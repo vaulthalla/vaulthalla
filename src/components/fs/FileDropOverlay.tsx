@@ -1,23 +1,34 @@
+'use client'
+
 import React, { useState, useRef } from 'react'
 import * as motion from 'motion/react-client'
 import { AnimatePresence } from 'motion/react'
 import { useFileDrop } from '@/hooks/useFileDrop'
 import { FileWithRelativePath } from '@/models/systemFile'
+import { useFSStore } from '@/stores/fsStore'
 
 interface FileDropOverlayProps {
-  onFiles: (files: FileWithRelativePath[]) => void
   children: React.ReactNode
 }
 
-export const FileDropOverlay: React.FC<FileDropOverlayProps> = ({ onFiles, children }) => {
+export const FileDropOverlay: React.FC<FileDropOverlayProps> = ({ children }) => {
   const [isDragging, setIsDragging] = useState(false)
   const dragCounter = useRef(0)
+
+  const { upload, fetchFiles } = useFSStore()
+
+  const processFiles = (files: FileWithRelativePath[]) => {
+    ;(async () => {
+      upload(files).catch(console.error)
+      await fetchFiles()
+    })()
+  }
 
   const dropRef = useFileDrop({
     onFiles: files => {
       setIsDragging(false)
       dragCounter.current = 0
-      onFiles(files)
+      processFiles(files)
     },
   })
 

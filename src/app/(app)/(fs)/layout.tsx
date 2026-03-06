@@ -13,7 +13,7 @@ const geistSans = Geist({ variable: '--font-geist-sans', subsets: ['latin'] })
 
 const geistMono = Geist_Mono({ variable: '--font-geist-mono', subsets: ['latin'] })
 
-export const metadata: Metadata = { title: 'Vaulthalla', description: 'The Final Cloud' }
+export const metadata: Metadata = { title: 'Filesystem | Vaulthalla', description: 'The Final Cloud' }
 
 const MainLayout = ({ children }: { children: React.ReactNode }) => (
   <RequireAuth>
@@ -25,7 +25,7 @@ const MainLayout = ({ children }: { children: React.ReactNode }) => (
           <MobileDrawer mode="fs" title="Files" />
         </div>
 
-        <main className="min-w-0 grow">{children}</main>
+        <main className="container mx-auto my-4 min-w-0 grow">{children}</main>
       </div>
     </div>
   </RequireAuth>

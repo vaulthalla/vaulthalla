@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom'
 import TrashIcon from '@/fa-duotone/trash.svg'
 import EditIcon from '@/fa-duotone/pen-to-square.svg'
 import CopyIcon from '@/fa-duotone/copy.svg'
-import PasteIcon from '@/fa-duotone/paste.svg' // ← Make sure you have this or use another icon
+import PasteIcon from '@/fa-duotone/paste.svg'
 import { useFSStore } from '@/stores/fsStore'
 
 interface ContextMenuProps<T extends { name: string }> {

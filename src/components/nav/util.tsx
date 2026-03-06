@@ -19,13 +19,12 @@ export const Banner = () => {
 }
 
 export const ToggleNavButton = ({ isCompact }: { isCompact: boolean }) => {
-  const path = usePathname()
   const router = useRouter()
 
-  const isFilesPage = path.startsWith('/fs')
+  const isFilesPage = usePathname().startsWith('/fs')
   const Icon = isFilesPage ? GaugeHigh : FolderOpen
   const route = isFilesPage ? '/dashboard' : '/fs'
-  const buttonText = isFilesPage ? 'Go to Dashboard' : 'Go to Filesystem'
+  const buttonText = isFilesPage ? 'Dashboard' : 'Filesystem'
 
   if (isCompact)
     return <Icon className="text-primary cursor-pointer fill-current text-4xl" onClick={() => router.push(route)} />

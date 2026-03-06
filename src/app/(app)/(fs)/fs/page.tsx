@@ -1,14 +1,20 @@
 import FilesClientPage from '@/app/(app)/(fs)/fs/page.client'
-import VaultBreadcrumbs from '@/components/files/VaultBreadcrumbs'
-import CopiedItemIndicator from '@/components/files/CopiedItemIndicator'
+import VaultBreadcrumbs from '@/components/fs/VaultBreadcrumbs'
+import CopiedItemIndicator from '@/components/fs/CopiedItemIndicator'
+import UploadProgress from '@/components/loading/UploadProgress'
+import { FileDropOverlay } from '@/components/fs/FileDropOverlay'
+import React from 'react'
 
 const FSPage = () => {
   return (
-    <div className="mx-8 h-full w-full">
+    <>
       <CopiedItemIndicator />
       <VaultBreadcrumbs className="mb-3" />
-      <FilesClientPage />
-    </div>
+      <FileDropOverlay>
+        <UploadProgress />
+        <FilesClientPage />
+      </FileDropOverlay>
+    </>
   )
 }
 
