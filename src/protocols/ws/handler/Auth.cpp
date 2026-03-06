@@ -42,6 +42,26 @@ json Auth::registerUser(const json& payload, Session& session) {
     return {{"token", token}, {"user", *user}};
 }
 
+json Auth::deleteUser(const json& payload, const Session& session) {
+    const auto id = payload.at("id").get<unsigned int>();
+    const auto user = session.getAuthenticatedUser();
+
+    const auto targetUser = db::query::identities::User::getUserById(id);
+    if (!targetUser) throw std::runtime_error("User not found");
+
+    if (targetUser->isSuperAdmin()) throw std::runtime_error("Cannot delete super admin user");
+    if (targetUser->isAdmin() && !user->canManageAdmins()) throw std::runtime_error("Permission denied: Only super admins can delete admin users");
+    if (!targetUser->isAdmin() && targetUser->id != user->id && !user->canManageUsers()) throw std::runtime_error("Permission denied: Only admins can delete other users");
+
+    db::query::identities::User::deleteUser(targetUser->id);
+    if (db::query::identities::User::getUserById(targetUser->id))
+        throw std::runtime_error("Failed to delete user with id: " + std::to_string(targetUser->id));
+
+    runtime::Deps::get().authManager->sessionManager()->invalidateSession(std::to_string(targetUser->id));
+
+    return {{ "user_id", targetUser->id }};
+}
+
 json Auth::updateUser(const json& payload, const Session& session) {
     const auto user = session.getAuthenticatedUser();
     if (!user) throw std::runtime_error("User not authenticated");

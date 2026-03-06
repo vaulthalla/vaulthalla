@@ -12,6 +12,7 @@ using json = nlohmann::json;
 struct Auth {
     static json login(const json& payload, Session& session);
     static json registerUser(const json& payload, Session& session);
+    static json deleteUser(const json& payload, const Session& session);
     static json updateUser(const json& payload, const Session& session);
     static json changePassword(const json& payload, const Session& session);
     static json getUser(const json& payload, const Session& session);

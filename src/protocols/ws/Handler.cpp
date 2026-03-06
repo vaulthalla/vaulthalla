@@ -31,6 +31,7 @@ void Handler::registerAllHandlers(const std::shared_ptr<Router>& r) {
 void Handler::registerAuthHandlers(const std::shared_ptr<Router>& r) {
     r->registerPayload("auth.login", &Auth::login);
     r->registerPayload("auth.register", &Auth::registerUser);
+    r->registerPayload("auth.user.delete", &Auth::deleteUser);
     r->registerSessionOnlyHandler("auth.logout", &Auth::logout);
     r->registerPayload("auth.user.update", &Auth::updateUser);
     r->registerPayload("auth.user.change_password", &Auth::changePassword);

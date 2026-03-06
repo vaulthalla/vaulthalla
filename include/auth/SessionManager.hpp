@@ -14,6 +14,7 @@ class SessionManager {
     std::string promoteSession(const std::shared_ptr<model::Client>& client);
     std::shared_ptr<model::Client> getClientSession(const std::string& token);
     void invalidateSession(const std::string& token);
+    void invalidateUserSession(uint32_t userId);
 
     // For admin / debug: list active sessions
     std::unordered_map<std::string, std::shared_ptr<model::Client>> getActiveSessions();
@@ -21,6 +22,7 @@ class SessionManager {
   private:
     std::unordered_map<std::string, std::shared_ptr<model::Client>> sessionsByUUID_;
     std::unordered_map<std::string, std::shared_ptr<model::Client>> sessionsByRefreshJti_;
+    std::unordered_map<uint32_t, std::shared_ptr<model::Client>> sessionsByUserId_;
     std::mutex sessionMutex_;
 };
 
