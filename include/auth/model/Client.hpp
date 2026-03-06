@@ -48,7 +48,7 @@ class Client {
     [[nodiscard]] std::chrono::system_clock::time_point connOpenedAt() const { return openedAt_; }
 
   private:
-    std::shared_ptr<identities::model::User> user_;
+    std::shared_ptr<identities::model::User> user_{nullptr};
     std::shared_ptr<Token> token_{nullptr};
     std::shared_ptr<protocols::ws::Session> session_;
     std::shared_ptr<RefreshToken> refreshToken_;

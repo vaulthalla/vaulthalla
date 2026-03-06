@@ -11,12 +11,11 @@ void SessionManager::createSession(const std::shared_ptr<Client>& client) {
 
     if (!client || !client->getSession()) throw std::invalid_argument("Session must not be null");
 
-    if (!client->getUser()) throw std::invalid_argument("User must not be null");
     if (const auto rt = client->getRefreshToken(); rt && !rt->getJti().empty())
         sessionsByRefreshJti_[rt->getJti()] = client;
     else throw std::invalid_argument("Refresh token not found");
 
-    sessionsByUserId_[client->getUser()->id] = client;
+    if (const auto user = client->getUser()) sessionsByUserId_[user->id] = client;
     sessionsByUUID_[client->getSession()->getUUID()] = client;
 
     log::Registry::ws()->debug("[SessionManager] Created session for user: {}", client->getUserName());
@@ -64,6 +63,7 @@ std::shared_ptr<Client> SessionManager::getClientSession(const std::string& toke
     std::lock_guard lock(sessionMutex_);
     if (sessionsByUUID_.contains(token)) return sessionsByUUID_[token];
     if (sessionsByRefreshJti_.contains(token)) return sessionsByRefreshJti_[token];
+    if (sessionsByUserId_.contains(std::stoi(token))) return sessionsByUserId_[std::stoi(token)];
     return nullptr;
 }
 
@@ -72,30 +72,24 @@ void SessionManager::invalidateSession(const std::string& token) {
 
     std::shared_ptr<Client> client = nullptr;
 
-    if (sessionsByUUID_.contains(token)) {
-        client = sessionsByUUID_[token];
-        sessionsByUUID_.erase(token);
-        sessionsByRefreshJti_.erase(client->getRefreshToken()->getJti());
-        sessionsByUserId_.erase(client->getUser()->id);
-    } else if (sessionsByRefreshJti_.contains(token)) {
-        client = sessionsByRefreshJti_[token];
-        sessionsByRefreshJti_.erase(token);
-        sessionsByUUID_.erase(client->getSession()->getUUID());
-        sessionsByUserId_.erase(client->getUser()->id);
-    } else if (sessionsByUserId_.contains(std::stoi(token))) {
-        client = sessionsByUserId_[std::stoi(token)];
-        sessionsByUserId_.erase(std::stoi(token));
-        sessionsByUUID_.erase(client->getSession()->getUUID());
-        sessionsByRefreshJti_.erase(client->getRefreshToken()->getJti());
-    } else {
+    if (sessionsByUUID_.contains(token)) client = sessionsByUUID_[token];
+    else if (sessionsByRefreshJti_.contains(token)) client = sessionsByRefreshJti_[token];
+    else if (sessionsByUserId_.contains(std::stoi(token))) client = sessionsByUserId_[std::stoi(token)];
+    else {
         log::Registry::ws()->warn("[SessionManager] No session found for token: {}", token);
         return;
     }
 
-    if (!client || !client->getSession())
-        throw std::invalid_argument("Session must not be null");
+    if (!client || !client->getSession()) {
+        log::Registry::ws()->warn("[SessionManager] Session not found for token: {}", token);
+        return;
+    }
+
+    sessionsByUUID_.erase(client->getSession()->getUUID());
+    sessionsByRefreshJti_.erase(client->getRefreshToken()->getJti());
 
     if (const auto user = client->getUser()) {
+        sessionsByUserId_.erase(user->id);
         client->invalidateToken();
         db::query::identities::User::revokeAndPurgeRefreshTokens(user->id);
         log::Registry::ws()->debug("[SessionManager] Invalidated session: {}", token);
