@@ -11,7 +11,7 @@
 using namespace vh::protocols::ws::handler;
 using namespace vh::identities::model;
 
-json Groups::add(const json& payload, const Session& session) {
+json Groups::add(const json& payload, const std::shared_ptr<Session>& session) {
     if (const auto user = session.getAuthenticatedUser(); !user || !user->canManageRoles())
         throw std::runtime_error("Permission denied: Only admins can create groups");
 
@@ -33,7 +33,7 @@ json Groups::add(const json& payload, const Session& session) {
     return {{"name", groupName}};
 }
 
-json Groups::remove(const json& payload, const Session& session) {
+json Groups::remove(const json& payload, const std::shared_ptr<Session>& session) {
     if (const auto user = session.getAuthenticatedUser(); !user || !user->canManageRoles())
         throw std::runtime_error("Permission denied: Only admins can delete groups");
 
@@ -43,7 +43,7 @@ json Groups::remove(const json& payload, const Session& session) {
     return {{"id", groupId}};
 }
 
-json Groups::addMember(const json& payload, const Session& session) {
+json Groups::addMember(const json& payload, const std::shared_ptr<Session>& session) {
     if (const auto user = session.getAuthenticatedUser(); !user || !user->canManageRoles())
         throw std::runtime_error("Permission denied: Only admins can add members to groups");
 
@@ -58,7 +58,7 @@ json Groups::addMember(const json& payload, const Session& session) {
     return {{"groupId", groupId}, {"memberName", memberName}};
 }
 
-json Groups::removeMember(const json& payload, const Session& session) {
+json Groups::removeMember(const json& payload, const std::shared_ptr<Session>& session) {
     if (const auto user = session.getAuthenticatedUser(); !user || !user->canManageRoles())
         throw std::runtime_error("Permission denied: Only admins can remove members from groups");
 
@@ -70,14 +70,14 @@ json Groups::removeMember(const json& payload, const Session& session) {
     return {{"groupId", groupId}, {"userId", userId}};
 }
 
-json Groups::list(const Session& session) {
+json Groups::list(const std::shared_ptr<Session>& session) {
     if (const auto user = session.getAuthenticatedUser(); !user || !user->canManageRoles())
         throw std::runtime_error("Permission denied: Only admins can list groups");
 
     return {{"groups", db::query::identities::Group::listGroups()}};
 }
 
-json Groups::get(const json& payload, const Session& session) {
+json Groups::get(const json& payload, const std::shared_ptr<Session>& session) {
     if (const auto user = session.getAuthenticatedUser(); !user || !user->canManageRoles())
         throw std::runtime_error("Permission denied: Only admins can get group details");
 
@@ -89,7 +89,7 @@ json Groups::get(const json& payload, const Session& session) {
     return {{"group", *group}};
 }
 
-json Groups::getByName(const json& payload, const Session& session) {
+json Groups::getByName(const json& payload, const std::shared_ptr<Session>& session) {
     if (const auto user = session.getAuthenticatedUser(); !user || !user->canManageRoles())
         throw std::runtime_error("Permission denied: Only admins can get group by name");
 
@@ -100,7 +100,7 @@ json Groups::getByName(const json& payload, const Session& session) {
 }
 
 
-json Groups::update(const json& payload, const Session& session) {
+json Groups::update(const json& payload, const std::shared_ptr<Session>& session) {
     if (const auto user = session.getAuthenticatedUser(); !user || !user->canManageRoles())
         throw std::runtime_error("Permission denied: Only admins can update groups");
 
@@ -127,7 +127,7 @@ json Groups::update(const json& payload, const Session& session) {
     return {{"id", groupId}, {"name", newName}};
 }
 
-json Groups::listByUser(const json& payload, const Session& session) {
+json Groups::listByUser(const json& payload, const std::shared_ptr<Session>& session) {
     if (const auto user = session.getAuthenticatedUser(); !user || !user->canManageRoles())
         throw std::runtime_error("Permission denied: Only admins can list groups by user");
 

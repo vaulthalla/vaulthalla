@@ -18,7 +18,7 @@ struct Response {
 
     Response(std::string&& cmd, json&& req, const Status& status, json&& data = json{}, std::optional<std::string>&& error = std::nullopt);
 
-    void operator()(Session& session);
+    void operator()(const std::shared_ptr<Session>& session);
 
     static Response SUCCESS(std::string&& cmd, json&& req, json&& data);
 

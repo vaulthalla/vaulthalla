@@ -1,6 +1,8 @@
 #include "protocols/ws/Session.hpp"
 
 #include "auth/Manager.hpp"
+#include "auth/model/RefreshToken.hpp"
+#include "auth/model/TokenPair.hpp"
 #include "log/Registry.hpp"
 #include "protocols/ws/Router.hpp"
 #include "protocols/ws/handler/Upload.hpp"
@@ -36,10 +38,10 @@ Session::Session(const std::shared_ptr<Router>& router)
 
 Session::~Session() {
     close();
-    log::Registry::ws()->debug("[WebSocketSession] Session destroyed for IP: {}", getClientIp());
+    log::Registry::ws()->debug("[WebSocketSession] Session destroyed for IP: {}", getIPAddress());
 }
 
-std::string Session::getClientIp() const {
+std::string Session::getIPAddress() const {
     try {
         if (!ws_ || !ws_->next_layer().is_open()) return "unknown";
         return ws_->next_layer().remote_endpoint().address().to_string();
@@ -49,14 +51,11 @@ std::string Session::getClientIp() const {
 }
 
 std::string Session::getUserAgent() const {
-    const auto it = handshakeRequest_.find(http::field::user_agent);
-    return it != handshakeRequest_.end() ? std::string(it->value()) : "unknown";
+    if (const auto it = handshakeRequest_.find(http::field::user_agent);
+        it != handshakeRequest_.end()) return std::string(it->value());
+    return  "unknown";
 }
 
-std::string Session::getRefreshToken() const { return refreshToken_; }
-std::shared_ptr<User> Session::getAuthenticatedUser() const { return authenticatedUser_; }
-void Session::setAuthenticatedUser(const std::shared_ptr<User>& user) { authenticatedUser_ = std::move(user); }
-void Session::setRefreshTokenCookie(const std::string& token) { refreshToken_ = token; }
 void Session::setHandshakeRequest(const RequestType& req) { handshakeRequest_ = req; }
 
 void Session::logFail(std::string_view where, const beast::error_code& ec) {
@@ -106,39 +105,37 @@ void Session::hydrateFromRequest(const RequestType& req) {
     handshakeRequest_ = req;
 
     try {
-        ipAddress_ = ws_->next_layer().remote_endpoint().address().to_string();
+        ipAddress = ws_->next_layer().remote_endpoint().address().to_string();
     } catch (...) {
-        ipAddress_ = "unknown";
+        ipAddress = "unknown";
     }
 
-    userAgent_ = std::string(req[http::field::user_agent]);
-    refreshToken_ = extractCookie(req, "refresh");
+    userAgent = std::string(req[http::field::user_agent]);
+    tokens->refreshToken = std::make_shared<auth::model::RefreshToken>(extractCookie(req, "refresh"));
 
-    if (refreshToken_.empty())
+    if (tokens->refreshToken->rawToken.empty())
         log::Registry::ws()->debug("[Session] No refresh token found in Cookie header");
     else
-        log::Registry::ws()->debug("[Session] Refresh token found in Cookie header: {}", refreshToken_);
+        log::Registry::ws()->debug("[Session] Refresh token found in Cookie header: {}", tokens->refreshToken->rawToken);
 }
 
 void Session::installHandshakeDecorator() const {
-    const auto token = refreshToken_;
-
+    const auto t = tokens->refreshToken->rawToken;
     ws_->set_option(websocket::stream_base::timeout::suggested(beast::role_type::server));
     ws_->set_option(websocket::stream_base::decorator(
-        [token](websocket::response_type& res) {
+        [&t](websocket::response_type& res) {
             res.set(http::field::server, "Vaulthalla");
 
             const bool isDev = config::ConfigRegistry::get().dev.enabled;
             const std::string sameSite = isDev ? "Lax" : "Lax"; // keep Lax unless *need* Strict
-            const bool secure = true; // or: !isDev ? true : config says https-enabled
 
-            std::string cookie = "refresh=" + token +
+            std::string cookie = "refresh=" + t +
                 "; Path=/" +
                 "; HttpOnly" +
                 "; SameSite=" + sameSite +
                 "; Max-Age=604800";
 
-            if (secure) cookie += "; Secure";
+            cookie += "; Secure";
 
             // IMPORTANT: use insert to avoid clobbering other Set-Cookie headers
             res.insert(http::field::set_cookie, cookie);
@@ -149,7 +146,7 @@ void Session::installHandshakeDecorator() const {
 void Session::onHandshakeAccepted(const beast::error_code& ec) {
     if (ec) return logFail("Handshake error", ec);
 
-    log::Registry::ws()->debug("[Session] Handshake accepted from IP: {}", getClientIp());
+    log::Registry::ws()->debug("[Session] Handshake accepted from IP: {}", getIPAddress());
     startReadLoop();
 }
 
@@ -178,7 +175,7 @@ void Session::close() {
         self->ws_.reset();
         self->buffer_.consume(self->buffer_.size());
 
-        log::Registry::ws()->debug("[WebSocketSession] Closed session for IP: {}", self->getClientIp());
+        log::Registry::ws()->debug("[WebSocketSession] Closed session for IP: {}", self->getIPAddress());
     });
 }
 
@@ -276,7 +273,7 @@ void Session::onRead(const beast::error_code& ec, std::size_t) {
     else {
         try {
             const auto text = beast::buffers_to_string(buffer_.data());
-            router_->routeMessage(json::parse(text), *this);
+            router_->routeMessage(json::parse(text), shared_from_this());
         } catch (const std::exception& ex) {
             log::Registry::ws()->debug("[Session] Error parsing message: {}", ex.what());
             sendParseError(std::string("Failed to parse message: ") + ex.what());

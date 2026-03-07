@@ -8,7 +8,7 @@
 
 using namespace vh::protocols::ws::handler;
 
-json Permissions::get(const json& payload, const Session& session) {
+json Permissions::get(const json& payload, const std::shared_ptr<Session>& session) {
     if (const auto user = session.getAuthenticatedUser(); !user || !user->canManageRoles())
         throw std::runtime_error("Permission denied: Only admins can get permissions");
 
@@ -19,7 +19,7 @@ json Permissions::get(const json& payload, const Session& session) {
     return {{"permission", *permission}};
 }
 
-json Permissions::getByName(const json& payload, const Session& session) {
+json Permissions::getByName(const json& payload, const std::shared_ptr<Session>& session) {
     if (const auto user = session.getAuthenticatedUser(); !user || !user->canManageRoles())
         throw std::runtime_error("Permission denied: Only admins can get permissions by name");
 
@@ -30,7 +30,7 @@ json Permissions::getByName(const json& payload, const Session& session) {
     return {{"permission", *permission}};
 }
 
-json Permissions::list(const Session& session) {
+json Permissions::list(const std::shared_ptr<Session>& session) {
     if (const auto user = session.getAuthenticatedUser(); !user || !user->canManageRoles())
         throw std::runtime_error("Permission denied: Only admins can list permissions");
 

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "auth/SessionManager.hpp"
+#include "session/Manager.hpp"
 #include "crypto/secrets/Manager.hpp"
 
 #include <memory>
@@ -15,19 +15,22 @@ namespace vh::storage { class Manager; }
 
 namespace vh::auth {
 
-namespace model { class Client; class RefreshToken; }
+namespace model { struct RefreshToken; }
+namespace session { class Manager; }
 
 class Manager {
 public:
+    std::shared_ptr<session::Manager> sessionManager;
+
     explicit Manager(const std::shared_ptr<storage::Manager>& storageManager = nullptr);
 
     void rehydrateOrCreateClient(const std::shared_ptr<protocols::ws::Session>& session) const;
 
-    std::shared_ptr<model::Client> registerUser(std::shared_ptr<identities::model::User> user,
+    std::shared_ptr<protocols::ws::Session> registerUser(std::shared_ptr<identities::model::User> user,
                                          const std::string& password,
                                          const std::shared_ptr<protocols::ws::Session>& session);
 
-    std::shared_ptr<model::Client> loginUser(const std::string& name, const std::string& password,
+    std::shared_ptr<protocols::ws::Session> loginUser(const std::string& name, const std::string& password,
                                       const std::shared_ptr<protocols::ws::Session>& session);
 
     void updateUser(const std::shared_ptr<identities::model::User>& user);
@@ -36,14 +39,12 @@ public:
 
     std::shared_ptr<identities::model::User> findUser(const std::string& name);
 
-    [[nodiscard]] std::shared_ptr<SessionManager> sessionManager() const;
-
     void validateRefreshToken(const std::string& refreshToken) const;
 
-    std::shared_ptr<model::Client> validateRefreshToken(const std::string& refreshToken,
+    std::shared_ptr<protocols::ws::Session> validateRefreshToken(const std::string& refreshToken,
                                                  const std::shared_ptr<protocols::ws::Session>& session) const;
 
-    std::pair<std::string, std::shared_ptr<model::RefreshToken>>
+    std::shared_ptr<model::RefreshToken>
     createRefreshToken(const std::shared_ptr<protocols::ws::Session>& session) const;
 
     static bool isValidRegistration(const std::shared_ptr<identities::model::User>& user,
@@ -59,7 +60,6 @@ public:
 
 private:
     std::unordered_map<std::string, std::shared_ptr<identities::model::User>> users_;
-    std::shared_ptr<SessionManager> sessionManager_;
     std::shared_ptr<storage::Manager> storageManager_;
     const std::string jwt_secret_ = crypto::secrets::Manager().jwtSecret();
 };

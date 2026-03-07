@@ -1,5 +1,5 @@
 #include "protocols/ws/ConnectionLifecycleManager.hpp"
-#include "auth/SessionManager.hpp"
+#include "auth/session/Manager.hpp"
 #include "auth/model/Client.hpp"
 #include "auth/Manager.hpp"
 #include "runtime/Deps.hpp"
@@ -13,7 +13,7 @@ using namespace std::chrono;
 
 ConnectionLifecycleManager::ConnectionLifecycleManager()
     : AsyncService("LifecycleManager"),
-      sessionManager_(runtime::Deps::get().authManager->sessionManager()) {
+      sessionManager_(runtime::Deps::get().authManager->sessionManager) {
     const auto& config = ConfigRegistry::get().services.connection_lifecycle_manager;
     sweep_interval_ = seconds(config.sweep_interval_seconds);
     unauthenticated_session_timeout_ = seconds(config.unauthenticated_timeout_seconds);
@@ -36,7 +36,7 @@ void ConnectionLifecycleManager::sweepActiveSessions() const {
     for (const auto& [tokenStr, client] : sessionManager_->getActiveSessions()) {
         if (!client) continue;
 
-        if (client->connOpenedAt() + unauthenticated_session_timeout_ < system_clock::now() && !client->token) {
+        if (client->connOpenedAt() + unauthenticated_session_timeout_ < system_clock::now() && !client->tokens) {
             log::Registry::ws()->debug("[LifecycleManager] Closing unauthenticated session (no token) opened at {}",
                                     system_clock::to_time_t(client->connOpenedAt()));
             client->sendControlMessage("unauthenticated_session_timeout", {});
@@ -55,7 +55,7 @@ void ConnectionLifecycleManager::sweepActiveSessions() const {
             continue;
         }
 
-        const auto secondsLeft = client->token->getTimeLeft();
+        const auto secondsLeft = client->tokens->getTimeLeft();
 
         if (secondsLeft <= 0) {
             if (const auto user = client->user) {

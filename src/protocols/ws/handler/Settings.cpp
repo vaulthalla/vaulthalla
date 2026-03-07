@@ -8,14 +8,14 @@
 
 using namespace vh::protocols::ws::handler;
 
-json Settings::get(const Session& session) {
+json Settings::get(const std::shared_ptr<Session>& session) {
     if (const auto user = session.getAuthenticatedUser(); !user || !user->canManageSettings())
         throw std::runtime_error("Permission denied: Only admins can view settings");
 
     return {{"settings", config::ConfigRegistry::get()}};
 }
 
-json Settings::update(const json& payload, const Session& session) {
+json Settings::update(const json& payload, const std::shared_ptr<Session>& session) {
     if (const auto user = session.getAuthenticatedUser(); !user || !user->canManageSettings())
         throw std::runtime_error("Permission denied: Only admins can update settings");
 

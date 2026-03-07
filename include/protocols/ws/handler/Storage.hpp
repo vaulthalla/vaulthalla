@@ -12,25 +12,25 @@ using json = nlohmann::json;
 
 class Storage {
 public:
-    static json startUpload(const json& payload, Session& session);
+    static json startUpload(const json& payload, const std::shared_ptr<Session>& session);
 
-    static json finishUpload(const json& payload, Session& session);
+    static json finishUpload(const json& payload, const std::shared_ptr<Session>& session);
 
-    static json mkdir(const json& payload, Session& session);
+    static json mkdir(const json& payload, const std::shared_ptr<Session>& session);
 
-    static json move(const json& payload, Session& session);
+    static json move(const json& payload, const std::shared_ptr<Session>& session);
 
-    static json rename(const json& payload, Session& session);
+    static json rename(const json& payload, const std::shared_ptr<Session>& session);
 
-    static json copy(const json& payload, Session& session);
+    static json copy(const json& payload, const std::shared_ptr<Session>& session);
 
-    static json listDir(const json& payload, Session& session);
+    static json listDir(const json& payload, const std::shared_ptr<Session>& session);
 
-    static json remove(const json& payload, Session& session);
+    static json remove(const json& payload, const std::shared_ptr<Session>& session);
 
 private:
     template <typename... Funcs> static void enforcePermissions(
-        Session& session,
+        const std::shared_ptr<Session>& session,
         const unsigned int vaultId,
         const std::filesystem::path& path, // Add path param
         Funcs... checks) {

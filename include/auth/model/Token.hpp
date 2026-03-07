@@ -2,26 +2,25 @@
 
 #include <chrono>
 #include <string>
-#include <utility>
+
+namespace pqxx { class row; }
 
 namespace vh::auth::model {
 
 struct Token {
-    Token(std::string token, const unsigned short userId)
-        : rawToken(std::move(token)), userId(userId),
-          expiryTs(std::chrono::system_clock::now() + std::chrono::hours(1)) {}
+    std::string rawToken{};
+    uint32_t userId{};
+    std::time_t expiresAt = 0;
+    bool revoked{false};
 
-    std::string rawToken;
-    unsigned short userId;
-    std::chrono::system_clock::time_point expiryTs;
-    bool revoked = false;
+    virtual ~Token() = default;
+    explicit Token(std::string rawToken);
+    Token(std::string token, unsigned short userId);
+    explicit Token(const pqxx::row& row);
 
-    [[nodiscard]] bool isExpired() const { return std::chrono::system_clock::now() >= expiryTs; }
-    [[nodiscard]] bool isValid() const { return !rawToken.empty() && !isExpired() && !revoked; }
-
-    [[nodiscard]] long long getTimeLeft() const {
-        return std::chrono::duration_cast<std::chrono::seconds>(expiryTs - std::chrono::system_clock::now()).count();
-    }
+    [[nodiscard]] bool isExpired() const;
+    [[nodiscard]] virtual bool isValid() const;
+    [[nodiscard]] std::chrono::seconds timeRemaining() const;
 
     void revoke() { revoked = true; }
 };

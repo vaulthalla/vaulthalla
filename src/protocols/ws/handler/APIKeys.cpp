@@ -13,8 +13,8 @@ using namespace vh::vault::model;
 using namespace vh::storage;
 using json = nlohmann::json;
 
-json APIKeys::add(const json& payload, const Session& session) {
-    const auto user = session.getAuthenticatedUser();
+json APIKeys::add(const json& payload, const std::shared_ptr<Session>& session) {
+    const auto user = session->user;
     if (!user) throw std::invalid_argument("Invalid user name");
 
     const auto userID = payload.at("user_id").get<unsigned int>();
@@ -33,15 +33,15 @@ json APIKeys::add(const json& payload, const Session& session) {
     return {};
 }
 
-json APIKeys::remove(const json& payload, const Session& session) {
+json APIKeys::remove(const json& payload, const std::shared_ptr<Session>& session) {
     const auto keyId = payload.at("id").get<unsigned int>();
-    const auto user = session.getAuthenticatedUser();
+    const auto user = session->user;
     runtime::Deps::get().apiKeyManager->removeAPIKey(keyId, user->id);
     return {};
 }
 
-json APIKeys::list(const Session& session) {
-    const auto user = session.getAuthenticatedUser();
+json APIKeys::list(const std::shared_ptr<Session>& session) {
+    const auto user = session->user;
 
     const auto keys = user->canManageAPIKeys() ?
         runtime::Deps::get().apiKeyManager->listAPIKeys() :
@@ -50,8 +50,8 @@ json APIKeys::list(const Session& session) {
     return {{"keys", json(keys).dump(4)}};
 }
 
-json APIKeys::get(const json& payload, const Session& session) {
+json APIKeys::get(const json& payload, const std::shared_ptr<Session>& session) {
     const unsigned int keyId = payload.at("id").get<unsigned int>();
-    const auto user = session.getAuthenticatedUser();
+    const auto user = session->user;
     return {{"api_key", runtime::Deps::get().apiKeyManager->getAPIKey(keyId, user->id)}};
 }

@@ -1,7 +1,7 @@
 #include "auth/Manager.hpp"
 #include "identities/model/User.hpp"
 #include "auth/model/Client.hpp"
-#include "auth/SessionManager.hpp"
+#include "auth/session/Manager.hpp"
 #include "crypto/util/hash.hpp"
 #include "crypto/password/Strength.hpp"
 #include "db/query/identities/User.hpp"
@@ -26,49 +26,41 @@ using namespace vh::protocols;
 namespace vh::auth {
 
 Manager::Manager(const std::shared_ptr<storage::Manager>& storageManager)
-    : sessionManager_(std::make_shared<SessionManager>()), storageManager_(storageManager) {
+    : sessionManager(std::make_shared<session::Manager>()), storageManager_(storageManager) {
     if (sodium_init() < 0) throw std::runtime_error("libsodium initialization failed in AuthManager");
 }
 
 void Manager::rehydrateOrCreateClient(const std::shared_ptr<ws::Session>& session) const {
-    std::shared_ptr<Client> client;
+    std::shared_ptr<Session> s;
 
-    if (!session->getRefreshToken().empty()) {
+    if (!session->refreshToken->rawToken.empty()) {
         log::Registry::auth()->debug("[AuthManager] Attempting to rehydrate session from provided refresh token.");
-        if (const auto validatedClient = validateRefreshToken(session->getRefreshToken(), session); !validatedClient)
-            log::Registry::auth()->debug("[AuthManager] Failed to rehydrate session: invalid refresh token.");
+        if (const auto validatedClient = validateRefreshToken(session->refreshToken->rawToken, session); !
+            validatedClient) log::Registry::auth()->debug(
+            "[AuthManager] Failed to rehydrate session: invalid refresh token.");
         else {
-            client = validatedClient;
-            log::Registry::auth()->debug("[AuthManager] Successfully rehydrated session with UUID: {}", client->session->getUUID());
+            s = validatedClient;
+            log::Registry::auth()->debug("[AuthManager] Successfully rehydrated session with UUID: {}", s->uuid);
         }
     }
 
-    if (!client) {
-        const auto tokenPair = createRefreshToken(session);
-        client = std::make_shared<Client>(session, tokenPair.second);
-        session->setRefreshTokenCookie(tokenPair.first);
-    }
-
-    sessionManager_->createSession(client);
+    if (!s) session->refreshToken = createRefreshToken(session);
+    sessionManager->ensureSession(s);
 }
 
-std::shared_ptr<SessionManager> Manager::sessionManager() const {
-    return sessionManager_;
-}
-
-std::shared_ptr<Client> Manager::registerUser(std::shared_ptr<User> user,
-                                                  const std::string& password,
-                                                  const std::shared_ptr<ws::Session>& session) {
+std::shared_ptr<Session> Manager::registerUser(std::shared_ptr<User> user,
+                                              const std::string& password,
+                                              const std::shared_ptr<ws::Session>& session) {
     isValidRegistration(user, password);
 
     user->setPasswordHash(hash::password(password));
     db::query::identities::User::createUser(user);
 
     user = findUser(user->name);
-    auto client = sessionManager_->getClientSession(session->getUUID());
-    client->setUser(user);
+    auto client = sessionManager->getSession(session->uuid);
+    session->user = user;
 
-    sessionManager_->promoteSession(client);
+    sessionManager->promoteSession(client);
     storageManager_->initUserStorage(user);
 
     if (!user) throw std::runtime_error("Failed to create user: " + user->name);
@@ -77,22 +69,22 @@ std::shared_ptr<Client> Manager::registerUser(std::shared_ptr<User> user,
     return client;
 }
 
-std::shared_ptr<Client> Manager::loginUser(const std::string& name, const std::string& password,
-                                               const std::shared_ptr<ws::Session>& session) {
+std::shared_ptr<Session> Manager::loginUser(const std::string& name, const std::string& password,
+                                           const std::shared_ptr<ws::Session>& session) {
     try {
         auto user = findUser(name);
         if (!user) throw std::runtime_error("User not found: " + name);
 
-        if (!hash::verifyPassword(password, user->password_hash))
-            throw std::runtime_error("Invalid password for user: " + name);
+        if (!hash::verifyPassword(password, user->password_hash)) throw std::runtime_error(
+            "Invalid password for user: " + name);
 
         db::query::identities::User::revokeAllRefreshTokens(user->id);
         db::query::identities::User::updateLastLoggedInUser(user->id);
         user = db::query::identities::User::getUserById(user->id);
-        auto client = sessionManager_->getClientSession(session->getUUID());
-        client->setUser(user);
+        auto client = sessionManager->getSession(session->uuid);
+        session->user = user;
 
-        sessionManager_->promoteSession(client);
+        sessionManager->promoteSession(client);
 
         log::Registry::auth()->info("[AuthManager] User logged in: {}", user->name);
         return client;
@@ -120,8 +112,8 @@ void Manager::validateRefreshToken(const std::string& refreshToken) const {
     const auto decoded = jwt::decode<jwt::traits::nlohmann_json>(refreshToken);
     const std::string tokenJti = decoded.get_id();
 
-    if (const auto session = sessionManager_->getClientSession(tokenJti)) {
-        if (!session->isAuthenticated()) throw std::runtime_error("Prior session is not authenticated");
+    if (const auto session = sessionManager->getSession(tokenJti)) {
+        if (!session::Validator::validateSession(session)) throw std::runtime_error("Prior session is not authenticated");
         return;
     }
 
@@ -130,24 +122,23 @@ void Manager::validateRefreshToken(const std::string& refreshToken) const {
                              "Session not found for token JTI: " + tokenJti);
 }
 
-std::shared_ptr<Client> Manager::validateRefreshToken(const std::string& refreshToken,
-                                  const std::shared_ptr<ws::Session>& session) const {
+std::shared_ptr<Session> Manager::validateRefreshToken(const std::string& refreshToken,
+                                                      const std::shared_ptr<ws::Session>& session) const {
     try {
         // 1. Decode and verify JWT
         const auto decoded = jwt::decode<jwt::traits::nlohmann_json>(refreshToken);
         const std::string tokenJti = decoded.get_id();
 
-        if (const auto priorSession = sessionManager_->getClientSession(tokenJti)) {
-            if (!priorSession->isAuthenticated()) throw std::runtime_error("Prior session is not authenticated");
+        if (const auto priorSession = sessionManager->getSession(tokenJti)) {
+            if (!session::Validator::validateSession(priorSession)) throw std::runtime_error("Prior session is not authenticated");
             log::Registry::auth()->debug("[AuthManager] Rehydrating existing session for JTI: {}", tokenJti);
-            priorSession->setSession(session);
+            sessionManager->ensureSession(session);
             return priorSession; // Session already exists, rehydrate it
         }
 
         const auto verifier = jwt::verify<jwt::traits::nlohmann_json>()
-                .allow_algorithm(jwt::algorithm::hs256{jwt_secret_})
-                .with_issuer("Vaulthalla")
-        ;
+            .allow_algorithm(jwt::algorithm::hs256{jwt_secret_})
+            .with_issuer("Vaulthalla");
 
         verifier.verify(decoded);
 
@@ -166,14 +157,14 @@ std::shared_ptr<Client> Manager::validateRefreshToken(const std::string& refresh
             return nullptr;
         }
 
-        if (storedToken->isRevoked()) throw std::runtime_error("Refresh token has been revoked");
+        if (storedToken->revoked) throw std::runtime_error("Refresh token has been revoked");
 
-        if (std::chrono::system_clock::from_time_t(storedToken->getExpiresAt()) < std::chrono::system_clock::now())
-            throw std::runtime_error("Refresh token has expired");
+        if (std::chrono::system_clock::from_time_t(storedToken->expiresAt) < std::chrono::system_clock::now()) throw
+            std::runtime_error("Refresh token has expired");
 
         // 4. Secure compare stored hash to hashed input token
-        if (!hash::verifyPassword(refreshToken, storedToken->getHashedToken()))
-            throw std::runtime_error("Refresh token hash mismatch");
+        if (!hash::verifyPassword(refreshToken, storedToken->hashedToken)) throw std::runtime_error(
+            "Refresh token hash mismatch");
 
         auto user = db::query::identities::User::getUserByRefreshToken(tokenJti);
         if (!user) {
@@ -181,10 +172,9 @@ std::shared_ptr<Client> Manager::validateRefreshToken(const std::string& refresh
             return nullptr;
         }
 
-        auto client = std::make_shared<Client>(session, storedToken, user);
-        sessionManager_->createSession(client);
+        sessionManager->ensureSession(session);
 
-        return client;
+        return session;
     } catch (const std::exception& e) {
         // making this debug to avoid flooding logs with errors
         log::Registry::auth()->debug("[AuthManager] validateRefreshToken failed: {}", e.what());
@@ -193,12 +183,12 @@ std::shared_ptr<Client> Manager::validateRefreshToken(const std::string& refresh
 }
 
 void Manager::changePassword(const std::string& name, const std::string& oldPassword,
-                                 const std::string& newPassword) {
+                             const std::string& newPassword) {
     const auto user = findUser(name);
     if (!user) throw std::runtime_error("User not found: " + name);
 
-    if (!hash::verifyPassword(oldPassword, user->password_hash))
-        throw std::runtime_error("Invalid old password for user: " + name);
+    if (!hash::verifyPassword(oldPassword, user->password_hash)) throw std::runtime_error(
+        "Invalid old password for user: " + name);
 
     user->setPasswordHash(hash::password(newPassword));
 
@@ -218,14 +208,14 @@ bool Manager::isValidRegistration(const std::shared_ptr<User>& user, const std::
             errors.emplace_back("Password is too weak (strength " + std::to_string(strength) +
                                 "/100). Use at least 12 characters, mix upper/lowercase, digits, and symbols.");
 
-        if (password::Strength::containsDictionaryWord(password))
-            errors.emplace_back("Password contains dictionary word — this is forbidden.");
+        if (password::Strength::containsDictionaryWord(password)) errors.emplace_back(
+            "Password contains dictionary word — this is forbidden.");
 
-        if (password::Strength::isCommonWeakPassword(password))
-            errors.emplace_back("Password matches known weak pattern — this is forbidden.");
+        if (password::Strength::isCommonWeakPassword(password)) errors.emplace_back(
+            "Password matches known weak pattern — this is forbidden.");
 
-        if (password::Strength::isPwnedPassword(password))
-            errors.emplace_back("Password has been found in public breaches — choose a different one.");
+        if (password::Strength::isPwnedPassword(password)) errors.emplace_back(
+            "Password has been found in public breaches — choose a different one.");
     }
 
     if (!errors.empty()) {
@@ -282,27 +272,28 @@ std::string generateUUID() {
     return {uuidStr};
 }
 
-std::pair<std::string, std::shared_ptr<RefreshToken>>
-Manager::createRefreshToken(const std::shared_ptr<ws::Session>& session) const {
+std::shared_ptr<RefreshToken> Manager::createRefreshToken(const std::shared_ptr<ws::Session>& session) const {
     const auto now = std::chrono::system_clock::now();
     const auto exp = now + std::chrono::days(config::ConfigRegistry::get().auth.refresh_token_expiry_days);
-    std::string jti = generateUUID();
+    const std::string jti = generateUUID();
 
-    std::string token =
+    const std::string token =
         jwt::create<jwt::traits::nlohmann_json>()
         .set_issuer("Vaulthalla")
-        .set_subject(session->getClientIp() + ":" + session->getUserAgent() + ":" + session->getUUID())
+        .set_subject(session->ipAddress + ":" + session->userAgent + ":" + session->uuid)
         .set_issued_at(now)
         .set_expires_at(exp)
         .set_id(jti)
         .sign(jwt::algorithm::hs256{jwt_secret_});
 
-    return {token,
-            std::make_shared<RefreshToken>(jti,
-                                           hash::password(token),     // Store hashed token
-                                           0,                       // User ID will be set later
-                                           session->getUserAgent(),
-                                           session->getClientIp())};
+    return RefreshToken::fromIssuedToken(
+        jti,
+        token,
+        hash::password(token),
+        0,
+        session->userAgent,
+        session->ipAddress
+        );
 }
 
 }

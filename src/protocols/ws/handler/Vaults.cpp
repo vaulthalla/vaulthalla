@@ -20,7 +20,7 @@ using namespace vh::storage;
 using namespace vh::sync::model;
 using json = nlohmann::json;
 
-json Vaults::add(const json& payload, const Session& session) {
+json Vaults::add(const json& payload, const std::shared_ptr<Session>& session) {
     const std::string name = payload.at("name").get<std::string>();
     const std::string type = payload.at("type").get<std::string>();
     const std::string typeLower = boost::algorithm::to_lower_copy(type);
@@ -45,7 +45,7 @@ json Vaults::add(const json& payload, const Session& session) {
     return {{"vault", *vault}};
 }
 
-json Vaults::update(const json& payload, const Session& session) {
+json Vaults::update(const json& payload, const std::shared_ptr<Session>& session) {
     const auto user = session.getAuthenticatedUser();
 
     const auto vault = std::make_shared<Vault>(payload);
@@ -55,7 +55,7 @@ json Vaults::update(const json& payload, const Session& session) {
     return {{"vault", *vault}};
 }
 
-json Vaults::remove(const json& payload, const Session& session) {
+json Vaults::remove(const json& payload, const std::shared_ptr<Session>& session) {
     const auto user = session.getAuthenticatedUser();
     const auto vaultId = payload.at("id").get<unsigned int>();
     const auto vault = runtime::Deps::get().storageManager->getVault(vaultId);
@@ -67,7 +67,7 @@ json Vaults::remove(const json& payload, const Session& session) {
     return {};
 }
 
-json Vaults::get(const json& payload, const Session& session) {
+json Vaults::get(const json& payload, const std::shared_ptr<Session>& session) {
     const auto user = session.getAuthenticatedUser();
     const auto vaultId = payload.at("id").get<unsigned int>();
     if (!user->canManageVault(vaultId)) throw std::runtime_error("User does not have permission to get vaults.");
@@ -88,14 +88,14 @@ json Vaults::get(const json& payload, const Session& session) {
     return data;
 }
 
-json Vaults::list(const Session& session) {
+json Vaults::list(const std::shared_ptr<Session>& session) {
     const auto user = session.getAuthenticatedUser();
     return user->canManageVaults() ?
         json{{"vaults", db::query::vault::Vault::listVaults()}} :
         json{{"vaults", db::query::vault::Vault::listUserVaults(user->id)}};
 }
 
-json Vaults::sync(const json& payload, const Session& session) {
+json Vaults::sync(const json& payload, const std::shared_ptr<Session>& session) {
     const auto user = session.getAuthenticatedUser();
     const auto vaultId = payload.at("id").get<unsigned int>();
     if (!user->canSyncVaultData(vaultId)) throw std::runtime_error("User does not have permission to sync vaults.");

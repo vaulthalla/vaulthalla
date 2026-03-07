@@ -1,12 +1,14 @@
 #pragma once
 
+#include "protocols/ws/Router.hpp"
 #include "protocols/ws/model/Response.hpp"
 
 #include <functional>
+#include <memory>
+#include <nlohmann/json.hpp>
 #include <string>
 #include <type_traits>
 #include <utility>
-#include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
 
@@ -15,32 +17,32 @@ namespace vh::protocols::ws { class Session; }
 namespace vh::protocols::ws::core {
 
 template <class Fn>
-auto makeWsHandler(std::string cmd, Fn&& fn) {
+Router::Handler makeWsHandler(std::string cmd, Fn&& fn) {
     return [cmd = std::move(cmd), fn = std::forward<Fn>(fn)]
-           (json&& msg, Session& session) mutable {
+           (json&& msg, const std::shared_ptr<Session>& session) mutable {
         try {
-            json data = std::invoke(fn, msg, session);  // fn reads msg by ref
+            json data = std::invoke(fn, msg, session);
             model::Response::SUCCESS(std::string(cmd), std::move(msg), std::move(data))(session);
         } catch (const std::exception& e) {
-            model::Response::ERROR(std::string(cmd), std::move(msg), e.what())(session);
+            model::Response::ERROR(std::string(cmd), std::move(msg), std::string(e.what()))(session);
         } catch (...) {
-            model::Response::ERROR(std::string(cmd), std::move(msg), "Unknown error")(session);
+            model::Response::ERROR(std::string(cmd), std::move(msg), std::string("Unknown error"))(session);
         }
     };
 }
 
 template <class Fn>
-auto makePayloadHandler(std::string cmd, Fn&& fn) {
+Router::Handler makePayloadHandler(std::string cmd, Fn&& fn) {
     return [cmd = std::move(cmd), fn = std::forward<Fn>(fn)]
-           (json&& msg, Session& session) mutable {
+           (json&& msg, const std::shared_ptr<Session>& session) mutable {
         try {
-            const json& payload = msg.at("payload");      // ref into msg (safe during this call)
-            json data = std::invoke(fn, payload, session); // handler returns response data
+            const json& payload = msg.at("payload");
+            json data = std::invoke(fn, payload, session);
             model::Response::SUCCESS(std::string(cmd), std::move(msg), std::move(data))(session);
         } catch (const std::exception& e) {
-            model::Response::ERROR(std::string(cmd), std::move(msg), e.what())(session);
+            model::Response::ERROR(std::string(cmd), std::move(msg), std::string(e.what()))(session);
         } catch (...) {
-            model::Response::ERROR(std::string(cmd), std::move(msg), "Unknown error")(session);
+            model::Response::ERROR(std::string(cmd), std::move(msg), std::string("Unknown error"))(session);
         }
     };
 }
@@ -48,17 +50,15 @@ auto makePayloadHandler(std::string cmd, Fn&& fn) {
 template <class Fn>
 Router::Handler makeHandlerWithToken(std::string cmd, Fn&& fn) {
     return [cmd = std::move(cmd), fn = std::forward<Fn>(fn)]
-           (json&& msg, Session& session) mutable {
+           (json&& msg, const std::shared_ptr<Session>& session) mutable {
         try {
             const auto& token = msg.at("token").get_ref<const std::string&>();
-
             json data = std::invoke(fn, token, session);
-
             model::Response::SUCCESS(std::string(cmd), std::move(msg), std::move(data))(session);
         } catch (const std::exception& e) {
-            model::Response::ERROR(std::string(cmd), std::move(msg), e.what())(session);
+            model::Response::ERROR(std::string(cmd), std::move(msg), std::string(e.what()))(session);
         } catch (...) {
-            model::Response::ERROR(std::string(cmd), std::move(msg), "Unknown error")(session);
+            model::Response::ERROR(std::string(cmd), std::move(msg), std::string("Unknown error"))(session);
         }
     };
 }
@@ -66,14 +66,14 @@ Router::Handler makeHandlerWithToken(std::string cmd, Fn&& fn) {
 template <class Fn>
 Router::Handler makeSessionOnlyHandler(std::string cmd, Fn&& fn) {
     return [cmd = std::move(cmd), fn = std::forward<Fn>(fn)]
-           (json&& msg, Session& session) mutable {
+           (json&& msg, const std::shared_ptr<Session>& session) mutable {
         try {
             json data = std::invoke(fn, session);
             model::Response::SUCCESS(std::string(cmd), std::move(msg), std::move(data))(session);
         } catch (const std::exception& e) {
-            model::Response::ERROR(std::string(cmd), std::move(msg), e.what())(session);
+            model::Response::ERROR(std::string(cmd), std::move(msg), std::string(e.what()))(session);
         } catch (...) {
-            model::Response::ERROR(std::string(cmd), std::move(msg), "Unknown error")(session);
+            model::Response::ERROR(std::string(cmd), std::move(msg), std::string("Unknown error"))(session);
         }
     };
 }
@@ -81,14 +81,14 @@ Router::Handler makeSessionOnlyHandler(std::string cmd, Fn&& fn) {
 template <class Fn>
 Router::Handler makeEmptyHandler(std::string cmd, Fn&& fn) {
     return [cmd = std::move(cmd), fn = std::forward<Fn>(fn)]
-        (json&& msg, Session& session) mutable {
+           (json&& msg, const std::shared_ptr<Session>& session) mutable {
         try {
             json data = std::invoke(fn);
             model::Response::SUCCESS(std::string(cmd), std::move(msg), std::move(data))(session);
         } catch (const std::exception& e) {
-            model::Response::ERROR(std::string(cmd), std::move(msg), e.what())(session);
+            model::Response::ERROR(std::string(cmd), std::move(msg), std::string(e.what()))(session);
         } catch (...) {
-            model::Response::ERROR(std::string(cmd), std::move(msg), "Unknown error")(session);
+            model::Response::ERROR(std::string(cmd), std::move(msg), std::string("Unknown error"))(session);
         }
     };
 }
@@ -96,17 +96,74 @@ Router::Handler makeEmptyHandler(std::string cmd, Fn&& fn) {
 // ---------------------------
 // helpers to bind member functions cleanly
 // ---------------------------
+
 template <class Obj>
-auto bindMember(Obj* obj, void (Obj::*mf)(json&&, Session&) const) {
-    return [obj, mf](json&& msg, Session& session) {
-        (obj->*mf)(std::move(msg), session);
+auto bindWsMember(Obj* obj, json (Obj::*mf)(const json&, const std::shared_ptr<Session>&)) {
+    return [obj, mf](const json& msg, const std::shared_ptr<Session>& session) {
+        return (obj->*mf)(msg, session);
     };
 }
 
 template <class Obj>
-auto bindPayloadMember(Obj* obj, void (Obj::*mf)(const json&, json&&, Session&) const) {
-    return [obj, mf](const json& payload, json&& msg, Session& session) {
-        (obj->*mf)(payload, std::move(msg), session);
+auto bindWsMember(const Obj* obj, json (Obj::*mf)(const json&, const std::shared_ptr<Session>&) const) {
+    return [obj, mf](const json& msg, const std::shared_ptr<Session>& session) {
+        return (obj->*mf)(msg, session);
+    };
+}
+
+template <class Obj>
+auto bindPayloadMember(Obj* obj, json (Obj::*mf)(const json&, const std::shared_ptr<Session>&)) {
+    return [obj, mf](const json& payload, const std::shared_ptr<Session>& session) {
+        return (obj->*mf)(payload, session);
+    };
+}
+
+template <class Obj>
+auto bindPayloadMember(const Obj* obj, json (Obj::*mf)(const json&, const std::shared_ptr<Session>&) const) {
+    return [obj, mf](const json& payload, const std::shared_ptr<Session>& session) {
+        return (obj->*mf)(payload, session);
+    };
+}
+
+template <class Obj>
+auto bindTokenMember(Obj* obj, json (Obj::*mf)(const std::string&, const std::shared_ptr<Session>&)) {
+    return [obj, mf](const std::string& token, const std::shared_ptr<Session>& session) {
+        return (obj->*mf)(token, session);
+    };
+}
+
+template <class Obj>
+auto bindTokenMember(const Obj* obj, json (Obj::*mf)(const std::string&, const std::shared_ptr<Session>&) const) {
+    return [obj, mf](const std::string& token, const std::shared_ptr<Session>& session) {
+        return (obj->*mf)(token, session);
+    };
+}
+
+template <class Obj>
+auto bindSessionOnlyMember(Obj* obj, json (Obj::*mf)(const std::shared_ptr<Session>&)) {
+    return [obj, mf](const std::shared_ptr<Session>& session) {
+        return (obj->*mf)(session);
+    };
+}
+
+template <class Obj>
+auto bindSessionOnlyMember(const Obj* obj, json (Obj::*mf)(const std::shared_ptr<Session>&) const) {
+    return [obj, mf](const std::shared_ptr<Session>& session) {
+        return (obj->*mf)(session);
+    };
+}
+
+template <class Obj>
+auto bindEmptyMember(Obj* obj, json (Obj::*mf)()) {
+    return [obj, mf]() {
+        return (obj->*mf)();
+    };
+}
+
+template <class Obj>
+auto bindEmptyMember(const Obj* obj, json (Obj::*mf)() const) {
+    return [obj, mf]() {
+        return (obj->*mf)();
     };
 }
 

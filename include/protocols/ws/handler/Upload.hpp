@@ -31,7 +31,7 @@ struct UploadContext : UploadArgs {
 
 class Upload {
 public:
-    Upload(Session& session);
+    Upload(const std::shared_ptr<Session>& session);
 
     void startUpload(const UploadArgs& args);
 
@@ -42,7 +42,7 @@ public:
     bool uploadInProgress() const { return currentUpload_.has_value(); }
 
 private:
-    Session& session_;
+    const std::shared_ptr<Session>& session_;
     std::optional<UploadContext> currentUpload_;
 
     void fail(const std::string& command, const std::string& error) const;

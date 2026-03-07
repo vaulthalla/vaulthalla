@@ -8,7 +8,7 @@
 using namespace vh::protocols::ws::handler;
 using namespace vh::rbac::model;
 
-json Roles::add(const json& payload, const Session& session) {
+json Roles::add(const json& payload, const std::shared_ptr<Session>& session) {
     if (const auto user = session.getAuthenticatedUser(); !user || !user->canManageRoles())
         throw std::runtime_error("Permission denied: Only admins can add roles");
 
@@ -17,7 +17,7 @@ json Roles::add(const json& payload, const Session& session) {
     return {{"role", *role}};
 }
 
-json Roles::remove(const json& payload, const Session& session) {
+json Roles::remove(const json& payload, const std::shared_ptr<Session>& session) {
     if (const auto user = session.getAuthenticatedUser(); !user || !user->canManageRoles())
         throw std::runtime_error("Permission denied: Only admins can delete roles");
 
@@ -26,7 +26,7 @@ json Roles::remove(const json& payload, const Session& session) {
     return {{"role", roleId}};
 }
 
-json Roles::update(const json& payload, const Session& session) {
+json Roles::update(const json& payload, const std::shared_ptr<Session>& session) {
     if (const auto user = session.getAuthenticatedUser(); !user || !user->canManageRoles())
         throw std::runtime_error("Permission denied: Only admins can update roles");
 
@@ -35,7 +35,7 @@ json Roles::update(const json& payload, const Session& session) {
     return {{"role", *role}};
 }
 
-json Roles::get(const json& payload, const Session& session) {
+json Roles::get(const json& payload, const std::shared_ptr<Session>& session) {
     if (const auto user = session.getAuthenticatedUser(); !user || !user->canManageRoles())
         throw std::runtime_error("Permission denied: Only admins can get roles");
 
@@ -47,7 +47,7 @@ json Roles::get(const json& payload, const Session& session) {
     return {{"role", *role}};
 }
 
-json Roles::getByName(const json& payload, const Session& session) {
+json Roles::getByName(const json& payload, const std::shared_ptr<Session>& session) {
     if (const auto user = session.getAuthenticatedUser(); !user || !user->canManageRoles())
         throw std::runtime_error("Permission denied: Only admins can get roles by name");
 
@@ -57,21 +57,21 @@ json Roles::getByName(const json& payload, const Session& session) {
     return {{"role", *role}};
 }
 
-json Roles::list(const Session& session) {
+json Roles::list(const std::shared_ptr<Session>& session) {
     if (const auto user = session.getAuthenticatedUser(); !user || !user->canManageRoles())
         throw std::runtime_error("Permission denied: Only admins can list roles");
 
     return {{"roles", db::query::rbac::Permission::listRoles()}};
 }
 
-json Roles::listUserRoles(const Session& session) {
+json Roles::listUserRoles(const std::shared_ptr<Session>& session) {
     if (const auto user = session.getAuthenticatedUser(); !user || !user->canManageRoles())
         throw std::runtime_error("Permission denied: Only admins can list user roles");
 
     return {{"roles", db::query::rbac::Permission::listUserRoles()}};
 }
 
-json Roles::listVaultRoles(const Session& session) {
+json Roles::listVaultRoles(const std::shared_ptr<Session>& session) {
     if (const auto user = session.getAuthenticatedUser(); !user || !user->canManageRoles())
         throw std::runtime_error("Permission denied: Only admins can list filesystem roles");
 

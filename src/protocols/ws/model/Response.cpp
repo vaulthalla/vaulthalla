@@ -8,7 +8,9 @@ using namespace vh::protocols::ws::model;
 Response::Response(std::string&& cmd, json&& req, const Status& status, json&& data, std::optional<std::string>&& error)
     : cmd(std::move(cmd)), req(std::move(req)), data(std::move(data)), status(status), error(std::move(error)) {}
 
-void Response::operator()(Session& session) {
+void Response::operator()(const std::shared_ptr<Session>& session) {
+    if (!session) return;
+
     json response = {
         {"command", std::format("{}.response", cmd)},
         {"status", to_string(status)},
@@ -18,7 +20,7 @@ void Response::operator()(Session& session) {
     if (!data.empty()) response["data"] = data;
     if (error) response["error"] = error;
 
-    session.send(response);
+    session->send(response);
 }
 
 Response Response::SUCCESS(std::string&& cmd, json&& req, json&& data) {
