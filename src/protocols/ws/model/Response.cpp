@@ -14,8 +14,9 @@ void Response::operator()(const std::shared_ptr<Session>& session) {
     json response = {
         {"command", std::format("{}.response", cmd)},
         {"status", to_string(status)},
-        {"requestId", req.at("requestId").get<std::string>()},
     };
+
+    if (req.is_object() && req.contains("requestId")) response["requestId"] = req.at("requestId").get<std::string>();
 
     if (!data.empty()) response["data"] = data;
     if (error) response["error"] = error;

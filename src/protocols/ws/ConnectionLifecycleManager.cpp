@@ -50,16 +50,16 @@ void ConnectionLifecycleManager::sweepActiveSessions() const {
                 continue;
             }
 
-            // if (!session->tokens || !session->tokens->refreshToken || !session->tokens->refreshToken->isValid()) {
-            //     log::Registry::ws()->debug("[LifecycleManager] Closing session with expired refresh token (opened at {})",
-            //                             system_clock::to_time_t(session->connectionOpenedAt));
-            //
-            //     model::Response::UNAUTHORIZED("unauthenticated_session_timeout",
-            //         "Session closed due to expired refresh token. Please re-authenticate to continue.")(session);
-            //     runtime::Deps::get().sessionManager->invalidate(session);
-            //     session->close();
-            //     continue;
-            // }
+            if (!session->tokens || !session->tokens->refreshToken || !session->tokens->refreshToken->isValid()) {
+                log::Registry::ws()->debug("[LifecycleManager] Closing session with expired refresh token (opened at {})",
+                                        system_clock::to_time_t(session->connectionOpenedAt));
+
+                model::Response::UNAUTHORIZED("unauthenticated_session_timeout",
+                    "Session closed due to expired refresh token. Please re-authenticate to continue.")(session);
+                runtime::Deps::get().sessionManager->invalidate(session);
+                session->close();
+                continue;
+            }
         } catch (const std::exception& e) {
             log::Registry::ws()->error("[LifecycleManager] Error while sweeping sessions: {}", e.what());
         }
