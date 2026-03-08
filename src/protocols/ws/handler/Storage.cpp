@@ -20,7 +20,7 @@ using namespace vh::storage;
 using namespace vh::fs;
 using namespace vh::fs::model;
 
-json Storage::startUpload(const json& payload, Session& session) {
+json Storage::startUpload(const json& payload, const std::shared_ptr<Session>& session) {
     const auto vaultId = payload.at("vault_id").get<unsigned int>();
     const auto path = payload.at("path").get<std::string>();
 
@@ -33,7 +33,7 @@ json Storage::startUpload(const json& payload, Session& session) {
     const auto absPath = engine->paths->absPath(path, PathType::VAULT_ROOT);
     const auto tmpPath = absPath.parent_path() / (".upload-" + uploadId + ".part");
 
-    session.getUploadHandler()->startUpload( {
+    session->getUploadHandler()->startUpload( {
         .uploadId = uploadId,
         .expectedSize = payload.at("size").get<uint64_t>(),
         .engine = engine,
@@ -46,15 +46,15 @@ json Storage::startUpload(const json& payload, Session& session) {
     return {{"upload_id", uploadId}};
 }
 
-json Storage::finishUpload(const json& payload, Session& session) {
+json Storage::finishUpload(const json& payload, const std::shared_ptr<Session>& session) {
     const auto vaultId = payload.at("vault_id").get<unsigned int>();
     const auto path = payload.at("path").get<std::string>();
     enforcePermissions(session, vaultId, path, &VaultRole::canCreate);
-    session.getUploadHandler()->finishUpload();
+    session->getUploadHandler()->finishUpload();
     return {{"path", path}};
 }
 
-json Storage::mkdir(const json& payload, Session& session) {
+json Storage::mkdir(const json& payload, const std::shared_ptr<Session>& session) {
     const auto vaultId = payload.at("vault_id").get<unsigned int>();
     const auto path = payload.at("path").get<std::string>();
 
@@ -62,13 +62,13 @@ json Storage::mkdir(const json& payload, Session& session) {
 
     const auto engine = runtime::Deps::get().storageManager->getEngine(vaultId);
     if (!engine) throw std::runtime_error("No storage engine found for vault with ID: " + std::to_string(vaultId));
-    engine->mkdir(path, session.getAuthenticatedUser()->id);
+    engine->mkdir(path, session->user->id);
     runtime::Deps::get().syncController->runNow(vaultId);
 
     return {{"path", path}};
 }
 
-json Storage::move(const json& payload, Session& session) {
+json Storage::move(const json& payload, const std::shared_ptr<Session>& session) {
     const auto vaultId = payload.at("vault_id").get<unsigned int>();
     const auto from = payload.at("from").get<std::string>();
     const auto to = payload.at("to").get<std::string>();
@@ -78,13 +78,13 @@ json Storage::move(const json& payload, Session& session) {
 
     const auto engine = runtime::Deps::get().storageManager->getEngine(vaultId);
     if (!engine) throw std::runtime_error("No storage engine found for vault with ID: " + std::to_string(vaultId));
-    engine->move(from, to, session.getAuthenticatedUser()->id);
+    engine->move(from, to, session->user->id);
     runtime::Deps::get().syncController->runNow(vaultId);
 
     return {{"from", from}, {"to", to}};
 }
 
-json Storage::rename(const json& payload, Session& session) {
+json Storage::rename(const json& payload, const std::shared_ptr<Session>& session) {
     const auto vaultId = payload.at("vault_id").get<unsigned int>();
     const auto from = std::filesystem::path(payload.at("from").get<std::string>());
     const auto to = std::filesystem::path(payload.at("to").get<std::string>());
@@ -94,13 +94,13 @@ json Storage::rename(const json& payload, Session& session) {
 
     const auto engine = runtime::Deps::get().storageManager->getEngine(vaultId);
     if (!engine) throw std::runtime_error("No storage engine found for vault with ID: " + std::to_string(vaultId));
-    engine->rename(from, to, session.getAuthenticatedUser()->id);
+    engine->rename(from, to, session->user->id);
     runtime::Deps::get().syncController->runNow(vaultId);
 
     return {{"from", from}, {"to", to}};
 }
 
-json Storage::copy(const json& payload, Session& session) {
+json Storage::copy(const json& payload, const std::shared_ptr<Session>& session) {
     const auto vaultId = payload.at("vault_id").get<unsigned int>();
     const auto from = std::filesystem::path(payload.at("from").get<std::string>());
     const auto to = std::filesystem::path(payload.at("to").get<std::string>());
@@ -110,13 +110,13 @@ json Storage::copy(const json& payload, Session& session) {
 
     const auto engine = runtime::Deps::get().storageManager->getEngine(vaultId);
     if (!engine) throw std::runtime_error("No storage engine found for vault with ID: " + std::to_string(vaultId));
-    engine->copy(from, to, session.getAuthenticatedUser()->id);
+    engine->copy(from, to, session->user->id);
     runtime::Deps::get().syncController->runNow(vaultId);
 
     return {{"from", from}, {"to", to}};
 }
 
-json Storage::listDir(const json& payload, Session& session) {
+json Storage::listDir(const json& payload, const std::shared_ptr<Session>& session) {
     const auto vaultId = payload.at("vault_id").get<unsigned int>();
     auto path = std::filesystem::path(payload.value("path", "/"));
     if (path.empty()) path = std::filesystem::path("/");
@@ -141,8 +141,8 @@ json Storage::listDir(const json& payload, Session& session) {
     };
 }
 
-json Storage::remove(const json& payload, Session& session) {
-    const auto user = session.getAuthenticatedUser();
+json Storage::remove(const json& payload, const std::shared_ptr<Session>& session) {
+    const auto user = session->user;
     if (!user) throw std::runtime_error("User not authenticated");
 
     const auto userId = user->id;

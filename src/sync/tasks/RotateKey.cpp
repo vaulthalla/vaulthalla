@@ -7,6 +7,7 @@
 #include "fs/model/File.hpp"
 #include "sync/model/RemotePolicy.hpp"
 #include "fs/ops/file.hpp"
+#include "log/Registry.hpp"
 
 #include <filesystem>
 #include <stdexcept>

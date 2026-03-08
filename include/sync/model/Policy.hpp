@@ -3,11 +3,8 @@
 #include <chrono>
 #include <string>
 #include <ctime>
+#include <pqxx/row>
 #include <nlohmann/json_fwd.hpp>
-
-namespace pqxx {
-class row;
-}
 
 namespace vh::sync::model {
 

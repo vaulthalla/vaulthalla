@@ -2,7 +2,6 @@
 #include "db/encoding/timestamp.hpp"
 #include "db/encoding/interval.hpp"
 
-#include <pqxx/row>
 #include <nlohmann/json.hpp>
 
 using namespace vh::sync::model;

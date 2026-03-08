@@ -7,7 +7,6 @@
 #include "db/query/sync/Policy.hpp"
 
 #include "storage/Manager.hpp"
-#include "storage/s3/S3Controller.hpp"
 
 #include "vault/model/Vault.hpp"
 #include "identities/model/User.hpp"
@@ -24,7 +23,6 @@ using namespace vh::protocols::shell::commands::vault;
 using namespace vh::vault::model;
 using namespace vh::storage;
 using namespace vh::config;
-using namespace vh::cloud;
 
 CommandResult commands::vault::handle_vault_update(const CommandCall& call) {
     constexpr const auto* ERR = "vault update";

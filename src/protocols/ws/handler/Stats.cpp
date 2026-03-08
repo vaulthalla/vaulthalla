@@ -19,7 +19,7 @@ namespace vh::protocols::ws::handler {
 
 json Stats::vault(const json& payload, const std::shared_ptr<Session>& session) {
     const auto& vaultId = payload.at("vault_id");
-    if (const auto user = session.getAuthenticatedUser(); !user || !user->canManageVault(vaultId))
+    if (!session->user->canManageVault(vaultId))
         throw std::runtime_error("User does not have permission to manage this vault.");
 
     const auto task = std::make_shared<vault::task::Stats>(vaultId);
@@ -33,18 +33,14 @@ json Stats::vault(const json& payload, const std::shared_ptr<Session>& session) 
 }
 
 json Stats::fsCache(const std::shared_ptr<Session>& session) {
-    if (const auto user = session.getAuthenticatedUser(); !user || !user->isAdmin())
-        throw std::runtime_error("Must be an admin to view cache stats.");
-
+    if (!session->user->isAdmin()) throw std::runtime_error("Must be an admin to view cache stats.");
     const auto stats = runtime::Deps::get().fsCache->stats();
     if (!stats) throw std::runtime_error("No cache stats available.");
     return {{"stats", stats}};
 }
 
 json Stats::httpCache(const std::shared_ptr<Session>& session) {
-    if (const auto user = session.getAuthenticatedUser(); !user || !user->isAdmin())
-        throw std::runtime_error("Must be an admin to view cache stats.");
-
+    if (!session->user->isAdmin()) throw std::runtime_error("Must be an admin to view cache stats.");
     return {{"stats", runtime::Deps::get().httpCacheStats->snapshot()}};
 }
 

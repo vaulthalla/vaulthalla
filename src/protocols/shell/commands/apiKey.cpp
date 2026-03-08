@@ -6,7 +6,7 @@
 #include "identities/model/User.hpp"
 #include "protocols/shell/util/argsHelpers.hpp"
 #include "vault/APIKeyManager.hpp"
-#include "storage/s3/S3Controller.hpp"
+#include "storage/s3/Controller.hpp"
 #include "runtime/Deps.hpp"
 #include "usage/include/UsageManager.hpp"
 #include "config/Registry.hpp"
@@ -18,7 +18,7 @@ using namespace vh;
 using namespace vh::protocols::shell;
 using namespace vh::vault::model;
 using namespace vh::crypto;
-using namespace vh::cloud;
+using namespace vh::storage;
 using namespace vh::config;
 
 static S3Provider s3_provider_from_shell_input(const std::string& str) {
@@ -88,7 +88,7 @@ static CommandResult handleCreateAPIKey(const CommandCall& call) {
     key->provider = s3_provider_from_shell_input(*providerOpt);
 
     if (!vh::paths::testMode) {
-        const auto [valid, validationErrors] = S3Controller(key, "").validateAPICredentials();
+        const auto [valid, validationErrors] = s3::Controller(key, "").validateAPICredentials();
         if (!valid) return invalid("API key validation failed:\n" + validationErrors);
     }
 

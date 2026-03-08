@@ -8,7 +8,6 @@
 
 namespace vh::vault::model { struct S3Vault; struct APIKey; }
 namespace vh::sync::model { struct RemotePolicy; }
-namespace vh::cloud { class S3Controller; }
 
 namespace vh::fs::model {
 struct File;
@@ -17,6 +16,8 @@ namespace file { struct Trashed; }
 }
 
 namespace vh::storage {
+
+namespace s3 { class Controller; }
 
 class CloudEngine final : public Engine {
 public:
@@ -55,7 +56,7 @@ public:
 
 private:
     std::shared_ptr<vault::model::APIKey> key_;
-    std::shared_ptr<cloud::S3Controller> s3Provider_;
+    std::shared_ptr<s3::Controller> s3Provider_;
 
     std::shared_ptr<vault::model::S3Vault> s3Vault() const;
 

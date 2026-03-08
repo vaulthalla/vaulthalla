@@ -123,7 +123,7 @@ void from_json(const nlohmann::json& j, User& u) {
     u.email = j.at("email").get<std::string>();
     u.is_active = j.at("is_active").get<bool>();
 
-    if (j.contains("role")) u.role = std::make_shared<UserRole>(j.at("role"));
+    if (j.contains("role")) u.role = UserRole::fromJson(j.at("role"));
 }
 
 nlohmann::json to_json(const std::vector<std::shared_ptr<User>>& users) {

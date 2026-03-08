@@ -9,12 +9,13 @@ using namespace vh::db::query::auth;
 
 void RefreshToken::set(const std::shared_ptr<vh::auth::model::RefreshToken>& token) {
     Transactions::exec("RefreshToken::setRefreshToken", [&](pqxx::work& txn) {
-        pqxx::params p{
+        const pqxx::params p{
             token->jti,
             token->userId,
             token->hashedToken,
             token->ipAddress,
             token->userAgent,
+            encoding::timestampToString(token->issuedAt),
             encoding::timestampToString(token->expiresAt)
         };
 

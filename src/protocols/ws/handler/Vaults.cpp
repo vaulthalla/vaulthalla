@@ -38,7 +38,7 @@ json Vaults::add(const json& payload, const std::shared_ptr<Session>& session) {
 
     vault->name = name;
     vault->mount_point = mountPoint;
-    vault->owner_id = session.getAuthenticatedUser()->id;
+    vault->owner_id = session->user->id;
 
     vault = runtime::Deps::get().storageManager->addVault(vault, sync);
 
@@ -46,21 +46,18 @@ json Vaults::add(const json& payload, const std::shared_ptr<Session>& session) {
 }
 
 json Vaults::update(const json& payload, const std::shared_ptr<Session>& session) {
-    const auto user = session.getAuthenticatedUser();
-
     const auto vault = std::make_shared<Vault>(payload);
-    if (!user->canManageVault(vault->id)) throw std::runtime_error("User does not have permission to update this vault.");
+    if (!session->user->canManageVault(vault->id)) throw std::runtime_error("User does not have permission to update this vault.");
 
     runtime::Deps::get().storageManager->updateVault(vault);
     return {{"vault", *vault}};
 }
 
 json Vaults::remove(const json& payload, const std::shared_ptr<Session>& session) {
-    const auto user = session.getAuthenticatedUser();
     const auto vaultId = payload.at("id").get<unsigned int>();
     const auto vault = runtime::Deps::get().storageManager->getVault(vaultId);
 
-    if (!user->isAdmin() && (!user->canManageVaults() || !user->canManageVault(vaultId)))
+    if (!session->user->isAdmin() && (!session->user->canManageVaults() || !session->user->canManageVault(vaultId)))
         throw std::runtime_error("User does not have permission to delete vaults.");
 
     runtime::Deps::get().storageManager->removeVault(vaultId);
@@ -68,9 +65,8 @@ json Vaults::remove(const json& payload, const std::shared_ptr<Session>& session
 }
 
 json Vaults::get(const json& payload, const std::shared_ptr<Session>& session) {
-    const auto user = session.getAuthenticatedUser();
     const auto vaultId = payload.at("id").get<unsigned int>();
-    if (!user->canManageVault(vaultId)) throw std::runtime_error("User does not have permission to get vaults.");
+    if (!session->user->canManageVault(vaultId)) throw std::runtime_error("User does not have permission to get vaults.");
 
     const auto vault = runtime::Deps::get().storageManager->getVault(vaultId);
     if (!vault) throw std::runtime_error("Vault not found with ID: " + std::to_string(vaultId));
@@ -82,23 +78,21 @@ json Vaults::get(const json& payload, const std::shared_ptr<Session>& session) {
         data["vault"] = *s3Vault;
     } else data["vault"] = *vault;
 
-    if (vault->owner_id == user->id) data["vault"]["owner"] = user->name;
+    if (vault->owner_id == session->user->id) data["vault"]["owner"] = session->user->name;
     else data["vault"]["owner"] = db::query::vault::Vault::getVaultOwnersName(vaultId);
 
     return data;
 }
 
 json Vaults::list(const std::shared_ptr<Session>& session) {
-    const auto user = session.getAuthenticatedUser();
-    return user->canManageVaults() ?
+    return session->user->canManageVaults() ?
         json{{"vaults", db::query::vault::Vault::listVaults()}} :
-        json{{"vaults", db::query::vault::Vault::listUserVaults(user->id)}};
+        json{{"vaults", db::query::vault::Vault::listUserVaults(session->user->id)}};
 }
 
 json Vaults::sync(const json& payload, const std::shared_ptr<Session>& session) {
-    const auto user = session.getAuthenticatedUser();
     const auto vaultId = payload.at("id").get<unsigned int>();
-    if (!user->canSyncVaultData(vaultId)) throw std::runtime_error("User does not have permission to sync vaults.");
+    if (!session->user->canSyncVaultData(vaultId)) throw std::runtime_error("User does not have permission to sync vaults.");
     runtime::Deps::get().syncController->runNow(vaultId);
     return {};
 }

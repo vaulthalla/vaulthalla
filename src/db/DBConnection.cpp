@@ -95,6 +95,7 @@ void DBConnection::initPrepared() const {
     // Auth
     initPreparedUsers();
     initPreparedGroups();
+    initPreparedRefreshTokens();
 
     // RBAC
     initPreparedRoles();

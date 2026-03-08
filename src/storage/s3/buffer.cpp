@@ -1,11 +1,11 @@
-#include "storage/s3/S3Controller.hpp"
+#include "storage/s3/Controller.hpp"
 #include "storage/s3/curl/helpers.hpp"
 #include "log/Registry.hpp"
 
-using namespace vh::cloud;
+using namespace vh::storage::s3;
 using namespace vh::storage::s3::curl;
 
-void S3Controller::uploadLargeObject(const std::filesystem::path& key,
+void Controller::uploadLargeObject(const std::filesystem::path& key,
                                      const std::vector<uint8_t>& buffer,
                                      const uintmax_t partSize) const {
     if (buffer.empty())
@@ -54,7 +54,7 @@ void S3Controller::uploadLargeObject(const std::filesystem::path& key,
     completeMultipartUpload(key, uploadId, etags);
 }
 
-void S3Controller::uploadBufferWithMetadata(
+void Controller::uploadBufferWithMetadata(
     const std::filesystem::path& key,
     const std::vector<uint8_t>& buffer,
     const std::unordered_map<std::string, std::string>& metadata) const
@@ -122,7 +122,7 @@ void S3Controller::uploadBufferWithMetadata(
         fmt::format("Failed to upload buffer to S3 (HTTP {}): {}", resp.http, resp.body));
 }
 
-void S3Controller::downloadToBuffer(const std::filesystem::path& key, std::vector<uint8_t>& outBuffer) const {
+void Controller::downloadToBuffer(const std::filesystem::path& key, std::vector<uint8_t>& outBuffer) const {
     CURL* curl = curl_easy_init();
     if (!curl) throw std::runtime_error("Failed to init curl for S3 download to buffer");
 

@@ -1,9 +1,9 @@
-#include "IntegrationsTestRunner.hpp"
+#include "tests/integrations/include/IntegrationsTestRunner.hpp"
 #include "db/query/identities/User.hpp"
 #include "db/query/identities/Group.hpp"
 #include "db/query/rbac/Permission.hpp"
 #include "db/query/vault/Vault.hpp"
-#include "generators.hpp"
+#include "tests/integrations/include/generators.hpp"
 #include "rbac/model/VaultRole.hpp"
 #include "rbac/model/UserRole.hpp"
 #include "rbac/model/PermissionOverride.hpp"
@@ -11,13 +11,14 @@
 #include "fs/model/Path.hpp"
 #include "sync/model/LocalPolicy.hpp"
 #include "identities/model/User.hpp"
+#include "identities/model/Group.hpp"
 #include "vault/model/Vault.hpp"
 #include "seed/include/seed_db.hpp"
 #include "runtime/Deps.hpp"
 #include "storage/Manager.hpp"
 #include "storage/Engine.hpp"
 #include "fs/Filesystem.hpp"
-#include "fuse_test_helpers.hpp"
+#include "tests/integrations/include/fuse_test_helpers.hpp"
 
 using namespace vh::test::cli;
 using namespace vh::test::fuse;

@@ -6,7 +6,7 @@ project('vaulthalla', 'cpp',
             'warning_level=3',
             'werror=false',
             'cpp_std=c++23',
-            'unity=on',
+            'unity=off',
             'unity_size=9',
             'prefix=/usr',
             'cpp_args=-D_GLIBCXX_USE_CXX11_ABI=1'

@@ -22,7 +22,6 @@ struct Auth {
     static json isUserAuthenticated(const std::string& token, const std::shared_ptr<Session>& session);
 
     static json listUsers(const std::shared_ptr<Session>& session);
-    static json refresh(const std::shared_ptr<Session>& session);
     static json logout(const std::shared_ptr<Session>& session);
 
     static json doesAdminHaveDefaultPassword();

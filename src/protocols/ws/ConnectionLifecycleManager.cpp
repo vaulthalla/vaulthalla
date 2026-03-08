@@ -1,10 +1,13 @@
 #include "protocols/ws/ConnectionLifecycleManager.hpp"
 #include "auth/session/Manager.hpp"
-#include "auth/model/Client.hpp"
-#include "auth/Manager.hpp"
+#include "auth/session/Validator.hpp"
+#include "protocols/ws/Session.hpp"
+#include "protocols/ws/model/Response.hpp"
 #include "runtime/Deps.hpp"
 #include "log/Registry.hpp"
 #include "config/Registry.hpp"
+#include "auth/model/TokenPair.hpp"
+#include "auth/model/RefreshToken.hpp"
 
 using namespace vh::protocols::ws;
 using namespace vh::auth;
@@ -12,8 +15,7 @@ using namespace vh::config;
 using namespace std::chrono;
 
 ConnectionLifecycleManager::ConnectionLifecycleManager()
-    : AsyncService("LifecycleManager"),
-      sessionManager_(runtime::Deps::get().authManager->sessionManager_) {
+    : AsyncService("LifecycleManager") {
     const auto& config = Registry::get().services.connection_lifecycle_manager;
     sweep_interval_ = seconds(config.sweep_interval_seconds);
     unauthenticated_session_timeout_ = seconds(config.unauthenticated_timeout_seconds);
@@ -33,46 +35,29 @@ void ConnectionLifecycleManager::runLoop() {
 }
 
 void ConnectionLifecycleManager::sweepActiveSessions() const {
-    for (const auto& [tokenStr, client] : sessionManager_->getActiveSessions()) {
-        if (!client) continue;
+    for (const auto& [_, session] : runtime::Deps::get().sessionManager->getActive()) {
+        if (!session) continue;
 
-        if (client->connOpenedAt() + unauthenticated_session_timeout_ < system_clock::now() && !client->tokens) {
+        if (!session->user && session->connectionOpenedAt + unauthenticated_session_timeout_ < system_clock::now()) {
             log::Registry::ws()->debug("[LifecycleManager] Closing unauthenticated session (no token) opened at {}",
-                                    system_clock::to_time_t(client->connOpenedAt()));
-            client->sendControlMessage("unauthenticated_session_timeout", {});
-            client->closeConnection();
-            sessionManager_->invalidateSession(tokenStr);
+                                    system_clock::to_time_t(session->connectionOpenedAt));
+
+            model::Response::UNAUTHORIZED("unauthenticated_session_timeout",
+                "Session closed due to inactivity. Please authenticate to continue.")(session);
+            runtime::Deps::get().sessionManager->invalidate(session);
+            session->close();
             continue;
         }
 
-        if (!client->validateSession()) {
-            if (const auto user = client->user) {
-                log::Registry::ws()->debug("[LifecycleManager] Token revoked. Closing session for user {}", user->id);
-                client->sendControlMessage("token_revoked", {});
-            }
-            client->closeConnection();
-            sessionManager_->invalidateSession(tokenStr);
+        if (!session->tokens->refreshToken->isValid()) {
+            log::Registry::ws()->debug("[LifecycleManager] Closing session with expired refresh token (opened at {})",
+                                    system_clock::to_time_t(session->connectionOpenedAt));
+
+            model::Response::UNAUTHORIZED("unauthenticated_session_timeout",
+                "Session closed due to expired refresh token. Please re-authenticate to continue.")(session);
+            runtime::Deps::get().sessionManager->invalidate(session);
+            session->close();
             continue;
-        }
-
-        const auto secondsLeft = client->tokens->getTimeLeft();
-
-        if (secondsLeft <= 0) {
-            if (const auto user = client->user) {
-                log::Registry::ws()->debug("[LifecycleManager] Token expired. Closing session for user {}", user->id);
-                client->sendControlMessage("token_expired", {});
-            }
-            client->closeConnection();
-            sessionManager_->invalidateSession(tokenStr);
-            continue;
-        }
-
-        // sendControlMessage requires a user to be set
-        if (client->user) {
-            if (secondsLeft <= 10)
-                client->sendControlMessage("token_refresh_urgent", {{"deadline_ms", 10000}});
-            else if (secondsLeft <= 300)
-                client->sendControlMessage("token_refresh_requested", {{"deadline_ms", 300000}});
         }
     }
 }

@@ -198,14 +198,14 @@ template<>
 struct convert<AuthConfig> {
     static Node encode(const AuthConfig& rhs) {
         Node node;
-        node["token_expiry_minutes"] = rhs.token_expiry_minutes;
+        node["token_expiry_minutes"] = rhs.access_token_expiry_minutes;
         node["refresh_token_expiry_days"] = rhs.refresh_token_expiry_days;
         return node;
     }
 
     static bool decode(const Node& node, AuthConfig& rhs) {
         if (!node.IsMap()) return false;
-        rhs.token_expiry_minutes = node["token_expiry_minutes"].as<int>(60);
+        rhs.access_token_expiry_minutes = node["token_expiry_minutes"].as<int>(60);
         rhs.refresh_token_expiry_days = node["refresh_token_expiry_days"].as<int>(7);
         return true;
     }

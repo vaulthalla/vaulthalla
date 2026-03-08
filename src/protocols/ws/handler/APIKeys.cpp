@@ -14,11 +14,8 @@ using namespace vh::storage;
 using json = nlohmann::json;
 
 json APIKeys::add(const json& payload, const std::shared_ptr<Session>& session) {
-    const auto user = session->user;
-    if (!user) throw std::invalid_argument("Invalid user name");
-
     const auto userID = payload.at("user_id").get<unsigned int>();
-    if (user->id != userID) throw std::invalid_argument("Invalid user ID");
+    if (session->user->id != userID) throw std::invalid_argument("Invalid user ID");
 
     const auto name = payload.at("name").get<std::string>();
     const auto provider = s3_provider_from_string(payload.at("provider").get<std::string>());
@@ -35,23 +32,20 @@ json APIKeys::add(const json& payload, const std::shared_ptr<Session>& session) 
 
 json APIKeys::remove(const json& payload, const std::shared_ptr<Session>& session) {
     const auto keyId = payload.at("id").get<unsigned int>();
-    const auto user = session->user;
-    runtime::Deps::get().apiKeyManager->removeAPIKey(keyId, user->id);
+    runtime::Deps::get().apiKeyManager->removeAPIKey(keyId, session->user->id);
     return {};
 }
 
 json APIKeys::list(const std::shared_ptr<Session>& session) {
-    const auto user = session->user;
 
-    const auto keys = user->canManageAPIKeys() ?
+    const auto keys = session->user->canManageAPIKeys() ?
         runtime::Deps::get().apiKeyManager->listAPIKeys() :
-        runtime::Deps::get().apiKeyManager->listUserAPIKeys(user->id);
+        runtime::Deps::get().apiKeyManager->listUserAPIKeys(session->user->id);
 
     return {{"keys", json(keys).dump(4)}};
 }
 
 json APIKeys::get(const json& payload, const std::shared_ptr<Session>& session) {
     const unsigned int keyId = payload.at("id").get<unsigned int>();
-    const auto user = session->user;
-    return {{"api_key", runtime::Deps::get().apiKeyManager->getAPIKey(keyId, user->id)}};
+    return {{"api_key", runtime::Deps::get().apiKeyManager->getAPIKey(keyId, session->user->id)}};
 }

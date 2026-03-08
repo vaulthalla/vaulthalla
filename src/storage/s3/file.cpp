@@ -1,12 +1,12 @@
-#include "storage/s3/S3Controller.hpp"
+#include "storage/s3/Controller.hpp"
 #include "log/Registry.hpp"
 
 #include <fstream>
 
-using namespace vh::cloud;
+using namespace vh::storage::s3;
 using namespace vh::storage::s3::curl;
 
-void S3Controller::uploadLargeObject(const std::filesystem::path& key,
+void Controller::uploadLargeObject(const std::filesystem::path& key,
 const std::filesystem::path& filePath,
 const uintmax_t partSize) const {
     std::ifstream file(filePath, std::ios::binary);
@@ -54,7 +54,7 @@ const uintmax_t partSize) const {
     return completeMultipartUpload(key, uploadId, etags);
 }
 
-void S3Controller::uploadObject(const std::filesystem::path& key, const std::filesystem::path& filePath) const {
+void Controller::uploadObject(const std::filesystem::path& key, const std::filesystem::path& filePath) const {
     std::ifstream fin(filePath, std::ios::binary);
     if (!fin) throw std::runtime_error("Failed to open file for upload: " + filePath.string());
 
@@ -92,7 +92,7 @@ void S3Controller::uploadObject(const std::filesystem::path& key, const std::fil
         fmt::format("Failed to upload file to S3 (HTTP {}): {}", resp.http, resp.body));
 }
 
-void S3Controller::downloadObject(const std::filesystem::path& key,
+void Controller::downloadObject(const std::filesystem::path& key,
                                 const std::filesystem::path& outputPath) const {
     CURL* curl = curl_easy_init();
     if (!curl) throw std::runtime_error("Failed to init curl for S3 download");

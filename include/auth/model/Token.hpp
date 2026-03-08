@@ -2,20 +2,32 @@
 
 #include <chrono>
 #include <string>
+#include <optional>
+#include <memory>
 
 namespace pqxx { class row; }
+namespace vh::protocols::ws { class Session; }
+namespace vh::auth::session { struct TokenClaims; }
 
 namespace vh::auth::model {
 
 struct Token {
+    enum class Type {
+        Access,
+        Refresh
+    };
+
     std::string rawToken{};
+    std::string jti{};
+    std::string subject{};
     uint32_t userId{};
+    std::time_t issuedAt = 0;
     std::time_t expiresAt = 0;
     bool revoked{false};
 
     virtual ~Token() = default;
+    Token() = default;
     explicit Token(std::string rawToken);
-    Token(std::string token, unsigned short userId);
     explicit Token(const pqxx::row& row);
 
     [[nodiscard]] bool isExpired() const;
@@ -23,6 +35,9 @@ struct Token {
     [[nodiscard]] std::chrono::seconds timeRemaining() const;
 
     void revoke() { revoked = true; }
+
+    [[nodiscard]] virtual Type type() const { return Type::Access; }
+    virtual void dangerousDivergence(const std::optional<session::TokenClaims>& claims) const;
 };
 
 bool operator==(const std::shared_ptr<Token>& lhs, const std::shared_ptr<Token>& rhs);

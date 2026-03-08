@@ -6,6 +6,10 @@
 
 #include <memory>
 
+using namespace vh::rbac::model;
+using namespace vh::identities::model;
+using namespace vh::vault::model;
+
 namespace vh::test::cli {
 
 class CommandBuilderRegistry {

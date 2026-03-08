@@ -9,7 +9,6 @@
 
 #include <sstream>
 #include <stdexcept>
-#include <pqxx/row>
 #include <nlohmann/json.hpp>
 
 using namespace vh::sync::model;

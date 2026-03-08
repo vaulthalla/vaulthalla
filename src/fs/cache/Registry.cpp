@@ -7,15 +7,14 @@
 #include "log/Registry.hpp"
 #include "crypto/id/Generator.hpp"
 #include "stats/model/CacheStats.hpp"
+#include "fs/model/Path.hpp"
 
 #include <unordered_set>
 #include <mutex>
 #include <limits>
 #include <chrono>
 
-using namespace vh::fs::cache;
 using namespace vh::fs::model;
-using namespace vh::storage;
 using namespace vh::stats::model;
 using namespace std::chrono;
 
@@ -41,6 +40,8 @@ uint64_t subClamp(uint64_t a, uint64_t b) noexcept {
 }
 
 } // namespace
+
+namespace vh::fs::cache {
 
 Registry::Registry() {
     stats_ = std::make_shared<CacheStats>();
@@ -469,4 +470,6 @@ std::vector<std::shared_ptr<Entry>> Registry::listDir(const unsigned int parentI
 std::shared_ptr<CacheStatsSnapshot> Registry::stats() const {
     // Snapshot should be atomics-only; safe without locking FSCache maps.
     return std::make_shared<CacheStatsSnapshot>(stats_->snapshot());
+}
+
 }

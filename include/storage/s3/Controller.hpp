@@ -12,19 +12,19 @@
 
 namespace vh::vault::model { struct APIKey; }
 
-namespace vh::cloud {
+namespace vh::storage::s3 {
 
 namespace fs = std::filesystem;
 
 struct ValidateResult { bool ok; std::string msg; };
 
-class S3Controller {
+class Controller {
 public:
     static constexpr uintmax_t MIN_PART_SIZE = 5 * 1024 * 1024; // 5 MiB
 
-    S3Controller(const std::shared_ptr<vault::model::APIKey>& apiKey, std::string bucket);
+    Controller(const std::shared_ptr<vault::model::APIKey>& apiKey, std::string bucket);
 
-    ~S3Controller();
+    ~Controller();
 
     // #########################################################################
     // ########################### FILE OPS ####################################

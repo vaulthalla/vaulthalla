@@ -4,6 +4,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace vh::protocols::ws { struct Session; }
 namespace vh::identities::model { struct User; }
@@ -12,28 +13,26 @@ namespace vh::auth::session {
 
 class Manager {
 public:
-    using SessionPtr = std::shared_ptr<protocols::ws::Session>;
-    using SessionMap = std::unordered_map<std::string, SessionPtr>;
-    using SessionUserMap = std::unordered_multimap<uint32_t, SessionPtr>;
+    void tryRehydrate(const std::shared_ptr<protocols::ws::Session>& session);
 
-    void tryRehydrateSession(const SessionPtr& session);
-    void ensureSession(const SessionPtr& session);
-    void promoteSession(const SessionPtr& session);
+    void promote(const std::shared_ptr<protocols::ws::Session>& session);
+    void cache(const std::shared_ptr<protocols::ws::Session>& session);
 
-    void cacheSession(const SessionPtr& session);
-    void invalidateSession(const std::string& token);
-    void invalidateSession(const SessionPtr& session);
+    bool validate(const std::shared_ptr<protocols::ws::Session>& session, const std::string& accessToken);
+    std::shared_ptr<protocols::ws::Session> validateRawRefreshToken(const std::string& refreshToken);
+    void invalidate(const std::string& token);
+    void invalidate(const std::shared_ptr<protocols::ws::Session>& session);
 
-    SessionPtr getSession(const std::string& token);
-    std::vector<SessionPtr> getSessions(const std::shared_ptr<identities::model::User>& user);
-    std::vector<SessionPtr> getSessionsByUserId(uint32_t userId);
+    std::shared_ptr<protocols::ws::Session> get(const std::string& token);
+    std::vector<std::shared_ptr<protocols::ws::Session>> getSessions(const std::shared_ptr<identities::model::User>& user);
+    std::vector<std::shared_ptr<protocols::ws::Session>> getSessionsByUserId(uint32_t userId);
 
-    SessionMap getActiveSessions();
+    std::unordered_map<std::string, std::shared_ptr<protocols::ws::Session>> getActive();
 
 private:
-    SessionMap sessionsByUUID_;
-    SessionMap sessionsByRefreshJti_;
-    SessionUserMap sessionsByUserId_;
+    std::unordered_map<std::string, std::shared_ptr<protocols::ws::Session>> sessionsByUUID_;
+    std::unordered_map<std::string, std::shared_ptr<protocols::ws::Session>> sessionsByRefreshJti_;
+    std::unordered_multimap<uint32_t, std::shared_ptr<protocols::ws::Session>> sessionsByUserId_;
     std::mutex sessionMutex_;
 };
 

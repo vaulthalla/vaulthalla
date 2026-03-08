@@ -42,6 +42,7 @@ public:
     std::shared_ptr<identities::model::User> user;
     std::shared_ptr<auth::model::TokenPair> tokens;
     std::string userAgent, ipAddress;
+    const std::chrono::system_clock::time_point connectionOpenedAt = std::chrono::system_clock::now();
 
     explicit Session(const std::shared_ptr<Router>& router);
     ~Session();

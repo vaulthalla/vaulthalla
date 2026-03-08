@@ -1,6 +1,5 @@
 #include "protocols/ws/Router.hpp"
 
-#include "auth/Manager.hpp"
 #include "auth/session/Manager.hpp"
 #include "auth/session/Validator.hpp"
 #include "log/Registry.hpp"
@@ -46,18 +45,15 @@ void Router::routeMessage(json&& msg, const SessionPtr& session) {
         log::Registry::ws()->debug("[Router] Routing message: {}", msg.dump());
 
         auto command = msg.at("command").get<std::string>();
-        const std::string accessToken = msg.value("token", "");
 
-        if (!command.starts_with("auth")) {
-            if (const auto activeSession = runtime::Deps::get().authManager->sessionManager_->getSession(session->uuid);
-                !activeSession || !auth::session::Validator::validateAccessToken(session, accessToken)) {
-                log::Registry::ws()->warn("[Router] Unauthorized access attempt for command: {}", command);
-                Response::UNAUTHORIZED(std::move(command), std::move(msg))(session);
-                return;
-            }
+        if (const std::string accessToken = msg.value("token", "");
+            !command.starts_with("auth") && !runtime::Deps::get().sessionManager->validate(session, accessToken)) {
+            log::Registry::ws()->warn("[Router] Unauthorized access attempt for command: {}", command);
+            Response::UNAUTHORIZED(std::move(command), std::move(msg))(session);
+            return;
         }
 
-        if (const auto it = handlers_.find(command); it != handlers_.end()) it->second(std::move(msg), session);
+        if (handlers_.contains(command)) handlers_[command](std::move(msg), session);
         else {
             log::Registry::ws()->warn("[Router] Unknown command: {}", command);
             Response::ERROR(std::move(command), std::move(msg), "Unknown command")(session);

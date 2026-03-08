@@ -1,4 +1,4 @@
-#include "storage/s3/S3Controller.hpp"
+#include "storage/s3/Controller.hpp"
 #include "vault/model/APIKey.hpp"
 #include "storage/s3/curl/helpers.hpp"
 #include "log/Registry.hpp"
@@ -8,19 +8,19 @@
 #include <sstream>
 #include <utility>
 
-using namespace vh::cloud;
+using namespace vh::storage::s3;
 using namespace vh::vault::model;
 using namespace vh::storage::s3::curl;
 
-S3Controller::S3Controller(const std::shared_ptr<APIKey>& apiKey, std::string bucket)
+Controller::Controller(const std::shared_ptr<APIKey>& apiKey, std::string bucket)
 : apiKey_(apiKey), bucket_(std::move(bucket)) {
     if (!apiKey_) throw std::runtime_error("S3Provider requires a valid S3APIKey");
     ensureCurlGlobalInit();
 }
 
-S3Controller::~S3Controller() = default;
+Controller::~Controller() = default;
 
-void S3Controller::deleteObject(const fs::path& key) const {
+void Controller::deleteObject(const fs::path& key) const {
     const CurlEasy tmpHandle;
     const auto [canonical, url] = constructPaths(static_cast<CURL*>(tmpHandle), key);
 
@@ -42,7 +42,7 @@ void S3Controller::deleteObject(const fs::path& key) const {
         fmt::format("Failed to delete object from S3 (HTTP {}): {}", resp.http, resp.body));
 }
 
-std::u8string S3Controller::listObjects(const fs::path& prefix) const {
+std::u8string Controller::listObjects(const fs::path& prefix) const {
     std::u8string fullXmlResponse;
     std::string continuationToken;
     bool moreResults = true;
@@ -102,7 +102,7 @@ std::u8string S3Controller::listObjects(const fs::path& prefix) const {
     return fullXmlResponse;
 }
 
-std::pair<std::string, std::string> S3Controller::constructPaths(CURL* curl, const fs::path& p, const std::string& query) const {
+std::pair<std::string, std::string> Controller::constructPaths(CURL* curl, const fs::path& p, const std::string& query) const {
     const auto escapedKey = escapeKeyPreserveSlashes(curl, p);
     const auto canonicalPath = "/" + bucket_ + "/" + escapedKey + query;
     const auto url = apiKey_->endpoint + canonicalPath;

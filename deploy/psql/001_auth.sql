@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS refresh_tokens
     jti        UUID PRIMARY KEY,
     user_id    INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
     token_hash TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT NOW(),
+    issued_at  TIMESTAMP DEFAULT NOW(),
     expires_at TIMESTAMP DEFAULT NOW() + INTERVAL '7 days',
     last_used  TIMESTAMP DEFAULT NOW(),
     ip_address TEXT,

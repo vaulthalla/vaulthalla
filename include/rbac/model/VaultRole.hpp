@@ -10,14 +10,8 @@
 #include <memory>
 #include <vector>
 #include <nlohmann/json_fwd.hpp>
-#include <pqxx/result.hxx>
 #include <regex>
 #include <unordered_map>
-
-namespace pqxx {
-class row;
-class result;
-}
 
 namespace vh::rbac::model {
 
@@ -40,6 +34,8 @@ struct VaultRole final : Role {
     explicit VaultRole(const Role& r) : Role(r) {
         if (type != "vault") throw std::runtime_error("VaultRole: invalid role type");
     }
+
+    static std::shared_ptr<VaultRole> fromJson(const nlohmann::json& j);
 
     [[nodiscard]] std::string permissions_to_flags_string() const override;
 
@@ -112,6 +108,7 @@ VRolePair vault_roles_from_pq_result(const pqxx::result& res, const pqxx::result
 
 std::string to_string(const std::shared_ptr<VaultRole>& role);
 std::string to_string(const std::unordered_map<unsigned int, std::shared_ptr<VaultRole>>& roles);
+std::string to_string(const std::vector<std::shared_ptr<VaultRole>>& roles);
 
 void to_json(nlohmann::json& j, const std::vector<std::shared_ptr<VaultRole> >& roles);
 
@@ -119,7 +116,5 @@ std::vector<std::shared_ptr<VaultRole>> vault_roles_vector_from_json(const nlohm
 
 std::vector<std::shared_ptr<VaultRole>> vault_roles_vector_from_pq_result(const pqxx::result& res,
                                                                           const pqxx::result& overrides);
-
-std::string to_string(const std::vector<std::shared_ptr<VaultRole>>& roles);
 
 }

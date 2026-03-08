@@ -3,14 +3,10 @@
 #include "Permission.hpp"
 #include "rbac/model/Role.hpp"
 
+#include <memory>
 #include <string>
 #include <ctime>
 #include <nlohmann/json_fwd.hpp>
-
-namespace pqxx {
-class row;
-class result;
-}
 
 namespace vh::rbac::model {
 
@@ -28,6 +24,8 @@ struct UserRole final : Role {
     }
 
     std::string permissions_to_flags_string() const override;
+
+    static std::shared_ptr<UserRole> fromJson(const nlohmann::json& j);
 };
 
 void to_json(nlohmann::json& j, const UserRole& r);

@@ -40,7 +40,6 @@ void Handler::registerAuthHandlers(const std::shared_ptr<Router>& r) {
     r->registerPayload("auth.user.get.byName", &Auth::getUserByName);
     r->registerSessionOnlyHandler("auth.users.list", &Auth::listUsers);
     r->registerEmptyHandler("auth.admin.default_password", &Auth::doesAdminHaveDefaultPassword);
-    r->registerSessionOnlyHandler("auth.refresh", &Auth::refresh);
 }
 
 void Handler::registerFileSystemHandlers(const std::shared_ptr<Router>& r) {

@@ -20,7 +20,6 @@
 
 using namespace vh::vault::model;
 using namespace vh::stats::model;
-using namespace vh::config;
 using namespace std::chrono;
 using namespace vh::fs;
 using namespace vh::fs::model;
@@ -38,7 +37,7 @@ public:
         namespace fs = std::filesystem;
 
         try {
-            const auto& sizes = Registry::get().caching.thumbnails.sizes;
+            const auto& sizes = config::Registry::get().caching.thumbnails.sizes;
             const auto basePath = engine_->paths->thumbnailRoot / file_->base32_alias;
             for (const auto& size : sizes) {
                 const auto filename = std::to_string(size) + ".jpg";

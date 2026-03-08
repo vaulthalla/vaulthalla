@@ -11,7 +11,7 @@ using namespace vh::storage;
 using namespace vh::identities::model;
 using namespace vh::fs;
 
-Upload::Upload(Session& session) : session_(session) {}
+Upload::Upload(const std::shared_ptr<Session>& session) : session_(session) {}
 
 void Upload::startUpload(const UploadArgs& args) {
     log::Registry::ws()->debug("[UploadHandler] Starting upload (uploadId: {}, tmpPath: {}, finalPath: {}, "
@@ -24,10 +24,7 @@ void Upload::startUpload(const UploadArgs& args) {
     if (std::filesystem::is_directory(args.finalPath))
         throw std::runtime_error("Upload final path is a directory — filename must be provided");
 
-    std::optional<unsigned int> userId = std::nullopt;
-    if (session_.getAuthenticatedUser()) userId = session_.getAuthenticatedUser()->id;
-
-    Filesystem::mkdir(args.fuseFrom.parent_path(), 0755, userId, args.engine);
+    Filesystem::mkdir(args.fuseFrom.parent_path(), 0755, session_->user->id, args.engine);
 
     currentUpload_.emplace(args);
 }
@@ -57,19 +54,16 @@ void Upload::finishUpload() {
         throw std::runtime_error("Upload size mismatch");
     }
 
-    std::optional<unsigned int> userId = std::nullopt;
-    if (session_.getAuthenticatedUser()) userId = session_.getAuthenticatedUser()->id;
-
     log::Registry::ws()->debug("[UploadHandler] Finishing upload (uploadId: {}, fuseFrom: {}, fuseTo: {}, userId: {})",
-                             upload.uploadId, upload.fuseFrom.string(), upload.fuseTo.string(), userId.value_or(0));
+                             upload.uploadId, upload.fuseFrom.string(), upload.fuseTo.string(), session_->user->id);
 
-    Filesystem::rename(upload.fuseFrom, upload.fuseTo, userId, upload.engine);
+    Filesystem::rename(upload.fuseFrom, upload.fuseTo, session_->user->id, upload.engine);
 
     currentUpload_.reset();
 }
 
 void Upload::fail(const std::string& command, const std::string& error) const {
-    session_.send({
+    session_->send({
         {"command", command},
         {"status", "error"},
         {"error", error}

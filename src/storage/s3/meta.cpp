@@ -1,15 +1,15 @@
-#include "storage/s3/S3Controller.hpp"
+#include "storage/s3/Controller.hpp"
 #include "vault/model/APIKey.hpp"
 #include "db/encoding/timestamp.hpp"
 #include "storage/s3/curl/helpers.hpp"
 #include "log/Registry.hpp"
 
-using namespace vh::cloud;
+using namespace vh::storage::s3;
 using namespace vh::vault::model;
 using namespace vh::storage::s3::curl;
 using namespace vh::db::encoding;
 
-std::map<std::string, std::string> S3Controller::buildHeaderMap(const std::string& payloadHash) const {
+std::map<std::string, std::string> Controller::buildHeaderMap(const std::string& payloadHash) const {
     return {
                 {"host", apiKey_->endpoint.substr(apiKey_->endpoint.find("//") + 2)},
                 {"x-amz-content-sha256", payloadHash},
@@ -17,7 +17,7 @@ std::map<std::string, std::string> S3Controller::buildHeaderMap(const std::strin
     };
 }
 
-SList S3Controller::makeSigHeaders(const std::string& method,
+SList Controller::makeSigHeaders(const std::string& method,
                                  const std::string& canonical,
                                  const std::string& payloadHash,
                                  const std::string& query) const {
@@ -31,7 +31,7 @@ SList S3Controller::makeSigHeaders(const std::string& method,
 }
 
 std::optional<std::unordered_map<std::string, std::string>>
-S3Controller::getHeadObject(const std::filesystem::path& key) const {
+Controller::getHeadObject(const std::filesystem::path& key) const {
     const auto [canonicalPath, url] = constructPaths(nullptr, key);
     const std::string payloadHash = "UNSIGNED-PAYLOAD";
 
@@ -71,7 +71,7 @@ S3Controller::getHeadObject(const std::filesystem::path& key) const {
     return metadata;
 }
 
-void S3Controller::setObjectContentHash(const std::filesystem::path& key, const std::string& hash) const {
+void Controller::setObjectContentHash(const std::filesystem::path& key, const std::string& hash) const {
     CurlEasy curl;
     const auto [canonicalPath, url] = constructPaths(static_cast<CURL*>(curl), key);
 
@@ -105,7 +105,7 @@ void S3Controller::setObjectContentHash(const std::filesystem::path& key, const 
         fmt::format("Failed to set content hash metadata on S3 object (HTTP {}): {}", resp.http, resp.body));
 }
 
-void S3Controller::setObjectEncryptionMetadata(const std::string& key, const std::string& iv_b64, unsigned int key_version) const {
+void Controller::setObjectEncryptionMetadata(const std::string& key, const std::string& iv_b64, unsigned int key_version) const {
     CurlEasy curl;
     const auto [canonicalPath, url] = constructPaths(static_cast<CURL*>(curl), key);
     const std::string payloadHash = "UNSIGNED-PAYLOAD";

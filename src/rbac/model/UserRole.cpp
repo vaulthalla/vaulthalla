@@ -26,6 +26,10 @@ UserRole::UserRole(const nlohmann::json& j)
     assigned_at = parsePostgresTimestamp(j.at("assigned_at").get<std::string>());
 }
 
+std::shared_ptr<UserRole> UserRole::fromJson(const nlohmann::json& j) {
+    return std::make_shared<UserRole>(j);
+}
+
 std::string UserRole::permissions_to_flags_string() const {
     std::ostringstream oss;
     for (unsigned int i = 0; i < ADMIN_SHELL_PERMS.size(); ++i) {

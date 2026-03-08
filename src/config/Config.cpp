@@ -254,14 +254,14 @@ void from_json(const nlohmann::json& j, DatabaseConfig& c) {
 
 void to_json(nlohmann::json& j, const AuthConfig& c) {
     j = {
-        {"token_expiry_minutes", c.token_expiry_minutes},
+        {"token_expiry_minutes", c.access_token_expiry_minutes},
         {"refresh_token_expiry_days", c.refresh_token_expiry_days}
         // Do not serialize jwt_secret
     };
 }
 
 void from_json(const nlohmann::json& j, AuthConfig& c) {
-    c.token_expiry_minutes = j.value("token_expiry_minutes", 60);
+    c.access_token_expiry_minutes = j.value("token_expiry_minutes", 60);
     c.refresh_token_expiry_days = j.value("refresh_token_expiry_days", 7);
 }
 

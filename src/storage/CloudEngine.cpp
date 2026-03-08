@@ -1,6 +1,6 @@
 #include "storage/CloudEngine.hpp"
 #include "vault/EncryptionManager.hpp"
-#include "storage/s3/S3Controller.hpp"
+#include "storage/s3/Controller.hpp"
 #include "fs/model/Entry.hpp"
 #include "fs/model/File.hpp"
 #include "fs/model/file/Trashed.hpp"
@@ -22,7 +22,6 @@ using namespace vh::fs::model;
 using namespace vh::storage;
 using namespace vh::vault;
 using namespace vh::concurrency;
-using namespace vh::cloud;
 using namespace vh::config;
 using namespace vh::sync::model;
 using namespace vh::fs::ops;
@@ -52,7 +51,7 @@ std::unordered_map<std::string, std::string> CloudEngine::getMetaMapFromFile(con
 CloudEngine::CloudEngine(const std::shared_ptr<S3Vault>& vault)
     : Engine(vault),
       key_(runtime::Deps::get().apiKeyManager->getAPIKey(vault->api_key_id, vault->owner_id)),
-      s3Provider_(std::make_shared<S3Controller>(key_, vault->bucket)) {}
+      s3Provider_(std::make_shared<s3::Controller>(key_, vault->bucket)) {}
 
 void CloudEngine::upload(const std::shared_ptr<File>& f) const {
     if (!fs::exists(f->backing_path) || !fs::is_regular_file(f->backing_path))
@@ -66,7 +65,7 @@ void CloudEngine::upload(const std::shared_ptr<File>& f) const {
 
     const fs::path s3Key = stripLeadingSlash(f->path);
 
-    if (fs::file_size(f->backing_path) < S3Controller::MIN_PART_SIZE) s3Provider_->uploadObject(s3Key, f->backing_path);
+    if (fs::file_size(f->backing_path) < s3::Controller::MIN_PART_SIZE) s3Provider_->uploadObject(s3Key, f->backing_path);
     else s3Provider_->uploadLargeObject(s3Key, f->backing_path);
 
     std::vector<uint8_t> buffer;
@@ -90,7 +89,7 @@ void CloudEngine::upload(const std::shared_ptr<File>& f, const std::vector<uint8
     const auto s3Key = stripLeadingSlash(f->path);
     const auto meta = getMetaMapFromFile(f);
 
-    if (buffer.size() < S3Controller::MIN_PART_SIZE) s3Provider_->uploadBufferWithMetadata(s3Key, buffer, meta);
+    if (buffer.size() < s3::Controller::MIN_PART_SIZE) s3Provider_->uploadBufferWithMetadata(s3Key, buffer, meta);
     else s3Provider_->uploadLargeObject(s3Key, buffer);
 }
 

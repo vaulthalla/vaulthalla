@@ -8,10 +8,6 @@
 #include <nlohmann/json_fwd.hpp>
 #include <memory>
 
-namespace pqxx {
-class row;
-}
-
 namespace vh::sync {
 struct Cloud;
 }

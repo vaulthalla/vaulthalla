@@ -10,6 +10,7 @@
 #include "runtime/Deps.hpp"
 #include "usage/include/UsageManager.hpp"
 #include "CommandUsage.hpp"
+#include "auth/registration/Validator.hpp"
 
 using namespace vh;
 using namespace vh::protocols::shell;
@@ -38,7 +39,7 @@ static CommandResult handle_group_create(const CommandCall& call) {
     validatePositionals(call, usage);
 
     const std::string name = call.positionals[0];
-    if (!auth::Manager::isValidGroup(name)) return invalid("group create: invalid group name '" + name + "'");
+    if (!auth::registration::Validator::isValidGroup(name)) return invalid("group create: invalid group name '" + name + "'");
 
     const auto group = std::make_shared<Group>();
     group->name = name;
@@ -59,7 +60,7 @@ static CommandResult handle_group_update(const CommandCall& call) {
     const auto group = resolveGroup(call.positionals[0]);
 
     if (const auto newName = optVal(call, usage->resolveOptional("name")->option_tokens)) {
-        if (!auth::Manager::isValidGroup(*newName)) return invalid("group update: invalid group name '" + *newName + "'");
+        if (!auth::registration::Validator::isValidGroup(*newName)) return invalid("group update: invalid group name '" + *newName + "'");
         group->name = *newName;
     }
 

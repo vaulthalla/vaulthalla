@@ -1,13 +1,13 @@
-#include "storage/s3/S3Controller.hpp"
+#include "storage/s3/Controller.hpp"
 #include "vault/model/APIKey.hpp"
 
 #include <ctime>
 #include <curl/curl.h>
 #include <regex>
 
-using namespace vh::cloud;
+using namespace vh::storage::s3;
 
-ValidateResult S3Controller::validateAPICredentials() const {
+ValidateResult Controller::validateAPICredentials() const {
     if (apiKey_->secret_access_key.empty())
         throw std::runtime_error("S3Provider: API key secret is empty, cannot validate credentials");
 
@@ -63,7 +63,7 @@ ValidateResult S3Controller::validateAPICredentials() const {
     return {false, "Auth probe failed: " + resp.body};
 }
 
-bool S3Controller::isBucketEmpty() const {
+bool Controller::isBucketEmpty() const {
     const auto rstrip = [](std::string s){ while(!s.empty() && s.back()=='/') s.pop_back(); return s; };
     const std::string base = rstrip(apiKey_->endpoint);
     const std::string path = "/" + bucket_;          // canonical URI

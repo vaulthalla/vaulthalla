@@ -5,8 +5,7 @@
 #include "db/query/vault/APIKey.hpp"
 #include "db/query/identities/User.hpp"
 
-#include "log/Registry.hpp"
-#include "storage/s3/S3Controller.hpp"
+#include "storage/s3/Controller.hpp"
 #include "vault/APIKeyManager.hpp"
 
 #include "vault/model/Vault.hpp"
@@ -31,7 +30,6 @@ using namespace vh::vault::model;
 using namespace vh::storage;
 using namespace vh::config;
 using namespace vh::crypto;
-using namespace vh::cloud;
 using namespace vh::sync::model;
 using namespace vh::rbac::model;
 using namespace vh::vault::terms;
@@ -70,7 +68,7 @@ static bool upstream_bucket_is_empty(const std::shared_ptr<S3Vault>& s3Vault) {
     const auto apiKey = runtime::Deps::get().apiKeyManager->getAPIKey(s3Vault->api_key_id, s3Vault->owner_id);
     if (!apiKey) throw std::runtime_error("Failed to load API key ID " + std::to_string(s3Vault->api_key_id));
     if (apiKey->secret_access_key.empty()) throw std::runtime_error("API key ID " + std::to_string(s3Vault->api_key_id) + " has no secret access key");
-    const S3Controller ctrl(apiKey, s3Vault->bucket);
+    const s3::Controller ctrl(apiKey, s3Vault->bucket);
 
     if (const auto [ok, msg] = ctrl.validateAPICredentials(); !ok)
         throw std::runtime_error("Failed to validate S3 credentials: " + msg);

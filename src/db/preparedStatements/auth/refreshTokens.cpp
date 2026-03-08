@@ -3,8 +3,8 @@
 void vh::db::DBConnection::initPreparedRefreshTokens() const {
     conn_->prepare(
         "insert_refresh_token",
-        "INSERT INTO refresh_tokens (jti, user_id, token_hash, ip_address, user_agent, created_at, expires_at, last_used, revoked) "
-        "VALUES ($1, $2, $3, $4, $5, NOW(), $6, NOW(), FALSE)"
+        "INSERT INTO refresh_tokens (jti, user_id, token_hash, ip_address, user_agent, issued_at, expires_at, last_used, revoked) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), FALSE)"
     );
 
     conn_->prepare(
@@ -59,21 +59,21 @@ void vh::db::DBConnection::initPreparedRefreshTokens() const {
         "DELETE FROM refresh_tokens "
         "WHERE user_id = $1 "
         "AND revoked = TRUE "
-        "AND created_at < NOW() - INTERVAL '7 days'"
+        "AND issued_at < NOW() - INTERVAL '7 days'"
     );
 
     conn_->prepare(
         "delete_old_revoked_refresh_tokens_global",
         "DELETE FROM refresh_tokens "
         "WHERE revoked = TRUE "
-        "AND created_at < NOW() - INTERVAL '7 days'"
+        "AND issued_at < NOW() - INTERVAL '7 days'"
     );
 
     conn_->prepare(
         "list_active_refresh_tokens_for_user",
         "SELECT * FROM refresh_tokens "
         "WHERE user_id = $1 AND revoked = FALSE AND expires_at >= NOW() "
-        "ORDER BY created_at DESC"
+        "ORDER BY issued_at DESC"
     );
 
     conn_->prepare(

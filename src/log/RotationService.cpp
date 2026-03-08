@@ -6,7 +6,6 @@
 #include <paths.h>
 
 using namespace vh::log;
-using namespace vh::config;
 
 static constexpr auto CHECK_INTERVAL = std::chrono::minutes(10);
 
@@ -25,12 +24,12 @@ RotationService::RotationService()
       })),
       auditRot_(std::make_unique<Rotator>(Rotator::Options{
         .active_path = paths::getLogPath() / "audit.log",
-        .max_bytes = Registry::get().auditing.audit_log.rotate_max_size,
-        .max_interval = Registry::get().auditing.audit_log.rotate_interval,
-        .retention_days = Registry::get().auditing.audit_log.retention_days,
-        .max_retained_size = Registry::get().auditing.audit_log.max_retained_logs_size,
-        .strict_retention = Registry::get().auditing.audit_log.strict_retention,
-        .compression = Registry::get().auditing.audit_log.compression,
+        .max_bytes = config::Registry::get().auditing.audit_log.rotate_max_size,
+        .max_interval = config::Registry::get().auditing.audit_log.rotate_interval,
+        .retention_days = config::Registry::get().auditing.audit_log.retention_days,
+        .max_retained_size = config::Registry::get().auditing.audit_log.max_retained_logs_size,
+        .strict_retention = config::Registry::get().auditing.audit_log.strict_retention,
+        .compression = config::Registry::get().auditing.audit_log.compression,
         .ignore_compress_errors = true,
         .on_reopen = []() { Registry::reopenAuditLog(); },
         .diag_log = [](const std::string_view& msg) { Registry::audit()->debug("[AuditLogRotator] {}", msg); }

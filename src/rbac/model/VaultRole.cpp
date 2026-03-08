@@ -3,15 +3,16 @@
 #include "db/encoding/timestamp.hpp"
 #include "protocols/shell/util/lineHelpers.hpp"
 #include "permsUtil.hpp"
+#include "log/Registry.hpp"
 
-#include <pqxx/row>
 #include <pqxx/result>
 #include <nlohmann/json.hpp>
 #include <sstream>
 
-using namespace vh::rbac::model;
 using namespace vh::db::encoding;
 using namespace vh::protocols::shell;
+
+namespace vh::rbac::model {
 
 VaultRole::VaultRole(const pqxx::row& row, const pqxx::result& overrides)
     : Role(row),
@@ -44,7 +45,10 @@ VaultRole::VaultRole(const nlohmann::json& j)
       vault_id(j.at("vault_id").get<unsigned int>()),
       subject_type(j.at("subject_type").get<std::string>()),
       assigned_at(parsePostgresTimestamp(j.at("assigned_at").get<std::string>())),
-      permission_overrides(j.at("permission_overrides")) {
+      permission_overrides(j.at("permission_overrides")) {}
+
+std::shared_ptr<VaultRole> VaultRole::fromJson(const nlohmann::json& j) {
+    return std::make_shared<VaultRole>(j);
 }
 
 std::string VaultRole::permissions_to_flags_string() const {
@@ -58,7 +62,7 @@ std::string VaultRole::permissions_to_flags_string() const {
     return oss.str();
 }
 
-void vh::rbac::model::to_json(nlohmann::json& j, const VaultRole& r) {
+void to_json(nlohmann::json& j, const VaultRole& r) {
     to_json(j, static_cast<const Role&>(r));
     j.update({
         {"assignment_id", r.assignment_id},
@@ -70,7 +74,7 @@ void vh::rbac::model::to_json(nlohmann::json& j, const VaultRole& r) {
     });
 }
 
-void vh::rbac::model::from_json(const nlohmann::json& j, VaultRole& r) {
+void from_json(const nlohmann::json& j, VaultRole& r) {
     from_json(j, static_cast<Role&>(r));
     r.assignment_id = j.at("assignment_id").get<unsigned int>();
     r.vault_id = j.at("vault_id").get<unsigned int>();
@@ -81,18 +85,18 @@ void vh::rbac::model::from_json(const nlohmann::json& j, VaultRole& r) {
     r.permission_overrides = permissionOverridesFromJson(j.at("permission_overrides"));
 }
 
-void vh::rbac::model::to_json(nlohmann::json& j, const std::vector<std::shared_ptr<VaultRole> >& roles) {
+void to_json(nlohmann::json& j, const std::vector<std::shared_ptr<VaultRole> >& roles) {
     j = nlohmann::json::array();
     for (const auto& role : roles) j.push_back(*role);
 }
 
-std::vector<std::shared_ptr<VaultRole> > vh::rbac::model::vault_roles_vector_from_json(const nlohmann::json& j) {
+std::vector<std::shared_ptr<VaultRole> > vault_roles_vector_from_json(const nlohmann::json& j) {
     std::vector<std::shared_ptr<VaultRole> > roles;
     for (const auto& roleJson : j) roles.push_back(std::make_shared<VaultRole>(roleJson));
     return roles;
 }
 
-std::vector<std::shared_ptr<VaultRole> > vh::rbac::model::vault_roles_vector_from_pq_result(
+std::vector<std::shared_ptr<VaultRole> > vault_roles_vector_from_pq_result(
     const pqxx::result& res,
     const pqxx::result& overrides
     ) {
@@ -113,23 +117,23 @@ std::vector<std::shared_ptr<VaultRole> > vh::rbac::model::vault_roles_vector_fro
     return roles;
 }
 
-void vh::rbac::model::to_json(nlohmann::json& j, const std::unordered_map<unsigned int, std::shared_ptr<VaultRole>>& roles) {
+void to_json(nlohmann::json& j, const std::unordered_map<unsigned int, std::shared_ptr<VaultRole>>& roles) {
     j = nlohmann::json::array();
     for (const auto& [k, v] : roles) j.push_back(*v);
 }
 
-VRolePair vh::rbac::model::vault_roles_from_json(const nlohmann::json& j) {
+VRolePair vault_roles_from_json(const nlohmann::json& j) {
     VRolePair rolesPair;
     for (const auto& roleJson : j) {
         const auto role = std::make_shared<VaultRole>(roleJson);
         if (role->subject_type == "user") rolesPair.roles[role->vault_id] = role;
         else if (role->subject_type == "group") rolesPair.group_roles[role->vault_id] = role;
-        else log::Registry::auth()->warn("Unknown subject_type '{}' in vault role ID {}", role->subject_type, role->id);
+        else vh::log::Registry::auth()->warn("Unknown subject_type '{}' in vault role ID {}", role->subject_type, role->id);
     }
     return rolesPair;
 }
 
-VRolePair vh::rbac::model::vault_roles_from_pq_result(
+VRolePair vault_roles_from_pq_result(
     const pqxx::result& res,
     const pqxx::result& overrides
     ) {
@@ -150,11 +154,11 @@ VRolePair vh::rbac::model::vault_roles_from_pq_result(
                 const auto existingRole = rolesPair.group_roles[role->vault_id];
                 const auto combinedPerms = existingRole->permissions | role->permissions;
                 rolesPair.group_roles[role->vault_id]->permissions = combinedPerms;
-                log::Registry::auth()->warn("Combining group role permissions for vault ID {}: existing perms {:04x} + new perms {:04x} = combined perms {:04x}",
+                vh::log::Registry::auth()->warn("Combining group role permissions for vault ID {}: existing perms {:04x} + new perms {:04x} = combined perms {:04x}",
                     role->vault_id, existingRole->permissions, role->permissions, combinedPerms);
             } else rolesPair.group_roles[role->vault_id] = role;
         }
-        else log::Registry::auth()->warn("Unknown subject_type '{}' in vault role ID {}", role->subject_type, role->id);
+        else vh::log::Registry::auth()->warn("Unknown subject_type '{}' in vault role ID {}", role->subject_type, role->id);
     }
 
     return rolesPair;
@@ -164,7 +168,7 @@ std::vector<std::shared_ptr<PermissionOverride> > VaultRole::getPermissionOverri
     std::vector<std::shared_ptr<PermissionOverride>> overrides;
     for (const auto& override : permission_overrides) {
         if (override->permission.bit_position == bit) overrides.push_back(override);
-        log::Registry::auth()->debug("Checking override: {} for bit {}", to_string(override), bit);
+        vh::log::Registry::auth()->debug("Checking override: {} for bit {}", to_string(override), bit);
     }
     return overrides;
 }
@@ -227,7 +231,7 @@ bool VaultRole::canList(const std::filesystem::path& path) const {
     return validatePermission(permissions, VaultPermission::List, path);
 }
 
-std::string vh::rbac::model::to_string(const std::shared_ptr<VaultRole>& role) {
+std::string to_string(const std::shared_ptr<VaultRole>& role) {
     std::string out = snake_case_to_title(role->name) + " (ID: " + std::to_string(role->id) + ")\n";
     out += " - Role ID: " + std::to_string(role->id) + "\n";
     out += " - Description: " + role->description + "\n";
@@ -242,7 +246,7 @@ std::string vh::rbac::model::to_string(const std::shared_ptr<VaultRole>& role) {
     return out;
 }
 
-std::string vh::rbac::model::to_string(const std::unordered_map<unsigned int, std::shared_ptr<VaultRole>>& roles) {
+std::string to_string(const std::unordered_map<unsigned int, std::shared_ptr<VaultRole>>& roles) {
     if (roles.empty()) return "No vault roles found\n";
 
     std::string out;
@@ -250,10 +254,12 @@ std::string vh::rbac::model::to_string(const std::unordered_map<unsigned int, st
     return out;
 }
 
-std::string vh::rbac::model::to_string(const std::vector<std::shared_ptr<VaultRole>>& roles) {
+std::string to_string(const std::vector<std::shared_ptr<VaultRole>>& roles) {
     if (roles.empty()) return "No vault roles found\n";
 
     std::string out;
     for (const auto& role : roles) out += to_string(role) + "\n";
     return out;
+}
+
 }

@@ -10,7 +10,6 @@
 
 #include "storage/Manager.hpp"
 #include "storage/Engine.hpp"
-#include "storage/s3/S3Controller.hpp"
 
 #include "vault/EncryptionManager.hpp"
 #include "crypto/encryptors/GPG.hpp"
@@ -37,7 +36,6 @@ using namespace vh::identities::model;
 using namespace vh::storage;
 using namespace vh::config;
 using namespace vh::crypto;
-using namespace vh::cloud;
 
 
 static CommandResult handle_key_encrypt_and_response(const CommandCall& call,

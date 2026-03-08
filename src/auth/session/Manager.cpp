@@ -2,7 +2,7 @@
 
 #include "auth/model/RefreshToken.hpp"
 #include "auth/model/TokenPair.hpp"
-#include "auth/session/Resolver.hpp"
+#include "auth/session/Issuer.hpp"
 #include "auth/session/Validator.hpp"
 #include "db/query/auth/RefreshToken.hpp"
 #include "log/Registry.hpp"
@@ -14,35 +14,21 @@ using namespace vh::identities::model;
 
 namespace vh::auth::session {
 
-void Manager::tryRehydrateSession(const SessionPtr& session) {
+void Manager::tryRehydrate(const std::shared_ptr<Session>& session) {
     if (!session) throw std::invalid_argument("Invalid session");
-
-    if (Validator::hasUsableRefreshToken(session))
-        Resolver::resolveFromRefreshToken(session);
-
-    ensureSession(session);
+    Validator::validateRefreshToken(session); // May throw if invalid
+    cache(session);
 }
 
-void Manager::ensureSession(const SessionPtr& session) {
-    if (!session) throw std::invalid_argument("Invalid session");
-
-    cacheSession(session);
-
-    log::Registry::ws()->debug(
-        "[SessionManager] Ensured session with UUID: {}",
-        session->uuid
-    );
-}
-
-void Manager::promoteSession(const SessionPtr& session) {
-    if (!session || !Validator::validateSession(session))
+void Manager::promote(const std::shared_ptr<Session>& session) {
+    if (!session || !Validator::softValidateSession(session))
         throw std::invalid_argument("Invalid session state for promotion");
 
     const auto oldJti = session->tokens->refreshToken->jti;
 
     if (const auto dbToken = db::query::auth::RefreshToken::get(oldJti);
         dbToken->dangerousDivergence(session->tokens->refreshToken))
-            invalidateSession(oldJti);
+            invalidate(oldJti);
 
     db::query::auth::RefreshToken::set(session->tokens->refreshToken);
 
@@ -51,9 +37,9 @@ void Manager::promoteSession(const SessionPtr& session) {
         throw std::runtime_error("Failed to reload refresh token");
 
     if (!oldJti.empty() && oldJti != session->tokens->refreshToken->jti)
-        invalidateSession(oldJti);
+        invalidate(oldJti);
 
-    cacheSession(session);
+    cache(session);
 
     log::Registry::ws()->debug(
         "[SessionManager] Promoted session for user: {}",
@@ -61,7 +47,7 @@ void Manager::promoteSession(const SessionPtr& session) {
     );
 }
 
-void Manager::cacheSession(const SessionPtr& session) {
+void Manager::cache(const std::shared_ptr<Session>& session) {
     if (!session) throw std::invalid_argument("Invalid session data for caching");
 
     std::lock_guard lock(sessionMutex_);
@@ -75,7 +61,49 @@ void Manager::cacheSession(const SessionPtr& session) {
         sessionsByUserId_.emplace(session->user->id, session);
 }
 
-void Manager::invalidateSession(const SessionPtr& session) {
+bool Manager::validate(const std::shared_ptr<Session>& session, const std::string& accessToken) {
+    try {
+        if (!session) throw std::invalid_argument("Invalid session for validation");
+
+        if (Validator::validateAccessToken(session, accessToken)) {
+            if (session->tokens->accessToken->timeRemaining() < std::chrono::seconds(60)) Issuer::accessToken(session);
+            cache(session);
+            return true;
+        }
+
+        Validator::validateRefreshToken(session); // May throw if invalid
+        Issuer::accessToken(session); // Assign new access token
+        cache(session);
+        return true;
+    } catch (const std::exception& ex) {
+        log::Registry::ws()->debug(
+            "[SessionManager] Validation failed for session UUID: {}. Reason: {}",
+            session ? session->uuid : "null",
+            ex.what()
+        );
+        invalidate(session);
+        return false;
+    }
+}
+
+std::shared_ptr<Session> Manager::validateRawRefreshToken(const std::string& refreshToken) {
+    const auto claims = Issuer::decode(refreshToken);
+    if (!claims || claims->jti.empty()) throw std::invalid_argument("Invalid refresh token for validation");
+
+    const auto session = get(claims->jti);
+    if (!session) throw std::invalid_argument("No session found for refresh token validation");
+    if (!session->tokens->refreshToken) throw std::invalid_argument("Session does not contain a refresh token for validation");
+
+    if (session->tokens->refreshToken->rawToken.empty()) session->tokens->refreshToken->rawToken = refreshToken;
+    else if (session->tokens->refreshToken->rawToken != refreshToken)
+        throw std::invalid_argument("Refresh token mismatch for validation");
+
+    Validator::validateRefreshToken(session);
+
+    return session;
+}
+
+void Manager::invalidate(const std::shared_ptr<Session>& session) {
     if (!session) return;
 
     const auto uuid = session->uuid;
@@ -109,11 +137,11 @@ void Manager::invalidateSession(const SessionPtr& session) {
     );
 }
 
-void Manager::invalidateSession(const std::string& token) {
-    invalidateSession(getSession(token));
+void Manager::invalidate(const std::string& token) {
+    invalidate(get(token));
 }
 
-Manager::SessionPtr Manager::getSession(const std::string& token) {
+std::shared_ptr<Session> Manager::get(const std::string& token) {
     std::lock_guard lock(sessionMutex_);
 
     if (sessionsByUUID_.contains(token)) return sessionsByUUID_[token];
@@ -122,15 +150,15 @@ Manager::SessionPtr Manager::getSession(const std::string& token) {
     return nullptr;
 }
 
-std::vector<Manager::SessionPtr> Manager::getSessions(const std::shared_ptr<User>& user) {
+std::vector<std::shared_ptr<Session>> Manager::getSessions(const std::shared_ptr<User>& user) {
     if (!user) throw std::invalid_argument("Invalid user");
     return getSessionsByUserId(user->id);
 }
 
-std::vector<Manager::SessionPtr> Manager::getSessionsByUserId(const uint32_t userId) {
+std::vector<std::shared_ptr<Session>> Manager::getSessionsByUserId(const uint32_t userId) {
     std::lock_guard lock(sessionMutex_);
 
-    std::vector<SessionPtr> sessions;
+    std::vector<std::shared_ptr<Session>> sessions;
     const auto [begin, end] = sessionsByUserId_.equal_range(userId);
 
     for (auto it = begin; it != end; ++it)
@@ -139,7 +167,7 @@ std::vector<Manager::SessionPtr> Manager::getSessionsByUserId(const uint32_t use
     return sessions;
 }
 
-Manager::SessionMap Manager::getActiveSessions() {
+std::unordered_map<std::string, std::shared_ptr<Session>> Manager::getActive() {
     std::lock_guard lock(sessionMutex_);
     return sessionsByUUID_;
 }

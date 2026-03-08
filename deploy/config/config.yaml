@@ -45,7 +45,7 @@ database:
 # Users can refresh their access tokens using valid refresh tokens.
 # This setup balances security and usability.
 auth:
-  token_expiry_minutes: 60          # JWT access token TTL
+  access_token_expiry_minutes: 60          # JWT access token TTL
   refresh_token_expiry_days: 7      # Refresh token TTL
 
 

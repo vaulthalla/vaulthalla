@@ -9,6 +9,7 @@
 #include "protocols/ws/Session.hpp"
 #include "log/Registry.hpp"
 #include "crypto/secrets/Manager.hpp"
+#include "runtime/Deps.hpp"
 
 #include <sodium.h>
 #include <stdexcept>
@@ -31,7 +32,7 @@ void Manager::registerUser(std::shared_ptr<User> user, const std::string& passwo
     user = findUser(user->name);
 
     session->setAuthenticatedUser(user);
-    runtime::Deps::get().sessionManager->promoteSession(session);
+    runtime::Deps::get().sessionManager->promote(session);
     runtime::Deps::get().storageManager->initUserStorage(user);
 
     if (!user) throw std::runtime_error("Failed to create user: " + user->name);
@@ -50,7 +51,7 @@ void Manager::loginUser(const std::string& name, const std::string& password, co
     user = db::query::identities::User::getUserById(user->id);
 
     session->setAuthenticatedUser(user);
-    runtime::Deps::get().sessionManager->promoteSession(session);
+    runtime::Deps::get().sessionManager->promote(session);
 
     log::Registry::auth()->info("[AuthManager] User logged in: {}", user->name);
 }

@@ -1,11 +1,12 @@
-#include "storage/s3/S3Controller.hpp"
+#include "storage/s3/Controller.hpp"
 #include "log/Registry.hpp"
 
 #include <regex>
 
-using namespace vh::cloud;
+using namespace vh::storage::s3;
+using namespace vh::storage::s3::curl;
 
-std::string S3Controller::initiateMultipartUpload(const std::filesystem::path& key) const {
+std::string Controller::initiateMultipartUpload(const std::filesystem::path& key) const {
     CURL* curl = curl_easy_init();
     if (!curl) return "";
 
@@ -49,7 +50,7 @@ std::string S3Controller::initiateMultipartUpload(const std::filesystem::path& k
     return "";
 }
 
-void S3Controller::uploadPart(const std::filesystem::path& key, const std::string& uploadId,
+void Controller::uploadPart(const std::filesystem::path& key, const std::string& uploadId,
                              const int partNumber, const std::string& partData, std::string& etagOut) const {
     CURL* curl = curl_easy_init();
     if (!curl) throw std::runtime_error("Failed to init curl for S3 multipart upload");
@@ -88,7 +89,7 @@ void S3Controller::uploadPart(const std::filesystem::path& key, const std::strin
         throw std::runtime_error(fmt::format("Failed to extract ETag for uploaded part {}", partNumber));
 }
 
-void S3Controller::completeMultipartUpload(const std::filesystem::path& key, const std::string& uploadId,
+void Controller::completeMultipartUpload(const std::filesystem::path& key, const std::string& uploadId,
                                          const std::vector<std::string>& etags) const {
     if (etags.empty()) throw std::runtime_error("No ETags provided to completeMultipartUpload");
 
@@ -131,7 +132,7 @@ void S3Controller::completeMultipartUpload(const std::filesystem::path& key, con
     }
 }
 
-void S3Controller::abortMultipartUpload(const std::filesystem::path& key, const std::string& uploadId) const {
+void Controller::abortMultipartUpload(const std::filesystem::path& key, const std::string& uploadId) const {
     CURL* curl = curl_easy_init();
     if (!curl) throw std::runtime_error("Failed to init curl for S3 abort multipart upload");
 

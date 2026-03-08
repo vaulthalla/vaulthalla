@@ -50,7 +50,7 @@ struct DatabaseConfig {
 };
 
 struct AuthConfig {
-    unsigned int token_expiry_minutes = 60;
+    unsigned int access_token_expiry_minutes = 60;
     unsigned int refresh_token_expiry_days = 7;
 };
 

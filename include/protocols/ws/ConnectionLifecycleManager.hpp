@@ -4,8 +4,6 @@
 
 #include <chrono>
 
-namespace vh::auth::session { class Manager; }
-
 namespace vh::protocols::ws {
 
 class ConnectionLifecycleManager final : public concurrency::AsyncService {
@@ -17,8 +15,6 @@ class ConnectionLifecycleManager final : public concurrency::AsyncService {
     void runLoop() override;
 
     void sweepActiveSessions() const;
-
-    std::shared_ptr<auth::session::Manager> sessionManager_;
 
     std::chrono::seconds sweep_interval_{30};
     std::chrono::seconds unauthenticated_session_timeout_{60};

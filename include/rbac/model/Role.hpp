@@ -6,10 +6,7 @@
 #include <ctime>
 #include <nlohmann/json_fwd.hpp>
 
-namespace pqxx {
-class row;
-class result;
-}
+namespace pqxx { class row; class result; }
 
 namespace vh::rbac::model {
 

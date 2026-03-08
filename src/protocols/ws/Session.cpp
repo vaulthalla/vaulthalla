@@ -32,7 +32,8 @@ using namespace vh::protocols;
 namespace vh::protocols::ws {
 
 Session::Session(const std::shared_ptr<Router>& router)
-    : uploadHandler_(std::make_shared<handler::Upload>(shared_from_this())), router_(router) {
+    : tokens(std::make_shared<auth::model::TokenPair>()),
+      uploadHandler_(std::make_shared<handler::Upload>(shared_from_this())), router_(router) {
     buffer_.max_size(65536);
 }
 
@@ -107,7 +108,7 @@ void Session::hydrateFromRequest(const RequestType& req) {
     ipAddress = getIPAddress();
     userAgent = getUserAgent();
     auth::model::RefreshToken::addToSession(shared_from_this(), extractCookie(req, "refresh"));
-    runtime::Deps::get().sessionManager->tryRehydrateSession(shared_from_this());
+    runtime::Deps::get().sessionManager->tryRehydrate(shared_from_this());
 }
 
 void Session::installHandshakeDecorator() const {

@@ -7,8 +7,8 @@ struct Token;
 struct RefreshToken;
 
 struct TokenPair {
-    std::shared_ptr<Token> accessToken;
-    std::shared_ptr<RefreshToken> refreshToken;
+    std::shared_ptr<Token> accessToken{nullptr};
+    std::shared_ptr<RefreshToken> refreshToken{nullptr};
 
     void revoke() const;
     void invalidate() const;
