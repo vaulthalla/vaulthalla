@@ -2,12 +2,11 @@
 #include "runtime/Deps.hpp"
 #include "auth/Manager.hpp"
 #include "db/query/rbac/Permission.hpp"
-#include "auth/model/RefreshToken.hpp"
-#include "auth/model/TokenPair.hpp"
 #include "auth/session/Validator.hpp"
 #include "identities/model/User.hpp"
 #include "db/query/identities/User.hpp"
 #include "protocols/ws/Session.hpp"
+#include "rbac/model/UserRole.hpp"
 
 using namespace vh::protocols::ws::handler;
 using namespace vh::auth;
@@ -19,7 +18,9 @@ json Auth::login(const json& payload, const std::shared_ptr<Session>& session) {
 
     runtime::Deps::get().authManager->loginUser(username, password, session);
     if (!session::Validator::softValidateActiveSession(session)) throw std::runtime_error("Failed to validate session after login");
-    return {{"token", session->tokens->accessToken->rawToken}, {"user", *session->user}};
+
+    session->sendAccessTokenOnNextResponse();
+    return {{"user", *session->user}};
 }
 
 json Auth::registerUser(const json& payload, const std::shared_ptr<Session>& session) {
@@ -28,12 +29,26 @@ json Auth::registerUser(const json& payload, const std::shared_ptr<Session>& ses
     const auto password = payload.at("password").get<std::string>();
     const auto isActive = payload.at("is_active").get<bool>();
     const auto role = payload.at("role").get<std::string>();
-    const auto userRole = db::query::rbac::Permission::getRoleByName(role);
 
-    runtime::Deps::get().authManager->registerUser(std::make_shared<User>(name, email, isActive), password, session);
-    if (!session->user) throw std::runtime_error("Failed to set authenticated user after registration");
+    const auto user = std::make_shared<User>(name, email, isActive);
 
-    return {{"token", session->tokens->accessToken->rawToken}, {"user", *session->user}};
+    if (const auto userRole = std::dynamic_pointer_cast<rbac::model::UserRole>(db::query::rbac::Permission::getRoleByName(role))) {
+        if (!session->user) throw std::runtime_error("User not authenticated");
+        if (userRole->name == "super_admin") throw std::runtime_error("Cannot assign super admin role to a user");
+        if (userRole->name == "admin" && !session->user->canManageAdmins()) throw std::runtime_error("Permission denied: Only super admins can assign admin role");
+        if (!session->user->canManageUsers()) throw std::runtime_error("Permission denied: Only admins can assign user roles");
+        user->role = userRole;
+    } else throw std::runtime_error("Invalid role specified: " + role);
+
+    runtime::Deps::get().authManager->registerUser(user, password);
+
+    return {{"user", *user}};
+}
+
+json Auth::refreshToken(const std::string& token, const std::shared_ptr<Session>& session) {
+    runtime::Deps::get().sessionManager->renewAccessToken(session, token);
+    session->sendAccessTokenOnNextResponse();
+    return {};
 }
 
 json Auth::deleteUser(const json& payload, const std::shared_ptr<Session>& session) {

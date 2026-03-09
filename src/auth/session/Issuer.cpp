@@ -6,7 +6,6 @@
 #include "crypto/util/hash.hpp"
 #include "crypto/secrets/Manager.hpp"
 #include "identities/model/User.hpp"
-#include "db/query/auth/RefreshToken.hpp"
 #include "log/Registry.hpp"
 #include "auth/model/TokenPair.hpp"
 
@@ -28,11 +27,13 @@ static std::string generateUUID() {
 }
 
 static void finalizeAndSignToken(const std::shared_ptr<Session>& session, const std::shared_ptr<model::Token>& t, const std::chrono::system_clock::duration ttl) {
-    const auto now = std::chrono::system_clock::now();
-    const auto exp = now + ttl;
+    const auto now = std::chrono::time_point_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now()
+    );
+    const auto exp = now + std::chrono::duration_cast<std::chrono::seconds>(ttl);
 
-    t->issuedAt = std::chrono::system_clock::to_time_t(now);
-    t->expiresAt = std::chrono::system_clock::to_time_t(exp);
+    t->issuedAt = now;
+    t->expiresAt = exp;
     t->jti = generateUUID();
     if (session->user) t->userId = session->user->id;
 
@@ -51,6 +52,7 @@ void Issuer::accessToken(const std::shared_ptr<Session>& session) {
     t->subject = buildAccessTokenSubject(session);
     finalizeAndSignToken(session, t, std::chrono::minutes(vh::config::Registry::get().auth.access_token_expiry_minutes));
     session->tokens->accessToken = t;
+    session->sendAccessTokenOnNextResponse();
 }
 
 void Issuer::refreshToken(const std::shared_ptr<Session>& session) {
@@ -61,7 +63,17 @@ void Issuer::refreshToken(const std::shared_ptr<Session>& session) {
     finalizeAndSignToken(session, t, std::chrono::days(vh::config::Registry::get().auth.refresh_token_expiry_days));
     t->hashedToken = crypto::hash::password(t->rawToken);
 
+    if (t->hashedToken.empty()) {
+        log::Registry::auth()->error("[session::Issuer] Failed to hash refresh token for session {}: {}", session->uuid, "Hashing failed");
+        throw std::runtime_error("Failed to hash refresh token");
+    }
+
     session->tokens->refreshToken = t;
+
+    if (session->tokens->refreshToken != t) {
+        log::Registry::auth()->error("[session::Issuer] Failed to assign refresh token to session {}: {}", session->uuid, "Assignment failed");
+        throw std::runtime_error("Failed to assign refresh token to session");
+    }
 }
 
 std::optional<TokenClaims> Issuer::decode(const std::string& refreshToken) {
@@ -77,10 +89,11 @@ std::optional<TokenClaims> Issuer::decode(const std::string& refreshToken) {
         return TokenClaims {
             .jti = decoded.get_id(),
             .subject = decoded.get_subject(),
+            .issuedAt = decoded.get_issued_at(),
             .expiresAt = decoded.get_expires_at()
         };
     } catch (const std::exception& e) {
-        log::Registry::auth()->debug("[AuthManager] Failed to decode refresh token: {}", e.what());
+        log::Registry::auth()->debug("[session::Issuer] Failed to decode refresh token: {}", e.what());
         return std::nullopt;
     }
 }
@@ -90,7 +103,7 @@ std::string Issuer::buildAccessTokenSubject(const std::shared_ptr<Session>& sess
 }
 
 std::string Issuer::buildRefreshTokenSubject(const std::shared_ptr<Session>& session) {
-    return session->ipAddress + ":" + session->userAgent + ":" + session->uuid;
+    return session->ipAddress + ":" + session->userAgent;
 }
 
 }

@@ -11,9 +11,8 @@ namespace vh::protocols::ws { class Session; }
 namespace vh::auth::session {
 
 struct TokenClaims {
-    std::string jti;
-    std::string subject;
-    std::chrono::system_clock::time_point expiresAt;
+    std::string jti, subject;
+    std::chrono::system_clock::time_point issuedAt, expiresAt;
 };
 
 struct Issuer {

@@ -18,8 +18,7 @@ namespace session { class Manager; }
 class Manager {
 public:
     void registerUser(std::shared_ptr<identities::model::User> user,
-                                         const std::string& password,
-                                         const std::shared_ptr<protocols::ws::Session>& session);
+                                         const std::string& password);
 
     void loginUser(const std::string& name, const std::string& password,
                                       const std::shared_ptr<protocols::ws::Session>& session);

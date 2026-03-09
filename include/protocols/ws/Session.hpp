@@ -48,11 +48,13 @@ public:
     ~Session();
 
     void accept(tcp::socket&& socket);
-    void send(const json& message);
+    void send(json message);
     void close();
 
     void setAuthenticatedUser(const std::shared_ptr<identities::model::User>& user);
     void setHandshakeRequest(const RequestType& req);
+
+    void sendAccessTokenOnNextResponse() { sendAccessToken_ = true; }
 
     std::shared_ptr<handler::Upload> getUploadHandler() const { return uploadHandler_; }
 
@@ -95,6 +97,8 @@ private:
 
     bool writing_ = false;                 // only touched on strand
     std::deque<std::string> writeQueue_;   // only touched on strand
+
+    bool sendAccessToken_{false};
 };
 
 }

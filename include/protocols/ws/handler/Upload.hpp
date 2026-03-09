@@ -31,7 +31,7 @@ struct UploadContext : UploadArgs {
 
 class Upload {
 public:
-    Upload(const std::shared_ptr<Session>& session);
+    explicit Upload(const std::shared_ptr<Session>& session);
 
     void startUpload(const UploadArgs& args);
 
@@ -39,13 +39,11 @@ public:
 
     void finishUpload();
 
-    bool uploadInProgress() const { return currentUpload_.has_value(); }
+    [[nodiscard]] bool uploadInProgress() const { return currentUpload_.has_value(); }
 
 private:
     const std::shared_ptr<Session>& session_;
     std::optional<UploadContext> currentUpload_;
-
-    void fail(const std::string& command, const std::string& error) const;
 };
 
-} // namespace vh::websocket
+}

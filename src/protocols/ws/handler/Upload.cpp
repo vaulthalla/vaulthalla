@@ -3,6 +3,7 @@
 #include "identities/model/User.hpp"
 #include "log/Registry.hpp"
 #include "fs/Filesystem.hpp"
+#include "protocols/ws/model/Response.hpp"
 
 #include <filesystem>
 
@@ -60,13 +61,4 @@ void Upload::finishUpload() {
     Filesystem::rename(upload.fuseFrom, upload.fuseTo, session_->user->id, upload.engine);
 
     currentUpload_.reset();
-}
-
-void Upload::fail(const std::string& command, const std::string& error) const {
-    session_->send({
-        {"command", command},
-        {"status", "error"},
-        {"error", error}
-    });
-    log::Registry::ws()->error("[UploadHandler] {} failed: {}", command, error);
 }

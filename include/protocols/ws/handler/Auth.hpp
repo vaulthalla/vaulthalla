@@ -19,6 +19,7 @@ struct Auth {
     static json getUser(const json& payload, const std::shared_ptr<Session>& session);
     static json getUserByName(const json& payload, const std::shared_ptr<Session>& session);
 
+    static json refreshToken(const std::string& token, const std::shared_ptr<Session>& session);
     static json isUserAuthenticated(const std::string& token, const std::shared_ptr<Session>& session);
 
     static json listUsers(const std::shared_ptr<Session>& session);

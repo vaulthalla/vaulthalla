@@ -21,8 +21,8 @@ struct Token {
     std::string jti{};
     std::string subject{};
     uint32_t userId{};
-    std::time_t issuedAt = 0;
-    std::time_t expiresAt = 0;
+    std::chrono::system_clock::time_point issuedAt = std::chrono::system_clock::now();
+    std::chrono::system_clock::time_point expiresAt = std::chrono::system_clock::now();
     bool revoked{false};
 
     virtual ~Token() = default;

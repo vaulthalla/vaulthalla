@@ -38,7 +38,7 @@ Session::Session(const std::shared_ptr<Router>& router)
 
 Session::~Session() {
     close();
-    log::Registry::ws()->debug("[WebSocketSession] Session destroyed for IP: {}", getIPAddress());
+    log::Registry::ws()->debug("[ws::Session] Session destroyed for IP: {}", getIPAddress());
 }
 
 std::string Session::getIPAddress() const {
@@ -66,7 +66,7 @@ void Session::setHandshakeRequest(const RequestType& req) { handshakeRequest_ = 
 
 void Session::logFail(std::string_view where, const beast::error_code& ec) {
     if (!ec) return;
-    log::Registry::ws()->debug("[WebSocketSession] {}: {}", where, ec.message());
+    log::Registry::ws()->debug("[ws::Session] {}: {}", where, ec.message());
 }
 
 void Session::accept(tcp::socket&& socket) {
@@ -105,26 +105,36 @@ void Session::onHeadersRead(const std::shared_ptr<RequestType>& req, const beast
 }
 
 void Session::hydrateFromRequest(const RequestType& req) {
-    log::Registry::ws()->debug("[Session] Handshake request received from IP: {}", getIPAddress());
+    log::Registry::ws()->debug("[ws::Session] Handshake request received from IP: {}", getIPAddress());
 
     handshakeRequest_ = req;
     ipAddress = getIPAddress();
     userAgent = getUserAgent();
 
-    log::Registry::ws()->debug("[Session] Attempting to hydrate session from request. IP: {}, User-Agent: {}", ipAddress, userAgent);
+    log::Registry::ws()->debug("[ws::Session] Attempting to hydrate session from request. IP: {}, User-Agent: {}", ipAddress, userAgent);
     auth::model::RefreshToken::addToSession(shared_from_this(), extractCookie(req, "refresh"));
 
-    log::Registry::ws()->debug("[Session] Extracted refresh token from cookies: {}", tokens->refreshToken ? tokens->refreshToken->rawToken : "none");
+    log::Registry::ws()->debug("[ws::Session] Extracted refresh token from cookies: {}", tokens->refreshToken ? tokens->refreshToken->rawToken : "none");
     runtime::Deps::get().sessionManager->tryRehydrate(shared_from_this());
 
-    log::Registry::ws()->debug("[Session] Session hydrated with user: {} (ID: {})", user ? user->name : "none", user ? user->id : 0);
+    if (user) log::Registry::ws()->debug("[ws::Session] Session hydrated with user: {} (ID: {})", user->name, user->id);
+    else {
+        log::Registry::ws()->debug("[ws::Session] No user associated with session after hydration");
+        if (!tokens->refreshToken->isValid()) exit(1); // this should never happen, but if it does, it's safest to just kill the session immediately
+        installHandshakeDecorator();
+    }
 }
 
 void Session::installHandshakeDecorator() const {
+    if (!tokens || !tokens->refreshToken) {
+        log::Registry::ws()->debug("[ws::Session] No refresh token available, skipping handshake decorator installation");
+        return;
+    }
+
     const auto t = tokens->refreshToken->rawToken;
     ws_->set_option(websocket::stream_base::timeout::suggested(beast::role_type::server));
     ws_->set_option(websocket::stream_base::decorator(
-        [&t](websocket::response_type& res) {
+        [t](websocket::response_type& res) {
             res.set(http::field::server, "Vaulthalla");
 
             const bool isDev = config::Registry::get().dev.enabled;
@@ -147,7 +157,7 @@ void Session::installHandshakeDecorator() const {
 void Session::onHandshakeAccepted(const beast::error_code& ec) {
     if (ec) return logFail("Handshake error", ec);
 
-    log::Registry::ws()->debug("[Session] Handshake accepted from IP: {}", getIPAddress());
+    log::Registry::ws()->debug("[ws::Session] Handshake accepted from IP: {}", getIPAddress());
     startReadLoop();
 }
 
@@ -171,16 +181,26 @@ void Session::close() {
             ws->close(websocket::close_code::normal, ec);
 
         if (ec)
-            log::Registry::ws()->debug("[WebSocketSession] ws close error: {}", ec.message());
+            log::Registry::ws()->debug("[ws::Session] ws close error: {}", ec.message());
 
         self->ws_.reset();
         self->buffer_.consume(self->buffer_.size());
 
-        log::Registry::ws()->debug("[WebSocketSession] Closed session for IP: {}", self->getIPAddress());
+        log::Registry::ws()->debug("[ws::Session] Closed session for IP: {}", self->ipAddress);
     });
 }
 
-void Session::send(const json& message) {
+void Session::send(json message) {
+    if (sendAccessToken_) {
+        if (!tokens || !tokens->accessToken) {
+            log::Registry::ws()->debug("[ws::Session] Attempted to send access token, but no access token is available in session");
+            throw std::runtime_error("No access token available in session");
+        }
+
+        message["token"] = tokens->accessToken->rawToken;
+        sendAccessToken_ = false;
+    }
+
     auto payload = message.dump();
     auto self = shared_from_this();
 
@@ -258,11 +278,11 @@ void Session::sendInternalError() {
 
 void Session::onRead(const beast::error_code& ec, std::size_t) {
     if (ec == websocket::error::closed) {
-        log::Registry::ws()->debug("[Session] WebSocket closed gracefully by peer");
+        log::Registry::ws()->debug("[ws::Session] WebSocket closed gracefully by peer");
         return close();
     }
     if (ec == asio::error::eof) {
-        log::Registry::ws()->debug("[Session] WebSocket peer vanished (EOF)");
+        log::Registry::ws()->debug("[ws::Session] WebSocket peer vanished (EOF)");
         return close();
     }
     if (ec) {
@@ -276,11 +296,11 @@ void Session::onRead(const beast::error_code& ec, std::size_t) {
             const auto text = beast::buffers_to_string(buffer_.data());
             router_->routeMessage(json::parse(text), shared_from_this());
         } catch (const std::exception& ex) {
-            log::Registry::ws()->debug("[Session] Error parsing message: {}", ex.what());
+            log::Registry::ws()->debug("[ws::Session] Error parsing message: {}", ex.what());
             sendParseError(std::string("Failed to parse message: ") + ex.what());
             // NOTE: we still continue reading (keeps session alive after a bad frame)
         } catch (...) {
-            log::Registry::ws()->debug("[Session] Unknown error while processing message");
+            log::Registry::ws()->debug("[ws::Session] Unknown error while processing message");
             sendInternalError();
         }
     }

@@ -25,20 +25,16 @@ using namespace vh::protocols::ws;
 
 namespace vh::auth {
 
-void Manager::registerUser(std::shared_ptr<User> user, const std::string& password, const std::shared_ptr<Session>& session) {
+void Manager::registerUser(std::shared_ptr<User> user, const std::string& password) {
+    if (!user) throw std::runtime_error("Failed to create user: " + user->name);
+
     registration::Validator::validateRegistration(user, password);
 
     user->setPasswordHash(hash::password(password));
     db::query::identities::User::createUser(user);
 
     user = findUser(user->name);
-
-    session->setAuthenticatedUser(user);
-    session::Issuer::accessToken(session);
-    runtime::Deps::get().sessionManager->promote(session);
     runtime::Deps::get().storageManager->initUserStorage(user);
-
-    if (!user) throw std::runtime_error("Failed to create user: " + user->name);
 
     log::Registry::auth()->info("[AuthManager] User registered: {}", user->name);
 }
@@ -54,7 +50,6 @@ void Manager::loginUser(const std::string& name, const std::string& password, co
     user = db::query::identities::User::getUserById(user->id);
 
     session->setAuthenticatedUser(user);
-    session::Issuer::accessToken(session);
     runtime::Deps::get().sessionManager->promote(session);
 
     log::Registry::auth()->info("[AuthManager] User logged in: {}", user->name);

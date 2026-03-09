@@ -21,7 +21,6 @@ struct Validator {
     static bool hasUsableRefreshToken(const std::shared_ptr<protocols::ws::Session>& session);
 
     static void checkForDangerousDiversion(const std::shared_ptr<model::RefreshToken>& incomingToken, const std::shared_ptr<model::RefreshToken>& storedToken);
-    static void handlePriorSession(const std::shared_ptr<protocols::ws::Session>& session, const std::shared_ptr<protocols::ws::Session>& priorSession);
     static void validateClaims(const std::shared_ptr<model::Token>& t, const std::optional<TokenClaims>& claims);
     static bool hasUsableRefreshContext(const std::shared_ptr<protocols::ws::Session>& session);
 };

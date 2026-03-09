@@ -44,9 +44,9 @@ void Router::routeMessage(json&& msg, const SessionPtr& session) {
         log::Registry::ws()->debug("[Router] Routing message: {}", msg.dump());
 
         auto command = msg.at("command").get<std::string>();
+        const std::string accessToken = msg.value("token", "");
 
-        if (const std::string accessToken = msg.value("token", "");
-            !command.starts_with("auth") && !runtime::Deps::get().sessionManager->validate(session, accessToken)) {
+        if (!command.starts_with("auth") && !runtime::Deps::get().sessionManager->validate(session, accessToken)) {
             log::Registry::ws()->warn("[Router] Unauthorized access attempt for command: {}", command);
             Response::UNAUTHORIZED(std::move(command), std::move(msg))(session);
             return;

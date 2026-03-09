@@ -2,7 +2,6 @@
 
 #include "auth/model/Token.hpp"
 
-#include <ctime>
 #include <string>
 
 namespace pqxx { class row; }
@@ -13,7 +12,7 @@ namespace vh::auth::model {
 
 struct RefreshToken final : Token {
     std::string hashedToken, userAgent, ipAddress;
-    std::time_t lastUsed = 0;
+    std::chrono::system_clock::time_point lastUsed = std::chrono::system_clock::now();
 
     ~RefreshToken() override = default;
     RefreshToken() = default;

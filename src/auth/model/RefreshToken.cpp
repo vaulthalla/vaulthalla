@@ -3,6 +3,7 @@
 #include "db/encoding/timestamp.hpp"
 #include "protocols/ws/Session.hpp"
 #include "auth/model/TokenPair.hpp"
+#include "log/Registry.hpp"
 
 #include <pqxx/row>
 #include <utility>
@@ -16,15 +17,28 @@ RefreshToken::RefreshToken(const pqxx::row& row)
       hashedToken(row["token_hash"].as<std::string>()),
       userAgent(row["user_agent"].as<std::string>()),
       ipAddress(row["ip_address"].as<std::string>()),
-      lastUsed(parsePostgresTimestamp(row["last_used"].as<std::string>())) {
-    rawToken = !row["token"].is_null() ? row["token"].as<std::string>() : "";
-    expiresAt = parsePostgresTimestamp(row["expires_at"].as<std::string>());
-    revoked = row["revoked"].as<bool>();
-}
+      lastUsed(std::chrono::system_clock::from_time_t(parsePostgresTimestamp(row["last_used"].as<std::string>()))) {}
 
 RefreshToken::RefreshToken(std::string rawToken) : Token(std::move(rawToken)) {}
 
-bool RefreshToken::isValid() const { return !hashedToken.empty() && !revoked && !isExpired(); }
+bool RefreshToken::isValid() const {
+    if (hashedToken.empty()) {
+        log::Registry::auth()->debug("[RefreshToken] No hashed token, invalid");
+        return false;
+    }
+
+    if (revoked) {
+        log::Registry::auth()->debug("[RefreshToken] Token is revoked");
+        return false;
+    }
+
+    if (isExpired()) {
+        log::Registry::auth()->debug("[RefreshToken] Token is expired");
+        return false;
+    }
+
+    return true;
+}
 
 bool RefreshToken::dangerousDivergence(const std::shared_ptr<RefreshToken>& other) const {
     if (!other) return false; // No divergence if the other token doesn't exist
@@ -47,11 +61,9 @@ void RefreshToken::addToSession(const std::shared_ptr<protocols::ws::Session>& s
 }
 
 bool operator==(const std::shared_ptr<RefreshToken>& lhs, const std::shared_ptr<RefreshToken>& rhs) {
-    return lhs->userId == rhs->userId && lhs->expiresAt == rhs->expiresAt &&
-           lhs->revoked == rhs->revoked && lhs->jti == rhs->jti && lhs->hashedToken == rhs->hashedToken &&
+    return lhs->revoked == rhs->revoked && lhs->jti == rhs->jti && lhs->hashedToken == rhs->hashedToken &&
            lhs->userAgent == rhs->userAgent && lhs->ipAddress == rhs->ipAddress &&
-           lhs->issuedAt == rhs->issuedAt && lhs->expiresAt == rhs->expiresAt &&
-           lhs->lastUsed == rhs->lastUsed && lhs->revoked == rhs->revoked;
+           lhs->issuedAt == rhs->issuedAt && lhs->expiresAt == rhs->expiresAt;
 }
 
 }

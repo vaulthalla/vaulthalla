@@ -5,9 +5,16 @@
 #include "db/encoding/timestamp.hpp"
 #include "log/Registry.hpp"
 
+#include <chrono>
+
 using namespace vh::db::query::auth;
 
 void RefreshToken::set(const std::shared_ptr<vh::auth::model::RefreshToken>& token) {
+    if (!token) {
+        log::Registry::db()->error("[RefreshToken] Attempted to set a null refresh token");
+        return;
+    }
+
     Transactions::exec("RefreshToken::setRefreshToken", [&](pqxx::work& txn) {
         const pqxx::params p{
             token->jti,
@@ -15,8 +22,8 @@ void RefreshToken::set(const std::shared_ptr<vh::auth::model::RefreshToken>& tok
             token->hashedToken,
             token->ipAddress,
             token->userAgent,
-            encoding::timestampToString(token->issuedAt),
-            encoding::timestampToString(token->expiresAt)
+            encoding::timestampToString(std::chrono::system_clock::to_time_t(token->issuedAt)),
+            encoding::timestampToString(std::chrono::system_clock::to_time_t(token->expiresAt)),
         };
 
         txn.exec(pqxx::prepped{"insert_refresh_token"}, p);

@@ -19,6 +19,7 @@ public:
 
     void promote(const std::shared_ptr<protocols::ws::Session>& session);
     void cache(const std::shared_ptr<protocols::ws::Session>& session);
+    void renewAccessToken(const std::shared_ptr<protocols::ws::Session>& session, const std::string& existingToken);
 
     bool validate(const std::shared_ptr<protocols::ws::Session>& session, const std::string& accessToken);
     std::shared_ptr<protocols::ws::Session> validateRawRefreshToken(const std::string& refreshToken);

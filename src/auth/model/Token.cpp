@@ -1,6 +1,7 @@
 #include "auth/model/Token.hpp"
 #include "db/encoding/timestamp.hpp"
 #include "auth/session/Issuer.hpp"
+#include "log/Registry.hpp"
 
 #include <pqxx/row>
 
@@ -9,20 +10,31 @@ using namespace vh::db::encoding;
 using namespace std::chrono;
 
 Token::Token(const pqxx::row& row)
-    : rawToken(row["raw_token"].c_str()),
-      jti(row["jti"].as<std::string>()),
+    : jti(row["jti"].as<std::string>()),
       userId(row["user_id"].as<unsigned short>()),
-      issuedAt(parsePostgresTimestamp(row["issued_at"].as<std::string>())),
-      expiresAt(parsePostgresTimestamp(row["expires_at"].as<std::string>())),
+      issuedAt(system_clock::from_time_t(parsePostgresTimestamp(row["issued_at"].as<std::string>()))),
+      expiresAt(system_clock::from_time_t(parsePostgresTimestamp(row["expires_at"].as<std::string>()))),
       revoked(row["revoked"].as<bool>()) {}
 
 Token::Token(std::string rawToken) : rawToken(std::move(rawToken)) {}
 
-bool Token::isExpired() const { return system_clock::to_time_t(system_clock::now()) > expiresAt; }
-bool Token::isValid() const { return !revoked && !isExpired(); }
+bool Token::isExpired() const { return system_clock::now() > expiresAt; }
+bool Token::isValid() const {
+    if (revoked) {
+        log::Registry::auth()->debug("[Token] Token is revoked");
+        return false;
+    }
+
+    if (isExpired()) {
+        log::Registry::auth()->debug("[Token] Token is expired");
+        return false;
+    }
+
+    return true;
+}
 
 seconds Token::timeRemaining() const {
-    return duration_cast<seconds>(system_clock::from_time_t(expiresAt) - system_clock::now());
+    return duration_cast<seconds>(expiresAt - system_clock::now());
 }
 
 bool vh::auth::model::operator==(const std::shared_ptr<Token>& lhs, const std::shared_ptr<Token>& rhs) {
