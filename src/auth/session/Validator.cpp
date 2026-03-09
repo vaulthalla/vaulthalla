@@ -15,64 +15,6 @@ using namespace vh::auth::model;
 
 namespace vh::auth::session {
 
-void Validator::validateRefreshToken(const std::shared_ptr<Session>& session) {
-    log::Registry::auth()->debug("[session::Validator] Validating refresh token for session");
-
-    if (!hasUsableRefreshContext(session)) {
-        log::Registry::ws()->debug("[session::Validator] No valid refresh token context found for session");
-        throw std::runtime_error("No valid refresh token context found for session");
-    }
-
-    const auto rawToken = session->tokens->refreshToken->rawToken;
-    const auto claims = Issuer::decode(rawToken);
-
-    if (!claims)
-        throw std::runtime_error("Invalid refresh token: unable to decode claims");
-
-    const auto storedToken = db::query::auth::RefreshToken::get(claims->jti);
-    if (!storedToken)
-        throw std::runtime_error("No stored refresh token found for JTI");
-
-    validateClaims(storedToken, claims);
-
-    if (claims->subject != Issuer::buildRefreshTokenSubject(session)) {
-        log::Registry::ws()->debug(
-            "[session::Validator] Refresh token subject mismatch: expected {}, got {}",
-            Issuer::buildRefreshTokenSubject(session),
-            claims->subject
-        );
-        throw std::runtime_error("Refresh token subject mismatch");
-    }
-
-    checkForDangerousDiversion(session->tokens->refreshToken, storedToken);
-
-    if (!crypto::hash::verifyPassword(rawToken, storedToken->hashedToken))
-        throw std::runtime_error("Refresh token hash mismatch");
-
-    if (const auto user = db::query::auth::RefreshToken::getUserByJti(claims->jti)) {
-        if (storedToken->userId != user->id) {
-            runtime::Deps::get().sessionManager->invalidate(session);
-            log::Registry::auth()->debug(
-                "[session::Validator] User ID mismatch for JTI: {}, token user ID: {}, expected user ID: {}",
-                claims->jti, storedToken->userId, user->id
-            );
-            throw std::runtime_error("User ID mismatch for refresh token");
-        }
-
-        session->user = user;
-    } else {
-        runtime::Deps::get().sessionManager->invalidate(session);
-        log::Registry::auth()->debug(
-            "[session::Validator] No user found for JTI: {}, token user ID: {}",
-            claims->jti, storedToken->userId
-        );
-        throw std::runtime_error("No user found for refresh token");
-    }
-
-    storedToken->rawToken = rawToken;
-    session->tokens->refreshToken = storedToken;
-}
-
 bool Validator::validateAccessToken(const std::shared_ptr<Session>& session, const std::string& accessToken) {
     log::Registry::auth()->debug("[session::Validator] Validating access token for session");
 
@@ -100,6 +42,120 @@ bool Validator::validateAccessToken(const std::shared_ptr<Session>& session, con
         log::Registry::ws()->debug("[session::Validator] Token validation failed: {}", e.what());
         return false;
     }
+}
+
+void Validator::validateRefreshToken(const std::shared_ptr<Session>& session) {
+    log::Registry::auth()->debug("[session::Validator] Validating refresh token for session");
+
+    if (!hasUsableRefreshContext(session)) {
+        log::Registry::ws()->debug("[session::Validator] No valid refresh token context found for session");
+        throw std::runtime_error("No valid refresh token context found for session");
+    }
+
+    const auto rawToken = session->tokens->refreshToken->rawToken;
+    const auto claims = Issuer::decode(rawToken);
+
+    if (!claims) throw std::runtime_error("Invalid refresh token: unable to decode claims");
+
+    validateRefreshClaims(session, claims);
+
+    if (tryRehydrateFromPriorSession(session, rawToken, claims)) return;
+
+    rehydrateFromStoredRefreshToken(session, rawToken, claims);
+}
+
+bool Validator::tryRehydrateFromPriorSession(const std::shared_ptr<Session>& session, const std::string& rawToken, const std::optional<TokenClaims>& claims) {
+    if (!claims) return false;
+
+    const auto priorSession = runtime::Deps::get().sessionManager->get(claims->jti);
+    if (!priorSession || priorSession.get() == session.get()) return false;
+    if (!priorSession->tokens || !priorSession->tokens->refreshToken || !priorSession->user) return false;
+
+    const auto& priorToken = priorSession->tokens->refreshToken;
+
+    if (priorToken->rawToken != rawToken) return false;
+
+    try {
+        validateClaims(priorToken, claims);
+
+        if (claims->subject != Issuer::buildRefreshTokenSubject(session)) {
+            log::Registry::ws()->debug(
+                "[session::Validator] Refresh token subject mismatch: expected {}, got {}",
+                Issuer::buildRefreshTokenSubject(session),
+                claims->subject
+            );
+            return false;
+        }
+
+        session->user = priorSession->user;
+        session->tokens->refreshToken = std::make_shared<auth::model::RefreshToken>(*priorToken);
+        session->tokens->refreshToken->rawToken = rawToken;
+
+        log::Registry::auth()->debug(
+            "[session::Validator] Rehydrated refresh token from prior session for JTI: {}",
+            claims->jti
+        );
+
+        return true;
+    } catch (const std::exception& ex) {
+        log::Registry::ws()->debug(
+            "[session::Validator] Prior session refresh rehydration failed for JTI {}: {}",
+            claims->jti,
+            ex.what()
+        );
+        return false;
+    }
+}
+
+void Validator::rehydrateFromStoredRefreshToken(const std::shared_ptr<Session>& session, const std::string& rawToken, const std::optional<TokenClaims>& claims) {
+    if (!claims)
+        throw std::runtime_error("Invalid refresh token: unable to decode claims");
+
+    const auto storedToken = db::query::auth::RefreshToken::get(claims->jti);
+    if (!storedToken)
+        throw std::runtime_error("No stored refresh token found for JTI");
+
+    validateClaims(storedToken, claims);
+
+    if (claims->subject != Issuer::buildRefreshTokenSubject(session)) {
+        log::Registry::ws()->debug(
+            "[session::Validator] Refresh token subject mismatch: expected {}, got {}",
+            Issuer::buildRefreshTokenSubject(session),
+            claims->subject
+        );
+        throw std::runtime_error("Refresh token subject mismatch");
+    }
+
+    checkForDangerousDiversion(session->tokens->refreshToken, storedToken);
+
+    if (!crypto::hash::verifyPassword(rawToken, storedToken->hashedToken))
+        throw std::runtime_error("Refresh token hash mismatch");
+
+    const auto user = db::query::auth::RefreshToken::getUserByJti(claims->jti);
+    if (!user) {
+        runtime::Deps::get().sessionManager->invalidate(session);
+        log::Registry::auth()->debug(
+            "[session::Validator] No user found for JTI: {}, token user ID: {}",
+            claims->jti,
+            storedToken->userId
+        );
+        throw std::runtime_error("No user found for refresh token");
+    }
+
+    if (storedToken->userId != user->id) {
+        runtime::Deps::get().sessionManager->invalidate(session);
+        log::Registry::auth()->debug(
+            "[session::Validator] User ID mismatch for JTI: {}, token user ID: {}, expected user ID: {}",
+            claims->jti,
+            storedToken->userId,
+            user->id
+        );
+        throw std::runtime_error("User ID mismatch for refresh token");
+    }
+
+    storedToken->rawToken = rawToken;
+    session->user = user;
+    session->tokens->refreshToken = storedToken;
 }
 
 bool Validator::softValidateActiveSession(const std::shared_ptr<Session>& session) {
@@ -238,6 +294,29 @@ void Validator::validateClaims(const std::shared_ptr<Token>& t, const std::optio
 
     if (claims->subject.empty())
         throw std::runtime_error("Missing subject in refresh token");
+}
+
+void Validator::validateRefreshClaims(const std::shared_ptr<Session>& session, const std::optional<TokenClaims>& claims) {
+    if (!claims)
+        throw std::runtime_error("Invalid refresh token: unable to decode claims");
+
+    if (claims->expiresAt < std::chrono::system_clock::now())
+        throw std::runtime_error("Refresh token has expired");
+
+    if (claims->jti.empty())
+        throw std::runtime_error("Missing JTI in refresh token");
+
+    if (claims->subject.empty())
+        throw std::runtime_error("Missing subject in refresh token");
+
+    if (claims->subject != Issuer::buildRefreshTokenSubject(session)) {
+        log::Registry::ws()->debug(
+            "[session::Validator] Refresh token subject mismatch: expected {}, got {}",
+            Issuer::buildRefreshTokenSubject(session),
+            claims->subject
+        );
+        throw std::runtime_error("Refresh token subject mismatch");
+    }
 }
 
 }
