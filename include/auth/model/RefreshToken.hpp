@@ -2,8 +2,6 @@
 
 #include "auth/model/Token.hpp"
 
-#include <string>
-
 namespace pqxx { class row; }
 
 namespace vh::protocols::ws { class Session; }
