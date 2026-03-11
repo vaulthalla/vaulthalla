@@ -12,6 +12,9 @@ enum class AuditPermissions : uint8_t {
 };
 
 struct Audits : Set<AuditPermissions, uint8_t> {
+    Audits() = default;
+    explicit Audits(const Mask& mask) : Set(mask) {}
+
     [[nodiscard]] bool canView() const noexcept { return has(AuditPermissions::View); }
 };
 

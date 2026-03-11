@@ -37,6 +37,10 @@ struct Settings final : Module<uint64_t> {
     settings::Sharing sharing;
     settings::Services services;
 
+    ~Settings() override = default;
+    Settings() = default;
+    explicit Settings(const Mask& mask) { fromMask(mask); }
+
     const char* name() const override { return ModuleName; }
 
     [[nodiscard]] uint64_t toMask() const override {

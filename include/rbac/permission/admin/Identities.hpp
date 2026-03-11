@@ -61,6 +61,8 @@ struct Identities final : Module<uint64_t> {
     Groups groups;
 
     ~Identities() override = default;
+    Identities() = default;
+    explicit Identities(const Mask& mask) { fromMask(mask); }
 
     [[nodiscard]] const char* name() const override { return ModuleName; }
     [[nodiscard]] uint64_t toMask() const override { return pack(users, admins, groups); }
