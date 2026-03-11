@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS vault_permission_overrides
     id            SERIAL PRIMARY KEY,
     assignment_id INTEGER NOT NULL REFERENCES vault_role_assignments (id) ON DELETE CASCADE,
     permission_id INTEGER NOT NULL REFERENCES permission (id) ON DELETE CASCADE,
+    permission_module  VARCHAR(12) NOT NULL CHECK (module IN ('filesystem', 'sync', 'roles', 'keys')),
     pattern       TEXT        NOT NULL,
     enabled       BOOLEAN     DEFAULT TRUE,
     effect        VARCHAR(10) NOT NULL CHECK (effect IN ('allow', 'deny')),

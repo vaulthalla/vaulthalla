@@ -19,7 +19,7 @@ std::string to_string(const OverrideOpt& opt);
 OverrideOpt overrideOptFromString(const std::string& str);
 
 struct Override {
-    enum class Level { File, Directory, Sync, Role, Key };
+    enum class PermissionModule { Filesystem, Sync, Role, Key };
     unsigned int id{0};
     Permission permission;
     OverrideOpt effect{OverrideOpt::ALLOW};
@@ -41,5 +41,8 @@ void to_json(nlohmann::json& j, const std::vector<std::shared_ptr<Override>>& ov
 
 std::string to_string(const std::shared_ptr<Override>& override);
 std::string to_string(const std::vector<std::shared_ptr<Override>>& overrides);
+
+std::string to_string(const Override::PermissionModule& module);
+Override::PermissionModule permission_module_from_string(const std::string& str);
 
 }

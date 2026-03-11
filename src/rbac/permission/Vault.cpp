@@ -1,7 +1,7 @@
 #include "rbac/permission/Vault.hpp"
 
 #include <nlohmann/json.hpp>
-#include <pqxx/row>
+#include <pqxx/result>
 
 namespace vh::rbac::permission {
 
@@ -10,6 +10,5 @@ Vault::Vault(const pqxx::row& row)
       roles(row["roles_permissions"].as<typename decltype(roles)::Mask>()),
       sync(row["sync_permissions"].as<typename decltype(sync)::Mask>()),
       filesystem(row) {}
-
 
 }
