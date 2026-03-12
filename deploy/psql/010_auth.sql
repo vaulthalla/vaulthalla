@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS users
     created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     last_login       TIMESTAMP,
     last_modified_by INTEGER REFERENCES users (id) ON DELETE SET NULL,
-    updated_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     is_active        BOOLEAN DEFAULT TRUE
 );
 
@@ -52,6 +52,33 @@ CREATE TABLE IF NOT EXISTS internal_secrets
     key        VARCHAR(50) PRIMARY KEY,
     value      BYTEA NOT NULL,
     iv         BYTEA NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+DO $$ BEGIN
+CREATE TRIGGER set_users_updated_at
+    BEFORE UPDATE ON users
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at();
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+CREATE TRIGGER set_groups_updated_at
+    BEFORE UPDATE ON groups
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at();
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+CREATE TRIGGER set_internal_secrets_updated_at
+    BEFORE UPDATE ON internal_secrets
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at();
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;

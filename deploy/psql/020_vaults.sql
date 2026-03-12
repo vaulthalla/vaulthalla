@@ -81,3 +81,32 @@ CREATE TABLE IF NOT EXISTS usage_log
     measured_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     total_bytes BIGINT NOT NULL
     );
+
+-- Triggers
+
+DO $$ BEGIN
+CREATE TRIGGER set_vault_updated_at
+    BEFORE UPDATE ON vault
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at();
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+CREATE TRIGGER set_vault_keys_updated_at
+    BEFORE UPDATE ON vault_keys
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at();
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+CREATE TRIGGER set_vault_usage_updated_at
+    BEFORE UPDATE ON vault_usage
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at();
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;

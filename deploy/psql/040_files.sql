@@ -12,8 +12,8 @@ CREATE TABLE IF NOT EXISTS fs_entry
     base32_alias     CHAR(33) UNIQUE,
     inode            BIGINT UNIQUE,
     created_by       INTEGER REFERENCES users (id),
-    created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_modified_by INTEGER REFERENCES users (id),
     path             TEXT NOT NULL,
     mode             INTEGER DEFAULT 0755,
@@ -30,8 +30,7 @@ CREATE TABLE IF NOT EXISTS directories
     fs_entry_id        INTEGER PRIMARY KEY REFERENCES fs_entry (id) ON DELETE CASCADE,
     file_count         INTEGER DEFAULT 0,
     subdirectory_count INTEGER DEFAULT 0,
-    size_bytes         BIGINT DEFAULT 0,
-    last_modified      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    size_bytes         BIGINT DEFAULT 0
     );
 
 -- File metadata
@@ -271,3 +270,13 @@ CREATE INDEX IF NOT EXISTS idx_file_xattrs_key
 
 CREATE INDEX IF NOT EXISTS idx_file_metadata_key
     ON file_metadata (key);
+
+
+DO $$ BEGIN
+CREATE TRIGGER set_fs_entry_updated_at
+    BEFORE UPDATE ON fs_entry
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at();
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;

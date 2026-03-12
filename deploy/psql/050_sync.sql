@@ -209,19 +209,11 @@ CREATE INDEX IF NOT EXISTS idx_sync_event_timestamp_begin_desc ON sync_event (ti
 -- Triggers
 -- ##################################
 
-CREATE OR REPLACE FUNCTION update_timestamp()
-RETURNS TRIGGER AS $$
-BEGIN
-    NEW.updated_at = CURRENT_TIMESTAMP;
-RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
 DO $$ BEGIN
-CREATE TRIGGER update_sync_timestamp
+CREATE TRIGGER set_updated_at
     BEFORE UPDATE ON sync
     FOR EACH ROW
-    EXECUTE FUNCTION update_timestamp();
+    EXECUTE FUNCTION set_updated_at();
 EXCEPTION
     WHEN duplicate_object THEN NULL;
 END $$;

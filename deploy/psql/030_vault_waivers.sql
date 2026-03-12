@@ -39,10 +39,10 @@ CREATE TABLE IF NOT EXISTS waiver_owner_overrides
     owner_name                VARCHAR(100) NOT NULL,
     owner_email               VARCHAR(255) DEFAULT NULL,
 
-    overriding_role_id          INTEGER REFERENCES role (id) ON DELETE SET NULL,
-    overriding_role_name        VARCHAR(100) NOT NULL,
+    overriding_role_id          INTEGER NOT NULL,
+    overriding_role_name        VARCHAR(50) NOT NULL,
     overriding_role_scope       VARCHAR(12) NOT NULL CHECK (overriding_role_scope IN ('user', 'vault')),
-    overriding_role_permissions BIT(16) NOT NULL,
+    overriding_role_sync_permissions BIT(32) NOT NULL,
     snapshot_at                 TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
     UNIQUE (waiver_id)
@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS waiver_permission_snapshots
     waiver_id                INTEGER REFERENCES cloud_encryption_waivers (id) ON DELETE CASCADE,
     snapshot_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
-    permission_id            INTEGER REFERENCES permission (id) ON DELETE SET NULL,
+    permission_id            INTEGER NOT NULL,
     permission_name          VARCHAR(50) NOT NULL,
     permission_category      VARCHAR(12) NOT NULL CHECK (permission_category IN ('user', 'vault')),
     permission_bit_position  INTEGER NOT NULL CHECK (permission_bit_position >= 0 AND permission_bit_position < 64),
