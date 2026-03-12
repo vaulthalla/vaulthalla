@@ -1,67 +1,218 @@
 #include "db/DBConnection.hpp"
 
 void vh::db::DBConnection::initPreparedVaultRoles() const {
-    conn_->prepare("remove_vault_role_assignment", "DELETE FROM vault_role_assignments WHERE id = $1");
+    conn_->prepare(
+        "vault_role_upsert",
+        R"SQL(
+            INSERT INTO vault_role (
+                id,
+                name,
+                description,
+                files_permissions,
+                directories_permissions,
+                sync_permissions,
+                roles_permissions,
+                keys_permissions
+            )
+            VALUES (
+                $1,
+                $2,
+                $3,
+                $4::bit(64),
+                $5::bit(64),
+                $6::bit(32),
+                $7::bit(16),
+                $8::bit(16)
+            )
+            ON CONFLICT (id) DO UPDATE SET
+                name                    = EXCLUDED.name,
+                description             = EXCLUDED.description,
+                files_permissions       = EXCLUDED.files_permissions,
+                directories_permissions = EXCLUDED.directories_permissions,
+                sync_permissions        = EXCLUDED.sync_permissions,
+                roles_permissions       = EXCLUDED.roles_permissions,
+                keys_permissions        = EXCLUDED.keys_permissions
+        )SQL"
+    );
 
-    conn_->prepare("get_vault_assigned_role",
-                   "SELECT vra.id as assignment_id, vra.subject_type, vra.subject_id, vra.role_id, vra.assigned_at, "
-                   "r.name, r.description, r.type, p.permissions::int AS permissions, r.created_at, vra.vault_id "
-                   "FROM role r "
-                   "JOIN vault_role_assignments vra ON r.id = vra.role_id "
-                   "JOIN permissions p ON r.id = p.role_id "
-                   "WHERE vra.id = $1");
+    // DELETE THIS IF NOT USED
+    conn_->prepare(
+    "vault_role_upsert_by_name",
+    R"SQL(
+        INSERT INTO vault_role (
+            name,
+            description,
+            files_permissions,
+            directories_permissions,
+            sync_permissions,
+            roles_permissions,
+            keys_permissions
+        )
+        VALUES (
+            $1,
+            $2,
+            $3::bit(64),
+            $4::bit(64),
+            $5::bit(32),
+            $6::bit(16),
+            $7::bit(16)
+        )
+        ON CONFLICT (name) DO UPDATE SET
+            description             = EXCLUDED.description,
+            files_permissions       = EXCLUDED.files_permissions,
+            directories_permissions = EXCLUDED.directories_permissions,
+            sync_permissions        = EXCLUDED.sync_permissions,
+            roles_permissions       = EXCLUDED.roles_permissions,
+            keys_permissions        = EXCLUDED.keys_permissions
+        RETURNING
+            id,
+            name,
+            description,
+            created_at,
+            updated_at,
+            files_permissions::text       AS files_permissions,
+            directories_permissions::text AS directories_permissions,
+            sync_permissions::text        AS sync_permissions,
+            roles_permissions::text       AS roles_permissions,
+            keys_permissions::text        AS keys_permissions
+    )SQL"
+);
 
-    conn_->prepare("get_vault_assigned_roles",
-                   "SELECT r.name, r.description, r.type, "
-                   "vra.role_id, vra.id as assignment_id, vra.subject_type, vra.subject_id, vra.assigned_at, "
-                   "p.permissions::int as permissions, r.created_at, vra.vault_id "
-                   "FROM role r "
-                   "JOIN permissions p ON r.id = p.role_id "
-                   "JOIN vault_role_assignments vra ON r.id = vra.role_id "
-                   "WHERE vra.vault_id = $1");
+    conn_->prepare(
+        "vault_role_insert",
+        R"SQL(
+            INSERT INTO vault_role (
+                name,
+                description,
+                files_permissions,
+                directories_permissions,
+                sync_permissions,
+                roles_permissions,
+                keys_permissions
+            )
+            VALUES (
+                $1,
+                $2,
+                $3::bit(64),
+                $4::bit(64),
+                $5::bit(32),
+                $6::bit(16),
+                $7::bit(16)
+            )
+            RETURNING
+                id,
+                name,
+                description,
+                created_at,
+                updated_at,
+                files_permissions::text       AS files_permissions,
+                directories_permissions::text AS directories_permissions,
+                sync_permissions::text        AS sync_permissions,
+                roles_permissions::text       AS roles_permissions,
+                keys_permissions::text        AS keys_permissions
+        )SQL"
+    );
 
-    conn_->prepare("get_subject_assigned_vault_roles",
-                   "SELECT vra.id as assignment_id, vra.subject_type, vra.subject_id, vra.role_id, vra.assigned_at, "
-                   "r.name, r.description, r.type, p.permissions::int AS permissions, r.created_at, vra.vault_id "
-                   "FROM role r "
-                   "JOIN vault_role_assignments vra ON r.id = vra.role_id "
-                   "JOIN permissions p ON r.id = p.role_id "
-                   "WHERE vra.subject_type = $1 AND vra.subject_id = $2");
+    conn_->prepare(
+        "vault_role_get_by_id",
+        R"SQL(
+            SELECT
+                id,
+                name,
+                description,
+                created_at,
+                updated_at,
+                files_permissions::text       AS files_permissions,
+                directories_permissions::text AS directories_permissions,
+                sync_permissions::text        AS sync_permissions,
+                roles_permissions::text       AS roles_permissions,
+                keys_permissions::text        AS keys_permissions
+            FROM vault_role
+            WHERE id = $1
+        )SQL"
+    );
 
-    conn_->prepare("get_subject_assigned_vault_role",
-                   "SELECT vra.id as assignment_id, vra.subject_type, vra.subject_id, vra.role_id, vra.assigned_at, "
-                   "r.name, r.description, r.type, p.permissions::int AS permissions, r.created_at, vra.vault_id "
-                   "FROM role r "
-                   "JOIN vault_role_assignments vra ON r.id = vra.role_id "
-                   "JOIN permissions p ON r.id = p.role_id "
-                   "WHERE vra.subject_type = $1 AND vra.subject_id = $2 AND vra.role_id = $3");
+    conn_->prepare(
+        "vault_role_get_by_name",
+        R"SQL(
+            SELECT
+                id,
+                name,
+                description,
+                created_at,
+                updated_at,
+                files_permissions::text       AS files_permissions,
+                directories_permissions::text AS directories_permissions,
+                sync_permissions::text        AS sync_permissions,
+                roles_permissions::text       AS roles_permissions,
+                keys_permissions::text        AS keys_permissions
+            FROM vault_role
+            WHERE name = $1
+        )SQL"
+    );
 
-    conn_->prepare("get_user_and_group_assigned_vault_roles",
-                   "("
-                   "SELECT vra.id as assignment_id, vra.subject_type, vra.subject_id, vra.role_id, vra.assigned_at, "
-                   "       r.name, r.description, r.type, p.permissions::int AS permissions, r.created_at, vra.vault_id "
-                   "FROM role r "
-                   "JOIN vault_role_assignments vra ON r.id = vra.role_id "
-                   "JOIN permissions p ON r.id = p.role_id "
-                   "WHERE vra.subject_type = 'user' AND vra.subject_id = $1"
-                   ") "
-                   "UNION ALL "
-                   "("
-                   "SELECT vra.id as assignment_id, vra.subject_type, vra.subject_id, vra.role_id, vra.assigned_at, "
-                   "       r.name, r.description, r.type, p.permissions::int AS permissions, r.created_at, vra.vault_id "
-                   "FROM role r "
-                   "JOIN vault_role_assignments vra ON r.id = vra.role_id "
-                   "JOIN permissions p ON r.id = p.role_id "
-                   "JOIN group_members gm ON vra.subject_type = 'group' AND vra.subject_id = gm.group_id "
-                   "WHERE gm.user_id = $1"
-                   ")"
-        );
+    conn_->prepare(
+        "vault_role_update",
+        R"SQL(
+            UPDATE vault_role
+            SET
+                name                    = $2,
+                description             = $3,
+                files_permissions       = $4::bit(64),
+                directories_permissions = $5::bit(64),
+                sync_permissions        = $6::bit(32),
+                roles_permissions       = $7::bit(16),
+                keys_permissions        = $8::bit(16)
+            WHERE id = $1
+        )SQL"
+    );
 
-    conn_->prepare("assign_vault_role",
-                   "INSERT INTO vault_role_assignments (subject_type, subject_id, vault_id, role_id, assigned_at) "
-                   "VALUES ($1, $2, $3, $4, NOW()) RETURNING id");
+    conn_->prepare(
+        "vault_role_delete",
+        R"SQL(
+            DELETE FROM vault_role
+            WHERE id = $1
+        )SQL"
+    );
 
-    conn_->prepare("upsert_assigned_vault_role",
-                   "INSERT INTO vault_role_assignments (subject_type, vault_id, subject_id, role_id, assigned_at) "
-                   "VALUES ($1, $2, $3, $4, NOW()) ON CONFLICT DO NOTHING");
+    conn_->prepare(
+        "vault_role_exists_by_id",
+        R"SQL(
+            SELECT EXISTS(
+                SELECT 1
+                FROM vault_role
+                WHERE id = $1
+            )
+        )SQL"
+    );
+
+    conn_->prepare(
+        "vault_role_exists_by_name",
+        R"SQL(
+            SELECT EXISTS(
+                SELECT 1
+                FROM vault_role
+                WHERE name = $1
+            )
+        )SQL"
+    );
+
+    conn_->prepare(
+        "vault_role_list_all",
+        R"SQL(
+            SELECT
+                id,
+                name,
+                description,
+                created_at,
+                updated_at,
+                files_permissions::text       AS files_permissions,
+                directories_permissions::text AS directories_permissions,
+                sync_permissions::text        AS sync_permissions,
+                roles_permissions::text       AS roles_permissions,
+                keys_permissions::text        AS keys_permissions
+            FROM vault_role
+            ORDER BY name
+        )SQL"
+    );
 }

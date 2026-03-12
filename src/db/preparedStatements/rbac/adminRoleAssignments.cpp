@@ -1,0 +1,124 @@
+#include "db/DBConnection.hpp"
+
+void vh::db::DBConnection::initPreparedAdminRoleAssignments() const {
+    conn_->prepare(
+        "admin_role_assignment_upsert",
+        R"SQL(
+            INSERT INTO admin_role_assignments (
+                user_id,
+                role_id
+            )
+            VALUES (
+                $1,
+                $2
+            )
+            ON CONFLICT (user_id) DO UPDATE SET
+                role_id = EXCLUDED.role_id,
+                assigned_at = CURRENT_TIMESTAMP
+            RETURNING
+                id,
+                user_id,
+                role_id,
+                assigned_at
+        )SQL"
+    );
+
+    conn_->prepare(
+        "admin_role_assignment_get_by_user_id",
+        R"SQL(
+            SELECT
+                ara.id                         AS assignment_id,
+                ara.user_id                    AS user_id,
+                ara.role_id                    AS role_id,
+                ara.assigned_at                AS assigned_at,
+
+                ar.id                          AS admin_role_id,
+                ar.name                        AS role_name,
+                ar.description                 AS role_description,
+                ar.created_at                  AS role_created_at,
+                ar.updated_at                  AS role_updated_at,
+                ar.identity_permissions::text  AS identity_permissions,
+                ar.audit_permissions::text     AS audit_permissions,
+                ar.settings_permissions::text  AS settings_permissions
+            FROM admin_role_assignments ara
+            INNER JOIN admin_role ar
+                ON ar.id = ara.role_id
+            WHERE ara.user_id = $1
+        )SQL"
+    );
+
+    conn_->prepare(
+        "admin_role_assignment_get_by_assignment_id",
+        R"SQL(
+            SELECT
+                ara.id                         AS assignment_id,
+                ara.user_id                    AS user_id,
+                ara.role_id                    AS role_id,
+                ara.assigned_at                AS assigned_at,
+
+                ar.id                          AS admin_role_id,
+                ar.name                        AS role_name,
+                ar.description                 AS role_description,
+                ar.created_at                  AS role_created_at,
+                ar.updated_at                  AS role_updated_at,
+                ar.identity_permissions::text  AS identity_permissions,
+                ar.audit_permissions::text     AS audit_permissions,
+                ar.settings_permissions::text  AS settings_permissions
+            FROM admin_role_assignments ara
+            INNER JOIN admin_role ar
+                ON ar.id = ara.role_id
+            WHERE ara.id = $1
+        )SQL"
+    );
+
+    conn_->prepare(
+        "admin_role_assignment_delete_by_user_id",
+        R"SQL(
+            DELETE FROM admin_role_assignments
+            WHERE user_id = $1
+        )SQL"
+    );
+
+    conn_->prepare(
+        "admin_role_assignment_delete_by_assignment_id",
+        R"SQL(
+            DELETE FROM admin_role_assignments
+            WHERE id = $1
+        )SQL"
+    );
+
+    conn_->prepare(
+        "admin_role_assignment_exists_by_user_id",
+        R"SQL(
+            SELECT EXISTS(
+                SELECT 1
+                FROM admin_role_assignments
+                WHERE user_id = $1
+            )
+        )SQL"
+    );
+
+    conn_->prepare(
+        "admin_role_assignment_list_all",
+        R"SQL(
+            SELECT
+                ara.id                         AS assignment_id,
+                ara.user_id                    AS user_id,
+                ara.role_id                    AS role_id,
+                ara.assigned_at                AS assigned_at,
+
+                ar.id                          AS admin_role_id,
+                ar.name                        AS role_name,
+                ar.description                 AS role_description,
+                ar.created_at                  AS role_created_at,
+                ar.updated_at                  AS role_updated_at,
+                ar.identity_permissions::text  AS identity_permissions,
+                ar.audit_permissions::text     AS audit_permissions,
+                ar.settings_permissions::text  AS settings_permissions
+            FROM admin_role_assignments ara
+            INNER JOIN admin_role ar
+                ON ar.id = ara.role_id
+            ORDER BY ara.user_id
+        )SQL"
+    );
+}

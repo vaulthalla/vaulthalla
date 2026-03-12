@@ -28,12 +28,12 @@ class DBConnection {
     void initPreparedRefreshTokens() const;
 
     // RBAC
-    void initPreparedRoles() const;
     void initPreparedPermissions() const;
-    void initPreparedAdminPermissions() const;
-    void initPreparedVaultPermissions() const;
-    void initPreparedUserRoles() const;
+    void initPreparedAdminRoles() const;
+    void initPreparedAdminRoleAssignments() const;
+    void initPreparedGlobalVaultRoles() const;
     void initPreparedVaultRoles() const;
+    void initPreparedVaultRoleAssignments() const;
     void initPreparedPermOverrides() const;
 
     // Vaults

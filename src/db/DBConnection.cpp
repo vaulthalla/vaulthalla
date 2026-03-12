@@ -98,9 +98,11 @@ void DBConnection::initPrepared() const {
     initPreparedRefreshTokens();
 
     // RBAC
-    initPreparedRoles();
-    initPreparedUserRoles();
+    initPreparedGlobalVaultRoles();
+    initPreparedAdminRoles();
+    initPreparedAdminRoleAssignments();
     initPreparedVaultRoles();
+    initPreparedVaultRoleAssignments();
     initPreparedPermOverrides();
     initPreparedPermissions();
 
