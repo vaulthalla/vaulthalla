@@ -19,6 +19,8 @@ struct Vault {
 
     Vault() = default;
     explicit Vault(const pqxx::row& row);
+
+    [[nodiscard]] std::string toString(uint8_t indent) const;
 };
 
 void to_json(nlohmann::json& j, const Vault& v);

@@ -12,7 +12,8 @@ enum class SyncActionPermissions : uint8_t {
     Trigger = 1 << 0,
 };
 
-struct Action : Set<SyncActionPermissions, uint8_t> {
+struct Action final : Set<SyncActionPermissions, uint8_t> {
+    [[nodiscard]] std::string toString(uint8_t indent) const override;
     [[nodiscard]] bool canTrigger() const noexcept { return has(SyncActionPermissions::Trigger); }
     [[nodiscard]] bool none() const noexcept { return has(SyncActionPermissions::None); }
 };

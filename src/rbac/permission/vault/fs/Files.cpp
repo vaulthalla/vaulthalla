@@ -1,8 +1,25 @@
 #include "rbac/permission/vault/fs/Files.hpp"
 
 #include <nlohmann/json.hpp>
+#include <ostream>
 
 namespace vh::rbac::permission::vault::fs {
+
+std::string Files::toString(const uint8_t indent) const {
+    std::ostringstream oss;
+    oss << std::string(indent, ' ') << "Files:\n";
+    const auto in = std::string(indent + 2, ' ');
+    oss << in << "Preview: " << bool_to_string(canPreview()) << "\n";
+    oss << in << "Upload: " << bool_to_string(canUpload()) << "\n";
+    oss << in << "Download: " << bool_to_string(canDownload()) << "\n";
+    oss << in << "Overwrite: " << bool_to_string(canOverwrite()) << "\n";
+    oss << in << "Rename: " << bool_to_string(canRename()) << "\n";
+    oss << in << "Delete: " << bool_to_string(canDelete()) << "\n";
+    oss << in << "Move: " << bool_to_string(canMove()) << "\n";
+    oss << in << "Copy: " << bool_to_string(canCopy()) << "\n";
+    oss << in << "Share: " << share.toString(indent + 4);
+    return oss.str();
+}
 
 void to_json(nlohmann::json& j, const Files& f) {
     j = {

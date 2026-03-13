@@ -1,8 +1,19 @@
 #include "rbac/permission/vault/APIKey.hpp"
 
 #include <nlohmann/json.hpp>
+#include <ostream>
 
 namespace vh::rbac::permission::vault {
+
+std::string APIKey::toString(const uint8_t indent) const {
+    std::ostringstream oss;
+    oss << std::string(indent, ' ') << "APIKey:\n";
+    const std::string in(indent + 2, ' ');
+    oss << in << "View: " << bool_to_string(canView()) << "\n";
+    oss << in << "View Secret: " << bool_to_string(canViewSecret()) << "\n";
+    oss << in << "Modify: " << bool_to_string(canModify()) << "\n";
+    return oss.str();
+}
 
 void to_json(nlohmann::json& j, const APIKey& k) {
     j = {

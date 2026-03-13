@@ -1,8 +1,19 @@
 #include "rbac/permission/admin/Identities.hpp"
 
 #include <nlohmann/json.hpp>
+#include <ostream>
 
 namespace vh::rbac::permission::admin {
+
+std::string Identities::toString(const uint8_t indent) const {
+    std::ostringstream oss;
+    oss << std::string(indent, ' ') << "Identities:\n";
+    const auto in = std::string(indent + 2, ' ');
+    oss << in << "Users:\n" << users.toString(indent + 4);
+    oss << in << "Groups:\n" << groups.toString(indent + 4);
+    oss << in << "Admins:\n" << admins.toString(indent + 4);
+    return oss.str();
+}
 
 bool Identities::canAdd(const Type type) const noexcept {
     return visit(type, [](const auto& node) { return node.canAdd(); });

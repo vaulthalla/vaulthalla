@@ -15,6 +15,8 @@ struct Vaults {
 
     Vaults() = default;
     explicit Vaults(const pqxx::result& res);
+
+    [[nodiscard]] std::string toString(uint8_t indent) const;
 };
 
 std::string to_string(const Vaults::Type& type);

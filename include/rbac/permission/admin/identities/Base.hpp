@@ -16,8 +16,9 @@ enum class IdentityPermissions : uint8_t {
     All = View | Add | Edit | Delete
 };
 
-struct IdentitiesBase : Set<IdentityPermissions, uint8_t> {
-    void operator=(const IdentitiesBase& other) = default;
+struct Base : Set<IdentityPermissions, uint8_t> {
+
+    [[nodiscard]] std::string toString(uint8_t indent) const override;
 
     [[nodiscard]] bool canView() const noexcept { return has(IdentityPermissions::View); }
     [[nodiscard]] bool canAdd() const noexcept { return has(IdentityPermissions::Add); }
@@ -25,7 +26,7 @@ struct IdentitiesBase : Set<IdentityPermissions, uint8_t> {
     [[nodiscard]] bool canDelete() const noexcept { return has(IdentityPermissions::Delete); }
 };
 
-void to_json(nlohmann::json& j, const IdentitiesBase& p);
-void from_json(const nlohmann::json& j, IdentitiesBase& p);
+void to_json(nlohmann::json& j, const Base& p);
+void from_json(const nlohmann::json& j, Base& p);
 
 }

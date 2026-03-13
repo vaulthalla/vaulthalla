@@ -30,6 +30,8 @@ struct Directories final : ModuleSet<uint32_t, DirectoryPermissions, uint16_t> {
     Directories() = default;
     explicit Directories(const Mask& mask) { fromMask(mask); }
 
+    [[nodiscard]] std::string toString(uint8_t indent) const override;
+
     const char* name() const override { return ModuleName; }
 
     [[nodiscard]] uint32_t toMask() const override { return pack(permissions, share); }

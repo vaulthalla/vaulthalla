@@ -16,7 +16,9 @@ struct Keys final : Module<uint16_t> {
     Keys() = default;
     explicit Keys(const Mask& mask) { fromMask(mask); }
 
-    const char* name() const override { return ModuleName; }
+    [[nodiscard]] std::string toString(uint8_t indent) const override;
+
+    [[nodiscard]] const char* name() const override { return ModuleName; }
     [[nodiscard]] uint16_t toMask() const override { return pack(apiKey, encryptionKey); }
     void fromMask(const Mask mask) override { unpack(mask, apiKey, encryptionKey); }
 };

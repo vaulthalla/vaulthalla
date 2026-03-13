@@ -16,7 +16,9 @@ enum class EncryptionKeyPermissions : uint8_t {
     All = View | Export | Rotate
 };
 
-struct EncryptionKey : Set<EncryptionKeyPermissions, uint8_t> {
+struct EncryptionKey final : Set<EncryptionKeyPermissions, uint8_t> {
+    [[nodiscard]] std::string toString(uint8_t indent) const override;
+
     [[nodiscard]] bool canView() const noexcept { return has(EncryptionKeyPermissions::View); }
     [[nodiscard]] bool canExport() const noexcept { return has(EncryptionKeyPermissions::Export); }
     [[nodiscard]] bool canRotate() const noexcept { return has(EncryptionKeyPermissions::Rotate); }

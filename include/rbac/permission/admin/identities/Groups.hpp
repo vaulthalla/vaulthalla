@@ -18,6 +18,8 @@ enum class GroupPermissions : uint8_t {
 };
 
 struct Groups final : Set<GroupPermissions, uint8_t> {
+    [[nodiscard]] std::string toString(uint8_t indent) const override;
+
     [[nodiscard]] bool canView() const noexcept { return has(GroupPermissions::View); }
     [[nodiscard]] bool canAdd() const noexcept { return has(GroupPermissions::Add); }
     [[nodiscard]] bool canEdit() const noexcept { return has(GroupPermissions::Edit); }

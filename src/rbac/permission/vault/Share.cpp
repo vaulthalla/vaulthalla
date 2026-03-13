@@ -1,8 +1,19 @@
 #include "rbac/permission/vault/Share.hpp"
 
 #include <nlohmann/json.hpp>
+#include <ostream>
 
 namespace vh::rbac::permission::vault {
+
+std::string Share::toString(const uint8_t indent) const {
+    std::ostringstream oss;
+    oss << std::string(indent, ' ') << "Sharing:\n";
+    const std::string in(indent + 2, ' ');
+    oss << in << "Share Internal: " << bool_to_string(canShareInternally()) << "\n";
+    oss << in << "Share Publicly: " << bool_to_string(canSharePublicly()) << "\n";
+    oss << in << "Share Publicly with Validation: " << bool_to_string(canSharePubliclyWithValidation()) << "\n";
+    return oss.str();
+}
 
 void to_json(nlohmann::json& j, const Share& s) {
     j = {

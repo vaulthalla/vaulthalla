@@ -19,6 +19,8 @@ struct Admin {
 
     Admin() = default;
     Admin(const pqxx::row& row, const pqxx::result& vaultGlobalPerms);
+
+    [[nodiscard]] std::string toString(uint8_t indent) const;
 };
 
 void to_json(nlohmann::json& j, const Admin& a);

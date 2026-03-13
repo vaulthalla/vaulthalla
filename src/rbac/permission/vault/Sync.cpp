@@ -1,8 +1,18 @@
 #include "rbac/permission/vault/Sync.hpp"
 
 #include <nlohmann/json.hpp>
+#include <ostream>
 
 namespace vh::rbac::permission::vault {
+
+std::string Sync::toString(const uint8_t indent) const {
+    std::ostringstream oss;
+    oss << std::string(indent, ' ') << "Sync:\n";
+    const auto i = indent + 2;
+    oss << config.toString(i);
+    oss << action.toString(i);
+    return oss.str();
+}
 
 void to_json(nlohmann::json& j, const Sync& v) {
     j = {

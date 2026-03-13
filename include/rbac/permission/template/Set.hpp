@@ -16,6 +16,7 @@ struct Set {
 
     Mask permissions{0};
 
+    virtual ~Set() = default;
     Set() = default;
     explicit Set(const Mask mask) : permissions(mask) {}
 
@@ -52,6 +53,13 @@ struct Set {
 
     constexpr void setRaw(const Mask mask) { permissions = mask; }
     constexpr void clear() { permissions = 0; }
+
+    [[nodiscard]] virtual std::string toString(uint8_t indent) const = 0;
+
+protected:
+    [[nodiscard]] static std::string bool_to_string(const bool value) {
+        return value ? "true" : "false";
+    }
 };
 
 }

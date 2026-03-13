@@ -4,12 +4,16 @@
 
 namespace vh::rbac::permission::admin::settings {
 
+std::string Websocket::toString(const uint8_t indent) const {
+    return std::string(indent, ' ') + "WebSocket:\n" + static_cast<Base>(*this).toString(indent + 2);
+}
+
 void to_json(nlohmann::json& j, const Websocket& s) {
     j = {{"websocket", static_cast<Base>(s)}};
 }
 
 void from_json(const nlohmann::json& j, Websocket& s) {
-    s = j.at("websocket").get<Base>();
+    j.at("websocket").get_to(static_cast<Base&>(s));
 }
 
 }

@@ -4,12 +4,16 @@
 
 namespace vh::rbac::permission::admin::identities {
 
+std::string Admins::toString(const uint8_t indent) const {
+    return "Admins:\n" + std::string(indent, ' ') + static_cast<Base>(*this).toString(indent + 2);
+}
+
 void to_json(nlohmann::json& j, const Admins& admins) {
-    j = {{"admins", static_cast<IdentitiesBase>(admins)}};
+    j = {{"admins", static_cast<Base>(admins)}};
 }
 
 void from_json(const nlohmann::json& j, Admins& admins) {
-    admins = j.at("admins").get<IdentitiesBase>();
+    j.at("admins").get_to(static_cast<Base&>(admins));
 }
 
 }

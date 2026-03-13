@@ -23,6 +23,7 @@ struct Identities final : Module<uint64_t> {
     Identities() = default;
     explicit Identities(const Mask& mask) { fromMask(mask); }
 
+    [[nodiscard]] std::string toString(uint8_t indent) const override;
     [[nodiscard]] const char* name() const override { return ModuleName; }
     [[nodiscard]] uint64_t toMask() const override { return pack(users, admins, groups); }
     void fromMask(const uint64_t mask) override { unpack(mask, users, admins, groups); }

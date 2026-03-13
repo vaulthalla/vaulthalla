@@ -16,6 +16,8 @@ struct Audits : Set<AuditPermissions, uint8_t> {
     Audits() = default;
     explicit Audits(const Mask& mask) : Set(mask) {}
 
+    [[nodiscard]] std::string toString(uint8_t indent) const override;
+
     [[nodiscard]] bool canView() const noexcept { return has(AuditPermissions::View); }
 };
 

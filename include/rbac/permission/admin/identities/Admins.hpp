@@ -6,8 +6,8 @@
 
 namespace vh::rbac::permission::admin::identities {
 
-struct Admins final : IdentitiesBase {
-    void operator=(const IdentitiesBase& base) {  IdentitiesBase::operator=(base); }
+struct Admins final : Base {
+    [[nodiscard]] std::string toString(uint8_t indent) const override;
 };
 
 void to_json(nlohmann::json& j, const Admins& admins);

@@ -7,7 +7,7 @@
 namespace vh::rbac::permission::admin::settings {
 
 struct Logging final : Base {
-    void operator=(const Base& base) { Base::operator=(base); }
+    [[nodiscard]] std::string toString(uint8_t indent) const override;
 };
 
 void to_json(nlohmann::json& j, const Logging& s);

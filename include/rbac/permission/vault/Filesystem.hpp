@@ -19,6 +19,8 @@ struct Filesystem {
 
     Filesystem() = default;
     explicit Filesystem(const pqxx::row& row);
+
+    [[nodiscard]] std::string toString(uint8_t indent) const;
 };
 
 void to_json(nlohmann::json& j, const Filesystem& f);

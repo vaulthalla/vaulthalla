@@ -1,8 +1,19 @@
 #include "rbac/permission/vault/EncryptionKey.hpp"
 
 #include <nlohmann/json.hpp>
+#include <ostream>
 
 namespace vh::rbac::permission::vault {
+
+std::string EncryptionKey::toString(const uint8_t indent) const {
+    std::ostringstream oss;
+    oss << std::string(indent, ' ') << "Encryption Key:\n";
+    const std::string in(indent + 2, ' ');
+    oss << in << "View: " << bool_to_string(canView()) << "\n";
+    oss << in << "Export: " << bool_to_string(canExport()) << "\n";
+    oss << in << "Rotate: " << bool_to_string(canRotate()) << "\n";
+    return oss.str();
+}
 
 void to_json(nlohmann::json& j, const EncryptionKey& k) {
     j = {

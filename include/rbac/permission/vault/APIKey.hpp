@@ -1,11 +1,9 @@
 #pragma once
 
 #include "rbac/permission/template/Set.hpp"
-#include "rbac/permission/Override.hpp"
 
 #include <cstdint>
 #include <memory>
-#include <vector>
 #include <nlohmann/json_fwd.hpp>
 
 namespace vh::rbac::permission::vault {
@@ -18,8 +16,8 @@ enum class APIKeyPermissions : uint8_t {
     All = View | ViewSecret | Modify
 };
 
-struct APIKey : Set<APIKeyPermissions, uint8_t> {
-    std::vector<std::shared_ptr<Override>> overrides;
+struct APIKey final : Set<APIKeyPermissions, uint8_t> {
+    [[nodiscard]] std::string toString(uint8_t indent) const override;
 
     [[nodiscard]] bool canView() const noexcept { return has(APIKeyPermissions::View); }
     [[nodiscard]] bool canViewSecret() const noexcept { return has(APIKeyPermissions::ViewSecret); }

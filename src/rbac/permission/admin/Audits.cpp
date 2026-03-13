@@ -1,16 +1,25 @@
 #include "rbac/permission/admin/Audits.hpp"
 
 #include <nlohmann/json.hpp>
+#include <ostream>
 
 namespace vh::rbac::permission::admin {
+
+std::string Audits::toString(const uint8_t indent) const {
+    std::ostringstream oss;
+    oss << std::string(indent, ' ') << "Audits:\n";
+    const auto in = std::string(indent + 2, ' ');
+    oss << in << "View: " << bool_to_string(view) << "\n";
+    return oss.str();
+}
 
 void to_json(nlohmann::json& j, const Audits& a) {
     j = {{"view", a.canView()}};
 }
 
 void from_json(const nlohmann::json& j, Audits& a) {
-    a.permissions = 0;
-    if (j.at("view").get<bool>()) a.permissions |= static_cast<Audits::Mask>(AuditPermissions::View);
+    a.clear();
+    if (j.at("view").get<bool>()) a.grant(AuditPermissions::View);
 }
 
 }

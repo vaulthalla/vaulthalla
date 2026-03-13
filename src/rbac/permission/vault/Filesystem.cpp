@@ -2,12 +2,22 @@
 
 #include <pqxx/row>
 #include <nlohmann/json.hpp>
+#include <ostream>
 
 namespace vh::rbac::permission::vault {
 
 Filesystem::Filesystem(const pqxx::row& row)
     : files(row["files_permissions"].as<typename decltype(files)::Mask>()),
       directories(row["directories_permissions"].as<typename decltype(directories)::Mask>()) {}
+
+std::string Filesystem::toString(const uint8_t indent) const {
+    std::ostringstream oss;
+    oss << std::string(indent, ' ') << "Filesystem:\n";
+    const auto i = indent + 2;
+    oss << files.toString(i);
+    oss << directories.toString(i);
+    return oss.str();
+}
 
 void to_json(nlohmann::json& j, const Filesystem& f) {
     j = {

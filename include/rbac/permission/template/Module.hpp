@@ -43,6 +43,8 @@ struct Module {
         return bits;
     }
 
+    [[nodiscard]] virtual std::string toString(uint8_t indent) const = 0;
+
 protected:
     template <typename EnumT, typename SetMaskT>
     static void append(Mask& dstMask, uint8_t& offset, const Set<EnumT, SetMaskT>& set, const char* context) {
@@ -85,6 +87,10 @@ protected:
     void unpack(const Mask srcMask, SetTs&... sets) const {
         uint8_t offset = 0;
         (extract(srcMask, offset, sets, name()), ...);
+    }
+
+    [[nodiscard]] static std::string bool_to_string(const bool value) {
+        return value ? "true" : "false";
     }
 };
 

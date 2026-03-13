@@ -2,6 +2,7 @@
 
 #include <pqxx/result>
 #include <nlohmann/json.hpp>
+#include <ostream>
 
 namespace vh::rbac::permission::admin {
 
@@ -21,6 +22,17 @@ Vaults::Vaults(const pqxx::result& res) {
                 throw std::runtime_error("Invalid vault type in database: " + row["global_name"].as<std::string>());
         }
     }
+}
+
+std::string Vaults::toString(const uint8_t indent) const {
+    std::ostringstream oss;
+    oss << std::string(indent, ' ') << "Global Vault Policies:\n";
+    const auto in = std::string(indent + 2, ' ');
+    const auto i = indent + 4;
+    oss << in << "Self Policy:\n" << self.toString(i);
+    oss << in << "User Policy:\n" << user.toString(i);
+    oss << in << "Admin Policy:\n" << admin.toString(i);
+    return oss.str();
 }
 
 std::string to_string(const Vaults::Type& type) {

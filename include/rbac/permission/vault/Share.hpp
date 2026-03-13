@@ -16,9 +16,11 @@ enum class SharePermissions : uint8_t {
     All = Internal | Public | PublicWithValidation
 };
 
-struct Share : Set<SharePermissions, uint8_t> {
+struct Share final : Set<SharePermissions, uint8_t> {
     Share() = default;
     explicit Share(const Mask& mask) : Set(mask) {}
+
+    [[nodiscard]] std::string toString(uint8_t indent) const override;
 
     [[nodiscard]] bool canShareInternally() const noexcept {
         return has(SharePermissions::Internal);

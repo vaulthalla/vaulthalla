@@ -1,8 +1,22 @@
 #include "rbac/permission/admin/identities/Groups.hpp"
 
 #include <nlohmann/json.hpp>
+#include <ostream>
 
 namespace vh::rbac::permission::admin::identities {
+
+std::string Groups::toString(uint8_t indent) const {
+    std::ostringstream oss;
+    const auto in = std::string(indent + 2, ' ');
+    oss << std::string(indent, ' ') << "Groups:" << "\n";
+    oss << in << "View: " << bool_to_string(canView()) << "\n";
+    oss << in << "Edit: " << bool_to_string(canEdit()) << "\n";
+    oss << in << "Delete: " << bool_to_string(canDelete()) << "\n";
+    oss << in << "Add: " << bool_to_string(canAdd()) << "\n";
+    oss << in << "Add Member: " << bool_to_string(canAddMember()) << "\n";
+    oss << in << "Remove Member: " << bool_to_string(canDelete()) << "\n";
+    return oss.str();
+}
 
 void to_json(nlohmann::json& j, const Groups& o) {
     j = {

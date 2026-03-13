@@ -15,10 +15,10 @@ enum class SettingsPermissions : uint8_t {
 };
 
 struct Base : Set<SettingsPermissions, uint8_t> {
+    [[nodiscard]] std::string toString(uint8_t indent) const override;
+
     [[nodiscard]] bool canView() const noexcept { return has(SettingsPermissions::View); }
     [[nodiscard]] bool canEdit() const noexcept { return has(SettingsPermissions::Edit); }
-
-    void operator=(const Base& other) = default;
 };
 
 void to_json(nlohmann::json& j, const Base& s);

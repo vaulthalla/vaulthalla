@@ -4,12 +4,16 @@
 
 namespace vh::rbac::permission::admin::settings {
 
+std::string Database::toString(const uint8_t indent) const {
+    return std::string(indent, ' ') + "DB:\n" + static_cast<Base>(*this).toString(indent + 2);
+}
+
 void to_json(nlohmann::json& j, const Database& s) {
     j = {{"database", static_cast<Base>(s)}};
 }
 
 void from_json(const nlohmann::json& j, Database& s) {
-    s = Database(j.at("database").get<Base>());
+    j.at("database").get_to(static_cast<Base&>(s));
 }
 
 }

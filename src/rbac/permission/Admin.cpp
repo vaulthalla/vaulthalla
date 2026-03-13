@@ -2,8 +2,20 @@
 
 #include <nlohmann/json.hpp>
 #include <pqxx/result>
+#include <ostream>
 
 namespace vh::rbac::permission {
+
+std::string Admin::toString(const uint8_t indent) const {
+    std::ostringstream oss;
+    oss << std::string(indent, ' ') << "Admin Permissions:\n";
+    const auto i = indent + 2;
+    oss << identities.toString(i);
+    oss << vaults.toString(i);
+    oss << audits.toString(i);
+    oss << settings.toString(i);
+    return oss.str();
+}
 
 Admin::Admin(const pqxx::row& row, const pqxx::result& vaultGlobalPerms)
     : identities(row["identities_permissions"].as<typename decltype(identities)::Mask>()),

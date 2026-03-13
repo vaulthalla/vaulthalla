@@ -14,7 +14,9 @@ enum class SyncConfigPermissions : uint8_t {
     All = View | Edit,
 };
 
-struct Config : Set<SyncConfigPermissions, uint8_t> {
+struct Config final : Set<SyncConfigPermissions, uint8_t> {
+    [[nodiscard]] std::string toString(uint8_t indent) const override;
+
     [[nodiscard]] bool canView() const noexcept { return has(SyncConfigPermissions::View); }
     [[nodiscard]] bool canEdit() const noexcept { return has(SyncConfigPermissions::Edit); }
     [[nodiscard]] bool all() const noexcept { return has(SyncConfigPermissions::All); }

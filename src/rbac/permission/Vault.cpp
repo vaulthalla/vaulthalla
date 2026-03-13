@@ -2,8 +2,20 @@
 
 #include <nlohmann/json.hpp>
 #include <pqxx/result>
+#include <ostream>
 
 namespace vh::rbac::permission {
+
+std::string Vault::toString(const uint8_t indent) const {
+    std::ostringstream oss;
+    oss << std::string(indent, ' ') << "Vault Permissions:\n";
+    const auto i = indent + 2;
+    oss << keys.toString(i);
+    oss << roles.toString(i);
+    oss << sync.toString(i);
+    oss << filesystem.toString(i);
+    return oss.str();
+}
 
 Vault::Vault(const pqxx::row& row)
     : keys(row["keys_permissions"].as<typename decltype(keys)::Mask>()),

@@ -42,6 +42,7 @@ struct Settings final : Module<uint64_t> {
     Settings() = default;
     explicit Settings(const Mask& mask) { fromMask(mask); }
 
+    [[nodiscard]] std::string toString(uint8_t indent) const override;
     const char* name() const override { return ModuleName; }
 
     [[nodiscard]] uint64_t toMask() const override {

@@ -1,8 +1,26 @@
 #include "rbac/permission/admin/Settings.hpp"
 
 #include <nlohmann/json.hpp>
+#include <ostream>
+
+#include "protocols/http/Server.hpp"
 
 namespace vh::rbac::permission::admin {
+
+std::string Settings::toString(const uint8_t indent) const {
+    std::ostringstream oss;
+    oss << std::string(indent, ' ') << "Settings:\n";
+    const auto i = indent + 2;
+    oss << websocket.toString(i);
+    oss << http.toString(i);
+    oss << database.toString(i);
+    oss << auth.toString(i);
+    oss << logging.toString(i);
+    oss << caching.toString(i);
+    oss << sharing.toString(i);
+    oss << services.toString(i);
+    return oss.str();
+}
 
 void to_json(nlohmann::json& j, const Settings& o) {
     j = {

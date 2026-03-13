@@ -16,9 +16,11 @@ enum class RolePermissions : uint8_t {
     All = Assign | Modify | Revoke
 };
 
-struct Roles : Set<RolePermissions, uint8_t> {
+struct Roles final : Set<RolePermissions, uint8_t> {
     Roles() = default;
     explicit Roles(const Mask& mask) : Set(mask) {}
+
+    [[nodiscard]] std::string toString(uint8_t indent) const override;
 
     [[nodiscard]] bool canAssign() const noexcept { return has(RolePermissions::Assign); }
     [[nodiscard]] bool canModify() const noexcept { return has(RolePermissions::Modify); }
