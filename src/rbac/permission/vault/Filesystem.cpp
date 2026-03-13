@@ -10,6 +10,8 @@ Filesystem::Filesystem(const pqxx::row& row)
     : files(row["files_permissions"].as<typename decltype(files)::Mask>()),
       directories(row["directories_permissions"].as<typename decltype(directories)::Mask>()) {}
 
+Filesystem::Filesystem(const pqxx::row& row, const pqxx::result& overrideRes) : Filesystem(row, overrideRes) {}
+
 std::string Filesystem::toString(const uint8_t indent) const {
     std::ostringstream oss;
     oss << std::string(indent, ' ') << "Filesystem:\n";

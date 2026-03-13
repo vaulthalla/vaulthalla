@@ -6,6 +6,18 @@
 
 namespace vh::rbac::permission {
 
+Vault::Vault(const pqxx::row& row)
+    : keys(row["keys_permissions"].as<typename decltype(keys)::Mask>()),
+      roles(row["roles_permissions"].as<typename decltype(roles)::Mask>()),
+      sync(row["sync_permissions"].as<typename decltype(sync)::Mask>()),
+      filesystem(row) {}
+
+Vault::Vault(const pqxx::row& row, const pqxx::result& overrides)
+    : keys(row["keys_permissions"].as<typename decltype(keys)::Mask>()),
+      roles(row["roles_permissions"].as<typename decltype(roles)::Mask>()),
+      sync(row["sync_permissions"].as<typename decltype(sync)::Mask>()),
+      filesystem(row, overrides) {}
+
 std::string Vault::toString(const uint8_t indent) const {
     std::ostringstream oss;
     oss << std::string(indent, ' ') << "Vault Permissions:\n";
@@ -16,12 +28,6 @@ std::string Vault::toString(const uint8_t indent) const {
     oss << filesystem.toString(i);
     return oss.str();
 }
-
-Vault::Vault(const pqxx::row& row)
-    : keys(row["keys_permissions"].as<typename decltype(keys)::Mask>()),
-      roles(row["roles_permissions"].as<typename decltype(roles)::Mask>()),
-      sync(row["sync_permissions"].as<typename decltype(sync)::Mask>()),
-      filesystem(row) {}
 
 void to_json(nlohmann::json& j, const Vault& v) {
     j = nlohmann::json{

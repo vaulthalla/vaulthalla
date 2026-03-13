@@ -7,7 +7,7 @@
 
 #include <nlohmann/json_fwd.hpp>
 
-namespace pqxx { class row; }
+namespace pqxx { class row; class result; }
 
 namespace vh::rbac::permission {
 
@@ -19,6 +19,7 @@ struct Vault {
 
     Vault() = default;
     explicit Vault(const pqxx::row& row);
+    Vault(const pqxx::row& row, const pqxx::result& overrides);
 
     [[nodiscard]] std::string toString(uint8_t indent) const;
 };

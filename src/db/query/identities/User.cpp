@@ -1,5 +1,7 @@
 #include "db/query/identities/User.hpp"
 
+#include "rbac/role/Admin.hpp"
+#include "rbac/permission/Admin.hpp"
 #include "auth/model/RefreshToken.hpp"
 #include "crypto/util/hash.hpp"
 #include "db/Transactions.hpp"
@@ -9,7 +11,9 @@
 #include <pqxx/pqxx>
 #include <stdexcept>
 
-using namespace vh::db;
+#include "rbac/permission/Vault.hpp"
+#include "rbac/permission/vault/APIKey.hpp"
+
 using namespace vh::db::query::identities;
 using namespace vh::auth::model;
 
@@ -152,10 +156,14 @@ unsigned int User::createUser(const UserPtr& user) {
             pqxx::params{userId, user->role->id}
         );
 
-        // User global vault policies
-        for (const auto& globalPolicy : user->global_vault_roles) {
-            if (!globalPolicy) continue;
+        std::vector userGlobalVaultRoles {
+            user->role->permissions.vaults.self,
+            user->role->permissions.vaults.user,
+            user->role->permissions.vaults.admin
+        };
 
+        // User global vault policies
+        for (const auto& globalPolicy : userGlobalVaultRoles) {
             txn.exec(
                 pqxx::prepped{"user_global_vault_policy_upsert"},
                 pqxx::params{

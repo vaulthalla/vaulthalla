@@ -8,7 +8,7 @@
 #include <memory>
 #include <nlohmann/json_fwd.hpp>
 
-namespace pqxx { class row; }
+namespace pqxx { class row; class result; }
 
 namespace vh::rbac::permission::vault {
 
@@ -19,6 +19,7 @@ struct Filesystem {
 
     Filesystem() = default;
     explicit Filesystem(const pqxx::row& row);
+    Filesystem(const pqxx::row& row, const pqxx::result& overrideRes);
 
     [[nodiscard]] std::string toString(uint8_t indent) const;
 };
