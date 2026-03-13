@@ -4,6 +4,8 @@
 #include "rbac/permission/vault/APIKey.hpp"
 #include "rbac/permission/vault/EncryptionKey.hpp"
 
+#include <nlohmann/json_fwd.hpp>
+
 namespace vh::rbac::permission::vault {
 
 struct Keys final : Module<uint16_t> {
@@ -18,5 +20,8 @@ struct Keys final : Module<uint16_t> {
     [[nodiscard]] uint16_t toMask() const override { return pack(apiKey, encryptionKey); }
     void fromMask(const Mask mask) override { unpack(mask, apiKey, encryptionKey); }
 };
+
+void to_json(nlohmann::json& j, const Keys& k);
+void from_json(const nlohmann::json& j, Keys& k);
 
 }

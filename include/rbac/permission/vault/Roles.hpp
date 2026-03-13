@@ -1,11 +1,10 @@
 #pragma once
 
 #include "rbac/permission/template/Set.hpp"
-#include "rbac/permission/Override.hpp"
 
 #include <cstdint>
 #include <memory>
-#include <vector>
+#include <nlohmann/json_fwd.hpp>
 
 namespace vh::rbac::permission::vault {
 
@@ -18,8 +17,6 @@ enum class RolePermissions : uint8_t {
 };
 
 struct Roles : Set<RolePermissions, uint8_t> {
-    std::vector<std::shared_ptr<Override>> overrides;
-
     Roles() = default;
     explicit Roles(const Mask& mask) : Set(mask) {}
 
@@ -29,5 +26,8 @@ struct Roles : Set<RolePermissions, uint8_t> {
     [[nodiscard]] bool any() const noexcept { return has(RolePermissions::All); }
     [[nodiscard]] bool none() const noexcept { return has(RolePermissions::None); }
 };
+
+void to_json(nlohmann::json& j, const Roles& r);
+void from_json(const nlohmann::json& j, Roles& r);
 
 }

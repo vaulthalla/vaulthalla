@@ -16,7 +16,7 @@ struct Admin final : Base {
 
     Admin() = default;
     ~Admin() override = default;
-    explicit Admin(const pqxx::row& row);
+    Admin(const pqxx::row& row, const pqxx::result& globalVaultRoles);
     explicit Admin(const nlohmann::json& j);
 
     explicit Admin(const Base& r) : Base(r) {

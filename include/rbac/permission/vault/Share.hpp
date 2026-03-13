@@ -1,11 +1,10 @@
 #pragma once
 
 #include "rbac/permission/template/Set.hpp"
-#include "rbac/permission/Override.hpp"
 
 #include <cstdint>
 #include <memory>
-#include <vector>
+#include <nlohmann/json_fwd.hpp>
 
 namespace vh::rbac::permission::vault {
 
@@ -18,8 +17,6 @@ enum class SharePermissions : uint8_t {
 };
 
 struct Share : Set<SharePermissions, uint8_t> {
-    std::vector<std::shared_ptr<Override>> overrides;
-
     Share() = default;
     explicit Share(const Mask& mask) : Set(mask) {}
 
@@ -43,5 +40,8 @@ struct Share : Set<SharePermissions, uint8_t> {
         return has(SharePermissions::None);
     }
 };
+
+void to_json(nlohmann::json& j, const Share& s);
+void from_json(const nlohmann::json& j, Share& s);
 
 }

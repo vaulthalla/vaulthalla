@@ -5,6 +5,8 @@
 #include "rbac/permission/vault/Sync.hpp"
 #include "rbac/permission/vault/Filesystem.hpp"
 
+#include <nlohmann/json_fwd.hpp>
+
 namespace pqxx { class row; }
 
 namespace vh::rbac::permission {
@@ -18,5 +20,8 @@ struct Vault {
     Vault() = default;
     explicit Vault(const pqxx::row& row);
 };
+
+void to_json(nlohmann::json& j, const Vault& v);
+void from_json(const nlohmann::json& j, Vault& v);
 
 }

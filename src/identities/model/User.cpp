@@ -1,7 +1,7 @@
-#include "../../../include/identities/User.hpp"
-#include "../../../include/rbac/role/Admin.hpp"
-#include "../../../include/rbac/role/Vault.hpp"
-#include "../../../include/rbac/permission/Permission.hpp"
+#include "identities/User.hpp"
+#include "rbac/role/Admin.hpp"
+#include "rbac/role/Vault.hpp"
+#include "rbac/permission/Permission.hpp"
 #include "db/encoding/timestamp.hpp"
 #include "protocols/shell/util/lineHelpers.hpp"
 #include "protocols/shell/Table.hpp"
@@ -15,13 +15,13 @@
 
 using namespace vh::protocols::shell;
 using namespace vh::db::encoding;
-using namespace vh::rbac::model;
+using namespace vh::rbac::role;
 
-namespace vh::identities::model {
+namespace vh::identities {
 
-Admin::Admin() = default;
+User::User() = default;
 
-Admin::Admin(std::string name, std::string email, const bool isActive)
+User::User(std::string name, std::string email, const bool isActive)
     : name(std::move(name)), created_at(std::time(nullptr)), is_active(isActive) {
     if (email.empty()) this->email = std::nullopt;
     else this->email = std::move(email);
@@ -29,7 +29,7 @@ Admin::Admin(std::string name, std::string email, const bool isActive)
     last_login = std::nullopt;
 }
 
-Admin::Admin(const pqxx::row& row)
+User::User(const pqxx::row& row)
     : id(row["id"].as<unsigned short>()),
       linux_uid(row["linux_uid"].as<std::optional<unsigned int>>()),
       name(row["name"].as<std::string>()),
@@ -46,26 +46,27 @@ Admin::Admin(const pqxx::row& row)
     else last_modified_by = std::make_optional(row["last_modified_by"].as<unsigned int>());
 }
 
-Admin::Admin(const pqxx::row& user, const pqxx::row& role, const pqxx::result& vaultRoles, const pqxx::result& overrides)
-: Admin(user) {
+User::User(const pqxx::row& user, const pqxx::row& role, const pqxx::result& globalVaultRoles, const pqxx::result& vaultRoles, const pqxx::result& overrides)
+: User(user) {
     this->role = std::make_shared<Admin>(role);
+    this->role->permissions.vaults = std::make_shared<>()
     const auto [roles, group_roles] = vault_roles_from_pq_result(vaultRoles, overrides);
     std::scoped_lock lock(mutex_);
     this->vault_roles = roles;
     this->group_roles = group_roles;
 }
 
-bool Admin::operator==(const Admin& other) const {
+bool User::operator==(const User& other) const {
     return linux_uid == other.linux_uid &&
            name == other.name &&
            email == other.email;
 }
 
-bool Admin::operator!=(const Admin& other) const {
+bool User::operator!=(const User& other) const {
     return !(*this == other);
 }
 
-std::shared_ptr<Vault> Admin::getRole(const unsigned int vaultId) const {
+std::shared_ptr<Vault> User::getRole(const unsigned int vaultId) const {
     std::scoped_lock lock(mutex_);
     if (vault_roles.contains(vaultId)) {
         log::Registry::auth()->debug("User {} has direct role for vault {}", name, vaultId);
@@ -83,17 +84,17 @@ std::shared_ptr<Vault> Admin::getRole(const unsigned int vaultId) const {
     return nullptr;
 }
 
-void Admin::setPasswordHash(const std::string& hash) {
+void User::setPasswordHash(const std::string& hash) {
     password_hash = hash;
 }
 
-void Admin::updateUser(const nlohmann::json& j) {
+void User::updateUser(const nlohmann::json& j) {
     if (j.contains("name")) name = j.at("name").get<std::string>();
     if (j.contains("email")) email = j.at("email").get<std::string>();
     if (j.contains("is_active")) is_active = j.at("is_active").get<bool>();
 }
 
-void to_json(nlohmann::json& j, const Admin& u) {
+void to_json(nlohmann::json& j, const User& u) {
     j = {
         {"id", u.id},
         {"name", u.name},
@@ -116,7 +117,7 @@ void to_json(nlohmann::json& j, const Admin& u) {
     if (!u.group_roles.empty()) j["group_roles"] = u.group_roles;
 }
 
-void from_json(const nlohmann::json& j, Admin& u) {
+void from_json(const nlohmann::json& j, User& u) {
     u.id = j.at("id").get<unsigned short>();
     u.linux_uid = j.at("uid").get<std::optional<unsigned int>>();
     u.name = j.at("name").get<std::string>();
@@ -126,15 +127,15 @@ void from_json(const nlohmann::json& j, Admin& u) {
     if (j.contains("role")) u.role = Admin::fromJson(j.at("role"));
 }
 
-nlohmann::json to_json(const std::vector<std::shared_ptr<Admin>>& users) {
+nlohmann::json to_json(const std::vector<std::shared_ptr<User>>& users) {
     nlohmann::json j = nlohmann::json::array();
     for (const auto& user : users) j.push_back(*user);
     return j;
 }
 
-nlohmann::json to_json(const std::shared_ptr<Admin>& user) { return {*user}; }
+nlohmann::json to_json(const std::shared_ptr<User>& user) { return {*user}; }
 
-nlohmann::json to_public_json(const std::shared_ptr<Admin>& u) {
+nlohmann::json to_public_json(const std::shared_ptr<User>& u) {
     return {
         {"id", u->id},
         {"name", u->name},
@@ -142,7 +143,7 @@ nlohmann::json to_public_json(const std::shared_ptr<Admin>& u) {
     };
 }
 
-nlohmann::json to_public_json(const std::vector<std::shared_ptr<Admin>>& u) {
+nlohmann::json to_public_json(const std::vector<std::shared_ptr<User>>& u) {
     nlohmann::json j = nlohmann::json::array();
     for (const auto& user : u) j.push_back(to_public_json(user));
     return j;
@@ -150,113 +151,113 @@ nlohmann::json to_public_json(const std::vector<std::shared_ptr<Admin>>& u) {
 
 
 // --- User role checks ---
-bool Admin::isSuperAdmin() const {
+bool User::isSuperAdmin() const {
     return hasPermission(role->permissions, AdminPermission::ManageAdmins)
     && hasPermission(role->permissions, AdminPermission::ManageEncryptionKeys);
 }
-bool Admin::isAdmin() const { return isSuperAdmin() || role->permissions == ADMIN_MASK; }
+bool User::isAdmin() const { return isSuperAdmin() || role->permissions == ADMIN_MASK; }
 
 
 // --- Admin checks ---
-bool Admin::canManageEncryptionKeys() const { return hasPermission(role->permissions, AdminPermission::ManageEncryptionKeys); }
-bool Admin::canManageAdmins() const { return hasPermission(role->permissions, AdminPermission::ManageAdmins); }
-bool Admin::canManageUsers() const { return hasPermission(role->permissions, AdminPermission::ManageUsers); }
-bool Admin::canManageGroups() const { return hasPermission(role->permissions, AdminPermission::ManageGroups); }
-bool Admin::canManageRoles() const { return hasPermission(role->permissions, AdminPermission::ManageRoles); }
-bool Admin::canManageSettings() const { return hasPermission(role->permissions, AdminPermission::ManageSettings); }
-bool Admin::canManageVaults() const { return hasPermission(role->permissions, AdminPermission::ManageVaults); }
-bool Admin::canAccessAuditLog() const { return hasPermission(role->permissions, AdminPermission::AuditLogAccess); }
-bool Admin::canManageAPIKeys() const { return hasPermission(role->permissions, AdminPermission::ManageAPIKeys); }
-bool Admin::canCreateVaults() const { return hasPermission(role->permissions, AdminPermission::CreateVaults); }
+bool User::canManageEncryptionKeys() const { return hasPermission(role->permissions, AdminPermission::ManageEncryptionKeys); }
+bool User::canManageAdmins() const { return hasPermission(role->permissions, AdminPermission::ManageAdmins); }
+bool User::canManageUsers() const { return hasPermission(role->permissions, AdminPermission::ManageUsers); }
+bool User::canManageGroups() const { return hasPermission(role->permissions, AdminPermission::ManageGroups); }
+bool User::canManageRoles() const { return hasPermission(role->permissions, AdminPermission::ManageRoles); }
+bool User::canManageSettings() const { return hasPermission(role->permissions, AdminPermission::ManageSettings); }
+bool User::canManageVaults() const { return hasPermission(role->permissions, AdminPermission::ManageVaults); }
+bool User::canAccessAuditLog() const { return hasPermission(role->permissions, AdminPermission::AuditLogAccess); }
+bool User::canManageAPIKeys() const { return hasPermission(role->permissions, AdminPermission::ManageAPIKeys); }
+bool User::canCreateVaults() const { return hasPermission(role->permissions, AdminPermission::CreateVaults); }
 
 
 // --- Vault role->permissions ---
 
-bool Admin::canManageVault(const unsigned int vaultId, const std::filesystem::path& path) const {
+bool User::canManageVault(const unsigned int vaultId, const std::filesystem::path& path) const {
     if (db::query::vault::Vault::getVaultOwnerId(vaultId) == id) return true;
     const auto role = getRole(vaultId);
     return role && role->canManageVault(path);
 }
 
-bool Admin::canManageVaultAccess(const unsigned int vaultId, const std::filesystem::path& path) const {
+bool User::canManageVaultAccess(const unsigned int vaultId, const std::filesystem::path& path) const {
     if (db::query::vault::Vault::getVaultOwnerId(vaultId) == id) return true;
     const auto role = getRole(vaultId);
     return role && role->canManageAccess(path);
 }
 
-bool Admin::canManageVaultTags(const unsigned int vaultId, const std::filesystem::path& path) const {
+bool User::canManageVaultTags(const unsigned int vaultId, const std::filesystem::path& path) const {
     if (db::query::vault::Vault::getVaultOwnerId(vaultId) == id) return true;
     const auto role = getRole(vaultId);
     return role && role->canManageTags(path);
 }
 
-bool Admin::canManageVaultMetadata(const unsigned int vaultId, const std::filesystem::path& path) const {
+bool User::canManageVaultMetadata(const unsigned int vaultId, const std::filesystem::path& path) const {
     if (db::query::vault::Vault::getVaultOwnerId(vaultId) == id) return true;
     const auto role = getRole(vaultId);
     return role && role->canManageMetadata(path);
 }
 
-bool Admin::canManageVaultVersions(const unsigned int vaultId, const std::filesystem::path& path) const {
+bool User::canManageVaultVersions(const unsigned int vaultId, const std::filesystem::path& path) const {
     if (db::query::vault::Vault::getVaultOwnerId(vaultId) == id) return true;
     const auto role = getRole(vaultId);
     return role && role->canManageVersions(path);
 }
 
-bool Admin::canManageVaultFileLocks(const unsigned int vaultId, const std::filesystem::path& path) const {
+bool User::canManageVaultFileLocks(const unsigned int vaultId, const std::filesystem::path& path) const {
     if (db::query::vault::Vault::getVaultOwnerId(vaultId) == id) return true;
     const auto role = getRole(vaultId);
     return role && role->canManageFileLocks(path);
 }
 
-bool Admin::canShareVaultData(const unsigned int vaultId, const std::filesystem::path& path) const {
+bool User::canShareVaultData(const unsigned int vaultId, const std::filesystem::path& path) const {
     if (db::query::vault::Vault::getVaultOwnerId(vaultId) == id) return true;
     const auto role = getRole(vaultId);
     return role && role->canShare(path);
 }
 
-bool Admin::canSyncVaultData(const unsigned int vaultId, const std::filesystem::path& path) const {
+bool User::canSyncVaultData(const unsigned int vaultId, const std::filesystem::path& path) const {
     if (db::query::vault::Vault::getVaultOwnerId(vaultId) == id) return true;
     const auto role = getRole(vaultId);
     return role && role->canSync(path);
 }
 
-bool Admin::canCreateVaultData(const unsigned int vaultId, const std::filesystem::path& path) const {
+bool User::canCreateVaultData(const unsigned int vaultId, const std::filesystem::path& path) const {
     if (db::query::vault::Vault::getVaultOwnerId(vaultId) == id) return true;
     const auto role = getRole(vaultId);
     return role && role->canCreate(path);
 }
 
-bool Admin::canDownloadVaultData(const unsigned int vaultId, const std::filesystem::path& path) const {
+bool User::canDownloadVaultData(const unsigned int vaultId, const std::filesystem::path& path) const {
     if (db::query::vault::Vault::getVaultOwnerId(vaultId) == id) return true;
     const auto role = getRole(vaultId);
     return role && role->canDownload(path);
 }
 
-bool Admin::canDeleteVaultData(const unsigned int vaultId, const std::filesystem::path& path) const {
+bool User::canDeleteVaultData(const unsigned int vaultId, const std::filesystem::path& path) const {
     if (db::query::vault::Vault::getVaultOwnerId(vaultId) == id) return true;
     const auto role = getRole(vaultId);
     return role && role->validatePermission(role->permissions, VaultPermission::Delete, path);
 }
 
-bool Admin::canRenameVaultData(const unsigned int vaultId, const std::filesystem::path& path) const {
+bool User::canRenameVaultData(const unsigned int vaultId, const std::filesystem::path& path) const {
     if (db::query::vault::Vault::getVaultOwnerId(vaultId) == id) return true;
     const auto role = getRole(vaultId);
     return role && role->validatePermission(role->permissions, VaultPermission::Rename, path);
 }
 
-bool Admin::canMoveVaultData(const unsigned int vaultId, const std::filesystem::path& path) const {
+bool User::canMoveVaultData(const unsigned int vaultId, const std::filesystem::path& path) const {
     if (db::query::vault::Vault::getVaultOwnerId(vaultId) == id) return true;
     const auto role = getRole(vaultId);
     return role && role->validatePermission(role->permissions, VaultPermission::Move, path);
 }
 
-bool Admin::canListVaultData(const unsigned int vaultId, const std::filesystem::path& path) const {
+bool User::canListVaultData(const unsigned int vaultId, const std::filesystem::path& path) const {
     if (db::query::vault::Vault::getVaultOwnerId(vaultId) == id) return true;
     const auto role = getRole(vaultId);
     return role && role->validatePermission(role->permissions, VaultPermission::List, path);
 }
 
-std::string to_string(const std::shared_ptr<Admin>& user) {
+std::string to_string(const std::shared_ptr<User>& user) {
     if (!user) return "No user found\n";
 
     std::string out;
@@ -282,7 +283,7 @@ std::string to_string(const std::shared_ptr<Admin>& user) {
     return out;
 }
 
-std::string to_string(const std::vector<std::shared_ptr<Admin>>& users) {
+std::string to_string(const std::vector<std::shared_ptr<User>>& users) {
     if (users.empty()) return "No users found\n";
 
     Table tbl({

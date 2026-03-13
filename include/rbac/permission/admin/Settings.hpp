@@ -11,6 +11,7 @@
 #include "rbac/permission/template/Module.hpp"
 
 #include <cstdint>
+#include <nlohmann/json_fwd.hpp>
 
 namespace vh::rbac::permission::admin {
 
@@ -54,5 +55,8 @@ struct Settings final : Module<uint64_t> {
     [[nodiscard]] bool canView(const Type& type) const;
     [[nodiscard]] bool canEdit(const Type& type) const;
 };
+
+void to_json(nlohmann::json& j, const Settings& o);
+void from_json(const nlohmann::json& j, Settings& o);
 
 }

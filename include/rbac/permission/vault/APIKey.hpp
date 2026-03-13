@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <memory>
 #include <vector>
+#include <nlohmann/json_fwd.hpp>
 
 namespace vh::rbac::permission::vault {
 
@@ -26,5 +27,8 @@ struct APIKey : Set<APIKeyPermissions, uint8_t> {
     [[nodiscard]] bool any() const noexcept { return has(APIKeyPermissions::All); }
     [[nodiscard]] bool none() const noexcept { return has(APIKeyPermissions::None); }
 };
+
+void to_json(nlohmann::json& j, const APIKey& k);
+void from_json(const nlohmann::json& j, APIKey& k);
 
 }

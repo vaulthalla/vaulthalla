@@ -1,6 +1,6 @@
-#include "../../../include/identities/Group.hpp"
+#include "identities/Group.hpp"
+#include "identities/User.hpp"
 #include "db/encoding/timestamp.hpp"
-#include "../../../include/identities/User.hpp"
 #include "protocols/shell/Table.hpp"
 #include "protocols/shell/util/lineHelpers.hpp"
 
@@ -10,10 +10,10 @@
 using namespace vh::protocols::shell;
 using namespace vh::db::encoding;
 
-namespace vh::identities::model {
+namespace vh::identities {
 
 GroupMember::GroupMember(const pqxx::row& row)
-    : user(std::make_shared<Admin>(row)),
+    : user(std::make_shared<User>(row)),
       joined_at(parsePostgresTimestamp(row["joined_at"].as<std::string>())) {}
 
 Group::Group(const pqxx::row& gr, const pqxx::result& members)
@@ -41,7 +41,7 @@ Group::Group(const nlohmann::json& j)
                      : std::nullopt) {
     for (const auto& memberJson : j.at("members")) {
         auto member = std::make_shared<GroupMember>();
-        member->user = std::make_shared<Admin>();
+        member->user = std::make_shared<User>();
         member->user->id = memberJson.at("user_id").get<unsigned int>();
         member->joined_at = parsePostgresTimestamp(memberJson.at("joined_at").get<std::string>());
         members.push_back(member);
@@ -79,7 +79,7 @@ void from_json(const nlohmann::json& j, Group& g) {
 
     for (const auto& memberJson : j.at("members")) {
         auto member = std::make_shared<GroupMember>();
-        member->user = std::make_shared<Admin>();
+        member->user = std::make_shared<User>();
         member->user->id = memberJson.at("user_id").get<unsigned int>();
         member->joined_at = parsePostgresTimestamp(memberJson.at("joined_at").get<std::string>());
         g.members.push_back(member);

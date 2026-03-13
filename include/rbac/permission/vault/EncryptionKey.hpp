@@ -1,11 +1,10 @@
 #pragma once
 
 #include "rbac/permission/template/Set.hpp"
-#include "rbac/permission/Override.hpp"
 
 #include <cstdint>
 #include <memory>
-#include <vector>
+#include <nlohmann/json_fwd.hpp>
 
 namespace vh::rbac::permission::vault {
 
@@ -18,13 +17,14 @@ enum class EncryptionKeyPermissions : uint8_t {
 };
 
 struct EncryptionKey : Set<EncryptionKeyPermissions, uint8_t> {
-    std::vector<std::shared_ptr<Override>> overrides;
-
     [[nodiscard]] bool canView() const noexcept { return has(EncryptionKeyPermissions::View); }
     [[nodiscard]] bool canExport() const noexcept { return has(EncryptionKeyPermissions::Export); }
     [[nodiscard]] bool canRotate() const noexcept { return has(EncryptionKeyPermissions::Rotate); }
     [[nodiscard]] bool any() const noexcept { return has(EncryptionKeyPermissions::All); }
     [[nodiscard]] bool none() const noexcept { return has(EncryptionKeyPermissions::None); }
 };
+
+void to_json(nlohmann::json& j, const EncryptionKey& k);
+void from_json(const nlohmann::json& j, EncryptionKey& k);
 
 }

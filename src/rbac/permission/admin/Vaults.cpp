@@ -1,6 +1,7 @@
 #include "rbac/permission/admin/Vaults.hpp"
 
 #include <pqxx/result>
+#include <nlohmann/json.hpp>
 
 namespace vh::rbac::permission::admin {
 
@@ -36,6 +37,20 @@ Vaults::Type vault_type_from_string(const std::string& str) {
     if (str == "user") return Vaults::Type::User;
     if (str == "admin") return Vaults::Type::Admin;
     throw std::runtime_error("Invalid vault type: " + str);
+}
+
+void to_json(nlohmann::json& j, const Vaults& v) {
+    j = {
+        {"self", v.self},
+        {"user", v.user},
+        {"admin", v.admin}
+    };
+}
+
+void from_json(const nlohmann::json& j, Vaults& v) {
+    j.at("self").get_to(v.self);
+    j.at("user").get_to(v.user);
+    j.at("admin").get_to(v.admin);
 }
 
 }

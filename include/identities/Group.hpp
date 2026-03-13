@@ -7,18 +7,15 @@
 #include <vector>
 #include <nlohmann/json_fwd.hpp>
 
-namespace pqxx {
-class row;
-class result;
-}
+namespace pqxx { class row; class result; }
 
 namespace vh::identities {
 
-struct Admin;
+struct User;
 struct Volume;
 
 struct GroupMember {
-    std::shared_ptr<Admin> user;
+    std::shared_ptr<User> user;
     std::time_t joined_at{};
 
     GroupMember() = default;

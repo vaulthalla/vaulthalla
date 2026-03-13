@@ -3,6 +3,7 @@
 #include "rbac/permission/template/Set.hpp"
 
 #include <cstdint>
+#include <nlohmann/json_fwd.hpp>
 
 namespace vh::rbac::permission::admin {
 
@@ -17,5 +18,8 @@ struct Audits : Set<AuditPermissions, uint8_t> {
 
     [[nodiscard]] bool canView() const noexcept { return has(AuditPermissions::View); }
 };
+
+void to_json(nlohmann::json& j, const Audits& a);
+void from_json(const nlohmann::json& j, Audits& a);
 
 }
