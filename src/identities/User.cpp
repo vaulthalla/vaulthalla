@@ -125,10 +125,14 @@ bool User::operator!=(const User& other) const {
     return !(*this == other);
 }
 
-std::shared_ptr<Admin> User::getAdminRole() const {
-    std::scoped_lock lock(mutex_);
-    return roles.admin;
-}
+rbac::permission::Admin& User::adminPerms() const { return roles.admin->permissions; }
+rbac::permission::admin::Identities& User::identityPerms() const { return roles.admin->permissions.identities; }
+rbac::permission::admin::identities::Users& User::userPerms() const { return identityPerms().users; }
+rbac::permission::admin::identities::Groups& User::groupPerms() const { return identityPerms().groups; }
+rbac::permission::admin::identities::Admins& User::adminUserPerms() const { return identityPerms().admins; }
+rbac::permission::admin::Settings& User::settingsPerms() const { return adminPerms().settings; }
+rbac::permission::admin::Audits& User::auditPerms() const { return adminPerms().audits; }
+rbac::permission::admin::Vaults& User::globalVaultPerms() const { return adminPerms().vaults; }
 
 std::shared_ptr<Vault> User::getDirectVaultRole(const uint32_t vaultId) const {
     std::scoped_lock lock(mutex_);

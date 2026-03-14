@@ -14,7 +14,7 @@
 #include "vault/model/APIKey.hpp"
 #include "sync/model/LocalPolicy.hpp"
 #include "sync/model/RemotePolicy.hpp"
-#include "../../../../../include/identities/User.hpp"
+#include "identities/User.hpp"
 
 #include "log/Registry.hpp"
 #include "config/Registry.hpp"
@@ -30,8 +30,8 @@
 using namespace vh;
 using namespace vh::protocols::shell;
 using namespace vh::protocols::shell::commands::vault;
-using namespace vh::vault::model;
-using namespace vh::identities::model;
+using namespace vh::vault;
+using namespace vh::identities;
 using namespace vh::storage;
 using namespace vh::config;
 using namespace vh::sync::model;
@@ -115,7 +115,7 @@ static std::string stripLeadingDashes(const std::string& s) {
 static CommandResult handle_vault_create_interactive(const CommandCall& call) {
     const auto& io = call.io;
 
-    std::shared_ptr<Vault> v;
+    std::shared_ptr<model::Vault> v;
     std::shared_ptr<Policy> sync;
 
     const auto helpOptions = std::vector<std::string>{"help", "h", "?"};
@@ -125,7 +125,7 @@ static CommandResult handle_vault_create_interactive(const CommandCall& call) {
 
     const auto type = io->prompt("Select vault type (local/s3) [local]:", "local");
     if (type == "local") {
-        v = std::make_shared<Vault>();
+        v = std::make_shared<model::Vault>();
         v->type = VaultType::Local;
     } else if (type == "s3") {
         v = std::make_shared<S3Vault>();
@@ -144,9 +144,9 @@ static CommandResult handle_vault_create_interactive(const CommandCall& call) {
     const auto owner = resolveOwner(call, usage);
     v->owner_id = owner->id;
 
-    if (v->owner_id != call.user->id && !call.user->canCreateVaults())
-        return invalid("vault create: user ID " + std::to_string(call.user->id) +
-            " does not have permission to create vaults for other users");
+    if (v->owner_id != call.user->id) {
+        // TODO: vault/global perm scoping
+    }
 
     if (v->type == VaultType::Local) {
         auto fSync = std::make_shared<LocalPolicy>();

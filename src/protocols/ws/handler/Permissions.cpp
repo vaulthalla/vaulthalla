@@ -8,10 +8,9 @@
 
 using namespace vh::protocols::ws::handler;
 
-json Permissions::get(const json& payload, const std::shared_ptr<Session>& session) {
-    if (!session->user->canManageRoles())
-        throw std::runtime_error("Permission denied: Only admins can get permissions");
+// TODO: Figure out how I want to authenticate this
 
+json Permissions::get(const json& payload, const std::shared_ptr<Session>& session) {
     const auto permissionId = payload.at("id").get<unsigned int>();
     auto permission = db::query::rbac::Permission::getPermission(permissionId);
     if (!permission) throw std::runtime_error("Permission not found");
@@ -20,9 +19,6 @@ json Permissions::get(const json& payload, const std::shared_ptr<Session>& sessi
 }
 
 json Permissions::getByName(const json& payload, const std::shared_ptr<Session>& session) {
-    if (!session->user->canManageRoles())
-        throw std::runtime_error("Permission denied: Only admins can get permissions by name");
-
     const auto permissionName = payload.at("name").get<std::string>();
     auto permission = db::query::rbac::Permission::getPermissionByName(permissionName);
     if (!permission) throw std::runtime_error("Permission not found");
@@ -31,9 +27,6 @@ json Permissions::getByName(const json& payload, const std::shared_ptr<Session>&
 }
 
 json Permissions::list(const std::shared_ptr<Session>& session) {
-    if (session->user->canManageRoles())
-        throw std::runtime_error("Permission denied: Only admins can list permissions");
-
     auto permissions = db::query::rbac::Permission::listPermissions();
 
     return {{"permissions", permissions}};

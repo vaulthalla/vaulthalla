@@ -5,25 +5,25 @@
 #include "protocols/shell/util/argsHelpers.hpp"
 #include "crypto/util/hash.hpp"
 #include "log/Registry.hpp"
-#include "../../../../include/rbac/role/Admin.hpp"
+#include "rbac/role/Admin.hpp"
 #include "runtime/Deps.hpp"
 #include "usage/include/UsageManager.hpp"
 #include "CommandUsage.hpp"
 #include "auth/registration/Validator.hpp"
-#include "../../../../include/identities/User.hpp"
+#include "identities/User.hpp"
 
 #include <paths.h>
 
 using namespace vh;
 using namespace vh::protocols::shell;
-using namespace vh::rbac::model;
-using namespace vh::identities::model;
+using namespace vh::rbac::role;
+using namespace vh::identities;
 using namespace vh::auth;
 using namespace vh::crypto;
 
 static const unsigned int PASSWORD_LENGTH = vh::paths::testMode ? 8 : 84;
 
-static std::string tryAssignNewPassword(const std::shared_ptr<Admin>& user) {
+static std::string tryAssignNewPassword(const std::shared_ptr<User>& user) {
     constexpr unsigned short maxRetries = 1024 * 4; // 4096 attempts max
     for (unsigned short i = 1; i < maxRetries; ++i) {
         if (const auto password = hash::generate_secure_password(PASSWORD_LENGTH); registration::Validator::isValidPassword(password)) {
@@ -36,7 +36,7 @@ static std::string tryAssignNewPassword(const std::shared_ptr<Admin>& user) {
     throw std::runtime_error("Failed to generate a valid password");
 }
 
-static void assignEmail(const CommandCall& call, const std::shared_ptr<Admin>& user, const std::shared_ptr<CommandUsage>& usage) {
+static void assignEmail(const CommandCall& call, const std::shared_ptr<User>& user, const std::shared_ptr<CommandUsage>& usage) {
     if (const auto emailOpt = optVal(call, usage->resolveOptional("email")->option_tokens)) {
         if (!registration::Validator::isValidEmail(*emailOpt))
             throw std::runtime_error("Invalid email address: " + *emailOpt);
@@ -44,29 +44,27 @@ static void assignEmail(const CommandCall& call, const std::shared_ptr<Admin>& u
     }
 }
 
-static void assignLinuxUidIfAvailable(const CommandCall& call, const std::shared_ptr<Admin>& user, const std::shared_ptr<CommandUsage>& usage) {
+static void assignLinuxUidIfAvailable(const CommandCall& call, const std::shared_ptr<User>& user, const std::shared_ptr<CommandUsage>& usage) {
     if (const auto linuxUidOpt = optVal(call, usage->resolveOptional("linux-uid")->option_tokens)) {
         const auto parsed = parseUInt(*linuxUidOpt);
         if (!parsed || *parsed <= 0)
             throw std::runtime_error("Invalid --linux-uid: must be a positive integer");
-        user->linux_uid = *parsed;
+        user->meta.linux_uid = *parsed;
     }
 }
 
 static CommandResult createUser(const CommandCall& call) {
     constexpr const auto* ERR = "user create";
 
-    if (!call.user->canManageUsers()) return invalid("You do not have permission to create users.");
-
     const auto usage = resolveUsage({"user", "create"});
     validatePositionals(call, usage);
 
-    const auto user = std::make_shared<Admin>();
+    const auto user = std::make_shared<User>();
     user->name = call.positionals[0];
     assignEmail(call, user, usage);
     assignLinuxUidIfAvailable(call, user, usage);
-    user->role = std::make_shared<Admin>();
-    user->last_modified_by = call.user->id;
+    user->roles.admin = std::make_shared<Admin>();
+    user->meta.updated_by = call.user->id;
 
     if (!registration::Validator::isValidName(user->name)) return invalid("Invalid user name: " + user->name);
 
@@ -77,9 +75,16 @@ static CommandResult createUser(const CommandCall& call) {
     if (!rLkp || !rLkp.ptr) return invalid(rLkp.error);
     const auto role = rLkp.ptr;
 
-    user->role->id = role->id;
-    user->role->name = role->name;
-    user->role->permissions = role->permissions;
+    user->roles.admin = role;
+
+    if (user->isSuperAdmin())
+        return invalid("Cannot create user with super_admin role.");
+
+    if (user->isAdmin() && !call.user->adminUserPerms().canAdd())
+        return invalid("You do not have permission to create admin users.");
+
+    if (!user->isAdmin() && !call.user->userPerms().canAdd())
+        return invalid("You do not have permission to create users.");
 
     const auto password = tryAssignNewPassword(user);
     user->id = db::query::identities::User::createUser(user);
@@ -103,11 +108,11 @@ static CommandResult handleUpdateUser(const CommandCall& call) {
         if (user->isSuperAdmin())
             return invalid("Cannot update super admin user: " + user->name);
 
-        if (!call.user->canManageUsers())
-            return invalid("You do not have permission to update other users.");
-
-        if (user->isAdmin() && !call.user->canManageAdmins())
+        if (user->isAdmin() && !call.user->adminUserPerms().canEdit())
             return invalid("You do not have permission to update admin users.");
+
+        if (!user->isAdmin() && !call.user->userPerms().canEdit())
+            return invalid("You do not have permission to update users.");
     }
 
     if (const auto newNameOpt = optVal(call, usage->resolveOptional("name")->option_tokens)) {
@@ -123,13 +128,13 @@ static CommandResult handleUpdateUser(const CommandCall& call) {
         const auto rLkp = resolveRole(*newRoleOpt, ERR);
         if (!rLkp || !rLkp.ptr) return invalid(rLkp.error);
         const auto role = rLkp.ptr;
-        user->admin->id = role->id;
+        user->roles.admin = role;
     }
 
     assignEmail(call, user, usage);
     assignLinuxUidIfAvailable(call, user, usage);
 
-    user->last_modified_by = call.user->id;
+    user->meta.updated_by = call.user->id;
 
     db::query::identities::User::updateUser(user);
 
@@ -155,10 +160,14 @@ static CommandResult deleteUser(const CommandCall& call) {
     }
 
     if (call.user->id != user->id) {
-        if (!call.user->canManageUsers())
-            return invalid("You do not have permission to delete users.");
-        if (user->isAdmin() && !call.user->canManageAdmins())
+        if (user->isSuperAdmin())
+            return invalid("Cannot delete super admin user: " + user->name);
+
+        if (user->isAdmin() && !call.user->adminUserPerms().canDelete())
             return invalid("You do not have permission to delete admin users.");
+
+        if (!user->isAdmin() && !call.user->userPerms().canDelete())
+            return invalid("You do not have permission to delete users.");
     }
 
     db::query::identities::User::deleteUser(user->id);
@@ -176,19 +185,23 @@ static CommandResult handleUserInfo(const CommandCall& call) {
     const auto user = uLkp.ptr;
 
     if (call.user->id != user->id) {
-        if (user->isSuperAdmin())
-            return invalid("Cannot view super admin user: " + user->name);
-        if (!call.user->canManageUsers())
-            return invalid("You do not have permission to view other users.");
-        if (user->isAdmin() && !call.user->canManageAdmins())
+        if (user->isSuperAdmin() && !call.user->adminUserPerms().canView())
+            return invalid("You do not have permission to view super admin users.");
+
+        if (user->isAdmin() && !call.user->adminUserPerms().canView())
             return invalid("You do not have permission to view admin users.");
+
+        if (!user->isAdmin() && !call.user->userPerms().canView())
+            return invalid("You do not have permission to view users.");
     }
 
     return ok(to_string(user));
 }
 
 static CommandResult handle_list_users(const CommandCall& call) {
-    if (!call.user->canManageUsers()) return invalid("You do not have permission to list users.");
+    if (!call.user->adminUserPerms().canView())
+        return invalid("You do not have permission to list users.");
+
     return ok(to_string(db::query::identities::User::listUsers(parseListQuery(call))));
 }
 

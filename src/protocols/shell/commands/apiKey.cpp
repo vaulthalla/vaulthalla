@@ -3,7 +3,7 @@
 #include "protocols/shell/Router.hpp"
 #include "db/query/vault/APIKey.hpp"
 #include "vault/model/APIKey.hpp"
-#include "../../../../include/identities/User.hpp"
+#include "identities/User.hpp"
 #include "protocols/shell/util/argsHelpers.hpp"
 #include "vault/APIKeyManager.hpp"
 #include "storage/s3/Controller.hpp"

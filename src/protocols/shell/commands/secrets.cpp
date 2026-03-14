@@ -2,7 +2,7 @@
 #include "protocols/shell/commands/helpers.hpp"
 #include "protocols/shell/Router.hpp"
 #include "protocols/shell/util/argsHelpers.hpp"
-#include "../../../../include/identities/User.hpp"
+#include "identities/User.hpp"
 #include "crypto/secrets/TPMKeyProvider.hpp"
 #include "crypto/secrets/Manager.hpp"
 #include "fs/ops/file.hpp"
@@ -18,7 +18,7 @@
 
 using namespace vh;
 using namespace vh::protocols::shell;
-using namespace vh::identities::model;
+using namespace vh::identities;
 using namespace vh::fs::ops;
 
 static std::vector<uint8_t> trimSecret(const std::vector<uint8_t>& secret) {
@@ -139,7 +139,9 @@ static bool isSecretsMatch(const std::string& cmd, const std::string_view input)
 }
 
 static CommandResult handle_secrets(const CommandCall& call) {
-    if (!call.user->isSuperAdmin() && !call.user->canManageEncryptionKeys())
+    // TODO: handle per vault
+
+    if (!call.user->isSuperAdmin() && !call.user->globalVaultPerms().admin.permissions.keys.encryptionKey.canView())
         return invalid("secrets: only super admins or users with ManageEncryptionKeys permission can manage secrets");
 
     if (call.positionals.empty() || hasKey(call, "help") || hasKey(call, "h"))

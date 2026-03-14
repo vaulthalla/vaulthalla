@@ -1,13 +1,14 @@
 #include "protocols/shell/commands/vault.hpp"
 #include "protocols/shell/util/argsHelpers.hpp"
 #include "runtime/Deps.hpp"
-#include "../../../../../include/db/query/rbac/Permission.hpp"
+#include "db/query/rbac/Permission.hpp"
 
 #include "vault/model/Vault.hpp"
-#include "../../../../../include/rbac/role/Vault.hpp"
-#include "../../../../../include/identities/User.hpp"
-#include "../../../../../include/rbac/role/Base.hpp"
-#include "../../../../../include/rbac/permission/Permission.hpp"
+#include "rbac/role/Vault.hpp"
+#include "identities/User.hpp"
+#include "rbac/role/Admin.hpp"
+#include "rbac/role/Vault.hpp"
+#include "rbac/permission/Permission.hpp"
 
 #include "config/Registry.hpp"
 #include "CommandUsage.hpp"
@@ -22,7 +23,7 @@
 using namespace vh;
 using namespace vh::protocols::shell;
 using namespace vh::protocols::shell::commands::vault;
-using namespace vh::identities::model;
+using namespace vh::identities;
 using namespace vh::rbac::model;
 using namespace vh::vault::model;
 using namespace vh::storage;

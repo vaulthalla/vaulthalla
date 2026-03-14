@@ -13,6 +13,24 @@
 namespace pqxx { class row; class result; }
 namespace vh::rbac::role { struct Admin; struct Vault; }
 
+namespace vh::rbac::permission {
+    struct Admin;
+
+    namespace admin {
+        struct Identities;
+        struct Audits;
+        struct Settings;
+        struct Vaults;
+
+        namespace identities {
+            struct Users;
+            struct Groups;
+            struct Admins;
+        }
+    }
+
+}
+
 namespace vh::identities {
 
 struct Group;
@@ -21,7 +39,6 @@ struct User : std::enable_shared_from_this<User> {
     struct RoleAssignments {
         std::shared_ptr<rbac::role::Admin> admin{};
         std::unordered_map<uint32_t, std::shared_ptr<rbac::role::Vault>> vaults{};
-
     };
 
     struct Meta {
@@ -64,7 +81,6 @@ struct User : std::enable_shared_from_this<User> {
     bool operator==(const User& other) const;
     bool operator!=(const User& other) const;
 
-    [[nodiscard]] std::shared_ptr<rbac::role::Admin> getAdminRole() const;
     [[nodiscard]] std::shared_ptr<rbac::role::Vault> getDirectVaultRole(uint32_t vaultId) const;
     [[nodiscard]] bool hasDirectVaultRole(uint32_t vaultId) const;
 
@@ -73,6 +89,15 @@ struct User : std::enable_shared_from_this<User> {
 
     [[nodiscard]] bool isAdmin() const;
     [[nodiscard]] bool isSuperAdmin() const;
+
+    [[nodiscard]] rbac::permission::Admin& adminPerms() const;
+    [[nodiscard]] rbac::permission::admin::Identities& identityPerms() const;
+    [[nodiscard]] rbac::permission::admin::identities::Users& userPerms() const;
+    [[nodiscard]] rbac::permission::admin::identities::Admins& adminUserPerms() const;
+    [[nodiscard]] rbac::permission::admin::identities::Groups& groupPerms() const;
+    [[nodiscard]] rbac::permission::admin::Settings& settingsPerms() const;
+    [[nodiscard]] rbac::permission::admin::Audits& auditPerms() const;
+    [[nodiscard]] rbac::permission::admin::Vaults& globalVaultPerms() const;
 };
 
 void to_json(nlohmann::json& j, const User& u);

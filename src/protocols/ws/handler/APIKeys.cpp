@@ -4,17 +4,20 @@
 #include "vault/APIKeyManager.hpp"
 #include "protocols/ws/Session.hpp"
 #include "runtime/Deps.hpp"
+#include "rbac/role/Admin.hpp"
+#include "rbac/permission/Admin.hpp"
 
 #include <nlohmann/json.hpp>
 
 using namespace vh::protocols::ws::handler;
 using namespace vh::vault::model;
 using namespace vh::storage;
+using namespace vh::rbac;
 using json = nlohmann::json;
 
 json APIKeys::add(const json& payload, const std::shared_ptr<Session>& session) {
     const auto userID = payload.at("user_id").get<unsigned int>();
-    if (session->user->id != userID) throw std::invalid_argument("Invalid user ID");
+    // TODO: validation logic
 
     const auto name = payload.at("name").get<std::string>();
     const auto provider = s3_provider_from_string(payload.at("provider").get<std::string>());
@@ -36,8 +39,9 @@ json APIKeys::remove(const json& payload, const std::shared_ptr<Session>& sessio
 }
 
 json APIKeys::list(const std::shared_ptr<Session>& session) {
+    const auto& apiKeyPerms = session->user->globalVaultPerms().admin.permissions.keys.apiKey;
 
-    const auto keys = session->user->canManageAPIKeys() ?
+    const auto keys = apiKeyPerms.canView() ?
         runtime::Deps::get().apiKeyManager->listAPIKeys() :
         runtime::Deps::get().apiKeyManager->listUserAPIKeys(session->user->id);
 

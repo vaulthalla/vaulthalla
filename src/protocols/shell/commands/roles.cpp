@@ -2,9 +2,10 @@
 #include "protocols/shell/commands/helpers.hpp"
 #include "protocols/shell/Router.hpp"
 #include "protocols/shell/util/argsHelpers.hpp"
-#include "../../../../include/db/query/rbac/Permission.hpp"
-#include "../../../../include/identities/User.hpp"
-#include "../../../../include/rbac/role/Base.hpp"
+#include "db/query/rbac/Permission.hpp"
+#include "identities/User.hpp"
+#include "rbac/role/Admin.hpp"
+#include "rbac/role/Vault.hpp"
 #include "runtime/Deps.hpp"
 #include "usage/include/UsageManager.hpp"
 #include "CommandUsage.hpp"
@@ -12,6 +13,8 @@
 using namespace vh;
 using namespace vh::protocols::shell;
 using namespace vh::rbac::model;
+
+// TODO: handle multiple role types and perms
 
 static void parseFlag(const CommandCall& call, const std::string& flag, uint16_t& permissions, const unsigned int bitPosition) {
     if (hasFlag(call, flag) || hasFlag(call, "allow-" + flag)) permissions |= (1 << bitPosition);

@@ -4,17 +4,18 @@
 #include "protocols/shell/types.hpp"
 #include "protocols/shell/util/argsHelpers.hpp"
 #include "db/query/identities/Group.hpp"
-#include "../../../../include/identities/Group.hpp"
-#include "identities/model/User.hpp"
+#include "include/identities/Group.hpp"
+#include "identities/User.hpp"
 #include "auth/Manager.hpp"
 #include "runtime/Deps.hpp"
 #include "usage/include/UsageManager.hpp"
 #include "CommandUsage.hpp"
 #include "auth/registration/Validator.hpp"
+#include "rbac/permission/admin/identities/Groups.hpp"
 
 using namespace vh;
 using namespace vh::protocols::shell;
-using namespace vh::identities::model;
+using namespace vh::identities;
 
 static std::shared_ptr<Group> resolveGroup(const std::string& groupNameOrId) {
     if (const auto gidOpt = parseUInt(groupNameOrId)) {
@@ -33,7 +34,7 @@ static void assignGidIfAvailable(const CommandCall& call, const std::shared_ptr<
 }
 
 static CommandResult handle_group_create(const CommandCall& call) {
-    if (!call.user->canManageGroups()) return invalid("group create: you do not have permission to create groups");
+    if (!call.user->groupPerms().canAdd()) return invalid("group create: you do not have permission to create groups");
 
     const auto usage = resolveUsage({"group", "create"});
     validatePositionals(call, usage);
@@ -52,7 +53,7 @@ static CommandResult handle_group_create(const CommandCall& call) {
 }
 
 static CommandResult handle_group_update(const CommandCall& call) {
-    if (!call.user->canManageGroups()) return invalid("group update: you do not have permission to update groups");
+    if (!call.user->groupPerms().canEdit()) return invalid("group update: you do not have permission to update groups");
 
     const auto usage = resolveUsage({"group", "update"});
     validatePositionals(call, usage);
@@ -74,7 +75,9 @@ static CommandResult handle_group_update(const CommandCall& call) {
 }
 
 static CommandResult handle_group_delete(const CommandCall& call) {
-    if (!call.user->canManageGroups()) return invalid("group delete: you do not have permission to delete groups");
+    if (!call.user->groupPerms().canDelete())
+        return invalid("group delete: you do not have permission to delete groups");
+
     const auto usage = resolveUsage({"group", "delete"});
     validatePositionals(call, usage);
     const auto group = resolveGroup(call.positionals[0]);
@@ -83,7 +86,9 @@ static CommandResult handle_group_delete(const CommandCall& call) {
 }
 
 static CommandResult handle_group_info(const CommandCall& call) {
-    if (!call.user->canManageGroups()) return invalid("group info: you do not have permission to view group information");
+    if (!call.user->groupPerms().canView())
+        return invalid("group info: you do not have permission to view group information");
+
     const auto usage = resolveUsage({"group", "info"});
     validatePositionals(call, usage);
     const auto group = resolveGroup(call.positionals[0]);
@@ -97,7 +102,7 @@ static CommandResult handle_group_list(const CommandCall& call) {
     auto params = parseListQuery(call);
 
     std::vector<std::shared_ptr<Group>> groups;
-    if (!call.user->canManageGroups()) groups = db::query::identities::Group::listGroups(call.user->id, std::move(params));
+    if (!call.user->groupPerms().canView()) groups = db::query::identities::Group::listGroups(call.user->id, std::move(params));
     else groups = db::query::identities::Group::listGroups(std::nullopt, std::move(params));
 
     return ok(to_string(groups));
@@ -106,7 +111,8 @@ static CommandResult handle_group_list(const CommandCall& call) {
 static CommandResult handle_group_add_user(const CommandCall& call) {
     constexpr const auto* ERR = "group add user";
 
-    if (!call.user->canManageGroups()) return invalid("group add-user: you do not have permission to add users to groups");
+    if (!call.user->groupPerms().canAddMember())
+        return invalid("group add-user: you do not have permission to add users to groups");
 
     const auto usage = resolveUsage({"group", "user", "add"});
     validatePositionals(call, usage);
@@ -125,7 +131,8 @@ static CommandResult handle_group_add_user(const CommandCall& call) {
 static CommandResult handle_group_remove_user(const CommandCall& call) {
     constexpr const auto* ERR = "group remove user";
 
-    if (!call.user->canManageGroups()) return invalid("group remove-user: you do not have permission to remove users from groups");
+    if (!call.user->groupPerms().canRemoveMember())
+        return invalid("group remove-user: you do not have permission to remove users from groups");
 
     const auto usage = resolveUsage({"group", "user", "remove"});
     validatePositionals(call, usage);
@@ -142,7 +149,9 @@ static CommandResult handle_group_remove_user(const CommandCall& call) {
 }
 
 static CommandResult handle_group_list_users(const CommandCall& call) {
-    if (!call.user->canManageGroups()) return invalid("group list-users: you do not have permission to view group users");
+    if (!call.user->groupPerms().canViewMembers())
+        return invalid("group list-users: you do not have permission to view group members");
+
     const auto usage = resolveUsage({"group", "list-users"});
     const auto group = resolveGroup(call.positionals[0]);
     return ok(to_string(group->members));
