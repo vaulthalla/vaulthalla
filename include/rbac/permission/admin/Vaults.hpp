@@ -1,6 +1,6 @@
 #pragma once
 
-#include "rbac/permission/Vault.hpp"
+#include "rbac/role/vault/Global.hpp"
 
 #include <nlohmann/json_fwd.hpp>
 
@@ -11,7 +11,7 @@ namespace vh::rbac::permission::admin {
 struct Vaults {
     enum class Type { Self, Admin, User };
 
-    Vault self{}, admin{}, user{};
+    role::vault::Global self{}, admin{}, user{};
 
     Vaults() = default;
     explicit Vaults(const pqxx::result& res);

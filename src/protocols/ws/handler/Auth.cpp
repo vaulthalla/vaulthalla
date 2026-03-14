@@ -37,7 +37,7 @@ json Auth::registerUser(const json& payload, const std::shared_ptr<Session>& ses
         if (userRole->name == "super_admin") throw std::runtime_error("Cannot assign super admin role to a user");
         if (userRole->name == "admin" && !session->user->canManageAdmins()) throw std::runtime_error("Permission denied: Only super admins can assign admin role");
         if (!session->user->canManageUsers()) throw std::runtime_error("Permission denied: Only admins can assign user roles");
-        user->role = userRole;
+        user->admin = userRole;
     } else throw std::runtime_error("Invalid role specified: " + role);
 
     runtime::Deps::get().authManager->registerUser(user, password);

@@ -164,12 +164,12 @@ void vh::seed::initSystemUser() {
             existingByUid->email = "no-reply@system";
             existingByUid->linux_uid = sysUid;
 
-            existingByUid->role = std::make_shared<Admin>();
-            existingByUid->role->id = role->id;
-            existingByUid->role->name = role->name;
-            existingByUid->role->description = role->description;
-            existingByUid->role->type = role->type;
-            existingByUid->role->permissions = role->permissions;
+            existingByUid->admin = std::make_shared<Admin>();
+            existingByUid->admin->id = role->id;
+            existingByUid->admin->name = role->name;
+            existingByUid->admin->description = role->description;
+            existingByUid->admin->type = role->type;
+            existingByUid->admin->permissions = role->permissions;
 
             // If you have an update query, use it. If not, skip.
             // db::query::identities::User::updateUser(existingByUid);
@@ -192,12 +192,12 @@ void vh::seed::initSystemUser() {
             existingByName->linux_uid = sysUid;
             existingByName->email = "";
 
-            existingByName->role = std::make_shared<Admin>();
-            existingByName->role->id = role->id;
-            existingByName->role->name = role->name;
-            existingByName->role->description = role->description;
-            existingByName->role->type = role->type;
-            existingByName->role->permissions = role->permissions;
+            existingByName->admin = std::make_shared<Admin>();
+            existingByName->admin->id = role->id;
+            existingByName->admin->name = role->name;
+            existingByName->admin->description = role->description;
+            existingByName->admin->type = role->type;
+            existingByName->admin->permissions = role->permissions;
 
             // If you have an update query, use it. If not, you can delete+recreate, but updating is better.
             // db::query::identities::User::updateUser(existingByName);

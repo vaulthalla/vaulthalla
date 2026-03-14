@@ -8,6 +8,7 @@
 #include <nlohmann/json_fwd.hpp>
 #include <regex>
 #include <optional>
+#include <unordered_map>
 
 namespace vh::rbac::role::vault {
 
@@ -16,9 +17,9 @@ struct Override;
 struct Global final : BasicMeta {
     enum class Scope { Self, User, Admin };
 
-    uint32_t user_id{};  // always exists as assignment
+    uint32_t user_id{};
     Scope scope{Scope::Self};
-    std::optional<uint32_t> template_id;  // whether to align values with existing role::Vault template
+    std::optional<uint32_t> template_role_id;
     bool enforce_template{false};
     permission::Vault permissions{};
 

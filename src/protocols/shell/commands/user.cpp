@@ -123,7 +123,7 @@ static CommandResult handleUpdateUser(const CommandCall& call) {
         const auto rLkp = resolveRole(*newRoleOpt, ERR);
         if (!rLkp || !rLkp.ptr) return invalid(rLkp.error);
         const auto role = rLkp.ptr;
-        user->role->id = role->id;
+        user->admin->id = role->id;
     }
 
     assignEmail(call, user, usage);

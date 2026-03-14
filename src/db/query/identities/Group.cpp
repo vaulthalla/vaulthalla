@@ -1,6 +1,6 @@
 #include "db/query/identities/Group.hpp"
 #include "db/Transactions.hpp"
-#include "../../../../include/identities/Group.hpp"
+#include "identities/Group.hpp"
 
 using namespace vh::db::model;
 

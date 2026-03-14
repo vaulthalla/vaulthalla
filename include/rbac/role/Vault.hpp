@@ -9,6 +9,7 @@
 #include <regex>
 #include <memory>
 #include <optional>
+#include <unordered_map>
 
 namespace vh::rbac::role {
 
@@ -37,6 +38,7 @@ void to_json(nlohmann::json& j, const Vault& r);
 void from_json(const nlohmann::json& j, Vault& r);
 
 void to_json(nlohmann::json& j, const std::vector<Vault>& roles);
+void to_json(nlohmann::json& j, const std::unordered_map<uint32_t, std::shared_ptr<Vault>>& roles);
 
 void to_json(nlohmann::json& j, const Vault::AssignmentInfo& r);
 void from_json(const nlohmann::json& j, Vault::AssignmentInfo& r);
@@ -44,7 +46,7 @@ void from_json(const nlohmann::json& j, Vault::AssignmentInfo& r);
 void to_json(nlohmann::json& j, const std::vector<std::shared_ptr<Vault>>& roles);
 
 std::vector<Vault> vault_roles_from_json(const nlohmann::json& j);
-std::vector<Vault> vault_roles_from_pq_result(const pqxx::result& res, const pqxx::result& overrides);
+std::unordered_map<uint32_t, std::shared_ptr<Vault>> vault_roles_from_pq_result(const pqxx::result& res, const pqxx::result& overrides);
 
 std::string to_string(const Vault& role);
 std::string to_string(const std::vector<Vault>& roles);

@@ -91,9 +91,13 @@ void to_json(nlohmann::json& j, const Vault& r) {
 
 void from_json(const nlohmann::json& j, Vault& r) { r = Vault(j); }
 
-std::vector<Vault> vault_roles_from_pq_result(const pqxx::result& res, const pqxx::result& overrides) {
-    std::vector<Vault> roles;
-    for (const auto& row : res) roles.emplace_back(row, overrides);
+std::unordered_map<uint32_t, std::shared_ptr<Vault>> vault_roles_from_pq_result(const pqxx::result& res, const pqxx::result& overrides) {
+    std::unordered_map<uint32_t, std::shared_ptr<Vault>> roles;
+    for (const auto& row : res) {
+        // TODO: Either split the overrides by vault id or share a central map pointer
+        const auto role = std::make_shared<Vault>(row, overrides);
+        roles[role->id] = role;
+    }
     return roles;
 }
 
@@ -102,6 +106,11 @@ std::vector<Vault> vault_roles_from_json(const nlohmann::json& j) {
     if (j.is_array()) for (const auto& item : j) roles.emplace_back(item);
     else if (j.is_object()) roles.emplace_back(j);
     return roles;
+}
+
+void to_json(nlohmann::json& j, const std::unordered_map<uint32_t, std::shared_ptr<Vault> >& roles) {
+    j = nlohmann::json::array();
+    for (const auto& [id, role] : roles) j.emplace_back(*role);
 }
 
 }

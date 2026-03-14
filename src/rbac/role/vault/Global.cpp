@@ -12,7 +12,7 @@ Global::Global(const pqxx::row& row)
       scope(global_vault_role_scope_from_string(row["scope"].as<std::string>())),
       enforce_template(row["enforce_template"].as<bool>()),
       permissions(row) {
-    if (!row.at("template_id").is_null()) template_id = row["template_id"].as<uint32_t>();
+    if (!row.at("template_id").is_null()) template_role_id = row["template_id"].as<uint32_t>();
 }
 
 Global::Global(const nlohmann::json& j)
@@ -21,7 +21,7 @@ Global::Global(const nlohmann::json& j)
       scope(global_vault_role_scope_from_string(j.at("scope").get<std::string>())),
       enforce_template(j.at("enforce_template").get<bool>()),
       permissions(j.at("permissions")) {
-        if (j.contains("template_id")) template_id = j.at("template_id").get<uint32_t>();
+        if (j.contains("template_id")) template_role_id = j.at("template_id").get<uint32_t>();
     }
 
 Global Global::fromJson(const nlohmann::json& j) { return Global(j); }
@@ -32,7 +32,7 @@ std::string Global::toString(const uint8_t indent) const {
     oss << std::string(indent, ' ') << "Global Vault Role:\n";
     oss << in << "- User ID: " << std::to_string(user_id) << "\n";
     oss << in << "- Scope: " << to_string(scope) << "\n";
-    oss << in << "- Template ID: " << (template_id ? *template_id : "None") << "\n";
+    oss << in << "- Template ID: " << (template_role_id ? *template_role_id : "None") << "\n";
     oss << in << "- Enforce Template: " << bool_to_string(enforce_template) << "\n";
     oss << permissions.toString(indent + 2);
     return oss.str();
@@ -58,7 +58,7 @@ void to_json(nlohmann::json& j, const Global& r) {
     j = static_cast<const BasicMeta&>(r);
     j["user_id"] = r.user_id;
     j["scope"] = r.scope;
-    j["template_id"] = r.template_id ? *r.template_id : "None";
+    j["template_id"] = r.template_role_id ? *r.template_role_id : "None";
     j["enforce_template"] = r.enforce_template ? "true" : "false";
     j["permissions"] = r.permissions;
 }

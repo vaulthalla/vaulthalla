@@ -29,6 +29,7 @@ struct Group {
     std::optional<std::string> description{std::nullopt};
     std::time_t created_at{};
     std::optional<std::time_t> updated_at{std::nullopt};
+
     std::vector<std::shared_ptr<GroupMember>> members{};
 
     Group() = default;

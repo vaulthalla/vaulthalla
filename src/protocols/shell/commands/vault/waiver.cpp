@@ -47,7 +47,7 @@ static std::shared_ptr<Waiver> create_encrypt_waiver(const CommandCall& call, co
         waiver->owner = db::query::identities::User::getUserById(s3Vault->owner_id);
         if (!waiver->owner) throw std::runtime_error("Failed to load owner ID " + std::to_string(s3Vault->owner_id));
 
-        if (waiver->owner->canManageVaults()) waiver->overridingRole = std::make_shared<Role>(*call.user->role);
+        if (waiver->owner->canManageVaults()) waiver->overridingRole = std::make_shared<Role>(*call.user->admin);
         else {
             const auto role = call.user->getRole(s3Vault->id);
             if (!role || role->type != "vault") throw std::runtime_error(
