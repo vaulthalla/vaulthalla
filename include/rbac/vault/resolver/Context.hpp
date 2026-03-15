@@ -16,6 +16,8 @@ namespace vh::rbac::vault {
 
         std::shared_ptr<identities::User> user;
         EnumT permission{};
+        std::optional<std::string> target_subject_type{std::nullopt};
+        std::optional<uint32_t> target_subject_id{std::nullopt};
         std::optional<uint32_t> vault_id{std::nullopt};
         std::optional<std::filesystem::path> path{std::nullopt};
 

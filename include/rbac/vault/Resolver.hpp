@@ -2,6 +2,8 @@
 
 #include "resolver/Context.hpp"
 #include "resolver/AccessTraits/Fwd.hpp"
+#include "resolver/ContextPolicy/Base.hpp"
+#include "resolver/VaultContext.hpp"
 
 #include "identities/User.hpp"
 #include "rbac/role/Vault.hpp"
@@ -11,6 +13,7 @@
 #include "storage/Engine.hpp"
 #include "storage/Manager.hpp"
 #include "db/query/identities/User.hpp"
+#include "db/query/identities/Group.hpp"
 
 #include <filesystem>
 #include <memory>
@@ -21,24 +24,16 @@
 namespace vh::rbac::vault {
 
 class Resolver {
-    struct ResolvedVaultContext {
-        std::shared_ptr<storage::Engine> engine;
-        std::shared_ptr<vh::vault::model::Vault> vault;
-        std::shared_ptr<identities::User> owner;
-
-        [[nodiscard]] bool isValid() const {
-            return engine && vault && owner;
-        }
-    };
-
     template <typename EnumT>
     static bool checkPermission(const std::shared_ptr<identities::User>& user,
-                                const ResolvedVaultContext& resolved,
+                                const resolver::ResolvedVaultContext& resolved,
                                 const EnumT permission) {
-        static_assert(std::is_enum_v<EnumT>, "vh::rbac::vault::Resolver::checkPermission(): EnumT must be an enum type");
+        static_assert(std::is_enum_v<EnumT>,
+                      "vh::rbac::vault::Resolver::checkPermission(): EnumT must be an enum type");
 
         if (!user || !resolved.isValid()) return false;
 
+        bool allowed = false;
         const auto vaultId = resolved.vault->id;
 
         if (user->hasDirectVaultRole(vaultId)) {
@@ -46,18 +41,23 @@ class Resolver {
             if (!role) return false;
 
             if (AccessTraits<EnumT>::direct(*role).has(permission))
-                return true;
+                allowed = true;
         }
 
-        const auto& globalPerms = user->globalVaultPerms();
+        if (!allowed) {
+            const auto& globalPerms = user->globalVaultPerms();
 
-        if (user->id == resolved.vault->owner_id)
-            return AccessTraits<EnumT>::self(globalPerms.self).has(permission);
+            if (user->id == resolved.vault->owner_id)
+                allowed = AccessTraits<EnumT>::self(globalPerms.self).has(permission);
+            else if (resolved.owner->isAdmin())
+                allowed = AccessTraits<EnumT>::admin(globalPerms.admin).has(permission);
+            else
+                allowed = AccessTraits<EnumT>::user(globalPerms.user).has(permission);
+        }
 
-        if (resolved.owner->isAdmin())
-            return AccessTraits<EnumT>::admin(globalPerms.admin).has(permission);
+        if (!allowed) return false;
 
-        return AccessTraits<EnumT>::user(globalPerms.user).has(permission);
+        return resolver::ContextPolicy<EnumT>::validate(user, resolved, permission);
     }
 
     static std::shared_ptr<storage::Engine> resolveEngine(const std::optional<uint32_t>& vaultId,
@@ -71,9 +71,11 @@ class Resolver {
         return nullptr;
     }
 
-    static ResolvedVaultContext resolveVaultContext(const std::optional<uint32_t>& vaultId,
-                                                    const std::optional<std::filesystem::path>& path) {
-        ResolvedVaultContext resolved{};
+    static resolver::ResolvedVaultContext resolveVaultContext(const std::optional<uint32_t>& vaultId,
+                                                              const std::optional<std::filesystem::path>& path,
+                                                              const std::optional<std::string>& targetSubjectType,
+                                                              const std::optional<uint32_t>& targetSubjectId) {
+        resolver::ResolvedVaultContext resolved{};
 
         resolved.engine = resolveEngine(vaultId, path);
         if (!resolved.engine) return resolved;
@@ -82,6 +84,15 @@ class Resolver {
         if (!resolved.vault) return resolved;
 
         resolved.owner = db::query::identities::User::getUserById(resolved.vault->owner_id);
+        if (!resolved.owner) return resolved;
+
+        if (targetSubjectType && targetSubjectId) {
+            if (*targetSubjectType == "user")
+                resolved.targetUser = db::query::identities::User::getUserById(*targetSubjectId);
+            else if (*targetSubjectType == "group")
+                resolved.targetGroup = db::query::identities::Group::getGroup(*targetSubjectId);
+        }
+
         return resolved;
     }
 
@@ -94,7 +105,13 @@ public:
         if (!user) return false;
         if (user->isSuperAdmin()) return true;
 
-        const auto resolved = resolveVaultContext(ctx.vault_id, ctx.path);
+        const auto resolved = resolveVaultContext(
+            ctx.vault_id,
+            ctx.path,
+            ctx.target_subject_type,
+            ctx.target_subject_id
+        );
+
         if (!resolved.isValid()) return false;
 
         return checkPermission(user, resolved, ctx.permission);

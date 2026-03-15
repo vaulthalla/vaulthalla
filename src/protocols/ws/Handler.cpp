@@ -6,7 +6,7 @@
 #include "protocols/ws/handler/Settings.hpp"
 #include "protocols/ws/handler/Groups.hpp"
 #include "protocols/ws/handler/Stats.hpp"
-#include "../../../include/protocols/ws/handler/rbac/roles/User.hpp"
+#include "../../../include/protocols/ws/handler/rbac/roles/Admin.hpp"
 #include "../../../include/protocols/ws/handler/vault/Vaults.hpp"
 #include "protocols/ws/handler/APIKeys.hpp"
 #include "log/Registry.hpp"

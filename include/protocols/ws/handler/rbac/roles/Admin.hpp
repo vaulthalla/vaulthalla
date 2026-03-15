@@ -9,7 +9,7 @@ namespace vh::protocols::ws::handler::rbac::roles {
 
 using json = nlohmann::json;
 
-struct User {
+struct Admin {
     static json add(const json& payload, const std::shared_ptr<Session>& session);
     static json remove(const json& payload, const std::shared_ptr<Session>& session);
     static json update(const json& payload, const std::shared_ptr<Session>& session);
