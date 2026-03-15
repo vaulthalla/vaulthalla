@@ -1,10 +1,11 @@
 #pragma once
 
 #include "resolver/Context.hpp"
-#include "resolver/AccessTraitsFwd.hpp"
+#include "resolver/AccessTraits/Fwd.hpp"
 
 #include "identities/User.hpp"
 #include "rbac/role/Vault.hpp"
+#include "rbac/permission/admin/Vaults.hpp"
 #include "vault/model/Vault.hpp"
 #include "runtime/Deps.hpp"
 #include "storage/Engine.hpp"

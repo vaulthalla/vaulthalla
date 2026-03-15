@@ -5,7 +5,7 @@
 
 namespace vh::protocols::ws { class Session; }
 
-namespace vh::protocols::ws::handler {
+namespace vh::protocols::ws::handler::rbac {
 
 using json = nlohmann::json;
 

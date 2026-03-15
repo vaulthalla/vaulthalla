@@ -4,6 +4,7 @@
 #include "rbac/permission/admin/Vaults.hpp"
 #include "rbac/permission/admin/Audits.hpp"
 #include "rbac/permission/admin/Settings.hpp"
+#include "rbac/permission/admin/Roles.hpp"
 
 #include <nlohmann/json_fwd.hpp>
 
@@ -16,6 +17,7 @@ struct Admin {
     admin::Vaults vaults;
     admin::Audits audits;
     admin::Settings settings;
+    admin::Roles roles;
 
     Admin() = default;
     Admin(const pqxx::row& row, const pqxx::result& vaultGlobalPerms);

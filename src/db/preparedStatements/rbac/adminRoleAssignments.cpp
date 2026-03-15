@@ -39,7 +39,8 @@ void vh::db::DBConnection::initPreparedAdminRoleAssignments() const {
                 ar.updated_at                  AS role_updated_at,
                 ar.identity_permissions::text  AS identity_permissions,
                 ar.audit_permissions::text     AS audit_permissions,
-                ar.settings_permissions::text  AS settings_permissions
+                ar.settings_permissions::text  AS settings_permissions,
+                ar.roles_permissions::text     AS roles_permissions
             FROM admin_role_assignments ara
             INNER JOIN admin_role ar
                 ON ar.id = ara.role_id
@@ -63,7 +64,8 @@ void vh::db::DBConnection::initPreparedAdminRoleAssignments() const {
                 ar.updated_at                  AS role_updated_at,
                 ar.identity_permissions::text  AS identity_permissions,
                 ar.audit_permissions::text     AS audit_permissions,
-                ar.settings_permissions::text  AS settings_permissions
+                ar.settings_permissions::text  AS settings_permissions,
+                ar.roles_permissions::text     AS roles_permissions
             FROM admin_role_assignments ara
             INNER JOIN admin_role ar
                 ON ar.id = ara.role_id
@@ -114,7 +116,8 @@ void vh::db::DBConnection::initPreparedAdminRoleAssignments() const {
                 ar.updated_at                  AS role_updated_at,
                 ar.identity_permissions::text  AS identity_permissions,
                 ar.audit_permissions::text     AS audit_permissions,
-                ar.settings_permissions::text  AS settings_permissions
+                ar.settings_permissions::text  AS settings_permissions,
+                ar.roles_permissions::text     AS roles_permissions
             FROM admin_role_assignments ara
             INNER JOIN admin_role ar
                 ON ar.id = ara.role_id

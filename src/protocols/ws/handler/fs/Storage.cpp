@@ -1,4 +1,4 @@
-#include "protocols/ws/handler/Storage.hpp"
+#include "protocols/ws/handler/fs/Storage.hpp"
 #include "protocols/ws/Session.hpp"
 #include "storage/Manager.hpp"
 #include "fs/model/File.hpp"
@@ -6,21 +6,21 @@
 #include "rbac/role/Vault.hpp"
 #include "vault/model/Vault.hpp"
 #include "identities/User.hpp"
-#include "protocols/ws/handler/Upload.hpp"
+#include "protocols/ws/handler/fs/Upload.hpp"
 #include "storage/Engine.hpp"
 #include "runtime/Deps.hpp"
 #include "fs/Filesystem.hpp"
 #include "sync/Controller.hpp"
 #include "fs/cache/Registry.hpp"
 #include "rbac/role/Vault.hpp"
-#include "rbac/vault/resolver/VaultResolver.hpp"
+#include "rbac/vault/resolver/*.hpp"
 
 #include <cstdint>
 #include <filesystem>
 #include <stdexcept>
 #include <string>
 
-using namespace vh::protocols::ws::handler;
+using namespace vh::protocols::ws::handler::fs;
 using namespace vh::vault::model;
 using namespace vh::rbac;
 using namespace vh::storage;

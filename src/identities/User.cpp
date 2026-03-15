@@ -130,6 +130,8 @@ rbac::permission::admin::Identities& User::identityPerms() const { return roles.
 rbac::permission::admin::identities::Users& User::userPerms() const { return identityPerms().users; }
 rbac::permission::admin::identities::Groups& User::groupPerms() const { return identityPerms().groups; }
 rbac::permission::admin::identities::Admins& User::adminUserPerms() const { return identityPerms().admins; }
+rbac::permission::admin::roles::Admin& User::adminRolePerms() const { return roles.admin->permissions.roles.admin; }
+rbac::permission::admin::roles::Vault &User::vaultRolePerms() const { return roles.admin->permissions.roles.vault; }
 rbac::permission::admin::Settings& User::settingsPerms() const { return adminPerms().settings; }
 rbac::permission::admin::Audits& User::auditPerms() const { return adminPerms().audits; }
 rbac::permission::admin::Vaults& User::globalVaultPerms() const { return adminPerms().vaults; }

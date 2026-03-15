@@ -2,7 +2,7 @@
 
 #include "protocols/ws/Session.hpp"
 #include "identities/User.hpp"
-#include "rbac/vault/resolver/VaultResolver.hpp"
+#include "rbac/vault/resolver/*.hpp"
 
 #include <filesystem>
 #include <memory>
@@ -10,7 +10,7 @@
 #include <stdexcept>
 #include <string_view>
 
-namespace vh::protocols::ws::handler {
+namespace vh::protocols::ws::handler::fs {
 
 using json = nlohmann::json;
 

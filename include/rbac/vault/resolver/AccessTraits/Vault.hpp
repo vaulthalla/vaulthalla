@@ -1,6 +1,6 @@
 #pragma once
 
-#include "rbac/vault/resolver/AccessTraitsFwd.hpp"
+#include "Fwd.hpp"
 
 #include "rbac/permission/Vault.hpp"
 #include "rbac/permission/admin/Vaults.hpp"

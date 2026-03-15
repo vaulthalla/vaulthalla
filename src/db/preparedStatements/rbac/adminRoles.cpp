@@ -10,7 +10,8 @@ void vh::db::DBConnection::initPreparedAdminRoles() const {
                 description,
                 identity_permissions,
                 audit_permissions,
-                settings_permissions
+                settings_permissions,
+                roles_permissions
             )
             VALUES (
                 $1,
@@ -18,14 +19,16 @@ void vh::db::DBConnection::initPreparedAdminRoles() const {
                 $3,
                 $4::bit(32),
                 $5::bit(8),
-                $6::bit(16)
+                $6::bit(16),
+                $7::bit(16)
             )
             ON CONFLICT (id) DO UPDATE SET
                 name                 = EXCLUDED.name,
                 description          = EXCLUDED.description,
                 identity_permissions = EXCLUDED.identity_permissions,
                 audit_permissions    = EXCLUDED.audit_permissions,
-                settings_permissions = EXCLUDED.settings_permissions
+                settings_permissions = EXCLUDED.settings_permissions,
+                roles_permissions    = EXCLUDED.roles_permissions
         )SQL"
     );
 
@@ -37,14 +40,16 @@ void vh::db::DBConnection::initPreparedAdminRoles() const {
                 description,
                 identity_permissions,
                 audit_permissions,
-                settings_permissions
+                settings_permissions,
+                roles_permissions
             )
             VALUES (
                 $1,
                 $2,
                 $3::bit(32),
                 $4::bit(8),
-                $5::bit(16)
+                $5::bit(16),
+                $6::bit(16)
             )
             RETURNING
                 id,
@@ -54,7 +59,8 @@ void vh::db::DBConnection::initPreparedAdminRoles() const {
                 updated_at,
                 identity_permissions::text AS identity_permissions,
                 audit_permissions::text    AS audit_permissions,
-                settings_permissions::text AS settings_permissions
+                settings_permissions::text AS settings_permissions,
+                roles_permissions::text    AS roles_permissions
         )SQL"
     );
 
@@ -66,20 +72,23 @@ void vh::db::DBConnection::initPreparedAdminRoles() const {
                 description,
                 identity_permissions,
                 audit_permissions,
-                settings_permissions
+                settings_permissions,
+                roles_permissions
             )
             VALUES (
                 $1,
                 $2,
                 $3::bit(32),
                 $4::bit(8),
-                $5::bit(16)
+                $5::bit(16),
+                $6::bit(16)
             )
             ON CONFLICT (name) DO UPDATE SET
                 description          = EXCLUDED.description,
                 identity_permissions = EXCLUDED.identity_permissions,
                 audit_permissions    = EXCLUDED.audit_permissions,
-                settings_permissions = EXCLUDED.settings_permissions
+                settings_permissions = EXCLUDED.settings_permissions,
+                roles_permissions    = EXCLUDED.roles_permissions
             RETURNING
                 id,
                 name,
@@ -88,7 +97,8 @@ void vh::db::DBConnection::initPreparedAdminRoles() const {
                 updated_at,
                 identity_permissions::text AS identity_permissions,
                 audit_permissions::text    AS audit_permissions,
-                settings_permissions::text AS settings_permissions
+                settings_permissions::text AS settings_permissions,
+                roles_permissions::text    AS roles_permissions
         )SQL"
     );
 
@@ -103,7 +113,8 @@ void vh::db::DBConnection::initPreparedAdminRoles() const {
                 updated_at,
                 identity_permissions::text AS identity_permissions,
                 audit_permissions::text    AS audit_permissions,
-                settings_permissions::text AS settings_permissions
+                settings_permissions::text AS settings_permissions,
+                roles_permissions::text    AS roles_permissions
             FROM admin_role
             WHERE id = $1
         )SQL"
@@ -120,7 +131,8 @@ void vh::db::DBConnection::initPreparedAdminRoles() const {
                 updated_at,
                 identity_permissions::text AS identity_permissions,
                 audit_permissions::text    AS audit_permissions,
-                settings_permissions::text AS settings_permissions
+                settings_permissions::text AS settings_permissions,
+                roles_permissions::text    AS roles_permissions
             FROM admin_role
             WHERE name = $1
         )SQL"
@@ -135,7 +147,8 @@ void vh::db::DBConnection::initPreparedAdminRoles() const {
                 description          = $3,
                 identity_permissions = $4::bit(32),
                 audit_permissions    = $5::bit(8),
-                settings_permissions = $6::bit(16)
+                settings_permissions = $6::bit(16),
+                roles_permissions    = $7::bit(16)
             WHERE id = $1
         )SQL"
     );
@@ -181,7 +194,8 @@ void vh::db::DBConnection::initPreparedAdminRoles() const {
                 updated_at,
                 identity_permissions::text AS identity_permissions,
                 audit_permissions::text    AS audit_permissions,
-                settings_permissions::text AS settings_permissions
+                settings_permissions::text AS settings_permissions,
+                roles_permissions::text    AS roles_permissions
             FROM admin_role
             ORDER BY name
         )SQL"

@@ -1,4 +1,4 @@
-#include "protocols/ws/handler/Permissions.hpp"
+#include "../../../../../include/protocols/ws/handler/rbac/Permissions.hpp"
 #include "protocols/ws/Session.hpp"
 #include "db/query/rbac/Permission.hpp"
 #include "identities/User.hpp"

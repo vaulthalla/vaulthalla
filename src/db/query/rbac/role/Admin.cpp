@@ -16,7 +16,7 @@ unsigned int Admin::upsert(const AdminRolePtr& role) {
 
     return Transactions::exec("role::Admin::upsert", [&](pqxx::work& txn) -> unsigned int {
         // If the role already has an id, update/upsert by id.
-        if (role->id() != 0) {
+        if (role->id != 0) {
             txn.exec(
                 pqxx::prepped{"admin_role_upsert"},
                 pqxx::params{
@@ -25,11 +25,12 @@ unsigned int Admin::upsert(const AdminRolePtr& role) {
                     role->description,
                     role->permissions.identities.toBitString(),
                     role->permissions.audits.toBitString(),
-                    role->permissions.settings.toBitString()
+                    role->permissions.settings.toBitString(),
+                    role->permissions.roles.toBitString()
                 }
             );
 
-            return role->id();
+            return role->id;
         }
 
         // Otherwise upsert by unique name and return the generated/resolved id.
@@ -40,7 +41,8 @@ unsigned int Admin::upsert(const AdminRolePtr& role) {
                 role->description,
                 role->permissions.identities.toBitString(),
                 role->permissions.audits.toBitString(),
-                role->permissions.settings.toBitString()
+                role->permissions.settings.toBitString(),
+                role->permissions.roles.toBitString()
             }
         );
 
@@ -57,7 +59,7 @@ void Admin::remove(unsigned int id) {
 
 void Admin::remove(const AdminRolePtr& role) {
     if (!role) return;
-    remove(role->id());
+    remove(role->id);
 }
 
 AdminRolePtr Admin::get(unsigned int id) {

@@ -20,7 +20,7 @@ namespace vh::rbac::vault {
         std::optional<std::filesystem::path> path{std::nullopt};
 
         [[nodiscard]] bool isValid() const {
-            return user && (vault_id || (path && !path->empty()));
+            return !!user;
         }
     };
 

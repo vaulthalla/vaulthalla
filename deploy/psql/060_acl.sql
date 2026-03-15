@@ -42,7 +42,8 @@ CREATE TABLE IF NOT EXISTS admin_role
 
     identity_permissions BIT(32) NOT NULL,
     audit_permissions    BIT(8) NOT NULL,
-    settings_permissions BIT(16) NOT NULL
+    settings_permissions BIT(16) NOT NULL,
+    roles_permissions    BIT(16) NOT NULL
 );
 
 DO $$

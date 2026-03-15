@@ -28,7 +28,7 @@ namespace vh::protocols::ws {
 
 class Router;
 
-namespace handler { class Upload; }
+namespace handler::fs { class Upload; }
 
 namespace beast     = boost::beast;
 namespace websocket = beast::websocket;
@@ -56,7 +56,7 @@ public:
 
     void sendAccessTokenOnNextResponse() { sendAccessToken_ = true; }
 
-    std::shared_ptr<handler::Upload> getUploadHandler() const { return uploadHandler_; }
+    std::shared_ptr<handler::fs::Upload> getUploadHandler() const { return uploadHandler_; }
 
     static std::string generateUUIDv4();
 
@@ -90,7 +90,7 @@ private:
     beast::flat_buffer tmpBuffer_{4096}; // used during HTTP header read/handshake
     RequestType handshakeRequest_;
 
-    std::shared_ptr<handler::Upload> uploadHandler_{nullptr};
+    std::shared_ptr<handler::fs::Upload> uploadHandler_{nullptr};
     std::shared_ptr<Router> router_;
 
     std::atomic_bool closing_{false};

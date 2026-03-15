@@ -5,7 +5,7 @@
 #include "auth/model/TokenPair.hpp"
 #include "log/Registry.hpp"
 #include "protocols/ws/Router.hpp"
-#include "protocols/ws/handler/Upload.hpp"
+#include "../../../include/protocols/ws/handler/fs/Upload.hpp"
 #include "runtime/Deps.hpp"
 #include "../../../include/identities/User.hpp"
 #include "protocols/cookie.hpp"

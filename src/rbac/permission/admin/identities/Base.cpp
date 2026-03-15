@@ -1,5 +1,5 @@
 #include "rbac/permission/admin/identities/Base.hpp"
-#include "protocols/ws/handler/Permissions.hpp"
+#include "protocols/ws/handler/rbac/Permissions.hpp"
 
 #include <nlohmann/json.hpp>
 #include <ostream>

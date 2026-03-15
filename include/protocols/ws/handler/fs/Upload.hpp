@@ -9,7 +9,7 @@
 namespace vh::storage { struct Engine; }
 namespace vh::protocols::ws { class Session; }
 
-namespace vh::protocols::ws::handler {
+namespace vh::protocols::ws::handler::fs {
 
 struct UploadArgs {
     std::string uploadId;

@@ -24,6 +24,11 @@ namespace vh::rbac {
             struct Settings;
             struct Vaults;
 
+            namespace roles {
+                struct Admin;
+                struct Vault;
+            }
+
             namespace identities {
                 struct Users;
                 struct Groups;
@@ -97,6 +102,8 @@ struct User : std::enable_shared_from_this<User> {
     [[nodiscard]] rbac::permission::admin::identities::Users& userPerms() const;
     [[nodiscard]] rbac::permission::admin::identities::Admins& adminUserPerms() const;
     [[nodiscard]] rbac::permission::admin::identities::Groups& groupPerms() const;
+    [[nodiscard]] rbac::permission::admin::roles::Admin& adminRolePerms() const;
+    [[nodiscard]] rbac::permission::admin::roles::Vault& vaultRolePerms() const;
     [[nodiscard]] rbac::permission::admin::Settings& settingsPerms() const;
     [[nodiscard]] rbac::permission::admin::Audits& auditPerms() const;
     [[nodiscard]] rbac::permission::admin::Vaults& globalVaultPerms() const;

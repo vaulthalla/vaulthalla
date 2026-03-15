@@ -1,4 +1,4 @@
-#include "protocols/ws/handler/Vaults.hpp"
+#include "../../../../../include/protocols/ws/handler/vault/Vaults.hpp"
 #include "vault/model/APIKey.hpp"
 #include "identities/User.hpp"
 #include "vault/model/Vault.hpp"
