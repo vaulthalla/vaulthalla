@@ -3,13 +3,9 @@
 #include "db/Transactions.hpp"
 #include "rbac/role/Vault.hpp"
 
-using R = vh::rbac::role::Vault;
-using Ptr = std::shared_ptr<R>;
-using RVec = std::vector<Ptr>;
-
 namespace {
 
-    Ptr makeAssignedVaultRole(pqxx::work& txn, const pqxx::row& row) {
+    std::shared_ptr<vh::rbac::role::Vault> makeAssignedVaultRole(pqxx::work& txn, const pqxx::row& row) {
         const auto roleId = row["vault_role_id"].as<uint32_t>();
 
         const auto overridesRes = txn.exec(
@@ -17,7 +13,7 @@ namespace {
             pqxx::params{roleId}
         );
 
-        return std::make_shared<R>(row, overridesRes);
+        return std::make_shared<vh::rbac::role::Vault>(row, overridesRes);
     }
 
 }
@@ -61,10 +57,10 @@ namespace vh::db::query::rbac::role::vault {
         });
     }
 
-    Ptr Assignments::get(const uint32_t vaultId,
+    std::shared_ptr<vh::rbac::role::Vault> Assignments::get(const uint32_t vaultId,
                          const std::string& subjectType,
                          const uint32_t subjectId) {
-        return Transactions::exec("role::vault::Assignments::get(vaultId, subjectType, subjectId)", [&](pqxx::work& txn) -> Ptr {
+        return Transactions::exec("role::vault::Assignments::get(vaultId, subjectType, subjectId)", [&](pqxx::work& txn) -> std::shared_ptr<vh::rbac::role::Vault> {
             const auto assignmentRes = txn.exec(
                 pqxx::prepped{"vault_role_assignment_get"},
                 pqxx::params{vaultId, subjectType, subjectId}
@@ -76,8 +72,8 @@ namespace vh::db::query::rbac::role::vault {
         });
     }
 
-    Ptr Assignments::getByAssignmentId(const uint32_t assignmentId) {
-        return Transactions::exec("role::vault::Assignments::getByAssignmentId(assignmentId)", [&](pqxx::work& txn) -> Ptr {
+    std::shared_ptr<vh::rbac::role::Vault> Assignments::getByAssignmentId(const uint32_t assignmentId) {
+        return Transactions::exec("role::vault::Assignments::getByAssignmentId(assignmentId)", [&](pqxx::work& txn) -> std::shared_ptr<vh::rbac::role::Vault> {
             const auto assignmentRes = txn.exec(
                 pqxx::prepped{"vault_role_assignment_get_by_id"},
                 pqxx::params{assignmentId}
@@ -89,14 +85,14 @@ namespace vh::db::query::rbac::role::vault {
         });
     }
 
-    RVec Assignments::listForVault(const uint32_t vaultId) {
-        return Transactions::exec("role::vault::Assignments::listForVault(vaultId)", [&](pqxx::work& txn) -> RVec {
+    std::vector<std::shared_ptr<vh::rbac::role::Vault>> Assignments::listForVault(const uint32_t vaultId) {
+        return Transactions::exec("role::vault::Assignments::listForVault(vaultId)", [&](pqxx::work& txn) -> std::vector<std::shared_ptr<vh::rbac::role::Vault>> {
             const auto assignmentRes = txn.exec(
                 pqxx::prepped{"vault_role_assignment_list_by_vault"},
                 pqxx::params{vaultId}
             );
 
-            RVec roles;
+            std::vector<std::shared_ptr<vh::rbac::role::Vault>> roles;
             roles.reserve(assignmentRes.size());
 
             for (const auto& row : assignmentRes)
@@ -106,15 +102,15 @@ namespace vh::db::query::rbac::role::vault {
         });
     }
 
-    RVec Assignments::listForSubject(const std::string& subjectType,
+    std::vector<std::shared_ptr<vh::rbac::role::Vault>> Assignments::listForSubject(const std::string& subjectType,
                                      const uint32_t subjectId) {
-        return Transactions::exec("role::vault::Assignments::listForSubject(subjectType, subjectId)", [&](pqxx::work& txn) -> RVec {
+        return Transactions::exec("role::vault::Assignments::listForSubject(subjectType, subjectId)", [&](pqxx::work& txn) -> std::vector<std::shared_ptr<vh::rbac::role::Vault>> {
             const auto assignmentRes = txn.exec(
                 pqxx::prepped{"vault_role_assignment_list_by_subject"},
                 pqxx::params{subjectType, subjectId}
             );
 
-            RVec roles;
+            std::vector<std::shared_ptr<vh::rbac::role::Vault>> roles;
             roles.reserve(assignmentRes.size());
 
             for (const auto& row : assignmentRes)
@@ -124,14 +120,14 @@ namespace vh::db::query::rbac::role::vault {
         });
     }
 
-    RVec Assignments::listAll() {
-        return Transactions::exec("role::vault::Assignments::listAll()", [&](pqxx::work& txn) -> RVec {
+    std::vector<std::shared_ptr<vh::rbac::role::Vault>> Assignments::listAll() {
+        return Transactions::exec("role::vault::Assignments::listAll()", [&](pqxx::work& txn) -> std::vector<std::shared_ptr<vh::rbac::role::Vault>> {
             const auto assignmentRes = txn.exec(
                 pqxx::prepped{"vault_role_assignment_list_all"},
                 pqxx::params{}
             );
 
-            RVec roles;
+            std::vector<std::shared_ptr<vh::rbac::role::Vault>> roles;
             roles.reserve(assignmentRes.size());
 
             for (const auto& row : assignmentRes)

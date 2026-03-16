@@ -1,8 +1,8 @@
-#include "seed_db.hpp"
+#include "seed/include/seed_db.hpp"
 
 // Database
 #include "db/query/vault/Vault.hpp"
-#include "../../include/db/query/rbac/Permission.hpp"
+#include "db/query/rbac/Permission.hpp"
 #include "db/query/identities/User.hpp"
 #include "db/query/identities/Group.hpp"
 #include "db/query/fs/Directory.hpp"
@@ -11,13 +11,12 @@
 
 // Types
 #include "rbac/permission/Permission.hpp"
-#include "rbac/permission/bitmask.hpp"
 #include "vault/model/S3Vault.hpp"
 #include "sync/model/RemotePolicy.hpp"
 #include "sync/model/LocalPolicy.hpp"
-#include "../../include/identities/User.hpp"
-#include "../../include/identities/Group.hpp"
-#include "rbac/role/Base.hpp"
+#include "identities/User.hpp"
+#include "identities/Group.hpp"
+#include "rbac/role/Vault.hpp"
 #include "rbac/role/Admin.hpp"
 #include "rbac/role/Vault.hpp"
 #include "vault/model/Vault.hpp"
@@ -46,7 +45,7 @@
 using namespace vh::seed;
 using namespace vh::config;
 using namespace vh::crypto;
-using namespace vh::identities::model;
+using namespace vh::identities;
 using namespace vh::rbac;
 using namespace vh::vault::model;
 using namespace vh::crypto;

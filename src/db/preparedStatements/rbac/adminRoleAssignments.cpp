@@ -27,20 +27,22 @@ void vh::db::DBConnection::initPreparedAdminRoleAssignments() const {
         "admin_role_assignment_get_by_user_id",
         R"SQL(
             SELECT
-                ara.id                         AS assignment_id,
-                ara.user_id                    AS user_id,
-                ara.role_id                    AS role_id,
-                ara.assigned_at                AS assigned_at,
+                ara.id                          AS assignment_id,
+                ara.user_id                     AS user_id,
+                ara.role_id                     AS role_id,
+                ara.assigned_at                 AS assigned_at,
 
-                ar.id                          AS admin_role_id,
-                ar.name                        AS role_name,
-                ar.description                 AS role_description,
-                ar.created_at                  AS role_created_at,
-                ar.updated_at                  AS role_updated_at,
-                ar.identity_permissions::text  AS identity_permissions,
-                ar.audit_permissions::text     AS audit_permissions,
-                ar.settings_permissions::text  AS settings_permissions,
-                ar.roles_permissions::text     AS roles_permissions
+                ar.id                           AS admin_role_id,
+                ar.name                         AS role_name,
+                ar.description                  AS role_description,
+                ar.created_at                   AS role_created_at,
+                ar.updated_at                   AS role_updated_at,
+                ar.identity_permissions::text   AS identity_permissions,
+                ar.audit_permissions::text      AS audit_permissions,
+                ar.settings_permissions::text   AS settings_permissions,
+                ar.roles_permissions::text      AS roles_permissions,
+                ar.vaults_permissions::text     AS vaults_permissions,
+                ar.keys_permissions::text       AS keys_permissions
             FROM admin_role_assignments ara
             INNER JOIN admin_role ar
                 ON ar.id = ara.role_id
@@ -52,20 +54,22 @@ void vh::db::DBConnection::initPreparedAdminRoleAssignments() const {
         "admin_role_assignment_get_by_assignment_id",
         R"SQL(
             SELECT
-                ara.id                         AS assignment_id,
-                ara.user_id                    AS user_id,
-                ara.role_id                    AS role_id,
-                ara.assigned_at                AS assigned_at,
+                ara.id                          AS assignment_id,
+                ara.user_id                     AS user_id,
+                ara.role_id                     AS role_id,
+                ara.assigned_at                 AS assigned_at,
 
-                ar.id                          AS admin_role_id,
-                ar.name                        AS role_name,
-                ar.description                 AS role_description,
-                ar.created_at                  AS role_created_at,
-                ar.updated_at                  AS role_updated_at,
-                ar.identity_permissions::text  AS identity_permissions,
-                ar.audit_permissions::text     AS audit_permissions,
-                ar.settings_permissions::text  AS settings_permissions,
-                ar.roles_permissions::text     AS roles_permissions
+                ar.id                           AS admin_role_id,
+                ar.name                         AS role_name,
+                ar.description                  AS role_description,
+                ar.created_at                   AS role_created_at,
+                ar.updated_at                   AS role_updated_at,
+                ar.identity_permissions::text   AS identity_permissions,
+                ar.audit_permissions::text      AS audit_permissions,
+                ar.settings_permissions::text   AS settings_permissions,
+                ar.roles_permissions::text      AS roles_permissions,
+                ar.vaults_permissions::text     AS vaults_permissions,
+                ar.keys_permissions::text       AS keys_permissions
             FROM admin_role_assignments ara
             INNER JOIN admin_role ar
                 ON ar.id = ara.role_id
@@ -104,20 +108,22 @@ void vh::db::DBConnection::initPreparedAdminRoleAssignments() const {
         "admin_role_assignment_list_all",
         R"SQL(
             SELECT
-                ara.id                         AS assignment_id,
-                ara.user_id                    AS user_id,
-                ara.role_id                    AS role_id,
-                ara.assigned_at                AS assigned_at,
+                ara.id                          AS assignment_id,
+                ara.user_id                     AS user_id,
+                ara.role_id                     AS role_id,
+                ara.assigned_at                 AS assigned_at,
 
-                ar.id                          AS admin_role_id,
-                ar.name                        AS role_name,
-                ar.description                 AS role_description,
-                ar.created_at                  AS role_created_at,
-                ar.updated_at                  AS role_updated_at,
-                ar.identity_permissions::text  AS identity_permissions,
-                ar.audit_permissions::text     AS audit_permissions,
-                ar.settings_permissions::text  AS settings_permissions,
-                ar.roles_permissions::text     AS roles_permissions
+                ar.id                           AS admin_role_id,
+                ar.name                         AS role_name,
+                ar.description                  AS role_description,
+                ar.created_at                   AS role_created_at,
+                ar.updated_at                   AS role_updated_at,
+                ar.identity_permissions::text   AS identity_permissions,
+                ar.audit_permissions::text      AS audit_permissions,
+                ar.settings_permissions::text   AS settings_permissions,
+                ar.roles_permissions::text      AS roles_permissions,
+                ar.vaults_permissions::text     AS vaults_permissions,
+                ar.keys_permissions::text       AS keys_permissions
             FROM admin_role_assignments ara
             INNER JOIN admin_role ar
                 ON ar.id = ara.role_id

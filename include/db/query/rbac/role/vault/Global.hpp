@@ -6,12 +6,12 @@
 #include <string>
 #include <vector>
 
-namespace vh::rbac::roles::vault { struct Global; }
+namespace vh::rbac::role::vault { struct Global; }
 
 namespace vh::db::query::rbac::roles::vault {
 
 struct Global {
-    using GlobalVaultRole = vh::rbac::roles::vault::Global;
+    using GlobalVaultRole = vh::rbac::role::vault::Global;
     using GlobalVaultRolePtr = std::shared_ptr<GlobalVaultRole>;
 
     static void upsert(const GlobalVaultRolePtr& role);

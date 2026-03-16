@@ -3,10 +3,6 @@
 #include "db/Transactions.hpp"
 #include "rbac/role/Admin.hpp"
 
-using R = vh::rbac::role::Admin;
-using Ptr = std::shared_ptr<R>;
-using RVec = std::vector<Ptr>;
-
 namespace vh::db::query::rbac::role::admin {
 
     void Assignments::assign(const uint32_t userId, const uint32_t roleId) {
@@ -39,8 +35,8 @@ namespace vh::db::query::rbac::role::admin {
         });
     }
 
-    Ptr Assignments::get(const uint32_t userId) {
-        return Transactions::exec("role::admin::Assignments::get(userId)", [&](pqxx::work& txn) -> Ptr {
+    std::shared_ptr<vh::rbac::role::Admin> Assignments::get(const uint32_t userId) {
+        return Transactions::exec("role::admin::Assignments::get(userId)", [&](pqxx::work& txn) -> std::shared_ptr<vh::rbac::role::Admin> {
             const auto result = txn.exec(
                 pqxx::prepped{"admin_role_assignment_get_by_user_id"},
                 pqxx::params{userId}
@@ -48,12 +44,12 @@ namespace vh::db::query::rbac::role::admin {
 
             if (result.empty()) return nullptr;
 
-            return std::make_shared<R>(result.one_row());
+            return std::make_shared<vh::rbac::role::Admin>(result.one_row());
         });
     }
 
-    Ptr Assignments::getByAssignmentId(const uint32_t assignmentId) {
-        return Transactions::exec("role::admin::Assignments::getByAssignmentId(assignmentId)", [&](pqxx::work& txn) -> Ptr {
+    std::shared_ptr<vh::rbac::role::Admin> Assignments::getByAssignmentId(const uint32_t assignmentId) {
+        return Transactions::exec("role::admin::Assignments::getByAssignmentId(assignmentId)", [&](pqxx::work& txn) -> std::shared_ptr<vh::rbac::role::Admin> {
             const auto result = txn.exec(
                 pqxx::prepped{"admin_role_assignment_get_by_assignment_id"},
                 pqxx::params{assignmentId}
@@ -61,22 +57,22 @@ namespace vh::db::query::rbac::role::admin {
 
             if (result.empty()) return nullptr;
 
-            return std::make_shared<R>(result.one_row());
+            return std::make_shared<vh::rbac::role::Admin>(result.one_row());
         });
     }
 
-    RVec Assignments::listAll() {
-        return Transactions::exec("role::admin::Assignments::listAll()", [&](pqxx::work& txn) -> RVec {
+    std::vector<std::shared_ptr<vh::rbac::role::Admin>> Assignments::listAll() {
+        return Transactions::exec("role::admin::Assignments::listAll()", [&](pqxx::work& txn) {
             const auto result = txn.exec(
                 pqxx::prepped{"admin_role_assignment_list_all"},
                 pqxx::params{}
             );
 
-            RVec roles;
+            std::vector<std::shared_ptr<vh::rbac::role::Admin>> roles;
             roles.reserve(result.size());
 
             for (const auto& row : result)
-                roles.emplace_back(std::make_shared<R>(row));
+                roles.emplace_back(std::make_shared<vh::rbac::role::Admin>(row));
 
             return roles;
         });

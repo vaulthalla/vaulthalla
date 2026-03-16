@@ -23,10 +23,12 @@ unsigned int Admin::upsert(const AdminRolePtr& role) {
                     role->id,
                     role->name,
                     role->description,
-                    role->permissions.identities.toBitString(),
-                    role->permissions.audits.toBitString(),
-                    role->permissions.settings.toBitString(),
-                    role->permissions.roles.toBitString()
+                    role->identities.toBitString(),
+                    role->audits.toBitString(),
+                    role->settings.toBitString(),
+                    role->roles.toBitString(),
+                    role->vaults.toBitString(),
+                    role->keys.toBitString()
                 }
             );
 
@@ -39,10 +41,12 @@ unsigned int Admin::upsert(const AdminRolePtr& role) {
             pqxx::params{
                 role->name,
                 role->description,
-                role->permissions.identities.toBitString(),
-                role->permissions.audits.toBitString(),
-                role->permissions.settings.toBitString(),
-                role->permissions.roles.toBitString()
+                role->identities.toBitString(),
+                role->audits.toBitString(),
+                role->settings.toBitString(),
+                role->roles.toBitString(),
+                role->vaults.toBitString(),
+                role->keys.toBitString()
             }
         );
 

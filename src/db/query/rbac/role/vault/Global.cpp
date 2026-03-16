@@ -8,7 +8,7 @@
 
 using namespace vh::db::query::rbac::roles::vault;
 
-using GlobalVaultRole = vh::rbac::roles::vault::Global;
+using GlobalVaultRole = vh::rbac::role::vault::Global;
 using GlobalVaultRolePtr = std::shared_ptr<GlobalVaultRole>;
 
 void Global::upsert(const GlobalVaultRolePtr& role) {
@@ -19,14 +19,13 @@ void Global::upsert(const GlobalVaultRolePtr& role) {
             pqxx::prepped{"user_global_vault_policy_upsert"},
             pqxx::params{
                 role->user_id,
-                role->template_role_id == 0 ? pqxx::nil() : pqxx::zview{std::to_string(role->template_role_id)},
+                role->template_role_id,
                 role->enforce_template,
                 role->scope,
-                role->permissions.filesystem.files.toBitString(),
-                role->permissions.filesystem.directories.toBitString(),
-                role->permissions.sync.toBitString(),
-                role->permissions.roles.toBitString(),
-                role->permissions.keys.toBitString()
+                role->fs.files.toBitString(),
+                role->fs.directories.toBitString(),
+                role->sync.toBitString(),
+                role->roles.toBitString()
             }
         );
     });
@@ -40,14 +39,13 @@ void Global::add(const GlobalVaultRolePtr& role) {
             pqxx::prepped{"user_global_vault_policy_insert"},
             pqxx::params{
                 role->user_id,
-                role->template_role_id == 0 ? pqxx::nil() : pqxx::zview{std::to_string(role->template_role_id)},
+                role->template_role_id,
                 role->enforce_template,
                 role->scope,
-                role->permissions.filesystem.files.toBitString(),
-                role->permissions.filesystem.directories.toBitString(),
-                role->permissions.sync.toBitString(),
-                role->permissions.roles.toBitString(),
-                role->permissions.keys.toBitString()
+                role->fs.files.toBitString(),
+                role->fs.directories.toBitString(),
+                role->sync.toBitString(),
+                role->roles.toBitString()
             }
         );
     });
@@ -62,13 +60,12 @@ void Global::update(const GlobalVaultRolePtr& role) {
             pqxx::params{
                 role->user_id,
                 role->scope,
-                role->template_role_id == 0 ? pqxx::nil() : pqxx::zview{std::to_string(role->template_role_id)},
+                role->template_role_id,
                 role->enforce_template,
-                role->permissions.filesystem.files.toBitString(),
-                role->permissions.filesystem.directories.toBitString(),
-                role->permissions.sync.toBitString(),
-                role->permissions.roles.toBitString(),
-                role->permissions.keys.toBitString()
+                role->fs.files.toBitString(),
+                role->fs.directories.toBitString(),
+                role->sync.toBitString(),
+                role->roles.toBitString()
             }
         );
     });

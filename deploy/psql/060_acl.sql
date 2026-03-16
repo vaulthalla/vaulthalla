@@ -29,7 +29,6 @@ CREATE TABLE IF NOT EXISTS vault_role
     directories_permissions BIT(64) NOT NULL,
     sync_permissions        BIT(32) NOT NULL,
     roles_permissions       BIT(16) NOT NULL,
-    keys_permissions        BIT(16) NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS admin_role
@@ -76,7 +75,6 @@ CREATE TABLE IF NOT EXISTS user_global_vault_policy
     directories_permissions BIT(64) NOT NULL,
     sync_permissions        BIT(32) NOT NULL,
     roles_permissions       BIT(16) NOT NULL,
-    keys_permissions        BIT(16) NOT NULL,
 
     PRIMARY KEY (user_id, scope)
     );

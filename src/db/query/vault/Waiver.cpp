@@ -2,9 +2,8 @@
 #include "db/Transactions.hpp"
 #include "sync/model/Waiver.hpp"
 #include "vault/model/S3Vault.hpp"
-#include "../../../../include/identities/User.hpp"
+#include "identities/User.hpp"
 #include "vault/model/APIKey.hpp"
-#include "../../../../include/rbac/role/Base.hpp"
 
 using namespace vh;
 
@@ -29,22 +28,23 @@ void db::query::vault::Waiver::addWaiver(const std::shared_ptr<vh::sync::model::
         waiver->id = res.one_field().as<unsigned int>();
 
         if (waiver->owner && waiver->vault->owner_id != waiver->user->id) {
+            const auto ctx = waiver->resolveOverridingRole();
+
             pqxx::params p2{
                 waiver->id,
                 waiver->owner->id,
                 waiver->owner->name,
                 waiver->owner->email,
-                waiver->overridingRole->id,
-                waiver->overridingRole->name,
-                waiver->overridingRole->type,
-                waiver->overridingRole->permissions
+                ctx.id,
+                ctx.name,
+                ctx.type
             };
 
             if (const auto res2 = txn.exec(pqxx::prepped{"insert_waiver_owner_override"}, p2);
                 res2.empty() || res2.affected_rows() == 0)
                 throw std::runtime_error("Failed to insert waiver for owner " + std::to_string(waiver->owner->id));
 
-            const pqxx::params p3{waiver->id, waiver->overridingRole->type};
+            const pqxx::params p3{waiver->id, ctx.type};
             txn.exec(pqxx::prepped{"insert_permission_snapshots_for_waiver"}, p3);
         }
     });

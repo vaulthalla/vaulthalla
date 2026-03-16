@@ -3,7 +3,7 @@
 #include "rbac/role/Admin.hpp"
 #include "rbac/role/Vault.hpp"
 #include "rbac/role/vault/Global.hpp"
-#include "rbac/permission/Admin.hpp"
+#include "rbac/role/Admin.hpp"
 #include "auth/model/RefreshToken.hpp"
 #include "crypto/util/hash.hpp"
 #include "db/Transactions.hpp"
@@ -13,8 +13,6 @@
 #include <pqxx/pqxx>
 #include <stdexcept>
 #include <array>
-
-#include "../../../../include/rbac/role/vault/Base.hpp"
 
 using namespace vh::db::query::identities;
 using namespace vh::auth::model;
@@ -158,9 +156,9 @@ unsigned int User::createUser(const UserPtr& user) {
         );
 
         const std::array userGlobalVaultRoles {
-            user->roles.admin->permissions.vaults.self,
-            user->roles.admin->permissions.vaults.user,
-            user->roles.admin->permissions.vaults.admin
+            user->roles.admin->vGlobals.self,
+            user->roles.admin->vGlobals.user,
+            user->roles.admin->vGlobals.admin
         };
 
         // User global vault policies
@@ -172,11 +170,10 @@ unsigned int User::createUser(const UserPtr& user) {
                     globalPolicy.template_role_id,
                     globalPolicy.enforce_template,
                     globalPolicy.scope,
-                    globalPolicy.permissions.filesystem.files.toBitString(),
-                    globalPolicy.permissions.filesystem.directories.toBitString(),
-                    globalPolicy.permissions.sync.toBitString(),
-                    globalPolicy.permissions.roles.toBitString(),
-                    globalPolicy.permissions.keys.toBitString()
+                    globalPolicy.fs.files.toBitString(),
+                    globalPolicy.fs.directories.toBitString(),
+                    globalPolicy.sync.toBitString(),
+                    globalPolicy.roles.toBitString()
                 }
             );
         }
@@ -205,7 +202,7 @@ unsigned int User::createUser(const UserPtr& user) {
         }
 
         // TODO: update this when moving to shared ptr overrides or otherwise
-        for (const auto& override : user->roles.vaults[0]->permissions.filesystem.overrides) {
+        for (const auto& override : user->roles.vaults[0]->fs.overrides) {
                 if (!override) continue;
 
                 override->assignment_id = user->roles.vaults[0]->assignment_id;
@@ -256,9 +253,9 @@ void User::updateUser(const UserPtr& user) {
         );
 
         const std::array userGlobalVaultRoles {
-            user->roles.admin->permissions.vaults.self,
-            user->roles.admin->permissions.vaults.user,
-            user->roles.admin->permissions.vaults.admin
+            user->roles.admin->vGlobals.self,
+            user->roles.admin->vGlobals.user,
+            user->roles.admin->vGlobals.admin
         };
 
         for (const auto& globalPolicy : userGlobalVaultRoles) {
@@ -269,11 +266,10 @@ void User::updateUser(const UserPtr& user) {
                     globalPolicy.template_role_id,
                     globalPolicy.enforce_template,
                     globalPolicy.scope,
-                    globalPolicy.permissions.filesystem.files.toBitString(),
-                    globalPolicy.permissions.filesystem.directories.toBitString(),
-                    globalPolicy.permissions.sync.toBitString(),
-                    globalPolicy.permissions.roles.toBitString(),
-                    globalPolicy.permissions.keys.toBitString()
+                    globalPolicy.fs.files.toBitString(),
+                    globalPolicy.fs.directories.toBitString(),
+                    globalPolicy.sync.toBitString(),
+                    globalPolicy.roles.toBitString(),
                 }
             );
         }
@@ -290,7 +286,7 @@ bool User::authenticateUser(const std::string& name, const std::string& password
         if (res.empty()) return false;
 
         const auto storedHash = res.one_row()["password_hash"].as<std::string>();
-        return crypto::hash::verifyPassword(password, storedHash);
+        return vh::crypto::hash::verifyPassword(password, storedHash);
     });
 }
 
@@ -364,6 +360,6 @@ bool User::adminPasswordIsDefault() {
             pqxx::prepped{"get_admin_password"}
         ).one_field().as<std::string>();
 
-        return crypto::hash::verifyPassword("vh!adm1n", passwordHash);
+        return vh::crypto::hash::verifyPassword("vh!adm1n", passwordHash);
     });
 }

@@ -22,11 +22,10 @@ namespace vh::db::query::rbac::role {
                         role->id,
                         role->name,
                         role->description,
-                        role->permissions.filesystem.files.toBitString(),
-                        role->permissions.filesystem.directories.toBitString(),
-                        role->permissions.sync.toBitString(),
-                        role->permissions.roles.toBitString(),
-                        role->permissions.keys.toBitString()
+                        role->fs.files.toBitString(),
+                        role->fs.directories.toBitString(),
+                        role->sync.toBitString(),
+                        role->roles.toBitString(),
                     }
                 );
 
@@ -38,11 +37,10 @@ namespace vh::db::query::rbac::role {
                 pqxx::params{
                     role->name,
                     role->description,
-                    role->permissions.filesystem.files.toBitString(),
-                    role->permissions.filesystem.directories.toBitString(),
-                    role->permissions.sync.toBitString(),
-                    role->permissions.roles.toBitString(),
-                    role->permissions.keys.toBitString()
+                    role->fs.files.toBitString(),
+                    role->fs.directories.toBitString(),
+                    role->sync.toBitString(),
+                    role->roles.toBitString(),
                 }
             );
 

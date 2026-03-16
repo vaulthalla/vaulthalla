@@ -11,8 +11,7 @@ void vh::db::DBConnection::initPreparedVaultRoles() const {
                 files_permissions,
                 directories_permissions,
                 sync_permissions,
-                roles_permissions,
-                keys_permissions
+                roles_permissions
             )
             VALUES (
                 $1,
@@ -21,8 +20,7 @@ void vh::db::DBConnection::initPreparedVaultRoles() const {
                 $4::bit(64),
                 $5::bit(64),
                 $6::bit(32),
-                $7::bit(16),
-                $8::bit(16)
+                $7::bit(16)
             )
             ON CONFLICT (id) DO UPDATE SET
                 name                    = EXCLUDED.name,
@@ -30,53 +28,48 @@ void vh::db::DBConnection::initPreparedVaultRoles() const {
                 files_permissions       = EXCLUDED.files_permissions,
                 directories_permissions = EXCLUDED.directories_permissions,
                 sync_permissions        = EXCLUDED.sync_permissions,
-                roles_permissions       = EXCLUDED.roles_permissions,
-                keys_permissions        = EXCLUDED.keys_permissions
+                roles_permissions       = EXCLUDED.roles_permissions
         )SQL"
     );
 
     // DELETE THIS IF NOT USED
     conn_->prepare(
-    "vault_role_upsert_by_name",
-    R"SQL(
-        INSERT INTO vault_role (
-            name,
-            description,
-            files_permissions,
-            directories_permissions,
-            sync_permissions,
-            roles_permissions,
-            keys_permissions
-        )
-        VALUES (
-            $1,
-            $2,
-            $3::bit(64),
-            $4::bit(64),
-            $5::bit(32),
-            $6::bit(16),
-            $7::bit(16)
-        )
-        ON CONFLICT (name) DO UPDATE SET
-            description             = EXCLUDED.description,
-            files_permissions       = EXCLUDED.files_permissions,
-            directories_permissions = EXCLUDED.directories_permissions,
-            sync_permissions        = EXCLUDED.sync_permissions,
-            roles_permissions       = EXCLUDED.roles_permissions,
-            keys_permissions        = EXCLUDED.keys_permissions
-        RETURNING
-            id,
-            name,
-            description,
-            created_at,
-            updated_at,
-            files_permissions::text       AS files_permissions,
-            directories_permissions::text AS directories_permissions,
-            sync_permissions::text        AS sync_permissions,
-            roles_permissions::text       AS roles_permissions,
-            keys_permissions::text        AS keys_permissions
-    )SQL"
-);
+        "vault_role_upsert_by_name",
+        R"SQL(
+            INSERT INTO vault_role (
+                name,
+                description,
+                files_permissions,
+                directories_permissions,
+                sync_permissions,
+                roles_permissions
+            )
+            VALUES (
+                $1,
+                $2,
+                $3::bit(64),
+                $4::bit(64),
+                $5::bit(32),
+                $6::bit(16)
+            )
+            ON CONFLICT (name) DO UPDATE SET
+                description             = EXCLUDED.description,
+                files_permissions       = EXCLUDED.files_permissions,
+                directories_permissions = EXCLUDED.directories_permissions,
+                sync_permissions        = EXCLUDED.sync_permissions,
+                roles_permissions       = EXCLUDED.roles_permissions
+            RETURNING
+                id,
+                name,
+                description,
+                created_at,
+                updated_at,
+                files_permissions::text       AS files_permissions,
+                directories_permissions::text AS directories_permissions,
+                sync_permissions::text        AS sync_permissions,
+                roles_permissions::text       AS roles_permissions
+        )SQL"
+    );
 
     conn_->prepare(
         "vault_role_insert",
@@ -87,8 +80,7 @@ void vh::db::DBConnection::initPreparedVaultRoles() const {
                 files_permissions,
                 directories_permissions,
                 sync_permissions,
-                roles_permissions,
-                keys_permissions
+                roles_permissions
             )
             VALUES (
                 $1,
@@ -96,8 +88,7 @@ void vh::db::DBConnection::initPreparedVaultRoles() const {
                 $3::bit(64),
                 $4::bit(64),
                 $5::bit(32),
-                $6::bit(16),
-                $7::bit(16)
+                $6::bit(16)
             )
             RETURNING
                 id,
@@ -108,8 +99,7 @@ void vh::db::DBConnection::initPreparedVaultRoles() const {
                 files_permissions::text       AS files_permissions,
                 directories_permissions::text AS directories_permissions,
                 sync_permissions::text        AS sync_permissions,
-                roles_permissions::text       AS roles_permissions,
-                keys_permissions::text        AS keys_permissions
+                roles_permissions::text       AS roles_permissions
         )SQL"
     );
 
@@ -125,8 +115,7 @@ void vh::db::DBConnection::initPreparedVaultRoles() const {
                 files_permissions::text       AS files_permissions,
                 directories_permissions::text AS directories_permissions,
                 sync_permissions::text        AS sync_permissions,
-                roles_permissions::text       AS roles_permissions,
-                keys_permissions::text        AS keys_permissions
+                roles_permissions::text       AS roles_permissions
             FROM vault_role
             WHERE id = $1
         )SQL"
@@ -144,8 +133,7 @@ void vh::db::DBConnection::initPreparedVaultRoles() const {
                 files_permissions::text       AS files_permissions,
                 directories_permissions::text AS directories_permissions,
                 sync_permissions::text        AS sync_permissions,
-                roles_permissions::text       AS roles_permissions,
-                keys_permissions::text        AS keys_permissions
+                roles_permissions::text       AS roles_permissions
             FROM vault_role
             WHERE name = $1
         )SQL"
@@ -161,8 +149,7 @@ void vh::db::DBConnection::initPreparedVaultRoles() const {
                 files_permissions       = $4::bit(64),
                 directories_permissions = $5::bit(64),
                 sync_permissions        = $6::bit(32),
-                roles_permissions       = $7::bit(16),
-                keys_permissions        = $8::bit(16)
+                roles_permissions       = $7::bit(16)
             WHERE id = $1
         )SQL"
     );
@@ -209,8 +196,7 @@ void vh::db::DBConnection::initPreparedVaultRoles() const {
                 files_permissions::text       AS files_permissions,
                 directories_permissions::text AS directories_permissions,
                 sync_permissions::text        AS sync_permissions,
-                roles_permissions::text       AS roles_permissions,
-                keys_permissions::text        AS keys_permissions
+                roles_permissions::text       AS roles_permissions
             FROM vault_role
             ORDER BY name
         )SQL"

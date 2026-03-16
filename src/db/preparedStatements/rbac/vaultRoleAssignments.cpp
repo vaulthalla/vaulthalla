@@ -33,22 +33,21 @@ void vh::db::DBConnection::initPreparedVaultRoleAssignments() const {
         "vault_role_assignment_get",
         R"SQL(
             SELECT
-                vra.id                          AS assignment_id,
-                vra.vault_id                    AS vault_id,
-                vra.subject_type                AS subject_type,
-                vra.subject_id                  AS subject_id,
-                vra.role_id                     AS vault_role_id,
-                vra.assigned_at                 AS assigned_at,
+                vra.id                           AS assignment_id,
+                vra.vault_id                     AS vault_id,
+                vra.subject_type                 AS subject_type,
+                vra.subject_id                   AS subject_id,
+                vra.role_id                      AS vault_role_id,
+                vra.assigned_at                  AS assigned_at,
 
-                vr.name                         AS role_name,
-                vr.description                  AS role_description,
-                vr.created_at                   AS role_created_at,
-                vr.updated_at                   AS role_updated_at,
-                vr.files_permissions::text      AS files_permissions,
+                vr.name                          AS role_name,
+                vr.description                   AS role_description,
+                vr.created_at                    AS role_created_at,
+                vr.updated_at                    AS role_updated_at,
+                vr.files_permissions::text       AS files_permissions,
                 vr.directories_permissions::text AS directories_permissions,
-                vr.sync_permissions::text       AS sync_permissions,
-                vr.roles_permissions::text      AS roles_permissions,
-                vr.keys_permissions::text       AS keys_permissions
+                vr.sync_permissions::text        AS sync_permissions,
+                vr.roles_permissions::text       AS roles_permissions
             FROM vault_role_assignments vra
             INNER JOIN vault_role vr
                 ON vr.id = vra.role_id
@@ -62,22 +61,21 @@ void vh::db::DBConnection::initPreparedVaultRoleAssignments() const {
         "vault_role_assignment_get_by_id",
         R"SQL(
             SELECT
-                vra.id                          AS assignment_id,
-                vra.vault_id                    AS vault_id,
-                vra.subject_type                AS subject_type,
-                vra.subject_id                  AS subject_id,
-                vra.role_id                     AS vault_role_id,
-                vra.assigned_at                 AS assigned_at,
+                vra.id                           AS assignment_id,
+                vra.vault_id                     AS vault_id,
+                vra.subject_type                 AS subject_type,
+                vra.subject_id                   AS subject_id,
+                vra.role_id                      AS vault_role_id,
+                vra.assigned_at                  AS assigned_at,
 
-                vr.name                         AS role_name,
-                vr.description                  AS role_description,
-                vr.created_at                   AS role_created_at,
-                vr.updated_at                   AS role_updated_at,
-                vr.files_permissions::text      AS files_permissions,
+                vr.name                          AS role_name,
+                vr.description                   AS role_description,
+                vr.created_at                    AS role_created_at,
+                vr.updated_at                    AS role_updated_at,
+                vr.files_permissions::text       AS files_permissions,
                 vr.directories_permissions::text AS directories_permissions,
-                vr.sync_permissions::text       AS sync_permissions,
-                vr.roles_permissions::text      AS roles_permissions,
-                vr.keys_permissions::text       AS keys_permissions
+                vr.sync_permissions::text        AS sync_permissions,
+                vr.roles_permissions::text       AS roles_permissions
             FROM vault_role_assignments vra
             INNER JOIN vault_role vr
                 ON vr.id = vra.role_id
@@ -120,22 +118,21 @@ void vh::db::DBConnection::initPreparedVaultRoleAssignments() const {
         "vault_role_assignment_list_by_vault",
         R"SQL(
             SELECT
-                vra.id                          AS assignment_id,
-                vra.vault_id                    AS vault_id,
-                vra.subject_type                AS subject_type,
-                vra.subject_id                  AS subject_id,
-                vra.role_id                     AS vault_role_id,
-                vra.assigned_at                 AS assigned_at,
+                vra.id                           AS assignment_id,
+                vra.vault_id                     AS vault_id,
+                vra.subject_type                 AS subject_type,
+                vra.subject_id                   AS subject_id,
+                vra.role_id                      AS vault_role_id,
+                vra.assigned_at                  AS assigned_at,
 
-                vr.name                         AS role_name,
-                vr.description                  AS role_description,
-                vr.created_at                   AS role_created_at,
-                vr.updated_at                   AS role_updated_at,
-                vr.files_permissions::text      AS files_permissions,
+                vr.name                          AS role_name,
+                vr.description                   AS role_description,
+                vr.created_at                    AS role_created_at,
+                vr.updated_at                    AS role_updated_at,
+                vr.files_permissions::text       AS files_permissions,
                 vr.directories_permissions::text AS directories_permissions,
-                vr.sync_permissions::text       AS sync_permissions,
-                vr.roles_permissions::text      AS roles_permissions,
-                vr.keys_permissions::text       AS keys_permissions
+                vr.sync_permissions::text        AS sync_permissions,
+                vr.roles_permissions::text       AS roles_permissions
             FROM vault_role_assignments vra
             INNER JOIN vault_role vr
                 ON vr.id = vra.role_id
@@ -148,22 +145,21 @@ void vh::db::DBConnection::initPreparedVaultRoleAssignments() const {
         "vault_role_assignment_list_by_subject",
         R"SQL(
             SELECT
-                vra.id                          AS assignment_id,
-                vra.vault_id                    AS vault_id,
-                vra.subject_type                AS subject_type,
-                vra.subject_id                  AS subject_id,
-                vra.role_id                     AS vault_role_id,
-                vra.assigned_at                 AS assigned_at,
+                vra.id                           AS assignment_id,
+                vra.vault_id                     AS vault_id,
+                vra.subject_type                 AS subject_type,
+                vra.subject_id                   AS subject_id,
+                vra.role_id                      AS vault_role_id,
+                vra.assigned_at                  AS assigned_at,
 
-                vr.name                         AS role_name,
-                vr.description                  AS role_description,
-                vr.created_at                   AS role_created_at,
-                vr.updated_at                   AS role_updated_at,
-                vr.files_permissions::text      AS files_permissions,
+                vr.name                          AS role_name,
+                vr.description                   AS role_description,
+                vr.created_at                    AS role_created_at,
+                vr.updated_at                    AS role_updated_at,
+                vr.files_permissions::text       AS files_permissions,
                 vr.directories_permissions::text AS directories_permissions,
-                vr.sync_permissions::text       AS sync_permissions,
-                vr.roles_permissions::text      AS roles_permissions,
-                vr.keys_permissions::text       AS keys_permissions
+                vr.sync_permissions::text        AS sync_permissions,
+                vr.roles_permissions::text       AS roles_permissions
             FROM vault_role_assignments vra
             INNER JOIN vault_role vr
                 ON vr.id = vra.role_id
@@ -177,22 +173,21 @@ void vh::db::DBConnection::initPreparedVaultRoleAssignments() const {
         "vault_role_assignment_list_all",
         R"SQL(
             SELECT
-                vra.id                          AS assignment_id,
-                vra.vault_id                    AS vault_id,
-                vra.subject_type                AS subject_type,
-                vra.subject_id                  AS subject_id,
-                vra.role_id                     AS vault_role_id,
-                vra.assigned_at                 AS assigned_at,
+                vra.id                           AS assignment_id,
+                vra.vault_id                     AS vault_id,
+                vra.subject_type                 AS subject_type,
+                vra.subject_id                   AS subject_id,
+                vra.role_id                      AS vault_role_id,
+                vra.assigned_at                  AS assigned_at,
 
-                vr.name                         AS role_name,
-                vr.description                  AS role_description,
-                vr.created_at                   AS role_created_at,
-                vr.updated_at                   AS role_updated_at,
-                vr.files_permissions::text      AS files_permissions,
+                vr.name                          AS role_name,
+                vr.description                   AS role_description,
+                vr.created_at                    AS role_created_at,
+                vr.updated_at                    AS role_updated_at,
+                vr.files_permissions::text       AS files_permissions,
                 vr.directories_permissions::text AS directories_permissions,
-                vr.sync_permissions::text       AS sync_permissions,
-                vr.roles_permissions::text      AS roles_permissions,
-                vr.keys_permissions::text       AS keys_permissions
+                vr.sync_permissions::text        AS sync_permissions,
+                vr.roles_permissions::text       AS roles_permissions
             FROM vault_role_assignments vra
             INNER JOIN vault_role vr
                 ON vr.id = vra.role_id

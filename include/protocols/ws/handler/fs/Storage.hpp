@@ -1,8 +1,7 @@
 #pragma once
 
 #include "protocols/ws/Session.hpp"
-#include "identities/User.hpp"
-#include "rbac/vault/resolver/*.hpp"
+#include "rbac/resolver/vault/*.hpp"
 
 #include <filesystem>
 #include <memory>
@@ -42,7 +41,7 @@ private:
         if (!session || !session->user)
             throw std::runtime_error("Unauthorized");
 
-        if (!rbac::vault::Resolver::has<EnumT>({
+        if (!resolver::Vault::has<EnumT>({
             .user = session->user,
             .permission = permission,
             .vault_id = vaultId,
@@ -59,14 +58,14 @@ private:
         if (!session || !session->user)
             throw std::runtime_error("Unauthorized");
 
-        if (!rbac::vault::Resolver::hasAny(
-            rbac::vault::Context<EnumT>{
+        if (!resolver::Vault::hasAny(
+            resolver::vault::Context<EnumT>{
                 .user = session->user,
                 .permission = permission,
                 .vault_id = vaultId,
                 .path = path
             },
-            rbac::vault::Context<EnumTs>{
+            resolver::vault::Context<EnumTs>{
                 .user = session->user,
                 .permission = permissions,
                 .vault_id = vaultId,
