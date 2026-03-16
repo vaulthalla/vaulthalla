@@ -13,6 +13,7 @@ namespace vh::rbac::permission::admin::keys {
         oss << in << "Remove: " << bool_to_string(canRemove()) << "\n";
         oss << in << "Export: " << bool_to_string(canExport()) << "\n";
         oss << in << "Rotate: " << bool_to_string(canRotate()) << "\n";
+        oss << in << "Consume: " << bool_to_string(canConsume()) << "\n";
         return oss.str();
     }
 
@@ -38,18 +39,20 @@ namespace vh::rbac::permission::admin::keys {
             {"edit", p.canEdit()},
             {"remove", p.canRemove()},
             {"export", p.canExport()},
-            {"rotate", p.canRotate()}
+            {"rotate", p.canRotate()},
+            {"consume", p.canConsume()}
         };
     }
 
     void from_json(const nlohmann::json &j, APIKeyBase &p) {
         p.clear();
-        if (j.at("view").get<bool>()) p.grant(APIKeyPermissions::View);
-        if (j.at("create").get<bool>()) p.grant(APIKeyPermissions::Create);
-        if (j.at("edit").get<bool>()) p.grant(APIKeyPermissions::Edit);
-        if (j.at("remove").get<bool>()) p.grant(APIKeyPermissions::Remove);
-        if (j.at("export").get<bool>()) p.grant(APIKeyPermissions::Export);
-        if (j.at("rotate").get<bool>()) p.grant(APIKeyPermissions::Rotate);
+        if (j.at("view").get<bool>()) p.grant(APIPermissions::View);
+        if (j.at("create").get<bool>()) p.grant(APIPermissions::Create);
+        if (j.at("edit").get<bool>()) p.grant(APIPermissions::Edit);
+        if (j.at("remove").get<bool>()) p.grant(APIPermissions::Remove);
+        if (j.at("export").get<bool>()) p.grant(APIPermissions::Export);
+        if (j.at("rotate").get<bool>()) p.grant(APIPermissions::Rotate);
+        if (j.at("consume").get<bool>()) p.grant(APIPermissions::Consume);
     }
 
     void to_json(nlohmann::json &j, const APIKeys &p) {

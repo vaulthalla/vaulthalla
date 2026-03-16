@@ -7,12 +7,12 @@
 
 namespace vh::identities { struct User; struct Group; }
 
-namespace vh::rbac::resolver {
+namespace vh::rbac::resolver::admin {
 
     template<typename EnumT>
     struct ContextPolicy {
         static bool validate(const std::shared_ptr<identities::User>&,
-                             const admin::ResolvedVaultContext&,
+                             const ResolvedContext&,
                              EnumT) {
             return true;
         }

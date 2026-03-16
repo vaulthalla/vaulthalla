@@ -5,6 +5,7 @@
 #include "protocols/ws/Session.hpp"
 #include "runtime/Deps.hpp"
 #include "rbac/role/Admin.hpp"
+#include "rbac/resolver/admin/*.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -14,6 +15,8 @@ using namespace vh::storage;
 using namespace vh::rbac;
 using json = nlohmann::json;
 
+using Permission = permission::admin::keys::APIPermissions;
+
 json APIKeys::add(const json& payload, const std::shared_ptr<Session>& session) {
     const auto name = payload.at("name").get<std::string>();
     const auto provider = s3_provider_from_string(payload.at("provider").get<std::string>());
@@ -21,8 +24,13 @@ json APIKeys::add(const json& payload, const std::shared_ptr<Session>& session) 
     const auto secretKey = payload.at("secret_access_key").get<std::string>();
     const auto region = payload.at("region").get<std::string>();
     const auto endpoint = payload.at("endpoint").get<std::string>();
+    const auto ownerId = payload.contains("owner_id") ? payload.at("owner_id").get<uint32_t>() : session->user->id;
 
-    // TODO: integrate into resolver for overload checks
+    if (!resolver::Admin::has<Permission>({
+        .user = session->user,
+        .permission = Permission::Create,
+        .target_user_id = ownerId
+    })) throw std::runtime_error("Insufficient permissions to create API key");
 
     auto key = std::make_shared<APIKey>(session->user->id, name, provider, accessKey, secretKey, region, endpoint);
     runtime::Deps::get().apiKeyManager->addAPIKey(key);
@@ -33,9 +41,10 @@ json APIKeys::add(const json& payload, const std::shared_ptr<Session>& session) 
 json APIKeys::remove(const json& payload, const std::shared_ptr<Session>& session) {
     const auto keyId = payload.at("id").get<unsigned int>();
 
-    if (!vh::rbac::vault::Resolver::has<Permission>({
+    if (!resolver::Admin::has<Permission>({
         .user = session->user,
-        .permission = Permission::Modify
+        .permission = Permission::Remove,
+        .api_key_id = keyId
     })) throw std::runtime_error("Insufficient permissions to remove API key");
 
     runtime::Deps::get().apiKeyManager->removeAPIKey(keyId, session->user->id);
@@ -43,25 +52,30 @@ json APIKeys::remove(const json& payload, const std::shared_ptr<Session>& sessio
 }
 
 json APIKeys::list(const std::shared_ptr<Session>& session) {
-    const bool canView = vh::rbac::vault::Resolver::has<Permission>({
-        .user = session->user,
-        .permission = Permission::View
-    });
+    const auto& akPerms = session->user->apiKeysPerms();
+    if (akPerms.self.canView() && !(akPerms.admin.canView() || akPerms.user.canView()))
+        return {{"keys", json(runtime::Deps::get().apiKeyManager->listUserAPIKeys(session->user->id)).dump(4)}};
 
-    const auto keys = canView ?
-        runtime::Deps::get().apiKeyManager->listAPIKeys() :
-        runtime::Deps::get().apiKeyManager->listUserAPIKeys(session->user->id);
+    auto keys = runtime::Deps::get().apiKeyManager->listAPIKeys();
+    for (const auto& key : keys) {
+        if (!resolver::Admin::has<Permission>({
+            .user = session->user,
+            .permission = Permission::View,
+            .api_key_id = key->id
+        })) std::erase(keys, key);
+    }
 
     return {{"keys", json(keys).dump(4)}};
 }
 
 json APIKeys::get(const json& payload, const std::shared_ptr<Session>& session) {
-    // TODO: implement a context policy in resolver for API key
-    if (!vh::rbac::vault::Resolver::has<Permission>({
-        .user = session->user,
-        .permission = Permission::View
-    })) throw std::runtime_error("Insufficient permissions to get API key");
-
     const unsigned int keyId = payload.at("id").get<unsigned int>();
+
+    if (!resolver::Admin::has<Permission>({
+            .user = session->user,
+            .permission = Permission::View,
+            .api_key_id = keyId
+        })) throw std::runtime_error("Insufficient permissions to get API key");
+
     return {{"api_key", runtime::Deps::get().apiKeyManager->getAPIKey(keyId, session->user->id)}};
 }

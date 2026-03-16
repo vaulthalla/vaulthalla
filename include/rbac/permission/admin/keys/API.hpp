@@ -17,6 +17,7 @@ namespace vh::rbac::permission {
             Remove = 1 << 3,
             Export = 1 << 4,
             Rotate = 1 << 5,
+            Consume = 1 << 6,
         };
     }
 
@@ -30,7 +31,8 @@ namespace vh::rbac::permission {
             Entry{admin::keys::APIPermissions::Edit, "edit"},
             Entry{admin::keys::APIPermissions::Remove, "remove"},
             Entry{admin::keys::APIPermissions::Export, "export"},
-            Entry{admin::keys::APIPermissions::Rotate, "rotate"}
+            Entry{admin::keys::APIPermissions::Rotate, "rotate"},
+            Entry{admin::keys::APIPermissions::Consume, "consume"}
         };
     };
 
@@ -49,6 +51,7 @@ namespace vh::rbac::permission {
             [[nodiscard]] bool canRemove() const noexcept { return has(APIPermissions::Remove); }
             [[nodiscard]] bool canExport() const noexcept { return has(APIPermissions::Export); }
             [[nodiscard]] bool canRotate() const noexcept { return has(APIPermissions::Rotate); }
+            [[nodiscard]] bool canConsume() const noexcept { return has(APIPermissions::Consume); }
         };
 
         struct APIKeys {

@@ -4,7 +4,6 @@
 #include "db/query/rbac/role/Vault.hpp"
 #include "identities/User.hpp"
 #include "rbac/role/Admin.hpp"
-#include "rbac/role/Vault.hpp"
 
 using namespace vh::rbac;
 

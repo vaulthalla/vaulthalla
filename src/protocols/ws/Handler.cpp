@@ -1,14 +1,14 @@
 #include "protocols/ws/Handler.hpp"
 #include "protocols/ws/Router.hpp"
 #include "protocols/ws/handler/Auth.hpp"
-#include "../../../include/protocols/ws/handler/fs/Storage.hpp"
-#include "../../../include/protocols/ws/handler/rbac/Permissions.hpp"
+#include "protocols/ws/handler/fs/Storage.hpp"
+#include "protocols/ws/handler/rbac/Permissions.hpp"
 #include "protocols/ws/handler/Settings.hpp"
 #include "protocols/ws/handler/Groups.hpp"
 #include "protocols/ws/handler/Stats.hpp"
-#include "../../../include/protocols/ws/handler/rbac/roles/Admin.hpp"
-#include "../../../include/protocols/ws/handler/vault/Vaults.hpp"
-#include "protocols/ws/handler/APIKeys.hpp"
+#include "protocols/ws/handler/rbac/roles/Admin.hpp"
+#include "protocols/ws/handler/vault/Vaults.hpp"
+#include "protocols/ws/handler/vault/APIKeys.hpp"
 #include "log/Registry.hpp"
 
 using namespace vh::protocols::ws;
@@ -82,9 +82,9 @@ void Handler::registerRoleHandlers(const std::shared_ptr<Router>& r) {
 }
 
 void Handler::registerPermissionsHandlers(const std::shared_ptr<Router>& r) {
-    r->registerPayload("permission.get", &Permissions::get);
-    r->registerPayload("permission.get.byName", &Permissions::getByName);
-    r->registerSessionOnlyHandler("permissions.list", &Permissions::list);
+    r->registerPayloadOnly("permission.get", &handler::rbac::Permissions::get);
+    r->registerPayloadOnly("permission.get.byName", &handler::rbac::Permissions::getByName);
+    r->registerEmptyHandler("permissions.list", &handler::rbac::Permissions::list);
 }
 
 void Handler::registerSettingsHandlers(const std::shared_ptr<Router>& r) {

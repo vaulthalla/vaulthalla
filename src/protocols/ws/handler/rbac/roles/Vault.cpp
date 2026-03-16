@@ -1,12 +1,11 @@
 #include "protocols/ws/handler/rbac/roles/Vault.hpp"
 #include "protocols/ws/Session.hpp"
-#include "db/query/rbac/role/Admin.hpp"
 #include "db/query/rbac/role/Vault.hpp"
 #include "db/query/rbac/role/vault/Assignments.hpp"
 #include "identities/User.hpp"
 #include "rbac/role/Admin.hpp"
 #include "rbac/role/Vault.hpp"
-#include "rbac/vault/resolver/*.hpp"
+#include "rbac/resolver/vault/*.hpp"
 #include "rbac/permission/vault/Roles.hpp"
 
 using namespace vh::rbac;
@@ -74,7 +73,7 @@ namespace vh::protocols::ws::handler::rbac::roles {
         const auto& vaultId = payload.at("vault_id").get<uint32_t>();
 
         using Permission = permission::vault::RolePermissions;
-        if (!vh::rbac::vault::Resolver::has<Permission>({
+        if (!resolver::Vault::has<Permission>({
             .user = session->user,
             .permission = Permission::Assign,
             .target_subject_type = subjectType,
@@ -96,7 +95,7 @@ namespace vh::protocols::ws::handler::rbac::roles {
         const auto& vaultId = payload.at("vault_id").get<uint32_t>();
 
         using Permission = permission::vault::RolePermissions;
-        if (!vh::rbac::vault::Resolver::has<Permission>({
+        if (!resolver::Vault::has<Permission>({
             .user = session->user,
             .permission = Permission::Revoke,
             .target_subject_type = subjectType,

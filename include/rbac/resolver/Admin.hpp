@@ -1,7 +1,7 @@
 #pragma once
 
 #include "admin/Context.hpp"
-#include "AccessTraits/Fwd.hpp"
+#include "ResolverTraits/Fwd.hpp"
 #include "admin/policy/Base.hpp"
 #include "admin/ResolvedContext.hpp"
 
@@ -12,6 +12,7 @@
 #include "storage/Manager.hpp"
 #include "db/query/identities/User.hpp"
 #include "rbac/role/Admin.hpp"
+#include "vault/model/Vault.hpp"
 
 #include <memory>
 #include <optional>
@@ -19,75 +20,113 @@
 #include <utility>
 
 namespace vh::rbac::resolver {
-    class Resolver {
+    class Admin {
         template<typename EnumT>
-        static bool checkPermission(const std::shared_ptr<identities::User> &user,
-                                    const admin::ResolvedVaultContext &resolved,
-                                    const EnumT permission) {
+        static bool checkPermission(const std::shared_ptr<identities::User>& user,
+                            const admin::ResolvedContext& resolved,
+                            EnumT permission) {
             static_assert(std::is_enum_v<EnumT>,
-                          "vh::rbac::vault::Resolver::checkPermission(): EnumT must be an enum type");
+                          "vh::rbac::resolver::Admin::checkPermission(): EnumT must be an enum type");
 
             if (!user || !resolved.isValid()) return false;
 
             bool allowed = false;
 
-            if (resolved.scope) {
-                const auto &perms = user->apiKeysPerms();
+            if constexpr (AdminResolverTraits<EnumT>::domain == Domain::APIKey) {
+                const auto& perms = user->apiKeysPerms();
 
-                if (user->id == resolved.vault->owner_id)
-                    allowed = AccessTraits<EnumT>::self(perms.self).has(permission);
+                if (!resolved.owner) return false;
+
+                if (user->id == resolved.owner->id)
+                    allowed = AdminResolverTraits<EnumT>::self(perms.self).has(permission);
                 else if (resolved.owner->isAdmin())
-                    allowed = AccessTraits<EnumT>::admin(perms.admin).has(permission);
+                    allowed = AdminResolverTraits<EnumT>::admin(perms.admin).has(permission);
                 else
-                    allowed = AccessTraits<EnumT>::user(perms.user).has(permission);
+                    allowed = AdminResolverTraits<EnumT>::user(perms.user).has(permission);
             }
-
-            if (resolved.identity) {
+            else if constexpr (AdminResolverTraits<EnumT>::domain == Domain::Identity) {
                 const auto& perms = user->identities();
-                if (*resolved.identity == admin::Entity::Group)
-                    allowed = AccessTraits<EnumT>::group(perms.groups).has(permission);
-                else if (*resolved.identity == admin::Entity::User)
-                    allowed = AccessTraits<EnumT>::user(perms.users).has(permission);
-                else if (*resolved.identity == admin::Entity::Admin)
-                    allowed = AccessTraits<EnumT>::admin(perms.admins).has(permission);
+
+                if (!resolved.identity) return false;
+
+                switch (*resolved.identity) {
+                    case admin::Entity::Group:
+                        allowed = AdminResolverTraits<EnumT>::group(perms.groups).has(permission);
+                        break;
+
+                    case admin::Entity::User:
+                        allowed = AdminResolverTraits<EnumT>::user(perms.users).has(permission);
+                        break;
+
+                    case admin::Entity::Admin:
+                        allowed = AdminResolverTraits<EnumT>::admin(perms.admins).has(permission);
+                        break;
+                }
+            }
+            else if constexpr (AdminResolverTraits<EnumT>::domain == Domain::Vault) {
+                const auto& perms = user->vaultsPerms();
+
+                if (!resolved.vault) return false;
+
+                if (resolved.owner->id == user->id)
+                    allowed = AdminResolverTraits<EnumT>::self(perms.self).has(permission);
+                else if (resolved.owner->isAdmin())
+                    allowed = AdminResolverTraits<EnumT>::admin(perms.admin).has(permission);
+                else
+                    allowed = AdminResolverTraits<EnumT>::user(perms.user).has(permission);
+            }
+            else {
+                static_assert([] { return false; }(), "Unhandled AdminResolverTraits domain");
             }
 
             if (!allowed) return false;
 
-            return ContextPolicy<EnumT>::validate(user, resolved, permission);
+            return admin::ContextPolicy<EnumT>::validate(user, resolved, permission);
         }
 
-        static admin::ResolvedVaultContext resolveContext(const std::optional<uint32_t> &vaultId,
-                                                          const std::optional<uint32_t> &apiKeyId,
-                                                          const std::optional<uint32_t> &targetUserId,
-                                                          const std::optional<admin::Entity> &entity,
-                                                          const std::optional<admin::Scope> &scope) {
-            admin::ResolvedVaultContext resolved{};
+        template <typename EnumT>
+        static admin::ResolvedContext resolveContext(const admin::Context<EnumT>& ctx) {
+            static_assert(std::is_enum_v<EnumT>,
+                          "vh::rbac::resolver::Admin::resolveContext(): EnumT must be an enum type");
 
-            if (targetUserId) resolved.owner = db::query::identities::User::getUserById(*targetUserId);
-            if (entity && apiKeyId) resolved.owner = db::query::vault::APIKey::getAPIKeyOwner(*apiKeyId);
-            if (scope && vaultId) resolved.engine = runtime::Deps::get().storageManager->getEngine(*vaultId);
+            admin::ResolvedContext resolved{};
+            resolved.identity = ctx.identity;
+
+            if constexpr (AdminResolverTraits<EnumT>::domain == Domain::APIKey) {
+                if (ctx.api_key_id)
+                    resolved.owner = db::query::vault::APIKey::getAPIKeyOwner(*ctx.api_key_id);
+
+                if (ctx.target_user_id && !resolved.owner)
+                    resolved.owner = db::query::identities::User::getUserById(*ctx.target_user_id);
+
+                if (ctx.vault_id)
+                    resolved.engine = runtime::Deps::get().storageManager->getEngine(*ctx.vault_id);
+
+                if (resolved.engine)
+                    resolved.vault = resolved.engine->vault;
+            }
+            else if constexpr (AdminResolverTraits<EnumT>::domain == Domain::Identity) {
+                if (ctx.target_user_id)
+                    resolved.owner = db::query::identities::User::getUserById(*ctx.target_user_id);
+
+                // if/when you support real group resolution:
+                // if (ctx.group_id)
+                //     resolved.group = db::query::identities::Group::getById(*ctx.group_id);
+            }
 
             return resolved;
         }
 
     public:
         template<typename EnumT>
-        static bool has(admin::Context<EnumT> &&ctx) {
+        static bool has(admin::Context<EnumT>&& ctx) {
             if (!ctx.isValid()) return false;
 
-            const auto &user = ctx.user;
+            const auto& user = ctx.user;
             if (!user) return false;
             if (user->isSuperAdmin()) return true;
 
-            const auto resolved = resolveContext(
-                ctx.vault_id,
-                ctx.api_key_id,
-                ctx.target_user_id,
-                ctx.identity,
-                ctx.scope
-            );
-
+            const auto resolved = resolveContext(ctx);
             if (!resolved.isValid()) return false;
 
             return checkPermission(user, resolved, ctx.permission);

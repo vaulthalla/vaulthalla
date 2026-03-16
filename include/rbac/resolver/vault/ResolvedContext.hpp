@@ -8,7 +8,7 @@
 
 namespace vh::rbac::resolver::vault {
 
-    struct ResolvedVaultContext {
+    struct ResolvedContext {
         std::shared_ptr<storage::Engine> engine;
         std::shared_ptr<vh::vault::model::Vault> vault;
         std::shared_ptr<identities::User> owner;

@@ -10,9 +10,9 @@ namespace vh::protocols::ws::handler::rbac {
 using json = nlohmann::json;
 
 struct Permissions {
-    static json get(const json& payload, const std::shared_ptr<Session>& session);
-    static json getByName(const json& payload, const std::shared_ptr<Session>& session);
-    static json list(const std::shared_ptr<Session>& session);
+    static json get(const json& payload);
+    static json getByName(const json& payload);
+    static json list();
 };
 
 }

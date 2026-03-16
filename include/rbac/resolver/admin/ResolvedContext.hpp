@@ -9,15 +9,18 @@
 
 namespace vh::rbac::resolver::admin {
 
-    struct ResolvedVaultContext {
+    struct ResolvedContext {
         std::shared_ptr<storage::Engine> engine;
-        std::shared_ptr<vault::model::Vault> vault;
+        std::shared_ptr<vh::vault::model::Vault> vault;
         std::shared_ptr<identities::User> owner;
         std::shared_ptr<identities::Group> group;
         std::optional<Entity> identity{};  // Users, Admins, Groups
-        std::optional<Scope> scope{};
 
-        [[nodiscard]] bool isValid() const { return (owner || (identity == Entity::Group && group)) && (identity || scope); }
+        [[nodiscard]] bool isValid() const {
+            if (identity == Entity::Group) return !!group;
+            return !!owner;
+        }
+
         [[nodiscard]] bool hasOwner() const { return !!owner; }
     };
 

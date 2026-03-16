@@ -24,7 +24,7 @@ private:
     };
 
     static TargetClass classifyTarget(const std::shared_ptr<User>& actor,
-                                      const admin::ResolvedVaultContext& resolved) {
+                                      const admin::ResolvedContext& resolved) {
         if (!actor || !resolved.isValid() || !resolved.owner)
             return TargetClass::Invalid;
 
@@ -44,7 +44,7 @@ private:
 
     template <typename Predicate>
     static bool validateForTarget(const std::shared_ptr<User>& actor,
-                                  const admin::ResolvedVaultContext& resolved,
+                                  const admin::ResolvedContext& resolved,
                                   Predicate&& allowed) {
         switch (classifyTarget(actor, resolved)) {
             case TargetClass::Self:
@@ -63,42 +63,42 @@ private:
     }
 
     static bool validateView(const std::shared_ptr<User>& actor,
-                             const admin::ResolvedVaultContext& resolved) {
+                             const admin::ResolvedContext& resolved) {
         return validateForTarget(actor, resolved, [](const auto& perms) {
             return perms.canView();
         });
     }
 
     static bool validateCreate(const std::shared_ptr<User>& actor,
-                               const admin::ResolvedVaultContext& resolved) {
+                               const admin::ResolvedContext& resolved) {
         return validateForTarget(actor, resolved, [](const auto& perms) {
             return perms.canCreate();
         });
     }
 
     static bool validateEdit(const std::shared_ptr<User>& actor,
-                             const admin::ResolvedVaultContext& resolved) {
+                             const admin::ResolvedContext& resolved) {
         return validateForTarget(actor, resolved, [](const auto& perms) {
             return perms.canEdit();
         });
     }
 
     static bool validateRemove(const std::shared_ptr<User>& actor,
-                               const admin::ResolvedVaultContext& resolved) {
+                               const admin::ResolvedContext& resolved) {
         return validateForTarget(actor, resolved, [](const auto& perms) {
             return perms.canRemove();
         });
     }
 
     static bool validateExport(const std::shared_ptr<User>& actor,
-                               const admin::ResolvedVaultContext& resolved) {
+                               const admin::ResolvedContext& resolved) {
         return validateForTarget(actor, resolved, [](const auto& perms) {
             return perms.canExport();
         });
     }
 
     static bool validateRotate(const std::shared_ptr<User>& actor,
-                               const admin::ResolvedVaultContext& resolved) {
+                               const admin::ResolvedContext& resolved) {
         return validateForTarget(actor, resolved, [](const auto& perms) {
             return perms.canRotate();
         });
@@ -106,7 +106,7 @@ private:
 
 public:
     static bool validate(const std::shared_ptr<User>& actor,
-                         const admin::ResolvedVaultContext& resolved,
+                         const admin::ResolvedContext& resolved,
                          Perm permission) {
         switch (permission) {
             case Perm::View:   return validateView(actor, resolved);

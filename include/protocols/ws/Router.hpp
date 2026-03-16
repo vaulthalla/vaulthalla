@@ -20,12 +20,14 @@ class Router {
 
     using RawWsHandler = std::function<json(const json&, const SessionPtr&)>;
     using RawPayloadHandler = std::function<json(const json&, const SessionPtr&)>;
+    using RawPayloadHandlerOnly = std::function<json(const json&)>;
     using RawHandlerWithToken = std::function<json(const std::string&, const SessionPtr&)>;
     using RawSessionOnly = std::function<json(const SessionPtr&)>;
     using RawEmpty = std::function<json()>;
 
     void registerWs(const std::string& cmd, RawWsHandler fn);
     void registerPayload(const std::string& cmd, RawPayloadHandler fn);
+    void registerPayloadOnly(const std::string& cmd, RawPayloadHandlerOnly fn);
     void registerHandlerWithToken(const std::string& cmd, RawHandlerWithToken fn);
     void registerSessionOnlyHandler(const std::string& cmd, RawSessionOnly fn);
     void registerEmptyHandler(const std::string& cmd, RawEmpty fn);
@@ -55,6 +57,24 @@ class Router {
             std::move(cmd),
             [obj, mf](const json& payload, const SessionPtr& session) {
                 return (obj->*mf)(payload, session);
+            });
+    }
+
+    template <class Obj>
+    void registerPayloadOnly(std::string cmd, Obj* obj, json (Obj::*mf)(const json&)) {
+        registerPayloadOnly(
+            std::move(cmd),
+            [obj, mf](const json& payload) {
+                return (obj->*mf)(payload);
+            });
+    }
+
+    template <class Obj>
+    void registerPayloadOnly(std::string cmd, const Obj* obj, json (Obj::*mf)(const json&) const) {
+        registerPayloadOnly(
+            std::move(cmd),
+            [obj, mf](const json& payload) {
+                return (obj->*mf)(payload);
             });
     }
 
@@ -133,6 +153,13 @@ class Router {
         registerPayload(cmd, RawPayloadHandler{
             [fn](const json& payload, const SessionPtr& session) {
                 return fn(payload, session);
+            }});
+    }
+
+    void registerPayloadOnly(const std::string& cmd, json (*fn)(const json&)) {
+        registerPayloadOnly(cmd, RawPayloadHandlerOnly{
+            [fn](const json& payload) {
+                return fn(payload);
             }});
     }
 

@@ -18,6 +18,10 @@ void Router::registerPayload(const std::string& cmd, RawPayloadHandler fn) {
     handlers_[cmd] = makePayloadHandler(cmd, std::move(fn));
 }
 
+void Router::registerPayloadOnly(const std::string &cmd, RawPayloadHandlerOnly fn) {
+    handlers_[cmd] = makePayloadOnlyHandler(cmd, std::move(fn));
+}
+
 void Router::registerHandlerWithToken(const std::string& cmd, RawHandlerWithToken fn) {
     handlers_[cmd] = makeHandlerWithToken(cmd, std::move(fn));
 }

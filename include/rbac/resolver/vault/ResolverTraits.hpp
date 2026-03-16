@@ -1,6 +1,6 @@
 #pragma once
 
-#include "rbac/resolver/AccessTraits/Fwd.hpp"
+#include "rbac/resolver/ResolverTraits/Fwd.hpp"
 #include "rbac/role/vault/Base.hpp"
 #include "rbac/permission/admin/Vaults.hpp"
 #include "rbac/permission/admin/VaultGlobals.hpp"
@@ -12,7 +12,7 @@
 namespace vh::rbac::resolver {
 
     template<>
-    struct AccessTraits<permission::vault::fs::FilePermissions> {
+    struct VaultResolverTraits<permission::vault::fs::FilePermissions> {
         static const auto& direct(const role::Vault& role) { return role.files(); }
         static const auto& self(const decltype(std::declval<identities::User>().vaultGlobals().self)& perms) { return perms.files(); }
         static const auto& admin(const decltype(std::declval<identities::User>().vaultGlobals().admin)& perms) { return perms.files(); }
@@ -20,7 +20,7 @@ namespace vh::rbac::resolver {
     };
 
     template<>
-    struct AccessTraits<permission::vault::fs::DirectoryPermissions> {
+    struct VaultResolverTraits<permission::vault::fs::DirectoryPermissions> {
         static const auto& direct(const role::Vault& role) { return role.directories(); }
         static const auto& self(const decltype(std::declval<identities::User>().vaultGlobals().self)& perms) { return perms.directories(); }
         static const auto& admin(const decltype(std::declval<identities::User>().vaultGlobals().admin)& perms) { return perms.directories(); }
@@ -28,7 +28,7 @@ namespace vh::rbac::resolver {
     };
 
     template<>
-    struct AccessTraits<permission::vault::RolePermissions> {
+    struct VaultResolverTraits<permission::vault::RolePermissions> {
         static const auto& direct(const role::Vault& role) { return role.rolesPerms(); }
         static const auto& self(const decltype(std::declval<identities::User>().vaultGlobals().self)& perms) { return perms.rolesPerms(); }
         static const auto& admin(const decltype(std::declval<identities::User>().vaultGlobals().admin)& perms) { return perms.rolesPerms(); }
@@ -36,7 +36,7 @@ namespace vh::rbac::resolver {
     };
 
     template<>
-    struct AccessTraits<permission::vault::sync::SyncConfigPermissions> {
+    struct VaultResolverTraits<permission::vault::sync::SyncConfigPermissions> {
         static const auto& direct(const role::Vault& role) { return role.syncConfig(); }
         static const auto& self(const decltype(std::declval<identities::User>().vaultGlobals().self)& perms) { return perms.syncConfig(); }
         static const auto& admin(const decltype(std::declval<identities::User>().vaultGlobals().admin)& perms) { return perms.syncConfig(); }
@@ -44,7 +44,7 @@ namespace vh::rbac::resolver {
     };
 
     template<>
-    struct AccessTraits<permission::vault::sync::SyncActionPermissions> {
+    struct VaultResolverTraits<permission::vault::sync::SyncActionPermissions> {
         static const auto& direct(const role::Vault& role) { return role.syncActions(); }
         static const auto& self(const decltype(std::declval<identities::User>().vaultGlobals().self)& perms) { return perms.syncActions(); }
         static const auto& admin(const decltype(std::declval<identities::User>().vaultGlobals().admin)& perms) { return perms.syncActions(); }

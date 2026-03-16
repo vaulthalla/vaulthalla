@@ -6,27 +6,11 @@
 
 namespace vh::rbac::permission::admin {
 
-Vaults::Vaults(const pqxx::result& res) {
-    for (const auto& row : res) {
-        switch (vault_type_from_string(row["global_name"].as<std::string>())) {
-            case Type::Self:
-                self = Vault(row);
-                break;
-            case Type::User:
-                user = Vault(row);
-                break;
-            case Type::Admin:
-                admin = Vault(row);
-                break;
-            default:
-                throw std::runtime_error("Invalid vault type in database: " + row["global_name"].as<std::string>());
-        }
-    }
-}
-
 std::string Vaults::toFlagsString() const {
     std::ostringstream oss;
-    oss << self.flagsToString() << "\n";
+    oss << self.toFlagsString()
+        << user.toFlagsString()
+        << admin.toFlagsString();
     return oss.str();
 }
 

@@ -7,6 +7,7 @@
 #include "db/query/identities/User.hpp"
 #include "protocols/ws/Session.hpp"
 #include "rbac/role/Admin.hpp"
+#include "rbac/resolver/admin/*.hpp"
 
 using namespace vh::protocols::ws::handler;
 using namespace vh::auth;

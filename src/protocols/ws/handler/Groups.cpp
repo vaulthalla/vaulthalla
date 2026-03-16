@@ -6,6 +6,7 @@
 #include "db/query/identities/Group.hpp"
 #include "identities/User.hpp"
 #include "identities/Group.hpp"
+#include "rbac/permission/admin/Identities.hpp"
 
 #include <nlohmann/json.hpp>
 

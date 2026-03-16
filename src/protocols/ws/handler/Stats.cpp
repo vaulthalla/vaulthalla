@@ -10,17 +10,34 @@
 #include "stats/model/CacheStats.hpp"
 #include "runtime/Deps.hpp"
 #include "fs/cache/Registry.hpp"
+#include "rbac/resolver/admin/*.hpp"
 
 #include <future>
+#include <utility>
+#include <array>
 
 using namespace vh::stats;
+using namespace vh::rbac;
 
 namespace vh::protocols::ws::handler {
 
 json Stats::vault(const json& payload, const std::shared_ptr<Session>& session) {
-    const auto& vaultId = payload.at("vault_id");
-    if (!session->user->canManageVault(vaultId))
-        throw std::runtime_error("User does not have permission to manage this vault.");
+    const auto& vaultId = payload.at("vault_id").get<uint32_t>();
+
+    using Perm = permission::admin::VaultPermissions;
+
+    constexpr std::array perms {
+        std::pair{Perm::View, "You do not have permission to view this vault."},
+        std::pair{Perm::ViewStats, "You do not have permission to view this vault's stats."}
+    };
+
+    for (const auto& [perm, err] : perms) {
+        if (!resolver::Admin::has<Perm>({
+        .user = session->user,
+        .permission = perm,
+            .vault_id = vaultId
+    })) throw std::runtime_error{err};
+    }
 
     const auto task = std::make_shared<vault::task::Stats>(vaultId);
     auto future = task->getFuture().value();

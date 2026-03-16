@@ -1,4 +1,4 @@
 #pragma once
 
 #include "rbac/resolver/Vault.hpp"
-#include "rbac/resolver/vault/AccessTraits.hpp"
+#include "rbac/resolver/vault/ResolverTraits.hpp"

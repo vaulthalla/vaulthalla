@@ -15,9 +15,10 @@ namespace vh::rbac::permission {
         enum class VaultPermissions : uint8_t {
             None   = 0,
             View   = 1 << 0,
-            Create = 1 << 1,
-            Edit   = 1 << 2,
-            Remove = 1 << 3
+            ViewStats = 1 << 1,
+            Create = 1 << 2,
+            Edit   = 1 << 3,
+            Remove = 1 << 4
         };
     }
 
@@ -27,6 +28,7 @@ namespace vh::rbac::permission {
 
         static constexpr std::array entries {
             Entry{admin::VaultPermissions::View, "view"},
+            Entry{admin::VaultPermissions::ViewStats, "view_stats"},
             Entry{admin::VaultPermissions::Create, "create"},
             Entry{admin::VaultPermissions::Edit, "edit"},
             Entry{admin::VaultPermissions::Remove, "remove"}
@@ -41,10 +43,18 @@ namespace vh::rbac::permission {
 
             [[nodiscard]] const char *flagPrefix() const override { return flag_prefix.c_str(); }
             [[nodiscard]] std::string toString(uint8_t indent) const override;
+
+            [[nodiscard]] bool canView() const noexcept { return has(VaultPermissions::View); }
+            [[nodiscard]] bool canViewStats() const noexcept { return has(VaultPermissions::ViewStats); }
+            [[nodiscard]] bool canCreate() const noexcept { return has(VaultPermissions::Create); }
+            [[nodiscard]] bool canEdit() const noexcept { return has(VaultPermissions::Edit); }
+            [[nodiscard]] bool canRemove() const noexcept { return has(VaultPermissions::Remove); }
         };
 
         struct Vaults : Module<uint32_t> {
             static constexpr const auto* MODULE_NAME = "vault";
+
+            enum class Type : uint8_t { Self, Admin, User };
 
             Vault self{std::string(MODULE_NAME) + "-self"};
             Vault admin{std::string(MODULE_NAME) + "-admin"};
@@ -65,6 +75,9 @@ namespace vh::rbac::permission {
 
         void to_json(nlohmann::json& j, const Vaults& v);
         void from_json(const nlohmann::json& j, Vaults& v);
+
+        std::string to_string(const Vaults::Type& type);
+        Vaults::Type vault_type_from_string(const std::string& str);
     }
 
 }
