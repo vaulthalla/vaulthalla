@@ -47,6 +47,11 @@ Admin::Admin(const nlohmann::json& j)
     }
 }
 
+std::string Admin::toFlagsString() const {
+    return identities.toFlagsString() + " " + vaults.toFlagsString() + " " + audits.toFlagsString() + " " + settings.toFlagsString() + " " +
+           roles.toFlagsString() + " " + keys.toFlagsString();
+}
+
 Admin Admin::fromJson(const nlohmann::json& j) { return Admin(j); }
 
 std::vector<Admin> admin_roles_from_pq_res(const pqxx::result& res) {

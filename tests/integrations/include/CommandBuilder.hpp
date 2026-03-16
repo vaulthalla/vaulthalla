@@ -1,10 +1,10 @@
 #pragma once
 
-#include "../../../include/identities/User.hpp"
+#include "identities/User.hpp"
 #include "vault/model/Vault.hpp"
-#include "../../../include/identities/Group.hpp"
-#include "../../../include/rbac/role/Admin.hpp"
-#include "../../../include/rbac/role/Vault.hpp"
+#include "identities/Group.hpp"
+#include "rbac/role/Admin.hpp"
+#include "rbac/role/Vault.hpp"
 #include "updateAliases.hpp"
 #include "UsageManager.hpp"
 
@@ -48,25 +48,25 @@ protected:
     virtual std::string updateAndResolveVar(const std::shared_ptr<T>& entity, const std::string& field) = 0;
 };
 
-class UserCommandBuilder final : CommandBuilder<identities::model::Admin> {
+class UserCommandBuilder final : CommandBuilder<identities::User> {
 public:
     explicit UserCommandBuilder(const std::shared_ptr<protocols::shell::UsageManager>& usage,
                                 const std::shared_ptr<CLITestContext>& ctx);
 
     ~UserCommandBuilder() override = default;
 
-    std::string create(const std::shared_ptr<identities::model::Admin>& entity) override;
+    std::string create(const std::shared_ptr<identities::User>& entity) override;
 
-    std::string update(const std::shared_ptr<identities::model::Admin>& entity) override;
+    std::string update(const std::shared_ptr<identities::User>& entity) override;
 
-    std::string remove(const std::shared_ptr<identities::model::Admin>& entity) override;
+    std::string remove(const std::shared_ptr<identities::User>& entity) override;
 
-    std::string info(const std::shared_ptr<identities::model::Admin>& entity) override;
+    std::string info(const std::shared_ptr<identities::User>& entity) override;
 
     std::string list() override;
 
 protected:
-    std::string updateAndResolveVar(const std::shared_ptr<identities::model::Admin>& entity, const std::string& field) override;
+    std::string updateAndResolveVar(const std::shared_ptr<identities::User>& entity, const std::string& field) override;
 
 private:
     UserAliases userAliases_;
@@ -90,12 +90,12 @@ public:
     std::string list() override;
 
     [[nodiscard]] std::string assignVaultRole(const std::shared_ptr<vault::model::Vault>& vault,
-                                const std::shared_ptr<rbac::model::Vault>& role,
+                                const std::shared_ptr<rbac::role::Vault>& role,
                                 const EntityType& entityType,
                                 const std::shared_ptr<void>& entity) const;
 
     [[nodiscard]] std::string unassignVaultRole(const std::shared_ptr<vault::model::Vault>& vault,
-                                  const std::shared_ptr<rbac::model::Vault>& role,
+                                  const std::shared_ptr<rbac::role::Vault>& role,
                                   const EntityType& entityType,
                                   const std::shared_ptr<void>& entity) const;
 
@@ -123,77 +123,77 @@ private:
     static std::string chooseVaultType();
 };
 
-class GroupCommandBuilder final : CommandBuilder<identities::model::Group> {
+class GroupCommandBuilder final : CommandBuilder<identities::Group> {
 public:
     explicit GroupCommandBuilder(const std::shared_ptr<protocols::shell::UsageManager>& usage,
                                  const std::shared_ptr<CLITestContext>& ctx);
 
     ~GroupCommandBuilder() override = default;
 
-    std::string create(const std::shared_ptr<identities::model::Group>& entity) override;
+    std::string create(const std::shared_ptr<identities::Group>& entity) override;
 
-    std::string update(const std::shared_ptr<identities::model::Group>& entity) override;
+    std::string update(const std::shared_ptr<identities::Group>& entity) override;
 
-    std::string remove(const std::shared_ptr<identities::model::Group>& entity) override;
+    std::string remove(const std::shared_ptr<identities::Group>& entity) override;
 
-    std::string info(const std::shared_ptr<identities::model::Group>& entity) override;
+    std::string info(const std::shared_ptr<identities::Group>& entity) override;
 
     std::string list() override;
 
-    std::string addUser(const std::shared_ptr<identities::model::Group>& entity, const std::shared_ptr<identities::model::Admin>& user) const;
+    std::string addUser(const std::shared_ptr<identities::Group>& entity, const std::shared_ptr<identities::User>& user) const;
 
-    std::string removeUser(const std::shared_ptr<identities::model::Group>& entity, const std::shared_ptr<identities::model::Admin>& user) const;
+    std::string removeUser(const std::shared_ptr<identities::Group>& entity, const std::shared_ptr<identities::User>& user) const;
 
 protected:
-    std::string updateAndResolveVar(const std::shared_ptr<identities::model::Group>& entity, const std::string& field) override;
+    std::string updateAndResolveVar(const std::shared_ptr<identities::Group>& entity, const std::string& field) override;
 
 private:
     GroupAliases groupAliases_;
 };
 
-class UserRoleCommandBuilder final : CommandBuilder<rbac::model::Admin> {
+class UserRoleCommandBuilder final : CommandBuilder<rbac::role::Admin> {
 public:
     explicit UserRoleCommandBuilder(const std::shared_ptr<protocols::shell::UsageManager>& usage,
                                     const std::shared_ptr<CLITestContext>& ctx);
 
     ~UserRoleCommandBuilder() override = default;
 
-    std::string create(const std::shared_ptr<rbac::model::Admin>& entity) override;
+    std::string create(const std::shared_ptr<rbac::role::Admin>& entity) override;
 
-    std::string update(const std::shared_ptr<rbac::model::Admin>& entity) override;
+    std::string update(const std::shared_ptr<rbac::role::Admin>& entity) override;
 
-    std::string remove(const std::shared_ptr<rbac::model::Admin>& entity) override;
+    std::string remove(const std::shared_ptr<rbac::role::Admin>& entity) override;
 
-    std::string info(const std::shared_ptr<rbac::model::Admin>& entity) override;
+    std::string info(const std::shared_ptr<rbac::role::Admin>& entity) override;
 
     std::string list() override;
 
 protected:
-    std::string updateAndResolveVar(const std::shared_ptr<rbac::model::Admin>& entity, const std::string& field) override;
+    std::string updateAndResolveVar(const std::shared_ptr<rbac::role::Admin>& entity, const std::string& field) override;
 
 private:
     UserRoleAliases userRoleAliases_;
 };
 
-class VaultRoleCommandBuilder final : CommandBuilder<rbac::model::Vault> {
+class VaultRoleCommandBuilder final : CommandBuilder<rbac::role::Vault> {
 public:
     explicit VaultRoleCommandBuilder(const std::shared_ptr<protocols::shell::UsageManager>& usage,
                                      const std::shared_ptr<CLITestContext>& ctx);
 
     ~VaultRoleCommandBuilder() override = default;
 
-    std::string create(const std::shared_ptr<rbac::model::Vault>& entity) override;
+    std::string create(const std::shared_ptr<rbac::role::Vault>& entity) override;
 
-    std::string update(const std::shared_ptr<rbac::model::Vault>& entity) override;
+    std::string update(const std::shared_ptr<rbac::role::Vault>& entity) override;
 
-    std::string remove(const std::shared_ptr<rbac::model::Vault>& entity) override;
+    std::string remove(const std::shared_ptr<rbac::role::Vault>& entity) override;
 
-    std::string info(const std::shared_ptr<rbac::model::Vault>& entity) override;
+    std::string info(const std::shared_ptr<rbac::role::Vault>& entity) override;
 
     std::string list() override;
 
 protected:
-    std::string updateAndResolveVar(const std::shared_ptr<rbac::model::Vault>& entity, const std::string& field) override;
+    std::string updateAndResolveVar(const std::shared_ptr<rbac::role::Vault>& entity, const std::string& field) override;
 
 private:
     VaultRoleAliases vaultRoleAliases_;

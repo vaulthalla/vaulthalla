@@ -4,13 +4,13 @@
 #include "generators.hpp"
 
 using namespace vh::test::cli;
-using namespace vh::identities::model;
+using namespace vh::identities;
 using namespace vh::protocols::shell;
 
 UserCommandBuilder::UserCommandBuilder(const std::shared_ptr<protocols::shell::UsageManager>& usage, const std::shared_ptr<CLITestContext>& ctx)
     : CommandBuilder(usage, ctx, "user"), userAliases_(ctx) {}
 
-std::string UserCommandBuilder::updateAndResolveVar(const std::shared_ptr<Admin>& entity, const std::string& field) {
+std::string UserCommandBuilder::updateAndResolveVar(const std::shared_ptr<User>& entity, const std::string& field) {
     if (!entity) throw std::runtime_error("UserCommandBuilder: entity is null in updateAndResolveVar");
     if (field.empty()) throw std::runtime_error("UserCommandBuilder: field is empty in updateAndResolveVar");
 
@@ -28,35 +28,35 @@ std::string UserCommandBuilder::updateAndResolveVar(const std::shared_ptr<Admin>
 
     if (userAliases_.isRole(field)) {
         if (ctx_->userRoles.empty()) throw std::runtime_error("UserCommandBuilder: no user roles available to assign");
-        entity->role = ctx_->randomUserRole();
-        return std::to_string(entity->role->id);
+        entity->roles.admin = ctx_->randomUserRole();
+        return std::to_string(entity->roles.admin->id);
     }
 
     if (userAliases_.isLinuxUID(field)) {
         const auto linuxUid = randomLinuxId();
-        entity->linux_uid = std::make_optional(linuxUid);
+        entity->meta.linux_uid = std::make_optional(linuxUid);
         return std::to_string(linuxUid);
     }
 
     throw std::runtime_error("UserCommandBuilder: unsupported user field for update: " + field);
 }
 
-static std::optional<std::string> resolveVar(const std::string& name, const std::shared_ptr<Admin>& user) {
+static std::optional<std::string> resolveVar(const std::string& name, const std::shared_ptr<User>& user) {
     if (name == "id" || name == "user_id") return std::to_string(user->id);
     if (name == "name" || name == "username") return user->name;
     if (name == "email") return user->email;
-    if (name == "role" || name == "role_id") return std::to_string(user->role->id);
+    if (name == "role" || name == "role_id") return std::to_string(user->roles.admin->id);
     throw std::runtime_error("UserCommandBuilder: unsupported user field for resolveVar: " + name);
 }
 
-static std::string randomizePrimaryPositional(const std::shared_ptr<Admin>& entity) {
+static std::string randomizePrimaryPositional(const std::shared_ptr<User>& entity) {
     if (!entity) throw std::runtime_error("UserCommandBuilder: entity is null in randomizePrimaryPositional");
     if (entity->name.empty()) throw std::runtime_error("UserCommandBuilder: entity name is empty in randomizePrimaryPositional");
     if (coin()) return std::to_string(entity->id);
     return entity->name;
 }
 
-std::string UserCommandBuilder::create(const std::shared_ptr<Admin>& entity) {
+std::string UserCommandBuilder::create(const std::shared_ptr<User>& entity) {
     const auto cmd = root_->findSubcommand("create");
     if (!cmd) throw std::runtime_error("UserCommandBuilder: 'create' command usage not found");
     std::ostringstream oss;
@@ -72,7 +72,7 @@ std::string UserCommandBuilder::create(const std::shared_ptr<Admin>& entity) {
     return oss.str();
 }
 
-std::string UserCommandBuilder::update(const std::shared_ptr<Admin>& entity) {
+std::string UserCommandBuilder::update(const std::shared_ptr<User>& entity) {
     const auto cmd = root_->findSubcommand("update");
     if (!cmd) throw std::runtime_error("UserCommandBuilder: 'update' command usage not found");
     std::ostringstream oss;
@@ -89,7 +89,7 @@ std::string UserCommandBuilder::update(const std::shared_ptr<Admin>& entity) {
     return oss.str();
 }
 
-std::string UserCommandBuilder::remove(const std::shared_ptr<Admin>& entity) {
+std::string UserCommandBuilder::remove(const std::shared_ptr<User>& entity) {
     const auto cmd = root_->findSubcommand("delete");
     if (!cmd) throw std::runtime_error("UserCommandBuilder: 'delete' command usage not found");
     std::ostringstream oss;
@@ -98,7 +98,7 @@ std::string UserCommandBuilder::remove(const std::shared_ptr<Admin>& entity) {
     return oss.str();
 }
 
-std::string UserCommandBuilder::info(const std::shared_ptr<Admin>& entity) {
+std::string UserCommandBuilder::info(const std::shared_ptr<User>& entity) {
     const auto cmd = root_->findSubcommand("info");
     if (!cmd) throw std::runtime_error("UserCommandBuilder: 'info' command usage not found");
     std::ostringstream oss;

@@ -4,10 +4,12 @@
 #include "usage/include/UsageManager.hpp"
 #include "db/query/identities/User.hpp"
 #include "db/query/identities/Group.hpp"
-#include "../../../../include/db/query/rbac/Permission.hpp"
-#include "identities/model/User.hpp"
-#include "../../../../include/identities/Group.hpp"
-#include "../../../../include/rbac/role/Base.hpp"
+#include "db/query/rbac/role/Vault.hpp"
+#include "db/query/rbac/role/Admin.hpp"
+#include "identities/User.hpp"
+#include "identities/Group.hpp"
+#include "rbac/role/Vault.hpp"
+#include "rbac/role/Admin.hpp"
 
 #include <optional>
 #include <string>
@@ -15,8 +17,8 @@
 #include <algorithm>
 #include <limits>
 
-using namespace vh::identities::model;
-using namespace vh::rbac::model;
+using namespace vh::identities;
+using namespace vh::rbac;
 using namespace vh::db::model;
 
 static constexpr uintmax_t KILOBYTE = 1024;
@@ -138,16 +140,31 @@ Lookup<Subject> parseSubject(const CommandCall& call, const std::string& errPref
     return out;
 }
 
-Lookup<Role> resolveRole(const std::string& roleArg, const std::string& errPrefix) {
-    Lookup<Role> out;
+Lookup<role::Vault> resolveVaultRole(const std::string& roleArg, const std::string& errPrefix) {
+    Lookup<role::Vault> out;
 
     if (const auto roleIdOpt = parseUInt(roleArg)) {
         if (*roleIdOpt <= 0) {
             out.error = errPrefix + ": role ID must be a positive integer";
             return out;
         }
-        out.ptr = db::query::rbac::Permission::getRole(*roleIdOpt);
-    } else out.ptr = db::query::rbac::Permission::getRoleByName(roleArg);
+        out.ptr = db::query::rbac::role::Vault::get(*roleIdOpt);
+    } else out.ptr = db::query::rbac::role::Vault::get(roleArg);
+
+    if (!out.ptr) out.error = errPrefix + ": role not found '" + roleArg + "'";
+    return out;
+}
+
+Lookup<rbac::role::Admin> resolveAdminRole(const std::string &roleArg, const std::string &errPrefix) {
+    Lookup<rbac::role::Admin> out;
+
+    if (const auto roleIdOpt = parseUInt(roleArg)) {
+        if (*roleIdOpt <= 0) {
+            out.error = errPrefix + ": role ID must be a positive integer";
+            return out;
+        }
+        out.ptr = db::query::rbac::role::Admin::get(*roleIdOpt);
+    } else out.ptr = db::query::rbac::role::Admin::get(roleArg);
 
     if (!out.ptr) out.error = errPrefix + ": role not found '" + roleArg + "'";
     return out;
@@ -197,8 +214,8 @@ ListQueryParams parseListQuery(const CommandCall& call) {
     return p;
 }
 
-Lookup<Admin> resolveUser(const std::string& userArg, const std::string& errPrefix) {
-    Lookup<Admin> out;
+Lookup<User> resolveUser(const std::string& userArg, const std::string& errPrefix) {
+    Lookup<User> out;
 
     if (const auto idOpt = parseUInt(userArg)) {
         if (*idOpt <= 0) {

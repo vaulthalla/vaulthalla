@@ -36,6 +36,10 @@ Vault::Vault(const nlohmann::json& j)
     }
 }
 
+std::string Vault::toFlagsString() const {
+    return sync.toFlagsString() + " " +
+}
+
 Vault Vault::fromJson(const nlohmann::json& j) { return Vault(j); }
 
 std::string Vault::AssignmentInfo::toString(const uint8_t indent) const {

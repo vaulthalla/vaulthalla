@@ -12,7 +12,7 @@
 #include <memory>
 #include <regex>
 
-namespace vh::rbac::model { struct Role; }
+namespace vh::rbac::role { struct Vault; struct Admin; }
 namespace vh::identities { struct User; }
 
 namespace vh::protocols::shell {
@@ -67,7 +67,8 @@ uintmax_t parseSize(const std::string& s);
 bool isCommandMatch(const std::vector<std::string>& path, std::string_view subcmd);
 
 Lookup<Subject> parseSubject(const CommandCall& call, const std::string& errPrefix);
-Lookup<rbac::model::Role> resolveRole(const std::string& roleArg, const std::string& errPrefix);
+Lookup<rbac::role::Vault> resolveVaultRole(const std::string& roleArg, const std::string& errPrefix);
+Lookup<rbac::role::Admin> resolveAdminRole(const std::string& roleArg, const std::string& errPrefix);
 Lookup<identities::User> resolveUser(const std::string& userArg, const std::string& errPrefix);
 
 std::pair<std::string_view, CommandCall> descend(const CommandCall& call);

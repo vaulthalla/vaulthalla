@@ -21,6 +21,7 @@ struct Base {
     Base(const pqxx::row& row, const pqxx::result& overrides);
 
     [[nodiscard]] virtual std::string toString(uint8_t indent) const;
+    [[nodiscard]] std::string toFlagsString() const;
 };
 
 void to_json(nlohmann::json& j, const Base& v);

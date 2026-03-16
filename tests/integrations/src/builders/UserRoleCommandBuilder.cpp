@@ -1,17 +1,18 @@
 #include "CommandBuilder.hpp"
 #include "CommandUsage.hpp"
 #include "generators.hpp"
+#include "rbac/role/Admin.hpp"
 
 using namespace vh::test::cli;
-using namespace vh::rbac::model;
-using namespace vh::identities::model;
+using namespace vh::rbac;
+using namespace vh::identities;
 using namespace vh::vault::model;
 using namespace vh::protocols::shell;
 
 UserRoleCommandBuilder::UserRoleCommandBuilder(const std::shared_ptr<protocols::shell::UsageManager>& usage, const std::shared_ptr<CLITestContext>& ctx)
     : CommandBuilder(usage, ctx, "role"), userRoleAliases_(ctx) {}
 
-std::string UserRoleCommandBuilder::updateAndResolveVar(const std::shared_ptr<Admin>& entity, const std::string& field) {
+std::string UserRoleCommandBuilder::updateAndResolveVar(const std::shared_ptr<role::Admin>& entity, const std::string& field) {
     const std::string usagePath = "role/update";
 
     if (userRoleAliases_.isName(field)) {
@@ -25,28 +26,28 @@ std::string UserRoleCommandBuilder::updateAndResolveVar(const std::shared_ptr<Ad
     }
 
     if (userRoleAliases_.isPermissions(field)) {
-        entity->permissions = generateBitmask(ADMIN_SHELL_PERMS.size());
-        return entity->permissions_to_flags_string();
+        // TODO: Fix perms generation
+        // entity->permissions = generateBitmask(ADMIN_SHELL_PERMS.size());
+        return entity->toFlagsString();
     }
 
     throw std::runtime_error("UserRoleCommandBuilder: unsupported user role field for update: " + field);
 }
 
-static std::optional<std::string> resolveVar(const std::string& name, const std::shared_ptr<Admin>& role) {
+static std::optional<std::string> resolveVar(const std::string& name, const std::shared_ptr<role::Admin>& role) {
     if (name == "id" || name == "role_id") return std::to_string(role->id);
     if (name == "name" || name == "role_name") return role->name;
     if (name == "description" || name == "desc") return role->description;
-    if (name == "permissions" || name == "perms") return role->permissions_to_flags_string();
-    if (name == "type" || name == "role_type") return role->type;
+    if (name == "permissions" || name == "perms") return role->toFlagsString();
     throw std::runtime_error("UserRoleCommandBuilder: unsupported user role field for resolveVar: " + name);
 }
 
-static std::string randomizePrimaryPositional(const std::shared_ptr<Admin>& entity) {
+static std::string randomizePrimaryPositional(const std::shared_ptr<role::Admin>& entity) {
     if (generateRandomIndex(10000) < 5000) return std::to_string(entity->id);
     return entity->name;
 }
 
-std::string UserRoleCommandBuilder::create(const std::shared_ptr<Admin>& entity) {
+std::string UserRoleCommandBuilder::create(const std::shared_ptr<role::Admin>& entity) {
     const auto cmd = root_->findSubcommand("create");
     if (!cmd) throw std::runtime_error("UserRoleCommandBuilder: 'create' command usage not found");
 
@@ -79,12 +80,12 @@ std::string UserRoleCommandBuilder::create(const std::shared_ptr<Admin>& entity)
         }
     }
 
-    oss << ' ' << entity->permissions_to_flags_string();
+    oss << ' ' << entity->toFlagsString();
 
     return oss.str();
 }
 
-std::string UserRoleCommandBuilder::update(const std::shared_ptr<Admin>& entity) {
+std::string UserRoleCommandBuilder::update(const std::shared_ptr<role::Admin>& entity) {
     const auto cmd = root_->findSubcommand("update");
     if (!cmd) throw std::runtime_error("UserRoleCommandBuilder: 'update' command usage not found");
 
@@ -119,7 +120,7 @@ std::string UserRoleCommandBuilder::update(const std::shared_ptr<Admin>& entity)
     return oss.str();
 }
 
-std::string UserRoleCommandBuilder::info(const std::shared_ptr<Admin>& entity) {
+std::string UserRoleCommandBuilder::info(const std::shared_ptr<role::Admin>& entity) {
     const auto cmd = root_->findSubcommand("info");
     if (!cmd) throw std::runtime_error("UserRoleCommandBuilder: 'info' command usage not found");
 
@@ -143,7 +144,7 @@ std::string UserRoleCommandBuilder::list() {
     return oss.str();
 }
 
-std::string UserRoleCommandBuilder::remove(const std::shared_ptr<Admin>& entity) {
+std::string UserRoleCommandBuilder::remove(const std::shared_ptr<role::Admin>& entity) {
     const auto cmd = root_->findSubcommand("delete");
     if (!cmd) throw std::runtime_error("UserRoleCommandBuilder: 'delete' command usage not found");
 

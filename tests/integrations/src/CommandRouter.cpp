@@ -3,16 +3,16 @@
 #include "EntityRegistrar.hpp"
 #include "CLITestContext.hpp"
 
-#include "../../../include/identities/User.hpp"
-#include "../../../include/identities/Group.hpp"
+#include "identities/User.hpp"
+#include "identities/Group.hpp"
 #include "vault/model/Vault.hpp"
-#include "../../../include/rbac/role/Admin.hpp"
-#include "../../../include/rbac/role/Vault.hpp"
+#include "rbac/role/Admin.hpp"
+#include "rbac/role/Vault.hpp"
 
 using namespace vh::test::cli;
 using namespace vh::protocols::shell;
-using namespace vh::identities::model;
-using namespace vh::rbac::model;
+using namespace vh::identities;
+using namespace vh::rbac;
 using namespace vh::vault::model;
 
 CommandRouter::CommandRouter(const std::shared_ptr<CLITestContext>& ctx)

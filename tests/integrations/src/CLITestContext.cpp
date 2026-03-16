@@ -1,10 +1,10 @@
 #include "CLITestContext.hpp"
 #include "UsageManager.hpp"
-#include "../../../include/identities/User.hpp"
+#include "identities/User.hpp"
 #include "vault/model/Vault.hpp"
-#include "../../../include/identities/Group.hpp"
-#include "../../../include/rbac/role/Admin.hpp"
-#include "../../../include/rbac/role/Vault.hpp"
+#include "identities/Group.hpp"
+#include "rbac/role/Admin.hpp"
+#include "rbac/role/Vault.hpp"
 #include "EntityType.hpp"
 #include "generators.hpp"
 
@@ -12,8 +12,8 @@
 
 using namespace vh::test::cli;
 using namespace vh::protocols::shell;
-using namespace vh::identities::model;
-using namespace vh::rbac::model;
+using namespace vh::identities;
+using namespace vh::rbac;
 using namespace vh::vault::model;
 
 CLITestContext::CLITestContext()
@@ -57,7 +57,7 @@ std::shared_ptr<CommandUsage> CLITestContext::getCommand(const EntityType& type,
     return commands.at(getCommandName(type, action));
 }
 
-std::shared_ptr<Admin> CLITestContext::pickRandomUser() const {
+std::shared_ptr<User> CLITestContext::pickRandomUser() const {
     if (users.empty()) throw std::runtime_error("CLITestContext: no users available to pick from");
     return users[generateRandomIndex(users.size())];
 }
@@ -72,7 +72,7 @@ std::shared_ptr<Vault> CLITestContext::pickRandomVault() const {
     return vaults[generateRandomIndex(vaults.size())];
 }
 
-std::shared_ptr<Vault> CLITestContext::pickVaultOwnedBy(const std::shared_ptr<Admin>& user) const {
+std::shared_ptr<Vault> CLITestContext::pickVaultOwnedBy(const std::shared_ptr<User>& user) const {
     if (vaults.empty()) throw std::runtime_error("CLITestContext: no vaults available to pick from");
     std::vector<std::shared_ptr<Vault>> owned;
     for (const auto& v : vaults) if (v->owner_id == user->id) owned.push_back(v);
@@ -80,12 +80,12 @@ std::shared_ptr<Vault> CLITestContext::pickVaultOwnedBy(const std::shared_ptr<Ad
     return owned[generateRandomIndex(owned.size())];
 }
 
-std::shared_ptr<Admin> CLITestContext::randomUserRole() const {
+std::shared_ptr<role::Admin> CLITestContext::randomUserRole() const {
     if (userRoles.empty()) throw std::runtime_error("CLITestContext: no user roles available to pick from");
     return userRoles[generateRandomIndex(userRoles.size())];
 }
 
-std::shared_ptr<Vault> CLITestContext::randomVaultRole() const {
+std::shared_ptr<role::Vault> CLITestContext::randomVaultRole() const {
     if (vaultRoles.empty()) throw std::runtime_error("CLITestContext: no vault roles available to pick from");
     return vaultRoles[generateRandomIndex(vaultRoles.size())];
 }

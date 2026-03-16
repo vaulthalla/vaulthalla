@@ -13,11 +13,11 @@
 #include "TestTask.hpp"
 #include "CLITestTask.hpp"
 
-#include "../../../../include/identities/User.hpp"
-#include "../../../../include/identities/Group.hpp"
+#include "identities/User.hpp"
+#include "identities/Group.hpp"
 #include "vault/model/Vault.hpp"
-#include "../../../../include/rbac/role/Admin.hpp"
-#include "../../../../include/rbac/role/Vault.hpp"
+#include "rbac/role/Admin.hpp"
+#include "rbac/role/Vault.hpp"
 
 #include <cstdlib>
 #include <cstdio>
@@ -29,15 +29,15 @@
 
 using namespace vh::protocols::shell;
 using namespace vh::args;
-using namespace vh::identities::model;
+using namespace vh::identities;
 using namespace vh::vault::model;
-using namespace vh::rbac::model;
+using namespace vh::rbac;
 
 
 // forward decls so casts compile even if headers aren’t pulled here
-namespace vh::identities::model { struct Admin; struct Group; }
+namespace vh::identities { struct Admin; struct Group; }
 namespace vh::vault::model { struct Vault; }
-namespace vh::rbac::model { struct Admin; struct Vault; }
+namespace vh::rbac::role { struct Admin; struct Vault; }
 
 
 namespace vh::test::cli {
@@ -63,7 +63,7 @@ IntegrationsTestRunner::extractId(std::string_view output, std::string_view idPr
 template <EntityType E> struct EntityTraits;
 
 template <> struct EntityTraits<EntityType::USER> {
-    using Type = Admin;
+    using Type = User;
     static constexpr std::string_view kStage = "Users";
     static constexpr std::string_view kIdPrefix = "User ID:";
     static std::vector<std::shared_ptr<Type>>& vec(CLITestContext& c) { return c.users; }
@@ -84,7 +84,7 @@ template <> struct EntityTraits<EntityType::VAULT> {
 };
 
 template <> struct EntityTraits<EntityType::USER_ROLE> {
-    using Type = Admin;
+    using Type = role::Admin;
     static constexpr std::string_view kStage = "User Roles";
     static constexpr std::string_view kIdPrefix = "Role ID:";
     static std::vector<std::shared_ptr<Type>>& vec(CLITestContext& c) { return c.userRoles; }
@@ -92,7 +92,7 @@ template <> struct EntityTraits<EntityType::USER_ROLE> {
 
 // VaultRole
 template <> struct EntityTraits<EntityType::VAULT_ROLE> {
-    using Type = Vault;
+    using Type = role::Vault;
     static constexpr std::string_view kStage = "Vault Roles";
     static constexpr std::string_view kIdPrefix = "Role ID:";
     static std::vector<std::shared_ptr<Type>>& vec(CLITestContext& c) { return c.vaultRoles; }
@@ -371,11 +371,11 @@ void IntegrationsTestRunner::teardownStage() {
 // ---------- Validation
 
 void IntegrationsTestRunner::validateAllTestObjects() const {
-    Validator<EntityType::USER,       Admin>::assert_all_exist(ctx_->users);
+    Validator<EntityType::USER,       User>::assert_all_exist(ctx_->users);
     Validator<EntityType::VAULT,      Vault>::assert_all_exist(ctx_->vaults);
     Validator<EntityType::GROUP,      Group>::assert_all_exist(ctx_->groups);
-    Validator<EntityType::USER_ROLE,  Admin>::assert_all_exist(ctx_->userRoles);
-    Validator<EntityType::VAULT_ROLE, Vault>::assert_all_exist(ctx_->vaultRoles);
+    Validator<EntityType::USER_ROLE,  role::Admin>::assert_all_exist(ctx_->userRoles);
+    Validator<EntityType::VAULT_ROLE, role::Vault>::assert_all_exist(ctx_->vaultRoles);
 }
 
 }

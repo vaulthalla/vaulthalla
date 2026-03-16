@@ -28,6 +28,7 @@ struct Admin final : Meta {
 
     [[nodiscard]] std::string toString(uint8_t indent) const override;
     [[nodiscard]] std::string toString() const { return toString(0); }
+    [[nodiscard]] std::string toFlagsString() const;
 
     static Admin fromJson(const nlohmann::json& j);
 };

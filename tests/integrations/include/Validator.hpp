@@ -5,22 +5,23 @@
 #include "db/query/identities/User.hpp"
 #include "db/query/vault/Vault.hpp"
 #include "db/query/identities/Group.hpp"
-#include "../../../include/db/query/rbac/Permission.hpp"
+#include "db/query/rbac/role/Admin.hpp"
+#include "db/query/rbac/role/Vault.hpp"
 
-#include "../../../include/identities/User.hpp"
+#include "identities/User.hpp"
 #include "vault/model/Vault.hpp"
-#include "../../../include/identities/Group.hpp"
-#include "../../../include/rbac/role/Admin.hpp"
-#include "../../../include/rbac/role/Vault.hpp"
+#include "identities/Group.hpp"
+#include "rbac/role/Admin.hpp"
+#include "rbac/role/Vault.hpp"
 
 #include <type_traits>
 #include <string>
 #include <memory>
 #include <vector>
 
-using namespace vh::identities::model;
+using namespace vh::identities;
 using namespace vh::vault::model;
-using namespace vh::rbac::model;
+using namespace vh::rbac;
 
 namespace vh::test::cli {
 
@@ -28,11 +29,11 @@ template <EntityType type, typename T>
 struct Validator {
     // Nice hard error if someone mismatches <type, T>
     static constexpr bool TypeOK =
-        (type == EntityType::USER      && std::is_same_v<T, Admin>)      ||
+        (type == EntityType::USER      && std::is_same_v<T, User>)      ||
         (type == EntityType::VAULT     && std::is_same_v<T, Vault>)     ||
         (type == EntityType::GROUP     && std::is_same_v<T, Group>)     ||
-        (type == EntityType::USER_ROLE && std::is_same_v<T, Admin>)  ||
-        (type == EntityType::VAULT_ROLE&& std::is_same_v<T, Vault>);
+        (type == EntityType::USER_ROLE && std::is_same_v<T, role::Admin>)  ||
+        (type == EntityType::VAULT_ROLE&& std::is_same_v<T, role::Vault>);
     static_assert(TypeOK, "Validator<type,T> mismatch: T must match the entity class for 'type'.");
 
     static AssertionResult assert_all_exist(const std::vector<std::shared_ptr<T>>& entities) {
@@ -57,8 +58,12 @@ struct Validator {
             if (!db::query::identities::Group::groupExists(entity->name))
                 return AssertionResult::Fail("Group '" + entity->name + "' not found in DB");
             return AssertionResult::Pass();
-        } else if constexpr (type == EntityType::USER_ROLE || type == EntityType::VAULT_ROLE) {
-            if (!db::query::rbac::Permission::roleExists(entity->name))
+        } else if constexpr (type == EntityType::USER_ROLE) {
+            if (!db::query::rbac::role::Admin::exists(entity->name))
+                return AssertionResult::Fail("Role '" + entity->name + "' not found in DB");
+            return AssertionResult::Pass();
+        } else if constexpr (type == EntityType::VAULT_ROLE) {
+            if (!db::query::rbac::role::Vault::exists(entity->name))
                 return AssertionResult::Fail("Role '" + entity->name + "' not found in DB");
             return AssertionResult::Pass();
         } else {
@@ -79,8 +84,12 @@ struct Validator {
             if (db::query::identities::Group::groupExists(entity->name))
                 return AssertionResult::Fail("Group '" + entity->name + "' unexpectedly found in DB");
             return AssertionResult::Pass();
-        } else if constexpr (type == EntityType::USER_ROLE || type == EntityType::VAULT_ROLE) {
-            if (db::query::rbac::Permission::roleExists(entity->name))
+        } else if constexpr (type == EntityType::USER_ROLE) {
+            if (db::query::rbac::role::Admin::exists(entity->name))
+                return AssertionResult::Fail("Role '" + entity->name + "' unexpectedly found in DB");
+            return AssertionResult::Pass();
+        } else if constexpr (type == EntityType::VAULT_ROLE) {
+            if (db::query::rbac::role::Vault::exists(entity->name))
                 return AssertionResult::Fail("Role '" + entity->name + "' unexpectedly found in DB");
             return AssertionResult::Pass();
         } else {
@@ -104,10 +113,15 @@ struct Validator {
             if (actual < count)
                 return AssertionResult::Fail("Expected at least " + std::to_string(count) + " groups, found " + std::to_string(actual));
             return AssertionResult::Pass();
-        } else if constexpr (type == EntityType::USER_ROLE || type == EntityType::VAULT_ROLE) {
-            const auto actual = db::query::rbac::Permission::listRoles().size();
+        } else if constexpr (type == EntityType::USER_ROLE) {
+            const auto actual = db::query::rbac::role::Admin::list().size();
             if (actual < count)
-                return AssertionResult::Fail("Expected at least " + std::to_string(count) + " roles, found " + std::to_string(actual));
+                return AssertionResult::Fail("Expected at least " + std::to_string(count) + " user roles, found " + std::to_string(actual));
+            return AssertionResult::Pass();
+        } else if constexpr (type == EntityType::VAULT_ROLE) {
+            const auto actual = db::query::rbac::role::Vault::list().size();
+            if (actual < count)
+                return AssertionResult::Fail("Expected at least " + std::to_string(count) + " vault roles, found " + std::to_string(actual));
             return AssertionResult::Pass();
         } else {
             return AssertionResult::Fail("Validator: unsupported entity type for count check");

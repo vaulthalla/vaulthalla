@@ -71,7 +71,7 @@ static CommandResult createUser(const CommandCall& call) {
     const auto roleOpt = optVal(call, usage->resolveRequired("role")->option_tokens);
     if (!roleOpt) return invalid("user create: --role is required");
 
-    const auto rLkp = resolveRole(*roleOpt, ERR);
+    const auto rLkp = resolveAdminRole(*roleOpt, ERR);
     if (!rLkp || !rLkp.ptr) return invalid(rLkp.error);
     const auto role = rLkp.ptr;
 
@@ -125,7 +125,7 @@ static CommandResult handleUpdateUser(const CommandCall& call) {
         if (user->isSuperAdmin()) return invalid("Cannot change role of super_admin user: " + user->name);
         if (*newRoleOpt == "super_admin") return invalid("Cannot change role to super_admin.");
 
-        const auto rLkp = resolveRole(*newRoleOpt, ERR);
+        const auto rLkp = resolveAdminRole(*newRoleOpt, ERR);
         if (!rLkp || !rLkp.ptr) return invalid(rLkp.error);
         const auto role = rLkp.ptr;
         user->roles.admin = role;

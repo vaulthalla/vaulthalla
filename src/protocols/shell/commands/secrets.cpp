@@ -12,7 +12,7 @@
 #include "runtime/Deps.hpp"
 #include "usage/include/UsageManager.hpp"
 #include "CommandUsage.hpp"
-#include "rbac/vault/resolver/*.hpp"
+#include "rbac/role/Admin.hpp"
 #include "rbac/role/Vault.hpp"
 
 #include <fstream>
@@ -141,10 +141,8 @@ static bool isSecretsMatch(const std::string& cmd, const std::string_view input)
 }
 
 static CommandResult handle_secrets(const CommandCall& call) {
-    // TODO: handle per vault
-
-    if (!call.user->isSuperAdmin() && !call.user->globalVaultPerms().admin.permissions.keys.encryptionKey.canView())
-        return invalid("secrets: only super admins or users with ManageEncryptionKeys permission can manage secrets");
+    if (!call.user->encryptionKeysPerms().canExport())
+        return invalid("secrets export: insufficient permissions to export secrets. Requires encryption keys export permission.");
 
     if (call.positionals.empty() || hasKey(call, "help") || hasKey(call, "h"))
         return usage(call.constructFullArgs());

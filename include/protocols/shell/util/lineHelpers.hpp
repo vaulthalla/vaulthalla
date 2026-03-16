@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <string>
 #include <fmt/core.h>
+#include <cstdint>
 
 namespace vh::protocols::shell {
 
@@ -18,7 +19,7 @@ inline int term_width() {
     return 80;
 }
 
-inline std::string human_bytes(uint64_t b) {
+inline std::string human_bytes(const uint64_t b) {
     static const char* kUnits[] = {"B","KiB","MiB","GiB","TiB","PiB"};
     int u = 0;
     auto v = static_cast<double>(b);

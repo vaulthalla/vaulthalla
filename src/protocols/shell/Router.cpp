@@ -2,7 +2,7 @@
 #include "protocols/shell/Token.hpp"
 #include "protocols/shell/Parser.hpp"
 #include "log/Registry.hpp"
-#include "../../../include/identities/User.hpp"
+#include "identities/User.hpp"
 #include "CommandUsage.hpp"
 #include "protocols/shell/util/argsHelpers.hpp"
 
@@ -11,7 +11,7 @@
 #include <string>
 #include <algorithm>
 
-using namespace vh::identities::model;
+using namespace vh::identities;
 
 using namespace vh::protocols::shell;
 
@@ -45,7 +45,7 @@ std::string Router::canonicalFor(const std::string& nameOrAlias) const {
     return n; // unknown; let caller error
 }
 
-CommandResult Router::executeLine(const std::string& line, const std::shared_ptr<Admin>& user, SocketIO* io) const {
+CommandResult Router::executeLine(const std::string& line, const std::shared_ptr<User>& user, SocketIO* io) const {
     log::Registry::shell()->debug("[Router] Executing line: '{}'", line);
     auto call   = parseTokens(tokenize(line));
     call.user = user;

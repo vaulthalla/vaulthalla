@@ -2,14 +2,14 @@
 #include "CommandUsage.hpp"
 #include "generators.hpp"
 #include "vault/model/Vault.hpp"
-#include "../../../../include/identities/User.hpp"
-#include "../../../../include/identities/Group.hpp"
+#include "identities/User.hpp"
+#include "identities/Group.hpp"
 
 using namespace vh::test::cli;
 using namespace vh::protocols::shell;
 using namespace vh::vault::model;
-using namespace vh::identities::model;
-using namespace vh::rbac::model;
+using namespace vh::identities;
+using namespace vh::rbac;
 using vh::vault::model::Vault;
 
 VaultCommandBuilder::VaultCommandBuilder(const std::shared_ptr<UsageManager>& usage, const std::shared_ptr<CLITestContext>& ctx)
@@ -169,7 +169,7 @@ std::string VaultCommandBuilder::list() {
     return oss.str();
 }
 
-static std::string manageRole(const std::shared_ptr<Vault>& vault, const std::shared_ptr<Vault>& role, const EntityType& entityType, const std::shared_ptr<void>& entity, const std::shared_ptr<CommandUsage>& root, std::string action) {
+static std::string manageRole(const std::shared_ptr<Vault>& vault, const std::shared_ptr<role::Vault>& role, const EntityType& entityType, const std::shared_ptr<void>& entity, const std::shared_ptr<CommandUsage>& root, std::string action) {
     const auto cmdBase = root->findSubcommand("role");
     if (!cmdBase) throw std::runtime_error("vault.roles usage not found");
     const auto cmd = cmdBase->findSubcommand(action);
@@ -191,7 +191,7 @@ static std::string manageRole(const std::shared_ptr<Vault>& vault, const std::sh
         if (req.label.contains("subject")) {
             if (!entity) throw std::runtime_error("VaultCommandBuilder: no entity provided for vault.roles.assign subject");
             if (entityType == EntityType::USER) {
-                const auto user = std::static_pointer_cast<Admin>(entity);
+                const auto user = std::static_pointer_cast<User>(entity);
                 if (coin()) oss << " --user " << user->id;
                 else       oss << " --user " << user->name;
             } else if (entityType == EntityType::GROUP) {
@@ -205,11 +205,11 @@ static std::string manageRole(const std::shared_ptr<Vault>& vault, const std::sh
     return oss.str();
 }
 
-std::string VaultCommandBuilder::assignVaultRole(const std::shared_ptr<Vault>& vault, const std::shared_ptr<Vault>& role, const EntityType& entityType, const std::shared_ptr<void>& entity) const {
+std::string VaultCommandBuilder::assignVaultRole(const std::shared_ptr<Vault>& vault, const std::shared_ptr<role::Vault>& role, const EntityType& entityType, const std::shared_ptr<void>& entity) const {
     return manageRole(vault, role, entityType, entity, root_, "assign");
 }
 
-std::string VaultCommandBuilder::unassignVaultRole(const std::shared_ptr<Vault>& vault, const std::shared_ptr<Vault>& role, const EntityType& entityType, const std::shared_ptr<void>& entity) const {
+std::string VaultCommandBuilder::unassignVaultRole(const std::shared_ptr<Vault>& vault, const std::shared_ptr<role::Vault>& role, const EntityType& entityType, const std::shared_ptr<void>& entity) const {
     return manageRole(vault, role, entityType, entity, root_, "unassign");
 }
 
