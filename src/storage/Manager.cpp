@@ -4,7 +4,7 @@
 #include "config/Registry.hpp"
 #include "vault/model/Vault.hpp"
 #include "vault/model/S3Vault.hpp"
-#include "../../include/identities/User.hpp"
+#include "identities/User.hpp"
 #include "fs/model/Path.hpp"
 #include "db/query/vault/Vault.hpp"
 #include "db/query/identities/User.hpp"
@@ -14,7 +14,7 @@
 
 using namespace vh::storage;
 using namespace vh::vault::model;
-using namespace vh::identities::model;
+using namespace vh::identities;
 using namespace vh::config;
 using namespace vh::fs::model;
 using namespace vh::crypto;
@@ -80,7 +80,7 @@ std::vector<std::shared_ptr<Engine>> Manager::getEngines() const {
     return engines;
 }
 
-void Manager::initUserStorage(const std::shared_ptr<Admin>& user) {
+void Manager::initUserStorage(const std::shared_ptr<User>& user) {
     try {
         log::Registry::storage()->debug("[StorageManager] Initializing storage user storage...");
 

@@ -317,7 +317,8 @@ namespace vh::identities {
         if (!roles.admin) return false;
 
         return roles.admin->identities.admins.canDelete()
-               && roles.admin->vaults.admin.keys.encryptionKey.any();
+               && roles.admin->keys.encryptionKeys.canRotate()
+               && roles.admin->name == "super_admin";
     }
 
     bool User::isAdmin() const {

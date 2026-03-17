@@ -10,7 +10,6 @@
 #include "identities/User.hpp"
 #include "log/Registry.hpp"
 
-#include <pqxx/pqxx>
 #include <stdexcept>
 #include <array>
 
@@ -20,9 +19,7 @@ using namespace vh::auth::model;
 using U = vh::identities::User;
 using UserPtr = std::shared_ptr<U>;
 
-namespace {
-
-UserPtr hydrateUser(pqxx::work& txn, const pqxx::row& userRow) {
+UserPtr User::hydrateUser(pqxx::work& txn, const pqxx::row& userRow) {
     const auto userId = userRow["id"].as<unsigned int>();
 
     // Singular admin-role assignment joined to full admin_role
@@ -62,8 +59,6 @@ UserPtr hydrateUser(pqxx::work& txn, const pqxx::row& userRow) {
         overridesRes
     );
 }
-
-} // namespace
 
 UserPtr User::getUserByName(const std::string& name) {
     return Transactions::exec("User::getUserByName", [&](pqxx::work& txn) -> UserPtr {

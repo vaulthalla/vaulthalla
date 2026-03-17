@@ -10,14 +10,10 @@ namespace vh::rbac::permission { struct Permission; }
 
 namespace vh::db::query::rbac {
 
-class Permission {
-    using Perm = vh::rbac::permission::Permission;
-    using PermPtr = std::shared_ptr<Perm>;
-
-public:
-    static PermPtr getPermission(unsigned int id);
-    static PermPtr getPermissionByName(const std::string& name);
-    static std::vector<PermPtr> listPermissions();
+struct Permission {
+    static std::shared_ptr<vh::rbac::permission::Permission> getPermission(unsigned int id);
+    static std::shared_ptr<vh::rbac::permission::Permission> getPermissionByName(const std::string& name);
+    static std::vector<std::shared_ptr<vh::rbac::permission::Permission>> listPermissions();
     static unsigned short countPermissions();
 };
 

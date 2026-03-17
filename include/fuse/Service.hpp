@@ -6,9 +6,7 @@
 
 #include <fuse_lowlevel.h>
 
-namespace vh::storage {
-class Manager;
-}
+namespace vh::storage { class Manager; }
 
 namespace vh::fuse {
 

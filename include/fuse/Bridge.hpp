@@ -6,9 +6,7 @@
 #include <fuse3/fuse_lowlevel.h>
 #include <memory>
 
-namespace vh::fs::model {
-struct Entry;
-}
+namespace vh::fs::model { struct Entry; }
 
 namespace vh::fuse {
 

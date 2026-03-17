@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <pqxx/pqxx>
 
 namespace vh::identities { struct User; }
 
@@ -15,7 +16,7 @@ class User {
     using UserPtr = std::shared_ptr<U>;
 
 public:
-    User() = default;
+    static UserPtr hydrateUser(pqxx::work& txn, const pqxx::row& userRow);
 
     [[nodiscard]] static UserPtr getUserByName(const std::string& name);
     [[nodiscard]] static UserPtr getUserById(unsigned int id);

@@ -41,7 +41,7 @@ private:
         if (!session || !session->user)
             throw std::runtime_error("Unauthorized");
 
-        if (!resolver::Vault::has<EnumT>({
+        if (!rbac::resolver::Vault::has<EnumT>({
             .user = session->user,
             .permission = permission,
             .vault_id = vaultId,
@@ -58,14 +58,14 @@ private:
         if (!session || !session->user)
             throw std::runtime_error("Unauthorized");
 
-        if (!resolver::Vault::hasAny(
-            resolver::vault::Context<EnumT>{
+        if (!rbac::resolver::Vault::hasAny(
+            rbac::resolver::vault::Context<EnumT>{
                 .user = session->user,
                 .permission = permission,
                 .vault_id = vaultId,
                 .path = path
             },
-            resolver::vault::Context<EnumTs>{
+            rbac::resolver::vault::Context<EnumTs>{
                 .user = session->user,
                 .permission = permissions,
                 .vault_id = vaultId,

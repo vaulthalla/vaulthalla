@@ -20,7 +20,7 @@ struct Permission {
     explicit Permission(const nlohmann::json& j);
     Permission(uint32_t bitPos, std::string name, std::string description);
 };
-
+    
 void to_json(nlohmann::json& j, const Permission& p);
 void from_json(const nlohmann::json& j, Permission& p);
 

@@ -80,7 +80,6 @@ namespace vh::rbac::permission {
             [[nodiscard]] bool canShareInternally() const noexcept { return share.canShareInternally(); }
             [[nodiscard]] bool canSharePublicly() const noexcept { return share.canSharePublicly(); }
             [[nodiscard]] bool canSharePubliclyWithVal() const noexcept { return share.canSharePubliclyWithValidation(); }
-            [[nodiscard]] bool canShareExternally() const noexcept { return share.canShareExternally(); }
 
             [[nodiscard]] bool canMutate() const noexcept {
                 return canUpload() || canTouch() || canDelete() || canRename() || canMove();

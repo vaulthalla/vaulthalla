@@ -7,6 +7,7 @@
 #include "protocols/ws/handler/Groups.hpp"
 #include "protocols/ws/handler/Stats.hpp"
 #include "protocols/ws/handler/rbac/roles/Admin.hpp"
+#include "protocols/ws/handler/rbac/roles/Vault.hpp"
 #include "protocols/ws/handler/vault/Vaults.hpp"
 #include "protocols/ws/handler/vault/APIKeys.hpp"
 #include "log/Registry.hpp"
@@ -44,14 +45,14 @@ void Handler::registerAuthHandlers(const std::shared_ptr<Router>& r) {
 }
 
 void Handler::registerFileSystemHandlers(const std::shared_ptr<Router>& r) {
-    r->registerPayload("fs.upload.start", &Storage::startUpload);
-    r->registerPayload("fs.upload.finish", &Storage::finishUpload);
-    r->registerPayload("fs.dir.create", &Storage::mkdir);
-    r->registerPayload("fs.dir.list", &Storage::listDir);
-    r->registerPayload("fs.entry.delete", &Storage::remove);
-    r->registerPayload("fs.entry.move", &Storage::move);
-    r->registerPayload("fs.entry.rename", &Storage::rename);
-    r->registerPayload("fs.entry.copy", &Storage::copy);
+    r->registerPayload("fs.upload.start", &handler::fs::Storage::startUpload);
+    r->registerPayload("fs.upload.finish", &handler::fs::Storage::finishUpload);
+    r->registerPayload("fs.dir.create", &handler::fs::Storage::mkdir);
+    r->registerPayload("fs.dir.list", &handler::fs::Storage::listDir);
+    r->registerPayload("fs.entry.delete", &handler::fs::Storage::remove);
+    r->registerPayload("fs.entry.move", &handler::fs::Storage::move);
+    r->registerPayload("fs.entry.rename", &handler::fs::Storage::rename);
+    r->registerPayload("fs.entry.copy", &handler::fs::Storage::copy);
 }
 
 void Handler::registerStorageHandlers(const std::shared_ptr<Router>& r) {
@@ -71,14 +72,19 @@ void Handler::registerAPIKeyHandlers(const std::shared_ptr<Router>& r) {
 }
 
 void Handler::registerRoleHandlers(const std::shared_ptr<Router>& r) {
-    r->registerPayload("role.add", &Roles::add);
-    r->registerPayload("role.update", &Roles::update);
-    r->registerPayload("role.delete", &Roles::remove);
-    r->registerPayload("role.get", &Roles::get);
-    r->registerPayload("role.get.byName", &Roles::getByName);
-    r->registerSessionOnlyHandler("roles.list", &Roles::list);
-    r->registerSessionOnlyHandler("roles.list.user", &Roles::listAdminRoles);
-    r->registerSessionOnlyHandler("roles.list.vault", &Roles::listVaultRoles);
+    r->registerPayload("role.admin.add", &handler::rbac::roles::Admin::add);
+    r->registerPayload("role.admin.update", &handler::rbac::roles::Admin::update);
+    r->registerPayload("role.admin.delete", &handler::rbac::roles::Admin::remove);
+    r->registerPayload("role.admin.get", &handler::rbac::roles::Admin::get);
+    r->registerPayload("role.admin.get.byName", &handler::rbac::roles::Admin::getByName);
+    r->registerSessionOnlyHandler("roles.admin.list", &handler::rbac::roles::Admin::list);
+
+    r->registerPayload("role.vault.add", &handler::rbac::roles::Vault::add);
+    r->registerPayload("role.vault.update", &handler::rbac::roles::Vault::update);
+    r->registerPayload("role.vault.delete", &handler::rbac::roles::Vault::remove);
+    r->registerPayload("role.vault.get", &handler::rbac::roles::Vault::get);
+    r->registerPayload("role.vault.get.byName", &handler::rbac::roles::Vault::getByName);
+    r->registerSessionOnlyHandler("roles.vault.list", &handler::rbac::roles::Vault::list);
 }
 
 void Handler::registerPermissionsHandlers(const std::shared_ptr<Router>& r) {

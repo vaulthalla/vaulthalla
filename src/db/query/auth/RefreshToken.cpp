@@ -1,13 +1,15 @@
 #include "db/query/auth/RefreshToken.hpp"
 #include "auth/model/RefreshToken.hpp"
-#include "../../../../include/identities/User.hpp"
+#include "identities/User.hpp"
 #include "db/Transactions.hpp"
 #include "db/encoding/timestamp.hpp"
 #include "log/Registry.hpp"
+#include "db/query/identities/User.hpp"
 
 #include <chrono>
 
 using namespace vh::db::query::auth;
+using namespace vh::identities;
 
 void RefreshToken::set(const std::shared_ptr<vh::auth::model::RefreshToken>& token) {
     if (!token) {
@@ -102,34 +104,11 @@ void RefreshToken::revokeAndPurge(const unsigned int userId) {
     });
 }
 
-std::shared_ptr<vh::identities::model::Admin> RefreshToken::getUserByJti(const std::string& jti) {
+std::shared_ptr<User> RefreshToken::getUserByJti(const std::string& jti) {
     return Transactions::exec(
         "RefreshToken::getUserByRefreshToken",
-        [&](pqxx::work& txn) -> std::shared_ptr<identities::model::Admin> {
+        [&](pqxx::work& txn) -> std::shared_ptr<User> {
             const auto res = txn.exec(pqxx::prepped{"get_user_by_refresh_token_jti"}, pqxx::params{jti});
-
-            if (res.empty()) {
-                log::Registry::db()->trace("[RefreshToken] No user found for refresh token JTI: {}", jti);
-                return nullptr;
-            }
-
-            const auto userRow = res.one_row();
-            const auto userId = userRow["id"].as<unsigned int>();
-
-            const auto userRoleRow =
-                txn.exec(pqxx::prepped{"get_user_assigned_role"}, pqxx::params{userId}).one_row();
-
-            const auto rolesRes =
-                txn.exec(pqxx::prepped{"get_user_and_group_assigned_vault_roles"}, pqxx::params{userId});
-
-            const auto overridesRes =
-                txn.exec(pqxx::prepped{"list_user_and_group_permission_overrides"}, pqxx::params{userId});
-
-            return std::make_shared<identities::model::Admin>(
-                userRow,
-                userRoleRow,
-                rolesRes,
-                overridesRes
-            );
+            return db::query::identities::User::hydrateUser(txn, res.one_row());
         });
 }

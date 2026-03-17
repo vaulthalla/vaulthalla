@@ -23,7 +23,7 @@ std::string Filesystem::toString(const uint8_t indent) const {
 
 std::string Filesystem::toFlagString() const {
     std::ostringstream oss;
-    oss << files.joinFlags() << " " << directories.joinFlags();
+    oss << files.toFlagsString() << " " << directories.toFlagsString();
     return oss.str();
 }
 
