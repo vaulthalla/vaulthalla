@@ -11,6 +11,7 @@ namespace vh::rbac::permission {
         enum class AuditPermissions : uint8_t {
             None = 0,
             View = 1 << 0,
+            All = View
         };
     }
 
@@ -51,10 +52,17 @@ namespace vh::rbac::permission {
                 return a;
             }
 
-            static Audits View() {
+            static Audits ViewOnly() {
                 Audits a;
                 a.clear();
                 a.grant(AuditPermissions::View);
+                return a;
+            }
+
+            static Audits Full() {
+                Audits a;
+                a.clear();
+                a.grant(AuditPermissions::All);
                 return a;
             }
         };
