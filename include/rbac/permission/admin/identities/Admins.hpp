@@ -13,6 +13,25 @@ struct Admins final : Base {
     [[nodiscard]] const char* flagPrefix() const override { return FLAG_CONTEXT; }
     [[nodiscard]] std::string_view descriptionObject() const override { return DESCRIPTION_CONTEXT; }
     [[nodiscard]] std::string toString(uint8_t indent) const override;
+
+    static Admins None() {
+        Admins a;
+        a.clear();
+        return a;
+    }
+
+    static Admins Full() {
+        Admins a;
+        a.grant(IdentityPermissions::All);
+        return a;
+    }
+
+    static Admins ViewOnly() {
+        Admins a;
+        a.clear();
+        a.grant(IdentityPermissions::View);
+        return a;
+    }
 };
 
 void to_json(nlohmann::json& j, const Admins& admins);

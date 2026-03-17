@@ -12,6 +12,25 @@ struct Database final : Base {
     [[nodiscard]] const char* flagPrefix() const override { return FLAG_CONTEXT; }
     [[nodiscard]] std::string_view descriptionObject() const override { return FLAG_CONTEXT; }
     [[nodiscard]] std::string toString(uint8_t indent) const override;
+
+    static Database None() {
+        Database d;
+        d.clear();
+        return d;
+    }
+
+    static Database View() {
+        Database d;
+        d.clear();
+        d.grant(SettingsPermissions::View);
+        return d;
+    }
+
+    static Database Edit() {
+        auto d = View();
+        d.grant(SettingsPermissions::Edit);
+        return d;
+    }
 };
 
 void to_json(nlohmann::json& j, const Database& s);

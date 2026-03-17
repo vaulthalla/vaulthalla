@@ -12,6 +12,25 @@ struct Http final : Base {
     [[nodiscard]] const char* flagPrefix() const override { return FLAG_CONTEXT; }
     [[nodiscard]] std::string_view descriptionObject() const override { return FLAG_CONTEXT; }
     [[nodiscard]] std::string toString(uint8_t indent) const override;
+
+    static Http None() {
+        Http h;
+        h.clear();
+        return h;
+    }
+
+    static Http View() {
+        Http h;
+        h.clear();
+        h.grant(SettingsPermissions::View);
+        return h;
+    }
+
+    static Http Edit() {
+        auto h = View();
+        h.grant(SettingsPermissions::Edit);
+        return h;
+    }
 };
 
 void to_json(nlohmann::json& j, const Http& s);

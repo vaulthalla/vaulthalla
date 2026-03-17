@@ -12,6 +12,25 @@ struct Services final : Base {
     [[nodiscard]] const char* flagPrefix() const override { return FLAG_CONTEXT; }
     [[nodiscard]] std::string_view descriptionObject() const override { return FLAG_CONTEXT; }
     [[nodiscard]] std::string toString(uint8_t indent) const override;
+
+    static Services None() {
+        Services s;
+        s.clear();
+        return s;
+    }
+
+    static Services View() {
+        Services s;
+        s.clear();
+        s.grant(SettingsPermissions::View);
+        return s;
+    }
+
+    static Services Edit() {
+        auto s = View();
+        s.grant(SettingsPermissions::Edit);
+        return s;
+    }
 };
 
 void to_json(nlohmann::json& j, const Services& s);

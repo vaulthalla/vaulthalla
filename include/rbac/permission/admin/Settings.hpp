@@ -29,14 +29,14 @@ struct Settings final : Module<uint64_t> {
         Services,
     };
 
-    settings::Websocket websocket;
-    settings::Http http;
-    settings::Database database;
-    settings::Auth auth;
-    settings::Logging logging;
-    settings::Caching caching;
-    settings::Sharing sharing;
-    settings::Services services;
+    settings::Websocket websocket{};
+    settings::Http http{};
+    settings::Database database{};
+    settings::Auth auth{};
+    settings::Logging logging{};
+    settings::Caching caching{};
+    settings::Sharing sharing{};
+    settings::Services services{};
 
     ~Settings() override = default;
     Settings() = default;
@@ -69,6 +69,119 @@ struct Settings final : Module<uint64_t> {
 
     [[nodiscard]] bool canView(const Type& type) const;
     [[nodiscard]] bool canEdit(const Type& type) const;
+
+    static Settings None() {
+        Settings s;
+        s.websocket = settings::Websocket::None();
+        s.http = settings::Http::None();
+        s.database = settings::Database::None();
+        s.auth = settings::Auth::None();
+        s.logging = settings::Logging::None();
+        s.caching = settings::Caching::None();
+        s.sharing = settings::Sharing::None();
+        s.services = settings::Services::None();
+        return s;
+    }
+
+    static Settings ViewOnly() {
+        Settings s;
+        s.websocket = settings::Websocket::View();
+        s.http = settings::Http::View();
+        s.database = settings::Database::View();
+        s.auth = settings::Auth::View();
+        s.logging = settings::Logging::View();
+        s.caching = settings::Caching::View();
+        s.sharing = settings::Sharing::View();
+        s.services = settings::Services::View();
+        return s;
+    }
+
+    static Settings Support() {
+        auto s = None();
+        s.websocket = settings::Websocket::View();
+        s.http = settings::Http::View();
+        s.logging = settings::Logging::View();
+        s.caching = settings::Caching::View();
+        s.services = settings::Services::View();
+        return s;
+    }
+
+    static Settings OperationsAdmin() {
+        auto s = None();
+        s.websocket = settings::Websocket::Edit();
+        s.http = settings::Http::Edit();
+        s.services = settings::Services::Edit();
+        s.caching = settings::Caching::Edit();
+        s.logging = settings::Logging::View();
+        return s;
+    }
+
+    static Settings SecurityAuditor() {
+        auto s = None();
+        s.auth = settings::Auth::View();
+        s.logging = settings::Logging::View();
+        s.sharing = settings::Sharing::View();
+        return s;
+    }
+
+    static Settings SecurityAdmin() {
+        auto s = None();
+        s.auth = settings::Auth::Edit();
+        s.sharing = settings::Sharing::Edit();
+        s.logging = settings::Logging::View();
+        return s;
+    }
+
+    static Settings DatabaseAdmin() {
+        auto s = None();
+        s.database = settings::Database::Edit();
+        s.caching = settings::Caching::Edit();
+        s.logging = settings::Logging::View();
+        return s;
+    }
+
+    static Settings SharingAdmin() {
+        auto s = None();
+        s.sharing = settings::Sharing::Edit();
+        s.auth = settings::Auth::View();
+        s.logging = settings::Logging::View();
+        return s;
+    }
+
+    static Settings Full() {
+        Settings s;
+        s.websocket = settings::Websocket::Edit();
+        s.http = settings::Http::Edit();
+        s.database = settings::Database::Edit();
+        s.auth = settings::Auth::Edit();
+        s.logging = settings::Logging::Edit();
+        s.caching = settings::Caching::Edit();
+        s.sharing = settings::Sharing::Edit();
+        s.services = settings::Services::Edit();
+        return s;
+    }
+
+    static Settings Custom(
+        settings::Websocket websocket,
+        settings::Http http,
+        settings::Database database,
+        settings::Auth auth,
+        settings::Logging logging,
+        settings::Caching caching,
+        settings::Sharing sharing,
+        settings::Services services
+    ) {
+        Settings s;
+        s.websocket = std::move(websocket);
+        s.http = std::move(http);
+        s.database = std::move(database);
+        s.auth = std::move(auth);
+        s.logging = std::move(logging);
+        s.caching = std::move(caching);
+        s.sharing = std::move(sharing);
+        s.services = std::move(services);
+        return s;
+    }
 };
 
 void to_json(nlohmann::json& j, const Settings& o);

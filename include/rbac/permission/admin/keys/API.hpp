@@ -17,6 +17,7 @@ namespace vh::rbac::permission {
             Export = 1 << 4,
             Rotate = 1 << 5,
             Consume = 1 << 6,
+            All = View | Create | Edit | Remove | Export | Rotate | Consume
         };
     }
 
@@ -57,6 +58,45 @@ namespace vh::rbac::permission {
             [[nodiscard]] bool canExport() const noexcept { return has(APIPermissions::Export); }
             [[nodiscard]] bool canRotate() const noexcept { return has(APIPermissions::Rotate); }
             [[nodiscard]] bool canConsume() const noexcept { return has(APIPermissions::Consume); }
+
+            static APIKeyBase None(std::string moduleName, std::string descriptionCtx) {
+                APIKeyBase a{std::move(moduleName), std::move(descriptionCtx)};
+                a.clear();
+                return a;
+            }
+
+            static APIKeyBase View(std::string moduleName, std::string descriptionCtx) {
+                APIKeyBase a{std::move(moduleName), std::move(descriptionCtx)};
+                a.clear();
+                a.grant(APIPermissions::View);
+                return a;
+            }
+
+            static APIKeyBase ViewAndConsume(std::string moduleName, std::string descriptionCtx) {
+                APIKeyBase a{std::move(moduleName), std::move(descriptionCtx)};
+                a.clear();
+                a.grant(APIPermissions::View);
+                a.grant(APIPermissions::Consume);
+                return a;
+            }
+
+            static APIKeyBase Create(std::string moduleName, std::string descriptionCtx) {
+                APIKeyBase a{std::move(moduleName), std::move(descriptionCtx)};
+                a.clear();
+                a.grant(APIPermissions::View);
+                a.grant(APIPermissions::Create);
+                a.grant(APIPermissions::Edit);
+                a.grant(APIPermissions::Remove);
+                a.grant(APIPermissions::Consume);
+                return a;
+            }
+
+            static APIKeyBase Full(std::string moduleName, std::string descriptionCtx) {
+                APIKeyBase a{std::move(moduleName), std::move(descriptionCtx)};
+                a.clear();
+                a.grant(APIPermissions::All);
+                return a;
+            }
         };
 
         struct APIKeys {
@@ -71,6 +111,54 @@ namespace vh::rbac::permission {
             [[nodiscard]] std::string toString(uint8_t indent) const;
 
             [[nodiscard]] std::string toFlagsString() const;
+
+            static APIKeys None() {
+                return APIKeys{
+                    .self = APIKeyBase::None(MODULE_NAME, "self"),
+                    .admin = APIKeyBase::None(MODULE_NAME, "admin"),
+                    .user = APIKeyBase::None(MODULE_NAME, "user")
+                };
+            }
+
+            static APIKeys View() {
+                return APIKeys{
+                    .self = APIKeyBase::View(MODULE_NAME, "self"),
+                    .admin = APIKeyBase::View(MODULE_NAME, "admin"),
+                    .user = APIKeyBase::View(MODULE_NAME, "user")
+                };
+            }
+
+            static APIKeys ViewAndConsume() {
+                return APIKeys{
+                    .self = APIKeyBase::ViewAndConsume(MODULE_NAME, "self"),
+                    .admin = APIKeyBase::ViewAndConsume(MODULE_NAME, "admin"),
+                    .user = APIKeyBase::ViewAndConsume(MODULE_NAME, "user")
+                };
+            }
+
+            static APIKeys Create() {
+                return APIKeys{
+                    .self = APIKeyBase::Create(MODULE_NAME, "self"),
+                    .admin = APIKeyBase::Create(MODULE_NAME, "admin"),
+                    .user = APIKeyBase::Create(MODULE_NAME, "user")
+                };
+            }
+
+            static APIKeys Full() {
+                return APIKeys{
+                    .self = APIKeyBase::Full(MODULE_NAME, "self"),
+                    .admin = APIKeyBase::Full(MODULE_NAME, "admin"),
+                    .user = APIKeyBase::Full(MODULE_NAME, "user")
+                };
+            }
+
+            static APIKeys Custom(APIKeyBase self, APIKeyBase admin, APIKeyBase user) {
+                return APIKeys{
+                    .self = std::move(self),
+                    .admin = std::move(admin),
+                    .user = std::move(user)
+                };
+            }
         };
 
         void to_json(nlohmann::json &j, const APIKeyBase &p);

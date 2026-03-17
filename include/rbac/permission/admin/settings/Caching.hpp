@@ -12,6 +12,25 @@ struct Caching final : Base {
     [[nodiscard]] const char* flagPrefix() const override { return FLAG_CONTEXT; }
     [[nodiscard]] std::string_view descriptionObject() const override { return FLAG_CONTEXT; }
     [[nodiscard]] std::string toString(uint8_t indent) const override;
+
+    static Caching None() {
+        Caching c;
+        c.clear();
+        return c;
+    }
+
+    static Caching View() {
+        Caching c;
+        c.clear();
+        c.grant(SettingsPermissions::View);
+        return c;
+    }
+
+    static Caching Edit() {
+        auto c = View();
+        c.grant(SettingsPermissions::Edit);
+        return c;
+    }
 };
 
 void to_json(nlohmann::json& j, const Caching& s);

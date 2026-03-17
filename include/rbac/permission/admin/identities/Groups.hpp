@@ -53,6 +53,36 @@ namespace vh::rbac::permission {
             [[nodiscard]] bool canAddMember() const noexcept { return has(GroupPermissions::AddMember); }
             [[nodiscard]] bool canRemoveMember() const noexcept { return has(GroupPermissions::RemoveMember); }
             [[nodiscard]] bool canViewMembers() const noexcept { return has(GroupPermissions::ViewMembers); }
+
+            static Groups None() {
+                Groups g;
+                g.clear();
+                return g;
+            }
+
+            static Groups Full() {
+                Groups g;
+                g.clear();
+                g.grant(GroupPermissions::All);
+                return g;
+            }
+
+            static Groups View() {
+                Groups g;
+                g.clear();
+                g.grant(GroupPermissions::View);
+                return g;
+            }
+
+            static Groups ManageMembers() {
+                Groups g;
+                g.clear();
+                g.grant(GroupPermissions::View);
+                g.grant(GroupPermissions::AddMember);
+                g.grant(GroupPermissions::RemoveMember);
+                g.grant(GroupPermissions::ViewMembers);
+                return g;
+            }
         };
 
         void to_json(nlohmann::json &j, const Groups &o);

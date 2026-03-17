@@ -44,6 +44,19 @@ namespace vh::rbac::permission {
             [[nodiscard]] std::string toString(uint8_t indent) const override;
 
             [[nodiscard]] bool canView() const noexcept { return has(AuditPermissions::View); }
+
+            static Audits None() {
+                Audits a;
+                a.clear();
+                return a;
+            }
+
+            static Audits View() {
+                Audits a;
+                a.clear();
+                a.grant(AuditPermissions::View);
+                return a;
+            }
         };
 
         void to_json(nlohmann::json &j, const Audits &a);

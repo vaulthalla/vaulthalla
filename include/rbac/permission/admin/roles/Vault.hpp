@@ -13,6 +13,34 @@ namespace vh::rbac::permission::admin::roles {
         [[nodiscard]] const char* flagPrefix() const override { return FLAG_CONTEXT; }
         [[nodiscard]] std::string toString(uint8_t indent) const override;
         [[nodiscard]] std::string_view descriptionObject() const override { return DESCRIPTION_CONTEXT; }
+
+        static Vault None() {
+            Vault v;
+            v.clear();
+            return v;
+        }
+
+        static Vault View() {
+            Vault v;
+            v.clear();
+            v.grant(RolesPermissions::View);
+            return v;
+        }
+
+        static Vault Edit() {
+            Vault v;
+            v.clear();
+            v.grant(RolesPermissions::View);
+            v.grant(RolesPermissions::Edit);
+            return v;
+        }
+
+        static Vault Full() {
+            Vault v;
+            v.clear();
+            v.grant(RolesPermissions::All);
+            return v;
+        }
     };
 
     void to_json(nlohmann::json& j, const Vault& admin);

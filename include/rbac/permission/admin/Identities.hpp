@@ -15,9 +15,9 @@ struct Identities final : Module<uint64_t> {
     static constexpr const auto* ModuleName = "Identities";
     enum class Type : uint8_t { Users, Admins, Groups };
 
-    identities::Users users;
-    identities::Admins admins;
-    identities::Groups groups;
+    identities::Users users{};
+    identities::Admins admins{};
+    identities::Groups groups{};
 
     ~Identities() override = default;
     Identities() = default;
@@ -67,6 +67,46 @@ public:
     [[nodiscard]] bool canDelete(const Type type) const noexcept;
     [[nodiscard]] bool canAddMember(const Type type) const noexcept;
     [[nodiscard]] bool canRemoveMember(const Type type) const noexcept;
+
+    static Identities None() {
+        Identities i;
+        i.users = identities::Users::None();
+        i.admins = identities::Admins::None();
+        i.groups = identities::Groups::None();
+        return i;
+    }
+
+    static Identities Users() {
+        Identities i;
+        i.users = identities::Users::Full();
+        i.admins = identities::Admins::None();
+        i.groups = identities::Groups::None();
+        return i;
+    }
+
+    static Identities UsersAndGroups() {
+        Identities i;
+        i.users = identities::Users::Full();
+        i.admins = identities::Admins::None();
+        i.groups = identities::Groups::Full();
+        return i;
+    }
+
+    static Identities Full() {
+        Identities i;
+        i.users = identities::Users::Full();
+        i.admins = identities::Admins::Full();
+        i.groups = identities::Groups::Full();
+        return i;
+    }
+
+    static Identities Custom(identities::Users users, identities::Admins admins, identities::Groups groups) {
+        Identities i;
+        i.users = std::move(users);
+        i.admins = std::move(admins);
+        i.groups = std::move(groups);
+        return i;
+    }
 };
 
 void to_json(nlohmann::json& j, const Identities& identities);

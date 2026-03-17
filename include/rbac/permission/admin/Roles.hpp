@@ -31,6 +31,27 @@ namespace vh::rbac::permission::admin {
                 mount("admin.roles.vault", vault)
             );
         }
+
+        static Roles None() {
+            Roles r;
+            r.admin = roles::Admin::None();
+            r.vault = roles::Vault::None();
+            return r;
+        }
+
+        static Roles Full() {
+            Roles r;
+            r.admin = roles::Admin::Full();
+            r.vault = roles::Vault::Full();
+            return r;
+        }
+
+        static Roles Custom(roles::Admin admin, roles::Vault vault) {
+            Roles r;
+            r.admin = std::move(admin);
+            r.vault = std::move(vault);
+            return r;
+        }
     };
 
     void to_json(nlohmann::json& j, const Roles& r);

@@ -50,6 +50,34 @@ namespace vh::rbac::permission {
             [[nodiscard]] bool canRotate() const noexcept { return has(EncryptionKeyPermissions::Rotate); }
             [[nodiscard]] bool any() const noexcept { return has(EncryptionKeyPermissions::All); }
             [[nodiscard]] bool none() const noexcept { return has(EncryptionKeyPermissions::None); }
+
+            static EncryptionKey None() {
+                EncryptionKey k;
+                k.clear();
+                return k;
+            }
+
+            static EncryptionKey View() {
+                EncryptionKey k;
+                k.clear();
+                k.grant(EncryptionKeyPermissions::View);
+                return k;
+            }
+
+            static EncryptionKey Export() {
+                EncryptionKey k;
+                k.clear();
+                k.grant(EncryptionKeyPermissions::View);
+                k.grant(EncryptionKeyPermissions::Export);
+                return k;
+            }
+
+            static EncryptionKey Full() {
+                EncryptionKey k;
+                k.clear();
+                k.grant(EncryptionKeyPermissions::All);
+                return k;
+            }
         };
 
         void to_json(nlohmann::json &j, const EncryptionKey &k);

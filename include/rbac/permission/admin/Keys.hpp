@@ -11,8 +11,8 @@ namespace vh::rbac::permission::admin {
 struct Keys final : Module<uint16_t> {
     static constexpr const auto* ModuleName = "keys";
 
-    keys::APIKeys apiKeys;
-    keys::EncryptionKey encryptionKeys;
+    keys::APIKeys apiKeys{};
+    keys::EncryptionKey encryptionKeys{};
 
     Keys() = default;
     explicit Keys(const Mask& mask) { fromMask(mask); }
@@ -31,6 +31,48 @@ struct Keys final : Module<uint16_t> {
             mount("admin.keys.api.user", apiKeys.user),
             mount("admin.keys.encryption", encryptionKeys)
         );
+    }
+
+    static Keys None() {
+        Keys k;
+        k.apiKeys = keys::APIKeys::None();
+        k.encryptionKeys = keys::EncryptionKey::None();
+        return k;
+    }
+
+    static Keys APIKeysAll() {
+        Keys k;
+        k.apiKeys = keys::APIKeys::Full();
+        k.encryptionKeys = keys::EncryptionKey::None();
+        return k;
+    }
+
+    static Keys EncryptionKeysAll() {
+        Keys k;
+        k.apiKeys = keys::APIKeys::None();
+        k.encryptionKeys = keys::EncryptionKey::Full();
+        return k;
+    }
+
+    static Keys Full() {
+        Keys k;
+        k.apiKeys = keys::APIKeys::Full();
+        k.encryptionKeys = keys::EncryptionKey::Full();
+        return k;
+    }
+
+    static Keys Custom(keys::APIKeys api_keys, keys::EncryptionKey encryption_keys) {
+        Keys k;
+        k.apiKeys = std::move(api_keys);
+        k.encryptionKeys = std::move(encryption_keys);
+        return k;
+    }
+
+    static Keys Custom(keys::APIKeyBase self, keys::APIKeyBase admins, keys::APIKeyBase users, keys::EncryptionKey encryption_keys) {
+        Keys k;
+        k.apiKeys = keys::APIKeys::Custom(std::move(self), std::move(admins), std::move(users));
+        k.encryptionKeys = std::move(encryption_keys);
+        return k;
     }
 };
 

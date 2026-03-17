@@ -13,6 +13,26 @@ struct Users final : Base {
     [[nodiscard]] const char* flagPrefix() const override { return FLAG_CONTEXT; }
     [[nodiscard]] std::string_view descriptionObject() const override { return DESCRIPTION_CONTEXT; }
     [[nodiscard]] std::string toString(uint8_t indent) const override;
+
+    static Users None() {
+        Users u;
+        u.clear();
+        return u;
+    }
+
+    static Users Full() {
+        Users u;
+        u.clear();
+        u.grant(IdentityPermissions::All);
+        return u;
+    }
+
+    static Users ViewOnly() {
+        Users u;
+        u.clear();
+        u.grant(IdentityPermissions::View);
+        return u;
+    }
 };
 
 void to_json(nlohmann::json& j, const Users& u);
