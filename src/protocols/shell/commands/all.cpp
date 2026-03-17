@@ -9,7 +9,9 @@ void vh::protocols::shell::commands::registerAllCommands(const std::shared_ptr<R
     registerSystemCommands(r);
     registerUserCommands(r);
     registerGroupCommands(r);
-    registerRoleCommands(r);
-    registerPermissionCommands(r);
     registerSecretsCommands(r);
+
+    // TODO: fix and re-register these
+    // registerRoleCommands(r);
+    // registerPermissionCommands(r);
 }

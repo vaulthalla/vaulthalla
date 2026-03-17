@@ -5,9 +5,9 @@
 #include "auth/model/TokenPair.hpp"
 #include "log/Registry.hpp"
 #include "protocols/ws/Router.hpp"
-#include "../../../include/protocols/ws/handler/fs/Upload.hpp"
+#include "protocols/ws/handler/fs/Upload.hpp"
 #include "runtime/Deps.hpp"
-#include "../../../include/identities/User.hpp"
+#include "identities/User.hpp"
 #include "protocols/cookie.hpp"
 
 #include <boost/beast/http.hpp>
@@ -23,10 +23,9 @@ namespace beast     = boost::beast;
 namespace http      = beast::http;
 namespace websocket = beast::websocket;
 namespace asio      = boost::asio;
-using json          = nlohmann::json;
 } // namespace
 
-using namespace vh::identities::model;
+using namespace vh::identities;
 using namespace vh::protocols;
 
 namespace vh::protocols::ws {
@@ -56,8 +55,8 @@ std::string Session::getUserAgent() const {
     return  "unknown";
 }
 
-void Session::setAuthenticatedUser(const std::shared_ptr<identities::model::Admin>& user) {
-    this->user = user;
+void Session::setAuthenticatedUser(const std::shared_ptr<User>& u) {
+    user = u;
     if (!tokens->refreshToken) throw std::runtime_error("Cannot set authenticated user without a refresh token in session");
     tokens->refreshToken->userId = user->id;
 }
@@ -70,7 +69,7 @@ void Session::logFail(std::string_view where, const beast::error_code& ec) {
 }
 
 void Session::accept(tcp::socket&& socket) {
-    uploadHandler_ = std::make_shared<handler::Upload>(shared_from_this());
+    uploadHandler_ = std::make_shared<handler::fs::Upload>(shared_from_this());
 
     ws_ = std::make_shared<websocket::stream<tcp::socket>>(std::move(socket));
     strand_ = asio::make_strand(ws_->get_executor());

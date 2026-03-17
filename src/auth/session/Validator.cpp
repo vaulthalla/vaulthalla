@@ -6,7 +6,7 @@
 #include "protocols/ws/Session.hpp"
 #include "log/Registry.hpp"
 #include "crypto/util/hash.hpp"
-#include "../../../include/identities/User.hpp"
+#include "identities/User.hpp"
 #include "runtime/Deps.hpp"
 #include "db/query/auth/RefreshToken.hpp"
 

@@ -51,7 +51,7 @@ public:
     void send(json message);
     void close();
 
-    void setAuthenticatedUser(const std::shared_ptr<identities::User>& user);
+    void setAuthenticatedUser(const std::shared_ptr<identities::User>& u);
     void setHandshakeRequest(const RequestType& req);
 
     void sendAccessTokenOnNextResponse() { sendAccessToken_ = true; }

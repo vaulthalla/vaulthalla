@@ -1,6 +1,6 @@
 #include "rbac/permission/vault/Filesystem.hpp"
 
-#include <pqxx/row>
+#include <pqxx/result>
 #include <nlohmann/json.hpp>
 #include <ostream>
 
@@ -10,7 +10,12 @@ Filesystem::Filesystem(const pqxx::row& row)
     : files(row["files_permissions"].as<typename decltype(files)::Mask>()),
       directories(row["directories_permissions"].as<typename decltype(directories)::Mask>()) {}
 
-Filesystem::Filesystem(const pqxx::row& row, const pqxx::result& overrideRes) : Filesystem(row, overrideRes) {}
+Filesystem::Filesystem(const pqxx::row& row, const pqxx::result& overrideRes)
+    : files(row["files_permissions"].as<typename decltype(files)::Mask>()),
+      directories(row["directories_permissions"].as<typename decltype(directories)::Mask>()) {
+    if (!overrideRes.empty())
+        for (const auto& r : overrideRes) overrides.emplace_back(std::make_shared<Override>(r));
+}
 
 std::string Filesystem::toString(const uint8_t indent) const {
     std::ostringstream oss;

@@ -64,11 +64,9 @@ static CommandResult handle_vault_sync_update(const CommandCall& call) {
         .vault_id = engine->vault->id
     }))
 
-    const auto& sync = engine->sync;
-
     if (const auto intervalOpt = optVal(call, "interval")) {
         try {
-            sync->interval = parseSyncInterval(*intervalOpt);
+            engine->sync->interval = parseSyncInterval(*intervalOpt);
         } catch (const std::exception& e) {
             return invalid("vault sync update: " + std::string(e.what()));
         }
@@ -76,7 +74,7 @@ static CommandResult handle_vault_sync_update(const CommandCall& call) {
 
     if (engine->vault->type == VaultType::Local) {
         if (const auto onSyncConflictOpt = optVal(call, usage->resolveOptional("on-sync-conflict")->option_tokens)) {
-            const auto fsync = std::static_pointer_cast<LocalPolicy>(sync);
+            const auto fsync = std::static_pointer_cast<LocalPolicy>(engine->sync);
 
             try {
                 fsync->conflict_policy = fsConflictPolicyFromString(*onSyncConflictOpt);
@@ -85,7 +83,7 @@ static CommandResult handle_vault_sync_update(const CommandCall& call) {
             }
         }
     } else if (engine->vault->type == VaultType::S3) {
-        const auto rsync = std::static_pointer_cast<RemotePolicy>(sync);
+        const auto rsync = std::static_pointer_cast<RemotePolicy>(engine->sync);
 
         if (const auto syncStrategyOpt = optVal(call, usage->resolveOptional("sync-strategy")->option_tokens)) {
             try {
@@ -105,12 +103,12 @@ static CommandResult handle_vault_sync_update(const CommandCall& call) {
     }
 
     if (engine->vault->type == VaultType::Local) {
-        const auto fsync = std::static_pointer_cast<LocalPolicy>(sync);
+        const auto fsync = std::static_pointer_cast<LocalPolicy>(engine->sync);
         return ok("Successfully updated local vault sync configuration!\n" + to_string(fsync));
     }
 
     if (engine->vault->type == VaultType::S3) {
-        const auto rsync = std::static_pointer_cast<RemotePolicy>(sync);
+        const auto rsync = std::static_pointer_cast<RemotePolicy>(engine->sync);
         return ok("Successfully updated S3 vault sync configuration!\n" + to_string(rsync));
     }
 

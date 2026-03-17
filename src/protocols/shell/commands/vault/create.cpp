@@ -84,8 +84,8 @@ Sync Interval:
   Default is 15 minutes (15m).
 )";
 
-static CommandResult finish_vault_create(const CommandCall& call, std::shared_ptr<Vault>& v,
-                                         const std::shared_ptr<Policy>& s) {
+static CommandResult finish_vault_create(const CommandCall& call, std::shared_ptr<vault::model::Vault>& v,
+                                         const std::shared_ptr<sync::model::Policy>& s) {
     try {
         const auto [okToProceed, waiver] = handle_encryption_waiver({call, v, false});
         if (!okToProceed) return invalid("vault create: user did not accept encryption waiver");

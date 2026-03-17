@@ -1,6 +1,6 @@
 #include "auth/registration/Validator.hpp"
 #include "crypto/password/Strength.hpp"
-#include "../../../include/identities/User.hpp"
+#include "identities/User.hpp"
 #include "log/Registry.hpp"
 
 #include <paths.h>
@@ -10,7 +10,7 @@
 
 namespace vh::auth::registration {
 
-void Validator::validateRegistration(const std::shared_ptr<identities::model::Admin>& user, const std::string& password) {
+void Validator::validateRegistration(const std::shared_ptr<identities::User>& user, const std::string& password) {
     std::vector<std::string> errors;
 
     if (!isValidName(user->name)) errors.emplace_back("Name must be between 3 and 50 characters.");

@@ -29,7 +29,7 @@ using namespace vh;
 using namespace vh::protocols::shell;
 using namespace vh::protocols::shell::commands::vault;
 using namespace vh::vault::model;
-using namespace vh::rbac::model;
+using namespace vh::rbac;
 using namespace vh::identities;
 using namespace vh::storage;
 using namespace vh::config;
@@ -45,8 +45,8 @@ CommandResult commands::vault::handle_vault_info(const CommandCall& call) {
     if (!vLkp || !vLkp.ptr) return invalid(vLkp.error);
     const auto vault = vLkp.ptr;
 
-    using Perm = rbac::permission::admin::VaultPermissions;
-    if (!rbac::resolver::Admin::has<Perm>({
+    using Perm = permission::admin::VaultPermissions;
+    if (!resolver::Admin::has<Perm>({
         .user = call.user,
         .permission = Perm::View,
         .vault_id = vault->id
@@ -73,8 +73,8 @@ CommandResult commands::vault::handle_vaults_list(const CommandCall& call) {
     else {
         vaults = db::query::vault::Vault::listVaults(typeFilter, parseListQuery(call));
         for (const auto& v : vaults) {
-            using Perm = rbac::permission::admin::VaultPermissions;
-            if (!rbac::resolver::Admin::has<Perm>({
+            using Perm = permission::admin::VaultPermissions;
+            if (!resolver::Admin::has<Perm>({
                 .user = call.user,
                 .permission = Perm::View,
                 .vault_id = v->id

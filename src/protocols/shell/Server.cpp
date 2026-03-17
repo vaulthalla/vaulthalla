@@ -5,7 +5,7 @@
 #include "db/query/identities/User.hpp"
 #include "log/Registry.hpp"
 #include "protocols/shell/SocketIO.hpp"
-#include "../../../include/identities/User.hpp"
+#include "identities/User.hpp"
 
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -97,7 +97,7 @@ Server::Server()
 
     const auto admin = db::query::identities::User::getUserByName("admin");
     if (!admin) log::Registry::shell()->warn("[CtlServerService] No 'admin' user found in database");
-    if (admin->linux_uid.has_value()) adminUIDSet_.store(true);
+    if (admin->meta.linux_uid.has_value()) adminUIDSet_.store(true);
 }
 
 Server::~Server() { closeListener(); }
@@ -130,7 +130,7 @@ void Server::initAdminUid(const int cfd, const uid_t uid) {
     // Assign UID to admin
     const auto admin = db::query::identities::User::getUserByName("admin");
     if (!admin) throw std::runtime_error("admin user disappeared");
-    admin->linux_uid = uid;
+    admin->meta.linux_uid = uid;
     db::query::identities::User::updateUser(admin);
     adminUIDSet_.store(true);
 

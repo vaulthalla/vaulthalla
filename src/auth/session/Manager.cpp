@@ -7,12 +7,12 @@
 #include "db/query/auth/RefreshToken.hpp"
 #include "log/Registry.hpp"
 #include "protocols/ws/Session.hpp"
-#include "../../../include/identities/User.hpp"
+#include "identities/User.hpp"
 #include "runtime/Deps.hpp"
 #include "protocols/ws/Router.hpp"
 
 using namespace vh::protocols::ws;
-using namespace vh::identities::model;
+using namespace vh::identities;
 
 namespace vh::auth::session {
 
@@ -215,7 +215,7 @@ std::shared_ptr<Session> Manager::get(const std::string& token) {
     return nullptr;
 }
 
-std::vector<std::shared_ptr<Session>> Manager::getSessions(const std::shared_ptr<Admin>& user) {
+std::vector<std::shared_ptr<Session>> Manager::getSessions(const std::shared_ptr<User>& user) {
     if (!user) throw std::invalid_argument("Invalid user");
     return getSessionsByUserId(user->id);
 }

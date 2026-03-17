@@ -1,9 +1,8 @@
 #include "auth/Manager.hpp"
-#include "../../include/identities/User.hpp"
+#include "identities/User.hpp"
 #include "auth/session/Manager.hpp"
 #include "auth/registration/Validator.hpp"
 #include "crypto/util/hash.hpp"
-#include "crypto/password/Strength.hpp"
 #include "db/query/identities/User.hpp"
 #include "storage/Manager.hpp"
 #include "protocols/ws/Session.hpp"
@@ -18,14 +17,14 @@
 
 using namespace vh::auth;
 using namespace vh::auth::model;
-using namespace vh::identities::model;
+using namespace vh::identities;
 using namespace vh::crypto;
 using namespace vh::storage;
 using namespace vh::protocols::ws;
 
 namespace vh::auth {
 
-void Manager::registerUser(std::shared_ptr<Admin> user, const std::string& password) {
+void Manager::registerUser(std::shared_ptr<User> user, const std::string& password) {
     if (!user) throw std::runtime_error("Failed to create user: " + user->name);
 
     registration::Validator::validateRegistration(user, password);
@@ -55,7 +54,7 @@ void Manager::loginUser(const std::string& name, const std::string& password, co
     log::Registry::auth()->info("[AuthManager] User logged in: {}", user->name);
 }
 
-void Manager::updateUser(const std::shared_ptr<Admin>& user) {
+void Manager::updateUser(const std::shared_ptr<User>& user) {
     if (!user) throw std::runtime_error("Cannot update null user");
 
     db::query::identities::User::updateUser(user);
@@ -78,7 +77,7 @@ void Manager::changePassword(const std::string& name, const std::string& oldPass
     log::Registry::auth()->info("[AuthManager] Changing password for user: {}", user->name);
 }
 
-std::shared_ptr<Admin> Manager::findUser(const std::string& name) {
+std::shared_ptr<User> Manager::findUser(const std::string& name) {
     if (users_.contains(name)) return users_[name];
 
     if (const auto user = db::query::identities::User::getUserByName(name)) {

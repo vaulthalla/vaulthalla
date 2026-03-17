@@ -6,3 +6,10 @@ option(
 )
 
 option('manpage', type: 'boolean', value: true, description: 'Build and install manpage via pandoc')
+
+option(
+    'integration_tests',
+    type: 'boolean',
+    value: false,
+    description: 'Build integration test executable'
+)

@@ -17,7 +17,7 @@ namespace vh::rbac::role {
           user_id(row["user_id"].as<uint32_t>()),
           identities(row["identities_permissions"].as<typename decltype(identities)::Mask>()),
           vaults(row["vaults_permissions"].as<typename decltype(vaults)::Mask>()),
-          audits(row["audits_permissions"].as<typename decltype(audits)::Mask>()),
+          audits(static_cast<typename decltype(audits)::Mask>(row["audits_permissions"].as<uint32_t>())),
           settings(row["settings_permissions"].as<typename decltype(settings)::Mask>()),
           roles(row["roles_permissions"].as<typename decltype(roles)::Mask>()),
           keys(row["keys_permissions"].as<typename decltype(keys)::Mask>()),

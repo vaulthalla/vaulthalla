@@ -257,17 +257,22 @@ test('vh_unit_tests',
                 include_directories: inc,
                 dependencies: test_deps))
 
-cli_test_inc = include_directories('tests/integrations/include', 'usage/include', 'include', 'vendor')
-cli_test_src = join_paths(source_root, 'tests/integrations/src')
-cli_test_sources = []
-foreach f : run_command('find', cli_test_src, '-type', 'f', '-name', '*.cpp', check: true).stdout().strip().split('\n')
-    cli_test_sources += files(f)
-endforeach
+if get_option('integration_tests')
+    cli_test_inc = include_directories('tests/integrations/include', 'usage/include', 'include', 'vendor')
+    cli_test_src = join_paths(source_root, 'tests/integrations/src')
+    cli_test_sources = []
+    foreach f : run_command('find', cli_test_src, '-type', 'f', '-name', '*.cpp', check: true).stdout().strip().split('\n')
+        cli_test_sources += files(f)
+    endforeach
 
-vh_integration_tests = executable('vh_integration_tests',
-                                  cli_test_sources + files('tests/integrations/CLI_test_main.cpp'),
-                                  include_directories: cli_test_inc,
-                                  link_with: [lib_core, lib_seed, lib_usage],
-                                  dependencies: test_deps,
-                                  install: false,
-)
+    vh_integration_tests = executable(
+        'vh_integration_tests',
+        cli_test_sources + files('tests/integrations/CLI_test_main.cpp'),
+        include_directories: cli_test_inc,
+        link_with: [lib_core, lib_seed, lib_usage],
+        dependencies: test_deps,
+        install: false,
+    )
+
+    test('vh_integration_tests', vh_integration_tests)
+endif

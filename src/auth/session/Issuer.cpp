@@ -5,7 +5,7 @@
 #include "runtime/Deps.hpp"
 #include "crypto/util/hash.hpp"
 #include "crypto/secrets/Manager.hpp"
-#include "../../../include/identities/User.hpp"
+#include "identities/User.hpp"
 #include "log/Registry.hpp"
 #include "auth/model/TokenPair.hpp"
 

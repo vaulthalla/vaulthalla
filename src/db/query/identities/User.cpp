@@ -164,7 +164,7 @@ unsigned int User::createUser(const UserPtr& user) {
                     userId,
                     globalPolicy.template_role_id,
                     globalPolicy.enforce_template,
-                    globalPolicy.scope,
+                    rbac::role::vault::to_string(globalPolicy.scope),
                     globalPolicy.fs.files.toBitString(),
                     globalPolicy.fs.directories.toBitString(),
                     globalPolicy.sync.toBitString(),
@@ -184,7 +184,7 @@ unsigned int User::createUser(const UserPtr& user) {
                 role->assignment->vault_id,
                 "user",
                 userId,
-                role->assignment
+                role->id
             };
 
             const auto res = txn.exec(
@@ -260,7 +260,7 @@ void User::updateUser(const UserPtr& user) {
                     user->id,
                     globalPolicy.template_role_id,
                     globalPolicy.enforce_template,
-                    globalPolicy.scope,
+                    rbac::role::vault::to_string(globalPolicy.scope),
                     globalPolicy.fs.files.toBitString(),
                     globalPolicy.fs.directories.toBitString(),
                     globalPolicy.sync.toBitString(),

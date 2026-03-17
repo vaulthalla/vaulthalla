@@ -58,10 +58,6 @@ std::vector<permission::Permission> Vault::toPermissions() const {
     return perms;
 }
 
-std::string Vault::toFlagsString() const {
-    return roles.toFlagsString() + " " + sync.toFlagsString() + " " + fs.toFlagString();
-}
-
 Vault Vault::fromJson(const nlohmann::json& j) { return Vault(j); }
 
 std::string Vault::AssignmentInfo::toString(const uint8_t indent) const {
