@@ -29,12 +29,69 @@ struct Sync final : Module<uint32_t> {
     [[nodiscard]] bool canViewConfig() const noexcept { return config.canView(); }
     [[nodiscard]] bool canEditConfig() const noexcept { return config.canEdit(); }
     [[nodiscard]] bool canTriggerSync() const noexcept { return action.canTrigger(); }
+    [[nodiscard]] bool canSignWaiver() const noexcept { return action.canSignWaiver(); }
 
     [[nodiscard]] PackedPermissionExportT<Mask> exportPermissions() const {
         return packAndExportPerms(
             mount("vault.sync.config", config),
             mount("vault.sync.action", action)
         );
+    }
+
+    static Sync None() {
+        Sync s;
+        s.config = sync::Config::None();
+        s.action = sync::Action::None();
+        return s;
+    }
+
+    static Sync Viewer() {
+        Sync s;
+        s.config = sync::Config::ViewOnly();
+        s.action = sync::Action::None();
+        return s;
+    }
+
+    static Sync Operator() {
+        Sync s;
+        s.config = sync::Config::ViewOnly();
+        s.action = sync::Action::TriggerOnly();
+        return s;
+    }
+
+    static Sync Manager() {
+        Sync s;
+        s.config = sync::Config::Editor();
+        s.action = sync::Action::TriggerOnly();
+        return s;
+    }
+
+    static Sync WaiverSigner() {
+        Sync s;
+        s.config = sync::Config::ViewOnly();
+        s.action = sync::Action::WaiverOnly();
+        return s;
+    }
+
+    static Sync SecureOperator() {
+        Sync s;
+        s.config = sync::Config::ViewOnly();
+        s.action = sync::Action::Full();
+        return s;
+    }
+
+    static Sync Full() {
+        Sync s;
+        s.config = sync::Config::Full();
+        s.action = sync::Action::Full();
+        return s;
+    }
+
+    static Sync Custom(sync::Config config, sync::Action action) {
+        Sync s;
+        s.config = std::move(config);
+        s.action = std::move(action);
+        return s;
     }
 };
 

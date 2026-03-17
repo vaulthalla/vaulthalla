@@ -72,6 +72,13 @@ namespace vh::rbac::permission {
                 return a;
             }
 
+            static APIKeyBase ConsumeOnly(std::string moduleName, std::string descriptionCtx) {
+                APIKeyBase a{std::move(moduleName), std::move(descriptionCtx)};
+                a.clear();
+                a.grant(APIPermissions::Consume);
+                return a;
+            }
+
             static APIKeyBase ViewAndConsume(std::string moduleName, std::string descriptionCtx) {
                 APIKeyBase a{std::move(moduleName), std::move(descriptionCtx)};
                 a.clear();
@@ -80,14 +87,47 @@ namespace vh::rbac::permission {
                 return a;
             }
 
-            static APIKeyBase Create(std::string moduleName, std::string descriptionCtx) {
+            static APIKeyBase Creator(std::string moduleName, std::string descriptionCtx) {
+                APIKeyBase a{std::move(moduleName), std::move(descriptionCtx)};
+                a.clear();
+                a.grant(APIPermissions::View);
+                a.grant(APIPermissions::Create);
+                return a;
+            }
+
+            static APIKeyBase Operator(std::string moduleName, std::string descriptionCtx) {
+                APIKeyBase a{std::move(moduleName), std::move(descriptionCtx)};
+                a.clear();
+                a.grant(APIPermissions::View);
+                a.grant(APIPermissions::Consume);
+                a.grant(APIPermissions::Rotate);
+                return a;
+            }
+
+            static APIKeyBase Manager(std::string moduleName, std::string descriptionCtx) {
                 APIKeyBase a{std::move(moduleName), std::move(descriptionCtx)};
                 a.clear();
                 a.grant(APIPermissions::View);
                 a.grant(APIPermissions::Create);
                 a.grant(APIPermissions::Edit);
                 a.grant(APIPermissions::Remove);
-                a.grant(APIPermissions::Consume);
+                a.grant(APIPermissions::Rotate);
+                return a;
+            }
+
+            static APIKeyBase Exporter(std::string moduleName, std::string descriptionCtx) {
+                APIKeyBase a{std::move(moduleName), std::move(descriptionCtx)};
+                a.clear();
+                a.grant(APIPermissions::View);
+                a.grant(APIPermissions::Export);
+                return a;
+            }
+
+            static APIKeyBase Rotator(std::string moduleName, std::string descriptionCtx) {
+                APIKeyBase a{std::move(moduleName), std::move(descriptionCtx)};
+                a.clear();
+                a.grant(APIPermissions::View);
+                a.grant(APIPermissions::Rotate);
                 return a;
             }
 
@@ -106,6 +146,11 @@ namespace vh::rbac::permission {
             APIKeyBase admin{std::string(MODULE_NAME), "admin"};
             APIKeyBase user{std::string(MODULE_NAME), "user"};
 
+            APIKeys() = default;
+            APIKeys(APIKeyBase self, APIKeyBase admin, APIKeyBase user)
+                : self(std::move(self)), admin(std::move(admin)), user(std::move(user)) {
+            }
+
             [[nodiscard]] static const char *name() { return MODULE_NAME; }
 
             [[nodiscard]] std::string toString(uint8_t indent) const;
@@ -114,49 +159,89 @@ namespace vh::rbac::permission {
 
             static APIKeys None() {
                 return APIKeys{
-                    .self = APIKeyBase::None(MODULE_NAME, "self"),
-                    .admin = APIKeyBase::None(MODULE_NAME, "admin"),
-                    .user = APIKeyBase::None(MODULE_NAME, "user")
+                    APIKeyBase::None(MODULE_NAME, "self"),
+                    APIKeyBase::None(MODULE_NAME, "admin"),
+                    APIKeyBase::None(MODULE_NAME, "user")
                 };
             }
 
-            static APIKeys View() {
+            static APIKeys ViewOnly() {
                 return APIKeys{
-                    .self = APIKeyBase::View(MODULE_NAME, "self"),
-                    .admin = APIKeyBase::View(MODULE_NAME, "admin"),
-                    .user = APIKeyBase::View(MODULE_NAME, "user")
+                    APIKeyBase::View(MODULE_NAME, "self"),
+                    APIKeyBase::View(MODULE_NAME, "admin"),
+                    APIKeyBase::View(MODULE_NAME, "user")
                 };
             }
 
-            static APIKeys ViewAndConsume() {
+            static APIKeys SelfService() {
                 return APIKeys{
-                    .self = APIKeyBase::ViewAndConsume(MODULE_NAME, "self"),
-                    .admin = APIKeyBase::ViewAndConsume(MODULE_NAME, "admin"),
-                    .user = APIKeyBase::ViewAndConsume(MODULE_NAME, "user")
+                    APIKeyBase::Manager(MODULE_NAME, "self"),
+                    APIKeyBase::None(MODULE_NAME, "admin"),
+                    APIKeyBase::None(MODULE_NAME, "user")
                 };
             }
 
-            static APIKeys Create() {
+            static APIKeys UserOperator() {
                 return APIKeys{
-                    .self = APIKeyBase::Create(MODULE_NAME, "self"),
-                    .admin = APIKeyBase::Create(MODULE_NAME, "admin"),
-                    .user = APIKeyBase::Create(MODULE_NAME, "user")
+                    APIKeyBase::View(MODULE_NAME, "self"),
+                    APIKeyBase::None(MODULE_NAME, "admin"),
+                    APIKeyBase::Operator(MODULE_NAME, "user")
+                };
+            }
+
+            static APIKeys UserManager() {
+                return APIKeys{
+                    APIKeyBase::View(MODULE_NAME, "self"),
+                    APIKeyBase::None(MODULE_NAME, "admin"),
+                    APIKeyBase::Manager(MODULE_NAME, "user")
+                };
+            }
+
+            static APIKeys AdminOperator() {
+                return APIKeys{
+                    APIKeyBase::View(MODULE_NAME, "self"),
+                    APIKeyBase::Operator(MODULE_NAME, "admin"),
+                    APIKeyBase::View(MODULE_NAME, "user")
+                };
+            }
+
+            static APIKeys AdminManager() {
+                return APIKeys{
+                    APIKeyBase::View(MODULE_NAME, "self"),
+                    APIKeyBase::Manager(MODULE_NAME, "admin"),
+                    APIKeyBase::View(MODULE_NAME, "user")
+                };
+            }
+
+            static APIKeys MixedOperator() {
+                return APIKeys{
+                    APIKeyBase::Operator(MODULE_NAME, "self"),
+                    APIKeyBase::Operator(MODULE_NAME, "admin"),
+                    APIKeyBase::Operator(MODULE_NAME, "user")
+                };
+            }
+
+            static APIKeys ExportOnly() {
+                return APIKeys{
+                    APIKeyBase::Exporter(MODULE_NAME, "self"),
+                    APIKeyBase::Exporter(MODULE_NAME, "admin"),
+                    APIKeyBase::Exporter(MODULE_NAME, "user")
                 };
             }
 
             static APIKeys Full() {
                 return APIKeys{
-                    .self = APIKeyBase::Full(MODULE_NAME, "self"),
-                    .admin = APIKeyBase::Full(MODULE_NAME, "admin"),
-                    .user = APIKeyBase::Full(MODULE_NAME, "user")
+                    APIKeyBase::Full(MODULE_NAME, "self"),
+                    APIKeyBase::Full(MODULE_NAME, "admin"),
+                    APIKeyBase::Full(MODULE_NAME, "user")
                 };
             }
 
             static APIKeys Custom(APIKeyBase self, APIKeyBase admin, APIKeyBase user) {
                 return APIKeys{
-                    .self = std::move(self),
-                    .admin = std::move(admin),
-                    .user = std::move(user)
+                    std::move(self),
+                    std::move(admin),
+                    std::move(user)
                 };
             }
         };

@@ -23,15 +23,18 @@ namespace vh::rbac::permission {
 
         static constexpr std::array entries{
             Entry{
-                admin::keys::EncryptionKeyPermissions::View, "view",
+                admin::keys::EncryptionKeyPermissions::View,
+                "view",
                 "Allows viewing encryption key details, excluding the key material."
             },
             Entry{
-                admin::keys::EncryptionKeyPermissions::Export, "export",
+                admin::keys::EncryptionKeyPermissions::Export,
+                "export",
                 "Allows exporting the encryption key material."
             },
             Entry{
-                admin::keys::EncryptionKeyPermissions::Rotate, "rotate",
+                admin::keys::EncryptionKeyPermissions::Rotate,
+                "rotate",
                 "Allows rotating the encryption key, which generates a new key and deprecates the old one."
             }
         };
@@ -39,17 +42,14 @@ namespace vh::rbac::permission {
 
     namespace admin::keys {
         struct EncryptionKey final : Set<EncryptionKeyPermissions, uint8_t> {
-            static constexpr const auto *FLAG_CONTEXT = "encryption-key";
+            static constexpr const auto* FLAG_CONTEXT = "encryption-key";
 
-            [[nodiscard]] const char *flagPrefix() const override { return FLAG_CONTEXT; }
-
+            [[nodiscard]] const char* flagPrefix() const override { return FLAG_CONTEXT; }
             [[nodiscard]] std::string toString(uint8_t indent) const override;
 
             [[nodiscard]] bool canView() const noexcept { return has(EncryptionKeyPermissions::View); }
             [[nodiscard]] bool canExport() const noexcept { return has(EncryptionKeyPermissions::Export); }
             [[nodiscard]] bool canRotate() const noexcept { return has(EncryptionKeyPermissions::Rotate); }
-            [[nodiscard]] bool any() const noexcept { return has(EncryptionKeyPermissions::All); }
-            [[nodiscard]] bool none() const noexcept { return has(EncryptionKeyPermissions::None); }
 
             static EncryptionKey None() {
                 EncryptionKey k;
@@ -57,18 +57,35 @@ namespace vh::rbac::permission {
                 return k;
             }
 
-            static EncryptionKey View() {
+            static EncryptionKey ViewOnly() {
                 EncryptionKey k;
                 k.clear();
                 k.grant(EncryptionKeyPermissions::View);
                 return k;
             }
 
-            static EncryptionKey Export() {
+            static EncryptionKey Exporter() {
                 EncryptionKey k;
                 k.clear();
                 k.grant(EncryptionKeyPermissions::View);
                 k.grant(EncryptionKeyPermissions::Export);
+                return k;
+            }
+
+            static EncryptionKey Rotator() {
+                EncryptionKey k;
+                k.clear();
+                k.grant(EncryptionKeyPermissions::View);
+                k.grant(EncryptionKeyPermissions::Rotate);
+                return k;
+            }
+
+            static EncryptionKey Custodian() {
+                EncryptionKey k;
+                k.clear();
+                k.grant(EncryptionKeyPermissions::View);
+                k.grant(EncryptionKeyPermissions::Export);
+                k.grant(EncryptionKeyPermissions::Rotate);
                 return k;
             }
 
@@ -78,10 +95,15 @@ namespace vh::rbac::permission {
                 k.grant(EncryptionKeyPermissions::All);
                 return k;
             }
+
+            static EncryptionKey Custom(const Mask mask) {
+                EncryptionKey k;
+                k.setRaw(mask);
+                return k;
+            }
         };
 
-        void to_json(nlohmann::json &j, const EncryptionKey &k);
-
-        void from_json(const nlohmann::json &j, EncryptionKey &k);
+        void to_json(nlohmann::json& j, const EncryptionKey& k);
+        void from_json(const nlohmann::json& j, EncryptionKey& k);
     }
 }

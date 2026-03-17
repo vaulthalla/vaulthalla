@@ -4,8 +4,8 @@
 #include "rbac/permission/template/ModuleSet.hpp"
 #include "rbac/permission/template/Traits.hpp"
 
-#include <cstdint>
 #include <array>
+#include <cstdint>
 #include <nlohmann/json_fwd.hpp>
 
 namespace vh::rbac::permission {
@@ -42,22 +42,19 @@ namespace vh::rbac::permission {
 
     namespace vault::fs {
         struct Files final : ModuleSet<uint32_t, FilePermissions, uint16_t> {
-            static constexpr const auto *ModuleName = "Files";
-            static constexpr const auto *FLAG_PREFIX = "files";
+            static constexpr const auto* ModuleName = "Files";
+            static constexpr const auto* FLAG_PREFIX = "files";
 
             Share share;
 
             Files() = default;
-
-            explicit Files(const Mask &mask) { fromMask(mask); }
+            explicit Files(const Mask& mask) { fromMask(mask); }
 
             [[nodiscard]] std::string toString(uint8_t indent) const override;
-
-            [[nodiscard]] const char *flagPrefix() const override { return FLAG_PREFIX; }
-
+            [[nodiscard]] const char* flagPrefix() const override { return FLAG_PREFIX; }
             [[nodiscard]] std::string toFlagsString() const override;
+            [[nodiscard]] const char* name() const override { return ModuleName; }
 
-            [[nodiscard]] const char *name() const override { return ModuleName; }
             [[nodiscard]] uint32_t toMask() const override { return packWithOwn(share); }
             void fromMask(const Mask mask) override { unpackWithOwn(mask, share); }
 
@@ -76,23 +73,104 @@ namespace vh::rbac::permission {
             [[nodiscard]] bool canDelete() const noexcept { return has(FilePermissions::Delete); }
             [[nodiscard]] bool canMove() const noexcept { return has(FilePermissions::Move); }
             [[nodiscard]] bool canCopy() const noexcept { return has(FilePermissions::Copy); }
-            [[nodiscard]] bool none() const noexcept { return raw() == 0; }
 
-            [[nodiscard]] bool all() const noexcept {
-                return (raw() & static_cast<SetMask>(FilePermissions::All)) ==
-                       static_cast<SetMask>(FilePermissions::All);
+            [[nodiscard]] bool canShareInternally() const noexcept { return share.canShareInternally(); }
+            [[nodiscard]] bool canSharePublicly() const noexcept { return share.canSharePublicly(); }
+            [[nodiscard]] bool canSharePubliclyWithVal() const noexcept { return share.canSharePubliclyWithValidation(); }
+            [[nodiscard]] bool canShareExternally() const noexcept { return share.canShareExternally(); }
+
+            static Files None() {
+                Files f;
+                f.clear();
+                f.share = Share::None();
+                return f;
             }
 
-            [[nodiscard]] bool canShareInternally() const noexcept { return share.has(SharePermissions::Internal); }
-            [[nodiscard]] bool canSharePublicly() const noexcept { return share.has(SharePermissions::Public); }
+            static Files PreviewOnly() {
+                Files f;
+                f.clear();
+                f.grant(FilePermissions::Preview);
+                f.share = Share::None();
+                return f;
+            }
 
-            [[nodiscard]] bool canSharePubliclyWithVal() const noexcept {
-                return share.has(SharePermissions::PublicWithValidation);
+            static Files DownloadOnly() {
+                Files f;
+                f.clear();
+                f.grant(FilePermissions::Preview);
+                f.grant(FilePermissions::Download);
+                f.share = Share::None();
+                return f;
+            }
+
+            static Files ReadOnly() {
+                Files f;
+                f.clear();
+                f.grant(FilePermissions::Preview);
+                f.grant(FilePermissions::Download);
+                f.grant(FilePermissions::Copy);
+                f.share = Share::InternalOnly();
+                return f;
+            }
+
+            static Files Contributor() {
+                Files f;
+                f.clear();
+                f.grant(FilePermissions::Preview);
+                f.grant(FilePermissions::Upload);
+                f.grant(FilePermissions::Download);
+                f.grant(FilePermissions::Overwrite);
+                f.grant(FilePermissions::Copy);
+                f.share = Share::InternalOnly();
+                return f;
+            }
+
+            static Files Editor() {
+                Files f;
+                f.clear();
+                f.grant(FilePermissions::Preview);
+                f.grant(FilePermissions::Upload);
+                f.grant(FilePermissions::Download);
+                f.grant(FilePermissions::Overwrite);
+                f.grant(FilePermissions::Rename);
+                f.grant(FilePermissions::Move);
+                f.grant(FilePermissions::Copy);
+                f.share = Share::InternalAndValidatedPublic();
+                return f;
+            }
+
+            static Files Manager() {
+                Files f;
+                f.clear();
+                f.grant(FilePermissions::Preview);
+                f.grant(FilePermissions::Upload);
+                f.grant(FilePermissions::Download);
+                f.grant(FilePermissions::Overwrite);
+                f.grant(FilePermissions::Rename);
+                f.grant(FilePermissions::Delete);
+                f.grant(FilePermissions::Move);
+                f.grant(FilePermissions::Copy);
+                f.share = Share::InternalAndValidatedPublic();
+                return f;
+            }
+
+            static Files Full() {
+                Files f;
+                f.clear();
+                f.grant(FilePermissions::All);
+                f.share = Share::Full();
+                return f;
+            }
+
+            static Files Custom(const SetMask fileMask, Share sharePerms) {
+                Files f;
+                f.setRawFromSetMask(fileMask);
+                f.share = std::move(sharePerms);
+                return f;
             }
         };
 
-        void to_json(nlohmann::json &j, const Files &f);
-
-        void from_json(const nlohmann::json &j, Files &f);
+        void to_json(nlohmann::json& j, const Files& f);
+        void from_json(const nlohmann::json& j, Files& f);
     }
 }

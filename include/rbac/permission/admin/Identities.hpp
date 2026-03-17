@@ -26,6 +26,7 @@ struct Identities final : Module<uint64_t> {
     [[nodiscard]] std::string toFlagsString() const override;
     [[nodiscard]] std::string toString(uint8_t indent) const override;
     [[nodiscard]] const char* name() const override { return ModuleName; }
+
     [[nodiscard]] uint64_t toMask() const override { return pack(users, admins, groups); }
     void fromMask(const uint64_t mask) override { unpack(mask, users, admins, groups); }
 
@@ -41,9 +42,9 @@ private:
     template <typename Fn>
     decltype(auto) visit(const Type type, Fn&& fn) {
         switch (type) {
-        case Type::Users:  return fn(users);
-        case Type::Admins: return fn(admins);
-        case Type::Groups: return fn(groups);
+            case Type::Users:  return fn(users);
+            case Type::Admins: return fn(admins);
+            case Type::Groups: return fn(groups);
         }
 
         throw std::runtime_error("Identities::visit: invalid type");
@@ -52,9 +53,9 @@ private:
     template <typename Fn>
     decltype(auto) visit(const Type type, Fn&& fn) const {
         switch (type) {
-        case Type::Users:  return fn(users);
-        case Type::Admins: return fn(admins);
-        case Type::Groups: return fn(groups);
+            case Type::Users:  return fn(users);
+            case Type::Admins: return fn(admins);
+            case Type::Groups: return fn(groups);
         }
 
         throw std::runtime_error("Identities::visit: invalid type");
@@ -73,6 +74,62 @@ public:
         i.users = identities::Users::None();
         i.admins = identities::Admins::None();
         i.groups = identities::Groups::None();
+        return i;
+    }
+
+    static Identities ViewOnly() {
+        Identities i;
+        i.users = identities::Users::ViewOnly();
+        i.admins = identities::Admins::ViewOnly();
+        i.groups = identities::Groups::ViewOnly();
+        return i;
+    }
+
+    static Identities UserSupport() {
+        Identities i;
+        i.users = identities::Users::ViewOnly();
+        i.admins = identities::Admins::None();
+        i.groups = identities::Groups::MemberViewer();
+        return i;
+    }
+
+    static Identities UserManager() {
+        Identities i;
+        i.users = identities::Users::Manager();
+        i.admins = identities::Admins::None();
+        i.groups = identities::Groups::MemberViewer();
+        return i;
+    }
+
+    static Identities GroupMemberManager() {
+        Identities i;
+        i.users = identities::Users::ViewOnly();
+        i.admins = identities::Admins::None();
+        i.groups = identities::Groups::MemberManager();
+        return i;
+    }
+
+    static Identities GroupManager() {
+        Identities i;
+        i.users = identities::Users::ViewOnly();
+        i.admins = identities::Admins::None();
+        i.groups = identities::Groups::GroupManager();
+        return i;
+    }
+
+    static Identities UserAndGroupManager() {
+        Identities i;
+        i.users = identities::Users::Manager();
+        i.admins = identities::Admins::None();
+        i.groups = identities::Groups::Full();
+        return i;
+    }
+
+    static Identities PrivilegedIdentityManager() {
+        Identities i;
+        i.users = identities::Users::Manager();
+        i.admins = identities::Admins::Manager();
+        i.groups = identities::Groups::Full();
         return i;
     }
 

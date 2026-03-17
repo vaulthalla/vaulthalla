@@ -40,6 +40,48 @@ struct Keys final : Module<uint16_t> {
         return k;
     }
 
+    static Keys ViewOnly() {
+        Keys k;
+        k.apiKeys = keys::APIKeys::ViewOnly();
+        k.encryptionKeys = keys::EncryptionKey::ViewOnly();
+        return k;
+    }
+
+    static Keys APIKeyOperator() {
+        Keys k;
+        k.apiKeys = keys::APIKeys::MixedOperator();
+        k.encryptionKeys = keys::EncryptionKey::None();
+        return k;
+    }
+
+    static Keys APIKeyManager() {
+        Keys k;
+        k.apiKeys = keys::APIKeys::Full();
+        k.encryptionKeys = keys::EncryptionKey::None();
+        return k;
+    }
+
+    static Keys KeyCustodian() {
+        Keys k;
+        k.apiKeys = keys::APIKeys::None();
+        k.encryptionKeys = keys::EncryptionKey::Custodian();
+        return k;
+    }
+
+    static Keys PlatformOperator() {
+        Keys k;
+        k.apiKeys = keys::APIKeys::MixedOperator();
+        k.encryptionKeys = keys::EncryptionKey::ViewOnly();
+        return k;
+    }
+
+    static Keys SecurityAdmin() {
+        Keys k;
+        k.apiKeys = keys::APIKeys::AdminManager();
+        k.encryptionKeys = keys::EncryptionKey::Custodian();
+        return k;
+    }
+
     static Keys APIKeysAll() {
         Keys k;
         k.apiKeys = keys::APIKeys::Full();
@@ -68,7 +110,12 @@ struct Keys final : Module<uint16_t> {
         return k;
     }
 
-    static Keys Custom(keys::APIKeyBase self, keys::APIKeyBase admins, keys::APIKeyBase users, keys::EncryptionKey encryption_keys) {
+    static Keys Custom(
+        keys::APIKeyBase self,
+        keys::APIKeyBase admins,
+        keys::APIKeyBase users,
+        keys::EncryptionKey encryption_keys
+    ) {
         Keys k;
         k.apiKeys = keys::APIKeys::Custom(std::move(self), std::move(admins), std::move(users));
         k.encryptionKeys = std::move(encryption_keys);

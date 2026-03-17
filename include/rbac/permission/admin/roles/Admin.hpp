@@ -27,11 +27,45 @@ namespace vh::rbac::permission::admin::roles {
             return a;
         }
 
+        static Admin Add() {
+            Admin a;
+            a.clear();
+            a.grant(RolesPermissions::View);
+            a.grant(RolesPermissions::Add);
+            return a;
+        }
+
         static Admin Edit() {
             Admin a;
             a.clear();
             a.grant(RolesPermissions::View);
             a.grant(RolesPermissions::Edit);
+            return a;
+        }
+
+        static Admin Delete() {
+            Admin a;
+            a.clear();
+            a.grant(RolesPermissions::View);
+            a.grant(RolesPermissions::Delete);
+            return a;
+        }
+
+        static Admin Manager() {
+            Admin a;
+            a.clear();
+            a.grant(RolesPermissions::View);
+            a.grant(RolesPermissions::Add);
+            a.grant(RolesPermissions::Edit);
+            return a;
+        }
+
+        static Admin Lifecycle() {
+            Admin a;
+            a.clear();
+            a.grant(RolesPermissions::View);
+            a.grant(RolesPermissions::Add);
+            a.grant(RolesPermissions::Delete);
             return a;
         }
 

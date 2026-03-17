@@ -20,16 +20,59 @@ struct Admins final : Base {
         return a;
     }
 
-    static Admins Full() {
-        Admins a;
-        a.grant(IdentityPermissions::All);
-        return a;
-    }
-
     static Admins ViewOnly() {
         Admins a;
         a.clear();
         a.grant(IdentityPermissions::View);
+        return a;
+    }
+
+    static Admins Creator() {
+        Admins a;
+        a.clear();
+        a.grant(IdentityPermissions::View);
+        a.grant(IdentityPermissions::Add);
+        return a;
+    }
+
+    static Admins Editor() {
+        Admins a;
+        a.clear();
+        a.grant(IdentityPermissions::View);
+        a.grant(IdentityPermissions::Edit);
+        return a;
+    }
+
+    static Admins Deleter() {
+        Admins a;
+        a.clear();
+        a.grant(IdentityPermissions::View);
+        a.grant(IdentityPermissions::Delete);
+        return a;
+    }
+
+    static Admins Manager() {
+        Admins a;
+        a.clear();
+        a.grant(IdentityPermissions::View);
+        a.grant(IdentityPermissions::Add);
+        a.grant(IdentityPermissions::Edit);
+        return a;
+    }
+
+    static Admins Lifecycle() {
+        Admins a;
+        a.clear();
+        a.grant(IdentityPermissions::View);
+        a.grant(IdentityPermissions::Add);
+        a.grant(IdentityPermissions::Delete);
+        return a;
+    }
+
+    static Admins Full() {
+        Admins a;
+        a.clear();
+        a.grant(IdentityPermissions::All);
         return a;
     }
 };

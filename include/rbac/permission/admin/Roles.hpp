@@ -39,6 +39,34 @@ namespace vh::rbac::permission::admin {
             return r;
         }
 
+        static Roles ViewOnly() {
+            Roles r;
+            r.admin = roles::Admin::View();
+            r.vault = roles::Vault::View();
+            return r;
+        }
+
+        static Roles AdminManager() {
+            Roles r;
+            r.admin = roles::Admin::Manager();
+            r.vault = roles::Vault::View();
+            return r;
+        }
+
+        static Roles VaultManager() {
+            Roles r;
+            r.admin = roles::Admin::View();
+            r.vault = roles::Vault::Manager();
+            return r;
+        }
+
+        static Roles LifecycleManager() {
+            Roles r;
+            r.admin = roles::Admin::Lifecycle();
+            r.vault = roles::Vault::Lifecycle();
+            return r;
+        }
+
         static Roles Full() {
             Roles r;
             r.admin = roles::Admin::Full();

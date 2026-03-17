@@ -5,8 +5,8 @@
 #include "rbac/permission/template/ModuleSet.hpp"
 #include "rbac/permission/template/Traits.hpp"
 
-#include <cstdint>
 #include <array>
+#include <cstdint>
 #include <nlohmann/json_fwd.hpp>
 
 namespace vh::rbac::permission {
@@ -43,20 +43,18 @@ namespace vh::rbac::permission {
 
     namespace vault::fs {
         struct Directories final : ModuleSet<uint32_t, DirectoryPermissions, uint16_t> {
-            static constexpr const auto *ModuleName = "Directories";
-            static constexpr const auto *FLAG_PREFIX = "dirs";
+            static constexpr const auto* ModuleName = "Directories";
+            static constexpr const auto* FLAG_PREFIX = "dirs";
 
             Share share;
 
             Directories() = default;
+            explicit Directories(const Mask& mask) { fromMask(mask); }
 
-            explicit Directories(const Mask &mask) { fromMask(mask); }
-
-            [[nodiscard]]
             [[nodiscard]] std::string toString(uint8_t indent) const override;
 
-            [[nodiscard]] const char *name() const override { return ModuleName; }
-            [[nodiscard]] const char *flagPrefix() const override { return FLAG_PREFIX; }
+            [[nodiscard]] const char* name() const override { return ModuleName; }
+            [[nodiscard]] const char* flagPrefix() const override { return FLAG_PREFIX; }
 
             [[nodiscard]] std::string toFlagsString() const override;
 
@@ -79,16 +77,107 @@ namespace vh::rbac::permission {
             [[nodiscard]] bool canMove() const noexcept { return has(DirectoryPermissions::Move); }
             [[nodiscard]] bool canCopy() const noexcept { return has(DirectoryPermissions::Copy); }
 
-            [[nodiscard]] bool canShareInternally() const noexcept { return share.has(SharePermissions::Internal); }
-            [[nodiscard]] bool canSharePublicly() const noexcept { return share.has(SharePermissions::Public); }
+            [[nodiscard]] bool canShareInternally() const noexcept { return share.canShareInternally(); }
+            [[nodiscard]] bool canSharePublicly() const noexcept { return share.canSharePublicly(); }
+            [[nodiscard]] bool canSharePubliclyWithVal() const noexcept { return share.canSharePubliclyWithValidation(); }
+            [[nodiscard]] bool canShareExternally() const noexcept { return share.canShareExternally(); }
 
-            [[nodiscard]] bool canSharePubliclyWithVal() const noexcept {
-                return share.has(SharePermissions::PublicWithValidation);
+            [[nodiscard]] bool canMutate() const noexcept {
+                return canUpload() || canTouch() || canDelete() || canRename() || canMove();
+            }
+
+            static Directories None() {
+                Directories d;
+                d.clear();
+                d.share = Share::None();
+                return d;
+            }
+
+            static Directories ListOnly() {
+                Directories d;
+                d.clear();
+                d.grant(DirectoryPermissions::List);
+                d.share = Share::None();
+                return d;
+            }
+
+            static Directories DownloadOnly() {
+                Directories d;
+                d.clear();
+                d.grant(DirectoryPermissions::List);
+                d.grant(DirectoryPermissions::Download);
+                d.share = Share::None();
+                return d;
+            }
+
+            static Directories ReadOnly() {
+                Directories d;
+                d.clear();
+                d.grant(DirectoryPermissions::List);
+                d.grant(DirectoryPermissions::Download);
+                d.grant(DirectoryPermissions::Copy);
+                d.share = Share::InternalOnly();
+                return d;
+            }
+
+            static Directories Contributor() {
+                Directories d;
+                d.clear();
+                d.grant(DirectoryPermissions::List);
+                d.grant(DirectoryPermissions::Upload);
+                d.grant(DirectoryPermissions::Download);
+                d.grant(DirectoryPermissions::Touch);
+                d.grant(DirectoryPermissions::Copy);
+                d.share = Share::InternalOnly();
+                return d;
+            }
+
+            static Directories Editor() {
+                Directories d;
+                d.clear();
+                d.grant(DirectoryPermissions::List);
+                d.grant(DirectoryPermissions::Upload);
+                d.grant(DirectoryPermissions::Download);
+                d.grant(DirectoryPermissions::Touch);
+                d.grant(DirectoryPermissions::Rename);
+                d.grant(DirectoryPermissions::Move);
+                d.grant(DirectoryPermissions::Copy);
+                d.share = Share::InternalAndValidatedPublic();
+                return d;
+            }
+
+            static Directories Manager() {
+                Directories d;
+                d.clear();
+                d.grant(DirectoryPermissions::List);
+                d.grant(DirectoryPermissions::Upload);
+                d.grant(DirectoryPermissions::Download);
+                d.grant(DirectoryPermissions::Touch);
+                d.grant(DirectoryPermissions::Delete);
+                d.grant(DirectoryPermissions::Rename);
+                d.grant(DirectoryPermissions::Move);
+                d.grant(DirectoryPermissions::Copy);
+                d.share = Share::InternalAndValidatedPublic();
+                return d;
+            }
+
+            static Directories Full() {
+                Directories d;
+                d.clear();
+                d.grant(DirectoryPermissions::All);
+                d.share = Share::Full();
+                return d;
+            }
+
+            static Directories Custom(const SetMask dirMask, Share sharePerms) {
+                Directories d;
+                d.setRawFromSetMask(dirMask);
+                d.share = std::move(sharePerms);
+                return d;
             }
         };
 
-        void to_json(nlohmann::json &j, const Directories &v);
-
-        void from_json(const nlohmann::json &j, Directories &v);
+        void to_json(nlohmann::json& j, const Directories& v);
+        void from_json(const nlohmann::json& j, Directories& v);
     }
 }

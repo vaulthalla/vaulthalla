@@ -27,11 +27,45 @@ namespace vh::rbac::permission::admin::roles {
             return v;
         }
 
+        static Vault Add() {
+            Vault v;
+            v.clear();
+            v.grant(RolesPermissions::View);
+            v.grant(RolesPermissions::Add);
+            return v;
+        }
+
         static Vault Edit() {
             Vault v;
             v.clear();
             v.grant(RolesPermissions::View);
             v.grant(RolesPermissions::Edit);
+            return v;
+        }
+
+        static Vault Delete() {
+            Vault v;
+            v.clear();
+            v.grant(RolesPermissions::View);
+            v.grant(RolesPermissions::Delete);
+            return v;
+        }
+
+        static Vault Manager() {
+            Vault v;
+            v.clear();
+            v.grant(RolesPermissions::View);
+            v.grant(RolesPermissions::Add);
+            v.grant(RolesPermissions::Edit);
+            return v;
+        }
+
+        static Vault Lifecycle() {
+            Vault v;
+            v.clear();
+            v.grant(RolesPermissions::View);
+            v.grant(RolesPermissions::Add);
+            v.grant(RolesPermissions::Delete);
             return v;
         }
 

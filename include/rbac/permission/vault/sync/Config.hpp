@@ -28,20 +28,44 @@ namespace vh::rbac::permission {
 
     namespace vault::sync {
         struct Config final : Set<SyncConfigPermissions, uint8_t> {
-            static constexpr const auto *FLAG_CONTEXT = "config";
+            static constexpr const auto* FLAG_CONTEXT = "config";
 
-            [[nodiscard]] const char *flagPrefix() const override { return FLAG_CONTEXT; }
-
+            [[nodiscard]] const char* flagPrefix() const override { return FLAG_CONTEXT; }
             [[nodiscard]] std::string toString(uint8_t indent) const override;
 
             [[nodiscard]] bool canView() const noexcept { return has(SyncConfigPermissions::View); }
             [[nodiscard]] bool canEdit() const noexcept { return has(SyncConfigPermissions::Edit); }
-            [[nodiscard]] bool all() const noexcept { return has(SyncConfigPermissions::All); }
-            [[nodiscard]] bool none() const noexcept { return has(SyncConfigPermissions::None); }
+
+            static Config None() {
+                Config c;
+                c.clear();
+                return c;
+            }
+
+            static Config ViewOnly() {
+                Config c;
+                c.clear();
+                c.grant(SyncConfigPermissions::View);
+                return c;
+            }
+
+            static Config Editor() {
+                Config c;
+                c.clear();
+                c.grant(SyncConfigPermissions::View);
+                c.grant(SyncConfigPermissions::Edit);
+                return c;
+            }
+
+            static Config Full() {
+                Config c;
+                c.clear();
+                c.grant(SyncConfigPermissions::All);
+                return c;
+            }
         };
 
-        void to_json(nlohmann::json &j, const Config &cfg);
-
-        void from_json(const nlohmann::json &j, Config &cfg);
+        void to_json(nlohmann::json& j, const Config& cfg);
+        void from_json(const nlohmann::json& j, Config& cfg);
     }
 }

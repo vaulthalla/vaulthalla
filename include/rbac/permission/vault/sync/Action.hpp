@@ -11,6 +11,7 @@ namespace vh::rbac::permission {
             None = 0,
             Trigger = 1 << 0,
             SignWaiver = 1 << 1,
+            All = Trigger | SignWaiver
         };
     }
 
@@ -26,19 +27,43 @@ namespace vh::rbac::permission {
 
     namespace vault::sync {
         struct Action final : Set<SyncActionPermissions, uint8_t> {
-            static constexpr const auto *FLAG_CONTEXT = "action";
+            static constexpr const auto* FLAG_CONTEXT = "action";
 
-            [[nodiscard]] const char *flagPrefix() const override { return FLAG_CONTEXT; }
-
+            [[nodiscard]] const char* flagPrefix() const override { return FLAG_CONTEXT; }
             [[nodiscard]] std::string toString(uint8_t indent) const override;
 
             [[nodiscard]] bool canTrigger() const noexcept { return has(SyncActionPermissions::Trigger); }
             [[nodiscard]] bool canSignWaiver() const noexcept { return has(SyncActionPermissions::SignWaiver); }
-            [[nodiscard]] bool none() const noexcept { return has(SyncActionPermissions::None); }
+
+            static Action None() {
+                Action a;
+                a.clear();
+                return a;
+            }
+
+            static Action TriggerOnly() {
+                Action a;
+                a.clear();
+                a.grant(SyncActionPermissions::Trigger);
+                return a;
+            }
+
+            static Action WaiverOnly() {
+                Action a;
+                a.clear();
+                a.grant(SyncActionPermissions::SignWaiver);
+                return a;
+            }
+
+            static Action Full() {
+                Action a;
+                a.clear();
+                a.grant(SyncActionPermissions::All);
+                return a;
+            }
         };
 
-        void to_json(nlohmann::json &j, const Action &a);
-
-        void from_json(const nlohmann::json &j, Action &a);
+        void to_json(nlohmann::json& j, const Action& a);
+        void from_json(const nlohmann::json& j, Action& a);
     }
 }
