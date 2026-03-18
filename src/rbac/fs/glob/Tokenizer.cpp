@@ -1,9 +1,9 @@
-#include "rbac/glob/Tokenizer.hpp"
-#include "rbac/glob/model/Token.hpp"
+#include "rbac/fs/glob/Tokenizer.hpp"
+#include "rbac/fs/glob/model/Token.hpp"
 
 #include <stdexcept>
 
-namespace vh::rbac::glob {
+namespace vh::rbac::fs::glob {
 
 namespace {
     using Token = model::Token;

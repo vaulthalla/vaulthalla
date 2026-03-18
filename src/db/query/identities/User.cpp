@@ -198,19 +198,17 @@ unsigned int User::createUser(const UserPtr &user) {
 
         const auto it = user->roles.vaults.find(0);
         if (it != user->roles.vaults.end() && it->second) {
-            for (const auto &override: it->second->fs.overrides) {
-                if (!override) continue;
-
-                override->assignment_id = it->second->assignment_id;
+            for (auto &override: it->second->fs.overrides) {
+                override.assignment_id = it->second->assignment_id;
 
                 txn.exec(
                     pqxx::prepped{"vault_permission_override_upsert"},
                     pqxx::params{
-                        override->assignment_id,
-                        override->permission.id,
-                        override->glob_path(),
-                        override->enabled,
-                        to_string(override->effect)
+                        override.assignment_id,
+                        override.permission.id,
+                        override.glob_path(),
+                        override.enabled,
+                        to_string(override.effect)
                     }
                 );
             }

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Permission.hpp"
-#include "rbac/glob/model/Pattern.hpp"
+#include "rbac/fs/glob/model/Pattern.hpp"
 
 #include <memory>
 #include <string>
@@ -30,7 +30,7 @@ struct Override {
     Permission permission;
     OverrideOpt effect{OverrideOpt::ALLOW};
     bool enabled{true};
-    glob::model::Pattern pattern;
+    fs::glob::model::Pattern pattern;
 
     Override() = default;
     explicit Override(const pqxx::row& row);
@@ -42,11 +42,11 @@ struct Override {
 void to_json(nlohmann::json& j, const Override& po);
 void from_json(const nlohmann::json& j, Override& po);
 
-std::vector<std::shared_ptr<Override>> permissionOverridesFromPqRes(const pqxx::result& res);
-std::vector<std::shared_ptr<Override>> permissionOverridesFromJson(const nlohmann::json& j);
-void to_json(nlohmann::json& j, const std::vector<std::shared_ptr<Override>>& overrides);
+std::vector<Override> permissionOverridesFromPqRes(const pqxx::result& res);
+std::vector<Override> permissionOverridesFromJson(const nlohmann::json& j);
+void to_json(nlohmann::json& j, const std::vector<Override>& overrides);
 
-std::string to_string(const std::shared_ptr<Override>& override);
-std::string to_string(const std::vector<std::shared_ptr<Override>>& overrides);
+std::string to_string(const Override& override);
+std::string to_string(const std::vector<Override>& overrides);
 
 }

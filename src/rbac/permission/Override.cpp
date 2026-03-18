@@ -78,63 +78,49 @@ void vh::rbac::permission::from_json(const nlohmann::json& j, Override& po) {
     po.effect = overrideOptFromString(j.value("effect", std::string("allow")));
     po.assignment_id = j.value("assignment_id", 0u);
     po.enabled = j.value("enabled", true);
-    po.pattern = glob::model::Pattern(j.value("glob_path", std::string()));
+    po.pattern = fs::glob::model::Pattern(j.value("glob_path", std::string()));
 }
 
-std::vector<std::shared_ptr<Override>> vh::rbac::permission::permissionOverridesFromPqRes(const pqxx::result& res) {
-    std::vector<std::shared_ptr<Override>> overrides;
+std::vector<Override> vh::rbac::permission::permissionOverridesFromPqRes(const pqxx::result& res) {
+    std::vector<Override> overrides;
     overrides.reserve(res.size());
 
-    for (const auto& row : res)
-        overrides.emplace_back(std::make_shared<Override>(row));
+    for (const auto& row : res) overrides.emplace_back(row);
 
     return overrides;
 }
 
-std::vector<std::shared_ptr<Override>> vh::rbac::permission::permissionOverridesFromJson(const nlohmann::json& j) {
+std::vector<Override> vh::rbac::permission::permissionOverridesFromJson(const nlohmann::json& j) {
     if (!j.is_array())
         throw std::runtime_error("permissionOverridesFromJson expected a JSON array");
 
-    std::vector<std::shared_ptr<Override>> overrides;
+    std::vector<Override> overrides;
     overrides.reserve(j.size());
 
-    for (const auto& item : j)
-        overrides.emplace_back(std::make_shared<Override>(item));
+    for (const auto& item : j) overrides.emplace_back(item);
 
     return overrides;
 }
 
-void vh::rbac::permission::to_json(nlohmann::json& j, const std::vector<std::shared_ptr<Override>>& overrides) {
+void vh::rbac::permission::to_json(nlohmann::json& j, const std::vector<Override>& overrides) {
     j = nlohmann::json::array();
-
-    for (const auto& overridePtr : overrides) {
-        if (!overridePtr) {
-            j.push_back(nullptr);
-            continue;
-        }
-
-        nlohmann::json item;
-        to_json(item, *overridePtr);
-        j.push_back(std::move(item));
-    }
+    for (const auto& override : overrides) j.emplace_back(override);
 }
 
-std::string vh::rbac::permission::to_string(const std::shared_ptr<Override>& override) {
-    if (!override) return "null override";
-
+std::string vh::rbac::permission::to_string(const Override& override) {
     std::ostringstream ss;
 
-    ss << "ID: " << override->id << "\n"
-       << "Permission: " << override->permission.name << " (" << override->permission.description << ")\n"
-       << "Glob Path: " << override->glob_path() << "\n"
-       << "Effect: " << to_string(override->effect) << "\n"
-       << "Enabled: " << (override->enabled ? "On" : "Off") << "\n"
-       << "Assignment ID: " << override->assignment_id << "\n";
+    ss << "ID: " << override.id << "\n"
+       << "Permission: " << override.permission.name << " (" << override.permission.description << ")\n"
+       << "Glob Path: " << override.glob_path() << "\n"
+       << "Effect: " << to_string(override.effect) << "\n"
+       << "Enabled: " << (override.enabled ? "On" : "Off") << "\n"
+       << "Assignment ID: " << override.assignment_id << "\n";
 
     return ss.str();
 }
 
-std::string vh::rbac::permission::to_string(const std::vector<std::shared_ptr<Override>>& overrides) {
+std::string vh::rbac::permission::to_string(const std::vector<Override>& overrides) {
     if (overrides.empty()) return "No overrides";
 
     Table tbl({
@@ -147,15 +133,13 @@ std::string vh::rbac::permission::to_string(const std::vector<std::shared_ptr<Ov
     }, term_width());
 
     for (const auto& ovr : overrides) {
-        if (!ovr) continue;
-
         tbl.add_row({
-            std::to_string(ovr->id),
-            ovr->permission.name,
-            ovr->permission.description,
-            ovr->glob_path(),
-            to_string(ovr->effect),
-            ovr->enabled ? "On" : "Off"
+            std::to_string(ovr.id),
+            ovr.permission.name,
+            ovr.permission.description,
+            ovr.glob_path(),
+            to_string(ovr.effect),
+            ovr.enabled ? "On" : "Off"
         });
     }
 

@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-namespace vh::rbac::glob::model {
+namespace vh::rbac::fs::glob::model {
 
 struct Pattern {
     std::string source{};

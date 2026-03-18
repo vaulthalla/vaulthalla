@@ -1,10 +1,10 @@
 #pragma once
 
-#include "rbac/glob/model/Pattern.hpp"
+#include "rbac/fs/glob/model/Pattern.hpp"
 
 #include <string>
 
-namespace vh::rbac::glob {
+namespace vh::rbac::fs::glob {
 
 struct Tokenizer {
     static model::Pattern parse(const std::string& pattern);
