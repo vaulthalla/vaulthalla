@@ -21,7 +21,6 @@
 using namespace vh::fs::model;
 using namespace vh::fs;
 using namespace vh::crypto;
-using namespace vh::vault::model;
 using namespace vh::config;
 using namespace vh::storage;
 using namespace vh::fs::ops;
@@ -30,7 +29,7 @@ using namespace vh::fs::metadata;
 
 namespace vh::storage {
 
-Engine::Engine(const std::shared_ptr<Vault>& vault)
+Engine::Engine(const std::shared_ptr<vault::model::Vault>& vault)
     : vault(vault),
       sync(db::query::sync::Policy::getSync(vault->id)),
       paths(std::make_shared<Path>(makeAbsolute(to_snake_case(vault->name)), vault->mount_point)),
