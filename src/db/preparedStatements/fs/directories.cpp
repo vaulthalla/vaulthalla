@@ -3,8 +3,7 @@
 void vh::db::DBConnection::initPreparedDirectories() const {
     conn_->prepare("update_dir_stats",
                    "UPDATE directories "
-                   "SET size_bytes = size_bytes + $2, file_count = file_count + $3, subdirectory_count = subdirectory_count + $4, "
-                   "last_modified = NOW() "
+                   "SET size_bytes = size_bytes + $2, file_count = file_count + $3, subdirectory_count = subdirectory_count + $4 "
                    "WHERE fs_entry_id = $1 RETURNING file_count");
 
     conn_->prepare("get_dir_file_count", "SELECT file_count FROM directories WHERE fs_entry_id = $1");
@@ -15,28 +14,30 @@ void vh::db::DBConnection::initPreparedDirectories() const {
     conn_->prepare("delete_empty_dir",
                    "DELETE FROM directories WHERE fs_entry_id = $1 AND file_count = 0 AND subdirectory_count = 0");
 
-    conn_->prepare("upsert_directory",
-                   "WITH inserted AS ( "
-                   "  INSERT INTO fs_entry (vault_id, parent_id, name, base32_alias, created_by, last_modified_by, path, inode, mode, owner_uid, group_gid, is_hidden, is_system) "
-                   "  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) "
-                   "  ON CONFLICT (parent_id, name) DO UPDATE SET "
-                   "    last_modified_by = EXCLUDED.last_modified_by, "
-                   "    inode = EXCLUDED.inode, "
-                   "    mode = EXCLUDED.mode, "
-                   "    owner_uid = EXCLUDED.owner_uid, "
-                   "    group_gid = EXCLUDED.group_gid, "
-                   "    is_hidden = EXCLUDED.is_hidden, "
-                   "    is_system = EXCLUDED.is_system, "
-                   "    updated_at = NOW() "
-                   "  RETURNING id "
-                   ") "
-                   "INSERT INTO directories (fs_entry_id, size_bytes, file_count, subdirectory_count) "
-                   "SELECT id, $14, $15, $16, NOW() FROM inserted "
-                   "ON CONFLICT (fs_entry_id) DO UPDATE SET "
-                   "  size_bytes = EXCLUDED.size_bytes, "
-                   "  file_count = EXCLUDED.file_count, "
-                   "  subdirectory_count = EXCLUDED.subdirectory_count "
-                   "RETURNING fs_entry_id");
+    conn_->prepare(
+        "upsert_directory",
+        "WITH inserted AS ( "
+        "  INSERT INTO fs_entry (vault_id, parent_id, name, base32_alias, created_by, last_modified_by, path, inode, mode, owner_uid, group_gid, is_hidden, is_system) "
+        "  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) "
+        "  ON CONFLICT (parent_id, name) DO UPDATE SET "
+        "    last_modified_by = EXCLUDED.last_modified_by, "
+        "    inode = EXCLUDED.inode, "
+        "    mode = EXCLUDED.mode, "
+        "    owner_uid = EXCLUDED.owner_uid, "
+        "    group_gid = EXCLUDED.group_gid, "
+        "    is_hidden = EXCLUDED.is_hidden, "
+        "    is_system = EXCLUDED.is_system, "
+        "    updated_at = NOW() "
+        "  RETURNING id "
+        ") "
+        "INSERT INTO directories (fs_entry_id, size_bytes, file_count, subdirectory_count) "
+        "SELECT id, $14, $15, $16 FROM inserted "
+        "ON CONFLICT (fs_entry_id) DO UPDATE SET "
+        "  size_bytes = EXCLUDED.size_bytes, "
+        "  file_count = EXCLUDED.file_count, "
+        "  subdirectory_count = EXCLUDED.subdirectory_count "
+        "RETURNING fs_entry_id"
+    );
 
     conn_->prepare("list_dirs_in_dir_by_parent_id",
                    "SELECT fs.*, d.* "

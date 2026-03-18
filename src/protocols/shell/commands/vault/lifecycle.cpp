@@ -49,7 +49,7 @@ CommandResult commands::vault::handle_vault_update(const CommandCall& call) {
 
     const auto sync = db::query::sync::Policy::getSync(vault->id);
     parseSync(call, usage, vault, sync);
-    parseS3API(call, usage, vault, vault->owner_id, false);
+    parseS3API(call, usage, vault, false);
 
     const auto [okToProceed, waiver] = handle_encryption_waiver({call, vault, true});
     if (!okToProceed) return invalid("vault create: user did not accept encryption waiver");

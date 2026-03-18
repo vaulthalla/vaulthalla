@@ -232,7 +232,7 @@ void parseSync(const CommandCall& call, const std::shared_ptr<CommandUsage>& usa
     }
 }
 
-void parseS3API(const CommandCall& call, const std::shared_ptr<CommandUsage>& usage, const std::shared_ptr<vh::vault::model::Vault>& vault, const unsigned int ownerId, const bool required) {
+void parseS3API(const CommandCall& call, const std::shared_ptr<CommandUsage>& usage, const std::shared_ptr<vh::vault::model::Vault>& vault, const bool required) {
     if (vault->type == vh::vault::model::VaultType::Local) return;
 
     const auto s3Vault = std::static_pointer_cast<vh::vault::model::S3Vault>(vault);

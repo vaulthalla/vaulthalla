@@ -132,15 +132,13 @@ json Vaults::list(const std::shared_ptr<Session> &session) {
         return json{{"vaults", db::query::vault::Vault::listUserVaults(session->user->id)}};
 
     auto vaults = db::query::vault::Vault::listVaults();
-    for (const auto &v: vaults) {
-        std::erase_if(vaults, [&](const auto &v) {
+    std::erase_if(vaults, [&](const auto &v) {
             return !resolver::Admin::has<permission::admin::VaultPermissions>({
                 .user = session->user,
                 .permission = permission::admin::VaultPermissions::View,
                 .vault_id = v->id
             });
         });
-    }
 
     return json{{"vaults", vaults}};
 }

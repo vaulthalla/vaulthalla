@@ -22,11 +22,4 @@ namespace vh::rbac::permission {
             {
                 PermissionTraits<EnumT>::entries;
             };
-
-    template<typename TraitsT>
-    concept HasPermissionEntries =
-            requires
-            {
-                TraitsT::entries;
-            };
 }

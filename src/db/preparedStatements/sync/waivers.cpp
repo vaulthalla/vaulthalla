@@ -22,8 +22,8 @@ void vh::db::DBConnection::initPreparedWaivers() const {
     conn_->prepare("insert_waiver_owner_override",
                    "INSERT INTO waiver_owner_overrides "
                    "(waiver_id, owner_id, owner_name, owner_email, overriding_role_id, overriding_role_name, "
-                   "overriding_role_scope, overriding_role_permissions) "
-                   "VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING waiver_id");
+                   "overriding_role_scope) "
+                   "VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING waiver_id");
 
     conn_->prepare("insert_permission_snapshots_for_waiver",
                    "INSERT INTO waiver_permission_snapshots ("

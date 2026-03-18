@@ -25,7 +25,7 @@ void vh::db::DBConnection::initPreparedAPIKeys() const {
     conn_->prepare("get_api_key_owner",
                    R"(SELECT u.*
 FROM api_keys ak
-JOIN users u ON ak.user_id = u.user_id
+JOIN users u ON ak.user_id = u.id
 WHERE ak.id = $1)");
 
 }

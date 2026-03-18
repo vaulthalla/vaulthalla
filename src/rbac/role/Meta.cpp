@@ -16,10 +16,12 @@ BasicMeta::BasicMeta(const pqxx::row& row)
 
 Meta::Meta(const pqxx::row& row)
     : BasicMeta(row),
-      id(row["id"].as<uint32_t>()),
       assignment_id(row["assignment_id"].as<uint32_t>()),
       name(row["name"].as<std::string>()),
-      description(row["description"].as<std::string>()) {}
+      description(row["description"].as<std::string>()) {
+    if (!row["role_id"].is_null()) id = parsePostgresTimestamp(row["role_id"].as<std::string>());
+    else if (!row["id"].is_null()) id = parsePostgresTimestamp(row["id"].as<std::string>());
+}
 
 Meta::Meta(const nlohmann::json& json) { from_json(json, *this); }
 

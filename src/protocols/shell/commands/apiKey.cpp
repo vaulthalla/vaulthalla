@@ -67,9 +67,9 @@ static CommandResult handleListAPIKeys(const CommandCall &call) {
             out.push_back('\n');
             return ok(out);
         }
-
-        return ok(to_string(keys));
     }
+
+    return ok(to_string(keys));
 }
 
 static CommandResult handleCreateAPIKey(const CommandCall &call) {

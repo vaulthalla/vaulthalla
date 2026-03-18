@@ -55,11 +55,11 @@ Vaults::Type vault_type_from_string(const std::string& str) {
 
 void to_json(nlohmann::json &j, const Vault &v) {
     j = {
-        {"view", VaultPermissions::View},
-        {"view_stats", VaultPermissions::ViewStats},
-        {"create", VaultPermissions::Create},
-        {"edit", VaultPermissions::Edit},
-        {"remove", VaultPermissions::Remove}
+        {"view", v.canView()},
+        {"view_stats", v.canViewStats()},
+        {"create", v.canCreate()},
+        {"edit", v.canEdit()},
+        {"remove", v.canRemove()}
     };
 }
 

@@ -23,18 +23,20 @@ namespace {
 }
 
 Override::Override(const pqxx::row& row)
-    : id(row["id"].as<unsigned int>()),
+    : assignment_id(row["assignment_id"].as<unsigned int>()),
       permission(row),
       effect(overrideOptFromString(row["effect"].as<std::string>())),
-      assignment_id(row["assignment_id"].as<unsigned int>()),
       enabled(row["enabled"].as<bool>()),
-      pattern(row["glob_path"].as<std::string>()) {}
+      pattern(row["glob_path"].as<std::string>()) {
+    if (!row["override_id"].is_null()) id = row["override_id"].as<uint32_t>();
+    else if (!row["id"].is_null()) id = row["id"].as<uint32_t>();
+}
 
 Override::Override(const nlohmann::json& j)
     : id(j.value("id", 0u)),
+      assignment_id(j.value("assignment_id", 0u)),
       permission(j.at("permission").get<Permission>()),
       effect(overrideOptFromString(j.value("effect", std::string("allow")))),
-      assignment_id(j.value("assignment_id", 0u)),
       enabled(j.value("enabled", true)),
       pattern(j.value("glob_path", std::string())) {}
 

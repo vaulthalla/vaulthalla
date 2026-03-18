@@ -9,12 +9,15 @@ using namespace vh::db::encoding;
 namespace vh::rbac::permission {
 
 Permission::Permission(const pqxx::row& row)
-    : id(row["id"].as<uint32_t>()),
-      bit_position(row["bit_position"].as<uint32_t>()),
+    : bit_position(row["bit_position"].as<uint32_t>()),
       name(row["name"].as<std::string>()),
       description(row["description"].as<std::string>()),
       created_at(parsePostgresTimestamp(row["created_at"].as<std::string>())),
-      updated_at(parsePostgresTimestamp(row["updated_at"].as<std::string>())) {}
+      updated_at(parsePostgresTimestamp(row["updated_at"].as<std::string>())) {
+    if (!row["permission_override_id"].is_null()) id = row["permission_override_id"].as<uint32_t>();
+    else if (!row["permission_id"].is_null()) id = row["permission_id"].as<uint32_t>();
+    else if (!row["id"].is_null()) id = row["id"].as<uint32_t>();
+}
 
 Permission::Permission(const nlohmann::json& j)
     : id(j.at("id").get<uint32_t>()),

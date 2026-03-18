@@ -55,6 +55,6 @@ DerivePointerAlignment: false
 PointerAlignment: Left
 
 # === Experimental Tightness ===
-ReflowComments: false
+ReflowComments: 'Always'
 IndentCaseLabels: false
 CompactNamespaces: true

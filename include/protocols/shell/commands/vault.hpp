@@ -94,6 +94,6 @@ void assignOwnerIfAvailable(const CommandCall& call, const std::shared_ptr<Comma
 
 void parseSync(const CommandCall& call, const std::shared_ptr<CommandUsage>& usage, const std::shared_ptr<vh::vault::model::Vault>& vault, const std::shared_ptr<sync::model::Policy>& sync);
 
-void parseS3API(const CommandCall& call, const std::shared_ptr<CommandUsage>& usage, const std::shared_ptr<vh::vault::model::Vault>& vault, unsigned int ownerId, bool required = false);
+void parseS3API(const CommandCall& call, const std::shared_ptr<CommandUsage>& usage, const std::shared_ptr<vh::vault::model::Vault>& vault, bool required = false);
 
 }

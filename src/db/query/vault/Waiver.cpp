@@ -30,7 +30,7 @@ void db::query::vault::Waiver::addWaiver(const std::shared_ptr<vh::sync::model::
         if (waiver->owner && waiver->vault->owner_id != waiver->user->id) {
             const auto ctx = waiver->resolveOverridingRole();
 
-            pqxx::params p2{
+            const pqxx::params p2{
                 waiver->id,
                 waiver->owner->id,
                 waiver->owner->name,

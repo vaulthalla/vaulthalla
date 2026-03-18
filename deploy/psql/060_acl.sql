@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS vault_role
     files_permissions       BIT(64) NOT NULL,
     directories_permissions BIT(64) NOT NULL,
     sync_permissions        BIT(32) NOT NULL,
-    roles_permissions       BIT(16) NOT NULL,
+    roles_permissions       BIT(16) NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS admin_role

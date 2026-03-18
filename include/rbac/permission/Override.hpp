@@ -6,6 +6,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <cstdint>
 
 #include <nlohmann/json_fwd.hpp>
 
@@ -25,10 +26,9 @@ std::string to_string(const OverrideOpt& opt);
 OverrideOpt overrideOptFromString(const std::string& str);
 
 struct Override {
-    unsigned int id{0};
+    uint32_t id{}, assignment_id{};
     Permission permission;
     OverrideOpt effect{OverrideOpt::ALLOW};
-    unsigned int assignment_id{0};
     bool enabled{true};
     glob::model::Pattern pattern;
 

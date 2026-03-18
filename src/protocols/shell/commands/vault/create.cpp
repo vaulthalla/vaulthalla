@@ -251,7 +251,7 @@ CommandResult commands::vault::handle_vault_create(const CommandCall& call) {
     else return invalid("vault create: unknown vault type");
 
     parseSync(call, usage, vault, sync);
-    parseS3API(call, usage, vault, owner->id, true);
+    parseS3API(call, usage, vault, true);
 
     return finish_vault_create(call, vault, sync);
 }

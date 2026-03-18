@@ -12,8 +12,8 @@ struct ListQueryParams {
     std::optional<std::string> sort;
     std::optional<SortDirection> direction;
     std::optional<std::string> filter;
-    std::optional<int64_t> limit;
-    std::optional<int64_t> page;
+    std::optional<uint64_t> limit;
+    std::optional<uint64_t> page;
 };
 
 inline std::string to_string(const std::optional<SortDirection>& order) {
@@ -45,9 +45,9 @@ inline std::string appendPaginationAndFilter(const std::string_view base,
         out << " " << to_string(p.direction);
     } else if (defaultSort) out << " ORDER BY " << *defaultSort << " ASC";
 
-    const int64_t page = std::max<int64_t>(p.page.value_or(1), 1);
-    const int64_t limit = p.limit.value_or(100);
-    const int64_t offset = (page - 1) * limit;
+    const uint64_t page = std::max<int64_t>(p.page.value_or(1), 1);
+    const uint64_t limit = p.limit.value_or(100);
+    const uint64_t offset = (page - 1) * limit;
 
     out << " LIMIT " << limit;
     out << " OFFSET " << offset;
