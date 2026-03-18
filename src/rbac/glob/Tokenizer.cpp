@@ -13,17 +13,17 @@ namespace {
         return c == '*' || c == '?' || c == '/';
     }
 
-    [[nodiscard]] std::string tokenTypeToString(const Token::Type type) {
-        switch (type) {
-            case Token::Type::Literal: return "Literal";
-            case Token::Type::Star: return "Star";
-            case Token::Type::DoubleStar: return "DoubleStar";
-            case Token::Type::Question: return "Question";
-            case Token::Type::Slash: return "Slash";
-        }
-
-        return "Unknown";
-    }
+    // [[nodiscard]] std::string tokenTypeToString(const Token::Type type) {
+    //     switch (type) {
+    //         case Token::Type::Literal: return "Literal";
+    //         case Token::Type::Star: return "Star";
+    //         case Token::Type::DoubleStar: return "DoubleStar";
+    //         case Token::Type::Question: return "Question";
+    //         case Token::Type::Slash: return "Slash";
+    //     }
+    //
+    //     return "Unknown";
+    // }
 
     void pushLiteralIfNeeded(std::string& buffer, std::vector<Token>& tokens) {
         if (buffer.empty()) return;

@@ -4,16 +4,28 @@
 
 -- ACL assignments (depends on: users, vault, role, permission)
 
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_type
+        WHERE typname = 'permission_category'
+    ) THEN
+CREATE TYPE permission_category AS ENUM ('admin', 'vault');
+END IF;
+END
+$$;
+
 CREATE TABLE IF NOT EXISTS permission
 (
     id           SERIAL PRIMARY KEY,
     name         VARCHAR(50) NOT NULL,
     description  TEXT,
-    category     VARCHAR(12) NOT NULL CHECK (category IN ('admin', 'vault')),
+    category     permission_category NOT NULL,
     bit_position INTEGER NOT NULL CHECK (bit_position >= 0 AND bit_position < 64),
     created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE (name, category)
+    UNIQUE (name, bit_position, category)
     );
 
 -- Permissions assigned to roles
@@ -25,8 +37,8 @@ CREATE TABLE IF NOT EXISTS vault_role
     created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-    files_permissions       BIT(64) NOT NULL,
-    directories_permissions BIT(64) NOT NULL,
+    files_permissions       BIT(32) NOT NULL,
+    directories_permissions BIT(32) NOT NULL,
     sync_permissions        BIT(32) NOT NULL,
     roles_permissions       BIT(16) NOT NULL
 );

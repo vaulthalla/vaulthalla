@@ -8,7 +8,7 @@
 
 namespace vh::rbac::permission::admin {
 
-struct Keys final : Module<uint16_t> {
+struct Keys final : Module<uint32_t> {
     static constexpr const auto* ModuleName = "keys";
 
     keys::APIKeys apiKeys{};
@@ -21,7 +21,7 @@ struct Keys final : Module<uint16_t> {
     [[nodiscard]] std::string toString(uint8_t indent) const override;
 
     [[nodiscard]] const char* name() const override { return ModuleName; }
-    [[nodiscard]] uint16_t toMask() const override;
+    [[nodiscard]] uint32_t toMask() const override;
     void fromMask(Mask mask) override;
 
     [[nodiscard]] PackedPermissionExportT<Mask> exportPermissions() const {

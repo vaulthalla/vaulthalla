@@ -4,7 +4,7 @@
 #include <ostream>
 
 namespace vh::rbac::permission::admin {
-    uint16_t Keys::toMask() const { return pack(apiKeys.self, apiKeys.admin, apiKeys.user, encryptionKeys); }
+    uint32_t Keys::toMask() const { return pack(apiKeys.self, apiKeys.admin, apiKeys.user, encryptionKeys); }
     void Keys::fromMask(const Mask mask) { unpack(mask, apiKeys.self, apiKeys.admin, apiKeys.user, encryptionKeys); }
 
     std::string Keys::toFlagsString() const {

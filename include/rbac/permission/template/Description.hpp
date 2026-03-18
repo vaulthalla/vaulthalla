@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
 
 namespace vh::rbac::permission {
     template<typename T>
@@ -22,10 +23,12 @@ namespace vh::rbac::permission {
     ) {
         std::string result;
 
-        if constexpr (HasDescriptionContext<T>) {
+        if constexpr (HasDescriptionContext<std::remove_cvref_t<T> >) {
+            const std::string_view ctx = object.descriptionObject();
+
             result = std::vformat(
                 std::string(description),
-                std::make_format_args(object.descriptionObject())
+                std::make_format_args(ctx)
             );
         } else {
             result = std::string(description);

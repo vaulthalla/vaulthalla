@@ -17,8 +17,8 @@ void vh::db::DBConnection::initPreparedVaultRoles() const {
                 $1,
                 $2,
                 $3,
-                $4::bit(64),
-                $5::bit(64),
+                $4::bit(32),
+                $5::bit(32),
                 $6::bit(32),
                 $7::bit(16)
             )
@@ -47,8 +47,8 @@ void vh::db::DBConnection::initPreparedVaultRoles() const {
             VALUES (
                 $1,
                 $2,
-                $3::bit(64),
-                $4::bit(64),
+                $3::bit(32),
+                $4::bit(32),
                 $5::bit(32),
                 $6::bit(16)
             )
@@ -85,8 +85,8 @@ void vh::db::DBConnection::initPreparedVaultRoles() const {
             VALUES (
                 $1,
                 $2,
-                $3::bit(64),
-                $4::bit(64),
+                $3::bit(32),
+                $4::bit(32),
                 $5::bit(32),
                 $6::bit(16)
             )
@@ -146,8 +146,8 @@ void vh::db::DBConnection::initPreparedVaultRoles() const {
             SET
                 name                    = $2,
                 description             = $3,
-                files_permissions       = $4::bit(64),
-                directories_permissions = $5::bit(64),
+                files_permissions       = $4::bit(32),
+                directories_permissions = $5::bit(32),
                 sync_permissions        = $6::bit(32),
                 roles_permissions       = $7::bit(16)
             WHERE id = $1

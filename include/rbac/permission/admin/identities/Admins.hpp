@@ -8,7 +8,7 @@ namespace vh::rbac::permission::admin::identities {
 
 struct Admins final : Base {
     static constexpr const auto* FLAG_CONTEXT = "admins";
-    static constexpr const auto* DESCRIPTION_CONTEXT = "admins";
+    static constexpr const auto* DESCRIPTION_CONTEXT = "admin";
 
     [[nodiscard]] const char* flagPrefix() const override { return FLAG_CONTEXT; }
     [[nodiscard]] std::string_view descriptionObject() const override { return DESCRIPTION_CONTEXT; }

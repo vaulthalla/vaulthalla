@@ -108,8 +108,9 @@ namespace vh::rbac::permission {
             return false;
         }
 
-        template<typename OutputIt>
+        template<typename Describer, typename OutputIt>
         void exportPermissions(
+            const Describer &describer,
             OutputIt out,
             const std::size_t baseOffset,
             std::string_view qualifiedPrefix,
@@ -133,7 +134,7 @@ namespace vh::rbac::permission {
                 *out++ = Permission{
                     static_cast<uint32_t>(globalBit),
                     std::move(qualifiedName),
-                    buildPermissionDescription(*this, entry.description, descriptionPrefix)
+                    buildPermissionDescription(describer, entry.description, descriptionPrefix)
                 };
             }
         }

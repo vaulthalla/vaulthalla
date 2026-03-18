@@ -8,8 +8,8 @@
 namespace vh::rbac::glob::model {
 
 struct Pattern {
-    std::string source;
-    std::vector<Token> tokens;
+    std::string source{};
+    std::vector<Token> tokens{};
 };
 
 }

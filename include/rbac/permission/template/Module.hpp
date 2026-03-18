@@ -10,8 +10,7 @@
 #include <type_traits>
 
 namespace vh::rbac::permission {
-
-    template <typename MaskT>
+    template<typename MaskT>
     struct Module {
         using Mask = MaskT;
         using Offset = std::size_t;
@@ -20,17 +19,21 @@ namespace vh::rbac::permission {
         static_assert(std::is_unsigned_v<Mask>, "Module<MaskT>: MaskT must be an unsigned integral type");
 
         virtual ~Module() = default;
+
         Module() = default;
 
         [[nodiscard]] static constexpr std::size_t bitWidth() {
             return sizeof(Mask) * 8u;
         }
 
-        [[nodiscard]] virtual const char* name() const = 0;
+        [[nodiscard]] virtual const char *name() const = 0;
+
         [[nodiscard]] virtual Mask toMask() const = 0;
+
         virtual void fromMask(Mask mask) = 0;
 
         [[nodiscard]] virtual std::string toFlagsString() const = 0;
+
         [[nodiscard]] virtual std::string toString(uint8_t indent) const = 0;
 
         [[nodiscard]] std::string toBitString() const {
@@ -50,8 +53,8 @@ namespace vh::rbac::permission {
         }
 
     protected:
-        template <SetLike SetLikeT>
-        static void append(Mask& dstMask, Offset& offset, const SetLikeT& set, const char* context) {
+        template<SetLike SetLikeT>
+        static void append(Mask &dstMask, Offset &offset, const SetLikeT &set, const char *context) {
             constexpr auto setBits = SetLikeT::bitWidth();
 
             if (offset + setBits > bitWidth())
@@ -61,17 +64,17 @@ namespace vh::rbac::permission {
             offset += setBits;
         }
 
-        template <SetLike SetLikeT>
-        static void extract(const Mask srcMask, Offset& offset, SetLikeT& set, const char* context) {
+        template<SetLike SetLikeT>
+        static void extract(const Mask srcMask, Offset &offset, SetLikeT &set, const char *context) {
             constexpr auto setBits = SetLikeT::bitWidth();
 
             if (offset + setBits > bitWidth())
                 throw std::runtime_error(std::string(context) + ": bit width exceeds source mask");
 
             constexpr Mask fieldMask =
-                setBits >= bitWidth()
-                    ? static_cast<Mask>(~static_cast<Mask>(0))
-                    : static_cast<Mask>((static_cast<Mask>(1) << setBits) - 1);
+                    setBits >= bitWidth()
+                        ? static_cast<Mask>(~static_cast<Mask>(0))
+                        : static_cast<Mask>((static_cast<Mask>(1) << setBits) - 1);
 
             using RawT = decltype(set.raw());
             const auto value = static_cast<RawT>((srcMask >> offset) & fieldMask);
@@ -80,26 +83,26 @@ namespace vh::rbac::permission {
             offset += setBits;
         }
 
-        template <SetLike... SetTs>
-        [[nodiscard]] Mask pack(const SetTs&... sets) const {
+        template<SetLike... SetTs>
+        [[nodiscard]] Mask pack(const SetTs &... sets) const {
             Mask mask = 0;
             Offset offset = 0;
             (append(mask, offset, sets, name()), ...);
             return mask;
         }
 
-        template <SetLike... SetTs>
-        void unpack(const Mask srcMask, SetTs&... sets) const {
+        template<SetLike... SetTs>
+        void unpack(const Mask srcMask, SetTs &... sets) const {
             Offset offset = 0;
             (extract(srcMask, offset, sets, name()), ...);
         }
 
-        template <typename... PermissionTs>
-        [[nodiscard]] static std::string joinFlags(const PermissionTs&... permissions) {
+        template<typename... PermissionTs>
+        [[nodiscard]] static std::string joinFlags(const PermissionTs &... permissions) {
             std::ostringstream oss;
             bool first = true;
 
-            auto append = [&](const auto& permission) {
+            auto append = [&](const auto &permission) {
                 const auto flags = permission.toFlagsString();
                 if (flags.empty()) return;
 
@@ -112,13 +115,13 @@ namespace vh::rbac::permission {
             return oss.str();
         }
 
-        template <ExportableSetLike SetT>
+        template<ExportableSetLike SetT>
         static void appendAndExport(
-            Mask& dstMask,
-            Offset& offset,
-            const MountedSetRef<SetT>& mounted,
-            const char* context,
-            std::vector<Permission>& out
+            Mask &dstMask,
+            Offset &offset,
+            const MountedSetRef<SetT> &mounted,
+            const char *context,
+            std::vector<Permission> &out
         ) {
             constexpr auto setBits = SetT::bitWidth();
 
@@ -126,12 +129,12 @@ namespace vh::rbac::permission {
                 throw std::runtime_error(std::string(context) + ": bit width exceeds destination mask");
 
             dstMask |= static_cast<Mask>(mounted.set.raw()) << offset;
-            mounted.set.exportPermissions(std::back_inserter(out), offset, mounted.qualifiedName);
+            mounted.set.exportPermissions(mounted.set, std::back_inserter(out), offset, mounted.qualifiedName);
             offset += setBits;
         }
 
-        template <ExportableSetLike... SetTs>
-        [[nodiscard]] PackedPermissionExportT<Mask> packAndExportPerms(const MountedSetRef<SetTs>&... sets) const {
+        template<ExportableSetLike... SetTs>
+        [[nodiscard]] PackedPermissionExportT<Mask> packAndExportPerms(const MountedSetRef<SetTs> &... sets) const {
             PackedPermissionExportT<Mask> result{};
             Offset offset = 0;
             (appendAndExport(result.mask, offset, sets, name(), result.permissions), ...);
@@ -142,5 +145,4 @@ namespace vh::rbac::permission {
             return value ? "true" : "false";
         }
     };
-
 }
