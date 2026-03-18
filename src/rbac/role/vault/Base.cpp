@@ -7,9 +7,9 @@
 namespace vh::rbac::role::vault {
     Base::Base(const pqxx::row &row)
         : roles(static_cast<permission::vault::Roles::Mask>(
-              row["roles_permissions"].as<unsigned int>())),
+              row["roles_permissions"].as<uint64_t>())),
           sync(static_cast<permission::vault::Sync::Mask>(
-              row["sync_permissions"].as<unsigned int>())),
+              row["sync_permissions"].as<uint64_t>())),
           fs(row) {
     }
 

@@ -12,8 +12,8 @@
 #include "sync/Controller.hpp"
 #include "rbac/role/Admin.hpp"
 #include "rbac/role/Vault.hpp"
-#include "rbac/resolver/admin/*.hpp"
-#include "rbac/resolver/vault/*.hpp"
+#include "rbac/resolver/admin/all.hpp"
+#include "rbac/resolver/vault/all.hpp"
 #include "rbac/permission/admin/Keys.hpp"
 #include "rbac/permission/admin/Vaults.hpp"
 

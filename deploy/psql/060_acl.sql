@@ -3,25 +3,12 @@
 -- ##################################
 
 -- ACL assignments (depends on: users, vault, role, permission)
-
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_type
-        WHERE typname = 'permission_category'
-    ) THEN
-CREATE TYPE permission_category AS ENUM ('admin', 'vault');
-END IF;
-END
-$$;
-
 CREATE TABLE IF NOT EXISTS permission
 (
     id           SERIAL PRIMARY KEY,
     name         VARCHAR(50) NOT NULL,
     description  TEXT,
-    category     permission_category NOT NULL,
+    category     permission_categories NOT NULL,
     bit_position INTEGER NOT NULL CHECK (bit_position >= 0 AND bit_position < 64),
     created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

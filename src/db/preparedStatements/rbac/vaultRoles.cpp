@@ -64,10 +64,10 @@ void vh::db::DBConnection::initPreparedVaultRoles() const {
                 description,
                 created_at,
                 updated_at,
-                files_permissions::text       AS files_permissions,
-                directories_permissions::text AS directories_permissions,
-                sync_permissions::text        AS sync_permissions,
-                roles_permissions::text       AS roles_permissions
+                files_permissions::bigint       AS files_permissions,
+                directories_permissions::bigint AS directories_permissions,
+                sync_permissions::bigint        AS sync_permissions,
+                roles_permissions::bigint       AS roles_permissions
         )SQL"
     );
 
@@ -96,10 +96,10 @@ void vh::db::DBConnection::initPreparedVaultRoles() const {
                 description,
                 created_at,
                 updated_at,
-                files_permissions::text       AS files_permissions,
-                directories_permissions::text AS directories_permissions,
-                sync_permissions::text        AS sync_permissions,
-                roles_permissions::text       AS roles_permissions
+                files_permissions::bigint       AS files_permissions,
+                directories_permissions::bigint AS directories_permissions,
+                sync_permissions::bigint        AS sync_permissions,
+                roles_permissions::bigint       AS roles_permissions
         )SQL"
     );
 
@@ -112,10 +112,10 @@ void vh::db::DBConnection::initPreparedVaultRoles() const {
                 description,
                 created_at,
                 updated_at,
-                files_permissions::text       AS files_permissions,
-                directories_permissions::text AS directories_permissions,
-                sync_permissions::text        AS sync_permissions,
-                roles_permissions::text       AS roles_permissions
+                files_permissions::bigint       AS files_permissions,
+                directories_permissions::bigint AS directories_permissions,
+                sync_permissions::bigint        AS sync_permissions,
+                roles_permissions::bigint       AS roles_permissions
             FROM vault_role
             WHERE id = $1
         )SQL"
@@ -130,10 +130,10 @@ void vh::db::DBConnection::initPreparedVaultRoles() const {
                 description,
                 created_at,
                 updated_at,
-                files_permissions::text       AS files_permissions,
-                directories_permissions::text AS directories_permissions,
-                sync_permissions::text        AS sync_permissions,
-                roles_permissions::text       AS roles_permissions
+                files_permissions::bigint       AS files_permissions,
+                directories_permissions::bigint AS directories_permissions,
+                sync_permissions::bigint        AS sync_permissions,
+                roles_permissions::bigint       AS roles_permissions
             FROM vault_role
             WHERE name = $1
         )SQL"
@@ -193,10 +193,10 @@ void vh::db::DBConnection::initPreparedVaultRoles() const {
                 description,
                 created_at,
                 updated_at,
-                files_permissions::text       AS files_permissions,
-                directories_permissions::text AS directories_permissions,
-                sync_permissions::text        AS sync_permissions,
-                roles_permissions::text       AS roles_permissions
+                files_permissions::bigint       AS files_permissions,
+                directories_permissions::bigint AS directories_permissions,
+                sync_permissions::bigint        AS sync_permissions,
+                roles_permissions::bigint       AS roles_permissions
             FROM vault_role
             ORDER BY name
         )SQL"

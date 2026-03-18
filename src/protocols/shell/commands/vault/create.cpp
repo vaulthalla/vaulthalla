@@ -20,7 +20,7 @@
 #include "config/Registry.hpp"
 #include "db/encoding/interval.hpp"
 
-#include "rbac/resolver/admin/*.hpp"
+#include "rbac/resolver/admin/all.hpp"
 
 #include <algorithm>
 #include <optional>

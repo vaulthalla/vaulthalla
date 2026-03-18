@@ -1,7 +1,7 @@
 #pragma once
 
 #include "rbac/role/Meta.hpp"
-#include "rbac/permission/admin/*.hpp"
+#include "rbac/permission/admin/all.hpp"
 #include "rbac/permission/Permission.hpp"
 
 #include <string>
@@ -15,13 +15,13 @@ namespace vh::rbac::role {
 struct Admin final : Meta {
     std::optional<uint32_t> user_id;
 
-    permission::admin::Identities identities;
-    permission::admin::Vaults vaults;
-    permission::admin::Audits audits;
-    permission::admin::Settings settings;
-    permission::admin::Roles roles;
-    permission::admin::Keys keys;
-    permission::admin::VaultGlobals vGlobals;
+    permission::admin::Identities identities{};
+    permission::admin::Vaults vaults{};
+    permission::admin::Audits audits{};
+    permission::admin::Settings settings{};
+    permission::admin::Roles roles{};
+    permission::admin::Keys keys{};
+    permission::admin::VaultGlobals vGlobals{};
 
     Admin() = default;
     Admin(const pqxx::row& row, const pqxx::result& globalVaultRoles);

@@ -1,8 +1,11 @@
 #include "rbac/role/vault/Global.hpp"
+#include "db/encoding/has.hpp"
 
 #include <pqxx/result>
 #include <nlohmann/json.hpp>
 #include <ostream>
+
+using namespace vh::db::encoding;
 
 namespace vh::rbac::role::vault {
 
@@ -12,7 +15,10 @@ Global::Global(const pqxx::row& row)
       user_id(row["user_id"].as<uint32_t>()),
       scope(global_vault_role_scope_from_string(row["scope"].as<std::string>())),
       enforce_template(row["enforce_template"].as<bool>()) {
-    if (!row.at("template_id").is_null()) template_role_id = row["template_id"].as<uint32_t>();
+    if (hasColumn(row, "role_template_id") && !row["role_template_id"].is_null())
+        template_role_id = row["role_template_id"].as<uint32_t>();
+    else if (hasColumn(row, "template_id") && !row["template_id"].is_null())
+        template_role_id = row["template_id"].as<uint32_t>();
 }
 
 Global::Global(const nlohmann::json& j)

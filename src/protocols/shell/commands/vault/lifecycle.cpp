@@ -14,7 +14,7 @@
 #include "config/Registry.hpp"
 #include "CommandUsage.hpp"
 
-#include "rbac/resolver/admin/*.hpp"
+#include "rbac/resolver/admin/all.hpp"
 
 #include <string>
 #include <memory>

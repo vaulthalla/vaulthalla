@@ -10,7 +10,7 @@
 #include "stats/model/CacheStats.hpp"
 #include "runtime/Deps.hpp"
 #include "fs/cache/Registry.hpp"
-#include "rbac/resolver/admin/*.hpp"
+#include "rbac/resolver/admin/all.hpp"
 
 #include <future>
 #include <utility>

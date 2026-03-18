@@ -56,7 +56,7 @@ namespace vh::identities {
     struct User : std::enable_shared_from_this<User> {
         struct RoleAssignments {
             std::shared_ptr<rbac::role::Admin> admin{};
-            std::unordered_map<uint32_t, std::shared_ptr<rbac::role::Vault> > vaults{};
+            std::unordered_map<uint32_t, std::shared_ptr<rbac::role::Vault>> vaults{};
         };
 
         struct Meta {

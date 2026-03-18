@@ -7,12 +7,12 @@
 namespace vh::rbac::permission::vault {
 
 Filesystem::Filesystem(const pqxx::row& row)
-    : files(row["files_permissions"].as<typename decltype(files)::Mask>()),
-      directories(row["directories_permissions"].as<typename decltype(directories)::Mask>()) {}
+    : files(static_cast<typename decltype(files)::Mask>(row["files_permissions"].as<uint64_t>())),
+      directories(static_cast<typename decltype(directories)::Mask>(row["directories_permissions"].as<uint64_t>())) {}
 
 Filesystem::Filesystem(const pqxx::row& row, const pqxx::result& overrideRes)
-    : files(row["files_permissions"].as<typename decltype(files)::Mask>()),
-      directories(row["directories_permissions"].as<typename decltype(directories)::Mask>()) {
+    : files(static_cast<typename decltype(files)::Mask>(row["files_permissions"].as<uint64_t>())),
+      directories(static_cast<typename decltype(directories)::Mask>(row["directories_permissions"].as<uint64_t>())) {
     if (!overrideRes.empty())
         for (const auto& r : overrideRes) overrides.emplace_back(std::make_shared<Override>(r));
 }

@@ -15,7 +15,7 @@
 #include "identities/User.hpp"
 #include "sync/model/Waiver.hpp"
 #include "rbac/role/Admin.hpp"
-#include "rbac/resolver/vault/*.hpp"
+#include "rbac/resolver/vault/all.hpp"
 
 #include "config/Registry.hpp"
 #include "vault/terms/waiver.hpp"

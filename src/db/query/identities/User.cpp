@@ -19,7 +19,7 @@ using namespace vh::auth::model;
 using U = vh::identities::User;
 using UserPtr = std::shared_ptr<U>;
 
-UserPtr User::hydrateUser(pqxx::work& txn, const pqxx::row& userRow) {
+UserPtr User::hydrateUser(pqxx::work &txn, const pqxx::row &userRow) {
     const auto userId = userRow["id"].as<unsigned int>();
 
     // Singular admin-role assignment joined to full admin_role
@@ -60,8 +60,8 @@ UserPtr User::hydrateUser(pqxx::work& txn, const pqxx::row& userRow) {
     );
 }
 
-UserPtr User::getUserByName(const std::string& name) {
-    return Transactions::exec("User::getUserByName", [&](pqxx::work& txn) -> UserPtr {
+UserPtr User::getUserByName(const std::string &name) {
+    return Transactions::exec("User::getUserByName", [&](pqxx::work &txn) -> UserPtr {
         const auto res = txn.exec(
             pqxx::prepped{"get_user_by_name"},
             pqxx::params{name}
@@ -77,7 +77,7 @@ UserPtr User::getUserByName(const std::string& name) {
 }
 
 UserPtr User::getUserById(const unsigned int id) {
-    return Transactions::exec("User::getUserById", [&](pqxx::work& txn) -> UserPtr {
+    return Transactions::exec("User::getUserById", [&](pqxx::work &txn) -> UserPtr {
         const auto res = txn.exec(
             pqxx::prepped{"get_user"},
             pqxx::params{id}
@@ -93,7 +93,7 @@ UserPtr User::getUserById(const unsigned int id) {
 }
 
 UserPtr User::getUserByLinuxUID(unsigned int linuxUid) {
-    return Transactions::exec("User::getUserByLinuxUID", [&](pqxx::work& txn) -> UserPtr {
+    return Transactions::exec("User::getUserByLinuxUID", [&](pqxx::work &txn) -> UserPtr {
         const auto res = txn.exec(
             pqxx::prepped{"get_user_by_linux_uid"},
             pqxx::params{linuxUid}
@@ -109,7 +109,7 @@ UserPtr User::getUserByLinuxUID(unsigned int linuxUid) {
 }
 
 unsigned int User::getUserIdByLinuxUID(const unsigned int linuxUid) {
-    return Transactions::exec("User::getUserIdByLinuxUID", [&](pqxx::work& txn) -> unsigned int {
+    return Transactions::exec("User::getUserIdByLinuxUID", [&](pqxx::work &txn) -> unsigned int {
         const auto res = txn.exec(
             pqxx::prepped{"get_user_id_by_linux_uid"},
             pqxx::params{linuxUid}
@@ -122,14 +122,14 @@ unsigned int User::getUserIdByLinuxUID(const unsigned int linuxUid) {
     });
 }
 
-unsigned int User::createUser(const UserPtr& user) {
+unsigned int User::createUser(const UserPtr &user) {
     if (!user) throw std::invalid_argument("User::createUser received null user");
 
     log::Registry::db()->debug("[User] Creating user: {}", user->name);
 
     if (!user->roles.admin) throw std::runtime_error("User admin role must be set before creating a user");
 
-    return Transactions::exec("User::createUser", [&](pqxx::work& txn) -> unsigned int {
+    return Transactions::exec("User::createUser", [&](pqxx::work &txn) -> unsigned int {
         const pqxx::params userParams{
             user->name,
             user->email,
@@ -150,14 +150,14 @@ unsigned int User::createUser(const UserPtr& user) {
             pqxx::params{userId, user->roles.admin->id}
         );
 
-        const std::array userGlobalVaultRoles {
+        const std::array userGlobalVaultRoles{
             user->roles.admin->vGlobals.self,
             user->roles.admin->vGlobals.user,
             user->roles.admin->vGlobals.admin
         };
 
         // User global vault policies
-        for (const auto& globalPolicy : userGlobalVaultRoles) {
+        for (const auto &globalPolicy: userGlobalVaultRoles) {
             txn.exec(
                 pqxx::prepped{"user_global_vault_policy_upsert"},
                 pqxx::params{
@@ -174,7 +174,7 @@ unsigned int User::createUser(const UserPtr& user) {
         }
 
         // Existing vault role assignment shape preserved for now
-        for (const auto& [_, role] : user->roles.vaults) {
+        for (const auto &[_, role]: user->roles.vaults) {
             if (!role->assignment) {
                 log::Registry::db()->debug("[User] User role assignment not set");
                 continue;
@@ -196,11 +196,12 @@ unsigned int User::createUser(const UserPtr& user) {
             role->assignment_id = res.one_row()["id"].as<unsigned int>();
         }
 
-        // TODO: update this when moving to shared ptr overrides or otherwise
-        for (const auto& override : user->roles.vaults[0]->fs.overrides) {
+        const auto it = user->roles.vaults.find(0);
+        if (it != user->roles.vaults.end() && it->second) {
+            for (const auto &override: it->second->fs.overrides) {
                 if (!override) continue;
 
-                override->assignment_id = user->roles.vaults[0]->assignment_id;
+                override->assignment_id = it->second->assignment_id;
 
                 txn.exec(
                     pqxx::prepped{"vault_permission_override_upsert"},
@@ -213,15 +214,16 @@ unsigned int User::createUser(const UserPtr& user) {
                     }
                 );
             }
+        }
 
         return userId;
     });
 }
 
-void User::updateUser(const UserPtr& user) {
+void User::updateUser(const UserPtr &user) {
     if (!user) throw std::invalid_argument("User::updateUser received null user");
 
-    Transactions::exec("User::updateUser", [&](pqxx::work& txn) {
+    Transactions::exec("User::updateUser", [&](pqxx::work &txn) {
         const pqxx::params userParams{
             user->id,
             user->name,
@@ -247,13 +249,13 @@ void User::updateUser(const UserPtr& user) {
             pqxx::params{user->id}
         );
 
-        const std::array userGlobalVaultRoles {
+        const std::array userGlobalVaultRoles{
             user->roles.admin->vGlobals.self,
             user->roles.admin->vGlobals.user,
             user->roles.admin->vGlobals.admin
         };
 
-        for (const auto& globalPolicy : userGlobalVaultRoles) {
+        for (const auto &globalPolicy: userGlobalVaultRoles) {
             txn.exec(
                 pqxx::prepped{"user_global_vault_policy_upsert"},
                 pqxx::params{
@@ -271,8 +273,8 @@ void User::updateUser(const UserPtr& user) {
     });
 }
 
-bool User::authenticateUser(const std::string& name, const std::string& password) {
-    return Transactions::exec("User::authenticateUser", [&](pqxx::work& txn) -> bool {
+bool User::authenticateUser(const std::string &name, const std::string &password) {
+    return Transactions::exec("User::authenticateUser", [&](pqxx::work &txn) -> bool {
         const auto res = txn.exec(
             pqxx::prepped{"get_user_by_name"},
             pqxx::params{name}
@@ -285,8 +287,8 @@ bool User::authenticateUser(const std::string& name, const std::string& password
     });
 }
 
-void User::updateUserPassword(const unsigned int userId, const std::string& newPassword) {
-    Transactions::exec("User::updateUserPassword", [&](pqxx::work& txn) {
+void User::updateUserPassword(const unsigned int userId, const std::string &newPassword) {
+    Transactions::exec("User::updateUserPassword", [&](pqxx::work &txn) {
         txn.exec(
             pqxx::prepped{"update_user_password"},
             pqxx::params{userId, newPassword}
@@ -295,7 +297,7 @@ void User::updateUserPassword(const unsigned int userId, const std::string& newP
 }
 
 void User::deleteUser(const unsigned int userId) {
-    Transactions::exec("User::deleteUser", [&](pqxx::work& txn) {
+    Transactions::exec("User::deleteUser", [&](pqxx::work &txn) {
         txn.exec(
             pqxx::prepped{"delete_user"},
             pqxx::params{userId}
@@ -303,8 +305,8 @@ void User::deleteUser(const unsigned int userId) {
     });
 }
 
-std::vector<UserPtr> User::listUsers(model::ListQueryParams&& params) {
-    return Transactions::exec("User::listUsers", [&](pqxx::work& txn) -> std::vector<UserPtr> {
+std::vector<UserPtr> User::listUsers(model::ListQueryParams &&params) {
+    return Transactions::exec("User::listUsers", [&](pqxx::work &txn) -> std::vector<UserPtr> {
         const auto sql = model::appendPaginationAndFilter(
             "SELECT * FROM users",
             params,
@@ -316,7 +318,7 @@ std::vector<UserPtr> User::listUsers(model::ListQueryParams&& params) {
         std::vector<UserPtr> users;
         users.reserve(res.size());
 
-        for (const auto& row : res)
+        for (const auto &row: res)
             users.emplace_back(hydrateUser(txn, row));
 
         return users;
@@ -324,7 +326,7 @@ std::vector<UserPtr> User::listUsers(model::ListQueryParams&& params) {
 }
 
 void User::updateLastLoggedInUser(const unsigned int userId) {
-    Transactions::exec("User::updateLastLoggedInUser", [&](pqxx::work& txn) {
+    Transactions::exec("User::updateLastLoggedInUser", [&](pqxx::work &txn) {
         txn.exec(
             pqxx::prepped{"update_user_last_login"},
             pqxx::params{userId}
@@ -332,8 +334,8 @@ void User::updateLastLoggedInUser(const unsigned int userId) {
     });
 }
 
-bool User::userExists(const std::string& name) {
-    return Transactions::exec("User::userExists", [&](pqxx::work& txn) -> bool {
+bool User::userExists(const std::string &name) {
+    return Transactions::exec("User::userExists", [&](pqxx::work &txn) -> bool {
         return txn.exec(
             pqxx::prepped{"user_exists"},
             pqxx::params{name}
@@ -342,7 +344,7 @@ bool User::userExists(const std::string& name) {
 }
 
 bool User::adminUserExists() {
-    return Transactions::exec("User::adminUserExists", [](pqxx::work& txn) -> bool {
+    return Transactions::exec("User::adminUserExists", [](pqxx::work &txn) -> bool {
         return txn.exec(
             pqxx::prepped{"admin_user_exists"}
         ).one_field().as<bool>();
@@ -350,7 +352,7 @@ bool User::adminUserExists() {
 }
 
 bool User::adminPasswordIsDefault() {
-    return Transactions::exec("User::adminPasswordIsDefault", [](pqxx::work& txn) -> bool {
+    return Transactions::exec("User::adminPasswordIsDefault", [](pqxx::work &txn) -> bool {
         const auto passwordHash = txn.exec(
             pqxx::prepped{"get_admin_password"}
         ).one_field().as<std::string>();

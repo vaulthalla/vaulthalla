@@ -67,12 +67,12 @@ void vh::db::DBConnection::initPreparedAdminRoles() const {
                 description,
                 created_at,
                 updated_at,
-                identity_permissions::text AS identity_permissions,
-                audit_permissions::text    AS audit_permissions,
-                settings_permissions::text AS settings_permissions,
-                roles_permissions::text    AS roles_permissions,
-                vaults_permissions::text   AS vaults_permissions,
-                keys_permissions::text     AS keys_permissions
+                identity_permissions::bigint AS identity_permissions,
+                audit_permissions::bigint    AS audit_permissions,
+                settings_permissions::bigint AS settings_permissions,
+                roles_permissions::bigint    AS roles_permissions,
+                vaults_permissions::bigint   AS vaults_permissions,
+                keys_permissions::bigint     AS keys_permissions
         )SQL"
     );
 
@@ -113,12 +113,12 @@ void vh::db::DBConnection::initPreparedAdminRoles() const {
                 description,
                 created_at,
                 updated_at,
-                identity_permissions::text AS identity_permissions,
-                audit_permissions::text    AS audit_permissions,
-                settings_permissions::text AS settings_permissions,
-                roles_permissions::text    AS roles_permissions,
-                vaults_permissions::text   AS vaults_permissions,
-                keys_permissions::text     AS keys_permissions
+                identity_permissions::bigint AS identity_permissions,
+                audit_permissions::bigint    AS audit_permissions,
+                settings_permissions::bigint AS settings_permissions,
+                roles_permissions::bigint    AS roles_permissions,
+                vaults_permissions::bigint   AS vaults_permissions,
+                keys_permissions::bigint     AS keys_permissions
         )SQL"
     );
 
@@ -131,12 +131,12 @@ void vh::db::DBConnection::initPreparedAdminRoles() const {
                 description,
                 created_at,
                 updated_at,
-                identity_permissions::text AS identity_permissions,
-                audit_permissions::text    AS audit_permissions,
-                settings_permissions::text AS settings_permissions,
-                roles_permissions::text    AS roles_permissions,
-                vaults_permissions::text   AS vaults_permissions,
-                keys_permissions::text     AS keys_permissions
+                identity_permissions::bigint AS identity_permissions,
+                audit_permissions::bigint    AS audit_permissions,
+                settings_permissions::bigint AS settings_permissions,
+                roles_permissions::bigint    AS roles_permissions,
+                vaults_permissions::bigint   AS vaults_permissions,
+                keys_permissions::bigint     AS keys_permissions
             FROM admin_role
             WHERE id = $1
         )SQL"
@@ -151,12 +151,12 @@ void vh::db::DBConnection::initPreparedAdminRoles() const {
                 description,
                 created_at,
                 updated_at,
-                identity_permissions::text AS identity_permissions,
-                audit_permissions::text    AS audit_permissions,
-                settings_permissions::text AS settings_permissions,
-                roles_permissions::text    AS roles_permissions,
-                vaults_permissions::text   AS vaults_permissions,
-                keys_permissions::text     AS keys_permissions
+                identity_permissions::bigint AS identity_permissions,
+                audit_permissions::bigint    AS audit_permissions,
+                settings_permissions::bigint AS settings_permissions,
+                roles_permissions::bigint    AS roles_permissions,
+                vaults_permissions::bigint   AS vaults_permissions,
+                keys_permissions::bigint     AS keys_permissions
             FROM admin_role
             WHERE name = $1
         )SQL"
@@ -218,12 +218,12 @@ void vh::db::DBConnection::initPreparedAdminRoles() const {
                 description,
                 created_at,
                 updated_at,
-                identity_permissions::text AS identity_permissions,
-                audit_permissions::text    AS audit_permissions,
-                settings_permissions::text AS settings_permissions,
-                roles_permissions::text    AS roles_permissions,
-                vaults_permissions::text   AS vaults_permissions,
-                keys_permissions::text     AS keys_permissions
+                identity_permissions::bigint AS identity_permissions,
+                audit_permissions::bigint    AS audit_permissions,
+                settings_permissions::bigint AS settings_permissions,
+                roles_permissions::bigint    AS roles_permissions,
+                vaults_permissions::bigint   AS vaults_permissions,
+                keys_permissions::bigint     AS keys_permissions
             FROM admin_role
             ORDER BY name
         )SQL"

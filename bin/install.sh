@@ -185,6 +185,9 @@ sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE vaulthalla TO vaultha
 sudo -u postgres psql -d vaulthalla -c "GRANT USAGE, CREATE ON SCHEMA public TO vaulthalla;"
 
 if [[ "$DEV_MODE" == true ]]; then
+  sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='vaulthalla_test'" | grep -q 1 ||
+    sudo -u postgres psql -c "CREATE ROLE vaulthalla_test LOGIN;"
+
   sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='vh_cli_test'" | grep -q 1 ||
     sudo -u postgres psql -c "CREATE DATABASE vh_cli_test OWNER vaulthalla_test;"
 

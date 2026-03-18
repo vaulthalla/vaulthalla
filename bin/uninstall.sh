@@ -38,17 +38,37 @@ if systemctl is-active --quiet vaulthalla-cli.socket; then
     sudo systemctl kill vaulthalla-cli.socket || true
 fi
 
-if [ -d /etc/systemd/system/vaulthalla.service.d ]; then
-    sudo rm -rf /etc/systemd/system/vaulthalla.service.d
-fi
+# === Remove all Vaulthalla systemd units ===
+echo "🧹 Removing all vaulthalla systemd units..."
+
+# Stop anything still running (don’t care if it fails)
+sudo systemctl stop 'vaulthalla*' 2>/dev/null || true
+
+# Disable all units
+sudo systemctl disable 'vaulthalla*' 2>/dev/null || true
+
+# Remove override directories
+sudo rm -rf /etc/systemd/system/vaulthalla*.service.d
+
+# Remove units from /etc (user-installed overrides)
 sudo rm -f /etc/systemd/system/vaulthalla*
 
+# Remove units from /lib (package-installed units)
+sudo rm -f /lib/systemd/system/vaulthalla*
+
+# Reload systemd so it forgets they ever existed
 sudo systemctl daemon-reload
-echo "✅ Systemd services uninstalled."
+
+# Clear failed state cache (important for restart loops like you had)
+sudo systemctl reset-failed
+
+echo "✅ Vaulthalla systemd units fully purged."
+
 
 # === 2) Remove binaries ===
 echo "🧹 Removing installed binaries..."
-sudo rm -rf /usr/local/bin/vaulthalla
+sudo rm -f /usr/local/bin/vaulthalla*
+sudo rm -f /usr/bin/vaulthalla*
 
 # === 3) Remove runtime and config dirs ===
 echo "🗑️  Cleaning directories..."
@@ -58,6 +78,7 @@ sudo rm -rf /var/lib/vaulthalla
 sudo rm -rf /var/log/vaulthalla
 sudo rm -rf /run/vaulthalla
 sudo rm -rf /etc/vaulthalla
+sudo rm -rf /usr/share/vaulthalla
 
 # === 4) Remove system user ===
 if id vaulthalla &>/dev/null; then
@@ -77,27 +98,32 @@ fi
 
 # === 5) Drop PostgreSQL DB and user ===
 echo
-if [[ "$DEV_MODE" == true ]]; then
-    echo "⚠️  [DEV_MODE] Dropping PostgreSQL DB and user 'vaulthalla'..."
-    sudo -u postgres psql <<EOF
-REVOKE CONNECT ON DATABASE vaulthalla FROM public;
-SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'vaulthalla';
-DROP DATABASE IF EXISTS vaulthalla;
-DROP DATABASE IF EXISTS vh_cli_test;
-DROP USER IF EXISTS vaulthalla;
-EOF
+
+if ! command -v psql >/dev/null 2>&1 || ! id -u postgres >/dev/null 2>&1; then
+    echo "🛡️  PostgreSQL not installed or 'postgres' user missing. Skipping database cleanup."
 else
-    read -p "⚠️  Drop PostgreSQL database and user 'vaulthalla'? [y/N]: " confirm
-    if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
-        echo "🧨 Dropping PostgreSQL DB and user..."
+    if [[ "$DEV_MODE" == true ]]; then
+        echo "⚠️  [DEV_MODE] Dropping PostgreSQL DB and user 'vaulthalla'..."
         sudo -u postgres psql <<EOF
 REVOKE CONNECT ON DATABASE vaulthalla FROM public;
 SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'vaulthalla';
 DROP DATABASE IF EXISTS vaulthalla;
-DROP USER IF EXISTS vaulthalla;
+DROP DATABASE IF EXISTS vh_cli_test;
+DROP ROLE IF EXISTS vaulthalla;
 EOF
     else
-        echo "🛡️  Skipping database deletion. You can do it manually with psql if needed."
+        read -p "⚠️  Drop PostgreSQL database and user 'vaulthalla'? [y/N]: " confirm
+        if [[ "$confirm" =~ ^[Yy]$ ]]; then
+            echo "🧨 Dropping PostgreSQL DB and user..."
+            sudo -u postgres psql <<EOF
+REVOKE CONNECT ON DATABASE vaulthalla FROM public;
+SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'vaulthalla';
+DROP DATABASE IF EXISTS vaulthalla;
+DROP ROLE IF EXISTS vaulthalla;
+EOF
+        else
+            echo "🛡️  Skipping database deletion. You can do it manually with psql if needed."
+        fi
     fi
 fi
 

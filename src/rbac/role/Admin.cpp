@@ -1,5 +1,6 @@
 #include "rbac/role/Admin.hpp"
 #include "db/encoding/timestamp.hpp"
+#include "db/encoding/has.hpp"
 #include "protocols/shell/util/lineHelpers.hpp"
 #include "usages.hpp"
 
@@ -14,14 +15,18 @@ using namespace vh::protocols::shell;
 namespace vh::rbac::role {
     Admin::Admin(const pqxx::row &row, const pqxx::result &globalVaultRoles)
         : Meta(row),
-          user_id(row["user_id"].as<uint32_t>()),
-          identities(row["identities_permissions"].as<typename decltype(identities)::Mask>()),
+          identities(static_cast<typename decltype(identities)::Mask>(
+              row["identity_permissions"].as<uint64_t>())),
           vaults(row["vaults_permissions"].as<typename decltype(vaults)::Mask>()),
-          audits(static_cast<typename decltype(audits)::Mask>(row["audits_permissions"].as<uint32_t>())),
-          settings(row["settings_permissions"].as<typename decltype(settings)::Mask>()),
-          roles(row["roles_permissions"].as<typename decltype(roles)::Mask>()),
-          keys(row["keys_permissions"].as<typename decltype(keys)::Mask>()),
+          audits(static_cast<typename decltype(audits)::Mask>(row["audit_permissions"].as<uint64_t>())),
+          settings(static_cast<typename decltype(settings)::Mask>(
+              row["settings_permissions"].as<uint64_t>())),
+          roles(static_cast<typename decltype(roles)::Mask>(
+              row["roles_permissions"].as<uint64_t>())),
+          keys(static_cast<typename decltype(keys)::Mask>(
+              row["keys_permissions"].as<uint64_t>())),
           vGlobals(globalVaultRoles) {
+        if (hasColumn(row, "user_id") && !row["user_id"].is_null()) user_id = row["user_id"].as<uint32_t>();
     }
 
     Admin::Admin(const pqxx::row &row) : Admin(row, {}) {

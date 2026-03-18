@@ -5,7 +5,7 @@
 #include "protocols/ws/Session.hpp"
 #include "runtime/Deps.hpp"
 #include "rbac/role/Admin.hpp"
-#include "rbac/resolver/admin/*.hpp"
+#include "rbac/resolver/admin/all.hpp"
 
 #include <nlohmann/json.hpp>
 

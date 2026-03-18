@@ -1,7 +1,7 @@
 #pragma once
 
 #include "protocols/ws/Session.hpp"
-#include "rbac/resolver/vault/*.hpp"
+#include "rbac/resolver/vault/all.hpp"
 
 #include <filesystem>
 #include <memory>

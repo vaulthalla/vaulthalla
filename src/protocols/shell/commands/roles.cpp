@@ -111,7 +111,7 @@
 //     if (role->type != "user" && role->type != "vault")
 //         throw std::runtime_error("assignPermissions: unknown role type: " + role->type);
 //
-//     role->permissions = role->type == "user"
+//     role->permissions = role->type == "admin"
 //         ? parseUserRolePermissions(call, role->permissions)
 //         : parseVaultRolePermissions(call, role->permissions);
 // }
@@ -123,8 +123,8 @@
 //     const auto type = call.positionals[0];
 //     const auto name = call.positionals[1];
 //
-//     if (type != "user" && type != "vault")
-//         return invalid("roles create: type must be either 'user' or 'vault'");
+//     if (type != "admin" && type != "vault")
+//         return invalid("roles create: type must be either 'admin' or 'vault'");
 //
 //     const auto role = std::make_shared<Role>();
 //     role->name = name,

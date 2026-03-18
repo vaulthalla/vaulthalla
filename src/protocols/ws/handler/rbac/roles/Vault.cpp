@@ -5,7 +5,7 @@
 #include "identities/User.hpp"
 #include "rbac/role/Admin.hpp"
 #include "rbac/role/Vault.hpp"
-#include "rbac/resolver/vault/*.hpp"
+#include "rbac/resolver/vault/all.hpp"
 #include "rbac/permission/vault/Roles.hpp"
 
 using namespace vh::rbac;

@@ -41,6 +41,7 @@ check_pkg libpdfium-dev "libpdfium-dev"
 check_pkg libpqxx-dev "libpqxx-dev"
 
 # -- Libraries --
+check_pkg postgresql "postgresql"
 check_pkg pkg-config "pkg-config"
 check_pkg libturbojpeg0-dev "libturbojpeg0-dev"
 check_pkg libmagic1 "libmagic1"

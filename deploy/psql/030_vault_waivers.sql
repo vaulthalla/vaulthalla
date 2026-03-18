@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS waiver_owner_overrides
 
     overriding_role_id          INTEGER NOT NULL,
     overriding_role_name        VARCHAR(50) NOT NULL,
-    overriding_role_scope       VARCHAR(12) NOT NULL CHECK (overriding_role_scope IN ('user', 'vault')),
+    overriding_role_scope       permission_categories NOT NULL,
     overriding_role_sync_permissions BIT(32) NOT NULL,
     snapshot_at                 TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS waiver_permission_snapshots
 
     permission_id            INTEGER NOT NULL,
     permission_name          VARCHAR(50) NOT NULL,
-    permission_category      VARCHAR(12) NOT NULL CHECK (permission_category IN ('user', 'vault')),
+    permission_category      permission_categories NOT NULL,
     permission_bit_position  INTEGER NOT NULL CHECK (permission_bit_position >= 0 AND permission_bit_position < 64),
 
     UNIQUE (waiver_id, permission_bit_position)

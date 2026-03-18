@@ -10,7 +10,7 @@
 #include "sync/model/Policy.hpp"
 #include "db/encoding/interval.hpp"
 #include "CommandUsage.hpp"
-#include "rbac/resolver/vault/*.hpp"
+#include "rbac/resolver/vault/all.hpp"
 
 #include <optional>
 #include <string>

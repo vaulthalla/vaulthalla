@@ -13,9 +13,9 @@ namespace pqxx { class row; class result; }
 namespace vh::rbac::permission::vault {
 
 struct Filesystem {
-    fs::Files files;
-    fs::Directories directories;
-    std::vector<std::shared_ptr<Override>> overrides;
+    fs::Files files{};
+    fs::Directories directories{};
+    std::vector<std::shared_ptr<Override>> overrides{};
 
     Filesystem() = default;
     explicit Filesystem(const pqxx::row& row);

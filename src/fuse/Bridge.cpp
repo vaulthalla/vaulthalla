@@ -13,7 +13,7 @@
 #include "db/query/fs/Directory.hpp"
 #include "log/Registry.hpp"
 #include "fs/cache/Registry.hpp"
-#include "rbac/resolver/vault/*.hpp"
+#include "rbac/resolver/vault/all.hpp"
 
 #include <cerrno>
 #include <cstring>
