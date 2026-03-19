@@ -2,6 +2,7 @@
 
 #include "db/model/ListQueryParams.hpp"
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -18,16 +19,16 @@ class Group {
 public:
     Group() = default;
 
-    static unsigned int createGroup(const GroupPtr& group);
+    static uint32_t createGroup(const GroupPtr& group);
     static void updateGroup(const GroupPtr& group);
-    static void deleteGroup(unsigned int groupId);
-    static void addMemberToGroup(unsigned int group, unsigned int member);
-    static void addMembersToGroup(unsigned int group, const std::vector<unsigned int>& members);
-    static void removeMemberFromGroup(unsigned int group, unsigned int member);
-    static void removeMembersFromGroup(unsigned int group, const std::vector<unsigned int>& members);
-    static GroupPtr getGroup(unsigned int groupId);
+    static void deleteGroup(uint32_t groupId);
+    static void addMemberToGroup(uint32_t group, uint32_t member);
+    static void addMembersToGroup(uint32_t group, const std::vector<uint32_t>& members);
+    static void removeMemberFromGroup(uint32_t group, uint32_t member);
+    static void removeMembersFromGroup(uint32_t group, const std::vector<uint32_t>& members);
+    static GroupPtr getGroup(uint32_t groupId);
     static GroupPtr getGroupByName(const std::string& name);
-    static std::vector<GroupPtr> listGroups(const std::optional<unsigned int>& userId = {}, model::ListQueryParams&& params = {});
+    static std::vector<GroupPtr> listGroups(const std::optional<uint32_t>& userId = {}, model::ListQueryParams&& params = {});
     [[nodiscard]] static bool groupExists(const std::string& name);
 };
 

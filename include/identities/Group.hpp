@@ -1,13 +1,16 @@
 #pragma once
 
 #include <ctime>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
+#include <unordered_map>
 #include <nlohmann/json_fwd.hpp>
 
 namespace pqxx { class row; class result; }
+namespace vh::rbac::role { struct Vault; }
 
 namespace vh::identities {
 
@@ -23,6 +26,10 @@ struct GroupMember {
 };
 
 struct Group {
+    struct RoleAssignments {
+        std::unordered_map<uint32_t, std::shared_ptr<rbac::role::Vault>> vaults{};
+    };
+
     unsigned int id{};
     std::optional<unsigned int> linux_gid{std::nullopt};
     std::string name;
@@ -31,9 +38,10 @@ struct Group {
     std::optional<std::time_t> updated_at{std::nullopt};
 
     std::vector<std::shared_ptr<GroupMember>> members{};
+    RoleAssignments roles{};
 
     Group() = default;
-    explicit Group(const pqxx::row& gr, const pqxx::result& members);
+    Group(const pqxx::row& gr, const pqxx::result& members, std::unordered_map<uint32_t, std::shared_ptr<rbac::role::Vault>>&& vRoles);
     explicit Group(const nlohmann::json& j);
 };
 

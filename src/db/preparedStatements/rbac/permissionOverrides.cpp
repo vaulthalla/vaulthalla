@@ -217,7 +217,7 @@ void vh::db::DBConnection::initPreparedPermOverrides() const {
     );
 
     conn_->prepare(
-        "vault_permission_override_list_by_role_id",
+        "vault_permission_override_list_by_assignment_id",
         R"SQL(
             SELECT
                 vpo.id AS override_id,
@@ -245,7 +245,7 @@ void vh::db::DBConnection::initPreparedPermOverrides() const {
                 ON p.id = vpo.permission_id
             INNER JOIN vault_role_assignments vra
                 ON vra.id = vpo.assignment_id
-            WHERE vra.role_id = $1
+            WHERE vra.id = $1
             ORDER BY
                 vra.vault_id,
                 vra.subject_type,
@@ -253,82 +253,5 @@ void vh::db::DBConnection::initPreparedPermOverrides() const {
                 p.bit_position,
                 vpo.glob_path
         )SQL"
-    );
-
-    conn_->prepare(
-        "vault_permission_override_list_for_user_and_groups",
-        R"SQL(
-        (
-            SELECT
-                p.id AS permission_override_id,
-                p.name,
-                p.description,
-                p.category,
-                p.bit_position,
-                p.created_at,
-                p.updated_at,
-
-                vpo.id AS override_id,
-                vpo.enabled,
-                vpo.glob_path,
-                vpo.assignment_id,
-                vpo.effect,
-                vpo.created_at,
-                vpo.updated_at,
-
-                vra.vault_id,
-                vra.subject_type,
-                vra.subject_id,
-                vra.role_id,
-                vra.assigned_at
-            FROM permission p
-            JOIN vault_permission_overrides vpo
-                ON p.id = vpo.permission_id
-            JOIN vault_role_assignments vra
-                ON vpo.assignment_id = vra.id
-            WHERE vra.subject_type = 'user'
-              AND vra.subject_id = $1
-        )
-        UNION ALL
-        (
-            SELECT
-                p.id AS permission_override_id,
-                p.name,
-                p.description,
-                p.category,
-                p.bit_position,
-                p.created_at,
-                p.updated_at,
-
-                vpo.id AS override_id,
-                vpo.enabled,
-                vpo.glob_path,
-                vpo.assignment_id,
-                vpo.effect,
-                vpo.created_at,
-                vpo.updated_at,
-
-                vra.vault_id,
-                vra.subject_type,
-                vra.subject_id,
-                vra.role_id,
-                vra.assigned_at
-            FROM permission p
-            JOIN vault_permission_overrides vpo
-                ON p.id = vpo.permission_id
-            JOIN vault_role_assignments vra
-                ON vpo.assignment_id = vra.id
-            JOIN group_members gm
-                ON vra.subject_type = 'group'
-               AND vra.subject_id = gm.group_id
-            WHERE gm.user_id = $1
-        )
-        ORDER BY
-            vault_id,
-            subject_type,
-            subject_id,
-            bit_position,
-            glob_path
-    )SQL"
     );
 }

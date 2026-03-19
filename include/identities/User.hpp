@@ -80,7 +80,7 @@ namespace vh::identities {
         std::optional<std::string> email{std::nullopt};
 
         RoleAssignments roles{};
-        std::vector<std::shared_ptr<Group> > groups{};
+        std::vector<std::shared_ptr<Group>> groups{};
         Meta meta{};
 
         mutable std::mutex mutex_{};
@@ -95,8 +95,8 @@ namespace vh::identities {
             const pqxx::row &user,
             const pqxx::row &adminRole,
             const pqxx::result &globalVaultRoles,
-            const pqxx::result &vaultRoles,
-            const pqxx::result &overrides
+            std::unordered_map<uint32_t, std::shared_ptr<rbac::role::Vault>>&& vRoles,
+            std::vector<std::shared_ptr<Group>>&& groups
         );
 
         bool operator==(const User &other) const;

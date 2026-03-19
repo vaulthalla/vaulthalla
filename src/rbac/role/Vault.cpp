@@ -9,8 +9,9 @@
 using namespace vh::db::encoding;
 
 namespace vh::rbac::role {
+    Vault::Vault(const pqxx::row &row) : Vault(row, pqxx::result()) {}
 
-Vault::Vault(const pqxx::row& row, const pqxx::result& overrides)
+    Vault::Vault(const pqxx::row& row, const pqxx::result& overrides)
     : Meta(row),
       Base(row, overrides),
       assignment(std::nullopt) {

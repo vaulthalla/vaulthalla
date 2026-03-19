@@ -24,7 +24,7 @@ struct RefreshToken {
     static void purgeOldRevoked();
     static void revokeAndPurge(unsigned int userId);
 
-    static std::shared_ptr<identities::User> getUserByJti(const std::string& jti);
+    static std::shared_ptr<vh::identities::User> getUserByJti(const std::string& jti);
 };
 
 }

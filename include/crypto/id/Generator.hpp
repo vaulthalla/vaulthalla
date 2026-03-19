@@ -17,7 +17,7 @@ struct IdOptions {
     size_t prefix_chars = 6;
 
     // How many random bytes per ID (not counting prefix). 16 bytes => 128-bit => 26 chars.
-    // You can crank this down if you really want shorter IDs, at collision risk.
+    // crank this down if you want shorter IDs, at collision risk.
     size_t random_bytes = 16;
 
     // Separator between the namespace prefix and the random body. "_" and "-" are safe.
@@ -74,7 +74,7 @@ private:
     [[nodiscard]] std::string random_body_() const {
         std::vector<uint8_t> buf(options_.random_bytes);
         randombytes_buf(buf.data(), buf.size());
-        // If you want RFC4122-ish semantics embedded here, you can set version/variant bits
+        // If RFC4122-ish semantics are desired they can be embedded here, set version/variant bits
         // on the first few bytes *before* encoding. With raw Base32 bodies this is optional.
         return b32_crockford_encode(buf.data(), buf.size(), options_.out_case);
     }

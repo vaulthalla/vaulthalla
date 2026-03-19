@@ -4,12 +4,11 @@
 #include "db/Transactions.hpp"
 #include "db/encoding/timestamp.hpp"
 #include "log/Registry.hpp"
-#include "db/query/identities/User.hpp"
+#include "db/query/identities/helpers.hpp"
 
 #include <chrono>
 
 using namespace vh::db::query::auth;
-using namespace vh::identities;
 
 void RefreshToken::set(const std::shared_ptr<vh::auth::model::RefreshToken>& token) {
     if (!token) {
@@ -104,11 +103,11 @@ void RefreshToken::revokeAndPurge(const unsigned int userId) {
     });
 }
 
-std::shared_ptr<User> RefreshToken::getUserByJti(const std::string& jti) {
+std::shared_ptr<vh::identities::User> RefreshToken::getUserByJti(const std::string& jti) {
     return Transactions::exec(
         "RefreshToken::getUserByRefreshToken",
-        [&](pqxx::work& txn) -> std::shared_ptr<User> {
+        [&](pqxx::work& txn) -> std::shared_ptr<vh::identities::User> {
             const auto res = txn.exec(pqxx::prepped{"get_user_by_refresh_token_jti"}, pqxx::params{jti});
-            return db::query::identities::User::hydrateUser(txn, res.one_row());
+            return identities::hydrateUser(txn, res.one_row());
         });
 }

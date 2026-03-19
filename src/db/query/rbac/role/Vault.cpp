@@ -69,12 +69,7 @@ namespace vh::db::query::rbac::role {
 
             if (roleRes.empty()) return nullptr;
 
-            const auto overridesRes = txn.exec(
-                pqxx::prepped{"vault_permission_override_list_by_role_id"},
-                pqxx::params{id}
-            );
-
-            return std::make_shared<VaultRole>(roleRes.one_row(), overridesRes);
+            return std::make_shared<VaultRole>(roleRes.one_row());
         });
     }
 
@@ -87,14 +82,7 @@ namespace vh::db::query::rbac::role {
 
             if (roleRes.empty()) return nullptr;
 
-            const auto roleId = roleRes.one_row()["id"].as<unsigned int>();
-
-            const auto overridesRes = txn.exec(
-                pqxx::prepped{"vault_permission_override_list_by_role_id"},
-                pqxx::params{roleId}
-            );
-
-            return std::make_shared<VaultRole>(roleRes.one_row(), overridesRes);
+            return std::make_shared<VaultRole>(roleRes.one_row());
         });
     }
 
@@ -130,16 +118,7 @@ namespace vh::db::query::rbac::role {
 
             roles.reserve(roleRes.size());
 
-            for (const auto& row : roleRes) {
-                const auto roleId = row["id"].as<unsigned int>();
-
-                const auto overridesRes = txn.exec(
-                    pqxx::prepped{"vault_permission_override_list_by_role_id"},
-                    pqxx::params{roleId}
-                );
-
-                roles.emplace_back(std::make_shared<VaultRole>(row, overridesRes));
-            }
+            for (const auto& row : roleRes) roles.emplace_back(std::make_shared<VaultRole>(row));
 
             return template_::paginate(std::move(roles), params);
         });

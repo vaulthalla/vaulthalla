@@ -3,6 +3,7 @@
 #include "db/encoding/timestamp.hpp"
 #include "protocols/shell/Table.hpp"
 #include "protocols/shell/util/lineHelpers.hpp"
+#include "rbac/role/Vault.hpp"
 
 #include <pqxx/result>
 #include <nlohmann/json.hpp>
@@ -16,7 +17,7 @@ GroupMember::GroupMember(const pqxx::row& row)
     : user(std::make_shared<User>(row)),
       joined_at(parsePostgresTimestamp(row["joined_at"].as<std::string>())) {}
 
-Group::Group(const pqxx::row& gr, const pqxx::result& members)
+Group::Group(const pqxx::row& gr, const pqxx::result& members, std::unordered_map<uint32_t, std::shared_ptr<rbac::role::Vault>>&& vRoles)
     : id(gr["id"].as<unsigned int>()),
       linux_gid(gr["linux_gid"].as<std::optional<unsigned int>>()),
       name(gr["name"].as<std::string>()),
@@ -26,6 +27,7 @@ Group::Group(const pqxx::row& gr, const pqxx::result& members)
                      ? std::nullopt
                      : std::make_optional(parsePostgresTimestamp(gr["updated_at"].as<std::string>()))) {
     for (const auto& memberRow : members) this->members.push_back(std::make_shared<GroupMember>(memberRow));
+    roles.vaults = std::move(vRoles);
 }
 
 Group::Group(const nlohmann::json& j)
@@ -88,7 +90,7 @@ void from_json(const nlohmann::json& j, Group& g) {
 
 void to_json(nlohmann::json& j, const std::vector<std::shared_ptr<Group>>& groups) {
     j = nlohmann::json::array();
-    for (const auto& group : groups) j.push_back(*group);
+    for (const auto& group : groups) j.emplace_back(*group);
 }
 
 std::vector<std::shared_ptr<Group> > groups_from_json(const nlohmann::json& j) {

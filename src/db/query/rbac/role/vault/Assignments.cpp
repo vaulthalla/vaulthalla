@@ -6,10 +6,10 @@
 namespace {
 
     std::shared_ptr<vh::rbac::role::Vault> makeAssignedVaultRole(pqxx::work& txn, const pqxx::row& row) {
-        const auto roleId = row["vault_role_id"].as<uint32_t>();
+        const auto roleId = row["assignment_id"].as<uint32_t>();
 
         const auto overridesRes = txn.exec(
-            pqxx::prepped{"vault_permission_override_list_by_role_id"},
+            pqxx::prepped{"vault_permission_override_list_by_assignment_id"},
             pqxx::params{roleId}
         );
 

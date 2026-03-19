@@ -9,9 +9,11 @@
 #include "db/Transactions.hpp"
 #include "identities/User.hpp"
 #include "log/Registry.hpp"
+#include "db/query/identities/helpers.hpp"
 
 #include <stdexcept>
 #include <array>
+#include <pqxx/pqxx>
 
 using namespace vh::auth::model;
 
@@ -19,46 +21,6 @@ using U = vh::identities::User;
 using UserPtr = std::shared_ptr<U>;
 
 namespace vh::db::query::identities {
-    UserPtr User::hydrateUser(pqxx::work &txn, const pqxx::row &userRow) {
-        const auto userId = userRow["id"].as<unsigned int>();
-
-        // Singular admin-role assignment joined to full admin_role
-        const auto adminRoleRes = txn.exec(
-            pqxx::prepped{"admin_role_assignment_get_by_user_id"},
-            pqxx::params{userId}
-        );
-
-        if (adminRoleRes.empty())
-            throw std::runtime_error("User " + std::to_string(userId) + " is missing an admin role assignment");
-
-        const auto adminRoleRow = adminRoleRes.one_row();
-
-        // Three global vault policy rows: self / user / admin
-        const auto globalPoliciesRes = txn.exec(
-            pqxx::prepped{"user_global_vault_policy_list_by_user"},
-            pqxx::params{userId}
-        );
-
-        // Existing/bridging shape for vault-role assignments and overrides.
-        // Keep these wired however your current User model expects them.
-        const auto rolesRes = txn.exec(
-            pqxx::prepped{"get_user_and_group_assigned_vault_roles"},
-            pqxx::params{userId}
-        );
-
-        const auto overridesRes = txn.exec(
-            pqxx::prepped{"vault_permission_override_list_for_user_and_groups"},
-            pqxx::params{userId}
-        );
-
-        return std::make_shared<U>(
-            userRow,
-            adminRoleRow,
-            globalPoliciesRes,
-            rolesRes,
-            overridesRes
-        );
-    }
 
     UserPtr User::getUserByName(const std::string &name) {
         return Transactions::exec("User::getUserByName", [&](pqxx::work &txn) -> UserPtr {
@@ -139,82 +101,14 @@ namespace vh::db::query::identities {
                 user->meta.updated_by
             };
 
-            const auto userId = txn.exec(
+            user->id = txn.exec(
                 pqxx::prepped{"insert_user"},
                 userParams
-            ).one_row()[0].as<unsigned int>();
+            ).one_row()[0].as<uint32_t>();
 
-            // Singular admin-role assignment
-            txn.exec(
-                pqxx::prepped{"admin_role_assignment_upsert"},
-                pqxx::params{userId, user->roles.admin->id}
-            );
+            upsertUserRoles(txn, user);
 
-            const std::array userGlobalVaultRoles{
-                user->roles.admin->vGlobals.self,
-                user->roles.admin->vGlobals.user,
-                user->roles.admin->vGlobals.admin
-            };
-
-            // User global vault policies
-            for (const auto &globalPolicy: userGlobalVaultRoles) {
-                txn.exec(
-                    pqxx::prepped{"user_global_vault_policy_upsert"},
-                    pqxx::params{
-                        userId,
-                        globalPolicy.template_role_id,
-                        globalPolicy.enforce_template,
-                        rbac::role::vault::to_string(globalPolicy.scope),
-                        globalPolicy.fs.files.toBitString(),
-                        globalPolicy.fs.directories.toBitString(),
-                        globalPolicy.sync.toBitString(),
-                        globalPolicy.roles.toBitString()
-                    }
-                );
-            }
-
-            // Existing vault role assignment shape preserved for now
-            for (const auto &[_, role]: user->roles.vaults) {
-                if (!role->assignment) {
-                    log::Registry::db()->debug("[User] User role assignment not set");
-                    continue;
-                }
-
-                pqxx::params roleParams{
-                    role->assignment->vault_id,
-                    "user",
-                    userId,
-                    role->id
-                };
-
-                const auto res = txn.exec(
-                    pqxx::prepped{"vault_role_assignment_upsert"},
-                    roleParams
-                );
-
-                if (res.empty()) continue;
-                role->assignment_id = res.one_row()["id"].as<unsigned int>();
-            }
-
-            const auto it = user->roles.vaults.find(0);
-            if (it != user->roles.vaults.end() && it->second) {
-                for (auto &override: it->second->fs.overrides) {
-                    override.assignment_id = it->second->assignment_id;
-
-                    txn.exec(
-                        pqxx::prepped{"vault_permission_override_upsert"},
-                        pqxx::params{
-                            override.assignment_id,
-                            override.permission.id,
-                            override.glob_path(),
-                            override.enabled,
-                            to_string(override.effect)
-                        }
-                    );
-                }
-            }
-
-            return userId;
+            return user->id;
         });
     }
 
@@ -234,40 +128,13 @@ namespace vh::db::query::identities {
 
             txn.exec(pqxx::prepped{"update_user"}, userParams);
 
-            // Singular admin-role assignment
-            if (user->roles.admin)
-                txn.exec(
-                    pqxx::prepped{"admin_role_assignment_upsert"},
-                    pqxx::params{user->id, user->roles.admin->id}
-                );
-
             // Simplest bridge shape for now: replace all global policies for user, then upsert current set.
             txn.exec(
                 pqxx::prepped{"user_global_vault_policy_delete_all_for_user"},
                 pqxx::params{user->id}
             );
 
-            const std::array userGlobalVaultRoles{
-                user->roles.admin->vGlobals.self,
-                user->roles.admin->vGlobals.user,
-                user->roles.admin->vGlobals.admin
-            };
-
-            for (const auto &globalPolicy: userGlobalVaultRoles) {
-                txn.exec(
-                    pqxx::prepped{"user_global_vault_policy_upsert"},
-                    pqxx::params{
-                        user->id,
-                        globalPolicy.template_role_id,
-                        globalPolicy.enforce_template,
-                        rbac::role::vault::to_string(globalPolicy.scope),
-                        globalPolicy.fs.files.toBitString(),
-                        globalPolicy.fs.directories.toBitString(),
-                        globalPolicy.sync.toBitString(),
-                        globalPolicy.roles.toBitString(),
-                    }
-                );
-            }
+            upsertUserRoles(txn, user);
         });
     }
 

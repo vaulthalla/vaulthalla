@@ -103,11 +103,12 @@ namespace vh::identities {
         const pqxx::row &user,
         const pqxx::row &adminRole,
         const pqxx::result &globalVaultRoles,
-        const pqxx::result &vaultRoles,
-        const pqxx::result &overrides
+        std::unordered_map<uint32_t, std::shared_ptr<rbac::role::Vault>>&& vRoles,
+        std::vector<std::shared_ptr<Group>>&& groups
     ) : User(user) {
         roles.admin = std::make_shared<Admin>(adminRole, globalVaultRoles);
-        roles.vaults = vault_roles_from_pq_result(vaultRoles, overrides);
+        roles.vaults = std::move(vRoles);
+        this->groups = std::move(groups);
     }
 
     bool User::operator==(const User &other) const {

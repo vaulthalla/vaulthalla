@@ -25,6 +25,7 @@ namespace vh::rbac::role {
 
         Vault() = default;
 
+        explicit Vault(const pqxx::row& row);
         Vault(const pqxx::row &row, const pqxx::result &overrides);
 
         explicit Vault(const nlohmann::json &j);
