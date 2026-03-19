@@ -20,7 +20,8 @@ namespace vh::rbac::resolver::vault {
         static_assert(std::is_enum_v<EnumT>, "vh::rbac::vault::Context<EnumT>: EnumT must be an enum type");
 
         std::shared_ptr<identities::User> user;
-        EnumT permission{};
+        std::optional<EnumT> permission{std::nullopt};
+        std::vector<EnumT> permissions{};
         std::optional<std::string> target_subject_type{std::nullopt};
         std::optional<uint32_t> target_subject_id{std::nullopt};
         std::optional<uint32_t> vault_id{std::nullopt};
@@ -28,7 +29,7 @@ namespace vh::rbac::resolver::vault {
         std::optional<std::shared_ptr<vh::fs::model::Entry> > entry{std::nullopt};
 
         [[nodiscard]] bool isValid() const {
-            return !!user;
+            return !!user && (permission || !permissions.empty());
         }
     };
 }

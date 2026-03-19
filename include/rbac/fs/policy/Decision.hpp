@@ -15,11 +15,14 @@ namespace vh::rbac::fs::policy {
             Allowed,
             MissingPath,
             MissingEntry,
+            MissingPathAndEntry,
+            MissingUser,
             InvalidActionForEntryType,
             DeniedByOverride,
             AllowedByOverride,
             DeniedByBasePermissions,
-            AllowedByBasePermissions
+            AllowedByBasePermissions,
+            StorageEngineNotFound
         };
 
         bool allowed{false};

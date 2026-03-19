@@ -2,6 +2,7 @@
 
 #include "rbac/resolver/ContextPolicy/Fwd.hpp"
 #include "rbac/resolver/admin/ResolvedContext.hpp"
+#include "rbac/resolver/admin/Context.hpp"
 
 #include <memory>
 
@@ -13,7 +14,8 @@ namespace vh::rbac::resolver::admin {
     struct ContextPolicy {
         static bool validate(const std::shared_ptr<identities::User>&,
                              const ResolvedContext&,
-                             EnumT) {
+                             EnumT,
+                             const Context<EnumT>&) {
             return true;
         }
     };

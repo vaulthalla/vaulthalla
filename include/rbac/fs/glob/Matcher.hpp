@@ -2,16 +2,23 @@
 
 #include "rbac/fs/glob/model/Pattern.hpp"
 
-#include <string>
+#include <filesystem>
 #include <string_view>
 
 namespace vh::rbac::fs::glob {
     struct Matcher {
-        static bool matches(const model::Pattern &pattern, const std::string &absolutePath);
+        using Path = std::filesystem::path;
 
-        static bool matches(const std::string &pattern, const std::string &absolutePath);
+        // Match a precompiled pattern against a vault-absolute path such as:
+        //   /docs/report.pdf
+        //   /images/raw/cat.png
+        static bool matches(const model::Pattern &pattern, const Path &path);
+
+        // Parse + match in one call.
+        static bool matches(std::string_view pattern, const Path &path);
 
     private:
-        static bool validatePath(std::string_view absolutePath);
+        static bool validatePath(const Path &path);
+        static std::string normalizePath(const Path &path);
     };
 }

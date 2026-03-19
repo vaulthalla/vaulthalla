@@ -2,12 +2,11 @@
 
 #include "rbac/fs/glob/model/Pattern.hpp"
 
-#include <string>
+#include <string_view>
 
 namespace vh::rbac::fs::glob {
     struct Tokenizer {
-        static model::Pattern parse(const std::string &pattern);
-
-        static void validate(const std::string &pattern);
+        static model::Pattern parse(std::string_view pattern);
+        static void validate(std::string_view pattern);
     };
 }

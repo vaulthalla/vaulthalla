@@ -2,6 +2,7 @@
 #include "rbac/fs/glob/model/Token.hpp"
 
 #include <stdexcept>
+#include <string>
 
 namespace vh::rbac::fs::glob {
     namespace {
@@ -12,18 +13,6 @@ namespace vh::rbac::fs::glob {
             return c == '*' || c == '?' || c == '/';
         }
 
-        // [[nodiscard]] std::string tokenTypeToString(const Token::Type type) {
-        //     switch (type) {
-        //         case Token::Type::Literal: return "Literal";
-        //         case Token::Type::Star: return "Star";
-        //         case Token::Type::DoubleStar: return "DoubleStar";
-        //         case Token::Type::Question: return "Question";
-        //         case Token::Type::Slash: return "Slash";
-        //     }
-        //
-        //     return "Unknown";
-        // }
-
         void pushLiteralIfNeeded(std::string &buffer, std::vector<Token> &tokens) {
             if (buffer.empty()) return;
             tokens.push_back(Token{Token::Type::Literal, buffer});
@@ -31,10 +20,10 @@ namespace vh::rbac::fs::glob {
         }
     }
 
-    void Tokenizer::validate(const std::string &pattern) {
+    void Tokenizer::validate(std::string_view pattern) {
         if (pattern.empty()) throw std::runtime_error("Glob pattern cannot be empty");
         if (pattern.front() != '/') throw std::runtime_error(
-            "Glob pattern must be absolute relative to vault and begin with '/'");
+            "Glob pattern must be vault-absolute and begin with '/'");
 
         for (std::size_t i = 0; i < pattern.size(); ++i) {
             const char c = pattern[i];
@@ -54,11 +43,11 @@ namespace vh::rbac::fs::glob {
         }
     }
 
-    model::Pattern Tokenizer::parse(const std::string &pattern) {
+    model::Pattern Tokenizer::parse(std::string_view pattern) {
         validate(pattern);
 
         Pattern compiled;
-        compiled.source = pattern;
+        compiled.source = std::string(pattern);
 
         std::string literalBuffer;
 

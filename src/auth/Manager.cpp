@@ -32,14 +32,14 @@ void Manager::registerUser(std::shared_ptr<User> user, const std::string& passwo
     user->setPasswordHash(hash::password(password));
     db::query::identities::User::createUser(user);
 
-    user = findUser(user->name);
+    user = getUser(user->name);
     runtime::Deps::get().storageManager->initUserStorage(user);
 
     log::Registry::auth()->info("[AuthManager] User registered: {}", user->name);
 }
 
 void Manager::loginUser(const std::string& name, const std::string& password, const std::shared_ptr<Session>& session) {
-    auto user = findUser(name);
+    auto user = getUser(name);
     if (!user) throw std::runtime_error("User not found: " + name);
 
     if (!hash::verifyPassword(password, user->password_hash)) throw std::runtime_error(
@@ -58,14 +58,14 @@ void Manager::updateUser(const std::shared_ptr<User>& user) {
     if (!user) throw std::runtime_error("Cannot update null user");
 
     db::query::identities::User::updateUser(user);
-    users_[user->name] = db::query::identities::User::getUserById(user->id);
+    usersByName_[user->name] = db::query::identities::User::getUserById(user->id);
 
     log::Registry::auth()->debug("[AuthManager] User updated: {}", user->name);
 }
 
 void Manager::changePassword(const std::string& name, const std::string& oldPassword,
                              const std::string& newPassword) {
-    const auto user = findUser(name);
+    const auto user = getUser(name);
     if (!user) throw std::runtime_error("User not found: " + name);
 
     if (!hash::verifyPassword(oldPassword, user->password_hash)) throw std::runtime_error(
@@ -77,15 +77,45 @@ void Manager::changePassword(const std::string& name, const std::string& oldPass
     log::Registry::auth()->info("[AuthManager] Changing password for user: {}", user->name);
 }
 
-std::shared_ptr<User> Manager::findUser(const std::string& name) {
-    if (users_.contains(name)) return users_[name];
+std::shared_ptr<User> Manager::getUser(const std::string& name) {
+    {
+        std::scoped_lock lock(mutex_);
+        if (usersByName_.contains(name)) return usersByName_[name];
+    }
 
     if (const auto user = db::query::identities::User::getUserByName(name)) {
-        users_[name] = user;
+        cacheUser(user);
         return user;
     }
 
     throw std::runtime_error("User not found: " + name);
 }
 
+std::shared_ptr<identities::User> Manager::getUser(const uint32_t id) {
+    {
+        std::scoped_lock lock(mutex_);
+        if (usersById_.contains(id)) return usersById_[id];
+    }
+
+    if (const auto user = db::query::identities::User::getUserById(id)) {
+        cacheUser(user);
+        return user;
+    }
+
+    throw std::runtime_error("User not found: " + std::to_string(id));
+}
+
+void Manager::cacheUser(std::shared_ptr<identities::User> user) {
+    if (!user) return;
+    std::scoped_lock lock(mutex_);
+    usersByName_[user->name] = user;
+    usersById_[user->id] = user;
+}
+
+void Manager::evictUser(std::shared_ptr<identities::User> user) {
+    if (!user) return;
+    std::scoped_lock lock(mutex_);
+    usersByName_.erase(user->name);
+    usersById_.erase(user->id);
+}
 }

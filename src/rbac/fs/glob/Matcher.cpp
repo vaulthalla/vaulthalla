@@ -61,17 +61,22 @@ namespace vh::rbac::fs::glob {
         }
     }
 
-    bool Matcher::validatePath(const std::string_view absolutePath) {
-        return !absolutePath.empty() && absolutePath.front() == '/';
+    bool Matcher::validatePath(const Path &path) {
+        const std::string normalized = normalizePath(path);
+        return !normalized.empty() && normalized.front() == '/';
     }
 
-    bool Matcher::matches(const model::Pattern &pattern, const std::string &absolutePath) {
-        if (!validatePath(absolutePath)) return false;
-        return matchRecursive(pattern.tokens, absolutePath, 0, 0);
+    std::string Matcher::normalizePath(const Path &path) {
+        return path.lexically_normal().generic_string();
     }
 
-    bool Matcher::matches(const std::string &pattern, const std::string &absolutePath) {
-        if (!validatePath(absolutePath)) return false;
-        return matches(Tokenizer::parse(pattern), absolutePath);
+    bool Matcher::matches(const model::Pattern &pattern, const Path &path) {
+        const std::string normalized = normalizePath(path);
+        if (normalized.empty() || normalized.front() != '/') return false;
+        return matchRecursive(pattern.tokens, normalized, 0, 0);
+    }
+
+    bool Matcher::matches(std::string_view pattern, const Path &path) {
+        return matches(Tokenizer::parse(pattern), path);
     }
 }

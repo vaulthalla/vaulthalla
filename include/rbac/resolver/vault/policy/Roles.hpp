@@ -46,8 +46,9 @@ namespace vh::rbac::resolver::vault {
 
     public:
         static bool validate(const std::shared_ptr<identities::User> &actor,
-                             const ResolvedContext &resolved,
-                             permission::vault::RolePermissions permission) {
+                     const ResolvedContext &resolved,
+                     permission::vault::RolePermissions permission,
+                     const Context<permission::vault::RolePermissions> &) {
             if (!actor || !resolved.isValid()) return false;
 
             switch (permission) {
