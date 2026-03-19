@@ -70,9 +70,9 @@ void getattr(const fuse_req_t req, const fuse_ino_t ino, fuse_file_info* fi) {
             return;
         }
 
-        if (!resolver::Vault::has<permission::vault::fs::DirectoryPermissions>({
+        if (!resolver::Vault::has<permission::vault::FilesystemAction>({
             .user = user,
-            .permission = permission::vault::fs::DirectoryPermissions::List,
+            .permission = permission::vault::FilesystemAction::List,
             .entry = entry
         })) {
             log::Registry::fuse()->error("[getattr] Access denied for user {} on path {}", user->name, entry->path.string());
@@ -124,9 +124,9 @@ void setattr(const fuse_req_t req, const fuse_ino_t ino,
             return;
         }
 
-        if (!resolver::Vault::has<permission::vault::fs::FilePermissions>({
+        if (!resolver::Vault::has<permission::vault::FilesystemAction>({
             .user = user,
-            .permission = permission::vault::fs::FilePermissions::Upload,
+            .permission = permission::vault::FilesystemAction::Upload,
             .entry = entry
         })) {
             log::Registry::fuse()->warn("[setattr] Access denied for user {} on path {}", user->name, entry->path.string());
@@ -179,9 +179,9 @@ void readdir(const fuse_req_t req, const fuse_ino_t ino, const size_t size, cons
         return;
     }
 
-    if (!resolver::Vault::has<permission::vault::fs::DirectoryPermissions>({
+    if (!resolver::Vault::has<permission::vault::FilesystemAction>({
             .user = user,
-            .permission = permission::vault::fs::DirectoryPermissions::List,
+            .permission = permission::vault::FilesystemAction::List,
             .entry = entry
         })) {
         log::Registry::fuse()->error("[readdir] Access denied for user {} on path {}", user->name, entry->path.string());
@@ -263,9 +263,9 @@ void lookup(const fuse_req_t req, const fuse_ino_t parent, const char* name) {
         return;
     }
 
-    if (!resolver::Vault::has<permission::vault::fs::DirectoryPermissions>({
+    if (!resolver::Vault::has<permission::vault::FilesystemAction>({
             .user = user,
-            .permission = permission::vault::fs::DirectoryPermissions::List,
+            .permission = permission::vault::FilesystemAction::List,
             .entry = entry
         })) {
         log::Registry::fuse()->error("[lookup] Access denied for user {} on path {}", user->name, entry->path.string());
@@ -315,9 +315,9 @@ void create(const fuse_req_t req, const fuse_ino_t parent, const char* name, con
             return;
         }
 
-        if (!resolver::Vault::has<permission::vault::fs::FilePermissions>({
+        if (!resolver::Vault::has<permission::vault::FilesystemAction>({
             .user = user,
-            .permission = permission::vault::fs::FilePermissions::Upload,
+            .permission = permission::vault::FilesystemAction::Upload,
             .path = vaultPath,
         })) {
             log::Registry::fuse()->error("[create] Access denied for user {} on path {}", user->name, vaultPath.string());
@@ -383,9 +383,9 @@ void open(const fuse_req_t req, const fuse_ino_t ino, fuse_file_info* fi) {
             return;
         }
 
-        if (!resolver::Vault::has<permission::vault::fs::FilePermissions>({
+        if (!resolver::Vault::has<permission::vault::FilesystemAction>({
             .user = user,
-            .permission = permission::vault::fs::FilePermissions::Download,
+            .permission = permission::vault::FilesystemAction::Download,
             .entry = entry
         })) {
             log::Registry::fuse()->error("[open] Access denied for user {} on path {}", user->name, entry->path.string());
@@ -442,9 +442,9 @@ void write(const fuse_req_t req, const fuse_ino_t ino, const char* buf,
         return;
     }
 
-    if (!resolver::Vault::has<permission::vault::fs::FilePermissions>({
+    if (!resolver::Vault::has<permission::vault::FilesystemAction>({
             .user = user,
-            .permission = permission::vault::fs::FilePermissions::Upload,
+            .permission = permission::vault::FilesystemAction::Upload,
             .entry = entry
         })) {
         log::Registry::fuse()->error("[write] Access denied for user {} on path {}", user->name, entry->path.string());
@@ -483,9 +483,9 @@ void read(const fuse_req_t req, const fuse_ino_t ino, const size_t size, const o
         return;
     }
 
-    if (!resolver::Vault::has<permission::vault::fs::FilePermissions>({
+    if (!resolver::Vault::has<permission::vault::FilesystemAction>({
             .user = user,
-            .permission = permission::vault::fs::FilePermissions::Download,
+            .permission = permission::vault::FilesystemAction::Download,
             .entry = entry
         })) {
         log::Registry::fuse()->error("[read] Access denied for user {} on path {}", user->name, entry->path.string());
@@ -537,9 +537,9 @@ void mkdir(const fuse_req_t req, const fuse_ino_t parent, const char* name, cons
         }
 
         const auto vaultPath = engine->paths->absRelToAbsRel(fullPath, PathType::FUSE_ROOT, PathType::VAULT_ROOT);
-        if (!resolver::Vault::has<permission::vault::fs::DirectoryPermissions>({
+        if (!resolver::Vault::has<permission::vault::FilesystemAction>({
             .user = user,
-            .permission = permission::vault::fs::DirectoryPermissions::Touch,
+            .permission = permission::vault::FilesystemAction::Touch,
             .path = vaultPath,
         })) {
             log::Registry::fuse()->error("[mkdir] Access denied for user {} on path {}", user->name, vaultPath.string());
@@ -606,21 +606,9 @@ void rename(const fuse_req_t req, const fuse_ino_t parent, const char* name, con
             return;
         }
 
-        // TODO: handle Filesystem level perms to prevent this redundant code
-
-        if (entry->isDirectory() && !resolver::Vault::has<permission::vault::fs::DirectoryPermissions>({
+        if (!resolver::Vault::has<permission::vault::FilesystemAction>({
             .user = user,
-            .permission = permission::vault::fs::DirectoryPermissions::Rename,
-            .entry = entry
-        })) {
-            log::Registry::fuse()->error("[rename] Access denied for user {} on path {}", user->name, entry->path.string());
-            fuse_reply_err(req, EPERM);
-            return;
-        }
-
-        if (!entry->isDirectory() && !resolver::Vault::has<permission::vault::fs::FilePermissions>({
-            .user = user,
-            .permission = permission::vault::fs::FilePermissions::Rename,
+            .permission = permission::vault::FilesystemAction::Rename,
             .entry = entry
         })) {
             log::Registry::fuse()->error("[rename] Access denied for user {} on path {}", user->name, entry->path.string());
@@ -677,26 +665,24 @@ void access(const fuse_req_t req, const fuse_ino_t ino, const int mask) {
         return;
     }
 
-    // TODO: handle for both types
-
     if (entry->vault_id) {
         bool allowed = true;
 
-        if ((mask & R_OK) && !resolver::Vault::has<permission::vault::fs::DirectoryPermissions>({
+        if ((mask & R_OK) && !resolver::Vault::has<permission::vault::FilesystemAction>({
             .user = user,
-            .permission = permission::vault::fs::DirectoryPermissions::Download,
+            .permission = permission::vault::FilesystemAction::Download,
             .entry = entry
         })) allowed = false;
 
-        if ((mask & W_OK) && !resolver::Vault::has<permission::vault::fs::DirectoryPermissions>({
+        if ((mask & W_OK) && !resolver::Vault::has<permission::vault::FilesystemAction>({
             .user = user,
-            .permission = permission::vault::fs::DirectoryPermissions::Upload,
+            .permission = permission::vault::FilesystemAction::Upload,
             .entry = entry
         })) allowed = false;
 
-        if ((mask & X_OK) && !resolver::Vault::has<permission::vault::fs::DirectoryPermissions>({
+        if ((mask & X_OK) && !resolver::Vault::has<permission::vault::FilesystemAction>({
             .user = user,
-            .permission = permission::vault::fs::DirectoryPermissions::List,
+            .permission = permission::vault::FilesystemAction::List,
             .entry = entry
         })) allowed = false;
 
@@ -748,9 +734,9 @@ void unlink(const fuse_req_t req, const fuse_ino_t parent, const char* name) {
             return;
         }
 
-        if (!resolver::Vault::has<permission::vault::fs::FilePermissions>({
+        if (!resolver::Vault::has<permission::vault::FilesystemAction>({
             .user = user,
-            .permission = permission::vault::fs::FilePermissions::Delete,
+            .permission = permission::vault::FilesystemAction::Delete,
             .entry = file
         })) {
             log::Registry::fuse()->warn("[unlink] Access denied for user {} on path {}", user->name, file->path.string());
@@ -811,9 +797,9 @@ void rmdir(const fuse_req_t req, const fuse_ino_t parent, const char* name) {
             return;
         }
 
-        if (!resolver::Vault::has<permission::vault::fs::DirectoryPermissions>({
+        if (!resolver::Vault::has<permission::vault::FilesystemAction>({
             .user = user,
-            .permission = permission::vault::fs::DirectoryPermissions::Delete,
+            .permission = permission::vault::FilesystemAction::Delete,
             .entry = entry
         })) {
             log::Registry::fuse()->warn("[rmdir] Access denied for user {} on path {}", user->name, entry->path.string());
@@ -885,9 +871,9 @@ void fsync(const fuse_req_t req, const fuse_ino_t ino, const int datasync, fuse_
         return;
     }
 
-    if (!resolver::Vault::has<permission::vault::fs::FilePermissions>({
+    if (!resolver::Vault::has<permission::vault::FilesystemAction>({
             .user = user,
-            .permission = permission::vault::fs::FilePermissions::Upload,
+            .permission = permission::vault::FilesystemAction::Upload,
             .entry = entry
         })) {
         log::Registry::fuse()->warn("[fsync] Access denied for user {} on path {}", user->name, entry->path.string());
@@ -931,9 +917,9 @@ void statfs(const fuse_req_t req, const fuse_ino_t ino) {
             return;
         }
 
-        if (!resolver::Vault::has<permission::vault::fs::FilePermissions>({
+        if (!resolver::Vault::has<permission::vault::FilesystemAction>({
             .user = user,
-            .permission = permission::vault::fs::FilePermissions::Download,
+            .permission = permission::vault::FilesystemAction::Download,
             .entry = entry
         })) {
             log::Registry::fuse()->warn("[statfs] Access denied for user {} on path {}", user->name, entry->path.string());

@@ -26,18 +26,11 @@ json Stats::vault(const json& payload, const std::shared_ptr<Session>& session) 
 
     using Perm = permission::admin::VaultPermissions;
 
-    constexpr std::array perms {
-        std::pair{Perm::View, "You do not have permission to view this vault."},
-        std::pair{Perm::ViewStats, "You do not have permission to view this vault's stats."}
-    };
-
-    for (const auto& [perm, err] : perms) {
-        if (!resolver::Admin::has<Perm>({
+    if (!resolver::Admin::has<Perm>({
         .user = session->user,
-        .permission = perm,
-            .vault_id = vaultId
-    })) throw std::runtime_error{err};
-    }
+        .permissions = { Perm::View, Perm::ViewStats },
+        .vault_id = vaultId
+    })) throw std::runtime_error("You do not have permission to view stats for this vault.");
 
     const auto task = std::make_shared<vault::task::Stats>(vaultId);
     auto future = task->getFuture().value();

@@ -25,11 +25,12 @@ using namespace vh::storage;
 using namespace vh::fs;
 using namespace vh::fs::model;
 
+using Permission = permission::vault::FilesystemAction;
+
 json Storage::startUpload(const json& payload, const std::shared_ptr<Session>& session) {
     const auto vaultId = payload.at("vault_id").get<uint32_t>();
     const auto path = std::filesystem::path(payload.at("path").get<std::string>());
 
-    using Permission = permission::vault::fs::FilePermissions;
     enforcePermission(
         session,
         vaultId,
@@ -62,7 +63,6 @@ json Storage::finishUpload(const json& payload, const std::shared_ptr<Session>& 
     const auto vaultId = payload.at("vault_id").get<uint32_t>();
     const auto path = std::filesystem::path(payload.at("path").get<std::string>());
 
-    using Permission = permission::vault::fs::FilePermissions;
     enforcePermission(
         session,
         vaultId,
@@ -79,7 +79,6 @@ json Storage::mkdir(const json& payload, const std::shared_ptr<Session>& session
     const auto vaultId = payload.at("vault_id").get<uint32_t>();
     const auto path = std::filesystem::path(payload.at("path").get<std::string>());
 
-    using Permission = permission::vault::fs::DirectoryPermissions;
     enforcePermission(
         session,
         vaultId,
@@ -102,7 +101,6 @@ json Storage::move(const json& payload, const std::shared_ptr<Session>& session)
     const auto from = std::filesystem::path(payload.at("from").get<std::string>());
     const auto to = std::filesystem::path(payload.at("to").get<std::string>());
 
-    using Permission = permission::vault::fs::FilePermissions;
     enforcePermission(
         session,
         vaultId,
@@ -136,7 +134,6 @@ json Storage::rename(const json& payload, const std::shared_ptr<Session>& sessio
     const auto from = std::filesystem::path(payload.at("from").get<std::string>());
     const auto to = std::filesystem::path(payload.at("to").get<std::string>());
 
-    using Permission = permission::vault::fs::FilePermissions;
     enforcePermission(
         session,
         vaultId,
@@ -170,7 +167,6 @@ json Storage::copy(const json& payload, const std::shared_ptr<Session>& session)
     const auto from = std::filesystem::path(payload.at("from").get<std::string>());
     const auto to = std::filesystem::path(payload.at("to").get<std::string>());
 
-    using Permission = permission::vault::fs::FilePermissions;
     enforcePermission(
         session,
         vaultId,
@@ -204,7 +200,6 @@ json Storage::listDir(const json& payload, const std::shared_ptr<Session>& sessi
     auto path = std::filesystem::path(payload.value("path", "/"));
     if (path.empty()) path = std::filesystem::path("/");
 
-    using Permission = permission::vault::fs::DirectoryPermissions;
     enforcePermission(
         session,
         vaultId,
@@ -241,7 +236,6 @@ json Storage::remove(const json& payload, const std::shared_ptr<Session>& sessio
     const auto vaultId = payload.at("vault_id").get<uint32_t>();
     const auto path = std::filesystem::path(payload.at("path").get<std::string>());
 
-    using Permission = permission::vault::fs::FilePermissions;
     enforcePermission(
         session,
         vaultId,
