@@ -35,8 +35,8 @@ namespace vh {
 
             std::shared_ptr<identities::User> user{};
             std::shared_ptr<identities::Group> group{};
-            std::shared_ptr<fs::model::Entry> entry{}, parentEntry{};
-            std::optional<std::filesystem::path> path{};
+            std::shared_ptr<fs::model::Entry> entry{};
+            std::optional<std::filesystem::path> path{}, vaultPath{};
             std::optional<fuse_ino_t> ino{};
             std::shared_ptr<storage::Engine> engine{};
 

@@ -26,7 +26,6 @@ namespace vh::fuse {
         constexpr std::array functions{
             resolveIdentity,
             resolveEntry,
-            resolveParentEntry,
             resolvePath,
             resolveEntryForPath,
             resolveEngine,
@@ -92,31 +91,11 @@ namespace vh::fuse {
         return true;
     }
 
-    bool Resolver::resolveParentEntry(const resolver::Request &req, resolver::Resolved &out) {
-        if (resolver::hasFlag(req.target, Target::Path) || resolver::hasFlag(req.target, Target::EntryForPath)) {
-            if (!req.parentIno) {
-                log::Registry::fuse()->debug("[{}] Request target includes ParentEntry but no parent inode provided",
-                                             req.caller);
-                out.setStatus(Status::MissingParentIno, EINVAL);
-                return false;
-            }
-
-            out.parentEntry = runtime::Deps::get().fsCache->getEntry(*req.parentIno);
-            if (!out.parentEntry) {
-                log::Registry::fuse()->debug("[{}] Failed to resolve parent entry", req.caller);
-                out.setStatus(Status::MissingParentEntry, ENOENT);
-                return false;
-            }
-        }
-
-        return true;
-    }
-
     bool Resolver::resolvePath(const resolver::Request &req, resolver::Resolved &out) {
         if (resolver::hasFlag(req.target, Target::Path) || resolver::hasFlag(req.target, Target::EntryForPath)) {
-            if (!out.parentEntry) {
-                log::Registry::fuse()->error("[{}] Cannot resolve path without parent entry", req.caller);
-                out.setStatus(Status::MissingParentEntry, ENOENT);
+            if (!req.parentIno) {
+                log::Registry::fuse()->debug("[{}] Request target includes Path but no parent inode provided", req.caller);
+                out.setStatus(Status::MissingParentIno, EINVAL);
                 return false;
             }
 
@@ -127,7 +106,7 @@ namespace vh::fuse {
                 return false;
             }
 
-            out.path = out.parentEntry->path / *req.childName;
+            out.path = runtime::Deps::get().fsCache->resolvePath(*req.parentIno) / *req.childName;
         }
 
         return true;
@@ -183,7 +162,7 @@ namespace vh::fuse {
                 return false;
             }
 
-            if (checkPath && !enforcePermission(out.user, *req.action, nullptr, out.path)) {
+            if (checkPath && !enforcePermission(out.user, *req.action, nullptr, out.vaultPath)) {
                 out.setStatus(Status::AccessDenied, EACCES);
                 return false;
             }
@@ -196,7 +175,7 @@ namespace vh::fuse {
                     return false;
                 }
 
-                if (checkPath && !enforcePermission(out.user, action, nullptr, out.path)) {
+                if (checkPath && !enforcePermission(out.user, action, nullptr, out.vaultPath)) {
                     out.setStatus(Status::AccessDenied, EACCES);
                     return false;
                 }
@@ -214,12 +193,10 @@ namespace vh::fuse {
             if (out.entry && out.entry->vault_id)
                 out.engine = runtime::Deps::get().storageManager->getEngine(*out.entry->vault_id);
 
-            if (!out.engine && out.parentEntry && out.parentEntry->vault_id)
-                out.engine = runtime::Deps::get().storageManager->getEngine(*out.parentEntry->vault_id);
-
             if (!out.engine && out.path)
                 out.engine = runtime::Deps::get().storageManager->resolveStorageEngine(*out.path);
 
+            if (out.engine && out.path) out.vaultPath = out.engine->paths->absRelToAbsRel(*out.path, fs::model::PathType::FUSE_ROOT, fs::model::PathType::FUSE_ROOT);
             if (!out.engine) {
                 out.setStatus(Status::MissingEngine, EIO);
                 return false;

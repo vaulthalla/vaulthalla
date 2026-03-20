@@ -1,10 +1,7 @@
 #include "fuse/Bridge.hpp"
 #include "storage/Manager.hpp"
-#include "storage/Engine.hpp"
 #include "identities/User.hpp"
-#include "fs/model/Path.hpp"
 #include "fs/model/Entry.hpp"
-#include "vault/model/Vault.hpp"
 #include "config/Registry.hpp"
 #include "fs/Filesystem.hpp"
 #include "runtime/Deps.hpp"
@@ -13,7 +10,6 @@
 #include "db/query/fs/Directory.hpp"
 #include "log/Registry.hpp"
 #include "fs/cache/Registry.hpp"
-#include "rbac/resolver/vault/all.hpp"
 #include "fuse/Resolver.hpp"
 
 #include <cerrno>
@@ -34,55 +30,21 @@ void getattr(const fuse_req_t req, const fuse_ino_t ino, fuse_file_info* fi) {
     log::Registry::fuse()->debug("[getattr] Called for inode: {}", ino);
     (void)fi;
 
-    const fuse_ctx* ctx = fuse_req_ctx(req);
-    uid_t uid = ctx->uid;
-    // gid_t gid = ctx->gid;
+    const auto resolved = Resolver::resolve({
+        .caller = "getattr",
+        .fuseReq = req,
+        .ino = ino,
+        .action = permission::vault::FilesystemAction::List,
+        .target = resolver::Target::Entry
+    });
 
-    const auto user = db::query::identities::User::getUserByLinuxUID(uid);
-    if (!user) {
-        log::Registry::fuse()->error("[getattr] No user found for UID: {}", uid);
-        fuse_reply_err(req, EACCES);
+    if (!resolved.ok()) {
+        fuse_reply_err(req, resolved.errnum);
         return;
     }
 
     try {
-        const auto& cache = runtime::Deps::get().fsCache;
-        if (ino == FUSE_ROOT_ID) {
-            const auto entry = cache->getEntry(FUSE_ROOT_ID);
-            if (!entry) {
-                log::Registry::fuse()->error("[getattr] No entry found for inode {}, resolved path: /", ino);
-                fuse_reply_err(req, ENOENT);
-                return;
-            }
-
-            struct stat st = statFromEntry(entry, ino);
-            st.st_uid = getuid();  // explicitly set ownership
-            st.st_gid = getgid();
-
-            fuse_reply_attr(req, &st,  0.1);
-            return;
-        }
-
-        const auto entry = cache->getEntry(ino);
-
-        if (!entry) {
-            log::Registry::fuse()->error("[getattr] No entry found for inode {}", ino);
-            fuse_reply_err(req, ENOENT);
-            return;
-        }
-
-        if (!rbac::resolver::Vault::has<permission::vault::FilesystemAction>({
-            .user = user,
-            .permission = permission::vault::FilesystemAction::List,
-            .entry = entry
-        })) {
-            log::Registry::fuse()->error("[getattr] Access denied for user {} on path {}", user->name, entry->path.string());
-            fuse_reply_err(req, EPERM);
-            return;
-        }
-
-        const auto st = statFromEntry(entry, ino);
-
+        const auto st = statFromEntry(resolved.entry, ino);
         fuse_reply_attr(req, &st, 0.1); // match attr_timeout from lookup()
     } catch (const std::exception&) {
         fuse_reply_err(req, ENOENT);
@@ -92,18 +54,7 @@ void getattr(const fuse_req_t req, const fuse_ino_t ino, fuse_file_info* fi) {
 void setattr(const fuse_req_t req, const fuse_ino_t ino,
                          struct stat* attr, int to_set, fuse_file_info* fi) {
     (void)fi;
-    const fuse_ctx* ctx = fuse_req_ctx(req);
-    const uid_t uid = ctx->uid;
-
-    const auto user = db::query::identities::User::getUserByLinuxUID(uid);
-    if (!user) {
-        log::Registry::fuse()->error("[setattr] No user found for UID: {}", uid);
-        fuse_reply_err(req, EACCES);
-        return;
-    }
-
-    log::Registry::fuse()->debug("[setattr] Called for inode: {}, to_set: {}, uid: {}, gid: {}",
-        ino, to_set, ctx->uid, ctx->gid);
+    log::Registry::fuse()->debug("[setattr] Called for inode: {}, to_set: {}", ino, to_set);
 
     if (to_set & FUSE_SET_ATTR_MODE) {
         log::Registry::fuse()->warn("⚔️ [Vaulthalla] Illegal access: chmod is forbidden beyond the gates!");
@@ -117,38 +68,34 @@ void setattr(const fuse_req_t req, const fuse_ino_t ino,
         return;
     }
 
+    const auto resolved = Resolver::resolve({
+        .caller = "setattr",
+        .fuseReq = req,
+        .ino = ino,
+        .action = permission::vault::FilesystemAction::Upload,
+        .target = resolver::Target::Entry
+    });
+
+    if (!resolved.ok()) {
+        fuse_reply_err(req, resolved.errnum);
+        return;
+    }
+
     try {
-        const auto entry = runtime::Deps::get().fsCache->getEntry(ino);
-        if (!entry) {
-            log::Registry::fuse()->error("[setattr] No entry found for inode {}", ino);
-            fuse_reply_err(req, ENOENT);
-            return;
-        }
-
-        if (!rbac::resolver::Vault::has<permission::vault::FilesystemAction>({
-            .user = user,
-            .permission = permission::vault::FilesystemAction::Upload,
-            .entry = entry
-        })) {
-            log::Registry::fuse()->warn("[setattr] Access denied for user {} on path {}", user->name, entry->path.string());
-            fuse_reply_err(req, EPERM);
-            return;
-        }
-
         timespec times[2];
         if (to_set & FUSE_SET_ATTR_ATIME) times[0] = attr->st_atim;
         else times[0].tv_nsec = UTIME_OMIT;
         if (to_set & FUSE_SET_ATTR_MTIME) times[1] = attr->st_mtim;
         else times[1].tv_nsec = UTIME_OMIT;
 
-        if (::utimensat(AT_FDCWD, entry->backing_path.c_str(), times, 0) < 0) {
+        if (::utimensat(AT_FDCWD, resolved.entry->backing_path.c_str(), times, 0) < 0) {
             fuse_reply_err(req, errno);
             return;
         }
 
         // Re-stat file so kernel gets fresh info
         struct stat st = {};
-        if (::stat(entry->backing_path.c_str(), &st) < 0) {
+        if (::stat(resolved.entry->backing_path.c_str(), &st) < 0) {
             fuse_reply_err(req, errno);
             return;
         }
@@ -163,34 +110,23 @@ void readdir(const fuse_req_t req, const fuse_ino_t ino, const size_t size, cons
     log::Registry::fuse()->debug("[readdir] Called for inode: {}, size: {}, offset: {}", ino, size, off);
     (void)fi;
 
-    const fuse_ctx* ctx = fuse_req_ctx(req);
-    const uid_t uid = ctx->uid;
+    const std::optional<permission::vault::FilesystemAction> action = ino == FUSE_ROOT_ID ?
+        std::nullopt : std::make_optional(permission::vault::FilesystemAction::List);
 
-    const auto entry = runtime::Deps::get().fsCache->getEntry(ino);
-    if (!entry) {
-        log::Registry::fuse()->error("[readdir] No entry found for inode {}", ino);
-        fuse_reply_err(req, ENOENT);
+    const auto resolved = Resolver::resolve({
+        .caller = "readdir",
+        .fuseReq = req,
+        .ino = ino,
+        .action = action,
+        .target = resolver::Target::Entry
+    });
+
+    if (!resolved.ok()) {
+        fuse_reply_err(req, resolved.errnum);
         return;
     }
 
-    const auto user = db::query::identities::User::getUserByLinuxUID(uid);
-    if (!user) {
-        log::Registry::fuse()->error("[readdir] No user found for UID: {}", uid);
-        fuse_reply_err(req, EACCES);
-        return;
-    }
-
-    if (!rbac::resolver::Vault::has<permission::vault::FilesystemAction>({
-            .user = user,
-            .permission = permission::vault::FilesystemAction::List,
-            .entry = entry
-        })) {
-        log::Registry::fuse()->error("[readdir] Access denied for user {} on path {}", user->name, entry->path.string());
-        fuse_reply_err(req, EPERM);
-        return;
-        }
-
-    const auto entries = runtime::Deps::get().fsCache->listDir(entry->id, false);
+    const auto entries = runtime::Deps::get().fsCache->listDir(resolved.entry->id, false);
 
     std::vector<char> buf(size);
     size_t buf_used = 0;
@@ -207,24 +143,20 @@ void readdir(const fuse_req_t req, const fuse_ino_t ino, const size_t size, cons
     off_t current_off = 0;
 
     if (off <= current_off++) {
-        struct stat dot;
+        struct stat dot{};
         dot.st_mode = S_IFDIR;
         if (!add_entry(".", dot, current_off)) goto reply;
     }
 
     if (off <= current_off++) {
-        struct stat dotdot;
+        struct stat dotdot{};
         dotdot.st_mode = S_IFDIR;
         if (!add_entry("..", dotdot, current_off)) goto reply;
     }
 
     for (size_t i = 0; i < entries.size(); ++i, ++current_off) {
         if (off > current_off) continue;
-
-        const auto& e = entries[i];
-        const auto st = statFromEntry(e, ino);
-
-        if (!add_entry(e->name, st, current_off + 1)) break;
+        if (!add_entry(entries[i]->name, statFromEntry(entries[i], ino), current_off + 1)) break;
     }
 
     reply:
@@ -261,50 +193,28 @@ void create(const fuse_req_t req, const fuse_ino_t parent, const char* name, con
     log::Registry::fuse()->debug("[create] Called for parent: {}, name: {}, mode: {}",
         parent, name, mode);
 
-    const fuse_ctx* ctx = fuse_req_ctx(req);
-    uid_t uid = ctx->uid;
+    const auto resolved = Resolver::resolve({
+        .caller = "create",
+        .fuseReq = req,
+        .parentIno = parent,
+        .childName = name,
+        .action = permission::vault::FilesystemAction::Upload,
+        .target = resolver::Target::Path
+    });
 
-    if (!name || strlen(name) == 0) {
-        fuse_reply_err(req, EINVAL);
+    if (!resolved.ok()) {
+        fuse_reply_err(req, resolved.errnum);
+        return;
+    }
+
+    if (runtime::Deps::get().fsCache->entryExists(*resolved.path)) {
+        fuse_reply_err(req, EEXIST);
         return;
     }
 
     try {
-        const auto parentPath = runtime::Deps::get().fsCache->resolvePath(parent);
-        const auto fullPath = parentPath / name;
-
-        const auto engine = runtime::Deps::get().storageManager->resolveStorageEngine(fullPath);
-        if (!engine) {
-            log::Registry::fuse()->error("[create] No storage engine found for path: {}", fullPath.string());
-            fuse_reply_err(req, EIO);
-            return;
-        }
-
-        const auto vaultPath = engine->paths->absRelToAbsRel(fullPath, PathType::FUSE_ROOT, PathType::VAULT_ROOT);
-        const auto user = db::query::identities::User::getUserByLinuxUID(uid);
-        if (!user) {
-            log::Registry::fuse()->error("[create] No user found for UID: {}", uid);
-            fuse_reply_err(req, EACCES);
-            return;
-        }
-
-        if (!rbac::resolver::Vault::has<permission::vault::FilesystemAction>({
-            .user = user,
-            .permission = permission::vault::FilesystemAction::Upload,
-            .path = vaultPath,
-        })) {
-            log::Registry::fuse()->error("[create] Access denied for user {} on path {}", user->name, vaultPath.string());
-            fuse_reply_err(req, EPERM);
-            return;
-        }
-
-        if (runtime::Deps::get().fsCache->entryExists(fullPath)) {
-            fuse_reply_err(req, EEXIST);
-            return;
-        }
-
-        const auto newEntry = Filesystem::createFile(fullPath, getuid(), getgid(), mode);
-        const auto st       = statFromEntry(newEntry, *newEntry->inode);
+        const auto newEntry = Filesystem::createFile(*resolved.path, getuid(), getgid(), mode);
+        const auto st = statFromEntry(newEntry, *newEntry->inode);
 
         // open backing file immediately
         const int fd = ::open(newEntry->backing_path.c_str(), O_CREAT | O_RDWR, mode);
@@ -337,42 +247,27 @@ void open(const fuse_req_t req, const fuse_ino_t ino, fuse_file_info* fi) {
 
     runtime::Deps::get().storageManager->registerOpenHandle(ino);
 
-    const fuse_ctx* ctx = fuse_req_ctx(req);
-    uid_t uid = ctx->uid;
-    // gid_t gid = ctx->gid;
+    const auto resolved = Resolver::resolve({
+        .caller = "open",
+        .fuseReq = req,
+        .ino = ino,
+        .action = permission::vault::FilesystemAction::Download,
+        .target = resolver::Target::Entry
+    });
 
-    const auto user = db::query::identities::User::getUserByLinuxUID(uid);
-    if (!user) {
-        log::Registry::fuse()->error("[open] No user found for UID: {}", uid);
-        fuse_reply_err(req, EACCES);
+    if (!resolved.ok()) {
+        fuse_reply_err(req, resolved.errnum);
         return;
     }
 
     try {
-        const auto entry = runtime::Deps::get().fsCache->getEntry(ino);
-        if (!entry) {
-            log::Registry::fuse()->error("[open] No entry found for inode {}", ino);
-            fuse_reply_err(req, ENOENT);
-            return;
-        }
-
-        if (!rbac::resolver::Vault::has<permission::vault::FilesystemAction>({
-            .user = user,
-            .permission = permission::vault::FilesystemAction::Download,
-            .entry = entry
-        })) {
-            log::Registry::fuse()->error("[open] Access denied for user {} on path {}", user->name, entry->path.string());
-            fuse_reply_err(req, EPERM);
-            return;
-        }
-
-        const int fd = ::open(entry->backing_path.c_str(), fi->flags, 0644);
+        const int fd = ::open(resolved.entry->backing_path.c_str(), fi->flags, 0644);
         if (fd < 0) {
             fuse_reply_err(req, errno);
             return;
         }
 
-        auto* fh = new FileHandle{entry->backing_path.string(), fd};
+        auto* fh = new FileHandle{resolved.entry->backing_path.string(), fd};
         fi->fh = reinterpret_cast<uint64_t>(fh);
 
         fi->direct_io = 1;
@@ -390,9 +285,6 @@ void write(const fuse_req_t req, const fuse_ino_t ino, const char* buf,
     log::Registry::fuse()->debug("[write] Called for inode: {}, size: {}, offset: {}, file handle: {}",
         ino, size, off, fi->fh);
 
-    const fuse_ctx* ctx = fuse_req_ctx(req);
-    uid_t uid = ctx->uid;
-
     const auto* fh = reinterpret_cast<FileHandle*>(fi->fh);
     (void)ino; // unused
 
@@ -401,35 +293,23 @@ void write(const fuse_req_t req, const fuse_ino_t ino, const char* buf,
     const ssize_t res = ::pwrite(fh->fd, buf, size, off);
     if (res < 0) fuse_reply_err(req, errno);
 
-    const auto user = db::query::identities::User::getUserByLinuxUID(uid);
-    if (!user) {
-        log::Registry::fuse()->error("[write] No user found for UID: {}", uid);
-        fuse_reply_err(req, EACCES);
+    const auto resolved = Resolver::resolve({
+        .caller = "write",
+        .fuseReq = req,
+        .ino = ino,
+        .action = permission::vault::FilesystemAction::Upload,
+        .target = resolver::Target::Entry
+    });
+
+    if (!resolved.ok()) {
+        fuse_reply_err(req, resolved.errnum);
         return;
     }
 
-    const auto entry = runtime::Deps::get().fsCache->getEntry(ino);
-    if (!entry) {
-        log::Registry::fuse()->error("[write] No entry found for inode {}", ino);
-        fuse_reply_err(req, ENOENT);
-        return;
-    }
-
-    if (!rbac::resolver::Vault::has<permission::vault::FilesystemAction>({
-            .user = user,
-            .permission = permission::vault::FilesystemAction::Upload,
-            .entry = entry
-        })) {
-        log::Registry::fuse()->error("[write] Access denied for user {} on path {}", user->name, entry->path.string());
-        fuse_reply_err(req, EPERM);
-        return;
-        }
-
-    entry->size_bytes = std::filesystem::file_size(entry->backing_path);
-    runtime::Deps::get().fsCache->updateEntry(entry);
+    resolved.entry->size_bytes = std::filesystem::file_size(resolved.entry->backing_path);
+    runtime::Deps::get().fsCache->updateEntry(resolved.entry);
 
     fuse_lowlevel_notify_inval_inode(runtime::Deps::get().fuseSession, ino, 0, 0);
-
     fuse_reply_write(req, res);
 }
 
@@ -437,34 +317,20 @@ void read(const fuse_req_t req, const fuse_ino_t ino, const size_t size, const o
     log::Registry::fuse()->debug("[read] Called for inode: {}, size: {}, offset: {}, file handle: {}",
         ino, size, off, fi->fh);
 
-    const fuse_ctx* ctx = fuse_req_ctx(req);
-    uid_t uid = ctx->uid;
-
     const auto* fh = reinterpret_cast<FileHandle*>(fi->fh);
 
-    const auto entry = runtime::Deps::get().fsCache->getEntry(ino);
-    if (!entry) {
-        log::Registry::fuse()->error("[read] No entry found for inode {}", ino);
-        fuse_reply_err(req, ENOENT);
+    const auto resolved = Resolver::resolve({
+        .caller = "read",
+        .fuseReq = req,
+        .ino = ino,
+        .action = permission::vault::FilesystemAction::Download,
+        .target = resolver::Target::Entry
+    });
+
+    if (!resolved.ok()) {
+        fuse_reply_err(req, resolved.errnum);
         return;
     }
-
-    const auto user = db::query::identities::User::getUserByLinuxUID(uid);
-    if (!user) {
-        log::Registry::fuse()->error("[read] No user found for UID: {}", uid);
-        fuse_reply_err(req, EACCES);
-        return;
-    }
-
-    if (!rbac::resolver::Vault::has<permission::vault::FilesystemAction>({
-            .user = user,
-            .permission = permission::vault::FilesystemAction::Download,
-            .entry = entry
-        })) {
-        log::Registry::fuse()->error("[read] Access denied for user {} on path {}", user->name, entry->path.string());
-        fuse_reply_err(req, EPERM);
-        return;
-        }
 
     std::vector<char> buffer(size);
     const ssize_t res = ::pread(fh->fd, buffer.data(), size, off);
@@ -476,13 +342,17 @@ void read(const fuse_req_t req, const fuse_ino_t ino, const size_t size, const o
 void mkdir(const fuse_req_t req, const fuse_ino_t parent, const char* name, const mode_t mode) {
     log::Registry::fuse()->debug("[mkdir] Called for parent: {}, name: {}, mode: {}", parent, name, mode);
 
-    const fuse_ctx* ctx = fuse_req_ctx(req);
-    uid_t uid = ctx->uid;
+    const auto resolved = Resolver::resolve({
+        .caller = "mkdir",
+        .fuseReq = req,
+        .parentIno = parent,
+        .childName = name,
+        .action = permission::vault::FilesystemAction::Touch,
+        .target = resolver::Target::Path
+    });
 
-    const auto user = db::query::identities::User::getUserByLinuxUID(uid);
-    if (!user) {
-        log::Registry::fuse()->error("[mkdir] No user found for UID: {}", uid);
-        fuse_reply_err(req, EACCES);
+    if (!resolved.ok()) {
+        fuse_reply_err(req, resolved.errnum);
         return;
     }
 
@@ -492,46 +362,10 @@ void mkdir(const fuse_req_t req, const fuse_ino_t parent, const char* name, cons
             return;
         }
 
-        const auto& cache = runtime::Deps::get().fsCache;
+        Filesystem::mkdir(*resolved.path, mode);
 
-        const auto parentPath = cache->resolvePath(parent);
-        if (parentPath.empty()) {
-            fuse_reply_err(req, ENOENT);
-            return;
-        }
-
-        const std::filesystem::path fullPath = parentPath / name;
-
-        const auto engine = runtime::Deps::get().storageManager->resolveStorageEngine(fullPath);
-        if (!engine) {
-            log::Registry::fuse()->error("[mkdir] No storage engine found for path: {}", fullPath.string());
-            fuse_reply_err(req, EIO);
-            return;
-        }
-
-        const auto vaultPath = engine->paths->absRelToAbsRel(fullPath, PathType::FUSE_ROOT, PathType::VAULT_ROOT);
-        if (!rbac::resolver::Vault::has<permission::vault::FilesystemAction>({
-            .user = user,
-            .permission = permission::vault::FilesystemAction::Touch,
-            .path = vaultPath,
-        })) {
-            log::Registry::fuse()->error("[mkdir] Access denied for user {} on path {}", user->name, vaultPath.string());
-            fuse_reply_err(req, EPERM);
-            return;
-        }
-
-        try {
-            Filesystem::mkdir(fullPath, mode);
-        } catch (const std::filesystem::filesystem_error& fsErr) {
-            log::Registry::fuse()->error("[mkdir] Failed to create directory: {} → {}: {}",
-                parentPath.string(), name, fsErr.what());
-            fuse_reply_err(req, EIO);
-            return;
-        }
-
-        // Final directory (last one created) = fullPath
-        const auto finalInode = cache->resolveInode(fullPath);
-        const auto finalEntry = cache->getEntry(fullPath);
+        const auto finalInode = runtime::Deps::get().fsCache->resolveInode(*resolved.path);
+        const auto finalEntry = runtime::Deps::get().fsCache->getEntry(*resolved.path);
 
         fuse_entry_param e{};
         e.ino = finalInode;
@@ -551,52 +385,32 @@ void rename(const fuse_req_t req, const fuse_ino_t parent, const char* name, con
     log::Registry::fuse()->debug("[rename] Called for parent: {}, name: {}, newparent: {}, newname: {}, flags: {}",
                                parent, name, newparent, newname, flags);
 
-    const fuse_ctx* ctx = fuse_req_ctx(req);
-    uid_t uid = ctx->uid;
-
     const auto& cache = runtime::Deps::get().fsCache;
 
-    try {
-        const auto fromPath = cache->resolvePath(parent) / name;
-        const auto toPath = cache->resolvePath(newparent) / newname;
+    const auto toPath = cache->resolvePath(newparent) / newname;
 
+    const auto resolved = Resolver::resolve({
+        .caller = "rename",
+        .fuseReq = req,
+        .parentIno = parent,
+        .childName = name,
+        .action = permission::vault::FilesystemAction::Rename,
+        .target = resolver::Target::EntryForPath
+    });
+
+    if (!resolved.ok()) {
+        fuse_reply_err(req, resolved.errnum);
+        return;
+    }
+
+    try {
         // Flags handling (RENAME_NOREPLACE = 1, RENAME_EXCHANGE = 2)
         if ((flags & RENAME_NOREPLACE) && cache->entryExists(toPath)) {
             fuse_reply_err(req, EEXIST);
             return;
         }
 
-        const auto entry = cache->getEntry(fromPath);
-        if (!entry) {
-            fuse_reply_err(req, ENOENT);
-            return;
-        }
-
-        const auto user = db::query::identities::User::getUserByLinuxUID(uid);
-        if (!user) {
-            log::Registry::fuse()->error("[rename] No user found for UID: {}", uid);
-            fuse_reply_err(req, EACCES);
-            return;
-        }
-
-        if (!rbac::resolver::Vault::has<permission::vault::FilesystemAction>({
-            .user = user,
-            .permission = permission::vault::FilesystemAction::Rename,
-            .entry = entry
-        })) {
-            log::Registry::fuse()->error("[rename] Access denied for user {} on path {}", user->name, entry->path.string());
-            fuse_reply_err(req, EPERM);
-            return;
-        }
-
-        try {
-            Filesystem::rename(fromPath, toPath);
-        } catch (const std::filesystem::filesystem_error& fsErr) {
-            log::Registry::fuse()->error("[rename] Failed to rename: {} → {}: {}",
-                fromPath.string(), toPath.string(), fsErr.what());
-            fuse_reply_err(req, EIO);
-            return;
-        }
+        Filesystem::rename(*resolved.path, toPath);
 
         fuse_reply_err(req, 0);  // Success
     } catch (const std::exception& ex) {
@@ -621,106 +435,54 @@ void forget(const fuse_req_t req, const fuse_ino_t ino, const uint64_t nlookup) 
 void access(const fuse_req_t req, const fuse_ino_t ino, const int mask) {
     log::Registry::fuse()->debug("[access] Called for inode: {}, mask: {}", ino, mask);
 
-    const fuse_ctx* ctx = fuse_req_ctx(req);
-    uid_t uid = ctx->uid;
+    std::vector<rbac::permission::vault::FilesystemAction> requiredPermissions;
+    if (mask & W_OK) requiredPermissions.push_back(permission::vault::FilesystemAction::Upload);
+    if (mask & R_OK) requiredPermissions.push_back(permission::vault::FilesystemAction::Download);
+    if (ino != FUSE_ROOT_ID && mask & X_OK) requiredPermissions.push_back(permission::vault::FilesystemAction::List);
 
-    const auto entry = runtime::Deps::get().fsCache->getEntry(ino);
-    if (!entry) {
-        log::Registry::fuse()->error("[access] No entry found for inode {}", ino);
-        fuse_reply_err(req, ENOENT);
+    const auto resolved = Resolver::resolve({
+        .caller = "access",
+        .fuseReq = req,
+        .ino = ino,
+        .actions = requiredPermissions,
+        .target = resolver::Target::Entry
+    });
+
+    if (!resolved.ok()) {
+        fuse_reply_err(req, resolved.errnum);
         return;
     }
 
-    const auto user = db::query::identities::User::getUserByLinuxUID(uid);
-    if (!user) {
-        log::Registry::fuse()->error("[access] No user found for UID: {}", uid);
-        fuse_reply_err(req, EACCES);
-        return;
-    }
-
-    if (entry->vault_id) {
-        bool allowed = true;
-
-        if ((mask & R_OK) && !rbac::resolver::Vault::has<permission::vault::FilesystemAction>({
-            .user = user,
-            .permission = permission::vault::FilesystemAction::Download,
-            .entry = entry
-        })) allowed = false;
-
-        if ((mask & W_OK) && !rbac::resolver::Vault::has<permission::vault::FilesystemAction>({
-            .user = user,
-            .permission = permission::vault::FilesystemAction::Upload,
-            .entry = entry
-        })) allowed = false;
-
-        if ((mask & X_OK) && !rbac::resolver::Vault::has<permission::vault::FilesystemAction>({
-            .user = user,
-            .permission = permission::vault::FilesystemAction::List,
-            .entry = entry
-        })) allowed = false;
-
-        if (!allowed) {
-            log::Registry::fuse()->warn("[access] Access denied for user {} on path {}, mask: {}",
-                user->name, entry->path.string(), mask);
-            fuse_reply_err(req, EACCES);
-            return;
-        }
-    }
-
-    fuse_reply_err(req, 0); // Access checks are not implemented, always allow
+    fuse_reply_err(req, 0);
 }
 
 void unlink(const fuse_req_t req, const fuse_ino_t parent, const char* name) {
-    const fuse_ctx *ctx = fuse_req_ctx(req);
-    const uid_t uid = ctx->uid;
-    // const gid_t gid = ctx->gid;
-
     log::Registry::fuse()->debug("[unlink] Called for parent: {}, name: {}", parent, name);
 
-    if (!name || strlen(name) == 0) {
-        fuse_reply_err(req, EINVAL);
+    const auto resolved = Resolver::resolve({
+        .caller = "unlink",
+        .fuseReq = req,
+        .parentIno = parent,
+        .childName = name,
+        .action = permission::vault::FilesystemAction::Delete,
+        .target = resolver::Target::EntryForPath
+    });
+
+    if (!resolved.ok()) {
+        fuse_reply_err(req, resolved.errnum);
+        return;
+    }
+
+    if (resolved.entry->isDirectory()) {
+        fuse_reply_err(req, EISDIR);
         return;
     }
 
     try {
-        const auto& cache = runtime::Deps::get().fsCache;
+        db::query::fs::File::markFileAsTrashed(resolved.user->id, *resolved.entry->vault_id, resolved.entry->path, true);
 
-        const auto parentPath = cache->resolvePath(parent);
-        const auto fullPath   = parentPath / name;
-
-        if (!cache->entryExists(fullPath)) {
-            log::Registry::fuse()->debug("[unlink] Entry does not exist for path: {}", fullPath.string());
-            fuse_reply_err(req, ENOENT);
-            return;
-        }
-
-        const auto file = cache->getEntry(fullPath);
-        if (!file || file->isDirectory()) {
-            fuse_reply_err(req, EISDIR);
-            return;
-        }
-
-        const auto user = db::query::identities::User::getUserByLinuxUID(uid);
-        if (!user) {
-            log::Registry::fuse()->error("[unlink] No user found for UID: {}", uid);
-            fuse_reply_err(req, EACCES);
-            return;
-        }
-
-        if (!rbac::resolver::Vault::has<permission::vault::FilesystemAction>({
-            .user = user,
-            .permission = permission::vault::FilesystemAction::Delete,
-            .entry = file
-        })) {
-            log::Registry::fuse()->warn("[unlink] Access denied for user {} on path {}", user->name, file->path.string());
-            fuse_reply_err(req, EACCES);
-            return;
-        }
-
-        db::query::fs::File::markFileAsTrashed(user->id, *file->vault_id, file->path, true);
-
-        if (::unlink(file->backing_path.c_str()) < 0)
-            log::Registry::fuse()->debug("[unlink] Failed to remove backing file: {}: {}", file->backing_path.string(), strerror(errno));
+        if (::unlink(resolved.entry->backing_path.c_str()) < 0)
+            log::Registry::fuse()->debug("[unlink] Failed to remove backing file: {}: {}", resolved.entry->backing_path.string(), strerror(errno));
 
         fuse_reply_err(req, 0);
     } catch (const std::exception& ex) {
@@ -730,60 +492,27 @@ void unlink(const fuse_req_t req, const fuse_ino_t parent, const char* name) {
 }
 
 void rmdir(const fuse_req_t req, const fuse_ino_t parent, const char* name) {
-    const fuse_ctx *ctx = fuse_req_ctx(req);
-    const uid_t uid = ctx->uid;
-    // const gid_t gid = ctx->gid;
-
     log::Registry::fuse()->debug("[rmdir] Called for parent: {}, name: {}", parent, name);
 
-    if (!name || strlen(name) == 0) {
-        fuse_reply_err(req, EINVAL);
+    const auto resolved = Resolver::resolve({
+        .caller = "rmdir",
+        .fuseReq = req,
+        .parentIno = parent,
+        .childName = name,
+        .action = permission::vault::FilesystemAction::Delete,
+        .target = resolver::Target::EntryForPath
+    });
+
+    if (!resolved.ok()) {
+        fuse_reply_err(req, resolved.errnum);
         return;
     }
 
     try {
-        const auto& cache = runtime::Deps::get().fsCache;
+        db::query::fs::Directory::deleteEmptyDirectory(resolved.entry->id);
 
-        const auto parentPath = cache->resolvePath(parent);
-        const auto fullPath   = parentPath / name;
-
-        if (!cache->entryExists(fullPath)) {
-            fuse_reply_err(req, ENOENT);
-            return;
-        }
-
-        const auto entry = cache->getEntry(fullPath);
-        if (!entry || !entry->isDirectory()) {
-            fuse_reply_err(req, ENOTDIR);
-            return;
-        }
-
-        if (!db::query::fs::Directory::isDirectoryEmpty(entry->id)) {
-            fuse_reply_err(req, ENOTEMPTY);
-            return;
-        }
-
-        const auto user = db::query::identities::User::getUserByLinuxUID(uid);
-        if (!user) {
-            log::Registry::fuse()->error("[rmdir] No user found for UID: {}", uid);
-            fuse_reply_err(req, EACCES);
-            return;
-        }
-
-        if (!rbac::resolver::Vault::has<permission::vault::FilesystemAction>({
-            .user = user,
-            .permission = permission::vault::FilesystemAction::Delete,
-            .entry = entry
-        })) {
-            log::Registry::fuse()->warn("[rmdir] Access denied for user {} on path {}", user->name, entry->path.string());
-            fuse_reply_err(req, EACCES);
-            return;
-        }
-
-        db::query::fs::Directory::deleteEmptyDirectory(entry->id);
-
-        if (::rmdir(entry->backing_path.c_str()) < 0)
-            log::Registry::fuse()->debug("[rmdir] Failed to remove backing directory: {}: {}", entry->backing_path.string(), strerror(errno));
+        if (::rmdir(resolved.entry->backing_path.c_str()) < 0)
+            log::Registry::fuse()->error("[rmdir] Failed to remove backing directory: {}: {}", resolved.entry->backing_path.string(), strerror(errno));
 
         fuse_reply_err(req, 0);
     } catch (const std::exception& ex) {
@@ -824,35 +553,20 @@ void release(const fuse_req_t req, const fuse_ino_t ino, fuse_file_info* fi) {
 
 void fsync(const fuse_req_t req, const fuse_ino_t ino, const int datasync, fuse_file_info* fi) {
     log::Registry::fuse()->debug("[fsync] Called for inode: {}, file handle: {}, isdatasync: {}", ino, fi->fh, datasync);
-
-    const fuse_ctx* ctx = fuse_req_ctx(req);
-    uid_t uid = ctx->uid;
-
     (void) datasync;
 
-    const auto user = db::query::identities::User::getUserByLinuxUID(uid);
-    if (!user) {
-        log::Registry::fuse()->error("[fsync] No user found for UID: {}", uid);
-        fuse_reply_err(req, EACCES);
+    const auto resolved = Resolver::resolve({
+        .caller = "fsync",
+        .fuseReq = req,
+        .ino = ino,
+        .action = permission::vault::FilesystemAction::Upload,
+        .target = resolver::Target::Entry
+    });
+
+    if (!resolved.ok()) {
+        fuse_reply_err(req, resolved.errnum);
         return;
     }
-
-    const auto entry = runtime::Deps::get().fsCache->getEntry(ino);
-    if (!entry) {
-        log::Registry::fuse()->error("[fsync] No entry found for inode {}", ino);
-        fuse_reply_err(req, ENOENT);
-        return;
-    }
-
-    if (!rbac::resolver::Vault::has<permission::vault::FilesystemAction>({
-            .user = user,
-            .permission = permission::vault::FilesystemAction::Upload,
-            .entry = entry
-        })) {
-        log::Registry::fuse()->warn("[fsync] Access denied for user {} on path {}", user->name, entry->path.string());
-        fuse_reply_err(req, EACCES);
-        return;
-        }
 
     try {
         if (const int fd = fi->fh; ::fsync(fd) < 0) {
@@ -871,37 +585,24 @@ void fsync(const fuse_req_t req, const fuse_ino_t ino, const int datasync, fuse_
 void statfs(const fuse_req_t req, const fuse_ino_t ino) {
     log::Registry::fuse()->debug("[statfs] Called for inode: {}", ino);
 
-    const fuse_ctx* ctx = fuse_req_ctx(req);
-    uid_t uid = ctx->uid;
+    const auto resolved = Resolver::resolve({
+        .caller = "statfs",
+        .fuseReq = req,
+        .ino = ino,
+        .action = permission::vault::FilesystemAction::Download,
+        .target = resolver::Target::Entry
+    });
+
+    if (!resolved.ok()) {
+        fuse_reply_err(req, resolved.errnum);
+        return;
+    }
 
     try {
         struct statvfs st{};
-        const auto entry = runtime::Deps::get().fsCache->getEntry(ino);
-        if (!entry) {
-            log::Registry::fuse()->error("[statfs] No entry found for inode {}", ino);
-            fuse_reply_err(req, ENOENT);
-            return;
-        }
 
-        const auto user = db::query::identities::User::getUserByLinuxUID(uid);
-        if (!user) {
-            log::Registry::fuse()->error("[statfs] No user found for UID: {}", uid);
-            fuse_reply_err(req, EACCES);
-            return;
-        }
-
-        if (!rbac::resolver::Vault::has<permission::vault::FilesystemAction>({
-            .user = user,
-            .permission = permission::vault::FilesystemAction::Download,
-            .entry = entry
-        })) {
-            log::Registry::fuse()->warn("[statfs] Access denied for user {} on path {}", user->name, entry->path.string());
-            fuse_reply_err(req, EACCES);
-            return;
-        }
-
-        if (::statvfs(entry->backing_path.c_str(), &st) < 0) {
-            log::Registry::fuse()->error("[statfs] Failed to get filesystem stats for: {}: {}", entry->backing_path.string(), strerror(errno));
+        if (::statvfs(resolved.entry->backing_path.c_str(), &st) < 0) {
+            log::Registry::fuse()->error("[statfs] Failed to get filesystem stats for: {}: {}", resolved.entry->backing_path.string(), strerror(errno));
             fuse_reply_err(req, errno);
             return;
         }

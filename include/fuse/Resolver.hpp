@@ -12,7 +12,6 @@ namespace vh::fuse {
     private:
         static bool resolveIdentity(const resolver::Request& req, resolver::Resolved& out);
         static bool resolveEntry(const resolver::Request& req, resolver::Resolved& out);
-        static bool resolveParentEntry(const resolver::Request& req, resolver::Resolved& out);
         static bool resolveEngine(const resolver::Request& req, resolver::Resolved& out);
         static bool resolvePath(const resolver::Request& req, resolver::Resolved& out);
         static bool resolveEntryForPath(const resolver::Request& req, resolver::Resolved& out);
