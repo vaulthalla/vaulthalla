@@ -12,7 +12,7 @@ Vaulthalla is **not** a user-space toy or a weekend Docker container.
 - ✅ **Requires `sudo` / root access** to install and operate  
 - ✅ **Manages its own PostgreSQL instance** (schemas, users, migrations)  
 - ✅ **Mounts a privileged FUSE filesystem backed by `/var/lib` at `/mnt/vaulthalla`**
-- 🧱 **Seals multiple non-exportable TPM2 keys** for encryption, identity, and internal trust domains  
+- 🧱 **Seals multiple** ***Super-Admin only*** **exportable TPM2 keys** for encryption, identity, and internal trust domains  
   (keys are hardware-bound and cannot be recovered if the host or TPM state is lost)
 - ⚠️ **Developer mode (`-d`) is destructive by design**
 
