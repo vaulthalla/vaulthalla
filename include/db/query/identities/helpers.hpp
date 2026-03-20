@@ -20,14 +20,14 @@ namespace vh {
 
         void upsertUserRoles(pqxx::work& txn, const std::shared_ptr<vh::identities::User>& user);
 
-        void upsertVaultRoles(pqxx::work& txn, const std::unordered_map<uint32_t, std::shared_ptr<rbac::role::Vault>>& vRoles,
+        void upsertVaultRoles(pqxx::work& txn, const std::unordered_map<uint32_t, std::shared_ptr<vh::rbac::role::Vault>>& vRoles,
                                      const std::string &subjectType, uint32_t subjectId);
 
         void upsertGlobalVRoles(pqxx::work& txn, const rbac::permission::admin::VaultGlobals &vGlobal, uint32_t userId);
 
         void upsertAdminRoleAssignment(pqxx::work& txn, uint32_t userId, uint32_t roleId);
 
-        std::unordered_map<uint32_t, std::shared_ptr<rbac::role::Vault>> getVaultRoles(pqxx::work &txn, const std::string& subjectType, uint32_t subjectId);
+        std::unordered_map<uint32_t, std::shared_ptr<vh::rbac::role::Vault>> getVaultRoles(pqxx::work &txn, const std::string& subjectType, uint32_t subjectId);
 
         std::vector<std::shared_ptr<vh::identities::Group>> getUserGroups(pqxx::work& txn, uint32_t userId);
     }
