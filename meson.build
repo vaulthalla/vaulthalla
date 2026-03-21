@@ -92,7 +92,7 @@ test_deps = deps + dependency('gtest', required: true, main: false)
 
 # ╭────────────────────────────────   FILES   ──────────────────────────────────╮
 
-inc         = include_directories('include', 'vendor')
+inc         = include_directories('include', 'vendor', 'usage/include')
 source_root = meson.project_source_root()
 src         = join_paths(source_root, 'src')
 tests_src   = join_paths(source_root, 'tests/unit')
@@ -103,8 +103,14 @@ foreach f : run_command('find', src, '-type', 'f', '-name', '*.cpp', check: true
     sources += files(f)
 endforeach
 
-main_usage = sources
-main_usage += files(join_paths(source_root, 'main/usage.cpp'))
+usage_inc = include_directories('usage/include')
+usage_src = join_paths(source_root, 'usage/src')
+main_usage = files(join_paths(source_root, 'main/usage.cpp'))
+
+usage_sources = []
+foreach f : run_command('find', usage_src, '-type', 'f', '-name', '*.cpp', check: true).stdout().strip().split('\n')
+    usage_sources += files(f)
+endforeach
 
 
 # ╭──────────────────────────────── LIBRARIES ───────────────────────────────────╮
@@ -122,12 +128,28 @@ lib_seed = static_library('vhseed', files(join_paths(source_root, 'seed/src/seed
                           link_with: lib_core
 )
 
+lib_usage = static_library('vhusage',
+                           usage_sources,
+                           include_directories: usage_inc,
+                           dependencies: fmt_dep,
+                           install: true
+)
+
+lib_usage_native = static_library('vhusage-native',
+                                  usage_sources,
+                                  include_directories: usage_inc,
+                                  dependencies: fmt_dep,
+                                  native: true,
+                                  install: false,
+                                  override_options: ['unity=on', 'b_pch=true']
+)
+
 
 # ╭──────────────────────────────── DEPENDENCIES ────────────────────────────────╮
 
 dep = declare_dependency(
     include_directories: inc,
-    link_with: [lib_core, lib_seed],
+    link_with: [lib_core, lib_seed, lib_usage],
     dependencies: deps
 )
 
@@ -147,8 +169,8 @@ executable('vaulthalla-cli', files(join_paths(source_root, 'main/cli.cpp')),
 )
 
 vh_usage = executable('vh_usage', main_usage,
-                      include_directories: inc,
-                      link_with: lib_core,
+                      include_directories: usage_inc,
+                      link_with: lib_usage_native,
                       native: true,
                       install: false
 )
@@ -231,17 +253,7 @@ endforeach
 
 test('vh_unit_tests',
      executable('vh_unit_tests', all_test_sources,
-                link_with: [lib_core, lib_seed],
-                include_directories: inc,
-                dependencies: test_deps))
-
-perms_test_sources = sources
-perms_test_sources += join_paths(tests_src, 'test_permission_export.cpp')
-perms_test_sources += join_paths(tests_src, 'gtest_main.cpp')
-
-test('vh_permission_export_tests',
-     executable('vh_permission_export_tests', perms_test_sources,
-                link_with: [lib_core, lib_seed],
+                link_with: [lib_core, lib_seed, lib_usage],
                 include_directories: inc,
                 dependencies: test_deps))
 
@@ -257,7 +269,7 @@ if get_option('integration_tests')
         'vh_integration_tests',
         cli_test_sources + files('tests/integrations/CLI_test_main.cpp'),
         include_directories: cli_test_inc,
-        link_with: [lib_core, lib_seed],
+        link_with: [lib_core, lib_seed, lib_usage],
         dependencies: test_deps,
         install: false,
     )

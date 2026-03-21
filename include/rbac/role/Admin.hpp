@@ -35,6 +35,8 @@ struct Admin final : Meta {
 
     [[nodiscard]] std::vector<permission::Permission> toPermissions() const;
 
+    [[nodiscard]] static std::string usage();
+
     static Admin fromJson(const nlohmann::json& j);
 
     // ---------- canonical builtins ----------

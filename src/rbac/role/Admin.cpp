@@ -53,6 +53,14 @@ namespace vh::rbac::role {
         }
     }
 
+    std::string Admin::usage() {
+        return formatPermissionTable(
+            rbac::role::Admin::None().getFlags(),
+            "Permission Flags:",
+            "You can use either the --manage-* shorthand to set, or explicitly use --set/--unset."
+        );
+    }
+
     std::vector<std::string> Admin::getFlags() const {
         auto identitiesFlags = identities.getFlags();
         auto vaultsFlags = vaults.getFlags();

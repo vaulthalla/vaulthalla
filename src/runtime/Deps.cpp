@@ -6,7 +6,7 @@
 #include "vault/APIKeyManager.hpp"
 #include "log/Registry.hpp"
 #include "stats/model/CacheStats.hpp"
-#include "usage/include/UsageManager.hpp"
+#include "UsageManager.hpp"
 #include "crypto/secrets/Manager.hpp"
 
 using namespace vh::runtime;
