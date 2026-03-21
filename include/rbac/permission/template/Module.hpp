@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <unordered_set>
 
 namespace vh::rbac::permission {
     template<typename MaskT>
@@ -36,7 +37,7 @@ namespace vh::rbac::permission {
 
         [[nodiscard]] virtual std::string toString(uint8_t indent) const = 0;
 
-        [[nodiscard]] std::string toBitString() const {
+        [[nodiscard]] virtual std::string toBitString() const {
             return maskToBitString(toMask());
         }
 
@@ -64,6 +65,80 @@ namespace vh::rbac::permission {
 
             (append(p), ...);
             return flags;
+        }
+
+        template<typename... SetTs>
+        [[nodiscard]] static auto buildFlagResolver(SetTs &... sets) {
+            std::unordered_map<std::string, std::function<void()> > resolver;
+            std::unordered_set<std::string> knownFlags;
+
+            auto append = [&](auto &set) {
+                for (auto &binding: set.getFlagBindings()) {
+                    knownFlags.insert(binding.flag);
+
+                    resolver[binding.flag] = [&set, binding]() {
+                        if (binding.operation == FlagOperation::Grant) set.grant(binding.permission);
+                        else set.revoke(binding.permission);
+                    };
+                }
+            };
+
+            (append(sets), ...);
+
+            return std::pair{
+                std::move(resolver),
+                std::move(knownFlags)
+            };
+        }
+
+        [[nodiscard]] static auto buildFlagResolver(const std::vector<ResolvedFlagBinding> &bindings) {
+            std::unordered_map<std::string, std::function<void()> > resolver;
+            std::unordered_set<std::string> knownFlags;
+
+            resolver.reserve(bindings.size());
+            knownFlags.reserve(bindings.size());
+
+            for (const auto &binding: bindings) {
+                knownFlags.insert(binding.flag);
+                resolver.emplace(binding.flag, binding.apply);
+            }
+
+            return std::pair{
+                std::move(resolver),
+                std::move(knownFlags)
+            };
+        }
+
+        template<typename CommitFn>
+        [[nodiscard]] std::string updateFromResolvedFlags(
+            const std::vector<std::string> &flags,
+            const std::vector<ResolvedFlagBinding> &bindings,
+            CommitFn &&commit
+        ) {
+            std::vector<std::string> errors;
+
+            auto [resolver, knownFlags] = buildFlagResolver(bindings);
+
+            for (const auto &flag: flags) {
+                const auto it = resolver.find(flag);
+                if (it == resolver.end()) {
+                    errors.push_back("Unknown permission flag '" + flag + "'");
+                    continue;
+                }
+
+                it->second();
+            }
+
+            if (!errors.empty()) {
+                std::ostringstream oss;
+                oss << "Failed to update permissions from flags:\n";
+                for (const auto &error: errors)
+                    oss << "  - " << error << '\n';
+                return oss.str();
+            }
+
+            commit();
+            return {};
         }
 
     protected:

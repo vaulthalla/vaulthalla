@@ -62,7 +62,7 @@ namespace vh::rbac::permission {
         constexpr void setRaw(const SetMask mask) { permissions = mask; }
         constexpr void clear() { permissions = 0; }
 
-        [[nodiscard]] std::string toBitString() const {
+        [[nodiscard]] std::string toBitString() const override {
             return Base::maskToBitString(static_cast<Mask>(permissions));
         }
 
@@ -93,7 +93,7 @@ namespace vh::rbac::permission {
         }
 
         bool applyFlag(const std::string_view flag)
-        requires HasPermissionTraits<Enum> {
+            requires HasPermissionTraits<Enum> {
             const auto allowAlias = "--" + std::string(ALLOW_FLAG_ALIAS);
             const auto denyAlias = "--" + std::string(DENY_FLAG_ALIAS);
 
@@ -219,11 +219,11 @@ namespace vh::rbac::permission {
         [[nodiscard]] std::vector<std::string> ownFlags() const {
             std::vector<std::string> flags;
 
-            const auto basePrefix = std::format("--{}-", flagPrefix());  // implicit allow
+            const auto basePrefix = std::format("--{}-", flagPrefix()); // implicit allow
             const auto allowFullPrefix = std::format("--{}-{}-", ALLOW_FLAG_ALIAS, flagPrefix());
             const auto denyFullPrefix = std::format("--{}-{}-", DENY_FLAG_ALIAS, flagPrefix());
 
-            for (const auto& entry : PermissionTraits<Enum>::entries) {
+            for (const auto &entry: PermissionTraits<Enum>::entries) {
                 flags.emplace_back(basePrefix + std::string(entry.slug));
                 flags.emplace_back(allowFullPrefix + std::string(entry.slug));
                 flags.emplace_back(denyFullPrefix + std::string(entry.slug));
@@ -237,13 +237,40 @@ namespace vh::rbac::permission {
             std::vector<std::string> flags = ownFlags();
 
             auto append = [&](const auto &permission) {
-                for (const auto& flag : permission.getFlags()) flags.emplace_back(flag);
+                for (const auto &flag: permission.getFlags()) flags.emplace_back(flag);
             };
 
             (void) append;
 
             (append(p), ...);
             return flags;
+        }
+
+        template<typename... SetTs>
+        [[nodiscard]] std::vector<ResolvedFlagBinding> getFlagBindingsWithOwn(SetTs &... sets)
+            requires HasPermissionTraits<Enum> {
+            std::vector<ResolvedFlagBinding> bindings;
+
+            appendResolvedBindings(bindings, *this);
+            (appendResolvedBindings(bindings, sets), ...);
+
+            return bindings;
+        }
+
+        template<typename SetT>
+        static void appendResolvedBindings(
+            std::vector<ResolvedFlagBinding> &out,
+            SetT &set
+        ) {
+            for (const auto &binding: set.getFlagBindings()) {
+                out.push_back({
+                    .flag = binding.flag,
+                    .apply = [&set, binding]() {
+                        if (binding.operation == FlagOperation::Grant) set.grant(binding.permission);
+                        else set.revoke(binding.permission);
+                    }
+                });
+            }
         }
 
         template<typename... SetTs>

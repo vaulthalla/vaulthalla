@@ -3,6 +3,7 @@
 #include "Traits.hpp"
 #include "Meta.hpp"
 #include "Description.hpp"
+#include "Flag.hpp"
 #include "rbac/permission/Permission.hpp"
 
 #include <cstddef>
@@ -67,7 +68,7 @@ namespace vh::rbac::permission {
         constexpr void setRaw(const Mask mask) { permissions = mask; }
         constexpr void clear() { permissions = 0; }
 
-        [[nodiscard]] static const typename PermissionTraits<Enum>::Entry *findEntry(std::string_view slug)
+        [[nodiscard]] static const PermissionTraits<Enum>::Entry *findEntry(std::string_view slug)
             requires HasPermissionTraits<Enum> {
             for (const auto &entry: PermissionTraits<Enum>::entries)
                 if (entry.slug == slug) return &entry;
@@ -75,37 +76,62 @@ namespace vh::rbac::permission {
             return nullptr;
         }
 
-        bool applyFlag(const std::string_view flag)
-        requires HasPermissionTraits<Enum> {
-            const auto allowAlias = "--" + std::string(ALLOW_FLAG_ALIAS);
-            const auto denyAlias = "--" + std::string(DENY_FLAG_ALIAS);
+        [[nodiscard]] std::vector<FlagBinding<Enum> > getFlagBindings() const
+            requires HasPermissionTraits<Enum> {
+            std::vector<FlagBinding<Enum> > bindings;
+            bindings.reserve(PermissionTraits<Enum>::entries.size() * 3);
 
-            if (!flag.starts_with(allowAlias) || !flag.starts_with(denyAlias)) {
-                const auto bare = flag.substr(2);
-                if (const auto *entry = findEntry(bare)) {
-                    grant(entry->value);
-                    return true;
-                }
+            const auto basePrefix = std::format("--{}-", flagPrefix());
+            const auto allowFullPrefix = std::format("--{}-{}-", ALLOW_FLAG_ALIAS, flagPrefix());
+            const auto denyFullPrefix = std::format("--{}-{}-", DENY_FLAG_ALIAS, flagPrefix());
+
+            for (const auto &entry: PermissionTraits<Enum>::entries) {
+                bindings.push_back({
+                    .flag = basePrefix + std::string(entry.slug),
+                    .permission = entry.value,
+                    .operation = FlagOperation::Grant,
+                    .slug = entry.slug
+                });
+
+                bindings.push_back({
+                    .flag = allowFullPrefix + std::string(entry.slug),
+                    .permission = entry.value,
+                    .operation = FlagOperation::Grant,
+                    .slug = entry.slug
+                });
+
+                bindings.push_back({
+                    .flag = denyFullPrefix + std::string(entry.slug),
+                    .permission = entry.value,
+                    .operation = FlagOperation::Revoke,
+                    .slug = entry.slug
+                });
             }
 
-            auto size = allowAlias.size();
-            if (flag.starts_with(allowAlias)) {
-                const auto slug = flag.substr(size);
-                if (const auto *entry = findEntry(slug)) {
-                    grant(entry->value);
-                    return true;
-                }
-                return false;
-            }
+            return bindings;
+        }
 
-            size = denyAlias.size();
-            if (flag.starts_with(denyAlias)) {
-                const auto slug = flag.substr(size);
-                if (const auto *entry = findEntry(slug)) {
-                    revoke(entry->value);
-                    return true;
-                }
-                return false;
+        [[nodiscard]] std::vector<std::string> getFlags() const
+            requires HasPermissionTraits<Enum> {
+            std::vector<std::string> flags;
+            const auto bindings = getFlagBindings();
+
+            flags.reserve(bindings.size());
+            for (const auto &binding: bindings)
+                flags.push_back(binding.flag);
+
+            return flags;
+        }
+
+        [[nodiscard]] bool applyFlag(const std::string_view flag)
+            requires HasPermissionTraits<Enum> {
+            for (const auto &binding: getFlagBindings()) {
+                if (binding.flag != flag) continue;
+
+                if (binding.operation == FlagOperation::Grant) grant(binding.permission);
+                else revoke(binding.permission);
+
+                return true;
             }
 
             return false;
@@ -127,22 +153,6 @@ namespace vh::rbac::permission {
             }
 
             return oss.str();
-        }
-
-        [[nodiscard]] std::vector<std::string> getFlags() const {
-            std::vector<std::string> flags;
-
-            const auto basePrefix = std::format("--{}-", flagPrefix());  // implicit allow
-            const auto allowFullPrefix = std::format("--{}-{}-", ALLOW_FLAG_ALIAS, flagPrefix());
-            const auto denyFullPrefix = std::format("--{}-{}-", DENY_FLAG_ALIAS, flagPrefix());
-
-            for (const auto& entry : PermissionTraits<Enum>::entries) {
-                flags.emplace_back(basePrefix + std::string(entry.slug));
-                flags.emplace_back(allowFullPrefix + std::string(entry.slug));
-                flags.emplace_back(denyFullPrefix + std::string(entry.slug));
-            }
-
-            return flags;
         }
 
         [[nodiscard]] virtual std::string toString(uint8_t indent) const = 0;
