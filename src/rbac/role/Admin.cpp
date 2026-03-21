@@ -182,4 +182,10 @@ namespace vh::rbac::role {
     }
 
     std::string to_string(const Admin &r) { return r.toString(); }
+
+    std::string to_string(const std::vector<std::shared_ptr<Admin>> &roles) {
+        std::ostringstream oss;
+        for (const auto &role: roles) oss << role->toString() << "\n";
+        return oss.str();
+    }
 }

@@ -76,9 +76,20 @@ namespace vh::rbac::permission {
         }
 
         bool applyFlag(const std::string_view flag)
-            requires HasPermissionTraits<Enum> {
-            auto size = std::string(ALLOW_FLAG_ALIAS).size();
-            if (flag.starts_with(ALLOW_FLAG_ALIAS)) {
+        requires HasPermissionTraits<Enum> {
+            const auto allowAlias = "--" + std::string(ALLOW_FLAG_ALIAS);
+            const auto denyAlias = "--" + std::string(DENY_FLAG_ALIAS);
+
+            if (!flag.starts_with(allowAlias) || !flag.starts_with(denyAlias)) {
+                const auto bare = flag.substr(2);
+                if (const auto *entry = findEntry(bare)) {
+                    grant(entry->value);
+                    return true;
+                }
+            }
+
+            auto size = allowAlias.size();
+            if (flag.starts_with(allowAlias)) {
                 const auto slug = flag.substr(size);
                 if (const auto *entry = findEntry(slug)) {
                     grant(entry->value);
@@ -87,8 +98,8 @@ namespace vh::rbac::permission {
                 return false;
             }
 
-            size = std::string(DENY_FLAG_ALIAS).size();
-            if (flag.starts_with(DENY_FLAG_ALIAS)) {
+            size = denyAlias.size();
+            if (flag.starts_with(denyAlias)) {
                 const auto slug = flag.substr(size);
                 if (const auto *entry = findEntry(slug)) {
                     revoke(entry->value);
@@ -121,11 +132,12 @@ namespace vh::rbac::permission {
         [[nodiscard]] std::vector<std::string> getFlags() const {
             std::vector<std::string> flags;
 
+            const auto basePrefix = std::format("--{}-", flagPrefix());  // implicit allow
             const auto allowFullPrefix = std::format("--{}-{}-", ALLOW_FLAG_ALIAS, flagPrefix());
             const auto denyFullPrefix = std::format("--{}-{}-", DENY_FLAG_ALIAS, flagPrefix());
 
             for (const auto& entry : PermissionTraits<Enum>::entries) {
-                flags.emplace_back("--" + std::string(entry.slug));
+                flags.emplace_back(basePrefix + std::string(entry.slug));
                 flags.emplace_back(allowFullPrefix + std::string(entry.slug));
                 flags.emplace_back(denyFullPrefix + std::string(entry.slug));
             }

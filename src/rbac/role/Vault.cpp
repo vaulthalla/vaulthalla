@@ -171,4 +171,12 @@ namespace vh::rbac::role {
         j = nlohmann::json::array();
         for (const auto &[id, role]: roles) j.emplace_back(*role);
     }
+
+    std::string to_string(const std::vector<std::shared_ptr<Vault> > &roles) {
+        std::ostringstream oss;
+        for (const auto &role: roles) oss << role->toString(0) << "\n";
+        return oss.str();
+    }
+
+    std::string to_string(const Vault &role) { return role.toString(0); }
 }

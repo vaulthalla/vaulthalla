@@ -17,6 +17,8 @@ namespace vh::db::query::rbac::role::admin {
         static std::shared_ptr<vh::rbac::role::Admin> getByAssignmentId(uint32_t assignmentId);
 
         static std::vector<std::shared_ptr<vh::rbac::role::Admin>> listAll();
+
+        static uint32_t countAssignmentsForRole(uint32_t role_id);
     };
 
 }

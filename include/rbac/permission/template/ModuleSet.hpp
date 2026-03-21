@@ -84,27 +84,44 @@ namespace vh::rbac::permission {
             }
         }
 
-        bool applyFlag(std::string_view flag,
-                       std::string_view allowPrefix = "--allow-",
-                       std::string_view denyPrefix = "--deny-")
+        [[nodiscard]] static const typename PermissionTraits<Enum>::Entry *findEntry(std::string_view slug)
             requires HasPermissionTraits<Enum> {
-            if (flag.starts_with(allowPrefix)) {
-                const auto slug = flag.substr(allowPrefix.size());
-                for (const auto &entry: PermissionTraits<Enum>::entries)
-                    if (entry.slug == slug) {
-                        grant(entry.value);
-                        return true;
-                    }
+            for (const auto &entry: PermissionTraits<Enum>::entries)
+                if (entry.slug == slug) return &entry;
+
+            return nullptr;
+        }
+
+        bool applyFlag(const std::string_view flag)
+        requires HasPermissionTraits<Enum> {
+            const auto allowAlias = "--" + std::string(ALLOW_FLAG_ALIAS);
+            const auto denyAlias = "--" + std::string(DENY_FLAG_ALIAS);
+
+            if (!flag.starts_with(allowAlias) || !flag.starts_with(denyAlias)) {
+                const auto bare = flag.substr(2);
+                if (const auto *entry = findEntry(bare)) {
+                    grant(entry->value);
+                    return true;
+                }
+            }
+
+            auto size = allowAlias.size();
+            if (flag.starts_with(allowAlias)) {
+                const auto slug = flag.substr(size);
+                if (const auto *entry = findEntry(slug)) {
+                    grant(entry->value);
+                    return true;
+                }
                 return false;
             }
 
-            if (flag.starts_with(denyPrefix)) {
-                const auto slug = flag.substr(denyPrefix.size());
-                for (const auto &entry: PermissionTraits<Enum>::entries)
-                    if (entry.slug == slug) {
-                        revoke(entry.value);
-                        return true;
-                    }
+            size = denyAlias.size();
+            if (flag.starts_with(denyAlias)) {
+                const auto slug = flag.substr(size);
+                if (const auto *entry = findEntry(slug)) {
+                    revoke(entry->value);
+                    return true;
+                }
                 return false;
             }
 
@@ -202,11 +219,12 @@ namespace vh::rbac::permission {
         [[nodiscard]] std::vector<std::string> ownFlags() const {
             std::vector<std::string> flags;
 
+            const auto basePrefix = std::format("--{}-", flagPrefix());  // implicit allow
             const auto allowFullPrefix = std::format("--{}-{}-", ALLOW_FLAG_ALIAS, flagPrefix());
             const auto denyFullPrefix = std::format("--{}-{}-", DENY_FLAG_ALIAS, flagPrefix());
 
-            for (const auto &entry: PermissionTraits<Enum>::entries) {
-                flags.emplace_back("--" + std::string(entry.slug));
+            for (const auto& entry : PermissionTraits<Enum>::entries) {
+                flags.emplace_back(basePrefix + std::string(entry.slug));
                 flags.emplace_back(allowFullPrefix + std::string(entry.slug));
                 flags.emplace_back(denyFullPrefix + std::string(entry.slug));
             }

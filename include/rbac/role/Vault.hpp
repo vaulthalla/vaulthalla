@@ -25,7 +25,8 @@ namespace vh::rbac::role {
 
         Vault() = default;
 
-        explicit Vault(const pqxx::row& row);
+        explicit Vault(const pqxx::row &row);
+
         Vault(const pqxx::row &row, const pqxx::result &overrides);
 
         explicit Vault(const nlohmann::json &j);
@@ -184,5 +185,5 @@ namespace vh::rbac::role {
 
     std::string to_string(const Vault &role);
 
-    std::string to_string(const std::vector<Vault> &roles);
+    std::string to_string(const std::vector<std::shared_ptr<Vault>> &roles);
 }

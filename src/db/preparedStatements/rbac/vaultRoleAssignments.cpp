@@ -195,7 +195,7 @@ void vh::db::DBConnection::initPreparedVaultRoleAssignments() const {
         )SQL"
     );
 
-    conn_->prepare("count_adminva_role_assignments_by_role_id",
+    conn_->prepare("count_vault_role_assignments_by_role_id",
         R"SQL(
             SELECT COUNT(*)
             FROM vault_role_assignments

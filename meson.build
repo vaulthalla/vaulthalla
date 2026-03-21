@@ -257,6 +257,16 @@ test('vh_unit_tests',
                 include_directories: inc,
                 dependencies: test_deps))
 
+perms_test_sources = sources
+perms_test_sources += join_paths(tests_src, 'test_permission_export.cpp')
+perms_test_sources += join_paths(tests_src, 'gtest_main.cpp')
+
+test('vh_permission_export_tests',
+     executable('vh_permission_export_tests', perms_test_sources,
+                link_with: [lib_core, lib_seed, lib_usage],
+                include_directories: inc,
+                dependencies: test_deps))
+
 if get_option('integration_tests')
     cli_test_inc = include_directories('tests/integrations/include', 'usage/include', 'include', 'vendor')
     cli_test_src = join_paths(source_root, 'tests/integrations/src')

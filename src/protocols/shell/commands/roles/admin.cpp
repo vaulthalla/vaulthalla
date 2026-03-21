@@ -23,15 +23,29 @@ namespace vh::protocols::shell::commands::roles {
         auto& io = call.io;
 
         const auto perms = call.user->roles.admin->toPermissions();
+
+        return ok("fixme");
     }
 
     static CommandResult handle_update(const CommandCall& call) {
-
+        if (!call.user->roles.admin->roles.admin.canEdit()) return invalid("You do not have permission to edit admin roles");
+        validatePositionals(call, resolveUsage({"role", "admin", "update"}));
+        return ok("fixme");
     }
 
     static CommandResult handle_delete(const CommandCall& call) {
         if (!call.user->roles.admin->roles.admin.canDelete()) return invalid("You do not have permission to delete admin roles");
-        if (db::query::rbac::role::Admin::)
+        validatePositionals(call, resolveUsage({"role", "admin", "delete"}));
+
+        const auto roleLkp = resolveAdminRole(call.positionals[0], "role admin delete");
+        if (!roleLkp.ptr) return invalid(roleLkp.error);
+
+        if (db::query::rbac::role::admin::Assignments::countAssignmentsForRole(roleLkp.ptr->id) > 0)
+            return invalid("Cannot delete role '" + roleLkp.ptr->name + "' because it has active assignments. Remove those assignments before deleting the role.");
+
+        db::query::rbac::role::Admin::remove(roleLkp.ptr->id);
+
+        return ok("Role '" + roleLkp.ptr->name + "' deleted successfully");
     }
 
     static CommandResult handle_info(const CommandCall& call) {
@@ -48,7 +62,6 @@ namespace vh::protocols::shell::commands::roles {
     static CommandResult handle_list(const CommandCall& call) {
         if (!call.user->roles.admin->roles.admin.canView()) return invalid("You do not have permission to view admin roles");
         validatePositionals(call, resolveUsage({"role", "admin", "list"}));
-
         return ok(to_string(db::query::rbac::role::Admin::list(parseListQuery(call))));
     }
 
@@ -68,6 +81,6 @@ namespace vh::protocols::shell::commands::roles {
         if (is_role_match("info", sub)) return handle_info(subcall);
         if (is_role_match("list", sub)) return handle_list(subcall);
 
-        return invalid(call.constructFullArgs(), "Unknown roles subcommand: '" + std::string(sub) + "'");
+        return invalid(call.constructFullArgs(), "Unknown admin roles subcommand: '" + std::string(sub) + "'");
     }
 }

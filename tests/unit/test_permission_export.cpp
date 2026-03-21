@@ -12,6 +12,10 @@ protected:
 
 TEST_F(PermExportTest, TestVaultPermExport) {
     std::cout << "Testing Vault Permission Export..." << std::endl;
+
     const auto vRole = rbac::role::Vault::PowerUser();
     std::cout << vRole.toFlagsString() << std::endl;
+
+    for (const auto& perm : vRole.getFlags())
+        std::cout << perm << std::endl;
 }

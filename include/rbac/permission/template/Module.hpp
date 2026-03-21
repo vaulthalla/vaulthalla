@@ -53,11 +53,11 @@ namespace vh::rbac::permission {
         }
 
         template<typename... PermissionTs>
-        [[nodiscard]] std::vector<std::string> getFlags(const PermissionTs&... p) const {
+        [[nodiscard]] std::vector<std::string> getFlags(const PermissionTs &... p) const {
             std::vector<std::string> flags;
 
-            auto append = [&](const auto& permission) {
-                for (const auto& perm : permission.getFlags()) flags.push_back(perm);
+            auto append = [&](const auto &permission) {
+                for (const auto &perm: permission.getFlags()) flags.push_back(perm);
             };
 
             (void) append;
