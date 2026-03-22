@@ -27,8 +27,9 @@ Permission::Permission(const nlohmann::json& j)
       created_at(parsePostgresTimestamp(j.at("created_at").get<std::string>())),
       updated_at(parsePostgresTimestamp(j.at("updated_at").get<std::string>())) {}
 
-Permission::Permission(const uint32_t bitPos, std::string name, std::string description)
-    : bit_position(bitPos), name(std::move(name)), description(std::move(description)) {}
+Permission::Permission(const uint32_t bitPos, std::string name, std::string description, const std::vector<std::string>& flags, uint64_t rawValue, std::type_index enumType)
+    : bit_position(bitPos), name(std::move(name)), description(std::move(description)),
+      flags(flags), rawValue(rawValue), enumType(enumType) {}
 
 void to_json(nlohmann::json& j, const std::vector<std::shared_ptr<Permission> >& permissions) {
     j = nlohmann::json::array();

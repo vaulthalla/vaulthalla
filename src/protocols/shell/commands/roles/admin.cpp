@@ -3,7 +3,7 @@
 
 #include "identities/User.hpp"
 #include "rbac/role/Admin.hpp"
-#include "rbac/resolver/admin/all.hpp"
+#include "rbac/resolver/permission/all.hpp"
 
 #include "db/query/rbac/role/Admin.hpp"
 #include "db/query/rbac/role/admin/Assignments.hpp"
@@ -28,9 +28,44 @@ namespace vh::protocols::shell::commands::roles {
     }
 
     static CommandResult handle_update(const CommandCall& call) {
-        if (!call.user->roles.admin->roles.admin.canEdit()) return invalid("You do not have permission to edit admin roles");
+        if (!call.user->roles.admin->roles.admin.canEdit())
+            return invalid("You do not have permission to edit admin roles");
+
         validatePositionals(call, resolveUsage({"role", "admin", "update"}));
-        return ok("fixme");
+
+        const auto roleLkp = resolveAdminRole(call.positionals[0], "role admin update");
+        if (!roleLkp.ptr) return invalid(roleLkp.error);
+
+        using AdminPermissionResolver = resolver::PermissionResolverEnumPack<rbac::role::Admin>::type;
+
+        auto staged = roleLkp.ptr;
+        const auto exported = staged->toPermissions();
+        const auto byFlag = AdminPermissionResolver::buildFlagMap(exported);
+
+        std::vector<std::string> errors;
+
+        for (const auto& opt : call.options) {
+            if (!opt.value) continue;
+
+            const auto it = byFlag.find(*opt.value);
+            if (it == byFlag.end()) {
+                errors.push_back("Unknown permission flag '" + *opt.value + "'");
+                continue;
+            }
+
+            if (!AdminPermissionResolver::apply(*staged, *it->second.permission, it->second.operation))
+                errors.push_back("Failed to apply permission flag '" + *opt.value + "'");
+        }
+
+        if (!errors.empty()) {
+            std::ostringstream oss;
+            oss << "Failed to update permissions from flags:\n";
+            for (const auto& e : errors) oss << "  - " << e << '\n';
+            return invalid(oss.str());
+        }
+
+        db::query::rbac::role::Admin::upsert(staged);
+        return ok("Role '" + staged->name + "' updated successfully");
     }
 
     static CommandResult handle_delete(const CommandCall& call) {

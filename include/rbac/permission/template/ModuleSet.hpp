@@ -138,7 +138,7 @@ namespace vh::rbac::permission {
         ) const
             requires HasPermissionTraits<Enum> {
             for (const auto &entry: PermissionTraits<Enum>::entries) {
-                const auto raw = static_cast<SetMask>(entry.value);
+                const auto raw = static_cast<Mask>(entry.value);
                 if (!hasSingleBit(raw))
                     continue;
 
@@ -151,10 +151,23 @@ namespace vh::rbac::permission {
                 qualifiedName.push_back('.');
                 qualifiedName.append(entry.slug);
 
+                std::vector<std::string> flags;
+                flags.reserve(3);
+
+                const auto dashed = std::string(qualifiedPrefix);
+                const auto slug = std::string(entry.slug);
+
+                flags.emplace_back(std::format("--{}-{}", dashed, slug));
+                flags.emplace_back(std::format("--{}-{}-{}", ALLOW_FLAG_ALIAS, dashed, slug));
+                flags.emplace_back(std::format("--{}-{}-{}", DENY_FLAG_ALIAS, dashed, slug));
+
                 *out++ = Permission{
                     static_cast<uint32_t>(globalBit),
                     std::move(qualifiedName),
-                    buildPermissionDescription(describer, entry.description, descriptionPrefix)
+                    buildPermissionDescription(describer, entry.description, descriptionPrefix),
+                    flags,
+                    static_cast<uint64_t>(raw),
+                    typeid(Enum)
                 };
             }
         }

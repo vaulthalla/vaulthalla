@@ -19,8 +19,7 @@ std::string to_string(const VaultType& type);
 VaultType from_string(const std::string& type);
 
 struct Vault {
-    unsigned int id{};
-    unsigned int owner_id{};
+    uint32_t id{}, owner_id{};
     std::string name, description{};
     uintmax_t quota{};
     VaultType type{VaultType::Local};
@@ -32,7 +31,7 @@ struct Vault {
     virtual ~Vault() = default;
     explicit Vault(const pqxx::row& row);
 
-    std::string quotaStr() const;
+    [[nodiscard]] std::string quotaStr() const;
     void setQuotaFromStr(const std::string& str);
 };
 

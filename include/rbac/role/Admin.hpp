@@ -8,6 +8,7 @@
 #include <optional>
 #include <memory>
 #include <vector>
+#include <unordered_map>
 #include <nlohmann/json_fwd.hpp>
 
 namespace vh::rbac::role {
@@ -39,6 +40,8 @@ namespace vh::rbac::role {
         [[nodiscard]] std::vector<std::string> getFlags() const;
 
         [[nodiscard]] std::vector<permission::Permission> toPermissions() const;
+
+        [[nodiscard]] std::unordered_map<std::string, permission::Permission> toFlagMap() const;
 
         [[nodiscard]] static std::string usage();
 

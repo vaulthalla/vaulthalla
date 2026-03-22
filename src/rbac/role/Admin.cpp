@@ -61,6 +61,16 @@ namespace vh::rbac::role {
         );
     }
 
+    std::unordered_map<std::string, permission::Permission> Admin::toFlagMap() const {
+        std::unordered_map<std::string, permission::Permission> flagMap;
+
+        for (const auto &perm: toPermissions())
+            for (const auto& flag : perm.flags)
+                flagMap[flag] = perm;
+
+        return flagMap;
+    }
+
     std::vector<std::string> Admin::getFlags() const {
         auto identitiesFlags = identities.getFlags();
         auto vaultsFlags = vaults.getFlags();

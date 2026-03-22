@@ -4,6 +4,7 @@
 #include "identities/Group.hpp"
 #include "storage/Engine.hpp"
 #include "log/Registry.hpp"
+#include "vault/model/Vault.hpp"
 
 #include <memory>
 
