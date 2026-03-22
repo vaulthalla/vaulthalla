@@ -30,7 +30,7 @@ static CommandResult handle_vault(const CommandCall& call) {
     if (isVaultMatch("update", sub)) return handle_vault_update(subcall);
     if (isVaultMatch("delete", sub)) return handle_vault_delete(subcall);
     if (isVaultMatch("keys", sub)) return handle_vault_keys(subcall);
-    // TODO: finish reo
+    // TODO: finish role assignment
     // if (isVaultMatch("role", sub)) return handle_vault_role(subcall);
 
     return invalid(call.constructFullArgs(), "Unknown vault subcommand: '" + std::string(sub) + "'");

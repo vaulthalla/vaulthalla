@@ -137,4 +137,16 @@ namespace vh::db::query::rbac::role::vault {
         });
     }
 
+    uint32_t Assignments::countAssignmentsForRole(uint32_t role_id) {
+        return Transactions::exec("role::vault::Assignments::countAssignmentsForRole(role_id)", [&](pqxx::work& txn) -> uint32_t {
+            const auto result = txn.exec(
+                pqxx::prepped{"count_vault_role_assignments_by_role_id"},
+                pqxx::params{role_id}
+            );
+
+            if (result.empty()) return 0;
+            return result.one_field().as<uint32_t>();
+        });
+    }
+
 }

@@ -35,6 +35,8 @@ namespace vh::db::query::rbac::role::vault {
                                                                                    uint32_t subjectId);
 
         static std::vector<std::shared_ptr<vh::rbac::role::Vault>> listAll();
+
+        static uint32_t countAssignmentsForRole(uint32_t role_id);
     };
 
 }

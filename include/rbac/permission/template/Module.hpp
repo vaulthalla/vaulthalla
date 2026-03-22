@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <unordered_set>
 
 namespace vh::rbac::permission {
     template<typename MaskT>
@@ -34,9 +35,11 @@ namespace vh::rbac::permission {
 
         [[nodiscard]] virtual std::string toFlagsString() const = 0;
 
+        virtual std::vector<std::string> getFlags() const = 0;
+
         [[nodiscard]] virtual std::string toString(uint8_t indent) const = 0;
 
-        [[nodiscard]] std::string toBitString() const {
+        [[nodiscard]] virtual std::string toBitString() const {
             return maskToBitString(toMask());
         }
 
@@ -50,6 +53,20 @@ namespace vh::rbac::permission {
             }
 
             return bits;
+        }
+
+        template<typename... PermissionTs>
+        [[nodiscard]] std::vector<std::string> getFlags(const PermissionTs &... p) const {
+            std::vector<std::string> flags;
+
+            auto append = [&](const auto &permission) {
+                for (const auto &perm: permission.getFlags()) flags.push_back(perm);
+            };
+
+            (void) append;
+
+            (append(p), ...);
+            return flags;
         }
 
     protected:

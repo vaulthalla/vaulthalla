@@ -1,5 +1,5 @@
 project('vaulthalla', 'cpp',
-        version: '0.23.0',
+        version: '0.24.0',
         license: 'AGPL-3.0-or-later',
         license_files: ['LICENSE', 'debian/copyright'],
         default_options: [
@@ -253,6 +253,16 @@ endforeach
 
 test('vh_unit_tests',
      executable('vh_unit_tests', all_test_sources,
+                link_with: [lib_core, lib_seed, lib_usage],
+                include_directories: inc,
+                dependencies: test_deps))
+
+perms_test_sources = sources
+perms_test_sources += join_paths(tests_src, 'test_permission_export.cpp')
+perms_test_sources += join_paths(tests_src, 'gtest_main.cpp')
+
+test('vh_permission_export_tests',
+     executable('vh_permission_export_tests', perms_test_sources,
                 link_with: [lib_core, lib_seed, lib_usage],
                 include_directories: inc,
                 dependencies: test_deps))

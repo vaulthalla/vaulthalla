@@ -228,7 +228,9 @@ namespace vh::identities {
 
         if (u.meta.linux_uid) j["linux_uid"] = *u.meta.linux_uid;
         if (u.meta.created_by) j["created_by"] = *u.meta.created_by;
-        if (u.meta.updated_by) j["updated_by"] = *u.meta.updated_by; {
+        if (u.meta.updated_by) j["updated_by"] = *u.meta.updated_by;
+
+        {
             std::scoped_lock lock(u.mutex_);
 
             if (u.roles.admin) j["admin_role"] = *u.roles.admin;

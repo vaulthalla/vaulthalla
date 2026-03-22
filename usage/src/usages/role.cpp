@@ -10,89 +10,142 @@ static std::shared_ptr<CommandUsage> buildBaseUsage(const std::weak_ptr<CommandU
     return cmd;
 }
 
-static const auto userFlag = Flag::WithAliases("user_filter", "Indicates the role is a user role", {"user", "u"});
-static const auto vaultFlag = Flag::WithAliases("vault_filter", "Indicates the role is a vault role", {"vault", "v"});
 static const auto rolePos = Positional::WithAliases("role", "ID or name of the role", {"id", "name"});
-static const auto roleType = Option::OneToMany("role_type", "Type of the role", "type", {"user", "vault"});
-static const auto inheritFrom = Optional::OneToMany("inherit_from", "Inherit permissions from an existing role ID", "from", {"id", "name"});
-static const auto roleNameOpt = Optional::Single("role_name", "New name for the role", "name", "new_name");
 static const auto newRolePos = Positional::Alias("role_name", "Name for the new role", "name");
-static const auto typePos = Positional::WithAliases("role_type", "Type of the role (user | vault)", {"user", "vault"});
 static const auto descriptionOpt = Optional::ManyToOne("description", "Description of the role", {"description", "desc", "d"}, "description");
+static const auto roleNameOpt = Optional::Single("role_name", "New name for the role", "name", "new_name");
+static const auto inheritFrom = Optional::OneToMany("inherit_from", "Inherit permissions from an existing role ID or name", "from", {"id", "name"});
 
-static std::shared_ptr<CommandUsage> list(const std::weak_ptr<CommandUsage>& parent) {
+static std::shared_ptr<CommandUsage> admin_list(const std::weak_ptr<CommandUsage>& parent) {
     const auto cmd = buildBaseUsage(parent);
     cmd->aliases = {"list", "ls"};
-    cmd->description = "List all roles in the system.";
-    cmd->optional_flags = { jsonFlag, userFlag, vaultFlag };
-    cmd->examples.push_back({"vh roles", "List all roles."});
-    cmd->examples.push_back({"vh roles --user --json", "List all user roles in JSON format."});
+    cmd->description = "List all admin roles in the system.";
+    cmd->optional_flags = { jsonFlag };
+    cmd->examples.push_back({"vh role admin list", "List all admin roles."});
+    cmd->examples.push_back({"vh role admin list --json", "List all admin roles in JSON format."});
     return cmd;
 }
 
-static std::shared_ptr<CommandUsage> info(const std::weak_ptr<CommandUsage>& parent) {
+static std::shared_ptr<CommandUsage> admin_info(const std::weak_ptr<CommandUsage>& parent) {
     const auto cmd = buildBaseUsage(parent);
     cmd->aliases = {"info", "show", "get"};
-    cmd->description = "Display detailed information about a specific role.";
+    cmd->description = "Display detailed information about a specific admin role.";
     cmd->positionals = { rolePos };
-    cmd->examples.push_back({"vh role info 42", "Show information for the role with ID 42."});
-    cmd->examples.push_back({"vh role info admin --user", "Show information for the user role named 'admin'."});
+    cmd->examples.push_back({"vh role admin info super_admin", "Show information for the admin role named 'super_admin'."});
+    cmd->examples.push_back({"vh role admin info 42", "Show information for the admin role with ID 42."});
     return cmd;
 }
 
-static std::shared_ptr<CommandUsage> create(const std::weak_ptr<CommandUsage>& parent) {
+static std::shared_ptr<CommandUsage> admin_create(const std::weak_ptr<CommandUsage>& parent) {
     const auto cmd = buildBaseUsage(parent);
     cmd->aliases = {"create", "new", "add", "mk"};
-    cmd->description = "Create a new role with specified permissions.";
-    cmd->positionals = { typePos, newRolePos };
-    cmd->optional_flags = { permissionsFlags };
+    cmd->description = "Create a new admin role with specified permissions.";
+    cmd->positionals = { newRolePos };
     cmd->optional = { descriptionOpt, inheritFrom };
-    cmd->examples.push_back({"vh role create editor --type user --set-manage-users --set-manage-groups",
-                           "Create a new user role named 'editor' with user and group management permissions."});
-    cmd->examples.push_back({"vh role create vault-admin --type vault --from 3 --set-manage-access",
-                           "Create a new vault role named 'vault-admin' by copying permissions from role ID 3 and adding manage access permission."});
+    cmd->examples.push_back({"vh role admin create audit_reader --description \"Read-only audit access\" --allow-audit-view",
+                            "Create a new admin role named 'audit_reader' with audit viewing permission."});
+    cmd->examples.push_back({"vh role admin create user_ops --allow-identities-users-view --allow-identities-users-modify",
+                            "Create a new admin role named 'user_ops' with user identity management permissions."});
+    cmd->examples.push_back({"vh role admin create settings_admin --from super_admin --deny-settings-services-edit",
+                            "Create a new admin role from 'super_admin' and revoke service settings edit permission."});
     return cmd;
 }
 
-static std::shared_ptr<CommandUsage> remove(const std::weak_ptr<CommandUsage>& parent) {
-    const auto cmd = buildBaseUsage(parent);
-    cmd->aliases = {"delete", "remove", "del", "rm"};
-    cmd->description = "Delete an existing role by ID.";
-    cmd->positionals = { rolePos };
-    cmd->examples.push_back({"vh role delete 42", "Delete the role with ID 42."});
-    cmd->examples.push_back({"vh role rm 42", "Delete the role with ID 42 (using alias)."});
-    return cmd;
-}
-
-static std::shared_ptr<CommandUsage> update(const std::weak_ptr<CommandUsage>& parent) {
+static std::shared_ptr<CommandUsage> admin_update(const std::weak_ptr<CommandUsage>& parent) {
     const auto cmd = buildBaseUsage(parent);
     cmd->aliases = {"update", "set", "modify", "edit"};
-    cmd->description = "Update properties and permissions of an existing role.";
+    cmd->description = "Update properties and permissions of an existing admin role.";
     cmd->positionals = { rolePos };
-    cmd->optional_flags = { permissionsFlags };
     cmd->optional = { descriptionOpt, roleNameOpt };
-    cmd->examples.push_back({"vh role update 42 --name superadmin --set-manage-admins",
-                           "Rename role ID 42 to 'superadmin' and add admin management permission."});
-    cmd->examples.push_back({"vh role update 3 --unset-manage-users",
-                           "Remove user management permission from role ID 3."});
-    cmd->examples.push_back({"vh role update 5 --set-manage-access --set-manage-tags",
-                           "Add manage access and manage tags permissions to vault role ID 5."});
-
+    cmd->examples.push_back({"vh role admin update audit_reader --name audit_observer --allow-audit-view",
+                            "Rename 'audit_reader' to 'audit_observer' and ensure audit viewing permission is granted."});
+    cmd->examples.push_back({"vh role admin update user_ops --deny-identities-users-modify",
+                            "Revoke user identity modification permission from 'user_ops'."});
+    cmd->examples.push_back({"vh role admin update super_admin --deny-settings-sharing-edit --deny-settings-services-edit",
+                            "Revoke sharing and services settings edit permissions from 'super_admin'."});
     return cmd;
 }
 
-static std::shared_ptr<CommandUsage> base(const std::weak_ptr<CommandUsage>& parent) {
-    auto cmd = buildBaseUsage(parent);
-    cmd->aliases = {"role", "r"};
-    cmd->pluralAliasImpliesList = true;
-    cmd->description = "Manage a single role.";
+static std::shared_ptr<CommandUsage> admin_remove(const std::weak_ptr<CommandUsage>& parent) {
+    const auto cmd = buildBaseUsage(parent);
+    cmd->aliases = {"delete", "remove", "del", "rm"};
+    cmd->description = "Delete an existing admin role by ID or name.";
+    cmd->positionals = { rolePos };
+    cmd->examples.push_back({"vh role admin delete audit_reader", "Delete the admin role named 'audit_reader'."});
+    cmd->examples.push_back({"vh role admin rm 42", "Delete the admin role with ID 42."});
+    return cmd;
+}
 
-    // ---------- build subcommands ----------
-    const auto listCmd   = list(cmd->weak_from_this());
-    const auto createCmd = create(cmd->weak_from_this());
-    const auto removeCmd = remove(cmd->weak_from_this());
-    const auto infoCmd   = info(cmd->weak_from_this());
-    const auto updateCmd = update(cmd->weak_from_this());
+static std::shared_ptr<CommandUsage> vault_list(const std::weak_ptr<CommandUsage>& parent) {
+    const auto cmd = buildBaseUsage(parent);
+    cmd->aliases = {"list", "ls"};
+    cmd->description = "List all vault roles in the system.";
+    cmd->optional_flags = { jsonFlag };
+    cmd->examples.push_back({"vh role vault list", "List all vault roles."});
+    cmd->examples.push_back({"vh role vault list --json", "List all vault roles in JSON format."});
+    return cmd;
+}
+
+static std::shared_ptr<CommandUsage> vault_info(const std::weak_ptr<CommandUsage>& parent) {
+    const auto cmd = buildBaseUsage(parent);
+    cmd->aliases = {"info", "show", "get"};
+    cmd->description = "Display detailed information about a specific vault role.";
+    cmd->positionals = { rolePos };
+    cmd->examples.push_back({"vh role vault info power_user", "Show information for the vault role named 'power_user'."});
+    cmd->examples.push_back({"vh role vault info 7", "Show information for the vault role with ID 7."});
+    return cmd;
+}
+
+static std::shared_ptr<CommandUsage> vault_create(const std::weak_ptr<CommandUsage>& parent) {
+    const auto cmd = buildBaseUsage(parent);
+    cmd->aliases = {"create", "new", "add", "mk"};
+    cmd->description = "Create a new vault role with specified permissions.";
+    cmd->positionals = { newRolePos };
+    cmd->optional = { descriptionOpt, inheritFrom };
+    cmd->examples.push_back({"vh role vault create uploader --description \"Upload-only vault role\" --allow-files-upload --allow-dirs-upload",
+                            "Create a vault role named 'uploader' with file and directory upload permissions."});
+    cmd->examples.push_back({"vh role vault create publisher --allow-share-public --allow-share-public_with_val",
+                            "Create a vault role named 'publisher' with public sharing permissions."});
+    cmd->examples.push_back({"vh role vault create sync_operator --from power_user --allow-sync-action-trigger --deny-files-delete",
+                            "Create a vault role from 'power_user', allow sync triggering, and revoke file deletion."});
+    return cmd;
+}
+
+static std::shared_ptr<CommandUsage> vault_update(const std::weak_ptr<CommandUsage>& parent) {
+    const auto cmd = buildBaseUsage(parent);
+    cmd->aliases = {"update", "set", "modify", "edit"};
+    cmd->description = "Update properties and permissions of an existing vault role.";
+    cmd->positionals = { rolePos };
+    cmd->optional = { descriptionOpt, roleNameOpt };
+    cmd->examples.push_back({"vh role vault update uploader --name ingest_only --allow-files-upload --allow-dirs-upload",
+                            "Rename 'uploader' to 'ingest_only' and ensure upload permissions are granted."});
+    cmd->examples.push_back({"vh role vault update publisher --deny-share-public",
+                            "Revoke public sharing permission from 'publisher'."});
+    cmd->examples.push_back({"vh role vault update power_user --allow-files-rename --allow-dirs-rename --deny-files-delete",
+                            "Grant rename permissions and revoke file deletion for 'power_user'."});
+    return cmd;
+}
+
+static std::shared_ptr<CommandUsage> vault_remove(const std::weak_ptr<CommandUsage>& parent) {
+    const auto cmd = buildBaseUsage(parent);
+    cmd->aliases = {"delete", "remove", "del", "rm"};
+    cmd->description = "Delete an existing vault role by ID or name.";
+    cmd->positionals = { rolePos };
+    cmd->examples.push_back({"vh role vault delete uploader", "Delete the vault role named 'uploader'."});
+    cmd->examples.push_back({"vh role vault rm 7", "Delete the vault role with ID 7."});
+    return cmd;
+}
+
+static std::shared_ptr<CommandUsage> admin_base(const std::weak_ptr<CommandUsage>& parent) {
+    auto cmd = buildBaseUsage(parent);
+    cmd->aliases = {"admin", "a"};
+    cmd->description = "Manage admin roles.";
+
+    const auto listCmd   = admin_list(cmd->weak_from_this());
+    const auto createCmd = admin_create(cmd->weak_from_this());
+    const auto removeCmd = admin_remove(cmd->weak_from_this());
+    const auto infoCmd   = admin_info(cmd->weak_from_this());
+    const auto updateCmd = admin_update(cmd->weak_from_this());
 
     const auto createSingle = TestCommandUsage::Single(createCmd);
     const auto createMultiple = TestCommandUsage::Multiple(createCmd);
@@ -100,8 +153,6 @@ static std::shared_ptr<CommandUsage> base(const std::weak_ptr<CommandUsage>& par
     const auto removeMultiple = TestCommandUsage::Multiple(removeCmd);
     const auto infoSingle = TestCommandUsage::Single(infoCmd);
     const auto updateSingle = TestCommandUsage::Single(updateCmd);
-
-    // ---------- test lifecycles ----------
 
     listCmd->test_usage.setup = { createMultiple };
     listCmd->test_usage.teardown = { removeMultiple };
@@ -117,8 +168,56 @@ static std::shared_ptr<CommandUsage> base(const std::weak_ptr<CommandUsage>& par
     updateCmd->test_usage.setup = { createMultiple };
     updateCmd->test_usage.teardown = { removeMultiple };
 
-    // ---------- finalize ----------
     cmd->subcommands = { listCmd, createCmd, removeCmd, infoCmd, updateCmd };
+    return cmd;
+}
+
+static std::shared_ptr<CommandUsage> vault_base(const std::weak_ptr<CommandUsage>& parent) {
+    auto cmd = buildBaseUsage(parent);
+    cmd->aliases = {"vault", "v"};
+    cmd->description = "Manage vault roles.";
+
+    const auto listCmd   = vault_list(cmd->weak_from_this());
+    const auto createCmd = vault_create(cmd->weak_from_this());
+    const auto removeCmd = vault_remove(cmd->weak_from_this());
+    const auto infoCmd   = vault_info(cmd->weak_from_this());
+    const auto updateCmd = vault_update(cmd->weak_from_this());
+
+    const auto createSingle = TestCommandUsage::Single(createCmd);
+    const auto createMultiple = TestCommandUsage::Multiple(createCmd);
+    const auto removeSingle = TestCommandUsage::Single(removeCmd);
+    const auto removeMultiple = TestCommandUsage::Multiple(removeCmd);
+    const auto infoSingle = TestCommandUsage::Single(infoCmd);
+    const auto updateSingle = TestCommandUsage::Single(updateCmd);
+
+    listCmd->test_usage.setup = { createMultiple };
+    listCmd->test_usage.teardown = { removeMultiple };
+
+    createCmd->test_usage.lifecycle = { infoSingle, updateSingle };
+    createCmd->test_usage.teardown = { removeSingle };
+
+    removeCmd->test_usage.setup = { createSingle };
+
+    infoCmd->test_usage.setup = { createMultiple };
+    infoCmd->test_usage.teardown = { removeMultiple };
+
+    updateCmd->test_usage.setup = { createMultiple };
+    updateCmd->test_usage.teardown = { removeMultiple };
+
+    cmd->subcommands = { listCmd, createCmd, removeCmd, infoCmd, updateCmd };
+    return cmd;
+}
+
+static std::shared_ptr<CommandUsage> base(const std::weak_ptr<CommandUsage>& parent) {
+    auto cmd = buildBaseUsage(parent);
+    cmd->aliases = {"role", "roles", "r"};
+    cmd->pluralAliasImpliesList = false;
+    cmd->description = "Manage admin and vault roles.";
+
+    const auto adminCmd = admin_base(cmd->weak_from_this());
+    const auto vaultCmd = vault_base(cmd->weak_from_this());
+
+    cmd->subcommands = { adminCmd, vaultCmd };
     return cmd;
 }
 

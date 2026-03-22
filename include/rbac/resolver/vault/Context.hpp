@@ -30,7 +30,7 @@ namespace vh::rbac::resolver::vault {
         std::optional<uint32_t> target_subject_id{std::nullopt};
         std::optional<uint32_t> vault_id{std::nullopt};
         std::optional<std::filesystem::path> path{std::nullopt};
-        std::shared_ptr<vh::fs::model::Entry> entry{nullptr};
+        std::shared_ptr<::vh::fs::model::Entry> entry{nullptr};
 
         [[nodiscard]] bool isValid() const {
             return !!user && (permission || !permissions.empty());

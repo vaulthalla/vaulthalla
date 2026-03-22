@@ -10,8 +10,6 @@
 #include <algorithm>
 #include <pdfium/fpdfview.h>
 
-namespace fs = std::filesystem;
-
 using namespace vh::storage::s3;
 using namespace vh::vault::model;
 using namespace vh::fs::model;
@@ -26,8 +24,8 @@ class S3ProviderIntegrationTest : public ::testing::Test {
     bool skipTests = false;
 
     void SetUp() override {
-        test_dir = fs::temp_directory_path() / "vaulthalla_test_dir";
-        fs::create_directory(test_dir);
+        test_dir = std::filesystem::temp_directory_path() / "vaulthalla_test_dir";
+        std::filesystem::create_directory(test_dir);
 
         if (!static_cast<bool>(std::getenv("VAULTHALLA_TEST_R2_ACCESS_KEY")) ||
             !static_cast<bool>(std::getenv("VAULTHALLA_TEST_R2_SECRET_ACCESS_KEY")) ||
@@ -59,11 +57,11 @@ class S3ProviderIntegrationTest : public ::testing::Test {
     }
 
     void TearDown() override {
-        fs::remove_all(test_dir);
+        std::filesystem::remove_all(test_dir);
         FPDF_DestroyLibrary();
     }
 
-    static void writeTextFile(const fs::path& path, const std::string& content) {
+    static void writeTextFile(const std::filesystem::path& path, const std::string& content) {
         std::ofstream out(path);
         out << content;
     }
@@ -73,7 +71,7 @@ TEST_F(S3ProviderIntegrationTest, test_DeleteUnicodeFilename) {
     if (skipTests) GTEST_SKIP() << "Skipping test due to missing environment variables.";
 
     const std::filesystem::path key = u8"Screenshot 2025-06-26 at 3.29.35\u202FPM.png";
-    ASSERT_TRUE(fs::exists(key));
+    ASSERT_TRUE(std::filesystem::exists(key));
 
     std::cout << "Uploading file: " << key << std::endl;
     ASSERT_NO_THROW(s3Provider_->uploadObject(key, key));
@@ -98,14 +96,14 @@ TEST_F(S3ProviderIntegrationTest, test_BulkUploadDownloadDeleteTestAssets) {
     std::vector<std::filesystem::path> uploadedKeys;
 
     for (const auto& name : filenames) {
-        const fs::path src = fs::path(name);
-        ASSERT_TRUE(fs::exists(src)) << "Test asset missing: " << src;
+        const std::filesystem::path src = std::filesystem::path(name);
+        ASSERT_TRUE(std::filesystem::exists(src)) << "Test asset missing: " << src;
 
-        const fs::path relKey = fs::path("test-assets") / src.filename();
-        const fs::path dest = test_dir / src.filename();
-        fs::copy_file(src, dest, fs::copy_options::overwrite_existing);
+        const std::filesystem::path relKey = std::filesystem::path("test-assets") / src.filename();
+        const std::filesystem::path dest = test_dir / src.filename();
+        std::filesystem::copy_file(src, dest, std::filesystem::copy_options::overwrite_existing);
 
-        ASSERT_TRUE(fs::exists(dest)) << "Failed to copy file to: " << dest;
+        ASSERT_TRUE(std::filesystem::exists(dest)) << "Failed to copy file to: " << dest;
 
         std::cout << "Uploading file: " << relKey << std::endl;
         ASSERT_NO_THROW(s3Provider_->uploadObject(relKey, dest)) << "Upload failed for: " << relKey;
@@ -133,7 +131,7 @@ TEST_F(S3ProviderIntegrationTest, test_S3SimpleUploadRoundTrip) {
     // Write some test content to the file
     writeTextFile(filePath, "This is a test file for S3 upload.");
 
-    ASSERT_TRUE(fs::exists(filePath)) << "File not created at: " << filePath;
+    ASSERT_TRUE(std::filesystem::exists(filePath)) << "File not created at: " << filePath;
 
     std::cout << "Uploading file: " << filePath << std::endl;
     EXPECT_NO_THROW(s3Provider_->uploadObject(key, filePath)) << "Failed to upload file to S3: " << key;
@@ -167,7 +165,7 @@ TEST_F(S3ProviderIntegrationTest, test_S3MultipartUploadRoundtrip) {
     out << part << part << part; // total 15MB
     out.close();
 
-    ASSERT_TRUE(fs::exists(filePath));
+    ASSERT_TRUE(std::filesystem::exists(filePath));
 
     // Upload the file using multipart logic
     EXPECT_NO_THROW(s3Provider_->uploadLargeObject(key, filePath.string(), 5 * 1024 * 1024));
@@ -239,8 +237,8 @@ TEST_F(S3ProviderIntegrationTest, test_ResizeAndCompressImageBuffer) {
     if (skipTests) GTEST_SKIP() << "Skipping test due to missing environment variables.";
 
     const std::filesystem::path key = {"test-image.jpg"};
-    const auto srcPath = fs::path("sample.jpg");
-    ASSERT_TRUE(fs::exists(srcPath));
+    const auto srcPath = std::filesystem::path("sample.jpg");
+    ASSERT_TRUE(std::filesystem::exists(srcPath));
     ASSERT_NO_THROW(s3Provider_->uploadObject(key, srcPath.string()));
 
     std::vector<uint8_t> buffer;
@@ -261,8 +259,8 @@ TEST_F(S3ProviderIntegrationTest, test_ResizeAndCompressPdfBuffer) {
     if (skipTests) GTEST_SKIP() << "Skipping test due to missing environment variables.";
 
     const std::filesystem::path key = {"test-pdf.pdf"};
-    const auto srcPath = fs::path("sample.pdf");
-    ASSERT_TRUE(fs::exists(srcPath));
+    const auto srcPath = std::filesystem::path("sample.pdf");
+    ASSERT_TRUE(std::filesystem::exists(srcPath));
     ASSERT_NO_THROW(s3Provider_->uploadObject(key, srcPath.string()));
 
     std::vector<uint8_t> buffer;

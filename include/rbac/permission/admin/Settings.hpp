@@ -54,6 +54,10 @@ struct Settings final : Module<uint64_t> {
         unpack(mask, websocket, http, database, auth, logging, caching, sharing, services);
     }
 
+    [[nodiscard]] std::vector<std::string> getFlags() const override {
+        return Module::getFlags(websocket, http, database, auth, logging, caching, sharing, services);
+    }
+
     [[nodiscard]] PackedPermissionExportT<Mask> exportPermissions() const {
         return packAndExportPerms(
             mount("admin.settings.websocket", websocket),

@@ -26,6 +26,8 @@ namespace vh::rbac::role::vault {
 
         explicit Global(const nlohmann::json &j);
 
+        [[nodiscard]] static std::string usage();
+
         [[nodiscard]] std::string toString(uint8_t indent) const override;
 
         [[nodiscard]] std::string toString() const { return toString(0); }

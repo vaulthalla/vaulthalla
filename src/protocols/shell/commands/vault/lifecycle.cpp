@@ -19,7 +19,6 @@
 #include <string>
 #include <memory>
 
-using namespace vh;
 using namespace vh::protocols::shell;
 using namespace vh::protocols::shell::commands::vault;
 using namespace vh::vault::model;
@@ -36,8 +35,8 @@ CommandResult commands::vault::handle_vault_update(const CommandCall& call) {
     if (!vLkp || !vLkp.ptr) return invalid(vLkp.error);
     const auto vault = vLkp.ptr;
 
-    using Perm = rbac::permission::admin::VaultPermissions;
-    if (!rbac::resolver::Admin::has<Perm>({
+    using Perm = ::vh::rbac::permission::admin::VaultPermissions;
+    if (!::vh::rbac::resolver::Admin::has<Perm>({
         .user = call.user,
         .permission = Perm::Edit,
         .vault_id = vault->id
@@ -71,8 +70,8 @@ CommandResult commands::vault::handle_vault_delete(const CommandCall& call) {
     if (!vLkp || !vLkp.ptr) return invalid(vLkp.error);
     const auto vault = vLkp.ptr;
 
-    using Perm = rbac::permission::admin::VaultPermissions;
-    if (!rbac::resolver::Admin::has<Perm>({
+    using Perm = ::vh::rbac::permission::admin::VaultPermissions;
+    if (!::vh::rbac::resolver::Admin::has<Perm>({
         .user = call.user,
         .permission = Perm::Remove,
         .vault_id = vault->id

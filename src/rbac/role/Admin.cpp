@@ -53,6 +53,54 @@ namespace vh::rbac::role {
         }
     }
 
+    std::string Admin::usage() {
+        return formatPermissionTable(
+            rbac::role::Admin::None().getFlags(),
+            "Permission Flags:",
+            "You can use either the --manage-* shorthand to set, or explicitly use --set/--unset."
+        );
+    }
+
+    std::unordered_map<std::string, permission::Permission> Admin::toFlagMap() const {
+        std::unordered_map<std::string, permission::Permission> flagMap;
+
+        for (const auto &perm: toPermissions())
+            for (const auto& flag : perm.flags)
+                flagMap[flag] = perm;
+
+        return flagMap;
+    }
+
+    std::vector<std::string> Admin::getFlags() const {
+        auto identitiesFlags = identities.getFlags();
+        auto vaultsFlags = vaults.getFlags();
+        auto auditsFlags = audits.getFlags();
+        auto settingsFlags = settings.getFlags();
+        auto rolesFlags = roles.getFlags();
+        auto keysFlags = keys.getFlags();
+
+        std::vector<std::string> flags;
+        flags.reserve(
+            identitiesFlags.size() +
+            vaultsFlags.size() +
+            auditsFlags.size() +
+            settingsFlags.size() +
+            rolesFlags.size() +
+            keysFlags.size()
+        );
+
+        auto append = [&](auto &src) { std::move(src.begin(), src.end(), std::back_inserter(flags)); };
+
+        append(identitiesFlags);
+        append(vaultsFlags);
+        append(auditsFlags);
+        append(settingsFlags);
+        append(rolesFlags);
+        append(keysFlags);
+
+        return flags;
+    }
+
     std::vector<permission::Permission> Admin::toPermissions() const {
         auto identitiesPerms = identities.exportPermissions();
         auto vaultsPerms = vaults.exportPermissions();
@@ -144,4 +192,10 @@ namespace vh::rbac::role {
     }
 
     std::string to_string(const Admin &r) { return r.toString(); }
+
+    std::string to_string(const std::vector<std::shared_ptr<Admin>> &roles) {
+        std::ostringstream oss;
+        for (const auto &role: roles) oss << role->toString() << "\n";
+        return oss.str();
+    }
 }

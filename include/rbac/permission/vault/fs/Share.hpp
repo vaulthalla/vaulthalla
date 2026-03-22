@@ -26,7 +26,7 @@ namespace vh::rbac::permission {
             Entry{
                 vault::fs::SharePermissions::Internal,
                 "internal",
-                "Allows sharing with other users within the same vault."
+                "Allows sharing of with other users within the same vault."
             },
             Entry{
                 vault::fs::SharePermissions::Public,
@@ -43,12 +43,14 @@ namespace vh::rbac::permission {
 
     namespace vault::fs {
         struct Share final : Set<SharePermissions, uint8_t> {
-            static constexpr const auto* FLAG_PREFIX = "share";
+            std::string module_prefix;
 
             Share() = default;
             explicit Share(const Mask& mask) : Set(mask) {}
+            explicit Share(const std::string& prefix) : module_prefix(prefix + "-share") {}
 
-            [[nodiscard]] const char* flagPrefix() const override { return FLAG_PREFIX; }
+            [[nodiscard]] const char* flagPrefix() const override { return module_prefix.c_str(); }
+
             [[nodiscard]] std::string toString(uint8_t indent) const override;
 
             [[nodiscard]] bool canShareInternally() const noexcept {

@@ -27,6 +27,8 @@ struct Identities final : Module<uint32_t> {
     [[nodiscard]] std::string toString(uint8_t indent) const override;
     [[nodiscard]] const char* name() const override { return ModuleName; }
 
+    [[nodiscard]] std::vector<std::string> getFlags() const override { return Module::getFlags(users, admins, groups); }
+
     [[nodiscard]] uint32_t toMask() const override { return pack(users, admins, groups); }
     void fromMask(const uint32_t mask) override { unpack(mask, users, admins, groups); }
 

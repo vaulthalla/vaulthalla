@@ -9,7 +9,7 @@
 using namespace vh::db::encoding;
 
 namespace vh::rbac::role {
-    BasicMeta::BasicMeta(const pqxx::row& row) {
+    BasicMeta::BasicMeta(const pqxx::row &row) {
         if (const auto v = try_get<std::string>(row, std::vector<std::string_view>{"role_created_at", "created_at"}))
             created_at = parsePostgresTimestamp(*v);
 
@@ -20,7 +20,7 @@ namespace vh::rbac::role {
             assigned_at = parsePostgresTimestamp(*v);
     }
 
-    Meta::Meta(const pqxx::row& row)
+    Meta::Meta(const pqxx::row &row)
         : BasicMeta(row) {
         if (const auto v = try_get<uint32_t>(row, std::vector<std::string_view>{"role_id", "id"}))
             id = *v;
@@ -55,6 +55,43 @@ namespace vh::rbac::role {
         oss << in << "- Description: " << description << std::endl;
         oss << BasicMeta::toString(indent);
         return oss.str();
+    }
+
+    std::string BasicMeta::formatPermissionTable(
+        const std::vector<std::string> &flags,
+        std::string_view header,
+        std::string_view footer
+    ) {
+        std::ostringstream os;
+        os << header << '\n';
+
+        if (flags.empty()) {
+            os << "  (no permissions available)\n";
+            return os.str();
+        }
+
+        // Expect groups of 3: base, allow, deny
+        constexpr size_t stride = 3;
+
+        size_t col1 = 0, col2 = 0, col3 = 0;
+
+        // Pass 1: compute max widths
+        for (size_t i = 0; i + 2 < flags.size(); i += stride) {
+            col1 = std::max(col1, flags[i].size());
+            col2 = std::max(col2, flags[i + 1].size());
+            col3 = std::max(col3, flags[i + 2].size());
+        }
+
+        // Pass 2: print rows
+        for (size_t i = 0; i + 2 < flags.size(); i += stride) {
+            os << "  "
+                    << std::left << std::setw(col1) << flags[i] << " | "
+                    << std::left << std::setw(col2) << flags[i + 1] << " | "
+                    << std::left << std::setw(col3) << flags[i + 2] << '\n';
+        }
+
+        os << '\n' << footer;
+        return os.str();
     }
 
     void to_json(nlohmann::json &j, const BasicMeta &m) {

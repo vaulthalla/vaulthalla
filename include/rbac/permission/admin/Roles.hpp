@@ -8,7 +8,7 @@
 
 namespace vh::rbac::permission::admin {
 
-    struct Roles : Module<uint16_t> {
+    struct Roles final : Module<uint16_t> {
         static constexpr const auto* ModuleName = "roles";
 
         roles::Admin admin;
@@ -18,6 +18,8 @@ namespace vh::rbac::permission::admin {
         explicit Roles(const Mask mask) { fromMask(mask); }
 
         [[nodiscard]] const char *name() const override { return ModuleName; }
+
+        [[nodiscard]] std::vector<std::string> getFlags() const override { return Module::getFlags(admin, vault); } ;
 
         [[nodiscard]] Mask toMask() const override { return pack(admin, vault); }
         void fromMask(const Mask mask) override { unpack(mask, admin, vault); }

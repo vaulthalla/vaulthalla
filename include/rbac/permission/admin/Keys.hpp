@@ -20,6 +20,10 @@ struct Keys final : Module<uint32_t> {
     [[nodiscard]] std::string toFlagsString() const override;
     [[nodiscard]] std::string toString(uint8_t indent) const override;
 
+    [[nodiscard]] std::vector<std::string> getFlags() const override {
+        return Module::getFlags(apiKeys.self, apiKeys.admin, apiKeys.user, encryptionKeys);
+    }
+
     [[nodiscard]] const char* name() const override { return ModuleName; }
     [[nodiscard]] uint32_t toMask() const override;
     void fromMask(Mask mask) override;

@@ -12,8 +12,6 @@ void registerAPIKeyCommands(const std::shared_ptr<Router>& r);
 void registerSystemCommands(const std::shared_ptr<Router>& r);
 void registerUserCommands(const std::shared_ptr<Router>& r);
 void registerGroupCommands(const std::shared_ptr<Router>& r);
-void registerRoleCommands(const std::shared_ptr<Router>& r);
-void registerPermissionCommands(const std::shared_ptr<Router>& r);
 void registerSecretsCommands(const std::shared_ptr<Router>& r);
 
 }

@@ -127,6 +127,9 @@ namespace vh::rbac::permission {
             [[nodiscard]] const char* name() const override { return MODULE_NAME; }
             [[nodiscard]] std::string toString(uint8_t indent) const override;
             [[nodiscard]] std::string toFlagsString() const override;
+
+            [[nodiscard]] std::vector<std::string> getFlags() const override { return Module::getFlags(self, admin, user); }
+
             [[nodiscard]] Mask toMask() const override { return pack(self, admin, user); }
             void fromMask(const Mask mask) override { unpack(mask, self, admin, user); }
 

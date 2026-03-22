@@ -98,7 +98,7 @@ namespace vh::protocols::shell::commands::vault {
                                                         const std::shared_ptr<vh::vault::model::Vault> &vault,
                                                         const std::string &errPrefix);
 
-    Lookup<rbac::role::Vault> resolveVRole(const std::string &roleArg,
+    Lookup<vh::rbac::role::Vault> resolveVRole(const std::string &roleArg,
                                            const std::shared_ptr<vh::vault::model::Vault> &vault,
                                            const Subject *subjectOrNull,
                                            const std::string &errPrefix);

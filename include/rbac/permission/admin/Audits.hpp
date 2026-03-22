@@ -38,6 +38,10 @@ namespace vh::rbac::permission {
             void fromMask(Mask mask) override;
             [[nodiscard]] std::string toFlagsString() const override;
 
+            [[nodiscard]] std::vector<std::string> getFlags() const override {
+                return getFlagsWithOwn();
+            }
+
             [[nodiscard]] PackedPermissionExportT<Mask> exportPermissions() const {
                 return packAndExportWithOwn("admin.audits");
             }

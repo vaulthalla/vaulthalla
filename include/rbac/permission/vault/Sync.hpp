@@ -23,6 +23,9 @@ struct Sync final : Module<uint32_t> {
     [[nodiscard]] std::string toFlagsString() const override;
 
     [[nodiscard]] const char* name() const override { return ModuleName; }
+
+    [[nodiscard]] std::vector<std::string> getFlags() const override { return Module::getFlags(config, action); }
+
     [[nodiscard]] uint32_t toMask() const override { return pack(config, action); }
     void fromMask(const Mask mask) override { unpack(mask, config, action); }
 

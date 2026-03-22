@@ -40,6 +40,4 @@ namespace vh::rbac::resolver {
         static const auto& user(const decltype(std::declval<identities::User>().vaultsPerms().user)& perms) { return perms; }
     };
 
-
-
 }

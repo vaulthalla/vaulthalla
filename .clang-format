@@ -4,57 +4,76 @@
 # ═══════════════════════════════════════════════════════
 
 BasedOnStyle: LLVM
+Standard: Latest
 
-# === Formatting Core ===
-IndentWidth:             4
-TabWidth:                4
-UseTab:                  Never
-ColumnLimit:             120
-AllowShortFunctionsOnASingleLine: Inline
-AllowShortIfStatementsOnASingleLine: Always
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 120
+
+# Crush short constructs onto one line whenever possible
+AllowShortFunctionsOnASingleLine: All
+AllowShortIfStatementsOnASingleLine: AllIfsAndElse
 AllowShortLoopsOnASingleLine: true
 AllowShortCaseLabelsOnASingleLine: true
+AllowShortCaseExpressionOnASingleLine: true
+AllowShortBlocksOnASingleLine: Always
+AllowShortEnumsOnASingleLine: true
+AllowShortLambdasOnASingleLine: All
+AllowShortCompoundRequirementOnASingleLine: true
+AllowShortNamespacesOnASingleLine: true
 
-# === Braces & Structure ===
-BreakBeforeBraces: Attach
-BraceWrapping:
-  AfterFunction:         false
-  AfterClass:            false
-  AfterControlStatement: false
-  AfterEnum:             false
-  AfterStruct:           false
-  BeforeElse:            false
-  IndentBraces:          false
-  SplitEmptyFunction:    false
-  SplitEmptyRecord:      false
-  SplitEmptyNamespace:   false
+# Keep templates/params packed
+BinPackArguments: true
+BinPackParameters: true
+PackConstructorInitializers: BinPack
 
-# === Includes ===
-SortIncludes: true
-IncludeBlocks: Merge
+# Bias formatter away from breaking lines
+PenaltyBreakBeforeFirstCallParameter: 1000
+PenaltyBreakTemplateDeclaration: 1000
+PenaltyBreakOpenParenthesis: 1000
+PenaltyBreakScopeResolution: 1000
+PenaltyBreakComment: 1000
+PenaltyBreakString: 1000
+PenaltyExcessCharacter: 1000000
+PenaltyReturnTypeOnItsOwnLine: 1000
 
-# === Alignment ===
-AlignConsecutiveAssignments: false
-AlignConsecutiveDeclarations: false
-AlignTrailingComments: true
-
-# === Style Tightening ===
+# Tight type formatting
+SpacesInAngles: Never
+DerivePointerAlignment: false
+PointerAlignment: Left
+ReferenceAlignment: Left
 SpaceAfterCStyleCast: false
 SpacesInParentheses: false
 SpacesInSquareBrackets: false
 SpaceBeforeParens: ControlStatements
 Cpp11BracedListStyle: true
 AlwaysBreakTemplateDeclarations: No
-BinPackArguments: true
-BinPackParameters: true
-PenaltyBreakBeforeFirstCallParameter: 1000
-PenaltyBreakString: 1000
 
-# === Naming & Advanced ===
-DerivePointerAlignment: false
-PointerAlignment: Left
+# Brace style
+BreakBeforeBraces: Attach
+BraceWrapping:
+  AfterFunction: false
+  AfterClass: false
+  AfterControlStatement: false
+  AfterEnum: false
+  AfterStruct: false
+  BeforeElse: false
+  IndentBraces: false
+  SplitEmptyFunction: false
+  SplitEmptyRecord: false
+  SplitEmptyNamespace: false
 
-# === Experimental Tightness ===
-ReflowComments: 'Always'
+# Includes / alignment
+SortIncludes: true
+IncludeBlocks: Merge
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+AlignTrailingComments: true
+
+# General compactness
+ReflowComments: Always
 IndentCaseLabels: false
 CompactNamespaces: true
+KeepEmptyLinesAtTheStartOfBlocks: false
+MaxEmptyLinesToKeep: 1

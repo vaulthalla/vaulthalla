@@ -503,6 +503,7 @@ std::string CommandUsage::str() const {
     };
 
     emitOne();
+    out << "\n" << lineBreak(tw) << "\n\n";
     for (unsigned int i = 0; i < subcommands.size(); ++i) {
         emitOne(subcommands[i]);
         if (i + 1 < subcommands.size()) out << "\n" << lineBreak(tw) << "\n\n";

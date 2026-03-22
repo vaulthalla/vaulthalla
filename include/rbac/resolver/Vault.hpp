@@ -127,7 +127,7 @@ namespace vh::rbac::resolver {
         static std::shared_ptr<storage::Engine> resolveEngine(
             const std::optional<uint32_t> &vaultId,
             const std::optional<std::filesystem::path> &path,
-            const std::shared_ptr<vh::fs::model::Entry> &entry
+            const std::shared_ptr<::vh::fs::model::Entry> &entry
         ) {
             const auto storageManager = runtime::Deps::get().storageManager;
             if (!storageManager)
@@ -156,7 +156,7 @@ namespace vh::rbac::resolver {
         static vault::ResolvedContext resolveVaultContext(
             const std::optional<uint32_t> &vaultId,
             const std::optional<std::filesystem::path> &path,
-            const std::shared_ptr<vh::fs::model::Entry> &entry,
+            const std::shared_ptr<::vh::fs::model::Entry> &entry,
             const std::optional<std::string> &targetSubjectType,
             const std::optional<uint32_t> &targetSubjectId
         ) {

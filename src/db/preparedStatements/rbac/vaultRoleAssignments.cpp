@@ -194,4 +194,12 @@ void vh::db::DBConnection::initPreparedVaultRoleAssignments() const {
             ORDER BY vra.vault_id, vra.subject_type, vra.subject_id
         )SQL"
     );
+
+    conn_->prepare("count_vault_role_assignments_by_role_id",
+        R"SQL(
+            SELECT COUNT(*)
+            FROM vault_role_assignments
+            WHERE role_id = $1
+            )SQL"
+        );
 }

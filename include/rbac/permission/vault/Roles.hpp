@@ -40,6 +40,7 @@ namespace vh::rbac::permission {
             [[nodiscard]] const char* flagPrefix() const override { return FLAG_CONTEXT; }
             [[nodiscard]] std::string toString(uint8_t indent) const override;
             [[nodiscard]] std::string toFlagsString() const override { return joinFlagsWithOwn(); }
+            [[nodiscard]] std::vector<std::string> getFlags() const override { return getFlagsWithOwn(); }
 
             [[nodiscard]] Mask toMask() const override { return packWithOwn(); }
             void fromMask(const Mask mask) override { unpackWithOwn(mask); }
