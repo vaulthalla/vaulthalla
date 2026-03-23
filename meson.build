@@ -242,8 +242,8 @@ if get_option('build_unit_tests') or get_option('permission_export_tests') or ge
     configure_file(input: 'test-assets/sample.jpg', output: 'sample.jpg', copy: true)
     configure_file(input: 'test-assets/sample.pdf', output: 'sample.pdf', copy: true)
     configure_file(
-        input: 'test-assets/Screenshot 2025-06-26 at 3.29.35 PM.png',
-        output: 'Screenshot 2025-06-26 at 3.29.35 PM.png',
+        input: 'test-assets/Screenshot 2025-06-26 at 3.29.35\u202FPM.png',
+        output: 'Screenshot 2025-06-26 at 3.29.35\u202FPM.png',
         copy: true
     )
 endif
