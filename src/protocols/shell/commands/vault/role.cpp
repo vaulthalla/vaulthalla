@@ -131,7 +131,7 @@ namespace vh::protocols::shell::commands::vault {
             vault = vLkp.ptr;
         }
 
-        std::vector<std::shared_ptr<role::Vault> > roles;
+        std::vector<std::shared_ptr<::vh::rbac::role::Vault>> roles;
         if (vault) {
             if (!resolver::Vault::has<permission::vault::RolePermissions>({
                 .user = call.user,
@@ -142,7 +142,7 @@ namespace vh::protocols::shell::commands::vault {
             roles = db::query::rbac::role::vault::Assignments::listForVault(vault->id);
         } else {
             roles = db::query::rbac::role::vault::Assignments::listAll();
-            std::erase_if(roles, [&](const std::shared_ptr<role::Vault> &r) {
+            std::erase_if(roles, [&](const std::shared_ptr<::vh::rbac::role::Vault> &r) {
                 return !resolver::Vault::has<permission::vault::RolePermissions>({
                     .user = call.user,
                     .permission = permission::vault::RolePermissions::View,
