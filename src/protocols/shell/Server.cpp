@@ -211,12 +211,12 @@ void Server::runLoop() {
         try {
             const auto p = peercred(cfd);
 
-            log::Registry::shell()->warn("[CtlServerService] Connection from UID {} (PID {})", p.uid, p.pid);
+            log::Registry::shell()->debug("[CtlServerService] Connection from UID {} (PID {})", p.uid, p.pid);
 
             if (!adminUIDSet_.load() && p.uid != 0 && p.uid >= 1000) initAdminUid(cfd, p.uid);
 
             if (!in_group(p.uid, adminGid_)) {
-                log::Registry::shell()->warn("[CtlServerService] Connection from UID {} (PID {}) not in vaulthalla group",
+                log::Registry::shell()->debug("[CtlServerService] Connection from UID {} (PID {}) not in vaulthalla group",
                                            p.uid, p.pid);
                 send_json(cfd, {{"ok", false}, {"exit_code", 1}, {"stderr", "permission denied"}});
                 ::close(cfd);
@@ -225,7 +225,7 @@ void Server::runLoop() {
 
             const auto user = db::query::identities::User::getUserByLinuxUID(p.uid);
             if (!user) {
-                log::Registry::shell()->warn("[CtlServerService] No user found for UID {} (PID {})", p.uid, p.pid);
+                log::Registry::shell()->debug("[CtlServerService] No user found for UID {} (PID {})", p.uid, p.pid);
                 send_json(cfd, {{"ok", false}, {"exit_code", 1}, {"stderr", "user not found"}});
                 ::close(cfd);
                 continue;

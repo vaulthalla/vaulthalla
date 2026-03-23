@@ -39,7 +39,7 @@ CommandResult invalid(const std::vector<std::string>& args, std::string msg) {
 CommandResult usage(const std::vector<std::string>& args) {
     const auto usageManager = runtime::Deps::get().shellUsageManager;
     const auto usage = args.empty() ? usageManager->root()->basicStr() : usageManager->renderHelp(args);
-    return {0, usageManager->renderHelp(args), ""};
+    return {0, usage, ""};
 }
 
 std::optional<std::string> optVal(const CommandCall& c, const std::string& key) {
