@@ -8,8 +8,8 @@ namespace vh::rbac::permission::admin {
 
 std::string Vaults::toFlagsString() const {
     std::ostringstream oss;
-    oss << self.toFlagsString()
-        << user.toFlagsString()
+    oss << self.toFlagsString() << ' '
+        << user.toFlagsString() << ' '
         << admin.toFlagsString();
     return oss.str();
 }
