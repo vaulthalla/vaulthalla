@@ -23,7 +23,7 @@ namespace vh::rbac::role {
 
         std::optional<AssignmentInfo> assignment;
 
-        Vault() = default;
+        Vault() : Meta(), Base() {}
 
         explicit Vault(const pqxx::row &row);
 

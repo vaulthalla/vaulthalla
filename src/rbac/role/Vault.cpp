@@ -9,7 +9,16 @@
 using namespace vh::db::encoding;
 
 namespace vh::rbac::role {
-    Vault::Vault(const pqxx::row &row) : Vault(row, pqxx::result()) {
+    Vault::Vault(const pqxx::row &row)
+        : Meta(row),
+          Base(row),
+          assignment(std::nullopt) {
+        if (hasColumn(row, "assignment_id") && !row["assignment_id"].is_null()) {
+            assignment = AssignmentInfo();
+            if (const auto id = try_get<uint32_t>(row, "subject_id")) assignment->subject_id = *id;
+            if (const auto type = try_get<std::string>(row, "subject_type")) assignment->subject_type = *type;
+            if (const auto vId = try_get<uint32_t>(row, "vault_id")) assignment->vault_id = *vId;
+        }
     }
 
     Vault::Vault(const pqxx::row &row, const pqxx::result &overrides)
@@ -106,6 +115,7 @@ namespace vh::rbac::role {
         oss << std::string(indent, ' ') << "Vault Role:\n";
         const std::string in(indent + 2, ' ');
         if (assignment) oss << in << assignment->toString(indent);
+        oss << Meta::toString(indent);
         oss << Base::toString(indent);
         return oss.str();
     }

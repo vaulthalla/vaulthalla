@@ -26,7 +26,7 @@ struct Context {
     std::vector<std::shared_ptr<identities::User>> users;
     std::vector<std::shared_ptr<vault::model::APIKey>> api_keys;
     std::vector<std::shared_ptr<vault::model::Vault>> vaults;
-    std::vector<std::shared_ptr<rbac::role::Admin>> userRoles;
+    std::vector<std::shared_ptr<rbac::role::Admin>> adminRoles;
     std::vector<std::shared_ptr<rbac::role::Vault>> vaultRoles;
     std::vector<std::shared_ptr<identities::Group>> groups;
     std::shared_ptr<protocols::shell::UsageManager> usage;
@@ -38,7 +38,7 @@ struct Context {
     [[nodiscard]] std::shared_ptr<identities::Group> pickRandomGroup() const;
     [[nodiscard]] std::shared_ptr<vault::model::Vault> pickRandomVault() const;
     [[nodiscard]] std::shared_ptr<vault::model::Vault> pickVaultOwnedBy(const std::shared_ptr<identities::User>& user) const;
-    [[nodiscard]] std::shared_ptr<rbac::role::Admin> randomUserRole() const;
+    [[nodiscard]] std::shared_ptr<rbac::role::Admin> randomAdminRole() const;
     [[nodiscard]] std::shared_ptr<rbac::role::Vault> randomVaultRole() const;
     [[nodiscard]] static std::string getCommandName(const EntityType& type, const std::string& action);
     [[nodiscard]] std::shared_ptr<protocols::shell::CommandUsage> getCommand(const EntityType& type, const std::string& action) const;

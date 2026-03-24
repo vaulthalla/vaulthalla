@@ -11,7 +11,7 @@ using namespace vh::vault::model;
 
 namespace vh::test::integrations::cmd {
     VaultRoleCommandBuilder::VaultRoleCommandBuilder(const std::shared_ptr<protocols::shell::UsageManager>& usage, const std::shared_ptr<cli::Context>& ctx)
-        : Builder(usage, ctx, "role"), vaultRoleAliases_(ctx) {}
+        : Builder(usage, ctx, std::vector<std::string>{"role", "vault"}), vaultRoleAliases_(ctx) {}
 
     std::string VaultRoleCommandBuilder::updateAndResolveVar(const std::shared_ptr<role::Vault>& entity, const std::string& field) {
         const std::string usagePath = "vault/update";
@@ -54,7 +54,7 @@ namespace vh::test::integrations::cmd {
         if (!cmd) throw std::runtime_error("VaultRoleCommandBuilder: 'create' command usage not found");
 
         std::ostringstream oss;
-        oss << "vh " << randomAlias(root_->aliases) << ' ' << randomAlias(cmd->aliases) << " vault " << entity->name;
+        oss << "vh role " << randomAlias(root_->aliases) << " " << randomAlias(cmd->aliases) << " " << entity->name;
 
         for (const auto& opt : cmd->required) {
             oss << ' ' << randomFlagAlias(opt.option_tokens);
@@ -91,7 +91,7 @@ namespace vh::test::integrations::cmd {
         if (!cmd) throw std::runtime_error("VaultRoleCommandBuilder: 'update' command usage not found");
 
         std::ostringstream oss;
-        oss << "vh " << randomAlias(root_->aliases) << ' ' << randomAlias(cmd->aliases);
+        oss << "vh role " << randomAlias(root_->aliases) << ' ' << randomAlias(cmd->aliases);
         oss << ' ' << randomizePrimaryPositional(entity);
 
         unsigned int numUpdated = 0;
@@ -126,7 +126,7 @@ namespace vh::test::integrations::cmd {
         if (!cmd) throw std::runtime_error("VaultRoleCommandBuilder: 'info' command usage not found");
 
         std::ostringstream oss;
-        oss << "vh " << randomAlias(root_->aliases) << ' ' << randomAlias(cmd->aliases);
+        oss << "vh role " << randomAlias(root_->aliases) << ' ' << randomAlias(cmd->aliases);
         oss << ' ' << randomizePrimaryPositional(entity);
 
         return oss.str();
@@ -137,8 +137,7 @@ namespace vh::test::integrations::cmd {
         if (!cmd) throw std::runtime_error("VaultRoleCommandBuilder: 'list' command usage not found");
 
         std::ostringstream oss;
-        oss << "vh " << randomAlias(root_->aliases) << ' ' << randomAlias(cmd->aliases);
-        if (generateRandomIndex(10000) < 5000) oss << " --vault";
+        oss << "vh role " << randomAlias(root_->aliases) << ' ' << randomAlias(cmd->aliases);
         for (const auto& flag : cmd->optional_flags)
             if (generateRandomIndex(10000) < 5000) oss << " --" << randomAlias(flag.aliases);
 
@@ -150,9 +149,9 @@ namespace vh::test::integrations::cmd {
         if (!cmd) throw std::runtime_error("VaultRoleCommandBuilder: 'delete' command usage not found");
 
         std::ostringstream oss;
-        oss << "vh " << randomAlias(root_->aliases) << ' ' << randomAlias(cmd->aliases);
+        oss << "vh role " << randomAlias(root_->aliases) << ' ' << randomAlias(cmd->aliases);
         if (generateRandomIndex(10000) < 5000) oss << ' ' << entity->id;
-        else oss << ' ' << entity->name << " --vault";
+        else oss << ' ' << entity->name;
 
         return oss.str();
     }

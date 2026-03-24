@@ -62,7 +62,7 @@ inline std::string generateVaultName(const std::string& usage, const bool prefix
 }
 
 inline std::string generateRoleName(const EntityType& type, const std::string& usage) {
-    if (type == EntityType::USER_ROLE) {
+    if (type == EntityType::ADMIN_ROLE) {
         return generateNow(args::ArgGenerator::Join({
             args::ArgGenerator::Constant(std::string("role_")),
             args::ArgGenerator::RandomString(6, 10, "abcdefghijklmnopqrstuvwxyz0123456789")

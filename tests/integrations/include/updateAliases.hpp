@@ -39,10 +39,10 @@ struct UserAliases {
         }
     }
 
-    bool isName (const std::string& field) const { return isFieldMatch(field, nameAliases); }
-    bool isEmail (const std::string& field) const { return isFieldMatch(field, emailAliases); }
-    bool isRole (const std::string& field) const { return isFieldMatch(field, roleAliases); }
-    bool isLinuxUID (const std::string& field) const { return isFieldMatch(field, linuxUidAliases); }
+    [[nodiscard]] bool isName (const std::string& field) const { return isFieldMatch(field, nameAliases); }
+    [[nodiscard]] bool isEmail (const std::string& field) const { return isFieldMatch(field, emailAliases); }
+    [[nodiscard]] bool isRole (const std::string& field) const { return isFieldMatch(field, roleAliases); }
+    [[nodiscard]] bool isLinuxUID (const std::string& field) const { return isFieldMatch(field, linuxUidAliases); }
 };
 
 struct GroupAliases {
@@ -62,16 +62,16 @@ struct GroupAliases {
         }
     }
 
-    bool isName (const std::string& field) const { return isFieldMatch(field, nameAliases); }
-    bool isDescription (const std::string& field) const { return isFieldMatch(field, descAliases); }
-    bool isLinuxGID (const std::string& field) const { return isFieldMatch(field, gidAliases); }
+    [[nodiscard]] bool isName (const std::string& field) const { return isFieldMatch(field, nameAliases); }
+    [[nodiscard]] bool isDescription (const std::string& field) const { return isFieldMatch(field, descAliases); }
+    [[nodiscard]] bool isLinuxGID (const std::string& field) const { return isFieldMatch(field, gidAliases); }
 };
 
 struct UserRoleAliases {
     std::vector<std::string> nameAliases, permAliases, descAliases;
 
     explicit UserRoleAliases(const std::shared_ptr<cli::Context>& ctx) {
-        const auto cmd = ctx->getCommand(EntityType::USER_ROLE, "update");
+        const auto cmd = ctx->getCommand(EntityType::ADMIN_ROLE, "update");
         if (!cmd) throw std::runtime_error("EntityFactory: command usage not found for user role update");
         for (const auto& opt : cmd->optional) {
             if (std::ranges::any_of(opt.option_tokens, [](const std::string& t){ return t == "name" || t == "role_name"; })) {
@@ -85,9 +85,9 @@ struct UserRoleAliases {
         permAliases.emplace_back("perms");
     }
 
-    bool isName (const std::string& field) const { return isFieldMatch(field, nameAliases); }
-    bool isPermissions (const std::string& field) const { return isFieldMatch(field, permAliases); }
-    bool isDescription (const std::string& field) const { return isFieldMatch(field, descAliases); }
+    [[nodiscard]] bool isName (const std::string& field) const { return isFieldMatch(field, nameAliases); }
+    [[nodiscard]] bool isPermissions (const std::string& field) const { return isFieldMatch(field, permAliases); }
+    [[nodiscard]] bool isDescription (const std::string& field) const { return isFieldMatch(field, descAliases); }
 };
 
 struct VaultRoleAliases {
@@ -108,9 +108,9 @@ struct VaultRoleAliases {
         permAliases.emplace_back("perms");
     }
 
-    bool isName (const std::string& field) const { return isFieldMatch(field, nameAliases); }
-    bool isPermissions (const std::string& field) const { return isFieldMatch(field, permAliases); }
-    bool isDescription (const std::string& field) const { return isFieldMatch(field, descAliases); }
+    [[nodiscard]] bool isName (const std::string& field) const { return isFieldMatch(field, nameAliases); }
+    [[nodiscard]] bool isPermissions (const std::string& field) const { return isFieldMatch(field, permAliases); }
+    [[nodiscard]] bool isDescription (const std::string& field) const { return isFieldMatch(field, descAliases); }
 };
 
 struct VaultAliases {
@@ -136,12 +136,12 @@ struct VaultAliases {
         }
     }
 
-    bool isName (const std::string& field) const { return isFieldMatch(field, nameAliases); }
-    bool isDescription (const std::string& field) const { return isFieldMatch(field, descAliases); }
-    bool isQuota (const std::string& field) const { return isFieldMatch(field, quotaAliases); }
-    bool isOwner (const std::string& field) const { return isFieldMatch(field, ownerAliases); }
-    bool isConflictPolicy (const std::string& field) const { return isFieldMatch(field, conflictPolicyAliases); }
-    bool isInterval (const std::string& field) const { return isFieldMatch(field, intervalAliases); }
+    [[nodiscard]] bool isName (const std::string& field) const { return isFieldMatch(field, nameAliases); }
+    [[nodiscard]] bool isDescription (const std::string& field) const { return isFieldMatch(field, descAliases); }
+    [[nodiscard]] bool isQuota (const std::string& field) const { return isFieldMatch(field, quotaAliases); }
+    [[nodiscard]] bool isOwner (const std::string& field) const { return isFieldMatch(field, ownerAliases); }
+    [[nodiscard]] bool isConflictPolicy (const std::string& field) const { return isFieldMatch(field, conflictPolicyAliases); }
+    [[nodiscard]] bool isInterval (const std::string& field) const { return isFieldMatch(field, intervalAliases); }
 };
 
 struct S3VaultAliases : VaultAliases {
@@ -159,8 +159,8 @@ struct S3VaultAliases : VaultAliases {
         }
     }
 
-    bool isApiKey (const std::string& field) const { return isFieldMatch(field, apiKeyAliases); }
-    bool isSyncStrategy (const std::string& field) const { return isFieldMatch(field, syncStrategyAliases); }
+    [[nodiscard]] bool isApiKey (const std::string& field) const { return isFieldMatch(field, apiKeyAliases); }
+    [[nodiscard]] bool isSyncStrategy (const std::string& field) const { return isFieldMatch(field, syncStrategyAliases); }
 };
 
 }

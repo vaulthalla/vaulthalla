@@ -30,7 +30,7 @@ public:
             const auto user = std::make_shared<User>();
             user->name = generateName(usage);
             if (coin()) user->email = generateEmail(usage);
-            user->roles.admin = ctx_->randomUserRole();
+            user->roles.admin = ctx_->randomAdminRole();
             return user;
         }
 
@@ -49,7 +49,7 @@ public:
             return group;
         }
 
-        if (type == EntityType::USER_ROLE) {
+        if (type == EntityType::ADMIN_ROLE) {
             const auto role = std::make_shared<role::Admin>();
             role->name = generateRoleName(type, "role/create");
             role->description = "Auto-generated user role";
@@ -59,7 +59,7 @@ public:
         }
 
         if (type == EntityType::VAULT_ROLE) {
-            const auto role = std::make_shared<Vault>();
+            const auto role = std::make_shared<role::Vault>();
             role->name = generateRoleName(type, "role/create");
             role->description = "Auto-generated vault role";
             // role->permissions = generateBitmask(VAULT_SHELL_PERMS.size());

@@ -16,6 +16,8 @@ void vh::db::DBConnection::initPreparedUsers() const {
                    "last_modified_by = $7, updated_at = NOW() "
                    "WHERE id = $1");
 
+    conn_->prepare("delete_user", "DELETE FROM users WHERE id = $1");
+
     conn_->prepare("update_user_password", "UPDATE users SET password_hash = $2 WHERE id = $1");
 
     conn_->prepare("update_user_last_login", "UPDATE users SET last_login = NOW() WHERE id = $1");

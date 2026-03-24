@@ -5,7 +5,7 @@
 namespace vh::rbac::permission::admin::settings {
 
 std::string Logging::toString(const uint8_t indent) const {
-    return std::string(indent, ' ') + "Logging:\n" + static_cast<const Base&>(*this).toString(indent + 2);
+    return std::string(indent, ' ') + "Logging:\n" + Base::toString(indent + 2);
 }
 
 void to_json(nlohmann::json& j, const Logging& s) {

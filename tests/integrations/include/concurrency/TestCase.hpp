@@ -24,9 +24,9 @@ struct TestCase {
         const std::string actionStr = "list";
         auto name = actionStr + " " + typeStr;
         auto path = typeStr + "/" + actionStr;
-        if (type == EntityType::USER_ROLE) {
-            name += " (user)";
-            path += "/user";
+        if (type == EntityType::ADMIN_ROLE) {
+            name += " (admin)";
+            path += "/admin";
         } else if (type == EntityType::VAULT_ROLE) {
             name += " (vault)";
             path += "/vault";
@@ -47,9 +47,9 @@ struct TestCase {
         const std::string actionStr = "delete";
         auto name = actionStr + " " + typeStr;
         auto path = typeStr + "/" + actionStr;
-        if (type == EntityType::USER_ROLE) {
-            name += " (user)";
-            path += "/user";
+        if (type == EntityType::ADMIN_ROLE) {
+            name += " (admin)";
+            path += "/admin";
         } else if (type == EntityType::VAULT_ROLE) {
             name += " (vault)";
             path += "/vault";
@@ -70,9 +70,9 @@ struct TestCase {
         const auto actionStr = CommandTypeToString(command);
         auto name = actionStr + " " + typeStr;
         auto path = typeStr + "/" + actionStr;
-        if (type == EntityType::USER_ROLE) {
-            name += " (user)";
-            path += "/user";
+        if (type == EntityType::ADMIN_ROLE) {
+            name += " (admin)";
+            path += "/admin";
         } else if (type == EntityType::VAULT_ROLE) {
             name += " (vault)";
             path += "/vault";

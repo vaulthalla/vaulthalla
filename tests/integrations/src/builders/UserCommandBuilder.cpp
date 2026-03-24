@@ -26,8 +26,8 @@ namespace vh::test::integrations::cmd {
         }
 
         if (userAliases_.isRole(field)) {
-            if (ctx_->userRoles.empty()) throw std::runtime_error("UserCommandBuilder: no user roles available to assign");
-            entity->roles.admin = ctx_->randomUserRole();
+            if (ctx_->adminRoles.empty()) throw std::runtime_error("UserCommandBuilder: no user roles available to assign");
+            entity->roles.admin = ctx_->randomAdminRole();
             return std::to_string(entity->roles.admin->id);
         }
 

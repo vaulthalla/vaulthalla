@@ -5,7 +5,7 @@
 namespace vh::rbac::permission::admin::settings {
 
 std::string Database::toString(const uint8_t indent) const {
-    return std::string(indent, ' ') + "DB:\n" + static_cast<const Base&>(*this).toString(indent + 2);
+    return std::string(indent, ' ') + "DB:\n" + Base::toString(indent + 2);
 }
 
 void to_json(nlohmann::json& j, const Database& s) {

@@ -28,7 +28,7 @@ struct Validator {
         (type == EntityType::USER      && std::is_same_v<T, identities::User>)      ||
         (type == EntityType::VAULT     && std::is_same_v<T, vault::model::Vault>)     ||
         (type == EntityType::GROUP     && std::is_same_v<T, identities::Group>)     ||
-        (type == EntityType::USER_ROLE && std::is_same_v<T, rbac::role::Admin>)  ||
+        (type == EntityType::ADMIN_ROLE && std::is_same_v<T, rbac::role::Admin>)  ||
         (type == EntityType::VAULT_ROLE&& std::is_same_v<T, rbac::role::Vault>);
     static_assert(TypeOK, "Validator<type,T> mismatch: T must match the entity class for 'type'.");
 
@@ -54,7 +54,7 @@ struct Validator {
             if (!db::query::identities::Group::groupExists(entity->name))
                 return AssertionResult::Fail("Group '" + entity->name + "' not found in DB");
             return AssertionResult::Pass();
-        } else if constexpr (type == EntityType::USER_ROLE) {
+        } else if constexpr (type == EntityType::ADMIN_ROLE) {
             if (!db::query::rbac::role::Admin::exists(entity->name))
                 return AssertionResult::Fail("Role '" + entity->name + "' not found in DB");
             return AssertionResult::Pass();
@@ -80,7 +80,7 @@ struct Validator {
             if (db::query::identities::Group::groupExists(entity->name))
                 return AssertionResult::Fail("Group '" + entity->name + "' unexpectedly found in DB");
             return AssertionResult::Pass();
-        } else if constexpr (type == EntityType::USER_ROLE) {
+        } else if constexpr (type == EntityType::ADMIN_ROLE) {
             if (db::query::rbac::role::Admin::exists(entity->name))
                 return AssertionResult::Fail("Role '" + entity->name + "' unexpectedly found in DB");
             return AssertionResult::Pass();
@@ -109,7 +109,7 @@ struct Validator {
             if (actual < count)
                 return AssertionResult::Fail("Expected at least " + std::to_string(count) + " groups, found " + std::to_string(actual));
             return AssertionResult::Pass();
-        } else if constexpr (type == EntityType::USER_ROLE) {
+        } else if constexpr (type == EntityType::ADMIN_ROLE) {
             const auto actual = db::query::rbac::role::Admin::list().size();
             if (actual < count)
                 return AssertionResult::Fail("Expected at least " + std::to_string(count) + " user roles, found " + std::to_string(actual));

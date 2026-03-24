@@ -69,8 +69,8 @@ public:
             return { router_->executeLine(command, admin, io.get()), group };
         }
 
-        if (type == EntityType::USER_ROLE) {
-            const auto role = factory_->create(EntityType::USER_ROLE);
+        if (type == EntityType::ADMIN_ROLE) {
+            const auto role = factory_->create(EntityType::ADMIN_ROLE);
             const auto command = buildCommand(role);
             return { router_->executeLine(command, admin, io.get()), role };
         }

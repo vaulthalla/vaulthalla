@@ -83,11 +83,11 @@ template <> struct EntityTraits<EntityType::VAULT> {
     static std::vector<std::shared_ptr<Type>>& vec(cli::Context& c) { return c.vaults; }
 };
 
-template <> struct EntityTraits<EntityType::USER_ROLE> {
+template <> struct EntityTraits<EntityType::ADMIN_ROLE> {
     using Type = role::Admin;
-    static constexpr std::string_view kStage = "User Roles";
+    static constexpr std::string_view kStage = "Admin Roles";
     static constexpr std::string_view kIdPrefix = "Role ID:";
-    static std::vector<std::shared_ptr<Type>>& vec(cli::Context& c) { return c.userRoles; }
+    static std::vector<std::shared_ptr<Type>>& vec(cli::Context& c) { return c.adminRoles; }
 };
 
 // VaultRole
@@ -217,7 +217,7 @@ void IntegrationsTestRunner::seed() {
         EntityType type;
         std::vector<std::shared_ptr<concurrency::TestCase>> tests;
     } jobs[] = {
-        { EntityType::USER_ROLE,  makeCreateTests<EntityType::USER_ROLE>(config_.numUserRoles) },
+        { EntityType::ADMIN_ROLE,  makeCreateTests<EntityType::ADMIN_ROLE>(config_.numAdminRoles) },
         { EntityType::VAULT_ROLE, makeCreateTests<EntityType::VAULT_ROLE>(config_.numVaultRoles) },
         { EntityType::USER,       makeCreateTests<EntityType::USER>(config_.numUsers) },
         { EntityType::GROUP,      makeCreateTests<EntityType::GROUP>(config_.numGroups) },
@@ -259,8 +259,8 @@ void IntegrationsTestRunner::seed() {
             case EntityType::GROUP:
                 finish_seed<EntityType::GROUP>(combined);
                 break;
-            case EntityType::USER_ROLE:
-                finish_seed<EntityType::USER_ROLE>(combined);
+            case EntityType::ADMIN_ROLE:
+                finish_seed<EntityType::ADMIN_ROLE>(combined);
                 break;
             case EntityType::VAULT:
                 finish_seed<EntityType::VAULT>(combined);
@@ -293,7 +293,7 @@ void IntegrationsTestRunner::readStage() {
         append(makeInfoTests<EntityType::USER>(C.users));
         append(makeInfoTests<EntityType::VAULT>(C.vaults));
         append(makeInfoTests<EntityType::GROUP>(C.groups));
-        append(makeInfoTests<EntityType::USER_ROLE>(C.userRoles));
+        append(makeInfoTests<EntityType::ADMIN_ROLE>(C.adminRoles));
         append(makeInfoTests<EntityType::VAULT_ROLE>(C.vaultRoles));
     }
 
@@ -301,7 +301,7 @@ void IntegrationsTestRunner::readStage() {
     tests.push_back(makeListTest<EntityType::USER>());
     tests.push_back(makeListTest<EntityType::VAULT>());
     tests.push_back(makeListTest<EntityType::GROUP>());
-    tests.push_back(makeListTest<EntityType::USER_ROLE>());
+    tests.push_back(makeListTest<EntityType::ADMIN_ROLE>());
     tests.push_back(makeListTest<EntityType::VAULT_ROLE>());
 
     const auto res = router_->route(tests);
@@ -339,7 +339,7 @@ void IntegrationsTestRunner::updateStage() {
     append(makeUpdateTests<EntityType::USER>(C.users));
     append(makeUpdateTests<EntityType::VAULT>(C.vaults));
     append(makeUpdateTests<EntityType::GROUP>(C.groups));
-    append(makeUpdateTests<EntityType::USER_ROLE>(C.userRoles));
+    append(makeUpdateTests<EntityType::ADMIN_ROLE>(C.adminRoles));
     append(makeUpdateTests<EntityType::VAULT_ROLE>(C.vaultRoles));
 
     const auto res = router_->route(tests);
@@ -359,7 +359,7 @@ void IntegrationsTestRunner::teardownStage() {
         append(makeDeleteTests<EntityType::VAULT>(C.vaults));
         append(makeDeleteTests<EntityType::USER>(C.users));
         append(makeDeleteTests<EntityType::GROUP>(C.groups));
-        append(makeDeleteTests<EntityType::USER_ROLE>(C.userRoles));
+        append(makeDeleteTests<EntityType::ADMIN_ROLE>(C.adminRoles));
         append(makeDeleteTests<EntityType::VAULT_ROLE>(C.vaultRoles));
     }
 
@@ -374,7 +374,7 @@ void IntegrationsTestRunner::validateAllTestObjects() const {
     Validator<EntityType::USER,       User>::assert_all_exist(ctx_->users);
     Validator<EntityType::VAULT,      Vault>::assert_all_exist(ctx_->vaults);
     Validator<EntityType::GROUP,      Group>::assert_all_exist(ctx_->groups);
-    Validator<EntityType::USER_ROLE,  role::Admin>::assert_all_exist(ctx_->userRoles);
+    Validator<EntityType::ADMIN_ROLE,  role::Admin>::assert_all_exist(ctx_->adminRoles);
     Validator<EntityType::VAULT_ROLE, role::Vault>::assert_all_exist(ctx_->vaultRoles);
 }
 

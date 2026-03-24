@@ -5,7 +5,7 @@
 namespace vh::rbac::permission::admin::settings {
 
 std::string Http::toString(const uint8_t indent) const {
-    return std::string(indent, ' ') + "HTTP:\n" + static_cast<const Base&>(*this).toString(indent + 2);
+    return std::string(indent, ' ') + "HTTP:\n" + Base::toString(indent + 2);
 }
 
 void to_json(nlohmann::json& j, const Http& s) {

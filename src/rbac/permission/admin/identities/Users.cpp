@@ -5,7 +5,7 @@
 namespace vh::rbac::permission::admin::identities {
 
 std::string Users::toString(const uint8_t indent) const {
-    return "Users:\n" + std::string(indent, ' ') + static_cast<const Base&>(*this).toString(indent + 2);
+    return Base::toString(indent);
 }
 
 void to_json(nlohmann::json& j, const Users& u) {

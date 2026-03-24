@@ -9,29 +9,29 @@ using namespace vh::identities;
 using namespace vh::vault::model;
 
 namespace vh::test::integrations::cmd {
-    UserRoleCommandBuilder::UserRoleCommandBuilder(const std::shared_ptr<protocols::shell::UsageManager>& usage, const std::shared_ptr<cli::Context>& ctx)
-        : Builder(usage, ctx, "role"), userRoleAliases_(ctx) {}
+    AdminRoleCommandBuilder::AdminRoleCommandBuilder(const std::shared_ptr<protocols::shell::UsageManager>& usage, const std::shared_ptr<cli::Context>& ctx)
+        : Builder(usage, ctx, std::vector<std::string>{"role", "admin"}), adminRoleAliases_(ctx) {}
 
-    std::string UserRoleCommandBuilder::updateAndResolveVar(const std::shared_ptr<role::Admin>& entity, const std::string& field) {
+    std::string AdminRoleCommandBuilder::updateAndResolveVar(const std::shared_ptr<role::Admin>& entity, const std::string& field) {
         const std::string usagePath = "role/update";
 
-        if (userRoleAliases_.isName(field)) {
-            entity->name = generateRoleName(EntityType::USER_ROLE, usagePath);
+        if (adminRoleAliases_.isName(field)) {
+            entity->name = generateRoleName(EntityType::ADMIN_ROLE, usagePath);
             return entity->name;
         }
 
-        if (userRoleAliases_.isDescription(field)) {
+        if (adminRoleAliases_.isDescription(field)) {
             entity->description = generateDescription(usagePath);
             return entity->description;
         }
 
-        if (userRoleAliases_.isPermissions(field)) {
+        if (adminRoleAliases_.isPermissions(field)) {
             // TODO: Fix perms generation
             // entity->permissions = generateBitmask(ADMIN_SHELL_PERMS.size());
             return entity->toFlagsString();
         }
 
-        throw std::runtime_error("UserRoleCommandBuilder: unsupported user role field for update: " + field);
+        throw std::runtime_error("AdminRoleCommandBuilder: unsupported user role field for update: " + field);
     }
 
     static std::optional<std::string> resolveVar(const std::string& name, const std::shared_ptr<role::Admin>& role) {
@@ -39,7 +39,7 @@ namespace vh::test::integrations::cmd {
         if (name == "name" || name == "role_name") return role->name;
         if (name == "description" || name == "desc") return role->description;
         if (name == "permissions" || name == "perms") return role->toFlagsString();
-        throw std::runtime_error("UserRoleCommandBuilder: unsupported user role field for resolveVar: " + name);
+        throw std::runtime_error("AdminRoleCommandBuilder: unsupported user role field for resolveVar: " + name);
     }
 
     static std::string randomizePrimaryPositional(const std::shared_ptr<role::Admin>& entity) {
@@ -47,25 +47,25 @@ namespace vh::test::integrations::cmd {
         return entity->name;
     }
 
-    std::string UserRoleCommandBuilder::create(const std::shared_ptr<role::Admin>& entity) {
+    std::string AdminRoleCommandBuilder::create(const std::shared_ptr<role::Admin>& entity) {
         const auto cmd = root_->findSubcommand("create");
-        if (!cmd) throw std::runtime_error("UserRoleCommandBuilder: 'create' command usage not found");
+        if (!cmd) throw std::runtime_error("AdminRoleCommandBuilder: 'create' command usage not found");
 
         std::ostringstream oss;
-        oss << "vh " << randomAlias(root_->aliases) << ' ' << randomAlias(cmd->aliases) << " user " << entity->name;
+        oss << "vh role " << randomAlias(root_->aliases) << " " << randomAlias(cmd->aliases) << " " << entity->name;
 
         for (const auto& opt : cmd->required) {
             if (opt.label == "type") continue; // skip type, always "user" for user roles
             oss << ' ' << randomFlagAlias(opt.option_tokens);
             if (auto val = resolveVar(opt.option_tokens[0], entity); val) oss << ' ' << *val;
-            else throw std::runtime_error("UserRoleCommandBuilder: unsupported user role field for create: " + opt.option_tokens[0]);
+            else throw std::runtime_error("AdminRoleCommandBuilder: unsupported user role field for create: " + opt.option_tokens[0]);
         }
 
         for (const auto& option : cmd->optional) {
             if (coin()) {
                 if (option.option_tokens[0] == "from") {
-                    if (!ctx_->userRoles.empty() && coin())
-                        oss << ' ' << randomFlagAlias(option.option_tokens) << ' ' << std::to_string(ctx_->randomUserRole()->id);
+                    if (!ctx_->adminRoles.empty() && coin())
+                        oss << ' ' << randomFlagAlias(option.option_tokens) << ' ' << std::to_string(ctx_->randomAdminRole()->id);
                     continue;
                 }
 
@@ -76,7 +76,7 @@ namespace vh::test::integrations::cmd {
 
                 oss << ' ' << randomFlagAlias(option.option_tokens);
                 if (auto val = resolveVar(option.option_tokens[0], entity); val) oss << ' ' << *val;
-                else throw std::runtime_error("UserRoleCommandBuilder: unsupported user role field for create: " + option.option_tokens[0]);
+                else throw std::runtime_error("AdminRoleCommandBuilder: unsupported user role field for create: " + option.option_tokens[0]);
             }
         }
 
@@ -85,12 +85,12 @@ namespace vh::test::integrations::cmd {
         return oss.str();
     }
 
-    std::string UserRoleCommandBuilder::update(const std::shared_ptr<role::Admin>& entity) {
+    std::string AdminRoleCommandBuilder::update(const std::shared_ptr<role::Admin>& entity) {
         const auto cmd = root_->findSubcommand("update");
-        if (!cmd) throw std::runtime_error("UserRoleCommandBuilder: 'update' command usage not found");
+        if (!cmd) throw std::runtime_error("AdminRoleCommandBuilder: 'update' command usage not found");
 
         std::ostringstream oss;
-        oss << "vh " << randomAlias(root_->aliases) << ' ' << randomAlias(cmd->aliases);
+        oss << "vh role " << randomAlias(root_->aliases) << ' ' << randomAlias(cmd->aliases);
         oss << ' ' << randomizePrimaryPositional(entity);
 
         unsigned int numUpdated = 0;
@@ -120,38 +120,37 @@ namespace vh::test::integrations::cmd {
         return oss.str();
     }
 
-    std::string UserRoleCommandBuilder::info(const std::shared_ptr<role::Admin>& entity) {
+    std::string AdminRoleCommandBuilder::info(const std::shared_ptr<role::Admin>& entity) {
         const auto cmd = root_->findSubcommand("info");
-        if (!cmd) throw std::runtime_error("UserRoleCommandBuilder: 'info' command usage not found");
+        if (!cmd) throw std::runtime_error("AdminRoleCommandBuilder: 'info' command usage not found");
 
         std::ostringstream oss;
-        oss << "vh " << randomAlias(root_->aliases) << ' ' << randomAlias(cmd->aliases);
+        oss << "vh role " << randomAlias(root_->aliases) << ' ' << randomAlias(cmd->aliases);
         oss << ' ' << randomizePrimaryPositional(entity);
 
         return oss.str();
     }
 
-    std::string UserRoleCommandBuilder::list() {
+    std::string AdminRoleCommandBuilder::list() {
         const auto cmd = root_->findSubcommand("list");
-        if (!cmd) throw std::runtime_error("UserRoleCommandBuilder: 'list' command usage not found");
+        if (!cmd) throw std::runtime_error("AdminRoleCommandBuilder: 'list' command usage not found");
 
         std::ostringstream oss;
-        oss << "vh " << randomAlias(root_->aliases) << ' ' << randomAlias(cmd->aliases);
-        if (generateRandomIndex(10000) < 5000) oss << " --user";
+        oss << "vh role " << randomAlias(root_->aliases) << ' ' << randomAlias(cmd->aliases);
         for (const auto& flag : cmd->optional_flags)
             if (generateRandomIndex(10000) < 5000) oss << " --" << randomAlias(flag.aliases);
 
         return oss.str();
     }
 
-    std::string UserRoleCommandBuilder::remove(const std::shared_ptr<role::Admin>& entity) {
+    std::string AdminRoleCommandBuilder::remove(const std::shared_ptr<role::Admin>& entity) {
         const auto cmd = root_->findSubcommand("delete");
-        if (!cmd) throw std::runtime_error("UserRoleCommandBuilder: 'delete' command usage not found");
+        if (!cmd) throw std::runtime_error("AdminRoleCommandBuilder: 'delete' command usage not found");
 
         std::ostringstream oss;
-        oss << "vh " << randomAlias(root_->aliases) << ' ' << randomAlias(cmd->aliases);
+        oss << "vh role " << randomAlias(root_->aliases) << ' ' << randomAlias(cmd->aliases);
         if (generateRandomIndex(10000) < 5000) oss << ' ' << entity->id;
-        else oss << ' ' << entity->name << " --user";
+        else oss << ' ' << entity->name;
 
         return oss.str();
     }

@@ -10,6 +10,7 @@
 
 #include <memory>
 #include <string>
+#include <fmt/format.h>
 
 namespace vh::protocols::shell {
 class CommandUsage;
@@ -22,12 +23,21 @@ template <typename T = void> class Builder {
 public:
     virtual ~Builder() = default;
 
-    explicit Builder(const std::shared_ptr<protocols::shell::UsageManager>& usage,
+    Builder(const std::shared_ptr<protocols::shell::UsageManager>& usage,
                             const std::shared_ptr<cli::Context>& ctx, const std::string& rootTopLevelAlias)
         : ctx_(ctx) {
         if (!usage) throw std::runtime_error("CommandBuilder: usage manager is null");
         const auto cmd = usage->resolve(rootTopLevelAlias);
         if (!cmd) throw std::runtime_error("CommandBuilder: command usage not found for root: " + rootTopLevelAlias);
+        root_ = cmd;
+    }
+
+    Builder(const std::shared_ptr<protocols::shell::UsageManager>& usage,
+                            const std::shared_ptr<cli::Context>& ctx, const std::vector<std::string>& pathToRoot)
+        : ctx_(ctx) {
+        if (!usage) throw std::runtime_error("CommandBuilder: usage manager is null");
+        const auto cmd = usage->resolve(pathToRoot);
+        if (!cmd) throw std::runtime_error("CommandBuilder: command usage not found for root: " + fmt::format("{}", fmt::join(pathToRoot, " ")));
         root_ = cmd;
     }
 
@@ -151,12 +161,12 @@ private:
     GroupAliases groupAliases_;
 };
 
-class UserRoleCommandBuilder final : Builder<rbac::role::Admin> {
+class AdminRoleCommandBuilder final : Builder<rbac::role::Admin> {
 public:
-    explicit UserRoleCommandBuilder(const std::shared_ptr<protocols::shell::UsageManager>& usage,
+    explicit AdminRoleCommandBuilder(const std::shared_ptr<protocols::shell::UsageManager>& usage,
                                     const std::shared_ptr<cli::Context>& ctx);
 
-    ~UserRoleCommandBuilder() override = default;
+    ~AdminRoleCommandBuilder() override = default;
 
     std::string create(const std::shared_ptr<rbac::role::Admin>& entity) override;
 
@@ -172,7 +182,7 @@ protected:
     std::string updateAndResolveVar(const std::shared_ptr<rbac::role::Admin>& entity, const std::string& field) override;
 
 private:
-    UserRoleAliases userRoleAliases_;
+    UserRoleAliases adminRoleAliases_;
 };
 
 class VaultRoleCommandBuilder final : Builder<rbac::role::Vault> {

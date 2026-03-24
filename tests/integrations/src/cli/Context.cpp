@@ -24,15 +24,16 @@ namespace vh::test::integrations::cli {
             for (const auto& action : ACTIONS) {
                 const auto eStr = std::string(entity);
                 const auto aStr = std::string(action);
+
                 if (entity == "role") {
                     const auto cmdBase = eStr + " " + aStr;
-                    const auto userCmd = cmdBase + " user";
+                    const auto adminCmd = cmdBase + " admin";
                     const auto vaultCmd = cmdBase + " vault";
-                    const auto userUsage = usage->resolve({eStr, aStr});
-                    const auto vaultUsage = usage->resolve({eStr, aStr});
-                    if (!userUsage) throw std::runtime_error("EntityFactory: unknown command usage: " + userCmd);
+                    const auto adminUsage = usage->resolve({eStr, "admin", aStr});
+                    const auto vaultUsage = usage->resolve({eStr, "vault", aStr});
+                    if (!adminUsage) throw std::runtime_error("EntityFactory: unknown command usage: " + adminCmd);
                     if (!vaultUsage) throw std::runtime_error("EntityFactory: unknown command usage: " + vaultCmd);
-                    commands[userCmd] = userUsage;
+                    commands[adminCmd] = adminUsage;
                     commands[vaultCmd] = vaultUsage;
                     continue;
                 }
@@ -49,7 +50,7 @@ namespace vh::test::integrations::cli {
             case EntityType::USER:  return "user " + action;
             case EntityType::VAULT: return "vault " + action;
             case EntityType::GROUP: return "group " + action;
-            case EntityType::USER_ROLE: return "role " + action + " user";
+            case EntityType::ADMIN_ROLE: return "role " + action + " admin";
             case EntityType::VAULT_ROLE: return "role " + action + " vault";
             default: throw std::runtime_error("EntityFactory: unsupported entity type for command name");
         }
@@ -82,9 +83,9 @@ namespace vh::test::integrations::cli {
         return owned[generateRandomIndex(owned.size())];
     }
 
-    std::shared_ptr<role::Admin> Context::randomUserRole() const {
-        if (userRoles.empty()) throw std::runtime_error("cli::Context: no user roles available to pick from");
-        return userRoles[generateRandomIndex(userRoles.size())];
+    std::shared_ptr<role::Admin> Context::randomAdminRole() const {
+        if (adminRoles.empty()) throw std::runtime_error("cli::Context: no admin roles available to pick from");
+        return adminRoles[generateRandomIndex(adminRoles.size())];
     }
 
     std::shared_ptr<role::Vault> Context::randomVaultRole() const {

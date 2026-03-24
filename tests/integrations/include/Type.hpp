@@ -8,7 +8,7 @@ enum class EntityType {
     USER,
     VAULT,
     GROUP,
-    USER_ROLE,
+    ADMIN_ROLE,
     VAULT_ROLE
 };
 
@@ -38,7 +38,7 @@ inline std::string EntityTypeToString(const EntityType& type) {
     case EntityType::USER: return "user";
     case EntityType::VAULT: return "vault";
     case EntityType::GROUP: return "group";
-    case EntityType::USER_ROLE:
+    case EntityType::ADMIN_ROLE:
     case EntityType::VAULT_ROLE: return "role";
     default: return "unknown";
     }

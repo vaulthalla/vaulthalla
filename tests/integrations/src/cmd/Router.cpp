@@ -90,8 +90,8 @@ namespace vh::test::integrations::cmd {
             return registrar_->create(EntityType::VAULT);
         });
 
-        registerRoute("role/create/user", [&](const std::shared_ptr<void>&) -> EntityResult {
-            return registrar_->create(EntityType::USER_ROLE);
+        registerRoute("role/create/admin", [&](const std::shared_ptr<void>&) -> EntityResult {
+            return registrar_->create(EntityType::ADMIN_ROLE);
         });
 
         registerRoute("role/create/vault", [&](const std::shared_ptr<void>&) -> EntityResult {
@@ -116,10 +116,10 @@ namespace vh::test::integrations::cmd {
             return registrar_->update(EntityType::GROUP, group);
         });
 
-        registerRoute("role/update/user", [&](const std::shared_ptr<void>& entity) -> EntityResult {
-            if (!entity) throw std::runtime_error("cmd::Router: no user role entity provided for update");
+        registerRoute("role/update/admin", [&](const std::shared_ptr<void>& entity) -> EntityResult {
+            if (!entity) throw std::runtime_error("cmd::Router: no admin role entity provided for update");
             const auto role = std::static_pointer_cast<User>(entity);
-            return registrar_->update(EntityType::USER_ROLE, role);
+            return registrar_->update(EntityType::ADMIN_ROLE, role);
         });
 
         registerRoute("role/update/vault", [&](const std::shared_ptr<void>& entity) -> EntityResult {
@@ -140,8 +140,8 @@ namespace vh::test::integrations::cmd {
             return registrar_->list(EntityType::VAULT);
         });
 
-        registerRoute("role/list/user", [&](const std::shared_ptr<void>&) -> EntityResult {
-            return registrar_->list(EntityType::USER_ROLE);
+        registerRoute("role/list/admin", [&](const std::shared_ptr<void>&) -> EntityResult {
+            return registrar_->list(EntityType::ADMIN_ROLE);
         });
 
         registerRoute("role/list/vault", [&](const std::shared_ptr<void>&) -> EntityResult {
@@ -166,10 +166,10 @@ namespace vh::test::integrations::cmd {
             return registrar_->info(EntityType::VAULT, vault);
         });
 
-        registerRoute("role/info/user", [&](const std::shared_ptr<void>& entity) -> EntityResult {
-            if (!entity) throw std::runtime_error("cmd::Router: no user role entity provided for info");
+        registerRoute("role/info/admin", [&](const std::shared_ptr<void>& entity) -> EntityResult {
+            if (!entity) throw std::runtime_error("cmd::Router: no admin role entity provided for info");
             const auto role = std::static_pointer_cast<User>(entity);
-            return registrar_->info(EntityType::USER_ROLE, role);
+            return registrar_->info(EntityType::ADMIN_ROLE, role);
         });
 
         registerRoute("role/info/vault", [&](const std::shared_ptr<void>& entity) -> EntityResult {
@@ -196,10 +196,10 @@ namespace vh::test::integrations::cmd {
             return registrar_->remove(EntityType::VAULT, vault);
         });
 
-        registerRoute("role/delete/user", [&](const std::shared_ptr<void>& entity) -> EntityResult {
-            if (!entity) throw std::runtime_error("cmd::Router: no user role entity provided for deletion");
+        registerRoute("role/delete/admin", [&](const std::shared_ptr<void>& entity) -> EntityResult {
+            if (!entity) throw std::runtime_error("cmd::Router: no admin role entity provided for deletion");
             const auto role = std::static_pointer_cast<User>(entity);
-            return registrar_->remove(EntityType::USER_ROLE, role);
+            return registrar_->remove(EntityType::ADMIN_ROLE, role);
         });
 
         registerRoute("role/delete/vault", [&](const std::shared_ptr<void>& entity) -> EntityResult {

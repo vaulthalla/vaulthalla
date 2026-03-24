@@ -13,7 +13,7 @@ public:
     std::shared_ptr<UserCommandBuilder> userBuilder;
     std::shared_ptr<VaultCommandBuilder> vaultBuilder;
     std::shared_ptr<GroupCommandBuilder> groupBuilder;
-    std::shared_ptr<UserRoleCommandBuilder> userRoleBuilder;
+    std::shared_ptr<AdminRoleCommandBuilder> userRoleBuilder;
     std::shared_ptr<VaultRoleCommandBuilder> vaultRoleBuilder;
 
 
@@ -31,7 +31,7 @@ public:
         registry.userBuilder = std::make_shared<UserCommandBuilder>(usage, ctx);
         registry.vaultBuilder = std::make_shared<VaultCommandBuilder>(usage, ctx);
         registry.groupBuilder = std::make_shared<GroupCommandBuilder>(usage, ctx);
-        registry.userRoleBuilder = std::make_shared<UserRoleCommandBuilder>(usage, ctx);
+        registry.userRoleBuilder = std::make_shared<AdminRoleCommandBuilder>(usage, ctx);
         registry.vaultRoleBuilder = std::make_shared<VaultRoleCommandBuilder>(usage, ctx);
     }
 
@@ -62,7 +62,7 @@ public:
             case CommandType::LIST: return groupBuilder->list();
             default: throw std::runtime_error("CommandBuilderRegistry: unsupported command type for GROUP");
             }
-        case EntityType::USER_ROLE: switch (cmdType) {
+        case EntityType::ADMIN_ROLE: switch (cmdType) {
             case CommandType::CREATE: return userRoleBuilder->create(std::static_pointer_cast<rbac::role::Admin>(entity));
             case CommandType::UPDATE: return userRoleBuilder->update(std::static_pointer_cast<rbac::role::Admin>(entity));
             case CommandType::DELETE: return userRoleBuilder->remove(std::static_pointer_cast<rbac::role::Admin>(entity));

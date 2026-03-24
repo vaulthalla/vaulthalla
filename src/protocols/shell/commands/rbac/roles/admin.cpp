@@ -16,6 +16,9 @@
 #include "protocols/shell/util/argsHelpers.hpp"
 #include "rbac/resolver/Admin.hpp"
 
+#include <algorithm>
+#include <ranges>
+
 using namespace vh::rbac;
 
 namespace vh::protocols::shell::commands::rbac::roles::admin {
@@ -23,7 +26,8 @@ namespace vh::protocols::shell::commands::rbac::roles::admin {
         if (!call.user->roles.admin->roles.admin.canAdd())
             return invalid("You do not have permission to create admin roles");
 
-        validatePositionals(call, resolveUsage({"role", "admin", "create"}));
+        const auto usage = resolveUsage({"role", "admin", "create"});
+        validatePositionals(call, usage);
 
         if (call.positionals.empty())
             return invalid("Missing required role name");
@@ -50,6 +54,11 @@ namespace vh::protocols::shell::commands::rbac::roles::admin {
         for (const auto& opt : call.options) {
             if (!opt.value) continue;
 
+            if (std::ranges::any_of(usage->optional, [&opt](const auto& e) {
+                return e.label == opt.key || std::ranges::any_of(e.option_tokens,
+                    [&opt](const auto& t) { return t == opt.key; });
+            })) continue; // Skip options that are defined in usage, as they are handled separately
+
             const auto it = byFlag.find(*opt.value);
             if (it == byFlag.end()) {
                 errors.push_back("Unknown permission flag '" + *opt.value + "'");
@@ -69,14 +78,16 @@ namespace vh::protocols::shell::commands::rbac::roles::admin {
         }
 
         db::query::rbac::role::Admin::upsert(staged);
-        return ok("Role '" + staged->name + "' created successfully");
+        const auto newRole = db::query::rbac::role::Admin::get(staged->name);
+        return ok("Role '" + newRole->name + "' created successfully\n" + newRole->toString());
     }
 
     static CommandResult handle_update(const CommandCall& call) {
         if (!call.user->roles.admin->roles.admin.canEdit())
             return invalid("You do not have permission to edit admin roles");
 
-        validatePositionals(call, resolveUsage({"role", "admin", "update"}));
+        const auto usage = resolveUsage({"role", "admin", "update"});
+        validatePositionals(call, usage);
 
         const auto roleLkp = resolveAdminRole(call.positionals[0], "role admin update");
         if (!roleLkp.ptr) return invalid(roleLkp.error);
@@ -87,10 +98,25 @@ namespace vh::protocols::shell::commands::rbac::roles::admin {
         const auto exported = staged->toPermissions();
         const auto byFlag = AdminPermissionResolver::buildFlagMap(exported);
 
+        for (const auto& field : usage->optional)
+            for (const auto& opt : field.option_tokens)
+                if (hasFlag(call, opt)) {
+                    const auto val = optVal(call, opt);
+                    if (!val || val->empty()) continue;
+                    if (field.label == "description") staged->description = *val;
+                    else if (field.label == "name") staged->name = *val;
+                    break;
+                }
+
         std::vector<std::string> errors;
 
         for (const auto& opt : call.options) {
             if (!opt.value) continue;
+
+            if (std::ranges::any_of(usage->optional, [&opt](const auto& e) {
+                return e.label == opt.key || std::ranges::any_of(e.option_tokens,
+                    [&opt](const auto& t) { return t == opt.key; });
+            })) continue; // Skip options that are defined in usage, as they are handled separately
 
             const auto it = byFlag.find(*opt.value);
             if (it == byFlag.end()) {
@@ -111,7 +137,7 @@ namespace vh::protocols::shell::commands::rbac::roles::admin {
         }
 
         db::query::rbac::role::Admin::upsert(staged);
-        return ok("Role '" + staged->name + "' updated successfully");
+        return ok("Role '" + staged->name + "' updated successfully\n" + staged->toString());
     }
 
     static CommandResult handle_delete(const CommandCall& call) {
