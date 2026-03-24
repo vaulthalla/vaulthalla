@@ -100,11 +100,10 @@ namespace vh::protocols::shell::commands::rbac::roles::vault {
 
         for (const auto& field : usage->optional)
             for (const auto& opt : field.option_tokens)
-                if (hasFlag(call, opt)) {
-                    const auto val = optVal(call, opt);
-                    if (!val || val->empty()) continue;
-                    if (field.label == "description") staged->description = *val;
-                    else if (field.label == "name") staged->name = *val;
+                if (const auto val = optVal(call, opt)) {
+                    if (val->empty()) continue;
+                    if (field.label.contains("desc")) staged->description = *val;
+                    else if (field.label.contains("name")) staged->name = *val;
                     break;
                 }
 
