@@ -28,7 +28,7 @@ namespace vh::rbac::permission {
 
     namespace vault::sync {
         struct Config final : Set<SyncConfigPermissions, uint8_t> {
-            static constexpr const auto* FLAG_CONTEXT = "config";
+            static constexpr const auto* FLAG_CONTEXT = "sync-config";
 
             [[nodiscard]] const char* flagPrefix() const override { return FLAG_CONTEXT; }
             [[nodiscard]] std::string toString(uint8_t indent) const override;

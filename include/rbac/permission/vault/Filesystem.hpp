@@ -190,11 +190,11 @@ namespace vh::rbac::permission {
                 Filesystem fs;
                 fs.files = fs::Files::Custom(
                     static_cast<fs::Files::SetMask>(fs::FilePermissions::All),
-                    fs::Share::None()
+                    fs::Share::None(fs::Files::FLAG_PREFIX)
                 );
                 fs.directories = fs::Directories::Custom(
                     static_cast<fs::Directories::SetMask>(fs::DirectoryPermissions::All),
-                    fs::Share::None()
+                    fs::Share::None(fs::Directories::FLAG_PREFIX)
                 );
                 fs.overrides.clear();
                 return fs;

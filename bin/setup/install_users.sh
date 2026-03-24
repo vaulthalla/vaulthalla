@@ -1,48 +1,64 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# === 1) Create 'vaulthalla' group if it doesn't exist ===
 if ! getent group vaulthalla > /dev/null; then
-    echo "👥 Creating 'vaulthalla' group..."
+    echo "👥 Creating system group 'vaulthalla'..."
     sudo groupadd --system vaulthalla
 else
-    echo "👥 'vaulthalla' group already exists."
+    echo "👥 System group 'vaulthalla' already exists."
 fi
 
-if ! id vaulthalla &>/dev/null; then
+# === 2) Create 'vaulthalla' user if it doesn't exist ===
+if ! id -u vaulthalla >/dev/null 2>&1; then
     echo "👤 Creating system user 'vaulthalla'..."
-    sudo useradd -r -g vaulthalla -s /usr/sbin/nologin vaulthalla
+    sudo useradd \
+        --system \
+        --gid vaulthalla \
+        --shell /usr/sbin/nologin \
+        --no-create-home \
+        vaulthalla
 else
     echo "👤 System user 'vaulthalla' already exists."
 fi
 
-# === 3) Add current user to 'vaulthalla' group ===
-if [[ -n "${SUDO_USER:-}" ]]; then
-    echo "👤 Adding current user '$SUDO_USER' to 'vaulthalla' group..."
-    sudo usermod -aG vaulthalla "$SUDO_USER"
-    echo "Please log out and back in for group changes to take effect."
-else
-    echo "⚠️ No SUDO_USER found, skipping user group addition."
+# === 3) Add invoking user to 'vaulthalla' group ===
+REAL_USER="${SUDO_USER:-${USER:-}}"
+
+if [[ -z "$REAL_USER" || "$REAL_USER" == "root" ]]; then
+    # fallback if script wasn't run via sudo
+    REAL_USER="$(logname 2>/dev/null || true)"
 fi
 
-# === 4) Add 'vaulthalla' user to 'tss' group (for TPM access) ===
-if getent group tss > /dev/null; then
-    echo "🔑 Adding 'vaulthalla' to existing 'tss' group..."
-    sudo usermod -aG tss vaulthalla
+if [[ -n "$REAL_USER" && "$REAL_USER" != "root" ]]; then
+    echo "👤 Adding user '$REAL_USER' to 'vaulthalla' group..."
+    sudo usermod -aG vaulthalla "$REAL_USER"
+    echo "ℹ️ Log out and back in for group changes to take effect."
 else
-    echo "⚠️ No 'tss' group found, creating one..."
-    sudo groupadd --system tss
-    sudo usermod -aG tss vaulthalla
+    echo "⚠️ Could not determine a non-root invoking user; skipping group addition."
 fi
+
+# === 4) Ensure 'tss' group exists and add 'vaulthalla' user ===
+if ! getent group tss > /dev/null; then
+    echo "👥 Creating system group 'tss'..."
+    sudo groupadd --system tss
+fi
+
+echo "🔑 Adding 'vaulthalla' user to 'tss' group..."
+sudo usermod -aG tss vaulthalla
 
 # === 5) Ensure TPM device permissions ===
 udev_rule_file="/etc/udev/rules.d/60-tpm.rules"
 
 check_perms() {
     local dev=$1
-    if [ -e "$dev" ]; then
+    if [[ -e "$dev" ]]; then
+        local perms
         perms=$(stat -c "%a %G" "$dev")
-        if [[ "$perms" != "660 tss" ]]; then
-            return 1
-        fi
+        [[ "$perms" == "660 tss" ]]
+    else
+        return 0
     fi
-    return 0
 }
 
 if ! check_perms /dev/tpm0 || ! check_perms /dev/tpmrm0; then

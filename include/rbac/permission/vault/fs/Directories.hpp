@@ -89,7 +89,7 @@ namespace vh::rbac::permission {
             static Directories None() {
                 Directories d;
                 d.clear();
-                d.share = Share::None();
+                d.share = Share::None(FLAG_PREFIX);
                 return d;
             }
 
@@ -97,7 +97,7 @@ namespace vh::rbac::permission {
                 Directories d;
                 d.clear();
                 d.grant(DirectoryPermissions::List);
-                d.share = Share::None();
+                d.share = Share::None(FLAG_PREFIX);
                 return d;
             }
 
@@ -106,7 +106,7 @@ namespace vh::rbac::permission {
                 d.clear();
                 d.grant(DirectoryPermissions::List);
                 d.grant(DirectoryPermissions::Download);
-                d.share = Share::None();
+                d.share = Share::None(FLAG_PREFIX);
                 return d;
             }
 
@@ -116,7 +116,7 @@ namespace vh::rbac::permission {
                 d.grant(DirectoryPermissions::List);
                 d.grant(DirectoryPermissions::Download);
                 d.grant(DirectoryPermissions::Copy);
-                d.share = Share::InternalOnly();
+                d.share = Share::InternalOnly(FLAG_PREFIX);
                 return d;
             }
 
@@ -128,7 +128,7 @@ namespace vh::rbac::permission {
                 d.grant(DirectoryPermissions::Download);
                 d.grant(DirectoryPermissions::Touch);
                 d.grant(DirectoryPermissions::Copy);
-                d.share = Share::InternalOnly();
+                d.share = Share::InternalOnly(FLAG_PREFIX);
                 return d;
             }
 
@@ -142,7 +142,7 @@ namespace vh::rbac::permission {
                 d.grant(DirectoryPermissions::Rename);
                 d.grant(DirectoryPermissions::Move);
                 d.grant(DirectoryPermissions::Copy);
-                d.share = Share::InternalAndValidatedPublic();
+                d.share = Share::InternalAndValidatedPublic(FLAG_PREFIX);
                 return d;
             }
 
@@ -157,7 +157,7 @@ namespace vh::rbac::permission {
                 d.grant(DirectoryPermissions::Rename);
                 d.grant(DirectoryPermissions::Move);
                 d.grant(DirectoryPermissions::Copy);
-                d.share = Share::InternalAndValidatedPublic();
+                d.share = Share::InternalAndValidatedPublic(FLAG_PREFIX);
                 return d;
             }
 
@@ -165,7 +165,7 @@ namespace vh::rbac::permission {
                 Directories d;
                 d.clear();
                 d.grant(DirectoryPermissions::All);
-                d.share = Share::Full();
+                d.share = Share::Full(FLAG_PREFIX);
                 return d;
             }
 

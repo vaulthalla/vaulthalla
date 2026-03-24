@@ -83,7 +83,7 @@ namespace vh::rbac::permission {
             static Files None() {
                 Files f;
                 f.clear();
-                f.share = Share::None();
+                f.share = Share::None(FLAG_PREFIX);
                 return f;
             }
 
@@ -91,7 +91,7 @@ namespace vh::rbac::permission {
                 Files f;
                 f.clear();
                 f.grant(FilePermissions::Preview);
-                f.share = Share::None();
+                f.share = Share::None(FLAG_PREFIX);
                 return f;
             }
 
@@ -100,7 +100,7 @@ namespace vh::rbac::permission {
                 f.clear();
                 f.grant(FilePermissions::Preview);
                 f.grant(FilePermissions::Download);
-                f.share = Share::None();
+                f.share = Share::None(FLAG_PREFIX);
                 return f;
             }
 
@@ -110,7 +110,7 @@ namespace vh::rbac::permission {
                 f.grant(FilePermissions::Preview);
                 f.grant(FilePermissions::Download);
                 f.grant(FilePermissions::Copy);
-                f.share = Share::InternalOnly();
+                f.share = Share::InternalOnly(FLAG_PREFIX);
                 return f;
             }
 
@@ -122,7 +122,7 @@ namespace vh::rbac::permission {
                 f.grant(FilePermissions::Download);
                 f.grant(FilePermissions::Overwrite);
                 f.grant(FilePermissions::Copy);
-                f.share = Share::InternalOnly();
+                f.share = Share::InternalOnly(FLAG_PREFIX);
                 return f;
             }
 
@@ -136,7 +136,7 @@ namespace vh::rbac::permission {
                 f.grant(FilePermissions::Rename);
                 f.grant(FilePermissions::Move);
                 f.grant(FilePermissions::Copy);
-                f.share = Share::InternalAndValidatedPublic();
+                f.share = Share::InternalAndValidatedPublic(FLAG_PREFIX);
                 return f;
             }
 
@@ -151,7 +151,7 @@ namespace vh::rbac::permission {
                 f.grant(FilePermissions::Delete);
                 f.grant(FilePermissions::Move);
                 f.grant(FilePermissions::Copy);
-                f.share = Share::InternalAndValidatedPublic();
+                f.share = Share::InternalAndValidatedPublic(FLAG_PREFIX);
                 return f;
             }
 
@@ -159,7 +159,7 @@ namespace vh::rbac::permission {
                 Files f;
                 f.clear();
                 f.grant(FilePermissions::All);
-                f.share = Share::Full();
+                f.share = Share::Full(FLAG_PREFIX);
                 return f;
             }
 

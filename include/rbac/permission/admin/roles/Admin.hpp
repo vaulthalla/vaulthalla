@@ -7,7 +7,7 @@
 namespace vh::rbac::permission::admin::roles {
 
     struct Admin final : Base {
-        static constexpr const auto* FLAG_CONTEXT = "admin";
+        static constexpr const auto* FLAG_CONTEXT = "roles-admin";
         static constexpr const auto* DESCRIPTION_CONTEXT = "Admin";
 
         [[nodiscard]] const char* flagPrefix() const override { return FLAG_CONTEXT; }

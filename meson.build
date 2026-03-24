@@ -206,7 +206,7 @@ license_dir = join_paths(get_option('prefix'), get_option('datadir'), 'doc', mes
 install_data('LICENSE', install_dir: license_dir)
 install_data('debian/copyright', install_dir: license_dir, rename: 'copyright')
 
-install_emptydir(runtime_dir, install_mode: ['rwx------', 'vaulthalla', 'vaulthalla'])
+install_emptydir(runtime_dir, install_mode: ['rwxr-x---', 'vaulthalla', 'vaulthalla'])
 install_emptydir(state_dir, install_mode: ['rwx------', 'vaulthalla', 'vaulthalla'])
 install_emptydir(log_dir, install_mode: ['rwxr-x---', 'vaulthalla', 'vaulthalla'])
 install_emptydir(join_paths('/mnt', meson.project_name()), install_mode: ['rwxr-xr-x', 'vaulthalla', 'vaulthalla'])
