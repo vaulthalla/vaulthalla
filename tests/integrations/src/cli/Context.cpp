@@ -1,7 +1,7 @@
 #include "tests/integrations/include/cli/Context.hpp"
 
-#include "tests/integrations/include/Type.hpp"
-#include "tests/integrations/include/generators.hpp"
+#include "tests/integrations/include/types/Type.hpp"
+#include "tests/integrations/include/cmd/generators.hpp"
 
 #include "UsageManager.hpp"
 #include "identities/User.hpp"

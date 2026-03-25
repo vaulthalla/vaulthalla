@@ -7,7 +7,7 @@
 
 #include "tests/integrations/include/cmd/Router.hpp"
 #include "tests/integrations/include/cmd/Registry.hpp"
-#include "tests/integrations/include/Type.hpp"
+#include "../../include/types/Type.hpp"
 
 #include "tests/integrations/include/concurrency/TestThreadPool.hpp"
 #include "tests/integrations/include/concurrency/TestCase.hpp"

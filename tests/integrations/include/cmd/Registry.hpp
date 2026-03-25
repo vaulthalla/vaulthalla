@@ -1,7 +1,7 @@
 #pragma once
 
 #include "tests/integrations/include/cmd/Builder.hpp"
-#include "tests/integrations/include/Type.hpp"
+#include "../types/Type.hpp"
 #include "UsageManager.hpp"
 
 #include <memory>

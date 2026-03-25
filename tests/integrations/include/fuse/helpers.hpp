@@ -12,11 +12,11 @@
 #include <fcntl.h>
 #include <iostream>
 
-#include "concurrency/TestCase.hpp"
+#include "../concurrency/TestCase.hpp"
 #include "protocols/shell/types.hpp"
 #include "log/Registry.hpp"
 #include "fs/ops/file.hpp"
-#include "AssertionResult.hpp"
+#include "../types/AssertionResult.hpp"
 
 using namespace vh::fs::ops;
 

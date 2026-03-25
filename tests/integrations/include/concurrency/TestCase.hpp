@@ -1,7 +1,7 @@
 #pragma once
 
-#include "tests/integrations/include/Type.hpp"
-#include "tests/integrations/include/AssertionResult.hpp"
+#include "tests/integrations/include/types/Type.hpp"
+#include "../types/AssertionResult.hpp"
 
 #include <string>
 #include <vector>

@@ -7,7 +7,7 @@
 #include "protocols/shell/Router.hpp"
 #include "tests/integrations/include/cli/Context.hpp"
 #include "tests/integrations/include/cmd/Registry.hpp"
-#include "tests/integrations/include/Type.hpp"
+#include "tests/integrations/include/types/Type.hpp"
 #include "tests/integrations/include/entity/Factory.hpp"
 #include "protocols/shell/commands/all.hpp"
 #include "db/query/identities/User.hpp"

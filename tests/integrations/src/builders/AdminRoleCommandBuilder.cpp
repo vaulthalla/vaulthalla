@@ -1,5 +1,5 @@
 #include "tests/integrations/include/cmd/Builder.hpp"
-#include "tests/integrations/include/generators.hpp"
+#include "tests/integrations/include/cmd/generators.hpp"
 #include "tests/integrations/include/cli/Context.hpp"
 #include "CommandUsage.hpp"
 #include "rbac/role/Admin.hpp"
@@ -9,7 +9,7 @@ using namespace vh::identities;
 using namespace vh::vault::model;
 
 namespace vh::test::integrations::cmd {
-    AdminRoleCommandBuilder::AdminRoleCommandBuilder(const std::shared_ptr<protocols::shell::UsageManager>& usage, const std::shared_ptr<cli::Context>& ctx)
+    AdminRoleCommandBuilder::AdminRoleCommandBuilder(const std::shared_ptr<protocols::shell::UsageManager>& usage, const std::shared_ptr<integrations::cli::Context>& ctx)
         : Builder(usage, ctx, std::vector<std::string>{"role", "admin"}), adminRoleAliases_(ctx) {}
 
     std::string AdminRoleCommandBuilder::updateAndResolveVar(const std::shared_ptr<role::Admin>& entity, const std::string& field) {

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "Type.hpp"
-#include "AssertionResult.hpp"
+#include "tests/integrations/include/types/Type.hpp"
+#include "types/AssertionResult.hpp"
 #include "db/query/identities/User.hpp"
 #include "db/query/vault/Vault.hpp"
 #include "db/query/identities/Group.hpp"

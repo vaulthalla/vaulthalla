@@ -1,5 +1,5 @@
 #include "tests/integrations/include/cmd/Builder.hpp"
-#include "tests/integrations/include/generators.hpp"
+#include "../../include/cmd/generators.hpp"
 #include "tests/integrations/include/cli/Context.hpp"
 #include "CommandUsage.hpp"
 
@@ -10,7 +10,7 @@ using namespace vh::rbac;
 using namespace vh::vault::model;
 
 namespace vh::test::integrations::cmd {
-    VaultRoleCommandBuilder::VaultRoleCommandBuilder(const std::shared_ptr<protocols::shell::UsageManager>& usage, const std::shared_ptr<cli::Context>& ctx)
+    VaultRoleCommandBuilder::VaultRoleCommandBuilder(const std::shared_ptr<protocols::shell::UsageManager>& usage, const std::shared_ptr<integrations::cli::Context>& ctx)
         : Builder(usage, ctx, std::vector<std::string>{"role", "vault"}), vaultRoleAliases_(ctx) {}
 
     std::string VaultRoleCommandBuilder::updateAndResolveVar(const std::shared_ptr<role::Vault>& entity, const std::string& field) {

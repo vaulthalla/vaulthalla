@@ -1,6 +1,6 @@
 #pragma once
 
-#include "tests/integrations/include/Type.hpp"
+#include "../types/Type.hpp"
 
 #include <unordered_map>
 #include <string>

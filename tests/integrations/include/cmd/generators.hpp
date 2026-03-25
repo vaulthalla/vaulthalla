@@ -1,7 +1,7 @@
 #pragma once
 
 #include "ArgsGenerator.hpp"
-#include "Type.hpp"
+#include "../types/Type.hpp"
 #include "permsUtil.hpp"
 
 #include <string>

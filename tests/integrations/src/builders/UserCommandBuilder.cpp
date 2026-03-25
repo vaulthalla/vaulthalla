@@ -1,5 +1,5 @@
 #include "tests/integrations/include/cmd/Builder.hpp"
-#include "tests/integrations/include/generators.hpp"
+#include "tests/integrations/include/cmd/generators.hpp"
 #include "tests/integrations/include/cli/Context.hpp"
 #include "CommandUsage.hpp"
 

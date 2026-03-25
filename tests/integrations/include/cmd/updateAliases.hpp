@@ -1,7 +1,7 @@
 #pragma once
 
-#include "Type.hpp"
-#include "cli/Context.hpp"
+#include "../types/Type.hpp"
+#include "../cli/Context.hpp"
 #include "CommandUsage.hpp"
 
 #include <string>
@@ -11,7 +11,7 @@
 #include <ranges>
 #include <stdexcept>
 
-namespace vh::test::integrations {
+namespace vh::test::integrations::cmd {
 
 static bool isFieldMatch(const std::string& field, const std::vector<std::string>& aliases) {
     return std::ranges::any_of(aliases, [&field](const std::string& t){ return t == field; });
