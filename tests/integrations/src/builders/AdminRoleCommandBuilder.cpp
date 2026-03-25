@@ -3,6 +3,7 @@
 #include "tests/integrations/include/cli/Context.hpp"
 #include "CommandUsage.hpp"
 #include "rbac/role/Admin.hpp"
+#include "tests/integrations/include/randomizer/AdminRole.hpp"
 
 using namespace vh::rbac;
 using namespace vh::identities;
@@ -26,8 +27,7 @@ namespace vh::test::integrations::cmd {
         }
 
         if (adminRoleAliases_.isPermissions(field)) {
-            // TODO: Fix perms generation
-            // entity->permissions = generateBitmask(ADMIN_SHELL_PERMS.size());
+            tests::integrations::randomizer::AdminRole::assignRandomPermissions(entity);
             return entity->toFlagsString();
         }
 
@@ -55,7 +55,6 @@ namespace vh::test::integrations::cmd {
         oss << "vh role " << randomAlias(root_->aliases) << " " << randomAlias(cmd->aliases) << " " << entity->name;
 
         for (const auto& opt : cmd->required) {
-            if (opt.label == "type") continue; // skip type, always "user" for user roles
             oss << ' ' << randomFlagAlias(opt.option_tokens);
             if (auto val = resolveVar(opt.option_tokens[0], entity); val) oss << ' ' << *val;
             else throw std::runtime_error("AdminRoleCommandBuilder: unsupported user role field for create: " + opt.option_tokens[0]);

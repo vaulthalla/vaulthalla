@@ -126,7 +126,6 @@ std::string vh::vault::model::to_string(const std::shared_ptr<Vault>& v) {
 
 
 std::string vh::vault::model::to_string(const std::vector<std::shared_ptr<Vault>>& vaults) {
-    if (vaults.empty()) return "No vaults found\n";
 
     Table tbl({
         {"ID",    Align::Right, 3, 8,   false, false },
@@ -137,6 +136,13 @@ std::string vh::vault::model::to_string(const std::vector<std::shared_ptr<Vault>
         // description wraps, effectively acts as flex column
         { "DESCRIPTION", Align::Left, 11, 2000, true, false },
     }, /*term_width*/ term_width());
+
+    if (vaults.empty()) {
+        auto out = tbl.render();
+        out += "\n";
+        out += "No vaults found\n";
+        return out;
+    }
 
     for (const auto& vp : vaults) {
         const auto& v = *vp;

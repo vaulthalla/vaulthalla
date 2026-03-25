@@ -1,7 +1,8 @@
 #include "tests/integrations/include/cmd/Builder.hpp"
-#include "../../include/cmd/generators.hpp"
+#include "tests/integrations/include/cmd/generators.hpp"
 #include "tests/integrations/include/cli/Context.hpp"
 #include "CommandUsage.hpp"
+#include "tests/integrations/include/randomizer/VaultRole.hpp"
 
 #include <iomanip>
 
@@ -27,8 +28,7 @@ namespace vh::test::integrations::cmd {
         }
 
         if (vaultRoleAliases_.isPermissions(field)) {
-            // TODO: fix perms generation
-            // entity->permissions = generateBitmask(ADMIN_SHELL_PERMS.size());
+            tests::integrations::randomizer::VaultRole::assignRandomPermissions(entity);
             return entity->toFlagsString();
         }
 
@@ -39,8 +39,7 @@ namespace vh::test::integrations::cmd {
         if (name == "id" || name == "role_id") return std::to_string(role->id);
         if (name == "name" || name == "role_name") return role->name;
         if (name == "description" || name == "desc") return role->description;
-        // TODO: fix
-        // if (name == "permissions" || name == "perms") return std::to_string(role->permissions);
+        if (name == "permissions" || name == "perms") return role->toFlagsString();
         throw std::runtime_error("VaultRoleCommandBuilder: unsupported vault role field for resolveVar: " + name);
     }
 

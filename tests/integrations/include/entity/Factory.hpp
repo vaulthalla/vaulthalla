@@ -8,7 +8,8 @@
 #include "identities/Group.hpp"
 #include "rbac/role/Admin.hpp"
 #include "rbac/role/Vault.hpp"
-#include "permsUtil.hpp"
+#include "tests/integrations/include/randomizer/AdminRole.hpp"
+#include "tests/integrations/include/randomizer/VaultRole.hpp"
 
 #include <string>
 #include <memory>
@@ -53,8 +54,7 @@ public:
             const auto role = std::make_shared<role::Admin>();
             role->name = generateRoleName(type, "role/create");
             role->description = "Auto-generated user role";
-            // TODO: permissions
-            // role->permissions = generateBitmask(ADMIN_SHELL_PERMS.size());
+            tests::integrations::randomizer::AdminRole::assignRandomPermissions(role);
             return role;
         }
 
@@ -62,7 +62,7 @@ public:
             const auto role = std::make_shared<role::Vault>();
             role->name = generateRoleName(type, "role/create");
             role->description = "Auto-generated vault role";
-            // role->permissions = generateBitmask(VAULT_SHELL_PERMS.size());
+            tests::integrations::randomizer::VaultRole::assignRandomPermissions(role);
             return role;
         }
 

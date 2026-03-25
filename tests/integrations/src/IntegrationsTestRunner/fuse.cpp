@@ -5,7 +5,7 @@
 // #include "db/query/vault/Vault.hpp"
 // #include "db/query/rbac/role/Vault.hpp"
 // #include "db/query/rbac/Permission.hpp"
-// #include "tests/integrations/include/generators.hpp"
+// #include "tests/integrations/include/cmd/generators.hpp"
 // #include "rbac/role/Vault.hpp"
 // #include "rbac/role/Admin.hpp"
 // #include "rbac/permission/Override.hpp"
@@ -20,7 +20,7 @@
 // #include "storage/Manager.hpp"
 // #include "storage/Engine.hpp"
 // #include "fs/Filesystem.hpp"
-// #include "tests/integrations/include/fuse_test_helpers.hpp"
+// #include "tests/integrations/include/fuse/helpers.hpp"
 //
 // using namespace vh::test::fuse;
 // using namespace vh::rbac;
