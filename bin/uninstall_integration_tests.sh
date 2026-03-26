@@ -15,11 +15,14 @@ fi
 echo "🔍 Build mode: ${VH_BUILD_MODE:-unset}"
 echo "🔍 Dev mode active: $DEV_MODE"
 
+# === 0) Unmount FUSE ===
+./bin/tests/unmount_fuse.sh
+
 # === 1) Remove binaries ===
 ./bin/teardown/uninstall_binaries.sh
 
 # === 2) Remove runtime and config dirs ===
-./bin/teardown/uninstall_dirs.sh
+./bin/tests/uninstall_dirs.sh
 
 # === 3) Remove system user ===
 ./bin/teardown/uninstall_users.sh

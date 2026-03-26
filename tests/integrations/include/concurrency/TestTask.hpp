@@ -1,5 +1,7 @@
 #pragma once
 
+#include "TestCase.hpp"
+
 #include <future>
 #include <optional>
 #include <variant>

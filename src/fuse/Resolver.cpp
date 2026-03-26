@@ -42,6 +42,9 @@ namespace vh::fuse {
         }
 
         if (!res.ino && (res.entry || res.path)) {
+            log::Registry::fuse()->debug("[{}] Attempting to resolve inode from entry or path: entry: {}, path: {}",
+                                         req.caller, res.entry ? res.entry->name : "null",
+                                         res.path && !res.path->empty() ? res.path->string() : "null");
             if (res.path) res.ino = runtime::Deps::get().fsCache->getOrAssignInode(*res.path);
             if (!res.ino && res.entry && res.entry->inode) res.ino = res.entry->inode;
             if (!res.ino) res.setStatus(Status::MissingIno, EINVAL);
@@ -94,7 +97,8 @@ namespace vh::fuse {
     bool Resolver::resolvePath(const resolver::Request &req, resolver::Resolved &out) {
         if (resolver::hasFlag(req.target, Target::Path) || resolver::hasFlag(req.target, Target::EntryForPath)) {
             if (!req.parentIno) {
-                log::Registry::fuse()->debug("[{}] Request target includes Path but no parent inode provided", req.caller);
+                log::Registry::fuse()->debug("[{}] Request target includes Path but no parent inode provided",
+                                             req.caller);
                 out.setStatus(Status::MissingParentIno, EINVAL);
                 return false;
             }
@@ -119,22 +123,29 @@ namespace vh::fuse {
     }
 
     bool Resolver::resolveEntryForPath(const resolver::Request &req, resolver::Resolved &out) {
-        if (resolver::hasFlag(req.target, Target::EntryForPath)) {
-            if (!out.path) {
-                log::Registry::fuse()->debug("[{}] Request target includes EntryForPath but no path resolved",
-                                             req.caller);
-                out.setStatus(Status::MissingPath, EINVAL);
-                return false;
-            }
+        log::Registry::fuse()->debug("[{}] Resolving entry for path: {}, parent inode: {}, child name: {}",
+                                     req.caller,
+                                     out.path ? out.path->string() : "null",
+                                     req.parentIno ? std::to_string(*req.parentIno) : "null",
+                                     req.childName ? *req.childName : "null");
 
-            out.entry = runtime::Deps::get().fsCache->getEntry(*out.path);
-            if (!out.entry) {
-                log::Registry::fuse()->error("[{}] Failed to resolve entry for path {}", req.caller,
-                                             out.path->string());
-                out.setStatus(Status::MissingEntry, ENOENT);
-                return false;
-            }
-        } else out.ino = runtime::Deps::get().fsCache->getOrAssignInode(*out.path);
+        if (!resolver::hasFlag(req.target, Target::EntryForPath))
+            return true;
+
+        if (!out.path) {
+            log::Registry::fuse()->debug("[{}] Request target includes EntryForPath but no path resolved",
+                                         req.caller);
+            out.setStatus(Status::MissingPath, EINVAL);
+            return false;
+        }
+
+        out.entry = runtime::Deps::get().fsCache->getEntry(*out.path);
+        if (!out.entry) {
+            log::Registry::fuse()->error("[{}] Failed to resolve entry for path {}", req.caller,
+                                         out.path->string());
+            out.setStatus(Status::MissingEntry, ENOENT);
+            return false;
+        }
 
         return true;
     }
@@ -209,7 +220,8 @@ namespace vh::fuse {
             if (!out.engine && out.path)
                 out.engine = runtime::Deps::get().storageManager->resolveStorageEngine(*out.path);
 
-            if (out.engine && out.path) out.vaultPath = out.engine->paths->absRelToAbsRel(*out.path, fs::model::PathType::FUSE_ROOT, fs::model::PathType::FUSE_ROOT);
+            if (out.engine && out.path) out.vaultPath = out.engine->paths->absRelToAbsRel(
+                                            *out.path, fs::model::PathType::FUSE_ROOT, fs::model::PathType::FUSE_ROOT);
             if (!out.engine) {
                 out.setStatus(Status::MissingEngine, EIO);
                 return false;

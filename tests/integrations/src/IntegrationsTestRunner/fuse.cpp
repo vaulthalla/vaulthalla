@@ -1,6 +1,11 @@
 #include "IntegrationsTestRunner.hpp"
 #include "fuse/helpers.hpp"
 #include "fuse/Builder.hpp"
+#include "identities/User.hpp"
+
+#include <array>
+
+#include "rbac/role/Vault.hpp"
 
 using namespace vh::test::integration::fuse;
 using namespace vh::rbac;
@@ -20,34 +25,34 @@ namespace vh::test::integration {
             .name = "FUSE mkdir (admin)",
             .path = "fuse/mkdir",
             .must_contain = {"OK mkdir"},
-            .fn = [=]{ return mkdir_as(subj.uid, ctx.base()); }
+            .fn = [=]{ return mkdir_as(*ctx.admin->meta.linux_uid, ctx.base()); }
         });
 
         builder.makeTestCase({
             .name = "FUSE write (admin)",
             .path = "fuse/write",
             .must_contain = {"OK write"},
-            .fn = [=]{ return write_as(subj.uid, ctx.hello(), "hello world!\n"); }
+            .fn = [=]{ return write_as(*ctx.admin->meta.linux_uid, ctx.hello(), "hello world!\n"); }
         });
 
         builder.makeTestCase({
             .name = "FUSE read (admin)",
             .path = "fuse/read",
-            .fn = [=] { return read_as(subj.uid, ctx.hello()); }
+            .fn = [=] { return read_as(*ctx.admin->meta.linux_uid, ctx.hello()); }
         });
 
         builder.makeTestCase({
             .name = "FUSE rename (admin)",
             .path = "fuse/rename",
             .must_contain = {"OK mv"},
-            .fn = [=]{ return mv_as(subj.uid, ctx.hello(), ctx.base() / "hello2.txt"); }
+            .fn = [=]{ return mv_as(*ctx.admin->meta.linux_uid, ctx.hello(), ctx.base() / "hello2.txt"); }
         });
 
         builder.makeTestCase({
             .name = "FUSE rm -rf (admin)",
             .path = "fuse/rmrf",
             .must_contain = {"OK rm -rf"},
-            .fn = [=]{ return rmrf_as(subj.uid, ctx.base()); }
+            .fn = [=]{ return rmrf_as(*ctx.admin->meta.linux_uid, ctx.base()); }
         });
 
         return builder.exec();
@@ -65,7 +70,7 @@ namespace vh::test::integration {
 
         builder.buildAssignVRole({
             .subjectType = TargetSubject::User,
-            .templateName = "power_user",
+            .templateName = role::Vault::PowerUser().name,
             .roleNameSeed = "vault_role/create/allow",
             .description = "Vault role with permissions to test allow cases",
         });
@@ -145,14 +150,14 @@ namespace vh::test::integration {
 
         builder.buildAssignVRole({
             .subjectType = TargetSubject::User,
-            .templateName = "implicit_deny",
+            .templateName = role::Vault::ImplicitDeny().name,
             .roleNameSeed = "vault_role/create/override",
             .description = "Vault role with override",
         });
 
         builder.makeOverride({
             .subjectType = TargetSubject::User,
-            .permName = "vault.fs.file.download",
+            .permName = "vault.fs.files.download",
             .effect = permission::OverrideOpt::ALLOW,
             .pattern = ctx.docs() / "*.txt"
         });
@@ -192,14 +197,14 @@ namespace vh::test::integration {
 
         builder.buildAssignVRole({
             .subjectType = TargetSubject::User,
-            .templateName = "power_user",
+            .templateName = role::Vault::PowerUser().name,
             .roleNameSeed = "vault_role/create/override_deny",
             .description = "Vault role with override",
         });
 
         builder.makeOverride({
             .subjectType = TargetSubject::User,
-            .permName = "vault.fs.file.download",
+            .permName = "vault.fs.files.download",
             .effect = permission::OverrideOpt::DENY,
             .pattern = ctx.base() / "docs" / "*.txt"
         });
@@ -210,7 +215,7 @@ namespace vh::test::integration {
             .expect_exit = EACCES,
             .fn = [=]{ return read_as(subj.uid, ctx.secret()); }
         });
-        
+
         builder.makeTestCase({
             .name = "FUSE allow: read note",
             .path = "fuse/read",
@@ -240,7 +245,7 @@ namespace vh::test::integration {
 
         builder.buildAssignVRole({
             .subjectType = TargetSubject::Group,
-            .templateName = "power_user",
+            .templateName = role::Vault::PowerUser().name,
             .roleNameSeed = "vault_role/create/group_perm",
             .description = "Vault role for testing group perms",
         });
@@ -281,14 +286,14 @@ namespace vh::test::integration {
 
         builder.buildAssignVRole({
             .subjectType = TargetSubject::Group,
-            .templateName = "power_user",
+            .templateName = role::Vault::PowerUser().name,
             .roleNameSeed = "vault_role/create/group_override",
             .description = "Vault role for testing group override perms",
         });
 
         builder.makeOverride({
             .subjectType = TargetSubject::Group,
-            .permName = "vault.fs.file.download",
+            .permName = "vault.fs.files.download",
             .effect = permission::OverrideOpt::DENY,
             .pattern = ctx.docs() / "*.txt"
         });
@@ -329,14 +334,14 @@ namespace vh::test::integration {
 
         builder.buildAssignVRole({
             .subjectType = TargetSubject::Group,
-            .templateName = "implicit_deny",
+            .templateName = role::Vault::ImplicitDeny().name,
             .roleNameSeed = "vault_role/create/override_deny_group",
             .description = "Vault role for testing group override perms",
         });
 
         builder.buildAssignVRole({
             .subjectType = TargetSubject::User,
-            .templateName = "implicit_deny",
+            .templateName = role::Vault::ImplicitDeny().name,
             .roleNameSeed = "vault_role/create/override_deny_user",
             .description = "Vault role for testing user override perms",
         });
@@ -345,14 +350,14 @@ namespace vh::test::integration {
 
         builder.makeOverride({
             .subjectType = TargetSubject::Group,
-            .permName = "vault.fs.file.download",
+            .permName = "vault.fs.files.download",
             .effect = permission::OverrideOpt::DENY,
             .pattern = pattern
         });
 
         builder.makeOverride({
             .subjectType = TargetSubject::User,
-            .permName = "vault.fs.file.download",
+            .permName = "vault.fs.files.download",
             .effect = permission::OverrideOpt::ALLOW,
             .pattern = pattern
         });
@@ -384,11 +389,13 @@ namespace vh::test::integration {
         };
 
         for (const auto& function : always_run) {
-            stages_.push_back(function());
-            validateStage(stages_.back());
+            auto stage = function();
+            validateStage(stage);
 
-            for (const auto& uid : stages_.back().uids) linux_uids_.push_back(uid);
-            for (const auto& gid : stages_.back().gids) linux_gids_.push_back(gid);
+            for (const auto& uid : stage.uids) linux_uids_.push_back(uid);
+            for (const auto& gid : stage.gids) linux_gids_.push_back(gid);
+
+            stages_.push_back(std::move(stage));
         }
 
         if (geteuid() != 0) return;
@@ -404,11 +411,13 @@ namespace vh::test::integration {
         };
 
         for (const auto& function : root_only) {
-            stages_.push_back(function());
-            validateStage(stages_.back());
+            auto stage = function();
+            validateStage(stage);
 
-            for (const auto& uid : stages_.back().uids) linux_uids_.push_back(uid);
-            for (const auto& gid : stages_.back().gids) linux_gids_.push_back(gid);
+            for (const auto& uid : stage.uids) linux_uids_.push_back(uid);
+            for (const auto& gid : stage.gids) linux_gids_.push_back(gid);
+
+            stages_.push_back(std::move(stage));
         }
     }
 }

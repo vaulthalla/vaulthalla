@@ -30,6 +30,7 @@ namespace vh::test::integration {
     struct ExecResult {
         int exit_code = -1; // 0 on success, else (errno & 0xFF)
         std::string stdout_text; // child stdout
+        std::string stderr_text;
     };
 
     struct EntityResult {

@@ -31,45 +31,62 @@ using namespace vh::identities;
 static unsigned int id_index = 1001;
 
 Builder Builder::make(BuilderSpec&& spec) {
-    const auto system = db::query::identities::User::getUserByName("system");
-    if (!system || !system->meta.linux_uid) throw std::runtime_error("Admin user/uid not found");
+    const auto admin = db::query::identities::User::getUserByName("admin");
+    if (!admin || !admin->meta.linux_uid) throw std::runtime_error("Admin user/uid not found");
 
     const auto engine = makeVault();
     if (!engine) throw std::runtime_error("Failed to create vault");
 
     const auto root = std::filesystem::path(engine->paths->fuseRoot / fs::model::to_snake_case(engine->vault->name));
-    seed_vault_tree(*system->meta.linux_uid, root, spec.baseDir);
+    if (!admin->meta.linux_uid) throw std::runtime_error("Admin Linux UID not found");
+    seed_vault_tree(*admin->meta.linux_uid, root, spec.baseDir);
 
-    return Builder{FuseScenarioContext{ "FUSE: " + spec.name, system, engine, root, spec.baseDir }};
+    return Builder{FuseScenarioContext{ "FUSE: " + spec.name, admin, engine, root, spec.baseDir }};
+}
+
+std::shared_ptr<storage::Engine> Builder::makeVault() {
+    auto vault = std::make_shared<vault::model::Vault>();
+    vault->name = generateVaultName("vault/create");
+    vault->description = "Test Vault";
+    vault->owner_id = db::query::identities::User::getUserByName("admin")->id;
+
+    if (vault->name.empty()) throw std::runtime_error("Vault name cannot be empty");
+
+    const auto sync = std::make_shared<sync::model::LocalPolicy>();
+    sync->interval = std::chrono::minutes(15);
+    sync->conflict_policy = sync::model::LocalPolicy::ConflictPolicy::Overwrite;
+
+    vault = runtime::Deps::get().storageManager->addVault(vault, sync);
+    return runtime::Deps::get().storageManager->getEngine(vault->id);
+}
+
+void Builder::seed_vault_tree(const uid_t admin_uid, const std::filesystem::path &root, const std::string &base) {
+    (void)mkdir_as(admin_uid, root / base / "docs");
+    (void)write_as(admin_uid, root / base / "docs" / "secret.txt", "TOP SECRET\n");
+    (void)write_as(admin_uid, root / base / "note.txt", "hello\n");
 }
 
 void Builder::buildAssignVRole(VaultRoleSpec&& spec) {
-    const auto tmpl = db::query::rbac::role::Vault::get(spec.templateName);
-    if (!tmpl) throw std::runtime_error("Builder::buildVaultRole(): template role not found: " + spec.templateName);
+    const auto role = db::query::rbac::role::Vault::get(spec.templateName);
+    if (!role) throw std::runtime_error("Builder::buildVaultRole(): template role not found: " + spec.templateName);
 
-    auto role = std::make_shared<rbac::role::Vault>(*tmpl);
-
+    role->id = 0;
     role->name = spec.roleNameSeed;
     role->description = spec.description;
 
     db::query::rbac::role::Vault::upsert(role);
-    role = db::query::rbac::role::Vault::get(role->name);
-
-    role->assignment->vault_id = ctx_.engine->vault->id;
 
     role->fs.overrides = spec.overrides;
 
     switch (spec.subjectType) {
         case TargetSubject::User:
-            role->assignment->subject_type = "user";
-            role->assignment->subject_id = subject_.user->id;
+            role->assign(subject_.user->id, spec.getSubjectType(), ctx_.engine->vault->id);
             subject_.userVaultRole = role;
             subject_.user->roles.vaults[ctx_.engine->vault->id] = role;
             break;
         case TargetSubject::Group:
-            role->assignment->subject_type = "group";
-            role->assignment->subject_id = subject_.group->id;
-            subject_.userVaultRole = role;
+            role->assign(subject_.group->id, spec.getSubjectType(), ctx_.engine->vault->id);
+            subject_.groupVaultRole = role;
             subject_.group->roles.vaults[ctx_.engine->vault->id] = role;
             break;
         default:
@@ -84,6 +101,7 @@ void Builder::makeUser(UserSpec&& userSpec) {
     user->name = generateName(userSpec.userNameSeed);
 
     user->roles.admin = db::query::rbac::role::Admin::get(userSpec.adminRoleTemplateName);
+    if (!user->roles.admin) throw std::runtime_error("Failed to create admin role: " + userSpec.adminRoleTemplateName);
 
     user->meta.linux_uid = id_index++;
     subject_.uid = *user->meta.linux_uid;
@@ -131,22 +149,6 @@ void Builder::makeGroup(std::string&& nameSeed) {
     } while (nameException);
 
     subject_.group = group;
-}
-
-std::shared_ptr<storage::Engine> Builder::makeVault() {
-    auto vault = std::make_shared<vault::model::Vault>();
-    vault->name = generateVaultName("vault/create");
-    vault->description = "Test Vault";
-    vault->owner_id = db::query::identities::User::getUserByName("admin")->id;
-
-    if (vault->name.empty()) throw std::runtime_error("Vault name cannot be empty");
-
-    const auto sync = std::make_shared<sync::model::LocalPolicy>();
-    sync->interval = std::chrono::minutes(15);
-    sync->conflict_policy = sync::model::LocalPolicy::ConflictPolicy::Overwrite;
-
-    vault = runtime::Deps::get().storageManager->addVault(vault, sync);
-    return runtime::Deps::get().storageManager->getEngine(vault->id);
 }
 
 void Builder::makeOverride(OverrideSpec &&spec) const {
@@ -221,12 +223,4 @@ void Builder::addUserToGroup() {
     if (!subject_.user || !subject_.group) throw std::runtime_error("Builder::addUserToGroup(): subject user/group not set");
     db::query::identities::Group::addMemberToGroup(subject_.group->id, subject_.user->id);
     subject_.group = db::query::identities::Group::getGroup(subject_.group->id);
-}
-
-void Builder::seed_vault_tree(const uid_t admin_uid, const std::filesystem::path &root, const std::string &base) {
-    {
-        (void)mkdir_as(admin_uid, root / base / "docs");
-        (void)write_as(admin_uid, root / base / "docs" / "secret.txt", "TOP SECRET\n");
-        (void)write_as(admin_uid, root / base / "note.txt", "hello\n");
-    }
 }

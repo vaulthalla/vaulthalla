@@ -65,7 +65,7 @@ namespace vh::test::integration::fuse {
 
     struct UserSpec {
         std::string userNameSeed{"user/create"};
-        std::string adminRoleTemplateName{"unpriveleged"};
+        std::string adminRoleTemplateName{"unprivileged"};
     };
 
     struct VaultRoleSpec {

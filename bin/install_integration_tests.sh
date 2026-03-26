@@ -73,7 +73,10 @@ fi
 # === 2) Create System User and Group ===
 ./bin/setup/install_users.sh
 
-# === 3) Build Project ===
+# === 3) Install Directories ===
+./bin/tests/install_dirs.sh
+
+# === 4) Build Project ===
 echo "🏗️  Starting Vaulthalla build..."
 
 meson setup build "${MESON_ARGS[@]}" -Db_sanitize=address,undefined
@@ -81,8 +84,8 @@ meson compile -C build
 sudo meson install -C build
 sudo ldconfig
 
-# === 4) Setup Database ===
+# === 5) Setup Database ===
 ./bin/tests/install_db.sh
 
-# === 5) Run Tests ===
+# === 6) Run Tests ===
 sudo bash --rcfile './deploy/vaulthalla.env' -i -c "./build/vh_integration_tests"

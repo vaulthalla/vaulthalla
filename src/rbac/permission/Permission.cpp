@@ -1,5 +1,6 @@
 #include "rbac/permission/Permission.hpp"
 #include "db/encoding/timestamp.hpp"
+#include "db/encoding/has.hpp"
 
 #include <pqxx/row>
 #include <nlohmann/json.hpp>
@@ -14,9 +15,8 @@ Permission::Permission(const pqxx::row& row)
       description(row["description"].as<std::string>()),
       created_at(parsePostgresTimestamp(row["created_at"].as<std::string>())),
       updated_at(parsePostgresTimestamp(row["updated_at"].as<std::string>())) {
-    if (!row["permission_override_id"].is_null()) id = row["permission_override_id"].as<uint32_t>();
-    else if (!row["permission_id"].is_null()) id = row["permission_id"].as<uint32_t>();
-    else if (!row["id"].is_null()) id = row["id"].as<uint32_t>();
+    if (const auto v = try_get<uint32_t>(row, std::vector<std::string_view>{"permission_id", "id"}))
+        id = *v;
 }
 
 Permission::Permission(const nlohmann::json& j)

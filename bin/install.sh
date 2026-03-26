@@ -67,7 +67,6 @@ fi
 echo "Setting up build with:"
 printf '  %s\n' "${MESON_ARGS[@]}"
 
-
 # Check if we're root OR have passwordless sudo
 if [[ $EUID -ne 0 ]]; then
     if ! sudo -n true 2>/dev/null; then
