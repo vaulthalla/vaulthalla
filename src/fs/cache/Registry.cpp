@@ -201,6 +201,8 @@ fuse_ino_t Registry::assignInode(const std::filesystem::path& path) {
 
 fuse_ino_t Registry::getOrAssignInode(const std::filesystem::path& path) {
     std::scoped_lock lock(mutex_);
+    if (path.empty()) throw std::runtime_error("Cannot assign inode to empty path");
+
     if (const auto it = pathToInode_.find(path); it != pathToInode_.end()) return it->second;
 
     const fuse_ino_t ino = nextInode_++;

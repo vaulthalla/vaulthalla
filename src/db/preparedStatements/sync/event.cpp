@@ -1,6 +1,6 @@
 #include "db/DBConnection.hpp"
 
-void vh::db::DBConnection::initPreparedSyncEvents() const {
+void vh::db::Connection::initPreparedSyncEvents() const {
     // ---------------------------------------
     // CREATE (DB generates run_uuid)
     // ---------------------------------------

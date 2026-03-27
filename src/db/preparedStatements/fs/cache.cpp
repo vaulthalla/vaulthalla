@@ -1,6 +1,6 @@
 #include "db/DBConnection.hpp"
 
-void vh::db::DBConnection::initPreparedCache() const {
+void vh::db::Connection::initPreparedCache() const {
     conn_->prepare("upsert_cache_index",
                    "INSERT INTO cache_index (vault_id, file_id, path, type, size) "
                    "VALUES ($1, $2, $3, $4, $5) "

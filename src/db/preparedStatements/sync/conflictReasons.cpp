@@ -1,6 +1,6 @@
 #include "db/DBConnection.hpp"
 
-void vh::db::DBConnection::initPreparedSyncConflictReasons() const {
+void vh::db::Connection::initPreparedSyncConflictReasons() const {
 
     // ------------------------------------------------------------
     // UPSERT (conflict_id + reason_code unique)

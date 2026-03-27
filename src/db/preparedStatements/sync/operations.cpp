@@ -1,6 +1,6 @@
 #include "db/DBConnection.hpp"
 
-void vh::db::DBConnection::initPreparedOperations() const {
+void vh::db::Connection::initPreparedOperations() const {
     conn_->prepare("insert_operation",
                    "INSERT INTO operations (fs_entry_id, executed_by, operation, target, status, "
                    "source_path, destination_path) "

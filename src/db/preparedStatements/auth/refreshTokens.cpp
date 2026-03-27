@@ -1,6 +1,6 @@
 #include "db/DBConnection.hpp"
 
-void vh::db::DBConnection::initPreparedRefreshTokens() const {
+void vh::db::Connection::initPreparedRefreshTokens() const {
     conn_->prepare(
         "insert_refresh_token",
         "INSERT INTO refresh_tokens (jti, user_id, token_hash, ip_address, user_agent, issued_at, expires_at, last_used, revoked) "

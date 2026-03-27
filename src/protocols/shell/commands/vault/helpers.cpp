@@ -138,11 +138,8 @@ PatternParse parseGlobPatternOpt(const CommandCall& call, bool required, const s
         return out;
     }
 
-    out.pattern = rbac::fs::glob::model::Pattern();
-    out.pattern->source = *p;
-
     try {
-        rbac::fs::glob::Tokenizer::validate(out.pattern->source);
+        out.pattern = rbac::fs::glob::Tokenizer::parse(*p);
     } catch (const std::regex_error&) {
         out.error = errPrefix + ": invalid regex for --path/--pattern";
         out.pattern = std::nullopt;

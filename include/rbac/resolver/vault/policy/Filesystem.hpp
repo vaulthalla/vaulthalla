@@ -25,29 +25,15 @@ namespace vh::rbac::resolver::vault {
             const fs::policy::Request req{
                 .user = actor,
                 .action = action,
-                .vaultId = ctx.vault_id,
+                .vaultId = resolved.vault ? std::optional<uint32_t>{resolved.vault->id} : ctx.vault_id,
                 .path = ctx.path,
-                .entry = ctx.entry ? *ctx.entry : nullptr
+                .entry = ctx.entry
             };
 
             const auto decision = fs::policy::Evaluator::evaluate(req);
 
-            if (!decision.allowed) {
-                if (ctx.path) {
-                    log::Registry::auth()->warn(
-                        "Access denied for user {} on path {} with decision context:\n{}",
-                        actor->name,
-                        ctx.path->string(),
-                        decision.toString()
-                    );
-                } else {
-                    log::Registry::auth()->warn(
-                        "Access denied for user {} with decision context:\n{}",
-                        actor->name,
-                        decision.toString()
-                    );
-                }
-            }
+            if (!decision.allowed)
+                log::Registry::auth()->warn("Filesystem permission denied. Context:\n{}", decision.toString());
 
             return decision.allowed;
         }

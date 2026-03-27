@@ -16,11 +16,11 @@ namespace pqxx {
 
 namespace vh::rbac::permission {
     namespace vault {
-        enum class FilesystemAction : uint8_t {
+        enum class FilesystemAction : uint16_t {
             Preview,
             List,
-            Upload,
-            Download,
+            Write,
+            Read,
             Touch,
             Overwrite,
             Rename,
@@ -29,7 +29,8 @@ namespace vh::rbac::permission {
             Copy,
             ShareInternal,
             SharePublic,
-            SharePublicValidated
+            SharePublicValidated,
+            Lookup
         };
     }
 
@@ -49,12 +50,12 @@ namespace vh::rbac::permission {
                 "Allows listing directory contents."
             },
             Entry{
-                vault::FilesystemAction::Upload,
+                vault::FilesystemAction::Write,
                 "upload",
                 "Allows uploading files or directories."
             },
             Entry{
-                vault::FilesystemAction::Download,
+                vault::FilesystemAction::Read,
                 "download",
                 "Allows downloading files or directories."
             },
@@ -103,6 +104,11 @@ namespace vh::rbac::permission {
                 "share_public_validated",
                 "Allows sharing files or directories publicly with validation."
             },
+            Entry{
+                vault::FilesystemAction::Lookup,
+                "lookup",
+                "Allows looking up files or directories by name or metadata."
+            }
         };
     };
 
@@ -190,11 +196,11 @@ namespace vh::rbac::permission {
                 Filesystem fs;
                 fs.files = fs::Files::Custom(
                     static_cast<fs::Files::SetMask>(fs::FilePermissions::All),
-                    fs::Share::None()
+                    fs::Share::None(fs::Files::FLAG_PREFIX)
                 );
                 fs.directories = fs::Directories::Custom(
                     static_cast<fs::Directories::SetMask>(fs::DirectoryPermissions::All),
-                    fs::Share::None()
+                    fs::Share::None(fs::Directories::FLAG_PREFIX)
                 );
                 fs.overrides.clear();
                 return fs;

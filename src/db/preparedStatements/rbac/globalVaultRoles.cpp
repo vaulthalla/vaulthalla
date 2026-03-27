@@ -1,6 +1,6 @@
 #include "db/DBConnection.hpp"
 
-void vh::db::DBConnection::initPreparedGlobalVaultRoles() const {
+void vh::db::Connection::initPreparedGlobalVaultRoles() const {
     conn_->prepare(
         "user_global_vault_policy_upsert",
         R"SQL(

@@ -1,6 +1,6 @@
 #include "db/DBConnection.hpp"
 
-void vh::db::DBConnection::initPreparedDirectories() const {
+void vh::db::Connection::initPreparedDirectories() const {
     conn_->prepare("update_dir_stats",
                    "UPDATE directories "
                    "SET size_bytes = size_bytes + $2, file_count = file_count + $3, subdirectory_count = subdirectory_count + $4 "

@@ -15,6 +15,11 @@ namespace vh::rbac::resolver::vault {
     template<typename EnumT>
     struct ContextPolicy {
         static bool validate(const std::shared_ptr<identities::User>&,
+                             const ResolvedContext&) {
+            return true;
+        }
+
+        static bool validate(const std::shared_ptr<identities::User>&,
                              const ResolvedContext&,
                              EnumT,
                              const Context<EnumT>&) {

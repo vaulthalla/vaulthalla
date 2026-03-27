@@ -20,15 +20,37 @@ namespace {
 
 namespace vh::db::query::rbac::role::vault {
 
-    void Assignments::assign(const uint32_t vaultId,
-                             const std::string& subjectType,
-                             const uint32_t subjectId,
-                             const uint32_t roleId) {
-        Transactions::exec("role::vault::Assignments::assign(vaultId, subjectType, subjectId, roleId)", [&](pqxx::work& txn) {
-            txn.exec(
+    void Assignments::assign(const std::shared_ptr<vh::rbac::role::Vault> &role) {
+        Transactions::exec("role::vault::Assignments::assign(role)", [&](pqxx::work& txn) {
+            const auto res = txn.exec(
+                pqxx::prepped{"vault_role_assignment_upsert"},
+                pqxx::params{role->assignment->vault_id, role->assignment->subject_type, role->assignment->subject_id, role->id}
+            );
+
+            if (res.empty()) throw std::runtime_error("Failed to assign vault role - no result returned");
+            role->assignment_id = res.one_row()["id"].as<uint32_t>();
+
+            for (const auto& override : role->fs.overrides) {
+                txn.exec(
+                    pqxx::prepped{"upsert_vault_permission_override"},
+                    pqxx::params{role->assignment_id, override.permission.id, override.glob_path(), override.enabled, vh::rbac::permission::to_string(override.effect)}
+                );
+            }
+        });
+    }
+
+    uint32_t Assignments::assign(const uint32_t vaultId,
+                                 const std::string& subjectType,
+                                 const uint32_t subjectId,
+                                 const uint32_t roleId) {
+        return Transactions::exec("role::vault::Assignments::assign(vaultId, subjectType, subjectId, roleId)", [&](pqxx::work& txn) {
+            const auto res = txn.exec(
                 pqxx::prepped{"vault_role_assignment_upsert"},
                 pqxx::params{vaultId, subjectType, subjectId, roleId}
             );
+
+            if (res.empty()) throw std::runtime_error("Failed to assign vault role - no result returned");
+            return res.one_row()["id"].as<uint32_t>();
         });
     }
 

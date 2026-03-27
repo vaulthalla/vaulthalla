@@ -1,6 +1,6 @@
 #include "db/DBConnection.hpp"
 
-void vh::db::DBConnection::initPreparedUsers() const {
+void vh::db::Connection::initPreparedUsers() const {
     conn_->prepare("insert_user",
                    "INSERT INTO users (name, email, password_hash, is_active, linux_uid, last_modified_by) "
                    "VALUES ($1, $2, $3, $4, $5, $6) RETURNING id");
@@ -15,6 +15,8 @@ void vh::db::DBConnection::initPreparedUsers() const {
                    "UPDATE users SET name = $2, email = $3, password_hash = $4, is_active = $5, linux_uid = $6, "
                    "last_modified_by = $7, updated_at = NOW() "
                    "WHERE id = $1");
+
+    conn_->prepare("delete_user", "DELETE FROM users WHERE id = $1");
 
     conn_->prepare("update_user_password", "UPDATE users SET password_hash = $2 WHERE id = $1");
 

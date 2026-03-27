@@ -23,7 +23,7 @@ unsigned int Override::upsert(const OverridePtr &permOverride) {
         p.append(permOverride->enabled);
         p.append(to_string(permOverride->effect));
 
-        const auto res = txn.exec(pqxx::prepped{"vault_permission_override_upsert"}, p);
+        const auto res = txn.exec(pqxx::prepped{"upsert_vault_permission_override"}, p);
         if (res.empty()) throw std::runtime_error("Failed to upsert vault permission override");
 
         return res.one_row()[0].as<unsigned int>();
@@ -41,7 +41,7 @@ unsigned int Override::add(const OverridePtr &permOverride) {
         p.append(permOverride->enabled);
         p.append(to_string(permOverride->effect));
 
-        const auto res = txn.exec(pqxx::prepped{"vault_permission_override_insert"}, p);
+        const auto res = txn.exec(pqxx::prepped{"insert_vault_permission_override"}, p);
         if (res.empty()) throw std::runtime_error("Failed to insert vault permission override");
 
         return res.one_row()[0].as<unsigned int>();
@@ -58,26 +58,26 @@ void Override::update(const OverridePtr &permOverride) {
         p.append(permOverride->enabled);
         p.append(to_string(permOverride->effect));
 
-        txn.exec(pqxx::prepped{"vault_permission_override_update"}, p);
+        txn.exec(pqxx::prepped{"update_vault_permission_override"}, p);
     });
 }
 
 void Override::remove(unsigned int permOverrideId) {
     Transactions::exec("permission::Override::remove", [&](pqxx::work &txn) {
-        txn.exec(pqxx::prepped{"vault_permission_override_delete"}, pqxx::params{permOverrideId});
+        txn.exec(pqxx::prepped{"delete_vault_permission_override"}, pqxx::params{permOverrideId});
     });
 }
 
 void Override::removeByAssignment(unsigned int assignmentId) {
     Transactions::exec("permission::Override::removeByAssignment", [&](pqxx::work &txn) {
-        txn.exec(pqxx::prepped{"vault_permission_override_delete_by_assignment"}, pqxx::params{assignmentId});
+        txn.exec(pqxx::prepped{"delete_vault_permission_overrides_by_assignment"}, pqxx::params{assignmentId});
     });
 }
 
 OverridePtr Override::get(unsigned int permOverrideId) {
     return Transactions::exec("permission::Override::get(id)", [&](pqxx::work &txn) -> OverridePtr {
         const auto res = txn.exec(
-            pqxx::prepped{"vault_permission_override_get_by_id"},
+            pqxx::prepped{"get_vault_permission_override_by_id"},
             pqxx::params{permOverrideId}
         );
 
@@ -95,7 +95,7 @@ OverridePtr Override::get(const Query &query) {
         p.append(query.bit_position);
 
         const auto res = txn.exec(
-            pqxx::prepped{"vault_permission_override_get_by_vault_subject_and_bitpos"},
+            pqxx::prepped{"get_permission_override_by_vault_subject_and_bitpos"},
             p
         );
 
@@ -107,19 +107,18 @@ OverridePtr Override::get(const Query &query) {
 bool Override::exists(unsigned int assignmentId, unsigned int permissionId, const std::string &globPath) {
     return Transactions::exec("permission::Override::exists", [&](pqxx::work &txn) -> bool {
         const auto res = txn.exec(
-            pqxx::prepped{"vault_permission_override_exists"},
+            pqxx::prepped{"exists_vault_permission_override"},
             pqxx::params{assignmentId, permissionId, globPath}
         );
 
-        if (res.empty()) return false;
-        return res.one_row()[0].as<bool>();
+        return !res.empty() && res.one_row()[0].as<bool>();
     });
 }
 
 std::vector<OverridePtr> Override::list(unsigned int vaultId, model::ListQueryParams &&params) {
     return Transactions::exec("permission::Override::list(vault)", [&](pqxx::work &txn) -> std::vector<OverridePtr> {
         const auto res = txn.exec(
-            pqxx::prepped{"vault_permission_override_list_by_vault"},
+            pqxx::prepped{"list_vault_permission_overrides"},
             pqxx::params{vaultId}
         );
 
@@ -133,20 +132,18 @@ std::vector<OverridePtr> Override::list(unsigned int vaultId, model::ListQueryPa
     });
 }
 
-std::vector<OverridePtr> Override::listAssigned(const Query &query, model::ListQueryParams &&params) {
+std::vector<OverridePtr> Override::listAssigned(unsigned int assignmentId, model::ListQueryParams &&params) {
     return Transactions::exec("permission::Override::listAssigned", [&](pqxx::work &txn) -> std::vector<OverridePtr> {
         const auto res = txn.exec(
-            pqxx::prepped{"vault_permission_override_list_by_subject"},
-            pqxx::params{query.subject_type, query.subject_id}
+            pqxx::prepped{"vault_permission_override_list_by_assignment_id"},
+            pqxx::params{assignmentId}
         );
 
         std::vector<OverridePtr> overrides;
         overrides.reserve(res.size());
 
-        for (const auto &row: res) {
-            if (row["vault_id"].as<unsigned int>() != query.vault_id) continue;
+        for (const auto &row: res)
             overrides.emplace_back(std::make_shared<OverrideT>(row));
-        }
 
         return template_::paginate(std::move(overrides), params);
     });
@@ -156,7 +153,7 @@ std::vector<OverridePtr> Override::listForSubject(const std::string &subjectType
                                                   model::ListQueryParams &&params) {
     return Transactions::exec("permission::Override::listForSubject", [&](pqxx::work &txn) -> std::vector<OverridePtr> {
         const auto res = txn.exec(
-            pqxx::prepped{"vault_permission_override_list_by_subject"},
+            pqxx::prepped{"list_subject_permission_overrides"},
             pqxx::params{subjectType, subjectId}
         );
 

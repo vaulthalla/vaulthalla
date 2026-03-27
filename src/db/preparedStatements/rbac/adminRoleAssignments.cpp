@@ -1,6 +1,6 @@
 #include "db/DBConnection.hpp"
 
-void vh::db::DBConnection::initPreparedAdminRoleAssignments() const {
+void vh::db::Connection::initPreparedAdminRoleAssignments() const {
     conn_->prepare(
         "admin_role_assignment_upsert",
         R"SQL(

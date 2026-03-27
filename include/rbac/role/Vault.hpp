@@ -16,20 +16,24 @@ namespace vh::rbac::role {
     struct Vault final : Meta, vault::Base {
         struct AssignmentInfo {
             uint32_t subject_id{}, vault_id{};
-            std::string subject_type; // 'user' or 'group'
+            std::string subject_type{}; // 'user' or 'group'
 
             [[nodiscard]] std::string toString(uint8_t indent) const;
         };
 
-        std::optional<AssignmentInfo> assignment;
+        std::optional<AssignmentInfo> assignment{std::nullopt};
 
-        Vault() = default;
+        Vault() : Meta(), Base() {}
 
         explicit Vault(const pqxx::row &row);
 
         Vault(const pqxx::row &row, const pqxx::result &overrides);
 
         explicit Vault(const nlohmann::json &j);
+
+        void assign(const uint32_t subject_id, const std::string &subject_type, const uint32_t vault_id) {
+            assignment = AssignmentInfo{subject_id, vault_id, subject_type};
+        }
 
         [[nodiscard]] static std::string usage();
 

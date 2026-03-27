@@ -68,7 +68,7 @@ void setattr(const fuse_req_t req, const fuse_ino_t ino,
         .caller = "setattr",
         .fuseReq = req,
         .ino = ino,
-        .action = permission::vault::FilesystemAction::Upload,
+        .action = permission::vault::FilesystemAction::Write,
         .target = resolver::Target::Entry
     });
 
@@ -156,14 +156,14 @@ void readdir(const fuse_req_t req, const fuse_ino_t ino, const size_t size, cons
 }
 
 void lookup(const fuse_req_t req, const fuse_ino_t parent, const char* name) {
-    log::Registry::fuse()->error("[lookup] Called for parent: {}, name: {}", parent, name);
+    log::Registry::fuse()->debug("[lookup] Called for parent: {}, name: {}", parent, name);
 
     const auto resolved = Resolver::resolve({
         .caller = "lookup",
         .fuseReq = req,
         .parentIno = parent,
         .childName = name,
-        .action = permission::vault::FilesystemAction::List,
+        .action = permission::vault::FilesystemAction::Lookup,
         .target = resolver::Target::EntryForPath
     });
 
@@ -190,7 +190,7 @@ void create(const fuse_req_t req, const fuse_ino_t parent, const char* name, con
         .fuseReq = req,
         .parentIno = parent,
         .childName = name,
-        .action = permission::vault::FilesystemAction::Upload,
+        .action = permission::vault::FilesystemAction::Write,
         .target = resolver::Target::Path
     });
 
@@ -243,7 +243,7 @@ void open(const fuse_req_t req, const fuse_ino_t ino, fuse_file_info* fi) {
         .caller = "open",
         .fuseReq = req,
         .ino = ino,
-        .action = permission::vault::FilesystemAction::Download,
+        .action = permission::vault::FilesystemAction::Read,
         .target = resolver::Target::Entry
     });
 
@@ -284,7 +284,7 @@ void write(const fuse_req_t req, const fuse_ino_t ino, const char* buf,
         .caller = "write",
         .fuseReq = req,
         .ino = ino,
-        .action = permission::vault::FilesystemAction::Upload,
+        .action = permission::vault::FilesystemAction::Write,
         .target = resolver::Target::Entry
     });
 
@@ -310,7 +310,7 @@ void read(const fuse_req_t req, const fuse_ino_t ino, const size_t size, const o
         .caller = "read",
         .fuseReq = req,
         .ino = ino,
-        .action = permission::vault::FilesystemAction::Download,
+        .action = permission::vault::FilesystemAction::Read,
         .target = resolver::Target::Entry
     });
 
@@ -403,14 +403,23 @@ void rename(const fuse_req_t req, const fuse_ino_t parent, const char* name, con
 
 void forget(const fuse_req_t req, const fuse_ino_t ino, const uint64_t nlookup) {
     log::Registry::fuse()->debug("[forget] Called for inode: {}, nlookup: {}", ino, nlookup);
-    if (const auto entry = runtime::Deps::get().fsCache->getEntry(ino)) {
-        log::Registry::fuse()->debug("[forget] Evicting inode: {} (path: {})", ino, entry->path.string());
-        runtime::Deps::get().fsCache->evictIno(ino);
-        fuse_reply_err(req, 0);
+
+    const auto resolved = Resolver::resolve({
+        .caller = "forget",
+        .fuseReq = req,
+        .ino = ino,
+        .target = resolver::Target::EntryForPath
+    });
+
+    if (!resolved.ok()) {
+        log::Registry::fuse()->debug("[forget] No entry found for inode {}: {}", ino, resolved.errnum);
+        fuse_reply_none(req); // still need to reply to avoid hanging the kernel, even if we have nothing to evict
         return;
     }
 
-    log::Registry::fuse()->error("[forget] No entry found for inode {}", ino);
+    runtime::Deps::get().fsCache->evictIno(ino);
+
+    log::Registry::fuse()->debug("[forget] Evicted inode {}", ino);
     fuse_reply_none(req); // no return value
 }
 
@@ -418,8 +427,8 @@ void access(const fuse_req_t req, const fuse_ino_t ino, const int mask) {
     log::Registry::fuse()->debug("[access] Called for inode: {}, mask: {}", ino, mask);
 
     std::vector<rbac::permission::vault::FilesystemAction> requiredPermissions;
-    if (mask & W_OK) requiredPermissions.push_back(permission::vault::FilesystemAction::Upload);
-    if (mask & R_OK) requiredPermissions.push_back(permission::vault::FilesystemAction::Download);
+    if (mask & W_OK) requiredPermissions.push_back(permission::vault::FilesystemAction::Write);
+    if (mask & R_OK) requiredPermissions.push_back(permission::vault::FilesystemAction::Read);
     if (ino != FUSE_ROOT_ID && mask & X_OK) requiredPermissions.push_back(permission::vault::FilesystemAction::List);
 
     const auto resolved = Resolver::resolve({
@@ -488,7 +497,7 @@ void rmdir(const fuse_req_t req, const fuse_ino_t parent, const char* name) {
     db::query::fs::Directory::deleteEmptyDirectory(resolved.entry->id);
 
     if (::rmdir(resolved.entry->backing_path.c_str()) < 0)
-        log::Registry::fuse()->error("[rmdir] Failed to remove backing directory: {}: {}", resolved.entry->backing_path.string(), strerror(errno));
+        log::Registry::fuse()->warn("[rmdir] Failed to remove backing directory: {}: {}", resolved.entry->backing_path.string(), strerror(errno));
 
     fuse_reply_err(req, 0);
 }
@@ -507,13 +516,13 @@ void release(const fuse_req_t req, const fuse_ino_t ino, fuse_file_info* fi) {
 
     const auto* fh = reinterpret_cast<FileHandle*>(fi->fh);
     if (!fh) {
-        log::Registry::fuse()->error("[release] Invalid file handle for inode: {}", ino);
+        log::Registry::fuse()->debug("[release] Invalid file handle for inode: {}", ino);
         fuse_reply_err(req, EBADF);
         return;
     }
 
     if (::close(fh->fd) < 0)
-        log::Registry::fuse()->error("[release] Failed to close file handle: {}: {}", fh->path.string(), strerror(errno));
+        log::Registry::fuse()->debug("[release] Failed to close file handle: {}: {}", fh->path.string(), strerror(errno));
 
     delete fh;  // clean up heap allocation
     fi->fh = 0; // clear the kernel-side handle
@@ -531,7 +540,7 @@ void fsync(const fuse_req_t req, const fuse_ino_t ino, const int datasync, fuse_
         .caller = "fsync",
         .fuseReq = req,
         .ino = ino,
-        .action = permission::vault::FilesystemAction::Upload,
+        .action = permission::vault::FilesystemAction::Write,
         .target = resolver::Target::Entry
     });
 
@@ -541,7 +550,7 @@ void fsync(const fuse_req_t req, const fuse_ino_t ino, const int datasync, fuse_
     }
 
     if (const int fd = fi->fh; ::fsync(fd) < 0) {
-        log::Registry::fuse()->error("[fsync] Failed to sync file handle: {}: {}", fd, strerror(errno));
+        log::Registry::fuse()->debug("[fsync] Failed to sync file handle: {}: {}", fd, strerror(errno));
         fuse_reply_err(req, errno);
         return;
     }
@@ -556,7 +565,7 @@ void statfs(const fuse_req_t req, const fuse_ino_t ino) {
         .caller = "statfs",
         .fuseReq = req,
         .ino = ino,
-        .action = permission::vault::FilesystemAction::Download,
+        .action = permission::vault::FilesystemAction::Read,
         .target = resolver::Target::Entry
     });
 
@@ -568,7 +577,7 @@ void statfs(const fuse_req_t req, const fuse_ino_t ino) {
     struct statvfs st{};
 
     if (::statvfs(resolved.entry->backing_path.c_str(), &st) < 0) {
-        log::Registry::fuse()->error("[statfs] Failed to get filesystem stats for: {}: {}", resolved.entry->backing_path.string(), strerror(errno));
+        log::Registry::fuse()->debug("[statfs] Failed to get filesystem stats for: {}: {}", resolved.entry->backing_path.string(), strerror(errno));
         fuse_reply_err(req, errno);
         return;
     }

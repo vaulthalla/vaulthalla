@@ -1,6 +1,6 @@
 #include "db/DBConnection.hpp"
 
-void vh::db::DBConnection::initPreparedSecrets() const {
+void vh::db::Connection::initPreparedSecrets() const {
     conn_->prepare("upsert_internal_secret",
                    "INSERT INTO internal_secrets (key, value, iv, created_at, updated_at) "
                    "VALUES ($1, $2, $3, NOW(), NOW()) "

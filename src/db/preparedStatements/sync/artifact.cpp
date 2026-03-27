@@ -1,6 +1,6 @@
 #include "db/DBConnection.hpp"
 
-void vh::db::DBConnection::initPreparedSyncConflictArtifacts() const {
+void vh::db::Connection::initPreparedSyncConflictArtifacts() const {
     conn_->prepare(
         "sync_conflict_artifact.upsert",
         R"SQL(

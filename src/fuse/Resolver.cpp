@@ -10,12 +10,31 @@
 #include "fs/model/Path.hpp"
 
 namespace vh::fuse {
-    using resolver::Target;
     using resolver::Request;
     using resolver::Resolved;
     using resolver::Status;
+    using resolver::Target;
 
-    Resolved Resolver::resolve(const Request &req) {
+    namespace {
+        [[nodiscard]]
+        bool needsEntry(const Request& req) {
+            return resolver::hasFlag(req.target, Target::Entry) ||
+                   resolver::hasFlag(req.target, Target::EntryForPath);
+        }
+
+        [[nodiscard]]
+        bool needsPath(const Request& req) {
+            return resolver::hasFlag(req.target, Target::Path) ||
+                   resolver::hasFlag(req.target, Target::EntryForPath);
+        }
+
+        [[nodiscard]]
+        std::string_view entryName(const std::shared_ptr<fs::model::Entry>& entry) {
+            return entry ? std::string_view(entry->name) : std::string_view("null");
+        }
+    }
+
+    Resolved Resolver::resolve(const Request& req) {
         Resolved res;
 
         if (!req.fuseReq) {
@@ -23,35 +42,36 @@ namespace vh::fuse {
             return res;
         }
 
-        constexpr std::array functions{
-            resolveIdentity,
-            resolveEntry,
-            resolvePath,
-            resolveEntryForPath,
-            resolveEngine,
-            enforcePermissions
-        };
-
-        for (const auto &func: functions) {
-            if (!func(req, res)) {
-                if (res.ok()) res.setStatus(Status::InternalError, EIO);
-                break;
-            }
-
-            if (!res.ok()) break;
-        }
+        if (!resolveIdentity(req, res)) return res;
+        if (!resolveEntry(req, res)) return res;
+        if (!resolvePath(req, res)) return res;
+        if (!resolveEntryForPath(req, res)) return res;
+        if (!resolveEngine(req, res)) return res;
+        if (!enforcePermissions(req, res)) return res;
 
         if (!res.ino && (res.entry || res.path)) {
-            if (res.path) res.ino = runtime::Deps::get().fsCache->getOrAssignInode(*res.path);
-            if (!res.ino && res.entry && res.entry->inode) res.ino = res.entry->inode;
-            if (!res.ino) res.setStatus(Status::MissingIno, EINVAL);
+            log::Registry::fuse()->debug(
+                "[{}] Attempting to resolve inode from entry or path: entry: {}, path: {}",
+                req.caller,
+                std::string(entryName(res.entry)),
+                res.path && !res.path->empty() ? res.path->string() : "null"
+            );
+
+            if (res.path)
+                res.ino = runtime::Deps::get().fsCache->getOrAssignInode(*res.path);
+
+            if (!res.ino && res.entry && res.entry->inode)
+                res.ino = res.entry->inode;
+
+            if (!res.ino)
+                res.setStatus(Status::MissingIno, EINVAL);
         }
 
         return res;
     }
 
-    bool Resolver::resolveIdentity(const resolver::Request &req, resolver::Resolved &out) {
-        const fuse_ctx *fctx = fuse_req_ctx(req.fuseReq);
+    bool Resolver::resolveIdentity(const Request& req, Resolved& out) {
+        const fuse_ctx* fctx = fuse_req_ctx(req.fuseReq);
         if (!fctx) {
             out.setStatus(Status::MissingFuseContext, EINVAL);
             return false;
@@ -62,87 +82,129 @@ namespace vh::fuse {
 
         out.user = db::query::identities::User::getUserByLinuxUID(uid);
         if (!out.user) {
-            log::Registry::fuse()->error("[{}] No user found for UID {}", req.caller, uid);
+            log::Registry::fuse()->debug("[{}] No user found for UID {}", req.caller, uid);
             out.setStatus(Status::MissingUser, EACCES);
             return false;
         }
 
         out.group = db::query::identities::Group::getGroupByLinuxGID(gid);
-
         return true;
     }
 
-    bool Resolver::resolveEntry(const resolver::Request &req, resolver::Resolved &out) {
-        if (resolver::hasFlag(req.target, Target::Entry)) {
-            if (!req.ino) {
-                log::Registry::fuse()->debug("[{}] Request target includes Ino but no inode provided", req.caller);
-                out.setStatus(Status::MissingIno, EINVAL);
-                return false;
-            }
+    bool Resolver::resolveEntry(const Request& req, Resolved& out) {
+        if (!needsEntry(req)) return true;
+        if (out.entry) return true;
 
+        if (req.ino) {
             out.entry = runtime::Deps::get().fsCache->getEntry(*req.ino);
-            if (!out.entry) {
-                log::Registry::fuse()->debug("[{}] Failed to resolve entry", req.caller);
-                out.setStatus(Status::MissingEntry, ENOENT);
-                return false;
+            if (out.entry) {
+                log::Registry::fuse()->debug(
+                    "[{}] Resolved entry from inode {}: {}",
+                    req.caller, *req.ino, out.entry->path.string()
+                );
+                return true;
             }
+
+            log::Registry::fuse()->debug("[{}] Failed to resolve entry from inode {}", req.caller, *req.ino);
         }
 
         return true;
     }
 
-    bool Resolver::resolvePath(const resolver::Request &req, resolver::Resolved &out) {
-        if (resolver::hasFlag(req.target, Target::Path) || resolver::hasFlag(req.target, Target::EntryForPath)) {
-            if (!req.parentIno) {
-                log::Registry::fuse()->debug("[{}] Request target includes Path but no parent inode provided", req.caller);
-                out.setStatus(Status::MissingParentIno, EINVAL);
-                return false;
-            }
+    bool Resolver::resolvePath(const Request& req, Resolved& out) {
+        if (!needsPath(req)) return true;
+        if (out.path) return true;
 
-            if (!req.childName) {
-                log::Registry::fuse()->debug("[{}] Request target includes Child but no child name provided",
-                                             req.caller);
-                out.setStatus(Status::MissingChildName, EINVAL);
-                return false;
-            }
-
+        if (req.parentIno && req.childName) {
             try {
-                out.path = runtime::Deps::get().fsCache->resolvePath(*req.parentIno) / *req.childName;
-            } catch (const std::exception &e) {
-                log::Registry::fuse()->error("[{}] Failed to resolve path: {}", req.caller, e.what());
-                out.setStatus(Status::MissingPath, ENOENT);
-                return false;
+                const auto parentPath = runtime::Deps::get().fsCache->resolvePath(*req.parentIno);
+                const auto child = std::filesystem::path(*req.childName).filename();
+                out.path = parentPath / child;
+
+                log::Registry::fuse()->debug(
+                    "[{}] Resolved path from parent/child: {}",
+                    req.caller, out.path->string()
+                );
+                return true;
+            } catch (const std::exception& e) {
+                log::Registry::fuse()->debug(
+                    "[{}] Failed to resolve path from parent/child: {}",
+                    req.caller, e.what()
+                );
             }
+        }
+
+        if (out.entry) {
+            out.path = out.entry->path;
+            log::Registry::fuse()->debug(
+                "[{}] Resolved path from entry: {}",
+                req.caller, out.path->string()
+            );
+            return true;
+        }
+
+        if (req.ino) {
+            if (const auto entry = runtime::Deps::get().fsCache->getEntry(*req.ino)) {
+                out.entry = entry;
+                out.path = entry->path;
+
+                log::Registry::fuse()->debug(
+                    "[{}] Resolved path from inode {} via entry: {}",
+                    req.caller, *req.ino, out.path->string()
+                );
+                return true;
+            }
+        }
+
+        log::Registry::fuse()->debug(
+            "[{}] Failed to resolve path: no parent/child path and no inode/entry fallback",
+            req.caller
+        );
+        out.setStatus(Status::MissingPath, ENOENT);
+        return false;
+    }
+
+    bool Resolver::resolveEntryForPath(const Request& req, Resolved& out) {
+        if (!needsEntry(req)) return true;
+        if (out.entry) return true;
+
+        log::Registry::fuse()->debug(
+            "[{}] Resolving entry for path: {}, parent inode: {}, child name: {}",
+            req.caller,
+            out.path ? out.path->string() : "null",
+            req.parentIno ? std::to_string(*req.parentIno) : "null",
+            req.childName ? *req.childName : "null"
+        );
+
+        if (!out.path) {
+            log::Registry::fuse()->debug("[{}] Need entry but no path resolved", req.caller);
+            out.setStatus(Status::MissingPath, EINVAL);
+            return false;
+        }
+
+        out.entry = runtime::Deps::get().fsCache->getEntry(*out.path);
+        if (!out.entry) {
+            log::Registry::fuse()->debug("[{}] Failed to resolve entry for path {}", req.caller, out.path->string());
+
+            // Important: for create/lookup of not-yet-existing children, missing entry may be acceptable.
+            if (req.action == rbac::permission::vault::FilesystemAction::Write ||
+                req.action == rbac::permission::vault::FilesystemAction::Touch) {
+                return true;
+            }
+
+            out.setStatus(Status::MissingEntry, ENOENT);
+            return false;
         }
 
         return true;
     }
 
-    bool Resolver::resolveEntryForPath(const resolver::Request &req, resolver::Resolved &out) {
-        if (resolver::hasFlag(req.target, Target::EntryForPath)) {
-            if (!out.path) {
-                log::Registry::fuse()->debug("[{}] Request target includes EntryForPath but no path resolved",
-                                             req.caller);
-                out.setStatus(Status::MissingPath, EINVAL);
-                return false;
-            }
-
-            out.entry = runtime::Deps::get().fsCache->getEntry(*out.path);
-            if (!out.entry) {
-                log::Registry::fuse()->error("[{}] Failed to resolve entry for path {}", req.caller,
-                                             out.path->string());
-                out.setStatus(Status::MissingEntry, ENOENT);
-                return false;
-            }
-        } else out.ino = runtime::Deps::get().fsCache->getOrAssignInode(*out.path);
-
-        return true;
-    }
-
-    static bool enforcePermission(const std::shared_ptr<vh::identities::User> &user,
-                                  const rbac::permission::vault::FilesystemAction &action,
-                                  const std::shared_ptr<fs::model::Entry> &entry,
-                                  const std::optional<std::filesystem::path> &path = std::nullopt) {
+    static bool enforcePermission(
+        const std::shared_ptr<vh::identities::User>& user,
+        const rbac::permission::vault::FilesystemAction& action,
+        const std::shared_ptr<fs::model::Entry>& entry,
+        const std::optional<std::filesystem::path>& path = std::nullopt
+    ) {
         if (!rbac::resolver::Vault::has<rbac::permission::vault::FilesystemAction>({
             .user = user,
             .permission = action,
@@ -150,71 +212,48 @@ namespace vh::fuse {
             .entry = entry
         })) {
             if (entry)
-                log::Registry::fuse()->warn("[create] Access denied for user {} on path {}", user->name,
-                                            entry->path.string());
+                log::Registry::fuse()->warn("[auth] Access denied for user {} on path {}", user->name, entry->path.string());
             else if (path)
-                log::Registry::fuse()->warn("[create] Access denied for user {} on path {}", user->name,
-                                            path->string());
+                log::Registry::fuse()->warn("[auth] Access denied for user {} on path {}", user->name, path->string());
+            else
+                log::Registry::fuse()->warn("[auth] Access denied for user {} with no resolved path/entry", user->name);
+
             return false;
         }
 
         return true;
     }
 
-    bool Resolver::enforcePermissions(const resolver::Request &req, resolver::Resolved &out) {
-        const bool checkEntry =
-                resolver::hasFlag(req.target, Target::Entry) ||
-                resolver::hasFlag(req.target, Target::EntryForPath);
+    bool Resolver::enforcePermissions(const Request& req, Resolved& out) {
+        const bool checkEntry = needsEntry(req);
+        const bool checkPath = needsPath(req);
 
-        const bool checkPath =
-                resolver::hasFlag(req.target, Target::Path);
+        if (req.action && (checkEntry || checkPath) && !enforcePermission(out.user, *req.action, out.entry, out.path)) {
+            out.setStatus(Status::AccessDenied, EACCES);
+            return false;
+        }
 
-        if (req.action) {
-            if (checkEntry && !enforcePermission(out.user, *req.action, out.entry)) {
+        for (const auto& action : req.actions)
+            if ((checkEntry || checkPath) && !enforcePermission(out.user, action, out.entry, out.path)) {
                 out.setStatus(Status::AccessDenied, EACCES);
                 return false;
             }
-
-            if (checkPath && !enforcePermission(out.user, *req.action, nullptr, out.vaultPath)) {
-                out.setStatus(Status::AccessDenied, EACCES);
-                return false;
-            }
-        }
-
-        if (!req.actions.empty()) {
-            for (const auto &action: req.actions) {
-                if (checkEntry && !enforcePermission(out.user, action, out.entry)) {
-                    out.setStatus(Status::AccessDenied, EACCES);
-                    return false;
-                }
-
-                if (checkPath && !enforcePermission(out.user, action, nullptr, out.vaultPath)) {
-                    out.setStatus(Status::AccessDenied, EACCES);
-                    return false;
-                }
-            }
-        }
 
         return true;
     }
 
-    bool Resolver::resolveEngine(const resolver::Request &req, resolver::Resolved &out) {
-        (void) req;
+    bool Resolver::resolveEngine(const Request& req, Resolved& out) {
+        if (!(req.action || !req.actions.empty() || needsPath(req))) return true;
 
-        if (req.action || !req.actions.empty() || resolver::hasFlag(req.target, Target::Path) || resolver::hasFlag(
-                req.target, Target::EntryForPath)) {
-            if (out.entry && out.entry->vault_id)
-                out.engine = runtime::Deps::get().storageManager->getEngine(*out.entry->vault_id);
+        if (out.entry && out.entry->vault_id)
+            out.engine = runtime::Deps::get().storageManager->getEngine(*out.entry->vault_id);
 
-            if (!out.engine && out.path)
-                out.engine = runtime::Deps::get().storageManager->resolveStorageEngine(*out.path);
+        if (!out.engine && out.path)
+            out.engine = runtime::Deps::get().storageManager->resolveStorageEngine(*out.path);
 
-            if (out.engine && out.path) out.vaultPath = out.engine->paths->absRelToAbsRel(*out.path, fs::model::PathType::FUSE_ROOT, fs::model::PathType::FUSE_ROOT);
-            if (!out.engine) {
-                out.setStatus(Status::MissingEngine, EIO);
-                return false;
-            }
-            return true;
+        if (!out.engine) {
+            out.setStatus(Status::MissingEngine, EIO);
+            return false;
         }
 
         return true;

@@ -7,7 +7,7 @@
 namespace vh::rbac::permission::admin::settings {
 
 struct Sharing final : Base {
-    static constexpr const auto* FLAG_CONTEXT = "share";
+    static constexpr const auto* FLAG_CONTEXT = "settings-share";
 
     [[nodiscard]] const char* flagPrefix() const override { return FLAG_CONTEXT; }
     [[nodiscard]] std::string_view descriptionObject() const override { return FLAG_CONTEXT; }

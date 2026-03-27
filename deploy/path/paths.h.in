@@ -7,6 +7,8 @@
 #define VH_RUNTIME_PATH @VH_RUNTIME_PATH@
 #define VH_CACHE_PATH @VH_CACHE_PATH@
 #define VH_PSQL_SCHEMAS_PATH @VH_PSQL_SCHEMAS_PATH@
+#define VH_PSQL_TEST_SCHEMAS_PATH @VH_PSQL_TEST_SCHEMAS_PATH@
+#define VH_TEST_ENV_PATH @VH_TEST_ENV_PATH@
 
 #include <filesystem>
 
@@ -19,6 +21,8 @@ inline std::filesystem::path backingPath = VH_BACKING_PATH;
 inline std::filesystem::path mountPath = VH_MOUNT_PATH;
 inline std::filesystem::path runtimePath = VH_RUNTIME_PATH;
 inline std::filesystem::path psqlSchemaPath = VH_PSQL_SCHEMAS_PATH;
+inline std::filesystem::path psqlTestSchemaPath = VH_PSQL_TEST_SCHEMAS_PATH;
+inline std::filesystem::path testEnvPath = VH_TEST_ENV_PATH;
 
 inline void setLogPathForTesting() {
     logPath = std::filesystem::temp_directory_path() / "vh_log";
@@ -55,6 +59,6 @@ inline std::filesystem::path getMountPath() { return mountPath; }
 inline std::filesystem::path getBackingPath() { return backingPath; }
 inline std::filesystem::path getRuntimePath() { return runtimePath; }
 inline std::filesystem::path getCachePath() { return VH_CACHE_PATH; }
-inline std::filesystem::path getPsqlSchemasPath() { return VH_PSQL_SCHEMAS_PATH; }
-
+inline std::filesystem::path getPsqlSchemasPath() { return isTestMode() ? VH_PSQL_TEST_SCHEMAS_PATH : VH_PSQL_SCHEMAS_PATH; }
+inline std::filesystem::path getTestEnvPath() { return testEnvPath; }
 }

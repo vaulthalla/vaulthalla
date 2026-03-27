@@ -7,8 +7,7 @@ namespace vh::rbac::permission::admin::identities {
 
 std::string Groups::toString(uint8_t indent) const {
     std::ostringstream oss;
-    const auto in = std::string(indent + 2, ' ');
-    oss << std::string(indent, ' ') << "Groups:" << "\n";
+    const auto in = std::string(indent, ' ');
     oss << in << "View: " << bool_to_string(canView()) << "\n";
     oss << in << "Edit: " << bool_to_string(canEdit()) << "\n";
     oss << in << "Delete: " << bool_to_string(canDelete()) << "\n";

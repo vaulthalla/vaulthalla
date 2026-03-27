@@ -1,7 +1,7 @@
 #pragma once
 
-#include "EntityType.hpp"
-#include "AssertionResult.hpp"
+#include "types/Type.hpp"
+#include "types/AssertionResult.hpp"
 #include "db/query/identities/User.hpp"
 #include "db/query/vault/Vault.hpp"
 #include "db/query/identities/Group.hpp"
@@ -19,21 +19,17 @@
 #include <memory>
 #include <vector>
 
-using namespace vh::identities;
-using namespace vh::vault::model;
-using namespace vh::rbac;
-
-namespace vh::test::cli {
+namespace vh::test::integration {
 
 template <EntityType type, typename T>
 struct Validator {
     // Nice hard error if someone mismatches <type, T>
     static constexpr bool TypeOK =
-        (type == EntityType::USER      && std::is_same_v<T, User>)      ||
-        (type == EntityType::VAULT     && std::is_same_v<T, Vault>)     ||
-        (type == EntityType::GROUP     && std::is_same_v<T, Group>)     ||
-        (type == EntityType::USER_ROLE && std::is_same_v<T, role::Admin>)  ||
-        (type == EntityType::VAULT_ROLE&& std::is_same_v<T, role::Vault>);
+        (type == EntityType::USER      && std::is_same_v<T, identities::User>)      ||
+        (type == EntityType::VAULT     && std::is_same_v<T, vault::model::Vault>)     ||
+        (type == EntityType::GROUP     && std::is_same_v<T, identities::Group>)     ||
+        (type == EntityType::ADMIN_ROLE && std::is_same_v<T, rbac::role::Admin>)  ||
+        (type == EntityType::VAULT_ROLE&& std::is_same_v<T, rbac::role::Vault>);
     static_assert(TypeOK, "Validator<type,T> mismatch: T must match the entity class for 'type'.");
 
     static AssertionResult assert_all_exist(const std::vector<std::shared_ptr<T>>& entities) {
@@ -58,7 +54,7 @@ struct Validator {
             if (!db::query::identities::Group::groupExists(entity->name))
                 return AssertionResult::Fail("Group '" + entity->name + "' not found in DB");
             return AssertionResult::Pass();
-        } else if constexpr (type == EntityType::USER_ROLE) {
+        } else if constexpr (type == EntityType::ADMIN_ROLE) {
             if (!db::query::rbac::role::Admin::exists(entity->name))
                 return AssertionResult::Fail("Role '" + entity->name + "' not found in DB");
             return AssertionResult::Pass();
@@ -84,7 +80,7 @@ struct Validator {
             if (db::query::identities::Group::groupExists(entity->name))
                 return AssertionResult::Fail("Group '" + entity->name + "' unexpectedly found in DB");
             return AssertionResult::Pass();
-        } else if constexpr (type == EntityType::USER_ROLE) {
+        } else if constexpr (type == EntityType::ADMIN_ROLE) {
             if (db::query::rbac::role::Admin::exists(entity->name))
                 return AssertionResult::Fail("Role '" + entity->name + "' unexpectedly found in DB");
             return AssertionResult::Pass();
@@ -113,7 +109,7 @@ struct Validator {
             if (actual < count)
                 return AssertionResult::Fail("Expected at least " + std::to_string(count) + " groups, found " + std::to_string(actual));
             return AssertionResult::Pass();
-        } else if constexpr (type == EntityType::USER_ROLE) {
+        } else if constexpr (type == EntityType::ADMIN_ROLE) {
             const auto actual = db::query::rbac::role::Admin::list().size();
             if (actual < count)
                 return AssertionResult::Fail("Expected at least " + std::to_string(count) + " user roles, found " + std::to_string(actual));

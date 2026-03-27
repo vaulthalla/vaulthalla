@@ -21,10 +21,20 @@ install:
 
 ## 🛠️ Install in development mode
 dev:
-	./bin/uninstall.sh -d
+	./bin/uninstall.sh
 	./bin/setup/install_guard.sh
 	@echo "🛡️  Running install script..."
-	./bin/install.sh -d
+	./bin/install.sh
+
+test:
+	./bin/tests/uninstall.sh
+	@echo "🛡️  Running integration tests install script..."
+	./bin/tests/install.sh
+
+run_test:
+	./bin/tests/uninstall.sh
+	@echo "🛡️  Running integration tests install script..."
+	./bin/tests/install.sh --run
 
 deb:
 	@echo "🔧 Building Debian package..."
@@ -38,3 +48,4 @@ release:
 clean uninstall:
 	@echo "💣 Running uninstall script..."
 	./bin/uninstall.sh
+	./bin/uninstall_integration_tests.sh

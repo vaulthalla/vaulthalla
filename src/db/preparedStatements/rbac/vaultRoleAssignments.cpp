@@ -1,6 +1,6 @@
 #include "db/DBConnection.hpp"
 
-void vh::db::DBConnection::initPreparedVaultRoleAssignments() const {
+void vh::db::Connection::initPreparedVaultRoleAssignments() const {
     conn_->prepare(
         "vault_role_assignment_upsert",
         R"SQL(

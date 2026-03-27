@@ -1,6 +1,6 @@
 #include "db/DBConnection.hpp"
 
-void vh::db::DBConnection::initPreparedVaultKeys() const {
+void vh::db::Connection::initPreparedVaultKeys() const {
     conn_->prepare("insert_vault_key",
                    "INSERT INTO vault_keys (vault_id, encrypted_key, iv) "
                    "VALUES ($1, $2, $3) RETURNING version");

@@ -45,7 +45,8 @@ namespace vh::db::query::rbac::role {
             );
 
             if (res.empty()) throw std::runtime_error("role::Vault::upsert failed to return row");
-            return res.one_row()["id"].as<unsigned int>();
+            role->id = res.one_row()["id"].as<unsigned int>();
+            return role->id;
         });
     }
 

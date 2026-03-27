@@ -67,6 +67,26 @@ namespace vh::rbac::permission {
                 );
             }
 
+            [[nodiscard]] static std::optional<FilePermissions> resolveFromQualifiedName(const std::string& qualifiedName) {
+                const std::string base = "vault.fs.files";
+                if (!qualifiedName.starts_with(base)) return std::nullopt;
+
+                const std::string entry = qualifiedName.substr(qualifiedName.find_last_of('.') + 1);
+
+                // TODO: handle share
+
+                if (entry == "preview") return FilePermissions::Preview;
+                if (entry == "upload") return FilePermissions::Upload;
+                if (entry == "download") return FilePermissions::Download;
+                if (entry == "overwrite") return FilePermissions::Overwrite;
+                if (entry == "rename") return FilePermissions::Rename;
+                if (entry == "delete") return FilePermissions::Delete;
+                if (entry == "move") return FilePermissions::Move;
+                if (entry == "copy") return FilePermissions::Copy;
+
+                return std::nullopt;
+            }
+
             [[nodiscard]] bool canPreview() const noexcept { return has(FilePermissions::Preview); }
             [[nodiscard]] bool canUpload() const noexcept { return has(FilePermissions::Upload); }
             [[nodiscard]] bool canDownload() const noexcept { return has(FilePermissions::Download); }
@@ -83,7 +103,7 @@ namespace vh::rbac::permission {
             static Files None() {
                 Files f;
                 f.clear();
-                f.share = Share::None();
+                f.share = Share::None(FLAG_PREFIX);
                 return f;
             }
 
@@ -91,7 +111,7 @@ namespace vh::rbac::permission {
                 Files f;
                 f.clear();
                 f.grant(FilePermissions::Preview);
-                f.share = Share::None();
+                f.share = Share::None(FLAG_PREFIX);
                 return f;
             }
 
@@ -100,7 +120,7 @@ namespace vh::rbac::permission {
                 f.clear();
                 f.grant(FilePermissions::Preview);
                 f.grant(FilePermissions::Download);
-                f.share = Share::None();
+                f.share = Share::None(FLAG_PREFIX);
                 return f;
             }
 
@@ -110,7 +130,7 @@ namespace vh::rbac::permission {
                 f.grant(FilePermissions::Preview);
                 f.grant(FilePermissions::Download);
                 f.grant(FilePermissions::Copy);
-                f.share = Share::InternalOnly();
+                f.share = Share::InternalOnly(FLAG_PREFIX);
                 return f;
             }
 
@@ -122,7 +142,7 @@ namespace vh::rbac::permission {
                 f.grant(FilePermissions::Download);
                 f.grant(FilePermissions::Overwrite);
                 f.grant(FilePermissions::Copy);
-                f.share = Share::InternalOnly();
+                f.share = Share::InternalOnly(FLAG_PREFIX);
                 return f;
             }
 
@@ -136,7 +156,7 @@ namespace vh::rbac::permission {
                 f.grant(FilePermissions::Rename);
                 f.grant(FilePermissions::Move);
                 f.grant(FilePermissions::Copy);
-                f.share = Share::InternalAndValidatedPublic();
+                f.share = Share::InternalAndValidatedPublic(FLAG_PREFIX);
                 return f;
             }
 
@@ -151,7 +171,7 @@ namespace vh::rbac::permission {
                 f.grant(FilePermissions::Delete);
                 f.grant(FilePermissions::Move);
                 f.grant(FilePermissions::Copy);
-                f.share = Share::InternalAndValidatedPublic();
+                f.share = Share::InternalAndValidatedPublic(FLAG_PREFIX);
                 return f;
             }
 
@@ -159,7 +179,7 @@ namespace vh::rbac::permission {
                 Files f;
                 f.clear();
                 f.grant(FilePermissions::All);
-                f.share = Share::Full();
+                f.share = Share::Full(FLAG_PREFIX);
                 return f;
             }
 

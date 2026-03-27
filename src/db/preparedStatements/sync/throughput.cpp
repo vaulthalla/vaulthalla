@@ -1,6 +1,6 @@
 #include "db/DBConnection.hpp"
 
-void vh::db::DBConnection::initPreparedSyncThroughput() const {
+void vh::db::Connection::initPreparedSyncThroughput() const {
     // ---------------------------------------
     // UPSERT (overwrite values)
     // ---------------------------------------

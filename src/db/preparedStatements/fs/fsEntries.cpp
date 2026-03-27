@@ -1,6 +1,6 @@
 #include "db/DBConnection.hpp"
 
-void vh::db::DBConnection::initPreparedFsEntries() const {
+void vh::db::Connection::initPreparedFsEntries() const {
     conn_->prepare("root_entry_exists",
                    "SELECT EXISTS(SELECT 1 FROM fs_entry "
                    "WHERE parent_id IS NULL AND vault_id IS NULL AND path = '/' AND name = '/') AS exists");

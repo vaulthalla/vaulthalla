@@ -19,6 +19,7 @@
 #include <string>
 #include <memory>
 
+using namespace vh;
 using namespace vh::protocols::shell;
 using namespace vh::protocols::shell::commands::vault;
 using namespace vh::vault::model;
@@ -35,10 +36,9 @@ CommandResult commands::vault::handle_vault_update(const CommandCall& call) {
     if (!vLkp || !vLkp.ptr) return invalid(vLkp.error);
     const auto vault = vLkp.ptr;
 
-    using Perm = ::vh::rbac::permission::admin::VaultPermissions;
-    if (!::vh::rbac::resolver::Admin::has<Perm>({
+    if (!::vh::rbac::resolver::Admin::has<::vh::rbac::permission::admin::VaultPermissions>({
         .user = call.user,
-        .permission = Perm::Edit,
+        .permission = ::vh::rbac::permission::admin::VaultPermissions::Edit,
         .vault_id = vault->id
     })) return invalid("vault update: you do not have permission to edit this vault");
 

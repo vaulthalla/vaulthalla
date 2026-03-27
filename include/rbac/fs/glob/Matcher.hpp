@@ -17,6 +17,10 @@ namespace vh::rbac::fs::glob {
         // Parse + match in one call.
         static bool matches(std::string_view pattern, const Path &path);
 
+        static bool requiresTraversalThrough(std::string_view pattern, const Path &directory);
+
+        static bool requiresTraversalThrough(const model::Pattern& pattern, const Path &directory);
+
     private:
         static bool validatePath(const Path &path);
         static std::string normalizePath(const Path &path);

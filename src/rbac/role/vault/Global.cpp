@@ -49,6 +49,7 @@ namespace vh::rbac::role::vault {
         oss << in << "- Scope: " << to_string(scope) << "\n";
         oss << in << "- Template ID: " << (template_role_id ? std::to_string(*template_role_id) : "None") << "\n";
         oss << in << "- Enforce Template: " << bool_to_string(enforce_template) << "\n";
+        oss << BasicMeta::toString(indent);
         oss << Base::toString(indent);
         return oss.str();
     }

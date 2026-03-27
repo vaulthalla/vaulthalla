@@ -1,17 +1,18 @@
 #include "IntegrationsTestRunner.hpp"
+#include "Validator.hpp"
 
 #include "UsageManager.hpp"
-#include "CLITestContext.hpp"
-#include "Validator.hpp"
-#include "EntityRegistrar.hpp"
-#include "TestCase.hpp"
-#include "CommandRouter.hpp"
-#include "CommandBuilderRegistry.hpp"
-#include "EntityType.hpp"
+#include "cli/Context.hpp"
+#include "entity/Registrar.hpp"
 
-#include "TestThreadPool.hpp"
-#include "TestTask.hpp"
-#include "CLITestTask.hpp"
+#include "cmd/Router.hpp"
+#include "cmd/Registry.hpp"
+#include "types/Type.hpp"
+
+#include "concurrency/TestThreadPool.hpp"
+#include "TestCase.hpp"
+#include "concurrency/TestTask.hpp"
+#include "cli/Task.hpp"
 
 #include "identities/User.hpp"
 #include "identities/Group.hpp"
@@ -27,7 +28,6 @@
 #include <utility>
 #include <future>
 
-using namespace vh::protocols::shell;
 using namespace vh::args;
 using namespace vh::identities;
 using namespace vh::vault::model;
@@ -35,12 +35,12 @@ using namespace vh::rbac;
 
 
 // forward decls so casts compile even if headers aren’t pulled here
-namespace vh::identities { struct Admin; struct Group; }
+namespace vh::identities { struct User; struct Group; }
 namespace vh::vault::model { struct Vault; }
 namespace vh::rbac::role { struct Admin; struct Vault; }
 
 
-namespace vh::test::cli {
+namespace vh::test::integration {
 
 // ---------- Small utilities
 
@@ -66,28 +66,28 @@ template <> struct EntityTraits<EntityType::USER> {
     using Type = User;
     static constexpr std::string_view kStage = "Users";
     static constexpr std::string_view kIdPrefix = "User ID:";
-    static std::vector<std::shared_ptr<Type>>& vec(CLITestContext& c) { return c.users; }
+    static std::vector<std::shared_ptr<Type>>& vec(cli::Context& c) { return c.users; }
 };
 
 template <> struct EntityTraits<EntityType::GROUP> {
     using Type = Group;
     static constexpr std::string_view kStage = "Groups";
     static constexpr std::string_view kIdPrefix = "Group ID:";
-    static std::vector<std::shared_ptr<Type>>& vec(CLITestContext& c) { return c.groups; }
+    static std::vector<std::shared_ptr<Type>>& vec(cli::Context& c) { return c.groups; }
 };
 
 template <> struct EntityTraits<EntityType::VAULT> {
     using Type = Vault;
     static constexpr std::string_view kStage = "Vaults";
     static constexpr std::string_view kIdPrefix = "ID:";
-    static std::vector<std::shared_ptr<Type>>& vec(CLITestContext& c) { return c.vaults; }
+    static std::vector<std::shared_ptr<Type>>& vec(cli::Context& c) { return c.vaults; }
 };
 
-template <> struct EntityTraits<EntityType::USER_ROLE> {
+template <> struct EntityTraits<EntityType::ADMIN_ROLE> {
     using Type = role::Admin;
-    static constexpr std::string_view kStage = "User Roles";
+    static constexpr std::string_view kStage = "Admin Roles";
     static constexpr std::string_view kIdPrefix = "Role ID:";
-    static std::vector<std::shared_ptr<Type>>& vec(CLITestContext& c) { return c.userRoles; }
+    static std::vector<std::shared_ptr<Type>>& vec(cli::Context& c) { return c.adminRoles; }
 };
 
 // VaultRole
@@ -95,7 +95,7 @@ template <> struct EntityTraits<EntityType::VAULT_ROLE> {
     using Type = role::Vault;
     static constexpr std::string_view kStage = "Vault Roles";
     static constexpr std::string_view kIdPrefix = "Role ID:";
-    static std::vector<std::shared_ptr<Type>>& vec(CLITestContext& c) { return c.vaultRoles; }
+    static std::vector<std::shared_ptr<Type>>& vec(cli::Context& c) { return c.vaultRoles; }
 };
 
 // ---------- Tiny generic helpers (local to this TU)
@@ -153,12 +153,12 @@ static std::shared_ptr<TestCase> makeListTest() {
 // Inject IDs into ctx after CREATE
 template <EntityType E>
 static void harvestIdsIntoContext(
-    CLITestContext& ctx,
+    cli::Context& ctx,
     const std::vector<std::shared_ptr<TestCase>>& results,
     std::string_view idPrefix,
     std::ostream& err
 ) {
-    using T = typename EntityTraits<E>::Type;
+    using T = EntityTraits<E>::Type;
     auto& bucket = EntityTraits<E>::vec(ctx);
 
     for (const auto& r : results) {
@@ -178,14 +178,14 @@ static void harvestIdsIntoContext(
 
 // ---------- Runner
 
-IntegrationsTestRunner::IntegrationsTestRunner(CLITestConfig&& cfg)
+IntegrationsTestRunner::IntegrationsTestRunner(cli::Config&& cfg)
     : config_(cfg),
-      ctx_(std::make_shared<CLITestContext>()),
-      usage_(std::make_shared<UsageManager>()),
-      router_(std::make_shared<CommandRouter>(ctx_)),
+      ctx_(std::make_shared<cli::Context>()),
+      usage_(std::make_shared<protocols::shell::UsageManager>()),
+      router_(std::make_shared<cmd::Router>(ctx_)),
       interruptFlag(std::make_shared<std::atomic<bool>>(false)),
-      threadPool_(std::make_shared<TestThreadPool>(interruptFlag, std::thread::hardware_concurrency())) {
-    CommandBuilderRegistry::init(usage_, ctx_);
+      threadPool_(std::make_shared<concurrency::TestThreadPool>(interruptFlag, std::thread::hardware_concurrency())) {
+    cmd::Registry::init(usage_, ctx_);
     registerAllContainsAssertions();
 }
 
@@ -217,7 +217,7 @@ void IntegrationsTestRunner::seed() {
         EntityType type;
         std::vector<std::shared_ptr<TestCase>> tests;
     } jobs[] = {
-        { EntityType::USER_ROLE,  makeCreateTests<EntityType::USER_ROLE>(config_.numUserRoles) },
+        { EntityType::ADMIN_ROLE,  makeCreateTests<EntityType::ADMIN_ROLE>(config_.numAdminRoles) },
         { EntityType::VAULT_ROLE, makeCreateTests<EntityType::VAULT_ROLE>(config_.numVaultRoles) },
         { EntityType::USER,       makeCreateTests<EntityType::USER>(config_.numUsers) },
         { EntityType::GROUP,      makeCreateTests<EntityType::GROUP>(config_.numGroups) },
@@ -227,12 +227,12 @@ void IntegrationsTestRunner::seed() {
     for (const auto& [type, tests] : jobs) {
         const auto splits = split(tests, numThreads);
 
-        std::vector<std::pair<std::optional<std::future<TestFuture>>, EntityType>> futures;
+        std::vector<std::pair<std::optional<std::future<concurrency::TestFuture>>, EntityType>> futures;
 
         for (const auto& splitVec : splits) {
             if (splitVec.empty()) continue;
 
-            const auto task = std::make_shared<CLITestTask>(router_, splitVec);
+            const auto task = std::make_shared<cli::Task>(router_, splitVec);
             futures.emplace_back(task->getFuture(), type);
             threadPool_->submit(task);
             std::this_thread::sleep_for(std::chrono::milliseconds(50)); // light stagger
@@ -259,8 +259,8 @@ void IntegrationsTestRunner::seed() {
             case EntityType::GROUP:
                 finish_seed<EntityType::GROUP>(combined);
                 break;
-            case EntityType::USER_ROLE:
-                finish_seed<EntityType::USER_ROLE>(combined);
+            case EntityType::ADMIN_ROLE:
+                finish_seed<EntityType::ADMIN_ROLE>(combined);
                 break;
             case EntityType::VAULT:
                 finish_seed<EntityType::VAULT>(combined);
@@ -293,7 +293,7 @@ void IntegrationsTestRunner::readStage() {
         append(makeInfoTests<EntityType::USER>(C.users));
         append(makeInfoTests<EntityType::VAULT>(C.vaults));
         append(makeInfoTests<EntityType::GROUP>(C.groups));
-        append(makeInfoTests<EntityType::USER_ROLE>(C.userRoles));
+        append(makeInfoTests<EntityType::ADMIN_ROLE>(C.adminRoles));
         append(makeInfoTests<EntityType::VAULT_ROLE>(C.vaultRoles));
     }
 
@@ -301,7 +301,7 @@ void IntegrationsTestRunner::readStage() {
     tests.push_back(makeListTest<EntityType::USER>());
     tests.push_back(makeListTest<EntityType::VAULT>());
     tests.push_back(makeListTest<EntityType::GROUP>());
-    tests.push_back(makeListTest<EntityType::USER_ROLE>());
+    tests.push_back(makeListTest<EntityType::ADMIN_ROLE>());
     tests.push_back(makeListTest<EntityType::VAULT_ROLE>());
 
     const auto res = router_->route(tests);
@@ -339,7 +339,7 @@ void IntegrationsTestRunner::updateStage() {
     append(makeUpdateTests<EntityType::USER>(C.users));
     append(makeUpdateTests<EntityType::VAULT>(C.vaults));
     append(makeUpdateTests<EntityType::GROUP>(C.groups));
-    append(makeUpdateTests<EntityType::USER_ROLE>(C.userRoles));
+    append(makeUpdateTests<EntityType::ADMIN_ROLE>(C.adminRoles));
     append(makeUpdateTests<EntityType::VAULT_ROLE>(C.vaultRoles));
 
     const auto res = router_->route(tests);
@@ -359,7 +359,7 @@ void IntegrationsTestRunner::teardownStage() {
         append(makeDeleteTests<EntityType::VAULT>(C.vaults));
         append(makeDeleteTests<EntityType::USER>(C.users));
         append(makeDeleteTests<EntityType::GROUP>(C.groups));
-        append(makeDeleteTests<EntityType::USER_ROLE>(C.userRoles));
+        append(makeDeleteTests<EntityType::ADMIN_ROLE>(C.adminRoles));
         append(makeDeleteTests<EntityType::VAULT_ROLE>(C.vaultRoles));
     }
 
@@ -374,7 +374,7 @@ void IntegrationsTestRunner::validateAllTestObjects() const {
     Validator<EntityType::USER,       User>::assert_all_exist(ctx_->users);
     Validator<EntityType::VAULT,      Vault>::assert_all_exist(ctx_->vaults);
     Validator<EntityType::GROUP,      Group>::assert_all_exist(ctx_->groups);
-    Validator<EntityType::USER_ROLE,  role::Admin>::assert_all_exist(ctx_->userRoles);
+    Validator<EntityType::ADMIN_ROLE,  role::Admin>::assert_all_exist(ctx_->adminRoles);
     Validator<EntityType::VAULT_ROLE, role::Vault>::assert_all_exist(ctx_->vaultRoles);
 }
 

@@ -69,6 +69,26 @@ namespace vh::rbac::permission {
                 );
             }
 
+            [[nodiscard]] static std::optional<DirectoryPermissions> resolveFromQualifiedName(const std::string& qualifiedName) {
+                const std::string base = "vault.fs.directories";
+                if (!qualifiedName.starts_with(base)) return std::nullopt;
+
+                const std::string entry = qualifiedName.substr(qualifiedName.find_last_of('.') + 1);
+
+                // TODO: handle share
+
+                if (entry == "list") return DirectoryPermissions::List;
+                if (entry == "upload") return DirectoryPermissions::Upload;
+                if (entry == "download") return DirectoryPermissions::Download;
+                if (entry == "touch") return DirectoryPermissions::Touch;
+                if (entry == "delete") return DirectoryPermissions::Delete;
+                if (entry == "rename") return DirectoryPermissions::Rename;
+                if (entry == "move") return DirectoryPermissions::Move;
+                if (entry == "copy") return DirectoryPermissions::Copy;
+
+                return std::nullopt;
+            }
+
             [[nodiscard]] bool canList() const noexcept { return has(DirectoryPermissions::List); }
             [[nodiscard]] bool canUpload() const noexcept { return has(DirectoryPermissions::Upload); }
             [[nodiscard]] bool canDownload() const noexcept { return has(DirectoryPermissions::Download); }
@@ -89,7 +109,7 @@ namespace vh::rbac::permission {
             static Directories None() {
                 Directories d;
                 d.clear();
-                d.share = Share::None();
+                d.share = Share::None(FLAG_PREFIX);
                 return d;
             }
 
@@ -97,7 +117,7 @@ namespace vh::rbac::permission {
                 Directories d;
                 d.clear();
                 d.grant(DirectoryPermissions::List);
-                d.share = Share::None();
+                d.share = Share::None(FLAG_PREFIX);
                 return d;
             }
 
@@ -106,7 +126,7 @@ namespace vh::rbac::permission {
                 d.clear();
                 d.grant(DirectoryPermissions::List);
                 d.grant(DirectoryPermissions::Download);
-                d.share = Share::None();
+                d.share = Share::None(FLAG_PREFIX);
                 return d;
             }
 
@@ -116,7 +136,7 @@ namespace vh::rbac::permission {
                 d.grant(DirectoryPermissions::List);
                 d.grant(DirectoryPermissions::Download);
                 d.grant(DirectoryPermissions::Copy);
-                d.share = Share::InternalOnly();
+                d.share = Share::InternalOnly(FLAG_PREFIX);
                 return d;
             }
 
@@ -128,7 +148,7 @@ namespace vh::rbac::permission {
                 d.grant(DirectoryPermissions::Download);
                 d.grant(DirectoryPermissions::Touch);
                 d.grant(DirectoryPermissions::Copy);
-                d.share = Share::InternalOnly();
+                d.share = Share::InternalOnly(FLAG_PREFIX);
                 return d;
             }
 
@@ -142,7 +162,7 @@ namespace vh::rbac::permission {
                 d.grant(DirectoryPermissions::Rename);
                 d.grant(DirectoryPermissions::Move);
                 d.grant(DirectoryPermissions::Copy);
-                d.share = Share::InternalAndValidatedPublic();
+                d.share = Share::InternalAndValidatedPublic(FLAG_PREFIX);
                 return d;
             }
 
@@ -157,7 +177,7 @@ namespace vh::rbac::permission {
                 d.grant(DirectoryPermissions::Rename);
                 d.grant(DirectoryPermissions::Move);
                 d.grant(DirectoryPermissions::Copy);
-                d.share = Share::InternalAndValidatedPublic();
+                d.share = Share::InternalAndValidatedPublic(FLAG_PREFIX);
                 return d;
             }
 
@@ -165,7 +185,7 @@ namespace vh::rbac::permission {
                 Directories d;
                 d.clear();
                 d.grant(DirectoryPermissions::All);
-                d.share = Share::Full();
+                d.share = Share::Full(FLAG_PREFIX);
                 return d;
             }
 

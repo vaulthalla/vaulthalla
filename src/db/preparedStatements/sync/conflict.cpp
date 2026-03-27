@@ -1,6 +1,6 @@
 #include "db/DBConnection.hpp"
 
-void vh::db::DBConnection::initPreparedSyncConflicts() const {
+void vh::db::Connection::initPreparedSyncConflicts() const {
     // Upsert conflict (insert or update)
     conn_->prepare(
         "sync_conflict.upsert",

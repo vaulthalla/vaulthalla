@@ -1,6 +1,6 @@
 #include "db/DBConnection.hpp"
 
-void vh::db::DBConnection::initPreparedVaults() const {
+void vh::db::Connection::initPreparedVaults() const {
     conn_->prepare("upsert_vault",
                    R"(INSERT INTO vault (name, type, description, owner_id, mount_point, quota, is_active)
        VALUES ($1, $2, $3, $4, $5, $6, $7)

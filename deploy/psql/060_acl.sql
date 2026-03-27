@@ -185,7 +185,8 @@ CREATE TRIGGER trg_set_updated_at_vault_permission_overrides
     FOR EACH ROW
     EXECUTE FUNCTION set_updated_at();
 
-CREATE TRIGGER set_updated_at
+DROP TRIGGER IF EXISTS set_updated_at_permission ON permission;
+CREATE TRIGGER set_updated_at_permission
     BEFORE UPDATE ON permission
     FOR EACH ROW
     EXECUTE FUNCTION set_updated_at();

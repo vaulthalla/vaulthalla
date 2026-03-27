@@ -45,9 +45,8 @@ namespace vh::rbac::permission {
         struct Share final : Set<SharePermissions, uint8_t> {
             std::string module_prefix;
 
-            Share() = default;
-            explicit Share(const Mask& mask) : Set(mask) {}
-            explicit Share(const std::string& prefix) : module_prefix(prefix + "-share") {}
+            Share() : module_prefix("undefined_share") {}
+            explicit Share(std::string&& prefix) : module_prefix(std::move(prefix) + "-share") {}
 
             [[nodiscard]] const char* flagPrefix() const override { return module_prefix.c_str(); }
 
@@ -82,59 +81,59 @@ namespace vh::rbac::permission {
                 return (raw() & mask) == mask;
             }
 
-            static Share None() {
-                Share s;
+            static Share None(std::string&& prefix) {
+                Share s{std::move(prefix)};
                 s.clear();
                 return s;
             }
 
-            static Share InternalOnly() {
-                Share s;
+            static Share InternalOnly(std::string&& prefix) {
+                Share s{std::move(prefix)};
                 s.clear();
                 s.grant(SharePermissions::Internal);
                 return s;
             }
 
-            static Share PublicOnly() {
-                Share s;
+            static Share PublicOnly(std::string&& prefix) {
+                Share s{std::move(prefix)};
                 s.clear();
                 s.grant(SharePermissions::Public);
                 return s;
             }
 
-            static Share PublicValidatedOnly() {
-                Share s;
+            static Share PublicValidatedOnly(std::string&& prefix) {
+                Share s{std::move(prefix)};
                 s.clear();
                 s.grant(SharePermissions::PublicWithValidation);
                 return s;
             }
 
-            static Share InternalAndPublic() {
-                Share s;
+            static Share InternalAndPublic(std::string&& prefix) {
+                Share s{std::move(prefix)};
                 s.clear();
                 s.grant(SharePermissions::Internal);
                 s.grant(SharePermissions::Public);
                 return s;
             }
 
-            static Share InternalAndValidatedPublic() {
-                Share s;
+            static Share InternalAndValidatedPublic(std::string&& prefix) {
+                Share s{std::move(prefix)};
                 s.clear();
                 s.grant(SharePermissions::Internal);
                 s.grant(SharePermissions::PublicWithValidation);
                 return s;
             }
 
-            static Share PublicAll() {
-                Share s;
+            static Share PublicAll(std::string&& prefix) {
+                Share s{std::move(prefix)};
                 s.clear();
                 s.grant(SharePermissions::Public);
                 s.grant(SharePermissions::PublicWithValidation);
                 return s;
             }
 
-            static Share Full() {
-                Share s;
+            static Share Full(std::string&& prefix) {
+                Share s{std::move(prefix)};
                 s.clear();
                 s.grant(SharePermissions::All);
                 return s;

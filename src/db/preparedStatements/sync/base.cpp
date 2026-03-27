@@ -1,6 +1,6 @@
 #include "db/DBConnection.hpp"
 
-void vh::db::DBConnection::initPreparedSync() const {
+void vh::db::Connection::initPreparedSync() const {
     conn_->prepare("insert_sync",
                    "INSERT INTO sync (vault_id, interval) "
                    "VALUES ($1, $2) RETURNING id");

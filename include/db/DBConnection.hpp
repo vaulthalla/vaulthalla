@@ -8,10 +8,10 @@ namespace vh::crypto::secrets { class TPMKeyProvider; }
 
 namespace vh::db {
 
-class DBConnection {
+class Connection {
   public:
-    DBConnection();
-    ~DBConnection();
+    Connection();
+    ~Connection();
 
     [[nodiscard]] pqxx::connection& get() const;
 

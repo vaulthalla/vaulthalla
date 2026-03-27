@@ -1,6 +1,6 @@
 #include "db/DBConnection.hpp"
 
-void vh::db::DBConnection::initPreparedWaivers() const {
+void vh::db::Connection::initPreparedWaivers() const {
     conn_->prepare("insert_cloud_encryption_waiver",
                    "INSERT INTO cloud_encryption_waivers ("
                    " vault_id, user_id, api_key_id, "

@@ -1,6 +1,6 @@
 #include "db/DBConnection.hpp"
 
-void vh::db::DBConnection::initPreparedAPIKeys() const {
+void vh::db::Connection::initPreparedAPIKeys() const {
 
     conn_->prepare("get_api_key", "SELECT * FROM api_keys WHERE id = $1");
 

@@ -1,5 +1,5 @@
 project('vaulthalla', 'cpp',
-        version: '0.25.0',
+        version: '0.27.0',
         license: 'AGPL-3.0-or-later',
         license_files: ['LICENSE', 'debian/copyright'],
         default_options: [
@@ -12,6 +12,8 @@ project('vaulthalla', 'cpp',
             'cpp_args=-D_GLIBCXX_USE_CXX11_ABI=1'
         ]
 )
+
+fs = import('fs')
 
 # ╭──────────────────────────────── VERSION HEADER ─────────────────────────────────╮
 
@@ -36,6 +38,7 @@ vh_version_header = configure_file(
 
 # ╭──────────────────────────────── PATH HEADER ─────────────────────────────────╮
 
+source_root = meson.project_source_root()
 config_dir = join_paths(get_option('sysconfdir'), meson.project_name())
 log_dir = join_paths(get_option('localstatedir'), 'log', meson.project_name())
 state_dir = join_paths(get_option('localstatedir'), 'lib', meson.project_name())
@@ -51,6 +54,8 @@ conf.set_quoted('VH_BACKING_PATH', state_dir)
 conf.set_quoted('VH_RUNTIME_PATH', runtime_dir)
 conf.set_quoted('VH_CACHE_PATH', '/.cache')
 conf.set_quoted('VH_PSQL_SCHEMAS_PATH', psql_dir)
+conf.set_quoted('VH_PSQL_TEST_SCHEMAS_PATH', join_paths(source_root, 'deploy/psql'))
+conf.set_quoted('VH_TEST_ENV_PATH', join_paths(source_root, 'deploy/vaulthalla.env'))
 
 vh_paths_header = configure_file(
     input: 'deploy/path/paths.h.in',
@@ -93,7 +98,6 @@ test_deps = deps + dependency('gtest', required: true, main: false)
 # ╭────────────────────────────────   FILES   ──────────────────────────────────╮
 
 inc         = include_directories('include', 'vendor', 'usage/include')
-source_root = meson.project_source_root()
 src         = join_paths(source_root, 'src')
 tests_src   = join_paths(source_root, 'tests/unit')
 main        = files(join_paths(source_root, 'main/main.cpp'))
@@ -199,15 +203,25 @@ endif
 
 # ╭─────────────────────────────────── INSTALLATION ───────────────────────────────────╮
 
-license_dir = join_paths(get_option('prefix'), get_option('datadir'), 'doc', 'vaulthalla')
+license_dir = join_paths(get_option('prefix'), get_option('datadir'), 'doc', meson.project_name())
 install_data('LICENSE', install_dir: license_dir)
 install_data('debian/copyright', install_dir: license_dir, rename: 'copyright')
+
+install_emptydir(runtime_dir, install_mode: ['rwxr-x---', 'vaulthalla', 'vaulthalla'])
+install_emptydir(state_dir, install_mode: ['rwx------', 'vaulthalla', 'vaulthalla'])
+install_emptydir(log_dir, install_mode: ['rwxr-x---', 'vaulthalla', 'vaulthalla'])
+install_emptydir(join_paths('/mnt', meson.project_name()), install_mode: ['rwxr-xr-x', 'vaulthalla', 'vaulthalla'])
 
 install_dir = join_paths(get_option('prefix'), get_option('bindir'))
 install_symlink('vaulthalla', install_dir: install_dir, pointing_to: 'vaulthalla-cli')
 install_symlink('vh', install_dir: install_dir, pointing_to: 'vaulthalla-cli')
 
-install_data('deploy/config/config.yaml', install_dir: config_dir)
+if fs.exists('config.yaml')
+    install_data('config.yaml', install_dir: config_dir)
+else
+    install_data('deploy/config/config.yaml', install_dir: config_dir)
+endif
+
 install_data('deploy/config/config_template.yaml.in', install_dir: config_dir)
 
 install_data('deploy/systemd/vaulthalla-cli.socket', install_dir: get_option('systemd_system_unit_dir'))
@@ -283,6 +297,23 @@ if get_option('permission_export_tests')
     test('vh_permission_export_tests', vh_permission_export_tests)
 endif
 
+if get_option('build_glob_path_tests')
+    glob_path_test_sources = sources
+    glob_path_test_sources += join_paths(tests_src, 'test_glob_path.cpp')
+    glob_path_test_sources += join_paths(tests_src, 'gtest_main.cpp')
+
+    vh_glob_path_tests = executable(
+        'vh_glob_path_tests',
+        glob_path_test_sources,
+        link_with: [lib_core, lib_seed, lib_usage],
+        include_directories: inc,
+        dependencies: test_deps,
+        install: false,
+    )
+
+    test('vh_glob_path_tests', vh_glob_path_tests)
+endif
+
 if get_option('integration_tests')
     cli_test_inc = include_directories(
         'tests/integrations/include',
@@ -300,10 +331,10 @@ if get_option('integration_tests')
 
     vh_integration_tests = executable(
         'vh_integration_tests',
-        cli_test_sources + files('tests/integrations/CLI_test_main.cpp'),
+        cli_test_sources + join_paths(source_root, 'tests/integrations/main.cpp'),
         include_directories: cli_test_inc,
         link_with: [lib_core, lib_seed, lib_usage],
-        dependencies: test_deps,
+        dependencies: deps,
         install: false,
     )
 

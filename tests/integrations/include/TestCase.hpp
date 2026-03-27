@@ -1,12 +1,12 @@
 #pragma once
 
-#include "EntityType.hpp"
-#include "AssertionResult.hpp"
+#include "types/Type.hpp"
+#include "types/AssertionResult.hpp"
 
 #include <string>
 #include <vector>
 
-namespace vh::test::cli {
+namespace vh::test::integration {
 
 struct TestCase {
     std::string name{};
@@ -24,9 +24,9 @@ struct TestCase {
         const std::string actionStr = "list";
         auto name = actionStr + " " + typeStr;
         auto path = typeStr + "/" + actionStr;
-        if (type == EntityType::USER_ROLE) {
-            name += " (user)";
-            path += "/user";
+        if (type == EntityType::ADMIN_ROLE) {
+            name += " (admin)";
+            path += "/admin";
         } else if (type == EntityType::VAULT_ROLE) {
             name += " (vault)";
             path += "/vault";
@@ -47,9 +47,9 @@ struct TestCase {
         const std::string actionStr = "delete";
         auto name = actionStr + " " + typeStr;
         auto path = typeStr + "/" + actionStr;
-        if (type == EntityType::USER_ROLE) {
-            name += " (user)";
-            path += "/user";
+        if (type == EntityType::ADMIN_ROLE) {
+            name += " (admin)";
+            path += "/admin";
         } else if (type == EntityType::VAULT_ROLE) {
             name += " (vault)";
             path += "/vault";
@@ -70,9 +70,9 @@ struct TestCase {
         const auto actionStr = CommandTypeToString(command);
         auto name = actionStr + " " + typeStr;
         auto path = typeStr + "/" + actionStr;
-        if (type == EntityType::USER_ROLE) {
-            name += " (user)";
-            path += "/user";
+        if (type == EntityType::ADMIN_ROLE) {
+            name += " (admin)";
+            path += "/admin";
         } else if (type == EntityType::VAULT_ROLE) {
             name += " (vault)";
             path += "/vault";

@@ -1,6 +1,6 @@
 #include "db/DBConnection.hpp"
 
-void vh::db::DBConnection::initPreparedGroups() const {
+void vh::db::Connection::initPreparedGroups() const {
     conn_->prepare(
         "create_group",
         R"SQL(

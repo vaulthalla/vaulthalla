@@ -1,6 +1,6 @@
 #include "db/DBConnection.hpp"
 
-void vh::db::DBConnection::initPreparedFiles() const {
+void vh::db::Connection::initPreparedFiles() const {
     conn_->prepare("upsert_file_by_entry_id",
                    "INSERT INTO files (fs_entry_id, size_bytes, mime_type, content_hash) "
                    "VALUES ($1, $2, $3, $4) "

@@ -22,7 +22,7 @@ namespace vh::rbac::role {
 
     Meta::Meta(const pqxx::row &row)
         : BasicMeta(row) {
-        if (const auto v = try_get<uint32_t>(row, std::vector<std::string_view>{"role_id", "id"}))
+        if (const auto v = try_get<uint32_t>(row, std::vector<std::string_view>{"vault_role_id", "role_id", "id"}))
             id = *v;
 
         if (const auto v = try_get<uint32_t>(row, std::vector<std::string_view>{"role_assignment_id", "assignment_id"}))
@@ -49,7 +49,7 @@ namespace vh::rbac::role {
     std::string Meta::toString(const uint8_t indent) const {
         const std::string in(indent + 2, ' ');
         std::ostringstream oss;
-        oss << in << "- Id: " << std::to_string(id) << std::endl;
+        oss << in << "- Role ID: " << std::to_string(id) << std::endl;
         oss << in << "- Assignment ID: " << std::to_string(assignment_id) << std::endl;
         oss << in << "- Name: " << name << std::endl;
         oss << in << "- Description: " << description << std::endl;

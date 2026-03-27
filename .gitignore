@@ -3,6 +3,8 @@
 ~/*
 .env
 /config.yaml
+enable_dev_mode
+/deploy/vaulthalla.env
 
 # Server
 /build/

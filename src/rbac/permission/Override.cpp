@@ -1,6 +1,8 @@
 #include "rbac/permission/Override.hpp"
 #include "protocols/shell/Table.hpp"
 #include "protocols/shell/util/lineHelpers.hpp"
+#include "db/encoding/has.hpp"
+#include "rbac/fs/glob/Tokenizer.hpp"
 
 #include <pqxx/result>
 #include <nlohmann/json.hpp>
@@ -12,6 +14,7 @@
 
 using namespace vh::rbac::permission;
 using namespace vh::protocols::shell;
+using namespace vh::db::encoding;
 
 namespace {
     [[nodiscard]] std::string lowerCopy(std::string value) {
@@ -27,9 +30,12 @@ Override::Override(const pqxx::row &row)
       permission(row),
       effect(overrideOptFromString(row["effect"].as<std::string>())),
       enabled(row["enabled"].as<bool>()),
-      pattern(row["glob_path"].as<std::string>()) {
-    if (!row["override_id"].is_null()) id = row["override_id"].as<uint32_t>();
-    else if (!row["id"].is_null()) id = row["id"].as<uint32_t>();
+      pattern(rbac::fs::glob::Tokenizer::parse(row["glob_path"].as<std::string>())) {
+    if (const auto v = try_get<uint32_t>(row, std::vector<std::string_view>{"permission_override_id", "override_id", "id"}))
+        id = *v;
+
+    if (const auto v = try_get<uint32_t>(row, std::vector<std::string_view>{"role_assignment_id", "assignment_id"}))
+        assignment_id = *v;
 }
 
 Override::Override(const nlohmann::json &j)

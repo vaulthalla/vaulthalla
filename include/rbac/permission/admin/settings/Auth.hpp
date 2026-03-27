@@ -7,7 +7,7 @@
 namespace vh::rbac::permission::admin::settings {
 
 struct Auth final : Base {
-    static constexpr const auto* FLAG_CONTEXT = "auth";
+    static constexpr const auto* FLAG_CONTEXT = "settings-auth";
 
     [[nodiscard]] const char* flagPrefix() const override { return FLAG_CONTEXT; }
     [[nodiscard]] std::string_view descriptionObject() const override { return FLAG_CONTEXT; }
