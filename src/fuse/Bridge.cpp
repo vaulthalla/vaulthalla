@@ -68,7 +68,7 @@ void setattr(const fuse_req_t req, const fuse_ino_t ino,
         .caller = "setattr",
         .fuseReq = req,
         .ino = ino,
-        .action = permission::vault::FilesystemAction::Upload,
+        .action = permission::vault::FilesystemAction::Write,
         .target = resolver::Target::Entry
     });
 
@@ -190,7 +190,7 @@ void create(const fuse_req_t req, const fuse_ino_t parent, const char* name, con
         .fuseReq = req,
         .parentIno = parent,
         .childName = name,
-        .action = permission::vault::FilesystemAction::Upload,
+        .action = permission::vault::FilesystemAction::Write,
         .target = resolver::Target::Path
     });
 
@@ -243,7 +243,7 @@ void open(const fuse_req_t req, const fuse_ino_t ino, fuse_file_info* fi) {
         .caller = "open",
         .fuseReq = req,
         .ino = ino,
-        .action = permission::vault::FilesystemAction::Download,
+        .action = permission::vault::FilesystemAction::Read,
         .target = resolver::Target::Entry
     });
 
@@ -284,7 +284,7 @@ void write(const fuse_req_t req, const fuse_ino_t ino, const char* buf,
         .caller = "write",
         .fuseReq = req,
         .ino = ino,
-        .action = permission::vault::FilesystemAction::Upload,
+        .action = permission::vault::FilesystemAction::Write,
         .target = resolver::Target::Entry
     });
 
@@ -310,7 +310,7 @@ void read(const fuse_req_t req, const fuse_ino_t ino, const size_t size, const o
         .caller = "read",
         .fuseReq = req,
         .ino = ino,
-        .action = permission::vault::FilesystemAction::Download,
+        .action = permission::vault::FilesystemAction::Read,
         .target = resolver::Target::Entry
     });
 
@@ -427,8 +427,8 @@ void access(const fuse_req_t req, const fuse_ino_t ino, const int mask) {
     log::Registry::fuse()->debug("[access] Called for inode: {}, mask: {}", ino, mask);
 
     std::vector<rbac::permission::vault::FilesystemAction> requiredPermissions;
-    if (mask & W_OK) requiredPermissions.push_back(permission::vault::FilesystemAction::Upload);
-    if (mask & R_OK) requiredPermissions.push_back(permission::vault::FilesystemAction::Download);
+    if (mask & W_OK) requiredPermissions.push_back(permission::vault::FilesystemAction::Write);
+    if (mask & R_OK) requiredPermissions.push_back(permission::vault::FilesystemAction::Read);
     if (ino != FUSE_ROOT_ID && mask & X_OK) requiredPermissions.push_back(permission::vault::FilesystemAction::List);
 
     const auto resolved = Resolver::resolve({
@@ -540,7 +540,7 @@ void fsync(const fuse_req_t req, const fuse_ino_t ino, const int datasync, fuse_
         .caller = "fsync",
         .fuseReq = req,
         .ino = ino,
-        .action = permission::vault::FilesystemAction::Upload,
+        .action = permission::vault::FilesystemAction::Write,
         .target = resolver::Target::Entry
     });
 
@@ -565,7 +565,7 @@ void statfs(const fuse_req_t req, const fuse_ino_t ino) {
         .caller = "statfs",
         .fuseReq = req,
         .ino = ino,
-        .action = permission::vault::FilesystemAction::Download,
+        .action = permission::vault::FilesystemAction::Read,
         .target = resolver::Target::Entry
     });
 

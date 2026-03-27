@@ -363,14 +363,16 @@ namespace vh::test::integration {
         });
 
         builder.makeTestCase({
-            .name = "FUSE allow: read note",
+            .name = "FUSE implicit deny: read note",
             .path = "fuse/read",
+            .expect_exit = EACCES,
             .fn = [=]{ return read_as(subj.uid, ctx.note()); }
         });
 
         builder.makeTestCase({
-            .name = "FUSE allow: rm -rf seed",
+            .name = "FUSE implicit deny: rm -rf seed",
             .path = "fuse/rmrf",
+            .expect_exit = EACCES,
             .fn = [=]{ return rmrf_as(subj.uid, ctx.base()); }
         });
 

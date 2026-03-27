@@ -19,8 +19,8 @@ namespace vh::rbac::permission {
         enum class FilesystemAction : uint16_t {
             Preview,
             List,
-            Upload,
-            Download,
+            Write,
+            Read,
             Touch,
             Overwrite,
             Rename,
@@ -50,12 +50,12 @@ namespace vh::rbac::permission {
                 "Allows listing directory contents."
             },
             Entry{
-                vault::FilesystemAction::Upload,
+                vault::FilesystemAction::Write,
                 "upload",
                 "Allows uploading files or directories."
             },
             Entry{
-                vault::FilesystemAction::Download,
+                vault::FilesystemAction::Read,
                 "download",
                 "Allows downloading files or directories."
             },

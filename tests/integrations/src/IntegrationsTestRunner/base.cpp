@@ -192,13 +192,13 @@ IntegrationsTestRunner::IntegrationsTestRunner(cli::Config&& cfg)
 // ----- pipeline
 
 int IntegrationsTestRunner::operator()() {
-    // seed();
-    // assign();
-    // readStage();
-    // updateStage();
-    // validateAllTestObjects();
+    seed();
+    assign();
+    readStage();
+    updateStage();
+    validateAllTestObjects();
     runFUSETests();
-    // teardownStage();
+    teardownStage();
     return printResults();
 }
 

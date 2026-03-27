@@ -187,7 +187,7 @@ namespace vh::fuse {
             log::Registry::fuse()->debug("[{}] Failed to resolve entry for path {}", req.caller, out.path->string());
 
             // Important: for create/lookup of not-yet-existing children, missing entry may be acceptable.
-            if (req.action == rbac::permission::vault::FilesystemAction::Upload ||
+            if (req.action == rbac::permission::vault::FilesystemAction::Write ||
                 req.action == rbac::permission::vault::FilesystemAction::Touch) {
                 return true;
             }

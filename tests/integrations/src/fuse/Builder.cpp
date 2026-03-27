@@ -187,9 +187,15 @@ void Builder::makeTestCase(FuseTestCaseSpec &&spec) {
 }
 
 test::integration::TestStage Builder::exec() const {
+    const auto results = runSteps();
+
+    const auto vId = ctx_.engine->vault->id;
+    if (subject_.user) db::query::rbac::role::vault::Assignments::unassign(vId, "user", subject_.user->id);
+    if (subject_.group) db::query::rbac::role::vault::Assignments::unassign(vId, "group", subject_.group->id);
+
     return {
         .name = ctx_.name,
-        .tests = runSteps(),
+        .tests = results,
         .uids = uids_,
         .gids = gids_
     };

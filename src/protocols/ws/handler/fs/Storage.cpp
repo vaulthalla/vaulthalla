@@ -40,7 +40,7 @@ json Storage::startUpload(const json& payload, const std::shared_ptr<Session>& s
         session,
         engine,
         path,
-        permission::vault::FilesystemAction::Upload,
+        permission::vault::FilesystemAction::Write,
         "Permission denied: User does not have upload permission for this path in the vault"
     );
 
@@ -68,7 +68,7 @@ json Storage::finishUpload(const json& payload, const std::shared_ptr<Session>& 
         session,
         engine,
         path,
-        permission::vault::FilesystemAction::Upload,
+        permission::vault::FilesystemAction::Write,
         "Permission denied: User does not have upload permission for this path in the vault"
     );
 

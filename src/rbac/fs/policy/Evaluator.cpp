@@ -36,8 +36,8 @@ namespace {
 
         switch (action) {
             case A::List: return D::List;
-            case A::Upload: return D::Upload;
-            case A::Download: return D::Download;
+            case A::Write: return D::Upload;
+            case A::Read: return D::Download;
             case A::Rename: return D::Rename;
             case A::Delete: return D::Delete;
             case A::Move: return D::Move;
@@ -63,8 +63,8 @@ namespace {
 
         switch (action) {
             case A::Preview: return F::Preview;
-            case A::Upload: return F::Upload;
-            case A::Download: return F::Download;
+            case A::Write: return F::Upload;
+            case A::Read: return F::Download;
             case A::Overwrite: return F::Overwrite;
             case A::Rename: return F::Rename;
             case A::Delete: return F::Delete;
@@ -93,8 +93,8 @@ namespace {
             case A::SharePublic: return S::Public;
             case A::SharePublicValidated: return S::PublicWithValidation;
             case A::Preview:
-            case A::Upload:
-            case A::Download:
+            case A::Write:
+            case A::Read:
             case A::Overwrite:
             case A::Rename:
             case A::Delete:
@@ -339,7 +339,7 @@ bool Evaluator::requiresExistingEntry(const permission::vault::FilesystemAction 
 
     switch (action) {
         case A::Preview:
-        case A::Download:
+        case A::Read:
         case A::Overwrite:
         case A::Rename:
         case A::Delete:
@@ -353,7 +353,7 @@ bool Evaluator::requiresExistingEntry(const permission::vault::FilesystemAction 
             return true;
 
         case A::Touch:
-        case A::Upload:
+        case A::Write:
             return false;
     }
 
@@ -367,7 +367,7 @@ bool Evaluator::inferIsDirectoryForMissingEntry(const permission::vault::Filesys
         case A::Touch:
             return true;
 
-        case A::Upload:
+        case A::Write:
         default:
             return false;
     }
@@ -378,8 +378,8 @@ bool Evaluator::isValidForFile(const permission::vault::FilesystemAction action)
 
     switch (action) {
         case A::Preview:
-        case A::Upload:
-        case A::Download:
+        case A::Write:
+        case A::Read:
         case A::Overwrite:
         case A::Rename:
         case A::Delete:
@@ -404,8 +404,8 @@ bool Evaluator::isValidForDirectory(const permission::vault::FilesystemAction ac
 
     switch (action) {
         case A::List:
-        case A::Upload:
-        case A::Download:
+        case A::Write:
+        case A::Read:
         case A::Touch:
         case A::Rename:
         case A::Delete:
@@ -437,8 +437,8 @@ bool Evaluator::allowedByBase(
 
         switch (action) {
             case A::List: return d.canList();
-            case A::Upload: return d.canUpload();
-            case A::Download: return d.canDownload();
+            case A::Write: return d.canUpload();
+            case A::Read: return d.canDownload();
             case A::Touch: return d.canTouch();
             case A::Rename: return d.canRename();
             case A::Delete: return d.canDelete();
@@ -458,8 +458,8 @@ bool Evaluator::allowedByBase(
 
     switch (action) {
         case A::Preview: return f.canPreview();
-        case A::Upload: return f.canUpload();
-        case A::Download: return f.canDownload();
+        case A::Write: return f.canUpload();
+        case A::Read: return f.canDownload();
         case A::Overwrite: return f.canOverwrite();
         case A::Rename: return f.canRename();
         case A::Delete: return f.canDelete();
