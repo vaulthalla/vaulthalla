@@ -27,14 +27,14 @@ dev:
 	./bin/install.sh
 
 test:
-	./bin/uninstall_integration_tests.sh
+	./bin/tests/uninstall.sh
 	@echo "🛡️  Running integration tests install script..."
-	./bin/install_integration_tests.sh
+	./bin/tests/install.sh
 
 run_test:
-	./bin/uninstall_integration_tests.sh
+	./bin/tests/uninstall.sh
 	@echo "🛡️  Running integration tests install script..."
-	./bin/install_integration_tests.sh --run
+	./bin/tests/install.sh --run
 
 deb:
 	@echo "🔧 Building Debian package..."
