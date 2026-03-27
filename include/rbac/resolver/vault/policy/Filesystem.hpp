@@ -25,7 +25,6 @@ namespace vh::rbac::resolver::vault {
             const fs::policy::Request req{
                 .user = actor,
                 .action = action,
-                .threatLevel = ctx.threat_level,
                 .vaultId = resolved.vault ? std::optional<uint32_t>{resolved.vault->id} : ctx.vault_id,
                 .path = ctx.path,
                 .entry = ctx.entry

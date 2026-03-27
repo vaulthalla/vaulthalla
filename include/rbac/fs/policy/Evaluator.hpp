@@ -51,7 +51,8 @@ namespace vh::rbac::fs::policy {
         [[nodiscard]]
         static StageResult resolveOverrides(
             const std::vector<permission::Override> &overrides,
-            std::string_view absolutePath
+            std::string_view absolutePath,
+            const rbac::permission::vault::FilesystemAction& action
         );
 
         [[nodiscard]]
@@ -83,7 +84,8 @@ namespace vh::rbac::fs::policy {
 
         [[nodiscard]] static const permission::Override *findBestOverride(
             const std::vector<permission::Override> &overrides,
-            const std::filesystem::path& absolutePath
+            const std::filesystem::path& absolutePath,
+            const rbac::permission::vault::FilesystemAction& action
         );
 
         [[nodiscard]]

@@ -200,7 +200,7 @@ namespace vh::test::integration {
             .subjectType = TargetSubject::User,
             .permName = "vault.fs.files.download",
             .effect = permission::OverrideOpt::DENY,
-            .pattern = ctx.base() / "docs" / "*.txt"
+            .pattern = fs::model::makeAbsolute(ctx.baseDir) / "docs" / "*.txt"
         });
 
         builder.makeTestCase({
@@ -289,7 +289,7 @@ namespace vh::test::integration {
             .subjectType = TargetSubject::Group,
             .permName = "vault.fs.files.download",
             .effect = permission::OverrideOpt::DENY,
-            .pattern = ctx.docs() / "*.txt"
+            .pattern = fs::model::makeAbsolute(ctx.baseDir) / "docs" / "*.txt"
         });
 
         builder.makeTestCase({
@@ -340,7 +340,7 @@ namespace vh::test::integration {
 
         const auto [ctx, subj] = builder.scenario();
 
-        const auto pattern = ctx.docs() / "*.txt";
+        const auto pattern = fs::model::makeAbsolute(ctx.baseDir) / "docs" / "*.txt";
 
         builder.makeOverride({
             .subjectType = TargetSubject::Group,
@@ -378,30 +378,30 @@ namespace vh::test::integration {
     }
 
     void IntegrationsTestRunner::runFUSETests() {
-        // constexpr std::array always_run {
-        //     testFUSECRUD
-        // };
-        //
-        // for (const auto& function : always_run) {
-        //     auto stage = function();
-        //     validateStage(stage);
-        //
-        //     for (const auto& uid : stage.uids) linux_uids_.push_back(uid);
-        //     for (const auto& gid : stage.gids) linux_gids_.push_back(gid);
-        //
-        //     stages_.push_back(std::move(stage));
-        // }
+        constexpr std::array always_run {
+            testFUSECRUD
+        };
+
+        for (const auto& function : always_run) {
+            auto stage = function();
+            validateStage(stage);
+
+            for (const auto& uid : stage.uids) linux_uids_.push_back(uid);
+            for (const auto& gid : stage.gids) linux_gids_.push_back(gid);
+
+            stages_.push_back(std::move(stage));
+        }
 
         if (geteuid() != 0) return;
 
         constexpr std::array root_only {
-            // testFUSEAllow,
-            // testFUSEDeny,
+            testFUSEAllow,
+            testFUSEDeny,
             testVaultPermOverridesAllow,
-            // testVaultPermOverridesDeny,
-            // testFUSEGroupPermissions,
-            // testGroupPermOverrides,
-            // testFUSEUserOverridesGroupOverride
+            testVaultPermOverridesDeny,
+            testFUSEGroupPermissions,
+            testGroupPermOverrides,
+            testFUSEUserOverridesGroupOverride
         };
 
         for (const auto& function : root_only) {

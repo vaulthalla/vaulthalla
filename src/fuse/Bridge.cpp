@@ -161,10 +161,9 @@ void lookup(const fuse_req_t req, const fuse_ino_t parent, const char* name) {
     const auto resolved = Resolver::resolve({
         .caller = "lookup",
         .fuseReq = req,
-        .threatLevel = rbac::fs::policy::ThreatLevel::Low,
         .parentIno = parent,
         .childName = name,
-        .action = permission::vault::FilesystemAction::List,
+        .action = permission::vault::FilesystemAction::Lookup,
         .target = resolver::Target::EntryForPath
     });
 

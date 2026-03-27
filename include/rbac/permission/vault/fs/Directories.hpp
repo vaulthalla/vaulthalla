@@ -69,6 +69,26 @@ namespace vh::rbac::permission {
                 );
             }
 
+            [[nodiscard]] static std::optional<DirectoryPermissions> resolveFromQualifiedName(const std::string& qualifiedName) {
+                const std::string base = "vault.fs.directories";
+                if (!qualifiedName.starts_with(base)) return std::nullopt;
+
+                const std::string entry = qualifiedName.substr(qualifiedName.find_last_of('.') + 1);
+
+                // TODO: handle share
+
+                if (entry == "list") return DirectoryPermissions::List;
+                if (entry == "upload") return DirectoryPermissions::Upload;
+                if (entry == "download") return DirectoryPermissions::Download;
+                if (entry == "touch") return DirectoryPermissions::Touch;
+                if (entry == "delete") return DirectoryPermissions::Delete;
+                if (entry == "rename") return DirectoryPermissions::Rename;
+                if (entry == "move") return DirectoryPermissions::Move;
+                if (entry == "copy") return DirectoryPermissions::Copy;
+
+                return std::nullopt;
+            }
+
             [[nodiscard]] bool canList() const noexcept { return has(DirectoryPermissions::List); }
             [[nodiscard]] bool canUpload() const noexcept { return has(DirectoryPermissions::Upload); }
             [[nodiscard]] bool canDownload() const noexcept { return has(DirectoryPermissions::Download); }

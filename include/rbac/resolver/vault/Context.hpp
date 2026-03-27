@@ -2,7 +2,6 @@
 
 #include "identities/User.hpp"
 #include "fs/model/Entry.hpp"
-#include "rbac/fs/policy/Request.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -27,7 +26,6 @@ namespace vh::rbac::resolver::vault {
         std::shared_ptr<identities::User> user;
         std::optional<EnumT> permission{std::nullopt};
         std::vector<EnumT> permissions{};
-        fs::policy::ThreatLevel threat_level{fs::policy::ThreatLevel::High};
         std::optional<std::string> target_subject_type{std::nullopt};
         std::optional<uint32_t> target_subject_id{std::nullopt};
         std::optional<uint32_t> vault_id{std::nullopt};

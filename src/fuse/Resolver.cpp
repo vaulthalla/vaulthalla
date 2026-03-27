@@ -202,14 +202,12 @@ namespace vh::fuse {
     static bool enforcePermission(
         const std::shared_ptr<vh::identities::User>& user,
         const rbac::permission::vault::FilesystemAction& action,
-        const rbac::fs::policy::ThreatLevel& threatLevel,
         const std::shared_ptr<fs::model::Entry>& entry,
         const std::optional<std::filesystem::path>& path = std::nullopt
     ) {
         if (!rbac::resolver::Vault::has<rbac::permission::vault::FilesystemAction>({
             .user = user,
             .permission = action,
-            .threat_level = threatLevel,
             .path = path,
             .entry = entry
         })) {
@@ -230,13 +228,13 @@ namespace vh::fuse {
         const bool checkEntry = needsEntry(req);
         const bool checkPath = needsPath(req);
 
-        if (req.action && (checkEntry || checkPath) && !enforcePermission(out.user, *req.action, req.threatLevel, out.entry, out.path)) {
+        if (req.action && (checkEntry || checkPath) && !enforcePermission(out.user, *req.action, out.entry, out.path)) {
             out.setStatus(Status::AccessDenied, EACCES);
             return false;
         }
 
         for (const auto& action : req.actions)
-            if ((checkEntry || checkPath) && !enforcePermission(out.user, action, req.threatLevel, out.entry, out.path)) {
+            if ((checkEntry || checkPath) && !enforcePermission(out.user, action, out.entry, out.path)) {
                 out.setStatus(Status::AccessDenied, EACCES);
                 return false;
             }
