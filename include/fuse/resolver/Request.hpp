@@ -3,6 +3,7 @@
 #define FUSE_USE_VERSION 35
 
 #include "rbac/permission/vault/Filesystem.hpp"
+#include "rbac/fs/policy/Request.hpp"
 
 #include <fuse_lowlevel.h>
 #include <optional>
@@ -37,6 +38,8 @@ namespace vh::fuse::resolver {
     struct Request {
         std::string caller;
         fuse_req_t fuseReq;
+
+        rbac::fs::policy::ThreatLevel threatLevel{rbac::fs::policy::ThreatLevel::High};
 
         std::optional<fuse_ino_t> ino{}, parentIno{};
         std::optional<std::string> childName{};

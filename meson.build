@@ -297,6 +297,23 @@ if get_option('permission_export_tests')
     test('vh_permission_export_tests', vh_permission_export_tests)
 endif
 
+if get_option('build_glob_path_tests')
+    glob_path_test_sources = sources
+    glob_path_test_sources += join_paths(tests_src, 'test_glob_path.cpp')
+    glob_path_test_sources += join_paths(tests_src, 'gtest_main.cpp')
+
+    vh_glob_path_tests = executable(
+        'vh_glob_path_tests',
+        glob_path_test_sources,
+        link_with: [lib_core, lib_seed, lib_usage],
+        include_directories: inc,
+        dependencies: test_deps,
+        install: false,
+    )
+
+    test('vh_glob_path_tests', vh_glob_path_tests)
+endif
+
 if get_option('integration_tests')
     cli_test_inc = include_directories(
         'tests/integrations/include',

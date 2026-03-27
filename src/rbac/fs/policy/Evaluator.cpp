@@ -13,6 +13,7 @@
 #include "storage/Engine.hpp"
 #include "storage/Manager.hpp"
 #include "vault/model/Vault.hpp"
+#include "fs/model/Path.hpp"
 
 #include <filesystem>
 #include <optional>
@@ -118,73 +119,73 @@ Decision Evaluator::evaluate(const Request &req) {
     if (const auto invalid = resolveTarget(req, target))
         return *invalid;
 
-    std::shared_ptr<storage::Engine> engine = nullptr;
-    if (req.vaultId) engine = runtime::Deps::get().storageManager->getEngine(*req.vaultId);
-    if (!engine) engine = runtime::Deps::get().storageManager->resolveStorageEngine(std::filesystem::path{target.absolutePath});
-
-    if (!engine)
-        return {
-            .allowed = false,
-            .reason = Decision::Reason::StorageEngineNotFound,
-            .evaluated_path = target.absolutePath
-        };
-
-    const auto vaultId = engine->vault->id;
+    const auto vaultId = target.engine->vault->id;
 
     // 1) Local/direct vault role: base policy + local overrides
     if (user->roles.vaults.contains(vaultId)) {
         if (const auto role = user->roles.vaults.at(vaultId)) {
             const auto stage = resolveStage(role->fs, target, req.action);
-            if (stage.matched && stage.allowed.has_value())
+            if (stage.matched && stage.allowed.has_value()) {
+                if (!*stage.allowed && req.threatLevel <= ThreatLevel::Low
+                    && requiresTraversalThrough(role->fs.overrides, target.vaultPath.string()))
+                    return {
+                        .allowed = true,
+                        .reason = Decision::Reason::LowRiskOpRequiredForOverrideTraversal,
+                        .evaluated_path = target.vaultPath
+                    };
+
                 return {
                     .allowed = *stage.allowed,
                     .reason = stage.reason,
-                    .evaluated_path = target.absolutePath,
+                    .evaluated_path = target.vaultPath,
                     .matched_override = stage.matchedOverride,
                     .override_effect = stage.overrideEffect
                 };
+            }
         }
     }
 
-    // 2) Group vault roles: overrides only
-    for (const auto &group : user->groups) {
+    // 2) Group vault roles
+    for (const auto &group: user->groups) {
         if (!group) continue;
         if (!group->roles.vaults.contains(vaultId)) continue;
 
         const auto role = group->roles.vaults.at(vaultId);
         if (!role) continue;
 
-        const auto stage = resolveOverrides(
-            role->fs.overrides,
-            role->fs,
-            target.isDir,
-            req.action,
-            target.absolutePath
-        );
+        const auto stage = resolveStage(role->fs, target, req.action);
+        if (stage.matched && stage.allowed.has_value()) {
+            if (!*stage.allowed && req.threatLevel <= ThreatLevel::Low
+                && requiresTraversalThrough(role->fs.overrides, target.vaultPath.string()))
+                return {
+                    .allowed = true,
+                    .reason = Decision::Reason::LowRiskOpRequiredForOverrideTraversal,
+                    .evaluated_path = target.vaultPath
+                };
 
-        if (stage.matched && stage.allowed.has_value())
             return {
                 .allowed = *stage.allowed,
                 .reason = stage.reason,
-                .evaluated_path = target.absolutePath,
+                .evaluated_path = target.vaultPath,
                 .matched_override = stage.matchedOverride,
                 .override_effect = stage.overrideEffect
             };
+        }
     }
 
     // 3) Global vault filesystem policy: last resort
-    std::array vGlobals {
+    std::array vGlobals{
         user->roles.admin->vGlobals.self,
         user->roles.admin->vGlobals.admin,
         user->roles.admin->vGlobals.user
     };
-    for (const auto& global : vGlobals) {
+    for (const auto &global: vGlobals) {
         const auto stage = resolveStage(global.fs, target, req.action);
         if (stage.matched && stage.allowed.has_value())
             return {
                 .allowed = *stage.allowed,
                 .reason = stage.reason,
-                .evaluated_path = target.absolutePath,
+                .evaluated_path = target.vaultPath,
                 .matched_override = stage.matchedOverride,
                 .override_effect = stage.overrideEffect
             };
@@ -194,7 +195,7 @@ Decision Evaluator::evaluate(const Request &req) {
     return {
         .allowed = false,
         .reason = Decision::Reason::DeniedByBasePermissions,
-        .evaluated_path = target.absolutePath
+        .evaluated_path = target.vaultPath
     };
 }
 
@@ -210,30 +211,54 @@ std::optional<Decision> Evaluator::resolveTarget(const Request &req, TargetConte
             .reason = Decision::Reason::MissingPathAndEntry
         };
 
-    out.absolutePath = resolvePath(req);
+    if (req.hasPath()) out.fusePath = *req.path;
+    if (req.hasEntry()) out.vaultPath = req.entry->path;
 
-    if (out.absolutePath.empty())
+    if (req.vaultId) out.engine = runtime::Deps::get().storageManager->getEngine(*req.vaultId);
+
+    if (!out.engine && req.hasEntry() && req.entry->vault_id)
+        out.engine = runtime::Deps::get().storageManager->getEngine(*req.entry->vault_id);
+
+    if (!out.engine && !out.fusePath.empty())
+        out.engine = runtime::Deps::get().storageManager->resolveStorageEngine(std::filesystem::path{out.fusePath});
+
+    if (!out.engine)
         return Decision{
             .allowed = false,
-            .reason = Decision::Reason::MissingPath
+            .reason = Decision::Reason::StorageEngineNotFound,
+            .evaluated_path = out.fusePath
         };
 
-    const auto pathObj = std::filesystem::path{out.absolutePath};
+    if (out.fusePath.empty())
+        out.fusePath = out.engine->paths->absRelToAbsRel(out.vaultPath, vh::fs::model::PathType::VAULT_ROOT,
+                                                         vh::fs::model::PathType::FUSE_ROOT);
+
+    if (out.vaultPath.empty())
+        out.vaultPath = out.engine->paths->absRelToAbsRel(out.fusePath, vh::fs::model::PathType::FUSE_ROOT,
+                                                          vh::fs::model::PathType::VAULT_ROOT);
+
+    // sanity check - paths should resolve by now one way or another for valid requests
+    if (out.fusePath.empty() || out.vaultPath.empty())
+        return Decision{
+            .allowed = false,
+            .reason = Decision::Reason::UnableToResolvePaths,
+            .evaluated_path = out.fusePath
+        };
 
     out.entry = req.hasEntry()
-        ? req.entry
-        : runtime::Deps::get().fsCache->getEntry(pathObj);
+                    ? req.entry
+                    : runtime::Deps::get().fsCache->getEntry(out.fusePath);
 
     out.exists = !!out.entry;
     out.isDir = out.entry
-        ? out.entry->isDirectory()
-        : inferIsDirectoryForMissingEntry(req.action);
+                    ? out.entry->isDirectory()
+                    : inferIsDirectoryForMissingEntry(req.action);
 
     if (!out.exists && requiresExistingEntry(req.action))
         return Decision{
             .allowed = false,
             .reason = Decision::Reason::MissingEntry,
-            .evaluated_path = out.absolutePath
+            .evaluated_path = out.vaultPath
         };
 
     if (out.isDir) {
@@ -241,14 +266,14 @@ std::optional<Decision> Evaluator::resolveTarget(const Request &req, TargetConte
             return Decision{
                 .allowed = false,
                 .reason = Decision::Reason::InvalidActionForEntryType,
-                .evaluated_path = out.absolutePath
+                .evaluated_path = out.vaultPath
             };
     } else {
         if (!isValidForFile(req.action))
             return Decision{
                 .allowed = false,
                 .reason = Decision::Reason::InvalidActionForEntryType,
-                .evaluated_path = out.absolutePath
+                .evaluated_path = out.vaultPath
             };
     }
 
@@ -260,7 +285,7 @@ Evaluator::StageResult Evaluator::resolveStage(
     const TargetContext &target,
     const permission::vault::FilesystemAction action
 ) {
-    if (const auto overrides = resolveOverrides(perms.overrides, perms, target.isDir, action, target.absolutePath);
+    if (const auto overrides = resolveOverrides(perms.overrides, target.vaultPath.string());
         overrides.matched)
         return overrides;
 
@@ -270,20 +295,18 @@ Evaluator::StageResult Evaluator::resolveStage(
         .matched = true,
         .allowed = allowed,
         .reason = allowed
-            ? Decision::Reason::AllowedByBasePermissions
-            : Decision::Reason::DeniedByBasePermissions
+                      ? Decision::Reason::AllowedByBasePermissions
+                      : Decision::Reason::DeniedByBasePermissions
     };
 }
 
 Evaluator::StageResult Evaluator::resolveOverrides(
     const std::vector<permission::Override> &overrides,
-    const permission::vault::Filesystem &perms,
-    const bool isDir,
-    const permission::vault::FilesystemAction action,
     const std::string_view absolutePath
 ) {
-    if (const auto *best = findBestOverride(overrides, absolutePath)) {
-        if (const auto effect = overrideEffect(*best, isDir, perms, action); effect.has_value()) {
+    const auto *best = findBestOverride(overrides, absolutePath);
+    if (best) {
+        if (const auto effect = overrideEffect(*best); effect.has_value()) {
             if (*effect == OverrideOpt::ALLOW)
                 return {
                     .matched = true,
@@ -305,18 +328,6 @@ Evaluator::StageResult Evaluator::resolveOverrides(
     }
 
     return {};
-}
-
-std::string Evaluator::resolvePath(const Request &req) {
-    const auto raw = req.hasEntry() ? req.entry->path : *req.path;
-    auto normalized = raw.lexically_normal().generic_string();
-
-    if (normalized.empty()) return "/";
-
-    if (normalized[0] != '/')
-        normalized.insert(normalized.begin(), '/');
-
-    return normalized;
 }
 
 bool Evaluator::requiresExistingEntry(const permission::vault::FilesystemAction action) {
@@ -458,54 +469,35 @@ bool Evaluator::allowedByBase(
 }
 
 std::optional<vh::rbac::permission::OverrideOpt> Evaluator::overrideEffect(
-    const permission::Override &o,
-    const bool isDir,
-    const permission::vault::Filesystem &perms,
-    const permission::vault::FilesystemAction action
+    const permission::Override &o
 ) {
     if (!o.enabled) return std::nullopt;
+    return o.effect;
+}
 
-    if (isDir) {
-        if (const auto d = tryParseDirectoryPerm(action)) {
-            if (!perms.directories.has(*d)) return std::nullopt;
-            return o.effect;
-        }
-
-        if (const auto s = tryParseSharePerm(action)) {
-            if (!perms.directories.share.has(*s)) return std::nullopt;
-            return o.effect;
-        }
-
-        return std::nullopt;
-    }
-
-    if (const auto f = tryParseFilePerm(action)) {
-        if (!perms.files.has(*f)) return std::nullopt;
-        return o.effect;
-    }
-
-    if (const auto s = tryParseSharePerm(action)) {
-        if (!perms.files.share.has(*s)) return std::nullopt;
-        return o.effect;
-    }
-
-    return std::nullopt;
+bool Evaluator::requiresTraversalThrough(
+    const std::vector<permission::Override> &overrides,
+    const std::filesystem::path &absolutePath
+) {
+    return std::ranges::any_of(overrides, [&](const permission::Override &o) {
+        return o.enabled &&
+               o.effect == permission::OverrideOpt::ALLOW &&
+               glob::Matcher::requiresTraversalThrough(o.pattern, absolutePath);
+    });
 }
 
 const vh::rbac::permission::Override *Evaluator::findBestOverride(
     const std::vector<permission::Override> &overrides,
-    const std::string_view absolutePath
+    const std::filesystem::path &absolutePath
 ) {
     const permission::Override *best = nullptr;
     std::size_t bestScore = 0;
 
-    const auto path = std::filesystem::path{std::string(absolutePath)};
-
-    for (const auto &o : overrides) {
+    for (const auto &o: overrides) {
         if (!o.enabled)
             continue;
 
-        if (!glob::Matcher::matches(o.pattern, path))
+        if (!glob::Matcher::matches(o.pattern, absolutePath))
             continue;
 
         const auto score = scorePattern(o.pattern);
@@ -523,7 +515,7 @@ std::size_t Evaluator::scorePattern(const glob::model::Pattern &pattern) {
 
     std::size_t score = 0;
 
-    for (const auto &token : pattern.tokens) {
+    for (const auto &token: pattern.tokens) {
         switch (token.type) {
             case T::Literal:
                 score += 10 + token.value.size();

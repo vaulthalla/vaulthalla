@@ -25,6 +25,8 @@ namespace vh::rbac::fs::policy {
             case Decision::Reason::DeniedByBasePermissions: return "DeniedByBasePermissions";
             case Decision::Reason::AllowedByBasePermissions: return "AllowedByBasePermissions";
             case Decision::Reason::StorageEngineNotFound: return "StorageEngineNotFound";
+            case Decision::Reason::UnableToResolvePaths: return "UnableToResolvePaths";
+            case Decision::Reason::LowRiskOpRequiredForOverrideTraversal: return "LowRiskOpRequiredForOverrideTraversal";
         }
         return "unknown reason";
     }

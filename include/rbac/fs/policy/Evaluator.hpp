@@ -14,6 +14,8 @@ namespace vh::identities {
     struct Group;
 }
 
+namespace vh::storage { struct Engine; }
+
 namespace vh::rbac::fs::policy {
     struct Evaluator {
         [[nodiscard]]
@@ -21,7 +23,8 @@ namespace vh::rbac::fs::policy {
 
     private:
         struct TargetContext {
-            std::string absolutePath;
+            std::shared_ptr<storage::Engine> engine{nullptr};
+            std::filesystem::path fusePath, vaultPath;
             std::shared_ptr<vh::fs::model::Entry> entry;
             bool exists{false};
             bool isDir{false};
@@ -48,14 +51,8 @@ namespace vh::rbac::fs::policy {
         [[nodiscard]]
         static StageResult resolveOverrides(
             const std::vector<permission::Override> &overrides,
-            const permission::vault::Filesystem &perms,
-            bool isDir,
-            permission::vault::FilesystemAction action,
             std::string_view absolutePath
         );
-
-        [[nodiscard]]
-        static std::string resolvePath(const Request &req);
 
         [[nodiscard]]
         static bool requiresExistingEntry(permission::vault::FilesystemAction action);
@@ -77,17 +74,16 @@ namespace vh::rbac::fs::policy {
         );
 
         [[nodiscard]]
-        static std::optional<permission::OverrideOpt> overrideEffect(
-            const permission::Override &o,
-            bool isDir,
-            const permission::vault::Filesystem &perms,
-            permission::vault::FilesystemAction action
+        static std::optional<permission::OverrideOpt> overrideEffect(const permission::Override &o);
+
+        [[nodiscard]] static bool requiresTraversalThrough(
+            const std::vector<permission::Override> &overrides,
+            const std::filesystem::path& absolutePath
         );
 
-        [[nodiscard]]
-        static const permission::Override *findBestOverride(
+        [[nodiscard]] static const permission::Override *findBestOverride(
             const std::vector<permission::Override> &overrides,
-            std::string_view absolutePath
+            const std::filesystem::path& absolutePath
         );
 
         [[nodiscard]]

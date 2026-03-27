@@ -16,7 +16,7 @@ namespace pqxx {
 
 namespace vh::rbac::permission {
     namespace vault {
-        enum class FilesystemAction : uint8_t {
+        enum class FilesystemAction : uint16_t {
             Preview,
             List,
             Upload,
@@ -29,7 +29,8 @@ namespace vh::rbac::permission {
             Copy,
             ShareInternal,
             SharePublic,
-            SharePublicValidated
+            SharePublicValidated,
+            Lookup
         };
     }
 
@@ -103,6 +104,11 @@ namespace vh::rbac::permission {
                 "share_public_validated",
                 "Allows sharing files or directories publicly with validation."
             },
+            Entry{
+                vault::FilesystemAction::Lookup,
+                "lookup",
+                "Allows looking up files or directories by name or metadata."
+            }
         };
     };
 

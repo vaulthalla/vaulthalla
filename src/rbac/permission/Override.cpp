@@ -2,6 +2,7 @@
 #include "protocols/shell/Table.hpp"
 #include "protocols/shell/util/lineHelpers.hpp"
 #include "db/encoding/has.hpp"
+#include "rbac/fs/glob/Tokenizer.hpp"
 
 #include <pqxx/result>
 #include <nlohmann/json.hpp>
@@ -29,7 +30,7 @@ Override::Override(const pqxx::row &row)
       permission(row),
       effect(overrideOptFromString(row["effect"].as<std::string>())),
       enabled(row["enabled"].as<bool>()),
-      pattern(row["glob_path"].as<std::string>()) {
+      pattern(rbac::fs::glob::Tokenizer::parse(row["glob_path"].as<std::string>())) {
     if (const auto v = try_get<uint32_t>(row, std::vector<std::string_view>{"permission_override_id", "override_id", "id"}))
         id = *v;
 

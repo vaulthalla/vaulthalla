@@ -14,6 +14,7 @@
 #include "db/query/identities/User.hpp"
 #include "db/query/identities/Group.hpp"
 #include "db/query/rbac/Permission.hpp"
+#include "db/query/rbac/permission/Override.hpp"
 
 #include "sync/model/LocalPolicy.hpp"
 #include "runtime/Deps.hpp"
@@ -23,6 +24,7 @@
 #include "fs/model/Path.hpp"
 
 #include "rbac/role/Vault.hpp"
+#include "rbac/fs/glob/Tokenizer.hpp"
 
 using namespace vh;
 using namespace vh::test::integration::fuse;
@@ -93,7 +95,7 @@ void Builder::buildAssignVRole(VaultRoleSpec&& spec) {
             throw std::runtime_error("Builder::buildVaultRole(): invalid subject kind");
     }
 
-    db::query::rbac::role::vault::Assignments::assign(ctx_.engine->vault->id, spec.getSubjectType(), role->assignment->subject_id, role->id);
+    db::query::rbac::role::vault::Assignments::assign(role);
 }
 
 void Builder::makeUser(UserSpec&& userSpec) {
@@ -161,10 +163,17 @@ void Builder::makeOverride(OverrideSpec &&spec) const {
         subject_.userVaultRole->assignment_id : subject_.groupVaultRole->assignment_id;
     ov.effect = spec.effect;
     ov.enabled = spec.enabled;
-    ov.pattern.source = spec.pattern;
+    ov.pattern = rbac::fs::glob::Tokenizer::parse(spec.pattern);
 
-    if (spec.subjectType == TargetSubject::User) subject_.userVaultRole->fs.overrides.push_back(ov);
-    else subject_.groupVaultRole->fs.overrides.push_back(ov);
+    if (spec.subjectType == TargetSubject::User) {
+        ov.assignment_id = subject_.userVaultRole->assignment_id;
+        subject_.userVaultRole->fs.overrides.push_back(ov);
+    } else {
+        ov.assignment_id = subject_.groupVaultRole->assignment_id;
+        subject_.groupVaultRole->fs.overrides.push_back(ov);
+    }
+
+    db::query::rbac::permission::Override::upsert(std::make_shared<rbac::permission::Override>(ov));
 }
 
 void Builder::makeTestCase(FuseTestCaseSpec &&spec) {

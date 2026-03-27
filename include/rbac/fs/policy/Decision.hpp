@@ -23,7 +23,9 @@ namespace vh::rbac::fs::policy {
             AllowedByOverride,
             DeniedByBasePermissions,
             AllowedByBasePermissions,
-            StorageEngineNotFound
+            StorageEngineNotFound,
+            UnableToResolvePaths,
+            LowRiskOpRequiredForOverrideTraversal
         };
 
         bool allowed{false};

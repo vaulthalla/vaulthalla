@@ -2,6 +2,26 @@
 
 void vh::db::Connection::initPreparedPermOverrides() const {
     conn_->prepare(
+        "upsert_vault_permission_override",
+        R"SQL(
+        INSERT INTO vault_permission_overrides (
+            assignment_id,
+            permission_id,
+            glob_path,
+            enabled,
+            effect
+        )
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (assignment_id, permission_id, glob_path)
+        DO UPDATE SET
+            enabled = EXCLUDED.enabled,
+            effect = EXCLUDED.effect,
+            updated_at = CURRENT_TIMESTAMP
+        RETURNING id
+    )SQL"
+    );
+
+    conn_->prepare(
         "get_permission_override_by_vault_subject_and_bitpos",
         R"SQL(
             SELECT
@@ -253,5 +273,60 @@ void vh::db::Connection::initPreparedPermOverrides() const {
                 p.bit_position,
                 vpo.glob_path
         )SQL"
+    );
+
+    conn_->prepare(
+        "get_vault_permission_override_by_id",
+        R"SQL(
+        SELECT
+            p.id AS permission_override_id,
+            p.name,
+            p.description,
+            p.category,
+            p.bit_position,
+            p.created_at,
+            p.updated_at,
+
+            vpo.id AS override_id,
+            vpo.enabled,
+            vpo.glob_path,
+            vpo.assignment_id,
+            vpo.effect,
+            vpo.created_at,
+            vpo.updated_at,
+
+            vra.vault_id,
+            vra.subject_type,
+            vra.subject_id,
+            vra.role_id,
+            vra.assigned_at
+        FROM vault_permission_overrides vpo
+        JOIN permission p
+            ON p.id = vpo.permission_id
+        JOIN vault_role_assignments vra
+            ON vra.id = vpo.assignment_id
+        WHERE vpo.id = $1
+    )SQL"
+    );
+
+    conn_->prepare(
+        "exists_vault_permission_override",
+        R"SQL(
+        SELECT EXISTS (
+            SELECT 1
+            FROM vault_permission_overrides
+            WHERE assignment_id = $1
+              AND permission_id = $2
+              AND glob_path = $3
+        )
+    )SQL"
+    );
+
+    conn_->prepare(
+        "delete_vault_permission_overrides_by_assignment",
+        R"SQL(
+        DELETE FROM vault_permission_overrides
+        WHERE assignment_id = $1
+    )SQL"
     );
 }

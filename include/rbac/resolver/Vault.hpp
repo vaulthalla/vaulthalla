@@ -5,6 +5,8 @@
 #include "ResolverTraits/Fwd.hpp"
 #include "vault/policy/Base.hpp"
 #include "vault/ResolverMode.hpp"
+#include "rbac/resolver/vault/policy/Filesystem.hpp"
+#include "rbac/resolver/vault/policy/Roles.hpp"
 
 #include "identities/User.hpp"
 #include "rbac/role/Vault.hpp"
@@ -30,41 +32,6 @@
 
 namespace vh::rbac::resolver {
     class Vault {
-        template<typename EnumT>
-        static bool checkSinglePermissionPolicyOnly(
-            const std::shared_ptr<identities::User> &user,
-            const vault::ResolvedContext &resolved,
-            const vault::Context<EnumT> &ctx,
-            const EnumT permission
-        ) {
-            return vault::ContextPolicy<EnumT>::validate(user, resolved, permission, ctx);
-        }
-
-        static bool checkFilesystemPermission(
-            const std::shared_ptr<identities::User> &user,
-            const vault::ResolvedContext &resolved,
-            const vault::Context<permission::vault::FilesystemAction> &ctx,
-            permission::vault::FilesystemAction permission
-        ) {
-            if (!user || !resolved.isValid()) return false;
-
-            const fs::policy::Request req{
-                .user = user,
-                .action = permission,
-                .vaultId = resolved.vault ? std::optional<uint32_t>{resolved.vault->id} : ctx.vault_id,
-                .path = ctx.path,
-                .entry = ctx.entry
-            };
-
-            const auto decision = fs::policy::Evaluator::evaluate(req);
-            if (!decision.allowed) {
-                log::Registry::auth()->warn("Filesystem permission denied. Context:\n{}", decision.toString());
-                return false;
-            }
-
-            return vault::ContextPolicy<permission::vault::FilesystemAction>::validate(user, resolved, permission, ctx);
-        }
-
         template<typename EnumT>
         static bool checkSinglePermissionTraits(
             const std::shared_ptr<identities::User> &user,
@@ -116,12 +83,9 @@ namespace vh::rbac::resolver {
 
             if (!user || !resolved.isValid()) return false;
 
-            if constexpr (std::is_same_v<EnumT, permission::vault::FilesystemAction>)
-                return checkFilesystemPermission(user, resolved, ctx, permission);
-            else if constexpr (VaultResolverMode<EnumT>::policy_only)
-                return checkSinglePermissionPolicyOnly(user, resolved, ctx, permission);
-            else
-                return checkSinglePermissionTraits(user, resolved, ctx, permission);
+            if constexpr (VaultResolverMode<EnumT>::policy_only)
+                return vault::ContextPolicy<EnumT>::validate(user, resolved, permission, ctx);
+            else return checkSinglePermissionTraits(user, resolved, ctx, permission);
         }
 
         template<typename EnumT>

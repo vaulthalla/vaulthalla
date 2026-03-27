@@ -10,7 +10,9 @@ namespace vh::rbac::role { struct Vault; }
 namespace vh::db::query::rbac::role::vault {
 
     struct Assignments {
-        static void assign(uint32_t vaultId,
+        static void assign(const std::shared_ptr<vh::rbac::role::Vault>& role);
+
+        static uint32_t assign(uint32_t vaultId,
                            const std::string& subjectType,
                            uint32_t subjectId,
                            uint32_t roleId);
