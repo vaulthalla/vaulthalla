@@ -2,11 +2,10 @@ import { create } from 'zustand'
 import { useWebSocketStore } from '@/stores/useWebSocket'
 import { persist } from 'zustand/middleware'
 import { WSCommandPayload } from '@/util/webSocketCommands'
-import { UserRole, VaultRole } from '@/models/role'
-import { Permission } from '@/models/permission'
+import { AdminRole, VaultRole, Permission } from '@/models/role'
 
 interface PermissionStore {
-  userRoles: UserRole[]
+  userRoles: AdminRole[]
   vaultRoles: VaultRole[]
   permissions: Permission[]
   fetchVaultRoles: () => Promise<void>
@@ -15,8 +14,8 @@ interface PermissionStore {
   addRole: (payload: WSCommandPayload<'role.add'>) => Promise<void>
   removeRole: (payload: WSCommandPayload<'role.delete'>) => Promise<void>
   updateRole: (payload: WSCommandPayload<'role.update'>) => Promise<void>
-  getRole: (payload: WSCommandPayload<'role.get'>) => Promise<UserRole | VaultRole | null | undefined>
-  getRoleByName: (payload: WSCommandPayload<'role.get.byName'>) => Promise<UserRole | VaultRole | null | undefined>
+  getRole: (payload: WSCommandPayload<'role.get'>) => Promise<AdminRole | VaultRole | null | undefined>
+  getRoleByName: (payload: WSCommandPayload<'role.get.byName'>) => Promise<AdminRole | VaultRole | null | undefined>
   getPermission: (payload: WSCommandPayload<'permission.get'>) => Promise<Permission | null | undefined>
   getPermissionByName: (payload: WSCommandPayload<'permission.get.byName'>) => Promise<Permission | null | undefined>
   getPermissions: () => Promise<Permission[]>
@@ -32,14 +31,14 @@ export const usePermsStore = create<PermissionStore>()(
       async fetchVaultRoles() {
         const ws = useWebSocketStore.getState()
         await ws.waitForConnection()
-        const response = await ws.sendCommand('roles.list.vault', null)
+        const response = await ws.sendCommand('roles.vault.list', null)
         set({ vaultRoles: response.roles })
       },
 
       async fetchUserRoles() {
         const ws = useWebSocketStore.getState()
         await ws.waitForConnection()
-        const response = await ws.sendCommand('roles.list.user', null)
+        const response = await ws.sendCommand('roles.admin.list', null)
         console.log(response.roles)
         set({ userRoles: response.roles })
       },
@@ -56,7 +55,7 @@ export const usePermsStore = create<PermissionStore>()(
         await sendCommand('role.add', payload)
 
         if (payload.type === 'vault') await this.fetchVaultRoles()
-        else if (payload.type === 'user') await this.fetchUserRoles()
+        else if (payload.type === 'admin') await this.fetchUserRoles()
       },
 
       async removeRole({ id }) {
@@ -64,8 +63,8 @@ export const usePermsStore = create<PermissionStore>()(
         await sendCommand('role.delete', { id })
 
         set(state => ({
-          vaultRoles: state.vaultRoles.filter(r => r.role_id !== id),
-          userRoles: state.userRoles.filter(r => r.role_id !== id),
+          vaultRoles: state.vaultRoles.filter(r => r.id !== id),
+          userRoles: state.userRoles.filter(r => r.id !== id),
         }))
       },
 
@@ -74,11 +73,11 @@ export const usePermsStore = create<PermissionStore>()(
         await sendCommand('role.update', payload)
 
         if (payload.type === 'vault') await this.fetchVaultRoles()
-        else if (payload.type === 'user') await this.fetchUserRoles()
+        else if (payload.type === 'admin') await this.fetchUserRoles()
       },
 
       async getRole({ id }) {
-        const role = get().vaultRoles.find(r => r.role_id === id) || get().userRoles.find(r => r.role_id === id)
+        const role = get().vaultRoles.find(r => r.id === id) || get().userRoles.find(r => r.id === id)
         if (role) return role
 
         const sendCommand = useWebSocketStore.getState().sendCommand
@@ -100,7 +99,7 @@ export const usePermsStore = create<PermissionStore>()(
       },
 
       async getPermissionByName({ name }) {
-        return get().permissions.find(p => p.name === name) || null
+        return get().permissions.find(p => p.displayName === name) || null
       },
 
       async getPermissions() {

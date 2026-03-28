@@ -20,13 +20,14 @@ interface AuthState {
   updateUser: (payload: WSCommandPayload<'auth.user.update'>) => Promise<void>
   changePassword: (id: number, old_password: string, new_password: string) => Promise<void>
   isUserAuthenticated: () => Promise<boolean>
-  logout: () => void
+  logout: () => Promise<void>
   refreshToken: () => Promise<void>
   fetchUser: () => Promise<void>
   getUser: (id: number) => Promise<User | null>
   getUsers: () => Promise<User[]>
   fetchAdminPasswordIsDefault: () => Promise<void>
   getUserByName: (payload: WSCommandPayload<'auth.user.get.byName'>) => Promise<User>
+  setToken: (token: string | null) => void
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -45,7 +46,7 @@ export const useAuthStore = create<AuthState>()(
           const sendCommand = useWebSocketStore.getState().sendCommand
           const response = await sendCommand('auth.login', { name, password })
 
-          set({ token: response.token, user: response.user })
+          set({ user: response.user })
           refreshAttempts = 0
         } catch (err) {
           set({ error: getErrorMessage(err) || 'Login failed' })
@@ -60,9 +61,7 @@ export const useAuthStore = create<AuthState>()(
         try {
           await useWebSocketStore.getState().waitForConnection()
           const sendCommand = useWebSocketStore.getState().sendCommand
-          const response = await sendCommand('auth.register', { name, email, password, is_active, role })
-
-          set({ token: response.token, user: response.user })
+          await sendCommand('auth.register', { name, email, password, is_active, role })
           refreshAttempts = 0
         } catch (err) {
           const errorMessage = getErrorMessage(err) || 'Registration failed'
@@ -73,12 +72,12 @@ export const useAuthStore = create<AuthState>()(
         }
       },
 
-      logout: () => {
+      logout: async () => {
         set({ token: null, user: null })
         try {
           const sendCommand = useWebSocketStore.getState().sendCommand
           const socket = useWebSocketStore.getState().socket
-          sendCommand('auth.logout', null)
+          await sendCommand('auth.logout', null)
 
           localStorage.removeItem('vaulthalla-auth')
           localStorage.removeItem('vaulthalla-groups')
@@ -240,6 +239,10 @@ export const useAuthStore = create<AuthState>()(
           set({ error: getErrorMessage(err) || 'Failed to fetch user by name' })
           throw err
         }
+      },
+
+      setToken: async token => {
+        set({ token })
       },
     }),
     {

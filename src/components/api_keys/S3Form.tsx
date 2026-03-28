@@ -28,14 +28,14 @@ const S3APIKeyForm = ({ edit, id }: { edit?: boolean; id?: number }) => {
     formState: { errors },
   } = useForm<FormData>()
 
-  const keyStore = useApiKeyStore.getState()
+  const { getApiKey, removeApiKey, addApiKey } = useApiKeyStore()
   const user_id = useAuthStore.getState().user?.id
 
   useEffect(() => {
     if (edit && id) {
       ;(async () => {
         try {
-          const key = (await keyStore.getApiKey({ id })) as S3APIKey
+          const key = (await getApiKey({ id })) as S3APIKey
           setValue('name', key.name)
           setValue('provider', key.provider)
           setValue('access_key', key.access_key)
@@ -49,7 +49,7 @@ const S3APIKeyForm = ({ edit, id }: { edit?: boolean; id?: number }) => {
         }
       })()
     }
-  }, [edit, id, keyStore, setValue])
+  }, [edit, id, getApiKey, setValue])
 
   const onSubmit = async (data: FormData) => {
     if (!user_id) {
@@ -60,10 +60,10 @@ const S3APIKeyForm = ({ edit, id }: { edit?: boolean; id?: number }) => {
     const payload = { ...data, user_id, type: 's3' }
 
     if (edit && id) {
-      await keyStore.removeApiKey({ id })
+      await removeApiKey({ id })
     }
 
-    await keyStore.addApiKey(payload)
+    await addApiKey(payload)
     redirect('/dashboard/api-keys')
   }
 
@@ -73,7 +73,7 @@ const S3APIKeyForm = ({ edit, id }: { edit?: boolean; id?: number }) => {
       return
     }
 
-    await keyStore.removeApiKey({ id })
+    await removeApiKey({ id })
     redirect('/dashboard/api-keys')
   }
 

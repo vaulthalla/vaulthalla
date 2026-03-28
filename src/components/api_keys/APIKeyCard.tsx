@@ -18,7 +18,7 @@ const APIKeyCard = (key: APIKey) => {
   if (key.provider && providerIconMap[key.provider]) ProviderIcon = providerIconMap[key.provider]
 
   return (
-    <Link href="/src/app/(app)/(admin)/api-keys/[slug]" as={`/dashboard/api-keys/${key.api_key_id}`}>
+    <Link href="/api-keys/[slug]" as={`/api-keys/${key.api_key_id}`}>
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}

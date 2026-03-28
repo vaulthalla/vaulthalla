@@ -2,7 +2,7 @@ import { LocalDiskVault, S3Vault, Vault } from '@/models/vaults'
 import { VaultStats } from '@/models/stats/vaultStats'
 import { APIKey, S3APIKey } from '@/models/apiKey'
 import { User } from '@/models/user'
-import { VaultRole, UserRole, IRole } from '@/models/role'
+import { VaultRole, AdminRole, IRole } from '@/models/role'
 import { Permission } from '@/models/permission'
 import { Settings } from '@/models/settings'
 import { Group } from '@/models/group'
@@ -74,25 +74,25 @@ export interface WebSocketCommandMap {
 
   'storage.apiKey.remove': { payload: { id: number }; response: null }
 
-  'storage.apiKey.get': { payload: { id: number }; response: { key: APIKey } }
+  'storage.apiKey.get': { payload: { id: number }; response: { api_key: APIKey } }
 
   // Roles and Permissions
 
-  'role.add': { payload: Partial<VaultRole | UserRole>; response: { role: VaultRole | UserRole } }
+  'role.add': { payload: Partial<VaultRole | AdminRole>; response: { role: VaultRole | AdminRole } }
 
   'role.delete': { payload: { id: number }; response: null }
 
-  'role.update': { payload: Partial<IRole | VaultRole | UserRole>; response: { role: VaultRole | UserRole } }
+  'role.update': { payload: Partial<IRole | VaultRole | AdminRole>; response: { role: VaultRole | AdminRole } }
 
-  'role.get': { payload: { id: number }; response: { role: VaultRole | UserRole } }
+  'role.get': { payload: { id: number }; response: { role: VaultRole | AdminRole } }
 
-  'role.get.byName': { payload: { name: string }; response: { role: VaultRole | UserRole } }
+  'role.get.byName': { payload: { name: string }; response: { role: VaultRole | AdminRole } }
 
-  'roles.list': { payload: null; response: { roles: (VaultRole | UserRole)[] } }
+  'roles.list': { payload: null; response: { roles: (VaultRole | AdminRole)[] } }
 
-  'roles.list.vault': { payload: null; response: { roles: VaultRole[] } }
+  'roles.vault.list': { payload: null; response: { roles: VaultRole[] } }
 
-  'roles.list.user': { payload: null; response: { roles: UserRole[] } }
+  'roles.admin.list': { payload: null; response: { roles: AdminRole[] } }
 
   'permission.get': { payload: { id: number }; response: { permission: Permission } }
 

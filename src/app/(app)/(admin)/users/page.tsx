@@ -5,4 +5,5 @@ export default makeAdminPage(UsersClientPage, {
   title: 'Users',
   description: 'Manage users and their permissions in your vault.',
   grid: true,
+  add: { title: 'Add User', href: '/users/add' },
 })

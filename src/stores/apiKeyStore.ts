@@ -43,7 +43,7 @@ export const useApiKeyStore = create<ApiKeyStore>()(
 
         const sendCommand = useWebSocketStore.getState().sendCommand
         const response = await sendCommand('storage.apiKey.get', { id })
-        return response.key
+        return response.api_key
       },
     }),
     {

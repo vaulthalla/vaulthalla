@@ -4,7 +4,7 @@ import { useEffect, useMemo } from 'react'
 import { useForm, SubmitHandler } from 'react-hook-form'
 import { motion } from 'framer-motion'
 import { Button } from '@/components/Button'
-import type { UserRole, VaultRole } from '@/models/role'
+import type { AdminRole, VaultRole } from '@/models/role'
 
 const sectionVariants = { hidden: { opacity: 0, y: 10 }, visible: { opacity: 1, y: 0 } }
 
@@ -40,7 +40,7 @@ export type RoleType = 'user' | 'vault'
 export type RoleFormData = { name: string; description: string; permissions: Record<string, boolean>; type: RoleType }
 
 type RoleDefaults =
-  | Partial<Pick<UserRole, 'name' | 'description' | 'permissions'>>
+  | Partial<Pick<AdminRole, 'name' | 'description' | 'permissions'>>
   | Partial<Pick<VaultRole, 'name' | 'description' | 'permissions'>>
 
 export default function RoleForm({

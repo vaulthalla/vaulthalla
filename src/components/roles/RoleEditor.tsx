@@ -4,13 +4,13 @@ import React, { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { usePermsStore } from '@/stores/permissionStore'
 import RoleForm, { RoleFormData, RoleType } from '@/components/roles/RoleForm'
-import type { UserRole, VaultRole } from '@/models/role'
+import type { AdminRole, VaultRole } from '@/models/role'
 
 type RoleEditorProps = {
   type: RoleType
   mode: 'create' | 'edit'
   defaultValues?:
-    | Partial<Pick<UserRole, 'name' | 'description' | 'permissions'>>
+    | Partial<Pick<AdminRole, 'name' | 'description' | 'permissions'>>
     | Partial<Pick<VaultRole, 'name' | 'description' | 'permissions'>>
   redirectTo?: string
   title?: string

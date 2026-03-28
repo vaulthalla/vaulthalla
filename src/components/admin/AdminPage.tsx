@@ -18,7 +18,7 @@ export const AdminPage = ({ title, description, children }: AdminPageBaseProps) 
     )
 
   return (
-    <div className="p-6 md:p-10">
+    <div>
       <Header />
       {children}
     </div>

@@ -1,106 +1,137 @@
-// Permission definition (as returned from API / DB)
-export interface Permission {
-  id: number
-  name: string
-  description: string
-  category: 'user' | 'vault'
-  bit_position: number
-  created_at: Date
-  updated_at: Date
-}
+import {
+  AdminRoleDTO,
+  PermissionDTO,
+  PermissionOverrideDTO,
+  RoleType,
+  SubjectType,
+  VaultRoleDTO,
+} from '@/models/permission'
+import { toDate } from '@/util/toDate'
 
-// Permission override on a vault role
-export interface PermissionOverride {
-  permission: Permission
-  enabled: boolean
-  regex: string
-}
-
-// Base role structure (used for both user + vault roles)
-export interface IRole {
-  role_id: number
-  name: string
-  description: string
-  type: 'user' | 'vault'
-  permissions: Record<string, boolean> // decoded mask
-  created_at: Date
-}
-
-// User role assignment
-export interface IUserRole extends IRole {
-  assignment_id: number
-  user_id: number
-  assigned_at: Date
-}
-
-// Vault role assignment
-export interface IVaultRole extends IRole {
-  assignment_id: number
-  vault_id: number
-  subject_type: 'user' | 'group'
-  subject_id: number
-  assigned_at: Date
-  permission_overrides: PermissionOverride[]
-}
-
-// UserRole class
-export class UserRole {
+export class Permission {
   constructor(
-    public role_id: number,
-    public name: string,
+    public bit_position: number,
+    public qualified: string,
+    public slug: string,
     public description: string,
-    public permissions: Record<string, boolean>,
-    public created_at: Date,
-    public assignment_id: number,
-    public user_id: number,
-    public assigned_at: Date,
-    public type: 'user' = 'user',
+    public value: boolean,
+    public id?: number,
+    public created_at?: Date | null,
+    public updated_at?: Date | null,
   ) {}
 
-  static fromData(data: IUserRole): UserRole {
-    return new UserRole(
-      data.role_id,
+  static fromData(data: PermissionDTO): Permission {
+    return new Permission(
+      data.bit_position,
+      data.qualified,
+      data.slug,
+      data.description,
+      data.value,
+      data.id,
+      toDate(data.created_at),
+      toDate(data.updated_at),
+    )
+  }
+
+  get segments(): string[] {
+    return this.qualified.split('.')
+  }
+
+  get categoryPath(): string[] {
+    return this.segments.slice(0, -1)
+  }
+
+  get displayName(): string {
+    return this.slug.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+  }
+}
+
+export class PermissionOverride {
+  constructor(
+    public permission: Permission,
+    public enabled: boolean,
+    public regex: string,
+  ) {}
+
+  static fromData(data: PermissionOverrideDTO): PermissionOverride {
+    return new PermissionOverride(Permission.fromData(data.permission), data.enabled, data.regex)
+  }
+}
+
+export abstract class Role {
+  constructor(
+    public id: number,
+    public type: RoleType,
+    public name: string,
+    public description: string,
+    public created_at: Date | null,
+    public updated_at: Date | null,
+    public permissions: Permission[],
+  ) {}
+}
+
+export class AdminRole extends Role {
+  constructor(
+    id: number,
+    name: string,
+    description: string,
+    created_at: Date | null,
+    updated_at: Date | null,
+    permissions: Permission[],
+    public assignment_id: number | null = null,
+    public user_id: number | null = null,
+    public assigned_at: Date | null = null,
+  ) {
+    super(id, 'admin', name, description, created_at, updated_at, permissions)
+  }
+
+  static fromData(data: AdminRoleDTO): AdminRole {
+    return new AdminRole(
+      data.id,
       data.name,
       data.description,
-      data.permissions,
-      new Date(data.created_at),
-      data.assignment_id,
-      data.user_id,
-      new Date(data.assigned_at),
+      toDate(data.created_at),
+      toDate(data.updated_at),
+      (data.permissions ?? []).map(Permission.fromData),
+      data.assignment_id ?? null,
+      data.user_id ?? null,
+      toDate(data.assigned_at),
     )
   }
 }
 
-// VaultRole class
-export class VaultRole {
+export class VaultRole extends Role {
   constructor(
-    public role_id: number,
-    public name: string,
-    public description: string,
-    public permissions: Record<string, boolean>,
-    public created_at: Date,
-    public assignment_id: number,
+    id: number,
+    name: string,
+    description: string,
+    created_at: Date | null,
+    updated_at: Date | null,
+    permissions: Permission[],
     public vault_id: number,
-    public subject_type: 'user' | 'group',
-    public subject_id: number,
-    public assigned_at: Date,
-    public permission_overrides: PermissionOverride[],
-    public type: 'vault' = 'vault',
-  ) {}
+    public assignment_id: number | null = null,
+    public subject_type: SubjectType | null = null,
+    public subject_id: number | null = null,
+    public assigned_at: Date | null = null,
+    public permission_overrides: PermissionOverride[] = [],
+  ) {
+    super(id, 'vault', name, description, created_at, updated_at, permissions)
+  }
 
-  static fromData(data: IVaultRole): VaultRole {
+  static fromData(data: VaultRoleDTO): VaultRole {
     return new VaultRole(
-      data.role_id,
+      data.id,
       data.name,
       data.description,
-      data.permissions,
-      new Date(data.created_at),
-      data.assignment_id,
+      toDate(data.created_at),
+      toDate(data.updated_at),
+      (data.permissions ?? []).map(Permission.fromData),
       data.vault_id,
-      data.subject_type,
-      data.subject_id,
-      new Date(data.assigned_at),
-      data.permission_overrides || [],
+      data.assignment_id ?? null,
+      data.subject_type ?? null,
+      data.subject_id ?? null,
+      toDate(data.assigned_at),
+      (data.permission_overrides ?? []).map(PermissionOverride.fromData),
     )
   }
 }

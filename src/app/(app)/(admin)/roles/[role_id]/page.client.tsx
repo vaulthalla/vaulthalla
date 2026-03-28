@@ -1,14 +1,14 @@
 'use client'
 
 import RoleForm, { RoleFormData } from '@/components/roles/RoleForm'
-import { UserRole, VaultRole } from '@/models/role'
+import { AdminRole, VaultRole } from '@/models/role'
 import { useEffect, useState } from 'react'
 import { usePermsStore } from '@/stores/permissionStore'
 import { useRouter } from 'next/navigation'
 import CircleNotchLoader from '@/components/loading/CircleNotchLoader'
 
 const EditRoleClientPage = ({ id }: { id: number }) => {
-  const [role, setRole] = useState<UserRole | VaultRole | null>(null)
+  const [role, setRole] = useState<AdminRole | VaultRole | null>(null)
   const router = useRouter()
 
   useEffect(() => {

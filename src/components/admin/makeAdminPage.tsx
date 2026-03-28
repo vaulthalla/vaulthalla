@@ -12,7 +12,7 @@ type AdminPageOpts = {
 }
 
 export const makeAdminPage = (ClientContent: React.ComponentType, opts: AdminPageOpts) => {
-  const Page = () => {
+  return () => {
     const { title, description, add, grid = false, actions } = opts
 
     const Body =
@@ -33,6 +33,4 @@ export const makeAdminPage = (ClientContent: React.ComponentType, opts: AdminPag
       </AdminPage>
     )
   }
-
-  return Page
 }

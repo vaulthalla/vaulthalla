@@ -25,7 +25,7 @@ const MainLayout = ({ children }: { children: React.ReactNode }) => (
           <MobileDrawer mode="admin" title="Admin" />
         </div>
 
-        <main className="min-w-0 grow">{children}</main>
+        <main className="min-w-0 grow p-6 md:p-10">{children}</main>
       </div>
     </div>
   </RequireAuth>

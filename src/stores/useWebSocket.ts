@@ -96,6 +96,8 @@ export const useWebSocketStore = create<WebSocketStore>()(
           try {
             const message = JSON.parse(event.data)
 
+            if (message.token) useAuthStore.getState().setToken(message.token)
+
             if (message.command === 'error' && message.status === 'unauthorized') {
               console.warn('[WS] Received unauthorized response — attempting token refresh')
 
@@ -146,23 +148,22 @@ export const useWebSocketStore = create<WebSocketStore>()(
       },
 
       sendCommand: async (command, payload) => {
-        const { socket, connected, pending, connect } = get()
+        let { socket, connected, connect } = get()
         const token = useAuthStore.getState().token
 
         if (!connected || !socket) {
           console.warn('[WS] Not connected, attempting to reconnect...')
           connect()
+          await get().waitForConnection()
+          ;({ socket, connected } = get())
         }
 
         if (!token && !command.startsWith('auth')) throw new Error('No auth token')
 
-        const requestId = uuidv4()
-
-        const message: WebSocketMessage<typeof command> = { command, payload, requestId, token: token || '' }
-
-        console.log('sending', message)
-
         if (!socket || !connected) throw new Error('WebSocket is not connected')
+
+        const requestId = uuidv4()
+        const message: WebSocketMessage<typeof command> = { command, payload, requestId, token: token || '' }
 
         return new Promise((resolve, reject) => {
           const timeout = setTimeout(() => {
@@ -172,16 +173,15 @@ export const useWebSocketStore = create<WebSocketStore>()(
             set({ pending: updated })
           }, 10000)
 
-          set({
+          set(state => ({
             pending: {
-              ...pending,
+              ...state.pending,
               [requestId]: dataPromise => {
                 clearTimeout(timeout)
-                // Normalize response regardless of sync or async return
                 Promise.resolve(dataPromise).then(resolve).catch(reject)
               },
             },
-          })
+          }))
 
           socket.send(JSON.stringify(message))
         })
