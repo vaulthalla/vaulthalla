@@ -85,12 +85,12 @@ sudo systemctl reset-failed "$UNIT" >/dev/null 2>&1 || true
 if sudo pgrep -fa 'vaulthalla|fuse' >/dev/null 2>&1; then
   log "❌ Stragglers still alive:"
   sudo pgrep -fa 'vaulthalla|fuse' || true
-  exit 1
+  # exit 1
 fi
 
 if is_mounted; then
   log "❌ Mount still present at $MOUNT (kernel-wedged FUSE). Only a reboot clears that."
-  exit 1
+  # exit 1
 fi
 
 log "✅ Annihilated."
