@@ -222,6 +222,10 @@ else
     install_data('deploy/config/config.yaml', install_dir: config_dir)
 endif
 
+if fs.exists('deploy/vaulthalla.env')
+    install_data('deploy/vaulthalla.env', install_dir: config_dir)
+endif
+
 install_data('deploy/config/config_template.yaml.in', install_dir: config_dir)
 
 install_data('deploy/systemd/vaulthalla-cli.socket', install_dir: get_option('systemd_system_unit_dir'))
