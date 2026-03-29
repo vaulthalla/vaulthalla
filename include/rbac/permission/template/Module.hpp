@@ -35,7 +35,7 @@ namespace vh::rbac::permission {
 
         [[nodiscard]] virtual std::string toFlagsString() const = 0;
 
-        virtual std::vector<std::string> getFlags() const = 0;
+        [[nodiscard]] virtual std::vector<std::string> getFlags() const = 0;
 
         [[nodiscard]] virtual std::string toString(uint8_t indent) const = 0;
 

@@ -8,9 +8,10 @@ namespace vh::rbac::permission::admin::settings {
 
 struct Logging final : Base {
     static constexpr const auto* FLAG_CONTEXT = "settings-log";
+    static constexpr const auto* DESCRIPTION_OBJECT = "logging";
 
     [[nodiscard]] const char* flagPrefix() const override { return FLAG_CONTEXT; }
-    [[nodiscard]] std::string_view descriptionObject() const override { return FLAG_CONTEXT; }
+    [[nodiscard]] std::string_view descriptionObject() const override { return DESCRIPTION_OBJECT; }
     [[nodiscard]] std::string toString(uint8_t indent) const override;
 
     static Logging None() {
@@ -27,8 +28,9 @@ struct Logging final : Base {
     }
 
     static Logging Edit() {
-        auto l = View();
-        l.grant(SettingsPermissions::Edit);
+        Logging l;
+        l.clear();
+        l.grant(SettingsPermissions::All);
         return l;
     }
 };

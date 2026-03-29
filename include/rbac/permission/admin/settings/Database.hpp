@@ -8,9 +8,10 @@ namespace vh::rbac::permission::admin::settings {
 
 struct Database final : Base {
     static constexpr const auto* FLAG_CONTEXT = "settings-db";
+    static constexpr const auto* DESCRIPTION_OBJECT = "database";
 
     [[nodiscard]] const char* flagPrefix() const override { return FLAG_CONTEXT; }
-    [[nodiscard]] std::string_view descriptionObject() const override { return FLAG_CONTEXT; }
+    [[nodiscard]] std::string_view descriptionObject() const override { return DESCRIPTION_OBJECT; }
     [[nodiscard]] std::string toString(uint8_t indent) const override;
 
     static Database None() {
@@ -27,8 +28,9 @@ struct Database final : Base {
     }
 
     static Database Edit() {
-        auto d = View();
-        d.grant(SettingsPermissions::Edit);
+        Database d;
+        d.clear();
+        d.grant(SettingsPermissions::All);
         return d;
     }
 };

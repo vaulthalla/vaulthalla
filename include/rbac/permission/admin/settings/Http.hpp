@@ -8,9 +8,10 @@ namespace vh::rbac::permission::admin::settings {
 
 struct Http final : Base {
     static constexpr const auto* FLAG_CONTEXT = "settings-http";
+    static constexpr const auto* DESCRIPTION_OBJECT = "http";
 
     [[nodiscard]] const char* flagPrefix() const override { return FLAG_CONTEXT; }
-    [[nodiscard]] std::string_view descriptionObject() const override { return FLAG_CONTEXT; }
+    [[nodiscard]] std::string_view descriptionObject() const override { return DESCRIPTION_OBJECT; }
     [[nodiscard]] std::string toString(uint8_t indent) const override;
 
     static Http None() {
@@ -27,8 +28,9 @@ struct Http final : Base {
     }
 
     static Http Edit() {
-        auto h = View();
-        h.grant(SettingsPermissions::Edit);
+        Http h;
+        h.clear();
+        h.grant(SettingsPermissions::All);
         return h;
     }
 };

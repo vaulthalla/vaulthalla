@@ -204,10 +204,10 @@ namespace vh::rbac::role {
         static Admin Custom(
             std::string name,
             std::string description,
-            permission::admin::Identities identities,
+            const permission::admin::Identities& identities,
             permission::admin::Vaults vaults,
             permission::admin::Audits audits,
-            permission::admin::Settings settings,
+            const permission::admin::Settings& settings,
             permission::admin::Roles roles,
             permission::admin::Keys keys,
             const std::optional<uint32_t> userId = std::nullopt,
@@ -217,10 +217,10 @@ namespace vh::rbac::role {
                 std::move(name),
                 std::move(description),
                 userId,
-                std::move(identities),
+                identities,
                 std::move(vaults),
                 std::move(audits),
-                std::move(settings),
+                settings,
                 std::move(roles),
                 std::move(keys),
                 std::move(vGlobals).value_or(permission::admin::VaultGlobals::NoneIfBound(userId))
@@ -232,10 +232,10 @@ namespace vh::rbac::role {
             std::string name,
             std::string description,
             const std::optional<uint32_t> userId,
-            permission::admin::Identities identities,
+            const permission::admin::Identities& identities,
             permission::admin::Vaults vaults,
             permission::admin::Audits audits,
-            permission::admin::Settings settings,
+            const permission::admin::Settings& settings,
             permission::admin::Roles roles,
             permission::admin::Keys keys,
             permission::admin::VaultGlobals vGlobals
@@ -245,10 +245,10 @@ namespace vh::rbac::role {
             a.description = std::move(description);
             a.user_id = userId;
 
-            a.identities = std::move(identities);
+            a.identities = identities;
             a.vaults = std::move(vaults);
             a.audits = std::move(audits);
-            a.settings = std::move(settings);
+            a.settings = settings;
             a.roles = std::move(roles);
             a.keys = std::move(keys);
             a.vGlobals = std::move(vGlobals);

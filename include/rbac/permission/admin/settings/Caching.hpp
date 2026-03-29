@@ -8,9 +8,10 @@ namespace vh::rbac::permission::admin::settings {
 
 struct Caching final : Base {
     static constexpr const auto* FLAG_CONTEXT = "settings-caching";
+    static constexpr const auto* DESCRIPTION_OBJECT = "caching";
 
     [[nodiscard]] const char* flagPrefix() const override { return FLAG_CONTEXT; }
-    [[nodiscard]] std::string_view descriptionObject() const override { return FLAG_CONTEXT; }
+    [[nodiscard]] std::string_view descriptionObject() const override { return DESCRIPTION_OBJECT; }
     [[nodiscard]] std::string toString(uint8_t indent) const override;
 
     static Caching None() {
@@ -27,8 +28,9 @@ struct Caching final : Base {
     }
 
     static Caching Edit() {
-        auto c = View();
-        c.grant(SettingsPermissions::Edit);
+        Caching c;
+        c.clear();
+        c.grant(SettingsPermissions::All);
         return c;
     }
 };

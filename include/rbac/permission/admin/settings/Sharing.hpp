@@ -8,9 +8,10 @@ namespace vh::rbac::permission::admin::settings {
 
 struct Sharing final : Base {
     static constexpr const auto* FLAG_CONTEXT = "settings-share";
+    static constexpr const auto* DESCRIPTION_OBJECT = "sharing";
 
     [[nodiscard]] const char* flagPrefix() const override { return FLAG_CONTEXT; }
-    [[nodiscard]] std::string_view descriptionObject() const override { return FLAG_CONTEXT; }
+    [[nodiscard]] std::string_view descriptionObject() const override { return DESCRIPTION_OBJECT; }
     [[nodiscard]] std::string toString(uint8_t indent) const override;
 
     static Sharing None() {
@@ -27,8 +28,9 @@ struct Sharing final : Base {
     }
 
     static Sharing Edit() {
-        auto s = View();
-        s.grant(SettingsPermissions::Edit);
+        Sharing s;
+        s.clear();
+        s.grant(SettingsPermissions::All);
         return s;
     }
 };

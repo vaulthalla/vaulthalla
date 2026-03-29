@@ -8,9 +8,10 @@ namespace vh::rbac::permission::admin::settings {
 
 struct Auth final : Base {
     static constexpr const auto* FLAG_CONTEXT = "settings-auth";
+    static constexpr const auto* DESCRIPTION_OBJECT = "auth";
 
     [[nodiscard]] const char* flagPrefix() const override { return FLAG_CONTEXT; }
-    [[nodiscard]] std::string_view descriptionObject() const override { return FLAG_CONTEXT; }
+    [[nodiscard]] std::string_view descriptionObject() const override { return DESCRIPTION_OBJECT; }
     [[nodiscard]] std::string toString(uint8_t indent) const override;
 
     static Auth None() {
@@ -26,8 +27,9 @@ struct Auth final : Base {
     }
 
     static Auth Edit() {
-        auto a = View();
-        a.grant(SettingsPermissions::Edit);
+        Auth a;
+        a.clear();
+        a.grant(SettingsPermissions::All);
         return a;
     }
 };
