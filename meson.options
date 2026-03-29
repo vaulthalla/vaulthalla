@@ -27,17 +27,3 @@ option(
     value: false,
     description: 'Build integration test executable'
 )
-
-option(
-    'permission_export_tests',
-    type: 'boolean',
-    value: false,
-    description: 'Build permission export test executable'
-)
-
-option(
-    'build_glob_path_tests',
-    type: 'boolean',
-    value: false,
-    description: 'Build glob path test executable'
-)

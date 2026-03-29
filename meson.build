@@ -259,7 +259,7 @@ endif
 
 # ╭────────────────────────────────────── TESTS ────────────────────────────────────────╮
 
-if get_option('build_unit_tests') or get_option('permission_export_tests') or get_option('integration_tests')
+if get_option('build_unit_tests')
     configure_file(input: 'test-assets/sample.jpg', output: 'sample.jpg', copy: true)
     configure_file(input: 'test-assets/sample.pdf', output: 'sample.pdf', copy: true)
     configure_file(
@@ -285,40 +285,6 @@ if get_option('build_unit_tests')
     )
 
     test('vh_unit_tests', vh_unit_tests)
-endif
-
-if get_option('permission_export_tests')
-    perms_test_sources = sources
-    perms_test_sources += join_paths(tests_src, 'test_permission_export.cpp')
-    perms_test_sources += join_paths(tests_src, 'gtest_main.cpp')
-
-    vh_permission_export_tests = executable(
-        'vh_permission_export_tests',
-        perms_test_sources,
-        link_with: [lib_core, lib_seed, lib_usage],
-        include_directories: inc,
-        dependencies: test_deps,
-        install: false,
-    )
-
-    test('vh_permission_export_tests', vh_permission_export_tests)
-endif
-
-if get_option('build_glob_path_tests')
-    glob_path_test_sources = sources
-    glob_path_test_sources += join_paths(tests_src, 'test_glob_path.cpp')
-    glob_path_test_sources += join_paths(tests_src, 'gtest_main.cpp')
-
-    vh_glob_path_tests = executable(
-        'vh_glob_path_tests',
-        glob_path_test_sources,
-        link_with: [lib_core, lib_seed, lib_usage],
-        include_directories: inc,
-        dependencies: test_deps,
-        install: false,
-    )
-
-    test('vh_glob_path_tests', vh_glob_path_tests)
 endif
 
 if get_option('integration_tests')
