@@ -148,7 +148,8 @@ export const useWebSocketStore = create<WebSocketStore>()(
       },
 
       sendCommand: async (command, payload) => {
-        let { socket, connected, connect } = get()
+        let { socket, connected } = get()
+        const { connect } = get()
         const token = useAuthStore.getState().token
 
         if (!connected || !socket) {

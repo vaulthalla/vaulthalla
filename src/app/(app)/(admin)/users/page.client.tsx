@@ -25,7 +25,7 @@ const UsersClientPage = () => {
 
   if (loading) return <CircleNotchLoader />
 
-  return users.map(user => <UserCard {...user} />)
+  return users.map(user => <UserCard key={user.id} {...user} />)
 }
 
 export default UsersClientPage

@@ -9,7 +9,7 @@ const APIKeysClientPage = () => {
   if (!apiKeys || apiKeys.length === 0)
     return <p className="text-gray-500">No API keys found. Create one to get started.</p>
 
-  return apiKeys.map(apiKey => <APIKeyCard {...apiKey} />)
+  return apiKeys.map(apiKey => <APIKeyCard key={apiKey.api_key_id} {...apiKey} />)
 }
 
 export default APIKeysClientPage
