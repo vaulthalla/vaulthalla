@@ -1,7 +1,7 @@
 'use client'
 
 import { useForm, SubmitHandler, Path, get } from 'react-hook-form'
-import { motion } from 'framer-motion'
+import * as motion from 'motion/react-client'
 import { JSX, useEffect } from 'react'
 import { Settings } from '@/models/settings'
 import { useSettingsStore } from '@/stores/settingsStore'

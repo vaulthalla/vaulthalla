@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import * as motion from 'motion/react-client'
+import { useForm } from 'react-hook-form'
 import { Button } from '@/components/Button'
 import { Permission } from '@/models/role'
 import { usePermStore } from '@/stores/usePermStore'
@@ -63,13 +64,40 @@ export default function VaultPermissionOverrideForm({
   const [permissionSearch, setPermissionSearch] = useState('')
   const [isPermissionOpen, setIsPermissionOpen] = useState(false)
 
-  const [form, setForm] = useState<PermissionOverrideFormData>({
+  const initialFormValues = useMemo<PermissionOverrideFormData>(() => ({
     id: defaultValues?.id,
     permission_qualified: defaultValues?.permission_qualified ?? '',
     enabled: defaultValues?.enabled ?? true,
     effect: defaultValues?.effect ?? 'allow',
     pattern: defaultValues?.pattern ?? '',
+  }), [
+    defaultValues?.id,
+    defaultValues?.permission_qualified,
+    defaultValues?.enabled,
+    defaultValues?.effect,
+    defaultValues?.pattern,
+  ])
+
+  const {
+    register,
+    handleSubmit,
+    watch,
+    setValue,
+    reset,
+    formState: { errors },
+  } = useForm<PermissionOverrideFormData>({
+    defaultValues: initialFormValues,
+    mode: 'onChange',
   })
+
+  const permissionQualified = watch('permission_qualified')
+  const enabled = watch('enabled')
+  const effect = watch('effect')
+  const isEditing = Boolean(initialFormValues.id)
+
+  useEffect(() => {
+    reset(initialFormValues)
+  }, [initialFormValues, reset])
 
   useEffect(() => {
     let mounted = true
@@ -95,8 +123,8 @@ export default function VaultPermissionOverrideForm({
   const permissionOptions = useMemo(() => vaultFsPermissions.map(formatQualifiedPermissionLabel), [vaultFsPermissions])
 
   const selectedPermission = useMemo(
-    () => permissionOptions.find(option => option.value === form.permission_qualified) ?? null,
-    [permissionOptions, form.permission_qualified],
+    () => permissionOptions.find(option => option.value === permissionQualified) ?? null,
+    [permissionOptions, permissionQualified],
   )
 
   const filteredPermissionOptions = useMemo(() => {
@@ -112,32 +140,20 @@ export default function VaultPermissionOverrideForm({
     )
   }, [permissionOptions, permissionSearch])
 
-  const patternError =
-    form.pattern.trim() && !isLikelyValidGlobPattern(form.pattern) ?
-      'Pattern must be vault-relative and start with /. Example: /docs/** or /finance/*.csv'
-    : null
+  const patternError = errors.pattern?.message as string | undefined
 
-  const canSubmit = !!form.permission_qualified && !patternError
+  const canSubmit = !!permissionQualified && !patternError
 
   const handleReset = () => {
     setPermissionSearch('')
     setIsPermissionOpen(false)
-
-    setForm({
-      id: defaultValues?.id,
-      permission_qualified: defaultValues?.permission_qualified ?? '',
-      enabled: defaultValues?.enabled ?? true,
-      effect: defaultValues?.effect ?? 'allow',
-      pattern: defaultValues?.pattern ?? '',
-    })
+    reset(initialFormValues)
   }
 
-  const handleSubmit = async () => {
-    if (!canSubmit) return
-
+  const onSubmit = async (data: PermissionOverrideFormData) => {
     setIsSubmitting(true)
     try {
-      await onSubmitAction?.({ ...form, pattern: form.pattern.trim() })
+      await onSubmitAction?.({ ...data, pattern: data.pattern.trim() })
     } finally {
       setIsSubmitting(false)
     }
@@ -157,7 +173,7 @@ export default function VaultPermissionOverrideForm({
           <div>
             <div className="mb-2">
               <span className="inline-flex rounded-full border border-cyan-400/20 bg-cyan-500/10 px-2.5 py-1 text-[10px] font-bold tracking-[0.18em] text-cyan-200 uppercase">
-                {form.id ? 'Edit override' : 'Create override'}
+                {isEditing ? 'Edit override' : 'Create override'}
               </span>
             </div>
 
@@ -168,8 +184,8 @@ export default function VaultPermissionOverrideForm({
           <div className="rounded-2xl border border-white/8 bg-black/20 px-4 py-3 text-right">
             <div className="text-[10px] font-bold tracking-[0.18em] text-white/35 uppercase">Effect</div>
             <div className="mt-1 text-lg font-semibold text-white">
-              {form.enabled ?
-                form.effect === 'allow' ?
+              {enabled ?
+                effect === 'allow' ?
                   <span className="text-emerald-300">Allow</span>
                 : <span className="text-red-300">Deny</span>
               : <span className="text-white/40">Disabled</span>}
@@ -177,9 +193,10 @@ export default function VaultPermissionOverrideForm({
           </div>
         </div>
 
-        <div className="grid gap-4 lg:grid-cols-2">
+        <form onSubmit={handleSubmit(onSubmit)} className="grid gap-4 lg:grid-cols-2">
           <div className="space-y-2 lg:col-span-2">
             <label className="block text-sm font-medium text-white">Permission</label>
+            <input type="hidden" {...register('permission_qualified', { required: 'Permission is required' })} />
 
             <div className="relative">
               <input
@@ -200,14 +217,17 @@ export default function VaultPermissionOverrideForm({
                 <div className="absolute z-30 mt-2 max-h-80 w-full overflow-y-auto rounded-2xl border border-white/10 bg-[#0a0a0a] p-2 shadow-2xl">
                   {filteredPermissionOptions.length ?
                     filteredPermissionOptions.map(option => {
-                      const isSelected = option.value === form.permission_qualified
+                      const isSelected = option.value === permissionQualified
 
                       return (
                         <button
                           key={option.value}
                           type="button"
                           onClick={() => {
-                            setForm(prev => ({ ...prev, permission_qualified: option.value }))
+                            setValue('permission_qualified', option.value, {
+                              shouldDirty: true,
+                              shouldValidate: true,
+                            })
                             setPermissionSearch('')
                             setIsPermissionOpen(false)
                           }}
@@ -238,6 +258,9 @@ export default function VaultPermissionOverrideForm({
                 </div>
               )}
             </div>
+            {errors.permission_qualified && (
+              <p className="text-sm text-red-300">{errors.permission_qualified.message}</p>
+            )}
 
             {selectedPermission && (
               <div className="rounded-2xl border border-white/8 bg-black/20 px-4 py-3">
@@ -252,19 +275,23 @@ export default function VaultPermissionOverrideForm({
 
             <button
               type="button"
-              onClick={() => setForm(prev => ({ ...prev, enabled: !prev.enabled }))}
+              onClick={() =>
+                setValue('enabled', !enabled, {
+                  shouldDirty: true,
+                })
+              }
               className={`flex w-full items-center justify-between rounded-2xl border p-3 text-left transition ${
-                form.enabled ? 'border-emerald-400/30 bg-emerald-500/10' : 'border-white/15 bg-black/20'
+                enabled ? 'border-emerald-400/30 bg-emerald-500/10' : 'border-white/15 bg-black/20'
               }`}>
-              <span className="text-white">{form.enabled ? 'Enabled' : 'Disabled'}</span>
+              <span className="text-white">{enabled ? 'Enabled' : 'Disabled'}</span>
 
               <span
                 className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
-                  form.enabled ? 'bg-emerald-400/60' : 'bg-white/15'
+                  enabled ? 'bg-emerald-400/60' : 'bg-white/15'
                 }`}>
                 <span
                   className={`inline-block h-5 w-5 transform rounded-full bg-white transition ${
-                    form.enabled ? 'translate-x-5' : 'translate-x-1'
+                    enabled ? 'translate-x-5' : 'translate-x-1'
                   }`}
                 />
               </span>
@@ -275,8 +302,7 @@ export default function VaultPermissionOverrideForm({
             <label className="block text-sm font-medium text-white">Effect</label>
 
             <select
-              value={form.effect}
-              onChange={e => setForm(prev => ({ ...prev, effect: e.target.value as PermissionOverrideEffect }))}
+              {...register('effect')}
               className="w-full rounded-2xl border border-white/20 bg-black/20 p-3 text-white">
               <option value="allow">Allow</option>
               <option value="deny">Deny</option>
@@ -286,8 +312,11 @@ export default function VaultPermissionOverrideForm({
           <div className="space-y-2 lg:col-span-2">
             <label className="block text-sm font-medium text-white">Path / Pattern</label>
             <input
-              value={form.pattern}
-              onChange={e => setForm(prev => ({ ...prev, pattern: e.target.value }))}
+              {...register('pattern', {
+                validate: value =>
+                  isLikelyValidGlobPattern(value)
+                  || 'Pattern must be vault-relative and start with /. Example: /docs/** or /finance/*.csv',
+              })}
               placeholder="/docs/**"
               className="w-full rounded-2xl border border-white/20 bg-black/20 p-3 text-white placeholder:text-white/35"
             />
@@ -298,8 +327,6 @@ export default function VaultPermissionOverrideForm({
 
             {patternError && <p className="text-sm text-red-300">{patternError}</p>}
           </div>
-        </div>
-
         <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
           {onCancelAction && (
             <Button type="button" onClick={onCancelAction} disabled={isSubmitting}>
@@ -311,14 +338,15 @@ export default function VaultPermissionOverrideForm({
             Reset
           </Button>
 
-          <Button type="button" onClick={handleSubmit} disabled={isSubmitting || !canSubmit}>
+          <Button type="submit" disabled={isSubmitting || !canSubmit}>
             {isSubmitting ?
               'Saving...'
-            : form.id ?
+            : isEditing ?
               'Update Override'
             : 'Create Override'}
           </Button>
         </div>
+        </form>
       </div>
     </motion.div>
   )

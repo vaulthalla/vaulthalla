@@ -8,10 +8,9 @@ import * as motion from 'motion/react-client'
 import { getVaultIcon } from '@/util/icons/vaultIconsMap'
 import { useApiKeyStore } from '@/stores/apiKeyStore'
 
-type VaultHeroProps = {
+export type VaultHeroProps = {
   vault: Vault
   rightSlot?: React.ReactNode
-  // optional: if you have these, the hero becomes worth the width
   usedBytes?: number
   totalBytes?: number
 }
@@ -27,7 +26,7 @@ function pct(used?: number, total?: number) {
   return Math.min(100, Math.max(0, (used / total) * 100))
 }
 
-const VaultHero = ({ vault, rightSlot, usedBytes, totalBytes }: VaultHeroProps) => {
+const VaultHeroClient = ({ vault, rightSlot, usedBytes, totalBytes }: VaultHeroProps) => {
   const [provider, setProvider] = useState<string>('')
 
   useEffect(() => {
@@ -42,7 +41,7 @@ const VaultHero = ({ vault, rightSlot, usedBytes, totalBytes }: VaultHeroProps) 
         if (alive) setProvider('s3')
       }
     }
-    run()
+    void run()
     return () => {
       alive = false
     }
@@ -58,14 +57,12 @@ const VaultHero = ({ vault, rightSlot, usedBytes, totalBytes }: VaultHeroProps) 
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35, ease: 'easeOut' }}
       className="relative w-full overflow-hidden rounded-2xl border border-white/10 bg-zinc-950/60 shadow-[0_20px_60px_-35px_rgba(0,0,0,0.9)] backdrop-blur-md">
-      {/* quieter magic: one soft wash, not three competing suns */}
       <div
         aria-hidden
-        className="bg-[radial-gradient(900px_circle_at_0%_0%,rgba(56,189,248,0.10),transparent_55%), radial-gradient(900px_circle_at_100%_0%,rgba(168,85,247,0.10),transparent_55%)] pointer-events-none absolute inset-0"
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(900px_circle_at_0%_0%,rgba(56,189,248,0.10),transparent_55%), radial-gradient(900px_circle_at_100%_0%,rgba(168,85,247,0.10),transparent_55%)]"
       />
 
       <div className="relative z-10 flex w-full flex-col gap-3 px-5 py-4 md:flex-row md:items-center">
-        {/* LEFT */}
         <div className="flex min-w-0 items-center gap-3">
           <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/5">
             <Icon className="text-primary h-6 w-6 fill-current" />
@@ -74,7 +71,6 @@ const VaultHero = ({ vault, rightSlot, usedBytes, totalBytes }: VaultHeroProps) 
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <h1 className="truncate text-lg font-semibold tracking-tight text-white">{vault.name}</h1>
-              {/* keep status near the name on small screens */}
               <span className="md:hidden">
                 {vault.is_active ?
                   <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-green-400">
@@ -104,7 +100,6 @@ const VaultHero = ({ vault, rightSlot, usedBytes, totalBytes }: VaultHeroProps) 
           </div>
         </div>
 
-        {/* MIDDLE: width-occupying rail (this is the “full width” payoff) */}
         <div className="md:mx-6 md:flex md:flex-1 md:flex-col md:justify-center">
           <div className="hidden md:block">
             <div className="flex items-center justify-between text-[11px] text-white/45">
@@ -116,11 +111,10 @@ const VaultHero = ({ vault, rightSlot, usedBytes, totalBytes }: VaultHeroProps) 
               <div className="h-2 rounded-full bg-white/35" style={{ width: p == null ? '18%' : `${p}%` }} />
             </div>
 
-            <div className="mt-3 h-px w-full bg-gradient-to-r from-transparent via-white/12 to-transparent" />
+            <div className="mt-3 h-px w-full bg-linear-to-r from-transparent via-white/12 to-transparent" />
           </div>
         </div>
 
-        {/* RIGHT */}
         <div className="hidden items-center gap-3 md:flex">
           <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm">
             {vault.is_active ?
@@ -141,4 +135,4 @@ const VaultHero = ({ vault, rightSlot, usedBytes, totalBytes }: VaultHeroProps) 
   )
 }
 
-export default VaultHero
+export default VaultHeroClient

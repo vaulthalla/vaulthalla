@@ -9,4 +9,21 @@ export const vaulthallaQuotes = [
   'TPM-sealed keys. GPG-signed exports. Vaulthalla does not trust blindly.',
   'A sword may protect a kingdom. A vault may protect a legacy. Vaulthalla protects both.',
   'The archive endures.',
+
+  // New drops
+  'What is written must endure. What endures must be protected.',
+  'A system is only as strong as the boundaries it enforces.',
+  'Trust is not granted. It is engineered.',
+  'To store is human. To preserve is divine.',
+  'The cloud forgets. Vaulthalla remembers.',
+  'Not all data is equal. Some must be immortal.',
+  'A file without integrity is already lost.',
+  'Redundancy is survival. Integrity is honor.',
+  'The vault does not ask who you are. Only what you can prove.',
+  'In distributed systems, there is no mercy for the careless.',
+  'Every abstraction leaks. Vaulthalla seals.',
+  'Persistence is not a feature. It is a promise.',
+  'Data is not owned until it can be restored.',
+  'What you cannot verify, you do not control.',
+  'The filesystem is truth. Everything else is translation.',
 ]

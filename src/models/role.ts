@@ -31,6 +31,14 @@ export type VaultRolePayload = {
   vault_id: number
   subject_type?: SubjectType | null
   subject_id?: number | null
+  permission_overrides?: VaultPermissionOverridePayload[]
+}
+
+export type VaultPermissionOverridePayload = {
+  permission_qualified: string
+  enabled: boolean
+  effect: 'allow' | 'deny'
+  pattern: string
 }
 
 export class Permission {
