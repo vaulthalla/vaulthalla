@@ -9,8 +9,8 @@ export interface IUser {
   created_at: string
   last_login: string
   is_active: boolean
-  role: AdminRoleDTO
-  roles: VaultRoleDTO[]
+  admin_role: AdminRoleDTO
+  vault_roles: VaultRoleDTO[]
 }
 
 export class User {
@@ -21,8 +21,8 @@ export class User {
   created_at: string
   last_login: string
   is_active: boolean
-  role: AdminRole
-  roles: VaultRole[]
+  admin_role: AdminRole
+  vault_roles: VaultRole[]
 
   constructor(data: IUser) {
     this.id = data.id
@@ -32,8 +32,8 @@ export class User {
     this.created_at = data.created_at
     this.last_login = data.last_login
     this.is_active = data.is_active
-    this.role = AdminRole.fromData(data.role)
-    this.roles = data.roles.map(role => VaultRole.fromData(role))
+    this.admin_role = AdminRole.fromData(data.admin_role)
+    this.vault_roles = data.vault_roles.map(role => VaultRole.fromData(role))
   }
 
   static fromJSON(data: IUser): User {

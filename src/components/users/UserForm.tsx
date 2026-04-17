@@ -41,7 +41,7 @@ const UserForm = ({ name }: { name?: string }) => {
         .then(fetchedUser => {
           setUser(fetchedUser)
           console.log(fetchedUser)
-          reset({ ...fetchedUser, role: fetchedUser.role.name, password: '' })
+          reset({ ...fetchedUser, role: fetchedUser.admin_role.name, password: '' })
         })
         .catch(err => {
           setError(getErrorMessage(err) || 'Failed to fetch user')

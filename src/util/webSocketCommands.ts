@@ -102,6 +102,8 @@ export interface WebSocketCommandMap {
 
   'roles.vault.list': { payload: null; response: { roles: VaultRoleDTO[] } }
 
+  'roles.vault.list.assigned': { payload: { id: number }; response: { vault: VaultRoleDTO } }
+
   'permission.get': { payload: { id: number }; response: { permission: Permission } }
 
   'permission.get.byName': { payload: { name: string }; response: { permission: Permission } }

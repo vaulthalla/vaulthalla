@@ -7,7 +7,7 @@ import { prettifySnakeCase } from '@/util/prettifySnakeCase'
 import Link from 'next/link'
 
 const UserCard = (user: User) => {
-  const roleName = prettifySnakeCase(user.role.name)
+  const roleName = prettifySnakeCase(user.admin_role.name)
   const Icon = getUserIcon(roleName)
 
   return (

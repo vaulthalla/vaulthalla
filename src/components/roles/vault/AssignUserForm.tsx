@@ -12,14 +12,9 @@ import { useAuthStore } from '@/stores/authStore'
 import { useVaultRoleStore } from '@/stores/useVaultRoleStore'
 import { User } from '@/models/user'
 
-type AssignUserFormProps = {
-  vault: Vault
-}
+type AssignUserFormProps = { vault: Vault }
 
-type AssignUserFormData = {
-  user_id: number
-  role_id: number
-}
+type AssignUserFormData = { user_id: number; role_id: number }
 
 const sectionVariants = { hidden: { opacity: 0, y: 10 }, visible: { opacity: 1, y: 0 } }
 
@@ -46,12 +41,7 @@ export const AssignUserForm = ({ vault }: AssignUserFormProps) => {
     handleSubmit,
     formState: { errors },
     reset,
-  } = useForm<AssignUserFormData>({
-    defaultValues: {
-      user_id: 0,
-      role_id: 0,
-    },
-  })
+  } = useForm<AssignUserFormData>({ defaultValues: { user_id: 0, role_id: 0 } })
 
   const selectedUserId = useWatch({ control, name: 'user_id' }) ?? 0
   const selectedRoleId = useWatch({ control, name: 'role_id' }) ?? 0
@@ -95,7 +85,8 @@ export const AssignUserForm = ({ vault }: AssignUserFormProps) => {
     const query = userSearch.trim().toLowerCase()
     if (!query) return users
     return users.filter(
-      user => user.name.toLowerCase().includes(query) || user.email.toLowerCase().includes(query) || `${user.id}` === query,
+      user =>
+        user.name.toLowerCase().includes(query) || user.email.toLowerCase().includes(query) || `${user.id}` === query,
     )
   }, [users, userSearch])
 
@@ -103,7 +94,10 @@ export const AssignUserForm = ({ vault }: AssignUserFormProps) => {
     const query = roleSearch.trim().toLowerCase()
     if (!query) return vaultScopedRoles
     return vaultScopedRoles.filter(
-      role => role.name.toLowerCase().includes(query) || role.description.toLowerCase().includes(query) || `${role.id}` === query,
+      role =>
+        role.name.toLowerCase().includes(query)
+        || role.description.toLowerCase().includes(query)
+        || `${role.id}` === query,
     )
   }, [vaultScopedRoles, roleSearch])
 
@@ -178,7 +172,12 @@ export const AssignUserForm = ({ vault }: AssignUserFormProps) => {
               <label className="block text-sm font-medium text-white">User</label>
               <div className="relative">
                 <input
-                  value={isUserOpen ? userSearch : (selectedUser ? `${selectedUser.name} (${selectedUser.email})` : '')}
+                  value={
+                    isUserOpen ? userSearch
+                    : selectedUser ?
+                      `${selectedUser.name} (${selectedUser.email})`
+                    : ''
+                  }
                   onFocus={() => {
                     setIsUserOpen(true)
                     setUserSearch('')
@@ -225,8 +224,7 @@ export const AssignUserForm = ({ vault }: AssignUserFormProps) => {
               <div className="relative">
                 <input
                   value={
-                    isRoleOpen ?
-                      roleSearch
+                    isRoleOpen ? roleSearch
                     : selectedRole ?
                       `${selectedRole.name} (${selectedRole.permissions.filter(permission => permission.value).length} enabled)`
                     : ''
@@ -271,9 +269,7 @@ export const AssignUserForm = ({ vault }: AssignUserFormProps) => {
                           </button>
                         )
                       })
-                    : <div className="px-3 py-4 text-sm text-white/50">
-                        No vault roles found for this vault.
-                      </div>}
+                    : <div className="px-3 py-4 text-sm text-white/50">No vault roles found for this vault.</div>}
                   </div>
                 )}
               </div>
