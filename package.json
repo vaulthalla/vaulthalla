@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
-    "build": "next build",
+    "build": "next build && next export -output dist",
     "start": "next start",
     "lint": "eslint src --ext .ts,.tsx,.js,.jsx"
   },
@@ -39,5 +39,6 @@
     "prettier-plugin-tailwindcss": "^0.6.14",
     "tailwindcss": "^4.2.2",
     "typescript": "^5.9.3"
-  }
+  },
+  "packageManager": "pnpm@10.30.3"
 }

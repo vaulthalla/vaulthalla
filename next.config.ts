@@ -3,6 +3,7 @@ import type { NextConfig } from 'next'
 const isTurbo = process.env.NEXT_TURBO === 'true'
 
 const nextConfig: NextConfig = {
+  output: 'standalone',
   allowedDevOrigins: ['vh.home.arpa'],
   images: { localPatterns: [{ pathname: '/preview**' }] },
   turbopack: {

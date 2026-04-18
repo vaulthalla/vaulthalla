@@ -1,0 +1,12 @@
+[Unit]
+Description=Vaulthalla Web
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/node /usr/share/vaulthalla-web/server.js
+Restart=always
+User=www-data
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target
