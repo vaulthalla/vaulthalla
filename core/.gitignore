@@ -1,5 +1,5 @@
 # Dev
-.idea
+../.idea
 ~/*
 .env
 /config.yaml
