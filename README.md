@@ -1,5 +1,9 @@
 # ⚡️ Vaulthalla | The Final Cloud ⚡️
 
+<a href="https://github.com/vaulthalla/vaulthalla/actions"><img alt="GitHub Workflow Status" src="https://img.shields.io/github/actions/workflow/status/vaulthalla/vaulthalla/build_and_test.yml"></a>
+&nbsp;
+<a href="https://github.com/vaulthalla/vaulthalla?tab=AGPL-3.0-1-ov-file"><img alt="license" src="https://img.shields.io/github/license/vaulthalla/vaulthalla" /></a>
+
 **Military-grade encryption. Lightning-fast performance.**  
 **Your files, your terms.**
 
