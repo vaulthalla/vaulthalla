@@ -1,39 +1,49 @@
 #include "runtime/Deps.hpp"
+
+#include "UsageManager.hpp"
 #include "auth/Manager.hpp"
+#include "crypto/secrets/Manager.hpp"
+#include "fs/cache/Registry.hpp"
+#include "stats/model/CacheStats.hpp"
 #include "storage/Manager.hpp"
 #include "sync/Controller.hpp"
-#include "fs/cache/Registry.hpp"
 #include "vault/APIKeyManager.hpp"
-#include "log/Registry.hpp"
-#include "stats/model/CacheStats.hpp"
-#include "UsageManager.hpp"
-#include "crypto/secrets/Manager.hpp"
 
-using namespace vh::runtime;
+namespace vh::runtime {
 
-Deps& Deps::get() {
-    static Deps instance_;
-    return instance_;
-}
-
-void Deps::init() {
-    if (const auto& registry = get();
-        registry.storageManager || registry.apiKeyManager || registry.authManager || registry.sessionManager
-        || registry.secretsManager || registry.fsCache || registry.syncController || registry.shellUsageManager) {
-        return;
+    Deps& Deps::get() {
+        static Deps instance;
+        return instance;
     }
 
-    auto& ctx = get();
-    ctx.storageManager = std::make_shared<storage::Manager>();
-    ctx.apiKeyManager = std::make_shared<vault::APIKeyManager>();
-    ctx.authManager = std::make_shared<auth::Manager>();
-    ctx.sessionManager = std::make_shared<auth::session::Manager>();
-    ctx.secretsManager = std::make_shared<crypto::secrets::Manager>();
-    ctx.fsCache = std::make_shared<fs::cache::Registry>();
-    ctx.shellUsageManager = std::make_shared<protocols::shell::UsageManager>();
-    ctx.httpCacheStats = std::make_shared<stats::model::CacheStats>();
-}
+    bool Deps::initialized() const {
+        return storageManager
+            || apiKeyManager
+            || authManager
+            || sessionManager
+            || secretsManager
+            || syncController
+            || fsCache
+            || shellUsageManager
+            || httpCacheStats;
+    }
 
-void Deps::setSyncController(const std::shared_ptr<sync::Controller>& syncController) {
-    get().syncController = syncController;
+    void Deps::init() {
+        auto& deps = get();
+        if (deps.initialized()) return;
+
+        deps.storageManager = std::make_shared<storage::Manager>();
+        deps.apiKeyManager = std::make_shared<vault::APIKeyManager>();
+        deps.authManager = std::make_shared<auth::Manager>();
+        deps.sessionManager = std::make_shared<auth::session::Manager>();
+        deps.secretsManager = std::make_shared<crypto::secrets::Manager>();
+        deps.fsCache = std::make_shared<fs::cache::Registry>();
+        deps.shellUsageManager = std::make_shared<protocols::shell::UsageManager>();
+        deps.httpCacheStats = std::make_shared<stats::model::CacheStats>();
+    }
+
+    void Deps::setSyncController(std::shared_ptr<sync::Controller> controller) {
+        get().syncController = std::move(controller);
+    }
+
 }

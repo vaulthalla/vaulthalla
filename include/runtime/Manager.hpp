@@ -2,52 +2,55 @@
 
 #include "log/Registry.hpp"
 
+#include <atomic>
 #include <csignal>
-#include <cstdlib>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
-#include <chrono>
-#include <atomic>
+#include <vector>
 
 namespace vh::protocols {
 class ProtocolService;
-namespace shell { class Router; class Server; }
+namespace shell { class Server; }
 namespace ws { class ConnectionLifecycleManager; }
 }
 
 namespace vh::concurrency { class AsyncService; }
-namespace vh::fuse { class Service; }
-namespace vh::sync { class Controller; }
-namespace vh::log { class RotationService; }
 namespace vh::db { class Janitor; }
+namespace vh::fuse { class Service; }
+namespace vh::log { class RotationService; }
+namespace vh::sync { class Controller; }
 
 namespace vh::runtime {
 
-class Manager : public std::enable_shared_from_this<Manager> {
+class Manager {
 public:
     static Manager& instance();
 
     void startAll();
     void stopAll(int signal = SIGTERM);
     void restartService(const std::string& name);
+    void startTestServices();
 
     [[nodiscard]] bool allRunning() const;
+    [[nodiscard]] std::shared_ptr<sync::Controller> getSyncController() const { return syncController; }
 
-    std::shared_ptr<sync::Controller> getSyncController() const { return syncController; }
-
-    // prevent accidental copies
     Manager(const Manager&) = delete;
     Manager& operator=(const Manager&) = delete;
 
-    void startTestServices();
-
 private:
+    struct ServiceEntry {
+        std::string name;
+        std::shared_ptr<concurrency::AsyncService> service;
+    };
+
     Manager();
 
-    void tryStart(const std::string& name, const std::shared_ptr<concurrency::AsyncService>& svc);
-    static void stopService(const std::string& name, const std::shared_ptr<concurrency::AsyncService>& svc, int signal);
+    [[nodiscard]] std::vector<ServiceEntry> serviceEntries() const;
+    void tryStart(const ServiceEntry& entry);
+    static void stopService(const ServiceEntry& entry, int signal);
 
     void startWatchdog();
     void stopWatchdog();
@@ -64,7 +67,6 @@ private:
     mutable std::mutex mutex_;
     std::map<std::string, std::shared_ptr<concurrency::AsyncService>> services_;
 
-    // Watchdog state
     std::thread watchdogThread;
     std::atomic<bool> watchdogRunning{false};
 };

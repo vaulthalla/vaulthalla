@@ -1,18 +1,26 @@
 #include "runtime/Manager.hpp"
+
 #include "concurrency/AsyncService.hpp"
-#include "sync/Controller.hpp"
+#include "db/Janitor.hpp"
 #include "fuse/Service.hpp"
+#include "log/Registry.hpp"
+#include "log/RotationService.hpp"
 #include "protocols/ProtocolService.hpp"
 #include "protocols/shell/Server.hpp"
 #include "protocols/ws/ConnectionLifecycleManager.hpp"
-#include "log/RotationService.hpp"
-#include "log/Registry.hpp"
 #include "runtime/Deps.hpp"
-#include "db/Janitor.hpp"
+#include "sync/Controller.hpp"
 
+#include <chrono>
+#include <cstdlib>
 #include <paths.h>
 
 namespace vh::runtime {
+
+namespace {
+constexpr auto kRestartDelay = std::chrono::milliseconds(500);
+constexpr auto kWatchdogInterval = std::chrono::seconds(2);
+}
 
 Manager& Manager::instance() {
     static Manager instance;
@@ -25,8 +33,8 @@ Manager::Manager()
       protocolService(std::make_shared<protocols::ProtocolService>()),
       connectionLifecycleManager(std::make_shared<protocols::ws::ConnectionLifecycleManager>()),
       logRotationService(std::make_shared<log::RotationService>()),
-      dbSweeperService(std::make_shared<db::Janitor>())
-{
+      dbSweeperService(std::make_shared<db::Janitor>()) {
+
     services_["SyncController"] = syncController;
     services_["FUSE"] = fuseService;
     services_["ProtocolService"] = protocolService;
@@ -40,121 +48,176 @@ Manager::Manager()
     }
 }
 
+std::vector<Manager::ServiceEntry> Manager::serviceEntries() const {
+    std::vector<ServiceEntry> entries;
+    entries.reserve(services_.size());
+
+    for (const auto& [name, service] : services_)
+        entries.push_back({name, service});
+
+    return entries;
+}
+
 void Manager::startAll() {
     log::Registry::runtime()->debug("[ServiceManager] Starting all services...");
-    std::lock_guard lock(mutex_);
-    tryStart("ProtocolService", protocolService);
-    tryStart("FUSE", fuseService);
-    runtime::Deps::get().setFuseSession(fuseService->session());
-    tryStart("SyncController", syncController);
-    tryStart("ShellServer", shellServer);
-    tryStart("ConnectionLifecycleManager", connectionLifecycleManager);
-    tryStart("LogRotationService", logRotationService);
-    tryStart("DBJanitor", dbSweeperService);
-    log::Registry::runtime()->debug("[ServiceManager] All services started.");
+
+    const auto entries = [&] {
+        std::scoped_lock lock(mutex_);
+        return serviceEntries();
+    }();
+
+    for (const auto& entry : entries) {
+        tryStart(entry);
+        if (entry.name == "FUSE" && fuseService)
+            Deps::get().setFuseSession(fuseService->session());
+    }
 
     startWatchdog();
+    log::Registry::runtime()->debug("[ServiceManager] All services started.");
 }
 
 void Manager::startTestServices() {
-    std::scoped_lock lock(mutex_);
-    tryStart("FUSE", fuseService);
-    tryStart("ShellServer", shellServer);
-}
+    const auto entries = [&] {
+        std::scoped_lock lock(mutex_);
+        std::vector<ServiceEntry> selected;
 
+        if (fuseService) selected.push_back({"FUSE", fuseService});
+        if (shellServer) selected.push_back({"ShellServer", shellServer});
+
+        return selected;
+    }();
+
+    for (const auto& entry : entries)
+        tryStart(entry);
+}
 
 void Manager::stopAll(const int signal) {
     log::Registry::runtime()->debug("[ServiceManager] Stopping all services...");
-    {
-        std::lock_guard lock(mutex_);
-        stopService("SyncController", syncController, signal);
-        stopService("FUSE", fuseService, signal);
-        stopService("ProtocolService", protocolService, signal);
-        stopService("ShellServer", shellServer, signal);
-        stopService("ConnectionLifecycleManager", connectionLifecycleManager, signal);
-        stopService("LogRotationService", logRotationService, signal);
-        stopService("DBJanitor", dbSweeperService, signal);
-    }
 
     stopWatchdog();
+
+    const auto entries = [&] {
+        std::scoped_lock lock(mutex_);
+        return serviceEntries();
+    }();
+
+    for (const auto& entry : entries)
+        stopService(entry, signal);
 
     log::Registry::runtime()->debug("[ServiceManager] All services stopped.");
 }
 
 void Manager::restartService(const std::string& name) {
-    std::lock_guard lock(mutex_);
+    std::shared_ptr<concurrency::AsyncService> service;
 
-    const auto svc = services_.at(name);
-    if (!svc) return;
+    {
+        std::scoped_lock lock(mutex_);
+        const auto it = services_.find(name);
+        if (it == services_.end() || !it->second) return;
+        service = it->second;
+    }
 
     log::Registry::runtime()->warn("[ServiceManager] Restarting service: {}", name);
-    stopService(name, svc, SIGTERM);
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-    tryStart(name, svc);
+
+    stopService({name, service}, SIGTERM);
+    std::this_thread::sleep_for(kRestartDelay);
+    tryStart({name, service});
+
+    if (name == "FUSE" && fuseService)
+        Deps::get().setFuseSession(fuseService->session());
 }
 
 bool Manager::allRunning() const {
-    return protocolService->isRunning() && fuseService->isRunning() &&
-        syncController->isRunning() && shellServer->isRunning() && connectionLifecycleManager->isRunning() &&
-            logRotationService->isRunning() && dbSweeperService->isRunning();
+    const auto entries = [&] {
+        std::scoped_lock lock(mutex_);
+        return serviceEntries();
+    }();
+
+    for (const auto& entry : entries)
+        if (!entry.service || !entry.service->isRunning())
+            return false;
+
+    return true;
 }
 
-void Manager::tryStart(const std::string& name, const std::shared_ptr<concurrency::AsyncService>& svc) {
-    if (!svc) return;
-    log::Registry::runtime()->debug("[ServiceManager] Starting service: {}", name);
+void Manager::tryStart(const ServiceEntry& entry) {
+    if (!entry.service) return;
+
+    log::Registry::runtime()->debug("[ServiceManager] Starting service: {}", entry.name);
+
     try {
-        svc->start();
+        entry.service->start();
     } catch (const std::exception& e) {
-        log::Registry::runtime()->error("[ServiceManager] Failed to start {}: {}", name, e.what());
+        log::Registry::runtime()->error(
+            "[ServiceManager] Failed to start {}: {}",
+            entry.name,
+            e.what()
+        );
         hardFail();
     }
 }
 
-void Manager::stopService(const std::string& name, const std::shared_ptr<concurrency::AsyncService>& svc, int signal) {
-    if (!svc || !svc->isRunning()) return;
+void Manager::stopService(const ServiceEntry& entry, const int signal) {
+    if (!entry.service || !entry.service->isRunning()) return;
 
-    log::Registry::runtime()->debug("[ServiceManager] Stopping service: {}", name);
+    log::Registry::runtime()->debug("[ServiceManager] Stopping service: {}", entry.name);
+
     try {
-        svc->stop();
+        entry.service->stop();
     } catch (...) {
-        log::Registry::runtime()->error("[ServiceManager] Failed to stop {} gracefully, sending signal {}", name, signal);
-        std::raise(SIGKILL); // Kill whole process group
+        log::Registry::runtime()->error(
+            "[ServiceManager] Failed to stop {} gracefully, escalating with signal {}.",
+            entry.name,
+            signal
+        );
+        std::raise(signal);
     }
 }
 
 void Manager::startWatchdog() {
-    if (watchdogRunning.exchange(true)) return; // already running
+    if (watchdogRunning.exchange(true)) return;
+
     watchdogThread = std::thread([this]() {
         log::Registry::runtime()->info("[ServiceManager] Watchdog started.");
-        while (watchdogRunning) {
-            {
-                std::lock_guard lock(mutex_);
-                for (auto& [name, svc] : services_) {
-                    if (svc && !svc->isRunning()) {
-                        log::Registry::runtime()->warn("[Watchdog] {} is down, restarting...", name);
-                        if (name == "FUSE") system(fmt::format("fusermount3 -u {} > /dev/null 2>&1 || fusermount -u {} > /dev/null 2>&1",
-                   paths::getMountPath().string(), paths::getMountPath().string()).c_str());
 
-                        restartService(name);
-                    }
-                }
+        while (watchdogRunning) {
+            std::vector<std::string> downServices;
+
+            {
+                std::scoped_lock lock(mutex_);
+                for (const auto& [name, service] : services_)
+                    if (service && !service->isRunning())
+                        downServices.push_back(name);
             }
-            std::this_thread::sleep_for(std::chrono::seconds(2));
+
+            for (const auto& name : downServices) {
+                log::Registry::runtime()->warn("[Watchdog] {} is down, restarting...", name);
+
+                if (name == "FUSE")
+                    system(fmt::format(
+                        "fusermount3 -u {} > /dev/null 2>&1 || fusermount -u {} > /dev/null 2>&1",
+                        paths::getMountPath().string(),
+                        paths::getMountPath().string()
+                    ).c_str());
+
+                restartService(name);
+            }
+
+            std::this_thread::sleep_for(kWatchdogInterval);
         }
+
         log::Registry::runtime()->info("[ServiceManager] Watchdog stopped.");
     });
 }
 
 void Manager::stopWatchdog() {
     if (!watchdogRunning.exchange(false)) return;
-    if (watchdogThread.joinable())
-        watchdogThread.join();
+    if (watchdogThread.joinable()) watchdogThread.join();
 }
 
 [[noreturn]] void Manager::hardFail() {
     log::Registry::runtime()->error("[ServiceManager] Critical failure, cannot continue.");
     stopAll(SIGTERM);
-    log::Registry::runtime()->error("[ServiceManager] Exiting with failure status.");
     std::_Exit(EXIT_FAILURE);
 }
 
