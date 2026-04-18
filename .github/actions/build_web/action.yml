@@ -4,6 +4,27 @@ description: 'Builds the web frontend.'
 runs:
   using: "composite"
   steps:
+    - name: Install private assets
+      shell: bash
+      run: |
+        ICON_SRC="$HOME/vaulthalla-web-icons"
+        ICON_DST="${{ github.workspace }}/web/public/icons"
+
+        if [[ ! -d "$ICON_SRC" ]]; then
+          echo "❌ Missing private icon directory: $ICON_SRC"
+          exit 1
+        fi
+
+        mkdir -p "$ICON_DST"
+        rsync -a --delete "$ICON_SRC/" "$ICON_DST/"
+
+        echo "✅ Icons synced"
+
+    - name: Install dependencies
+      shell: bash
+      working-directory: ${{ github.workspace }}/web
+      run: pnpm install --frozen-lockfile
+
     - name: Build web
       shell: bash
       working-directory: ${{ github.workspace }}/web
