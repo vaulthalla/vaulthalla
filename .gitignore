@@ -12,6 +12,7 @@ enable_dev_mode
 # Deployment Artifacts
 /deploy/vaulthalla.env
 /deploy/hash_password
+/deploy/bashrc
 
 # Core build
 /core/build/

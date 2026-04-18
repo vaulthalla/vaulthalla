@@ -52,8 +52,9 @@ done
 "$ROOT_DIR/bin/tests/install_dirs.sh"
 "$ROOT_DIR/bin/tests/install_db.sh"
 
-CORE_ARGS=()
-[[ "$CLEAN_BUILD" == true ]] && CORE_ARGS+=("--clean")
-[[ "$RUN_TEST" == true ]] && CORE_ARGS+=("--run")
-
-"$CORE_DIR/bin/tests/install.sh" "${CORE_ARGS[@]}"
+if [[ "$RUN_TEST" == true ]]; then
+  CORE_ARGS=()
+  [[ "$CLEAN_BUILD" == true ]] && CORE_ARGS+=("--clean")
+  [[ "$RUN_TEST" == true ]] && CORE_ARGS+=("--run")
+  "$CORE_DIR/bin/tests/install.sh" "${CORE_ARGS[@]}"
+fi
