@@ -1,18 +1,20 @@
 # Dev
-../.idea
+.idea
 ~/*
 .env
-/config.yaml
+/core/config.yaml
 enable_dev_mode
-/deploy/vaulthalla.env
 
-# Server
-/build/
+# Deployment Artifacts
+/deploy/vaulthalla.env
 /deploy/psql/hash_password
 
+# Server
+/core/build/
+
 # Production
-/dist/
-.release_notes
+/*/dist/
+*/.release_notes
 
 # Debian
 /debian/**/*debhelper*
