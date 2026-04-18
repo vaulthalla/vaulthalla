@@ -1,7 +1,6 @@
 project('vaulthalla', 'cpp',
         version: '0.28.0',
         license: 'AGPL-3.0-or-later',
-        license_files: ['LICENSE', 'debian/copyright'],
         default_options: [
             'warning_level=3',
             'werror=false',
@@ -39,10 +38,11 @@ vh_version_header = configure_file(
 # ╭──────────────────────────────── PATH HEADER ─────────────────────────────────╮
 
 source_root = meson.project_source_root()
+parent = join_paths(source_root, '..')
 config_dir = join_paths(get_option('sysconfdir'), meson.project_name())
 log_dir = join_paths(get_option('localstatedir'), 'log', meson.project_name())
 state_dir = join_paths(get_option('localstatedir'), 'lib', meson.project_name())
-runtime_dir = join_paths(get_option('localstatedir'), 'run', meson.project_name())
+runtime_dir = join_paths('/run', meson.project_name())
 data_dir = join_paths(get_option('prefix'), get_option('datadir'), meson.project_name())
 psql_dir = join_paths(data_dir, 'psql')
 
@@ -54,8 +54,8 @@ conf.set_quoted('VH_BACKING_PATH', state_dir)
 conf.set_quoted('VH_RUNTIME_PATH', runtime_dir)
 conf.set_quoted('VH_CACHE_PATH', '/.cache')
 conf.set_quoted('VH_PSQL_SCHEMAS_PATH', psql_dir)
-conf.set_quoted('VH_PSQL_TEST_SCHEMAS_PATH', join_paths(source_root, 'deploy/psql'))
-conf.set_quoted('VH_TEST_ENV_PATH', join_paths(source_root, 'deploy/vaulthalla.env'))
+conf.set_quoted('VH_PSQL_TEST_SCHEMAS_PATH', join_paths(parent, 'deploy/psql'))
+conf.set_quoted('VH_TEST_ENV_PATH', join_paths(parent, 'deploy/vaulthalla.env'))
 
 vh_paths_header = configure_file(
     input: 'deploy/path/paths.h.in',
@@ -197,62 +197,6 @@ if get_option('manpage')
                          command: [pandoc, '-s', '-t', 'man', '@INPUT@', '-o', '@OUTPUT@'],
                          install: true,
                          install_dir: get_option('mandir') / 'man1'
-    )
-endif
-
-
-# ╭─────────────────────────────────── INSTALLATION ───────────────────────────────────╮
-
-# install config.yaml regardless for CI test integration
-if fs.exists('config.yaml')
-    install_data('config.yaml', install_dir: config_dir)
-else
-    install_data('deploy/config/config.yaml', install_dir: config_dir)
-endif
-
-if get_option('install_data')
-    license_dir = join_paths(get_option('prefix'), get_option('datadir'), 'doc', meson.project_name())
-    install_data('LICENSE', install_dir: license_dir)
-    install_data('debian/copyright', install_dir: license_dir, rename: 'copyright')
-
-    install_emptydir(runtime_dir, install_mode: ['rwxr-x---', 'vaulthalla', 'vaulthalla'])
-    install_emptydir(state_dir, install_mode: ['rwx------', 'vaulthalla', 'vaulthalla'])
-    install_emptydir(log_dir, install_mode: ['rwxr-x---', 'vaulthalla', 'vaulthalla'])
-    install_emptydir(join_paths('/mnt', meson.project_name()), install_mode: ['rwxr-xr-x', 'vaulthalla', 'vaulthalla'])
-
-    install_dir = join_paths(get_option('prefix'), get_option('bindir'))
-    install_symlink('vaulthalla', install_dir: install_dir, pointing_to: 'vaulthalla-cli')
-    install_symlink('vh', install_dir: install_dir, pointing_to: 'vaulthalla-cli')
-
-    if fs.exists('deploy/vaulthalla.env')
-        install_data('deploy/vaulthalla.env', install_dir: config_dir)
-    endif
-
-    install_data('deploy/config/config_template.yaml.in', install_dir: config_dir)
-
-    install_data('deploy/systemd/vaulthalla-cli.socket', install_dir: get_option('systemd_system_unit_dir'))
-
-    install_data('debian/tmpfiles.d/vaulthalla.conf',
-                 install_dir: join_paths(get_option('prefix'), get_option('libdir'), 'tmpfiles.d'))
-
-    install_data('debian/vaulthalla.udev',
-                 install_dir: join_paths(get_option('libdir'), 'udev', 'rules.d'),
-                 rename: '60-vaulthalla-tpm.rules')
-
-    install_subdir('deploy/psql', install_dir: data_dir)
-
-    configure_file(
-        input: 'deploy/systemd/vaulthalla.service.in',
-        output: 'vaulthalla.service',
-        configuration: { 'BINDIR': install_dir },
-        install_dir: get_option('systemd_system_unit_dir')
-    )
-
-    configure_file(
-        input: 'deploy/systemd/vaulthalla-cli.service.in',
-        output: 'vaulthalla-cli.service',
-        configuration: { 'BINDIR': install_dir },
-        install_dir: get_option('systemd_system_unit_dir')
     )
 endif
 

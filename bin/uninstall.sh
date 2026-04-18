@@ -1,42 +1,96 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-source ./bin/lib/dev_mode.sh
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+CORE_DIR="$ROOT_DIR/core"
+
+source "$ROOT_DIR/bin/lib/dev_mode.sh"
 
 echo "🗡️  Initiating Vaulthalla uninstallation sequence..."
 
 vh_assert_dev_mode_consistency
 
 DEV_MODE=false
-if vh_is_dev_mode; then
-    DEV_MODE=true
-fi
+vh_is_dev_mode && DEV_MODE=true
 
 echo "🔍 Build mode: ${VH_BUILD_MODE:-unset}"
 echo "🔍 Dev mode active: $DEV_MODE"
 
-# === Make sure FUSE is fully unmounted ===
-./bin/teardown/unmount_fuse.sh
+REMOVE_DB=false
+REMOVE_USERS=false
+PURGE_DEPS=false
 
-# === 1) Stop and disable systemd service (if exists) ===
-./bin/teardown/uninstall_systemd.sh
+if [[ "$DEV_MODE" == true ]]; then
+  REMOVE_DB=true
+  REMOVE_USERS=true
+fi
 
-# === 2) Remove binaries ===
-./bin/teardown/uninstall_binaries.sh
+usage() {
+  cat <<EOF
+Usage: $0 [options]
 
-# === 3) Remove runtime and config dirs ===
-./bin/teardown/uninstall_dirs.sh
+Options:
+  --remove-db        Drop PostgreSQL database and user
+  --remove-users     Remove system user/group
+  --purge-deps       Uninstall apt dependencies installed for Vaulthalla
+  -h, --help         Show this help
+EOF
+}
 
-# === 4) Remove system user ===
-./bin/teardown/uninstall_users.sh
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --remove-db)
+      REMOVE_DB=true
+      shift
+      ;;
+    --remove-users)
+      REMOVE_USERS=true
+      shift
+      ;;
+    --purge-deps)
+      PURGE_DEPS=true
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1"
+      usage
+      exit 1
+      ;;
+  esac
+done
 
-# === 5) Drop PostgreSQL DB and user ===
-./bin/teardown/uninstall_db.sh
+# 1) Make sure FUSE is fully unmounted
+"$CORE_DIR/bin/teardown/unmount_fuse.sh"
 
-# === 6) Uninstall Deps ===
-./bin/teardown/uninstall_deps.sh
+# 2) Stop and remove systemd services
+"$ROOT_DIR/bin/teardown/uninstall_systemd.sh"
 
-# === Done ===
+# 3) Remove installed binaries/artifacts
+"$ROOT_DIR/bin/teardown/uninstall_binaries.sh"
+
+# 4) Remove runtime/config dirs
+"$ROOT_DIR/bin/teardown/uninstall_dirs.sh"
+
+# 5) Optionally remove DB
+if [[ "$REMOVE_DB" == true ]]; then
+  "$ROOT_DIR/bin/teardown/uninstall_db.sh"
+fi
+
+# 6) Optionally remove system user/group
+if [[ "$REMOVE_USERS" == true ]]; then
+  "$ROOT_DIR/bin/teardown/uninstall_users.sh"
+fi
+
+# 7) Optionally purge dependencies
+if [[ "$PURGE_DEPS" == true ]]; then
+  "$ROOT_DIR/bin/teardown/uninstall_deps.sh"
+fi
+
 echo
 echo "✅ Vaulthalla has been uninstalled."
 echo "🧙‍♂️ If this was a test install, may your next deployment rise stronger from these ashes."

@@ -1,0 +1,23 @@
+name: 'Setup Web Toolchain'
+description: 'Sets up Node.js and installs web dependencies.'
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        package_json_file: web/package.json
+        run_install: false
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version-file: web/.nvmrc
+        cache: pnpm
+        cache-dependency-path: web/pnpm-lock.yaml
+
+    - name: Install web dependencies
+      shell: bash
+      working-directory: ${{ github.workspace }}/web
+      run: pnpm install --frozen-lockfile

@@ -1,4 +1,4 @@
-name: C++ CI Build
+name: Vaulthalla CI Build
 on:
   pull_request:
     branches:
@@ -18,3 +18,5 @@ jobs:
       - uses: ./.github/actions/runner
         with:
           test: 'true'
+          build_web: 'true'
+          test_web: 'true'

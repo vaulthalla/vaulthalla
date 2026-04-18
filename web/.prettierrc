@@ -1,0 +1,16 @@
+{
+  "printWidth": 120,
+  "tabWidth": 2,
+  "semi": false,
+  "singleQuote": true,
+  "trailingComma": "all",
+  "arrowParens": "avoid",
+  "objectWrap": "collapse",
+  "bracketSameLine": true,
+  "bracketSpacing": true,
+  "experimentalTernaries": true,
+  "experimentalOperatorPosition": "start",
+  "proseWrap": "never",
+  "htmlWhitespaceSensitivity": "ignore",
+  "plugins": ["prettier-plugin-tailwindcss"]
+}

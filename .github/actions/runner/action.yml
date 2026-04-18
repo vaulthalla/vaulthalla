@@ -10,6 +10,14 @@ inputs:
     description: Run the test step
     default: 'false'
     required: false
+  build_web:
+    description: Run the web build step
+    default: 'false'
+    required: false
+  test_web:
+    description: Run the web test step
+    default: 'false'
+    required: false
   package:
     description: Run the package step
     default: 'false'
@@ -31,6 +39,18 @@ runs:
     - name: Test
       if: ${{ inputs.test == 'true' }}
       uses: ./.github/actions/test
+
+    - name: Setup Web
+      if: ${{ inputs.build_web == 'true' || inputs.test_web == 'true' }}
+      uses: ./.github/actions/setup_web
+
+    - name: Build Web
+      if: ${{ inputs.build_web == 'true' }}
+      uses: ./.github/actions/build_web
+
+    - name: Test Web
+      if: ${{ inputs.test_web == 'true' }}
+      uses: ./.github/actions/test_web
 
     - name: Package
       if: ${{ inputs.package == 'true' || inputs.release == 'true' }}

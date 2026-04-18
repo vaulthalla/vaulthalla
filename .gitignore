@@ -1,21 +1,77 @@
+# ═══════════════════════════════════════════════════════
+# 🧠 VAULTHALLA GLOBAL
+# ═══════════════════════════════════════════════════════
+
 # Dev
-.idea
+/**/.idea
 ~/*
 .env
 /config.yaml
 enable_dev_mode
+
+# Deployment Artifacts
 /deploy/vaulthalla.env
+/deploy/hash_password
+/deploy/bashrc
 
-# Server
-/build/
-/deploy/psql/hash_password
+# Core build (also cover root-level build artifacts)
+/build
+/core/build/
 
-# Production
-/dist/
-.release_notes
+# Production artifacts (multi-project)
+*/dist/
+*/.release_notes
 
-# Debian
+# macOS / misc
+.DS_Store
+*.pem
+
+# Debug logs (global)
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# ═══════════════════════════════════════════════════════
+# 📦 DEBIAN PACKAGING
+# ═══════════════════════════════════════════════════════
+
 /debian/**/*debhelper*
 /debian/vaulthalla-server
 /debian/vaulthalla.substvars
 /debian/files
+
+# ═══════════════════════════════════════════════════════
+# 🌐 WEB (scoped to /web)
+# ═══════════════════════════════════════════════════════
+
+# dependencies
+/web/node_modules/
+/web/.pnp
+/web/.pnp.*
+/web/.yarn/*
+!/web/.yarn/patches
+!/web/.yarn/plugins
+!/web/.yarn/releases
+!/web/.yarn/versions
+
+# build output
+/web/.next/
+/web/out/
+/web/build/
+
+# testing
+/web/coverage/
+
+# env files (web-specific)
+/web/.env*
+
+# typescript
+/web/*.tsbuildinfo
+/web/next-env.d.ts
+
+# vercel
+/web/.vercel
+
+# misc web
+/web/public/icons/fa/

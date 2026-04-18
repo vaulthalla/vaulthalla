@@ -1,0 +1,213 @@
+@import "tailwindcss";
+
+:root {
+    /* Base UI */
+    --background: #0a0a0a;        /* deep void */
+    --foreground: #e5e7eb;        /* zinc-200 */
+
+    /* Primary: Cyan Glimmer */
+    --primary: #0ff4f2;           /* radiant cyan */
+    --primary-foreground: #000000;
+
+    /* Secondary: Obsidian Steel */
+    --secondary: #1e293b;         /* slate-800 */
+    --secondary-foreground: #f1f5f9;
+
+    /* Destructive: Blood of the Betrayer */
+    --destructive: #dc2626;       /* red-600 */
+    --destructive-foreground: #ffffff;
+
+    /* Accent: Rune Energy */
+    --accent: #0f766e;            /* teal-700 */
+    --accent-foreground: #ecfeff;
+
+    /* Muted: For Subtle Borders, Dividers */
+    --muted: #334155;             /* slate-700 */
+    --muted-foreground: #94a3b8;  /* slate-400 */
+
+    /* Border / Ring / Input */
+    --border: #1f2937;            /* gray-800 */
+    --input: #1f2937;
+    --ring: #7dd3fc;              /* sky-300 */
+
+    /* Warning / Caution */
+    --warning: #facc15;           /* yellow-400 */
+    --warning-foreground: #000000;
+
+    /* Success / Verified */
+    --success: #22c55e;           /* green-500 */
+    --success-foreground: #000000;
+
+    /* Glow FX (for glows, shadows, overlays) */
+    --glow-cyan: #0ff4f288;
+    --glow-red: #dc262688;
+    --glow-green: #22c55e88;
+    --glow-yellow: #facc1588;
+    --glow-orange: rgba(255, 107, 0, 0.9);
+
+    /* Font */
+    --font-sans: var(--font-geist-sans, 'Geist Sans', sans-serif);
+    --font-mono: var(--font-geist-mono, 'Geist Mono', monospace);
+}
+
+@theme inline {
+    --color-background: var(--background);
+    --color-foreground: var(--foreground);
+
+    --color-primary: var(--primary);
+    --color-primary-foreground: var(--primary-foreground);
+
+    --color-secondary: var(--secondary);
+    --color-secondary-foreground: var(--secondary-foreground);
+
+    --color-destructive: var(--destructive);
+    --color-destructive-foreground: var(--destructive-foreground);
+
+    --color-accent: var(--accent);
+    --color-accent-foreground: var(--accent-foreground);
+
+    --color-muted: var(--muted);
+    --color-muted-foreground: var(--muted-foreground);
+
+    --color-border: var(--border);
+    --color-input: var(--input);
+    --color-ring: var(--ring);
+
+    --color-warning: var(--warning);
+    --color-warning-foreground: var(--warning-foreground);
+
+    --color-success: var(--success);
+    --color-success-foreground: var(--success-foreground);
+
+    --color-glow-cyan: var(--glow-cyan);
+    --color-glow-red: var(--glow-red);
+    --color-glow-green: var(--glow-green);
+    --color-glow-yellow: var(--glow-yellow);
+    --color-glow-orange: var(--glow-orange);
+
+    --font-sans: var(--font-sans);
+    --font-mono: var(--font-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --background: #0a0a0a;
+        --foreground: #ededed;
+    }
+}
+
+@media (prefers-color-scheme: light) {
+    :root {
+        --background: #f9fafb;
+        --foreground: #111827;
+
+        --primary: #0e7490;
+        --primary-foreground: #ffffff;
+
+        --secondary: #e5e7eb;
+        --secondary-foreground: #111827;
+
+        --destructive: #ef4444;
+        --destructive-foreground: #ffffff;
+
+        --accent: #06b6d4;
+        --accent-foreground: #000000;
+
+        --muted: #e5e7eb;
+        --muted-foreground: #6b7280;
+
+        --border: #d1d5db;
+        --input: #e5e7eb;
+        --ring: #0ea5e9;
+
+        --warning: #eab308;
+        --warning-foreground: #000000;
+
+        --success: #16a34a;
+        --success-foreground: #ffffff;
+    }
+}
+
+body {
+    background: var(--background);
+    color: var(--foreground);
+    font-family: Arial, Helvetica, sans-serif;
+}
+
+.icon-duo-bluewhite .fa-secondary {
+    fill: #60a5fa; /* Tailwind blue-400 */
+}
+
+.icon-duo-bluewhite .fa-primary {
+    fill: #ffffff; /* White */
+}
+
+.icon-duo-redyellow .fa-secondary {
+    fill: #facc15; /* yellow-400 */
+}
+
+.icon-duo-redyellow .fa-primary {
+    fill: #dc2626; /* red-600 */
+}
+
+@keyframes spin-slow {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.animate-spin-slow {
+    animation: spin-slow 3s linear infinite;
+}
+
+.card-glass {
+    @apply bg-gradient-to-br from-gray-600/10 to-gray-200/10 border border-gray-200 rounded-xl shadow-lg backdrop-blur;
+}
+
+.text-glow-cyan {
+    color: #67e8f9;
+    text-shadow:
+            0 0 8px rgba(103, 232, 249, 0.45),
+            0 0 18px rgba(34, 211, 238, 0.25);
+}
+
+.text-glow-blue {
+    color: #60a5fa;
+    text-shadow:
+            0 0 8px rgba(96, 165, 250, 0.45),
+            0 0 18px rgba(59, 130, 246, 0.25);
+}
+
+.text-glow-green {
+    color: #4ade80;
+    text-shadow:
+            0 0 8px rgba(74, 222, 128, 0.45),
+            0 0 18px rgba(34, 197, 94, 0.25);
+}
+
+.text-glow-yellow {
+    color: #fde047;
+    text-shadow:
+            0 0 8px rgba(253, 224, 71, 0.45),
+            0 0 18px rgba(250, 204, 21, 0.25);
+}
+
+.text-glow-red {
+    color: #f87171;
+    text-shadow:
+            0 0 8px rgba(248, 113, 113, 0.45),
+            0 0 18px rgba(220, 38, 38, 0.25);
+}
+
+.text-glow-violet {
+    color: #a78bfa;
+    text-shadow:
+            0 0 8px rgba(167, 139, 250, 0.45),
+            0 0 18px rgba(139, 92, 246, 0.25);
+}
+
+.text-glow-orange {
+    color: #ff8a3d;
+    text-shadow:
+            0 0 8px rgba(255, 138, 61, 0.45),
+            0 0 18px rgba(255, 107, 0, 0.28);
+}

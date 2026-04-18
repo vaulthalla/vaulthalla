@@ -15,10 +15,10 @@ if vh_is_dev_mode; then
   sudo -u postgres psql -d vh_cli_test -c "GRANT USAGE, CREATE ON SCHEMA public TO vaulthalla_test;"
 
   # 🔥 Persist to bashrc (replace if exists, append if not)
-  if grep -q "^export VH_TEST_DB_PASS=" "./deploy/vaulthalla.env"; then
-    sed -i "s|^export VH_TEST_DB_PASS=.*|export VH_TEST_DB_PASS=\"${VAUL_TEST_PG_PASS}\"|" "./deploy/vaulthalla.env"
+  if grep -q "^export VH_TEST_DB_PASS=" "./deploy/bashrc"; then
+    sed -i "s|^export VH_TEST_DB_PASS=.*|export VH_TEST_DB_PASS=\"${VAUL_TEST_PG_PASS}\"|" "./deploy/bashrc"
   else
-    echo "export VH_TEST_DB_PASS=\"${VAUL_TEST_PG_PASS}\"" >> "./deploy/vaulthalla.env"
+    echo "export VH_TEST_DB_PASS=\"${VAUL_TEST_PG_PASS}\"" >> "./deploy/bashrc"
   fi
 
   # 🔥 Export for current session

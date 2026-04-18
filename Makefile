@@ -48,8 +48,12 @@ release:
 	@echo "🔧 Building release package..."
 	./bin/install_deb.sh --push
 
+doctor:
+	@echo "🔍 Running doctor script..."
+	./bin/doctor.sh
+
 ## 🧼 Uninstall everything
 clean uninstall:
 	@echo "💣 Running uninstall script..."
 	./bin/uninstall.sh
-	./bin/uninstall_integration_tests.sh
+	./bin/tests/uninstall.sh

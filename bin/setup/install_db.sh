@@ -17,5 +17,3 @@ echo "$VAUL_PG_PASS" | sudo tee "$PENDING_DB_PASS_FILE" >/dev/null
 sudo chown vaulthalla:vaulthalla "$PENDING_DB_PASS_FILE"
 sudo chmod 600 "$PENDING_DB_PASS_FILE"
 echo "✅ Wrote DB password seed to $PENDING_DB_PASS_FILE"
-
-

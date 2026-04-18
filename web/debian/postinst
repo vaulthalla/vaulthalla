@@ -1,0 +1,19 @@
+#!/bin/bash
+set -e
+
+# Enable service
+systemctl daemon-reexec || true
+systemctl enable vaulthalla-web || true
+systemctl start vaulthalla-web || true
+
+# Drop nginx config (do NOT override blindly)
+if [ ! -f /etc/nginx/sites-enabled/vaulthalla ]; then
+  ln -s /etc/nginx/sites-available/vaulthalla /etc/nginx/sites-enabled/vaulthalla || true
+fi
+
+systemctl reload nginx || true
+
+echo "Vaulthalla Web installed."
+echo "Run: vh web setup --domain your.domain.com"
+
+exit 0
