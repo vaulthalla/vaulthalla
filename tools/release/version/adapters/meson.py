@@ -1,7 +1,7 @@
 import re
 from pathlib import Path
 
-from tools.release.versioning import Version
+from tools.release.version.models import Version
 
 PROJECT_VERSION_PATTERN = re.compile(
     r"""(?P<prefix>\bproject\s*\(.*?\bversion\s*:\s*['"])(?P<version>\d+\.\d+\.\d+)(?P<suffix>['"])""",

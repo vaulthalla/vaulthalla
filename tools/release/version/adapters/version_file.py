@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from tools.release.versioning import Version
+from tools.release.version.models import Version
 
 
 def read_version_file(path: Path) -> Version:

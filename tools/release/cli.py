@@ -4,20 +4,14 @@ import argparse
 import sys
 from pathlib import Path
 
-from tools.release.files import (
-    read_debian_version,
-    write_debian_version,
-    write_meson_version,
-    write_package_json_version,
-    write_version_file,
-)
-from tools.release.validate import (
+from tools.release.version.models import Version
+from tools.release.version.sync import apply_version_update, resolve_debian_revision
+from tools.release.version.validate import (
     build_sync_required_message,
     get_release_state,
     require_release_files,
     require_synced_release_state,
 )
-from tools.release.versioning import Version
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -136,11 +130,9 @@ def cmd_sync(args: argparse.Namespace) -> int:
     if canonical is None:
         raise ValueError("Canonical VERSION could not be resolved")
 
-    current_debian = state.versions.debian
-    debian_revision = (
-        args.debian_revision
-        if args.debian_revision is not None
-        else (current_debian.revision if current_debian is not None else 1)
+    debian_revision = resolve_debian_revision(
+        explicit_revision=args.debian_revision,
+        current_debian=state.versions.debian,
     )
 
     print(f"Canonical version: {canonical}")
@@ -160,7 +152,7 @@ def cmd_sync(args: argparse.Namespace) -> int:
         print("\nDry run only. No files were modified.")
         return 0
 
-    apply_managed_file_sync(
+    apply_version_update(
         paths=paths,
         version=canonical,
         debian_revision=debian_revision,
@@ -197,7 +189,7 @@ def cmd_set_version(args: argparse.Namespace) -> int:
         print("\nDry run only. No files were modified.")
         return 0
 
-    apply_managed_file_sync(
+    apply_version_update(
         paths=paths,
         version=target_version,
         debian_revision=debian_revision,
@@ -230,15 +222,6 @@ def cmd_bump(args: argparse.Namespace) -> int:
         dry_run=args.dry_run,
     )
     return cmd_set_version(set_args)
-
-
-def apply_managed_file_sync(*, paths, version: Version, debian_revision: int, write_canonical: bool) -> None:
-    if write_canonical:
-        write_version_file(paths.version_file, version)
-
-    write_meson_version(paths.meson_file, version)
-    write_package_json_version(paths.package_json_file, version)
-    write_debian_version(paths.debian_changelog_file, version, revision=debian_revision)
 
 
 def bump_version(version: Version, part: str) -> Version:

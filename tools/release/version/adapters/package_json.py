@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from tools.release.versioning import Version
+from tools.release.version.models import Version
 
 
 def read_package_json_version(path: Path) -> Version:

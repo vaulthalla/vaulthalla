@@ -3,14 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from tools.release.files import (
+from tools.release.version.adapters import (
     DebianVersion,
     read_debian_version,
     read_meson_version,
     read_package_json_version,
     read_version_file,
 )
-from tools.release.versioning import Version
+from tools.release.version.models import Version
 
 
 @dataclass(frozen=True)

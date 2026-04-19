@@ -2,7 +2,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from tools.release.versioning import Version
+from tools.release.version.models import Version
 
 CHANGELOG_HEADER_PATTERN = re.compile(
     r"^(?P<package>[^\s]+)\s+\((?P<full_version>\d+\.\d+\.\d+(?:-\d+)?)\)\s+(?P<distribution>[^\s;]+);\s+urgency=(?P<urgency>[^\s]+)$"
