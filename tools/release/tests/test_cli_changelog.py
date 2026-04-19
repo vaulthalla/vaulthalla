@@ -147,6 +147,9 @@ class CliChangelogDraftTests(unittest.TestCase):
                 "--use-triage",
                 "--save-triage-json",
                 "/tmp/triage.json",
+                "--polish",
+                "--save-polish-json",
+                "/tmp/polish.json",
             ]
         )
         self.assertEqual(parsed_ai.command, "changelog")
@@ -157,6 +160,8 @@ class CliChangelogDraftTests(unittest.TestCase):
         self.assertEqual(parsed_ai.model, "gpt-5.4-mini")
         self.assertTrue(parsed_ai.use_triage)
         self.assertEqual(parsed_ai.save_triage_json, "/tmp/triage.json")
+        self.assertTrue(parsed_ai.polish)
+        self.assertEqual(parsed_ai.save_polish_json, "/tmp/polish.json")
 
 
 class CliChangelogPayloadTests(unittest.TestCase):
@@ -222,6 +227,8 @@ class CliChangelogAIDraftTests(unittest.TestCase):
         model: str = DEFAULT_AI_DRAFT_MODEL,
         use_triage: bool = False,
         save_triage_json: str | None = None,
+        polish: bool = False,
+        save_polish_json: str | None = None,
     ) -> argparse.Namespace:
         return argparse.Namespace(
             repo_root=repo_root,
@@ -231,6 +238,8 @@ class CliChangelogAIDraftTests(unittest.TestCase):
             model=model,
             use_triage=use_triage,
             save_triage_json=save_triage_json,
+            polish=polish,
+            save_polish_json=save_polish_json,
         )
 
     def test_ai_draft_to_stdout(self) -> None:
@@ -245,6 +254,9 @@ class CliChangelogAIDraftTests(unittest.TestCase):
             patch("tools.release.cli.render_draft_result_json") as render_json,
             patch("tools.release.cli.run_triage_stage") as run_triage,
             patch("tools.release.cli.render_triage_result_json") as render_triage_json,
+            patch("tools.release.cli.run_polish_stage") as run_polish,
+            patch("tools.release.cli.render_polish_result_json") as render_polish_json,
+            patch("tools.release.cli.render_polish_markdown") as render_polish_markdown,
             redirect_stdout(out),
         ):
             result = cli.cmd_changelog_ai_draft(args)
@@ -262,6 +274,9 @@ class CliChangelogAIDraftTests(unittest.TestCase):
         render_json.assert_not_called()
         run_triage.assert_not_called()
         render_triage_json.assert_not_called()
+        run_polish.assert_not_called()
+        render_polish_json.assert_not_called()
+        render_polish_markdown.assert_not_called()
 
     def test_ai_draft_output_and_json_files(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -285,6 +300,9 @@ class CliChangelogAIDraftTests(unittest.TestCase):
                 patch("tools.release.cli.render_draft_markdown", return_value="# AI Draft\n"),
                 patch("tools.release.cli.render_draft_result_json", return_value='{"title":"x"}\n'),
                 patch("tools.release.cli.render_triage_result_json", return_value='{"schema_version":"triage"}\n'),
+                patch("tools.release.cli.run_polish_stage") as run_polish,
+                patch("tools.release.cli.render_polish_result_json") as render_polish_json,
+                patch("tools.release.cli.render_polish_markdown") as render_polish_markdown,
                 redirect_stdout(out),
             ):
                 result = cli.cmd_changelog_ai_draft(args)
@@ -301,6 +319,9 @@ class CliChangelogAIDraftTests(unittest.TestCase):
             )
             self.assertIn("Wrote AI changelog draft to", out.getvalue())
             self.assertIn("Wrote AI draft JSON to", out.getvalue())
+            run_polish.assert_not_called()
+            render_polish_json.assert_not_called()
+            render_polish_markdown.assert_not_called()
 
     def test_ai_draft_can_save_triage_json(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -317,6 +338,9 @@ class CliChangelogAIDraftTests(unittest.TestCase):
                 patch("tools.release.cli.render_draft_markdown", return_value="# AI Draft\n"),
                 patch("tools.release.cli.render_triage_result_json", return_value='{"schema_version":"triage"}\n'),
                 patch("tools.release.cli.render_draft_result_json"),
+                patch("tools.release.cli.run_polish_stage"),
+                patch("tools.release.cli.render_polish_result_json"),
+                patch("tools.release.cli.render_polish_markdown"),
                 redirect_stdout(out),
             ):
                 result = cli.cmd_changelog_ai_draft(args)
@@ -324,6 +348,87 @@ class CliChangelogAIDraftTests(unittest.TestCase):
             self.assertEqual(result, 0)
             self.assertEqual(triage_target.read_text(encoding="utf-8"), '{"schema_version":"triage"}\n')
             self.assertIn("Wrote AI triage JSON to", out.getvalue())
+
+    def test_ai_draft_polish_stage_output_and_json(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            markdown_target = Path(temp_dir) / "ai-polished.md"
+            json_target = Path(temp_dir) / "ai-polished.json"
+            polish_target = Path(temp_dir) / "polish.json"
+            draft_obj = object()
+            polish_obj = object()
+            args = self._args(
+                output=str(markdown_target),
+                save_json=str(json_target),
+                polish=True,
+                save_polish_json=str(polish_target),
+            )
+            out = StringIO()
+
+            with (
+                patch("tools.release.cli.build_changelog_context", return_value=object()),
+                patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
+                patch("tools.release.cli.generate_draft_from_payload", return_value=draft_obj) as generate_draft,
+                patch("tools.release.cli.run_polish_stage", return_value=polish_obj) as run_polish,
+                patch("tools.release.cli.render_draft_markdown", return_value="# AI Draft\n") as render_draft_markdown,
+                patch("tools.release.cli.render_polish_markdown", return_value="# AI Polished\n") as render_polish_markdown,
+                patch("tools.release.cli.render_draft_result_json", return_value='{"title":"draft"}\n') as render_draft_json,
+                patch("tools.release.cli.render_polish_result_json", return_value='{"schema_version":"polish"}\n') as render_polish_json,
+                patch("tools.release.cli.run_triage_stage") as run_triage,
+                patch("tools.release.cli.render_triage_result_json") as render_triage_json,
+                redirect_stdout(out),
+            ):
+                result = cli.cmd_changelog_ai_draft(args)
+
+            self.assertEqual(result, 0)
+            self.assertEqual(markdown_target.read_text(encoding="utf-8"), "# AI Polished\n")
+            self.assertEqual(json_target.read_text(encoding="utf-8"), '{"schema_version":"polish"}\n')
+            self.assertEqual(polish_target.read_text(encoding="utf-8"), '{"schema_version":"polish"}\n')
+            generate_draft.assert_called_once_with(
+                {"schema_version": "x"},
+                model=DEFAULT_AI_DRAFT_MODEL,
+                source_kind="payload",
+            )
+            run_polish.assert_called_once_with(draft_obj, model=DEFAULT_AI_DRAFT_MODEL)
+            render_polish_markdown.assert_called_once_with(polish_obj)
+            render_polish_json.assert_called()
+            render_draft_markdown.assert_not_called()
+            render_draft_json.assert_not_called()
+            run_triage.assert_not_called()
+            render_triage_json.assert_not_called()
+            self.assertIn("Wrote AI polish JSON to", out.getvalue())
+
+    def test_ai_draft_triage_and_polish_pipeline_order(self) -> None:
+        triage_obj = object()
+        draft_obj = object()
+        polish_obj = object()
+        args = self._args(use_triage=True, polish=True, model="gpt-x-mini")
+        out = StringIO()
+
+        with (
+            patch("tools.release.cli.build_changelog_context", return_value=object()),
+            patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
+            patch("tools.release.cli.run_triage_stage", return_value=triage_obj) as run_triage,
+            patch("tools.release.cli.build_triage_ir_payload", return_value={"schema_version": "triage-x"}) as build_triage,
+            patch("tools.release.cli.generate_draft_from_payload", return_value=draft_obj) as generate_draft,
+            patch("tools.release.cli.run_polish_stage", return_value=polish_obj) as run_polish,
+            patch("tools.release.cli.render_polish_markdown", return_value="# Polished\n"),
+            patch("tools.release.cli.render_polish_result_json"),
+            patch("tools.release.cli.render_draft_markdown"),
+            patch("tools.release.cli.render_draft_result_json"),
+            patch("tools.release.cli.render_triage_result_json"),
+            redirect_stdout(out),
+        ):
+            result = cli.cmd_changelog_ai_draft(args)
+
+        self.assertEqual(result, 0)
+        run_triage.assert_called_once_with({"schema_version": "x"}, model="gpt-x-mini")
+        build_triage.assert_called_once_with(triage_obj)
+        generate_draft.assert_called_once_with(
+            {"schema_version": "triage-x"},
+            model="gpt-x-mini",
+            source_kind="triage",
+        )
+        run_polish.assert_called_once_with(draft_obj, model="gpt-x-mini")
 
     def test_main_fails_when_triage_requested_and_invalid(self) -> None:
         err = StringIO()
@@ -341,6 +446,23 @@ class CliChangelogAIDraftTests(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("ERROR: AI triage response must include non-empty `categories` list.", err.getvalue())
 
+    def test_main_fails_when_polish_requested_and_invalid(self) -> None:
+        err = StringIO()
+        with (
+            patch("tools.release.cli.build_changelog_context", return_value=object()),
+            patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
+            patch("tools.release.cli.generate_draft_from_payload", return_value=object()),
+            patch(
+                "tools.release.cli.run_polish_stage",
+                side_effect=ValueError("AI polish response must include non-empty `sections` list."),
+            ),
+            patch("sys.stderr", new=err),
+        ):
+            rc = cli.main(["changelog", "ai-draft", "--polish"])
+
+        self.assertEqual(rc, 1)
+        self.assertIn("ERROR: AI polish response must include non-empty `sections` list.", err.getvalue())
+
     def test_main_fails_when_save_triage_json_used_without_triage(self) -> None:
         err = StringIO()
         with patch("sys.stderr", new=err):
@@ -348,6 +470,14 @@ class CliChangelogAIDraftTests(unittest.TestCase):
 
         self.assertEqual(rc, 1)
         self.assertIn("ERROR: --save-triage-json requires --use-triage.", err.getvalue())
+
+    def test_main_fails_when_save_polish_json_used_without_polish(self) -> None:
+        err = StringIO()
+        with patch("sys.stderr", new=err):
+            rc = cli.main(["changelog", "ai-draft", "--save-polish-json", "/tmp/polish.json"])
+
+        self.assertEqual(rc, 1)
+        self.assertIn("ERROR: --save-polish-json requires --polish.", err.getvalue())
 
     def test_main_reports_missing_api_key_error_cleanly(self) -> None:
         err = StringIO()
@@ -359,6 +489,7 @@ class CliChangelogAIDraftTests(unittest.TestCase):
                 side_effect=ValueError("OPENAI_API_KEY is not set."),
             ),
             patch("tools.release.cli.run_triage_stage"),
+            patch("tools.release.cli.run_polish_stage"),
             patch("sys.stderr", new=err),
         ):
             rc = cli.main(["changelog", "ai-draft"])

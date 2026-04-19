@@ -5,9 +5,11 @@ import sys
 from pathlib import Path
 
 from tools.release.changelog.ai.config import DEFAULT_AI_DRAFT_MODEL
+from tools.release.changelog.ai.contracts.polish import AIPolishResult
 from tools.release.changelog.ai.contracts.triage import build_triage_ir_payload
-from tools.release.changelog.ai.render.markdown import render_draft_markdown
+from tools.release.changelog.ai.render.markdown import render_draft_markdown, render_polish_markdown
 from tools.release.changelog.ai.stages.draft import generate_draft_from_payload, render_draft_result_json
+from tools.release.changelog.ai.stages.polish import render_polish_result_json, run_polish_stage
 from tools.release.changelog.ai.stages.triage import render_triage_result_json, run_triage_stage
 from tools.release.changelog.context_builder import build_release_context
 from tools.release.changelog.payload import build_ai_payload, render_ai_payload_json
@@ -178,6 +180,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional path to save validated structured triage JSON when --use-triage is enabled.",
     )
+    changelog_ai_draft_parser.add_argument(
+        "--polish",
+        action="store_true",
+        help="Run optional editorial polish stage after draft generation.",
+    )
+    changelog_ai_draft_parser.add_argument(
+        "--save-polish-json",
+        default=None,
+        help="Optional path to save validated structured polish JSON when --polish is enabled.",
+    )
     changelog_ai_draft_parser.set_defaults(func=cmd_changelog_ai_draft)
 
     return parser
@@ -343,6 +355,8 @@ def cmd_changelog_payload(args: argparse.Namespace) -> int:
 def cmd_changelog_ai_draft(args: argparse.Namespace) -> int:
     if args.save_triage_json and not args.use_triage:
         raise ValueError("--save-triage-json requires --use-triage.")
+    if args.save_polish_json and not args.polish:
+        raise ValueError("--save-polish-json requires --polish.")
 
     repo_root = Path(args.repo_root).resolve()
     context = build_changelog_context(repo_root, args.since_tag)
@@ -360,14 +374,28 @@ def cmd_changelog_ai_draft(args: argparse.Namespace) -> int:
             print(f"Wrote AI triage JSON to {Path(args.save_triage_json).resolve()}")
 
     draft = generate_draft_from_payload(draft_input, model=args.model, source_kind=source_kind)
-    markdown = render_draft_markdown(draft)
-    write_output(markdown, args.output)
+    polish_result: AIPolishResult | None = None
+
+    if args.polish:
+        polish_result = run_polish_stage(draft, model=args.model)
+        final_markdown = render_polish_markdown(polish_result)
+
+        if args.save_polish_json:
+            write_output(render_polish_result_json(polish_result), args.save_polish_json)
+            print(f"Wrote AI polish JSON to {Path(args.save_polish_json).resolve()}")
+    else:
+        final_markdown = render_draft_markdown(draft)
+
+    write_output(final_markdown, args.output)
 
     if args.output:
         print(f"Wrote AI changelog draft to {Path(args.output).resolve()}")
 
     if args.save_json:
-        write_output(render_draft_result_json(draft), args.save_json)
+        if polish_result is not None:
+            write_output(render_polish_result_json(polish_result), args.save_json)
+        else:
+            write_output(render_draft_result_json(draft), args.save_json)
         print(f"Wrote AI draft JSON to {Path(args.save_json).resolve()}")
 
     return 0
