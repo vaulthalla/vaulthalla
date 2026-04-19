@@ -4,7 +4,7 @@ import json
 from typing import Any
 
 
-def build_mini_system_prompt() -> str:
+def build_draft_system_prompt() -> str:
     return (
         "You are a release editor for Vaulthalla. "
         "Use only provided evidence. Do not invent fixes, features, or impacts. "
@@ -13,7 +13,7 @@ def build_mini_system_prompt() -> str:
     )
 
 
-def build_mini_user_prompt(payload: dict[str, Any]) -> str:
+def build_draft_user_prompt(payload: dict[str, Any]) -> str:
     payload_json = json.dumps(payload, indent=2, sort_keys=False)
     return (
         "Draft a human-reviewable release summary from the payload below.\n"

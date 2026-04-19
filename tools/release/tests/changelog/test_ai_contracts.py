@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import unittest
 
-from tools.release.changelog.ai.contracts import (
+from tools.release.changelog.ai.contracts.draft import (
     AIDraftResult,
     AI_DRAFT_RESPONSE_JSON_SCHEMA,
     ai_draft_result_to_dict,

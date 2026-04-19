@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from tools.release import cli
-from tools.release.changelog.ai.openai_client import DEFAULT_OPENAI_MINI_MODEL
+from tools.release.changelog.ai.config import DEFAULT_AI_DRAFT_MODEL
 from tools.release.version.models import Version
 
 
@@ -214,7 +214,7 @@ class CliChangelogAIDraftTests(unittest.TestCase):
         since_tag: str | None = None,
         output: str | None = None,
         save_json: str | None = None,
-        model: str = DEFAULT_OPENAI_MINI_MODEL,
+        model: str = DEFAULT_AI_DRAFT_MODEL,
     ) -> argparse.Namespace:
         return argparse.Namespace(
             repo_root=repo_root,
@@ -231,9 +231,9 @@ class CliChangelogAIDraftTests(unittest.TestCase):
         with (
             patch("tools.release.cli.build_changelog_context", return_value=object()) as build_context,
             patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}) as build_payload,
-            patch("tools.release.cli.generate_mini_draft_from_payload", return_value=object()) as generate_draft,
-            patch("tools.release.cli.render_ai_draft_markdown", return_value="# AI Draft\n") as render_markdown,
-            patch("tools.release.cli.render_ai_draft_json") as render_json,
+            patch("tools.release.cli.generate_draft_from_payload", return_value=object()) as generate_draft,
+            patch("tools.release.cli.render_draft_markdown", return_value="# AI Draft\n") as render_markdown,
+            patch("tools.release.cli.render_draft_result_json") as render_json,
             redirect_stdout(out),
         ):
             result = cli.cmd_changelog_ai_draft(args)
@@ -242,7 +242,7 @@ class CliChangelogAIDraftTests(unittest.TestCase):
         self.assertEqual(out.getvalue(), "# AI Draft\n")
         self.assertEqual(build_context.call_args.args[1], "v0.1.0")
         build_payload.assert_called_once()
-        generate_draft.assert_called_once_with({"schema_version": "x"}, model=DEFAULT_OPENAI_MINI_MODEL)
+        generate_draft.assert_called_once_with({"schema_version": "x"}, model=DEFAULT_AI_DRAFT_MODEL)
         render_markdown.assert_called_once()
         render_json.assert_not_called()
 
@@ -256,9 +256,9 @@ class CliChangelogAIDraftTests(unittest.TestCase):
             with (
                 patch("tools.release.cli.build_changelog_context", return_value=object()),
                 patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
-                patch("tools.release.cli.generate_mini_draft_from_payload", return_value=object()) as generate_draft,
-                patch("tools.release.cli.render_ai_draft_markdown", return_value="# AI Draft\n"),
-                patch("tools.release.cli.render_ai_draft_json", return_value='{"title":"x"}\n'),
+                patch("tools.release.cli.generate_draft_from_payload", return_value=object()) as generate_draft,
+                patch("tools.release.cli.render_draft_markdown", return_value="# AI Draft\n"),
+                patch("tools.release.cli.render_draft_result_json", return_value='{"title":"x"}\n'),
                 redirect_stdout(out),
             ):
                 result = cli.cmd_changelog_ai_draft(args)
@@ -276,7 +276,7 @@ class CliChangelogAIDraftTests(unittest.TestCase):
             patch("tools.release.cli.build_changelog_context", return_value=object()),
             patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
             patch(
-                "tools.release.cli.generate_mini_draft_from_payload",
+                "tools.release.cli.generate_draft_from_payload",
                 side_effect=ValueError("OPENAI_API_KEY is not set."),
             ),
             patch("sys.stderr", new=err),

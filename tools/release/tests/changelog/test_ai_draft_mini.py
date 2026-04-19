@@ -4,11 +4,8 @@ import json
 from pathlib import Path
 import unittest
 
-from tools.release.changelog.ai.draft_mini import (
-    generate_mini_draft_from_payload,
-    render_ai_draft_json,
-    render_ai_draft_markdown,
-)
+from tools.release.changelog.ai.render.markdown import render_draft_markdown
+from tools.release.changelog.ai.stages.draft import generate_draft_from_payload, render_draft_result_json
 
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -43,7 +40,7 @@ class AIDraftMiniStageTests(unittest.TestCase):
         }
         fake = _FakeOpenAIClient(_load_json_fixture("ai_draft_valid.json"))
 
-        draft = generate_mini_draft_from_payload(payload, client=fake)
+        draft = generate_draft_from_payload(payload, provider=fake)
 
         self.assertEqual(draft.title, "Release 2.4.0 Draft")
         self.assertEqual(len(fake.calls), 1)
@@ -53,20 +50,20 @@ class AIDraftMiniStageTests(unittest.TestCase):
         self.assertIn("vaulthalla.release.ai_payload.v1", call["user_prompt"])
 
     def test_markdown_render_matches_fixture(self) -> None:
-        draft = generate_mini_draft_from_payload(
+        draft = generate_draft_from_payload(
             {"schema_version": "x", "metadata": {}, "categories": []},
-            client=_FakeOpenAIClient(_load_json_fixture("ai_draft_valid.json")),
+            provider=_FakeOpenAIClient(_load_json_fixture("ai_draft_valid.json")),
         )
-        rendered = render_ai_draft_markdown(draft)
+        rendered = render_draft_markdown(draft)
         self.assertEqual(rendered, _load_text_fixture("ai_draft_markdown.md"))
 
     def test_json_render_is_structured_and_stable(self) -> None:
-        draft = generate_mini_draft_from_payload(
+        draft = generate_draft_from_payload(
             {"schema_version": "x", "metadata": {}, "categories": []},
-            client=_FakeOpenAIClient(_load_json_fixture("ai_draft_valid.json")),
+            provider=_FakeOpenAIClient(_load_json_fixture("ai_draft_valid.json")),
         )
-        first = render_ai_draft_json(draft)
-        second = render_ai_draft_json(draft)
+        first = render_draft_result_json(draft)
+        second = render_draft_result_json(draft)
         self.assertEqual(first, second)
         self.assertIn('"sections": [', first)
 

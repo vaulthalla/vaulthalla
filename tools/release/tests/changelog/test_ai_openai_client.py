@@ -4,7 +4,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from tools.release.changelog.ai.openai_client import OpenAIClientAdapter
+from tools.release.changelog.ai.providers.openai import OpenAIProvider
 
 
 class _FakeMessage:
@@ -43,10 +43,10 @@ class _FakeSDKClient:
         self.chat = _FakeChat(_FakeCompletions(response))
 
 
-class OpenAIClientAdapterTests(unittest.TestCase):
+class OpenAIProviderTests(unittest.TestCase):
     def test_structured_request_uses_json_schema_response_format(self) -> None:
         sdk = _FakeSDKClient(_FakeResponse('{"title":"x","summary":"y","sections":[{"category":"core","overview":"z","bullets":["a"]}]}'))
-        client = OpenAIClientAdapter(sdk_client=sdk, model="gpt-test-mini")
+        client = OpenAIProvider(sdk_client=sdk, model="gpt-test-mini")
 
         result = client.generate_structured_json(
             system_prompt="sys",
@@ -66,11 +66,11 @@ class OpenAIClientAdapterTests(unittest.TestCase):
     def test_missing_api_key_fails_clearly(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaisesRegex(ValueError, "OPENAI_API_KEY"):
-                OpenAIClientAdapter()
+                OpenAIProvider()
 
     def test_invalid_json_response_fails_clearly(self) -> None:
         sdk = _FakeSDKClient(_FakeResponse("not-json"))
-        client = OpenAIClientAdapter(sdk_client=sdk)
+        client = OpenAIProvider(sdk_client=sdk)
 
         with self.assertRaisesRegex(ValueError, "invalid JSON"):
             client.generate_structured_json(

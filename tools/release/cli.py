@@ -4,12 +4,9 @@ import argparse
 import sys
 from pathlib import Path
 
-from tools.release.changelog.ai.draft_mini import (
-    generate_mini_draft_from_payload,
-    render_ai_draft_json,
-    render_ai_draft_markdown,
-)
-from tools.release.changelog.ai.openai_client import DEFAULT_OPENAI_MINI_MODEL
+from tools.release.changelog.ai.config import DEFAULT_AI_DRAFT_MODEL
+from tools.release.changelog.ai.render.markdown import render_draft_markdown
+from tools.release.changelog.ai.stages.draft import generate_draft_from_payload, render_draft_result_json
 from tools.release.changelog.context_builder import build_release_context
 from tools.release.changelog.payload import build_ai_payload, render_ai_payload_json
 from tools.release.changelog.render_raw import render_debug_json, render_release_changelog
@@ -166,8 +163,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     changelog_ai_draft_parser.add_argument(
         "--model",
-        default=DEFAULT_OPENAI_MINI_MODEL,
-        help=f"OpenAI model to use (default: {DEFAULT_OPENAI_MINI_MODEL}).",
+        default=DEFAULT_AI_DRAFT_MODEL,
+        help=f"OpenAI model to use (default: {DEFAULT_AI_DRAFT_MODEL}).",
     )
     changelog_ai_draft_parser.set_defaults(func=cmd_changelog_ai_draft)
 
@@ -336,15 +333,15 @@ def cmd_changelog_ai_draft(args: argparse.Namespace) -> int:
     context = build_changelog_context(repo_root, args.since_tag)
     payload = build_ai_payload(context)
 
-    draft = generate_mini_draft_from_payload(payload, model=args.model)
-    markdown = render_ai_draft_markdown(draft)
+    draft = generate_draft_from_payload(payload, model=args.model)
+    markdown = render_draft_markdown(draft)
     write_output(markdown, args.output)
 
     if args.output:
         print(f"Wrote AI changelog draft to {Path(args.output).resolve()}")
 
     if args.save_json:
-        write_output(render_ai_draft_json(draft), args.save_json)
+        write_output(render_draft_result_json(draft), args.save_json)
         print(f"Wrote AI draft JSON to {Path(args.save_json).resolve()}")
 
     return 0

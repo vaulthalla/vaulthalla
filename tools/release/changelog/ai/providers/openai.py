@@ -4,17 +4,16 @@ import json
 import os
 from typing import Any
 
+from tools.release.changelog.ai.config import DEFAULT_AI_DRAFT_MODEL, OPENAI_API_KEY_ENV_VAR
 
-DEFAULT_OPENAI_MINI_MODEL = "gpt-5.4-mini"
 
-
-class OpenAIClientAdapter:
-    """Thin OpenAI adapter for one structured JSON generation pass."""
+class OpenAIProvider:
+    """Thin OpenAI transport adapter for one structured JSON generation pass."""
 
     def __init__(
         self,
         *,
-        model: str = DEFAULT_OPENAI_MINI_MODEL,
+        model: str = DEFAULT_AI_DRAFT_MODEL,
         api_key: str | None = None,
         sdk_client: Any | None = None,
     ) -> None:
@@ -24,10 +23,10 @@ class OpenAIClientAdapter:
             self._client = sdk_client
             return
 
-        resolved_api_key = api_key or os.getenv("OPENAI_API_KEY")
+        resolved_api_key = api_key or os.getenv(OPENAI_API_KEY_ENV_VAR)
         if not resolved_api_key:
             raise ValueError(
-                "OPENAI_API_KEY is not set. Export OPENAI_API_KEY to run `changelog ai-draft`."
+                f"{OPENAI_API_KEY_ENV_VAR} is not set. Export {OPENAI_API_KEY_ENV_VAR} to run `changelog ai-draft`."
             )
 
         self._client = _build_sdk_client(api_key=resolved_api_key)
