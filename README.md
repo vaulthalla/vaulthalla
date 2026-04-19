@@ -1,5 +1,9 @@
 # ⚡️ Vaulthalla | The Final Cloud ⚡️
 
+[![build](https://img.shields.io/github/actions/workflow/status/vaulthalla/vaulthalla/build_and_test.yml)](https://github.com/vaulthalla/vaulthalla/actions)
+&nbsp;
+[![license](https://img.shields.io/github/license/vaulthalla/vaulthalla?v=2)](https://github.com/vaulthalla/vaulthalla/blob/main/LICENSE)
+
 **Military-grade encryption. Lightning-fast performance.**  
 **Your files, your terms.**
 

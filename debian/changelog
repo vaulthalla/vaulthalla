@@ -1,6 +1,8 @@
-vaulthalla (0.28.1-1) unstable; urgency=medium
+vaulthalla (0.28.0-1) unstable; urgency=medium
 
-  * Initial Debian upload
-  * A FUSE filesystem backed with postgres and robust encryption
+  - merge web into core monorepo layout
+  - major RBAC and protocol refactors
+  - integration test rewrite and build cleanup
+  - initial Debian packaging and release tooling foundation
 
- -- Cooper Larson <cooper@valkyrianlabs.com>  Wed, 27 Aug 2025 16:15:45 +0000
+ -- Cooper Larson <cooper@valkyrianlabs.com>  Sun, 19 April 2026 10:33:00 +0000
