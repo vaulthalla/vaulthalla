@@ -144,6 +144,10 @@ class CliChangelogDraftTests(unittest.TestCase):
                 "/tmp/ai.json",
                 "--model",
                 "gpt-5.4-mini",
+                "--provider",
+                "openai-compatible",
+                "--base-url",
+                "http://localhost:8888/v1",
                 "--use-triage",
                 "--save-triage-json",
                 "/tmp/triage.json",
@@ -158,6 +162,8 @@ class CliChangelogDraftTests(unittest.TestCase):
         self.assertEqual(parsed_ai.output, "/tmp/ai.md")
         self.assertEqual(parsed_ai.save_json, "/tmp/ai.json")
         self.assertEqual(parsed_ai.model, "gpt-5.4-mini")
+        self.assertEqual(parsed_ai.provider, "openai-compatible")
+        self.assertEqual(parsed_ai.base_url, "http://localhost:8888/v1")
         self.assertTrue(parsed_ai.use_triage)
         self.assertEqual(parsed_ai.save_triage_json, "/tmp/triage.json")
         self.assertTrue(parsed_ai.polish)
@@ -225,6 +231,8 @@ class CliChangelogAIDraftTests(unittest.TestCase):
         output: str | None = None,
         save_json: str | None = None,
         model: str = DEFAULT_AI_DRAFT_MODEL,
+        provider: str = "openai",
+        base_url: str | None = None,
         use_triage: bool = False,
         save_triage_json: str | None = None,
         polish: bool = False,
@@ -236,6 +244,8 @@ class CliChangelogAIDraftTests(unittest.TestCase):
             output=output,
             save_json=save_json,
             model=model,
+            provider=provider,
+            base_url=base_url,
             use_triage=use_triage,
             save_triage_json=save_triage_json,
             polish=polish,
@@ -245,10 +255,12 @@ class CliChangelogAIDraftTests(unittest.TestCase):
     def test_ai_draft_to_stdout(self) -> None:
         args = self._args(since_tag="v0.1.0")
         out = StringIO()
+        provider_obj = object()
 
         with (
             patch("tools.release.cli.build_changelog_context", return_value=object()) as build_context,
             patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}) as build_payload,
+            patch("tools.release.cli.build_ai_provider_from_args", return_value=provider_obj) as build_provider,
             patch("tools.release.cli.generate_draft_from_payload", return_value=object()) as generate_draft,
             patch("tools.release.cli.render_draft_markdown", return_value="# AI Draft\n") as render_markdown,
             patch("tools.release.cli.render_draft_result_json") as render_json,
@@ -265,9 +277,10 @@ class CliChangelogAIDraftTests(unittest.TestCase):
         self.assertEqual(out.getvalue(), "# AI Draft\n")
         self.assertEqual(build_context.call_args.args[1], "v0.1.0")
         build_payload.assert_called_once()
+        build_provider.assert_called_once_with(args)
         generate_draft.assert_called_once_with(
             {"schema_version": "x"},
-            model=DEFAULT_AI_DRAFT_MODEL,
+            provider=provider_obj,
             source_kind="payload",
         )
         render_markdown.assert_called_once()
@@ -290,10 +303,12 @@ class CliChangelogAIDraftTests(unittest.TestCase):
                 use_triage=True,
             )
             out = StringIO()
+            provider_obj = object()
 
             with (
                 patch("tools.release.cli.build_changelog_context", return_value=object()),
                 patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
+                patch("tools.release.cli.build_ai_provider_from_args", return_value=provider_obj),
                 patch("tools.release.cli.run_triage_stage", return_value=triage_obj) as run_triage,
                 patch("tools.release.cli.build_triage_ir_payload", return_value={"schema_version": "triage-x"}) as build_triage,
                 patch("tools.release.cli.generate_draft_from_payload", return_value=object()) as generate_draft,
@@ -310,11 +325,11 @@ class CliChangelogAIDraftTests(unittest.TestCase):
             self.assertEqual(result, 0)
             self.assertEqual(markdown_target.read_text(encoding="utf-8"), "# AI Draft\n")
             self.assertEqual(json_target.read_text(encoding="utf-8"), '{"title":"x"}\n')
-            run_triage.assert_called_once_with({"schema_version": "x"}, model="gpt-x-mini")
+            run_triage.assert_called_once_with({"schema_version": "x"}, provider=provider_obj)
             build_triage.assert_called_once_with(triage_obj)
             generate_draft.assert_called_once_with(
                 {"schema_version": "triage-x"},
-                model="gpt-x-mini",
+                provider=provider_obj,
                 source_kind="triage",
             )
             self.assertIn("Wrote AI changelog draft to", out.getvalue())
@@ -328,10 +343,12 @@ class CliChangelogAIDraftTests(unittest.TestCase):
             triage_target = Path(temp_dir) / "triage.json"
             args = self._args(use_triage=True, save_triage_json=str(triage_target))
             out = StringIO()
+            provider_obj = object()
 
             with (
                 patch("tools.release.cli.build_changelog_context", return_value=object()),
                 patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
+                patch("tools.release.cli.build_ai_provider_from_args", return_value=provider_obj),
                 patch("tools.release.cli.run_triage_stage", return_value=object()),
                 patch("tools.release.cli.build_triage_ir_payload", return_value={"schema_version": "triage-x"}),
                 patch("tools.release.cli.generate_draft_from_payload", return_value=object()),
@@ -363,10 +380,12 @@ class CliChangelogAIDraftTests(unittest.TestCase):
                 save_polish_json=str(polish_target),
             )
             out = StringIO()
+            provider_obj = object()
 
             with (
                 patch("tools.release.cli.build_changelog_context", return_value=object()),
                 patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
+                patch("tools.release.cli.build_ai_provider_from_args", return_value=provider_obj),
                 patch("tools.release.cli.generate_draft_from_payload", return_value=draft_obj) as generate_draft,
                 patch("tools.release.cli.run_polish_stage", return_value=polish_obj) as run_polish,
                 patch("tools.release.cli.render_draft_markdown", return_value="# AI Draft\n") as render_draft_markdown,
@@ -385,10 +404,10 @@ class CliChangelogAIDraftTests(unittest.TestCase):
             self.assertEqual(polish_target.read_text(encoding="utf-8"), '{"schema_version":"polish"}\n')
             generate_draft.assert_called_once_with(
                 {"schema_version": "x"},
-                model=DEFAULT_AI_DRAFT_MODEL,
+                provider=provider_obj,
                 source_kind="payload",
             )
-            run_polish.assert_called_once_with(draft_obj, model=DEFAULT_AI_DRAFT_MODEL)
+            run_polish.assert_called_once_with(draft_obj, provider=provider_obj)
             render_polish_markdown.assert_called_once_with(polish_obj)
             render_polish_json.assert_called()
             render_draft_markdown.assert_not_called()
@@ -403,10 +422,12 @@ class CliChangelogAIDraftTests(unittest.TestCase):
         polish_obj = object()
         args = self._args(use_triage=True, polish=True, model="gpt-x-mini")
         out = StringIO()
+        provider_obj = object()
 
         with (
             patch("tools.release.cli.build_changelog_context", return_value=object()),
             patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
+            patch("tools.release.cli.build_ai_provider_from_args", return_value=provider_obj),
             patch("tools.release.cli.run_triage_stage", return_value=triage_obj) as run_triage,
             patch("tools.release.cli.build_triage_ir_payload", return_value={"schema_version": "triage-x"}) as build_triage,
             patch("tools.release.cli.generate_draft_from_payload", return_value=draft_obj) as generate_draft,
@@ -421,20 +442,21 @@ class CliChangelogAIDraftTests(unittest.TestCase):
             result = cli.cmd_changelog_ai_draft(args)
 
         self.assertEqual(result, 0)
-        run_triage.assert_called_once_with({"schema_version": "x"}, model="gpt-x-mini")
+        run_triage.assert_called_once_with({"schema_version": "x"}, provider=provider_obj)
         build_triage.assert_called_once_with(triage_obj)
         generate_draft.assert_called_once_with(
             {"schema_version": "triage-x"},
-            model="gpt-x-mini",
+            provider=provider_obj,
             source_kind="triage",
         )
-        run_polish.assert_called_once_with(draft_obj, model="gpt-x-mini")
+        run_polish.assert_called_once_with(draft_obj, provider=provider_obj)
 
     def test_main_fails_when_triage_requested_and_invalid(self) -> None:
         err = StringIO()
         with (
             patch("tools.release.cli.build_changelog_context", return_value=object()),
             patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
+            patch("tools.release.cli.build_ai_provider_from_args", return_value=object()),
             patch(
                 "tools.release.cli.run_triage_stage",
                 side_effect=ValueError("AI triage response must include non-empty `categories` list."),
@@ -451,6 +473,7 @@ class CliChangelogAIDraftTests(unittest.TestCase):
         with (
             patch("tools.release.cli.build_changelog_context", return_value=object()),
             patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
+            patch("tools.release.cli.build_ai_provider_from_args", return_value=object()),
             patch("tools.release.cli.generate_draft_from_payload", return_value=object()),
             patch(
                 "tools.release.cli.run_polish_stage",
@@ -485,7 +508,7 @@ class CliChangelogAIDraftTests(unittest.TestCase):
             patch("tools.release.cli.build_changelog_context", return_value=object()),
             patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
             patch(
-                "tools.release.cli.generate_draft_from_payload",
+                "tools.release.cli.build_ai_provider_from_args",
                 side_effect=ValueError("OPENAI_API_KEY is not set."),
             ),
             patch("tools.release.cli.run_triage_stage"),
@@ -496,6 +519,56 @@ class CliChangelogAIDraftTests(unittest.TestCase):
 
         self.assertEqual(rc, 1)
         self.assertIn("ERROR: OPENAI_API_KEY is not set.", err.getvalue())
+
+    def test_main_openai_rejects_base_url_flag(self) -> None:
+        err = StringIO()
+        with (
+            patch("tools.release.cli.build_changelog_context", return_value=object()),
+            patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
+            patch("sys.stderr", new=err),
+        ):
+            rc = cli.main(
+                [
+                    "changelog",
+                    "ai-draft",
+                    "--provider",
+                    "openai",
+                    "--base-url",
+                    "http://localhost:8888/v1",
+                ]
+            )
+
+        self.assertEqual(rc, 1)
+        self.assertIn("ERROR: `--base-url` is only valid when `--provider openai-compatible` is used.", err.getvalue())
+
+    def test_main_openai_compatible_allows_no_auth_provider_build(self) -> None:
+        err = StringIO()
+        out = StringIO()
+        with (
+            patch("tools.release.cli.build_changelog_context", return_value=object()),
+            patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
+            patch("tools.release.cli.build_ai_provider_from_args", return_value=object()),
+            patch("tools.release.cli.generate_draft_from_payload", return_value=object()),
+            patch("tools.release.cli.render_draft_markdown", return_value="# Draft\n"),
+            patch("sys.stderr", new=err),
+            redirect_stdout(out),
+        ):
+            rc = cli.main(
+                [
+                    "changelog",
+                    "ai-draft",
+                    "--provider",
+                    "openai-compatible",
+                    "--base-url",
+                    "http://localhost:8888/v1",
+                    "--model",
+                    "Qwen3.5-122B",
+                ]
+            )
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(err.getvalue(), "")
+        self.assertEqual(out.getvalue(), "# Draft\n")
 
 
 class CliChangelogContextHelperTests(unittest.TestCase):

@@ -6,6 +6,8 @@ from typing import Any
 
 from tools.release.changelog.ai.config import DEFAULT_AI_DRAFT_MODEL, OPENAI_API_KEY_ENV_VAR
 
+LOCAL_NO_AUTH_API_KEY_PLACEHOLDER = "local-no-auth"
+
 
 class OpenAIProvider:
     """Thin OpenAI transport adapter for one structured JSON generation pass."""
@@ -15,6 +17,10 @@ class OpenAIProvider:
         *,
         model: str = DEFAULT_AI_DRAFT_MODEL,
         api_key: str | None = None,
+        api_key_env_var: str = OPENAI_API_KEY_ENV_VAR,
+        base_url: str | None = None,
+        timeout_seconds: float | None = None,
+        require_api_key: bool = True,
         sdk_client: Any | None = None,
     ) -> None:
         self.model = model
@@ -23,13 +29,21 @@ class OpenAIProvider:
             self._client = sdk_client
             return
 
-        resolved_api_key = api_key or os.getenv(OPENAI_API_KEY_ENV_VAR)
-        if not resolved_api_key:
+        resolved_api_key = api_key or os.getenv(api_key_env_var)
+        if not resolved_api_key and require_api_key:
             raise ValueError(
-                f"{OPENAI_API_KEY_ENV_VAR} is not set. Export {OPENAI_API_KEY_ENV_VAR} to run `changelog ai-draft`."
+                f"{api_key_env_var} is not set. Export {api_key_env_var} to run `changelog ai-draft`."
             )
+        if not resolved_api_key:
+            # OpenAI-compatible local gateways may not require auth; keep a placeholder
+            # so SDK client construction still succeeds when no key is provided.
+            resolved_api_key = LOCAL_NO_AUTH_API_KEY_PLACEHOLDER
 
-        self._client = _build_sdk_client(api_key=resolved_api_key)
+        self._client = _build_sdk_client(
+            api_key=resolved_api_key,
+            base_url=base_url,
+            timeout_seconds=timeout_seconds,
+        )
 
     def generate_structured_json(
         self,
@@ -85,14 +99,24 @@ class OpenAIProvider:
         }
 
 
-def _build_sdk_client(*, api_key: str) -> Any:
+def _build_sdk_client(
+    *,
+    api_key: str,
+    base_url: str | None = None,
+    timeout_seconds: float | None = None,
+) -> Any:
     try:
         from openai import OpenAI
     except Exception as exc:
         raise ValueError(
             "OpenAI SDK is not available in this environment. Install `openai` in the active venv."
         ) from exc
-    return OpenAI(api_key=api_key)
+    kwargs: dict[str, Any] = {"api_key": api_key}
+    if base_url:
+        kwargs["base_url"] = base_url
+    if timeout_seconds is not None:
+        kwargs["timeout"] = timeout_seconds
+    return OpenAI(**kwargs)
 
 
 def _extract_message_content(response: Any) -> str:

@@ -2,17 +2,36 @@ from __future__ import annotations
 
 from typing import Any
 
+from tools.release.changelog.ai.config import DEFAULT_AI_DRAFT_MODEL, OPENAI_API_KEY_ENV_VAR
 from tools.release.changelog.ai.providers.base import StructuredJSONProvider
+from tools.release.changelog.ai.providers.openai import OpenAIProvider
 
 
 class OpenAICompatibleProvider(StructuredJSONProvider):
-    """Placeholder for future local OpenAI-compatible providers."""
+    """OpenAI-compatible transport for local or self-hosted endpoints."""
 
-    def __init__(self, *, model: str, base_url: str, api_key: str | None = None, sdk_client: Any | None = None):
-        self.model = model
-        self.base_url = base_url
-        self.api_key = api_key
-        self._client = sdk_client
+    def __init__(
+        self,
+        *,
+        model: str = DEFAULT_AI_DRAFT_MODEL,
+        base_url: str,
+        api_key: str | None = None,
+        api_key_env_var: str = OPENAI_API_KEY_ENV_VAR,
+        timeout_seconds: float | None = None,
+        sdk_client: Any | None = None,
+    ) -> None:
+        normalized_base_url = base_url.strip()
+        if not normalized_base_url:
+            raise ValueError("OpenAI-compatible provider requires a non-empty `base_url`.")
+        self._delegate = OpenAIProvider(
+            model=model,
+            api_key=api_key,
+            api_key_env_var=api_key_env_var,
+            base_url=normalized_base_url,
+            timeout_seconds=timeout_seconds,
+            require_api_key=False,
+            sdk_client=sdk_client,
+        )
 
     def generate_structured_json(
         self,
@@ -21,4 +40,8 @@ class OpenAICompatibleProvider(StructuredJSONProvider):
         user_prompt: str,
         json_schema: dict[str, Any],
     ) -> dict[str, Any]:
-        raise NotImplementedError("OpenAI-compatible provider support is deferred to a later phase.")
+        return self._delegate.generate_structured_json(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            json_schema=json_schema,
+        )

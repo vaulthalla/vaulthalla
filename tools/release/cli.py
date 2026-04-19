@@ -4,9 +4,11 @@ import argparse
 import sys
 from pathlib import Path
 
-from tools.release.changelog.ai.config import DEFAULT_AI_DRAFT_MODEL
+from tools.release.changelog.ai.config import AIProviderConfig, DEFAULT_AI_DRAFT_MODEL, DEFAULT_AI_PROVIDER_KIND
 from tools.release.changelog.ai.contracts.polish import AIPolishResult
 from tools.release.changelog.ai.contracts.triage import build_triage_ir_payload
+from tools.release.changelog.ai.providers import build_structured_json_provider
+from tools.release.changelog.ai.providers.base import StructuredJSONProvider
 from tools.release.changelog.ai.render.markdown import render_draft_markdown, render_polish_markdown
 from tools.release.changelog.ai.stages.draft import generate_draft_from_payload, render_draft_result_json
 from tools.release.changelog.ai.stages.polish import render_polish_result_json, run_polish_stage
@@ -169,6 +171,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--model",
         default=DEFAULT_AI_DRAFT_MODEL,
         help=f"OpenAI model to use (default: {DEFAULT_AI_DRAFT_MODEL}).",
+    )
+    changelog_ai_draft_parser.add_argument(
+        "--provider",
+        choices=("openai", "openai-compatible"),
+        default=DEFAULT_AI_PROVIDER_KIND,
+        help="AI provider transport to use (default: openai).",
+    )
+    changelog_ai_draft_parser.add_argument(
+        "--base-url",
+        default=None,
+        help="OpenAI-compatible endpoint base URL (for --provider openai-compatible).",
     )
     changelog_ai_draft_parser.add_argument(
         "--use-triage",
@@ -361,11 +374,12 @@ def cmd_changelog_ai_draft(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo_root).resolve()
     context = build_changelog_context(repo_root, args.since_tag)
     payload = build_ai_payload(context)
+    provider = build_ai_provider_from_args(args)
     draft_input: dict = payload
     source_kind = "payload"
 
     if args.use_triage:
-        triage_result = run_triage_stage(payload, model=args.model)
+        triage_result = run_triage_stage(payload, provider=provider)
         draft_input = build_triage_ir_payload(triage_result)
         source_kind = "triage"
 
@@ -373,11 +387,11 @@ def cmd_changelog_ai_draft(args: argparse.Namespace) -> int:
             write_output(render_triage_result_json(triage_result), args.save_triage_json)
             print(f"Wrote AI triage JSON to {Path(args.save_triage_json).resolve()}")
 
-    draft = generate_draft_from_payload(draft_input, model=args.model, source_kind=source_kind)
+    draft = generate_draft_from_payload(draft_input, provider=provider, source_kind=source_kind)
     polish_result: AIPolishResult | None = None
 
     if args.polish:
-        polish_result = run_polish_stage(draft, model=args.model)
+        polish_result = run_polish_stage(draft, provider=provider)
         final_markdown = render_polish_markdown(polish_result)
 
         if args.save_polish_json:
@@ -476,3 +490,12 @@ def build_changelog_context(repo_root: Path, since_tag: str | None):
         repo_root=repo_root,
         previous_tag=since_tag,
     )
+
+
+def build_ai_provider_from_args(args: argparse.Namespace) -> StructuredJSONProvider:
+    config = AIProviderConfig(
+        kind=args.provider,
+        model=args.model,
+        base_url=args.base_url,
+    )
+    return build_structured_json_provider(config)

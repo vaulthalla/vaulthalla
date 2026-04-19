@@ -1,7 +1,11 @@
 from tools.release.changelog.ai.config import (
+    AIProviderConfig,
+    AIProviderKind,
+    DEFAULT_AI_PROVIDER_KIND,
     DEFAULT_AI_DRAFT_MODEL,
     DEFAULT_AI_POLISH_MODEL,
     DEFAULT_AI_TRIAGE_MODEL,
+    DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
 )
 from tools.release.changelog.ai.contracts import (
     AIDraftResult,
@@ -24,7 +28,11 @@ from tools.release.changelog.ai.contracts import (
     parse_ai_polish_response,
     parse_ai_triage_response,
 )
-from tools.release.changelog.ai.providers.openai import OpenAIProvider
+from tools.release.changelog.ai.providers import (
+    OpenAICompatibleProvider,
+    OpenAIProvider,
+    build_structured_json_provider,
+)
 from tools.release.changelog.ai.render.markdown import render_draft_markdown, render_polish_markdown
 from tools.release.changelog.ai.stages.draft import generate_draft_from_payload, render_draft_result_json
 from tools.release.changelog.ai.stages.polish import render_polish_result_json, run_polish_stage
@@ -58,9 +66,15 @@ __all__ = [
     "ai_triage_result_to_dict",
     "build_triage_ir_payload",
     "DEFAULT_AI_DRAFT_MODEL",
+    "DEFAULT_AI_PROVIDER_KIND",
     "DEFAULT_AI_POLISH_MODEL",
     "DEFAULT_AI_TRIAGE_MODEL",
+    "DEFAULT_OPENAI_COMPATIBLE_BASE_URL",
+    "AIProviderKind",
+    "AIProviderConfig",
     "OpenAIProvider",
+    "OpenAICompatibleProvider",
+    "build_structured_json_provider",
     "generate_draft_from_payload",
     "render_draft_markdown",
     "render_draft_result_json",
