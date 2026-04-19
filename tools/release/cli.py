@@ -4,6 +4,9 @@ import argparse
 import sys
 from pathlib import Path
 
+from tools.release.changelog.context_builder import build_release_context
+from tools.release.changelog.render_raw import render_debug_json, render_release_changelog
+from tools.release.version.adapters.version_file import read_version_file
 from tools.release.version.models import Version
 from tools.release.version.sync import apply_version_update, resolve_debian_revision
 from tools.release.version.validate import (
@@ -90,6 +93,34 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show what would change without writing files.",
     )
     bump_parser.set_defaults(func=cmd_bump)
+
+    changelog_parser = subparsers.add_parser(
+        "changelog",
+        help="Generate changelog artifacts from git history.",
+    )
+    changelog_subparsers = changelog_parser.add_subparsers(dest="changelog_command", required=True)
+
+    changelog_draft_parser = changelog_subparsers.add_parser(
+        "draft",
+        help="Render a changelog draft from the current release context.",
+    )
+    changelog_draft_parser.add_argument(
+        "--format",
+        choices=("raw", "json"),
+        default="raw",
+        help="Output format (default: raw).",
+    )
+    changelog_draft_parser.add_argument(
+        "--since-tag",
+        default=None,
+        help="Optional tag to use as lower bound (overrides latest-tag auto-detection).",
+    )
+    changelog_draft_parser.add_argument(
+        "--output",
+        default=None,
+        help="Write rendered output to a file path instead of stdout.",
+    )
+    changelog_draft_parser.set_defaults(func=cmd_changelog_draft)
 
     return parser
 
@@ -224,6 +255,32 @@ def cmd_bump(args: argparse.Namespace) -> int:
     return cmd_set_version(set_args)
 
 
+def cmd_changelog_draft(args: argparse.Namespace) -> int:
+    repo_root = Path(args.repo_root).resolve()
+    version_path = repo_root / "VERSION"
+
+    try:
+        version = read_version_file(version_path)
+    except Exception as exc:
+        raise ValueError(f"Failed to read canonical version from {version_path}: {exc}") from exc
+
+    context = build_release_context(
+        version=str(version),
+        repo_root=repo_root,
+        previous_tag=args.since_tag,
+    )
+
+    if args.format == "json":
+        rendered = f"{render_debug_json(context)}\n"
+    else:
+        rendered = render_release_changelog(context)
+
+    write_output(rendered, args.output)
+    if args.output:
+        print(f"Wrote changelog draft to {Path(args.output).resolve()}")
+    return 0
+
+
 def bump_version(version: Version, part: str) -> Version:
     if part == "major":
         return version.bump_major()
@@ -272,3 +329,15 @@ def print_planned_changes(
 
 def format_value(value) -> str:
     return str(value) if value is not None else "<unavailable>"
+
+
+def write_output(content: str, output_path: str | None) -> None:
+    if output_path is None:
+        print(content, end="" if content.endswith("\n") else "\n")
+        return
+
+    target = Path(output_path)
+    try:
+        target.write_text(content, encoding="utf-8")
+    except Exception as exc:
+        raise ValueError(f"Failed to write output to {target}: {exc}") from exc
