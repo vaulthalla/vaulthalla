@@ -4,6 +4,12 @@ import argparse
 import sys
 from pathlib import Path
 
+from tools.release.changelog.ai.draft_mini import (
+    generate_mini_draft_from_payload,
+    render_ai_draft_json,
+    render_ai_draft_markdown,
+)
+from tools.release.changelog.ai.openai_client import DEFAULT_OPENAI_MINI_MODEL
 from tools.release.changelog.context_builder import build_release_context
 from tools.release.changelog.payload import build_ai_payload, render_ai_payload_json
 from tools.release.changelog.render_raw import render_debug_json, render_release_changelog
@@ -138,6 +144,32 @@ def build_parser() -> argparse.ArgumentParser:
         help="Write rendered output to a file path instead of stdout.",
     )
     changelog_payload_parser.set_defaults(func=cmd_changelog_payload)
+
+    changelog_ai_draft_parser = changelog_subparsers.add_parser(
+        "ai-draft",
+        help="Generate an AI-assisted changelog draft from deterministic payload input.",
+    )
+    changelog_ai_draft_parser.add_argument(
+        "--since-tag",
+        default=None,
+        help="Optional tag to use as lower bound (overrides latest-tag auto-detection).",
+    )
+    changelog_ai_draft_parser.add_argument(
+        "--output",
+        default=None,
+        help="Write rendered markdown draft to a file path instead of stdout.",
+    )
+    changelog_ai_draft_parser.add_argument(
+        "--save-json",
+        default=None,
+        help="Optional path to save the validated structured AI draft JSON.",
+    )
+    changelog_ai_draft_parser.add_argument(
+        "--model",
+        default=DEFAULT_OPENAI_MINI_MODEL,
+        help=f"OpenAI model to use (default: {DEFAULT_OPENAI_MINI_MODEL}).",
+    )
+    changelog_ai_draft_parser.set_defaults(func=cmd_changelog_ai_draft)
 
     return parser
 
@@ -296,6 +328,25 @@ def cmd_changelog_payload(args: argparse.Namespace) -> int:
     write_output(rendered, args.output)
     if args.output:
         print(f"Wrote changelog payload to {Path(args.output).resolve()}")
+    return 0
+
+
+def cmd_changelog_ai_draft(args: argparse.Namespace) -> int:
+    repo_root = Path(args.repo_root).resolve()
+    context = build_changelog_context(repo_root, args.since_tag)
+    payload = build_ai_payload(context)
+
+    draft = generate_mini_draft_from_payload(payload, model=args.model)
+    markdown = render_ai_draft_markdown(draft)
+    write_output(markdown, args.output)
+
+    if args.output:
+        print(f"Wrote AI changelog draft to {Path(args.output).resolve()}")
+
+    if args.save_json:
+        write_output(render_ai_draft_json(draft), args.save_json)
+        print(f"Wrote AI draft JSON to {Path(args.save_json).resolve()}")
+
     return 0
 
 

@@ -7,16 +7,16 @@ This is the current architecture and status map for release/version/changelog au
 `tools/release` currently does two real jobs:
 
 1. Version-state management (authoritative `VERSION` sync and drift validation).
-2. Changelog generation pipeline (collect/categorize/score/snippet/context, raw draft rendering, and deterministic AI payload projection).
+2. Changelog generation pipeline (collect/categorize/score/snippet/context, raw draft rendering, deterministic AI payload projection, and local single-pass AI draft generation).
 
-It does **not** yet include OpenAI API integration; payload generation is local/offline only.
+It does **not** yet include multi-stage OpenAI orchestration; current AI drafting is mini-tier and single-pass.
 
 ## Package Layout (Current Code)
 
 Top level:
 
 - `tools/release/__main__.py`: `python -m tools.release` entrypoint.
-- `tools/release/cli.py`: CLI parser + version commands + changelog `draft`/`payload` flows.
+- `tools/release/cli.py`: CLI parser + version commands + changelog `draft`/`payload`/`ai-draft` flows.
 
 Version system:
 
@@ -45,6 +45,11 @@ Changelog system:
 - `tools/release/changelog/context_builder.py`: orchestration into `ReleaseContext` (commit/file stats + snippets).
 - `tools/release/changelog/render_raw.py`: raw markdown/debug/json rendering.
 - `tools/release/changelog/payload.py`: deterministic model-ready payload builder (`schema_version`, bounded evidence, truncation metadata).
+- `tools/release/changelog/ai/`:
+  - `contracts.py`: typed AI response contract + validation.
+  - `prompt_mini.py`: mini drafting prompt builder.
+  - `openai_client.py`: thin OpenAI structured JSON adapter.
+  - `draft_mini.py`: single-pass mini orchestration + local markdown/json rendering.
 
 Debug surface:
 
@@ -59,6 +64,7 @@ python3 -m tools.release set-version X.Y.Z [--dry-run] [--debian-revision N]
 python3 -m tools.release bump {major|minor|patch} [--dry-run] [--debian-revision N]
 python3 -m tools.release changelog draft [--format raw|json] [--since-tag TAG] [--output PATH]
 python3 -m tools.release changelog payload [--since-tag TAG] [--output PATH]
+python3 -m tools.release changelog ai-draft [--since-tag TAG] [--output PATH] [--save-json PATH] [--model MODEL]
 ```
 
 Debug harness:
@@ -124,7 +130,7 @@ This is currently the best introspection path for tuning collector quality.
    - limited narrative synthesis.
 2. Categorization/scoring/snippet logic is heuristic and not yet benchmarked by representative git-range fixtures.
 3. Snippet reasoning is shallow (`build_snippet_reason` still mostly file-level).
-4. No OpenAI client integration in `tools/release` yet (by design at current stage).
+4. AI drafting currently has no multi-stage flow (no nano triage, no full-model polish pass).
 
 ## Intended Progression Toward AI-Assisted Changelog Generation
 
@@ -132,7 +138,7 @@ Planned progression from current state:
 
 1. Continue collector quality and determinism tuning.
 2. Improve/validate renderer quality using representative fixtures.
-3. Add local OpenAI draft integration on top of deterministic payload input.
+3. Expand from single-pass mini drafting to staged AI flow (Phase 5b/5c).
 4. Add optional refinement passes only after baseline deterministic quality is stable.
 
 Roadmap tracking file:

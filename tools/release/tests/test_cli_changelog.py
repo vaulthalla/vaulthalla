@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from tools.release import cli
+from tools.release.changelog.ai.openai_client import DEFAULT_OPENAI_MINI_MODEL
 from tools.release.version.models import Version
 
 
@@ -131,6 +132,27 @@ class CliChangelogDraftTests(unittest.TestCase):
         self.assertEqual(parsed_payload.since_tag, "v0.1.0")
         self.assertEqual(parsed_payload.output, "/tmp/payload.json")
 
+        parsed_ai = parser.parse_args(
+            [
+                "changelog",
+                "ai-draft",
+                "--since-tag",
+                "v0.1.0",
+                "--output",
+                "/tmp/ai.md",
+                "--save-json",
+                "/tmp/ai.json",
+                "--model",
+                "gpt-5.4-mini",
+            ]
+        )
+        self.assertEqual(parsed_ai.command, "changelog")
+        self.assertEqual(parsed_ai.changelog_command, "ai-draft")
+        self.assertEqual(parsed_ai.since_tag, "v0.1.0")
+        self.assertEqual(parsed_ai.output, "/tmp/ai.md")
+        self.assertEqual(parsed_ai.save_json, "/tmp/ai.json")
+        self.assertEqual(parsed_ai.model, "gpt-5.4-mini")
+
 
 class CliChangelogPayloadTests(unittest.TestCase):
     def _args(
@@ -182,6 +204,87 @@ class CliChangelogPayloadTests(unittest.TestCase):
             self.assertTrue(target.is_file())
             self.assertEqual(target.read_text(encoding="utf-8"), '{"schema_version":"x"}\n')
             self.assertIn("Wrote changelog payload to", out.getvalue())
+
+
+class CliChangelogAIDraftTests(unittest.TestCase):
+    def _args(
+        self,
+        *,
+        repo_root: str = ".",
+        since_tag: str | None = None,
+        output: str | None = None,
+        save_json: str | None = None,
+        model: str = DEFAULT_OPENAI_MINI_MODEL,
+    ) -> argparse.Namespace:
+        return argparse.Namespace(
+            repo_root=repo_root,
+            since_tag=since_tag,
+            output=output,
+            save_json=save_json,
+            model=model,
+        )
+
+    def test_ai_draft_to_stdout(self) -> None:
+        args = self._args(since_tag="v0.1.0")
+        out = StringIO()
+
+        with (
+            patch("tools.release.cli.build_changelog_context", return_value=object()) as build_context,
+            patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}) as build_payload,
+            patch("tools.release.cli.generate_mini_draft_from_payload", return_value=object()) as generate_draft,
+            patch("tools.release.cli.render_ai_draft_markdown", return_value="# AI Draft\n") as render_markdown,
+            patch("tools.release.cli.render_ai_draft_json") as render_json,
+            redirect_stdout(out),
+        ):
+            result = cli.cmd_changelog_ai_draft(args)
+
+        self.assertEqual(result, 0)
+        self.assertEqual(out.getvalue(), "# AI Draft\n")
+        self.assertEqual(build_context.call_args.args[1], "v0.1.0")
+        build_payload.assert_called_once()
+        generate_draft.assert_called_once_with({"schema_version": "x"}, model=DEFAULT_OPENAI_MINI_MODEL)
+        render_markdown.assert_called_once()
+        render_json.assert_not_called()
+
+    def test_ai_draft_output_and_json_files(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            markdown_target = Path(temp_dir) / "ai-draft.md"
+            json_target = Path(temp_dir) / "ai-draft.json"
+            args = self._args(output=str(markdown_target), save_json=str(json_target), model="gpt-x-mini")
+            out = StringIO()
+
+            with (
+                patch("tools.release.cli.build_changelog_context", return_value=object()),
+                patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
+                patch("tools.release.cli.generate_mini_draft_from_payload", return_value=object()) as generate_draft,
+                patch("tools.release.cli.render_ai_draft_markdown", return_value="# AI Draft\n"),
+                patch("tools.release.cli.render_ai_draft_json", return_value='{"title":"x"}\n'),
+                redirect_stdout(out),
+            ):
+                result = cli.cmd_changelog_ai_draft(args)
+
+            self.assertEqual(result, 0)
+            self.assertEqual(markdown_target.read_text(encoding="utf-8"), "# AI Draft\n")
+            self.assertEqual(json_target.read_text(encoding="utf-8"), '{"title":"x"}\n')
+            generate_draft.assert_called_once_with({"schema_version": "x"}, model="gpt-x-mini")
+            self.assertIn("Wrote AI changelog draft to", out.getvalue())
+            self.assertIn("Wrote AI draft JSON to", out.getvalue())
+
+    def test_main_reports_missing_api_key_error_cleanly(self) -> None:
+        err = StringIO()
+        with (
+            patch("tools.release.cli.build_changelog_context", return_value=object()),
+            patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
+            patch(
+                "tools.release.cli.generate_mini_draft_from_payload",
+                side_effect=ValueError("OPENAI_API_KEY is not set."),
+            ),
+            patch("sys.stderr", new=err),
+        ):
+            rc = cli.main(["changelog", "ai-draft"])
+
+        self.assertEqual(rc, 1)
+        self.assertIn("ERROR: OPENAI_API_KEY is not set.", err.getvalue())
 
 
 class CliChangelogContextHelperTests(unittest.TestCase):
