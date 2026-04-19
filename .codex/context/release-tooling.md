@@ -64,7 +64,8 @@ python3 -m tools.release set-version X.Y.Z [--dry-run] [--debian-revision N]
 python3 -m tools.release bump {major|minor|patch} [--dry-run] [--debian-revision N]
 python3 -m tools.release changelog draft [--format raw|json] [--since-tag TAG] [--output PATH]
 python3 -m tools.release changelog payload [--since-tag TAG] [--output PATH]
-python3 -m tools.release changelog ai-draft [--since-tag TAG] [--output PATH] [--save-json PATH] [--model MODEL]
+python3 -m tools.release changelog ai-check [--provider openai|openai-compatible] [--base-url URL] [--model MODEL]
+python3 -m tools.release changelog ai-draft [--since-tag TAG] [--output PATH] [--save-json PATH] [--model MODEL] [--provider openai|openai-compatible] [--base-url URL] [--use-triage] [--save-triage-json PATH] [--polish] [--save-polish-json PATH]
 ```
 
 Debug harness:
@@ -144,3 +145,29 @@ Planned progression from current state:
 Roadmap tracking file:
 
 - `.codex/scratch/release-changelog-roadmap.md`
+
+## Local OpenAI-Compatible Workflow (vMLX)
+
+For local dogfood on vMLX-compatible endpoints:
+
+- Base URL format: `http://localhost:8888/v1`
+- Example local model names: `Qwen3.5-122B`, `Gemma-4-31B`
+- Local compatible mode can run without `OPENAI_API_KEY`
+
+Preflight provider/model connectivity before generation:
+
+```bash
+python3 -m tools.release changelog ai-check \
+  --provider openai-compatible \
+  --base-url http://localhost:8888/v1 \
+  --model Qwen3.5-122B
+```
+
+Then run generation with the same provider settings:
+
+```bash
+python3 -m tools.release changelog ai-draft \
+  --provider openai-compatible \
+  --base-url http://localhost:8888/v1 \
+  --model Qwen3.5-122B
+```

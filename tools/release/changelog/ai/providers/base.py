@@ -12,3 +12,8 @@ class StructuredJSONProvider(Protocol):
         json_schema: dict[str, Any],
     ) -> dict[str, Any]:
         ...
+
+
+class ModelDiscoveryProvider(Protocol):
+    def list_models(self) -> list[str]:
+        ...

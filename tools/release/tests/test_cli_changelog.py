@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from tools.release import cli
 from tools.release.changelog.ai.config import DEFAULT_AI_DRAFT_MODEL
+from tools.release.changelog.ai.providers import ProviderPreflightResult
 from tools.release.version.models import Version
 
 
@@ -132,6 +133,24 @@ class CliChangelogDraftTests(unittest.TestCase):
         self.assertEqual(parsed_payload.since_tag, "v0.1.0")
         self.assertEqual(parsed_payload.output, "/tmp/payload.json")
 
+        parsed_ai_check = parser.parse_args(
+            [
+                "changelog",
+                "ai-check",
+                "--provider",
+                "openai-compatible",
+                "--base-url",
+                "http://localhost:8888/v1",
+                "--model",
+                "Qwen3.5-122B",
+            ]
+        )
+        self.assertEqual(parsed_ai_check.command, "changelog")
+        self.assertEqual(parsed_ai_check.changelog_command, "ai-check")
+        self.assertEqual(parsed_ai_check.provider, "openai-compatible")
+        self.assertEqual(parsed_ai_check.base_url, "http://localhost:8888/v1")
+        self.assertEqual(parsed_ai_check.model, "Qwen3.5-122B")
+
         parsed_ai = parser.parse_args(
             [
                 "changelog",
@@ -222,6 +241,77 @@ class CliChangelogPayloadTests(unittest.TestCase):
             self.assertIn("Wrote changelog payload to", out.getvalue())
 
 
+class CliChangelogAICheckTests(unittest.TestCase):
+    def _args(
+        self,
+        *,
+        provider: str = "openai-compatible",
+        model: str = "Qwen3.5-122B",
+        base_url: str | None = "http://localhost:8888/v1",
+        repo_root: str = ".",
+    ) -> argparse.Namespace:
+        return argparse.Namespace(
+            provider=provider,
+            model=model,
+            base_url=base_url,
+            repo_root=repo_root,
+        )
+
+    def test_ai_check_prints_success_summary(self) -> None:
+        out = StringIO()
+        args = self._args()
+        result_obj = ProviderPreflightResult(
+            provider_kind="openai-compatible",
+            model="Qwen3.5-122B",
+            base_url="http://localhost:8888/v1",
+            discovered_models=("Qwen3.5-122B", "Gemma-4-31B"),
+            model_found=True,
+        )
+        with (
+            patch("tools.release.cli.build_ai_provider_config_from_args") as build_config,
+            patch("tools.release.cli.build_ai_provider_from_config", return_value=object()) as build_provider,
+            patch("tools.release.cli.run_provider_preflight", return_value=result_obj) as run_preflight,
+            redirect_stdout(out),
+        ):
+            rc = cli.cmd_changelog_ai_check(args)
+
+        self.assertEqual(rc, 0)
+        build_config.assert_called_once_with(args)
+        build_provider.assert_called_once()
+        run_preflight.assert_called_once()
+        rendered = out.getvalue()
+        self.assertIn("AI provider check", rendered)
+        self.assertIn("openai-compatible", rendered)
+        self.assertIn("Qwen3.5-122B", rendered)
+        self.assertIn("Gemma-4-31B", rendered)
+
+    def test_main_ai_check_surfaces_preflight_errors(self) -> None:
+        err = StringIO()
+        with (
+            patch("tools.release.cli.build_ai_provider_from_config", return_value=object()),
+            patch(
+                "tools.release.cli.run_provider_preflight",
+                side_effect=ValueError("Could not reach OpenAI-compatible endpoint"),
+            ),
+            patch("sys.stderr", new=err),
+        ):
+            rc = cli.main(
+                [
+                    "changelog",
+                    "ai-check",
+                    "--provider",
+                    "openai-compatible",
+                    "--base-url",
+                    "http://localhost:8888/v1",
+                    "--model",
+                    "Qwen3.5-122B",
+                ]
+            )
+
+        self.assertEqual(rc, 1)
+        self.assertIn("ERROR: Could not reach OpenAI-compatible endpoint", err.getvalue())
+
+
 class CliChangelogAIDraftTests(unittest.TestCase):
     def _args(
         self,
@@ -269,6 +359,7 @@ class CliChangelogAIDraftTests(unittest.TestCase):
             patch("tools.release.cli.run_polish_stage") as run_polish,
             patch("tools.release.cli.render_polish_result_json") as render_polish_json,
             patch("tools.release.cli.render_polish_markdown") as render_polish_markdown,
+            patch("tools.release.cli.run_provider_preflight") as run_preflight,
             redirect_stdout(out),
         ):
             result = cli.cmd_changelog_ai_draft(args)
@@ -290,6 +381,7 @@ class CliChangelogAIDraftTests(unittest.TestCase):
         run_polish.assert_not_called()
         render_polish_json.assert_not_called()
         render_polish_markdown.assert_not_called()
+        run_preflight.assert_not_called()
 
     def test_ai_draft_output_and_json_files(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -548,6 +640,7 @@ class CliChangelogAIDraftTests(unittest.TestCase):
             patch("tools.release.cli.build_changelog_context", return_value=object()),
             patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
             patch("tools.release.cli.build_ai_provider_from_args", return_value=object()),
+            patch("tools.release.cli.run_provider_preflight"),
             patch("tools.release.cli.generate_draft_from_payload", return_value=object()),
             patch("tools.release.cli.render_draft_markdown", return_value="# Draft\n"),
             patch("sys.stderr", new=err),
@@ -569,6 +662,31 @@ class CliChangelogAIDraftTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(err.getvalue(), "")
         self.assertEqual(out.getvalue(), "# Draft\n")
+
+    def test_ai_draft_openai_compatible_runs_preflight(self) -> None:
+        args = self._args(provider="openai-compatible", base_url="http://localhost:8888/v1", model="Qwen3.5-122B")
+        out = StringIO()
+        provider_obj = object()
+
+        with (
+            patch("tools.release.cli.build_changelog_context", return_value=object()),
+            patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
+            patch("tools.release.cli.build_ai_provider_from_args", return_value=provider_obj),
+            patch("tools.release.cli.run_provider_preflight") as run_preflight,
+            patch("tools.release.cli.generate_draft_from_payload", return_value=object()),
+            patch("tools.release.cli.render_draft_markdown", return_value="# Draft\n"),
+            redirect_stdout(out),
+        ):
+            rc = cli.cmd_changelog_ai_draft(args)
+
+        self.assertEqual(rc, 0)
+        run_preflight.assert_called_once()
+        call = run_preflight.call_args
+        self.assertEqual(call.kwargs["provider"], provider_obj)
+        self.assertTrue(call.kwargs["require_model"])
+        self.assertEqual(call.args[0].kind, "openai-compatible")
+        self.assertEqual(call.args[0].base_url, "http://localhost:8888/v1")
+        self.assertEqual(call.args[0].model, "Qwen3.5-122B")
 
 
 class CliChangelogContextHelperTests(unittest.TestCase):

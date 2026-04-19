@@ -7,7 +7,11 @@ from pathlib import Path
 from tools.release.changelog.ai.config import AIProviderConfig, DEFAULT_AI_DRAFT_MODEL, DEFAULT_AI_PROVIDER_KIND
 from tools.release.changelog.ai.contracts.polish import AIPolishResult
 from tools.release.changelog.ai.contracts.triage import build_triage_ir_payload
-from tools.release.changelog.ai.providers import build_structured_json_provider
+from tools.release.changelog.ai.providers import (
+    ProviderPreflightResult,
+    build_structured_json_provider,
+    run_provider_preflight,
+)
 from tools.release.changelog.ai.providers.base import StructuredJSONProvider
 from tools.release.changelog.ai.render.markdown import render_draft_markdown, render_polish_markdown
 from tools.release.changelog.ai.stages.draft import generate_draft_from_payload, render_draft_result_json
@@ -147,6 +151,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="Write rendered output to a file path instead of stdout.",
     )
     changelog_payload_parser.set_defaults(func=cmd_changelog_payload)
+
+    changelog_ai_check_parser = changelog_subparsers.add_parser(
+        "ai-check",
+        help="Validate AI provider connectivity and model availability.",
+    )
+    changelog_ai_check_parser.add_argument(
+        "--model",
+        default=DEFAULT_AI_DRAFT_MODEL,
+        help=f"Model to verify against provider model discovery (default: {DEFAULT_AI_DRAFT_MODEL}).",
+    )
+    changelog_ai_check_parser.add_argument(
+        "--provider",
+        choices=("openai", "openai-compatible"),
+        default=DEFAULT_AI_PROVIDER_KIND,
+        help="AI provider transport to use (default: openai).",
+    )
+    changelog_ai_check_parser.add_argument(
+        "--base-url",
+        default=None,
+        help="OpenAI-compatible endpoint base URL (for --provider openai-compatible).",
+    )
+    changelog_ai_check_parser.set_defaults(func=cmd_changelog_ai_check)
 
     changelog_ai_draft_parser = changelog_subparsers.add_parser(
         "ai-draft",
@@ -374,7 +400,13 @@ def cmd_changelog_ai_draft(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo_root).resolve()
     context = build_changelog_context(repo_root, args.since_tag)
     payload = build_ai_payload(context)
+    provider_config = build_ai_provider_config_from_args(args)
     provider = build_ai_provider_from_args(args)
+
+    # Local-compatible runs should fail early with explicit endpoint/model diagnostics.
+    if provider_config.kind == "openai-compatible":
+        _ = run_provider_preflight(provider_config, provider=provider, require_model=True)
+
     draft_input: dict = payload
     source_kind = "payload"
 
@@ -412,6 +444,14 @@ def cmd_changelog_ai_draft(args: argparse.Namespace) -> int:
             write_output(render_draft_result_json(draft), args.save_json)
         print(f"Wrote AI draft JSON to {Path(args.save_json).resolve()}")
 
+    return 0
+
+
+def cmd_changelog_ai_check(args: argparse.Namespace) -> int:
+    provider_config = build_ai_provider_config_from_args(args)
+    provider = build_ai_provider_from_config(provider_config)
+    result = run_provider_preflight(provider_config, provider=provider, require_model=True)
+    print_provider_preflight_result(result)
     return 0
 
 
@@ -492,10 +532,33 @@ def build_changelog_context(repo_root: Path, since_tag: str | None):
     )
 
 
-def build_ai_provider_from_args(args: argparse.Namespace) -> StructuredJSONProvider:
-    config = AIProviderConfig(
+def build_ai_provider_config_from_args(args: argparse.Namespace) -> AIProviderConfig:
+    return AIProviderConfig(
         kind=args.provider,
         model=args.model,
         base_url=args.base_url,
     )
+
+
+def build_ai_provider_from_config(config: AIProviderConfig) -> StructuredJSONProvider:
     return build_structured_json_provider(config)
+
+
+def build_ai_provider_from_args(args: argparse.Namespace) -> StructuredJSONProvider:
+    return build_ai_provider_from_config(build_ai_provider_config_from_args(args))
+
+
+def print_provider_preflight_result(result: ProviderPreflightResult) -> None:
+    print("AI provider check")
+    print("-----------------")
+    print(f"Provider:         {result.provider_kind}")
+    print(f"Model:            {result.model}")
+    if result.base_url:
+        print(f"Base URL:         {result.base_url}")
+    print(f"Reachability:     OK")
+    print(f"Discovered models:{len(result.discovered_models):>2}")
+    if result.discovered_models:
+        print(f"Model match:      {'yes' if result.model_found else 'no'}")
+        print("Sample models:")
+        for model in result.discovered_models[:10]:
+            print(f"  - {model}")

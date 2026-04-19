@@ -95,6 +95,10 @@ class OpenAICompatibleProviderTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "base_url"):
             OpenAICompatibleProvider(model="Qwen3.5-122B", base_url="")
 
+    def test_malformed_base_url_fails_clearly(self) -> None:
+        with self.assertRaisesRegex(ValueError, "http"):
+            OpenAICompatibleProvider(model="Qwen3.5-122B", base_url="localhost:8888/v1")
+
 
 if __name__ == "__main__":
     unittest.main()

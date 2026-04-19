@@ -41,6 +41,7 @@ class _FakeChat:
 class _FakeSDKClient:
     def __init__(self, response):
         self.chat = _FakeChat(_FakeCompletions(response))
+        self.models = type("FakeModels", (), {"list": lambda self: {"data": []}})()
 
 
 class OpenAIProviderTests(unittest.TestCase):
@@ -78,6 +79,29 @@ class OpenAIProviderTests(unittest.TestCase):
                 user_prompt="usr",
                 json_schema={"type": "object"},
             )
+
+    def test_list_models_parses_ids(self) -> None:
+        sdk = _FakeSDKClient(_FakeResponse("{}"))
+        sdk.models = type(
+            "FakeModels",
+            (),
+            {"list": lambda self: {"data": [{"id": "Qwen3.5-122B"}, {"id": "Gemma-4-31B"}]}},
+        )()
+        client = OpenAIProvider(sdk_client=sdk)
+
+        self.assertEqual(client.list_models(), ["Gemma-4-31B", "Qwen3.5-122B"])
+
+    def test_list_models_error_is_clear(self) -> None:
+        class _BoomModels:
+            def list(self):
+                raise RuntimeError("Connection error")
+
+        sdk = _FakeSDKClient(_FakeResponse("{}"))
+        sdk.models = _BoomModels()
+        client = OpenAIProvider(sdk_client=sdk)
+
+        with self.assertRaisesRegex(ValueError, "Model discovery request failed"):
+            client.list_models()
 
 
 if __name__ == "__main__":

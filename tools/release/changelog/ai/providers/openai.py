@@ -24,6 +24,7 @@ class OpenAIProvider:
         sdk_client: Any | None = None,
     ) -> None:
         self.model = model
+        self.base_url = base_url
 
         if sdk_client is not None:
             self._client = sdk_client
@@ -44,6 +45,23 @@ class OpenAIProvider:
             base_url=base_url,
             timeout_seconds=timeout_seconds,
         )
+
+    def list_models(self) -> list[str]:
+        try:
+            response = self._client.models.list()
+        except Exception as exc:
+            raise ValueError(f"Model discovery request failed: {exc}") from exc
+
+        data = response.get("data") if isinstance(response, dict) else getattr(response, "data", None)
+        if not isinstance(data, list):
+            raise ValueError("Model discovery response did not include a valid `data` list.")
+
+        model_ids: list[str] = []
+        for item in data:
+            model_id = item.get("id") if isinstance(item, dict) else getattr(item, "id", None)
+            if isinstance(model_id, str) and model_id.strip():
+                model_ids.append(model_id.strip())
+        return sorted(set(model_ids))
 
     def generate_structured_json(
         self,

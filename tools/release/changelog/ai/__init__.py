@@ -31,7 +31,9 @@ from tools.release.changelog.ai.contracts import (
 from tools.release.changelog.ai.providers import (
     OpenAICompatibleProvider,
     OpenAIProvider,
+    ProviderPreflightResult,
     build_structured_json_provider,
+    run_provider_preflight,
 )
 from tools.release.changelog.ai.render.markdown import render_draft_markdown, render_polish_markdown
 from tools.release.changelog.ai.stages.draft import generate_draft_from_payload, render_draft_result_json
@@ -74,7 +76,9 @@ __all__ = [
     "AIProviderConfig",
     "OpenAIProvider",
     "OpenAICompatibleProvider",
+    "ProviderPreflightResult",
     "build_structured_json_provider",
+    "run_provider_preflight",
     "generate_draft_from_payload",
     "render_draft_markdown",
     "render_draft_result_json",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlparse
 
 from tools.release.changelog.ai.config import DEFAULT_AI_DRAFT_MODEL, OPENAI_API_KEY_ENV_VAR
 from tools.release.changelog.ai.providers.base import StructuredJSONProvider
@@ -23,6 +24,12 @@ class OpenAICompatibleProvider(StructuredJSONProvider):
         normalized_base_url = base_url.strip()
         if not normalized_base_url:
             raise ValueError("OpenAI-compatible provider requires a non-empty `base_url`.")
+        parsed = urlparse(normalized_base_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError(
+                "OpenAI-compatible provider `base_url` must be an absolute http(s) URL, e.g. "
+                "`http://localhost:8888/v1`."
+            )
         self._delegate = OpenAIProvider(
             model=model,
             api_key=api_key,
@@ -45,3 +52,6 @@ class OpenAICompatibleProvider(StructuredJSONProvider):
             user_prompt=user_prompt,
             json_schema=json_schema,
         )
+
+    def list_models(self) -> list[str]:
+        return self._delegate.list_models()
