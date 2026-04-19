@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 from collections import defaultdict
 from pathlib import Path
+import re
 
 from tools.release.categorize import (
     CATEGORY_ORDER,
@@ -12,11 +13,12 @@ from tools.release.categorize import (
     extract_subscopes,
     normalize_path,
 )
-from tools.release.models import CategoryContext, CommitInfo, FileChange, ReleaseContext
-
+from tools.release.models import CategoryContext, CommitInfo, FileChange, ReleaseContext, DiffSnippet
 
 FIELD_SEP = "\x1f"
 RECORD_SEP = "\x1e"
+
+HUNK_HEADER_RE = re.compile(r"^@@ .* @@.*$", re.MULTILINE)
 
 
 def get_head_sha(repo_root: Path | str = ".") -> str:
@@ -49,6 +51,26 @@ def build_release_context(
         file_stats=file_stats,
         file_commit_counts=file_commit_counts,
     )
+
+    snippet_map = extract_relevant_snippets(
+        repo_root=repo_root,
+        previous_tag=previous_tag,
+        category_contexts=categories,
+    )
+
+    final_categories: dict[str, CategoryContext] = {}
+
+    for name, context in categories.items():
+        final_categories[name] = CategoryContext(
+            name=context.name,
+            commit_count=context.commit_count,
+            insertions=context.insertions,
+            deletions=context.deletions,
+            commits=context.commits,
+            files=context.files,
+            snippets=snippet_map.get(name, []),
+            detected_themes=context.detected_themes,
+        )
 
     return ReleaseContext(
         version=version,
@@ -162,6 +184,18 @@ def get_file_commit_counts(commits: list[CommitInfo]) -> dict[str, int]:
             counts[path] += 1
 
     return dict(counts)
+
+
+def get_file_patch(
+    repo_root: Path | str,
+    path: str,
+    previous_tag: str | None = None,
+) -> str:
+    repo_root = Path(repo_root).resolve()
+    commit_range = _build_commit_range(previous_tag)
+    normalized_path = normalize_path(path)
+
+    return _run_git(["diff", commit_range, "--", normalized_path], repo_root)
 
 
 def build_category_contexts(
@@ -318,6 +352,73 @@ def score_file_change(
     return round(score, 2)
 
 
+def split_patch_into_hunks(patch: str) -> list[str]:
+    if not patch.strip():
+        return []
+
+    matches = list(HUNK_HEADER_RE.finditer(patch))
+    if not matches:
+        return [patch.strip()]
+
+    hunks: list[str] = []
+    for i, match in enumerate(matches):
+        start = match.start()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(patch)
+        hunks.append(patch[start:end].strip())
+
+    return hunks
+
+
+def score_patch_hunk(hunk: str, category: str, path: str) -> float:
+    score = 0.0
+    lower = hunk.lower()
+
+    added_lines = sum(1 for line in hunk.splitlines() if line.startswith("+") and not line.startswith("+++"))
+    removed_lines = sum(1 for line in hunk.splitlines() if line.startswith("-") and not line.startswith("---"))
+
+    score += min(added_lines + removed_lines, 120) / 8.0
+
+    symbol_keywords = (
+        "class ", "struct ", "interface ", "enum ", "def ", "function ",
+        "export ", "public ", "private ", "static ", "async ", "await ",
+        "argparse", "subparsers", "rrule", "systemd", "postgres", "sql",
+        "permission", "role", "auth", "fuse", "vault", "sync",
+    )
+    for keyword in symbol_keywords:
+        if keyword in lower:
+            score += 1.2
+
+    if category == "deploy":
+        for keyword in ("sql", "postgres", "psql", "systemd", "environment", "config"):
+            if keyword in lower:
+                score += 1.5
+
+    elif category == "debian":
+        for keyword in ("depends", "install", "postinst", "rules", "package", "dh_"):
+            if keyword in lower:
+                score += 1.5
+
+    elif category == "tools":
+        for keyword in ("version", "release", "changelog", "sync", "validate", "bump"):
+            if keyword in lower:
+                score += 1.5
+
+    elif category == "web":
+        for keyword in ("export", "useeffect", "router", "auth", "component", "props"):
+            if keyword in lower:
+                score += 1.2
+
+    elif category == "core":
+        for keyword in ("fuse", "storage", "vault", "permission", "protocol", "postgres"):
+            if keyword in lower:
+                score += 1.2
+
+    if path.endswith(("pnpm-lock.yaml", "package-lock.json", "yarn.lock")):
+        score -= 20.0
+
+    return round(score, 2)
+
+
 def _is_noise_path(path: str) -> bool:
     if path.startswith("build/"):
         return True
@@ -344,6 +445,68 @@ def _is_noise_path(path: str) -> bool:
         "/test-assets/",
     )
     return any(part in f"/{path}" for part in noisy_parts)
+
+
+def build_snippet_reason(file_change: FileChange, hunk: str, category: str) -> str:
+    reasons = [f"Selected from high-scoring {category} file"]
+
+    if file_change.commit_count > 1:
+        reasons.append(f"touched in {file_change.commit_count} commits")
+
+    if file_change.flags:
+        reasons.append(f"flags: {', '.join(file_change.flags)}")
+
+    return "; ".join(reasons)
+
+
+def extract_relevant_snippets(
+    repo_root: Path | str,
+    previous_tag: str | None,
+    category_contexts: dict[str, CategoryContext],
+    max_files_per_category: int = 5,
+    max_hunks_per_file: int = 2,
+) -> dict[str, list[DiffSnippet]]:
+    repo_root = Path(repo_root).resolve()
+    results: dict[str, list[DiffSnippet]] = {}
+
+    for category_name, context in category_contexts.items():
+        snippets: list[DiffSnippet] = []
+
+        candidate_files = context.files[:max_files_per_category]
+
+        for file_change in candidate_files:
+            patch = get_file_patch(repo_root, file_change.path, previous_tag)
+            if not patch.strip():
+                continue
+
+            hunks = split_patch_into_hunks(patch)
+            if not hunks:
+                continue
+
+            ranked_hunks = sorted(
+                hunks,
+                key=lambda h: score_patch_hunk(h, category_name, file_change.path),
+                reverse=True,
+            )
+
+            for hunk in ranked_hunks[:max_hunks_per_file]:
+                reason = build_snippet_reason(file_change, hunk, category_name)
+                snippets.append(
+                    DiffSnippet(
+                        path=file_change.path,
+                        category=category_name,
+                        subscopes=file_change.subscopes,
+                        score=score_patch_hunk(hunk, category_name, file_change.path),
+                        reason=reason,
+                        patch=hunk,
+                        flags=file_change.flags,
+                    )
+                )
+
+        snippets.sort(key=lambda s: s.score, reverse=True)
+        results[category_name] = snippets
+
+    return results
 
 
 def _build_commit_range(previous_tag: str | None) -> str:
@@ -410,6 +573,10 @@ if __name__ == "__main__":
         print("\nRecent Commits:")
         for c in cat.commits[:5]:
             print(f"  - {c.subject} ({c.sha[:7]})")
+
+        print("\nTop Snippets:")
+        for s in cat.snippets[:3]:
+            print(f"  - {s.path} (score={s.score}, reason={s.reason})")
 
         print("\n")
 
