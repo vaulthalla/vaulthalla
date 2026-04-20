@@ -33,6 +33,7 @@ def build_release_context(
     commits = get_commits_since_tag(repo_root, previous_tag)
     file_stats = get_release_file_stats(repo_root, previous_tag)
     file_commit_counts = get_file_commit_counts(commits)
+    uncategorized_commits = [commit for commit in commits if not commit.categories]
 
     categories = build_category_contexts(
         commits=commits,
@@ -59,13 +60,20 @@ def build_release_context(
             detected_themes=context.detected_themes,
         )
 
+    cross_cutting_notes: list[str] = []
+    if previous_tag == f"v{version}" and commits:
+        cross_cutting_notes.append(
+            "Release tag already exists for this version while HEAD is ahead; bump VERSION or pass --since-tag explicitly."
+        )
+
     return ReleaseContext(
         version=version,
         previous_tag=previous_tag,
         head_sha=head_sha,
         commit_count=len(commits),
         categories=final_categories,
-        cross_cutting_notes=[],
+        uncategorized_commits=uncategorized_commits,
+        cross_cutting_notes=cross_cutting_notes,
     )
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from tools.release.changelog.categorize import categorize_path, normalize_path
+from tools.release.changelog.categorize import categorize_path, infer_categories_from_text, normalize_path
 from tools.release.changelog.models import CommitInfo
 
 FIELD_SEP = "\x1f"
@@ -32,17 +32,30 @@ def get_commits_since_tag(
     pretty = f"%H{FIELD_SEP}%s{FIELD_SEP}%b{RECORD_SEP}"
     output = _run_git(["log", commit_range, f"--pretty=format:{pretty}"], repo_root)
 
-    raw_records = [record.strip() for record in output.split(RECORD_SEP) if record.strip()]
+    raw_records = [record for record in output.split(RECORD_SEP) if record.strip()]
     commits: list[CommitInfo] = []
 
     for record in raw_records:
-        parts = record.split(FIELD_SEP)
-        if len(parts) != 3:
+        parts = record.split(FIELD_SEP, 2)
+        if len(parts) < 2:
             continue
 
-        sha, subject, body = (part.strip() for part in parts)
+        if len(parts) == 2:
+            sha, subject = parts
+            body = ""
+        else:
+            sha, subject, body = parts
+
+        sha = sha.strip()
+        subject = subject.strip()
+        body = body.strip()
+
         files, insertions, deletions = get_commit_file_summary(repo_root, sha)
-        categories = sorted({categorize_path(path) for path in files})
+        categories = set(categorize_path(path) for path in files)
+
+        # Metadata-only commits can still be meaningful release/tooling work.
+        if not files or categories == {"meta"}:
+            categories.update(infer_categories_from_text(subject=subject, body=body))
 
         commits.append(
             CommitInfo(
@@ -52,7 +65,7 @@ def get_commits_since_tag(
                 files=files,
                 insertions=insertions,
                 deletions=deletions,
-                categories=categories,
+                categories=sorted(categories),
             )
         )
 

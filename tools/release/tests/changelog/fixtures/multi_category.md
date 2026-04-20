@@ -3,6 +3,7 @@
 - Previous tag: `v1.2.5`
 - HEAD: `abcabca`
 - Commits in range: 3
+- Release-note entries: 3
 
 ## Debian
 - Evidence: weak (commits: 1, files: 1, snippets: 0, delta: +2/-1)

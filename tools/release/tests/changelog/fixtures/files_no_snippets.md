@@ -3,6 +3,7 @@
 - Previous tag: `v1.2.3`
 - HEAD: `1234567`
 - Commits in range: 1
+- Release-note entries: 1
 
 ## Web
 - Evidence: weak (commits: 1, files: 1, snippets: 0, delta: +10/-2)

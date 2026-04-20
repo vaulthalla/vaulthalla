@@ -3,6 +3,7 @@
 - Previous tag: `v1.2.2`
 - HEAD: `abcdef1`
 - Commits in range: 3
+- Release-note entries: 2
 
 ## Core
 - Evidence: moderate (commits: 2, files: 2, snippets: 1, delta: +34/-12)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import PurePosixPath
 
 
@@ -58,6 +59,23 @@ def categorize_path(path: str) -> str:
         return "meta"
 
     return "meta"
+
+
+_DEBIAN_HINT_RE = re.compile(r"\b(debian|packaging|package|apt|dpkg|nexus)\b", re.IGNORECASE)
+_TOOLS_HINT_RE = re.compile(r"\b(changelog|release(?:\s+tooling)?|tooling|ci|github actions)\b", re.IGNORECASE)
+
+
+def infer_categories_from_text(subject: str, body: str = "") -> tuple[str, ...]:
+    """Infer likely release categories from commit text for metadata-only file changes."""
+    text = f"{subject}\n{body}"
+    categories: set[str] = set()
+
+    if _DEBIAN_HINT_RE.search(text):
+        categories.add("debian")
+    if _TOOLS_HINT_RE.search(text):
+        categories.add("tools")
+
+    return tuple(sorted(categories))
 
 
 def extract_subscopes(path: str, category: str) -> tuple[str, ...]:

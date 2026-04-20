@@ -3,6 +3,7 @@
 - Previous tag: `none`
 - HEAD: `0000000`
 - Commits in range: 0
+- Release-note entries: 0
 
 ## Highlights
 - No categorized release content is available for this range.

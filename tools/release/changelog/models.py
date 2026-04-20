@@ -49,4 +49,5 @@ class ReleaseContext:
     head_sha: str
     commit_count: int
     categories: dict[str, CategoryContext]
+    uncategorized_commits: list[CommitInfo] = field(default_factory=list)
     cross_cutting_notes: list[str] = field(default_factory=list)

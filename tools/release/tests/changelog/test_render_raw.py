@@ -284,6 +284,28 @@ def _minimal_context() -> ReleaseContext:
     )
 
 
+def _uncategorized_only_context() -> ReleaseContext:
+    return ReleaseContext(
+        version="1.3.2",
+        previous_tag="v1.3.1",
+        head_sha="1111111aaaaaaa11",
+        commit_count=1,
+        categories={},
+        uncategorized_commits=[
+            CommitInfo(
+                sha="eeeeeeee55555555",
+                subject="Merge branch 'main' into release-train",
+                body="",
+                files=[],
+                insertions=0,
+                deletions=0,
+                categories=[],
+            )
+        ],
+        cross_cutting_notes=[],
+    )
+
+
 class RenderRawContractTests(unittest.TestCase):
     maxDiff = None
 
@@ -310,6 +332,13 @@ class RenderRawContractTests(unittest.TestCase):
     def test_minimal_release_fallback_fixture(self) -> None:
         rendered = render_release_changelog(_minimal_context())
         self.assertEqual(rendered, _load_fixture("minimal_release.md"))
+
+    def test_uncategorized_commits_are_rendered(self) -> None:
+        rendered = render_release_changelog(_uncategorized_only_context())
+        self.assertIn("- Commits in range: 1", rendered)
+        self.assertIn("- Release-note entries: 0", rendered)
+        self.assertIn("## Uncategorized", rendered)
+        self.assertIn("Merge branch 'main' into release-train", rendered)
 
     def test_renderer_output_is_byte_stable(self) -> None:
         context = _multi_category_context()

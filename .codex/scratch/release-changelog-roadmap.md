@@ -21,6 +21,8 @@ Completed phases:
 - ✅ Phase 7a: local Debian packaging orchestration (`build-deb`)
 - ✅ Phase 7b: web deployable artifact inclusion in release outputs
 - ✅ Phase 8: GitHub release workflow with `Production` environment tracking
+- [] Phase 9a: Prompt for nginx install in debian package postinst script (deferred from initial buildout to avoid blocking core release flow).
+- [] Phase 9b: Nexus/APT publication automation
 
 Current command spine exists end-to-end from local tooling through CI release artifact generation.
 

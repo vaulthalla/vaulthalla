@@ -28,7 +28,7 @@ def render_release_changelog(context: ReleaseContext) -> str:
     lines.append("")
 
     ordered_categories = _ordered_categories(context)
-    if not ordered_categories:
+    if not ordered_categories and not context.uncategorized_commits:
         lines.extend(
             [
                 "## Highlights",
@@ -41,6 +41,10 @@ def render_release_changelog(context: ReleaseContext) -> str:
 
     for name, category in ordered_categories:
         lines.extend(_render_category_section(name, category))
+        lines.append("")
+
+    if context.uncategorized_commits:
+        lines.extend(_render_uncategorized_section(context))
         lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
@@ -112,11 +116,22 @@ def render_debug_json(context: ReleaseContext) -> str:
 
 def _render_metadata(context: ReleaseContext) -> list[str]:
     previous_tag = context.previous_tag if context.previous_tag is not None else "none"
-    return [
+    lines = [
         f"- Previous tag: `{previous_tag}`",
         f"- HEAD: `{context.head_sha[:7]}`",
         f"- Commits in range: {context.commit_count}",
+        f"- Release-note entries: {_release_note_entry_count(context)}",
     ]
+
+    if context.commit_count > 0 and _release_note_entry_count(context) == 0:
+        lines.append(
+            "- Note: commits are outside primary app-facing buckets; see `Meta`/`Uncategorized` sections."
+        )
+
+    for note in context.cross_cutting_notes:
+        lines.append(f"- Warning: {note}")
+
+    return lines
 
 
 def _ordered_categories(context: ReleaseContext):
@@ -207,3 +222,34 @@ def _is_weak_signal(name: str, category, evidence_tier: str) -> bool:
         return True
 
     return change_total <= 12 and len(category.snippets) == 0
+
+
+def _release_note_entry_count(context: ReleaseContext) -> int:
+    primary_commit_ids: set[str] = set()
+    for category_name, category in context.categories.items():
+        if category_name == "meta":
+            continue
+        primary_commit_ids.update(commit.sha for commit in category.commits)
+    return len(primary_commit_ids)
+
+
+def _render_uncategorized_section(context: ReleaseContext) -> list[str]:
+    lines = [
+        "## Uncategorized",
+        (
+            f"- Evidence: weak (commits: {len(context.uncategorized_commits)}, files: 0, snippets: 0, "
+            "delta: +0/-0)"
+        ),
+        "- Themes: none detected",
+        "- Key commits:",
+    ]
+    for commit in context.uncategorized_commits[:TOP_COMMITS_PER_CATEGORY]:
+        lines.append(f"  - {commit.subject} (`{commit.sha[:7]}`)")
+    lines.extend(
+        [
+            "- Top files:",
+            "  - none collected",
+            "- Snippets: none available.",
+        ]
+    )
+    return lines

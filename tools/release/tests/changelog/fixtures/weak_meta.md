@@ -3,6 +3,8 @@
 - Previous tag: `v1.2.4`
 - HEAD: `4444444`
 - Commits in range: 1
+- Release-note entries: 0
+- Note: commits are outside primary app-facing buckets; see `Meta`/`Uncategorized` sections.
 
 ## Meta
 - Evidence: weak (commits: 1, files: 1, snippets: 0, delta: +0/-0)
