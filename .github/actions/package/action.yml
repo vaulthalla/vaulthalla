@@ -71,6 +71,7 @@ runs:
         command -v python3 >/dev/null 2>&1 || { echo "::error::python3 is not available on runner PATH."; exit 1; }
         command -v pnpm >/dev/null 2>&1 || { echo "::error::pnpm is not available on runner PATH."; exit 1; }
         command -v dpkg-buildpackage >/dev/null 2>&1 || { echo "::error::dpkg-buildpackage is not available on runner PATH."; exit 1; }
+        command -v dpkg-deb >/dev/null 2>&1 || { echo "::error::dpkg-deb is not available on runner PATH."; exit 1; }
         echo "[preflight] runner checks passed"
 
     - name: Resolve release changelog (AI or manual fallback)

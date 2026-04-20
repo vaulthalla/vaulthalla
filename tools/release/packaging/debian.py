@@ -4,6 +4,8 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+from io import BytesIO
+from fnmatch import fnmatch
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -35,6 +37,29 @@ SUPPORTED_ARTIFACT_SUFFIXES: tuple[str, ...] = (
 WEB_DEPLOYABLE_SUFFIX = "_next-standalone.tar.gz"
 WEB_INSTALL_COMMAND: tuple[str, ...] = ("pnpm", "install", "--frozen-lockfile")
 WEB_BUILD_COMMAND: tuple[str, ...] = ("pnpm", "build")
+REQUIRED_DEBIAN_PACKAGE_PATHS: tuple[str, ...] = (
+    "usr/bin/vaulthalla-server",
+    "usr/bin/vaulthalla-cli",
+    "usr/bin/vaulthalla",
+    "usr/bin/vh",
+    "etc/vaulthalla/config.yaml",
+    "etc/vaulthalla/config_template.yaml.in",
+    "lib/systemd/system/vaulthalla.service",
+    "lib/systemd/system/vaulthalla-cli.service",
+    "lib/systemd/system/vaulthalla-cli.socket",
+    "usr/share/doc/vaulthalla/LICENSE",
+    "usr/share/doc/vaulthalla/copyright",
+)
+ALTERNATE_DEBIAN_PACKAGE_PATH_GROUPS: tuple[tuple[str, ...], ...] = (
+    ("usr/share/man/man1/vh.1", "usr/share/man/man1/vh.1.gz"),
+    ("usr/lib/libvaulthalla.a", "usr/lib/*/libvaulthalla.a"),
+    ("usr/lib/libvhusage.a", "usr/lib/*/libvhusage.a"),
+    ("usr/lib/udev/rules.d/60-vaulthalla-tpm.rules", "usr/lib/*/udev/rules.d/60-vaulthalla-tpm.rules"),
+    ("usr/lib/tmpfiles.d/vaulthalla.conf", "usr/lib/*/tmpfiles.d/vaulthalla.conf"),
+)
+REQUIRED_WEB_ARCHIVE_ROOT = "vaulthalla-web/"
+REQUIRED_WEB_SERVER_ENTRY = "vaulthalla-web/server.js"
+REQUIRED_WEB_STATIC_PREFIX = "vaulthalla-web/.next/static/"
 
 
 @dataclass(frozen=True)
@@ -217,12 +242,135 @@ def validate_release_artifacts(
             f"{rendered}"
         )
 
+    contract_issues: list[str] = []
+    for artifact in debian_artifacts:
+        contract_issues.extend(_validate_debian_package_contract(artifact))
+    for artifact in web_artifacts:
+        contract_issues.extend(_validate_web_archive_contract(artifact))
+    if contract_issues:
+        rendered = "\n".join(f"- {item}" for item in contract_issues)
+        raise ValueError(
+            "Release artifact validation failed. Artifact completeness checks did not match the "
+            "current packaging/deployment contract:\n"
+            f"{rendered}"
+        )
+
     return ReleaseArtifactValidationResult(
         output_dir=destination,
         debian_artifacts=debian_artifacts,
         web_artifacts=web_artifacts,
         changelog_artifacts=changelog_artifacts,
     )
+
+
+def _validate_debian_package_contract(deb_path: Path) -> list[str]:
+    members = _read_debian_package_members(deb_path)
+    issues: list[str] = []
+
+    for required in REQUIRED_DEBIAN_PACKAGE_PATHS:
+        if required not in members:
+            issues.append(f"[debian package] {deb_path.name}: missing `{required}`")
+
+    for alternatives in ALTERNATE_DEBIAN_PACKAGE_PATH_GROUPS:
+        if not any(_member_matches_pattern(members, candidate) for candidate in alternatives):
+            rendered = " or ".join(f"`{candidate}`" for candidate in alternatives)
+            issues.append(
+                f"[debian package] {deb_path.name}: missing expected path ({rendered})"
+            )
+
+    return issues
+
+
+def _read_debian_package_members(deb_path: Path) -> set[str]:
+    try:
+        completed = subprocess.run(
+            ("dpkg-deb", "--fsys-tarfile", str(deb_path)),
+            text=False,
+            capture_output=True,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise ValueError(
+            "Cannot validate Debian package contents: `dpkg-deb` is not installed or not on PATH."
+        ) from exc
+    except Exception as exc:
+        raise ValueError(f"Failed to inspect Debian package contents for {deb_path}: {exc}") from exc
+
+    if completed.returncode != 0:
+        stderr = completed.stderr.decode("utf-8", errors="replace").strip()
+        raise ValueError(
+            f"Failed to inspect Debian package contents for {deb_path} "
+            f"(exit {completed.returncode}): {stderr or 'no stderr output'}"
+        )
+
+    try:
+        with tarfile.open(fileobj=BytesIO(completed.stdout), mode="r:*") as data_tar:
+            normalized = {
+                _normalize_archive_path(member.name)
+                for member in data_tar.getmembers()
+                if _normalize_archive_path(member.name)
+            }
+    except Exception as exc:
+        raise ValueError(f"Failed to parse Debian data tar stream for {deb_path}: {exc}") from exc
+
+    return normalized
+
+
+def _validate_web_archive_contract(archive_path: Path) -> list[str]:
+    issues: list[str] = []
+    try:
+        with tarfile.open(archive_path, "r:gz") as tar:
+            members = tar.getmembers()
+            member_names = {
+                _normalize_archive_path(member.name)
+                for member in members
+                if _normalize_archive_path(member.name)
+            }
+    except Exception as exc:
+        return [f"[web artifact] {archive_path.name}: failed to read archive: {exc}"]
+
+    if not any(name == REQUIRED_WEB_ARCHIVE_ROOT.rstrip("/") for name in member_names):
+        issues.append(
+            f"[web artifact] {archive_path.name}: missing archive root `{REQUIRED_WEB_ARCHIVE_ROOT}`"
+        )
+
+    if REQUIRED_WEB_SERVER_ENTRY not in member_names:
+        issues.append(
+            f"[web artifact] {archive_path.name}: missing runtime entry `{REQUIRED_WEB_SERVER_ENTRY}`"
+        )
+
+    has_static_payload = any(name.startswith(REQUIRED_WEB_STATIC_PREFIX) for name in member_names)
+    if not has_static_payload:
+        issues.append(
+            f"[web artifact] {archive_path.name}: missing static payload under `{REQUIRED_WEB_STATIC_PREFIX}`"
+        )
+
+    invalid_paths = [
+        name for name in member_names if name.startswith("/") or name.startswith("../") or "/../" in name
+    ]
+    if invalid_paths:
+        issues.append(
+            f"[web artifact] {archive_path.name}: contains unsafe paths ({', '.join(sorted(invalid_paths)[:5])})"
+        )
+
+    return issues
+
+
+def _normalize_archive_path(raw: str) -> str:
+    normalized = raw.strip()
+    if normalized in {"", ".", "./"}:
+        return ""
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    if normalized.endswith("/"):
+        normalized = normalized[:-1]
+    return normalized
+
+
+def _member_matches_pattern(members: set[str], pattern: str) -> bool:
+    if "*" not in pattern:
+        return pattern in members
+    return any(fnmatch(member, pattern) for member in members)
 
 
 def _require_debian_prerequisites(paths: ReleasePaths) -> None:
