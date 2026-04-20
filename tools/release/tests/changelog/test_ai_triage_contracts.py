@@ -12,6 +12,7 @@ from tools.release.changelog.ai.contracts.triage import (
     build_triage_ir_payload,
     parse_ai_triage_response,
 )
+from tools.release.changelog.ai.providers.parsing import parse_json_object_from_text
 
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -85,11 +86,49 @@ class AITriageContractsTests(unittest.TestCase):
         parsed = parse_ai_triage_response(raw)
         self.assertEqual(parsed.categories[0].retained_snippets, ("snippet",))
 
-    def test_optional_retained_snippets_rejects_non_string_non_null(self) -> None:
+    def test_optional_retained_snippets_drops_non_string_placeholder(self) -> None:
         raw = _load_json_fixture("ai_triage_valid.json")
         raw["categories"][0]["retained_snippets"] = [1]
-        with self.assertRaisesRegex(ValueError, "retained_snippets\\[0\\]"):
+        parsed = parse_ai_triage_response(raw)
+        self.assertEqual(parsed.categories[0].retained_snippets, ())
+
+    def test_required_key_points_still_rejects_non_string(self) -> None:
+        raw = _load_json_fixture("ai_triage_valid.json")
+        raw["categories"][0]["key_points"] = [1]
+        with self.assertRaisesRegex(ValueError, "key_points\\[0\\]"):
             parse_ai_triage_response(raw)
+
+    def test_qwen_like_envelope_and_optional_array_noise_is_normalized(self) -> None:
+        content = json.dumps(
+            {
+                "result": {
+                    "schema_version": AI_TRIAGE_SCHEMA_VERSION,
+                    "version": "2.4.0",
+                    "summary_points": ["Core work dominates."],
+                    "categories": [
+                        {
+                            "name": "core",
+                            "signal_strength": "strong",
+                            "priority_rank": 1,
+                            "key_points": ["Service hardening work."],
+                            "important_files": [" service.py ", None, ""],
+                            "retained_snippets": ["", "   ", None, 1, "kept snippet"],
+                            "caution_notes": [None, "weak signal", ""],
+                        }
+                    ],
+                    "dropped_noise": [None, "", "minor refactors"],
+                    "caution_notes": [None, "verify benchmarks"],
+                }
+            }
+        )
+        parsed_text = parse_json_object_from_text(content)
+        parsed = parse_ai_triage_response(parsed_text)
+        category = parsed.categories[0]
+        self.assertEqual(category.retained_snippets, ("kept snippet",))
+        self.assertEqual(category.important_files, ("service.py",))
+        self.assertEqual(category.caution_notes, ("weak signal",))
+        self.assertEqual(parsed.dropped_noise, ("minor refactors",))
+        self.assertEqual(parsed.caution_notes, ("verify benchmarks",))
 
     def test_parse_rejects_duplicate_priority_rank(self) -> None:
         invalid = _load_json_fixture("ai_triage_valid.json")

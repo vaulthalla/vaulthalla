@@ -5,6 +5,8 @@ from typing import Any
 
 
 AI_TRIAGE_SCHEMA_VERSION = "vaulthalla.release.ai_triage.v1"
+_OPTIONAL_TOP_LEVEL_STRING_ARRAY_FIELDS = ("dropped_noise", "caution_notes")
+_OPTIONAL_CATEGORY_STRING_ARRAY_FIELDS = ("important_files", "retained_snippets", "caution_notes")
 
 AI_TRIAGE_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -100,16 +102,17 @@ class AITriageResult:
 def parse_ai_triage_response(data: Any) -> AITriageResult:
     if not isinstance(data, dict):
         raise ValueError("AI triage response must be a JSON object.")
+    normalized_data = _normalize_optional_string_arrays(data)
 
-    schema_version = _read_non_empty_string(data, "schema_version")
+    schema_version = _read_non_empty_string(normalized_data, "schema_version")
     if schema_version != AI_TRIAGE_SCHEMA_VERSION:
         raise ValueError(
             f"`schema_version` must be {AI_TRIAGE_SCHEMA_VERSION!r}, got {schema_version!r}."
         )
 
-    version = _read_non_empty_string(data, "version")
-    summary_points = _read_non_empty_string_list(data, "summary_points", required=True)
-    categories_raw = data.get("categories")
+    version = _read_non_empty_string(normalized_data, "version")
+    summary_points = _read_non_empty_string_list(normalized_data, "summary_points", required=True)
+    categories_raw = normalized_data.get("categories")
     if not isinstance(categories_raw, list) or not categories_raw:
         raise ValueError("AI triage response must include non-empty `categories` list.")
 
@@ -162,8 +165,8 @@ def parse_ai_triage_response(data: Any) -> AITriageResult:
         version=version,
         summary_points=tuple(summary_points),
         categories=tuple(categories),
-        dropped_noise=tuple(_read_non_empty_string_list(data, "dropped_noise")),
-        caution_notes=tuple(_read_non_empty_string_list(data, "caution_notes")),
+        dropped_noise=tuple(_read_non_empty_string_list(normalized_data, "dropped_noise")),
+        caution_notes=tuple(_read_non_empty_string_list(normalized_data, "caution_notes")),
     )
 
 
@@ -247,11 +250,6 @@ def _read_non_empty_string_list(
     normalized: list[str] = []
     for index, value in enumerate(raw):
         if not isinstance(value, str):
-            if required:
-                raise ValueError(f"`{prefix}{key}[{index}]` must be a non-empty string.")
-            # Local-model optional arrays can include null placeholders; drop them.
-            if value is None:
-                continue
             raise ValueError(f"`{prefix}{key}[{index}]` must be a non-empty string.")
         trimmed = value.strip()
         if not trimmed:
@@ -261,4 +259,42 @@ def _read_non_empty_string_list(
         normalized.append(trimmed)
     if required and not normalized:
         raise ValueError(f"`{prefix}{key}` must be a non-empty list of strings.")
+    return normalized
+
+
+def _normalize_optional_string_arrays(data: dict[str, Any]) -> dict[str, Any]:
+    normalized: dict[str, Any] = dict(data)
+    for field in _OPTIONAL_TOP_LEVEL_STRING_ARRAY_FIELDS:
+        if field in normalized:
+            normalized[field] = _normalize_optional_string_array_value(normalized[field])
+
+    categories_raw = normalized.get("categories")
+    if isinstance(categories_raw, list):
+        normalized_categories: list[Any] = []
+        for category_raw in categories_raw:
+            if not isinstance(category_raw, dict):
+                normalized_categories.append(category_raw)
+                continue
+            category = dict(category_raw)
+            for field in _OPTIONAL_CATEGORY_STRING_ARRAY_FIELDS:
+                if field in category:
+                    category[field] = _normalize_optional_string_array_value(category[field])
+            normalized_categories.append(category)
+        normalized["categories"] = normalized_categories
+    return normalized
+
+
+def _normalize_optional_string_array_value(raw: Any) -> Any:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        return raw
+    normalized: list[str] = []
+    for value in raw:
+        if not isinstance(value, str):
+            # Optional arrays can contain local-model placeholders; drop non-string entries.
+            continue
+        trimmed = value.strip()
+        if trimmed:
+            normalized.append(trimmed)
     return normalized
