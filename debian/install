@@ -12,7 +12,7 @@ lib/systemd/system/vaulthalla-cli.socket
 usr/share/doc/vaulthalla/LICENSE
 usr/share/doc/vaulthalla/copyright
 usr/share/man/man1/vh.1
-usr/lib/x86_64-linux-gnu/libvaulthalla.a usr/lib/libvaulthalla.a
-usr/lib/x86_64-linux-gnu/libvhusage.a usr/lib/libvhusage.a
-usr/lib/x86_64-linux-gnu/udev/rules.d/60-vaulthalla-tpm.rules usr/lib/udev/rules.d/60-vaulthalla-tpm.rules
-usr/lib/x86_64-linux-gnu/tmpfiles.d/vaulthalla.conf usr/lib/tmpfiles.d/
+usr/lib/*/libvaulthalla.a usr/lib/libvaulthalla.a
+usr/lib/*/libvhusage.a usr/lib/libvhusage.a
+usr/lib/*/udev/rules.d/60-vaulthalla-tpm.rules usr/lib/udev/rules.d/60-vaulthalla-tpm.rules
+usr/lib/*/tmpfiles.d/vaulthalla.conf usr/lib/tmpfiles.d/

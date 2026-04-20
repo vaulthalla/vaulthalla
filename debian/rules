@@ -1,4 +1,6 @@
 #!/usr/bin/make -f
+DEB_HOST_MULTIARCH ?= $(shell dpkg-architecture -qDEB_HOST_MULTIARCH)
+
 %:
 	dh $@ --buildsystem=meson
 
@@ -7,3 +9,26 @@ override_dh_auto_configure:
 
 override_dh_auto_install:
 	dh_auto_install --sourcedirectory=core --destdir=debian/tmp
+
+	# Stage packaging payloads that are not emitted by Meson install targets.
+	install -d debian/tmp/etc/vaulthalla
+	install -d debian/tmp/lib/systemd/system
+	install -d debian/tmp/usr/share/doc/vaulthalla
+	install -d debian/tmp/usr/lib/$(DEB_HOST_MULTIARCH)/udev/rules.d
+	install -d debian/tmp/usr/lib/$(DEB_HOST_MULTIARCH)/tmpfiles.d
+
+	install -m 0644 deploy/config/config.yaml debian/tmp/etc/vaulthalla/config.yaml
+	install -m 0644 deploy/config/config_template.yaml.in debian/tmp/etc/vaulthalla/config_template.yaml.in
+
+	sed 's|@BINDIR@|/usr/bin|g' deploy/systemd/vaulthalla.service.in > debian/tmp/lib/systemd/system/vaulthalla.service
+	sed 's|@BINDIR@|/usr/bin|g' deploy/systemd/vaulthalla-cli.service.in > debian/tmp/lib/systemd/system/vaulthalla-cli.service
+	install -m 0644 deploy/systemd/vaulthalla-cli.socket debian/tmp/lib/systemd/system/vaulthalla-cli.socket
+
+	install -m 0644 LICENSE debian/tmp/usr/share/doc/vaulthalla/LICENSE
+	install -m 0644 debian/copyright debian/tmp/usr/share/doc/vaulthalla/copyright
+
+	ln -sf vaulthalla-cli debian/tmp/usr/bin/vaulthalla
+	ln -sf vaulthalla-cli debian/tmp/usr/bin/vh
+
+	install -m 0644 debian/vaulthalla.udev debian/tmp/usr/lib/$(DEB_HOST_MULTIARCH)/udev/rules.d/60-vaulthalla-tpm.rules
+	install -m 0644 debian/tmpfiles.d/vaulthalla.conf debian/tmp/usr/lib/$(DEB_HOST_MULTIARCH)/tmpfiles.d/vaulthalla.conf
