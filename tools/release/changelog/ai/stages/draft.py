@@ -3,7 +3,12 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from tools.release.changelog.ai.config import DEFAULT_AI_DRAFT_MODEL
+from tools.release.changelog.ai.config import (
+    AIProviderKind,
+    AIReasoningEffort,
+    AIStructuredMode,
+    DEFAULT_AI_DRAFT_MODEL,
+)
 from tools.release.changelog.ai.contracts.draft import (
     AI_DRAFT_RESPONSE_JSON_SCHEMA,
     AIDraftResult,
@@ -21,12 +26,17 @@ def generate_draft_from_payload(
     model: str | None = None,
     provider: StructuredJSONProvider | None = None,
     source_kind: str = "payload",
+    provider_kind: AIProviderKind = "openai",
+    reasoning_effort: AIReasoningEffort | None = None,
+    structured_mode: AIStructuredMode | None = None,
 ) -> AIDraftResult:
-    active_provider = provider or OpenAIProvider(model=model or DEFAULT_AI_DRAFT_MODEL)
+    active_provider = provider or OpenAIProvider(model=model or DEFAULT_AI_DRAFT_MODEL, provider_kind=provider_kind)
     structured = active_provider.generate_structured_json(
         system_prompt=build_draft_system_prompt(),
         user_prompt=build_draft_user_prompt(payload, source_kind=source_kind),
         json_schema=AI_DRAFT_RESPONSE_JSON_SCHEMA,
+        reasoning_effort=reasoning_effort,
+        structured_mode=structured_mode,
     )
     return parse_ai_draft_response(structured)
 

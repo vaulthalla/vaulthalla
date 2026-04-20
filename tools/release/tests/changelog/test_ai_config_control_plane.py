@@ -118,9 +118,13 @@ profiles:
     provider: openai-compatible
     base_url: http://127.0.0.1:9999/v1
     model: shared-model
+    reasoning_effort: low
+    structured_mode: json_object
     stages:
       draft:
         model: draft-model
+        reasoning_effort: high
+        structured_mode: prompt_json
 """,
             )
 
@@ -135,6 +139,10 @@ profiles:
         self.assertEqual(resolved.stage_model("draft"), "draft-model")
         self.assertEqual(resolved.stage_model("triage"), "shared-model")
         self.assertEqual(resolved.stage_model("polish"), "shared-model")
+        self.assertEqual(resolved.stages["triage"].reasoning_effort, "low")
+        self.assertEqual(resolved.stages["triage"].structured_mode, "json_object")
+        self.assertEqual(resolved.stages["draft"].reasoning_effort, "high")
+        self.assertEqual(resolved.stages["draft"].structured_mode, "prompt_json")
 
     def test_cli_overrides_beat_profile_values(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -258,6 +266,56 @@ profiles:
                 )
 
         self.assertIn("unsupported provider", str(ctx.exception))
+
+    def test_invalid_reasoning_effort_rejected(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            _write_profile(
+                repo_root,
+                """
+profiles:
+  bad:
+    provider: openai
+    stages:
+      draft:
+        model: gpt-test
+        reasoning_effort: turbo
+""",
+            )
+
+            with self.assertRaises(ValueError) as ctx:
+                resolve_ai_pipeline_config(
+                    repo_root=repo_root,
+                    profile_slug="bad",
+                    cli_overrides=AIPipelineCLIOverrides(),
+                )
+
+        self.assertIn("reasoning_effort", str(ctx.exception))
+
+    def test_invalid_structured_mode_rejected(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            _write_profile(
+                repo_root,
+                """
+profiles:
+  bad:
+    provider: openai
+    stages:
+      draft:
+        model: gpt-test
+        structured_mode: xml
+""",
+            )
+
+            with self.assertRaises(ValueError) as ctx:
+                resolve_ai_pipeline_config(
+                    repo_root=repo_root,
+                    profile_slug="bad",
+                    cli_overrides=AIPipelineCLIOverrides(),
+                )
+
+        self.assertIn("structured_mode", str(ctx.exception))
 
 
 if __name__ == "__main__":

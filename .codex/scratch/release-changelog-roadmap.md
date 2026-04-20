@@ -150,10 +150,71 @@ profiles:
 - OpenAIProvider:
   - migrate toward Responses API where applicable
   - support reasoning effort natively
+  - align request construction with stage-level `reasoning_effort` and `structured_mode`
+  - preserve clean compatibility with the current control-plane contract
+
 - OpenAICompatibleProvider:
   - support fallback structured modes
   - avoid strict schema assumptions
   - improve resilience for local models
+  - treat provider capabilities honestly and degrade intentionally when native support is absent
+
+- Structured output fallback behavior:
+  - define explicit fallback order for structured generation:
+    - strict JSON schema
+    - JSON object
+    - prompt-driven JSON
+  - ensure fallback behavior is deterministic, testable, and provider-aware
+  - avoid silent behavior changes that make debugging ambiguous
+
+- Prompt discipline and output tightening:
+  - revise stage prompts to reduce verbosity and speculative filler
+  - tighten instructions so outputs stay evidence-bound and concise
+  - explicitly forbid unsupported extrapolation beyond commit/changelog evidence
+  - reduce category bloat and duplicate phrasing across triage/draft/polish
+  - preserve useful uncertainty language when evidence is weak
+  - ensure local/open models are steered toward:
+    - shorter summaries
+    - cleaner bullets
+    - less repeated framing text
+    - no decorative or generic release-language padding
+
+- JSON/output robustness:
+  - improve extraction/repair handling for providers that return extra wrapper text or noisy JSON-adjacent output
+  - validate parsed outputs cleanly before continuing pipeline stages
+  - distinguish clearly between:
+    - transport failure
+    - invalid JSON
+    - unsupported structured mode
+    - schema mismatch
+  - make failure messages operator-useful and debugging-friendly
+
+- Reasoning / response tuning:
+  - ensure reasoning settings are only passed where supported
+  - prevent local-compatible transports from receiving unsupported provider fields by default
+  - minimize unnecessary response verbosity for stages that should stay operational and terse
+  - keep stage behavior aligned with intended workload:
+    - triage = lean classification
+    - draft = structured synthesis
+    - polish = concise refinement, not ornamental rewriting
+
+- Provider-specific request shaping:
+  - allow transport/request builders to adapt per provider without changing stage logic
+  - centralize request-shaping logic so prompt + transport behavior is easier to audit
+  - keep provider-specific hacks contained rather than leaking into stage code
+
+- Resilience and operator trust:
+  - make degraded-mode behavior explicit in code/tests
+  - ensure local-model paths fail soft where possible instead of crashing on unsupported features
+  - avoid hidden “best effort” behavior that changes output quality unpredictably
+  - keep defaults conservative and stable for repeatable release drafting
+
+- Tests and verification:
+  - add regression tests for provider-specific request construction
+  - add tests for structured-mode fallback behavior
+  - add tests for prompt/output tightening expectations where practical
+  - add tests ensuring noisy local-model responses are handled or rejected clearly
+  - verify transport changes do not break existing profile/control-plane behavior
 
 ---
 

@@ -21,6 +21,7 @@ class AIProviderConfigTests(unittest.TestCase):
         self.assertIs(provider, sentinel)
         openai_cls.assert_called_once_with(
             model="gpt-5.4-mini",
+            provider_kind="openai",
             api_key=None,
             api_key_env_var="OPENAI_API_KEY",
             timeout_seconds=None,

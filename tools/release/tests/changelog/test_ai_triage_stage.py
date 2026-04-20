@@ -52,6 +52,24 @@ class AITriageStageTests(unittest.TestCase):
                 provider=_FakeProvider(invalid),
             )
 
+    def test_run_triage_stage_passes_reasoning_and_structured_mode(self) -> None:
+        payload = {
+            "schema_version": "vaulthalla.release.ai_payload.v1",
+            "metadata": {"version": "2.4.0"},
+            "categories": [],
+        }
+        fake = _FakeProvider(_load_json_fixture("ai_triage_valid.json"))
+
+        _ = run_triage_stage(
+            payload,
+            provider=fake,
+            reasoning_effort="low",
+            structured_mode="prompt_json",
+        )
+        call = fake.calls[0]
+        self.assertEqual(call["reasoning_effort"], "low")
+        self.assertEqual(call["structured_mode"], "prompt_json")
+
     def test_render_triage_json_is_stable(self) -> None:
         triage = run_triage_stage(
             {"schema_version": "x", "metadata": {}, "categories": []},

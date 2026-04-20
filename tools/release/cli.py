@@ -489,10 +489,19 @@ def cmd_changelog_ai_draft(args: argparse.Namespace) -> int:
 
     draft_input: dict = payload
     source_kind = "payload"
+    triage_stage_cfg = pipeline_config.stages["triage"]
+    draft_stage_cfg = pipeline_config.stages["draft"]
+    polish_stage_cfg = pipeline_config.stages["polish"]
 
     if args.use_triage:
         triage_provider = build_ai_provider_from_args(args, repo_root=repo_root, stage="triage")
-        triage_result = run_triage_stage(payload, provider=triage_provider)
+        triage_result = run_triage_stage(
+            payload,
+            provider=triage_provider,
+            provider_kind=pipeline_config.provider,
+            reasoning_effort=triage_stage_cfg.reasoning_effort,
+            structured_mode=triage_stage_cfg.structured_mode,
+        )
         draft_input = build_triage_ir_payload(triage_result)
         source_kind = "triage"
 
@@ -500,12 +509,25 @@ def cmd_changelog_ai_draft(args: argparse.Namespace) -> int:
             write_output(render_triage_result_json(triage_result), args.save_triage_json)
             print(f"Wrote AI triage JSON to {Path(args.save_triage_json).resolve()}")
 
-    draft = generate_draft_from_payload(draft_input, provider=draft_provider, source_kind=source_kind)
+    draft = generate_draft_from_payload(
+        draft_input,
+        provider=draft_provider,
+        source_kind=source_kind,
+        provider_kind=pipeline_config.provider,
+        reasoning_effort=draft_stage_cfg.reasoning_effort,
+        structured_mode=draft_stage_cfg.structured_mode,
+    )
     polish_result: AIPolishResult | None = None
 
     if args.polish:
         polish_provider = build_ai_provider_from_args(args, repo_root=repo_root, stage="polish")
-        polish_result = run_polish_stage(draft, provider=polish_provider)
+        polish_result = run_polish_stage(
+            draft,
+            provider=polish_provider,
+            provider_kind=pipeline_config.provider,
+            reasoning_effort=polish_stage_cfg.reasoning_effort,
+            structured_mode=polish_stage_cfg.structured_mode,
+        )
         final_markdown = render_polish_markdown(polish_result)
 
         if args.save_polish_json:

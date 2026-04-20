@@ -4,7 +4,18 @@ import json
 import os
 from typing import Any
 
-from tools.release.changelog.ai.config import DEFAULT_AI_DRAFT_MODEL, OPENAI_API_KEY_ENV_VAR
+from tools.release.changelog.ai.config import (
+    AIProviderKind,
+    AIReasoningEffort,
+    AIStructuredMode,
+    DEFAULT_AI_DRAFT_MODEL,
+    OPENAI_API_KEY_ENV_VAR,
+)
+from tools.release.changelog.ai.providers.capabilities import (
+    ProviderCapabilities,
+    get_provider_capabilities,
+    resolve_generation_settings,
+)
 
 LOCAL_NO_AUTH_API_KEY_PLACEHOLDER = "local-no-auth"
 
@@ -16,6 +27,7 @@ class OpenAIProvider:
         self,
         *,
         model: str = DEFAULT_AI_DRAFT_MODEL,
+        provider_kind: AIProviderKind = "openai",
         api_key: str | None = None,
         api_key_env_var: str = OPENAI_API_KEY_ENV_VAR,
         base_url: str | None = None,
@@ -24,6 +36,7 @@ class OpenAIProvider:
         sdk_client: Any | None = None,
     ) -> None:
         self.model = model
+        self.provider_kind = provider_kind
         self.base_url = base_url
 
         if sdk_client is not None:
@@ -69,7 +82,14 @@ class OpenAIProvider:
         system_prompt: str,
         user_prompt: str,
         json_schema: dict[str, Any],
+        reasoning_effort: AIReasoningEffort | None = None,
+        structured_mode: AIStructuredMode | None = None,
     ) -> dict[str, Any]:
+        settings = resolve_generation_settings(
+            provider_kind=self.provider_kind,
+            requested_structured_mode=structured_mode,
+            requested_reasoning_effort=reasoning_effort,
+        )
         try:
             response = self._client.chat.completions.create(
                 **self._build_request(
@@ -77,6 +97,8 @@ class OpenAIProvider:
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
                     json_schema=json_schema,
+                    structured_mode=settings.structured_mode,
+                    reasoning_effort=settings.reasoning_effort,
                 )
             )
         except Exception as exc:
@@ -92,6 +114,9 @@ class OpenAIProvider:
             raise ValueError("OpenAI structured response must be a JSON object.")
         return parsed
 
+    def capabilities(self) -> ProviderCapabilities:
+        return get_provider_capabilities(self.provider_kind)
+
     @staticmethod
     def _build_request(
         *,
@@ -99,22 +124,38 @@ class OpenAIProvider:
         system_prompt: str,
         user_prompt: str,
         json_schema: dict[str, Any],
+        structured_mode: AIStructuredMode,
+        reasoning_effort: AIReasoningEffort | None,
     ) -> dict[str, Any]:
-        return {
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        request: dict[str, Any] = {
             "model": model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            "response_format": {
+            "messages": messages,
+        }
+
+        if structured_mode == "strict_json_schema":
+            request["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {
                     "name": "vaulthalla_release_changelog_draft",
                     "schema": json_schema,
                     "strict": True,
                 },
-            },
-        }
+            }
+        elif structured_mode == "json_object":
+            request["response_format"] = {"type": "json_object"}
+        else:
+            messages[0]["content"] = (
+                f"{system_prompt}\n\nReturn only a valid JSON object with no prose or markdown."
+            )
+
+        if reasoning_effort is not None:
+            request["reasoning"] = {"effort": reasoning_effort}
+
+        return request
 
 
 def _build_sdk_client(

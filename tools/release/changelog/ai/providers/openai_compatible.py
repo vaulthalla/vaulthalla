@@ -3,8 +3,14 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import urlparse
 
-from tools.release.changelog.ai.config import DEFAULT_AI_DRAFT_MODEL, OPENAI_API_KEY_ENV_VAR
+from tools.release.changelog.ai.config import (
+    AIReasoningEffort,
+    AIStructuredMode,
+    DEFAULT_AI_DRAFT_MODEL,
+    OPENAI_API_KEY_ENV_VAR,
+)
 from tools.release.changelog.ai.providers.base import StructuredJSONProvider
+from tools.release.changelog.ai.providers.capabilities import ProviderCapabilities, get_provider_capabilities
 from tools.release.changelog.ai.providers.openai import OpenAIProvider
 
 
@@ -32,6 +38,7 @@ class OpenAICompatibleProvider(StructuredJSONProvider):
             )
         self._delegate = OpenAIProvider(
             model=model,
+            provider_kind="openai-compatible",
             api_key=api_key,
             api_key_env_var=api_key_env_var,
             base_url=normalized_base_url,
@@ -39,6 +46,7 @@ class OpenAICompatibleProvider(StructuredJSONProvider):
             require_api_key=False,
             sdk_client=sdk_client,
         )
+        self.provider_kind = "openai-compatible"
 
     def generate_structured_json(
         self,
@@ -46,12 +54,19 @@ class OpenAICompatibleProvider(StructuredJSONProvider):
         system_prompt: str,
         user_prompt: str,
         json_schema: dict[str, Any],
+        reasoning_effort: AIReasoningEffort | None = None,
+        structured_mode: AIStructuredMode | None = None,
     ) -> dict[str, Any]:
         return self._delegate.generate_structured_json(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             json_schema=json_schema,
+            reasoning_effort=reasoning_effort,
+            structured_mode=structured_mode,
         )
 
     def list_models(self) -> list[str]:
         return self._delegate.list_models()
+
+    def capabilities(self) -> ProviderCapabilities:
+        return get_provider_capabilities("openai-compatible")

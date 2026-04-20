@@ -63,6 +63,57 @@ class OpenAIProviderTests(unittest.TestCase):
         self.assertEqual(call["response_format"]["json_schema"]["schema"], {"type": "object"})
         self.assertEqual(call["messages"][0]["role"], "system")
         self.assertEqual(call["messages"][1]["role"], "user")
+        self.assertNotIn("reasoning", call)
+
+    def test_reasoning_effort_is_forwarded_when_requested(self) -> None:
+        sdk = _FakeSDKClient(_FakeResponse('{"title":"x","summary":"y","sections":[{"category":"core","overview":"z","bullets":["a"]}]}'))
+        client = OpenAIProvider(sdk_client=sdk, model="gpt-test-mini")
+
+        _ = client.generate_structured_json(
+            system_prompt="sys",
+            user_prompt="usr",
+            json_schema={"type": "object"},
+            reasoning_effort="high",
+        )
+
+        call = sdk.chat.completions.calls[0]
+        self.assertEqual(call["reasoning"]["effort"], "high")
+
+    def test_json_object_mode_uses_json_object_response_format(self) -> None:
+        sdk = _FakeSDKClient(_FakeResponse('{"title":"x","summary":"y","sections":[{"category":"core","overview":"z","bullets":["a"]}]}'))
+        client = OpenAIProvider(sdk_client=sdk, model="gpt-test-mini")
+
+        _ = client.generate_structured_json(
+            system_prompt="sys",
+            user_prompt="usr",
+            json_schema={"type": "object"},
+            structured_mode="json_object",
+        )
+
+        call = sdk.chat.completions.calls[0]
+        self.assertEqual(call["response_format"]["type"], "json_object")
+
+    def test_prompt_json_mode_omits_response_format(self) -> None:
+        sdk = _FakeSDKClient(_FakeResponse('{"title":"x","summary":"y","sections":[{"category":"core","overview":"z","bullets":["a"]}]}'))
+        client = OpenAIProvider(sdk_client=sdk, model="gpt-test-mini")
+
+        _ = client.generate_structured_json(
+            system_prompt="sys",
+            user_prompt="usr",
+            json_schema={"type": "object"},
+            structured_mode="prompt_json",
+        )
+
+        call = sdk.chat.completions.calls[0]
+        self.assertNotIn("response_format", call)
+        self.assertIn("valid JSON object", call["messages"][0]["content"])
+
+    def test_provider_exposes_capabilities(self) -> None:
+        sdk = _FakeSDKClient(_FakeResponse("{}"))
+        client = OpenAIProvider(sdk_client=sdk)
+        caps = client.capabilities()
+        self.assertTrue(caps.supports_reasoning_effort)
+        self.assertTrue(caps.supports_strict_schema)
 
     def test_missing_api_key_fails_clearly(self) -> None:
         with patch.dict(os.environ, {}, clear=True):

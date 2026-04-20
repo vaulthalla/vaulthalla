@@ -66,7 +66,7 @@ class OpenAICompatibleProviderTests(unittest.TestCase):
             timeout_seconds=None,
         )
 
-    def test_structured_request_uses_json_schema_response_format(self) -> None:
+    def test_structured_request_defaults_to_json_object_response_format(self) -> None:
         sdk = _FakeSDKClient(
             _FakeResponse(
                 '{"title":"x","summary":"y","sections":[{"category":"core","overview":"z","bullets":["a"]}]}'
@@ -87,9 +87,31 @@ class OpenAICompatibleProviderTests(unittest.TestCase):
         self.assertEqual(result["title"], "x")
         call = sdk.chat.completions.calls[0]
         self.assertEqual(call["model"], "Qwen3.5-122B")
-        self.assertEqual(call["response_format"]["type"], "json_schema")
-        self.assertTrue(call["response_format"]["json_schema"]["strict"])
-        self.assertEqual(call["response_format"]["json_schema"]["schema"], {"type": "object"})
+        self.assertEqual(call["response_format"]["type"], "json_object")
+
+    def test_strict_schema_request_is_downgraded(self) -> None:
+        sdk = _FakeSDKClient(
+            _FakeResponse(
+                '{"title":"x","summary":"y","sections":[{"category":"core","overview":"z","bullets":["a"]}]}'
+            )
+        )
+        client = OpenAICompatibleProvider(
+            sdk_client=sdk,
+            model="Qwen3.5-122B",
+            base_url="http://localhost:8888/v1",
+        )
+
+        _ = client.generate_structured_json(
+            system_prompt="sys",
+            user_prompt="usr",
+            json_schema={"type": "object"},
+            structured_mode="strict_json_schema",
+            reasoning_effort="high",
+        )
+
+        call = sdk.chat.completions.calls[0]
+        self.assertEqual(call["response_format"]["type"], "json_object")
+        self.assertNotIn("reasoning", call)
 
     def test_missing_base_url_fails_clearly(self) -> None:
         with self.assertRaisesRegex(ValueError, "base_url"):
@@ -98,6 +120,17 @@ class OpenAICompatibleProviderTests(unittest.TestCase):
     def test_malformed_base_url_fails_clearly(self) -> None:
         with self.assertRaisesRegex(ValueError, "http"):
             OpenAICompatibleProvider(model="Qwen3.5-122B", base_url="localhost:8888/v1")
+
+    def test_provider_exposes_limited_capabilities(self) -> None:
+        sdk = _FakeSDKClient(_FakeResponse("{}"))
+        client = OpenAICompatibleProvider(
+            sdk_client=sdk,
+            model="Qwen3.5-122B",
+            base_url="http://localhost:8888/v1",
+        )
+        caps = client.capabilities()
+        self.assertFalse(caps.supports_reasoning_effort)
+        self.assertFalse(caps.supports_strict_schema)
 
 
 if __name__ == "__main__":

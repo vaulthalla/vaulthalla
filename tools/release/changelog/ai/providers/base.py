@@ -2,15 +2,25 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+from tools.release.changelog.ai.config import AIReasoningEffort, AIStructuredMode
+from tools.release.changelog.ai.providers.capabilities import ProviderCapabilities
+
 
 class StructuredJSONProvider(Protocol):
+    provider_kind: str
+
     def generate_structured_json(
         self,
         *,
         system_prompt: str,
         user_prompt: str,
         json_schema: dict[str, Any],
+        reasoning_effort: AIReasoningEffort | None = None,
+        structured_mode: AIStructuredMode | None = None,
     ) -> dict[str, Any]:
+        ...
+
+    def capabilities(self) -> ProviderCapabilities:
         ...
 
 

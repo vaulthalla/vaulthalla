@@ -2,6 +2,12 @@ from dataclasses import dataclass
 
 from tools.release.changelog.ai.config import AIProviderConfig, DEFAULT_OPENAI_COMPATIBLE_BASE_URL
 from tools.release.changelog.ai.providers.base import ModelDiscoveryProvider, StructuredJSONProvider
+from tools.release.changelog.ai.providers.capabilities import (
+    ProviderCapabilities,
+    ResolvedGenerationSettings,
+    get_provider_capabilities,
+    resolve_generation_settings,
+)
 from tools.release.changelog.ai.providers.openai import OpenAIProvider
 from tools.release.changelog.ai.providers.openai_compatible import OpenAICompatibleProvider
 
@@ -14,6 +20,7 @@ def build_structured_json_provider(config: AIProviderConfig) -> StructuredJSONPr
             raise ValueError("`--base-url` is only valid when `--provider openai-compatible` is used.")
         return OpenAIProvider(
             model=model,
+            provider_kind="openai",
             api_key=config.api_key,
             api_key_env_var=config.api_key_env_var,
             timeout_seconds=config.timeout_seconds,
@@ -95,4 +102,8 @@ __all__ = [
     "build_structured_json_provider",
     "ProviderPreflightResult",
     "run_provider_preflight",
+    "ProviderCapabilities",
+    "ResolvedGenerationSettings",
+    "get_provider_capabilities",
+    "resolve_generation_settings",
 ]

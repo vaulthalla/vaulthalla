@@ -57,6 +57,20 @@ class AIPolishStageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "sections"):
             run_polish_stage(draft, provider=_FakeProvider(invalid))
 
+    def test_run_polish_stage_passes_reasoning_and_structured_mode(self) -> None:
+        draft = self._draft_input()
+        fake = _FakeProvider(_load_json_fixture("ai_polish_valid.json"))
+
+        _ = run_polish_stage(
+            draft,
+            provider=fake,
+            reasoning_effort="high",
+            structured_mode="json_object",
+        )
+        call = fake.calls[0]
+        self.assertEqual(call["reasoning_effort"], "high")
+        self.assertEqual(call["structured_mode"], "json_object")
+
     def test_polish_markdown_render_matches_fixture(self) -> None:
         draft = self._draft_input()
         polish = run_polish_stage(draft, provider=_FakeProvider(_load_json_fixture("ai_polish_valid.json")))

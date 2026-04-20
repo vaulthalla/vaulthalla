@@ -13,7 +13,12 @@ DEFAULT_AI_POLISH_MODEL = DEFAULT_AI_DRAFT_MODEL
 DEFAULT_OPENAI_COMPATIBLE_BASE_URL = "http://localhost:8888/v1"
 DEFAULT_AI_PROVIDER_KIND = "openai"
 
+VALID_REASONING_EFFORTS = ("low", "medium", "high")
+VALID_STRUCTURED_MODES = ("strict_json_schema", "json_object", "prompt_json")
+
 AIProviderKind = Literal["openai", "openai-compatible"]
+AIReasoningEffort = Literal["low", "medium", "high"]
+AIStructuredMode = Literal["strict_json_schema", "json_object", "prompt_json"]
 
 
 @dataclass(frozen=True)
@@ -50,6 +55,8 @@ AIStageName = Literal["triage", "draft", "polish"]
 @dataclass(frozen=True)
 class AIPipelineStageConfig:
     model: str
+    reasoning_effort: AIReasoningEffort | None = None
+    structured_mode: AIStructuredMode | None = None
 
 
 @dataclass(frozen=True)
@@ -95,6 +102,16 @@ def resolve_ai_pipeline_config(
         "draft": DEFAULT_AI_DRAFT_MODEL,
         "polish": DEFAULT_AI_POLISH_MODEL,
     }
+    stage_reasoning: dict[AIStageName, AIReasoningEffort | None] = {
+        "triage": None,
+        "draft": None,
+        "polish": None,
+    }
+    stage_structured_modes: dict[AIStageName, AIStructuredMode | None] = {
+        "triage": None,
+        "draft": None,
+        "polish": None,
+    }
 
     if profile_slug:
         profile = _load_profile(repo_root / DEFAULT_AI_PROFILE_PATH, profile_slug)
@@ -104,6 +121,14 @@ def resolve_ai_pipeline_config(
         profile_fallback = _read_optional_non_empty_string(profile.get("model"), path=f"profiles.{profile_slug}.model")
         if profile_fallback is not None:
             fallback_model = profile_fallback
+        profile_reasoning_fallback = _read_optional_reasoning_effort(
+            profile.get("reasoning_effort"),
+            path=f"profiles.{profile_slug}.reasoning_effort",
+        )
+        profile_structured_mode_fallback = _read_optional_structured_mode(
+            profile.get("structured_mode"),
+            path=f"profiles.{profile_slug}.structured_mode",
+        )
 
         stages = profile.get("stages")
         if stages is not None:
@@ -125,11 +150,27 @@ def resolve_ai_pipeline_config(
                 if model is not None:
                     stage_models[stage_name] = model
                     explicitly_configured_stages.add(stage_name)
+                stage_reasoning[stage_name] = _read_optional_reasoning_effort(
+                    stage_cfg.get("reasoning_effort"),
+                    path=f"profiles.{profile_slug}.stages.{stage_name}.reasoning_effort",
+                )
+                stage_structured_modes[stage_name] = _read_optional_structured_mode(
+                    stage_cfg.get("structured_mode"),
+                    path=f"profiles.{profile_slug}.stages.{stage_name}.structured_mode",
+                )
 
         if profile_fallback is not None:
             for stage_name in ("triage", "draft", "polish"):
                 if stage_name not in explicitly_configured_stages:
                     stage_models[stage_name] = profile_fallback
+        if profile_reasoning_fallback is not None:
+            for stage_name in ("triage", "draft", "polish"):
+                if stage_reasoning[stage_name] is None:
+                    stage_reasoning[stage_name] = profile_reasoning_fallback
+        if profile_structured_mode_fallback is not None:
+            for stage_name in ("triage", "draft", "polish"):
+                if stage_structured_modes[stage_name] is None:
+                    stage_structured_modes[stage_name] = profile_structured_mode_fallback
 
     if cli_overrides.provider is not None:
         provider = cli_overrides.provider
@@ -145,9 +186,21 @@ def resolve_ai_pipeline_config(
         stage_models["polish"] = cli_model
 
     resolved_stages: dict[AIStageName, AIPipelineStageConfig] = {
-        "triage": AIPipelineStageConfig(model=stage_models["triage"] or fallback_model),
-        "draft": AIPipelineStageConfig(model=stage_models["draft"] or fallback_model),
-        "polish": AIPipelineStageConfig(model=stage_models["polish"] or fallback_model),
+        "triage": AIPipelineStageConfig(
+            model=stage_models["triage"] or fallback_model,
+            reasoning_effort=stage_reasoning["triage"],
+            structured_mode=stage_structured_modes["triage"],
+        ),
+        "draft": AIPipelineStageConfig(
+            model=stage_models["draft"] or fallback_model,
+            reasoning_effort=stage_reasoning["draft"],
+            structured_mode=stage_structured_modes["draft"],
+        ),
+        "polish": AIPipelineStageConfig(
+            model=stage_models["polish"] or fallback_model,
+            reasoning_effort=stage_reasoning["polish"],
+            structured_mode=stage_structured_modes["polish"],
+        ),
     }
 
     return AIPipelineConfig(
@@ -218,3 +271,27 @@ def _read_optional_non_empty_string(raw: object, *, path: str) -> str | None:
     if not normalized:
         raise ValueError(f"Invalid `{path}`: expected non-empty string.")
     return normalized
+
+
+def _read_optional_reasoning_effort(raw: object, *, path: str) -> AIReasoningEffort | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        raise ValueError(f"Invalid `{path}`: expected string.")
+    normalized = raw.strip()
+    if normalized not in VALID_REASONING_EFFORTS:
+        allowed = ", ".join(VALID_REASONING_EFFORTS)
+        raise ValueError(f"Invalid `{path}`: expected one of {allowed}.")
+    return normalized  # type: ignore[return-value]
+
+
+def _read_optional_structured_mode(raw: object, *, path: str) -> AIStructuredMode | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        raise ValueError(f"Invalid `{path}`: expected string.")
+    normalized = raw.strip()
+    if normalized not in VALID_STRUCTURED_MODES:
+        allowed = ", ".join(VALID_STRUCTURED_MODES)
+        raise ValueError(f"Invalid `{path}`: expected one of {allowed}.")
+    return normalized  # type: ignore[return-value]

@@ -383,6 +383,9 @@ class CliChangelogAIDraftTests(unittest.TestCase):
             {"schema_version": "x"},
             provider=provider_obj,
             source_kind="payload",
+            provider_kind="openai",
+            reasoning_effort=None,
+            structured_mode=None,
         )
         render_markdown.assert_called_once()
         render_json.assert_not_called()
@@ -427,7 +430,13 @@ class CliChangelogAIDraftTests(unittest.TestCase):
             self.assertEqual(result, 0)
             self.assertEqual(markdown_target.read_text(encoding="utf-8"), "# AI Draft\n")
             self.assertEqual(json_target.read_text(encoding="utf-8"), '{"title":"x"}\n')
-            run_triage.assert_called_once_with({"schema_version": "x"}, provider=provider_obj)
+            run_triage.assert_called_once_with(
+                {"schema_version": "x"},
+                provider=provider_obj,
+                provider_kind="openai",
+                reasoning_effort=None,
+                structured_mode=None,
+            )
             build_provider.assert_has_calls(
                 [
                     call(args, repo_root=Path(".").resolve(), stage="draft"),
@@ -439,6 +448,9 @@ class CliChangelogAIDraftTests(unittest.TestCase):
                 {"schema_version": "triage-x"},
                 provider=provider_obj,
                 source_kind="triage",
+                provider_kind="openai",
+                reasoning_effort=None,
+                structured_mode=None,
             )
             self.assertIn("Wrote AI changelog draft to", out.getvalue())
             self.assertIn("Wrote AI draft JSON to", out.getvalue())
@@ -520,8 +532,17 @@ class CliChangelogAIDraftTests(unittest.TestCase):
                 {"schema_version": "x"},
                 provider=provider_obj,
                 source_kind="payload",
+                provider_kind="openai",
+                reasoning_effort=None,
+                structured_mode=None,
             )
-            run_polish.assert_called_once_with(draft_obj, provider=provider_obj)
+            run_polish.assert_called_once_with(
+                draft_obj,
+                provider=provider_obj,
+                provider_kind="openai",
+                reasoning_effort=None,
+                structured_mode=None,
+            )
             build_provider.assert_has_calls(
                 [
                     call(args, repo_root=Path(".").resolve(), stage="draft"),
@@ -569,14 +590,106 @@ class CliChangelogAIDraftTests(unittest.TestCase):
                 call(args, repo_root=Path(".").resolve(), stage="polish"),
             ]
         )
-        run_triage.assert_called_once_with({"schema_version": "x"}, provider=provider_obj)
+        run_triage.assert_called_once_with(
+            {"schema_version": "x"},
+            provider=provider_obj,
+            provider_kind="openai",
+            reasoning_effort=None,
+            structured_mode=None,
+        )
         build_triage.assert_called_once_with(triage_obj)
         generate_draft.assert_called_once_with(
             {"schema_version": "triage-x"},
             provider=provider_obj,
             source_kind="triage",
+            provider_kind="openai",
+            reasoning_effort=None,
+            structured_mode=None,
         )
-        run_polish.assert_called_once_with(draft_obj, provider=provider_obj)
+        run_polish.assert_called_once_with(
+            draft_obj,
+            provider=provider_obj,
+            provider_kind="openai",
+            reasoning_effort=None,
+            structured_mode=None,
+        )
+
+    def test_ai_draft_stage_reasoning_and_mode_resolve_from_profile(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            profile_cfg = repo_root / ".vaulthalla" / "ai.yml"
+            profile_cfg.parent.mkdir(parents=True, exist_ok=True)
+            profile_cfg.write_text(
+                """
+profiles:
+  openai-balanced:
+    provider: openai
+    stages:
+      triage:
+        model: gpt-5-nano
+        reasoning_effort: low
+        structured_mode: json_object
+      draft:
+        model: gpt-5-mini
+        reasoning_effort: medium
+        structured_mode: strict_json_schema
+      polish:
+        model: gpt-5.4
+        reasoning_effort: high
+        structured_mode: prompt_json
+""",
+                encoding="utf-8",
+            )
+            args = self._args(
+                repo_root=str(repo_root),
+                ai_profile="openai-balanced",
+                provider=None,
+                model=None,
+                use_triage=True,
+                polish=True,
+            )
+            provider_obj = object()
+            draft_obj = object()
+
+            with (
+                patch("tools.release.cli.build_changelog_context", return_value=object()),
+                patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
+                patch("tools.release.cli.build_ai_provider_from_args", return_value=provider_obj),
+                patch("tools.release.cli.run_triage_stage", return_value=object()) as run_triage,
+                patch("tools.release.cli.build_triage_ir_payload", return_value={"schema_version": "triage-x"}),
+                patch("tools.release.cli.generate_draft_from_payload", return_value=draft_obj) as generate_draft,
+                patch("tools.release.cli.run_polish_stage", return_value=object()) as run_polish,
+                patch("tools.release.cli.render_polish_markdown", return_value="# Polished\n"),
+                patch("tools.release.cli.render_polish_result_json"),
+                patch("tools.release.cli.render_draft_markdown"),
+                patch("tools.release.cli.render_draft_result_json"),
+                patch("tools.release.cli.render_triage_result_json"),
+            ):
+                result = cli.cmd_changelog_ai_draft(args)
+
+            self.assertEqual(result, 0)
+            run_triage.assert_called_once_with(
+                {"schema_version": "x"},
+                provider=provider_obj,
+                provider_kind="openai",
+                reasoning_effort="low",
+                structured_mode="json_object",
+            )
+            generate_draft.assert_called_once_with(
+                {"schema_version": "triage-x"},
+                provider=provider_obj,
+                source_kind="triage",
+                provider_kind="openai",
+                reasoning_effort="medium",
+                structured_mode="strict_json_schema",
+            )
+            run_polish.assert_called_once_with(
+                draft_obj,
+                provider=provider_obj,
+                provider_kind="openai",
+                reasoning_effort="high",
+                structured_mode="prompt_json",
+            )
 
     def test_main_fails_when_triage_requested_and_invalid(self) -> None:
         err = StringIO()
