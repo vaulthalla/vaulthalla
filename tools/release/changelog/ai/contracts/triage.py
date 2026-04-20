@@ -247,6 +247,11 @@ def _read_non_empty_string_list(
     normalized: list[str] = []
     for index, value in enumerate(raw):
         if not isinstance(value, str):
+            if required:
+                raise ValueError(f"`{prefix}{key}[{index}]` must be a non-empty string.")
+            # Local-model optional arrays can include null placeholders; drop them.
+            if value is None:
+                continue
             raise ValueError(f"`{prefix}{key}[{index}]` must be a non-empty string.")
         trimmed = value.strip()
         if not trimmed:

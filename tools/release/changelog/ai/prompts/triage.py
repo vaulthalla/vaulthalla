@@ -32,7 +32,7 @@ def build_triage_user_prompt(payload: dict[str, Any]) -> str:
         f"- Set `schema_version` exactly to `{AI_TRIAGE_SCHEMA_VERSION}`.\n"
         "- Required category fields: `name`, `signal_strength`, `priority_rank`, `key_points`, "
         "`important_files`, `retained_snippets`.\n"
-        "- Never emit empty placeholders in arrays (no `\"\"` or whitespace-only items); omit blank items.\n"
+        "- Never emit empty placeholders in arrays (no `\"\"`, whitespace-only items, or nulls); omit blank items.\n"
         "- Return JSON only.\n\n"
         "Release payload:\n"
         f"{payload_json}"

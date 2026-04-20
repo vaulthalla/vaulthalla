@@ -73,6 +73,24 @@ class AITriageContractsTests(unittest.TestCase):
         parsed = parse_ai_triage_response(raw)
         self.assertEqual(parsed.categories[0].retained_snippets, ("kept snippet",))
 
+    def test_optional_retained_snippets_drops_null_placeholder(self) -> None:
+        raw = _load_json_fixture("ai_triage_valid.json")
+        raw["categories"][0]["retained_snippets"] = [None]
+        parsed = parse_ai_triage_response(raw)
+        self.assertEqual(parsed.categories[0].retained_snippets, ())
+
+    def test_optional_retained_snippets_keeps_valid_and_drops_null(self) -> None:
+        raw = _load_json_fixture("ai_triage_valid.json")
+        raw["categories"][0]["retained_snippets"] = ["snippet", None]
+        parsed = parse_ai_triage_response(raw)
+        self.assertEqual(parsed.categories[0].retained_snippets, ("snippet",))
+
+    def test_optional_retained_snippets_rejects_non_string_non_null(self) -> None:
+        raw = _load_json_fixture("ai_triage_valid.json")
+        raw["categories"][0]["retained_snippets"] = [1]
+        with self.assertRaisesRegex(ValueError, "retained_snippets\\[0\\]"):
+            parse_ai_triage_response(raw)
+
     def test_parse_rejects_duplicate_priority_rank(self) -> None:
         invalid = _load_json_fixture("ai_triage_valid.json")
         invalid["categories"][1]["priority_rank"] = 1
