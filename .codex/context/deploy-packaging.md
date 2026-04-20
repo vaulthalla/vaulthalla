@@ -1,84 +1,37 @@
-# Deploy + Debian Map
+# Deploy + Packaging Map
+
+## Purpose
+
+Quick map of deploy-time assets and how they feed packaging.  
+For maintainer-script lifecycle details, use:
+
+- `.codex/context/debian-packaging-lifecycle.md`
+- `.codex/context/debian-bin-lifecycle-audit.md`
 
 ## Deploy Assets (`deploy/`)
 
-- `deploy/config/config.yaml`: runtime config defaults (websocket/http/db/auth/sync/services/sharing/caching/audit/dev).
-- `deploy/config/config_template.yaml.in`: sparse template payload.
-- `deploy/psql/*.sql`: ordered SQL schema/migration files (`000_...`, `001_...`, ..., `060_...`).
-- `deploy/systemd/*.service.in`: systemd unit templates for core, cli, and web.
-- `deploy/systemd/vaulthalla-cli.socket`: Unix socket activation for CLI service.
-- `deploy/vaulthalla.env.example`: environment template.
+- `deploy/config/config.yaml`: default runtime config.
+- `deploy/config/config_template.yaml.in`: template config payload.
+- `deploy/psql/*.sql`: SQL schema/migration assets used by source/test flows.
+- `deploy/systemd/*.service.in`: unit templates for core, CLI, web.
+- `deploy/systemd/vaulthalla-cli.socket`: CLI socket unit.
+- `deploy/nginx/vaulthalla.conf`: package nginx site template source.
 
-## Systemd Units
+## Systemd Template Contract
 
-Core service (`deploy/systemd/vaulthalla.service.in`):
+- Core service: `@BINDIR@/vaulthalla-server`, user/group `vaulthalla`.
+- CLI service: `@BINDIR@/vaulthalla-cli --systemd`, unix-socket restricted.
+- Web service: `@BINDIR@/node /usr/share/vaulthalla-web/server.js`, user/group `vaulthalla`.
 
-- Exec: `@BINDIR@/vaulthalla-server`
-- User/Group: `vaulthalla`
-- Requires PostgreSQL
+## Packaging Path (Canonical)
 
-CLI service (`deploy/systemd/vaulthalla-cli.service.in`):
+- CI packaging entrypoint: `.github/actions/package/action.yml`
+- Build tooling: `python3 -m tools.release build-deb`
+- Contract validation: `python3 -m tools.release validate-release-artifacts`
 
-- Exec: `@BINDIR@/vaulthalla-cli --systemd`
-- Restricts to `AF_UNIX`
-- Read-write path: `/run/vaulthalla`
+`debian/rules` builds from `core/` and stages non-Meson payloads from `deploy/` and `web/` into the package.
 
-Web service (`deploy/systemd/vaulthalla-web.service.in`):
+## `/bin` Script Boundary
 
-- Exec: `@BINDIR@/node /usr/share/vaulthalla-web/server.js`
-- User: `www-data`
-
-## Install Orchestration (`bin/`)
-
-- `bin/install.sh`: dependency/user/dir/core install + DB + systemd.
-- `bin/setup/install_dirs.sh`: runtime dirs, config/data payloads, SQL sync, CLI symlinks.
-- `bin/setup/install_systemd.sh`: renders `.service.in` templates with `@BINDIR@`, installs socket, enables units.
-- `bin/uninstall.sh`: unmount + service teardown + optional DB/user/deps purge.
-
-## Debian Package (`debian/`)
-
-Single package name:
-
-- Source/package: `vaulthalla` (`debian/control`)
-
-Installed payload (`debian/install`) includes:
-
-- Binaries: `vaulthalla-server`, `vaulthalla-cli`, `vaulthalla`, `vh`
-- Config: `/etc/vaulthalla/config.yaml`
-- Systemd units: core + cli service/socket
-- Static libs and docs/manpage
-- Udev rule + tmpfiles payload
-
-Packaging contract notes:
-
-- Debian Meson build is sourced from `core/` (`debian/rules` uses `--sourcedirectory=core`).
-- `override_dh_auto_install` stages non-Meson payloads into `debian/tmp`:
-  - config files (`deploy/config`)
-  - rendered systemd templates (`deploy/systemd/*.in`)
-  - doc files (`LICENSE`, `debian/copyright`)
-  - CLI symlink shims (`/usr/bin/vaulthalla`, `/usr/bin/vh`)
-  - udev + tmpfiles entries
-- `debian/install` uses multiarch globs (`usr/lib/*/...`) for portability across runner/arch layouts.
-
-`debian/postinst` behavior:
-
-- creates `vaulthalla` system user/group
-- sets up runtime/state/log/mount dirs
-- optional PostgreSQL role/db initialization via debconf
-- seeds runtime DB password file for TPM sealing flow
-- presets systemd units
-
-`debian/changelog` tracks Debian upstream+revision (`X.Y.Z-N`).
-
-## Important Packaging Reality
-
-The repo currently builds/deploys as a single package `vaulthalla`; web-specific Debian files under `web/debian/` are not the active monorepo packaging path by default.
-
-## Release Tooling Packaging Path
-
-`python3 -m tools.release build-deb` is the local packaging entrypoint used by CI:
-
-- validates synced release state first,
-- builds web standalone artifact and Debian package artifacts,
-- writes outputs to `release/` by default,
-- emits `release/build-deb.log` with web/debian command output sections.
+`/bin` scripts are source/dev/operator install helpers, not Debian maintainer-script replacements.  
+Do not assume `/bin` install/uninstall semantics match `apt remove/purge` behavior.
