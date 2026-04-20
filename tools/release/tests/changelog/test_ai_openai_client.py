@@ -112,6 +112,22 @@ class OpenAIProviderTests(unittest.TestCase):
         call = sdk.chat.completions.calls[0]
         self.assertEqual(call["reasoning"]["effort"], "high")
 
+    def test_temperature_and_max_tokens_are_forwarded_when_requested(self) -> None:
+        sdk = _FakeSDKClient(_FakeResponse('{"title":"x","summary":"y","sections":[{"category":"core","overview":"z","bullets":["a"]}]}'))
+        client = OpenAIProvider(sdk_client=sdk, model="gpt-test-mini")
+
+        _ = client.generate_structured_json(
+            system_prompt="sys",
+            user_prompt="usr",
+            json_schema={"type": "object"},
+            temperature=0.25,
+            max_output_tokens=1024,
+        )
+
+        call = sdk.chat.completions.calls[0]
+        self.assertEqual(call["temperature"], 0.25)
+        self.assertEqual(call["max_completion_tokens"], 1024)
+
     def test_json_object_mode_uses_json_object_response_format(self) -> None:
         sdk = _FakeSDKClient(_FakeResponse('{"title":"x","summary":"y","sections":[{"category":"core","overview":"z","bullets":["a"]}]}'))
         client = OpenAIProvider(sdk_client=sdk, model="gpt-test-mini")
@@ -160,6 +176,8 @@ class OpenAIProviderTests(unittest.TestCase):
             json_schema={"type": "object"},
             reasoning_effort="medium",
             structured_mode="strict_json_schema",
+            temperature=0.1,
+            max_output_tokens=777,
         )
 
         self.assertEqual(len(sdk.responses.calls), 1)
@@ -167,6 +185,8 @@ class OpenAIProviderTests(unittest.TestCase):
         self.assertEqual(request["model"], "gpt-test-mini")
         self.assertEqual(request["text"]["format"]["type"], "json_schema")
         self.assertEqual(request["reasoning"]["effort"], "medium")
+        self.assertEqual(request["temperature"], 0.1)
+        self.assertEqual(request["max_output_tokens"], 777)
 
     def test_fallback_order_is_deterministic_when_structured_modes_fail(self) -> None:
         final = _FakeResponse('{"title":"x","summary":"y","sections":[{"category":"core","overview":"z","bullets":["a"]}]}')

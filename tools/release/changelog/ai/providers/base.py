@@ -17,6 +17,8 @@ class StructuredJSONProvider(Protocol):
         json_schema: dict[str, Any],
         reasoning_effort: AIReasoningEffort | None = None,
         structured_mode: AIStructuredMode | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
     ) -> dict[str, Any]:
         ...
 

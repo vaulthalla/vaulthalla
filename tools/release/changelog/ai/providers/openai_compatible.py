@@ -56,6 +56,8 @@ class OpenAICompatibleProvider(StructuredJSONProvider):
         json_schema: dict[str, Any],
         reasoning_effort: AIReasoningEffort | None = None,
         structured_mode: AIStructuredMode | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
     ) -> dict[str, Any]:
         return self._delegate.generate_structured_json(
             system_prompt=system_prompt,
@@ -63,6 +65,8 @@ class OpenAICompatibleProvider(StructuredJSONProvider):
             json_schema=json_schema,
             reasoning_effort=reasoning_effort,
             structured_mode=structured_mode,
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
         )
 
     def list_models(self) -> list[str]:

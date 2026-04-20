@@ -5,7 +5,9 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from tools.release.changelog.ai.config import (
+    AIDynamicRatioTokenBudget,
     AIPipelineCLIOverrides,
+    compute_max_output_tokens,
     resolve_ai_pipeline_config,
 )
 
@@ -93,6 +95,8 @@ profiles:
   bad:
     provider: openai
     stages:
+      draft:
+        model: gpt-test
       triage: nope
 """,
             )
@@ -105,6 +109,52 @@ profiles:
                 )
 
         self.assertIn("profiles.bad.stages.triage", str(ctx.exception))
+
+    def test_missing_required_draft_stage_errors(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            _write_profile(
+                repo_root,
+                """
+profiles:
+  bad:
+    provider: openai
+    stages:
+      triage:
+        model: gpt-test
+""",
+            )
+
+            with self.assertRaises(ValueError) as ctx:
+                resolve_ai_pipeline_config(
+                    repo_root=repo_root,
+                    profile_slug="bad",
+                    cli_overrides=AIPipelineCLIOverrides(),
+                )
+
+        self.assertIn("required stage `draft` is missing", str(ctx.exception))
+
+    def test_empty_stages_mapping_errors(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            _write_profile(
+                repo_root,
+                """
+profiles:
+  bad:
+    provider: openai
+    stages: {}
+""",
+            )
+
+            with self.assertRaises(ValueError) as ctx:
+                resolve_ai_pipeline_config(
+                    repo_root=repo_root,
+                    profile_slug="bad",
+                    cli_overrides=AIPipelineCLIOverrides(),
+                )
+
+        self.assertIn("required stage `draft` is missing", str(ctx.exception))
 
     def test_profile_values_apply_without_cli_overrides(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -315,6 +365,155 @@ profiles:
                 )
 
         self.assertIn("structured_mode", str(ctx.exception))
+
+    def test_enabled_stages_use_fixed_contract_order(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            _write_profile(
+                repo_root,
+                """
+profiles:
+  ordered:
+    provider: openai
+    stages:
+      polish:
+        model: polish-x
+      draft:
+        model: draft-x
+      triage:
+        model: triage-x
+""",
+            )
+            resolved = resolve_ai_pipeline_config(
+                repo_root=repo_root,
+                profile_slug="ordered",
+                cli_overrides=AIPipelineCLIOverrides(),
+            )
+
+        self.assertEqual(resolved.enabled_stages, ("triage", "draft", "polish"))
+
+    def test_temperature_defaults_and_stage_override(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            _write_profile(
+                repo_root,
+                """
+profiles:
+  tuned:
+    provider: openai
+    default_temperature:
+      triage: 0.1
+      draft: 0.3
+    stages:
+      draft:
+        model: gpt-draft
+      triage:
+        model: gpt-triage
+        temperature: 0.05
+""",
+            )
+            resolved = resolve_ai_pipeline_config(
+                repo_root=repo_root,
+                profile_slug="tuned",
+                cli_overrides=AIPipelineCLIOverrides(),
+            )
+
+        self.assertEqual(resolved.stages["triage"].temperature, 0.05)
+        self.assertEqual(resolved.stages["draft"].temperature, 0.3)
+        self.assertEqual(resolved.stages["polish"].temperature, 0.0)
+
+    def test_invalid_temperature_rejected(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            _write_profile(
+                repo_root,
+                """
+profiles:
+  bad:
+    provider: openai
+    stages:
+      draft:
+        model: gpt-test
+        temperature: 3
+""",
+            )
+
+            with self.assertRaises(ValueError) as ctx:
+                resolve_ai_pipeline_config(
+                    repo_root=repo_root,
+                    profile_slug="bad",
+                    cli_overrides=AIPipelineCLIOverrides(),
+                )
+
+        self.assertIn("temperature", str(ctx.exception))
+
+    def test_max_output_tokens_defaults_and_stage_override(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            _write_profile(
+                repo_root,
+                """
+profiles:
+  tuned:
+    provider: openai
+    default_max_output_tokens:
+      triage: 200
+      draft:
+        mode: dynamic_ratio
+        ratio: 0.25
+        min: 700
+        max: 2100
+    stages:
+      draft:
+        model: gpt-draft
+      polish:
+        model: gpt-polish
+        max_output_tokens: 900
+""",
+            )
+            resolved = resolve_ai_pipeline_config(
+                repo_root=repo_root,
+                profile_slug="tuned",
+                cli_overrides=AIPipelineCLIOverrides(),
+            )
+
+        self.assertEqual(resolved.stages["triage"].max_output_tokens, 200)
+        self.assertEqual(resolved.stages["polish"].max_output_tokens, 900)
+        self.assertIsInstance(resolved.stages["draft"].max_output_tokens, AIDynamicRatioTokenBudget)
+
+    def test_invalid_dynamic_ratio_shape_rejected(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            _write_profile(
+                repo_root,
+                """
+profiles:
+  bad:
+    provider: openai
+    stages:
+      draft:
+        model: gpt-test
+        max_output_tokens:
+          mode: dynamic_ratio
+          ratio: 0.2
+          min: 800
+""",
+            )
+
+            with self.assertRaises(ValueError) as ctx:
+                resolve_ai_pipeline_config(
+                    repo_root=repo_root,
+                    profile_slug="bad",
+                    cli_overrides=AIPipelineCLIOverrides(),
+                )
+
+        self.assertIn("dynamic_ratio requires", str(ctx.exception))
+
+    def test_dynamic_ratio_budget_clamps_min_and_max(self) -> None:
+        policy = AIDynamicRatioTokenBudget(mode="dynamic_ratio", ratio=0.5, min=100, max=400)
+        self.assertEqual(compute_max_output_tokens(policy, input_size=20), 100)
+        self.assertEqual(compute_max_output_tokens(policy, input_size=500), 250)
+        self.assertEqual(compute_max_output_tokens(policy, input_size=2000), 400)
 
 
 if __name__ == "__main__":

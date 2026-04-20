@@ -65,10 +65,14 @@ class AITriageStageTests(unittest.TestCase):
             provider=fake,
             reasoning_effort="low",
             structured_mode="prompt_json",
+            temperature=0.0,
+            max_output_tokens_policy=123,
         )
         call = fake.calls[0]
         self.assertEqual(call["reasoning_effort"], "low")
         self.assertEqual(call["structured_mode"], "prompt_json")
+        self.assertEqual(call["temperature"], 0.0)
+        self.assertEqual(call["max_output_tokens"], 123)
 
     def test_render_triage_json_is_stable(self) -> None:
         triage = run_triage_stage(

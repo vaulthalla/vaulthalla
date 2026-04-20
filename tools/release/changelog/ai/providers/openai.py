@@ -98,6 +98,8 @@ class OpenAIProvider:
         json_schema: dict[str, Any],
         reasoning_effort: AIReasoningEffort | None = None,
         structured_mode: AIStructuredMode | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
     ) -> dict[str, Any]:
         self.last_structured_mode_used = None
         settings = resolve_generation_settings(
@@ -116,6 +118,8 @@ class OpenAIProvider:
                     json_schema=json_schema,
                     structured_mode=mode,
                     reasoning_effort=settings.reasoning_effort,
+                    temperature=temperature,
+                    max_output_tokens=max_output_tokens,
                 )
                 self.last_structured_mode_used = mode
                 return parse_json_object_from_text(content)
@@ -147,6 +151,8 @@ class OpenAIProvider:
         json_schema: dict[str, Any],
         structured_mode: AIStructuredMode,
         reasoning_effort: AIReasoningEffort | None,
+        temperature: float | None,
+        max_output_tokens: int | None,
     ) -> str:
         if self._supports_responses_api():
             try:
@@ -158,6 +164,8 @@ class OpenAIProvider:
                         json_schema=json_schema,
                         structured_mode=structured_mode,
                         reasoning_effort=reasoning_effort,
+                        temperature=temperature,
+                        max_output_tokens=max_output_tokens,
                     )
                 )
                 return _extract_responses_output_text(response)
@@ -176,6 +184,8 @@ class OpenAIProvider:
                     json_schema=json_schema,
                     structured_mode=structured_mode,
                     reasoning_effort=reasoning_effort,
+                    temperature=temperature,
+                    max_output_tokens=max_output_tokens,
                 )
             )
         except Exception as exc:
@@ -198,6 +208,8 @@ class OpenAIProvider:
         json_schema: dict[str, Any],
         structured_mode: AIStructuredMode,
         reasoning_effort: AIReasoningEffort | None,
+        temperature: float | None,
+        max_output_tokens: int | None,
     ) -> dict[str, Any]:
         messages = [
             {"role": "system", "content": system_prompt},
@@ -226,6 +238,10 @@ class OpenAIProvider:
 
         if reasoning_effort is not None:
             request["reasoning"] = {"effort": reasoning_effort}
+        if temperature is not None:
+            request["temperature"] = temperature
+        if max_output_tokens is not None:
+            request["max_completion_tokens"] = max_output_tokens
 
         return request
 
@@ -238,6 +254,8 @@ class OpenAIProvider:
         json_schema: dict[str, Any],
         structured_mode: AIStructuredMode,
         reasoning_effort: AIReasoningEffort | None,
+        temperature: float | None,
+        max_output_tokens: int | None,
     ) -> dict[str, Any]:
         effective_system_prompt = system_prompt
         if structured_mode == "prompt_json":
@@ -273,6 +291,10 @@ class OpenAIProvider:
 
         if reasoning_effort is not None:
             request["reasoning"] = {"effort": reasoning_effort}
+        if temperature is not None:
+            request["temperature"] = temperature
+        if max_output_tokens is not None:
+            request["max_output_tokens"] = max_output_tokens
 
         return request
 

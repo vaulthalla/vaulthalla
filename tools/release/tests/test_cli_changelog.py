@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import call, patch
 
 from tools.release import cli
-from tools.release.changelog.ai.config import DEFAULT_AI_DRAFT_MODEL
+from tools.release.changelog.ai.config import AIDynamicRatioTokenBudget, DEFAULT_AI_DRAFT_MODEL
 from tools.release.changelog.ai.providers import ProviderPreflightResult
 from tools.release.version.models import Version
 
@@ -386,6 +386,8 @@ class CliChangelogAIDraftTests(unittest.TestCase):
             provider_kind="openai",
             reasoning_effort=None,
             structured_mode=None,
+            temperature=0.2,
+            max_output_tokens_policy=AIDynamicRatioTokenBudget(mode="dynamic_ratio", ratio=0.35, min=800, max=4000),
         )
         render_markdown.assert_called_once()
         render_json.assert_not_called()
@@ -436,6 +438,8 @@ class CliChangelogAIDraftTests(unittest.TestCase):
                 provider_kind="openai",
                 reasoning_effort=None,
                 structured_mode=None,
+                temperature=0.0,
+                max_output_tokens_policy=300,
             )
             build_provider.assert_has_calls(
                 [
@@ -451,6 +455,8 @@ class CliChangelogAIDraftTests(unittest.TestCase):
                 provider_kind="openai",
                 reasoning_effort=None,
                 structured_mode=None,
+                temperature=0.2,
+                max_output_tokens_policy=AIDynamicRatioTokenBudget(mode="dynamic_ratio", ratio=0.35, min=800, max=4000),
             )
             self.assertIn("Wrote AI changelog draft to", out.getvalue())
             self.assertIn("Wrote AI draft JSON to", out.getvalue())
@@ -535,6 +541,8 @@ class CliChangelogAIDraftTests(unittest.TestCase):
                 provider_kind="openai",
                 reasoning_effort=None,
                 structured_mode=None,
+                temperature=0.2,
+                max_output_tokens_policy=AIDynamicRatioTokenBudget(mode="dynamic_ratio", ratio=0.35, min=800, max=4000),
             )
             run_polish.assert_called_once_with(
                 draft_obj,
@@ -542,6 +550,8 @@ class CliChangelogAIDraftTests(unittest.TestCase):
                 provider_kind="openai",
                 reasoning_effort=None,
                 structured_mode=None,
+                temperature=0.0,
+                max_output_tokens_policy=800,
             )
             build_provider.assert_has_calls(
                 [
@@ -596,6 +606,8 @@ class CliChangelogAIDraftTests(unittest.TestCase):
             provider_kind="openai",
             reasoning_effort=None,
             structured_mode=None,
+            temperature=0.0,
+            max_output_tokens_policy=300,
         )
         build_triage.assert_called_once_with(triage_obj)
         generate_draft.assert_called_once_with(
@@ -605,6 +617,8 @@ class CliChangelogAIDraftTests(unittest.TestCase):
             provider_kind="openai",
             reasoning_effort=None,
             structured_mode=None,
+            temperature=0.2,
+            max_output_tokens_policy=AIDynamicRatioTokenBudget(mode="dynamic_ratio", ratio=0.35, min=800, max=4000),
         )
         run_polish.assert_called_once_with(
             draft_obj,
@@ -612,6 +626,8 @@ class CliChangelogAIDraftTests(unittest.TestCase):
             provider_kind="openai",
             reasoning_effort=None,
             structured_mode=None,
+            temperature=0.0,
+            max_output_tokens_policy=800,
         )
 
     def test_ai_draft_stage_reasoning_and_mode_resolve_from_profile(self) -> None:
@@ -673,6 +689,8 @@ profiles:
                 provider_kind="openai",
                 reasoning_effort="low",
                 structured_mode="json_object",
+                temperature=0.0,
+                max_output_tokens_policy=300,
             )
             generate_draft.assert_called_once_with(
                 {"schema_version": "triage-x"},
@@ -681,6 +699,8 @@ profiles:
                 provider_kind="openai",
                 reasoning_effort="medium",
                 structured_mode="strict_json_schema",
+                temperature=0.2,
+                max_output_tokens_policy=AIDynamicRatioTokenBudget(mode="dynamic_ratio", ratio=0.35, min=800, max=4000),
             )
             run_polish.assert_called_once_with(
                 draft_obj,
@@ -688,7 +708,66 @@ profiles:
                 provider_kind="openai",
                 reasoning_effort="high",
                 structured_mode="prompt_json",
+                temperature=0.0,
+                max_output_tokens_policy=800,
             )
+
+    def test_ai_draft_profile_defined_stages_run_without_cli_flags(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            (repo_root / "ai.yml").write_text(
+                """
+profiles:
+  local:
+    provider: openai
+    stages:
+      polish:
+        model: gpt-polish
+      draft:
+        model: gpt-draft
+      triage:
+        model: gpt-triage
+""",
+                encoding="utf-8",
+            )
+            args = self._args(
+                repo_root=str(repo_root),
+                ai_profile="local",
+                provider=None,
+                model=None,
+                use_triage=False,
+                polish=False,
+            )
+            provider_obj = object()
+            call_order: list[str] = []
+
+            with (
+                patch("tools.release.cli.build_changelog_context", return_value=object()),
+                patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
+                patch("tools.release.cli.build_ai_provider_from_args", return_value=provider_obj),
+                patch("tools.release.cli.build_triage_ir_payload", return_value={"schema_version": "triage-x"}),
+                patch(
+                    "tools.release.cli.run_triage_stage",
+                    side_effect=lambda *a, **k: call_order.append("triage") or object(),
+                ),
+                patch(
+                    "tools.release.cli.generate_draft_from_payload",
+                    side_effect=lambda *a, **k: call_order.append("draft") or object(),
+                ),
+                patch(
+                    "tools.release.cli.run_polish_stage",
+                    side_effect=lambda *a, **k: call_order.append("polish") or object(),
+                ),
+                patch("tools.release.cli.render_polish_markdown", return_value="# Polished\n"),
+                patch("tools.release.cli.render_polish_result_json"),
+                patch("tools.release.cli.render_draft_markdown"),
+                patch("tools.release.cli.render_draft_result_json"),
+                patch("tools.release.cli.render_triage_result_json"),
+            ):
+                result = cli.cmd_changelog_ai_draft(args)
+
+            self.assertEqual(result, 0)
+            self.assertEqual(call_order, ["triage", "draft", "polish"])
 
     def test_main_fails_when_triage_requested_and_invalid(self) -> None:
         err = StringIO()
@@ -731,7 +810,7 @@ profiles:
             rc = cli.main(["changelog", "ai-draft", "--save-triage-json", "/tmp/triage.json"])
 
         self.assertEqual(rc, 1)
-        self.assertIn("ERROR: --save-triage-json requires --use-triage.", err.getvalue())
+        self.assertIn("ERROR: --save-triage-json requires triage stage to run.", err.getvalue())
 
     def test_main_fails_when_save_polish_json_used_without_polish(self) -> None:
         err = StringIO()
@@ -739,7 +818,7 @@ profiles:
             rc = cli.main(["changelog", "ai-draft", "--save-polish-json", "/tmp/polish.json"])
 
         self.assertEqual(rc, 1)
-        self.assertIn("ERROR: --save-polish-json requires --polish.", err.getvalue())
+        self.assertIn("ERROR: --save-polish-json requires polish stage to run.", err.getvalue())
 
     def test_main_reports_missing_api_key_error_cleanly(self) -> None:
         err = StringIO()

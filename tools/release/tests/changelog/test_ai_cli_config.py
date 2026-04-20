@@ -73,6 +73,32 @@ profiles:
         self.assertEqual(pipeline.stages["polish"].reasoning_effort, "high")
         self.assertEqual(pipeline.stages["polish"].structured_mode, "prompt_json")
 
+    def test_profile_stage_tuning_resolves_with_defaults(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            _write_profile(
+                repo_root,
+                """
+profiles:
+  tuned:
+    provider: openai
+    default_temperature:
+      draft: 0.4
+    default_max_output_tokens:
+      draft: 1200
+    stages:
+      draft:
+        model: gpt-draft
+        temperature: 0.1
+""",
+            )
+            args = self._args(repo_root=str(repo_root), ai_profile="tuned")
+            pipeline = cli.build_ai_pipeline_config_from_args(args)
+
+        self.assertEqual(pipeline.stages["draft"].temperature, 0.1)
+        self.assertEqual(pipeline.stages["draft"].max_output_tokens, 1200)
+        self.assertEqual(pipeline.stages["triage"].temperature, 0.0)
+
     def test_cli_model_override_beats_profile_stage_models(self) -> None:
         with TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)

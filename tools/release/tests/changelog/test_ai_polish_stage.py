@@ -66,10 +66,14 @@ class AIPolishStageTests(unittest.TestCase):
             provider=fake,
             reasoning_effort="high",
             structured_mode="json_object",
+            temperature=0.0,
+            max_output_tokens_policy=789,
         )
         call = fake.calls[0]
         self.assertEqual(call["reasoning_effort"], "high")
         self.assertEqual(call["structured_mode"], "json_object")
+        self.assertEqual(call["temperature"], 0.0)
+        self.assertEqual(call["max_output_tokens"], 789)
 
     def test_polish_markdown_render_matches_fixture(self) -> None:
         draft = self._draft_input()

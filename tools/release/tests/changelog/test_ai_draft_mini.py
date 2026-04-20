@@ -72,10 +72,14 @@ class AIDraftMiniStageTests(unittest.TestCase):
             provider=fake,
             reasoning_effort="medium",
             structured_mode="json_object",
+            temperature=0.3,
+            max_output_tokens_policy=456,
         )
         call = fake.calls[0]
         self.assertEqual(call["reasoning_effort"], "medium")
         self.assertEqual(call["structured_mode"], "json_object")
+        self.assertEqual(call["temperature"], 0.3)
+        self.assertEqual(call["max_output_tokens"], 456)
 
     def test_markdown_render_matches_fixture(self) -> None:
         draft = generate_draft_from_payload(

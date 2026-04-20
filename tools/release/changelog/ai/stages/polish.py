@@ -4,10 +4,14 @@ import json
 from typing import Any
 
 from tools.release.changelog.ai.config import (
+    AIMaxOutputTokensPolicy,
     AIProviderKind,
     AIReasoningEffort,
     AIStructuredMode,
     DEFAULT_AI_POLISH_MODEL,
+    DEFAULT_STAGE_MAX_OUTPUT_TOKENS,
+    compute_max_output_tokens,
+    estimate_input_size_units,
 )
 from tools.release.changelog.ai.contracts.draft import AIDraftResult
 from tools.release.changelog.ai.contracts.polish import (
@@ -30,15 +34,26 @@ def run_polish_stage(
     provider_kind: AIProviderKind = "openai",
     reasoning_effort: AIReasoningEffort | None = None,
     structured_mode: AIStructuredMode | None = None,
+    temperature: float | None = None,
+    max_output_tokens_policy: AIMaxOutputTokensPolicy | None = None,
 ) -> AIPolishResult:
     active_provider = provider or OpenAIProvider(model=model or DEFAULT_AI_POLISH_MODEL, provider_kind=provider_kind)
     draft_payload = build_polish_input_payload(draft)
+    system_prompt = build_polish_system_prompt()
+    user_prompt = build_polish_user_prompt(draft_payload)
+    policy = max_output_tokens_policy or DEFAULT_STAGE_MAX_OUTPUT_TOKENS["polish"]
+    max_output_tokens = compute_max_output_tokens(
+        policy,
+        input_size=estimate_input_size_units(system_prompt, user_prompt),
+    )
     structured = active_provider.generate_structured_json(
-        system_prompt=build_polish_system_prompt(),
-        user_prompt=build_polish_user_prompt(draft_payload),
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
         json_schema=AI_POLISH_RESPONSE_JSON_SCHEMA,
         reasoning_effort=reasoning_effort,
         structured_mode=structured_mode,
+        temperature=temperature,
+        max_output_tokens=max_output_tokens,
     )
     return parse_ai_polish_response(structured)
 

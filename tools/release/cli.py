@@ -466,15 +466,16 @@ def cmd_changelog_payload(args: argparse.Namespace) -> int:
 
 
 def cmd_changelog_ai_draft(args: argparse.Namespace) -> int:
-    if args.save_triage_json and not args.use_triage:
-        raise ValueError("--save-triage-json requires --use-triage.")
-    if args.save_polish_json and not args.polish:
-        raise ValueError("--save-polish-json requires --polish.")
-
     repo_root = Path(args.repo_root).resolve()
     context = build_changelog_context(repo_root, args.since_tag)
     payload = build_ai_payload(context)
     pipeline_config = build_ai_pipeline_config_from_args(args, repo_root=repo_root)
+    run_triage = bool(args.use_triage) or pipeline_config.is_stage_enabled("triage")
+    run_polish = bool(args.polish) or pipeline_config.is_stage_enabled("polish")
+    if args.save_triage_json and not run_triage:
+        raise ValueError("--save-triage-json requires triage stage to run.")
+    if args.save_polish_json and not run_polish:
+        raise ValueError("--save-polish-json requires polish stage to run.")
     draft_provider = build_ai_provider_from_args(args, repo_root=repo_root, stage="draft")
 
     # Local-compatible runs should fail early with explicit endpoint/model diagnostics.
@@ -483,8 +484,8 @@ def cmd_changelog_ai_draft(args: argparse.Namespace) -> int:
             args=args,
             repo_root=repo_root,
             draft_provider=draft_provider,
-            include_triage=args.use_triage,
-            include_polish=args.polish,
+            include_triage=run_triage,
+            include_polish=run_polish,
         )
 
     draft_input: dict = payload
@@ -493,7 +494,7 @@ def cmd_changelog_ai_draft(args: argparse.Namespace) -> int:
     draft_stage_cfg = pipeline_config.stages["draft"]
     polish_stage_cfg = pipeline_config.stages["polish"]
 
-    if args.use_triage:
+    if run_triage:
         triage_provider = build_ai_provider_from_args(args, repo_root=repo_root, stage="triage")
         triage_result = run_triage_stage(
             payload,
@@ -501,6 +502,8 @@ def cmd_changelog_ai_draft(args: argparse.Namespace) -> int:
             provider_kind=pipeline_config.provider,
             reasoning_effort=triage_stage_cfg.reasoning_effort,
             structured_mode=triage_stage_cfg.structured_mode,
+            temperature=triage_stage_cfg.temperature,
+            max_output_tokens_policy=triage_stage_cfg.max_output_tokens,
         )
         draft_input = build_triage_ir_payload(triage_result)
         source_kind = "triage"
@@ -516,10 +519,12 @@ def cmd_changelog_ai_draft(args: argparse.Namespace) -> int:
         provider_kind=pipeline_config.provider,
         reasoning_effort=draft_stage_cfg.reasoning_effort,
         structured_mode=draft_stage_cfg.structured_mode,
+        temperature=draft_stage_cfg.temperature,
+        max_output_tokens_policy=draft_stage_cfg.max_output_tokens,
     )
     polish_result: AIPolishResult | None = None
 
-    if args.polish:
+    if run_polish:
         polish_provider = build_ai_provider_from_args(args, repo_root=repo_root, stage="polish")
         polish_result = run_polish_stage(
             draft,
@@ -527,6 +532,8 @@ def cmd_changelog_ai_draft(args: argparse.Namespace) -> int:
             provider_kind=pipeline_config.provider,
             reasoning_effort=polish_stage_cfg.reasoning_effort,
             structured_mode=polish_stage_cfg.structured_mode,
+            temperature=polish_stage_cfg.temperature,
+            max_output_tokens_policy=polish_stage_cfg.max_output_tokens,
         )
         final_markdown = render_polish_markdown(polish_result)
 
@@ -688,9 +695,10 @@ def _run_stage_preflight(
     include_polish: bool,
 ) -> None:
     seen: set[tuple[str, str | None]] = set()
-    stage_order: list[AIStageName] = ["draft"]
+    stage_order: list[AIStageName] = []
     if include_triage:
         stage_order.append("triage")
+    stage_order.append("draft")
     if include_polish:
         stage_order.append("polish")
 
