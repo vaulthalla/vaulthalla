@@ -1,218 +1,134 @@
 # Release Tooling Map (`tools/release/`)
 
-This file is the current system map for release, changelog, AI drafting, and packaging/deployment automation.
+Current operator map for release generation, packaging, install contract checks, and publication.
 
 ## Current Scope
 
-`tools/release` now covers four production-use areas:
+`tools/release` currently covers:
 
-1. Version authority + drift enforcement (`check/sync/set-version/bump`).
-2. Deterministic changelog intelligence (git collection, categorization, scoring, snippets, context assembly, raw rendering).
-3. AI-assisted changelog drafting pipeline (payload -> optional triage -> draft -> optional polish).
-4. Local Debian packaging orchestration including Next standalone artifact output (`build-deb`).
+1. Version authority and drift enforcement (`check/sync/set-version/bump`).
+2. Deterministic changelog context + payload generation.
+3. Release changelog path selection with deterministic AI/local/manual fallback.
+4. Debian + web artifact build and contract validation.
+5. Debian publication to Nexus (env/secret-gated).
 
-## Package Layout (Ground Truth)
+## Canonical Entrypoints
 
-Top-level:
+- CLI entrypoint: `python3 -m tools.release`
+- Canonical CI packaging action: `.github/actions/package/action.yml`
+- Canonical release workflow: `.github/workflows/release.yml`
 
-- `tools/release/__main__.py`: module entrypoint.
-- `tools/release/cli.py`: command parsing + thin orchestration.
+`package/action.yml` is still the single packaging entrypoint in CI.  
+`release.yml` orchestrates publish/upload/release attachment around that action.
 
-Version subsystem (`tools/release/version/`):
-
-- `models.py`: semantic `Version`.
-- `adapters/`: `VERSION`, Meson, `package.json`, Debian changelog adapters.
-- `validate.py`: `ReleaseState` + structural/drift checks.
-- `sync.py`: file-write orchestration and Debian revision resolution.
-
-Changelog subsystem (`tools/release/changelog/`):
-
-- `git_collect.py`: git IO only.
-- `categorize.py`, `scoring.py`, `snippets.py`: deterministic release intelligence primitives.
-- `context_builder.py`: `ReleaseContext` orchestration.
-- `render_raw.py`: deterministic human raw draft + debug renderers.
-- `payload.py`: deterministic bounded AI payload projection (`vaulthalla.release.ai_payload.v1`).
-- `ai/`:
-  - `contracts/`: typed schemas/parsers for draft, triage, polish.
-  - `prompts/`: stage prompt builders.
-  - `providers/`: hosted OpenAI + OpenAI-compatible transports + preflight/model discovery.
-  - `stages/`: draft, triage, polish orchestration.
-  - `render/markdown.py`: final local markdown rendering from typed AI results.
-
-Debug surface:
-
-- `tools/release/debug/release_context.py`: inspect `ReleaseContext` as text/JSON.
-
-Packaging subsystem:
-
-- `tools/release/packaging/debian.py`: local build orchestration and artifact collection.
-
-## Command Surface
+## Command Surface (Current)
 
 ```bash
 python3 -m tools.release check
 python3 -m tools.release sync [--dry-run] [--debian-revision N]
 python3 -m tools.release set-version X.Y.Z [--dry-run] [--debian-revision N]
 python3 -m tools.release bump {major|minor|patch} [--dry-run] [--debian-revision N]
-python3 -m tools.release build-deb [--output-dir PATH] [--dry-run]
 
-python3 -m tools.release changelog draft [--format raw|json] [--since-tag TAG] [--output PATH]
-python3 -m tools.release changelog payload [--since-tag TAG] [--output PATH]
-python3 -m tools.release changelog ai-check [--provider openai|openai-compatible] [--base-url URL] [--model MODEL]
-python3 -m tools.release changelog ai-draft [--since-tag TAG] [--output PATH] [--save-json PATH] [--model MODEL] [--provider openai|openai-compatible] [--base-url URL] [--use-triage] [--save-triage-json PATH] [--polish] [--save-polish-json PATH]
+python3 -m tools.release changelog release \
+  --output release/changelog.release.md \
+  --raw-output release/changelog.raw.md \
+  --payload-output release/changelog.payload.json
 
-python3 -m tools.release.debug.release_context [--repo-root PATH] [--json]
+python3 -m tools.release build-deb --output-dir release [--dry-run]
+python3 -m tools.release validate-release-artifacts --output-dir release [--skip-changelog]
+python3 -m tools.release publish-deb --output-dir release [--mode disabled|nexus] [--dry-run]
 ```
 
-## Version Authority + Invariants
+## Current Release Spine
 
-Canonical source of truth:
+1. Release state validation (`tools.release check`).
+2. Core + web build/test workflow steps.
+3. Package action preflight checks.
+4. Changelog release stage:
+   - writes deterministic evidence (`changelog.raw.md`, `changelog.payload.json`)
+   - resolves final changelog path (`changelog.release.md`)
+5. Artifact build (`build-deb`) + contract validation (`validate-release-artifacts`).
+6. Workflow artifact upload + GitHub release attachment (tags).
+7. Publication stage (`publish-deb`) to Nexus when enabled.
 
-- top-level `VERSION`
+## Changelog Path Selection (Phase 10a Contract)
 
-Managed files:
+Configured by:
 
-- `core/meson.build`
-- `web/package.json`
-- `debian/changelog`
+- `RELEASE_AI_MODE=auto|openai-only|local-only|disabled`
+- `OPENAI_API_KEY`
+- `RELEASE_AI_PROFILE_OPENAI`
+- `RELEASE_LOCAL_LLM_ENABLED=true|false`
+- `RELEASE_LOCAL_LLM_PROFILE`
+- `RELEASE_LOCAL_LLM_BASE_URL`
+- `RELEASE_LOCAL_LLM_API_KEY` (optional)
 
-Debian invariant (critical):
+Deterministic order:
 
-- `VERSION` stores upstream semver only.
-- `debian/changelog` stores full Debian version (`X.Y.Z-N`).
-- Validation compares upstream only: `debian.upstream == VERSION`.
-- Revision is preserved by default in `sync` and `bump`, unless explicitly overridden.
+- `auto`: hosted OpenAI -> local OpenAI-compatible -> manual/no-AI
+- `openai-only`: hosted OpenAI -> manual/no-AI
+- `local-only`: local OpenAI-compatible -> manual/no-AI
+- `disabled`: manual/no-AI only
 
-Guardrails:
+Important behavior:
 
-- `check` fails on drift/structural issues.
-- `bump` and `set-version` require synced state first.
-- `sync` now re-validates synced state after write completion.
+- Local fallback requires explicit `RELEASE_LOCAL_LLM_ENABLED=true`; base URL presence alone does not activate local.
+- `RELEASE_LOCAL_LLM_BASE_URL` explicitly overrides local profile `base_url` and logs that override.
+- Manual path enforces a stale check against `VERSION` and fails when `debian/changelog` is missing/stale.
 
-## Deterministic Changelog Pipeline
+## Packaging and Artifact Contract (Phase 10b/10c + 11)
 
-Current deterministic path:
+`build-deb`:
 
-1. Build release context (`context_builder.py`):
-   - resolve previous tag (`--since-tag` override supported),
-   - collect commits/file stats,
-   - categorize/score files,
-   - attach top snippets.
-2. Render raw draft (`changelog draft --format raw`) or debug JSON (`--format json`).
-3. Build bounded model-ready payload (`changelog payload`).
+- runs web install/build (`pnpm install`, `pnpm build`)
+- creates standalone web deployable archive
+- runs Debian build
+- copies Debian artifacts into release output dir
 
-Raw renderer contract:
+`validate-release-artifacts`:
 
-- stable category ordering (`CATEGORY_ORDER`, then alphabetical),
-- stable top-N evidence selections,
-- explicit empty/weak evidence language.
+- validates required artifact classes exist (`.deb`, web archive, changelog artifacts unless skipped)
+- validates Debian package payload completeness (binary/unit/config/docs/web/nginx expected paths)
+- validates web archive completeness (`server.js`, static payload, safe archive paths)
 
-## AI Drafting Pipeline (Current)
+## Install Path and Lifecycle (Phase 11 + Lifecycle Hardening)
 
-Pipeline shape:
+High-level package behavior now:
 
-- `payload`
-  -> optional `triage`
-  -> `draft`
-  -> optional `polish`
-  -> local markdown render
+- Installs web runtime under `/usr/share/vaulthalla-web`.
+- Installs and enables `vaulthalla-web.service`.
+- Uses debconf templates (`init-db`, `superadmin-uid`, `configure-nginx`).
+- Performs conservative nginx integration (safe-skip on non-greenfield conditions).
+- Maintainer lifecycle scripts explicitly separate remove vs purge boundaries:
+  - remove: conservative stop/disable + runtime seed cleanup
+  - purge: debconf purge + system/state cleanup within defined package-owned boundaries
 
-Key properties:
+Details remain documented in `debian/README.Debian` and script contracts/tests.
 
-- all model outputs are required as structured JSON and validated against typed contracts,
-- markdown is rendered locally from validated objects,
-- no repo mutation, no Debian changelog insertion, no commit/tag writes.
+## Publication Boundary (Phase 12a)
 
-Default model tier:
+Publication command:
 
-- `gpt-5.4-mini` (override with `--model`).
+- `python3 -m tools.release publish-deb --output-dir <artifact_dir>`
 
-## Provider Support + Local-Compatible Mode
+Mode/config:
 
-Supported providers:
+- `RELEASE_PUBLISH_MODE=disabled|nexus`
+- `NEXUS_REPO_URL`
+- `NEXUS_USER`
+- `NEXUS_PASS`
 
-- `openai` (hosted, requires `OPENAI_API_KEY`)
-- `openai-compatible` (custom `--base-url`, no-auth supported)
+Behavior:
 
-Preflight:
+- `disabled`: explicit skip with diagnostic output.
+- `nexus`: validates config + selects sorted `*.deb` artifacts + uploads each to Nexus via curl; fails clearly on missing config/artifacts/upload error.
 
-- `changelog ai-check` performs connectivity + `/models` discovery and model verification.
-- `changelog ai-draft` automatically preflights when `--provider openai-compatible` is used.
+No canonical runner-local env sourcing (`source ~/runner_local.env`) is used.
 
-Local dogfood defaults:
+## Deferred / Next
 
-- default compatible base URL: `http://localhost:8888/v1`
+Still intentionally deferred:
 
-## Debian Packaging Flow (`build-deb`)
-
-`python3 -m tools.release build-deb`:
-
-1. validates synced release state,
-2. validates required Debian files (`debian/changelog`, `debian/control`, `debian/rules`, `debian/source/format`),
-3. runs web install/build (`pnpm install --frozen-lockfile`, `pnpm build`),
-4. packages Next standalone web artifact to:
-   - `release/<package>-web_<version>_next-standalone.tar.gz`,
-5. runs `dpkg-buildpackage -us -uc -b`,
-6. copies Debian artifacts (`.deb`, `.changes`, `.buildinfo`, etc.) into output dir,
-7. writes `release/build-deb.log` with web + Debian command output.
-
-Debian packaging contract (current):
-
-- Meson source directory for Debian build is `core/` (`debian/rules` uses `--sourcedirectory=core`).
-- Non-Meson payloads (config/systemd/docs/udev/tmpfiles/symlink shims) are explicitly staged in `debian/rules` so `dh_install` finds expected paths.
-- Standalone web archive creation preserves symlinks to handle pnpm link structures in CI.
-
-## CI/CD Release Workflow (Phase 8 State)
-
-Workflow:
-
-- `.github/workflows/release.yml`
-- triggers:
-  - `workflow_dispatch`
-  - tag push (`v*`)
-- release job runs with `environment: Production` (mandatory deployment tracking).
-
-CI sequence:
-
-1. `python3 -m tools.release check`
-2. core build + tests
-3. release-tooling unit tests
-4. web setup + `build_web` (includes private icon sync) + web checks
-5. deterministic changelog evidence artifacts (`changelog.raw.md`, `changelog.payload.json`)
-6. canonical package action (`.github/actions/package`) -> `python3 -m tools.release build-deb`
-7. upload release artifacts
-8. on tags: attach artifacts to GitHub Release
-
-Canonical packaging entrypoint in CI:
-
-- `.github/actions/package/action.yml`
-
-## End-to-End Release Flow Snapshot
-
-Current end-to-end spine:
-
-1. version state validation/sync
-2. release context generation
-3. raw draft rendering + payload projection
-4. optional AI triage/draft/polish
-5. local markdown output
-6. Debian + web artifact build (`build-deb`)
-7. CI artifact upload + optional GitHub Release attachment
-8. Production environment deployment tracking in GitHub Actions
-
-## Sharp Edges / Learned Invariants (Today)
-
-1. Debian version comparisons must use upstream only; full string comparison with revision is incorrect.
-2. Release workflow must include web `build_web` semantics for private icon sync parity before web checks.
-3. Debian Meson source root in packaging must be `core/`, not repository root.
-4. Debian package staging must explicitly include non-Meson runtime payloads expected by `debian/install`.
-5. Next standalone archive copy must preserve symlinks to avoid CI failures on pnpm-linked paths.
-6. `environment: Production` in release workflow is intentional and required for deployment tracking.
-7. `.github/actions/package` is the canonical CI packaging wrapper and should stay the single packaging entrypoint.
-
-## Current Gaps / Deferred Work
-
-1. AI-generated release notes are not yet first-class in CI release publishing flow.
-2. External publishing channels (Nexus/APT promotion) remain deferred.
-3. CI hardening around packaging edge-cases may still need iterative tuning as runner environments vary.
-4. Changelog quality tuning (collector/scoring/snippet heuristics) is ongoing.
+1. Phase 12b live distribution validation against the real published APT path (install/upgrade on clean hosts).
+2. Any broader publication/promotion orchestration beyond current Nexus upload boundary.
+3. Automatic GitHub release-body authoring from AI changelog output.
