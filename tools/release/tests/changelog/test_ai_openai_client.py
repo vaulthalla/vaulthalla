@@ -1,0 +1,108 @@
+from __future__ import annotations
+
+import os
+import unittest
+from unittest.mock import patch
+
+from tools.release.changelog.ai.providers.openai import OpenAIProvider
+
+
+class _FakeMessage:
+    def __init__(self, content):
+        self.content = content
+        self.refusal = None
+
+
+class _FakeChoice:
+    def __init__(self, content):
+        self.message = _FakeMessage(content)
+
+
+class _FakeResponse:
+    def __init__(self, content):
+        self.choices = [_FakeChoice(content)]
+
+
+class _FakeCompletions:
+    def __init__(self, response):
+        self._response = response
+        self.calls: list[dict] = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        return self._response
+
+
+class _FakeChat:
+    def __init__(self, completions):
+        self.completions = completions
+
+
+class _FakeSDKClient:
+    def __init__(self, response):
+        self.chat = _FakeChat(_FakeCompletions(response))
+        self.models = type("FakeModels", (), {"list": lambda self: {"data": []}})()
+
+
+class OpenAIProviderTests(unittest.TestCase):
+    def test_structured_request_uses_json_schema_response_format(self) -> None:
+        sdk = _FakeSDKClient(_FakeResponse('{"title":"x","summary":"y","sections":[{"category":"core","overview":"z","bullets":["a"]}]}'))
+        client = OpenAIProvider(sdk_client=sdk, model="gpt-test-mini")
+
+        result = client.generate_structured_json(
+            system_prompt="sys",
+            user_prompt="usr",
+            json_schema={"type": "object"},
+        )
+
+        self.assertEqual(result["title"], "x")
+        call = sdk.chat.completions.calls[0]
+        self.assertEqual(call["model"], "gpt-test-mini")
+        self.assertEqual(call["response_format"]["type"], "json_schema")
+        self.assertTrue(call["response_format"]["json_schema"]["strict"])
+        self.assertEqual(call["response_format"]["json_schema"]["schema"], {"type": "object"})
+        self.assertEqual(call["messages"][0]["role"], "system")
+        self.assertEqual(call["messages"][1]["role"], "user")
+
+    def test_missing_api_key_fails_clearly(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(ValueError, "OPENAI_API_KEY"):
+                OpenAIProvider()
+
+    def test_invalid_json_response_fails_clearly(self) -> None:
+        sdk = _FakeSDKClient(_FakeResponse("not-json"))
+        client = OpenAIProvider(sdk_client=sdk)
+
+        with self.assertRaisesRegex(ValueError, "invalid JSON"):
+            client.generate_structured_json(
+                system_prompt="sys",
+                user_prompt="usr",
+                json_schema={"type": "object"},
+            )
+
+    def test_list_models_parses_ids(self) -> None:
+        sdk = _FakeSDKClient(_FakeResponse("{}"))
+        sdk.models = type(
+            "FakeModels",
+            (),
+            {"list": lambda self: {"data": [{"id": "Qwen3.5-122B"}, {"id": "Gemma-4-31B"}]}},
+        )()
+        client = OpenAIProvider(sdk_client=sdk)
+
+        self.assertEqual(client.list_models(), ["Gemma-4-31B", "Qwen3.5-122B"])
+
+    def test_list_models_error_is_clear(self) -> None:
+        class _BoomModels:
+            def list(self):
+                raise RuntimeError("Connection error")
+
+        sdk = _FakeSDKClient(_FakeResponse("{}"))
+        sdk.models = _BoomModels()
+        client = OpenAIProvider(sdk_client=sdk)
+
+        with self.assertRaisesRegex(ValueError, "Model discovery request failed"):
+            client.list_models()
+
+
+if __name__ == "__main__":
+    unittest.main()

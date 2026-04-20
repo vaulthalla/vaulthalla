@@ -1,0 +1,209 @@
+from __future__ import annotations
+
+import json
+from dataclasses import asdict
+
+from tools.release.changelog.categorize import CATEGORY_ORDER
+from tools.release.changelog.models import ReleaseContext
+
+TOP_COMMITS_PER_CATEGORY = 3
+TOP_FILES_PER_CATEGORY = 3
+TOP_SNIPPETS_PER_CATEGORY = 2
+
+
+def render_release_changelog(context: ReleaseContext) -> str:
+    """Render a deterministic, human-reviewable markdown changelog draft.
+
+    Rendering contract:
+    - Stable category ordering:
+      1) categories in CATEGORY_ORDER, 2) remaining categories alphabetical.
+    - Stable bullet ordering:
+      themes alphabetical (already normalized upstream), then commits/files/snippets
+      in list order as provided by ReleaseContext, truncated by fixed TOP_* limits.
+    - Explicit empty-state fallbacks for categories and release-wide no-content cases.
+    - Pure presentation only; this renderer never reaches back into git.
+    """
+    lines = [f"# Release Draft: {context.version}", ""]
+    lines.extend(_render_metadata(context))
+    lines.append("")
+
+    ordered_categories = _ordered_categories(context)
+    if not ordered_categories:
+        lines.extend(
+            [
+                "## Highlights",
+                "- No categorized release content is available for this range.",
+                "- This release may contain only merge/version metadata updates.",
+                "",
+            ]
+        )
+        return "\n".join(lines).rstrip() + "\n"
+
+    for name, category in ordered_categories:
+        lines.extend(_render_category_section(name, category))
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def render_debug_context(context: ReleaseContext) -> str:
+    lines = [
+        "=== RELEASE CONTEXT DEBUG ===",
+        "",
+        f"Version:        {context.version}",
+        f"Previous tag:   {context.previous_tag}",
+        f"HEAD:           {context.head_sha}",
+        f"Commit count:   {context.commit_count}",
+        "",
+    ]
+
+    ordered_categories = _ordered_categories(context)
+    if not ordered_categories:
+        lines.extend(["No categories collected.", ""])
+        return "\n".join(lines).rstrip() + "\n"
+
+    for name, category in ordered_categories:
+        lines.extend(
+            [
+                f"--- CATEGORY: {name} ---",
+                f"Commits:      {category.commit_count}",
+                f"Insertions:   {category.insertions}",
+                f"Deletions:    {category.deletions}",
+                f"Themes:       {', '.join(category.detected_themes) or 'none'}",
+                "",
+                "Top Files:",
+            ]
+        )
+
+        if category.files:
+            for file_change in category.files[:TOP_FILES_PER_CATEGORY]:
+                lines.append(
+                    f"  - {file_change.path} "
+                    f"(score={file_change.score}, +{file_change.insertions}/-{file_change.deletions}, "
+                    f"commits={file_change.commit_count}, flags={list(file_change.flags)})"
+                )
+        else:
+            lines.append("  - none")
+
+        lines.append("")
+        lines.append("Recent Commits:")
+        if category.commits:
+            for commit in category.commits[:TOP_COMMITS_PER_CATEGORY]:
+                lines.append(f"  - {commit.subject} ({commit.sha[:7]})")
+        else:
+            lines.append("  - none")
+
+        lines.append("")
+        lines.append("Top Snippets:")
+        if category.snippets:
+            for snippet in category.snippets[:TOP_SNIPPETS_PER_CATEGORY]:
+                lines.append(f"  - {snippet.path} (score={snippet.score}, reason={snippet.reason})")
+        else:
+            lines.append("  - none")
+
+        lines.extend(["", ""])
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def render_debug_json(context: ReleaseContext) -> str:
+    return json.dumps(asdict(context), indent=2)
+
+
+def _render_metadata(context: ReleaseContext) -> list[str]:
+    previous_tag = context.previous_tag if context.previous_tag is not None else "none"
+    return [
+        f"- Previous tag: `{previous_tag}`",
+        f"- HEAD: `{context.head_sha[:7]}`",
+        f"- Commits in range: {context.commit_count}",
+    ]
+
+
+def _ordered_categories(context: ReleaseContext):
+    category_rank = {name: index for index, name in enumerate(CATEGORY_ORDER)}
+    return sorted(
+        context.categories.items(),
+        key=lambda item: (category_rank.get(item[0], len(CATEGORY_ORDER)), item[0]),
+    )
+
+
+def _render_category_section(name, category):
+    files_count = len(category.files)
+    snippets_count = len(category.snippets)
+    change_total = category.insertions + category.deletions
+    evidence_tier = _evidence_tier(category.commit_count, files_count, snippets_count, change_total)
+
+    lines = [
+        f"## {name.title()}",
+        (
+            f"- Evidence: {evidence_tier} "
+            f"(commits: {category.commit_count}, files: {files_count}, snippets: {snippets_count}, "
+            f"delta: +{category.insertions}/-{category.deletions})"
+        ),
+    ]
+
+    if category.detected_themes:
+        themes = ", ".join(f"`{theme}`" for theme in category.detected_themes)
+        lines.append(f"- Themes: {themes}")
+    else:
+        lines.append("- Themes: none detected")
+
+    if _is_weak_signal(name, category, evidence_tier):
+        lines.append("- Signal: low-confidence category; changes appear metadata-only or sparse.")
+
+    lines.append("- Key commits:")
+    if category.commits:
+        for commit in category.commits[:TOP_COMMITS_PER_CATEGORY]:
+            lines.append(f"  - {commit.subject} (`{commit.sha[:7]}`)")
+    else:
+        lines.append("  - none collected")
+
+    lines.append("- Top files:")
+    if category.files:
+        for file_change in category.files[:TOP_FILES_PER_CATEGORY]:
+            lines.append(
+                f"  - `{file_change.path}` (+{file_change.insertions}/-{file_change.deletions}, "
+                f"score {file_change.score})"
+            )
+    else:
+        lines.append("  - none collected")
+
+    if category.snippets:
+        lines.append("- Snippets:")
+        for snippet in category.snippets[:TOP_SNIPPETS_PER_CATEGORY]:
+            lines.append(
+                f"  - `{snippet.path}` — {snippet.reason} (score {snippet.score})"
+            )
+    elif category.files:
+        lines.append("- Snippets: none extracted; file-level evidence only.")
+    else:
+        lines.append("- Snippets: none available.")
+
+    return lines
+
+
+def _evidence_tier(
+    commit_count: int,
+    files_count: int,
+    snippets_count: int,
+    change_total: int,
+) -> str:
+    if snippets_count >= 2 or change_total >= 80 or commit_count >= 4:
+        return "strong"
+    if snippets_count >= 1 or change_total >= 20 or commit_count >= 2 or files_count >= 3:
+        return "moderate"
+    return "weak"
+
+
+def _is_weak_signal(name: str, category, evidence_tier: str) -> bool:
+    if evidence_tier != "weak":
+        return False
+
+    change_total = category.insertions + category.deletions
+    if not category.files and not category.commits:
+        return True
+
+    if name == "meta" and category.snippets == [] and change_total <= 10:
+        return True
+
+    return change_total <= 12 and len(category.snippets) == 0

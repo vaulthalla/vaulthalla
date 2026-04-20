@@ -1,28 +1,26 @@
-name: 'Debian Package and Upload'
-description: 'Packages and uploads Debian binary to Nexus Sonatype.'
+name: 'Build Release Artifacts'
+description: 'Build Debian and web deployable release artifacts via tools.release.'
+
+inputs:
+  output_dir:
+    description: Relative output directory where build artifacts are written.
+    required: false
+    default: release
+
+outputs:
+  artifact_dir:
+    description: Absolute path to the generated release artifact directory.
+    value: ${{ steps.package.outputs.artifact_dir }}
 
 runs:
   using: "composite"
   steps:
-    - name: Create Debian Package
+    - name: Build Debian + web release artifacts
+      id: package
       shell: bash
       run: |
-        VERSION=$(meson introspect build --projectinfo | jq -r .version)
+        set -euo pipefail
+        python3 -m tools.release build-deb --output-dir "${{ inputs.output_dir }}"
 
-        # make upstream tarball in the parent dir
-        git archive --format=tar --prefix=vaulthalla-server-$VERSION/ HEAD \
-          | gzip -9 > ../vaulthalla-server_$VERSION.orig.tar.gz
-
-        # build source + binary package
-        dpkg-buildpackage -us -uc -b
-
-    - name: Upload Package to Nexus Sonatype
-      shell: bash
-      run: |
-        source ~/runner_local.env  # Load environment variables
-        for pkg in ../*.deb; do
-          curl -sSf -u "$NEXUS_USER:$NEXUS_PASS" \
-            -H "Content-Type: multipart/form-data" \
-            --data-binary "@$pkg" \
-            "$NEXUS_REPO_URL"
-          done
+        artifact_dir="${{ github.workspace }}/${{ inputs.output_dir }}"
+        echo "artifact_dir=$artifact_dir" >> "$GITHUB_OUTPUT"
