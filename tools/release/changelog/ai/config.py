@@ -12,6 +12,7 @@ DEFAULT_AI_TRIAGE_MODEL = DEFAULT_AI_DRAFT_MODEL
 DEFAULT_AI_POLISH_MODEL = DEFAULT_AI_DRAFT_MODEL
 DEFAULT_OPENAI_COMPATIBLE_BASE_URL = "http://localhost:8888/v1"
 DEFAULT_AI_PROVIDER_KIND = "openai"
+AI_PROFILE_SCHEMA_VERSION = "vaulthalla.release.ai_profile.v1"
 STAGE_EXECUTION_ORDER: tuple["AIStageName", ...] = ("triage", "draft", "polish")
 DEFAULT_STAGE_TEMPERATURES: dict["AIStageName", float] = {
     "triage": 0.0,
@@ -295,6 +296,7 @@ def _load_profile(path: Path, profile_slug: str) -> dict:
         raw = {}
     if not isinstance(raw, dict):
         raise ValueError(f"Invalid AI profile config at {path}: root must be a mapping.")
+    _ = _resolve_top_level_schema_version(raw, path=path)
 
     profiles = raw.get("profiles")
     if not isinstance(profiles, dict):
@@ -310,6 +312,21 @@ def _load_profile(path: Path, profile_slug: str) -> dict:
     if not isinstance(profile, dict):
         raise ValueError(f"Invalid AI profile `profiles.{profile_slug}`: expected mapping.")
     return profile
+
+
+def _resolve_top_level_schema_version(raw: dict[str, object], *, path: Path) -> str:
+    schema_version = raw.get("schema_version")
+    if schema_version is None:
+        return AI_PROFILE_SCHEMA_VERSION
+    if not isinstance(schema_version, str) or not schema_version.strip():
+        raise ValueError("`schema_version` must be a non-empty string.")
+    normalized = schema_version.strip()
+    if normalized != AI_PROFILE_SCHEMA_VERSION:
+        raise ValueError(
+            f"Unsupported AI profile schema_version `{normalized}` in {path}. "
+            f"Supported schema_version: {AI_PROFILE_SCHEMA_VERSION}"
+        )
+    return normalized
 
 
 def _read_provider(raw: object, *, path: str) -> AIProviderKind:

@@ -18,6 +18,101 @@ def _write_profile(repo_root: Path, content: str) -> None:
 
 
 class AIControlPlaneConfigTests(unittest.TestCase):
+    def test_profile_config_without_schema_version_loads(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            _write_profile(
+                repo_root,
+                """
+profiles:
+  local-gemma:
+    provider: openai-compatible
+    base_url: http://127.0.0.1:8888/v1
+    stages:
+      draft:
+        model: Gemma-4-31B
+""",
+            )
+            resolved = resolve_ai_pipeline_config(
+                repo_root=repo_root,
+                profile_slug="local-gemma",
+                cli_overrides=AIPipelineCLIOverrides(),
+            )
+
+        self.assertEqual(resolved.provider, "openai-compatible")
+
+    def test_profile_config_with_valid_schema_version_loads(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            _write_profile(
+                repo_root,
+                """
+schema_version: vaulthalla.release.ai_profile.v1
+profiles:
+  local-gemma:
+    provider: openai-compatible
+    base_url: http://127.0.0.1:8888/v1
+    stages:
+      draft:
+        model: Gemma-4-31B
+""",
+            )
+            resolved = resolve_ai_pipeline_config(
+                repo_root=repo_root,
+                profile_slug="local-gemma",
+                cli_overrides=AIPipelineCLIOverrides(),
+            )
+
+        self.assertEqual(resolved.provider, "openai-compatible")
+
+    def test_profile_config_empty_schema_version_fails_clearly(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            _write_profile(
+                repo_root,
+                """
+schema_version: "   "
+profiles:
+  local-gemma:
+    provider: openai-compatible
+    stages:
+      draft:
+        model: Gemma-4-31B
+""",
+            )
+            with self.assertRaises(ValueError) as ctx:
+                resolve_ai_pipeline_config(
+                    repo_root=repo_root,
+                    profile_slug="local-gemma",
+                    cli_overrides=AIPipelineCLIOverrides(),
+                )
+
+        self.assertIn("`schema_version` must be a non-empty string.", str(ctx.exception))
+
+    def test_profile_config_unsupported_schema_version_fails_clearly(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            _write_profile(
+                repo_root,
+                """
+schema_version: vaulthalla.release.ai_profile.v99
+profiles:
+  local-gemma:
+    provider: openai-compatible
+    stages:
+      draft:
+        model: Gemma-4-31B
+""",
+            )
+            with self.assertRaises(ValueError) as ctx:
+                resolve_ai_pipeline_config(
+                    repo_root=repo_root,
+                    profile_slug="local-gemma",
+                    cli_overrides=AIPipelineCLIOverrides(),
+                )
+
+        self.assertIn("Unsupported AI profile schema_version", str(ctx.exception))
+
     def test_valid_profile_loads(self) -> None:
         with TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)

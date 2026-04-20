@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from tools.release.changelog.ai.contracts.triage import AI_TRIAGE_SCHEMA_VERSION
+
 
 def build_triage_system_prompt() -> str:
     return (
@@ -26,6 +28,10 @@ def build_triage_user_prompt(payload: dict[str, Any]) -> str:
         "- Keep `key_points` concise and evidence-bound.\n"
         "- No filler prose, no intro/outro text, no repetition.\n"
         "- Record dropped low-signal details in `dropped_noise`.\n"
+        "- Required top-level output fields: `schema_version`, `version`, `summary_points`, `categories`.\n"
+        f"- Set `schema_version` exactly to `{AI_TRIAGE_SCHEMA_VERSION}`.\n"
+        "- Required category fields: `name`, `signal_strength`, `priority_rank`, `key_points`, "
+        "`important_files`, `retained_snippets`.\n"
         "- Return JSON only.\n\n"
         "Release payload:\n"
         f"{payload_json}"

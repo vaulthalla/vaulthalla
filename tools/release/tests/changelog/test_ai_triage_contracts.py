@@ -49,6 +49,12 @@ class AITriageContractsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "signal_strength"):
             parse_ai_triage_response(invalid)
 
+    def test_parse_rejects_missing_schema_version(self) -> None:
+        invalid = _load_json_fixture("ai_triage_valid.json")
+        invalid.pop("schema_version", None)
+        with self.assertRaisesRegex(ValueError, "schema_version"):
+            parse_ai_triage_response(invalid)
+
     def test_parse_rejects_duplicate_priority_rank(self) -> None:
         invalid = _load_json_fixture("ai_triage_valid.json")
         invalid["categories"][1]["priority_rank"] = 1

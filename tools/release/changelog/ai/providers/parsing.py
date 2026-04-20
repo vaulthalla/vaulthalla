@@ -41,7 +41,7 @@ def parse_json_object_from_text(text: str) -> dict[str, Any]:
             )
             continue
 
-        return parsed
+        return _unwrap_common_object_envelope(parsed)
 
     details = "; ".join(f"{item.reason}: {item.sample}" for item in failures[:2])
     raise ValueError(f"AI parse error: could not recover valid JSON object. {details}".strip())
@@ -111,3 +111,16 @@ def _truncate(value: str, *, max_len: int = 120) -> str:
     if len(compact) <= max_len:
         return compact
     return compact[: max_len - 3] + "..."
+
+
+def _unwrap_common_object_envelope(parsed: dict[str, Any]) -> dict[str, Any]:
+    # Some local providers wrap the JSON object under a generic container key.
+    if len(parsed) != 1:
+        return parsed
+    key = next(iter(parsed.keys()))
+    if key not in {"result", "output", "data", "json", "response"}:
+        return parsed
+    value = parsed.get(key)
+    if isinstance(value, dict):
+        return value
+    return parsed

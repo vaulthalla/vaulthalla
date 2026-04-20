@@ -784,7 +784,25 @@ profiles:
             rc = cli.main(["changelog", "ai-draft", "--use-triage"])
 
         self.assertEqual(rc, 1)
-        self.assertIn("ERROR: AI triage response must include non-empty `categories` list.", err.getvalue())
+        self.assertIn("ERROR: Triage stage failed:", err.getvalue())
+        self.assertIn("categories", err.getvalue())
+
+    def test_main_fails_with_stage_specific_triage_missing_schema_version_message(self) -> None:
+        err = StringIO()
+        with (
+            patch("tools.release.cli.build_changelog_context", return_value=object()),
+            patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
+            patch("tools.release.cli.build_ai_provider_from_args", return_value=object()),
+            patch(
+                "tools.release.cli.run_triage_stage",
+                side_effect=ValueError("`schema_version` must be a non-empty string."),
+            ),
+            patch("sys.stderr", new=err),
+        ):
+            rc = cli.main(["changelog", "ai-draft", "--use-triage"])
+
+        self.assertEqual(rc, 1)
+        self.assertIn("ERROR: Triage stage failed: missing required field `schema_version`.", err.getvalue())
 
     def test_main_fails_when_polish_requested_and_invalid(self) -> None:
         err = StringIO()
@@ -802,7 +820,25 @@ profiles:
             rc = cli.main(["changelog", "ai-draft", "--polish"])
 
         self.assertEqual(rc, 1)
-        self.assertIn("ERROR: AI polish response must include non-empty `sections` list.", err.getvalue())
+        self.assertIn("ERROR: Polish stage failed:", err.getvalue())
+        self.assertIn("sections", err.getvalue())
+
+    def test_main_fails_with_stage_specific_draft_missing_title_message(self) -> None:
+        err = StringIO()
+        with (
+            patch("tools.release.cli.build_changelog_context", return_value=object()),
+            patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
+            patch("tools.release.cli.build_ai_provider_from_args", return_value=object()),
+            patch(
+                "tools.release.cli.generate_draft_from_payload",
+                side_effect=ValueError("`title` must be a non-empty string."),
+            ),
+            patch("sys.stderr", new=err),
+        ):
+            rc = cli.main(["changelog", "ai-draft"])
+
+        self.assertEqual(rc, 1)
+        self.assertIn("ERROR: Draft stage failed: missing required field `title`.", err.getvalue())
 
     def test_main_fails_when_save_triage_json_used_without_triage(self) -> None:
         err = StringIO()

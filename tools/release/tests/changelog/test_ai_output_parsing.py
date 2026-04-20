@@ -19,6 +19,11 @@ class AIOutputParsingTests(unittest.TestCase):
         parsed = parse_json_object_from_text("prefix {\"ok\": true, \"nested\": {\"x\": 1}} suffix")
         self.assertEqual(parsed["nested"]["x"], 1)
 
+    def test_common_single_key_envelope_is_unwrapped(self) -> None:
+        parsed = parse_json_object_from_text('{"result":{"title":"x","summary":"y","sections":[]}}')
+        self.assertEqual(parsed["title"], "x")
+        self.assertIn("sections", parsed)
+
     def test_non_object_json_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "JSON root must be object"):
             parse_json_object_from_text("[1,2,3]")

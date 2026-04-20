@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from tools.release.changelog.ai.contracts.polish import AI_POLISH_SCHEMA_VERSION
+
 
 def build_polish_system_prompt() -> str:
     return (
@@ -28,6 +30,9 @@ def build_polish_user_prompt(draft_payload: dict[str, Any]) -> str:
         "- dropping caveats or weak-signal cautions\n"
         "- adding narrative or promotional language\n"
         "- increasing verbosity\n"
+        "- Required top-level output fields: `schema_version`, `title`, `summary`, `sections`.\n"
+        f"- Set `schema_version` exactly to `{AI_POLISH_SCHEMA_VERSION}`.\n"
+        "- Required section fields: `category`, `overview`, `bullets`.\n"
         "Return JSON only.\n\n"
         "Draft input:\n"
         f"{draft_json}"

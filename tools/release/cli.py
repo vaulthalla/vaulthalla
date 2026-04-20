@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -496,15 +497,18 @@ def cmd_changelog_ai_draft(args: argparse.Namespace) -> int:
 
     if run_triage:
         triage_provider = build_ai_provider_from_args(args, repo_root=repo_root, stage="triage")
-        triage_result = run_triage_stage(
-            payload,
-            provider=triage_provider,
-            provider_kind=pipeline_config.provider,
-            reasoning_effort=triage_stage_cfg.reasoning_effort,
-            structured_mode=triage_stage_cfg.structured_mode,
-            temperature=triage_stage_cfg.temperature,
-            max_output_tokens_policy=triage_stage_cfg.max_output_tokens,
-        )
+        try:
+            triage_result = run_triage_stage(
+                payload,
+                provider=triage_provider,
+                provider_kind=pipeline_config.provider,
+                reasoning_effort=triage_stage_cfg.reasoning_effort,
+                structured_mode=triage_stage_cfg.structured_mode,
+                temperature=triage_stage_cfg.temperature,
+                max_output_tokens_policy=triage_stage_cfg.max_output_tokens,
+            )
+        except Exception as exc:
+            raise _stage_failure("Triage", exc) from exc
         draft_input = build_triage_ir_payload(triage_result)
         source_kind = "triage"
 
@@ -512,29 +516,35 @@ def cmd_changelog_ai_draft(args: argparse.Namespace) -> int:
             write_output(render_triage_result_json(triage_result), args.save_triage_json)
             print(f"Wrote AI triage JSON to {Path(args.save_triage_json).resolve()}")
 
-    draft = generate_draft_from_payload(
-        draft_input,
-        provider=draft_provider,
-        source_kind=source_kind,
-        provider_kind=pipeline_config.provider,
-        reasoning_effort=draft_stage_cfg.reasoning_effort,
-        structured_mode=draft_stage_cfg.structured_mode,
-        temperature=draft_stage_cfg.temperature,
-        max_output_tokens_policy=draft_stage_cfg.max_output_tokens,
-    )
+    try:
+        draft = generate_draft_from_payload(
+            draft_input,
+            provider=draft_provider,
+            source_kind=source_kind,
+            provider_kind=pipeline_config.provider,
+            reasoning_effort=draft_stage_cfg.reasoning_effort,
+            structured_mode=draft_stage_cfg.structured_mode,
+            temperature=draft_stage_cfg.temperature,
+            max_output_tokens_policy=draft_stage_cfg.max_output_tokens,
+        )
+    except Exception as exc:
+        raise _stage_failure("Draft", exc) from exc
     polish_result: AIPolishResult | None = None
 
     if run_polish:
         polish_provider = build_ai_provider_from_args(args, repo_root=repo_root, stage="polish")
-        polish_result = run_polish_stage(
-            draft,
-            provider=polish_provider,
-            provider_kind=pipeline_config.provider,
-            reasoning_effort=polish_stage_cfg.reasoning_effort,
-            structured_mode=polish_stage_cfg.structured_mode,
-            temperature=polish_stage_cfg.temperature,
-            max_output_tokens_policy=polish_stage_cfg.max_output_tokens,
-        )
+        try:
+            polish_result = run_polish_stage(
+                draft,
+                provider=polish_provider,
+                provider_kind=pipeline_config.provider,
+                reasoning_effort=polish_stage_cfg.reasoning_effort,
+                structured_mode=polish_stage_cfg.structured_mode,
+                temperature=polish_stage_cfg.temperature,
+                max_output_tokens_policy=polish_stage_cfg.max_output_tokens,
+            )
+        except Exception as exc:
+            raise _stage_failure("Polish", exc) from exc
         final_markdown = render_polish_markdown(polish_result)
 
         if args.save_polish_json:
@@ -731,3 +741,27 @@ def print_provider_preflight_result(result: ProviderPreflightResult) -> None:
         print("Sample models:")
         for model in result.discovered_models[:10]:
             print(f"  - {model}")
+
+
+def _stage_failure(stage: str, exc: Exception) -> ValueError:
+    message = str(exc).strip()
+    field = _extract_missing_field(message)
+    if field is not None:
+        return ValueError(f"{stage} stage failed: missing required field `{field}`. {message}")
+    return ValueError(f"{stage} stage failed: {message}")
+
+
+def _extract_missing_field(message: str) -> str | None:
+    direct = re.match(r"^`([^`]+)` must be a non-empty string\.$", message)
+    if direct:
+        return direct.group(1)
+    nested = re.match(r"^`([^`]+)\[[0-9]+\]` must be a non-empty string\.$", message)
+    if nested:
+        return nested.group(1)
+    list_field = re.search(r"`([^`]+)` must be a non-empty list of strings\.$", message)
+    if list_field:
+        return list_field.group(1)
+    sections = re.search(r"must include non-empty `([^`]+)` list", message)
+    if sections:
+        return sections.group(1)
+    return None

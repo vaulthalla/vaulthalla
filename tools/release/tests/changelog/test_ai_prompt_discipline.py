@@ -21,6 +21,8 @@ class AIPromptDisciplineTests(unittest.TestCase):
         self.assertIn("do not use speculative wording", system)
         self.assertIn("directly attributable to input evidence", user)
         self.assertIn("do not add intro/outro filler", user)
+        self.assertIn("required top-level output fields", user)
+        self.assertIn("`title`, `summary`, `sections`", user)
 
     def test_polish_prompt_constrains_semantic_changes(self) -> None:
         system = build_polish_system_prompt().lower()
@@ -29,6 +31,13 @@ class AIPromptDisciplineTests(unittest.TestCase):
         self.assertIn("never add meaning", system)
         self.assertIn("increasing verbosity", user)
         self.assertIn("return json only", user)
+        self.assertIn("schema_version", user)
+        self.assertIn("required top-level output fields", user)
+
+    def test_triage_prompt_requires_schema_version_contract_fields(self) -> None:
+        user = build_triage_user_prompt({"schema_version": "x"}).lower()
+        self.assertIn("required top-level output fields", user)
+        self.assertIn("schema_version", user)
 
     def test_required_input_labels_preserved(self) -> None:
         triage_user = build_triage_user_prompt({"schema_version": "x"})

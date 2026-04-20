@@ -41,6 +41,10 @@ class AIDraftContractsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "sections"):
             parse_ai_draft_response({"title": "x", "summary": "y"})
 
+    def test_parse_rejects_missing_title(self) -> None:
+        with self.assertRaisesRegex(ValueError, "title"):
+            parse_ai_draft_response({"summary": "x", "sections": [{"category": "core", "overview": "y", "bullets": ["z"]}]})
+
     def test_parse_rejects_invalid_bullets(self) -> None:
         invalid = {
             "title": "Release Draft",
