@@ -42,6 +42,9 @@ jobs:
       - name: Setup web toolchain
         uses: ./.github/actions/setup_web
 
+      - name: Build web (includes private icon sync)
+        uses: ./.github/actions/build_web
+
       - name: Run web checks
         uses: ./.github/actions/test_web
 
