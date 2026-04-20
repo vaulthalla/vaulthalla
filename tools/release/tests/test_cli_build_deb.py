@@ -54,6 +54,7 @@ class CliBuildDebParsingTests(unittest.TestCase):
                 "--nexus-pass",
                 "secret",
                 "--dry-run",
+                "--require-enabled",
             ]
         )
 
@@ -64,6 +65,7 @@ class CliBuildDebParsingTests(unittest.TestCase):
         self.assertEqual(parsed.nexus_user, "ci-user")
         self.assertEqual(parsed.nexus_pass, "secret")
         self.assertTrue(parsed.dry_run)
+        self.assertTrue(parsed.require_enabled)
         self.assertTrue(callable(parsed.func))
 
 
@@ -174,6 +176,7 @@ class CliBuildDebCommandTests(unittest.TestCase):
             nexus_user=None,
             nexus_pass=None,
             dry_run=False,
+            require_enabled=False,
         )
         out = StringIO()
         fake_settings = type(
@@ -198,14 +201,22 @@ class CliBuildDebCommandTests(unittest.TestCase):
 
         with (
             patch("tools.release.cli.resolve_debian_publication_settings", return_value=fake_settings),
-            patch("tools.release.cli.publish_debian_artifacts", return_value=fake_result),
+            patch("tools.release.cli.publish_debian_artifacts", return_value=fake_result) as publish,
             redirect_stdout(out),
         ):
             rc = cli.cmd_publish_deb(args)
 
         self.assertEqual(rc, 0)
+        publish.assert_called_once()
+        kwargs = publish.call_args.kwargs
+        self.assertEqual(kwargs["settings"], fake_settings)
+        self.assertEqual(kwargs["dry_run"], False)
+        self.assertEqual(kwargs["require_enabled"], False)
+        self.assertIsInstance(kwargs["output_dir"], Path)
+        self.assertEqual(kwargs["output_dir"].name, "release")
         rendered = out.getvalue()
         self.assertIn("Debian publication", rendered)
+        self.assertIn("Publication required: no", rendered)
         self.assertIn("Status:            SKIPPED", rendered)
         self.assertIn("Publication mode is disabled.", rendered)
 
@@ -218,6 +229,7 @@ class CliBuildDebCommandTests(unittest.TestCase):
             nexus_user=None,
             nexus_pass=None,
             dry_run=False,
+            require_enabled=True,
         )
         out = StringIO()
         fake_settings = type(
@@ -242,16 +254,51 @@ class CliBuildDebCommandTests(unittest.TestCase):
 
         with (
             patch("tools.release.cli.resolve_debian_publication_settings", return_value=fake_settings),
-            patch("tools.release.cli.publish_debian_artifacts", return_value=fake_result),
+            patch("tools.release.cli.publish_debian_artifacts", return_value=fake_result) as publish,
             redirect_stdout(out),
         ):
             rc = cli.cmd_publish_deb(args)
 
         self.assertEqual(rc, 0)
+        publish.assert_called_once()
+        kwargs = publish.call_args.kwargs
+        self.assertEqual(kwargs["settings"], fake_settings)
+        self.assertEqual(kwargs["dry_run"], False)
+        self.assertEqual(kwargs["require_enabled"], True)
+        self.assertIsInstance(kwargs["output_dir"], Path)
+        self.assertEqual(kwargs["output_dir"].name, "release")
         rendered = out.getvalue()
+        self.assertIn("Publication required: yes", rendered)
         self.assertIn("Mode:              nexus", rendered)
         self.assertIn("Target URLs:       1", rendered)
         self.assertIn("Status:            PUBLISHED", rendered)
+
+    def test_publish_deb_required_disabled_errors_cleanly(self) -> None:
+        err = StringIO()
+        with (
+            patch(
+                "tools.release.cli.resolve_debian_publication_settings",
+                return_value=type(
+                    "_Settings",
+                    (),
+                    {
+                        "mode": "disabled",
+                        "nexus_repo_url": "",
+                        "nexus_user": "",
+                        "nexus_password": "",
+                    },
+                )(),
+            ),
+            patch(
+                "tools.release.cli.publish_debian_artifacts",
+                side_effect=ValueError("Debian publication is required for this run, but RELEASE_PUBLISH_MODE is disabled."),
+            ),
+            patch("sys.stderr", new=err),
+        ):
+            rc = cli.main(["publish-deb", "--require-enabled", "--output-dir", "/tmp/release"])
+
+        self.assertEqual(rc, 1)
+        self.assertIn("publication is required", err.getvalue().lower())
 
 
 if __name__ == "__main__":

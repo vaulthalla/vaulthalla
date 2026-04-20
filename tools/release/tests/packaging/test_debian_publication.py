@@ -31,6 +31,17 @@ class DebianPublicationSettingsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "NEXUS_REPO_URL, NEXUS_USER, NEXUS_PASS"):
             _ = resolve_debian_publication_settings(mode="nexus", env={})
 
+    def test_settings_fail_when_required_publication_uses_nexus_without_credentials(self) -> None:
+        with self.assertRaisesRegex(ValueError, "required Nexus configuration is missing"):
+            _ = resolve_debian_publication_settings(
+                mode="nexus",
+                env={
+                    "NEXUS_REPO_URL": "https://nexus.example/repository/vaulthalla-debian",
+                    "NEXUS_USER": "",
+                    "NEXUS_PASS": "",
+                },
+            )
+
     def test_settings_fail_when_nexus_url_is_not_absolute_http(self) -> None:
         with self.assertRaisesRegex(ValueError, "NEXUS_REPO_URL must be an absolute http"):
             _ = resolve_debian_publication_settings(
@@ -95,6 +106,19 @@ class DebianPublicationTests(unittest.TestCase):
             self.assertIn("disabled", result.skipped_reason or "")
             self.assertEqual(len(result.artifacts), 1)
             self.assertEqual(result.target_urls, ())
+
+    def test_publish_required_fails_when_mode_disabled(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir) / "release"
+            output_dir.mkdir(parents=True, exist_ok=True)
+            _write(output_dir / "vaulthalla_1.2.3-1_amd64.deb", "deb")
+
+            with self.assertRaisesRegex(ValueError, "publication is required.*RELEASE_PUBLISH_MODE is disabled"):
+                _ = publish_debian_artifacts(
+                    output_dir=output_dir,
+                    settings=self._settings_disabled(),
+                    require_enabled=True,
+                )
 
     def test_publish_disabled_mode_skips_cleanly_when_output_dir_is_missing(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -178,6 +202,27 @@ class DebianPublicationTests(unittest.TestCase):
                 [call[3] for call in upload_calls],
                 ["secret", "secret"],
             )
+
+    def test_publish_required_succeeds_with_valid_nexus_config(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir) / "release"
+            output_dir.mkdir(parents=True, exist_ok=True)
+            _write(output_dir / "vaulthalla_1.2.3-1_amd64.deb", "deb")
+
+            upload_calls: list[tuple[Path, str, str, str]] = []
+
+            def _uploader(artifact: Path, target_url: str, username: str, password: str) -> None:
+                upload_calls.append((artifact, target_url, username, password))
+
+            result = publish_debian_artifacts(
+                output_dir=output_dir,
+                settings=self._settings_nexus(),
+                require_enabled=True,
+                uploader=_uploader,
+            )
+
+            self.assertTrue(result.enabled)
+            self.assertEqual(len(upload_calls), 1)
 
 
 if __name__ == "__main__":

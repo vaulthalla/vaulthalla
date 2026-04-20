@@ -194,6 +194,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Validate publication settings and artifact selection without uploading.",
     )
+    publish_deb_parser.add_argument(
+        "--require-enabled",
+        action="store_true",
+        help="Fail if publication mode resolves to disabled for this run.",
+    )
     publish_deb_parser.set_defaults(func=cmd_publish_deb)
 
     changelog_parser = subparsers.add_parser(
@@ -570,10 +575,12 @@ def cmd_publish_deb(args: argparse.Namespace) -> int:
         output_dir=output_dir,
         settings=settings,
         dry_run=bool(args.dry_run),
+        require_enabled=bool(args.require_enabled),
     )
 
     print("Debian publication")
     print("------------------")
+    print(f"Publication required: {'yes' if args.require_enabled else 'no'}")
     print(f"Mode:              {result.mode}")
     print(f"Output dir:        {result.output_dir}")
     print(f"Debian artifacts:  {len(result.artifacts)}")

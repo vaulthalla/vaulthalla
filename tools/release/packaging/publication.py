@@ -95,11 +95,16 @@ def publish_debian_artifacts(
     output_dir: Path | str,
     settings: DebianPublicationSettings,
     dry_run: bool = False,
+    require_enabled: bool = False,
     uploader: Callable[[Path, str, str, str], None] | None = None,
 ) -> DebianPublicationResult:
     destination = Path(output_dir).resolve()
 
     if settings.mode == "disabled":
+        if require_enabled:
+            raise ValueError(
+                "Debian publication is required for this run, but RELEASE_PUBLISH_MODE is disabled."
+            )
         artifacts = _find_debian_publication_artifacts(destination)
         return DebianPublicationResult(
             output_dir=destination,

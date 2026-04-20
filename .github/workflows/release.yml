@@ -27,6 +27,7 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || '' }}
       RELEASE_LOCAL_LLM_API_KEY: ${{ secrets.RELEASE_LOCAL_LLM_API_KEY || '' }}
       RELEASE_PUBLISH_MODE: ${{ vars.RELEASE_PUBLISH_MODE || 'disabled' }}
+      RELEASE_PUBLISH_REQUIRED: ${{ vars.RELEASE_PUBLISH_REQUIRED || 'auto' }}
       NEXUS_REPO_URL: ${{ vars.NEXUS_REPO_URL || '' }}
       NEXUS_USER: ${{ secrets.NEXUS_USER || '' }}
       NEXUS_PASS: ${{ secrets.NEXUS_PASS || '' }}
@@ -90,11 +91,57 @@ jobs:
           path: ${{ steps.package.outputs.artifact_dir }}
           if-no-files-found: error
 
+      - name: Resolve publication policy (optional vs required)
+        id: publish_policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          ref="${GITHUB_REF:-}"
+          is_tag="false"
+          if [[ "$ref" == refs/tags/* ]]; then
+            is_tag="true"
+          fi
+
+          raw_required="${RELEASE_PUBLISH_REQUIRED:-auto}"
+          case "$raw_required" in
+            auto)
+              if [ "$is_tag" = "true" ]; then
+                required="true"
+              else
+                required="false"
+              fi
+              ;;
+            true|false)
+              required="$raw_required"
+              ;;
+            *)
+              echo "::error::Invalid RELEASE_PUBLISH_REQUIRED value: ${raw_required}. Expected auto|true|false."
+              exit 1
+              ;;
+          esac
+
+          echo "[publish-policy] github.ref=${ref}"
+          echo "[publish-policy] is_tag_release=${is_tag}"
+          echo "[publish-policy] RELEASE_PUBLISH_REQUIRED=${raw_required}"
+          if [ "$required" = "true" ]; then
+            echo "[publish-policy] publication requirement: MANDATORY for this run"
+          else
+            echo "[publish-policy] publication requirement: OPTIONAL for this run"
+          fi
+
+          echo "required=${required}" >> "$GITHUB_OUTPUT"
+
       - name: Publish Debian packages to Nexus
         shell: bash
         run: |
           set -euo pipefail
           artifact_dir="${{ steps.package.outputs.artifact_dir }}"
+          required="${{ steps.publish_policy.outputs.required }}"
+          if [ "$required" = "true" ]; then
+            echo "[publish] publication requirement: MANDATORY"
+          else
+            echo "[publish] publication requirement: OPTIONAL"
+          fi
           echo "[publish] RELEASE_PUBLISH_MODE=${RELEASE_PUBLISH_MODE:-disabled}"
           if [ -n "${NEXUS_REPO_URL:-}" ]; then
             echo "[publish] NEXUS_REPO_URL configured: ${NEXUS_REPO_URL}"
@@ -112,7 +159,12 @@ jobs:
             echo "[publish] NEXUS_PASS configured: no"
           fi
 
-          if ! python3 -m tools.release publish-deb --output-dir "$artifact_dir"; then
+          publish_args=(--output-dir "$artifact_dir")
+          if [ "$required" = "true" ]; then
+            publish_args+=(--require-enabled)
+          fi
+
+          if ! python3 -m tools.release publish-deb "${publish_args[@]}"; then
             echo "::error::Debian publication stage failed. Review publication logs for configuration, artifact selection, and upload diagnostics."
             exit 1
           fi

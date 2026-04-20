@@ -1,4 +1,4 @@
-vaulthalla (0.31.1-1) unstable; urgency=medium
+vaulthalla (0.31.2-1) unstable; urgency=medium
 
   - merge web into core monorepo layout
   - major RBAC and protocol refactors
