@@ -169,11 +169,39 @@ jobs:
             exit 1
           fi
 
+      - name: Prepare GitHub release asset list (deduped)
+        if: startsWith(github.ref, 'refs/tags/')
+        id: gh_release_assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_dir="${{ steps.package.outputs.artifact_dir }}"
+          if [ -z "$artifact_dir" ] || [ ! -d "$artifact_dir" ]; then
+            echo "::error::Cannot prepare GitHub release assets; artifact_dir is missing: $artifact_dir"
+            exit 1
+          fi
+
+          mapfile -t release_assets < <(find "$artifact_dir" -type f | LC_ALL=C sort -u)
+          if [ "${#release_assets[@]}" -eq 0 ]; then
+            echo "::error::No files found for GitHub release asset attachment under $artifact_dir"
+            exit 1
+          fi
+
+          echo "[gh-release] deduped asset count: ${#release_assets[@]}"
+          echo "[gh-release] assets:"
+          printf '%s\n' "${release_assets[@]}"
+
+          {
+            echo "assets<<EOF"
+            printf '%s\n' "${release_assets[@]}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Attach artifacts to GitHub Release (tag only)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: |
-            release/*
-            release/**/*
+          files: ${{ steps.gh_release_assets.outputs.assets }}
+          fail_on_unmatched_files: true
+          overwrite_files: true
