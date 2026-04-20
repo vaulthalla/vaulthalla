@@ -59,7 +59,7 @@ def write_debian_version(path: Path, version: Version, revision: int = 1) -> Non
         raise ValueError(f"Debian changelog is empty: {path}")
 
     header = lines[0]
-    match = CHANGELOG_HEADER_PATTERN.fullmatch(header)
+    match = CHANGELOG_HEADER_PATTERN.fullmatch(header.strip())
     if not match:
         raise ValueError(f"Could not parse Debian changelog header in {path}: {header}")
 

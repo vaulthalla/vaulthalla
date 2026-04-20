@@ -1,19 +1,75 @@
-name: C++ CI Release
+name: Release Pipeline
+
 on:
-  release:
-    branches:
-      - main
-    types:
-      - published
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
 jobs:
-  build:
+  release:
+    name: Validate, Package, and Publish Artifacts
     runs-on:
       - self-hosted
       - Linux
       - X64
       - ubuntu-latest-lts
+    environment: Production
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/runner
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate release state
+        shell: bash
+        run: |
+          python3 -m tools.release check
+
+      - name: Build core
+        uses: ./.github/actions/build
+
+      - name: Run core tests
+        uses: ./.github/actions/test
+
+      - name: Run release tooling tests
+        shell: bash
+        run: |
+          python3 -m unittest discover -s tools/release/tests -p 'test_*.py'
+
+      - name: Setup web toolchain
+        uses: ./.github/actions/setup_web
+
+      - name: Run web checks
+        uses: ./.github/actions/test_web
+
+      - name: Generate changelog evidence artifacts
+        shell: bash
+        run: |
+          mkdir -p release
+          python3 -m tools.release changelog draft --format raw --output release/changelog.raw.md
+          python3 -m tools.release changelog payload --output release/changelog.payload.json
+
+      - name: Build release artifacts (Debian + web deployable)
+        id: package
+        uses: ./.github/actions/package
         with:
-          release: 'true'
+          output_dir: release
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: vaulthalla-release-${{ github.ref_name }}
+          path: ${{ steps.package.outputs.artifact_dir }}
+          if-no-files-found: error
+
+      - name: Attach artifacts to GitHub Release (tag only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            release/*
+            release/**/*

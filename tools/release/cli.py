@@ -20,6 +20,7 @@ from tools.release.changelog.ai.stages.triage import render_triage_result_json, 
 from tools.release.changelog.context_builder import build_release_context
 from tools.release.changelog.payload import build_ai_payload, render_ai_payload_json
 from tools.release.changelog.render_raw import render_debug_json, render_release_changelog
+from tools.release.packaging import build_debian_package
 from tools.release.version.adapters.version_file import read_version_file
 from tools.release.version.models import Version
 from tools.release.version.sync import apply_version_update, resolve_debian_revision
@@ -107,6 +108,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show what would change without writing files.",
     )
     bump_parser.set_defaults(func=cmd_bump)
+
+    build_deb_parser = subparsers.add_parser(
+        "build-deb",
+        help="Build Debian package artifacts into a local release directory.",
+    )
+    build_deb_parser.add_argument(
+        "--output-dir",
+        default="release",
+        help="Output directory for copied Debian artifacts (default: release/ at repo root).",
+    )
+    build_deb_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate and print planned build actions without running dpkg-buildpackage.",
+    )
+    build_deb_parser.set_defaults(func=cmd_build_deb)
 
     changelog_parser = subparsers.add_parser(
         "changelog",
@@ -298,6 +315,8 @@ def cmd_sync(args: argparse.Namespace) -> int:
         debian_revision=debian_revision,
         write_canonical=False,
     )
+    # Enforce that sync leaves the repo in a fully consistent release state.
+    _ = require_synced_release_state(repo_root)
 
     print("\nSync complete.")
     return 0
@@ -362,6 +381,37 @@ def cmd_bump(args: argparse.Namespace) -> int:
         dry_run=args.dry_run,
     )
     return cmd_set_version(set_args)
+
+
+def cmd_build_deb(args: argparse.Namespace) -> int:
+    repo_root = Path(args.repo_root).resolve()
+    result = build_debian_package(
+        repo_root=repo_root,
+        output_dir=args.output_dir,
+        dry_run=args.dry_run,
+    )
+
+    print("Debian build plan")
+    print("----------------")
+    print(f"Repo root:   {result.repo_root}")
+    print(f"Package:     {result.package_name}")
+    print(f"Version:     {result.package_version}")
+    print(f"Output dir:  {result.output_dir}")
+    print(f"Command:     {' '.join(result.command)}")
+
+    if result.dry_run:
+        print("\nDry run only. No Debian build command was executed.")
+        return 0
+
+    print()
+    print("Artifacts")
+    print("---------")
+    for artifact in result.artifacts:
+        print(f"- {artifact}")
+    if result.build_log is not None:
+        print(f"\nBuild log: {result.build_log}")
+
+    return 0
 
 
 def cmd_changelog_draft(args: argparse.Namespace) -> int:

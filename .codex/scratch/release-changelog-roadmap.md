@@ -19,16 +19,21 @@ Completed:
 - ✅ Deterministic AI payload builder implemented (Phase 4)
 - ✅ AI draft stage implemented (Phase 5a)
 - ✅ AI triage optimizer stage implemented (Phase 5b)
+- ✅ AI polish stage implemented (Phase 5c)
+- ✅ Provider seam + OpenAI-compatible local support (Phase 6a)
+- ✅ Local-compatible preflight/operator workflow (`ai-check`) (Phase 6b)
+- ✅ Debian local build orchestration (`build-deb`) (Phase 7a)
+- ✅ Web deployable artifact included in release output (Phase 7b)
+- ✅ GitHub release workflow with `Production` environment tracking (Phase 8)
 
 Current pipeline:
 
 git → categorized → scored → payload → triage → IR → draft → markdown
 
-Remaining work focuses on:
-- polish stage
-- provider flexibility
-- packaging automation
-- CI/CD integration
+Remaining work now focuses on post-Phase-8 hardening:
+- external publish channels (APT/Nexus) and promotion policy
+- CI/runtime hardening and release-note quality gates
+- optional AI-in-CI enablement with explicit secret boundaries
 
 ---
 
@@ -144,6 +149,7 @@ Concrete tasks:
      - version is synced
      - changelog is updated
      - build artifacts are captured
+   - status (7a): implemented with `python -m tools.release build-deb`, synced-state guardrails, and artifact collection into `release/`
 
 3. Add release output directory:
    - e.g. `/release/` or `/dist/`
@@ -242,7 +248,7 @@ git
 - [x] Phase 4 deterministic AI payload
 - [x] Phase 5a AI draft
 - [x] Phase 5b AI triage
-- [ ] Phase 5c AI polish
-- [ ] Phase 6 provider abstraction + local LLM
-- [ ] Phase 7 Debian packaging automation
-- [ ] Phase 8 CI/CD + production channel
+- [x] Phase 5c AI polish
+- [x] Phase 6 provider abstraction + local LLM
+- [~] Phase 7 Debian packaging automation (7a+7b complete; publishing channels still pending)
+- [x] Phase 8 CI/CD + production channel
