@@ -3,7 +3,7 @@
 	dh $@ --buildsystem=meson
 
 override_dh_auto_configure:
-	dh_auto_configure -- -Dmanpage=true
+	dh_auto_configure --sourcedirectory=core -- -Dmanpage=true
 
 override_dh_auto_install:
-	dh_auto_install --destdir=debian/tmp
+	dh_auto_install --sourcedirectory=core --destdir=debian/tmp
