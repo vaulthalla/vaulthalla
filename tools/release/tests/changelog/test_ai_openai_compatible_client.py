@@ -28,9 +28,12 @@ class _FakeCompletions:
     def __init__(self, response):
         self._response = response
         self.calls: list[dict] = []
+        self.error: Exception | None = None
 
     def create(self, **kwargs):
         self.calls.append(kwargs)
+        if self.error is not None:
+            raise self.error
         return self._response
 
 
@@ -42,6 +45,19 @@ class _FakeChat:
 class _FakeSDKClient:
     def __init__(self, response):
         self.chat = _FakeChat(_FakeCompletions(response))
+
+
+class _CompatFallbackCompletions:
+    def __init__(self, final_response):
+        self._final_response = final_response
+        self.calls: list[dict] = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        response_format = kwargs.get("response_format")
+        if isinstance(response_format, dict) and response_format.get("type") == "json_object":
+            raise RuntimeError("response_format json_object unsupported")
+        return self._final_response
 
 
 class OpenAICompatibleProviderTests(unittest.TestCase):
@@ -131,6 +147,29 @@ class OpenAICompatibleProviderTests(unittest.TestCase):
         caps = client.capabilities()
         self.assertFalse(caps.supports_reasoning_effort)
         self.assertFalse(caps.supports_strict_schema)
+
+    def test_openai_compatible_falls_back_to_prompt_json_when_json_object_fails(self) -> None:
+        final = _FakeResponse(
+            '{"title":"x","summary":"y","sections":[{"category":"core","overview":"z","bullets":["a"]}]}'
+        )
+        completions = _CompatFallbackCompletions(final)
+        sdk = type("SDK", (), {})()
+        sdk.chat = _FakeChat(completions)
+        client = OpenAICompatibleProvider(
+            sdk_client=sdk,
+            model="Qwen3.5-122B",
+            base_url="http://localhost:8888/v1",
+        )
+
+        _ = client.generate_structured_json(
+            system_prompt="sys",
+            user_prompt="usr",
+            json_schema={"type": "object"},
+        )
+
+        self.assertEqual(len(completions.calls), 2)
+        self.assertEqual(completions.calls[0]["response_format"]["type"], "json_object")
+        self.assertNotIn("response_format", completions.calls[1])
 
 
 if __name__ == "__main__":

@@ -10,6 +10,12 @@ from tools.release.changelog.ai.config import (
     VALID_STRUCTURED_MODES,
 )
 
+STRUCTURED_MODE_FALLBACK_ORDER: tuple[AIStructuredMode, ...] = (
+    "strict_json_schema",
+    "json_object",
+    "prompt_json",
+)
+
 
 @dataclass(frozen=True)
 class ProviderCapabilities:
@@ -82,6 +88,14 @@ def resolve_generation_settings(
         reasoning_effort=reasoning_effort,
         degradations=tuple(degradations),
     )
+
+
+def build_structured_mode_fallback_chain(
+    initial_mode: AIStructuredMode,
+) -> tuple[AIStructuredMode, ...]:
+    _validate_structured_mode(initial_mode)
+    start_index = STRUCTURED_MODE_FALLBACK_ORDER.index(initial_mode)
+    return STRUCTURED_MODE_FALLBACK_ORDER[start_index:]
 
 
 def _validate_structured_mode(value: str) -> None:

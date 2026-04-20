@@ -5,6 +5,7 @@ from tools.release.changelog.ai.providers.base import ModelDiscoveryProvider, St
 from tools.release.changelog.ai.providers.capabilities import (
     ProviderCapabilities,
     ResolvedGenerationSettings,
+    build_structured_mode_fallback_chain,
     get_provider_capabilities,
     resolve_generation_settings,
 )
@@ -106,4 +107,5 @@ __all__ = [
     "ResolvedGenerationSettings",
     "get_provider_capabilities",
     "resolve_generation_settings",
+    "build_structured_mode_fallback_chain",
 ]

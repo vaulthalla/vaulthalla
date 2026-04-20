@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from tools.release.changelog.ai.providers import (
+    build_structured_mode_fallback_chain,
     get_provider_capabilities,
     resolve_generation_settings,
 )
@@ -62,6 +63,20 @@ class AIProviderCapabilitiesTests(unittest.TestCase):
                 provider_kind="openai",
                 requested_reasoning_effort="turbo",  # type: ignore[arg-type]
             )
+
+    def test_structured_mode_fallback_chain_is_explicit(self) -> None:
+        self.assertEqual(
+            build_structured_mode_fallback_chain("strict_json_schema"),
+            ("strict_json_schema", "json_object", "prompt_json"),
+        )
+        self.assertEqual(
+            build_structured_mode_fallback_chain("json_object"),
+            ("json_object", "prompt_json"),
+        )
+        self.assertEqual(
+            build_structured_mode_fallback_chain("prompt_json"),
+            ("prompt_json",),
+        )
 
 
 if __name__ == "__main__":
