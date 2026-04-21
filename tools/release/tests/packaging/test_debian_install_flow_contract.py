@@ -58,6 +58,7 @@ class DebianInstallFlowContractTests(unittest.TestCase):
             "vh setup db",
             "vh setup remote-db",
             "vh setup nginx",
+            "vh setup nginx --certbot --domain",
             "vh teardown nginx",
             "/usr/share/vaulthalla/psql",
             "/var/lib/vaulthalla/nginx_site_managed",

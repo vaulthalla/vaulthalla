@@ -17,6 +17,8 @@ static const auto dbNameReq = Option::ManyToOne("database", "Remote PostgreSQL d
 static const auto dbPassFileReq = Option::ManyToOne("password_file", "Path to file containing remote DB password", {"password-file", "password-path", "pw-file"}, "path");
 static const auto dbPoolSizeOpt = Optional::ManyToOne("pool_size", "Database pool size", {"pool-size"}, "size");
 static const auto interactiveFlag = Flag::WithAliases("interactive_mode", "Prompt for missing remote DB values", {"interactive", "i"});
+static const auto nginxDomainOpt = Optional::ManyToOne("domain", "Domain to configure for Vaulthalla nginx integration", {"domain", "d"}, "domain");
+static const auto nginxCertbotFlag = Flag::WithAliases("certbot_mode", "Use certbot nginx integration for certificate issue/renew handling", {"certbot"});
 
 static std::shared_ptr<CommandUsage> db(const std::weak_ptr<CommandUsage>& parent) {
     const auto cmd = buildBaseUsage(parent);
@@ -46,8 +48,11 @@ static std::shared_ptr<CommandUsage> nginx(const std::weak_ptr<CommandUsage>& pa
     const auto cmd = buildBaseUsage(parent);
     cmd->aliases = {"nginx", "proxy"};
     cmd->description = "Install and enable Vaulthalla nginx site integration conservatively.";
+    cmd->optional = {nginxDomainOpt};
+    cmd->optional_flags = {nginxCertbotFlag};
     cmd->examples = {
-        {"vh setup nginx", "Install/enable Vaulthalla nginx site config and reload nginx when safe."}
+        {"vh setup nginx", "Install/enable Vaulthalla nginx site config and reload nginx when safe."},
+        {"vh setup nginx --certbot --domain vault.example.com", "Configure Vaulthalla nginx integration and run deterministic certbot issue/renew flow for the domain."}
     };
     return cmd;
 }
@@ -59,7 +64,8 @@ static std::shared_ptr<CommandUsage> base(const std::weak_ptr<CommandUsage>& par
     cmd->examples = {
         {"vh setup db", "Bootstrap local PostgreSQL integration."},
         {"vh setup remote-db --host db.example.net --user vaulthalla --database vaulthalla --password-file /path/to/password-file", "Configure remote PostgreSQL integration."},
-        {"vh setup nginx", "Configure Vaulthalla nginx integration."}
+        {"vh setup nginx", "Configure Vaulthalla nginx integration."},
+        {"vh setup nginx --certbot --domain vault.example.com", "Configure Vaulthalla nginx integration with explicit certbot handling for the requested domain."}
     };
     cmd->subcommands = {
         db(cmd->weak_from_this()),

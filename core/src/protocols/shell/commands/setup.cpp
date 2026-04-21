@@ -13,6 +13,7 @@
 #include <array>
 #include <cctype>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <grp.h>
@@ -52,6 +53,11 @@ struct ExecResult {
 struct ServiceIdentity {
     uid_t uid = 0;
     gid_t gid = 0;
+};
+
+struct CertbotPrereqState {
+    bool certbot = false;
+    bool nginxPlugin = false;
 };
 
 static std::string trim(std::string s) {
@@ -400,6 +406,190 @@ static bool filesEqual(const fs::path& a, const fs::path& b) {
     return true;
 }
 
+static bool tokenizedLineContainsDomain(const std::string& line, const std::string& domain) {
+    std::istringstream in(line);
+    std::string token;
+    while (in >> token) {
+        while (!token.empty() &&
+               (token.back() == ',' || token.back() == ';' || token.back() == '.'))
+            token.pop_back();
+        if (token == domain) return true;
+    }
+    return false;
+}
+
+static bool certbotCertificatesMentionDomain(const std::string& output, const std::string& domain) {
+    std::istringstream in(output);
+    std::string line;
+    while (std::getline(in, line)) {
+        const auto trimmed = trim(line);
+        if (trimmed.rfind("Domains:", 0) != 0) continue;
+        const auto domainsPart = trim(trimmed.substr(std::string("Domains:").size()));
+        if (tokenizedLineContainsDomain(domainsPart, domain))
+            return true;
+    }
+    return false;
+}
+
+static bool hasCertbotManagedCertForDomain(const std::string& domain) {
+    const fs::path livePath = fs::path("/etc/letsencrypt/live") / domain;
+    const bool liveFilesExist = fs::exists(livePath / "fullchain.pem") && fs::exists(livePath / "privkey.pem");
+    if (liveFilesExist) return true;
+
+    if (!commandExists("certbot")) return false;
+    const auto certs = runCapture("certbot certificates");
+    if (certs.code != 0) return false;
+    return certbotCertificatesMentionDomain(certs.output, domain);
+}
+
+static bool isLikelyDomain(const std::string& raw) {
+    if (raw.empty() || raw.size() > 253) return false;
+    if (raw.front() == '.' || raw.back() == '.' || raw.front() == '-' || raw.back() == '-') return false;
+
+    bool hasDot = false;
+    size_t labelLen = 0;
+    for (const char c : raw) {
+        const bool ok = std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '.';
+        if (!ok) return false;
+
+        if (c == '.') {
+            hasDot = true;
+            if (labelLen == 0 || labelLen > 63) return false;
+            labelLen = 0;
+            continue;
+        }
+
+        ++labelLen;
+    }
+
+    if (labelLen == 0 || labelLen > 63) return false;
+    return hasDot;
+}
+
+static bool containsListen80(const std::string& content) {
+    return content.find("listen 80") != std::string::npos ||
+           content.find("listen [::]:80") != std::string::npos;
+}
+
+static bool containsListen443(const std::string& content) {
+    return content.find("listen 443") != std::string::npos ||
+           content.find("listen [::]:443") != std::string::npos;
+}
+
+static std::optional<std::string> readFileToString(const fs::path& path, std::string& content) {
+    std::ifstream in(path);
+    if (!in.is_open()) return "failed opening file: " + path.string();
+    std::ostringstream buffer;
+    buffer << in.rdbuf();
+    content = buffer.str();
+    return std::nullopt;
+}
+
+static std::optional<std::string> writeStringToFile(const fs::path& path, const std::string& content) {
+    std::ofstream out(path, std::ios::out | std::ios::trunc);
+    if (!out.is_open()) return "failed opening file for write: " + path.string();
+    out << content;
+    if (!out.good()) return "failed writing file: " + path.string();
+    return std::nullopt;
+}
+
+static std::optional<std::string> renderManagedNginxConfig(const std::optional<std::string>& domain,
+                                                           std::string& rendered) {
+    std::string content;
+    if (const auto readErr = readFileToString(kNginxTemplate, content))
+        return "failed reading managed nginx template: " + *readErr;
+
+    if (domain && !domain->empty()) {
+        constexpr auto* marker = "server_name _;";
+        const auto pos = content.find(marker);
+        if (pos == std::string::npos)
+            return "managed nginx template is missing expected token '" + std::string(marker) + "'";
+        content.replace(pos, std::strlen(marker), "server_name " + *domain + ";");
+    }
+
+    rendered = std::move(content);
+    return std::nullopt;
+}
+
+static CertbotPrereqState detectCertbotPrereqs() {
+    CertbotPrereqState out;
+    out.certbot = commandExists("certbot");
+    if (!out.certbot) return out;
+
+    const auto plugins = runCapture("certbot plugins");
+    out.nginxPlugin = plugins.code == 0 && plugins.output.find("nginx") != std::string::npos;
+    return out;
+}
+
+static std::optional<std::string> ensureCertbotPrereqs(const CommandCall& call, bool& installedNow) {
+    installedNow = false;
+    auto prereqs = detectCertbotPrereqs();
+    if (prereqs.certbot && prereqs.nginxPlugin) return std::nullopt;
+
+    std::vector<std::string> missing;
+    if (!prereqs.certbot) missing.emplace_back("certbot");
+    if (!prereqs.nginxPlugin) missing.emplace_back("python3-certbot-nginx");
+
+    std::ostringstream missingMsg;
+    for (size_t i = 0; i < missing.size(); ++i) {
+        if (i) missingMsg << ", ";
+        missingMsg << missing[i];
+    }
+
+    if (!call.io) {
+        return "certbot prerequisites missing in noninteractive context (" + missingMsg.str() +
+               "). Install packages manually and rerun.";
+    }
+
+    const auto prompt = "setup nginx: certbot prerequisites missing (" + missingMsg.str() +
+                        "). Install via apt-get now? [no]";
+    const bool installNow = call.io->confirm(prompt, true);
+    if (!installNow) {
+        return "certbot prerequisites missing (" + missingMsg.str() +
+               "). Install them manually and rerun.";
+    }
+
+    const bool aptSupported = fs::exists("/etc/debian_version") && commandExists("apt-get");
+    if (!aptSupported) {
+        return "automatic certbot prerequisite install is only supported on Debian/Ubuntu apt environments. "
+               "Install packages manually and rerun.";
+    }
+
+    const auto prefix = privilegedPrefix();
+    if (prefix.empty())
+        return "insufficient privileges to install certbot prerequisites; rerun as root or with passwordless sudo";
+
+    const auto install = runCapture(prefix + "DEBIAN_FRONTEND=noninteractive apt-get install -y certbot python3-certbot-nginx");
+    if (install.code != 0)
+        return formatFailure("failed installing certbot prerequisites", install);
+
+    prereqs = detectCertbotPrereqs();
+    if (!prereqs.certbot || !prereqs.nginxPlugin)
+        return "certbot prerequisites still unavailable after install attempt";
+
+    installedNow = true;
+    return std::nullopt;
+}
+
+static std::optional<std::string> validateAndReloadNginx(std::string& reloadStatus) {
+    const auto nginxTest = runCapture("nginx -t");
+    if (nginxTest.code != 0) {
+        if (!nginxTest.output.empty())
+            return "nginx -t failed: " + nginxTest.output;
+        return "nginx -t failed";
+    }
+
+    reloadStatus = "not attempted (systemctl unavailable or nginx inactive)";
+    if (commandExists("systemctl") && runCapture("systemctl --quiet is-active nginx.service").code == 0) {
+        const auto reload = runCapture("systemctl reload nginx.service");
+        if (reload.code != 0)
+            return formatFailure("systemctl reload nginx.service", reload);
+        reloadStatus = "nginx reloaded";
+    }
+
+    return std::nullopt;
+}
+
 static bool isSetupMatch(const std::string& cmd, const std::string_view input) {
     return isCommandMatch({"setup", cmd}, input);
 }
@@ -618,6 +808,27 @@ static CommandResult handle_setup_nginx(const CommandCall& call) {
     if (!call.user->isSuperAdmin())
         return invalid("setup nginx: requires super_admin role");
 
+    if (!hasEffectiveRoot())
+        return invalid("setup nginx: must run as root to manage /etc/nginx and certbot state safely");
+
+    const auto certbotFlag = usage->resolveFlag("certbot_mode");
+    const bool useCertbot = certbotFlag ? hasFlag(call, certbotFlag->aliases) : hasFlag(call, "certbot");
+
+    const auto domainOptDef = usage->resolveOptional("domain");
+    const auto domainOpt = domainOptDef ? optVal(call, domainOptDef->option_tokens) : std::nullopt;
+
+    if (!useCertbot && domainOpt && !domainOpt->empty())
+        return invalid("setup nginx: --domain requires --certbot");
+
+    std::string certbotDomain;
+    if (useCertbot) {
+        if (!domainOpt || domainOpt->empty())
+            return invalid("setup nginx: --certbot requires --domain <domain>");
+        certbotDomain = trim(*domainOpt);
+        if (!isLikelyDomain(certbotDomain))
+            return invalid("setup nginx: invalid domain '" + certbotDomain + "'");
+    }
+
     if (!commandExists("nginx") || !fs::exists("/etc/nginx"))
         return invalid("setup nginx: nginx is not installed or /etc/nginx is missing");
 
@@ -647,7 +858,15 @@ static CommandResult handle_setup_nginx(const CommandCall& call) {
             if (!filesEqual(siteAvailPath, templatePath) && !fs::exists(markerPath))
                 return invalid("setup nginx: existing site file differs and is not package-managed: " + siteAvailPath.string());
         } else {
-            fs::copy_file(templatePath, siteAvailPath, fs::copy_options::none);
+            if (useCertbot) {
+                std::string rendered;
+                if (const auto renderError = renderManagedNginxConfig(certbotDomain, rendered))
+                    return invalid("setup nginx: " + *renderError);
+                if (const auto writeErr = writeStringToFile(siteAvailPath, rendered))
+                    return invalid("setup nginx: " + *writeErr);
+            } else {
+                fs::copy_file(templatePath, siteAvailPath, fs::copy_options::none);
+            }
             createdSiteFile = true;
         }
 
@@ -672,8 +891,8 @@ static CommandResult handle_setup_nginx(const CommandCall& call) {
         return invalid("setup nginx: failed preparing site files: " + std::string(e.what()));
     }
 
-    const auto nginxTest = runCapture("nginx -t");
-    if (nginxTest.code != 0) {
+    std::string reloadStatus;
+    if (const auto validateError = validateAndReloadNginx(reloadStatus)) {
         std::error_code ec;
         bool rollbackOk = true;
 
@@ -694,7 +913,7 @@ static CommandResult handle_setup_nginx(const CommandCall& call) {
         }
 
         std::ostringstream err;
-        err << "setup nginx: nginx -t failed before reload";
+        err << "setup nginx: failed nginx validation/reload during managed site staging";
         if (rollbackOk) {
             err << "; rolled back newly staged Vaulthalla nginx changes";
         } else {
@@ -703,28 +922,135 @@ static CommandResult handle_setup_nginx(const CommandCall& call) {
                 << "  - " << kNginxSiteAvailable << "\n"
                 << "  - " << kNginxManagedMarker;
         }
-        if (!nginxTest.output.empty()) err << "\nnginx -t output: " << nginxTest.output;
+        err << "\nfailure: " << *validateError;
         return invalid(err.str());
     }
 
-    std::string reloadStatus = "not attempted (systemctl unavailable or nginx inactive)";
-    if (commandExists("systemctl") && runCapture("systemctl --quiet is-active nginx.service").code == 0) {
-        const auto reload = runCapture("systemctl reload nginx.service");
-        if (reload.code != 0) {
+    if (!useCertbot) {
+        std::ostringstream out;
+        out << "setup nginx: Vaulthalla nginx integration configured\n";
+        out << "  site file: " << (createdSiteFile ? "installed" : "already present") << " (" << kNginxSiteAvailable << ")\n";
+        out << "  site link: " << (createdSiteLink ? "enabled" : "already enabled") << " (" << kNginxSiteEnabled << ")\n";
+        out << "  reload: " << reloadStatus;
+        return ok(out.str());
+    }
+
+    if (!fs::exists(kNginxManagedMarker))
+        return invalid("setup nginx: certbot mode requires Vaulthalla-managed nginx marker state");
+
+    bool prereqsInstalledNow = false;
+    if (const auto prereqError = ensureCertbotPrereqs(call, prereqsInstalledNow))
+        return invalid("setup nginx: " + *prereqError);
+
+    const bool hasExistingCert = hasCertbotManagedCertForDomain(certbotDomain);
+    const fs::path siteAvailablePath{kNginxSiteAvailable};
+    std::string certbotMode;
+    std::string postCertReloadStatus = reloadStatus;
+
+    if (hasExistingCert) {
+        certbotMode = "existing certificate detected (renew-safe path)";
+        const auto renew = runCapture("certbot renew --cert-name " + shellQuote(certbotDomain) + " --non-interactive");
+        if (renew.code != 0) {
             std::ostringstream err;
-            err << "setup nginx: site/config changes were applied and nginx -t passed, "
-                << "but nginx reload failed. Configuration was left in place.\n";
-            err << "reload failure: " << formatFailure("systemctl reload nginx.service", reload);
+            err << "setup nginx: existing certificate state detected for " << certbotDomain << ", "
+                << "but certbot renew failed\n"
+                << "renew failure: " << formatFailure("certbot renew --cert-name " + certbotDomain, renew);
             return invalid(err.str());
         }
-        reloadStatus = "nginx reloaded";
+    } else {
+        certbotMode = "no existing certificate detected (fresh issuance path)";
+
+        std::string currentContent;
+        if (const auto readErr = readFileToString(siteAvailablePath, currentContent))
+            return invalid("setup nginx: failed reading managed site before certbot issuance: " + *readErr);
+
+        const bool had80 = containsListen80(currentContent);
+        const bool had443 = containsListen443(currentContent);
+
+        const fs::path backupPath = fs::path(std::string(kNginxSiteAvailable) + ".vh-certbot.backup");
+        std::error_code ec;
+        fs::copy_file(siteAvailablePath, backupPath, fs::copy_options::overwrite_existing, ec);
+        if (ec)
+            return invalid("setup nginx: failed creating certbot backup of managed site: " + ec.message());
+
+        std::string rendered;
+        if (const auto renderError = renderManagedNginxConfig(certbotDomain, rendered))
+            return invalid("setup nginx: " + *renderError);
+        if (const auto writeErr = writeStringToFile(siteAvailablePath, rendered))
+            return invalid("setup nginx: failed writing certbot-prepared managed nginx config: " + *writeErr);
+
+        std::string prepReloadStatus;
+        if (const auto prepErr = validateAndReloadNginx(prepReloadStatus)) {
+            fs::copy_file(backupPath, siteAvailablePath, fs::copy_options::overwrite_existing, ec);
+            if (ec) {
+                return invalid(
+                    "setup nginx: certbot-prepared nginx config failed validation and backup restore also failed: " +
+                    ec.message() + ". original failure: " + *prepErr);
+            }
+
+            std::string restoreReloadStatus;
+            const auto restoreErr = validateAndReloadNginx(restoreReloadStatus);
+            if (restoreErr) {
+                return invalid(
+                    "setup nginx: certbot-prepared nginx config failed validation ('" + *prepErr +
+                    "') and backup restore validation also failed ('" + *restoreErr + "')");
+            }
+
+            return invalid(
+                "setup nginx: certbot-prepared nginx config failed validation/reload; restored previous managed config");
+        }
+
+        const auto certbotIssue = runCapture(
+            "certbot --nginx --non-interactive --agree-tos --register-unsafely-without-email "
+            "--keep-until-expiring --domain " + shellQuote(certbotDomain));
+        if (certbotIssue.code != 0) {
+            fs::copy_file(backupPath, siteAvailablePath, fs::copy_options::overwrite_existing, ec);
+            if (ec) {
+                return invalid(
+                    "setup nginx: certbot issuance failed and backup restore also failed: " + ec.message() +
+                    "\ncertbot failure: " + formatFailure("certbot --nginx --domain " + certbotDomain, certbotIssue));
+            }
+
+            std::string restoreReloadStatus;
+            const auto restoreErr = validateAndReloadNginx(restoreReloadStatus);
+            if (restoreErr) {
+                return invalid(
+                    "setup nginx: certbot issuance failed and backup restore validation/reload failed: " + *restoreErr +
+                    "\ncertbot failure: " + formatFailure("certbot --nginx --domain " + certbotDomain, certbotIssue));
+            }
+
+            return invalid(
+                "setup nginx: certbot issuance failed; restored previous managed nginx config safely\n"
+                "certbot failure: " + formatFailure("certbot --nginx --domain " + certbotDomain, certbotIssue));
+        }
+
+        fs::remove(backupPath, ec);
+
+        if (had80 && had443) {
+            if (call.io) {
+                call.io->print(
+                    "setup nginx: detected managed config with both :80 and :443 before issuance; normalized to "
+                    "managed HTTP-only certbot-preparation state before issuing certificate.\n");
+            }
+        }
+    }
+
+    if (const auto finalErr = validateAndReloadNginx(postCertReloadStatus)) {
+        std::ostringstream err;
+        err << "setup nginx: certbot flow completed, but final nginx validation/reload failed. "
+            << "Configuration was left in place.\n";
+        err << "failure: " << *finalErr;
+        return invalid(err.str());
     }
 
     std::ostringstream out;
-    out << "setup nginx: Vaulthalla nginx integration configured\n";
+    out << "setup nginx: Vaulthalla nginx integration configured with certbot handling\n";
     out << "  site file: " << (createdSiteFile ? "installed" : "already present") << " (" << kNginxSiteAvailable << ")\n";
     out << "  site link: " << (createdSiteLink ? "enabled" : "already enabled") << " (" << kNginxSiteEnabled << ")\n";
-    out << "  reload: " << reloadStatus;
+    out << "  certbot domain: " << certbotDomain << "\n";
+    out << "  certbot mode: " << certbotMode << "\n";
+    out << "  certbot prerequisites: " << (prereqsInstalledNow ? "installed via apt-get during this run" : "already present") << "\n";
+    out << "  reload: " << postCertReloadStatus;
     return ok(out.str());
 }
 

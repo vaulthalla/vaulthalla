@@ -111,6 +111,7 @@ If package-time automation skipped optional integration steps, admins can run:
 - `vh setup db`
 - `vh setup remote-db --host <host> --user <user> --database <name> --password-file <path>`
 - `vh setup nginx`
+- `vh setup nginx --certbot --domain <fqdn>`
 - `vh teardown nginx`
 
 These commands are explicit integration actions and are intended for controlled
@@ -142,5 +143,15 @@ Vaulthalla site path and marker:
 - `/var/lib/vaulthalla/nginx_site_managed`
 
 They do not claim ownership over unrelated nginx site configuration.
+
+For explicit certbot-backed nginx handling, `vh setup nginx --certbot --domain <fqdn>`:
+
+- validates root-run managed nginx state and certbot prerequisites
+- can prompt (default No) to install missing certbot packages via apt on
+  Debian/Ubuntu in interactive CLI context
+- uses renewal-safe behavior when certbot-managed certificate state already
+  exists for the requested domain
+- uses deterministic managed config preparation + validation for fresh issuance
+  and rolls back to prior managed config when preparation/issuance fails
 
  -- Cooper Larson <cooper@valkyrianlabs.com>  Tue, 21 Apr 2026 00:00:00 +0000
