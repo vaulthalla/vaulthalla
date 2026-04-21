@@ -1,8 +1,12 @@
-vaulthalla (0.32.1-1) unstable; urgency=medium
+vaulthalla (0.33.0-1) unstable; urgency=medium
 
-  - merge web into core monorepo layout
-  - major RBAC and protocol refactors
-  - integration test rewrite and build cleanup
-  - initial Debian packaging and release tooling foundation
+  - Implemented setup and teardown commands in shell protocols.
+  - Added certbot support for nginx setup with domain options.
+  - Added remote PostgreSQL setup command with configuration options.
+  - Adopted a low-prompt install policy, removing routine debconf prompts.
+  - Updated post-installation scripts to conditionally handle PostgreSQL bootstrap and nginx integration.
+  - Added cached draft support to changelog generation.
+  - Added CLI support for Debian changelog updates, including distribution and urgency options.
+  - Documented the transition from prompt-based installation to CLI-driven orchestration.
 
- -- Cooper Larson <cooper@valkyrianlabs.com>  Sun, 19 Apr 2026 10:33:00 +0000
+ -- Cooper Larson <cooper@valkyrianlabs.com>  Tue, 21 Apr 2026 22:38:22 +0000
