@@ -40,6 +40,8 @@ yarn-error.log*
 /debian/vaulthalla-server
 /debian/vaulthalla.substvars
 /debian/files
+/release/
+/.changelog_scratch
 
 # ═══════════════════════════════════════════════════════
 # 🌐 WEB (scoped to /web)

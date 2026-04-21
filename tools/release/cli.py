@@ -29,6 +29,7 @@ from tools.release.changelog.ai.stages.polish import render_polish_result_json, 
 from tools.release.changelog.ai.stages.triage import render_triage_result_json, run_triage_stage
 from tools.release.changelog.release_workflow import (
     parse_release_ai_settings,
+    refresh_debian_changelog_entry,
     resolve_release_changelog,
 )
 from tools.release.changelog.context_builder import build_release_context
@@ -272,7 +273,23 @@ def build_parser() -> argparse.ArgumentParser:
     changelog_release_parser.add_argument(
         "--manual-changelog-path",
         default="debian/changelog",
-        help="Manual changelog file used when AI is disabled/unavailable.",
+        help="Debian changelog file used for manual fallback and release entry updates.",
+    )
+    changelog_release_parser.add_argument(
+        "--debian-distribution",
+        default=None,
+        help=(
+            "Override Debian changelog distribution token (e.g. unstable/stable). "
+            "Defaults to RELEASE_DEBIAN_DISTRIBUTION env or current top-entry distribution."
+        ),
+    )
+    changelog_release_parser.add_argument(
+        "--debian-urgency",
+        default=None,
+        help=(
+            "Override Debian changelog urgency token (e.g. low/medium/high). "
+            "Defaults to RELEASE_DEBIAN_URGENCY env or current top-entry urgency."
+        ),
     )
     changelog_release_parser.set_defaults(func=cmd_changelog_release)
 
@@ -677,6 +694,32 @@ def cmd_changelog_release(args: argparse.Namespace) -> int:
                 print("Local base_url override status: set but not applied.")
     except Exception as exc:
         raise ValueError(f"Changelog release failed while writing selected output: {exc}") from exc
+
+    if selection.path == "manual":
+        print("Changelog release stage: Debian changelog entry update skipped (manual/no-AI path selected)")
+        return 0
+
+    try:
+        print("Changelog release stage: refresh Debian changelog top entry metadata + summary")
+        updated = refresh_debian_changelog_entry(
+            changelog_path=Path(args.manual_changelog_path)
+            if Path(args.manual_changelog_path).is_absolute()
+            else (repo_root / args.manual_changelog_path),
+            release_markdown=selection.content,
+            distribution=args.debian_distribution,
+            urgency=args.debian_urgency,
+            environ=os.environ,
+        )
+        print(f"Updated Debian changelog entry at {updated.path}")
+        print(
+            "Debian entry metadata: "
+            f"{updated.package} ({updated.full_version}) {updated.distribution}; urgency={updated.urgency}"
+        )
+        print(f"Debian entry maintainer: {updated.maintainer}")
+        print(f"Debian entry timestamp:  {updated.timestamp}")
+    except Exception as exc:
+        raise ValueError(f"Changelog release failed while updating Debian changelog: {exc}") from exc
+
     return 0
 
 

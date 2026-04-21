@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -7,6 +9,7 @@ from unittest.mock import patch
 
 from tools.release.changelog.release_workflow import (
     parse_release_ai_settings,
+    refresh_debian_changelog_entry,
     resolve_local_release_pipeline_config,
     resolve_release_changelog,
     validate_manual_changelog_current,
@@ -166,6 +169,112 @@ profiles:
                     repo_root=repo_root,
                     changelog_path="debian/changelog",
                 )
+
+    def test_refresh_debian_changelog_entry_rewrites_full_top_entry(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            changelog_path = repo_root / "debian" / "changelog"
+            _write(
+                changelog_path,
+                (
+                    "vaulthalla (1.2.3-2) unstable; urgency=medium\n\n"
+                    "  - previous line\n\n"
+                    " -- Test User <test@example.com>  Sun, 19 Apr 2026 00:00:00 +0000\n\n"
+                    "vaulthalla (1.2.2-1) unstable; urgency=medium\n\n"
+                    "  - older entry\n\n"
+                    " -- Test User <test@example.com>  Sat, 18 Apr 2026 00:00:00 +0000\n"
+                ),
+            )
+
+            result = refresh_debian_changelog_entry(
+                changelog_path=changelog_path,
+                release_markdown="# Release\n- alpha change\n- beta change\n",
+                now=datetime(2026, 4, 21, 18, 30, 0, tzinfo=timezone.utc),
+            )
+
+            rendered = changelog_path.read_text(encoding="utf-8")
+            self.assertEqual(result.package, "vaulthalla")
+            self.assertEqual(result.full_version, "1.2.3-2")
+            self.assertEqual(result.distribution, "unstable")
+            self.assertEqual(result.urgency, "medium")
+            self.assertIn("vaulthalla (1.2.3-2) unstable; urgency=medium", rendered)
+            self.assertIn("  - alpha change", rendered)
+            self.assertIn("  - beta change", rendered)
+            self.assertIn(" -- Test User <test@example.com>  Tue, 21 Apr 2026 18:30:00 +0000", rendered)
+            self.assertIn("vaulthalla (1.2.2-1) unstable; urgency=medium", rendered)
+
+    def test_refresh_debian_changelog_entry_honors_distribution_urgency_override(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            changelog_path = repo_root / "debian" / "changelog"
+            _make_debian_changelog(changelog_path, "2.1.0-1")
+
+            result = refresh_debian_changelog_entry(
+                changelog_path=changelog_path,
+                release_markdown="- release note one\n",
+                distribution="stable",
+                urgency="high",
+                now=datetime(2026, 4, 21, 19, 0, 0, tzinfo=timezone.utc),
+            )
+
+            rendered = changelog_path.read_text(encoding="utf-8")
+            self.assertEqual(result.distribution, "stable")
+            self.assertEqual(result.urgency, "high")
+            self.assertIn("vaulthalla (2.1.0-1) stable; urgency=high", rendered)
+
+    def test_refresh_debian_changelog_entry_honors_env_distribution_urgency_and_maintainer(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            changelog_path = repo_root / "debian" / "changelog"
+            _make_debian_changelog(changelog_path, "2.1.0-1")
+
+            result = refresh_debian_changelog_entry(
+                changelog_path=changelog_path,
+                release_markdown="- release note one\n",
+                environ={
+                    "RELEASE_DEBIAN_DISTRIBUTION": "stable",
+                    "RELEASE_DEBIAN_URGENCY": "low",
+                    "DEBFULLNAME": "Release Bot",
+                    "DEBEMAIL": "release@example.com",
+                },
+                now=datetime(2026, 4, 21, 19, 30, 0, tzinfo=timezone.utc),
+            )
+
+            rendered = changelog_path.read_text(encoding="utf-8")
+            self.assertEqual(result.distribution, "stable")
+            self.assertEqual(result.urgency, "low")
+            self.assertEqual(result.maintainer, "Release Bot <release@example.com>")
+            self.assertIn("vaulthalla (2.1.0-1) stable; urgency=low", rendered)
+            self.assertIn(" -- Release Bot <release@example.com>  Tue, 21 Apr 2026 19:30:00 +0000", rendered)
+
+    def test_refresh_debian_changelog_entry_rejects_invalid_distribution(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            changelog_path = repo_root / "debian" / "changelog"
+            _make_debian_changelog(changelog_path, "2.1.0-1")
+
+            with self.assertRaisesRegex(ValueError, "invalid distribution"):
+                _ = refresh_debian_changelog_entry(
+                    changelog_path=changelog_path,
+                    release_markdown="- release note\n",
+                    distribution="invalid token",
+                )
+
+    def test_refresh_debian_changelog_entry_uses_rfc2822_timestamp_format(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            changelog_path = repo_root / "debian" / "changelog"
+            _make_debian_changelog(changelog_path, "2.1.0-1")
+
+            _ = refresh_debian_changelog_entry(
+                changelog_path=changelog_path,
+                release_markdown="- note\n",
+                now=datetime(2026, 4, 21, 20, 45, 0, tzinfo=timezone.utc),
+            )
+
+            rendered = changelog_path.read_text(encoding="utf-8")
+            signature_line = next(line for line in rendered.splitlines() if line.startswith(" -- "))
+            self.assertRegex(signature_line, re.compile(r"^ -- .+  [A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} [+-]\d{4}$"))
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ Current roadmap focus is live distribution/runtime validation and operational ha
 - Phase 10a: deterministic changelog path selection (OpenAI -> local gated fallback -> manual stale-check path).
 - Phase 10b: release workflow diagnostics and preflight hardening.
 - Phase 10c: artifact completeness validation for Debian/web/staged release outputs.
-- Phase 11: install/deployment completion (web runtime install, service alignment, conservative nginx path, debconf/templates integration, lifecycle hardening).
+- Phase 11: install/deployment completion (web runtime install, service alignment, conservative nginx path, low-prompt maintainer-script policy, lifecycle hardening).
 - Phase 12a: Nexus publication automation restored and policy-gated in release workflow.
 
 ## Current Operational Spine

@@ -88,13 +88,13 @@ Validation flows
 ================
 
 1. Default install:
-   - `sudo apt install ./vaulthalla_<version>_<arch>.deb`
+   - `sudo apt install vaulthalla`
 2. Lean install:
-   - `sudo apt install --no-install-recommends ./vaulthalla_<version>_<arch>.deb`
+   - `sudo apt install --no-install-recommends vaulthalla`
 3. DB override install:
-   - `VH_SKIP_DB_BOOTSTRAP=1 sudo -E apt install ./vaulthalla_<version>_<arch>.deb`
+   - `VH_SKIP_DB_BOOTSTRAP=1 sudo -E apt install vaulthalla`
 4. nginx override install:
-   - `VH_SKIP_NGINX_CONFIG=1 sudo -E apt install ./vaulthalla_<version>_<arch>.deb`
+   - `VH_SKIP_NGINX_CONFIG=1 sudo -E apt install vaulthalla`
 5. Verify payload:
    - `test -f /usr/share/vaulthalla-web/server.js`
    - `test -f /usr/share/vaulthalla/psql/000_schema.sql`
@@ -102,6 +102,10 @@ Validation flows
    - `systemctl status vaulthalla.service`
    - `systemctl status vaulthalla-cli.socket`
    - `systemctl status vaulthalla-web.service`
+
+If testing local package files directly, replace package names above with:
+
+- `./vaulthalla_<version>_<arch>.deb`
 
 CLI integration follow-up (Phase 3)
 ===================================

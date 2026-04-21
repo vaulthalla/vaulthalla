@@ -55,6 +55,10 @@ class DebianInstallFlowContractTests(unittest.TestCase):
     def test_readme_documents_phase3_cli_integration_followups(self) -> None:
         readme = (self._repo_root() / "debian" / "README.Debian").read_text(encoding="utf-8")
         required = (
+            "apt install vaulthalla",
+            "apt install --no-install-recommends vaulthalla",
+            "VH_SKIP_DB_BOOTSTRAP=1 sudo -E apt install vaulthalla",
+            "VH_SKIP_NGINX_CONFIG=1 sudo -E apt install vaulthalla",
             "vh setup db",
             "vh setup remote-db",
             "vh setup nginx",
@@ -66,6 +70,30 @@ class DebianInstallFlowContractTests(unittest.TestCase):
         )
         for fragment in required:
             self.assertIn(fragment, readme)
+
+    def test_top_level_readme_matches_low_prompt_install_contract(self) -> None:
+        readme = (self._repo_root() / "README.md").read_text(encoding="utf-8")
+        required = (
+            "sudo apt install vaulthalla",
+            "sudo apt install --no-install-recommends vaulthalla",
+            "VH_SKIP_DB_BOOTSTRAP=1 sudo -E apt install vaulthalla",
+            "VH_SKIP_NGINX_CONFIG=1 sudo -E apt install vaulthalla",
+            "vh setup db",
+            "vh setup remote-db",
+            "vh setup nginx",
+            "vh setup nginx --certbot --domain <domain>",
+            "vh teardown nginx",
+            "Schema/migration ownership remains with runtime startup (`SqlDeployer`)",
+        )
+        forbidden = (
+            "Debian Install Prompts",
+            "Initialize PostgreSQL database?",
+            "Super-admin Linux UID",
+        )
+        for fragment in required:
+            self.assertIn(fragment, readme)
+        for fragment in forbidden:
+            self.assertNotIn(fragment, readme)
 
     def test_shell_usage_and_command_registry_include_setup_and_teardown(self) -> None:
         repo = self._repo_root()

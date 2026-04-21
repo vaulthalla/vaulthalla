@@ -77,8 +77,8 @@ Vaulthalla can be installed either via the official Debian/Ubuntu package
 ### Option 1: Debian / Ubuntu Package (Recommended)
 
 > ⚠️ **Root access required**  
-> The package installs system services, manages PostgreSQL, and mounts a
-> privileged FUSE filesystem.
+> The package installs system services and a privileged FUSE runtime.
+> Optional DB/nginx integration is conservative and low-prompt by default.
 
     sudo curl -fsSL https://apt.vaulthalla.sh/pubkey.gpg \
       -o /etc/apt/trusted.gpg.d/vaulthalla.gpg
@@ -89,28 +89,39 @@ Vaulthalla can be installed either via the official Debian/Ubuntu package
     sudo apt update
     sudo apt install vaulthalla
 
-#### Debian Install Prompts
+#### Debian Install Modes
 
-During installation, you will be prompted for the following:
+Default install (recommended):
 
-**1. Initialize PostgreSQL database?**  
-By default, the installer will attempt to create the required PostgreSQL
-database and user automatically.
+    sudo apt install vaulthalla
 
-- Select **Yes** (recommended) to allow Vaulthalla to initialize PostgreSQL.
-- Select **No** only if you intend to provision the database manually.
+Lean install (skip recommended integrations):
 
-Manual setup instructions are available in:  
+    sudo apt install --no-install-recommends vaulthalla
+
+Advanced package-time opt-out overrides:
+
+    VH_SKIP_DB_BOOTSTRAP=1 sudo -E apt install vaulthalla
+    VH_SKIP_NGINX_CONFIG=1 sudo -E apt install vaulthalla
+
+Package install may stage a baseline nginx artifact, but final nginx deployment
+is owned by CLI setup. Package install does not prompt for super-admin UID;
+initial ownership is first-use based.
+
+Post-install CLI follow-up:
+
+    vh setup db
+    vh setup remote-db
+    vh setup nginx
+    vh setup nginx --certbot --domain <domain>
+    vh teardown nginx
+
+Local DB bootstrap (`vh setup db`) and remote DB configuration
+(`vh setup remote-db`) are intentionally separate flows.
+Schema/migration ownership remains with runtime startup (`SqlDeployer`).
+
+Manual setup and install policy details are in:
 `/usr/share/doc/vaulthalla/README.Debian`
-
-**2. Super-admin Linux UID**  
-Vaulthalla maps a privileged internal super-admin account to a Linux user
-for filesystem and administrative operations.
-
-- Leave blank or select **auto** to assign the installing user automatically.
-- Enter a numeric UID to bind super-admin privileges to a specific user.
-
-This UID is assigned once and is not modified automatically thereafter.
 
 ---
 

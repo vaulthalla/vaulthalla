@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import re
+from datetime import datetime, timezone
+from email.utils import format_datetime
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Literal, Mapping
@@ -29,6 +31,8 @@ ReleaseChangelogPath = Literal["openai", "local", "manual"]
 
 DEFAULT_RELEASE_AI_MODE: ReleaseAIMode = "auto"
 DEFAULT_RELEASE_OPENAI_PROFILE = "openai-balanced"
+DEBIAN_CHANGELOG_SIGNATURE_PATTERN = re.compile(r"^ -- (?P<maintainer>.+?)  (?P<timestamp>.+)$")
+DEBIAN_CHANGELOG_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9+.-]*$")
 
 
 @dataclass(frozen=True)
@@ -55,6 +59,29 @@ class ReleaseChangelogSelection:
     path: ReleaseChangelogPath
     content: str
     local_base_url_overrode_profile: bool = False
+
+
+@dataclass(frozen=True)
+class DebianChangelogUpdateResult:
+    path: Path
+    package: str
+    full_version: str
+    distribution: str
+    urgency: str
+    maintainer: str
+    timestamp: str
+
+
+@dataclass(frozen=True)
+class _DebianTopEntry:
+    package: str
+    full_version: str
+    distribution: str
+    urgency: str
+    maintainer: str
+    start_index: int
+    end_index: int
+    lines: list[str]
 
 
 def parse_release_ai_settings(environ: Mapping[str, str] | None = None) -> ReleaseAISettings:
@@ -230,6 +257,64 @@ def validate_manual_changelog_current(
         version=str(version),
         detected_target=str(version),
         content=content,
+    )
+
+
+def refresh_debian_changelog_entry(
+    *,
+    changelog_path: Path | str,
+    release_markdown: str,
+    distribution: str | None = None,
+    urgency: str | None = None,
+    environ: Mapping[str, str] | None = None,
+    now: datetime | None = None,
+) -> DebianChangelogUpdateResult:
+    env = dict(os.environ if environ is None else environ)
+    target_path = Path(changelog_path).resolve()
+    if not target_path.is_file():
+        raise ValueError(f"Debian changelog update failed: file not found: {target_path}")
+
+    original = target_path.read_text(encoding="utf-8")
+    top = _parse_debian_top_entry(original, target_path)
+    maintainer = _resolve_debian_maintainer(top.maintainer, env)
+    resolved_distribution = _resolve_debian_token(
+        explicit=distribution,
+        env_value=env.get("RELEASE_DEBIAN_DISTRIBUTION"),
+        fallback=top.distribution,
+        field_name="distribution",
+    )
+    resolved_urgency = _resolve_debian_token(
+        explicit=urgency,
+        env_value=env.get("RELEASE_DEBIAN_URGENCY"),
+        fallback=top.urgency,
+        field_name="urgency",
+    )
+    bullet_lines = _extract_debian_bullets(release_markdown)
+    now_value = now if now is not None else datetime.now(timezone.utc)
+    if now_value.tzinfo is None:
+        now_value = now_value.replace(tzinfo=timezone.utc)
+    timestamp = format_datetime(now_value.astimezone(timezone.utc))
+
+    rendered_entry = _render_debian_entry(
+        package=top.package,
+        full_version=top.full_version,
+        distribution=resolved_distribution,
+        urgency=resolved_urgency,
+        maintainer=maintainer,
+        timestamp=timestamp,
+        bullets=bullet_lines,
+    )
+    updated = _replace_debian_top_entry(top, rendered_entry)
+    target_path.write_text(updated, encoding="utf-8")
+
+    return DebianChangelogUpdateResult(
+        path=target_path,
+        package=top.package,
+        full_version=top.full_version,
+        distribution=resolved_distribution,
+        urgency=resolved_urgency,
+        maintainer=maintainer,
+        timestamp=timestamp,
     )
 
 
@@ -467,3 +552,189 @@ def _normalize_or_default(raw: str | None, default: str) -> str:
     normalized = _normalize_optional_string(raw)
     return normalized if normalized is not None else default
 
+
+def _parse_debian_top_entry(content: str, path: Path) -> _DebianTopEntry:
+    lines = content.splitlines()
+    if not lines:
+        raise ValueError(f"Debian changelog update failed: changelog is empty: {path}")
+
+    start_index = -1
+    header_line = ""
+    for idx, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped:
+            start_index = idx
+            header_line = stripped
+            break
+    if start_index < 0:
+        raise ValueError(f"Debian changelog update failed: changelog is empty: {path}")
+
+    header_match = CHANGELOG_HEADER_PATTERN.fullmatch(header_line)
+    if not header_match:
+        raise ValueError(
+            "Debian changelog update failed: could not parse top header "
+            f"in {path}: {header_line}"
+        )
+
+    signature_index = -1
+    maintainer = ""
+    for idx in range(start_index + 1, len(lines)):
+        match = DEBIAN_CHANGELOG_SIGNATURE_PATTERN.fullmatch(lines[idx])
+        if match:
+            signature_index = idx
+            maintainer = match.group("maintainer").strip()
+            break
+
+    if signature_index < 0:
+        raise ValueError(
+            "Debian changelog update failed: missing maintainer signature line in top entry "
+            f"at {path}."
+        )
+
+    if not maintainer:
+        raise ValueError(
+            "Debian changelog update failed: top entry maintainer signature is empty "
+            f"in {path}."
+        )
+
+    end_index = signature_index + 1
+    if end_index < len(lines) and lines[end_index].strip() == "":
+        end_index += 1
+
+    return _DebianTopEntry(
+        package=header_match.group("package"),
+        full_version=header_match.group("full_version"),
+        distribution=header_match.group("distribution"),
+        urgency=header_match.group("urgency"),
+        maintainer=maintainer,
+        start_index=start_index,
+        end_index=end_index,
+        lines=lines,
+    )
+
+
+def _resolve_debian_maintainer(existing: str, env: Mapping[str, str]) -> str:
+    name = _normalize_optional_string(env.get("DEBFULLNAME"))
+    email = _normalize_optional_string(env.get("DEBEMAIL"))
+    if name and email:
+        return f"{name} <{email}>"
+    return existing
+
+
+def _resolve_debian_token(
+    *,
+    explicit: str | None,
+    env_value: str | None,
+    fallback: str,
+    field_name: str,
+) -> str:
+    value = _normalize_optional_string(explicit)
+    if value is None:
+        value = _normalize_optional_string(env_value)
+    if value is None:
+        value = fallback
+
+    if not DEBIAN_CHANGELOG_TOKEN_PATTERN.fullmatch(value):
+        raise ValueError(
+            f"Debian changelog update failed: invalid {field_name} '{value}'. "
+            f"Use a Debian token like 'unstable' or 'medium'."
+        )
+    return value
+
+
+def _extract_debian_bullets(markdown: str) -> list[str]:
+    bullets: list[str] = []
+    code_fence_open = False
+
+    for raw_line in markdown.splitlines():
+        stripped = raw_line.strip()
+        if stripped.startswith("```"):
+            code_fence_open = not code_fence_open
+            continue
+        if code_fence_open or not stripped:
+            continue
+
+        bullet_match = re.match(r"^(?:[-*+]|\d+\.)\s+(?P<item>.+)$", stripped)
+        if not bullet_match:
+            continue
+
+        normalized = _normalize_bullet_text(bullet_match.group("item"))
+        if normalized and normalized not in bullets:
+            bullets.append(normalized)
+        if len(bullets) >= 8:
+            break
+
+    if bullets:
+        return bullets
+
+    # Fallback for markdown with no list markers: use up to 4 meaningful lines.
+    fallback: list[str] = []
+    for raw_line in markdown.splitlines():
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("#") or stripped.startswith(">") or stripped.startswith("```"):
+            continue
+        normalized = _normalize_bullet_text(stripped)
+        if normalized and normalized not in fallback:
+            fallback.append(normalized)
+        if len(fallback) >= 4:
+            break
+
+    if not fallback:
+        raise ValueError(
+            "Debian changelog update failed: no usable summary lines were found in generated release markdown."
+        )
+    return fallback
+
+
+def _normalize_bullet_text(text: str) -> str:
+    normalized = text.strip()
+    normalized = re.sub(r"`([^`]+)`", r"\1", normalized)
+    normalized = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return normalized
+
+
+def _render_debian_entry(
+    *,
+    package: str,
+    full_version: str,
+    distribution: str,
+    urgency: str,
+    maintainer: str,
+    timestamp: str,
+    bullets: list[str],
+) -> str:
+    lines = [
+        f"{package} ({full_version}) {distribution}; urgency={urgency}",
+        "",
+    ]
+    for bullet in bullets:
+        lines.append(f"  - {bullet}")
+    lines.extend(
+        [
+            "",
+            f" -- {maintainer}  {timestamp}",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _replace_debian_top_entry(top: _DebianTopEntry, rendered_entry: str) -> str:
+    lines = top.lines
+    prefix_lines = lines[:top.start_index]
+    suffix_lines = lines[top.end_index:]
+
+    output_parts: list[str] = []
+    if prefix_lines:
+        output_parts.append("\n".join(prefix_lines).rstrip("\n"))
+    output_parts.append(rendered_entry.rstrip("\n"))
+    if suffix_lines:
+        output_parts.append("\n".join(suffix_lines).lstrip("\n"))
+
+    merged = "\n".join(part for part in output_parts if part)
+    if not merged.endswith("\n"):
+        merged += "\n"
+    return merged

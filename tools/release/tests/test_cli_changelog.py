@@ -156,6 +156,8 @@ class CliChangelogDraftTests(unittest.TestCase):
         self.assertEqual(parsed_release.raw_output, "/tmp/raw.md")
         self.assertEqual(parsed_release.payload_output, "/tmp/release-payload.json")
         self.assertEqual(parsed_release.manual_changelog_path, "debian/changelog")
+        self.assertIsNone(parsed_release.debian_distribution)
+        self.assertIsNone(parsed_release.debian_urgency)
 
         parsed_ai_check = parser.parse_args(
             [
@@ -281,6 +283,8 @@ class CliChangelogReleaseTests(unittest.TestCase):
         raw_output: str = "release/changelog.raw.md",
         payload_output: str = "release/changelog.payload.json",
         manual_changelog_path: str = "debian/changelog",
+        debian_distribution: str | None = None,
+        debian_urgency: str | None = None,
     ) -> argparse.Namespace:
         return argparse.Namespace(
             repo_root=repo_root,
@@ -289,6 +293,8 @@ class CliChangelogReleaseTests(unittest.TestCase):
             raw_output=raw_output,
             payload_output=payload_output,
             manual_changelog_path=manual_changelog_path,
+            debian_distribution=debian_distribution,
+            debian_urgency=debian_urgency,
         )
 
     def test_release_command_writes_evidence_and_selected_changelog(self) -> None:
@@ -344,6 +350,76 @@ class CliChangelogReleaseTests(unittest.TestCase):
             self.assertIn("Wrote changelog raw evidence to", rendered)
             self.assertIn("Wrote changelog payload evidence to", rendered)
             self.assertIn("Wrote release changelog to", rendered)
+            self.assertIn("Debian changelog entry update skipped", rendered)
+
+    def test_release_command_refreshes_debian_changelog_for_generated_selection(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "release.md"
+            raw_target = Path(temp_dir) / "raw.md"
+            payload_target = Path(temp_dir) / "payload.json"
+            args = self._args(
+                output=str(target),
+                raw_output=str(raw_target),
+                payload_output=str(payload_target),
+                debian_distribution="stable",
+                debian_urgency="high",
+            )
+            out = StringIO()
+
+            with (
+                patch("tools.release.cli.build_changelog_context", return_value=object()),
+                patch("tools.release.cli.render_release_changelog", return_value="# Raw Draft\n"),
+                patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
+                patch("tools.release.cli.render_ai_payload_json", return_value='{"schema_version":"x"}\n'),
+                patch(
+                    "tools.release.cli.parse_release_ai_settings",
+                    return_value=type(
+                        "_ReleaseSettings",
+                        (),
+                        {
+                            "mode": "auto",
+                            "openai_profile": "openai-balanced",
+                            "openai_api_key_present": True,
+                            "local_enabled": False,
+                            "local_profile": None,
+                            "local_base_url_override": None,
+                            "local_api_key": None,
+                        },
+                    )(),
+                ),
+                patch(
+                    "tools.release.cli.resolve_release_changelog",
+                    return_value=type(
+                        "_Selection",
+                        (),
+                        {"path": "openai", "content": "# Release\n- change one\n", "local_base_url_overrode_profile": False},
+                    )(),
+                ),
+                patch(
+                    "tools.release.cli.refresh_debian_changelog_entry",
+                    return_value=type(
+                        "_DebianUpdate",
+                        (),
+                        {
+                            "path": Path(temp_dir) / "debian" / "changelog",
+                            "package": "vaulthalla",
+                            "full_version": "1.2.3-1",
+                            "distribution": "stable",
+                            "urgency": "high",
+                            "maintainer": "Test User <test@example.com>",
+                            "timestamp": "Tue, 21 Apr 2026 20:00:00 +0000",
+                        },
+                    )(),
+                ) as refresh_entry,
+                redirect_stdout(out),
+            ):
+                rc = cli.cmd_changelog_release(args)
+
+            self.assertEqual(rc, 0)
+            refresh_entry.assert_called_once()
+            self.assertEqual(refresh_entry.call_args.kwargs["release_markdown"], "# Release\n- change one\n")
+            self.assertEqual(refresh_entry.call_args.kwargs["distribution"], "stable")
+            self.assertEqual(refresh_entry.call_args.kwargs["urgency"], "high")
 
 
 class CliChangelogAICheckTests(unittest.TestCase):

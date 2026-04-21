@@ -5,10 +5,23 @@ import unittest
 
 
 class ReleaseWorkflowContractTests(unittest.TestCase):
+    def _repo_root(self) -> Path:
+        return Path(__file__).resolve().parents[4]
+
     def _workflow(self) -> str:
-        repo_root = Path(__file__).resolve().parents[4]
+        repo_root = self._repo_root()
         workflow_path = repo_root / ".github" / "workflows" / "release.yml"
         return workflow_path.read_text(encoding="utf-8")
+
+    def _package_action(self) -> str:
+        repo_root = self._repo_root()
+        action_path = repo_root / ".github" / "actions" / "package" / "action.yml"
+        return action_path.read_text(encoding="utf-8")
+
+    def test_release_workflow_exposes_debian_distribution_and_urgency_env(self) -> None:
+        workflow = self._workflow()
+        self.assertIn("RELEASE_DEBIAN_DISTRIBUTION", workflow)
+        self.assertIn("RELEASE_DEBIAN_URGENCY", workflow)
 
     def test_github_release_assets_are_prepared_via_deduped_manifest_step(self) -> None:
         workflow = self._workflow()
@@ -24,6 +37,14 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         self.assertNotIn("release/**/**/*", workflow)
         self.assertNotIn("release/**/*", workflow)
         self.assertNotIn("release/*", workflow)
+
+    def test_package_action_preflight_validates_debian_distribution_and_urgency_tokens(self) -> None:
+        action = self._package_action()
+        self.assertIn("RELEASE_DEBIAN_DISTRIBUTION", action)
+        self.assertIn("RELEASE_DEBIAN_URGENCY", action)
+        self.assertIn("debian_token_regex=", action)
+        self.assertIn("RELEASE_DEBIAN_DISTRIBUTION must be a Debian token", action)
+        self.assertIn("RELEASE_DEBIAN_URGENCY must be a Debian token", action)
 
 
 if __name__ == "__main__":

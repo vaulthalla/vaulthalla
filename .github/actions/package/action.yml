@@ -25,6 +25,8 @@ runs:
         echo "[preflight] RELEASE_LOCAL_LLM_ENABLED=${RELEASE_LOCAL_LLM_ENABLED:-<unset>}"
         echo "[preflight] RELEASE_LOCAL_LLM_PROFILE=${RELEASE_LOCAL_LLM_PROFILE:-<unset>}"
         echo "[preflight] RELEASE_LOCAL_LLM_BASE_URL=${RELEASE_LOCAL_LLM_BASE_URL:-<unset>}"
+        echo "[preflight] RELEASE_DEBIAN_DISTRIBUTION=${RELEASE_DEBIAN_DISTRIBUTION:-<unset>}"
+        echo "[preflight] RELEASE_DEBIAN_URGENCY=${RELEASE_DEBIAN_URGENCY:-<unset>}"
         if [ -n "${OPENAI_API_KEY:-}" ]; then
           echo "[preflight] OPENAI_API_KEY configured: yes"
         else
@@ -53,6 +55,16 @@ runs:
             echo "::error::Release preflight failed: RELEASE_AI_MODE=local-only requires RELEASE_LOCAL_LLM_PROFILE."
             exit 1
           fi
+        fi
+
+        debian_token_regex='^[A-Za-z0-9][A-Za-z0-9+.-]*$'
+        if [ -n "${RELEASE_DEBIAN_DISTRIBUTION:-}" ] && ! [[ "${RELEASE_DEBIAN_DISTRIBUTION}" =~ $debian_token_regex ]]; then
+          echo "::error::Release preflight failed: RELEASE_DEBIAN_DISTRIBUTION must be a Debian token (example: unstable)."
+          exit 1
+        fi
+        if [ -n "${RELEASE_DEBIAN_URGENCY:-}" ] && ! [[ "${RELEASE_DEBIAN_URGENCY}" =~ $debian_token_regex ]]; then
+          echo "::error::Release preflight failed: RELEASE_DEBIAN_URGENCY must be a Debian token (example: medium)."
+          exit 1
         fi
 
         if [ ! -f VERSION ]; then
