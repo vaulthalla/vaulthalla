@@ -43,6 +43,7 @@ Deterministic provider order:
 
 - hosted OpenAI
 - local OpenAI-compatible endpoint (explicitly gated by `RELEASE_LOCAL_LLM_ENABLED=true`)
+- cached local draft (`.changelog_scratch/changelog.draft.md`)
 - manual/no-AI path with changelog stale check against `VERSION`
 
 When set, `RELEASE_LOCAL_LLM_BASE_URL` explicitly overrides the local profile `base_url` and is logged.
@@ -50,6 +51,8 @@ When set, `RELEASE_LOCAL_LLM_BASE_URL` explicitly overrides the local profile `b
 Debian changelog generation contract:
 
 - `python3 -m tools.release changelog release` writes release evidence artifacts and the selected release markdown.
+- `python3 -m tools.release changelog ai-draft` writes a cached draft artifact under `.changelog_scratch` by default.
+- `python3 -m tools.release changelog ai-release` runs AI draft generation and then finalizes Debian changelog from the freshly cached draft path (no manual copy/paste handoff).
 - For generated paths (`openai` or `local`), it also refreshes the top `debian/changelog` entry as a full Debian record:
   - package name + full Debian version
   - distribution token
@@ -61,7 +64,12 @@ Debian changelog generation contract:
   - CLI flags: `--debian-distribution`, `--debian-urgency`
   - env fallbacks: `RELEASE_DEBIAN_DISTRIBUTION`, `RELEASE_DEBIAN_URGENCY`
   - final fallback: existing top-entry values
-- Manual/no-AI path (`debian/changelog` fallback) is stale-checked and does not blindly rewrite the changelog.
+- Manual/no-AI path (`debian/changelog` fallback) is stale-checked, explicitly logged as fallback, and does not blindly rewrite the changelog.
+
+Scratch artifact policy:
+
+- `.changelog_scratch/` is volatile local generation state, not canonical release truth.
+- Scratch artifacts are cleared on version transitions driven by `set-version`, `bump`, and `sync` when upstream version alignment changes.
 
 ## Artifact/Packaging Contract
 

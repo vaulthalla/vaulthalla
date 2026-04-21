@@ -11,6 +11,7 @@ from unittest.mock import call, patch
 from tools.release import cli
 from tools.release.changelog.ai.config import AIDynamicRatioTokenBudget, DEFAULT_AI_DRAFT_MODEL
 from tools.release.changelog.ai.providers import ProviderPreflightResult
+from tools.release.changelog.release_workflow import ReleaseAISettings
 from tools.release.version.models import Version
 
 
@@ -156,8 +157,27 @@ class CliChangelogDraftTests(unittest.TestCase):
         self.assertEqual(parsed_release.raw_output, "/tmp/raw.md")
         self.assertEqual(parsed_release.payload_output, "/tmp/release-payload.json")
         self.assertEqual(parsed_release.manual_changelog_path, "debian/changelog")
+        self.assertEqual(parsed_release.cached_draft_path, ".changelog_scratch/changelog.draft.md")
         self.assertIsNone(parsed_release.debian_distribution)
         self.assertIsNone(parsed_release.debian_urgency)
+
+        parsed_ai_release = parser.parse_args(
+            [
+                "changelog",
+                "ai-release",
+                "--ai-profile",
+                "openai-balanced",
+                "--draft-output",
+                "/tmp/draft.md",
+                "--output",
+                "/tmp/release.md",
+            ]
+        )
+        self.assertEqual(parsed_ai_release.command, "changelog")
+        self.assertEqual(parsed_ai_release.changelog_command, "ai-release")
+        self.assertEqual(parsed_ai_release.ai_profile, "openai-balanced")
+        self.assertEqual(parsed_ai_release.draft_output, "/tmp/draft.md")
+        self.assertEqual(parsed_ai_release.output, "/tmp/release.md")
 
         parsed_ai_check = parser.parse_args(
             [
@@ -279,10 +299,11 @@ class CliChangelogReleaseTests(unittest.TestCase):
         *,
         repo_root: str = ".",
         since_tag: str | None = None,
-        output: str = "release/changelog.release.md",
-        raw_output: str = "release/changelog.raw.md",
-        payload_output: str = "release/changelog.payload.json",
+        output: str = ".changelog_scratch/changelog.release.md",
+        raw_output: str = ".changelog_scratch/changelog.raw.md",
+        payload_output: str = ".changelog_scratch/changelog.payload.json",
         manual_changelog_path: str = "debian/changelog",
+        cached_draft_path: str = ".changelog_scratch/changelog.draft.md",
         debian_distribution: str | None = None,
         debian_urgency: str | None = None,
     ) -> argparse.Namespace:
@@ -293,6 +314,7 @@ class CliChangelogReleaseTests(unittest.TestCase):
             raw_output=raw_output,
             payload_output=payload_output,
             manual_changelog_path=manual_changelog_path,
+            cached_draft_path=cached_draft_path,
             debian_distribution=debian_distribution,
             debian_urgency=debian_urgency,
         )
@@ -420,6 +442,59 @@ class CliChangelogReleaseTests(unittest.TestCase):
             self.assertEqual(refresh_entry.call_args.kwargs["release_markdown"], "# Release\n- change one\n")
             self.assertEqual(refresh_entry.call_args.kwargs["distribution"], "stable")
             self.assertEqual(refresh_entry.call_args.kwargs["urgency"], "high")
+
+
+class CliChangelogAIReleaseTests(unittest.TestCase):
+    def _args(self) -> argparse.Namespace:
+        return argparse.Namespace(
+            repo_root=".",
+            since_tag=None,
+            draft_output=".changelog_scratch/changelog.draft.md",
+            output=".changelog_scratch/changelog.release.md",
+            raw_output=".changelog_scratch/changelog.raw.md",
+            payload_output=".changelog_scratch/changelog.payload.json",
+            manual_changelog_path="debian/changelog",
+            debian_distribution=None,
+            debian_urgency=None,
+            save_json=None,
+            ai_profile="openai-balanced",
+            model=None,
+            provider="openai",
+            base_url=None,
+            use_triage=False,
+            save_triage_json=None,
+            polish=False,
+            save_polish_json=None,
+        )
+
+    def test_ai_release_runs_ai_draft_then_forced_cached_release(self) -> None:
+        args = self._args()
+        out = StringIO()
+        settings = ReleaseAISettings(
+            mode="auto",
+            openai_profile="openai-balanced",
+            openai_api_key_present=True,
+            local_enabled=False,
+            local_profile=None,
+            local_base_url_override=None,
+            local_api_key=None,
+        )
+
+        with (
+            patch("tools.release.cli.cmd_changelog_ai_draft", return_value=0) as run_ai_draft,
+            patch("tools.release.cli.parse_release_ai_settings", return_value=settings),
+            patch("tools.release.cli._run_changelog_release_with_settings", return_value=0) as run_release,
+            redirect_stdout(out),
+        ):
+            rc = cli.cmd_changelog_ai_release(args)
+
+        self.assertEqual(rc, 0)
+        run_ai_draft.assert_called_once()
+        run_release.assert_called_once()
+        kwargs = run_release.call_args.kwargs
+        self.assertEqual(kwargs["repo_root"], Path(".").resolve())
+        self.assertEqual(kwargs["env_settings"].mode, "disabled")
+        self.assertEqual(run_release.call_args.args[0].cached_draft_path, ".changelog_scratch/changelog.draft.md")
 
 
 class CliChangelogAICheckTests(unittest.TestCase):
@@ -605,7 +680,9 @@ class CliChangelogAIDraftTests(unittest.TestCase):
                 result = cli.cmd_changelog_ai_draft(args)
 
             self.assertEqual(result, 0)
-            self.assertEqual(markdown_target.read_text(encoding="utf-8"), "# AI Draft\n")
+            rendered_markdown = markdown_target.read_text(encoding="utf-8")
+            self.assertIn("<!-- vaulthalla-release-version:", rendered_markdown)
+            self.assertIn("# AI Draft", rendered_markdown)
             self.assertEqual(json_target.read_text(encoding="utf-8"), '{"title":"x"}\n')
             run_triage.assert_called_once_with(
                 {"schema_version": "x"},
@@ -706,7 +783,9 @@ class CliChangelogAIDraftTests(unittest.TestCase):
                 result = cli.cmd_changelog_ai_draft(args)
 
             self.assertEqual(result, 0)
-            self.assertEqual(markdown_target.read_text(encoding="utf-8"), "# AI Polished\n")
+            rendered_markdown = markdown_target.read_text(encoding="utf-8")
+            self.assertIn("<!-- vaulthalla-release-version:", rendered_markdown)
+            self.assertIn("# AI Polished", rendered_markdown)
             self.assertEqual(json_target.read_text(encoding="utf-8"), '{"schema_version":"polish"}\n')
             self.assertEqual(polish_target.read_text(encoding="utf-8"), '{"schema_version":"polish"}\n')
             generate_draft.assert_called_once_with(
@@ -809,6 +888,7 @@ class CliChangelogAIDraftTests(unittest.TestCase):
         with TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
             profile_cfg = repo_root / "ai.yml"
+            (repo_root / "VERSION").write_text("1.2.3\n", encoding="utf-8")
             profile_cfg.write_text(
                 """
 profiles:
@@ -890,6 +970,7 @@ profiles:
     def test_ai_draft_profile_defined_stages_run_without_cli_flags(self) -> None:
         with TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
+            (repo_root / "VERSION").write_text("1.2.3\n", encoding="utf-8")
             (repo_root / "ai.yml").write_text(
                 """
 profiles:

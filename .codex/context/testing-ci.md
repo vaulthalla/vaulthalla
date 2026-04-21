@@ -57,6 +57,8 @@ Release/version-specific:
 - `python3 -m tools.release sync --dry-run`
 - `python3 -m tools.release changelog draft --format raw`
 - `python3 -m tools.release changelog payload`
+- `python3 -m tools.release changelog ai-draft --ai-profile <profile>`
+- `python3 -m tools.release changelog ai-release --ai-profile <profile>`
 - `python3 -m tools.release build-deb --dry-run`
 
 ## Integration Harness Notes

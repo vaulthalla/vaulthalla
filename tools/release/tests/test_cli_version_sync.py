@@ -43,6 +43,11 @@ def _make_repo(repo_root: Path, *, canonical: str, debian_full: str) -> None:
     )
 
 
+def _seed_scratch(repo_root: Path) -> None:
+    _write(repo_root / ".changelog_scratch" / "changelog.draft.md", "# draft\n")
+    _write(repo_root / ".changelog_scratch" / "changelog.raw.md", "# raw\n")
+
+
 def _run_cli(argv: list[str]) -> tuple[int, str, str]:
     out = StringIO()
     err = StringIO()
@@ -100,6 +105,29 @@ class CliVersionSyncTests(unittest.TestCase):
             header = (repo_root / "debian" / "changelog").read_text(encoding="utf-8").splitlines()[0]
             self.assertEqual(version_value, "0.30.0")
             self.assertEqual(header, "vaulthalla (0.30.0-1) unstable; urgency=medium")
+
+    def test_bump_clears_changelog_scratch_artifacts(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            _make_repo(repo_root, canonical="0.29.0", debian_full="0.29.0-1")
+            _seed_scratch(repo_root)
+
+            self.assertTrue((repo_root / ".changelog_scratch" / "changelog.draft.md").is_file())
+            rc_bump, out_bump, err_bump = _run_cli(["--repo-root", str(repo_root), "bump", "patch"])
+            self.assertEqual(rc_bump, 0, msg=err_bump or out_bump)
+            self.assertFalse((repo_root / ".changelog_scratch").exists())
+
+    def test_sync_clears_changelog_scratch_when_upstream_version_changes(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            _make_repo(repo_root, canonical="0.29.1", debian_full="0.29.0-1")
+            _seed_scratch(repo_root)
+
+            rc_sync, out_sync, err_sync = _run_cli(["--repo-root", str(repo_root), "sync"])
+            self.assertEqual(rc_sync, 0, msg=err_sync or out_sync)
+            self.assertFalse((repo_root / ".changelog_scratch").exists())
 
     def test_sync_can_override_debian_revision(self) -> None:
         with TemporaryDirectory() as temp_dir:

@@ -10,6 +10,7 @@ from unittest.mock import patch
 from tools.release.changelog.release_workflow import (
     parse_release_ai_settings,
     refresh_debian_changelog_entry,
+    render_cached_draft_markdown,
     resolve_local_release_pipeline_config,
     resolve_release_changelog,
     validate_manual_changelog_current,
@@ -129,6 +130,45 @@ class ReleaseWorkflowSelectionTests(unittest.TestCase):
                     settings=settings,
                     logger=lambda _line: None,
                 )
+
+    def test_auto_mode_uses_cached_draft_before_manual_fallback(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            _write(repo_root / "VERSION", "2.0.0\n")
+            _make_debian_changelog(repo_root / "debian" / "changelog", "2.0.0-3")
+            cached = render_cached_draft_markdown(version="2.0.0", content="# AI Draft\n- from cache\n")
+            _write(repo_root / ".changelog_scratch" / "changelog.draft.md", cached)
+            settings = parse_release_ai_settings({"RELEASE_AI_MODE": "disabled"})
+
+            result = resolve_release_changelog(
+                repo_root=repo_root,
+                payload={"schema_version": "x"},
+                settings=settings,
+                logger=lambda _line: None,
+            )
+
+            self.assertEqual(result.path, "cached-draft")
+            self.assertIn("- from cache", result.content)
+            self.assertIsNotNone(result.source_path)
+
+    def test_auto_mode_skips_stale_cached_draft_and_falls_back_to_manual(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            _write(repo_root / "VERSION", "2.0.0\n")
+            _make_debian_changelog(repo_root / "debian" / "changelog", "2.0.0-3")
+            cached = render_cached_draft_markdown(version="1.9.9", content="# AI Draft\n- stale cache\n")
+            _write(repo_root / ".changelog_scratch" / "changelog.draft.md", cached)
+            settings = parse_release_ai_settings({"RELEASE_AI_MODE": "disabled"})
+
+            result = resolve_release_changelog(
+                repo_root=repo_root,
+                payload={"schema_version": "x"},
+                settings=settings,
+                logger=lambda _line: None,
+            )
+
+            self.assertEqual(result.path, "manual")
+            self.assertIn("2.0.0-3", result.content)
 
 
 class ReleaseWorkflowConfigTests(unittest.TestCase):

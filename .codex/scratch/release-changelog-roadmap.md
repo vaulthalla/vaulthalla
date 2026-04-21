@@ -19,7 +19,7 @@ Current roadmap focus is live distribution/runtime validation and operational ha
 1. Release validation (`tools.release check`) + build/test stages.
 2. Canonical package action performs:
    - release preflight
-   - changelog resolution
+   - changelog resolution (explicit source logs: OpenAI/local/cached/manual)
    - artifact build/staging
    - artifact contract validation
 3. Workflow upload of staged artifacts.
@@ -39,3 +39,8 @@ Current roadmap focus is live distribution/runtime validation and operational ha
 
 - Promotion/orchestration beyond current Nexus upload boundary.
 - Broader installer UX redesign outside current packaging/install contract.
+
+## Local Changelog Workflow Notes
+
+- Volatile changelog scratch state lives under `.changelog_scratch/`.
+- `python3 -m tools.release changelog ai-release --ai-profile <profile>` is the deterministic no-copy/paste bridge from AI generation to `/debian/changelog` top-entry rewrite.

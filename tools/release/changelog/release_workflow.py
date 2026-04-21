@@ -27,10 +27,12 @@ from tools.release.version.adapters.debian import CHANGELOG_HEADER_PATTERN, pars
 from tools.release.version.adapters.version_file import read_version_file
 
 ReleaseAIMode = Literal["auto", "openai-only", "local-only", "disabled"]
-ReleaseChangelogPath = Literal["openai", "local", "manual"]
+ReleaseChangelogPath = Literal["openai", "local", "cached-draft", "manual"]
 
 DEFAULT_RELEASE_AI_MODE: ReleaseAIMode = "auto"
 DEFAULT_RELEASE_OPENAI_PROFILE = "openai-balanced"
+DEFAULT_CHANGELOG_SCRATCH_DIR = Path(".changelog_scratch")
+DEFAULT_CACHED_DRAFT_PATH = DEFAULT_CHANGELOG_SCRATCH_DIR / "changelog.draft.md"
 DEBIAN_CHANGELOG_SIGNATURE_PATTERN = re.compile(r"^ -- (?P<maintainer>.+?)  (?P<timestamp>.+)$")
 DEBIAN_CHANGELOG_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9+.-]*$")
 
@@ -58,6 +60,7 @@ class ManualChangelogValidation:
 class ReleaseChangelogSelection:
     path: ReleaseChangelogPath
     content: str
+    source_path: Path | None = None
     local_base_url_overrode_profile: bool = False
 
 
@@ -113,6 +116,7 @@ def resolve_release_changelog(
     payload: dict,
     settings: ReleaseAISettings,
     manual_changelog_path: Path | str = Path("debian/changelog"),
+    cached_draft_path: Path | str = DEFAULT_CACHED_DRAFT_PATH,
     logger: Callable[[str], None] | None = None,
 ) -> ReleaseChangelogSelection:
     emit = logger or (lambda _line: None)
@@ -166,16 +170,37 @@ def resolve_release_changelog(
                 local_base_url_overrode_profile=used_override,
             )
 
+        if candidate == "cached-draft":
+            try:
+                cached = validate_cached_draft_current(
+                    repo_root=repo_root,
+                    draft_path=cached_draft_path,
+                )
+            except Exception as exc:
+                emit(f"Skipping cached draft path: {exc}")
+                continue
+            emit(f"Selected changelog path: cached local draft ({cached.path})")
+            emit(
+                "Cached draft validation passed: "
+                f"{cached.path} targets VERSION {cached.detected_target}."
+            )
+            return ReleaseChangelogSelection(
+                path="cached-draft",
+                content=cached.content,
+                source_path=cached.path,
+            )
+
         validation = validate_manual_changelog_current(
             repo_root=repo_root,
             changelog_path=manual_changelog_path,
         )
-        emit("Selected changelog path: manual/no-AI")
+        emit("Selected changelog path: manual/no-AI fallback (existing debian/changelog)")
         emit(
             "Manual changelog stale check passed: "
             f"{validation.path} targets version {validation.detected_target} (VERSION={validation.version})."
         )
-        return ReleaseChangelogSelection(path="manual", content=validation.content)
+        emit("No generated AI/cached draft content was selected; reusing manual changelog source.")
+        return ReleaseChangelogSelection(path="manual", content=validation.content, source_path=validation.path)
 
     # The candidate order always ends with manual.
     raise ValueError("No release changelog strategy could be resolved.")
@@ -260,6 +285,43 @@ def validate_manual_changelog_current(
     )
 
 
+def validate_cached_draft_current(
+    *,
+    repo_root: Path,
+    draft_path: Path | str = DEFAULT_CACHED_DRAFT_PATH,
+) -> ManualChangelogValidation:
+    version_path = repo_root / "VERSION"
+    version = read_version_file(version_path)
+    target_path = Path(draft_path)
+    if not target_path.is_absolute():
+        target_path = (repo_root / target_path).resolve()
+    if not target_path.is_file():
+        raise ValueError(f"cached draft file is missing at {target_path}")
+
+    content = target_path.read_text(encoding="utf-8")
+    if not content.strip():
+        raise ValueError(f"cached draft file is empty at {target_path}")
+
+    detected_target = _detect_cached_draft_version(content)
+    if detected_target is not None and detected_target != str(version):
+        raise ValueError(
+            "cached draft is stale. "
+            f"{target_path} targets {detected_target} but VERSION is {version}."
+        )
+    if detected_target is None:
+        raise ValueError(
+            "cached draft metadata is missing required version marker. "
+            f"Regenerate with `python3 -m tools.release changelog ai-draft`."
+        )
+
+    return ManualChangelogValidation(
+        path=target_path,
+        version=str(version),
+        detected_target=detected_target,
+        content=_strip_cached_draft_metadata(content),
+    )
+
+
 def refresh_debian_changelog_entry(
     *,
     changelog_path: Path | str,
@@ -320,12 +382,12 @@ def refresh_debian_changelog_entry(
 
 def _release_candidate_order(mode: ReleaseAIMode) -> tuple[ReleaseChangelogPath, ...]:
     if mode == "auto":
-        return ("openai", "local", "manual")
+        return ("openai", "local", "cached-draft", "manual")
     if mode == "openai-only":
-        return ("openai", "manual")
+        return ("openai", "cached-draft", "manual")
     if mode == "local-only":
-        return ("local", "manual")
-    return ("manual",)
+        return ("local", "cached-draft", "manual")
+    return ("cached-draft", "manual")
 
 
 def _can_attempt_openai(settings: ReleaseAISettings) -> tuple[bool, str]:
@@ -551,6 +613,38 @@ def _normalize_optional_string(raw: str | None) -> str | None:
 def _normalize_or_default(raw: str | None, default: str) -> str:
     normalized = _normalize_optional_string(raw)
     return normalized if normalized is not None else default
+
+
+def render_cached_draft_markdown(*, version: str, content: str) -> str:
+    cleaned = content.strip()
+    if not cleaned:
+        raise ValueError("Cannot render cached draft markdown: content is empty.")
+    return (
+        f"<!-- vaulthalla-release-version: {version} -->\n"
+        f"{cleaned}\n"
+    )
+
+
+def _detect_cached_draft_version(content: str) -> str | None:
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        match = re.fullmatch(r"<!--\s*vaulthalla-release-version:\s*([0-9]+\.[0-9]+\.[0-9]+)\s*-->", stripped)
+        if match:
+            return match.group(1)
+        return None
+    return None
+
+
+def _strip_cached_draft_metadata(content: str) -> str:
+    lines = content.splitlines()
+    if not lines:
+        return ""
+    if re.fullmatch(r"\s*<!--\s*vaulthalla-release-version:\s*[0-9]+\.[0-9]+\.[0-9]+\s*-->\s*", lines[0]):
+        body = "\n".join(lines[1:]).lstrip("\n")
+        return f"{body}\n" if body and not body.endswith("\n") else body
+    return content
 
 
 def _parse_debian_top_entry(content: str, path: Path) -> _DebianTopEntry:

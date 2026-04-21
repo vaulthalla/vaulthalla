@@ -46,6 +46,12 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         self.assertIn("RELEASE_DEBIAN_DISTRIBUTION must be a Debian token", action)
         self.assertIn("RELEASE_DEBIAN_URGENCY must be a Debian token", action)
 
+    def test_package_action_clears_volatile_changelog_scratch_before_generation(self) -> None:
+        action = self._package_action()
+        self.assertIn("scratch_dir=\".changelog_scratch\"", action)
+        self.assertIn("rm -rf \"$scratch_dir\" \"$artifact_dir\"", action)
+        self.assertIn("clearing volatile changelog scratch", action)
+
 
 if __name__ == "__main__":
     unittest.main()

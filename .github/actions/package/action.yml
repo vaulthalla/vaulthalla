@@ -90,6 +90,15 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        scratch_dir=".changelog_scratch"
+        artifact_dir="${{ inputs.output_dir }}"
+        if [ -z "$artifact_dir" ] || [ "$artifact_dir" = "/" ] || [ "$artifact_dir" = "." ]; then
+          echo "::error::Unsafe or empty output_dir for package action changelog stage: '$artifact_dir'"
+          exit 1
+        fi
+        echo "[changelog] clearing volatile changelog scratch + staged changelog outputs"
+        rm -rf "$scratch_dir" "$artifact_dir"
+        mkdir -p "$artifact_dir"
         echo "[changelog] starting changelog generation/validation"
         if ! python3 -m tools.release changelog release \
           --output "${{ inputs.output_dir }}/changelog.release.md" \
