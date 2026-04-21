@@ -787,7 +787,7 @@ def cmd_changelog_ai_release(args: argparse.Namespace) -> int:
         draft_output_path = (repo_root / draft_output_path).resolve()
     draft_output = str(draft_output_path)
 
-    print("Changelog ai-release stage: generate AI draft artifact")
+    _print_status("Changelog ai-release stage: generate AI draft artifact")
     draft_args = argparse.Namespace(
         repo_root=args.repo_root,
         since_tag=args.since_tag,
@@ -806,7 +806,7 @@ def cmd_changelog_ai_release(args: argparse.Namespace) -> int:
     if draft_rc != 0:
         return int(draft_rc)
 
-    print("Changelog ai-release stage: finalize release using freshly cached draft source")
+    _print_status("Changelog ai-release stage: finalize release using freshly cached draft source")
     release_args = argparse.Namespace(
         repo_root=args.repo_root,
         since_tag=args.since_tag,
@@ -954,7 +954,7 @@ def _run_changelog_release_with_settings(
     env_settings,
 ) -> int:
     try:
-        print("Changelog release stage: build deterministic context + payload")
+        _print_status("Changelog release stage: build deterministic context + payload")
         context = build_changelog_context(repo_root, args.since_tag)
         payload = build_ai_payload(context)
         raw_markdown = render_release_changelog(context)
@@ -963,52 +963,52 @@ def _run_changelog_release_with_settings(
         raise ValueError(f"Changelog release failed during context/payload generation: {exc}") from exc
 
     try:
-        print("Changelog release stage: write evidence artifacts")
+        _print_status("Changelog release stage: write evidence artifacts")
         write_output(raw_markdown, args.raw_output)
-        print(f"Wrote changelog raw evidence to {Path(args.raw_output).resolve()}")
+        _print_status(f"Wrote changelog raw evidence to {Path(args.raw_output).resolve()}")
         write_output(payload_json, args.payload_output)
-        print(f"Wrote changelog payload evidence to {Path(args.payload_output).resolve()}")
+        _print_status(f"Wrote changelog payload evidence to {Path(args.payload_output).resolve()}")
     except Exception as exc:
         raise ValueError(f"Changelog release failed while writing evidence artifacts: {exc}") from exc
 
     try:
-        print("Changelog release stage: resolve changelog source")
+        _print_status("Changelog release stage: resolve changelog source")
         selection = resolve_release_changelog(
             repo_root=repo_root,
             payload=payload,
             settings=env_settings,
             manual_changelog_path=args.manual_changelog_path,
             cached_draft_path=getattr(args, "cached_draft_path", DEFAULT_CHANGELOG_DRAFT_OUTPUT),
-            logger=print,
+            logger=_print_status,
         )
         selected_source = selection.path
         source_path = getattr(selection, "source_path", None)
         source_suffix = f" ({source_path})" if source_path is not None else ""
-        print(f"Selected changelog source: {selected_source}{source_suffix}")
+        _print_status(f"Selected changelog source: {selected_source}{source_suffix}")
     except Exception as exc:
         raise ValueError(f"Changelog release failed during source selection/generation: {exc}") from exc
 
     try:
-        print("Changelog release stage: write selected release changelog")
+        _print_status("Changelog release stage: write selected release changelog")
         write_output(selection.content, args.output)
-        print(f"Wrote release changelog to {Path(args.output).resolve()}")
+        _print_status(f"Wrote release changelog to {Path(args.output).resolve()}")
         if selection.path == "local" and env_settings.local_base_url_override:
             if selection.local_base_url_overrode_profile:
-                print("Local base_url override status: applied from RELEASE_LOCAL_LLM_BASE_URL.")
+                _print_status("Local base_url override status: applied from RELEASE_LOCAL_LLM_BASE_URL.")
             else:
-                print("Local base_url override status: set but not applied.")
+                _print_status("Local base_url override status: set but not applied.")
     except Exception as exc:
         raise ValueError(f"Changelog release failed while writing selected output: {exc}") from exc
 
     if selection.path == "manual":
-        print(
+        _print_status(
             "Changelog release stage: Debian changelog entry update skipped "
             "(manual/no-AI fallback source selected)."
         )
         return 0
 
     try:
-        print("Changelog release stage: refresh Debian changelog top entry metadata + summary")
+        _print_status("Changelog release stage: refresh Debian changelog top entry metadata + summary")
         updated = refresh_debian_changelog_entry(
             changelog_path=Path(args.manual_changelog_path)
             if Path(args.manual_changelog_path).is_absolute()
@@ -1018,13 +1018,13 @@ def _run_changelog_release_with_settings(
             urgency=args.debian_urgency,
             environ=os.environ,
         )
-        print(f"Updated Debian changelog entry at {updated.path}")
-        print(
+        _print_status(f"Updated Debian changelog entry at {updated.path}")
+        _print_status(
             "Debian entry metadata: "
             f"{updated.package} ({updated.full_version}) {updated.distribution}; urgency={updated.urgency}"
         )
-        print(f"Debian entry maintainer: {updated.maintainer}")
-        print(f"Debian entry timestamp:  {updated.timestamp}")
+        _print_status(f"Debian entry maintainer: {updated.maintainer}")
+        _print_status(f"Debian entry timestamp:  {updated.timestamp}")
     except Exception as exc:
         raise ValueError(f"Changelog release failed while updating Debian changelog: {exc}") from exc
 
@@ -1093,7 +1093,9 @@ def clear_changelog_scratch(repo_root: Path, *, reason: str) -> None:
 
 def write_output(content: str, output_path: str | None) -> None:
     if output_path is None or output_path == "-":
-        print(content, end="" if content.endswith("\n") else "\n")
+        line = content if content.endswith("\n") else f"{content}\n"
+        sys.stdout.write(line)
+        sys.stdout.flush()
         return
 
     target = Path(output_path)
@@ -1236,24 +1238,29 @@ def _extract_missing_field(message: str) -> str | None:
 
 
 def _log_release_ai_preflight(settings) -> None:
-    print("Release AI preflight")
-    print("--------------------")
-    print(f"RELEASE_AI_MODE:               {settings.mode}")
-    print(f"RELEASE_AI_PROFILE_OPENAI:     {settings.openai_profile}")
-    print(f"OPENAI_API_KEY configured:     {'yes' if settings.openai_api_key_present else 'no'}")
-    print(f"RELEASE_LOCAL_LLM_ENABLED:     {'true' if settings.local_enabled else 'false'}")
-    print(
+    _print_status("Release AI preflight")
+    _print_status("--------------------")
+    _print_status(f"RELEASE_AI_MODE:               {settings.mode}")
+    _print_status(f"RELEASE_AI_PROFILE_OPENAI:     {settings.openai_profile}")
+    _print_status(f"OPENAI_API_KEY configured:     {'yes' if settings.openai_api_key_present else 'no'}")
+    _print_status(f"RELEASE_LOCAL_LLM_ENABLED:     {'true' if settings.local_enabled else 'false'}")
+    _print_status(
         f"RELEASE_LOCAL_LLM_PROFILE:     "
         f"{settings.local_profile if settings.local_profile else '<unset>'}"
     )
-    print(
+    _print_status(
         f"RELEASE_LOCAL_LLM_BASE_URL:    "
         f"{settings.local_base_url_override if settings.local_base_url_override else '<unset>'}"
     )
     if settings.mode == "openai-only" and not settings.openai_api_key_present:
-        print("Preflight note: openai-only requested but OPENAI_API_KEY is missing; manual fallback may be used.")
+        _print_status("Preflight note: openai-only requested but OPENAI_API_KEY is missing; manual fallback may be used.")
     if settings.mode == "local-only" and (not settings.local_enabled or not settings.local_profile):
-        print(
+        _print_status(
             "Preflight note: local-only requested but local fallback is not fully configured; "
             "manual fallback may be used."
         )
+
+
+def _print_status(line: str) -> None:
+    sys.stdout.write(f"{line}\n")
+    sys.stdout.flush()
