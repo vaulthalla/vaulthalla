@@ -219,8 +219,11 @@ These commands should manage Vaulthalla-specific configuration/bootstrap tasks, 
 
 #### `vh setup db`
 
-* bootstrap Vaulthalla DB/user/schema against local PostgreSQL
-* optionally later support remote DB bootstrap where appropriate
+* bootstrap Vaulthalla local PostgreSQL role/database against a local PostgreSQL installation
+* rely on the canonical packaged/runtime schema + migration flow already owned by `SqlDeployer`
+* do **not** evolve into a generic arbitrary SQL installer
+* do **not** make custom user-provided `.sql` ingestion a first-class long-term feature unless explicitly revisited later
+* after successful local DB bootstrap, hand off to normal runtime startup behavior so Vaulthalla can consume the seeded DB password and perform any needed startup-driven schema install / migration work
 
 #### `vh setup nginx`
 
@@ -237,6 +240,8 @@ These commands should manage Vaulthalla-specific configuration/bootstrap tasks, 
 
 * package-manager side effects hidden behind package install
 * broad system teardown that removes software the user may still want
+* arbitrary user-provided `.sql` schema injection as a promoted feature
+* remote DB configuration workflows in this phase
 
 ### Expected work
 
@@ -263,13 +268,15 @@ Add richer explicit tooling for convenience features that should never live in D
 * `vh setup nginx --domain <domain>`
 * `vh doctor`
 * `vh doctor install`
-* `vh setup db --local`
-* `vh setup db --remote`
+* `vh setup remote-db`
+* or equivalent explicit remote DB configuration command naming to be finalized later
 * `vh setup status`
 
 ### Rationale
 
 These are high-value admin conveniences, but they belong in the Vaulthalla control plane, not in `apt install`.
+
+Remote DB should be treated as an explicit advanced configuration workflow, not as hidden behavior inside basic local DB bootstrap. This flow should update the canonical Vaulthalla config file through existing config helpers and seed the provided DB password through the normal runtime-consumed mechanism.
 
 ### Examples
 
@@ -279,6 +286,12 @@ These are high-value admin conveniences, but they belong in the Vaulthalla contr
 * `vh doctor`
 
   * report DB status, proxy status, service health, initial super-admin state, missing assets, etc.
+* `vh setup remote-db`
+
+  * prompt for remote DB host/port/user/database settings
+  * update `config.yaml` through existing config helpers
+  * seed remote DB password using the same normal runtime-consumed path
+  * restart/reload the service as appropriate so the new config takes effect cleanly
 
 ### Exit criteria
 
@@ -410,6 +423,8 @@ VH_SKIP_NGINX_CONFIG=1 sudo -E apt install vaulthalla
 vh setup db
 vh setup nginx
 vh setup nginx --certbot
+# later:
+# vh setup remote-db
 ```
 
-This keeps package install clean while making Vaulthalla’s own tooling the place where richer system orchestration lives.
+`vh setup db` is intended to handle local DB bootstrap only. Remote DB configuration belongs in a later explicit advanced CLI workflow rather than being folded into the base local DB bootstrap command.

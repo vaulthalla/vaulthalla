@@ -5,15 +5,16 @@
 #include "runtime/Deps.hpp"
 #include "usage/include/UsageManager.hpp"
 #include "CommandUsage.hpp"
-#include "seed/include/SqlDeployer.hpp"
+
+#include <paths.h>
 
 #include <algorithm>
 #include <array>
 #include <cctype>
 #include <cstdio>
-#include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <grp.h>
 #include <optional>
 #include <pwd.h>
 #include <random>
@@ -34,8 +35,8 @@ namespace fs = std::filesystem;
 
 constexpr auto* kDbUser = "vaulthalla";
 constexpr auto* kDbName = "vaulthalla";
+constexpr auto* kServiceUnit = "vaulthalla.service";
 constexpr auto* kPendingDbPasswordFile = "/run/vaulthalla/db_password";
-constexpr auto* kPsqlDeployDir = "/usr/share/vaulthalla/psql";
 
 constexpr auto* kNginxTemplate = "/usr/share/vaulthalla/nginx/vaulthalla.conf";
 constexpr auto* kNginxSiteAvailable = "/etc/nginx/sites-available/vaulthalla";
@@ -45,6 +46,11 @@ constexpr auto* kNginxManagedMarker = "/var/lib/vaulthalla/nginx_site_managed";
 struct ExecResult {
     int code = 1;
     std::string output;
+};
+
+struct ServiceIdentity {
+    uid_t uid = 0;
+    gid_t gid = 0;
 };
 
 static std::string trim(std::string s) {
@@ -77,12 +83,10 @@ static std::string sqlLiteral(const std::string& s) {
 
 static ExecResult runCapture(const std::string& command) {
     const auto wrapped = command + " 2>&1";
-    const auto* cstr = wrapped.c_str();
-
     std::array<char, 4096> buf{};
     std::string output;
 
-    FILE* pipe = ::popen(cstr, "r");
+    FILE* pipe = ::popen(wrapped.c_str(), "r");
     if (!pipe) return {.code = 1, .output = "failed to execute command"};
 
     while (fgets(buf.data(), static_cast<int>(buf.size()), pipe) != nullptr)
@@ -100,105 +104,47 @@ static bool commandExists(const std::string& command) {
     return runCapture("command -v " + shellQuote(command) + " >/dev/null").code == 0;
 }
 
-static std::optional<std::string> choosePostgresPrefix() {
-    const std::vector<std::string> prefixes = {
-        "runuser -u postgres -- psql -X -v ON_ERROR_STOP=1",
-        "sudo -n -u postgres psql -X -v ON_ERROR_STOP=1",
-        "psql -X -v ON_ERROR_STOP=1 -U postgres"
-    };
+static bool hasEffectiveRoot() {
+    return ::geteuid() == 0;
+}
 
-    for (const auto& prefix : prefixes) {
-        const auto probe = runCapture(prefix + " -d postgres -tAc " + shellQuote("SELECT 1;"));
-        if (probe.code == 0 && trim(probe.output) == "1") return prefix;
-    }
-    return std::nullopt;
+static bool canUsePasswordlessSudo() {
+    if (!commandExists("sudo")) return false;
+    return runCapture("sudo -n true").code == 0;
+}
+
+static bool hasRootOrEquivalentPrivileges() {
+    return hasEffectiveRoot() || canUsePasswordlessSudo();
+}
+
+static std::string privilegedPrefix() {
+    if (hasEffectiveRoot()) return "";
+    if (canUsePasswordlessSudo()) return "sudo -n ";
+    return "";
+}
+
+static std::string formatFailure(const std::string& step, const ExecResult& result) {
+    std::ostringstream msg;
+    msg << step << " (exit " << result.code << ")";
+    if (!result.output.empty()) msg << ": " << result.output;
+    return msg.str();
 }
 
 static ExecResult psqlSql(const std::string& prefix, const std::string& db, const std::string& sql) {
     return runCapture(prefix + " -d " + shellQuote(db) + " -tAc " + shellQuote(sql));
 }
 
-static ExecResult psqlFile(const std::string& prefix, const std::string& db, const fs::path& sqlPath) {
-    return runCapture(prefix + " -d " + shellQuote(db) + " -f " + shellQuote(sqlPath.string()));
-}
-
 static std::vector<fs::path> listSqlFilesSorted(const fs::path& dir) {
     std::vector<fs::path> files;
     for (const auto& entry : fs::directory_iterator(dir)) {
         if (!entry.is_regular_file()) continue;
-        const auto& p = entry.path();
-        if (p.extension() == ".sql") files.push_back(p);
+        if (entry.path().extension() == ".sql") files.push_back(entry.path());
     }
 
     std::ranges::sort(files, [](const fs::path& a, const fs::path& b) {
         return a.filename().string() < b.filename().string();
     });
-
     return files;
-}
-
-static std::optional<std::string> applyMigrations(const std::string& psqlPrefix, size_t& applied, size_t& skipped) {
-    const fs::path deployDir{kPsqlDeployDir};
-    const auto sqlFiles = listSqlFilesSorted(deployDir);
-    if (sqlFiles.empty()) return "no SQL files found under " + deployDir.string();
-
-    const auto ensureMigrationsTable = psqlSql(psqlPrefix, kDbName, R"(
-        CREATE TABLE IF NOT EXISTS schema_migrations (
-            filename   TEXT PRIMARY KEY,
-            sha256     TEXT NOT NULL,
-            applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-    )");
-
-    if (ensureMigrationsTable.code != 0)
-        return "failed ensuring schema_migrations table: " + ensureMigrationsTable.output;
-
-    for (const auto& sqlFile : sqlFiles) {
-        const auto filename = sqlFile.filename().string();
-        std::string hash;
-        try {
-            const auto sql = vh::db::seed::readFileToString(sqlFile);
-            hash = vh::db::seed::sha256Hex(sql);
-        } catch (const std::exception& e) {
-            return "failed reading migration file '" + filename + "': " + e.what();
-        }
-
-        const auto existingHashQuery = psqlSql(
-            psqlPrefix,
-            kDbName,
-            "SELECT sha256 FROM schema_migrations WHERE filename = " + sqlLiteral(filename) + ";"
-        );
-
-        if (existingHashQuery.code != 0)
-            return "failed checking migration state for '" + filename + "': " + existingHashQuery.output;
-
-        const auto existingHash = trim(existingHashQuery.output);
-        if (!existingHash.empty()) {
-            if (existingHash != hash) {
-                return "migration file changed after apply: " + filename +
-                       " (db=" + existingHash + ", file=" + hash + ")";
-            }
-            ++skipped;
-            continue;
-        }
-
-        const auto applyResult = psqlFile(psqlPrefix, kDbName, sqlFile);
-        if (applyResult.code != 0)
-            return "failed applying migration file '" + filename + "': " + applyResult.output;
-
-        const auto markApplied = psqlSql(
-            psqlPrefix,
-            kDbName,
-            "INSERT INTO schema_migrations (filename, sha256) VALUES (" + sqlLiteral(filename) + ", " + sqlLiteral(hash) +
-                ") ON CONFLICT (filename) DO UPDATE SET sha256 = EXCLUDED.sha256, applied_at = CURRENT_TIMESTAMP;"
-        );
-        if (markApplied.code != 0)
-            return "failed recording migration '" + filename + "': " + markApplied.output;
-
-        ++applied;
-    }
-
-    return std::nullopt;
 }
 
 static std::string makeDbPassword(const size_t len = 48) {
@@ -217,28 +163,108 @@ static std::string makeDbPassword(const size_t len = 48) {
     return out;
 }
 
+static std::optional<std::string> resolveServiceIdentity(ServiceIdentity& identity) {
+    const auto* user = ::getpwnam(kDbUser);
+    if (!user) return "system user '" + std::string(kDbUser) + "' not found";
+
+    identity.uid = user->pw_uid;
+    identity.gid = user->pw_gid;
+
+    if (const auto* group = ::getgrnam(kDbUser); group)
+        identity.gid = group->gr_gid;
+
+    return std::nullopt;
+}
+
+static std::optional<std::string> enforceDbPasswordFileState(const fs::path& pendingPath, const ServiceIdentity& identity) {
+    struct stat st{};
+    if (::stat(pendingPath.c_str(), &st) != 0)
+        return "failed to stat pending password file: " + pendingPath.string();
+
+    if ((st.st_uid != identity.uid || st.st_gid != identity.gid) &&
+        ::chown(pendingPath.c_str(), identity.uid, identity.gid) != 0) {
+        const auto sudoChown = runCapture("sudo -n chown " + std::string(kDbUser) + ":" + std::string(kDbUser) + " " + shellQuote(pendingPath.string()));
+        if (sudoChown.code != 0)
+            return "failed setting ownership to " + std::string(kDbUser) + ":" + std::string(kDbUser) + " on " + pendingPath.string();
+    }
+
+    if ((st.st_mode & 0777) != (S_IRUSR | S_IWUSR) && ::chmod(pendingPath.c_str(), S_IRUSR | S_IWUSR) != 0) {
+        const auto sudoChmod = runCapture("sudo -n chmod 0600 " + shellQuote(pendingPath.string()));
+        if (sudoChmod.code != 0)
+            return "failed setting mode 0600 on " + pendingPath.string();
+    }
+
+    if (::stat(pendingPath.c_str(), &st) != 0)
+        return "failed to restat pending password file: " + pendingPath.string();
+
+    if (st.st_uid != identity.uid || st.st_gid != identity.gid)
+        return "pending password file has wrong ownership; expected " + std::string(kDbUser) + ":" + std::string(kDbUser);
+    if ((st.st_mode & 0777) != (S_IRUSR | S_IWUSR))
+        return "pending password file has wrong mode; expected 0600";
+
+    return std::nullopt;
+}
+
 static std::optional<std::string> writePendingDbPassword(const std::string& pass) {
     const fs::path pendingPath{kPendingDbPasswordFile};
+    ServiceIdentity identity{};
+    if (const auto identityError = resolveServiceIdentity(identity)) return identityError;
+
     std::error_code ec;
     fs::create_directories(pendingPath.parent_path(), ec);
     if (ec) return "failed creating runtime directory: " + ec.message();
 
     {
         std::ofstream out(pendingPath, std::ios::out | std::ios::trunc);
-        if (!out.is_open()) return "failed writing " + pendingPath.string();
+        if (!out.is_open()) return "failed writing pending password file: " + pendingPath.string();
         out << pass << "\n";
     }
 
     if (::chmod(pendingPath.c_str(), S_IRUSR | S_IWUSR) != 0)
-        return "failed to set mode 0600 on " + pendingPath.string();
+        return "failed setting mode 0600 on " + pendingPath.string();
 
-    const auto* svcUser = ::getpwnam(kDbUser);
-    if (!svcUser) return "system user '" + std::string(kDbUser) + "' not found";
+    return enforceDbPasswordFileState(pendingPath, identity);
+}
 
-    if (::geteuid() == 0) {
-        if (::chown(pendingPath.c_str(), svcUser->pw_uid, svcUser->pw_gid) != 0)
-            return "failed to set ownership on " + pendingPath.string();
+static std::optional<std::string> choosePostgresPrefix() {
+    std::vector<std::string> prefixes;
+
+    if (hasEffectiveRoot() && commandExists("runuser"))
+        prefixes.push_back("runuser -u postgres -- psql -X -v ON_ERROR_STOP=1");
+
+    if (canUsePasswordlessSudo())
+        prefixes.push_back("sudo -n -u postgres psql -X -v ON_ERROR_STOP=1");
+
+    for (const auto& prefix : prefixes) {
+        const auto probe = runCapture(prefix + " -d postgres -tAc " + shellQuote("SELECT 1;"));
+        if (probe.code == 0 && trim(probe.output) == "1") return prefix;
     }
+
+    return std::nullopt;
+}
+
+static std::optional<std::string> restartOrStartService(std::string& actionTaken) {
+    if (!commandExists("systemctl"))
+        return "systemctl is not available; cannot hand off DB bootstrap to runtime startup";
+
+    const auto prefix = privilegedPrefix();
+    if (prefix.empty())
+        return "insufficient privileges for systemctl; run with root or passwordless sudo access";
+
+    const auto active = runCapture(prefix + "systemctl --quiet is-active " + kServiceUnit);
+    const bool isActive = active.code == 0;
+
+    ExecResult serviceAction;
+    if (isActive) {
+        serviceAction = runCapture(prefix + "systemctl restart " + kServiceUnit);
+        actionTaken = "restarted";
+    } else {
+        serviceAction = runCapture(prefix + "systemctl start " + kServiceUnit);
+        actionTaken = "started";
+    }
+
+    if (serviceAction.code != 0)
+        return formatFailure("failed to " + actionTaken + " " + kServiceUnit, serviceAction);
 
     return std::nullopt;
 }
@@ -309,11 +335,24 @@ static CommandResult handle_setup_db(const CommandCall& call) {
     if (!call.user->isSuperAdmin())
         return invalid("setup db: requires super_admin role");
 
-    const fs::path sqlDir{kPsqlDeployDir};
-    if (!fs::exists(sqlDir) || !fs::is_directory(sqlDir))
-        return invalid("setup db: SQL deploy directory missing: " + sqlDir.string());
-    if (listSqlFilesSorted(sqlDir).empty())
-        return invalid("setup db: no SQL migration files found in " + sqlDir.string());
+    if (!hasRootOrEquivalentPrivileges()) {
+        return invalid(
+            "setup db: requires root privileges or equivalent non-interactive sudo access "
+            "for PostgreSQL/systemd integration steps");
+    }
+
+    const fs::path schemaPath = vh::paths::getPsqlSchemasPath();
+    if (!fs::exists(schemaPath) || !fs::is_directory(schemaPath))
+        return invalid("setup db: canonical schema path is missing: " + schemaPath.string());
+
+    std::vector<fs::path> sqlFiles;
+    try {
+        sqlFiles = listSqlFilesSorted(schemaPath);
+    } catch (const std::exception& e) {
+        return invalid("setup db: failed scanning canonical schema path '" + schemaPath.string() + "': " + e.what());
+    }
+    if (sqlFiles.empty())
+        return invalid("setup db: canonical schema path has no .sql files: " + schemaPath.string());
 
     if (!commandExists("psql"))
         return invalid("setup db: PostgreSQL client 'psql' is not installed");
@@ -322,18 +361,18 @@ static CommandResult handle_setup_db(const CommandCall& call) {
     if (!postgresPrefix) {
         return invalid(
             "setup db: unable to run PostgreSQL admin commands as 'postgres'. "
-            "Run from a context with runuser/sudo access to the postgres account."
+            "Verify local PostgreSQL is installed/running and root-equivalent privileges are available."
         );
     }
 
     const auto roleState = psqlSql(
         *postgresPrefix, "postgres", "SELECT 1 FROM pg_roles WHERE rolname = " + sqlLiteral(kDbUser) + ";");
-    if (roleState.code != 0) return invalid("setup db: failed querying role state: " + roleState.output);
+    if (roleState.code != 0) return invalid("setup db: " + formatFailure("failed querying PostgreSQL role state", roleState));
     const bool roleExists = trim(roleState.output) == "1";
 
     const auto dbState = psqlSql(
         *postgresPrefix, "postgres", "SELECT 1 FROM pg_database WHERE datname = " + sqlLiteral(kDbName) + ";");
-    if (dbState.code != 0) return invalid("setup db: failed querying database state: " + dbState.output);
+    if (dbState.code != 0) return invalid("setup db: " + formatFailure("failed querying PostgreSQL database state", dbState));
     const bool dbExists = trim(dbState.output) == "1";
 
     bool createdRole = false;
@@ -347,44 +386,52 @@ static CommandResult handle_setup_db(const CommandCall& call) {
             "postgres",
             "CREATE ROLE " + std::string(kDbUser) + " LOGIN PASSWORD " + sqlLiteral(generatedPassword) + ";"
         );
-        if (createRole.code != 0) return invalid("setup db: failed creating role '" + std::string(kDbUser) + "': " + createRole.output);
+        if (createRole.code != 0)
+            return invalid("setup db: " + formatFailure("failed creating PostgreSQL role '" + std::string(kDbUser) + "'", createRole));
         createdRole = true;
     }
 
     if (!dbExists) {
         const auto createDb = psqlSql(
             *postgresPrefix, "postgres", "CREATE DATABASE " + std::string(kDbName) + " OWNER " + std::string(kDbUser) + ";");
-        if (createDb.code != 0) return invalid("setup db: failed creating database '" + std::string(kDbName) + "': " + createDb.output);
+        if (createDb.code != 0)
+            return invalid("setup db: " + formatFailure("failed creating PostgreSQL database '" + std::string(kDbName) + "'", createDb));
         createdDb = true;
     }
 
     const auto grantDb = psqlSql(
         *postgresPrefix, "postgres", "GRANT ALL PRIVILEGES ON DATABASE " + std::string(kDbName) + " TO " + std::string(kDbUser) + ";");
-    if (grantDb.code != 0) return invalid("setup db: failed granting database privileges: " + grantDb.output);
+    if (grantDb.code != 0) return invalid("setup db: " + formatFailure("failed granting database privileges", grantDb));
 
     const auto grantSchema = psqlSql(
         *postgresPrefix, kDbName, "GRANT USAGE, CREATE ON SCHEMA public TO " + std::string(kDbUser) + ";");
-    if (grantSchema.code != 0) return invalid("setup db: failed granting schema privileges: " + grantSchema.output);
-
-    size_t applied = 0;
-    size_t skipped = 0;
-    if (const auto migrationError = applyMigrations(*postgresPrefix, applied, skipped))
-        return invalid("setup db: " + *migrationError);
+    if (grantSchema.code != 0) return invalid("setup db: " + formatFailure("failed granting schema privileges", grantSchema));
 
     if (createdRole) {
         if (const auto passSeedError = writePendingDbPassword(generatedPassword))
-            return invalid("setup db: " + *passSeedError);
+            return invalid("setup db: failed preparing pending DB password handoff file: " + *passSeedError);
+    }
+
+    std::string serviceAction;
+    if (const auto serviceError = restartOrStartService(serviceAction)) {
+        std::ostringstream error;
+        error << "setup db: local DB bootstrap completed but runtime service handoff failed: " << *serviceError;
+        if (createdRole)
+            error << ". Pending password remains at " << kPendingDbPasswordFile << " for next successful service startup.";
+        return invalid(error.str());
     }
 
     std::ostringstream out;
     out << "setup db: local PostgreSQL bootstrap complete\n";
     out << "  role: " << (createdRole ? "created" : "already existed") << " (" << kDbUser << ")\n";
     out << "  database: " << (createdDb ? "created" : "already existed") << " (" << kDbName << ")\n";
-    out << "  migrations: applied=" << applied << ", already-applied=" << skipped << "\n";
+    out << "  canonical schema path: " << schemaPath.string() << " (validated)\n";
     if (createdRole)
-        out << "  seeded runtime DB password: " << kPendingDbPasswordFile << "\n";
+        out << "  seeded runtime DB password: " << kPendingDbPasswordFile << " (owner/mode verified)\n";
     else
-        out << "  runtime DB password seed: unchanged (role already existed)\n";
+        out << "  seeded runtime DB password: unchanged (existing role/password path)\n";
+    out << "  service: " << kServiceUnit << " " << serviceAction << "\n";
+    out << "  migrations: delegated to normal runtime startup flow (SqlDeployer)";
 
     return ok(out.str());
 }
@@ -453,16 +500,48 @@ static CommandResult handle_setup_nginx(const CommandCall& call) {
     const auto nginxTest = runCapture("nginx -t");
     if (nginxTest.code != 0) {
         std::error_code ec;
-        if (createdSiteLink) fs::remove(kNginxSiteEnabled, ec);
-        if (createdSiteFile) fs::remove(kNginxSiteAvailable, ec);
-        if (createdMarker) fs::remove(kNginxManagedMarker, ec);
-        return invalid("setup nginx: nginx -t failed: " + nginxTest.output);
+        bool rollbackOk = true;
+
+        if (createdSiteLink) {
+            fs::remove(kNginxSiteEnabled, ec);
+            if (ec) rollbackOk = false;
+            ec.clear();
+        }
+        if (createdSiteFile) {
+            fs::remove(kNginxSiteAvailable, ec);
+            if (ec) rollbackOk = false;
+            ec.clear();
+        }
+        if (createdMarker) {
+            fs::remove(kNginxManagedMarker, ec);
+            if (ec) rollbackOk = false;
+            ec.clear();
+        }
+
+        std::ostringstream err;
+        err << "setup nginx: nginx -t failed before reload";
+        if (rollbackOk) {
+            err << "; rolled back newly staged Vaulthalla nginx changes";
+        } else {
+            err << "; rollback was partial, manual cleanup may be required for:\n"
+                << "  - " << kNginxSiteEnabled << "\n"
+                << "  - " << kNginxSiteAvailable << "\n"
+                << "  - " << kNginxManagedMarker;
+        }
+        if (!nginxTest.output.empty()) err << "\nnginx -t output: " << nginxTest.output;
+        return invalid(err.str());
     }
 
-    std::string reloadStatus = "nginx reload skipped (systemctl unavailable or nginx inactive)";
+    std::string reloadStatus = "not attempted (systemctl unavailable or nginx inactive)";
     if (commandExists("systemctl") && runCapture("systemctl --quiet is-active nginx.service").code == 0) {
         const auto reload = runCapture("systemctl reload nginx.service");
-        if (reload.code != 0) return invalid("setup nginx: failed reloading nginx.service: " + reload.output);
+        if (reload.code != 0) {
+            std::ostringstream err;
+            err << "setup nginx: site/config changes were applied and nginx -t passed, "
+                << "but nginx reload failed. Configuration was left in place.\n";
+            err << "reload failure: " << formatFailure("systemctl reload nginx.service", reload);
+            return invalid(err.str());
+        }
         reloadStatus = "nginx reloaded";
     }
 

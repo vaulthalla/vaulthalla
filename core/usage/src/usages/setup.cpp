@@ -13,9 +13,9 @@ static std::shared_ptr<CommandUsage> buildBaseUsage(const std::weak_ptr<CommandU
 static std::shared_ptr<CommandUsage> db(const std::weak_ptr<CommandUsage>& parent) {
     const auto cmd = buildBaseUsage(parent);
     cmd->aliases = {"db", "database", "postgres"};
-    cmd->description = "Bootstrap Vaulthalla local PostgreSQL integration (role, database, schema migrations).";
+    cmd->description = "Bootstrap Vaulthalla local PostgreSQL integration (role/database) and hand off schema/migrations to normal runtime startup.";
     cmd->examples = {
-        {"vh setup db", "Create/reuse local PostgreSQL role/database and apply packaged migrations."}
+        {"vh setup db", "Create/reuse local PostgreSQL role/database, seed runtime DB password handoff when needed, and restart/start runtime service."}
     };
     return cmd;
 }

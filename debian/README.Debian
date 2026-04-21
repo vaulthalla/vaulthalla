@@ -120,8 +120,10 @@ For local PostgreSQL bootstrap, `vh setup db` now:
 
 - validates packaged SQL assets under `/usr/share/vaulthalla/psql`
 - creates/reuses local `vaulthalla` role and database
-- applies packaged SQL migrations and records hashes in `schema_migrations`
 - seeds `/run/vaulthalla/db_password` only when the role is newly created
+- starts/restarts `vaulthalla.service` so normal runtime startup can consume the
+  pending DB password and run canonical schema/migration deployment via
+  `SqlDeployer`
 
 For nginx integration, `vh setup nginx` and `vh teardown nginx` only manage the
 Vaulthalla site path and marker:
