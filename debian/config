@@ -1,9 +1,0 @@
-#!/bin/sh
-set -e
-
-. /usr/share/debconf/confmodule
-
-db_input high vaulthalla/init-db || true
-db_input medium vaulthalla/superadmin-uid || true
-db_input medium vaulthalla/configure-nginx || true
-db_go

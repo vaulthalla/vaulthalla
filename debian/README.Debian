@@ -1,149 +1,106 @@
 vaulthalla for Debian
 ---------------------
 
-Install-time prompts (debconf)
-==============================
+Install policy (Phase 2)
+========================
 
-The package uses debconf templates in `/debian/templates` to collect install-time
-choices:
+Package install is intentionally low-prompt and conservative:
 
-1. `vaulthalla/init-db`
-2. `vaulthalla/superadmin-uid`
-3. `vaulthalla/configure-nginx`
+- no routine debconf prompts in the default install path
+- optional local PostgreSQL bootstrap is attempted only when local PostgreSQL is
+  already present and healthy
+- optional nginx integration is attempted only when nginx is already present and
+  host checks indicate low-risk automation
+- package install does not bind initial super-admin Linux UID
 
-Prompt visibility caveat:
-
-- `apt install ./vaulthalla_<version>_<arch>.deb` (with debconf frontend available)
-  is the supported path for interactive prompting.
-- `dpkg -i` does not run preconfiguration prompts; defaults are used.
-- `dpkg-reconfigure vaulthalla` can be used later to review/change answers.
-
-Database initialization
+Package metadata policy
 =======================
 
-If `vaulthalla/init-db=true`, the maintainer script attempts to create:
+- hard runtime deps remain in `Depends`
+- integration components are `Recommends`:
+  - `postgresql`
+  - `nginx`
 
-- PostgreSQL role: `vaulthalla`
-- PostgreSQL database: `vaulthalla`
+This keeps `apt install vaulthalla` helpful by default while preserving lean
+installs via `--no-install-recommends`.
 
-It also writes a pending database password seed file to:
+Automatic DB behavior
+=====================
+
+During postinst, Vaulthalla attempts local DB bootstrap only when all of these
+conditions hold:
+
+- `VH_SKIP_DB_BOOTSTRAP` is not enabled
+- `psql` exists
+- local `postgres` user exists
+- local PostgreSQL is accepting connections
+
+If any check fails, package install continues and reports skip reason.
+
+When bootstrap runs successfully, postinst creates (or reuses):
+
+- role: `vaulthalla`
+- database: `vaulthalla`
+
+If a new role password is generated, it is seeded to:
 
 - `/run/vaulthalla/db_password`
 
-If local PostgreSQL is not installed/running when `init-db=true`, install fails
-with a clear error.
+Automatic nginx behavior
+========================
 
-If disabled (`init-db=false`, default), package install skips local DB setup.
-Create the database and role manually (local or remote) before first runtime setup.
+During postinst, Vaulthalla attempts nginx integration only when all of these
+conditions hold:
 
-Super-admin UID seed
-====================
+- `VH_SKIP_NGINX_CONFIG` is not enabled
+- nginx is installed and active
+- no non-nginx listeners are detected on `:80`/`:443`
+- no custom nginx site layout is detected
+- packaged template exists at `/usr/share/vaulthalla/nginx/vaulthalla.conf`
 
-If `vaulthalla/superadmin-uid` is set to a numeric UID, the package writes:
+If checks pass, postinst installs/enables:
 
-- `/run/vaulthalla/superadmin_uid`
+- `/etc/nginx/sites-available/vaulthalla`
+- `/etc/nginx/sites-enabled/vaulthalla`
 
-If set to `auto`, install attempts auto-detection for interactive sessions.
-In noninteractive mode, `auto` is ignored for safety.
+and reloads nginx only after `nginx -t` succeeds.
 
-If left blank (default), no install-time super-admin UID is pre-seeded.
+Super-admin bootstrap policy
+============================
 
-Web runtime deployment
-======================
+Package install does not prompt for or pre-seed super-admin Linux UID mapping.
+Initial ownership claim is deferred to first CLI use (`vh` / `vaulthalla`).
 
-The package deploys the standalone web runtime to:
-
-- `/usr/share/vaulthalla-web`
-
-and installs the unit:
-
-- `/lib/systemd/system/vaulthalla-web.service`
-
-The service is configured to run Node in production mode on localhost port
-`36968`.
-
-SQL deploy payload
+Advanced overrides
 ==================
 
-The package installs SQL schema/migration assets to:
+Use these install-time environment flags for explicit opt-out:
 
-- `/usr/share/vaulthalla/psql`
+- `VH_SKIP_DB_BOOTSTRAP=1`
+- `VH_SKIP_NGINX_CONFIG=1`
 
-Core runtime initialization reads this directory on startup.
+Examples:
 
-Nginx integration (conservative mode)
-=====================================
+- `VH_SKIP_DB_BOOTSTRAP=1 sudo -E apt install vaulthalla`
+- `VH_SKIP_NGINX_CONFIG=1 sudo -E apt install vaulthalla`
 
-When `vaulthalla/configure-nginx=true`, postinst attempts safe nginx integration
-using:
+Validation flows
+================
 
-- template source: `/usr/share/vaulthalla/nginx/vaulthalla.conf`
-- target site: `/etc/nginx/sites-available/vaulthalla`
-- enabled link: `/etc/nginx/sites-enabled/vaulthalla`
-
-The script skips automatic nginx enablement when:
-
-- nginx is not installed
-- nginx is installed but inactive
-- non-nginx listeners are detected on port 80/443
-- custom nginx site layouts are already enabled
-
-In all skip cases, install continues and logs the reason.
-
-`configure-nginx=false` is the default to avoid unexpected web stack mutation on
-noninteractive installs.
-
-Remove vs purge lifecycle semantics
-===================================
-
-Remove (`apt remove` / `dpkg -r`)
----------------------------------
-
-- stops and disables `vaulthalla.service`, `vaulthalla-cli.service`,
-  `vaulthalla-cli.socket`, and `vaulthalla-web.service`
-- removes pending runtime seed files under `/run/vaulthalla`
-- disables `/etc/nginx/sites-enabled/vaulthalla` only when it points to the
-  package site path
-- preserves:
-  - `/etc/nginx/sites-available/vaulthalla`
-  - `/var/lib/vaulthalla`
-  - `/var/log/vaulthalla`
-  - debconf answers
-
-Purge (`apt purge` / `dpkg -P`)
--------------------------------
-
-- includes remove behavior, plus:
-  - removes package-managed nginx site file when installer created it
-  - preserves nginx site file when no package-managed marker is present
-  - removes `/var/lib/vaulthalla` and `/var/log/vaulthalla`
-  - attempts to remove `/mnt/vaulthalla` only when empty
-  - deletes `vaulthalla` system user/group (best-effort)
-  - purges debconf answers
-
-Practical clean-host validation
-===============================
-
-On a clean Debian/Ubuntu test VM:
-
-1. Interactive install with prompts:
+1. Default install:
    - `sudo apt install ./vaulthalla_<version>_<arch>.deb`
-2. Noninteractive/default install:
-   - `sudo DEBIAN_FRONTEND=noninteractive dpkg -i ./vaulthalla_<version>_<arch>.deb`
-3. Reconfigure debconf answers later:
-   - `sudo dpkg-reconfigure vaulthalla`
-4. Verify services:
-   - `systemctl status vaulthalla-web.service`
-   - `systemctl status vaulthalla.service`
-5. Verify runtime payload:
+2. Lean install:
+   - `sudo apt install --no-install-recommends ./vaulthalla_<version>_<arch>.deb`
+3. DB override install:
+   - `VH_SKIP_DB_BOOTSTRAP=1 sudo -E apt install ./vaulthalla_<version>_<arch>.deb`
+4. nginx override install:
+   - `VH_SKIP_NGINX_CONFIG=1 sudo -E apt install ./vaulthalla_<version>_<arch>.deb`
+5. Verify payload:
    - `test -f /usr/share/vaulthalla-web/server.js`
-   - `test -d /usr/share/vaulthalla-web/.next/static`
-   - `test -d /usr/share/vaulthalla/psql`
    - `test -f /usr/share/vaulthalla/psql/000_schema.sql`
-6. Verify nginx decision:
-   - If auto-config applied: `test -L /etc/nginx/sites-enabled/vaulthalla`
-   - If skipped: check `/var/log/dpkg.log` or install output for skip reason.
-7. Verify local web reachability:
-   - `curl -I http://127.0.0.1:36968/`
+6. Verify services:
+   - `systemctl status vaulthalla.service`
+   - `systemctl status vaulthalla-cli.socket`
+   - `systemctl status vaulthalla-web.service`
 
- -- Cooper Larson <cooper@valkyrianlabs.com>  Mon, 20 Apr 2026 00:00:00 +0000
+ -- Cooper Larson <cooper@valkyrianlabs.com>  Tue, 21 Apr 2026 00:00:00 +0000

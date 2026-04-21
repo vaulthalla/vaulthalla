@@ -3,21 +3,19 @@ set -e
 
 # postinst for vaulthalla
 # - Creates system user/group + runtime dirs
-# - (Optional) initializes PostgreSQL role/db
-# - Seeds super-admin UID to /run for runtime consumption
-# - Seeds DB password to /run for runtime TPM sealing
-# - Installs/starts web runtime service
-# - Optionally enables conservative nginx reverse-proxy integration
-# - Does NOT write secrets to /etc/vaulthalla/config.yaml
+# - Performs conservative optional local PostgreSQL bootstrap when available
+# - Performs conservative optional nginx integration when available
+# - Does NOT prompt routinely during install
+# - Does NOT perform package-time super-admin UID binding
 #
-# Depends (in debian/control): openssl, nodejs
-
-. /usr/share/debconf/confmodule
+# Advanced opt-outs:
+#   VH_SKIP_DB_BOOTSTRAP=1
+#   VH_SKIP_NGINX_CONFIG=1
 
 PKG="vaulthalla"
 DB_USER="vaulthalla"
 DB_NAME="vaulthalla"
-PENDING_SUPERADMIN_UID_FILE="/run/vaulthalla/superadmin_uid"
+LEGACY_PENDING_SUPERADMIN_UID_FILE="/run/vaulthalla/superadmin_uid"
 PENDING_DB_PASS_FILE="/run/vaulthalla/db_password"
 CORE_SYSTEMD_UNIT="vaulthalla.service"
 CLI_SYSTEMD_UNIT="vaulthalla-cli.service"
@@ -29,29 +27,12 @@ NGINX_SITE_AVAIL="/etc/nginx/sites-available/vaulthalla"
 NGINX_SITE_ENABLED="/etc/nginx/sites-enabled/vaulthalla"
 NGINX_MANAGED_MARKER="/var/lib/vaulthalla/nginx_site_managed"
 
-# ---------- helpers ----------
+DB_BOOTSTRAP_STATUS="skipped"
+NGINX_CONFIG_STATUS="skipped"
 
 create_dir() {
     # create_dir path mode owner group
     install -d -m "$2" -o "$3" -g "$4" "$1"
-}
-
-psql_q() {
-    # psql_q "SQL" [database]
-    run_as_postgres psql -X -v ON_ERROR_STOP=1 -tAc "$1" "${2:-postgres}"
-}
-
-ensure_tss_group_and_user_added() {
-    if getent group tss > /dev/null; then
-        echo "[${PKG}] Ensuring '${DB_USER}' is a member of the existing 'tss' group."
-    else
-        echo "[${PKG}] No 'tss' group found; creating one."
-        addgroup --system tss
-    fi
-    if id -nG "$DB_USER" 2>/dev/null | tr ' ' '\n' | grep -qx tss; then
-        return 0
-    fi
-    adduser "$DB_USER" tss
 }
 
 has_command() {
@@ -77,62 +58,20 @@ run_as_postgres() {
     return 1
 }
 
-seed_superadmin_uid() {
-    db_get vaulthalla/superadmin-uid || true
-    REQUESTED_UID="${RET:-}"
-    RESOLVED_UID=""
-
-    case "$REQUESTED_UID" in
-        "")
-            echo "[${PKG}] No super-admin UID pre-seeded by debconf; skipping UID seed."
+env_flag_enabled() {
+    case "$1" in
+        1|true|TRUE|yes|YES|on|ON)
             return 0
             ;;
-        auto)
-            if [ "${DEBIAN_FRONTEND:-}" = "noninteractive" ]; then
-                echo "[${PKG}] Noninteractive install with superadmin-uid=auto; skipping UID auto-detection."
-                return 0
-            fi
-            if [ -n "${SUDO_UID:-}" ]; then
-                RESOLVED_UID="$SUDO_UID"
-            elif [ -n "${PKEXEC_UID:-}" ]; then
-                RESOLVED_UID="$PKEXEC_UID"
-            else
-                LOGNAME_USER="$(logname 2>/dev/null || true)"
-                if [ -n "$LOGNAME_USER" ] && [ "$LOGNAME_USER" != "root" ]; then
-                    RESOLVED_UID="$(id -u "$LOGNAME_USER" 2>/dev/null || true)"
-                fi
-            fi
-            if [ -z "$RESOLVED_UID" ]; then
-                RESOLVED_UID="$(
-                    getent passwd 2>/dev/null \
-                        | awk -F: '$3 >= 1000 && $3 < 65534 { print $3; exit }'
-                )"
-            fi
-            ;;
         *)
-            if printf '%s' "$REQUESTED_UID" | grep -Eq '^[0-9]+$'; then
-                RESOLVED_UID="$REQUESTED_UID"
-            else
-                echo "[${PKG}] WARNING: Invalid super-admin UID value '$REQUESTED_UID'; skipping UID seed."
-            fi
+            return 1
             ;;
     esac
-
-    if [ -z "$RESOLVED_UID" ]; then
-        echo "[${PKG}] WARNING: Could not determine super-admin UID automatically; skipping UID seed."
-        return 0
-    fi
-
-    umask 077
-    printf '%s\n' "$RESOLVED_UID" > "$PENDING_SUPERADMIN_UID_FILE"
-    chown "$DB_USER:$DB_USER" "$PENDING_SUPERADMIN_UID_FILE"
-    echo "[${PKG}] Seeded super-admin UID to ${PENDING_SUPERADMIN_UID_FILE} (uid=${RESOLVED_UID})."
 }
 
-fail_init_db() {
-    echo "[${PKG}] ERROR: $1" >&2
-    echo "[${PKG}] ERROR: Re-run with vaulthalla/init-db=false to skip automatic local PostgreSQL setup." >&2
-    exit 1
+psql_q() {
+    # psql_q "SQL" [database]
+    run_as_postgres psql -X -v ON_ERROR_STOP=1 -tAc "$1" "${2:-postgres}"
 }
 
 postgresql_server_ready() {
@@ -140,34 +79,20 @@ postgresql_server_ready() {
         run_as_postgres pg_isready -q >/dev/null 2>&1
         return $?
     fi
-
     run_as_postgres psql -X -v ON_ERROR_STOP=1 -d postgres -tAc 'SELECT 1' >/dev/null 2>&1
 }
 
-ensure_superadmin_user_in_group() {
-    if [ ! -f "$PENDING_SUPERADMIN_UID_FILE" ]; then
-        return 0
-    fi
-
-    SUPERADMIN_UID="$(cat "$PENDING_SUPERADMIN_UID_FILE" 2>/dev/null || true)"
-    if ! printf '%s' "$SUPERADMIN_UID" | grep -Eq '^[0-9]+$'; then
-        return 0
-    fi
-
-    SUPERADMIN_USER="$(getent passwd "$SUPERADMIN_UID" | cut -d: -f1)"
-    if [ -z "$SUPERADMIN_USER" ] || [ "$SUPERADMIN_USER" = "root" ] || [ "$SUPERADMIN_USER" = "$DB_USER" ]; then
-        return 0
-    fi
-
-    if id -nG "$SUPERADMIN_USER" 2>/dev/null | tr ' ' '\n' | grep -qx "$DB_USER"; then
-        return 0
-    fi
-
-    if adduser "$SUPERADMIN_USER" "$DB_USER" >/dev/null 2>&1; then
-        echo "[${PKG}] Added '${SUPERADMIN_USER}' to '${DB_USER}' group."
+ensure_tss_group_and_user_added() {
+    if getent group tss > /dev/null; then
+        echo "[${PKG}] Ensuring '${DB_USER}' is a member of the existing 'tss' group."
     else
-        echo "[${PKG}] WARNING: Failed to add '${SUPERADMIN_USER}' to '${DB_USER}' group."
+        echo "[${PKG}] No 'tss' group found; creating one."
+        addgroup --system tss
     fi
+    if id -nG "$DB_USER" 2>/dev/null | tr ' ' '\n' | grep -qx tss; then
+        return 0
+    fi
+    adduser "$DB_USER" tss
 }
 
 align_config_file_permissions() {
@@ -197,6 +122,85 @@ refresh_tpm_udev_rules() {
     fi
     udevadm control --reload-rules >/dev/null 2>&1 || true
     udevadm trigger --subsystem-match=tpm >/dev/null 2>&1 || true
+}
+
+bootstrap_db_if_safe() {
+    if env_flag_enabled "${VH_SKIP_DB_BOOTSTRAP:-}"; then
+        DB_BOOTSTRAP_STATUS="skipped (VH_SKIP_DB_BOOTSTRAP=1)"
+        return 0
+    fi
+
+    if ! has_command psql; then
+        DB_BOOTSTRAP_STATUS="skipped (psql not installed; install PostgreSQL or configure remote DB)"
+        return 0
+    fi
+    if ! id postgres >/dev/null 2>&1; then
+        DB_BOOTSTRAP_STATUS="skipped (local postgres user missing; likely remote/lean install)"
+        return 0
+    fi
+    if ! run_as_postgres true >/dev/null 2>&1; then
+        DB_BOOTSTRAP_STATUS="skipped (cannot execute as postgres user)"
+        return 0
+    fi
+    if ! postgresql_server_ready; then
+        DB_BOOTSTRAP_STATUS="skipped (local PostgreSQL server not ready)"
+        return 0
+    fi
+
+    if ! ROLE_EXISTS="$(psql_q "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'")"; then
+        DB_BOOTSTRAP_STATUS="skipped (failed to query PostgreSQL role state)"
+        return 0
+    fi
+    ROLE_EXISTS="$(printf '%s' "$ROLE_EXISTS" | tr -d '[:space:]')"
+
+    if ! DB_EXISTS="$(psql_q "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'")"; then
+        DB_BOOTSTRAP_STATUS="skipped (failed to query PostgreSQL database state)"
+        return 0
+    fi
+    DB_EXISTS="$(printf '%s' "$DB_EXISTS" | tr -d '[:space:]')"
+
+    ROLE_CREATED="false"
+    VAUL_PG_PASS=""
+
+    if [ "$ROLE_EXISTS" != "1" ]; then
+        if ! has_command openssl; then
+            DB_BOOTSTRAP_STATUS="skipped (openssl not installed for role password generation)"
+            return 0
+        fi
+
+        VAUL_PG_PASS="$(openssl rand -base64 32 | tr -d '\n')"
+        if ! run_as_postgres psql -X -v ON_ERROR_STOP=1 postgres <<EOF
+CREATE ROLE ${DB_USER} LOGIN PASSWORD '${VAUL_PG_PASS}';
+EOF
+        then
+            DB_BOOTSTRAP_STATUS="skipped (failed creating PostgreSQL role '${DB_USER}')"
+            return 0
+        fi
+        ROLE_CREATED="true"
+        echo "[${PKG}] Created PostgreSQL role '${DB_USER}'."
+    fi
+
+    if [ "$DB_EXISTS" != "1" ]; then
+        if ! run_as_postgres psql -X -v ON_ERROR_STOP=1 -c "CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};" postgres; then
+            DB_BOOTSTRAP_STATUS="skipped (failed creating PostgreSQL database '${DB_NAME}')"
+            return 0
+        fi
+        echo "[${PKG}] Created PostgreSQL database '${DB_NAME}'."
+    fi
+
+    if ! run_as_postgres psql -X -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};" postgres; then
+        DB_BOOTSTRAP_STATUS="skipped (failed granting DB privileges)"
+        return 0
+    fi
+
+    if [ "$ROLE_CREATED" = "true" ]; then
+        umask 077
+        printf '%s\n' "$VAUL_PG_PASS" > "$PENDING_DB_PASS_FILE"
+        chown "$DB_USER:$DB_USER" "$PENDING_DB_PASS_FILE"
+        DB_BOOTSTRAP_STATUS="done (created local DB role/database and seeded runtime password)"
+    else
+        DB_BOOTSTRAP_STATUS="done (local DB role/database already present)"
+    fi
 }
 
 nginx_installed() {
@@ -237,35 +241,29 @@ has_custom_nginx_sites_enabled() {
 }
 
 configure_nginx_if_safe() {
-    db_get vaulthalla/configure-nginx || true
-    CONFIGURE_NGINX="${RET:-false}"
-    if [ "$CONFIGURE_NGINX" != "true" ]; then
-        echo "[${PKG}] Skipping nginx integration per user choice."
+    if env_flag_enabled "${VH_SKIP_NGINX_CONFIG:-}"; then
+        NGINX_CONFIG_STATUS="skipped (VH_SKIP_NGINX_CONFIG=1)"
         return 0
     fi
 
     if ! nginx_installed; then
-        echo "[${PKG}] nginx not installed; skipping automatic reverse-proxy setup."
+        NGINX_CONFIG_STATUS="skipped (nginx not installed; install nginx for reverse-proxy integration)"
         return 0
     fi
-
     if ! nginx_active; then
-        echo "[${PKG}] nginx installed but inactive; skipping automatic reverse-proxy setup."
+        NGINX_CONFIG_STATUS="skipped (nginx installed but inactive)"
         return 0
     fi
-
     if has_non_nginx_listener_on_web_ports; then
-        echo "[${PKG}] Detected non-nginx listeners on port 80/443; skipping nginx setup for safety."
+        NGINX_CONFIG_STATUS="skipped (non-nginx listeners active on 80/443)"
         return 0
     fi
-
     if has_custom_nginx_sites_enabled; then
-        echo "[${PKG}] Existing custom nginx sites detected; skipping automatic site enablement."
+        NGINX_CONFIG_STATUS="skipped (custom nginx site layout detected)"
         return 0
     fi
-
     if [ ! -f "$NGINX_TEMPLATE" ]; then
-        echo "[${PKG}] WARNING: nginx template missing at ${NGINX_TEMPLATE}; skipping nginx setup."
+        NGINX_CONFIG_STATUS="skipped (missing packaged nginx template)"
         return 0
     fi
 
@@ -275,41 +273,34 @@ configure_nginx_if_safe() {
         install -m 0644 "$NGINX_TEMPLATE" "$NGINX_SITE_AVAIL"
         printf '%s\n' "managed-by=${PKG}" > "$NGINX_MANAGED_MARKER"
         chmod 0644 "$NGINX_MANAGED_MARKER" >/dev/null 2>&1 || true
-        echo "[${PKG}] Installed nginx site config: ${NGINX_SITE_AVAIL}"
-    else
-        echo "[${PKG}] nginx site config already exists; keeping existing file: ${NGINX_SITE_AVAIL}"
     fi
 
     CREATED_SITE_LINK="false"
     if [ -e "$NGINX_SITE_ENABLED" ] && [ ! -L "$NGINX_SITE_ENABLED" ]; then
-        echo "[${PKG}] WARNING: ${NGINX_SITE_ENABLED} exists and is not a symlink; skipping nginx enablement."
+        NGINX_CONFIG_STATUS="skipped (${NGINX_SITE_ENABLED} exists and is not a symlink)"
         return 0
     fi
 
     if [ ! -e "$NGINX_SITE_ENABLED" ]; then
         ln -s "$NGINX_SITE_AVAIL" "$NGINX_SITE_ENABLED"
         CREATED_SITE_LINK="true"
-        echo "[${PKG}] Enabled nginx site: ${NGINX_SITE_ENABLED}"
     fi
 
     if nginx -t >/dev/null 2>&1; then
         safe_systemctl reload nginx.service
-        echo "[${PKG}] nginx reverse-proxy setup applied."
+        NGINX_CONFIG_STATUS="done (package-managed nginx site enabled)"
         return 0
     fi
 
-    echo "[${PKG}] WARNING: nginx configuration test failed; reverting Vaulthalla site enablement."
     if [ "$CREATED_SITE_LINK" = "true" ]; then
         rm -f "$NGINX_SITE_ENABLED"
     fi
+    NGINX_CONFIG_STATUS="skipped (nginx config test failed; reverted site enablement)"
     return 0
 }
 
-# ---------- main ----------
-
 case "$1" in
   configure)
-    # System user/group
     if ! id "$DB_USER" >/dev/null 2>&1; then
         adduser --quiet --system --group --home /nonexistent --no-create-home --shell /usr/sbin/nologin "$DB_USER"
     fi
@@ -319,7 +310,6 @@ case "$1" in
     ensure_tss_group_and_user_added
     refresh_tpm_udev_rules
 
-    # Runtime/state dirs
     create_dir /var/lib/vaulthalla 0700 "$DB_USER" "$DB_USER"
     create_dir /var/log/vaulthalla 0750 "$DB_USER" "$DB_USER"
     create_dir /run/vaulthalla     0750 "$DB_USER" "$DB_USER"
@@ -328,73 +318,11 @@ case "$1" in
     align_config_file_permissions /etc/vaulthalla/config.yaml
     align_config_file_permissions /etc/vaulthalla/config_template.yaml.in
     require_runtime_assets
-    seed_superadmin_uid
-    ensure_superadmin_user_in_group
 
-    # --- Debconf: initialize database? ---
-    db_get vaulthalla/init-db || true
-    INIT_DB="${RET:-false}"
+    # Remove any stale super-admin seed from older package revisions.
+    rm -f "$LEGACY_PENDING_SUPERADMIN_UID_FILE"
 
-    if [ "$INIT_DB" = "true" ]; then
-        if ! has_command psql; then
-            fail_init_db "PostgreSQL client (psql) is not installed."
-        fi
-        if ! has_command openssl; then
-            fail_init_db "OpenSSL CLI is required to generate a database password seed."
-        fi
-        if ! id postgres >/dev/null 2>&1; then
-            fail_init_db "Local postgres system user is missing. Install/configure a local PostgreSQL server first."
-        fi
-        if ! run_as_postgres true >/dev/null 2>&1; then
-            fail_init_db "Unable to execute commands as postgres user."
-        fi
-        if ! postgresql_server_ready; then
-            fail_init_db "Local PostgreSQL server is not accepting connections."
-        fi
-    fi
-
-    if [ "$INIT_DB" = "true" ]; then
-        echo "[${PKG}] Setting up PostgreSQL role/database..."
-
-        ROLE_EXISTS="$(psql_q "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'")"
-        DB_EXISTS="$(psql_q "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'")"
-        ROLE_CREATED="false"
-
-        if [ "$ROLE_EXISTS" != "1" ]; then
-            VAUL_PG_PASS="$(openssl rand -base64 32 | tr -d '\n')"
-            run_as_postgres psql -X -v ON_ERROR_STOP=1 postgres <<EOF
-CREATE ROLE ${DB_USER} LOGIN PASSWORD '${VAUL_PG_PASS}';
-EOF
-            echo "[${PKG}] Created role '${DB_USER}'."
-            ROLE_CREATED="true"
-        else
-            echo "[${PKG}] Role '${DB_USER}' already exists."
-        fi
-
-        if [ "$DB_EXISTS" != "1" ]; then
-            run_as_postgres psql -X -v ON_ERROR_STOP=1 \
-              -c "CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};" postgres
-            echo "[${PKG}] Created database '${DB_NAME}'."
-        else
-            echo "[${PKG}] Database '${DB_NAME}' already exists."
-        fi
-
-        # Harmless if owner already
-        run_as_postgres psql -X -v ON_ERROR_STOP=1 \
-          -c "GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};" postgres
-
-        if [ "$ROLE_CREATED" = "true" ]; then
-            # Seed DB password (for runtime TPM sealing) only when a new role password was generated.
-            umask 077
-            printf '%s\n' "$VAUL_PG_PASS" > "$PENDING_DB_PASS_FILE"
-            chown "$DB_USER:$DB_USER" "$PENDING_DB_PASS_FILE"
-            echo "[${PKG}] Seeded DB password to ${PENDING_DB_PASS_FILE} (mode 600)."
-        else
-            echo "[${PKG}] Role already existed; preserving current DB password seed state."
-        fi
-    else
-        echo "[${PKG}] Skipping PostgreSQL initialization per user choice."
-    fi
+    bootstrap_db_if_safe
 
     safe_systemctl daemon-reexec
     safe_systemctl daemon-reload
@@ -408,6 +336,11 @@ EOF
     safe_systemctl enable --now "$WEB_SYSTEMD_UNIT"
 
     configure_nginx_if_safe
+
+    echo "[${PKG}] Install summary:"
+    echo "[${PKG}]   DB bootstrap: ${DB_BOOTSTRAP_STATUS}"
+    echo "[${PKG}]   nginx config: ${NGINX_CONFIG_STATUS}"
+    echo "[${PKG}]   Super-admin ownership: deferred to first CLI use ('vh' or 'vaulthalla')."
 
     #DEBHELPER#
     ;;

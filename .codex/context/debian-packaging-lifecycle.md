@@ -11,14 +11,12 @@ Primary build/runtime sources: `core/`, `web/`, `deploy/`, `/debian` maintainer 
 
 | File | Responsibility |
 | --- | --- |
-| `debian/control` | Package metadata, deps (`adduser`, `nodejs`, `openssl`), PostgreSQL/nginx as `Recommends`. |
+| `debian/control` | Package metadata, hard runtime deps in `Depends`, PostgreSQL/nginx in `Recommends`. |
 | `debian/rules` | Meson build from `core/`; stages non-Meson payloads into `debian/tmp` (config, systemd units, nginx template, docs, web standalone payload, udev/tmpfiles, CLI symlinks). |
 | `debian/install` | Final install manifest mapping staged files into package paths. Includes multiarch mappings for libs/udev/tmpfiles. |
-| `debian/templates` | Debconf prompts: `init-db`, `superadmin-uid`, `configure-nginx`. |
-| `debian/config` | Debconf question collection (`db_input` + `db_go`). |
-| `debian/postinst` | `configure` lifecycle logic: user/group/runtime dirs, optional DB init, seed files under `/run`, systemd preset/enable, conservative nginx setup. |
-| `debian/prerm` | `remove|deconfigure` handling: stop/disable web unit, clear run seeds, disable nginx symlink only when package site path is targeted. |
-| `debian/postrm` | `remove` seed cleanup; `purge` state/debconf/nginx cleanup with marker checks and conservative boundaries. |
+| `debian/postinst` | `configure` lifecycle logic: user/group/runtime dirs, optional conservative DB/nginx setup via runtime detection + `VH_SKIP_*` env overrides, systemd preset/enable. |
+| `debian/prerm` | `remove|deconfigure` handling: stop/disable core/cli/web units, clear run seeds, disable nginx symlink only when package site path is targeted. |
+| `debian/postrm` | `remove` seed cleanup; `purge` state/nginx cleanup with marker checks and conservative boundaries. |
 | `debian/tmpfiles.d/vaulthalla.conf` | Runtime/log tmpfiles policy. |
 | `debian/vaulthalla.udev` | TPM device group/mode rules. |
 | `debian/README.Debian` | Operator-facing install/runtime/remove/purge behavior summary. |
@@ -38,15 +36,11 @@ Key package-managed paths:
 - TPM/tmpfiles: `/usr/lib/*/udev/rules.d/60-vaulthalla-tpm.rules`, `/usr/lib/*/tmpfiles.d/vaulthalla.conf`
 - Docs: `/usr/share/doc/vaulthalla/LICENSE`, `/usr/share/doc/vaulthalla/copyright`
 
-## Debconf Prompt Flow
+## Prompt Flow
 
-1. `debian/config` asks all three prompts.
-2. `debian/postinst configure` consumes answers via `db_get`.
-   - Note: `dpkg -i` does not run preconfiguration prompts; defaults apply unless values were preseeded/reconfigured.
-3. Prompt effects:
-- `vaulthalla/init-db` (default `false`): gates local role/database bootstrap attempt. `true` is strict and fails if local PostgreSQL is unavailable.
-- `vaulthalla/superadmin-uid` (default blank): seeds `/run/vaulthalla/superadmin_uid` only when numeric UID (or interactive `auto`) resolves.
-- `vaulthalla/configure-nginx` (default `false`): gates conservative nginx integration path.
+Phase 2 policy removes routine debconf prompting for install setup decisions.
+Package install is low-prompt by default; optional integration behavior is
+driven by conservative runtime checks and optional environment overrides.
 
 ## Lifecycle Semantics
 
@@ -54,10 +48,11 @@ Key package-managed paths:
 
 - Ensures `vaulthalla` system user/group and `tss` group membership.
 - Creates runtime/state dirs and `/mnt/vaulthalla` when missing.
-- Optionally initializes local PostgreSQL role/db (strict failure when explicitly requested but unavailable).
+- Optionally initializes local PostgreSQL role/db when local PostgreSQL is present and healthy.
 - Seeds `/run/vaulthalla/db_password` only when a new DB role password was generated.
 - Presets core/cli/web units; explicitly enables `vaulthalla-web.service`.
 - Applies nginx integration only under safety checks.
+- Removes legacy `/run/vaulthalla/superadmin_uid` seed to avoid package-time ownership binding.
 
 `prerm remove|deconfigure`:
 
@@ -70,7 +65,6 @@ Key package-managed paths:
 - Removes package nginx symlink and removes site file only when package-managed marker exists.
 - Purges `/var/lib/vaulthalla`, `/var/log/vaulthalla`, attempts empty `/mnt/vaulthalla` removal.
 - Deletes `vaulthalla` system user (best-effort).
-- Purges debconf state via `db_purge`.
 
 ## Conservative Boundaries / Invariants
 

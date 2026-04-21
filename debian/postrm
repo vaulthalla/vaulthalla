@@ -1,13 +1,11 @@
 #!/bin/sh
 set -e
 
-. /usr/share/debconf/confmodule
-
 PKG="vaulthalla"
 NGINX_SITE_AVAIL="/etc/nginx/sites-available/vaulthalla"
 NGINX_SITE_ENABLED="/etc/nginx/sites-enabled/vaulthalla"
 NGINX_MANAGED_MARKER="/var/lib/vaulthalla/nginx_site_managed"
-PENDING_SUPERADMIN_UID_FILE="/run/vaulthalla/superadmin_uid"
+LEGACY_PENDING_SUPERADMIN_UID_FILE="/run/vaulthalla/superadmin_uid"
 PENDING_DB_PASS_FILE="/run/vaulthalla/db_password"
 
 has_command() {
@@ -52,11 +50,11 @@ reload_nginx_if_safe() {
 
 case "$1" in
     remove)
-        rm -f "$PENDING_SUPERADMIN_UID_FILE" "$PENDING_DB_PASS_FILE"
+        rm -f "$LEGACY_PENDING_SUPERADMIN_UID_FILE" "$PENDING_DB_PASS_FILE"
         ;;
 
     purge)
-        rm -f "$PENDING_SUPERADMIN_UID_FILE" "$PENDING_DB_PASS_FILE"
+        rm -f "$LEGACY_PENDING_SUPERADMIN_UID_FILE" "$PENDING_DB_PASS_FILE"
         cleanup_nginx_site_link_if_package_path
         if [ -f "$NGINX_MANAGED_MARKER" ]; then
             rm -f "$NGINX_SITE_AVAIL"
@@ -73,9 +71,6 @@ case "$1" in
         rmdir /run/vaulthalla >/dev/null 2>&1 || true
         rmdir /mnt/vaulthalla >/dev/null 2>&1 || true
         rmdir /etc/vaulthalla >/dev/null 2>&1 || true
-
-        echo "[${PKG}] Purging debconf settings for vaulthalla..."
-        db_purge || true
         ;;
 esac
 

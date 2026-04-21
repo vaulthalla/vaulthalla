@@ -8,7 +8,7 @@ CLI_SOCKET_SYSTEMD_UNIT="vaulthalla-cli.socket"
 WEB_SYSTEMD_UNIT="vaulthalla-web.service"
 NGINX_SITE_AVAIL="/etc/nginx/sites-available/vaulthalla"
 NGINX_SITE_ENABLED="/etc/nginx/sites-enabled/vaulthalla"
-PENDING_SUPERADMIN_UID_FILE="/run/vaulthalla/superadmin_uid"
+LEGACY_PENDING_SUPERADMIN_UID_FILE="/run/vaulthalla/superadmin_uid"
 PENDING_DB_PASS_FILE="/run/vaulthalla/db_password"
 
 has_command() {
@@ -52,7 +52,7 @@ case "$1" in
         safe_systemctl disable "$CLI_SOCKET_SYSTEMD_UNIT"
         safe_systemctl disable "$CORE_SYSTEMD_UNIT"
         safe_systemctl disable "$WEB_SYSTEMD_UNIT"
-        rm -f "$PENDING_SUPERADMIN_UID_FILE" "$PENDING_DB_PASS_FILE"
+        rm -f "$LEGACY_PENDING_SUPERADMIN_UID_FILE" "$PENDING_DB_PASS_FILE"
         disable_nginx_site_link_if_package_path
         ;;
 esac
