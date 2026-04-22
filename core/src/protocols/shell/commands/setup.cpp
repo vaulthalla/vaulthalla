@@ -2,6 +2,7 @@
 #include "protocols/shell/commands/helpers.hpp"
 #include "protocols/shell/Router.hpp"
 #include "protocols/shell/util/argsHelpers.hpp"
+#include "protocols/shell/types.hpp"
 #include "config/Config.hpp"
 #include "db/query/identities/User.hpp"
 #include "runtime/Deps.hpp"
@@ -47,11 +48,6 @@ constexpr auto* kNginxManagedMarker = "/var/lib/vaulthalla/nginx_site_managed";
 constexpr auto* kWebUpstreamHost = "127.0.0.1";
 constexpr uint16_t kWebUpstreamPort = 36968;
 
-struct ExecResult {
-    int code = 1;
-    std::string output;
-};
-
 struct ServiceIdentity {
     uid_t uid = 0;
     gid_t gid = 0;
@@ -90,7 +86,7 @@ static std::string sqlLiteral(const std::string& s) {
     return out;
 }
 
-static ExecResult runCapture(const std::string& command) {
+static vh::protocols::shell::ExecResult runCapture(const std::string& command) {
     const auto wrapped = command + " 2>&1";
     std::array<char, 4096> buf{};
     std::string output;

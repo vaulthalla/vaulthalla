@@ -6,6 +6,7 @@
 #include "runtime/Manager.hpp"
 #include "runtime/Deps.hpp"
 #include "usage/include/UsageManager.hpp"
+#include "protocols/shell/types.hpp"
 
 #include <version.h>
 
@@ -29,11 +30,6 @@ static CommandResult handle_version(const CommandCall&) {
 
 namespace {
 
-struct ExecResult {
-    int code = 1;
-    std::string output;
-};
-
 static std::string trim(std::string s) {
     const auto ws = [](const unsigned char c) { return std::isspace(c) != 0; };
     s.erase(s.begin(), std::find_if(s.begin(), s.end(), [&](const unsigned char c) { return !ws(c); }));
@@ -51,7 +47,7 @@ static std::string shellQuote(const std::string& s) {
     return out;
 }
 
-static ExecResult runCapture(const std::string& command) {
+static vh::protocols::shell::ExecResult runCapture(const std::string& command) {
     const auto wrapped = command + " 2>&1";
     std::array<char, 4096> buf{};
     std::string output;

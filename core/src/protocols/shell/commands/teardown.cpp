@@ -2,6 +2,7 @@
 #include "protocols/shell/commands/helpers.hpp"
 #include "protocols/shell/Router.hpp"
 #include "protocols/shell/util/argsHelpers.hpp"
+#include "protocols/shell/types.hpp"
 #include "runtime/Deps.hpp"
 #include "usage/include/UsageManager.hpp"
 #include "CommandUsage.hpp"
@@ -27,11 +28,6 @@ constexpr auto* kNginxSiteAvailable = "/etc/nginx/sites-available/vaulthalla";
 constexpr auto* kNginxSiteEnabled = "/etc/nginx/sites-enabled/vaulthalla";
 constexpr auto* kNginxManagedMarker = "/var/lib/vaulthalla/nginx_site_managed";
 
-struct ExecResult {
-    int code = 1;
-    std::string output;
-};
-
 static std::string trim(std::string s) {
     const auto ws = [](const unsigned char c) { return std::isspace(c) != 0; };
     s.erase(s.begin(), std::find_if(s.begin(), s.end(), [&](const unsigned char c) { return !ws(c); }));
@@ -49,7 +45,7 @@ static std::string shellQuote(const std::string& s) {
     return out;
 }
 
-static ExecResult runCapture(const std::string& command) {
+static vh::protocols::shell::ExecResult runCapture(const std::string& command) {
     const auto wrapped = command + " 2>&1";
     std::array<char, 4096> buf{};
     std::string output;

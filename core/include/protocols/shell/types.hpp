@@ -12,6 +12,11 @@ namespace vh::identities { struct User; }
 
 namespace vh::protocols::shell {
 
+    struct ExecResult {
+        int code = 1;
+        std::string output;
+    };
+
 struct FlagKV {
     std::string key;
     std::optional<std::string> value;
