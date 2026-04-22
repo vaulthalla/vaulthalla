@@ -230,7 +230,9 @@ ensure_repo_bootstrap() {
     tmp_key="$(mktemp)"
     local tmp_keyring
     tmp_keyring="$(mktemp)"
-    trap "rm -f '$tmp_key' '$tmp_keyring'" EXIT
+    local tmp_source
+    tmp_source="$(mktemp)"
+    trap "rm -f '$tmp_key' '$tmp_keyring' '$tmp_source'" EXIT
 
     log "Ensuring Vaulthalla apt key and source are configured."
     curl -fsSL "$KEY_URL" -o "$tmp_key"
@@ -245,6 +247,15 @@ ensure_repo_bootstrap() {
     else
         run_priv install -m 0644 -o root -g root "$tmp_keyring" "$KEY_FILE"
         REPO_KEY_STATUS="updated"
+    fi
+
+    printf '%s\n' "$SOURCE_LINE" > "$tmp_source"
+
+    if [[ -f "$SOURCE_FILE" ]] && cmp -s "$tmp_source" "$SOURCE_FILE"; then
+        REPO_SOURCE_STATUS="already configured"
+    else
+        run_priv install -m 0644 -o root -g root "$tmp_source" "$SOURCE_FILE"
+        REPO_SOURCE_STATUS="updated"
     fi
 }
 
