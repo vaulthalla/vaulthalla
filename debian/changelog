@@ -1,12 +1,12 @@
-vaulthalla (0.33.0-1) unstable; urgency=medium
+vaulthalla (0.34.0-1) unstable; urgency=medium
 
-  - Implemented a low-prompt, conservative install policy removing routine debconf prompts from the default path.
-  - Added support for Debian changelog updates with distribution and urgency options.
-  - Optional local PostgreSQL bootstrap now occurs only if local PostgreSQL is present and healthy.
-  - Added Certbot support for nginx setup with domain options.
-  - Enhanced setup and teardown command implementations.
-  - Refactored AI release process for better draft output handling.
-  - Added cached draft support and improved scratch directory management for changelogs.
-  - Implemented release contract tests for the Debian install flow.
+  - Added buffer release logic and improved exception management in FUSE service.
+  - Implemented active client closure and improved the shutdown process.
+  - Expanded system command implementation in shell protocols.
+  - Enhanced install script with temporary source file handling and improved repository configuration.
+  - Updated key file URL to .asc format and improved key handling.
+  - Added new build and release badges to README.md.
+  - Added CLI setup instructions and convenience scripts to installation documentation.
+  - Removed unchanged Debian examples and scripts (prerm.ex, preinst.ex).
 
- -- Cooper Larson <cooper@valkyrianlabs.com>  Tue, 21 Apr 2026 23:11:51 +0000
+ -- Cooper Larson <cooper@valkyrianlabs.com>  Wed, 22 Apr 2026 17:04:26 +0000

@@ -1,5 +1,5 @@
 project('vaulthalla', 'cpp',
-        version: '0.33.0',
+        version: '0.34.0',
         license: 'AGPL-3.0-or-later',
         default_options: [
             'warning_level=3',
