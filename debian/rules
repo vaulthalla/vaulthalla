@@ -30,6 +30,7 @@ override_dh_auto_install:
 	install -m 0644 deploy/systemd/vaulthalla-cli.socket debian/tmp/lib/systemd/system/vaulthalla-cli.socket
 	install -m 0644 deploy/nginx/vaulthalla.conf debian/tmp/usr/share/vaulthalla/nginx/vaulthalla.conf
 	cp -a deploy/psql/. debian/tmp/usr/share/vaulthalla/psql/
+	install -m 0755 deploy/lifecycle/main.py debian/tmp/usr/lib/vaulthalla/lifecycle
 	install -m 0644 LICENSE debian/tmp/usr/share/doc/vaulthalla/LICENSE
 	install -m 0644 debian/copyright debian/tmp/usr/share/doc/vaulthalla/copyright
 

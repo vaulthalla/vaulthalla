@@ -16,7 +16,7 @@ echo "🗑️  Cleaning directories..."
 
 PROGRAM_NAME=vaulthalla
 
-for dir in /mnt /var/lib /var/log /run /etc /usr/share; do
+for dir in /mnt /var/lib /var/log /run /etc /usr/share /usr/lib; do
   safe_rm_dir "$dir/$PROGRAM_NAME"
 done
 

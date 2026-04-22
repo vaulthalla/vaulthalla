@@ -45,7 +45,6 @@ state_dir = join_paths(get_option('localstatedir'), 'lib', meson.project_name())
 runtime_dir = join_paths('/run', meson.project_name())
 data_dir = join_paths(get_option('prefix'), get_option('datadir'), meson.project_name())
 psql_dir = join_paths(data_dir, 'psql')
-lifecycle_install_dir = join_paths(get_option('prefix'), 'lib', meson.project_name())
 
 conf = configuration_data()
 conf.set_quoted('VH_MOUNT_PATH', join_paths('/mnt', meson.project_name()))
@@ -171,12 +170,6 @@ executable('vaulthalla-cli', files(join_paths(source_root, 'main/cli.cpp')),
            include_directories: include_directories('vendor'),
            dependencies: fmt_dep,
            install: true
-)
-
-install_data(
-    '../deploy/lifecycle/main.py',
-    install_dir: lifecycle_install_dir,
-    rename: 'lifecycle'
 )
 
 vh_usage = executable('vh_usage', main_usage,

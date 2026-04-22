@@ -10,12 +10,14 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 : "${BINDIR:=$PREFIX/bin}"
 : "${SYSCONFDIR:=/etc}"
 : "${DATADIR:=$PREFIX/share}"
+: "${LIBDIR:=$PREFIX/lib}"
 : "${SYSTEMD_UNIT_DIR:=/etc/systemd/system}"
 
 PROJECT_NAME="vaulthalla"
 
 CONFIG_DIR="$SYSCONFDIR/$PROJECT_NAME"
 DATA_DIR="$DATADIR/$PROJECT_NAME"
+LIBEXEC_DIR="$LIBDIR/$PROJECT_NAME"
 RUNTIME_DIR="/run/$PROJECT_NAME"
 STATE_DIR="/var/lib/$PROJECT_NAME"
 LOG_DIR="/var/log/$PROJECT_NAME"
@@ -72,6 +74,9 @@ if [[ -d "$ROOT_DIR/deploy/psql" ]]; then
   sudo mkdir -p "$DATA_DIR"
   sudo rsync -a "$ROOT_DIR/deploy/psql/" "$DATA_DIR/psql/"
 fi
+
+echo "🧰 Installing lifecycle utility..."
+install_file "$ROOT_DIR/deploy/lifecycle/main.py" "$LIBEXEC_DIR/lifecycle" 0755
 
 echo "⚙️  Installing systemd socket payload..."
 if [[ -f "$ROOT_DIR/deploy/systemd/vaulthalla-cli.socket" ]]; then

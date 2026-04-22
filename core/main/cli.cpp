@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
+#include <cerrno>
 
 static bool readn(const int fd, void* b, size_t n) {
     auto* p = static_cast<uint8_t*>(b);
@@ -204,6 +205,25 @@ static std::string lifecycle_binary_path() {
 
 static int run_lifecycle_command(const std::vector<std::string>& argv_norm) {
     const auto lifecycleBin = lifecycle_binary_path();
+    if (::access(lifecycleBin.c_str(), F_OK) != 0) {
+        fmt::print(
+            stderr,
+            "Lifecycle utility not found: {}\n"
+            "Install Vaulthalla lifecycle payload or set VAULTHALLA_LIFECYCLE_BIN to the utility path.\n",
+            lifecycleBin
+        );
+        return 127;
+    }
+    if (::access(lifecycleBin.c_str(), X_OK) != 0) {
+        fmt::print(
+            stderr,
+            "Lifecycle utility is not executable: {}\n"
+            "Expected an executable script/binary. Reinstall Vaulthalla or fix file permissions.\n",
+            lifecycleBin
+        );
+        return 126;
+    }
+
     std::vector<std::string> args;
     args.reserve(argv_norm.size() + 1);
     args.push_back(lifecycleBin);
@@ -214,34 +234,15 @@ static int run_lifecycle_command(const std::vector<std::string>& argv_norm) {
     for (auto& arg : args) execArgv.push_back(arg.data());
     execArgv.push_back(nullptr);
 
-    const pid_t pid = ::fork();
-    if (pid < 0) {
-        perror("fork");
-        return 1;
-    }
-
-    if (pid == 0) {
-        ::execv(execArgv[0], execArgv.data());
-        if (::access(execArgv[0], R_OK) == 0) {
-            std::vector<char*> pyArgv;
-            pyArgv.reserve(execArgv.size() + 1);
-            pyArgv.push_back(const_cast<char*>("python3"));
-            pyArgv.insert(pyArgv.end(), execArgv.begin(), execArgv.end() - 1);
-            pyArgv.push_back(nullptr);
-            ::execvp("python3", pyArgv.data());
-        }
-        perror("exec");
-        _exit(127);
-    }
-
-    int status = 0;
-    if (::waitpid(pid, &status, 0) < 0) {
-        perror("waitpid");
-        return 1;
-    }
-    if (WIFEXITED(status)) return WEXITSTATUS(status);
-    if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
-    return 1;
+    ::execv(execArgv[0], execArgv.data());
+    const auto err = errno;
+    fmt::print(
+        stderr,
+        "Failed to execute lifecycle utility '{}': {}\n",
+        lifecycleBin,
+        std::strerror(err)
+    );
+    return err == ENOENT ? 127 : 126;
 }
 
 static bool should_append_status_systemd_summary(const std::vector<std::string>& argv_norm) {
