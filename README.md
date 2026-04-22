@@ -1,8 +1,16 @@
 # ⚡️ Vaulthalla | The Final Cloud ⚡️
 
-[![build](https://img.shields.io/github/actions/workflow/status/vaulthalla/vaulthalla/build_and_test.yml)](https://github.com/vaulthalla/vaulthalla/actions)
-&nbsp;
+[![build](https://img.shields.io/github/actions/workflow/status/vaulthalla/vaulthalla/build_and_test.yml?label=build)](https://github.com/vaulthalla/vaulthalla/actions)
+ 
+[![release](https://img.shields.io/github/v/release/vaulthalla/vaulthalla?display_name=tag\&sort=semver)](https://github.com/vaulthalla/vaulthalla/releases)
+ 
 [![license](https://img.shields.io/github/license/vaulthalla/vaulthalla?v=2)](https://github.com/vaulthalla/vaulthalla/blob/main/LICENSE)
+ 
+[![debian-first](https://img.shields.io/badge/debian-first-8A2BE2)](https://github.com/vaulthalla/vaulthalla)
+ 
+[![linux-native](https://img.shields.io/badge/linux-native-2ea44f)](https://github.com/vaulthalla/vaulthalla)
+ 
+[![AES-256-GCM/NI](https://img.shields.io/badge/AES--256--GCM%2FNI-encrypted-cyan)](https://github.com/vaulthalla/vaulthalla)
 
 **Military-grade encryption. Lightning-fast performance.**  
 **Your files, your terms.**
