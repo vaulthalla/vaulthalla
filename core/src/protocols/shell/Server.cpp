@@ -102,8 +102,42 @@ Server::Server()
 
 Server::~Server() { closeListener(); }
 
+void Server::closeActiveClient() {
+    std::scoped_lock lock(fdMutex_);
+    if (activeClientFd_ >= 0) {
+        ::shutdown(activeClientFd_, SHUT_RDWR);
+        ::close(activeClientFd_);
+        activeClientFd_ = -1;
+    }
+}
+
+void Server::closeClient(const int fd) {
+    int fdToClose = -1;
+    {
+        std::scoped_lock lock(fdMutex_);
+        if (activeClientFd_ == fd) {
+            fdToClose = activeClientFd_;
+            activeClientFd_ = -1;
+        } else if (activeClientFd_ < 0 && shouldStop()) {
+            // stop path already force-closed this client
+            return;
+        } else {
+            // fallback cleanup for unexpected state
+            fdToClose = fd;
+        }
+    }
+
+    if (fdToClose >= 0) {
+        ::shutdown(fdToClose, SHUT_RDWR);
+        ::close(fdToClose);
+    }
+}
+
 void Server::closeListener() {
+    std::scoped_lock lock(fdMutex_);
     if (listenFd_ >= 0) {
+        // shutdown() is the reliable unblock path for a thread blocked in accept4()
+        ::shutdown(listenFd_, SHUT_RDWR);
         ::close(listenFd_);
         listenFd_ = -1;
     }
@@ -111,7 +145,8 @@ void Server::closeListener() {
 }
 
 void Server::onStop() {
-    // Close listener before AsyncService::join() so accept4() is unblocked.
+    // Unblock any blocking client read/prompt first, then accept4().
+    closeActiveClient();
     closeListener();
 }
 
@@ -172,7 +207,6 @@ void Server::initAdminUid(const int cfd, const uid_t uid) {
             if (!in_group) {
                 log::Registry::shell()->error("[CtlServerService] Failed to add '{}' to vaulthalla group", uname);
                 send_json(cfd, {{"ok", false}, {"exit_code", 1}, {"stderr", "failed to add to vaulthalla group"}});
-                ::close(cfd);
                 throw std::runtime_error("Group add failed and could not verify fallback");
             }
         }
@@ -187,25 +221,34 @@ void Server::initAdminUid(const int cfd, const uid_t uid) {
 void Server::runLoop() {
     // Bind
     ::unlink(socketPath_.c_str());
-    listenFd_ = ::socket(AF_UNIX, SOCK_STREAM, 0);
-    if (listenFd_ < 0) throw std::runtime_error("socket()");
+    int listenFd = -1;
+    {
+        std::scoped_lock lock(fdMutex_);
+        listenFd_ = ::socket(AF_UNIX, SOCK_STREAM, 0);
+        listenFd = listenFd_;
+    }
+    if (listenFd < 0) throw std::runtime_error("socket()");
     sockaddr_un addr{};
     addr.sun_family = AF_UNIX;
     std::snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", socketPath_.c_str());
-    if (::bind(listenFd_, reinterpret_cast<sockaddr*>(&addr),
+    if (::bind(listenFd, reinterpret_cast<sockaddr*>(&addr),
                sizeof(sa_family_t) + std::strlen(addr.sun_path) + 1) != 0)
         throw std::runtime_error("bind()");
     ::chmod(socketPath_.c_str(), 0660);
     // chown to vaulthalla:vaulthalla in your service startup if needed
 
-    if (::listen(listenFd_, 16) != 0) throw std::runtime_error("listen()");
+    if (::listen(listenFd, 16) != 0) throw std::runtime_error("listen()");
 
     // Accept loop
     while (!shouldStop()) {
-        int cfd = ::accept4(listenFd_, nullptr, nullptr, SOCK_CLOEXEC);
+        int cfd = ::accept4(listenFd, nullptr, nullptr, SOCK_CLOEXEC);
         if (cfd < 0) {
             if (shouldStop()) break;
             continue;
+        }
+        {
+            std::scoped_lock lock(fdMutex_);
+            activeClientFd_ = cfd;
         }
 
         try {
@@ -219,7 +262,7 @@ void Server::runLoop() {
                 log::Registry::shell()->debug("[CtlServerService] Connection from UID {} (PID {}) not in vaulthalla group",
                                            p.uid, p.pid);
                 send_json(cfd, {{"ok", false}, {"exit_code", 1}, {"stderr", "permission denied"}});
-                ::close(cfd);
+                closeClient(cfd);
                 continue;
             }
 
@@ -227,25 +270,25 @@ void Server::runLoop() {
             if (!user) {
                 log::Registry::shell()->debug("[CtlServerService] No user found for UID {} (PID {})", p.uid, p.pid);
                 send_json(cfd, {{"ok", false}, {"exit_code", 1}, {"stderr", "user not found"}});
-                ::close(cfd);
+                closeClient(cfd);
                 continue;
             }
 
             uint32_t be = 0;
             if (!readn(cfd, &be, 4)) {
-                ::close(cfd);
+                closeClient(cfd);
                 continue;
             }
             const uint32_t len = ntohl(be);
             if (len > (1u << 20)) {
                 // 1 MiB cap
                 send_json(cfd, {{"ok", false}, {"exit_code", 1}, {"stderr", "request too large"}});
-                ::close(cfd);
+                closeClient(cfd);
                 continue;
             }
             std::string body(len, '\0');
             if (!readn(cfd, body.data(), len)) {
-                ::close(cfd);
+                closeClient(cfd);
                 continue;
             }
 
@@ -284,7 +327,7 @@ void Server::runLoop() {
                 if (line.empty()) line = "help";
                 if (req.value("interactive", false)) io = std::make_unique<SocketIO>(cfd);
                 try_exec_line(line);
-                ::close(cfd);
+                closeClient(cfd);
                 continue;
             }
 
@@ -299,6 +342,6 @@ void Server::runLoop() {
             // best-effort error response
             send_json(cfd, {{"ok", false}, {"exit_code", 1}, {"stderr", "internal error"}});
         }
-        ::close(cfd);
+        closeClient(cfd);
     }
 }
