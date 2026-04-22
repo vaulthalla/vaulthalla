@@ -7,9 +7,9 @@ readonly REPO_DIST="${VH_APT_DIST:-stable}"
 readonly REPO_COMPONENT="${VH_APT_COMPONENT:-main}"
 readonly REPO_ARCH="${VH_APT_ARCH:-$(dpkg --print-architecture 2>/dev/null || echo amd64)}"
 
-readonly KEY_FILE="/etc/apt/trusted.gpg.d/vaulthalla.gpg"
+readonly KEY_FILE="/usr/share/keyrings/vaulthalla.gpg"
 readonly SOURCE_FILE="/etc/apt/sources.list.d/vaulthalla.list"
-readonly SOURCE_LINE="deb [arch=${REPO_ARCH}] ${REPO_URL} ${REPO_DIST} ${REPO_COMPONENT}"
+readonly SOURCE_LINE="deb [arch=${REPO_ARCH} signed-by=${KEY_FILE}] ${REPO_URL} ${REPO_DIST} ${REPO_COMPONENT}"
 
 readonly VH_GROUP="vaulthalla"
 readonly DEFAULT_PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -226,7 +226,7 @@ resolve_operator_user() {
 ensure_repo_bootstrap() {
     local tmp_key
     tmp_key="$(mktemp)"
-    trap 'rm -f "$tmp_key"' EXIT
+    trap "rm -f '$tmp_key'" EXIT
 
     log "Ensuring Vaulthalla apt key and source are configured."
     curl -fsSL "$KEY_URL" -o "$tmp_key"
@@ -241,13 +241,14 @@ ensure_repo_bootstrap() {
         REPO_KEY_STATUS="updated"
     fi
 
-    local expected
-    expected="$(printf '%s\n' "$SOURCE_LINE")"
-    if [[ -f "$SOURCE_FILE" ]] && [[ "$(cat "$SOURCE_FILE")"$'\n' == "$expected" ]]; then
+    local tmp_source
+    tmp_source="$(mktemp)"
+    printf '%s\n' "$SOURCE_LINE" > "$tmp_source"
+
+    if [[ -f "$SOURCE_FILE" ]] && cmp -s "$tmp_source" "$SOURCE_FILE"; then
         REPO_SOURCE_STATUS="already configured"
     else
-        printf '%s\n' "$SOURCE_LINE" | run_priv tee "$SOURCE_FILE" >/dev/null
-        run_priv chmod 0644 "$SOURCE_FILE"
+        run_priv install -m 0644 -o root -g root "$tmp_source" "$SOURCE_FILE"
         REPO_SOURCE_STATUS="updated"
     fi
 }
