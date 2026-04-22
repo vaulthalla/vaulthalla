@@ -1,5 +1,6 @@
 #include "protocols/shell/commands/all.hpp"
 #include "protocols/shell/Router.hpp"
+#include "protocols/shell/Server.hpp"
 #include "protocols/shell/util/argsHelpers.hpp"
 #include "protocols/ProtocolService.hpp"
 #include "runtime/Manager.hpp"
