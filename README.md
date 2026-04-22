@@ -13,7 +13,7 @@ native FUSE integration, encrypted storage workflows, and S3-compatible sync.
 ## Read This First
 
 - Vaulthalla is system-level software: install and operational setup require root privileges.
-- The standard path is Debian/Ubuntu packaging (`apt install vaulthalla`).
+- The recommended convenience path is the hosted installer script.
 - Package install is intentionally low-prompt and conservative; optional DB/nginx steps run only when local checks pass.
 - Package install does not pre-bind initial super-admin ownership. First-use CLI flow handles that.
 - CLI commands are the explicit control plane for optional integration setup.
@@ -31,7 +31,29 @@ native FUSE integration, encrypted storage workflows, and S3-compatible sync.
 
 ## Installation
 
-### Debian / Ubuntu Package (Standard Path)
+### Recommended Convenience Installer
+
+```bash
+curl -fsSL https://apt.vaulthalla.sh/install.sh | bash
+```
+
+This is the recommended path for most operators. It performs one no-prompt flow:
+repo bootstrap, apt install, and post-install CLI onboarding.
+
+Advanced interactive flow (arrow-key profile + onboarding selections):
+
+```bash
+curl -fsSL https://apt.vaulthalla.sh/install.sh | bash -s -- --interactive
+```
+
+If running from a local clone instead of the hosted endpoint:
+
+```bash
+./bin/vh/install.sh
+./bin/vh/install.sh --interactive
+```
+
+### Debian / Ubuntu Package (Manual / Transparent Alternative)
 
 ```bash
 sudo curl -fsSL https://apt.vaulthalla.sh/pubkey.gpg \
@@ -42,34 +64,6 @@ echo "deb [arch=amd64] https://apt.vaulthalla.sh stable main" | \
 
 sudo apt update
 sudo apt install vaulthalla
-```
-
-### Convenience Helper Scripts (Optional)
-
-`/bin/vh/` provides convenience helpers for operators who want a faster bootstrap
-path outside manual apt copy/paste. This is optional and does not replace the
-manual apt flow above.
-
-```bash
-git clone https://github.com/vaulthalla/vaulthalla.git
-cd vaulthalla/bin/vh
-./install.sh
-```
-
-If you fetched only the helper directory itself, run from that directory:
-
-```bash
-cd vh
-./install.sh
-```
-
-Available helper modes:
-
-```bash
-./install.sh
-./install-lean.sh
-./install-no-db.sh
-./install-no-nginx.sh
 ```
 
 Install modes:

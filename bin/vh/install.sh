@@ -1,11 +1,36 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-readonly ADD_REPO_SCRIPT="${SCRIPT_DIR}/add_vaulthalla_repo.sh"
-readonly INIT_SCRIPT="${SCRIPT_DIR}/init_cli.sh"
+readonly KEY_URL="${VH_APT_KEY_URL:-https://apt.vaulthalla.sh/pubkey.gpg}"
+readonly REPO_URL="${VH_APT_REPO_URL:-https://apt.vaulthalla.sh}"
+readonly REPO_DIST="${VH_APT_DIST:-stable}"
+readonly REPO_COMPONENT="${VH_APT_COMPONENT:-main}"
+readonly REPO_ARCH="${VH_APT_ARCH:-$(dpkg --print-architecture 2>/dev/null || echo amd64)}"
+
+readonly KEY_FILE="/etc/apt/trusted.gpg.d/vaulthalla.gpg"
+readonly SOURCE_FILE="/etc/apt/sources.list.d/vaulthalla.list"
+readonly SOURCE_LINE="deb [arch=${REPO_ARCH}] ${REPO_URL} ${REPO_DIST} ${REPO_COMPONENT}"
+
+readonly VH_GROUP="vaulthalla"
+readonly DEFAULT_PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+INTERACTIVE_MODE=0
+PROFILE="standard"
+PROFILE_LOCKED=0
+ADMIN_MODE="current"
+ASSIGN_TARGET_USER=""
+
+REPO_KEY_STATUS="unknown"
+REPO_SOURCE_STATUS="unknown"
+GROUP_STATUS_LINES=()
+ADMIN_STATUS="not attempted"
+ADMIN_DETAIL=""
+SESSION_STATUS="not evaluated"
+SESSION_NEXT_STEP=""
+SESSION_NOTE=""
 
 log() { printf '[vh install] %s\n' "$*"; }
+warn() { printf '[vh install] WARN: %s\n' "$*" >&2; }
 die() { printf '[vh install] ERROR: %s\n' "$*" >&2; exit 1; }
 
 need_cmd() {
@@ -17,67 +42,494 @@ run_priv() {
         "$@"
         return
     fi
-
     need_cmd sudo
     sudo "$@"
 }
 
+run_as_user() {
+    local user="$1"
+    shift
+
+    if [[ "$(id -un)" == "$user" && "${EUID:-$(id -u)}" -ne 0 ]]; then
+        "$@"
+        return
+    fi
+
+    if [[ "${EUID:-$(id -u)}" -eq 0 ]] && command -v runuser >/dev/null 2>&1; then
+        runuser -u "$user" -- "$@"
+        return
+    fi
+
+    need_cmd sudo
+    sudo -u "$user" "$@"
+}
+
 usage() {
     cat <<'EOF'
-Usage: ./install.sh [apt-install-options]
+Usage: ./install.sh [options]
 
-Installs Vaulthalla via apt using this flow:
-1) add Vaulthalla apt repo/key
-2) apt-get update
-3) apt-get install vaulthalla
-4) post-install CLI onboarding (group + admin-claim flow)
-
-Examples:
+Default (no prompts):
   ./install.sh
-  ./install.sh --no-install-recommends
-  VH_SKIP_DB_BOOTSTRAP=1 ./install.sh
-  VH_SKIP_NGINX_CONFIG=1 ./install.sh
+
+Advanced interactive mode (arrow-key menus):
+  ./install.sh --interactive
+  ./install.sh --advanced
+
+Deterministic profile flags (non-interactive):
+  --lean       Install with --no-install-recommends
+  --no-db      Set VH_SKIP_DB_BOOTSTRAP=1 for package install
+  --no-nginx   Set VH_SKIP_NGINX_CONFIG=1 for package install
+
+Deterministic onboarding flags:
+  --assign-user <linux-user>   Attempt explicit admin claim as this user
+  --skip-admin-assign          Skip explicit admin claim
 EOF
 }
 
-main() {
-    if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-        usage
-        return 0
+supports_interactive_ui() {
+    [[ -t 0 && -t 1 ]]
+}
+
+menu_select() {
+    local prompt="$1"
+    shift
+    local -a options=("$@")
+    local selected=0
+
+    while true; do
+        printf '%s\n' "$prompt"
+        for i in "${!options[@]}"; do
+            if [[ "$i" -eq "$selected" ]]; then
+                printf '  ◉ %s\n' "${options[$i]}"
+            else
+                printf '  ◯ %s\n' "${options[$i]}"
+            fi
+        done
+        printf '  Use ↑/↓ and Enter.\n'
+
+        local key=""
+        IFS= read -rsn1 key || true
+        if [[ "$key" == $'\x1b' ]]; then
+            local rest=""
+            IFS= read -rsn2 rest || true
+            key+="$rest"
+        fi
+
+        case "$key" in
+            $'\x1b[A'|k|K)
+                selected=$(( (selected - 1 + ${#options[@]}) % ${#options[@]} ))
+                ;;
+            $'\x1b[B'|j|J)
+                selected=$(( (selected + 1) % ${#options[@]} ))
+                ;;
+            ""|$'\n')
+                printf '\n'
+                printf '%s\n' "$selected"
+                return 0
+                ;;
+            *)
+                ;;
+        esac
+
+        printf '\033[%dA\033[J' "$(( ${#options[@]} + 2 ))"
+    done
+}
+
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --interactive|--advanced)
+                INTERACTIVE_MODE=1
+                shift
+                ;;
+            --lean)
+                [[ "$PROFILE_LOCKED" -eq 0 ]] || die "Install profile already selected. Use only one of --lean/--no-db/--no-nginx."
+                PROFILE="lean"
+                PROFILE_LOCKED=1
+                shift
+                ;;
+            --no-db)
+                [[ "$PROFILE_LOCKED" -eq 0 ]] || die "Install profile already selected. Use only one of --lean/--no-db/--no-nginx."
+                PROFILE="no-db"
+                PROFILE_LOCKED=1
+                shift
+                ;;
+            --no-nginx)
+                [[ "$PROFILE_LOCKED" -eq 0 ]] || die "Install profile already selected. Use only one of --lean/--no-db/--no-nginx."
+                PROFILE="no-nginx"
+                PROFILE_LOCKED=1
+                shift
+                ;;
+            --assign-user)
+                [[ $# -ge 2 ]] || die "--assign-user requires a username argument."
+                ASSIGN_TARGET_USER="$2"
+                ADMIN_MODE="other"
+                shift 2
+                ;;
+            --skip-admin-assign)
+                ADMIN_MODE="skip"
+                shift
+                ;;
+            -h|--help)
+                usage
+                exit 0
+                ;;
+            *)
+                die "Unknown argument: $1"
+                ;;
+        esac
+    done
+
+    if [[ "$INTERACTIVE_MODE" -eq 1 && "$PROFILE_LOCKED" -eq 1 ]]; then
+        die "Do not combine --interactive/--advanced with --lean/--no-db/--no-nginx."
+    fi
+}
+
+ensure_supported_environment() {
+    [[ "$(uname -s)" == "Linux" ]] || die "Unsupported OS: $(uname -s). This installer supports Debian/Ubuntu Linux only."
+    [[ -r /etc/os-release ]] || die "Missing /etc/os-release. Cannot determine distribution."
+    [[ -r /etc/debian_version ]] || die "Unsupported distro: /etc/debian_version is missing."
+
+    # shellcheck source=/dev/null
+    . /etc/os-release
+
+    local id="${ID:-unknown}"
+    local id_like="${ID_LIKE:-}"
+    case "$id" in
+        debian|ubuntu) ;;
+        *)
+            [[ "$id_like" == *debian* ]] || die "Unsupported distro: ${id}. This installer supports Debian/Ubuntu apt environments only."
+            ;;
+    esac
+
+    need_cmd apt-get
+    need_cmd curl
+    need_cmd cmp
+    need_cmd install
+    need_cmd tee
+    need_cmd getent
+    need_cmd id
+}
+
+resolve_operator_user() {
+    if [[ -n "${ASSIGN_TARGET_USER:-}" && "$ADMIN_MODE" == "other" ]]; then
+        id "$ASSIGN_TARGET_USER" >/dev/null 2>&1 || die "User '${ASSIGN_TARGET_USER}' does not exist."
     fi
 
-    [[ -x "$ADD_REPO_SCRIPT" ]] || die "Missing executable helper: ${ADD_REPO_SCRIPT}"
-    [[ -x "$INIT_SCRIPT" ]] || die "Missing executable helper: ${INIT_SCRIPT}"
+    if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
+        printf '%s\n' "$SUDO_USER"
+        return
+    fi
+    id -un
+}
 
-    log "Bootstrapping Vaulthalla apt repository."
-    "$ADD_REPO_SCRIPT"
+ensure_repo_bootstrap() {
+    local tmp_key
+    tmp_key="$(mktemp)"
+    trap 'rm -f "$tmp_key"' EXIT
+
+    log "Ensuring Vaulthalla apt key and source are configured."
+    curl -fsSL "$KEY_URL" -o "$tmp_key"
+    [[ -s "$tmp_key" ]] || die "Downloaded key is empty: ${KEY_URL}"
+
+    run_priv install -d -m 0755 /etc/apt/trusted.gpg.d /etc/apt/sources.list.d
+
+    if [[ -f "$KEY_FILE" ]] && cmp -s "$tmp_key" "$KEY_FILE"; then
+        REPO_KEY_STATUS="already configured"
+    else
+        run_priv install -m 0644 -o root -g root "$tmp_key" "$KEY_FILE"
+        REPO_KEY_STATUS="updated"
+    fi
+
+    local expected
+    expected="$(printf '%s\n' "$SOURCE_LINE")"
+    if [[ -f "$SOURCE_FILE" ]] && [[ "$(cat "$SOURCE_FILE")"$'\n' == "$expected" ]]; then
+        REPO_SOURCE_STATUS="already configured"
+    else
+        printf '%s\n' "$SOURCE_LINE" | run_priv tee "$SOURCE_FILE" >/dev/null
+        run_priv chmod 0644 "$SOURCE_FILE"
+        REPO_SOURCE_STATUS="updated"
+    fi
+}
+
+interactive_select_profile() {
+    supports_interactive_ui || die "--interactive/--advanced requires a TTY."
+    local -a opts=(
+        "Standard (apt install vaulthalla)"
+        "Lean (apt install --no-install-recommends vaulthalla)"
+        "No DB bootstrap (VH_SKIP_DB_BOOTSTRAP=1)"
+        "No nginx setup (VH_SKIP_NGINX_CONFIG=1)"
+    )
+    local selected
+    selected="$(menu_select "Select install profile:" "${opts[@]}")"
+    case "$selected" in
+        0) PROFILE="standard" ;;
+        1) PROFILE="lean" ;;
+        2) PROFILE="no-db" ;;
+        3) PROFILE="no-nginx" ;;
+        *) die "Invalid profile selection: ${selected}" ;;
+    esac
+}
+
+interactive_select_admin_mode() {
+    supports_interactive_ui || die "--interactive/--advanced requires a TTY."
+    local operator_user="$1"
+
+    local -a opts=(
+        "Assign current user (${operator_user}) as Vaulthalla CLI super-admin"
+        "Assign a different local user as Vaulthalla CLI super-admin"
+        "Skip admin assignment for now"
+    )
+
+    local selected
+    selected="$(menu_select "Select post-install admin assignment behavior:" "${opts[@]}")"
+    case "$selected" in
+        0)
+            ADMIN_MODE="current"
+            ASSIGN_TARGET_USER="$operator_user"
+            ;;
+        1)
+            ADMIN_MODE="other"
+            ASSIGN_TARGET_USER="$(interactive_select_local_user "$operator_user")"
+            ;;
+        2)
+            ADMIN_MODE="skip"
+            ASSIGN_TARGET_USER=""
+            ;;
+        *)
+            die "Invalid admin selection: ${selected}"
+            ;;
+    esac
+}
+
+interactive_select_local_user() {
+    local operator_user="$1"
+    local -a users=()
+
+    if command -v getent >/dev/null 2>&1; then
+        while IFS=: read -r user _ uid _ _ _ shell; do
+            [[ -n "$user" ]] || continue
+            [[ "$uid" -ge 1000 ]] || continue
+            [[ "$user" == "nobody" ]] && continue
+            [[ "$shell" =~ (false|nologin)$ ]] && continue
+            users+=("$user")
+        done < <(getent passwd)
+    fi
+
+    if [[ "$operator_user" != "root" ]]; then
+        users+=("$operator_user")
+    fi
+
+    if [[ ${#users[@]} -eq 0 ]]; then
+        die "No eligible local users were found for admin assignment."
+    fi
+
+    mapfile -t users < <(printf '%s\n' "${users[@]}" | awk '!seen[$0]++' | sort)
+
+    local selected
+    selected="$(menu_select "Select local user for admin assignment:" "${users[@]}")"
+    printf '%s\n' "${users[$selected]}"
+}
+
+run_apt_install_flow() {
+    local -a apt_opts=()
+    local -a install_env=("DEBIAN_FRONTEND=noninteractive")
+
+    case "$PROFILE" in
+        lean)
+            apt_opts+=("--no-install-recommends")
+            ;;
+        no-db)
+            install_env+=("VH_SKIP_DB_BOOTSTRAP=1")
+            ;;
+        no-nginx)
+            install_env+=("VH_SKIP_NGINX_CONFIG=1")
+            ;;
+        standard)
+            ;;
+        *)
+            die "Unknown install profile: ${PROFILE}"
+            ;;
+    esac
 
     log "Running apt-get update."
-    run_priv apt-get update
+    run_priv env DEBIAN_FRONTEND=noninteractive apt-get update
 
-    local -a env_args=()
-    [[ -n "${VH_SKIP_DB_BOOTSTRAP:-}" ]] && env_args+=("VH_SKIP_DB_BOOTSTRAP=${VH_SKIP_DB_BOOTSTRAP}")
-    [[ -n "${VH_SKIP_NGINX_CONFIG:-}" ]] && env_args+=("VH_SKIP_NGINX_CONFIG=${VH_SKIP_NGINX_CONFIG}")
+    log "Installing vaulthalla package (profile: ${PROFILE})."
+    run_priv env "${install_env[@]}" apt-get install -y "${apt_opts[@]}" vaulthalla
+}
 
-    local -a install_cmd=(apt-get install -y "$@" vaulthalla)
-    log "Installing Vaulthalla package."
-    if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
-        if [[ ${#env_args[@]} -gt 0 ]]; then
-            env "${env_args[@]}" "${install_cmd[@]}"
-        else
-            "${install_cmd[@]}"
-        fi
-    else
-        need_cmd sudo
-        if [[ ${#env_args[@]} -gt 0 ]]; then
-            sudo env "${env_args[@]}" "${install_cmd[@]}"
-        else
-            sudo "${install_cmd[@]}"
+user_in_group_configured() {
+    local user="$1"
+    id -nG "$user" 2>/dev/null | tr ' ' '\n' | grep -Fxq "$VH_GROUP"
+}
+
+current_shell_in_group() {
+    id -nG 2>/dev/null | tr ' ' '\n' | grep -Fxq "$VH_GROUP"
+}
+
+ensure_user_group_membership() {
+    local user="$1"
+    [[ -n "$user" ]] || return
+    if [[ "$user" == "root" ]]; then
+        GROUP_STATUS_LINES+=("group ${VH_GROUP}: skipped for root")
+        return
+    fi
+    if user_in_group_configured "$user"; then
+        GROUP_STATUS_LINES+=("group ${VH_GROUP}: ${user} already enrolled")
+        return
+    fi
+    run_priv usermod -aG "$VH_GROUP" "$user"
+    GROUP_STATUS_LINES+=("group ${VH_GROUP}: added ${user}")
+}
+
+attempt_admin_assignment() {
+    local user="$1"
+    [[ -n "$user" ]] || {
+        ADMIN_STATUS="skipped by operator choice"
+        return
+    }
+
+    local vh_bin="/usr/bin/vh"
+    if [[ ! -x "$vh_bin" ]]; then
+        vh_bin="$(command -v vh || true)"
+    fi
+    [[ -n "$vh_bin" ]] || {
+        ADMIN_STATUS="pending (vh binary not found)"
+        ADMIN_DETAIL="Install appears complete but 'vh' is not in PATH."
+        return
+    }
+
+    local output=""
+    if output="$(run_as_user "$user" env PATH="$DEFAULT_PATH" "$vh_bin" setup assign-admin 2>&1)"; then
+        ADMIN_STATUS="completed (user: ${user})"
+        ADMIN_DETAIL="$(printf '%s\n' "$output" | head -n 1)"
+        return
+    fi
+
+    if command -v sg >/dev/null 2>&1; then
+        local sg_cmd
+        printf -v sg_cmd '%q %q %q' "$vh_bin" "setup" "assign-admin"
+        if output="$(run_as_user "$user" env PATH="$DEFAULT_PATH" sg "$VH_GROUP" -c "$sg_cmd" 2>&1)"; then
+            ADMIN_STATUS="completed via sg handoff (user: ${user})"
+            ADMIN_DETAIL="$(printf '%s\n' "$output" | head -n 1)"
+            return
         fi
     fi
 
-    log "Running post-install CLI onboarding."
-    "$INIT_SCRIPT"
+    ADMIN_STATUS="pending (user: ${user})"
+    ADMIN_DETAIL="$(printf '%s\n' "$output" | head -n 1)"
+    if [[ "$output" == *"Unknown setup subcommand"* ]]; then
+        ADMIN_DETAIL="This build does not provide 'vh setup assign-admin'; first non-root user to run 'vh'/'vaulthalla' will claim super-admin."
+    fi
+}
+
+compute_session_handoff_summary() {
+    local operator_user="$1"
+    local invoking_user
+    invoking_user="$(id -un)"
+
+    if [[ "$operator_user" != "$invoking_user" ]]; then
+        SESSION_STATUS="not applied (installer was invoked by '${invoking_user}', operator '${operator_user}')"
+        SESSION_NOTE="Group refresh must be done in the operator's own shell."
+        return
+    fi
+
+    if current_shell_in_group; then
+        SESSION_STATUS="current shell already has '${VH_GROUP}' group"
+        return
+    fi
+
+    SESSION_STATUS="current shell may not yet have '${VH_GROUP}' group"
+    if command -v newgrp >/dev/null 2>&1; then
+        SESSION_NEXT_STEP="newgrp ${VH_GROUP}"
+    else
+        SESSION_NEXT_STEP="log out and log back in"
+    fi
+    SESSION_NOTE="A full new login shell/session may still be required to refresh parent-shell group membership."
+}
+
+print_summary() {
+    local operator_user="$1"
+    local profile_label="$PROFILE"
+    case "$PROFILE" in
+        standard) profile_label="standard" ;;
+        lean) profile_label="lean (--no-install-recommends)" ;;
+        no-db) profile_label="no-db (VH_SKIP_DB_BOOTSTRAP=1)" ;;
+        no-nginx) profile_label="no-nginx (VH_SKIP_NGINX_CONFIG=1)" ;;
+    esac
+
+    log "Install summary:"
+    log "  repo key: ${REPO_KEY_STATUS}"
+    log "  repo source: ${REPO_SOURCE_STATUS}"
+    log "  profile: ${profile_label}"
+    log "  operator user: ${operator_user}"
+
+    if [[ ${#GROUP_STATUS_LINES[@]} -eq 0 ]]; then
+        log "  group handling: no changes"
+    else
+        for line in "${GROUP_STATUS_LINES[@]}"; do
+            log "  ${line}"
+        done
+    fi
+
+    log "  session handoff: ${SESSION_STATUS}"
+    [[ -n "$SESSION_NEXT_STEP" ]] && log "  session next step: run '${SESSION_NEXT_STEP}'"
+    [[ -n "$SESSION_NOTE" ]] && log "  note: ${SESSION_NOTE}"
+
+    log "  admin assignment: ${ADMIN_STATUS}"
+    [[ -n "$ADMIN_DETAIL" ]] && log "  admin detail: ${ADMIN_DETAIL}"
+
+    if [[ "$ADMIN_MODE" == "skip" ]]; then
+        warn "Admin assignment was skipped."
+        warn "First non-root user to call 'vh' or 'vaulthalla' will claim super-admin ownership for their Linux UID."
+    fi
+
+    log "Recommended next commands:"
+    log "  vh setup assign-admin"
+    log "  vh setup db"
+    log "  vh setup remote-db"
+    log "  vh setup nginx"
+    log "  vh setup nginx --certbot --domain <domain>"
+}
+
+main() {
+    parse_args "$@"
+    ensure_supported_environment
+
+    local operator_user
+    operator_user="$(resolve_operator_user)"
+    id "$operator_user" >/dev/null 2>&1 || die "Operator user does not exist: ${operator_user}"
+
+    if [[ "$INTERACTIVE_MODE" -eq 1 ]]; then
+        interactive_select_profile
+    fi
+
+    ensure_repo_bootstrap
+    run_apt_install_flow
+
+    getent group "$VH_GROUP" >/dev/null 2>&1 || die "Group '${VH_GROUP}' was not created by package install."
+
+    ensure_user_group_membership "$operator_user"
+
+    if [[ "$INTERACTIVE_MODE" -eq 1 ]]; then
+        interactive_select_admin_mode "$operator_user"
+    elif [[ "$ADMIN_MODE" == "current" && -z "$ASSIGN_TARGET_USER" ]]; then
+        ASSIGN_TARGET_USER="$operator_user"
+    fi
+
+    if [[ "$ADMIN_MODE" == "other" ]]; then
+        ensure_user_group_membership "$ASSIGN_TARGET_USER"
+    fi
+
+    if [[ "$ADMIN_MODE" == "skip" ]]; then
+        ADMIN_STATUS="skipped by operator choice"
+    else
+        attempt_admin_assignment "$ASSIGN_TARGET_USER"
+    fi
+
+    compute_session_handoff_summary "$operator_user"
+    print_summary "$operator_user"
 }
 
 main "$@"
