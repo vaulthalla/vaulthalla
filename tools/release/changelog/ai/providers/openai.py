@@ -14,6 +14,7 @@ from tools.release.changelog.ai.providers.capabilities import (
     ProviderCapabilities,
     build_structured_mode_fallback_chain,
     get_provider_capabilities,
+    resolve_request_parameter_capabilities,
     resolve_generation_settings,
 )
 from tools.release.changelog.ai.providers.parsing import parse_json_object_from_text
@@ -22,6 +23,7 @@ LOCAL_NO_AUTH_API_KEY_PLACEHOLDER = "local-no-auth"
 _MODE_RECOVERABLE_ERROR_MARKERS = (
     "response_format",
     "json_schema",
+    "invalid schema",
     "strict",
     "unsupported",
     "not supported",
@@ -154,27 +156,76 @@ class OpenAIProvider:
         temperature: float | None,
         max_output_tokens: int | None,
     ) -> str:
-        if self._supports_responses_api():
-            try:
-                response = self._client.responses.create(
-                    **self._build_responses_request(
-                        model=self.model,
-                        system_prompt=system_prompt,
-                        user_prompt=user_prompt,
-                        json_schema=json_schema,
-                        structured_mode=structured_mode,
-                        reasoning_effort=reasoning_effort,
-                        temperature=temperature,
-                        max_output_tokens=max_output_tokens,
-                    )
-                )
-                return _extract_responses_output_text(response)
-            except Exception as exc:
-                # Hosted OpenAI should prefer Responses API, but fall back to chat completions
-                # when SDK/server support is incomplete.
-                if not _is_mode_recoverable_error(str(exc)):
-                    raise ValueError(f"AI transport error: Responses API request failed: {exc}") from exc
+        if self.provider_kind == "openai":
+            return self._generate_hosted_openai_output(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                json_schema=json_schema,
+                structured_mode=structured_mode,
+                reasoning_effort=reasoning_effort,
+                temperature=temperature,
+                max_output_tokens=max_output_tokens,
+            )
+        return self._generate_openai_compatible_output(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            json_schema=json_schema,
+            structured_mode=structured_mode,
+            reasoning_effort=reasoning_effort,
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+        )
 
+    def _generate_hosted_openai_output(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        json_schema: dict[str, Any],
+        structured_mode: AIStructuredMode,
+        reasoning_effort: AIReasoningEffort | None,
+        temperature: float | None,
+        max_output_tokens: int | None,
+    ) -> str:
+        responses = getattr(self._client, "responses", None)
+        create = getattr(responses, "create", None)
+        if not callable(create):
+            raise ValueError(
+                "AI transport error: Hosted OpenAI provider requires Responses API support on the active OpenAI SDK/client."
+            )
+        parameter_capabilities = resolve_request_parameter_capabilities(
+            provider_kind="openai",
+            model=self.model,
+        )
+        try:
+            response = create(
+                **self._build_responses_request(
+                    model=self.model,
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    json_schema=json_schema,
+                    structured_mode=structured_mode,
+                    reasoning_effort=reasoning_effort,
+                    temperature=temperature,
+                    max_output_tokens=max_output_tokens,
+                    include_temperature=parameter_capabilities.supports_temperature,
+                )
+            )
+        except Exception as exc:
+            raise ValueError(f"AI transport error: Responses API request failed: {exc}") from exc
+        return _extract_responses_output_text(response)
+
+    def _generate_openai_compatible_output(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        json_schema: dict[str, Any],
+        structured_mode: AIStructuredMode,
+        reasoning_effort: AIReasoningEffort | None,
+        temperature: float | None,
+        max_output_tokens: int | None,
+    ) -> str:
         try:
             response = self._client.chat.completions.create(
                 **self._build_chat_request(
@@ -190,14 +241,7 @@ class OpenAIProvider:
             )
         except Exception as exc:
             raise ValueError(f"AI transport error: Chat Completions request failed: {exc}") from exc
-
         return _extract_message_content(response)
-
-    def _supports_responses_api(self) -> bool:
-        if self.provider_kind != "openai":
-            return False
-        responses = getattr(self._client, "responses", None)
-        return responses is not None and callable(getattr(responses, "create", None))
 
     @staticmethod
     def _build_chat_request(
@@ -256,6 +300,7 @@ class OpenAIProvider:
         reasoning_effort: AIReasoningEffort | None,
         temperature: float | None,
         max_output_tokens: int | None,
+        include_temperature: bool,
     ) -> dict[str, Any]:
         effective_system_prompt = system_prompt
         if structured_mode == "prompt_json":
@@ -291,7 +336,7 @@ class OpenAIProvider:
 
         if reasoning_effort is not None:
             request["reasoning"] = {"effort": reasoning_effort}
-        if temperature is not None:
+        if include_temperature and temperature is not None:
             request["temperature"] = temperature
         if max_output_tokens is not None:
             request["max_output_tokens"] = max_output_tokens

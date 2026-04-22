@@ -105,6 +105,28 @@ class OpenAICompatibleProviderTests(unittest.TestCase):
         self.assertEqual(call["model"], "Qwen3.5-122B")
         self.assertEqual(call["response_format"]["type"], "json_object")
 
+    def test_temperature_is_forwarded_for_openai_compatible(self) -> None:
+        sdk = _FakeSDKClient(
+            _FakeResponse(
+                '{"title":"x","summary":"y","sections":[{"category":"core","overview":"z","bullets":["a"]}]}'
+            )
+        )
+        client = OpenAICompatibleProvider(
+            sdk_client=sdk,
+            model="Qwen3.5-122B",
+            base_url="http://localhost:8888/v1",
+        )
+
+        _ = client.generate_structured_json(
+            system_prompt="sys",
+            user_prompt="usr",
+            json_schema={"type": "object"},
+            temperature=0.42,
+        )
+
+        call = sdk.chat.completions.calls[0]
+        self.assertEqual(call["temperature"], 0.42)
+
     def test_strict_schema_request_attempts_strict_and_omits_unsupported_reasoning(self) -> None:
         sdk = _FakeSDKClient(
             _FakeResponse(

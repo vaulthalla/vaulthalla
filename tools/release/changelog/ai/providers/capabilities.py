@@ -32,6 +32,13 @@ class ResolvedGenerationSettings:
     degradations: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class RequestParameterCapabilities:
+    provider_kind: AIProviderKind
+    model: str
+    supports_temperature: bool
+
+
 def get_provider_capabilities(provider_kind: AIProviderKind) -> ProviderCapabilities:
     if provider_kind == "openai":
         return ProviderCapabilities(
@@ -105,6 +112,22 @@ def build_structured_mode_fallback_chain(
     _validate_structured_mode(initial_mode)
     start_index = STRUCTURED_MODE_FALLBACK_ORDER.index(initial_mode)
     return STRUCTURED_MODE_FALLBACK_ORDER[start_index:]
+
+
+def resolve_request_parameter_capabilities(
+    *,
+    provider_kind: AIProviderKind,
+    model: str,
+) -> RequestParameterCapabilities:
+    normalized_model = model.strip().lower()
+    supports_temperature = True
+    if provider_kind == "openai" and normalized_model.startswith("gpt-5"):
+        supports_temperature = False
+    return RequestParameterCapabilities(
+        provider_kind=provider_kind,
+        model=model,
+        supports_temperature=supports_temperature,
+    )
 
 
 def _validate_structured_mode(value: str) -> None:

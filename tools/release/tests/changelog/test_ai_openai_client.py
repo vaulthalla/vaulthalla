@@ -47,39 +47,55 @@ class _FakeSDKClient:
         self.models = type("FakeModels", (), {"list": lambda self: {"data": []}})()
 
 
-class _FallbackCompletions:
-    def __init__(self, final_response):
-        self._final_response = final_response
-        self.calls: list[dict] = []
-
-    def create(self, **kwargs):
-        self.calls.append(kwargs)
-        response_format = kwargs.get("response_format")
-        if isinstance(response_format, dict) and response_format.get("type") in {"json_schema", "json_object"}:
-            raise RuntimeError(f"response_format {response_format.get('type')} unsupported")
-        return self._final_response
-
-
 class _FakeResponses:
-    def __init__(self, output_text: str):
+    def __init__(
+        self,
+        output_text: str,
+        *,
+        recoverable_error_formats: set[str] | None = None,
+        hard_error: Exception | None = None,
+    ):
         self.output_text = output_text
+        self.recoverable_error_formats = recoverable_error_formats or set()
+        self.hard_error = hard_error
         self.calls: list[dict] = []
 
     def create(self, **kwargs):
         self.calls.append(kwargs)
+        if self.hard_error is not None:
+            raise self.hard_error
+        text_cfg = kwargs.get("text")
+        if isinstance(text_cfg, dict):
+            fmt_cfg = text_cfg.get("format")
+            if isinstance(fmt_cfg, dict):
+                fmt_type = fmt_cfg.get("type")
+                if isinstance(fmt_type, str) and fmt_type in self.recoverable_error_formats:
+                    raise RuntimeError(f"{fmt_type} unsupported")
         return {"output_text": self.output_text}
 
 
 class _FakeSDKWithResponses:
-    def __init__(self, output_text: str):
-        self.responses = _FakeResponses(output_text)
+    def __init__(
+        self,
+        output_text: str,
+        *,
+        recoverable_error_formats: set[str] | None = None,
+        hard_error: Exception | None = None,
+    ):
+        self.responses = _FakeResponses(
+            output_text,
+            recoverable_error_formats=recoverable_error_formats,
+            hard_error=hard_error,
+        )
         self.chat = _FakeChat(_FakeCompletions(_FakeResponse(output_text)))
         self.models = type("FakeModels", (), {"list": lambda self: {"data": []}})()
 
 
 class OpenAIProviderTests(unittest.TestCase):
     def test_structured_request_uses_json_schema_response_format(self) -> None:
-        sdk = _FakeSDKClient(_FakeResponse('{"title":"x","summary":"y","sections":[{"category":"core","overview":"z","bullets":["a"]}]}'))
+        sdk = _FakeSDKWithResponses(
+            '{"title":"x","summary":"y","sections":[{"category":"core","overview":"z","bullets":["a"]}]}'
+        )
         client = OpenAIProvider(sdk_client=sdk, model="gpt-test-mini")
 
         result = client.generate_structured_json(
@@ -89,17 +105,19 @@ class OpenAIProviderTests(unittest.TestCase):
         )
 
         self.assertEqual(result["title"], "x")
-        call = sdk.chat.completions.calls[0]
+        call = sdk.responses.calls[0]
         self.assertEqual(call["model"], "gpt-test-mini")
-        self.assertEqual(call["response_format"]["type"], "json_schema")
-        self.assertTrue(call["response_format"]["json_schema"]["strict"])
-        self.assertEqual(call["response_format"]["json_schema"]["schema"], {"type": "object"})
-        self.assertEqual(call["messages"][0]["role"], "system")
-        self.assertEqual(call["messages"][1]["role"], "user")
+        self.assertEqual(call["text"]["format"]["type"], "json_schema")
+        self.assertTrue(call["text"]["format"]["strict"])
+        self.assertEqual(call["text"]["format"]["schema"], {"type": "object"})
+        self.assertEqual(call["input"][0]["role"], "system")
+        self.assertEqual(call["input"][1]["role"], "user")
         self.assertNotIn("reasoning", call)
 
     def test_reasoning_effort_is_forwarded_when_requested(self) -> None:
-        sdk = _FakeSDKClient(_FakeResponse('{"title":"x","summary":"y","sections":[{"category":"core","overview":"z","bullets":["a"]}]}'))
+        sdk = _FakeSDKWithResponses(
+            '{"title":"x","summary":"y","sections":[{"category":"core","overview":"z","bullets":["a"]}]}'
+        )
         client = OpenAIProvider(sdk_client=sdk, model="gpt-test-mini")
 
         _ = client.generate_structured_json(
@@ -109,11 +127,13 @@ class OpenAIProviderTests(unittest.TestCase):
             reasoning_effort="high",
         )
 
-        call = sdk.chat.completions.calls[0]
+        call = sdk.responses.calls[0]
         self.assertEqual(call["reasoning"]["effort"], "high")
 
     def test_temperature_and_max_tokens_are_forwarded_when_requested(self) -> None:
-        sdk = _FakeSDKClient(_FakeResponse('{"title":"x","summary":"y","sections":[{"category":"core","overview":"z","bullets":["a"]}]}'))
+        sdk = _FakeSDKWithResponses(
+            '{"title":"x","summary":"y","sections":[{"category":"core","overview":"z","bullets":["a"]}]}'
+        )
         client = OpenAIProvider(sdk_client=sdk, model="gpt-test-mini")
 
         _ = client.generate_structured_json(
@@ -124,12 +144,32 @@ class OpenAIProviderTests(unittest.TestCase):
             max_output_tokens=1024,
         )
 
-        call = sdk.chat.completions.calls[0]
+        call = sdk.responses.calls[0]
         self.assertEqual(call["temperature"], 0.25)
-        self.assertEqual(call["max_completion_tokens"], 1024)
+        self.assertEqual(call["max_output_tokens"], 1024)
+
+    def test_hosted_gpt5_omits_temperature_but_keeps_max_tokens(self) -> None:
+        sdk = _FakeSDKWithResponses(
+            '{"title":"x","summary":"y","sections":[{"category":"core","overview":"z","bullets":["a"]}]}'
+        )
+        client = OpenAIProvider(sdk_client=sdk, model="gpt-5-mini")
+
+        _ = client.generate_structured_json(
+            system_prompt="sys",
+            user_prompt="usr",
+            json_schema={"type": "object"},
+            temperature=0.25,
+            max_output_tokens=1024,
+        )
+
+        call = sdk.responses.calls[0]
+        self.assertNotIn("temperature", call)
+        self.assertEqual(call["max_output_tokens"], 1024)
 
     def test_json_object_mode_uses_json_object_response_format(self) -> None:
-        sdk = _FakeSDKClient(_FakeResponse('{"title":"x","summary":"y","sections":[{"category":"core","overview":"z","bullets":["a"]}]}'))
+        sdk = _FakeSDKWithResponses(
+            '{"title":"x","summary":"y","sections":[{"category":"core","overview":"z","bullets":["a"]}]}'
+        )
         client = OpenAIProvider(sdk_client=sdk, model="gpt-test-mini")
 
         _ = client.generate_structured_json(
@@ -139,11 +179,13 @@ class OpenAIProviderTests(unittest.TestCase):
             structured_mode="json_object",
         )
 
-        call = sdk.chat.completions.calls[0]
-        self.assertEqual(call["response_format"]["type"], "json_object")
+        call = sdk.responses.calls[0]
+        self.assertEqual(call["text"]["format"]["type"], "json_object")
 
     def test_prompt_json_mode_omits_response_format(self) -> None:
-        sdk = _FakeSDKClient(_FakeResponse('{"title":"x","summary":"y","sections":[{"category":"core","overview":"z","bullets":["a"]}]}'))
+        sdk = _FakeSDKWithResponses(
+            '{"title":"x","summary":"y","sections":[{"category":"core","overview":"z","bullets":["a"]}]}'
+        )
         client = OpenAIProvider(sdk_client=sdk, model="gpt-test-mini")
 
         _ = client.generate_structured_json(
@@ -153,9 +195,9 @@ class OpenAIProviderTests(unittest.TestCase):
             structured_mode="prompt_json",
         )
 
-        call = sdk.chat.completions.calls[0]
-        self.assertNotIn("response_format", call)
-        self.assertIn("valid JSON object", call["messages"][0]["content"])
+        call = sdk.responses.calls[0]
+        self.assertNotIn("text", call)
+        self.assertIn("valid JSON object", call["input"][0]["content"][0]["text"])
 
     def test_provider_exposes_capabilities(self) -> None:
         sdk = _FakeSDKClient(_FakeResponse("{}"))
@@ -189,11 +231,10 @@ class OpenAIProviderTests(unittest.TestCase):
         self.assertEqual(request["max_output_tokens"], 777)
 
     def test_fallback_order_is_deterministic_when_structured_modes_fail(self) -> None:
-        final = _FakeResponse('{"title":"x","summary":"y","sections":[{"category":"core","overview":"z","bullets":["a"]}]}')
-        completions = _FallbackCompletions(final)
-        sdk = type("SDK", (), {})()
-        sdk.chat = _FakeChat(completions)
-        sdk.models = type("FakeModels", (), {"list": lambda self: {"data": []}})()
+        sdk = _FakeSDKWithResponses(
+            '{"title":"x","summary":"y","sections":[{"category":"core","overview":"z","bullets":["a"]}]}',
+            recoverable_error_formats={"json_schema", "json_object"},
+        )
         client = OpenAIProvider(sdk_client=sdk, model="gpt-test-mini")
 
         _ = client.generate_structured_json(
@@ -203,18 +244,17 @@ class OpenAIProviderTests(unittest.TestCase):
             structured_mode="strict_json_schema",
         )
 
-        self.assertEqual(len(completions.calls), 3)
-        self.assertEqual(completions.calls[0]["response_format"]["type"], "json_schema")
-        self.assertEqual(completions.calls[1]["response_format"]["type"], "json_object")
-        self.assertNotIn("response_format", completions.calls[2])
+        self.assertEqual(len(sdk.responses.calls), 3)
+        self.assertEqual(sdk.responses.calls[0]["text"]["format"]["type"], "json_schema")
+        self.assertEqual(sdk.responses.calls[1]["text"]["format"]["type"], "json_object")
+        self.assertNotIn("text", sdk.responses.calls[2])
         self.assertEqual(client.last_structured_mode_used, "prompt_json")
 
     def test_non_recoverable_transport_error_does_not_fallback(self) -> None:
-        sdk = _FakeSDKClient(_FakeResponse("{}"))
-        sdk.chat.completions.error = RuntimeError("network timeout")
+        sdk = _FakeSDKWithResponses("{}", hard_error=RuntimeError("network timeout"))
         client = OpenAIProvider(sdk_client=sdk, model="gpt-test-mini")
 
-        with self.assertRaisesRegex(ValueError, "Chat Completions request failed"):
+        with self.assertRaisesRegex(ValueError, "Responses API request failed"):
             client.generate_structured_json(
                 system_prompt="sys",
                 user_prompt="usr",
@@ -222,14 +262,12 @@ class OpenAIProviderTests(unittest.TestCase):
                 structured_mode="strict_json_schema",
             )
 
-        self.assertEqual(len(sdk.chat.completions.calls), 1)
+        self.assertEqual(len(sdk.responses.calls), 1)
         self.assertEqual(client.last_structured_mode_used, None)
 
     def test_json_wrapper_noise_is_recovered(self) -> None:
-        sdk = _FakeSDKClient(
-            _FakeResponse(
-                'Result:\n```json\n{"title":"x","summary":"y","sections":[{"category":"core","overview":"z","bullets":["a"]}]}\n```'
-            )
+        sdk = _FakeSDKWithResponses(
+            'Result:\n```json\n{"title":"x","summary":"y","sections":[{"category":"core","overview":"z","bullets":["a"]}]}\n```'
         )
         client = OpenAIProvider(sdk_client=sdk, model="gpt-test-mini")
         parsed = client.generate_structured_json(
@@ -245,7 +283,7 @@ class OpenAIProviderTests(unittest.TestCase):
                 OpenAIProvider()
 
     def test_invalid_json_response_fails_clearly(self) -> None:
-        sdk = _FakeSDKClient(_FakeResponse("not-json"))
+        sdk = _FakeSDKWithResponses("not-json")
         client = OpenAIProvider(sdk_client=sdk)
 
         with self.assertRaisesRegex(ValueError, "invalid JSON"):
@@ -253,6 +291,18 @@ class OpenAIProviderTests(unittest.TestCase):
                 system_prompt="sys",
                 user_prompt="usr",
                 json_schema={"type": "object"},
+            )
+
+    def test_hosted_openai_requires_responses_api_support(self) -> None:
+        sdk = _FakeSDKClient(_FakeResponse("{}"))
+        client = OpenAIProvider(sdk_client=sdk, model="gpt-test-mini")
+
+        with self.assertRaisesRegex(ValueError, "requires Responses API support"):
+            client.generate_structured_json(
+                system_prompt="sys",
+                user_prompt="usr",
+                json_schema={"type": "object"},
+                structured_mode="strict_json_schema",
             )
 
     def test_list_models_parses_ids(self) -> None:

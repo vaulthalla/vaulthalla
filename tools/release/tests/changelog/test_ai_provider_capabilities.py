@@ -5,6 +5,7 @@ import unittest
 from tools.release.changelog.ai.providers import (
     build_structured_mode_fallback_chain,
     get_provider_capabilities,
+    resolve_request_parameter_capabilities,
     resolve_generation_settings,
 )
 
@@ -81,6 +82,27 @@ class AIProviderCapabilitiesTests(unittest.TestCase):
             build_structured_mode_fallback_chain("prompt_json"),
             ("prompt_json",),
         )
+
+    def test_hosted_gpt5_disables_temperature_parameter(self) -> None:
+        caps = resolve_request_parameter_capabilities(
+            provider_kind="openai",
+            model="gpt-5-mini",
+        )
+        self.assertFalse(caps.supports_temperature)
+
+    def test_hosted_non_gpt5_keeps_temperature_parameter(self) -> None:
+        caps = resolve_request_parameter_capabilities(
+            provider_kind="openai",
+            model="gpt-4.1-mini",
+        )
+        self.assertTrue(caps.supports_temperature)
+
+    def test_local_openai_compatible_keeps_temperature_parameter(self) -> None:
+        caps = resolve_request_parameter_capabilities(
+            provider_kind="openai-compatible",
+            model="gpt-5-mini",
+        )
+        self.assertTrue(caps.supports_temperature)
 
 
 if __name__ == "__main__":

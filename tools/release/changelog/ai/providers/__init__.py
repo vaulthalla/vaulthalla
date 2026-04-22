@@ -4,9 +4,11 @@ from tools.release.changelog.ai.config import AIProviderConfig, DEFAULT_OPENAI_C
 from tools.release.changelog.ai.providers.base import ModelDiscoveryProvider, StructuredJSONProvider
 from tools.release.changelog.ai.providers.capabilities import (
     ProviderCapabilities,
+    RequestParameterCapabilities,
     ResolvedGenerationSettings,
     build_structured_mode_fallback_chain,
     get_provider_capabilities,
+    resolve_request_parameter_capabilities,
     resolve_generation_settings,
 )
 from tools.release.changelog.ai.providers.openai import OpenAIProvider
@@ -104,8 +106,10 @@ __all__ = [
     "ProviderPreflightResult",
     "run_provider_preflight",
     "ProviderCapabilities",
+    "RequestParameterCapabilities",
     "ResolvedGenerationSettings",
     "get_provider_capabilities",
+    "resolve_request_parameter_capabilities",
     "resolve_generation_settings",
     "build_structured_mode_fallback_chain",
 ]
