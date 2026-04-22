@@ -107,20 +107,6 @@ CommandResult handleStatus(const CommandCall& call) {
     if (shellServer)
         out << "  shell admin uid bound: " << yesNo(shellServer->adminUIDSet()) << "\n";
 
-    if (system_cmd_util::hasEffectiveRoot() && system_cmd_util::commandExists("systemctl")) {
-        out << "systemd summary (supplemental):\n";
-        constexpr std::array<std::string_view, 4> units{
-            "vaulthalla.service",
-            "vaulthalla-cli.service",
-            "vaulthalla-cli.socket",
-            "vaulthalla-web.service"
-        };
-        for (const auto unit : units)
-            out << "  " << unit << ": " << systemdUnitState(std::string(unit)) << "\n";
-    } else {
-        out << "systemd summary: unavailable (run with elevated privileges for unit state)\n";
-    }
-
     return ok(out.str());
 }
 
