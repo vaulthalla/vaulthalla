@@ -69,7 +69,9 @@ Super-admin bootstrap policy
 ============================
 
 Package install does not prompt for or pre-seed super-admin Linux UID mapping.
-Initial ownership claim is deferred to first CLI use (`vh` / `vaulthalla`).
+Initial ownership claim is handled in CLI flow; operators should run:
+
+- `vh setup assign-admin`
 
 Advanced overrides
 ==================
@@ -112,6 +114,7 @@ CLI integration follow-up (Phase 3)
 
 If package-time automation skipped optional integration steps, admins can run:
 
+- `vh setup assign-admin`
 - `vh setup db`
 - `vh setup remote-db --host <host> --user <user> --database <name> --password-file <path>`
 - `vh setup nginx`

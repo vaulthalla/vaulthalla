@@ -44,6 +44,34 @@ sudo apt update
 sudo apt install vaulthalla
 ```
 
+### Convenience Helper Scripts (Optional)
+
+`/bin/vh/` provides convenience helpers for operators who want a faster bootstrap
+path outside manual apt copy/paste. This is optional and does not replace the
+manual apt flow above.
+
+```bash
+git clone https://github.com/vaulthalla/vaulthalla.git
+cd vaulthalla/bin/vh
+./install.sh
+```
+
+If you fetched only the helper directory itself, run from that directory:
+
+```bash
+cd vh
+./install.sh
+```
+
+Available helper modes:
+
+```bash
+./install.sh
+./install-lean.sh
+./install-no-db.sh
+./install-no-nginx.sh
+```
+
 Install modes:
 
 ```bash
@@ -61,6 +89,7 @@ Package install may stage a baseline nginx template at
 ### Post-Install CLI Setup
 
 ```bash
+vh setup assign-admin
 vh setup db
 vh setup remote-db
 vh setup nginx
@@ -68,6 +97,7 @@ vh setup nginx --certbot --domain <domain>
 vh teardown nginx
 ```
 
+- `vh setup assign-admin` is the explicit admin-claim verification/claim command.
 - `vh setup db` is for local PostgreSQL bootstrap.
 - `vh setup remote-db` is for explicit remote PostgreSQL configuration.
 - `vh setup nginx` is the canonical final deployment path for Vaulthalla-managed nginx config.

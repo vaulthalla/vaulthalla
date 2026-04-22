@@ -3,6 +3,7 @@
 #include "protocols/shell/Router.hpp"
 #include "protocols/shell/util/argsHelpers.hpp"
 #include "config/Config.hpp"
+#include "db/query/identities/User.hpp"
 #include "runtime/Deps.hpp"
 #include "usage/include/UsageManager.hpp"
 #include "CommandUsage.hpp"
@@ -652,6 +653,53 @@ static bool isSetupMatch(const std::string& cmd, const std::string_view input) {
     return isCommandMatch({"setup", cmd}, input);
 }
 
+static CommandResult handle_setup_assign_admin(const CommandCall& call) {
+    const auto usage = resolveUsage({"setup", "assign-admin"});
+    validatePositionals(call, usage);
+
+    if (!call.user)
+        return invalid("setup assign-admin: missing authenticated shell user context");
+
+    if (!call.user->isSuperAdmin())
+        return invalid("setup assign-admin: requires super_admin role");
+
+    if (!call.user->meta.linux_uid.has_value())
+        return invalid("setup assign-admin: current shell user has no Linux UID mapping");
+
+    const auto admin = db::query::identities::User::getUserByName("admin");
+    if (!admin)
+        return invalid("setup assign-admin: admin user record not found");
+
+    const auto callerUid = *call.user->meta.linux_uid;
+    if (admin->meta.linux_uid.has_value()) {
+        if (*admin->meta.linux_uid == callerUid) {
+            std::ostringstream out;
+            out << "setup assign-admin: already assigned\n";
+            out << "  admin linux_uid: " << callerUid << "\n";
+            out << "  owner: " << call.user->name;
+            return ok(out.str());
+        }
+
+        std::ostringstream err;
+        err << "setup assign-admin: admin linux_uid is already bound to UID "
+            << *admin->meta.linux_uid
+            << " and does not match current operator UID "
+            << callerUid
+            << ". Refusing to rebind implicitly.";
+        return invalid(err.str());
+    }
+
+    admin->meta.linux_uid = callerUid;
+    admin->meta.updated_by = call.user->id;
+    db::query::identities::User::updateUser(admin);
+
+    std::ostringstream out;
+    out << "setup assign-admin: assigned\n";
+    out << "  admin linux_uid: " << callerUid << "\n";
+    out << "  owner: " << call.user->name;
+    return ok(out.str());
+}
+
 static CommandResult handle_setup_db(const CommandCall& call) {
     const auto usage = resolveUsage({"setup", "db"});
     validatePositionals(call, usage);
@@ -1198,6 +1246,7 @@ static CommandResult handle_setup(const CommandCall& call) {
 
     const auto [sub, subcall] = descend(call);
 
+    if (isSetupMatch("assign-admin", sub)) return handle_setup_assign_admin(subcall);
     if (isSetupMatch("db", sub)) return handle_setup_db(subcall);
     if (isSetupMatch("remote-db", sub)) return handle_setup_remote_db(subcall);
     if (isSetupMatch("nginx", sub)) return handle_setup_nginx(subcall);
