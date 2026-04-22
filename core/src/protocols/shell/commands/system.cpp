@@ -2,81 +2,37 @@
 #include "protocols/shell/Router.hpp"
 #include "protocols/shell/Server.hpp"
 #include "protocols/shell/util/argsHelpers.hpp"
+#include "protocols/shell/util/commandHelpers.hpp"
 #include "protocols/ProtocolService.hpp"
 #include "runtime/Manager.hpp"
 #include "runtime/Deps.hpp"
 #include "usage/include/UsageManager.hpp"
-#include "protocols/shell/ExecResult.hpp"
 
 #include <version.h>
 
 #include <algorithm>
 #include <array>
-#include <cctype>
-#include <cstdio>
 #include <sstream>
 #include <string>
-#include <sys/wait.h>
-#include <unistd.h>
+#include <string_view>
 
-using namespace vh;
-using namespace vh::protocols::shell;
+namespace vh::protocols::shell::commands {
 
-static CommandResult handle_help(const CommandCall&) { return usage(); }
+namespace system_cmd_util = vh::protocols::shell::util;
 
-static CommandResult handle_version(const CommandCall&) {
+namespace {
+
+CommandResult handleHelp(const CommandCall&) { return usage(); }
+
+CommandResult handleVersion(const CommandCall&) {
     return {0, "Vaulthalla v" + std::string(VH_VERSION), ""};
 }
 
-static std::string trim(std::string s) {
-    const auto ws = [](const unsigned char c) { return std::isspace(c) != 0; };
-    s.erase(s.begin(), std::ranges::find_if(s.begin(), s.end(), [&](const unsigned char c) { return !ws(c); }));
-    s.erase(std::find_if(s.rbegin(), s.rend(), [&](const unsigned char c) { return !ws(c); }).base(), s.end());
-    return s;
-}
-
-static std::string shellQuote(const std::string& s) {
-    std::string out{"'"};
-    for (const char c : s) {
-        if (c == '\'') out += "'\"'\"'";
-        else out.push_back(c);
-    }
-    out.push_back('\'');
-    return out;
-}
-
-static ExecResult runCapture(const std::string& command) {
-    const auto wrapped = command + " 2>&1";
-    std::array<char, 4096> buf{};
-    std::string output;
-
-    FILE* pipe = ::popen(wrapped.c_str(), "r");
-    if (!pipe) return {.code = 1, .output = "failed to execute command"};
-
-    while (fgets(buf.data(), static_cast<int>(buf.size()), pipe) != nullptr)
-        output += buf.data();
-
-    const int status = ::pclose(pipe);
-    int code = status;
-    if (WIFEXITED(status)) code = WEXITSTATUS(status);
-    else if (WIFSIGNALED(status)) code = 128 + WTERMSIG(status);
-
-    return {.code = code, .output = trim(output)};
-}
-
-static bool commandExists(const std::string& command) {
-    return runCapture("command -v " + shellQuote(command) + " >/dev/null").code == 0;
-}
-
-static bool hasEffectiveRoot() {
-    return ::geteuid() == 0;
-}
-
-static std::string yesNo(const bool value) {
+std::string yesNo(const bool value) {
     return value ? "yes" : "no";
 }
 
-static std::string renderDepsCoreReady(const runtime::Deps::SanityStatus& deps, size_t& ready, size_t& total) {
+std::string renderDepsCoreReady(const runtime::Deps::SanityStatus& deps, size_t& ready, size_t& total) {
     const std::array<bool, 9> checks{
         deps.storageManager,
         deps.apiKeyManager,
@@ -95,14 +51,14 @@ static std::string renderDepsCoreReady(const runtime::Deps::SanityStatus& deps, 
     return out.str();
 }
 
-static std::string systemdUnitState(const std::string& unit) {
-    const auto state = runCapture("systemctl is-active " + shellQuote(unit));
+std::string systemdUnitState(const std::string& unit) {
+    const auto state = system_cmd_util::runCapture("systemctl is-active " + system_cmd_util::shellQuote(unit));
     if (state.code == 0 && !state.output.empty()) return state.output;
     if (!state.output.empty()) return state.output;
     return "unknown (exit " + std::to_string(state.code) + ")";
 }
 
-static CommandResult handle_status(const CommandCall& call) {
+CommandResult handleStatus(const CommandCall& call) {
     if (hasKey(call, "help") || hasKey(call, "h"))
         return usage(call.constructFullArgs());
 
@@ -151,7 +107,7 @@ static CommandResult handle_status(const CommandCall& call) {
     if (shellServer)
         out << "  shell admin uid bound: " << yesNo(shellServer->adminUIDSet()) << "\n";
 
-    if (hasEffectiveRoot() && commandExists("systemctl")) {
+    if (system_cmd_util::hasEffectiveRoot() && system_cmd_util::commandExists("systemctl")) {
         out << "systemd summary (supplemental):\n";
         constexpr std::array<std::string_view, 4> units{
             "vaulthalla.service",
@@ -168,13 +124,17 @@ static CommandResult handle_status(const CommandCall& call) {
     return ok(out.str());
 }
 
-void commands::registerSystemCommands(const std::shared_ptr<Router>& r) {
-    const auto usageManager = runtime::Deps::get().shellUsageManager;
-    r->registerCommand(usageManager->resolve("help"), handle_help);
-    r->registerCommand(usageManager->resolve("version"), handle_version);
 }
 
-void commands::registerStatusCommands(const std::shared_ptr<Router>& r) {
+void registerSystemCommands(const std::shared_ptr<Router>& r) {
     const auto usageManager = runtime::Deps::get().shellUsageManager;
-    r->registerCommand(usageManager->resolve("status"), handle_status);
+    r->registerCommand(usageManager->resolve("help"), handleHelp);
+    r->registerCommand(usageManager->resolve("version"), handleVersion);
+}
+
+void registerStatusCommands(const std::shared_ptr<Router>& r) {
+    const auto usageManager = runtime::Deps::get().shellUsageManager;
+    r->registerCommand(usageManager->resolve("status"), handleStatus);
+}
+
 }
