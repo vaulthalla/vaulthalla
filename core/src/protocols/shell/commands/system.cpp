@@ -28,11 +28,9 @@ static CommandResult handle_version(const CommandCall&) {
     return {0, "Vaulthalla v" + std::string(VH_VERSION), ""};
 }
 
-namespace {
-
 static std::string trim(std::string s) {
     const auto ws = [](const unsigned char c) { return std::isspace(c) != 0; };
-    s.erase(s.begin(), std::find_if(s.begin(), s.end(), [&](const unsigned char c) { return !ws(c); }));
+    s.erase(s.begin(), std::ranges::find_if(s.begin(), s.end(), [&](const unsigned char c) { return !ws(c); }));
     s.erase(std::find_if(s.rbegin(), s.rend(), [&](const unsigned char c) { return !ws(c); }).base(), s.end());
     return s;
 }
@@ -169,8 +167,6 @@ static CommandResult handle_status(const CommandCall& call) {
 
     return ok(out.str());
 }
-
-} // namespace
 
 void commands::registerSystemCommands(const std::shared_ptr<Router>& r) {
     const auto usageManager = runtime::Deps::get().shellUsageManager;

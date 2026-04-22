@@ -33,10 +33,6 @@
 using namespace vh;
 using namespace vh::protocols::shell;
 
-namespace {
-
-namespace fs = std::filesystem;
-
 constexpr auto* kDbUser = "vaulthalla";
 constexpr auto* kDbName = "vaulthalla";
 constexpr auto* kServiceUnit = "vaulthalla.service";
@@ -61,7 +57,7 @@ struct CertbotPrereqState {
 
 static std::string trim(std::string s) {
     const auto ws = [](const unsigned char c) { return std::isspace(c) != 0; };
-    s.erase(s.begin(), std::find_if(s.begin(), s.end(), [&](const unsigned char c) { return !ws(c); }));
+    s.erase(s.begin(), std::ranges::find_if(s.begin(), s.end(), [&](const unsigned char c) { return !ws(c); }));
     s.erase(std::find_if(s.rbegin(), s.rend(), [&](const unsigned char c) { return !ws(c); }).base(), s.end());
     return s;
 }
@@ -140,14 +136,14 @@ static ExecResult psqlSql(const std::string& prefix, const std::string& db, cons
     return runCapture(prefix + " -d " + shellQuote(db) + " -tAc " + shellQuote(sql));
 }
 
-static std::vector<fs::path> listSqlFilesSorted(const fs::path& dir) {
-    std::vector<fs::path> files;
-    for (const auto& entry : fs::directory_iterator(dir)) {
+static std::vector<std::filesystem::path> listSqlFilesSorted(const std::filesystem::path& dir) {
+    std::vector<std::filesystem::path> files;
+    for (const auto& entry : std::filesystem::directory_iterator(dir)) {
         if (!entry.is_regular_file()) continue;
         if (entry.path().extension() == ".sql") files.push_back(entry.path());
     }
 
-    std::ranges::sort(files, [](const fs::path& a, const fs::path& b) {
+    std::ranges::sort(files, [](const std::filesystem::path& a, const std::filesystem::path& b) {
         return a.filename().string() < b.filename().string();
     });
     return files;
@@ -182,7 +178,7 @@ static std::optional<std::string> resolveServiceIdentity(ServiceIdentity& identi
     return std::nullopt;
 }
 
-static std::optional<std::string> enforceDbPasswordFileState(const fs::path& pendingPath, const ServiceIdentity& identity) {
+static std::optional<std::string> enforceDbPasswordFileState(const std::filesystem::path& pendingPath, const ServiceIdentity& identity) {
     struct stat st{};
     if (::stat(pendingPath.c_str(), &st) != 0)
         return "failed to stat pending password file: " + pendingPath.string();
@@ -212,12 +208,12 @@ static std::optional<std::string> enforceDbPasswordFileState(const fs::path& pen
 }
 
 static std::optional<std::string> writePendingDbPassword(const std::string& pass) {
-    const fs::path pendingPath{kPendingDbPasswordFile};
+    const std::filesystem::path pendingPath{kPendingDbPasswordFile};
     ServiceIdentity identity{};
     if (const auto identityError = resolveServiceIdentity(identity)) return identityError;
 
     std::error_code ec;
-    fs::create_directories(pendingPath.parent_path(), ec);
+    std::filesystem::create_directories(pendingPath.parent_path(), ec);
     if (ec) return "failed creating runtime directory: " + ec.message();
 
     {
@@ -236,10 +232,10 @@ static std::optional<std::string> choosePostgresPrefix() {
     std::vector<std::string> prefixes;
 
     if (hasEffectiveRoot() && commandExists("runuser"))
-        prefixes.push_back("runuser -u postgres -- psql -X -v ON_ERROR_STOP=1");
+        prefixes.emplace_back("runuser -u postgres -- psql -X -v ON_ERROR_STOP=1");
 
     if (canUsePasswordlessSudo())
-        prefixes.push_back("sudo -n -u postgres psql -X -v ON_ERROR_STOP=1");
+        prefixes.emplace_back("sudo -n -u postgres psql -X -v ON_ERROR_STOP=1");
 
     for (const auto& prefix : prefixes) {
         const auto probe = runCapture(prefix + " -d postgres -tAc " + shellQuote("SELECT 1;"));
@@ -286,10 +282,9 @@ static std::optional<std::string> requiredOptionValue(const CommandCall& call,
     if (const auto value = optVal(call, required->option_tokens); value && !value->empty())
         return value;
 
-    if (interactive && call.io) {
-        const auto prompted = call.io->prompt(prompt);
-        if (!prompted.empty()) return prompted;
-    }
+    if (interactive && call.io)
+        if (auto prompted = call.io->prompt(prompt); !prompted.empty())
+            return prompted;
 
     return std::nullopt;
 }
@@ -306,10 +301,9 @@ static std::optional<std::string> optionalOptionValue(const CommandCall& call,
     if (const auto value = optVal(call, optional->option_tokens); value && !value->empty())
         return value;
 
-    if (interactive && call.io) {
-        const auto prompted = call.io->prompt(prompt, defValue);
-        if (!prompted.empty()) return prompted;
-    }
+    if (interactive && call.io)
+        if (auto prompted = call.io->prompt(prompt, defValue); !prompted.empty())
+            return prompted;
 
     if (!defValue.empty()) return defValue;
     return std::nullopt;
@@ -333,11 +327,11 @@ static std::optional<std::string> parsePoolSizeValue(const std::optional<std::st
 }
 
 static std::optional<std::string> loadPasswordFromFile(const std::string& filePath, std::string& password) {
-    const fs::path sourcePath{filePath};
+    const std::filesystem::path sourcePath{filePath};
     std::error_code ec;
-    if (!fs::exists(sourcePath, ec))
+    if (!std::filesystem::exists(sourcePath, ec))
         return "password file does not exist: " + sourcePath.string();
-    if (!fs::is_regular_file(sourcePath, ec))
+    if (!std::filesystem::is_regular_file(sourcePath, ec))
         return "password file is not a regular file: " + sourcePath.string();
 
     std::ifstream in(sourcePath);
@@ -367,28 +361,25 @@ static bool hasNonNginxListenersOnWebPorts() {
 }
 
 static bool hasCustomNginxSitesEnabled() {
-    const fs::path sitesEnabled{"/etc/nginx/sites-enabled"};
-    if (!fs::exists(sitesEnabled) || !fs::is_directory(sitesEnabled)) return false;
+    const std::filesystem::path sitesEnabled{"/etc/nginx/sites-enabled"};
+    if (!std::filesystem::exists(sitesEnabled) || !std::filesystem::is_directory(sitesEnabled)) return false;
 
-    for (const auto& entry : fs::directory_iterator(sitesEnabled)) {
+    return std::ranges::any_of(std::filesystem::directory_iterator(sitesEnabled), [](const auto& entry) {
         const auto base = entry.path().filename().string();
-        if (base.empty()) continue;
-        if (base == "default" || base == "vaulthalla") continue;
-        return true;
-    }
-    return false;
+        return !base.empty() && base != "default" && base != "vaulthalla";
+    });
 }
 
-static bool isManagedSiteSymlinkTarget(const fs::path& linkPath) {
-    if (!fs::is_symlink(linkPath)) return false;
-    const auto target = fs::read_symlink(linkPath);
-    return target == fs::path(kNginxSiteAvailable) || target == fs::path("../sites-available/vaulthalla");
+static bool isManagedSiteSymlinkTarget(const std::filesystem::path& linkPath) {
+    if (!std::filesystem::is_symlink(linkPath)) return false;
+    const auto target = std::filesystem::read_symlink(linkPath);
+    return target == std::filesystem::path(kNginxSiteAvailable) || target == std::filesystem::path("../sites-available/vaulthalla");
 }
 
-static bool filesEqual(const fs::path& a, const fs::path& b) {
+static bool filesEqual(const std::filesystem::path& a, const std::filesystem::path& b) {
     std::error_code ec;
-    if (!fs::exists(a, ec) || !fs::exists(b, ec)) return false;
-    if (fs::file_size(a, ec) != fs::file_size(b, ec)) return false;
+    if (!std::filesystem::exists(a, ec) || !std::filesystem::exists(b, ec)) return false;
+    if (std::filesystem::file_size(a, ec) != std::filesystem::file_size(b, ec)) return false;
 
     std::ifstream fa(a, std::ios::binary);
     std::ifstream fb(b, std::ios::binary);
@@ -431,14 +422,15 @@ static bool certbotCertificatesMentionDomain(const std::string& output, const st
 }
 
 static bool hasCertbotManagedCertForDomain(const std::string& domain) {
-    const fs::path livePath = fs::path("/etc/letsencrypt/live") / domain;
-    const bool liveFilesExist = fs::exists(livePath / "fullchain.pem") && fs::exists(livePath / "privkey.pem");
-    if (liveFilesExist) return true;
+    if (const std::filesystem::path livePath = std::filesystem::path("/etc/letsencrypt/live") / domain;
+        std::filesystem::exists(livePath / "fullchain.pem")
+        && std::filesystem::exists(livePath / "privkey.pem"))
+        return true;
 
     if (!commandExists("certbot")) return false;
-    const auto certs = runCapture("certbot certificates");
-    if (certs.code != 0) return false;
-    return certbotCertificatesMentionDomain(certs.output, domain);
+    const auto [code, output] = runCapture("certbot certificates");
+    if (code != 0) return false;
+    return certbotCertificatesMentionDomain(output, domain);
 }
 
 static bool isLikelyDomain(const std::string& raw) {
@@ -481,7 +473,7 @@ static bool looksCertbotManagedNginxConfig(const std::string& content) {
            content.find("ssl_certificate ") != std::string::npos;
 }
 
-static std::optional<std::string> readFileToString(const fs::path& path, std::string& content) {
+static std::optional<std::string> readFileToString(const std::filesystem::path& path, std::string& content) {
     std::ifstream in(path);
     if (!in.is_open()) return "failed opening file: " + path.string();
     std::ostringstream buffer;
@@ -490,7 +482,7 @@ static std::optional<std::string> readFileToString(const fs::path& path, std::st
     return std::nullopt;
 }
 
-static std::optional<std::string> writeStringToFile(const fs::path& path, const std::string& content) {
+static std::optional<std::string> writeStringToFile(const std::filesystem::path& path, const std::string& content) {
     std::ofstream out(path, std::ios::out | std::ios::trunc);
     if (!out.is_open()) return "failed opening file for write: " + path.string();
     out << content;
@@ -499,14 +491,14 @@ static std::optional<std::string> writeStringToFile(const fs::path& path, const 
 }
 
 static std::string normalizedLocalUpstreamHost(const std::string& hostRaw) {
-    const auto host = trim(hostRaw);
+    auto host = trim(hostRaw);
     if (host.empty() || host == "0.0.0.0" || host == "::" || host == "[::]")
         return "127.0.0.1";
     return host;
 }
 
 static std::string hostForProxyPass(const std::string& hostRaw) {
-    const auto host = normalizedLocalUpstreamHost(hostRaw);
+    auto host = normalizedLocalUpstreamHost(hostRaw);
     if (host.find(':') != std::string::npos && !host.starts_with('['))
         return "[" + host + "]";
     return host;
@@ -605,7 +597,7 @@ static std::optional<std::string> ensureCertbotPrereqs(const CommandCall& call, 
                "). Install them manually and rerun.";
     }
 
-    const bool aptSupported = fs::exists("/etc/debian_version") && commandExists("apt-get");
+    const bool aptSupported = std::filesystem::exists("/etc/debian_version") && commandExists("apt-get");
     if (!aptSupported) {
         return "automatic certbot prerequisite install is only supported on Debian/Ubuntu apt environments. "
                "Install packages manually and rerun.";
@@ -710,11 +702,11 @@ static CommandResult handle_setup_db(const CommandCall& call) {
             "for PostgreSQL/systemd integration steps");
     }
 
-    const fs::path schemaPath = vh::paths::getPsqlSchemasPath();
-    if (!fs::exists(schemaPath) || !fs::is_directory(schemaPath))
+    const std::filesystem::path schemaPath = vh::paths::getPsqlSchemasPath();
+    if (!std::filesystem::exists(schemaPath) || !std::filesystem::is_directory(schemaPath))
         return invalid("setup db: canonical schema path is missing: " + schemaPath.string());
 
-    std::vector<fs::path> sqlFiles;
+    std::vector<std::filesystem::path> sqlFiles;
     try {
         sqlFiles = listSqlFilesSorted(schemaPath);
     } catch (const std::exception& e) {
@@ -857,7 +849,7 @@ static CommandResult handle_setup_remote_db(const CommandCall& call) {
     if (const auto passErr = loadPasswordFromFile(*passwordFile, remotePassword))
         return invalid("setup remote-db: " + *passErr);
 
-    const fs::path configPath = vh::paths::getConfigPath();
+    const std::filesystem::path configPath = vh::paths::getConfigPath();
     config::Config cfg;
     try {
         cfg = config::loadConfig(configPath.string());
@@ -932,16 +924,16 @@ static CommandResult handle_setup_nginx(const CommandCall& call) {
             return invalid("setup nginx: invalid domain '" + certbotDomain + "'");
     }
 
-    if (!commandExists("nginx") || !fs::exists("/etc/nginx"))
+    if (!commandExists("nginx") || !std::filesystem::exists("/etc/nginx"))
         return invalid("setup nginx: nginx is not installed or /etc/nginx is missing");
 
     if (hasNonNginxListenersOnWebPorts())
         return invalid("setup nginx: detected non-nginx listeners on :80/:443; refusing automatic integration");
 
-    if (hasCustomNginxSitesEnabled() && !fs::exists(kNginxSiteEnabled))
+    if (hasCustomNginxSitesEnabled() && !std::filesystem::exists(kNginxSiteEnabled))
         return invalid("setup nginx: custom nginx site layout detected; refusing automatic integration");
 
-    const fs::path configPath = vh::paths::getConfigPath();
+    const std::filesystem::path configPath = vh::paths::getConfigPath();
     config::Config runtimeConfig;
     try {
         runtimeConfig = config::loadConfig(configPath.string());
@@ -959,27 +951,27 @@ static CommandResult handle_setup_nginx(const CommandCall& call) {
     bool skippedRewriteForExistingCert = false;
     bool preservedCertbotManagedTls = false;
 
-    const fs::path siteSetupBackupPath = fs::path(std::string(kNginxSiteAvailable) + ".vh-setup.backup");
+    const std::filesystem::path siteSetupBackupPath = std::filesystem::path(std::string(kNginxSiteAvailable) + ".vh-setup.backup");
 
     try {
-        fs::create_directories("/etc/nginx/sites-available");
-        fs::create_directories("/etc/nginx/sites-enabled");
+        std::filesystem::create_directories("/etc/nginx/sites-available");
+        std::filesystem::create_directories("/etc/nginx/sites-enabled");
 
-        const fs::path templatePath{kNginxTemplate};
-        const fs::path siteAvailPath{kNginxSiteAvailable};
-        const fs::path siteEnabledPath{kNginxSiteEnabled};
-        const fs::path markerPath{kNginxManagedMarker};
+        const std::filesystem::path templatePath{kNginxTemplate};
+        const std::filesystem::path siteAvailPath{kNginxSiteAvailable};
+        const std::filesystem::path siteEnabledPath{kNginxSiteEnabled};
+        const std::filesystem::path markerPath{kNginxManagedMarker};
 
-        const bool markerExists = fs::exists(markerPath);
+        const bool markerExists = std::filesystem::exists(markerPath);
         const auto domainForManagedConfig = useCertbot ? std::optional<std::string>(certbotDomain) : std::nullopt;
 
         std::string renderedManagedConfig;
         if (const auto renderError = renderManagedNginxConfig(runtimeConfig, domainForManagedConfig, renderedManagedConfig))
             return invalid("setup nginx: " + *renderError);
 
-        if (fs::exists(siteAvailPath)) {
+        if (std::filesystem::exists(siteAvailPath)) {
             if (!markerExists) {
-                if (!fs::exists(templatePath))
+                if (!std::filesystem::exists(templatePath))
                     return invalid(
                         "setup nginx: packaged nginx template missing at " + std::string(kNginxTemplate) +
                         " while existing unmanaged site file is present");
@@ -998,7 +990,7 @@ static CommandResult handle_setup_nginx(const CommandCall& call) {
                     preservedCertbotManagedTls = true;
                 } else if (existingContent != renderedManagedConfig) {
                     std::error_code ec;
-                    fs::copy_file(siteAvailPath, siteSetupBackupPath, fs::copy_options::overwrite_existing, ec);
+                    std::filesystem::copy_file(siteAvailPath, siteSetupBackupPath, std::filesystem::copy_options::overwrite_existing, ec);
                     if (ec)
                         return invalid("setup nginx: failed creating managed site backup: " + ec.message());
                     backedUpSiteFile = true;
@@ -1015,8 +1007,8 @@ static CommandResult handle_setup_nginx(const CommandCall& call) {
             rewroteSiteFile = true;
         }
 
-        if (!fs::exists(markerPath)) {
-            fs::create_directories(markerPath.parent_path());
+        if (!std::filesystem::exists(markerPath)) {
+            std::filesystem::create_directories(markerPath.parent_path());
             std::ofstream marker(markerPath, std::ios::out | std::ios::trunc);
             if (!marker.is_open())
                 return invalid("setup nginx: failed opening managed marker for write: " + markerPath.string());
@@ -1027,14 +1019,14 @@ static CommandResult handle_setup_nginx(const CommandCall& call) {
             createdMarker = true;
         }
 
-        if (fs::exists(siteEnabledPath) && !fs::is_symlink(siteEnabledPath))
+        if (std::filesystem::exists(siteEnabledPath) && !std::filesystem::is_symlink(siteEnabledPath))
             return invalid("setup nginx: target exists and is not a symlink: " + siteEnabledPath.string());
 
-        if (fs::is_symlink(siteEnabledPath) && !isManagedSiteSymlinkTarget(siteEnabledPath))
+        if (std::filesystem::is_symlink(siteEnabledPath) && !isManagedSiteSymlinkTarget(siteEnabledPath))
             return invalid("setup nginx: existing symlink points outside Vaulthalla-managed site");
 
-        if (!fs::exists(siteEnabledPath)) {
-            fs::create_symlink(siteAvailPath, siteEnabledPath);
+        if (!std::filesystem::exists(siteEnabledPath)) {
+            std::filesystem::create_symlink(siteAvailPath, siteEnabledPath);
             createdSiteLink = true;
         }
     } catch (const std::exception& e) {
@@ -1047,26 +1039,26 @@ static CommandResult handle_setup_nginx(const CommandCall& call) {
         bool rollbackOk = true;
 
         if (createdSiteLink) {
-            fs::remove(kNginxSiteEnabled, ec);
+            std::filesystem::remove(kNginxSiteEnabled, ec);
             if (ec) rollbackOk = false;
             ec.clear();
         }
         if (createdSiteFile) {
-            fs::remove(kNginxSiteAvailable, ec);
+            std::filesystem::remove(kNginxSiteAvailable, ec);
             if (ec) rollbackOk = false;
             ec.clear();
         } else if (backedUpSiteFile) {
-            fs::copy_file(siteSetupBackupPath, kNginxSiteAvailable, fs::copy_options::overwrite_existing, ec);
+            std::filesystem::copy_file(siteSetupBackupPath, kNginxSiteAvailable, std::filesystem::copy_options::overwrite_existing, ec);
             if (ec) rollbackOk = false;
             ec.clear();
         }
         if (createdMarker) {
-            fs::remove(kNginxManagedMarker, ec);
+            std::filesystem::remove(kNginxManagedMarker, ec);
             if (ec) rollbackOk = false;
             ec.clear();
         }
         if (backedUpSiteFile) {
-            fs::remove(siteSetupBackupPath, ec);
+            std::filesystem::remove(siteSetupBackupPath, ec);
             ec.clear();
         }
 
@@ -1086,7 +1078,7 @@ static CommandResult handle_setup_nginx(const CommandCall& call) {
 
     if (backedUpSiteFile) {
         std::error_code ec;
-        fs::remove(siteSetupBackupPath, ec);
+        std::filesystem::remove(siteSetupBackupPath, ec);
     }
 
     if (!useCertbot) {
@@ -1112,14 +1104,14 @@ static CommandResult handle_setup_nginx(const CommandCall& call) {
         return ok(out.str());
     }
 
-    if (!fs::exists(kNginxManagedMarker))
+    if (!std::filesystem::exists(kNginxManagedMarker))
         return invalid("setup nginx: certbot mode requires Vaulthalla-managed nginx marker state");
 
     bool prereqsInstalledNow = false;
     if (const auto prereqError = ensureCertbotPrereqs(call, prereqsInstalledNow))
         return invalid("setup nginx: " + *prereqError);
 
-    const fs::path siteAvailablePath{kNginxSiteAvailable};
+    const std::filesystem::path siteAvailablePath{kNginxSiteAvailable};
     std::string certbotMode;
     std::string postCertReloadStatus = reloadStatus;
 
@@ -1143,9 +1135,9 @@ static CommandResult handle_setup_nginx(const CommandCall& call) {
         const bool had80 = containsListen80(currentContent);
         const bool had443 = containsListen443(currentContent);
 
-        const fs::path backupPath = fs::path(std::string(kNginxSiteAvailable) + ".vh-certbot.backup");
+        const std::filesystem::path backupPath = std::filesystem::path(std::string(kNginxSiteAvailable) + ".vh-certbot.backup");
         std::error_code ec;
-        fs::copy_file(siteAvailablePath, backupPath, fs::copy_options::overwrite_existing, ec);
+        std::filesystem::copy_file(siteAvailablePath, backupPath, std::filesystem::copy_options::overwrite_existing, ec);
         if (ec)
             return invalid("setup nginx: failed creating certbot backup of managed site: " + ec.message());
 
@@ -1157,7 +1149,7 @@ static CommandResult handle_setup_nginx(const CommandCall& call) {
 
         std::string prepReloadStatus;
         if (const auto prepErr = validateAndReloadNginx(prepReloadStatus)) {
-            fs::copy_file(backupPath, siteAvailablePath, fs::copy_options::overwrite_existing, ec);
+            std::filesystem::copy_file(backupPath, siteAvailablePath, std::filesystem::copy_options::overwrite_existing, ec);
             if (ec) {
                 return invalid(
                     "setup nginx: certbot-prepared nginx config failed validation and backup restore also failed: " +
@@ -1165,8 +1157,7 @@ static CommandResult handle_setup_nginx(const CommandCall& call) {
             }
 
             std::string restoreReloadStatus;
-            const auto restoreErr = validateAndReloadNginx(restoreReloadStatus);
-            if (restoreErr) {
+            if (const auto restoreErr = validateAndReloadNginx(restoreReloadStatus); restoreErr) {
                 return invalid(
                     "setup nginx: certbot-prepared nginx config failed validation ('" + *prepErr +
                     "') and backup restore validation also failed ('" + *restoreErr + "')");
@@ -1180,7 +1171,7 @@ static CommandResult handle_setup_nginx(const CommandCall& call) {
             "certbot --nginx --non-interactive --agree-tos --register-unsafely-without-email "
             "--keep-until-expiring --domain " + shellQuote(certbotDomain));
         if (certbotIssue.code != 0) {
-            fs::copy_file(backupPath, siteAvailablePath, fs::copy_options::overwrite_existing, ec);
+            std::filesystem::copy_file(backupPath, siteAvailablePath, std::filesystem::copy_options::overwrite_existing, ec);
             if (ec) {
                 return invalid(
                     "setup nginx: certbot issuance failed and backup restore also failed: " + ec.message() +
@@ -1188,8 +1179,7 @@ static CommandResult handle_setup_nginx(const CommandCall& call) {
             }
 
             std::string restoreReloadStatus;
-            const auto restoreErr = validateAndReloadNginx(restoreReloadStatus);
-            if (restoreErr) {
+            if (const auto restoreErr = validateAndReloadNginx(restoreReloadStatus); restoreErr) {
                 return invalid(
                     "setup nginx: certbot issuance failed and backup restore validation/reload failed: " + *restoreErr +
                     "\ncertbot failure: " + formatFailure("certbot --nginx --domain " + certbotDomain, certbotIssue));
@@ -1200,7 +1190,7 @@ static CommandResult handle_setup_nginx(const CommandCall& call) {
                 "certbot failure: " + formatFailure("certbot --nginx --domain " + certbotDomain, certbotIssue));
         }
 
-        fs::remove(backupPath, ec);
+        std::filesystem::remove(backupPath, ec);
 
         if (had80 && had443) {
             if (call.io) {
@@ -1250,8 +1240,6 @@ static CommandResult handle_setup(const CommandCall& call) {
 
     return invalid(call.constructFullArgs(), "Unknown setup subcommand: '" + std::string(sub) + "'");
 }
-
-} // namespace
 
 void commands::registerSetupCommands(const std::shared_ptr<Router>& r) {
     const auto usageManager = runtime::Deps::get().shellUsageManager;

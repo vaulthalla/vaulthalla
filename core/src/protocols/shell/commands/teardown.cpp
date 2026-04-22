@@ -21,10 +21,6 @@
 using namespace vh;
 using namespace vh::protocols::shell;
 
-namespace {
-
-namespace fs = std::filesystem;
-
 constexpr auto* kNginxSiteAvailable = "/etc/nginx/sites-available/vaulthalla";
 constexpr auto* kNginxSiteEnabled = "/etc/nginx/sites-enabled/vaulthalla";
 constexpr auto* kNginxManagedMarker = "/var/lib/vaulthalla/nginx_site_managed";
@@ -68,10 +64,10 @@ static bool commandExists(const std::string& command) {
     return runCapture("command -v " + shellQuote(command) + " >/dev/null").code == 0;
 }
 
-static bool isManagedSiteSymlinkTarget(const fs::path& linkPath) {
-    if (!fs::is_symlink(linkPath)) return false;
-    const auto target = fs::read_symlink(linkPath);
-    return target == fs::path(kNginxSiteAvailable) || target == fs::path("../sites-available/vaulthalla");
+static bool isManagedSiteSymlinkTarget(const std::filesystem::path& linkPath) {
+    if (!std::filesystem::is_symlink(linkPath)) return false;
+    const auto target = std::filesystem::read_symlink(linkPath);
+    return target == std::filesystem::path(kNginxSiteAvailable) || target == std::filesystem::path("../sites-available/vaulthalla");
 }
 
 static bool isTeardownMatch(const std::string& cmd, const std::string_view input) {
@@ -90,25 +86,25 @@ static CommandResult handle_teardown_nginx(const CommandCall& call) {
     bool removedMarker = false;
 
     try {
-        const fs::path siteEnabledPath{kNginxSiteEnabled};
-        const fs::path siteAvailablePath{kNginxSiteAvailable};
-        const fs::path markerPath{kNginxManagedMarker};
+        const std::filesystem::path siteEnabledPath{kNginxSiteEnabled};
+        const std::filesystem::path siteAvailablePath{kNginxSiteAvailable};
+        const std::filesystem::path markerPath{kNginxManagedMarker};
 
-        if (fs::exists(siteEnabledPath)) {
-            if (!fs::is_symlink(siteEnabledPath))
+        if (std::filesystem::exists(siteEnabledPath)) {
+            if (!std::filesystem::is_symlink(siteEnabledPath))
                 return invalid("teardown nginx: " + siteEnabledPath.string() + " exists and is not a symlink");
             if (!isManagedSiteSymlinkTarget(siteEnabledPath))
                 return invalid("teardown nginx: refusing to remove non-Vaulthalla nginx symlink target");
-            fs::remove(siteEnabledPath);
+            std::filesystem::remove(siteEnabledPath);
             removedLink = true;
         }
 
-        if (fs::exists(markerPath)) {
-            if (fs::exists(siteAvailablePath)) {
-                fs::remove(siteAvailablePath);
+        if (std::filesystem::exists(markerPath)) {
+            if (std::filesystem::exists(siteAvailablePath)) {
+                std::filesystem::remove(siteAvailablePath);
                 removedSiteFile = true;
             }
-            fs::remove(markerPath);
+            std::filesystem::remove(markerPath);
             removedMarker = true;
         }
     } catch (const std::exception& e) {
@@ -142,8 +138,6 @@ static CommandResult handle_teardown(const CommandCall& call) {
 
     return invalid(call.constructFullArgs(), "Unknown teardown subcommand: '" + std::string(sub) + "'");
 }
-
-} // namespace
 
 void commands::registerTeardownCommands(const std::shared_ptr<Router>& r) {
     const auto usageManager = runtime::Deps::get().shellUsageManager;
