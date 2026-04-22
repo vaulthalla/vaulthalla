@@ -266,7 +266,10 @@ void Server::runLoop() {
                 continue;
             }
 
-            const auto user = db::query::identities::User::getUserByLinuxUID(p.uid);
+            const auto user = p.uid == 0 ?
+            db::query::identities::User::getUserByName("system") :
+            db::query::identities::User::getUserByLinuxUID(p.uid);
+
             if (!user) {
                 log::Registry::shell()->debug("[CtlServerService] No user found for UID {} (PID {})", p.uid, p.pid);
                 send_json(cfd, {{"ok", false}, {"exit_code", 1}, {"stderr", "user not found"}});

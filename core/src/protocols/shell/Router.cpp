@@ -47,13 +47,18 @@ std::string Router::canonicalFor(const std::string& nameOrAlias) const {
 
 CommandResult Router::executeLine(const std::string& line, const std::shared_ptr<User>& user, SocketIO* io) const {
     log::Registry::shell()->debug("[Router] Executing line: '{}'", line);
-    auto call   = parseTokens(tokenize(line));
+
+    auto call = parseTokens(tokenize(line));
     call.original_positionals = call.positionals;
     call.user = user;
     call.io = io;
 
     if (call.name.empty()) return invalid("No command provided.");
+
     const auto canonical = canonicalFor(call.name);
+
+    if (call.user->name == "system" && call.user->isSuperAdmin() && canonical != "status")
+        return invalid(call.constructFullArgs(), "System user can only execute 'status' command.");
 
     if (call.positionals.empty() && pluralMap_.contains(call.name)) {
         call.name = canonical;
