@@ -1,13 +1,11 @@
-#include "protocols/shell/commands/setup.hpp"
-#include "protocols/shell/commands/helpers.hpp"
-#include "protocols/shell/util/argsHelpers.hpp"
-#include "protocols/shell/util/commandHelpers.hpp"
+#include "CommandUsage.hpp"
 #include "config/Config.hpp"
 #include "db/query/identities/User.hpp"
-#include "CommandUsage.hpp"
-
-#include <paths.h>
-
+#include "protocols/shell/commands/helpers.hpp"
+#include "protocols/shell/commands/router.hpp"
+#include "protocols/shell/util/argsHelpers.hpp"
+#include "protocols/shell/util/commandHelpers.hpp"
+#include "identities/User.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <exception>
@@ -15,6 +13,7 @@
 #include <fstream>
 #include <grp.h>
 #include <optional>
+#include <paths.h>
 #include <pwd.h>
 #include <random>
 #include <sstream>

@@ -1,13 +1,11 @@
-#include "protocols/shell/commands/setup.hpp"
+#include "CommandUsage.hpp"
+#include "config/Config.hpp"
 #include "protocols/shell/commands/helpers.hpp"
+#include "protocols/shell/commands/router.hpp"
 #include "protocols/shell/util/argsHelpers.hpp"
 #include "protocols/shell/util/commandHelpers.hpp"
 #include "protocols/shell/util/nginxHelpers.hpp"
-#include "config/Config.hpp"
-#include "CommandUsage.hpp"
-
-#include <paths.h>
-
+#include "identities/User.hpp"
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -16,6 +14,7 @@
 #include <filesystem>
 #include <fstream>
 #include <optional>
+#include <paths.h>
 #include <sstream>
 #include <string>
 #include <string_view>

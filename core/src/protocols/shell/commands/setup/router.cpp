@@ -1,9 +1,8 @@
-#include "protocols/shell/commands/setup.hpp"
-#include "protocols/shell/util/argsHelpers.hpp"
 #include "protocols/shell/Router.hpp"
+#include "protocols/shell/commands/router.hpp"
+#include "protocols/shell/util/argsHelpers.hpp"
 #include "runtime/Deps.hpp"
 #include "usage/include/UsageManager.hpp"
-
 #include <string>
 #include <string_view>
 

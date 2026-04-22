@@ -6,6 +6,7 @@
 #include "protocols/shell/util/nginxHelpers.hpp"
 #include "runtime/Deps.hpp"
 #include "usage/include/UsageManager.hpp"
+#include "identities/User.hpp"
 
 #include <exception>
 #include <filesystem>
