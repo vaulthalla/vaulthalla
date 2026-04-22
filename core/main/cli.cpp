@@ -87,13 +87,11 @@ static bool looks_glued_value(std::string_view tail) {
     });
 }
 
-// Normalize argv: split --key=value and -Xvalue (heuristic), keep -abc bundles as-is
-static std::vector<std::string> normalize_args(const int argc, char** argv) {
-    constexpr int start_index = 2; // skip argv[0] (program) and argv[1] (command)
+// Normalize argv tokens: split --key=value and -Xvalue (heuristic), keep -abc bundles as-is
+static std::vector<std::string> normalize_tokens(const std::vector<std::string>& in) {
     std::vector<std::string> out;
-    out.reserve(static_cast<size_t>(argc) - start_index + 4);
-    for (int i = start_index; i < argc; ++i) {
-        std::string a = argv[i];
+    out.reserve(in.size() + 4);
+    for (auto a : in) {
 
         if (a == "--") { out.emplace_back("--"); continue; }
 
@@ -124,6 +122,24 @@ static std::vector<std::string> normalize_args(const int argc, char** argv) {
         out.emplace_back(std::move(a)); // plain arg
     }
     return out;
+}
+
+static bool is_root_command_token(const std::string& token) {
+    return token == "vh" || token == "vaulthalla" || token == "vaulthalla-cli";
+}
+
+static std::vector<std::string> canonicalize_argv_norm(const int argc, char** argv) {
+    std::vector<std::string> raw;
+    raw.reserve(argc > 1 ? static_cast<size_t>(argc) - 1 : 1);
+    for (int i = 1; i < argc; ++i) {
+        if (argv[i]) raw.emplace_back(argv[i]);
+    }
+
+    while (!raw.empty() && is_root_command_token(raw.front()))
+        raw.erase(raw.begin());
+
+    if (raw.empty()) raw.emplace_back("help");
+    return normalize_tokens(raw);
 }
 
 static std::string build_line_from_tokens(const std::vector<std::string>& tokens) {
@@ -166,6 +182,18 @@ static bool is_lifecycle_command(const std::vector<std::string>& argv_norm) {
         || command_is(argv_norm, "setup", "nginx")
         || command_is(argv_norm, "teardown", "db")
         || command_is(argv_norm, "teardown", "nginx");
+}
+
+static int lifecycle_sudo_required(const std::vector<std::string>& argv_norm) {
+    std::ostringstream out;
+    out << "This lifecycle command must be run with elevated privileges.\n";
+    out << "Re-run with sudo:\n";
+    out << "  sudo vh";
+    for (const auto& token : argv_norm)
+        out << " " << (needs_quotes(token) ? dq_quote(token) : token);
+    out << "\n";
+    fmt::print(stderr, "{}", out.str());
+    return 2;
 }
 
 static std::string lifecycle_binary_path() {
@@ -301,22 +329,13 @@ static void append_status_systemd_summary_if_needed(const std::vector<std::strin
 /* ----------------------------------------------------------------- */
 
 int main(const int argc, char** argv) {
-    // Decide the "command" token up front (safe even if argv[1] is nullptr)
-    const std::string cmd = (argc >= 2 && argv[1] && argv[1][0] != '\0')
-                            ? std::string(argv[1])
-                            : std::string("help");
+    std::vector<std::string> argv_norm = canonicalize_argv_norm(argc, argv);
 
-    // Build normalized argv: [cmd, args...], with --key=value and -Xvalue split
-    std::vector<std::string> argv_norm;
-    argv_norm.emplace_back(cmd);
-
-    if (argc >= 3) {
-        auto tail = normalize_args(argc, argv);
-        argv_norm.insert(argv_norm.end(), tail.begin(), tail.end());
-    }
-
-    if (is_lifecycle_command(argv_norm))
+    if (is_lifecycle_command(argv_norm)) {
+        if (::geteuid() != 0)
+            return lifecycle_sudo_required(argv_norm);
         return run_lifecycle_command(argv_norm);
+    }
 
     // Quoted line for legacy servers
     std::string line = build_line_from_tokens(argv_norm);
