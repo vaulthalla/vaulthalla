@@ -6,6 +6,7 @@ from io import StringIO
 import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 import unittest
 from unittest.mock import call, patch
 
@@ -239,6 +240,27 @@ class CliChangelogDraftTests(unittest.TestCase):
         self.assertEqual(parsed_ai.save_triage_json, "/tmp/triage.json")
         self.assertTrue(parsed_ai.polish)
         self.assertEqual(parsed_ai.save_polish_json, "/tmp/polish.json")
+
+        parsed_ai_compare = parser.parse_args(
+            [
+                "changelog",
+                "ai-compare",
+                "--since-tag",
+                "v0.1.0",
+                "--ai-profiles",
+                "openai-cheap,openai-balanced,openai-premium",
+                "--output-name",
+                "0.34.0-openai-comparison.md",
+            ]
+        )
+        self.assertEqual(parsed_ai_compare.command, "changelog")
+        self.assertEqual(parsed_ai_compare.changelog_command, "ai-compare")
+        self.assertEqual(parsed_ai_compare.since_tag, "v0.1.0")
+        self.assertEqual(
+            parsed_ai_compare.ai_profiles,
+            "openai-cheap,openai-balanced,openai-premium",
+        )
+        self.assertEqual(parsed_ai_compare.output_name, "0.34.0-openai-comparison.md")
 
 
 class CliChangelogPayloadTests(unittest.TestCase):
@@ -1274,6 +1296,129 @@ profiles:
         self.assertEqual(call.args[0].kind, "openai-compatible")
         self.assertEqual(call.args[0].base_url, "http://localhost:8888/v1")
         self.assertEqual(call.args[0].model, "Qwen3.5-122B")
+
+
+class CliChangelogAICompareTests(unittest.TestCase):
+    def _write_repo_basics(self, repo_root: Path) -> str:
+        original_debian = (
+            "vaulthalla (0.34.0-1) unstable; urgency=medium\n\n"
+            "  - existing line\n\n"
+            " -- Test User <test@example.com>  Sun, 19 Apr 2026 00:00:00 +0000\n"
+        )
+        (repo_root / "VERSION").write_text("0.34.0\n", encoding="utf-8")
+        debian_path = repo_root / "debian" / "changelog"
+        debian_path.parent.mkdir(parents=True, exist_ok=True)
+        debian_path.write_text(original_debian, encoding="utf-8")
+        return original_debian
+
+    def test_ai_compare_writes_combined_markdown_artifact(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            original_debian = self._write_repo_basics(repo_root)
+            args = argparse.Namespace(
+                repo_root=str(repo_root),
+                since_tag=None,
+                ai_profiles="openai-cheap,openai-balanced",
+                output_name="0.34.0-openai-comparison.md",
+            )
+
+            def _fake_draft(draft_args: argparse.Namespace) -> int:
+                cached = cli.render_cached_draft_markdown(
+                    version="0.34.0",
+                    content=f"# {draft_args.ai_profile}\n- {draft_args.ai_profile} summary",
+                )
+                Path(draft_args.output).write_text(cached, encoding="utf-8")
+                return 0
+
+            def _fake_pipeline(_draft_args: argparse.Namespace, *, repo_root: Path | None = None):
+                return SimpleNamespace(
+                    provider="openai",
+                    base_url=None,
+                    profile_slug=None,
+                    enabled_stages=("triage", "draft", "polish"),
+                    stages={
+                        "triage": SimpleNamespace(
+                            model="gpt-5-nano",
+                            reasoning_effort="low",
+                            structured_mode=None,
+                            max_output_tokens=300,
+                        ),
+                        "draft": SimpleNamespace(
+                            model="gpt-5-mini",
+                            reasoning_effort="medium",
+                            structured_mode="strict_json_schema",
+                            max_output_tokens=SimpleNamespace(mode="dynamic_ratio", ratio=0.35, min=800, max=4000),
+                        ),
+                        "polish": SimpleNamespace(
+                            model="gpt-5.4",
+                            reasoning_effort="medium",
+                            structured_mode=None,
+                            max_output_tokens=800,
+                        ),
+                    },
+                    is_stage_enabled=lambda stage: stage in {"triage", "draft", "polish"},
+                )
+
+            def _fake_refresh(**kwargs):
+                changelog_path = Path(kwargs["changelog_path"])
+                heading = kwargs["release_markdown"].splitlines()[0].strip()
+                changelog_path.write_text(f"effective debian from {heading}\n", encoding="utf-8")
+                return SimpleNamespace(path=changelog_path)
+
+            with (
+                patch("tools.release.cli.cmd_changelog_ai_draft", side_effect=_fake_draft) as run_draft,
+                patch("tools.release.cli.build_ai_pipeline_config_from_args", side_effect=_fake_pipeline),
+                patch("tools.release.cli.refresh_debian_changelog_entry", side_effect=_fake_refresh) as refresh_entry,
+            ):
+                rc = cli.cmd_changelog_ai_compare(args)
+
+            self.assertEqual(rc, 0)
+            artifact = (
+                repo_root / ".changelog_scratch" / "comparisons" / "0.34.0-openai-comparison.md"
+            )
+            self.assertTrue(artifact.is_file())
+            rendered = artifact.read_text(encoding="utf-8")
+            self.assertIn("# AI Changelog Comparison — 0.34.0", rendered)
+            self.assertIn("## Profile: openai-cheap", rendered)
+            self.assertIn("## Profile: openai-balanced", rendered)
+            self.assertIn("### changelog.release.md", rendered)
+            self.assertIn("### Effective profile config", rendered)
+            self.assertIn("```yaml", rendered)
+            self.assertIn("# openai-cheap", rendered)
+            self.assertIn("# openai-balanced", rendered)
+            self.assertIn("### debian/changelog", rendered)
+            self.assertIn("effective debian from # openai-cheap", rendered)
+            self.assertIn("effective debian from # openai-balanced", rendered)
+            self.assertIn("provider: openai", rendered)
+            self.assertIn("profile_slug: <none>", rendered)
+            self.assertIn("enabled_stages:", rendered)
+            self.assertIn("default_max_output_tokens:", rendered)
+            self.assertIn("mode: dynamic_ratio", rendered)
+            self.assertIn("ratio: 0.35", rendered)
+            self.assertIn("stages:", rendered)
+            self.assertIn("reasoning_effort: medium", rendered)
+            self.assertIn("structured_mode: strict_json_schema", rendered)
+            self.assertEqual(run_draft.call_count, 2)
+            self.assertEqual(refresh_entry.call_count, 2)
+            for call_ in refresh_entry.call_args_list:
+                self.assertNotEqual(
+                    Path(call_.kwargs["changelog_path"]).resolve(),
+                    (repo_root / "debian" / "changelog").resolve(),
+                )
+            self.assertEqual((repo_root / "debian" / "changelog").read_text(encoding="utf-8"), original_debian)
+
+    def test_ai_compare_rejects_invalid_output_name(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            (repo_root / "VERSION").write_text("0.34.0\n", encoding="utf-8")
+            args = argparse.Namespace(
+                repo_root=str(repo_root),
+                since_tag=None,
+                ai_profiles="openai-cheap",
+                output_name="../bad.md",
+            )
+            with self.assertRaisesRegex(ValueError, "--output-name must be a file name"):
+                _ = cli.cmd_changelog_ai_compare(args)
 
 
 class CliChangelogContextHelperTests(unittest.TestCase):
