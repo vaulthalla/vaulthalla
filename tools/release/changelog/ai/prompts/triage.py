@@ -20,7 +20,8 @@ def build_triage_system_prompt(*, hosted_compact_mode: bool = False) -> str:
     return (
         f"{base} "
         "This is a compression stage: produce the smallest valid high-signal object, "
-        "not a comprehensive narrative."
+        "not a comprehensive narrative. "
+        "Preserve the strongest summary points and clear top-category distinctions for downstream drafting."
     )
 
 
@@ -44,6 +45,7 @@ def build_triage_user_prompt(
     category_caution_notes_max_items = 2 if hosted_compact_mode else 4
     compression_directive = (
         "- Compression mode (hosted): prefer shorter arrays and denser phrasing; do not expand rationale text.\n"
+        "- Compression mode (hosted): retain enough signal for drafting by preserving strongest summary points and top category distinctions.\n"
         if hosted_compact_mode
         else ""
     )
