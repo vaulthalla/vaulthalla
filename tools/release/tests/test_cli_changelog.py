@@ -487,6 +487,7 @@ class CliChangelogAIReleaseTests(unittest.TestCase):
             save_triage_json=None,
             polish=False,
             save_polish_json=None,
+            release_notes_output=".changelog_scratch/release_notes.md",
         )
 
     def test_ai_release_runs_ai_draft_then_forced_cached_release(self) -> None:
@@ -571,6 +572,7 @@ class CliChangelogAIReleaseTests(unittest.TestCase):
                 save_triage_json=None,
                 polish=False,
                 save_polish_json=None,
+                release_notes_output=str(repo_root / ".changelog_scratch" / "release_notes.md"),
             )
 
             with (
@@ -677,6 +679,7 @@ class CliChangelogAIDraftTests(unittest.TestCase):
         save_triage_json: str | None = None,
         polish: bool = False,
         save_polish_json: str | None = None,
+        release_notes_output: str = ".changelog_scratch/release_notes.md",
     ) -> argparse.Namespace:
         return argparse.Namespace(
             repo_root=repo_root,
@@ -691,6 +694,7 @@ class CliChangelogAIDraftTests(unittest.TestCase):
             save_triage_json=save_triage_json,
             polish=polish,
             save_polish_json=save_polish_json,
+            release_notes_output=release_notes_output,
         )
 
     def test_ai_draft_to_stdout(self) -> None:
@@ -911,6 +915,68 @@ class CliChangelogAIDraftTests(unittest.TestCase):
             run_triage.assert_not_called()
             render_triage_json.assert_not_called()
             self.assertIn("Wrote AI polish JSON to", out.getvalue())
+
+    def test_ai_draft_release_notes_stage_writes_artifact_when_profile_enables_it(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            (repo_root / "VERSION").write_text("1.2.3\n", encoding="utf-8")
+            (repo_root / "ai.yml").write_text(
+                """
+profiles:
+  openai-balanced:
+    provider: openai
+    stages:
+      draft:
+        model: gpt-5-mini
+      release_notes:
+        model: gpt-5.4
+        reasoning_effort: high
+""",
+                encoding="utf-8",
+            )
+            notes_target = repo_root / ".changelog_scratch" / "release_notes.md"
+            args = self._args(
+                repo_root=str(repo_root),
+                ai_profile="openai-balanced",
+                provider=None,
+                model=None,
+                release_notes_output=str(notes_target),
+            )
+            out = StringIO()
+            provider_obj = object()
+            release_notes_obj = SimpleNamespace(markdown="# Public Notes\n- polished item\n")
+
+            with (
+                patch("tools.release.cli.build_changelog_context", return_value=object()),
+                patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
+                patch("tools.release.cli.build_ai_provider_from_args", return_value=provider_obj) as build_provider,
+                patch("tools.release.cli.generate_draft_from_payload", return_value=object()),
+                patch("tools.release.cli.render_draft_markdown", return_value="# Final Changelog\n- item\n"),
+                patch("tools.release.cli.run_release_notes_stage", return_value=release_notes_obj) as run_release_notes,
+                patch("tools.release.cli.run_triage_stage"),
+                patch("tools.release.cli.run_polish_stage"),
+                patch("tools.release.cli.render_polish_markdown"),
+                redirect_stdout(out),
+            ):
+                result = cli.cmd_changelog_ai_draft(args)
+
+            self.assertEqual(result, 0)
+            run_release_notes.assert_called_once_with(
+                "# Final Changelog\n- item\n",
+                provider=provider_obj,
+                provider_kind="openai",
+                reasoning_effort="high",
+                structured_mode=None,
+                temperature=0.0,
+                max_output_tokens_policy=1200,
+            )
+            self.assertIn(
+                call(args, repo_root=repo_root.resolve(), stage="release_notes"),
+                build_provider.call_args_list,
+            )
+            self.assertTrue(notes_target.is_file())
+            self.assertEqual(notes_target.read_text(encoding="utf-8"), "# Public Notes\n- polished item\n")
+            self.assertIn("Wrote AI release notes to", out.getvalue())
 
     def test_ai_draft_triage_and_polish_pipeline_order(self) -> None:
         triage_obj = object()
@@ -1355,6 +1421,12 @@ class CliChangelogAICompareTests(unittest.TestCase):
                             structured_mode=None,
                             max_output_tokens=800,
                         ),
+                        "release_notes": SimpleNamespace(
+                            model="gpt-5.4",
+                            reasoning_effort="high",
+                            structured_mode=None,
+                            max_output_tokens=1200,
+                        ),
                     },
                     is_stage_enabled=lambda stage: stage in {"triage", "draft", "polish"},
                 )
@@ -1387,6 +1459,8 @@ class CliChangelogAICompareTests(unittest.TestCase):
             self.assertIn("# openai-cheap", rendered)
             self.assertIn("# openai-balanced", rendered)
             self.assertIn("### debian/changelog", rendered)
+            self.assertIn("### release_notes.md", rendered)
+            self.assertIn("_not generated_", rendered)
             self.assertIn("effective debian from # openai-cheap", rendered)
             self.assertIn("effective debian from # openai-balanced", rendered)
             self.assertIn("provider: openai", rendered)

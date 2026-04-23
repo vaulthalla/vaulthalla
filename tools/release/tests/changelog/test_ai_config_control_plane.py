@@ -487,6 +487,33 @@ profiles:
 
         self.assertEqual(resolved.enabled_stages, ("triage", "draft", "polish"))
 
+    def test_release_notes_stage_is_optional_and_ordered_last_when_present(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            _write_profile(
+                repo_root,
+                """
+profiles:
+  ordered:
+    provider: openai
+    stages:
+      release_notes:
+        model: notes-x
+        reasoning_effort: high
+      draft:
+        model: draft-x
+""",
+            )
+            resolved = resolve_ai_pipeline_config(
+                repo_root=repo_root,
+                profile_slug="ordered",
+                cli_overrides=AIPipelineCLIOverrides(),
+            )
+
+        self.assertEqual(resolved.enabled_stages, ("draft", "release_notes"))
+        self.assertEqual(resolved.stage_model("release_notes"), "notes-x")
+        self.assertEqual(resolved.stages["release_notes"].reasoning_effort, "high")
+
     def test_temperature_defaults_and_stage_override(self) -> None:
         with TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)

@@ -4,6 +4,10 @@ import unittest
 
 from tools.release.changelog.ai.prompts.draft import build_draft_system_prompt, build_draft_user_prompt
 from tools.release.changelog.ai.prompts.polish import build_polish_system_prompt, build_polish_user_prompt
+from tools.release.changelog.ai.prompts.release_notes import (
+    build_release_notes_system_prompt,
+    build_release_notes_user_prompt,
+)
 from tools.release.changelog.ai.prompts.triage import build_triage_system_prompt, build_triage_user_prompt
 
 
@@ -64,6 +68,16 @@ class AIPromptDisciplineTests(unittest.TestCase):
         self.assertIn("top category distinctions", user)
         self.assertIn("retained_snippets", user)
         self.assertIn("no rationale prose", user)
+
+    def test_release_notes_prompt_enforces_no_invention(self) -> None:
+        system = build_release_notes_system_prompt().lower()
+        user = build_release_notes_user_prompt("# Changelog\n- fix\n").lower()
+        self.assertIn("do not invent", system)
+        self.assertIn("do not contradict", system)
+        self.assertIn("do not write marketing copy", system)
+        self.assertIn("preserve cautions", system)
+        self.assertIn("schema_version", user)
+        self.assertIn("return markdown in `markdown`", user)
 
 
 if __name__ == "__main__":

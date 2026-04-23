@@ -11,6 +11,7 @@ from tools.release.changelog.ai.config import (
     DEFAULT_AI_PROVIDER_KIND,
     DEFAULT_AI_DRAFT_MODEL,
     DEFAULT_AI_POLISH_MODEL,
+    DEFAULT_AI_RELEASE_NOTES_MODEL,
     DEFAULT_AI_TRIAGE_MODEL,
     DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
     VALID_REASONING_EFFORTS,
@@ -23,19 +24,24 @@ from tools.release.changelog.ai.contracts import (
     AI_DRAFT_RESPONSE_JSON_SCHEMA,
     AI_POLISH_RESPONSE_JSON_SCHEMA,
     AI_POLISH_SCHEMA_VERSION,
+    AI_RELEASE_NOTES_RESPONSE_JSON_SCHEMA,
+    AI_RELEASE_NOTES_SCHEMA_VERSION,
     AI_TRIAGE_RESPONSE_JSON_SCHEMA,
     AI_TRIAGE_SCHEMA_VERSION,
     AIPolishResult,
     AIPolishSection,
+    AIReleaseNotesResult,
     AITriageCategory,
     AITriageResult,
     ai_draft_result_to_dict,
     ai_polish_result_to_dict,
+    ai_release_notes_result_to_dict,
     ai_triage_result_to_dict,
     build_polish_input_payload,
     build_triage_ir_payload,
     parse_ai_draft_response,
     parse_ai_polish_response,
+    parse_ai_release_notes_response,
     parse_ai_triage_response,
 )
 from tools.release.changelog.ai.providers import (
@@ -53,6 +59,10 @@ from tools.release.changelog.ai.providers import (
 from tools.release.changelog.ai.render.markdown import render_draft_markdown, render_polish_markdown
 from tools.release.changelog.ai.stages.draft import generate_draft_from_payload, render_draft_result_json
 from tools.release.changelog.ai.stages.polish import render_polish_result_json, run_polish_stage
+from tools.release.changelog.ai.stages.release_notes import (
+    render_release_notes_result_json,
+    run_release_notes_stage,
+)
 from tools.release.changelog.ai.stages.triage import render_triage_result_json, run_triage_stage
 
 # Backward-compatible aliases while imports migrate to responsibility modules.
@@ -75,6 +85,11 @@ __all__ = [
     "parse_ai_polish_response",
     "ai_polish_result_to_dict",
     "build_polish_input_payload",
+    "AI_RELEASE_NOTES_SCHEMA_VERSION",
+    "AI_RELEASE_NOTES_RESPONSE_JSON_SCHEMA",
+    "AIReleaseNotesResult",
+    "parse_ai_release_notes_response",
+    "ai_release_notes_result_to_dict",
     "AITriageCategory",
     "AITriageResult",
     "AI_TRIAGE_SCHEMA_VERSION",
@@ -85,6 +100,7 @@ __all__ = [
     "DEFAULT_AI_DRAFT_MODEL",
     "DEFAULT_AI_PROVIDER_KIND",
     "DEFAULT_AI_POLISH_MODEL",
+    "DEFAULT_AI_RELEASE_NOTES_MODEL",
     "DEFAULT_AI_TRIAGE_MODEL",
     "DEFAULT_OPENAI_COMPATIBLE_BASE_URL",
     "AIProviderKind",
@@ -115,6 +131,8 @@ __all__ = [
     "run_polish_stage",
     "render_polish_markdown",
     "render_polish_result_json",
+    "run_release_notes_stage",
+    "render_release_notes_result_json",
     "run_triage_stage",
     "render_triage_result_json",
     "DEFAULT_OPENAI_MINI_MODEL",

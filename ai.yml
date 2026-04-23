@@ -1,4 +1,88 @@
 profiles:
+  openai-cheap:
+    provider: openai
+
+    default_max_output_tokens:
+      triage: 2000
+      draft: 2800
+      polish: 2000
+
+    stages:
+      triage:
+        model: gpt-5-nano
+        reasoning_effort: low
+      draft:
+        model: gpt-5-mini
+        reasoning_effort: low
+        structured_mode: strict_json_schema
+      polish:
+        model: gpt-5-mini
+        reasoning_effort: low
+
+  openai-balanced:
+    provider: openai
+
+    default_max_output_tokens:
+      triage: 3000
+      draft: 5000
+      polish: 4000
+
+    stages:
+      triage:
+        model: gpt-5-nano
+        reasoning_effort: low
+      draft:
+        model: gpt-5-mini
+        reasoning_effort: medium
+        structured_mode: strict_json_schema
+      polish:
+        model: gpt-5.4
+        reasoning_effort: medium
+
+  openai-premium:
+    provider: openai
+
+    default_max_output_tokens:
+      triage: 8000
+      draft: 12000
+      polish: 10000
+
+    stages:
+      triage:
+        model: gpt-5-nano
+        reasoning_effort: low
+      draft:
+        model: gpt-5-mini
+        reasoning_effort: medium
+        structured_mode: strict_json_schema
+      polish:
+        model: gpt-5.4
+        reasoning_effort: high
+
+  openai-premium-deep-triage:
+    provider: openai
+
+    default_max_output_tokens:
+      triage: 9000
+      draft: 12000
+      polish: 10000
+      release_notes: 25000
+
+    stages:
+      triage:
+        model: gpt-5-nano
+        reasoning_effort: medium
+      draft:
+        model: gpt-5-mini
+        reasoning_effort: medium
+        structured_mode: strict_json_schema
+      polish:
+        model: gpt-5.4
+        reasoning_effort: high
+      release_notes:
+        model: gpt-5.4
+        reasoning_effort: high
+
   gemma-solo-stable:
     provider: openai-compatible
     base_url: http://127.0.0.1:8888/v1
@@ -117,84 +201,4 @@ profiles:
 
       polish:
         model: Gemma-4-31B-it-JANG_4M
-        reasoning_effort: high
-
-  openai-cheap:
-    provider: openai
-
-    default_max_output_tokens:
-      triage: 2000
-      draft: 2800
-      polish: 2000
-
-    stages:
-      triage:
-        model: gpt-5-nano
-        reasoning_effort: low
-      draft:
-        model: gpt-5-mini
-        reasoning_effort: low
-        structured_mode: strict_json_schema
-      polish:
-        model: gpt-5-mini
-        reasoning_effort: low
-
-  openai-balanced:
-    provider: openai
-
-    default_max_output_tokens:
-      triage: 3000
-      draft: 5000
-      polish: 4000
-
-    stages:
-      triage:
-        model: gpt-5-nano
-        reasoning_effort: low
-      draft:
-        model: gpt-5-mini
-        reasoning_effort: medium
-        structured_mode: strict_json_schema
-      polish:
-        model: gpt-5.4
-        reasoning_effort: medium
-
-  openai-premium:
-    provider: openai
-
-    default_max_output_tokens:
-      triage: 8000
-      draft: 12000
-      polish: 10000
-
-    stages:
-      triage:
-        model: gpt-5-nano
-        reasoning_effort: low
-      draft:
-        model: gpt-5-mini
-        reasoning_effort: medium
-        structured_mode: strict_json_schema
-      polish:
-        model: gpt-5.4
-        reasoning_effort: high
-
-  openai-premium-deep-triage:
-    provider: openai
-
-    default_max_output_tokens:
-      triage: 9000
-      draft: 12000
-      polish: 10000
-
-    stages:
-      triage:
-        model: gpt-5-nano
-        reasoning_effort: medium
-      draft:
-        model: gpt-5-mini
-        reasoning_effort: medium
-        structured_mode: strict_json_schema
-      polish:
-        model: gpt-5.4
         reasoning_effort: high

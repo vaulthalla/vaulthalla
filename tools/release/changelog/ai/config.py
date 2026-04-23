@@ -10,14 +10,16 @@ OPENAI_API_KEY_ENV_VAR = "OPENAI_API_KEY"
 DEFAULT_AI_DRAFT_MODEL = "gpt-5.4-mini"
 DEFAULT_AI_TRIAGE_MODEL = DEFAULT_AI_DRAFT_MODEL
 DEFAULT_AI_POLISH_MODEL = DEFAULT_AI_DRAFT_MODEL
+DEFAULT_AI_RELEASE_NOTES_MODEL = DEFAULT_AI_DRAFT_MODEL
 DEFAULT_OPENAI_COMPATIBLE_BASE_URL = "http://localhost:8888/v1"
 DEFAULT_AI_PROVIDER_KIND = "openai"
 AI_PROFILE_SCHEMA_VERSION = "vaulthalla.release.ai_profile.v1"
-STAGE_EXECUTION_ORDER: tuple["AIStageName", ...] = ("triage", "draft", "polish")
+STAGE_EXECUTION_ORDER: tuple["AIStageName", ...] = ("triage", "draft", "polish", "release_notes")
 DEFAULT_STAGE_TEMPERATURES: dict["AIStageName", float] = {
     "triage": 0.0,
     "draft": 0.2,
     "polish": 0.0,
+    "release_notes": 0.0,
 }
 
 VALID_REASONING_EFFORTS = ("minimal", "low", "medium", "high", "xhigh")
@@ -41,6 +43,7 @@ DEFAULT_STAGE_MAX_OUTPUT_TOKENS: dict["AIStageName", AIMaxOutputTokensPolicy] = 
     "triage": 300,
     "draft": AIDynamicRatioTokenBudget(mode="dynamic_ratio", ratio=0.35, min=800, max=4000),
     "polish": 800,
+    "release_notes": 1200,
 }
 
 
@@ -72,7 +75,7 @@ class AIProviderConfig:
     timeout_seconds: float | None = None
 
 
-AIStageName = Literal["triage", "draft", "polish"]
+AIStageName = Literal["triage", "draft", "polish", "release_notes"]
 
 
 @dataclass(frozen=True)
@@ -130,16 +133,19 @@ def resolve_ai_pipeline_config(
         "triage": DEFAULT_AI_TRIAGE_MODEL,
         "draft": DEFAULT_AI_DRAFT_MODEL,
         "polish": DEFAULT_AI_POLISH_MODEL,
+        "release_notes": DEFAULT_AI_RELEASE_NOTES_MODEL,
     }
     stage_reasoning: dict[AIStageName, AIReasoningEffort | None] = {
         "triage": None,
         "draft": None,
         "polish": None,
+        "release_notes": None,
     }
     stage_structured_modes: dict[AIStageName, AIStructuredMode | None] = {
         "triage": None,
         "draft": None,
         "polish": None,
+        "release_notes": None,
     }
     stage_temperatures: dict[AIStageName, float] = dict(DEFAULT_STAGE_TEMPERATURES)
     stage_max_output_tokens: dict[AIStageName, AIMaxOutputTokensPolicy] = dict(DEFAULT_STAGE_MAX_OUTPUT_TOKENS)
@@ -181,7 +187,7 @@ def resolve_ai_pipeline_config(
                     f"Invalid AI profile `profiles.{profile_slug}.stages`: required stage `draft` is missing."
                 )
             for stage_name, stage_cfg in stages.items():
-                if stage_name not in {"triage", "draft", "polish"}:
+                if stage_name not in {"triage", "draft", "polish", "release_notes"}:
                     raise ValueError(
                         f"Invalid AI profile `profiles.{profile_slug}.stages.{stage_name}`: unknown stage."
                     )
@@ -219,15 +225,15 @@ def resolve_ai_pipeline_config(
                     stage_max_output_tokens[stage_name] = stage_budget
 
         if profile_fallback is not None:
-            for stage_name in ("triage", "draft", "polish"):
+            for stage_name in ("triage", "draft", "polish", "release_notes"):
                 if stage_name not in explicitly_configured_stages:
                     stage_models[stage_name] = profile_fallback
         if profile_reasoning_fallback is not None:
-            for stage_name in ("triage", "draft", "polish"):
+            for stage_name in ("triage", "draft", "polish", "release_notes"):
                 if stage_reasoning[stage_name] is None:
                     stage_reasoning[stage_name] = profile_reasoning_fallback
         if profile_structured_mode_fallback is not None:
-            for stage_name in ("triage", "draft", "polish"):
+            for stage_name in ("triage", "draft", "polish", "release_notes"):
                 if stage_structured_modes[stage_name] is None:
                     stage_structured_modes[stage_name] = profile_structured_mode_fallback
 
@@ -243,6 +249,7 @@ def resolve_ai_pipeline_config(
         stage_models["triage"] = cli_model
         stage_models["draft"] = cli_model
         stage_models["polish"] = cli_model
+        stage_models["release_notes"] = cli_model
 
     resolved_stages: dict[AIStageName, AIPipelineStageConfig] = {
         "triage": AIPipelineStageConfig(
@@ -265,6 +272,13 @@ def resolve_ai_pipeline_config(
             structured_mode=stage_structured_modes["polish"],
             temperature=stage_temperatures["polish"],
             max_output_tokens=stage_max_output_tokens["polish"],
+        ),
+        "release_notes": AIPipelineStageConfig(
+            model=stage_models["release_notes"] or fallback_model,
+            reasoning_effort=stage_reasoning["release_notes"],
+            structured_mode=stage_structured_modes["release_notes"],
+            temperature=stage_temperatures["release_notes"],
+            max_output_tokens=stage_max_output_tokens["release_notes"],
         ),
     }
     resolved_enabled_stages = tuple(stage for stage in STAGE_EXECUTION_ORDER if stage == "draft" or stage in enabled_stages)
@@ -416,7 +430,7 @@ def _parse_stage_name(raw: object, *, path: str) -> AIStageName:
     if not isinstance(raw, str):
         raise ValueError(f"Invalid `{path}`: unknown stage.")
     stage = raw.strip()
-    if stage not in {"triage", "draft", "polish"}:
+    if stage not in {"triage", "draft", "polish", "release_notes"}:
         raise ValueError(f"Invalid `{path}`: unknown stage.")
     return stage  # type: ignore[return-value]
 

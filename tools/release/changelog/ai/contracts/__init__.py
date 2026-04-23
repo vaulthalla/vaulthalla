@@ -14,6 +14,13 @@ from tools.release.changelog.ai.contracts.polish import (
     build_polish_input_payload,
     parse_ai_polish_response,
 )
+from tools.release.changelog.ai.contracts.release_notes import (
+    AI_RELEASE_NOTES_RESPONSE_JSON_SCHEMA,
+    AI_RELEASE_NOTES_SCHEMA_VERSION,
+    AIReleaseNotesResult,
+    ai_release_notes_result_to_dict,
+    parse_ai_release_notes_response,
+)
 from tools.release.changelog.ai.contracts.triage import (
     AI_TRIAGE_RESPONSE_JSON_SCHEMA,
     AI_TRIAGE_SCHEMA_VERSION,
@@ -44,4 +51,9 @@ __all__ = [
     "parse_ai_polish_response",
     "ai_polish_result_to_dict",
     "build_polish_input_payload",
+    "AI_RELEASE_NOTES_SCHEMA_VERSION",
+    "AI_RELEASE_NOTES_RESPONSE_JSON_SCHEMA",
+    "AIReleaseNotesResult",
+    "parse_ai_release_notes_response",
+    "ai_release_notes_result_to_dict",
 ]

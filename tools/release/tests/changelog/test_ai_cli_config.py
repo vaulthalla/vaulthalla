@@ -53,6 +53,9 @@ profiles:
         model: gpt-5.4
         reasoning_effort: high
         structured_mode: prompt_json
+      release_notes:
+        model: gpt-5.4
+        reasoning_effort: high
 """,
             )
             args = self._args(repo_root=str(repo_root), ai_profile="openai-balanced")
@@ -60,11 +63,13 @@ profiles:
             triage_cfg = cli.build_ai_provider_config_from_args(args, stage="triage")
             draft_cfg = cli.build_ai_provider_config_from_args(args, stage="draft")
             polish_cfg = cli.build_ai_provider_config_from_args(args, stage="polish")
+            release_notes_cfg = cli.build_ai_provider_config_from_args(args, stage="release_notes")
             pipeline = cli.build_ai_pipeline_config_from_args(args)
 
         self.assertEqual(triage_cfg.model, "gpt-5-nano")
         self.assertEqual(draft_cfg.model, "gpt-5-mini")
         self.assertEqual(polish_cfg.model, "gpt-5.4")
+        self.assertEqual(release_notes_cfg.model, "gpt-5.4")
         self.assertEqual(draft_cfg.kind, "openai")
         self.assertEqual(pipeline.stages["triage"].reasoning_effort, "low")
         self.assertEqual(pipeline.stages["triage"].structured_mode, "json_object")
@@ -72,6 +77,7 @@ profiles:
         self.assertEqual(pipeline.stages["draft"].structured_mode, "strict_json_schema")
         self.assertEqual(pipeline.stages["polish"].reasoning_effort, "high")
         self.assertEqual(pipeline.stages["polish"].structured_mode, "prompt_json")
+        self.assertEqual(pipeline.stages["release_notes"].reasoning_effort, "high")
 
     def test_profile_stage_tuning_resolves_with_defaults(self) -> None:
         with TemporaryDirectory() as temp_dir:

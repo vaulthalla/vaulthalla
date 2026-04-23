@@ -33,6 +33,7 @@ from tools.release.changelog.ai.providers.base import StructuredJSONProvider
 from tools.release.changelog.ai.render.markdown import render_draft_markdown, render_polish_markdown
 from tools.release.changelog.ai.stages.draft import generate_draft_from_payload, render_draft_result_json
 from tools.release.changelog.ai.stages.polish import render_polish_result_json, run_polish_stage
+from tools.release.changelog.ai.stages.release_notes import run_release_notes_stage
 from tools.release.changelog.ai.stages.triage import render_triage_result_json, run_triage_stage
 from tools.release.changelog.release_workflow import (
     DEFAULT_CACHED_DRAFT_PATH,
@@ -65,6 +66,7 @@ DEFAULT_CHANGELOG_DRAFT_OUTPUT = str(DEFAULT_CACHED_DRAFT_PATH)
 DEFAULT_CHANGELOG_RELEASE_OUTPUT = str(DEFAULT_CHANGELOG_SCRATCH_DIR / "changelog.release.md")
 DEFAULT_CHANGELOG_RAW_OUTPUT = str(DEFAULT_CHANGELOG_SCRATCH_DIR / "changelog.raw.md")
 DEFAULT_CHANGELOG_PAYLOAD_OUTPUT = str(DEFAULT_CHANGELOG_SCRATCH_DIR / "changelog.payload.json")
+DEFAULT_RELEASE_NOTES_OUTPUT = str(DEFAULT_CHANGELOG_SCRATCH_DIR / "release_notes.md")
 DEFAULT_CHANGELOG_COMPARISON_DIR = DEFAULT_CHANGELOG_SCRATCH_DIR / "comparisons"
 
 
@@ -410,6 +412,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional path to save validated structured polish JSON when --polish is enabled.",
     )
+    changelog_ai_draft_parser.add_argument(
+        "--release-notes-output",
+        default=DEFAULT_RELEASE_NOTES_OUTPUT,
+        help="Output path for optional release_notes markdown when stage is enabled by profile.",
+    )
     changelog_ai_draft_parser.set_defaults(func=cmd_changelog_ai_draft)
 
     changelog_ai_release_parser = changelog_subparsers.add_parser(
@@ -504,6 +511,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--save-polish-json",
         default=None,
         help="Optional path to save validated structured polish JSON when --polish is enabled.",
+    )
+    changelog_ai_release_parser.add_argument(
+        "--release-notes-output",
+        default=DEFAULT_RELEASE_NOTES_OUTPUT,
+        help="Output path for optional release_notes markdown when stage is enabled by profile.",
     )
     changelog_ai_release_parser.set_defaults(func=cmd_changelog_ai_release)
 
@@ -830,6 +842,7 @@ def cmd_changelog_ai_release(args: argparse.Namespace) -> int:
         save_triage_json=args.save_triage_json,
         polish=args.polish,
         save_polish_json=args.save_polish_json,
+        release_notes_output=args.release_notes_output,
     )
     draft_rc = cmd_changelog_ai_draft(draft_args)
     if draft_rc != 0:
@@ -892,6 +905,7 @@ def cmd_changelog_ai_compare(args: argparse.Namespace) -> int:
                 save_triage_json=None,
                 polish=False,
                 save_polish_json=None,
+                release_notes_output=str(temp_root / f"{profile}.release_notes.md"),
             )
             pipeline_config = build_ai_pipeline_config_from_args(compare_args, repo_root=repo_root)
             run_rc = cmd_changelog_ai_draft(compare_args)
@@ -927,6 +941,11 @@ def cmd_changelog_ai_compare(args: argparse.Namespace) -> int:
                     release_markdown.rstrip(),
                     "```",
                     "",
+                    "### release_notes.md",
+                    "```markdown",
+                    _read_release_notes_for_compare(compare_args.release_notes_output),
+                    "```",
+                    "",
                     "### debian/changelog",
                     "```text",
                     debian_output.rstrip(),
@@ -949,6 +968,7 @@ def cmd_changelog_ai_draft(args: argparse.Namespace) -> int:
     pipeline_config = build_ai_pipeline_config_from_args(args, repo_root=repo_root)
     run_triage = bool(args.use_triage) or pipeline_config.is_stage_enabled("triage")
     run_polish = bool(args.polish) or pipeline_config.is_stage_enabled("polish")
+    run_release_notes = pipeline_config.is_stage_enabled("release_notes")
     if args.save_triage_json and not run_triage:
         raise ValueError("--save-triage-json requires triage stage to run.")
     if args.save_polish_json and not run_polish:
@@ -963,6 +983,7 @@ def cmd_changelog_ai_draft(args: argparse.Namespace) -> int:
             draft_provider=draft_provider,
             include_triage=run_triage,
             include_polish=run_polish,
+            include_release_notes=run_release_notes,
         )
 
     draft_input: dict = payload
@@ -970,6 +991,7 @@ def cmd_changelog_ai_draft(args: argparse.Namespace) -> int:
     triage_stage_cfg = pipeline_config.stages["triage"]
     draft_stage_cfg = pipeline_config.stages["draft"]
     polish_stage_cfg = pipeline_config.stages["polish"]
+    release_notes_stage_cfg = pipeline_config.stages["release_notes"]
 
     if run_triage:
         triage_provider = build_ai_provider_from_args(args, repo_root=repo_root, stage="triage")
@@ -1071,6 +1093,39 @@ def cmd_changelog_ai_draft(args: argparse.Namespace) -> int:
             print(f"Wrote AI polish JSON to {Path(args.save_polish_json).resolve()}")
     else:
         final_markdown = render_draft_markdown(draft)
+
+    if run_release_notes:
+        release_notes_provider = build_ai_provider_from_args(args, repo_root=repo_root, stage="release_notes")
+        try:
+            release_notes = run_release_notes_stage(
+                final_markdown,
+                provider=release_notes_provider,
+                provider_kind=pipeline_config.provider,
+                reasoning_effort=release_notes_stage_cfg.reasoning_effort,
+                structured_mode=release_notes_stage_cfg.structured_mode,
+                temperature=release_notes_stage_cfg.temperature,
+                max_output_tokens_policy=release_notes_stage_cfg.max_output_tokens,
+            )
+        except Exception as exc:
+            _capture_stage_failure_artifact(
+                repo_root=repo_root,
+                args=args,
+                stage="release_notes",
+                pipeline_config=pipeline_config,
+                provider=release_notes_provider,
+                exc=exc,
+                stage_settings={
+                    "structured_mode": release_notes_stage_cfg.structured_mode,
+                    "reasoning_effort": release_notes_stage_cfg.reasoning_effort,
+                    "temperature": release_notes_stage_cfg.temperature,
+                    "max_output_tokens_policy": str(release_notes_stage_cfg.max_output_tokens),
+                },
+            )
+            raise _stage_failure("Release notes", exc) from exc
+        release_notes_output = getattr(args, "release_notes_output", DEFAULT_RELEASE_NOTES_OUTPUT)
+        write_output(release_notes.markdown, release_notes_output)
+        if release_notes_output != "-":
+            print(f"Wrote AI release notes to {Path(release_notes_output).resolve()}")
 
     version = read_version_file(repo_root / "VERSION")
     cached_markdown = render_cached_draft_markdown(version=str(version), content=final_markdown)
@@ -1346,12 +1401,12 @@ def _render_ai_compare_profile_config_yaml(pipeline: AIPipelineConfig) -> str:
         lines.append(f"  - {stage}")
 
     lines.append("default_max_output_tokens:")
-    for stage in ("triage", "draft", "polish"):
+    for stage in ("triage", "draft", "polish", "release_notes"):
         token_policy = pipeline.stages[stage].max_output_tokens
         lines.extend(_render_ai_compare_token_policy(stage, token_policy))
 
     lines.append("stages:")
-    for stage in ("triage", "draft", "polish"):
+    for stage in ("triage", "draft", "polish", "release_notes"):
         stage_cfg = pipeline.stages[stage]
         lines.append(f"  {stage}:")
         lines.append(f"    model: {stage_cfg.model}")
@@ -1377,6 +1432,18 @@ def _render_ai_compare_token_policy(stage: str, policy: object) -> list[str]:
             f"    max: {maximum}",
         ]
     return [f"  {stage}: {policy!r}"]
+
+
+def _read_release_notes_for_compare(path: str | None) -> str:
+    if not path:
+        return "_not generated_"
+    candidate = Path(path)
+    if not candidate.is_file():
+        return "_not generated_"
+    content = candidate.read_text(encoding="utf-8").strip()
+    if not content:
+        return "_not generated_"
+    return content
 
 
 def build_ai_provider_config_from_args(
@@ -1411,6 +1478,7 @@ def _run_stage_preflight(
     draft_provider: StructuredJSONProvider,
     include_triage: bool,
     include_polish: bool,
+    include_release_notes: bool,
 ) -> None:
     seen: set[tuple[str, str | None]] = set()
     stage_order: list[AIStageName] = []
@@ -1419,6 +1487,8 @@ def _run_stage_preflight(
     stage_order.append("draft")
     if include_polish:
         stage_order.append("polish")
+    if include_release_notes:
+        stage_order.append("release_notes")
 
     for stage in stage_order:
         stage_config = build_ai_provider_config_from_args(args, repo_root=repo_root, stage=stage)
