@@ -101,7 +101,20 @@ def render_debug_context(context: ReleaseContext) -> str:
         lines.append("Top Snippets:")
         if category.snippets:
             for snippet in category.snippets[:TOP_SNIPPETS_PER_CATEGORY]:
-                lines.append(f"  - {snippet.path} (score={snippet.score}, reason={snippet.reason})")
+                details = []
+                if snippet.region_kind:
+                    details.append(f"region={snippet.region_kind}")
+                if snippet.region_label:
+                    details.append(f"label={snippet.region_label}")
+                if snippet.hunk_count > 1:
+                    details.append(f"hunks={snippet.hunk_count}")
+                if snippet.changed_lines > 0:
+                    details.append(f"changed={snippet.changed_lines}")
+                metadata = f", {'; '.join(details)}" if details else ""
+                lines.append(f"  - {snippet.path} (score={snippet.score}, reason={snippet.reason}{metadata})")
+                preview = _snippet_preview_line(snippet.patch)
+                if preview:
+                    lines.append(f"    preview: {preview}")
         else:
             lines.append("  - none")
 
@@ -186,8 +199,16 @@ def _render_category_section(name, category):
     if category.snippets:
         lines.append("- Snippets:")
         for snippet in category.snippets[:TOP_SNIPPETS_PER_CATEGORY]:
+            details = []
+            if snippet.region_kind:
+                details.append(snippet.region_kind)
+            if snippet.region_label:
+                details.append(snippet.region_label)
+            if snippet.hunk_count > 1:
+                details.append(f"{snippet.hunk_count} hunks")
+            detail_suffix = f" [{'; '.join(details)}]" if details else ""
             lines.append(
-                f"  - `{snippet.path}` — {snippet.reason} (score {snippet.score})"
+                f"  - `{snippet.path}` — {snippet.reason}{detail_suffix} (score {snippet.score})"
             )
     elif category.files:
         lines.append("- Snippets: none extracted; file-level evidence only.")
@@ -231,6 +252,21 @@ def _release_note_entry_count(context: ReleaseContext) -> int:
             continue
         primary_commit_ids.update(commit.sha for commit in category.commits)
     return len(primary_commit_ids)
+
+
+def _snippet_preview_line(patch: str) -> str | None:
+    for line in patch.splitlines():
+        if line.startswith(("+++", "---", "@@")):
+            continue
+        if not line.startswith(("+", "-")):
+            continue
+        payload = line[1:].strip()
+        if not payload:
+            continue
+        if len(payload) > 120:
+            payload = payload[:120].rstrip() + "..."
+        return payload
+    return None
 
 
 def _render_uncategorized_section(context: ReleaseContext) -> list[str]:

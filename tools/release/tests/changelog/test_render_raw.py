@@ -306,6 +306,57 @@ def _uncategorized_only_context() -> ReleaseContext:
     )
 
 
+def _metadata_snippet_context() -> ReleaseContext:
+    category = CategoryContext(
+        name="tools",
+        commit_count=1,
+        insertions=24,
+        deletions=6,
+        commits=[],
+        files=[
+            FileChange(
+                path="tools/release/changelog/snippets.py",
+                category="tools",
+                subscopes=("release", "changelog"),
+                insertions=24,
+                deletions=6,
+                commit_count=1,
+                score=10.4,
+                flags=("release-tooling",),
+            )
+        ],
+        snippets=[
+            DiffSnippet(
+                path="tools/release/changelog/snippets.py",
+                category="tools",
+                subscopes=("release", "changelog"),
+                score=12.1,
+                reason="Selected from high-scoring tools file; function region `extract_relevant_snippets`",
+                patch=(
+                    "@@ -40,6 +42,12 @@ def extract_relevant_snippets(...):\n"
+                    "+evidence_units = _extract_evidence_units(file_change.path, patch)\n"
+                    "+ranked_units = sorted(evidence_units, key=...)"
+                ),
+                flags=("release-tooling",),
+                region_kind="function",
+                region_label="def extract_relevant_snippets",
+                hunk_count=2,
+                changed_lines=10,
+                meaningful_lines=10,
+            )
+        ],
+        detected_themes=["release-automation"],
+    )
+    return ReleaseContext(
+        version="1.3.3",
+        previous_tag="v1.3.2",
+        head_sha="2222222bbbbbbb22",
+        commit_count=1,
+        categories={"tools": category},
+        cross_cutting_notes=[],
+    )
+
+
 class RenderRawContractTests(unittest.TestCase):
     maxDiff = None
 
@@ -353,6 +404,12 @@ class RenderRawContractTests(unittest.TestCase):
         rendered_with_empty_lists = render_debug_context(_files_no_snippets_context())
         self.assertIn("Top Snippets:", rendered_with_empty_lists)
         self.assertIn("  - none", rendered_with_empty_lists)
+
+    def test_debug_renderer_surfaces_snippet_region_metadata(self) -> None:
+        rendered = render_debug_context(_metadata_snippet_context())
+        self.assertIn("region=function", rendered)
+        self.assertIn("label=def extract_relevant_snippets", rendered)
+        self.assertIn("preview:", rendered)
 
 
 if __name__ == "__main__":

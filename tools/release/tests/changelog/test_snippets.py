@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import patch
 
 from tools.release.changelog.models import CategoryContext, FileChange
-from tools.release.changelog.snippets import UNIDIFF_AVAILABLE, extract_relevant_snippets
+from tools.release.changelog.snippets import extract_relevant_snippets
 
 
 def _file(path: str, *, score: float = 10.0, insertions: int = 20, deletions: int = 4) -> FileChange:
@@ -108,7 +108,6 @@ class SnippetHarvestTests(unittest.TestCase):
         self.assertTrue(harvested)
         self.assertTrue(all(item.path == "tools/release/cli.py" for item in harvested))
 
-    @unittest.skipUnless(UNIDIFF_AVAILABLE, "unidiff not available in this environment")
     def test_extract_relevant_snippets_groups_adjacent_unified_hunks(self) -> None:
         context = CategoryContext(
             name="tools",
@@ -148,6 +147,103 @@ class SnippetHarvestTests(unittest.TestCase):
         self.assertIn("--ai-profiles", harvested[0].patch)
         self.assertIn("--keep-artifacts", harvested[0].patch)
         self.assertIn("grouped", harvested[0].reason)
+
+    def test_extract_relevant_snippets_lifts_same_function_hunks_into_single_unit(self) -> None:
+        context = CategoryContext(
+            name="tools",
+            commit_count=3,
+            insertions=120,
+            deletions=32,
+            commits=[],
+            files=[_file("tools/release/changelog/release_workflow.py", score=18.0, insertions=120, deletions=32)],
+            snippets=[],
+            detected_themes=["release-automation"],
+        )
+        patch_text = (
+            "@@ -40,6 +40,10 @@ def run_ai_release_pipeline(config):\n"
+            "+draft = run_draft_stage(context)\n"
+            "+emit_artifact(\"changelog.release.md\", draft)\n"
+            "@@ -98,6 +108,12 @@ def run_ai_release_pipeline(config):\n"
+            "+if config.release_notes:\n"
+            "+    notes = run_release_notes_stage(draft)\n"
+            "+    emit_artifact(\"release_notes.md\", notes)\n"
+        )
+        with patch("tools.release.changelog.snippets.get_file_patch", return_value=patch_text):
+            snippets = extract_relevant_snippets(
+                repo_root=".",
+                previous_tag="v0.1.0",
+                category_contexts={"tools": context},
+                max_files_per_category=2,
+                max_hunks_per_file=1,
+            )
+        harvested = snippets["tools"]
+        self.assertEqual(len(harvested), 1)
+        self.assertEqual(harvested[0].region_kind, "function")
+        self.assertIn("run_ai_release_pipeline", harvested[0].region_label or "")
+        self.assertGreaterEqual(harvested[0].hunk_count, 2)
+
+    def test_extract_relevant_snippets_keeps_trivial_self_contained_hunk_small(self) -> None:
+        context = CategoryContext(
+            name="tools",
+            commit_count=1,
+            insertions=4,
+            deletions=1,
+            commits=[],
+            files=[_file("tools/release/cli.py", score=9.0, insertions=4, deletions=1)],
+            snippets=[],
+            detected_themes=["release-automation"],
+        )
+        patch_text = (
+            "@@ -22,4 +22,5 @@ def build_parser(subparsers):\n"
+            "+compare.add_argument(\"--output-name\")\n"
+        )
+        with patch("tools.release.changelog.snippets.get_file_patch", return_value=patch_text):
+            snippets = extract_relevant_snippets(
+                repo_root=".",
+                previous_tag="v0.1.0",
+                category_contexts={"tools": context},
+                max_files_per_category=2,
+                max_hunks_per_file=2,
+            )
+        harvested = snippets["tools"]
+        self.assertEqual(len(harvested), 1)
+        self.assertEqual(harvested[0].hunk_count, 1)
+        self.assertLessEqual(harvested[0].changed_lines, 2)
+        self.assertIn(harvested[0].region_kind, {"function", "command"})
+
+    def test_extract_relevant_snippets_splits_oversized_single_region(self) -> None:
+        context = CategoryContext(
+            name="tools",
+            commit_count=6,
+            insertions=420,
+            deletions=130,
+            commits=[],
+            files=[_file("tools/release/changelog/payload.py", score=24.0, insertions=420, deletions=130)],
+            snippets=[],
+            detected_themes=["release-automation"],
+        )
+        body_lines: list[str] = []
+        for idx in range(1, 170):
+            if idx in {1, 56, 112}:
+                body_lines.append(f"+def semantic_block_{idx}(payload):")
+            else:
+                body_lines.append(f"+    update_field_{idx} = compute_value_{idx}()")
+        patch_text = (
+            "@@ -1,3 +1,220 @@ def build_semantic_payload(context):\n"
+            + "\n".join(body_lines)
+        )
+        with patch("tools.release.changelog.snippets.get_file_patch", return_value=patch_text):
+            snippets = extract_relevant_snippets(
+                repo_root=".",
+                previous_tag="v0.1.0",
+                category_contexts={"tools": context},
+                max_files_per_category=2,
+                max_hunks_per_file=4,
+            )
+        harvested = snippets["tools"]
+        self.assertGreaterEqual(len(harvested), 2)
+        self.assertTrue(all(item.changed_lines <= 90 for item in harvested))
+        self.assertTrue(all(item.region_kind in {"function", "block", "command"} for item in harvested))
 
 
 if __name__ == "__main__":

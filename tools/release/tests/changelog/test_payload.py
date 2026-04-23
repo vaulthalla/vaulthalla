@@ -860,6 +860,31 @@ class PayloadContractTests(unittest.TestCase):
         self.assertIn("command-line surface changes", selected["why_selected"])
         self.assertIn("add_parser", selected["why_selected"])
 
+    def test_semantic_hunks_propagate_region_metadata_when_available(self) -> None:
+        context = _semantic_selection_context()
+        context.categories["tools"].snippets[1] = DiffSnippet(
+            path="tools/release/cli.py",
+            category="tools",
+            subscopes=("release", "cli"),
+            score=8.0,
+            reason="Selected from high-scoring tools file",
+            patch=(
+                "@@ -40,6 +40,10 @@ def build_parser(subparsers):\n"
+                "+compare = subparsers.add_parser(\"ai-compare\")\n"
+            ),
+            flags=("release-tooling",),
+            region_kind="function",
+            region_label="def build_parser",
+            hunk_count=1,
+            changed_lines=1,
+            meaningful_lines=1,
+        )
+        config = PayloadBuildConfig(limits=PayloadLimits(max_snippets_per_category=1))
+        payload = build_semantic_ai_payload(context, config=config)
+        selected = payload["categories"][0]["semantic_hunks"][0]
+        self.assertEqual(selected["region_type"], "function")
+        self.assertEqual(selected["context_label"], "def build_parser")
+
     def test_semantic_payload_json_is_byte_stable(self) -> None:
         context = _multi_category_context()
         first = render_semantic_ai_payload_json(build_semantic_ai_payload(context))

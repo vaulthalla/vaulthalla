@@ -445,6 +445,8 @@ def _build_category_semantic_packet(
                 kind=kind,
                 why_selected=_build_semantic_why_selected(snippet, kind),
                 excerpt=excerpt,
+                region_type=snippet.region_kind,
+                context_label=snippet.region_label,
             )
         )
 
@@ -696,6 +698,12 @@ def _classify_semantic_hunk_kind(snippet: DiffSnippet) -> str:
     lower_patch = snippet.patch.lower()
     flags = {flag.lower() for flag in snippet.flags}
     merged = f"{lower_path}\n{lower_patch}\n{' '.join(sorted(flags))}"
+    if snippet.region_kind == "test":
+        return "tests-contract"
+    if snippet.region_kind == "command":
+        return "command-surface"
+    if snippet.region_kind == "config":
+        return "config-surface"
 
     if "/tests/" in f"/{lower_path}" or lower_path.startswith("test_") or "/test_" in lower_path:
         return "tests-contract"
@@ -784,10 +792,16 @@ def _build_semantic_excerpt(patch: str, limits: PayloadLimits) -> str:
 def _build_semantic_why_selected(snippet: DiffSnippet, kind: str) -> str:
     reason = _SEMANTIC_KIND_WHY_TEXT.get(kind, "captures meaningful behavior changes")
     anchors = _extract_semantic_anchors(snippet)
+    region_prefix = ""
+    if snippet.region_label:
+        if snippet.region_kind:
+            region_prefix = f"{snippet.region_kind} region `{snippet.region_label}`; "
+        else:
+            region_prefix = f"region `{snippet.region_label}`; "
     if not anchors:
-        return f"{reason}."
+        return f"{region_prefix}{reason}."
     anchor_text = ", ".join(f"`{anchor}`" for anchor in anchors)
-    return f"{reason}; anchors: {anchor_text}."
+    return f"{region_prefix}{reason}; anchors: {anchor_text}."
 
 
 def _extract_semantic_anchors(snippet: DiffSnippet) -> tuple[str, ...]:
@@ -1055,17 +1069,20 @@ def _build_snippets(snippets: list[DiffSnippet], limits: PayloadLimits):
             excerpt_truncated_count += 1
 
         payload.append(
-            {
-                "path": snippet.path,
-                "score": snippet.score,
-                "reason": reason,
-                "reason_truncated": reason_truncated,
-                "flags": list(snippet.flags),
-                "excerpt": excerpt,
-                "excerpt_line_count": excerpt_line_count,
-                "excerpt_char_count": excerpt_char_count,
-                "excerpt_truncated": excerpt_truncated,
-            }
+            _snippet_payload_entry(
+                {
+                    "path": snippet.path,
+                    "score": snippet.score,
+                    "reason": reason,
+                    "reason_truncated": reason_truncated,
+                    "flags": list(snippet.flags),
+                    "excerpt": excerpt,
+                    "excerpt_line_count": excerpt_line_count,
+                    "excerpt_char_count": excerpt_char_count,
+                    "excerpt_truncated": excerpt_truncated,
+                },
+                snippet,
+            )
         )
 
     meta = _section_meta(
@@ -1075,6 +1092,20 @@ def _build_snippets(snippets: list[DiffSnippet], limits: PayloadLimits):
     )
     meta["excerpt_truncated_count"] = excerpt_truncated_count
     return payload, meta
+
+
+def _snippet_payload_entry(base: dict[str, Any], snippet: DiffSnippet) -> dict[str, Any]:
+    if snippet.region_kind:
+        base["region_kind"] = snippet.region_kind
+    if snippet.region_label:
+        base["region_label"] = snippet.region_label
+    if snippet.hunk_count > 1:
+        base["hunk_count"] = snippet.hunk_count
+    if snippet.changed_lines > 0:
+        base["changed_lines"] = snippet.changed_lines
+    if snippet.meaningful_lines > 0:
+        base["meaningful_lines"] = snippet.meaningful_lines
+    return base
 
 
 def _build_snippet_excerpt(

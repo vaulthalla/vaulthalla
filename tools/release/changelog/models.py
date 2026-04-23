@@ -30,6 +30,11 @@ class DiffSnippet:
     reason: str
     patch: str
     flags: tuple[str, ...] = ()
+    region_kind: str | None = None
+    region_label: str | None = None
+    hunk_count: int = 1
+    changed_lines: int = 0
+    meaningful_lines: int = 0
 
 @dataclass(frozen=True)
 class CategoryContext:
@@ -60,6 +65,8 @@ class SemanticHunk:
     kind: str
     why_selected: str
     excerpt: str
+    region_type: str | None = None
+    context_label: str | None = None
 
 
 @dataclass(frozen=True)
