@@ -55,6 +55,13 @@ class FailureArtifactTests(unittest.TestCase):
                         "response_summary": {"output_item_types": ["reasoning"]},
                         "parse_candidates": ['{"title":"x"}'],
                         "error": "AI parse error",
+                        "request_payload_raw": {
+                            "model": "gpt-5-nano",
+                            "authorization": "Bearer should-not-persist",
+                        },
+                        "response_payload_raw": {
+                            "output": [{"type": "message", "content": [{"type": "output_text", "text": "{}"}]}]
+                        },
                         "request_payload_debug": {"api_key": "secret"},
                         "response_payload_debug": {"output_text": "x"},
                     }
@@ -72,19 +79,26 @@ class FailureArtifactTests(unittest.TestCase):
                 error=ValueError("boom"),
                 provider_evidence=evidence,
             )
-            self.assertTrue(target.is_file())
+            self.assertTrue(target.is_dir())
             self.assertIn(".changelog_scratch/failures", str(target))
-            rendered = json.loads(target.read_text(encoding="utf-8"))
-            self.assertEqual(rendered["metadata"]["stage"], "triage")
-            self.assertEqual(rendered["metadata"]["provider_key"], "openai")
-            self.assertEqual(rendered["metadata"]["model"], "gpt-5-nano")
-            self.assertEqual(rendered["error"]["message"], "boom")
-            self.assertEqual(rendered["normalized_request_settings"]["max_output_tokens"], 600)
-            attempt = rendered["provider_evidence"]["attempts"][0]
+            context = json.loads((target / "context.json").read_text(encoding="utf-8"))
+            request = json.loads((target / "request.json").read_text(encoding="utf-8"))
+            response = json.loads((target / "response.json").read_text(encoding="utf-8"))
+            self.assertEqual(context["metadata"]["stage"], "triage")
+            self.assertEqual(context["metadata"]["provider_key"], "openai")
+            self.assertEqual(context["metadata"]["model"], "gpt-5-nano")
+            self.assertEqual(context["error"]["message"], "boom")
+            self.assertEqual(context["normalized_request_settings"]["max_output_tokens"], 600)
+            attempt = context["provider_evidence"]["attempts"][0]
             self.assertEqual(attempt["mode"], "json_object")
             self.assertIn("response_summary", attempt)
             self.assertNotIn("request_payload_debug", attempt)
             self.assertNotIn("response_payload_debug", attempt)
+            self.assertEqual(request["authorization"], "<redacted>")
+            self.assertEqual(response["output"][0]["type"], "message")
+            self.assertEqual(context["raw_payload_capture"]["attempt_index"], 2)
+            self.assertTrue(context["raw_payload_capture"]["request_available"])
+            self.assertTrue(context["raw_payload_capture"]["response_available"])
 
     def test_write_failure_artifact_verbose_mode_includes_debug_payloads(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -115,10 +129,41 @@ class FailureArtifactTests(unittest.TestCase):
                     error=ValueError("boom"),
                     provider_evidence=evidence,
                 )
-            rendered = json.loads(target.read_text(encoding="utf-8"))
-            attempt = rendered["provider_evidence"]["attempts"][0]
+            context = json.loads((target / "context.json").read_text(encoding="utf-8"))
+            attempt = context["provider_evidence"]["attempts"][0]
             self.assertIn("request_payload_debug", attempt)
             self.assertEqual(attempt["request_payload_debug"]["authorization"], "<redacted>")
+
+    def test_write_failure_artifact_records_missing_payloads_cleanly(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            evidence = {
+                "provider_kind": "openai",
+                "model": "gpt-5-nano",
+                "attempts": [
+                    {
+                        "attempt_index": 1,
+                        "mode": "prompt_json",
+                        "response_received": True,
+                    }
+                ],
+            }
+            target = write_failure_artifact(
+                repo_root=repo_root,
+                command="ai-draft",
+                stage="draft",
+                ai_profile="openai-cheap",
+                provider_key="openai",
+                model="gpt-5-nano",
+                structured_mode="prompt_json",
+                normalized_request_settings={},
+                error=ValueError("boom"),
+                provider_evidence=evidence,
+            )
+            request = json.loads((target / "request.json").read_text(encoding="utf-8"))
+            response = json.loads((target / "response.json").read_text(encoding="utf-8"))
+            self.assertFalse(request["available"])
+            self.assertFalse(response["available"])
 
     def test_cli_capture_hook_writes_artifact_only_when_response_was_seen(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -150,8 +195,12 @@ class FailureArtifactTests(unittest.TestCase):
                 stage_settings={"structured_mode": "json_object"},
             )
 
-            failures = list((repo_root / ".changelog_scratch" / "failures").glob("*.json"))
+            failures_root = repo_root / ".changelog_scratch" / "failures"
+            failures = [path for path in failures_root.iterdir() if path.is_dir()]
             self.assertEqual(len(failures), 1)
+            self.assertTrue((failures[0] / "context.json").is_file())
+            self.assertTrue((failures[0] / "request.json").is_file())
+            self.assertTrue((failures[0] / "response.json").is_file())
 
             no_response_provider = _FakeProvider({"attempts": [{"response_received": False}]})
             cli._capture_stage_failure_artifact(
@@ -163,7 +212,7 @@ class FailureArtifactTests(unittest.TestCase):
                 exc=ValueError("transport failed"),
                 stage_settings={"structured_mode": "json_object"},
             )
-            failures_after = list((repo_root / ".changelog_scratch" / "failures").glob("*.json"))
+            failures_after = [path for path in failures_root.iterdir() if path.is_dir()]
             self.assertEqual(len(failures_after), 1)
 
 

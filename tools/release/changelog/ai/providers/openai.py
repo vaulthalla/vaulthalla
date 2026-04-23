@@ -87,6 +87,8 @@ class _AttemptFailure(Exception):
         response_summary: dict[str, Any] | None = None,
         request_payload_debug: Any | None = None,
         response_payload_debug: Any | None = None,
+        request_payload_raw: Any | None = None,
+        response_payload_raw: Any | None = None,
     ) -> None:
         super().__init__(message)
         self.transport = transport
@@ -95,6 +97,8 @@ class _AttemptFailure(Exception):
         self.response_summary = response_summary
         self.request_payload_debug = request_payload_debug
         self.response_payload_debug = response_payload_debug
+        self.request_payload_raw = request_payload_raw
+        self.response_payload_raw = response_payload_raw
 
 
 class _GenerationOutcome:
@@ -107,6 +111,8 @@ class _GenerationOutcome:
         content: str,
         request_payload_debug: Any,
         response_payload_debug: Any,
+        request_payload_raw: Any,
+        response_payload_raw: Any,
     ) -> None:
         self.transport = transport
         self.request_payload = request_payload
@@ -114,6 +120,8 @@ class _GenerationOutcome:
         self.content = content
         self.request_payload_debug = request_payload_debug
         self.response_payload_debug = response_payload_debug
+        self.request_payload_raw = request_payload_raw
+        self.response_payload_raw = response_payload_raw
 
 
 class OpenAIProvider:
@@ -281,6 +289,8 @@ class OpenAIProvider:
                 attempt["response_summary"] = outcome.response_summary
                 attempt["response_payload_debug"] = outcome.response_payload_debug
                 attempt["request_payload_debug"] = outcome.request_payload_debug
+                attempt["request_payload_raw"] = outcome.request_payload_raw
+                attempt["response_payload_raw"] = outcome.response_payload_raw
                 attempt["content_preview"] = _truncate_text(outcome.content)
                 attempt["content_length"] = len(outcome.content)
                 try:
@@ -325,6 +335,8 @@ class OpenAIProvider:
                 attempt["response_summary"] = exc.response_summary
                 attempt["response_payload_debug"] = exc.response_payload_debug
                 attempt["request_payload_debug"] = exc.request_payload_debug
+                attempt["request_payload_raw"] = exc.request_payload_raw
+                attempt["response_payload_raw"] = exc.response_payload_raw
             except Exception as exc:
                 message = str(exc)
                 attempt["error"] = message
@@ -427,6 +439,7 @@ class OpenAIProvider:
             max_output_tokens=max_output_tokens,
             include_temperature=parameter_capabilities.supports_temperature,
         )
+        request_payload_raw = _serialize_payload_for_failure_capture(request_payload)
         try:
             response = create(**request_payload)
         except Exception as exc:
@@ -436,9 +449,11 @@ class OpenAIProvider:
                 request_payload=request_payload,
                 response_received=False,
                 request_payload_debug=_sanitize_for_evidence(request_payload),
+                request_payload_raw=request_payload_raw,
             ) from exc
 
         response_summary = _summarize_responses_response(response)
+        response_payload_raw = _serialize_payload_for_failure_capture(response)
         try:
             content = _extract_responses_output_text(response)
         except Exception as exc:
@@ -450,6 +465,8 @@ class OpenAIProvider:
                 response_summary=response_summary,
                 request_payload_debug=_sanitize_for_evidence(request_payload),
                 response_payload_debug=_sanitize_for_evidence(response),
+                request_payload_raw=request_payload_raw,
+                response_payload_raw=response_payload_raw,
             ) from exc
         return _GenerationOutcome(
             transport="responses",
@@ -458,6 +475,8 @@ class OpenAIProvider:
             content=content,
             request_payload_debug=_sanitize_for_evidence(request_payload),
             response_payload_debug=_sanitize_for_evidence(response),
+            request_payload_raw=request_payload_raw,
+            response_payload_raw=response_payload_raw,
         )
 
     def _generate_openai_compatible_output(
@@ -481,6 +500,7 @@ class OpenAIProvider:
             temperature=temperature,
             max_output_tokens=max_output_tokens,
         )
+        request_payload_raw = _serialize_payload_for_failure_capture(request_payload)
         try:
             response = self._client.chat.completions.create(**request_payload)
         except Exception as exc:
@@ -490,9 +510,11 @@ class OpenAIProvider:
                 request_payload=request_payload,
                 response_received=False,
                 request_payload_debug=_sanitize_for_evidence(request_payload),
+                request_payload_raw=request_payload_raw,
             ) from exc
 
         response_summary = _summarize_chat_response(response)
+        response_payload_raw = _serialize_payload_for_failure_capture(response)
         try:
             content = _extract_message_content(response)
         except Exception as exc:
@@ -504,6 +526,8 @@ class OpenAIProvider:
                 response_summary=response_summary,
                 request_payload_debug=_sanitize_for_evidence(request_payload),
                 response_payload_debug=_sanitize_for_evidence(response),
+                request_payload_raw=request_payload_raw,
+                response_payload_raw=response_payload_raw,
             ) from exc
         return _GenerationOutcome(
             transport="chat_completions",
@@ -512,6 +536,8 @@ class OpenAIProvider:
             content=content,
             request_payload_debug=_sanitize_for_evidence(request_payload),
             response_payload_debug=_sanitize_for_evidence(response),
+            request_payload_raw=request_payload_raw,
+            response_payload_raw=response_payload_raw,
         )
 
     @staticmethod
@@ -583,7 +609,7 @@ class OpenAIProvider:
             "model": model,
             "input": [
                 {
-                    "role": "system",
+                    "role": "developer",
                     "content": [{"type": "input_text", "text": effective_system_prompt}],
                 },
                 {
@@ -1173,6 +1199,34 @@ def _is_sensitive_key(key: str) -> bool:
     if normalized in _SECRET_KEY_EXACT_NAMES:
         return True
     return any(normalized.endswith(suffix) for suffix in _SECRET_KEY_SUFFIXES)
+
+
+def _serialize_payload_for_failure_capture(value: Any, *, depth: int = 0) -> Any:
+    if depth > 20:
+        return "<max-depth>"
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, dict):
+        return {
+            str(key): _serialize_payload_for_failure_capture(item, depth=depth + 1)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_serialize_payload_for_failure_capture(item, depth=depth + 1) for item in value]
+
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        try:
+            dumped = model_dump(exclude_none=True)
+        except TypeError:
+            dumped = model_dump()
+        return _serialize_payload_for_failure_capture(dumped, depth=depth + 1)
+
+    to_dict = getattr(value, "to_dict", None)
+    if callable(to_dict):
+        return _serialize_payload_for_failure_capture(to_dict(), depth=depth + 1)
+
+    return repr(value)
 
 
 def _safe_json_clone(value: Any) -> Any:

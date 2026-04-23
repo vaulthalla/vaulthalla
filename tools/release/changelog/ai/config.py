@@ -20,11 +20,11 @@ DEFAULT_STAGE_TEMPERATURES: dict["AIStageName", float] = {
     "polish": 0.0,
 }
 
-VALID_REASONING_EFFORTS = ("low", "medium", "high")
+VALID_REASONING_EFFORTS = ("minimal", "low", "medium", "high", "xhigh")
 VALID_STRUCTURED_MODES = ("strict_json_schema", "json_object", "prompt_json")
 
 AIProviderKind = Literal["openai", "openai-compatible"]
-AIReasoningEffort = Literal["low", "medium", "high"]
+AIReasoningEffort = Literal["minimal", "low", "medium", "high", "xhigh"]
 AIStructuredMode = Literal["strict_json_schema", "json_object", "prompt_json"]
 
 
