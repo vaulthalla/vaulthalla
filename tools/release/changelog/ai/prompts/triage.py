@@ -78,7 +78,7 @@ def _build_compact_payload_projection(
     *,
     hosted_compact_mode: bool,
 ) -> dict[str, Any]:
-    categories_raw = payload.get("categories")
+    categories_raw = _as_sequence(payload.get("categories"))
     notes_raw = payload.get("notes")
     category_limit = 6 if hosted_compact_mode else 10
     notes_limit = 4 if hosted_compact_mode else 8
@@ -97,27 +97,26 @@ def _build_compact_payload_projection(
     }
 
     categories: list[dict[str, Any]] = []
-    if isinstance(categories_raw, list):
-        for category in categories_raw[:category_limit]:
-            if not isinstance(category, dict):
-                continue
-            categories.append(
-                {
-                    "name": _read_nested_string(category, "name"),
-                    "signal_strength": _read_nested_string(category, "signal_strength"),
-                    "summary_hint": _truncate(_read_nested_string(category, "summary_hint"), limit=220),
-                    "key_commits": _normalize_string_list(category.get("key_commits"), limit=commit_limit),
-                    "semantic_hunks": _compact_semantic_hunks(
-                        category.get("semantic_hunks"),
-                        hosted_compact_mode=hosted_compact_mode,
-                        limit=hunk_limit,
-                    ),
-                    "supporting_files": _normalize_string_list(
-                        category.get("supporting_files"),
-                        limit=files_limit,
-                    ),
-                }
-            )
+    for category in categories_raw[:category_limit]:
+        if not isinstance(category, dict):
+            continue
+        categories.append(
+            {
+                "name": _read_nested_string(category, "name"),
+                "signal_strength": _read_nested_string(category, "signal_strength"),
+                "summary_hint": _truncate(_read_nested_string(category, "summary_hint"), limit=220),
+                "key_commits": _normalize_string_list(category.get("key_commits"), limit=commit_limit),
+                "semantic_hunks": _compact_semantic_hunks(
+                    category.get("semantic_hunks"),
+                    hosted_compact_mode=hosted_compact_mode,
+                    limit=hunk_limit,
+                ),
+                "supporting_files": _normalize_string_list(
+                    category.get("supporting_files"),
+                    limit=files_limit,
+                ),
+            }
+        )
     compact["categories"] = categories
     return compact
 
@@ -128,11 +127,10 @@ def _compact_semantic_hunks(
     hosted_compact_mode: bool,
     limit: int,
 ) -> list[dict[str, Any]]:
-    if not isinstance(raw, list):
-        return []
+    items = _as_sequence(raw)
     compact: list[dict[str, Any]] = []
     excerpt_limit = 180 if hosted_compact_mode else 340
-    for item in raw:
+    for item in items:
         if not isinstance(item, dict):
             continue
         compact.append(
@@ -168,10 +166,9 @@ def _read_nested_int(obj: Any, key: str) -> int | None:
 
 
 def _normalize_string_list(raw: Any, *, limit: int) -> list[str]:
-    if not isinstance(raw, list):
-        return []
+    items = _as_sequence(raw)
     out: list[str] = []
-    for value in raw:
+    for value in items:
         if not isinstance(value, str):
             continue
         trimmed = value.strip()
@@ -189,3 +186,11 @@ def _truncate(value: str | None, *, limit: int) -> str | None:
     if len(value) <= limit:
         return value
     return value[: limit - 3].rstrip() + "..."
+
+
+def _as_sequence(raw: Any) -> list[Any]:
+    if isinstance(raw, list):
+        return raw
+    if isinstance(raw, tuple):
+        return list(raw)
+    return []

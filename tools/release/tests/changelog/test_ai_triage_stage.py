@@ -164,6 +164,45 @@ class AITriageStageTests(unittest.TestCase):
         triage = run_triage_stage(payload, provider=_FakeProvider(response))
         self.assertEqual(triage.summary_points, ())
 
+    def test_run_triage_stage_compact_projection_accepts_tuple_payload_arrays(self) -> None:
+        payload = {
+            "schema_version": "vaulthalla.release.semantic_payload.v1",
+            "version": "2.4.0",
+            "categories": (
+                {
+                    "name": "tools",
+                    "signal_strength": "strong",
+                    "summary_hint": "Release tooling contract updates",
+                    "key_commits": ("Switch triage to semantic payload",),
+                    "semantic_hunks": (
+                        {
+                            "kind": "prompt-contract",
+                            "why_selected": "changed triage prompt contract text",
+                            "excerpt": "@@ -1,2 +1,3 @@\n+required categories",
+                            "path": "tools/release/changelog/ai/prompts/triage.py",
+                        },
+                    ),
+                    "supporting_files": ("tools/release/changelog/ai/prompts/triage.py",),
+                },
+            ),
+            "notes": ("note a",),
+        }
+        fake = _FakeProvider(_load_json_fixture("ai_triage_valid.json"))
+
+        _ = run_triage_stage(payload, provider=fake)
+        call = fake.calls[0]
+        marker = "Semantic payload (compact projection):\n"
+        projection_text = call["user_prompt"].split(marker, 1)[1]
+        projection = json.loads(projection_text)
+
+        self.assertEqual(len(projection["categories"]), 1)
+        tools = projection["categories"][0]
+        self.assertEqual(tools["name"], "tools")
+        self.assertEqual(tools["key_commits"], ["Switch triage to semantic payload"])
+        self.assertEqual(len(tools["semantic_hunks"]), 1)
+        self.assertEqual(tools["semantic_hunks"][0]["kind"], "prompt-contract")
+        self.assertEqual(tools["supporting_files"], ["tools/release/changelog/ai/prompts/triage.py"])
+
 
 if __name__ == "__main__":
     unittest.main()

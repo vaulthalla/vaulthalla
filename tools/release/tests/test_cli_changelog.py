@@ -3,14 +3,17 @@ from __future__ import annotations
 import argparse
 from contextlib import redirect_stdout
 from io import StringIO
+import json
 import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
+import threading
 from types import SimpleNamespace
 import unittest
 from unittest.mock import call, patch
 
 from tools.release import cli
+from tools.release.changelog.models import CategoryContext, CommitInfo, DiffSnippet, FileChange, ReleaseContext
 from tools.release.changelog.ai.config import AIDynamicRatioTokenBudget, DEFAULT_AI_DRAFT_MODEL
 from tools.release.changelog.ai.providers import ProviderPreflightResult
 from tools.release.version.models import Version
@@ -1095,6 +1098,110 @@ profiles:
             self.assertIn("# Polished Output", rendered_changelog)
             self.assertEqual(notes_target.read_text(encoding="utf-8"), "# Public Notes\n- from draft\n")
 
+    def test_ai_draft_runs_polish_and_release_notes_concurrently(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            (repo_root / "VERSION").write_text("1.2.3\n", encoding="utf-8")
+            (repo_root / "ai.yml").write_text(
+                """
+profiles:
+  openai-balanced:
+    provider: openai
+    stages:
+      draft:
+        model: gpt-5-mini
+      polish:
+        model: gpt-5.4
+      release_notes:
+        model: gpt-5.4
+""",
+                encoding="utf-8",
+            )
+            args = self._args(
+                repo_root=str(repo_root),
+                ai_profile="openai-balanced",
+                provider=None,
+                model=None,
+            )
+            provider_obj = object()
+            draft_obj = object()
+            polish_obj = object()
+            release_notes_obj = SimpleNamespace(markdown="# Public Notes\n- concurrent\n")
+            polish_started = threading.Event()
+            release_notes_started = threading.Event()
+
+            def _run_polish(*_args, **_kwargs):
+                polish_started.set()
+                self.assertTrue(
+                    release_notes_started.wait(timeout=1.0),
+                    "release_notes did not start while polish was running",
+                )
+                return polish_obj
+
+            def _run_release_notes(*_args, **_kwargs):
+                release_notes_started.set()
+                self.assertTrue(
+                    polish_started.wait(timeout=1.0),
+                    "polish did not start while release_notes was running",
+                )
+                return release_notes_obj
+
+            with (
+                patch("tools.release.cli.build_changelog_context", return_value=object()),
+                patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
+                patch("tools.release.cli.build_ai_provider_from_args", return_value=provider_obj),
+                patch("tools.release.cli.generate_draft_from_payload", return_value=draft_obj),
+                patch("tools.release.cli.render_draft_markdown", return_value="# Draft Output\n- d\n"),
+                patch("tools.release.cli.run_polish_stage", side_effect=_run_polish),
+                patch("tools.release.cli.render_polish_markdown", return_value="# Polished Output\n- p\n"),
+                patch("tools.release.cli.run_release_notes_stage", side_effect=_run_release_notes),
+                patch("tools.release.cli.run_triage_stage"),
+            ):
+                result = cli.cmd_changelog_ai_draft(args)
+
+            self.assertEqual(result, 0)
+
+    def test_ai_draft_fails_when_release_notes_sibling_stage_fails(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            (repo_root / "VERSION").write_text("1.2.3\n", encoding="utf-8")
+            (repo_root / "ai.yml").write_text(
+                """
+profiles:
+  openai-balanced:
+    provider: openai
+    stages:
+      draft:
+        model: gpt-5-mini
+      polish:
+        model: gpt-5.4
+      release_notes:
+        model: gpt-5.4
+""",
+                encoding="utf-8",
+            )
+            args = self._args(
+                repo_root=str(repo_root),
+                ai_profile="openai-balanced",
+                provider=None,
+                model=None,
+            )
+            provider_obj = object()
+
+            with (
+                patch("tools.release.cli.build_changelog_context", return_value=object()),
+                patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
+                patch("tools.release.cli.build_ai_provider_from_args", return_value=provider_obj),
+                patch("tools.release.cli.generate_draft_from_payload", return_value=object()),
+                patch("tools.release.cli.render_draft_markdown", return_value="# Draft Output\n- d\n"),
+                patch("tools.release.cli.run_polish_stage", return_value=object()),
+                patch("tools.release.cli.render_polish_markdown", return_value="# Polished Output\n- p\n"),
+                patch("tools.release.cli.run_release_notes_stage", side_effect=ValueError("notes parse failure")),
+                patch("tools.release.cli.run_triage_stage"),
+            ):
+                with self.assertRaisesRegex(ValueError, "Release notes stage failed: notes parse failure"):
+                    _ = cli.cmd_changelog_ai_draft(args)
+
     def test_ai_draft_triage_and_polish_pipeline_order(self) -> None:
         triage_obj = object()
         draft_obj = object()
@@ -1615,6 +1722,158 @@ class CliChangelogAICompareTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(ValueError, "--output-name must be a file name"):
                 _ = cli.cmd_changelog_ai_compare(args)
+
+    def test_ai_compare_real_triage_path_handles_semantic_tuple_projection(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            _ = self._write_repo_basics(repo_root)
+            (repo_root / "ai.yml").write_text(
+                """
+profiles:
+  openai-cheap:
+    provider: openai
+    stages:
+      triage:
+        model: gpt-5-nano
+      draft:
+        model: gpt-5-nano
+      polish:
+        model: gpt-5-mini
+      release_notes:
+        model: gpt-5-mini
+""",
+                encoding="utf-8",
+            )
+            args = argparse.Namespace(
+                repo_root=str(repo_root),
+                since_tag=None,
+                ai_profiles="openai-cheap",
+                output_name="0.34.0-openai-comparison.md",
+            )
+
+            context = ReleaseContext(
+                version="0.34.0",
+                previous_tag="v0.33.0",
+                head_sha="abc123",
+                commit_count=1,
+                categories={
+                    "tools": CategoryContext(
+                        name="tools",
+                        commit_count=1,
+                        insertions=10,
+                        deletions=1,
+                        commits=[
+                            CommitInfo(
+                                sha="abcd1234",
+                                subject="Refine ai-compare profile projection",
+                                body="",
+                                files=["tools/release/cli.py"],
+                                insertions=10,
+                                deletions=1,
+                                categories=["tools"],
+                            )
+                        ],
+                        files=[
+                            FileChange(
+                                path="tools/release/cli.py",
+                                category="tools",
+                                subscopes=("release", "cli"),
+                                insertions=10,
+                                deletions=1,
+                                commit_count=1,
+                                score=10.0,
+                                flags=("release-tooling",),
+                            )
+                        ],
+                        snippets=[
+                            DiffSnippet(
+                                path="tools/release/cli.py",
+                                category="tools",
+                                subscopes=("release", "cli"),
+                                score=8.0,
+                                reason="Selected from high-scoring tools file; flags: release-tooling",
+                                patch="@@ -1,2 +1,2 @@\n+compare wiring update",
+                                flags=("release-tooling",),
+                            )
+                        ],
+                        detected_themes=["release-automation"],
+                    )
+                },
+                cross_cutting_notes=[],
+            )
+
+            class _StageAwareProvider:
+                def __init__(self) -> None:
+                    self.triage_projection_categories = 0
+
+                def generate_structured_json(self, **kwargs):
+                    stage = kwargs["stage"]
+                    if stage == "triage":
+                        marker = "Semantic payload (compact projection):\n"
+                        projection = json.loads(kwargs["user_prompt"].split(marker, 1)[1])
+                        self.triage_projection_categories = len(projection.get("categories", []))
+                        if self.triage_projection_categories <= 0:
+                            raise AssertionError("triage projection categories unexpectedly empty")
+                        return {
+                            "schema_version": "vaulthalla.release.ai_triage.v2",
+                            "version": "0.34.0",
+                            "categories": [
+                                {
+                                    "name": "tools",
+                                    "signal_strength": "strong",
+                                    "priority_rank": 1,
+                                    "theme": "Release tooling updates",
+                                    "grounded_claims": ["AI compare output and contract flow were updated."],
+                                }
+                            ],
+                        }
+                    if stage == "draft":
+                        return {
+                            "title": "Release 0.34.0",
+                            "summary": "Release tooling updates.",
+                            "sections": [
+                                {
+                                    "category": "tools",
+                                    "overview": "Release tooling changed.",
+                                    "bullets": ["AI compare output and contract flow were updated."],
+                                }
+                            ],
+                            "notes": [],
+                        }
+                    if stage == "polish":
+                        return {
+                            "schema_version": "vaulthalla.release.ai_polish.v1",
+                            "title": "Release 0.34.0",
+                            "summary": "Release tooling updates.",
+                            "sections": [
+                                {
+                                    "category": "tools",
+                                    "overview": "Release tooling changed.",
+                                    "bullets": ["AI compare output and contract flow were updated."],
+                                }
+                            ],
+                            "notes": [],
+                        }
+                    if stage == "release_notes":
+                        return {
+                            "schema_version": "vaulthalla.release.ai_release_notes.v1",
+                            "markdown": "# Public Notes\n- AI compare output and contract flow were updated.\n",
+                        }
+                    raise AssertionError(f"Unexpected stage: {stage}")
+
+            provider = _StageAwareProvider()
+
+            with (
+                patch("tools.release.cli.build_changelog_context", return_value=context),
+                patch("tools.release.cli.build_ai_provider_from_args", return_value=provider),
+            ):
+                rc = cli.cmd_changelog_ai_compare(args)
+
+            self.assertEqual(rc, 0)
+            self.assertGreater(provider.triage_projection_categories, 0)
+            artifact = repo_root / ".changelog_scratch" / "comparisons" / "0.34.0-openai-comparison.md"
+            self.assertTrue(artifact.is_file())
+            self.assertIn("## Profile: openai-cheap", artifact.read_text(encoding="utf-8"))
 
 
 class CliChangelogContextHelperTests(unittest.TestCase):

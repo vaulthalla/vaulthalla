@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import os
 import re
 import shutil
@@ -1076,12 +1077,22 @@ def cmd_changelog_ai_draft(args: argparse.Namespace) -> int:
         )
         raise _stage_failure("Draft", exc) from exc
     draft_markdown: str | None = None
+    if run_release_notes or not run_polish:
+        draft_markdown = render_draft_markdown(draft)
     polish_result: AIPolishResult | None = None
+    release_notes_result = None
+    polish_provider: StructuredJSONProvider | None = None
+    release_notes_provider: StructuredJSONProvider | None = None
 
     if run_polish:
         polish_provider = build_ai_provider_from_args(args, repo_root=repo_root, stage="polish")
+    if run_release_notes:
+        release_notes_provider = build_ai_provider_from_args(args, repo_root=repo_root, stage="release_notes")
+
+    def _run_polish() -> AIPolishResult:
+        assert polish_provider is not None
         try:
-            polish_result = run_polish_stage(
+            return run_polish_stage(
                 draft,
                 provider=polish_provider,
                 provider_kind=pipeline_config.provider,
@@ -1106,23 +1117,12 @@ def cmd_changelog_ai_draft(args: argparse.Namespace) -> int:
                 },
             )
             raise _stage_failure("Polish", exc) from exc
-        final_markdown = render_polish_markdown(polish_result)
-        if run_release_notes:
-            draft_markdown = render_draft_markdown(draft)
 
-        if args.save_polish_json:
-            write_output(render_polish_result_json(polish_result), args.save_polish_json)
-            print(f"Wrote AI polish JSON to {Path(args.save_polish_json).resolve()}")
-    else:
-        final_markdown = render_draft_markdown(draft)
-        draft_markdown = final_markdown
-
-    if run_release_notes:
-        if draft_markdown is None:
-            draft_markdown = render_draft_markdown(draft)
-        release_notes_provider = build_ai_provider_from_args(args, repo_root=repo_root, stage="release_notes")
+    def _run_release_notes():
+        assert release_notes_provider is not None
+        assert draft_markdown is not None
         try:
-            release_notes = run_release_notes_stage(
+            return run_release_notes_stage(
                 draft_markdown,
                 provider=release_notes_provider,
                 provider_kind=pipeline_config.provider,
@@ -1147,10 +1147,47 @@ def cmd_changelog_ai_draft(args: argparse.Namespace) -> int:
                 },
             )
             raise _stage_failure("Release notes", exc) from exc
+
+    if run_polish and run_release_notes:
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="vh-ai-final") as executor:
+            futures = {
+                "polish": executor.submit(_run_polish),
+                "release_notes": executor.submit(_run_release_notes),
+            }
+            stage_errors: dict[str, Exception] = {}
+            for stage_name in ("polish", "release_notes"):
+                try:
+                    result = futures[stage_name].result()
+                except Exception as exc:  # pragma: no cover - exercised by stage failure tests.
+                    stage_errors[stage_name] = exc if isinstance(exc, Exception) else RuntimeError(str(exc))
+                    continue
+                if stage_name == "polish":
+                    polish_result = result
+                else:
+                    release_notes_result = result
+            if stage_errors:
+                first_failed_stage = "polish" if "polish" in stage_errors else "release_notes"
+                raise stage_errors[first_failed_stage]
+    elif run_polish:
+        polish_result = _run_polish()
+    elif run_release_notes:
+        release_notes_result = _run_release_notes()
+
+    if polish_result is not None and args.save_polish_json:
+        write_output(render_polish_result_json(polish_result), args.save_polish_json)
+        print(f"Wrote AI polish JSON to {Path(args.save_polish_json).resolve()}")
+
+    if release_notes_result is not None:
         release_notes_output = getattr(args, "release_notes_output", DEFAULT_RELEASE_NOTES_OUTPUT)
-        write_output(release_notes.markdown, release_notes_output)
+        write_output(release_notes_result.markdown, release_notes_output)
         if release_notes_output != "-":
             print(f"Wrote AI release notes to {Path(release_notes_output).resolve()}")
+
+    if polish_result is not None:
+        final_markdown = render_polish_markdown(polish_result)
+    else:
+        assert draft_markdown is not None
+        final_markdown = draft_markdown
 
     version = read_version_file(repo_root / "VERSION")
     cached_markdown = render_cached_draft_markdown(version=str(version), content=final_markdown)

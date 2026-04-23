@@ -5,7 +5,8 @@ profiles:
     default_max_output_tokens:
       triage: 2000
       draft: 2800
-      polish: 2000
+      polish: 2400
+      release_notes: 4000
 
     stages:
       triage:
