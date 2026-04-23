@@ -415,6 +415,96 @@ def _truncation_context() -> ReleaseContext:
     )
 
 
+def _semantic_selection_context() -> ReleaseContext:
+    tools = CategoryContext(
+        name="tools",
+        commit_count=2,
+        insertions=12,
+        deletions=3,
+        commits=[
+            CommitInfo(
+                sha="99999999000000001",
+                subject="Refine CLI compare command arguments",
+                body="",
+                files=["tools/release/cli.py"],
+                insertions=8,
+                deletions=2,
+                categories=["tools"],
+            ),
+            CommitInfo(
+                sha="99999999000000002",
+                subject="Import cleanup in helper module",
+                body="",
+                files=["tools/release/helpers.py"],
+                insertions=4,
+                deletions=1,
+                categories=["tools"],
+            ),
+        ],
+        files=[
+            FileChange(
+                path="tools/release/cli.py",
+                category="tools",
+                subscopes=("release", "cli"),
+                insertions=8,
+                deletions=2,
+                commit_count=1,
+                score=10.0,
+                flags=("release-tooling",),
+            ),
+            FileChange(
+                path="tools/release/helpers.py",
+                category="tools",
+                subscopes=("release",),
+                insertions=4,
+                deletions=1,
+                commit_count=1,
+                score=16.0,
+                flags=("release-tooling",),
+            ),
+        ],
+        snippets=[
+            DiffSnippet(
+                path="tools/release/helpers.py",
+                category="tools",
+                subscopes=("release",),
+                score=16.0,
+                reason="Selected from high-scoring tools file; flags: release-tooling",
+                patch=(
+                    "@@ -1,4 +1,4 @@\n"
+                    "+import os\n"
+                    "+from pathlib import Path\n"
+                    "-import sys\n"
+                ),
+                flags=("release-tooling",),
+            ),
+            DiffSnippet(
+                path="tools/release/cli.py",
+                category="tools",
+                subscopes=("release", "cli"),
+                score=8.0,
+                reason="Selected from high-scoring tools file; flags: release-tooling",
+                patch=(
+                    "@@ -40,6 +40,10 @@\n"
+                    "+compare = subparsers.add_parser(\"ai-compare\")\n"
+                    "+compare.add_argument(\"--ai-profiles\", required=True)\n"
+                    "+compare.add_argument(\"--output-name\")\n"
+                ),
+                flags=("release-tooling",),
+            ),
+        ],
+        detected_themes=["release-automation", "tools"],
+    )
+    return ReleaseContext(
+        version="2.5.0",
+        previous_tag="v2.4.9",
+        head_sha="feedfacecafebeef",
+        commit_count=2,
+        categories={"tools": tools},
+        cross_cutting_notes=[],
+    )
+
+
 class PayloadContractTests(unittest.TestCase):
     maxDiff = None
 
@@ -492,8 +582,29 @@ class PayloadContractTests(unittest.TestCase):
         self.assertIn("key_commits", core)
         self.assertIn("supporting_files", core)
         self.assertIn("semantic_hunks", core)
+        self.assertIn("kind", core["semantic_hunks"][0])
+        self.assertIn("why_selected", core["semantic_hunks"][0])
         self.assertNotIn("truncation", core)
         self.assertNotIn("score", core)
+
+    def test_semantic_summary_hint_is_semantic_not_count_led(self) -> None:
+        payload = build_semantic_ai_payload(_multi_category_context())
+        tools = payload["categories"][1]
+
+        self.assertIn("covering", tools["summary_hint"])
+        self.assertNotIn("commits", tools["summary_hint"])
+        self.assertNotIn("+", tools["summary_hint"])
+
+    def test_semantic_selection_prefers_meaningful_hunks_over_import_noise(self) -> None:
+        config = PayloadBuildConfig(limits=PayloadLimits(max_snippets_per_category=1))
+        payload = build_semantic_ai_payload(_semantic_selection_context(), config=config)
+        tools = payload["categories"][0]
+        selected = tools["semantic_hunks"][0]
+
+        self.assertEqual(selected["path"], "tools/release/cli.py")
+        self.assertEqual(selected["kind"], "command-surface")
+        self.assertIn("command-line surface changes", selected["why_selected"])
+        self.assertIn("add_parser", selected["why_selected"])
 
     def test_semantic_payload_json_is_byte_stable(self) -> None:
         context = _multi_category_context()

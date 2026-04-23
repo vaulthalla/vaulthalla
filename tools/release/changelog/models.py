@@ -56,8 +56,9 @@ class ReleaseContext:
 @dataclass(frozen=True)
 class SemanticHunk:
     path: str
+    kind: str
+    why_selected: str
     excerpt: str
-    summary_hint: str | None = None
 
 
 @dataclass(frozen=True)
