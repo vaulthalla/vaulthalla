@@ -5,9 +5,19 @@ import json
 from typing import Any
 
 from tools.release.changelog.categorize import CATEGORY_ORDER
-from tools.release.changelog.models import CategoryContext, CommitInfo, DiffSnippet, FileChange, ReleaseContext
+from tools.release.changelog.models import (
+    CategoryContext,
+    CategorySemanticPacket,
+    CommitInfo,
+    DiffSnippet,
+    FileChange,
+    ReleaseContext,
+    SemanticHunk,
+    SemanticReleasePayload,
+)
 
 AI_PAYLOAD_SCHEMA_VERSION = "vaulthalla.release.ai_payload.v1"
+AI_SEMANTIC_PAYLOAD_SCHEMA_VERSION = "vaulthalla.release.semantic_payload.v1"
 
 
 @dataclass(frozen=True)
@@ -117,6 +127,47 @@ def render_ai_payload_json(payload: dict[str, Any]) -> str:
     return json.dumps(payload, indent=2, sort_keys=False) + "\n"
 
 
+def build_semantic_ai_payload(
+    context: ReleaseContext,
+    config: PayloadBuildConfig | None = None,
+) -> dict[str, Any]:
+    """Build deterministic semantic-first payload in parallel to forensic payload."""
+    cfg = config if config is not None else PayloadBuildConfig()
+    ordered_categories = _ordered_categories(context)
+    selected: list[CategorySemanticPacket] = []
+
+    for name, category in ordered_categories:
+        signal_strength = classify_signal_strength(category)
+        if signal_strength == "weak" and not cfg.include_weak_categories:
+            continue
+        selected.append(
+            _build_category_semantic_packet(
+                name=name,
+                category=category,
+                signal_strength=signal_strength,
+                limits=cfg.limits,
+            )
+        )
+        if cfg.limits.max_categories is not None and len(selected) >= cfg.limits.max_categories:
+            break
+
+    notes = tuple(context.cross_cutting_notes)
+    semantic = SemanticReleasePayload(
+        schema_version=AI_SEMANTIC_PAYLOAD_SCHEMA_VERSION,
+        version=context.version,
+        previous_tag=context.previous_tag,
+        head_sha=context.head_sha,
+        commit_count=context.commit_count,
+        categories=tuple(selected),
+        notes=notes,
+    )
+    return asdict(semantic)
+
+
+def render_semantic_ai_payload_json(payload: dict[str, Any]) -> str:
+    return json.dumps(payload, indent=2, sort_keys=False) + "\n"
+
+
 def classify_signal_strength(category: CategoryContext) -> str:
     files_count = len(category.files)
     snippets_count = len(category.snippets)
@@ -127,6 +178,54 @@ def classify_signal_strength(category: CategoryContext) -> str:
     if snippets_count >= 1 or change_total >= 20 or category.commit_count >= 2 or files_count >= 3:
         return "moderate"
     return "weak"
+
+
+def _build_category_semantic_packet(
+    *,
+    name: str,
+    category: CategoryContext,
+    signal_strength: str,
+    limits: PayloadLimits,
+) -> CategorySemanticPacket:
+    commit_subjects = tuple(
+        _truncate_text(commit.subject.strip(), limits.max_commit_subject_chars)[0]
+        for commit in category.commits[: limits.max_commits_per_category]
+    )
+    supporting_files = tuple(
+        file_change.path for file_change in category.files[: limits.max_files_per_category]
+    )
+    semantic_hunks: list[SemanticHunk] = []
+    for snippet in category.snippets[: limits.max_snippets_per_category]:
+        excerpt, _lines, _chars, _truncated = _build_snippet_excerpt(snippet.patch, limits)
+        semantic_hunks.append(
+            SemanticHunk(
+                path=snippet.path,
+                excerpt=excerpt,
+                summary_hint=snippet.reason or None,
+            )
+        )
+
+    caution_notes: tuple[str, ...] = ()
+    if signal_strength == "weak":
+        caution_notes = ("Low-signal category with limited concrete evidence.",)
+
+    return CategorySemanticPacket(
+        name=name,
+        signal_strength=signal_strength,
+        summary_hint=_build_category_summary_hint(category, signal_strength),
+        key_commits=commit_subjects,
+        supporting_files=supporting_files,
+        semantic_hunks=tuple(semantic_hunks),
+        caution_notes=caution_notes,
+    )
+
+
+def _build_category_summary_hint(category: CategoryContext, signal_strength: str) -> str:
+    themes = ", ".join(category.detected_themes[:3]) if category.detected_themes else "no explicit themes"
+    return (
+        f"{signal_strength.title()} signal from {category.commit_count} commits, "
+        f"+{category.insertions}/-{category.deletions}, themes: {themes}."
+    )
 
 
 def _build_category_payload(

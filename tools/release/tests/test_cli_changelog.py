@@ -147,6 +147,8 @@ class CliChangelogDraftTests(unittest.TestCase):
                 "/tmp/raw.md",
                 "--payload-output",
                 "/tmp/release-payload.json",
+                "--semantic-payload-output",
+                "/tmp/release-semantic-payload.json",
                 "--manual-changelog-path",
                 "debian/changelog",
             ]
@@ -157,6 +159,7 @@ class CliChangelogDraftTests(unittest.TestCase):
         self.assertEqual(parsed_release.output, "/tmp/release.md")
         self.assertEqual(parsed_release.raw_output, "/tmp/raw.md")
         self.assertEqual(parsed_release.payload_output, "/tmp/release-payload.json")
+        self.assertEqual(parsed_release.semantic_payload_output, "/tmp/release-semantic-payload.json")
         self.assertEqual(parsed_release.manual_changelog_path, "debian/changelog")
         self.assertEqual(parsed_release.cached_draft_path, ".changelog_scratch/changelog.draft.md")
         self.assertIsNone(parsed_release.debian_distribution)
@@ -179,6 +182,10 @@ class CliChangelogDraftTests(unittest.TestCase):
         self.assertEqual(parsed_ai_release.ai_profile, "openai-balanced")
         self.assertEqual(parsed_ai_release.draft_output, "/tmp/draft.md")
         self.assertEqual(parsed_ai_release.output, "/tmp/release.md")
+        self.assertEqual(
+            parsed_ai_release.semantic_payload_output,
+            ".changelog_scratch/changelog.semantic_payload.json",
+        )
 
         parsed_ai_check = parser.parse_args(
             [
@@ -324,6 +331,7 @@ class CliChangelogReleaseTests(unittest.TestCase):
         output: str = ".changelog_scratch/changelog.release.md",
         raw_output: str = ".changelog_scratch/changelog.raw.md",
         payload_output: str = ".changelog_scratch/changelog.payload.json",
+        semantic_payload_output: str = ".changelog_scratch/changelog.semantic_payload.json",
         manual_changelog_path: str = "debian/changelog",
         cached_draft_path: str = ".changelog_scratch/changelog.draft.md",
         debian_distribution: str | None = None,
@@ -335,6 +343,7 @@ class CliChangelogReleaseTests(unittest.TestCase):
             output=output,
             raw_output=raw_output,
             payload_output=payload_output,
+            semantic_payload_output=semantic_payload_output,
             manual_changelog_path=manual_changelog_path,
             cached_draft_path=cached_draft_path,
             debian_distribution=debian_distribution,
@@ -346,10 +355,12 @@ class CliChangelogReleaseTests(unittest.TestCase):
             target = Path(temp_dir) / "release.md"
             raw_target = Path(temp_dir) / "raw.md"
             payload_target = Path(temp_dir) / "payload.json"
+            semantic_payload_target = Path(temp_dir) / "semantic-payload.json"
             args = self._args(
                 output=str(target),
                 raw_output=str(raw_target),
                 payload_output=str(payload_target),
+                semantic_payload_output=str(semantic_payload_target),
             )
             out = StringIO()
 
@@ -358,6 +369,11 @@ class CliChangelogReleaseTests(unittest.TestCase):
                 patch("tools.release.cli.render_release_changelog", return_value="# Raw Draft\n"),
                 patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
                 patch("tools.release.cli.render_ai_payload_json", return_value='{"schema_version":"x"}\n'),
+                patch("tools.release.cli.build_semantic_ai_payload", return_value={"schema_version": "semantic-x"}),
+                patch(
+                    "tools.release.cli.render_semantic_ai_payload_json",
+                    return_value='{"schema_version":"semantic-x"}\n',
+                ),
                 patch(
                     "tools.release.cli.parse_release_ai_settings",
                     return_value=type(
@@ -390,9 +406,14 @@ class CliChangelogReleaseTests(unittest.TestCase):
             self.assertEqual(target.read_text(encoding="utf-8"), "# Manual Changelog\n")
             self.assertEqual(raw_target.read_text(encoding="utf-8"), "# Raw Draft\n")
             self.assertEqual(payload_target.read_text(encoding="utf-8"), '{"schema_version":"x"}\n')
+            self.assertEqual(
+                semantic_payload_target.read_text(encoding="utf-8"),
+                '{"schema_version":"semantic-x"}\n',
+            )
             rendered = out.getvalue()
             self.assertIn("Wrote changelog raw evidence to", rendered)
             self.assertIn("Wrote changelog payload evidence to", rendered)
+            self.assertIn("Wrote changelog semantic payload evidence to", rendered)
             self.assertIn("Wrote release changelog to", rendered)
             self.assertIn("Debian changelog entry update skipped", rendered)
 
@@ -401,10 +422,12 @@ class CliChangelogReleaseTests(unittest.TestCase):
             target = Path(temp_dir) / "release.md"
             raw_target = Path(temp_dir) / "raw.md"
             payload_target = Path(temp_dir) / "payload.json"
+            semantic_payload_target = Path(temp_dir) / "semantic-payload.json"
             args = self._args(
                 output=str(target),
                 raw_output=str(raw_target),
                 payload_output=str(payload_target),
+                semantic_payload_output=str(semantic_payload_target),
                 debian_distribution="stable",
                 debian_urgency="high",
             )
@@ -415,6 +438,11 @@ class CliChangelogReleaseTests(unittest.TestCase):
                 patch("tools.release.cli.render_release_changelog", return_value="# Raw Draft\n"),
                 patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
                 patch("tools.release.cli.render_ai_payload_json", return_value='{"schema_version":"x"}\n'),
+                patch("tools.release.cli.build_semantic_ai_payload", return_value={"schema_version": "semantic-x"}),
+                patch(
+                    "tools.release.cli.render_semantic_ai_payload_json",
+                    return_value='{"schema_version":"semantic-x"}\n',
+                ),
                 patch(
                     "tools.release.cli.parse_release_ai_settings",
                     return_value=type(
@@ -460,6 +488,10 @@ class CliChangelogReleaseTests(unittest.TestCase):
                 rc = cli.cmd_changelog_release(args)
 
             self.assertEqual(rc, 0)
+            self.assertEqual(
+                semantic_payload_target.read_text(encoding="utf-8"),
+                '{"schema_version":"semantic-x"}\n',
+            )
             refresh_entry.assert_called_once()
             self.assertEqual(refresh_entry.call_args.kwargs["release_markdown"], "# Release\n- change one\n")
             self.assertEqual(refresh_entry.call_args.kwargs["distribution"], "stable")
@@ -475,6 +507,7 @@ class CliChangelogAIReleaseTests(unittest.TestCase):
             output=".changelog_scratch/changelog.release.md",
             raw_output=".changelog_scratch/changelog.raw.md",
             payload_output=".changelog_scratch/changelog.payload.json",
+            semantic_payload_output=".changelog_scratch/changelog.semantic_payload.json",
             manual_changelog_path="debian/changelog",
             debian_distribution=None,
             debian_urgency=None,
@@ -514,6 +547,10 @@ class CliChangelogAIReleaseTests(unittest.TestCase):
         expected_cached_path = str((Path(".").resolve() / ".changelog_scratch/changelog.draft.md").resolve())
         self.assertEqual(run_ai_draft.call_args.args[0].output, expected_cached_path)
         self.assertEqual(run_release.call_args.args[0].cached_draft_path, expected_cached_path)
+        self.assertEqual(
+            run_release.call_args.args[0].semantic_payload_output,
+            ".changelog_scratch/changelog.semantic_payload.json",
+        )
 
     def test_ai_release_skips_release_stage_when_draft_returns_nonzero(self) -> None:
         args = self._args()
@@ -560,6 +597,9 @@ class CliChangelogAIReleaseTests(unittest.TestCase):
                 output=str(repo_root / ".changelog_scratch" / "changelog.release.md"),
                 raw_output=str(repo_root / ".changelog_scratch" / "changelog.raw.md"),
                 payload_output=str(repo_root / ".changelog_scratch" / "changelog.payload.json"),
+                semantic_payload_output=str(
+                    repo_root / ".changelog_scratch" / "changelog.semantic_payload.json"
+                ),
                 manual_changelog_path="debian/changelog",
                 debian_distribution=None,
                 debian_urgency=None,
@@ -581,6 +621,11 @@ class CliChangelogAIReleaseTests(unittest.TestCase):
                 patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
                 patch("tools.release.cli.render_release_changelog", return_value="# Raw Draft\n"),
                 patch("tools.release.cli.render_ai_payload_json", return_value='{"schema_version":"x"}\n'),
+                patch("tools.release.cli.build_semantic_ai_payload", return_value={"schema_version": "semantic-x"}),
+                patch(
+                    "tools.release.cli.render_semantic_ai_payload_json",
+                    return_value='{"schema_version":"semantic-x"}\n',
+                ),
             ):
                 rc = cli.cmd_changelog_ai_release(args)
 

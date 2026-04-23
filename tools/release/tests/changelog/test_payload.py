@@ -5,11 +5,14 @@ import unittest
 
 from tools.release.changelog.models import CategoryContext, CommitInfo, DiffSnippet, FileChange, ReleaseContext
 from tools.release.changelog.payload import (
+    AI_SEMANTIC_PAYLOAD_SCHEMA_VERSION,
     AI_PAYLOAD_SCHEMA_VERSION,
     PayloadBuildConfig,
     PayloadLimits,
     build_ai_payload,
+    build_semantic_ai_payload,
     render_ai_payload_json,
+    render_semantic_ai_payload_json,
 )
 
 
@@ -476,6 +479,26 @@ class PayloadContractTests(unittest.TestCase):
         )
         first = render_ai_payload_json(build_ai_payload(context, config=config))
         second = render_ai_payload_json(build_ai_payload(context, config=config))
+        self.assertEqual(first, second)
+
+    def test_semantic_payload_has_distinct_model_facing_shape(self) -> None:
+        payload = build_semantic_ai_payload(_multi_category_context())
+
+        self.assertEqual(payload["schema_version"], AI_SEMANTIC_PAYLOAD_SCHEMA_VERSION)
+        self.assertEqual(payload["version"], "2.4.0")
+        self.assertEqual([item["name"] for item in payload["categories"]], ["debian", "tools", "core", "meta"])
+        core = payload["categories"][2]
+        self.assertIn("summary_hint", core)
+        self.assertIn("key_commits", core)
+        self.assertIn("supporting_files", core)
+        self.assertIn("semantic_hunks", core)
+        self.assertNotIn("truncation", core)
+        self.assertNotIn("score", core)
+
+    def test_semantic_payload_json_is_byte_stable(self) -> None:
+        context = _multi_category_context()
+        first = render_semantic_ai_payload_json(build_semantic_ai_payload(context))
+        second = render_semantic_ai_payload_json(build_semantic_ai_payload(context))
         self.assertEqual(first, second)
 
 

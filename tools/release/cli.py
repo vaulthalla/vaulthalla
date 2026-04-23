@@ -44,7 +44,12 @@ from tools.release.changelog.release_workflow import (
     resolve_release_changelog,
 )
 from tools.release.changelog.context_builder import build_release_context
-from tools.release.changelog.payload import build_ai_payload, render_ai_payload_json
+from tools.release.changelog.payload import (
+    build_ai_payload,
+    build_semantic_ai_payload,
+    render_ai_payload_json,
+    render_semantic_ai_payload_json,
+)
 from tools.release.changelog.render_raw import render_debug_json, render_release_changelog
 from tools.release.packaging import (
     build_debian_package,
@@ -66,6 +71,7 @@ DEFAULT_CHANGELOG_DRAFT_OUTPUT = str(DEFAULT_CACHED_DRAFT_PATH)
 DEFAULT_CHANGELOG_RELEASE_OUTPUT = str(DEFAULT_CHANGELOG_SCRATCH_DIR / "changelog.release.md")
 DEFAULT_CHANGELOG_RAW_OUTPUT = str(DEFAULT_CHANGELOG_SCRATCH_DIR / "changelog.raw.md")
 DEFAULT_CHANGELOG_PAYLOAD_OUTPUT = str(DEFAULT_CHANGELOG_SCRATCH_DIR / "changelog.payload.json")
+DEFAULT_CHANGELOG_SEMANTIC_PAYLOAD_OUTPUT = str(DEFAULT_CHANGELOG_SCRATCH_DIR / "changelog.semantic_payload.json")
 DEFAULT_RELEASE_NOTES_OUTPUT = str(DEFAULT_CHANGELOG_SCRATCH_DIR / "release_notes.md")
 DEFAULT_CHANGELOG_COMPARISON_DIR = DEFAULT_CHANGELOG_SCRATCH_DIR / "comparisons"
 
@@ -289,6 +295,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output path for deterministic AI payload evidence JSON.",
     )
     changelog_release_parser.add_argument(
+        "--semantic-payload-output",
+        default=DEFAULT_CHANGELOG_SEMANTIC_PAYLOAD_OUTPUT,
+        help="Output path for deterministic semantic payload evidence JSON.",
+    )
+    changelog_release_parser.add_argument(
         "--manual-changelog-path",
         default="debian/changelog",
         help="Debian changelog file used for manual fallback and release entry updates.",
@@ -447,6 +458,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--payload-output",
         default=DEFAULT_CHANGELOG_PAYLOAD_OUTPUT,
         help="Output path for deterministic AI payload evidence JSON.",
+    )
+    changelog_ai_release_parser.add_argument(
+        "--semantic-payload-output",
+        default=DEFAULT_CHANGELOG_SEMANTIC_PAYLOAD_OUTPUT,
+        help="Output path for deterministic semantic payload evidence JSON.",
     )
     changelog_ai_release_parser.add_argument(
         "--manual-changelog-path",
@@ -855,6 +871,7 @@ def cmd_changelog_ai_release(args: argparse.Namespace) -> int:
         output=args.output,
         raw_output=args.raw_output,
         payload_output=args.payload_output,
+        semantic_payload_output=args.semantic_payload_output,
         manual_changelog_path=args.manual_changelog_path,
         cached_draft_path=draft_output,
         debian_distribution=args.debian_distribution,
@@ -1167,8 +1184,10 @@ def _run_changelog_release_with_settings(
         _print_status("Changelog release stage: build deterministic context + payload")
         context = build_changelog_context(repo_root, args.since_tag)
         payload = build_ai_payload(context)
+        semantic_payload = build_semantic_ai_payload(context)
         raw_markdown = render_release_changelog(context)
         payload_json = render_ai_payload_json(payload)
+        semantic_payload_json = render_semantic_ai_payload_json(semantic_payload)
     except Exception as exc:
         raise ValueError(f"Changelog release failed during context/payload generation: {exc}") from exc
 
@@ -1178,6 +1197,9 @@ def _run_changelog_release_with_settings(
         _print_status(f"Wrote changelog raw evidence to {Path(args.raw_output).resolve()}")
         write_output(payload_json, args.payload_output)
         _print_status(f"Wrote changelog payload evidence to {Path(args.payload_output).resolve()}")
+        semantic_target = getattr(args, "semantic_payload_output", DEFAULT_CHANGELOG_SEMANTIC_PAYLOAD_OUTPUT)
+        write_output(semantic_payload_json, semantic_target)
+        _print_status(f"Wrote changelog semantic payload evidence to {Path(semantic_target).resolve()}")
     except Exception as exc:
         raise ValueError(f"Changelog release failed while writing evidence artifacts: {exc}") from exc
 

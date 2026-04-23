@@ -51,3 +51,32 @@ class ReleaseContext:
     categories: dict[str, CategoryContext]
     uncategorized_commits: list[CommitInfo] = field(default_factory=list)
     cross_cutting_notes: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class SemanticHunk:
+    path: str
+    excerpt: str
+    summary_hint: str | None = None
+
+
+@dataclass(frozen=True)
+class CategorySemanticPacket:
+    name: str
+    signal_strength: str
+    summary_hint: str
+    key_commits: tuple[str, ...]
+    supporting_files: tuple[str, ...]
+    semantic_hunks: tuple[SemanticHunk, ...]
+    caution_notes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class SemanticReleasePayload:
+    schema_version: str
+    version: str
+    previous_tag: str | None
+    head_sha: str
+    commit_count: int
+    categories: tuple[CategorySemanticPacket, ...]
+    notes: tuple[str, ...] = ()
