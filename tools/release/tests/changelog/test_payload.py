@@ -885,6 +885,35 @@ class PayloadContractTests(unittest.TestCase):
         self.assertEqual(selected["region_type"], "function")
         self.assertEqual(selected["context_label"], "def build_parser")
 
+    def test_semantic_excerpt_prefers_context_rich_regions(self) -> None:
+        context = _semantic_selection_context()
+        context.categories["tools"].snippets[1] = DiffSnippet(
+            path="tools/release/cli.py",
+            category="tools",
+            subscopes=("release", "cli"),
+            score=8.0,
+            reason="Context-first region capture",
+            patch=(
+                "@@ -38,6 +38,14 @@ def build_parser(subparsers):\n"
+                " compare = subparsers.add_parser(\"ai-compare\")\n"
+                " compare.set_defaults(handler=run_ai_compare)\n"
+                "+compare.add_argument(\"--ai-profiles\", required=True)\n"
+                "+compare.add_argument(\"--output-name\")\n"
+                " return compare\n"
+            ),
+            flags=("release-tooling",),
+            region_kind="function",
+            region_label="def build_parser",
+            hunk_count=1,
+            changed_lines=2,
+            meaningful_lines=2,
+        )
+        config = PayloadBuildConfig(limits=PayloadLimits(max_snippets_per_category=1, max_snippet_lines=120))
+        payload = build_semantic_ai_payload(context, config=config)
+        excerpt = payload["categories"][0]["semantic_hunks"][0]["excerpt"]
+        self.assertIn("compare.set_defaults(handler=run_ai_compare)", excerpt)
+        self.assertIn("+compare.add_argument(\"--ai-profiles\", required=True)", excerpt)
+
     def test_semantic_payload_json_is_byte_stable(self) -> None:
         context = _multi_category_context()
         first = render_semantic_ai_payload_json(build_semantic_ai_payload(context))

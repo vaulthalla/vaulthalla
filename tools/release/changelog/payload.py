@@ -304,8 +304,8 @@ def _default_semantic_payload_config() -> PayloadBuildConfig:
             max_commits_per_category=16,
             max_files_per_category=10,
             max_snippets_per_category=20,
-            max_snippet_lines=28,
-            max_snippet_chars=1400,
+            max_snippet_lines=220,
+            max_snippet_chars=12000,
             max_commit_subject_chars=220,
             max_snippet_reason_chars=320,
         ),
@@ -758,27 +758,15 @@ def _classify_semantic_hunk_kind(snippet: DiffSnippet) -> str:
 
 
 def _build_semantic_excerpt(patch: str, limits: PayloadLimits) -> str:
-    max_lines = min(limits.max_snippet_lines, 18)
-    max_chars = min(limits.max_snippet_chars, 900)
-    raw_lines = patch.strip().splitlines() if patch.strip() else []
-    if not raw_lines:
+    max_lines = min(limits.max_snippet_lines, 180)
+    max_chars = min(limits.max_snippet_chars, 10000)
+    lines = patch.strip().splitlines() if patch.strip() else []
+    if not lines:
         return ""
 
-    header: str | None = raw_lines[0] if raw_lines and raw_lines[0].startswith("@@") else None
-    changed_lines = _semantic_changed_lines(patch)
-    meaningful_lines = [line for line in changed_lines if not _is_noise_change_line(line)]
-    selected_body = meaningful_lines if meaningful_lines else changed_lines
-    body_limit = max_lines - (1 if header is not None else 0)
-    body_limit = max(body_limit, 1)
-    selected_lines = selected_body[:body_limit]
-
-    excerpt_lines: list[str] = []
-    if header is not None:
-        excerpt_lines.append(header)
-    excerpt_lines.extend(selected_lines)
-
-    excerpt = "\n".join(excerpt_lines)
-    truncated = len(selected_body) > len(selected_lines)
+    selected_lines = lines[:max_lines]
+    excerpt = "\n".join(selected_lines)
+    truncated = len(lines) > len(selected_lines)
 
     if len(excerpt) > max_chars:
         excerpt = excerpt[:max_chars].rstrip()

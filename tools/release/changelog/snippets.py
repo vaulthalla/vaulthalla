@@ -26,13 +26,13 @@ _FUNCTION_SIGNATURE_RE = re.compile(
 )
 _COMMAND_SURFACE_RE = re.compile(r"\b(add_parser|add_argument|subparsers|argparse)\b")
 _CONFIG_KEY_RE = re.compile(r"^[+-]\s*[\"']?[a-zA-Z_][a-zA-Z0-9_.-]*[\"']?\s*[:=]", re.MULTILINE)
-_MAX_ADJACENT_HUNK_GAP = 8
-_MAX_SAME_REGION_GAP = 96
-_MAX_GROUPED_HUNKS = 3
-_MAX_UNIT_CHANGED_LINES = 120
-_MAX_UNIT_CHARS = 4800
-_MAX_SINGLE_UNIT_SEGMENT_LINES = 72
-_MIN_LINES_BEFORE_SPLIT_ANCHOR = 20
+_MAX_ADJACENT_HUNK_GAP = 24
+_MAX_SAME_REGION_GAP = 320
+_MAX_GROUPED_HUNKS = 16
+_MAX_UNIT_CHANGED_LINES = 420
+_MAX_UNIT_CHARS = 24000
+_MAX_SINGLE_UNIT_SEGMENT_LINES = 220
+_MIN_LINES_BEFORE_SPLIT_ANCHOR = 80
 
 
 @dataclass(frozen=True)
@@ -328,7 +328,7 @@ def _lift_hunks_to_logical_units(path: str, hunks: list[_ParsedHunk]) -> list[_E
 
     units: list[_EvidenceUnit] = []
     for group, region_label in groups:
-        rendered = "\n\n".join(hunk.text for hunk in group).strip()
+        rendered = _join_group_hunks(group)
         if not rendered:
             continue
         changed_line_count, meaningful_line_count = _change_line_counts(rendered)
@@ -353,15 +353,26 @@ def _should_group_hunks(
     right_label: str | None,
 ) -> bool:
     if left_label is not None and right_label is not None and left_label == right_label:
-        if _hunks_are_adjacent(left, right, _MAX_SAME_REGION_GAP):
-            return True
-        if left.target_start is None and right.target_start is None:
-            return True
+        return True
 
     if left_label is None and right_label is None:
         return _hunks_are_adjacent(left, right, _MAX_ADJACENT_HUNK_GAP)
 
     return False
+
+
+def _join_group_hunks(group: list[_ParsedHunk]) -> str:
+    seen: set[str] = set()
+    rendered_parts: list[str] = []
+    for hunk in group:
+        text = hunk.text.strip()
+        if not text:
+            continue
+        if text in seen:
+            continue
+        seen.add(text)
+        rendered_parts.append(text)
+    return "\n\n".join(rendered_parts).strip()
 
 
 def _hunks_are_adjacent(left: _ParsedHunk, right: _ParsedHunk, max_gap: int) -> bool:

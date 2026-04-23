@@ -8,7 +8,7 @@ from tools.release.changelog.models import ReleaseContext
 
 TOP_COMMITS_PER_CATEGORY = 3
 TOP_FILES_PER_CATEGORY = 3
-TOP_SNIPPETS_PER_CATEGORY = 2
+TOP_SNIPPETS_PER_CATEGORY = 4
 
 
 def render_release_changelog(context: ReleaseContext) -> str:

@@ -161,9 +161,11 @@ class SnippetHarvestTests(unittest.TestCase):
         )
         patch_text = (
             "@@ -40,6 +40,10 @@ def run_ai_release_pipeline(config):\n"
+            " draft = run_draft_stage(context)\n"
             "+draft = run_draft_stage(context)\n"
             "+emit_artifact(\"changelog.release.md\", draft)\n"
             "@@ -98,6 +108,12 @@ def run_ai_release_pipeline(config):\n"
+            " notes = None\n"
             "+if config.release_notes:\n"
             "+    notes = run_release_notes_stage(draft)\n"
             "+    emit_artifact(\"release_notes.md\", notes)\n"
@@ -181,6 +183,7 @@ class SnippetHarvestTests(unittest.TestCase):
         self.assertEqual(harvested[0].region_kind, "function")
         self.assertIn("run_ai_release_pipeline", harvested[0].region_label or "")
         self.assertGreaterEqual(harvested[0].hunk_count, 2)
+        self.assertIn(" draft = run_draft_stage(context)", harvested[0].patch)
 
     def test_extract_relevant_snippets_keeps_trivial_self_contained_hunk_small(self) -> None:
         context = CategoryContext(
@@ -223,13 +226,13 @@ class SnippetHarvestTests(unittest.TestCase):
             detected_themes=["release-automation"],
         )
         body_lines: list[str] = []
-        for idx in range(1, 170):
-            if idx in {1, 56, 112}:
+        for idx in range(1, 760):
+            if idx in {1, 180, 360, 540, 720}:
                 body_lines.append(f"+def semantic_block_{idx}(payload):")
             else:
                 body_lines.append(f"+    update_field_{idx} = compute_value_{idx}()")
         patch_text = (
-            "@@ -1,3 +1,220 @@ def build_semantic_payload(context):\n"
+            "@@ -1,3 +1,820 @@ def build_semantic_payload(context):\n"
             + "\n".join(body_lines)
         )
         with patch("tools.release.changelog.snippets.get_file_patch", return_value=patch_text):
@@ -242,7 +245,7 @@ class SnippetHarvestTests(unittest.TestCase):
             )
         harvested = snippets["tools"]
         self.assertGreaterEqual(len(harvested), 2)
-        self.assertTrue(all(item.changed_lines <= 90 for item in harvested))
+        self.assertTrue(all(item.changed_lines <= 220 for item in harvested))
         self.assertTrue(all(item.region_kind in {"function", "block", "command"} for item in harvested))
 
 

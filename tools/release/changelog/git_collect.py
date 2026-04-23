@@ -136,7 +136,10 @@ def get_file_patch(
     repo_root = Path(repo_root).resolve()
     commit_range = _build_commit_range(previous_tag)
     normalized_path = normalize_path(path)
-    return _run_git(["diff", commit_range, "--", normalized_path], repo_root)
+    return _run_git(
+        ["diff", "--function-context", "--unified=120", commit_range, "--", normalized_path],
+        repo_root,
+    )
 
 
 def _build_commit_range(previous_tag: str | None) -> str:
