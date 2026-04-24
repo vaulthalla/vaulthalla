@@ -303,48 +303,48 @@ jobs:
           export SELECTION_PATH="${selection_path}"
           export RELEASE_NOTES_PATH="${release_notes_path}"
           "${RELEASE_PYTHON}" - <<'PY'
-import json
-import os
-import sys
-from pathlib import Path
+          import json
+          import os
+          import sys
+          from pathlib import Path
 
-selection_path = Path(os.environ["SELECTION_PATH"])
-notes_path = Path(os.environ["RELEASE_NOTES_PATH"])
-out_path = Path(os.environ["GITHUB_OUTPUT"])
-data = json.loads(selection_path.read_text(encoding="utf-8"))
+          selection_path = Path(os.environ["SELECTION_PATH"])
+          notes_path = Path(os.environ["RELEASE_NOTES_PATH"])
+          out_path = Path(os.environ["GITHUB_OUTPUT"])
+          data = json.loads(selection_path.read_text(encoding="utf-8"))
 
-selected_path = str(data.get("selected_path") or "").strip() or "unknown"
-ai_mode = str(data.get("ai_mode") or "").strip() or "unknown"
-openai_profile = str(data.get("openai_profile") or "").strip() or "<unset>"
-local_profile = str(data.get("local_profile") or "").strip() or "<unset>"
-notes_generated = bool(data.get("release_notes_generated"))
-notes_exists = notes_path.is_file()
-notes_nonempty = notes_exists and bool(notes_path.read_text(encoding="utf-8").strip())
+          selected_path = str(data.get("selected_path") or "").strip() or "unknown"
+          ai_mode = str(data.get("ai_mode") or "").strip() or "unknown"
+          openai_profile = str(data.get("openai_profile") or "").strip() or "<unset>"
+          local_profile = str(data.get("local_profile") or "").strip() or "<unset>"
+          notes_generated = bool(data.get("release_notes_generated"))
+          notes_exists = notes_path.is_file()
+          notes_nonempty = notes_exists and bool(notes_path.read_text(encoding="utf-8").strip())
 
-should_sync = notes_generated and notes_nonempty
-reason = "release_notes_present"
-if not notes_generated:
-    reason = f"release_notes_not_generated_for_selected_path:{selected_path}"
-elif not notes_nonempty:
-    reason = "release_notes_missing_or_empty"
+          should_sync = notes_generated and notes_nonempty
+          reason = "release_notes_present"
+          if not notes_generated:
+              reason = f"release_notes_not_generated_for_selected_path:{selected_path}"
+          elif not notes_nonempty:
+              reason = "release_notes_missing_or_empty"
 
-if notes_generated and not notes_nonempty:
-    print(
-        f"::error::Selection metadata reports generated release notes, but file is missing/empty: {notes_path}"
-    )
-    sys.exit(1)
+          if notes_generated and not notes_nonempty:
+              print(
+                  f"::error::Selection metadata reports generated release notes, but file is missing/empty: {notes_path}"
+              )
+              sys.exit(1)
 
-with out_path.open("a", encoding="utf-8") as fh:
-    fh.write(f"selected_path={selected_path}\n")
-    fh.write(f"ai_mode={ai_mode}\n")
-    fh.write(f"openai_profile={openai_profile}\n")
-    fh.write(f"local_profile={local_profile}\n")
-    fh.write(f"release_notes_generated={'true' if notes_generated else 'false'}\n")
-    fh.write(f"release_notes_exists={'true' if notes_exists else 'false'}\n")
-    fh.write(f"release_notes_nonempty={'true' if notes_nonempty else 'false'}\n")
-    fh.write(f"should_sync={'true' if should_sync else 'false'}\n")
-    fh.write(f"reason={reason}\n")
-PY
+          with out_path.open("a", encoding="utf-8") as fh:
+              fh.write(f"selected_path={selected_path}\n")
+              fh.write(f"ai_mode={ai_mode}\n")
+              fh.write(f"openai_profile={openai_profile}\n")
+              fh.write(f"local_profile={local_profile}\n")
+              fh.write(f"release_notes_generated={'true' if notes_generated else 'false'}\n")
+              fh.write(f"release_notes_exists={'true' if notes_exists else 'false'}\n")
+              fh.write(f"release_notes_nonempty={'true' if notes_nonempty else 'false'}\n")
+              fh.write(f"should_sync={'true' if should_sync else 'false'}\n")
+              fh.write(f"reason={reason}\n")
+          PY
 
       - name: Log release path decision
         if: startsWith(github.ref, 'refs/tags/')
