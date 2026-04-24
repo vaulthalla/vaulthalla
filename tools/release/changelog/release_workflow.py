@@ -523,6 +523,11 @@ def _run_release_ai_pipeline(
     source_kind = "payload"
     triage_input_mode = "raw_semantic"
     triage_input_payload = semantic_payload if isinstance(semantic_payload, dict) else payload
+    semantic_categories = semantic_payload.get("categories") if isinstance(semantic_payload, dict) else None
+    has_empty_semantic_categories = bool(
+        isinstance(semantic_categories, list)
+        and not any(isinstance(item, dict) for item in semantic_categories)
+    )
     emergency_triage_cfg = pipeline.stages["emergency_triage"]
     triage_cfg = pipeline.stages["triage"]
     draft_cfg = pipeline.stages["draft"]
@@ -530,7 +535,14 @@ def _run_release_ai_pipeline(
     release_notes_cfg = pipeline.stages["release_notes"]
 
     if run_triage:
-        if run_emergency_triage and isinstance(semantic_payload, dict):
+        if has_empty_semantic_categories:
+            emit(
+                "Skipping triage stages: semantic payload has no categories; "
+                "falling back to deterministic payload draft input."
+            )
+            run_triage = False
+            run_emergency_triage = False
+        if run_triage and run_emergency_triage and isinstance(semantic_payload, dict):
             try:
                 emit("Emergency triage: batch aggregation start")
                 emergency_triage_result = run_emergency_triage_stage(
@@ -562,39 +574,46 @@ def _run_release_ai_pipeline(
             emit("Emergency triage: artifact write start")
             _write_emergency_triage_artifact(repo_root=repo_root, content=render_emergency_triage_result_json(emergency_triage_result))
             emit("Emergency triage: artifact write end")
-            triage_input_payload = build_triage_input_from_emergency_result(
-                semantic_payload,
-                emergency_triage_result,
-            )
-            triage_input_mode = "synthesized_semantic"
-        try:
-            triage_result = run_triage_stage(
-                triage_input_payload,
-                provider=providers["triage"],
-                provider_kind=pipeline.provider,
-                reasoning_effort=triage_cfg.reasoning_effort,
-                structured_mode=triage_cfg.structured_mode,
-                temperature=triage_cfg.temperature,
-                max_output_tokens_policy=triage_cfg.max_output_tokens,
-                input_mode=triage_input_mode,
-            )
-        except Exception as exc:
-            _capture_release_stage_failure_artifact(
-                repo_root=repo_root,
-                pipeline=pipeline,
-                stage="triage",
-                provider=providers["triage"],
-                exc=exc,
-                stage_settings={
-                    "structured_mode": triage_cfg.structured_mode,
-                    "reasoning_effort": triage_cfg.reasoning_effort,
-                    "temperature": triage_cfg.temperature,
-                    "max_output_tokens_policy": str(triage_cfg.max_output_tokens),
-                },
-            )
-            raise ValueError(f"Triage stage failed: {exc}") from exc
-        draft_input = build_triage_ir_payload(triage_result)
-        source_kind = "triage"
+            if emergency_triage_result.items:
+                triage_input_payload = build_triage_input_from_emergency_result(
+                    semantic_payload,
+                    emergency_triage_result,
+                )
+                triage_input_mode = "synthesized_semantic"
+            else:
+                emit(
+                    "Emergency triage produced zero synthesized items; "
+                    "falling back to raw semantic triage input."
+                )
+        if run_triage:
+            try:
+                triage_result = run_triage_stage(
+                    triage_input_payload,
+                    provider=providers["triage"],
+                    provider_kind=pipeline.provider,
+                    reasoning_effort=triage_cfg.reasoning_effort,
+                    structured_mode=triage_cfg.structured_mode,
+                    temperature=triage_cfg.temperature,
+                    max_output_tokens_policy=triage_cfg.max_output_tokens,
+                    input_mode=triage_input_mode,
+                )
+            except Exception as exc:
+                _capture_release_stage_failure_artifact(
+                    repo_root=repo_root,
+                    pipeline=pipeline,
+                    stage="triage",
+                    provider=providers["triage"],
+                    exc=exc,
+                    stage_settings={
+                        "structured_mode": triage_cfg.structured_mode,
+                        "reasoning_effort": triage_cfg.reasoning_effort,
+                        "temperature": triage_cfg.temperature,
+                        "max_output_tokens_policy": str(triage_cfg.max_output_tokens),
+                    },
+                )
+                raise ValueError(f"Triage stage failed: {exc}") from exc
+            draft_input = build_triage_ir_payload(triage_result)
+            source_kind = "triage"
 
     try:
         draft = generate_draft_from_payload(

@@ -110,15 +110,73 @@ runs:
         echo "[changelog] clearing volatile changelog scratch + staged changelog outputs"
         rm -rf "$scratch_dir" "$artifact_dir"
         mkdir -p "$artifact_dir"
+        selection_output="${{ inputs.output_dir }}/changelog.selection.json"
         echo "[changelog] starting changelog generation/validation"
-        if ! "$PYTHON_BIN" -m tools.release changelog release \
-          --output "${{ inputs.output_dir }}/changelog.release.md" \
-          --raw-output "${{ inputs.output_dir }}/changelog.raw.md" \
-          --payload-output "${{ inputs.output_dir }}/changelog.payload.json" \
-          --release-notes-output "${{ inputs.output_dir }}/release_notes.md"; then
-          echo "::error::Changelog stage failed. See logs above for path selection/fallback/stale-check diagnostics."
+        mode="${RELEASE_AI_MODE:-auto}"
+        openai_profile="${RELEASE_AI_PROFILE_OPENAI:-openai-balanced}"
+        local_profile="${RELEASE_LOCAL_LLM_PROFILE:-}"
+        local_base_url="${RELEASE_LOCAL_LLM_BASE_URL:-}"
+        common_args=(
+          --output "${{ inputs.output_dir }}/changelog.release.md"
+          --raw-output "${{ inputs.output_dir }}/changelog.raw.md"
+          --payload-output "${{ inputs.output_dir }}/changelog.payload.json"
+          --release-notes-output "${{ inputs.output_dir }}/release_notes.md"
+          --selection-output "${selection_output}"
+        )
+        case "$mode" in
+          openai-only)
+            echo "[changelog] command path: changelog ai-release (explicit OpenAI profile)"
+            echo "[changelog] ai_profile=${openai_profile}"
+            if ! "$PYTHON_BIN" -m tools.release changelog ai-release \
+              --ai-profile "${openai_profile}" \
+              "${common_args[@]}"; then
+              echo "::error::AI release path failed in openai-only mode."
+              exit 1
+            fi
+            ;;
+          local-only)
+            if [ -z "$local_profile" ]; then
+              echo "::error::RELEASE_AI_MODE=local-only requires RELEASE_LOCAL_LLM_PROFILE."
+              exit 1
+            fi
+            echo "[changelog] command path: changelog ai-release (explicit local profile)"
+            echo "[changelog] ai_profile=${local_profile}"
+            if [ -n "$local_base_url" ]; then
+              echo "[changelog] local base_url override=${local_base_url}"
+            fi
+            local_args=(
+              --ai-profile "${local_profile}"
+              --provider openai-compatible
+            )
+            if [ -n "$local_base_url" ]; then
+              local_args+=(--base-url "$local_base_url")
+            fi
+            if ! "$PYTHON_BIN" -m tools.release changelog ai-release \
+              "${local_args[@]}" \
+              "${common_args[@]}"; then
+              echo "::error::AI release path failed in local-only mode."
+              exit 1
+            fi
+            ;;
+          auto|disabled)
+            echo "[changelog] command path: changelog release (auto/disabled orchestrator)"
+            echo "[changelog] openai_profile=${openai_profile}"
+            if ! "$PYTHON_BIN" -m tools.release changelog release \
+              "${common_args[@]}"; then
+              echo "::error::Changelog stage failed. See logs above for path selection/fallback/stale-check diagnostics."
+              exit 1
+            fi
+            ;;
+          *)
+            echo "::error::Unsupported RELEASE_AI_MODE for changelog stage: ${mode}"
+            exit 1
+            ;;
+        esac
+        if [ ! -f "${selection_output}" ]; then
+          echo "::error::Missing changelog selection metadata output: ${selection_output}"
           exit 1
         fi
+        echo "[changelog] selection metadata: ${selection_output}"
         echo "[changelog] completed successfully"
 
     - name: Build Debian + web release artifacts

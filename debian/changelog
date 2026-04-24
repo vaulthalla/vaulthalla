@@ -1,4 +1,4 @@
-vaulthalla (0.35.6-1) unstable; urgency=medium
+vaulthalla (0.35.7-1) unstable; urgency=medium
 
   - update nginx template path
   - enhance installation scripts

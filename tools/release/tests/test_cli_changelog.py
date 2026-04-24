@@ -336,6 +336,7 @@ class CliChangelogReleaseTests(unittest.TestCase):
         payload_output: str = ".changelog_scratch/changelog.payload.json",
         semantic_payload_output: str = ".changelog_scratch/changelog.semantic_payload.json",
         release_notes_output: str = ".changelog_scratch/release_notes.md",
+        selection_output: str | None = None,
         manual_changelog_path: str = "debian/changelog",
         cached_draft_path: str = ".changelog_scratch/changelog.draft.md",
         debian_distribution: str | None = None,
@@ -349,6 +350,7 @@ class CliChangelogReleaseTests(unittest.TestCase):
             payload_output=payload_output,
             semantic_payload_output=semantic_payload_output,
             release_notes_output=release_notes_output,
+            selection_output=selection_output,
             manual_changelog_path=manual_changelog_path,
             cached_draft_path=cached_draft_path,
             debian_distribution=debian_distribution,
@@ -486,6 +488,147 @@ class CliChangelogReleaseTests(unittest.TestCase):
             self.assertEqual(release_notes_target.read_text(encoding="utf-8"), "# Public Notes\n")
             refresh.assert_called_once()
             self.assertIn("Wrote release notes artifact to", out.getvalue())
+
+    def test_release_command_writes_selection_metadata_when_requested(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "release.md"
+            raw_target = Path(temp_dir) / "raw.md"
+            payload_target = Path(temp_dir) / "payload.json"
+            semantic_payload_target = Path(temp_dir) / "semantic-payload.json"
+            release_notes_target = Path(temp_dir) / "release-notes.md"
+            selection_target = Path(temp_dir) / "selection.json"
+            args = self._args(
+                output=str(target),
+                raw_output=str(raw_target),
+                payload_output=str(payload_target),
+                semantic_payload_output=str(semantic_payload_target),
+                release_notes_output=str(release_notes_target),
+                selection_output=str(selection_target),
+            )
+            out = StringIO()
+
+            with (
+                patch("tools.release.cli.build_changelog_context", return_value=object()),
+                patch("tools.release.cli.render_release_changelog", return_value="# Raw Draft\n"),
+                patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
+                patch("tools.release.cli.render_ai_payload_json", return_value='{"schema_version":"x"}\n'),
+                patch("tools.release.cli.build_semantic_ai_payload", return_value={"schema_version": "semantic-x"}),
+                patch(
+                    "tools.release.cli.render_semantic_ai_payload_json",
+                    return_value='{"schema_version":"semantic-x"}\n',
+                ),
+                patch(
+                    "tools.release.cli.parse_release_ai_settings",
+                    return_value=type(
+                        "_ReleaseSettings",
+                        (),
+                        {
+                            "mode": "auto",
+                            "openai_profile": "openai-balanced",
+                            "openai_api_key_present": True,
+                            "local_enabled": False,
+                            "local_profile": None,
+                            "local_base_url_override": None,
+                            "local_api_key": None,
+                        },
+                    )(),
+                ),
+                patch(
+                    "tools.release.cli.resolve_release_changelog",
+                    return_value=type(
+                        "_Selection",
+                        (),
+                        {
+                            "path": "openai",
+                            "content": "# Final Changelog\n",
+                            "release_notes_content": "# Public Notes\n",
+                            "source_path": None,
+                            "local_base_url_overrode_profile": False,
+                        },
+                    )(),
+                ),
+                patch("tools.release.cli.refresh_debian_changelog_entry"),
+                redirect_stdout(out),
+            ):
+                rc = cli.cmd_changelog_release(args)
+
+            self.assertEqual(rc, 0)
+            metadata = json.loads(selection_target.read_text(encoding="utf-8"))
+            self.assertEqual(metadata["selected_path"], "openai")
+            self.assertTrue(metadata["release_notes_generated"])
+            self.assertEqual(metadata["ai_mode"], "auto")
+            self.assertEqual(metadata["openai_profile"], "openai-balanced")
+            self.assertIn("Wrote changelog selection metadata to", out.getvalue())
+
+    def test_release_command_selection_metadata_marks_existing_release_notes_as_generated(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "release.md"
+            raw_target = Path(temp_dir) / "raw.md"
+            payload_target = Path(temp_dir) / "payload.json"
+            semantic_payload_target = Path(temp_dir) / "semantic-payload.json"
+            release_notes_target = Path(temp_dir) / "release-notes.md"
+            selection_target = Path(temp_dir) / "selection.json"
+            release_notes_target.write_text("# Existing AI Notes\n", encoding="utf-8")
+            args = self._args(
+                output=str(target),
+                raw_output=str(raw_target),
+                payload_output=str(payload_target),
+                semantic_payload_output=str(semantic_payload_target),
+                release_notes_output=str(release_notes_target),
+                selection_output=str(selection_target),
+            )
+
+            with (
+                patch("tools.release.cli.build_changelog_context", return_value=object()),
+                patch("tools.release.cli.render_release_changelog", return_value="# Raw Draft\n"),
+                patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
+                patch("tools.release.cli.render_ai_payload_json", return_value='{"schema_version":"x"}\n'),
+                patch("tools.release.cli.build_semantic_ai_payload", return_value={"schema_version": "semantic-x"}),
+                patch(
+                    "tools.release.cli.render_semantic_ai_payload_json",
+                    return_value='{"schema_version":"semantic-x"}\n',
+                ),
+                patch(
+                    "tools.release.cli.parse_release_ai_settings",
+                    return_value=type(
+                        "_ReleaseSettings",
+                        (),
+                        {
+                            "mode": "disabled",
+                            "openai_profile": "openai-balanced",
+                            "openai_api_key_present": True,
+                            "local_enabled": False,
+                            "local_profile": None,
+                            "local_base_url_override": None,
+                            "local_api_key": None,
+                        },
+                    )(),
+                ),
+                patch(
+                    "tools.release.cli.resolve_release_changelog",
+                    return_value=type(
+                        "_Selection",
+                        (),
+                        {
+                            "path": "cached-draft",
+                            "content": "# Final Changelog\n",
+                            "release_notes_content": None,
+                            "source_path": None,
+                            "local_base_url_overrode_profile": False,
+                        },
+                    )(),
+                ),
+                patch("tools.release.cli.refresh_debian_changelog_entry"),
+            ):
+                rc = cli.cmd_changelog_release(args)
+
+            self.assertEqual(rc, 0)
+            metadata = json.loads(selection_target.read_text(encoding="utf-8"))
+            self.assertTrue(metadata["release_notes_generated"])
+            self.assertEqual(
+                Path(metadata["release_notes_output"]).resolve(),
+                release_notes_target.resolve(),
+            )
 
     def test_release_command_refreshes_debian_changelog_for_generated_selection(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -991,7 +1134,7 @@ profiles:
             )
             out = StringIO()
             provider_obj = object()
-            emergency_obj = object()
+            emergency_obj = SimpleNamespace(items=(SimpleNamespace(id="tools:1"),))
 
             with (
                 patch("tools.release.cli.build_changelog_context", return_value=object()),
@@ -1001,7 +1144,7 @@ profiles:
                     return_value={
                         "schema_version": "vaulthalla.release.semantic_payload.v1",
                         "version": "1.2.3",
-                        "categories": [],
+                        "categories": [{"name": "tools"}],
                     },
                 ),
                 patch("tools.release.cli.build_ai_provider_from_args", return_value=provider_obj),
@@ -1032,7 +1175,7 @@ profiles:
                 {
                     "schema_version": "vaulthalla.release.semantic_payload.v1",
                     "version": "1.2.3",
-                    "categories": [],
+                    "categories": [{"name": "tools"}],
                 },
                 provider=provider_obj,
                 provider_kind="openai",
@@ -1046,7 +1189,7 @@ profiles:
                 {
                     "schema_version": "vaulthalla.release.semantic_payload.v1",
                     "version": "1.2.3",
-                    "categories": [],
+                    "categories": [{"name": "tools"}],
                 },
                 emergency_obj,
             )
@@ -1063,6 +1206,152 @@ profiles:
             emergency_artifact = repo_root / ".changelog_scratch" / "emergency_triage.json"
             self.assertTrue(emergency_artifact.is_file())
             self.assertIn("vaulthalla.release.ai_emergency_triage.v1", emergency_artifact.read_text(encoding="utf-8"))
+
+    def test_ai_draft_skips_triage_when_semantic_payload_has_no_categories(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            (repo_root / "VERSION").write_text("1.2.3\n", encoding="utf-8")
+            (repo_root / "ai.yml").write_text(
+                """
+profiles:
+  openai-balanced:
+    provider: openai
+    stages:
+      emergency_triage:
+        model: gpt-5-nano
+      triage:
+        model: gpt-5-nano
+      draft:
+        model: gpt-5-mini
+""",
+                encoding="utf-8",
+            )
+            args = self._args(
+                repo_root=str(repo_root),
+                ai_profile="openai-balanced",
+                provider=None,
+                model=None,
+                use_triage=False,
+            )
+            out = StringIO()
+            provider_obj = object()
+
+            with (
+                patch("tools.release.cli.build_changelog_context", return_value=object()),
+                patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
+                patch(
+                    "tools.release.cli.build_semantic_ai_payload",
+                    return_value={
+                        "schema_version": "vaulthalla.release.semantic_payload.v1",
+                        "version": "1.2.3",
+                        "categories": [],
+                    },
+                ),
+                patch("tools.release.cli.build_ai_provider_from_args", return_value=provider_obj),
+                patch("tools.release.cli.run_emergency_triage_stage") as run_emergency,
+                patch("tools.release.cli.run_triage_stage") as run_triage,
+                patch("tools.release.cli.generate_draft_from_payload", return_value=object()) as generate_draft,
+                patch("tools.release.cli.render_draft_markdown", return_value="# AI Draft\n"),
+                patch("tools.release.cli.render_draft_result_json"),
+                patch("tools.release.cli.run_polish_stage"),
+                patch("tools.release.cli.render_polish_result_json"),
+                patch("tools.release.cli.render_polish_markdown"),
+                redirect_stdout(out),
+            ):
+                result = cli.cmd_changelog_ai_draft(args)
+
+            self.assertEqual(result, 0)
+            run_emergency.assert_not_called()
+            run_triage.assert_not_called()
+            generate_draft.assert_called_once_with(
+                {"schema_version": "x"},
+                provider=provider_obj,
+                source_kind="payload",
+                provider_kind="openai",
+                reasoning_effort=None,
+                structured_mode=None,
+                temperature=0.2,
+                max_output_tokens_policy=AIDynamicRatioTokenBudget(mode="dynamic_ratio", ratio=0.35, min=800, max=4000),
+            )
+            self.assertIn("AI triage skipped: semantic payload has no categories", out.getvalue())
+
+    def test_ai_draft_falls_back_to_raw_semantic_when_emergency_triage_returns_no_items(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            (repo_root / "VERSION").write_text("1.2.3\n", encoding="utf-8")
+            (repo_root / "ai.yml").write_text(
+                """
+profiles:
+  openai-balanced:
+    provider: openai
+    stages:
+      emergency_triage:
+        model: gpt-5-nano
+      triage:
+        model: gpt-5-nano
+      draft:
+        model: gpt-5-mini
+""",
+                encoding="utf-8",
+            )
+            args = self._args(
+                repo_root=str(repo_root),
+                ai_profile="openai-balanced",
+                provider=None,
+                model=None,
+                use_triage=False,
+            )
+            out = StringIO()
+            provider_obj = object()
+            emergency_obj = SimpleNamespace(items=())
+
+            with (
+                patch("tools.release.cli.build_changelog_context", return_value=object()),
+                patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
+                patch(
+                    "tools.release.cli.build_semantic_ai_payload",
+                    return_value={
+                        "schema_version": "vaulthalla.release.semantic_payload.v1",
+                        "version": "1.2.3",
+                        "categories": [{"name": "tools"}],
+                    },
+                ),
+                patch("tools.release.cli.build_ai_provider_from_args", return_value=provider_obj),
+                patch("tools.release.cli.run_emergency_triage_stage", return_value=emergency_obj),
+                patch(
+                    "tools.release.cli.render_emergency_triage_result_json",
+                    return_value='{"schema_version":"vaulthalla.release.ai_emergency_triage.v1","version":"1.2.3","items":[]}\n',
+                ),
+                patch("tools.release.cli.build_triage_input_from_emergency_result") as build_triage_input,
+                patch("tools.release.cli.run_triage_stage", return_value=object()) as run_triage,
+                patch("tools.release.cli.build_triage_ir_payload", return_value={"schema_version": "triage-x"}),
+                patch("tools.release.cli.generate_draft_from_payload", return_value=object()),
+                patch("tools.release.cli.render_draft_markdown", return_value="# AI Draft\n"),
+                patch("tools.release.cli.render_draft_result_json"),
+                patch("tools.release.cli.run_polish_stage"),
+                patch("tools.release.cli.render_polish_result_json"),
+                patch("tools.release.cli.render_polish_markdown"),
+                redirect_stdout(out),
+            ):
+                result = cli.cmd_changelog_ai_draft(args)
+
+            self.assertEqual(result, 0)
+            build_triage_input.assert_not_called()
+            run_triage.assert_called_once_with(
+                {
+                    "schema_version": "vaulthalla.release.semantic_payload.v1",
+                    "version": "1.2.3",
+                    "categories": [{"name": "tools"}],
+                },
+                provider=provider_obj,
+                provider_kind="openai",
+                reasoning_effort=None,
+                structured_mode=None,
+                temperature=0.0,
+                max_output_tokens_policy=300,
+                input_mode="raw_semantic",
+            )
+            self.assertIn("Emergency triage produced zero synthesized items", out.getvalue())
 
     def test_ai_draft_polish_stage_output_and_json(self) -> None:
         with TemporaryDirectory() as temp_dir:

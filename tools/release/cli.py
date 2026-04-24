@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor
+import json
 import os
 import re
 import shutil
@@ -311,6 +312,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output path for optional release_notes markdown when AI path and profile stage enable it.",
     )
     changelog_release_parser.add_argument(
+        "--selection-output",
+        default=None,
+        help="Optional path to write release changelog path-selection metadata JSON.",
+    )
+    changelog_release_parser.add_argument(
         "--manual-changelog-path",
         default="debian/changelog",
         help="Debian changelog file used for manual fallback and release entry updates.",
@@ -543,6 +549,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--release-notes-output",
         default=DEFAULT_RELEASE_NOTES_OUTPUT,
         help="Output path for optional release_notes markdown when stage is enabled by profile.",
+    )
+    changelog_ai_release_parser.add_argument(
+        "--selection-output",
+        default=None,
+        help="Optional path to write release changelog path-selection metadata JSON.",
     )
     changelog_ai_release_parser.set_defaults(func=cmd_changelog_ai_release)
 
@@ -884,6 +895,7 @@ def cmd_changelog_ai_release(args: argparse.Namespace) -> int:
         payload_output=args.payload_output,
         semantic_payload_output=args.semantic_payload_output,
         release_notes_output=args.release_notes_output,
+        selection_output=getattr(args, "selection_output", None),
         manual_changelog_path=args.manual_changelog_path,
         cached_draft_path=draft_output,
         debian_distribution=args.debian_distribution,
@@ -1020,6 +1032,11 @@ def cmd_changelog_ai_draft(args: argparse.Namespace) -> int:
         )
 
     semantic_payload: dict | None = build_semantic_ai_payload(context) if run_triage else None
+    semantic_categories = semantic_payload.get("categories") if isinstance(semantic_payload, dict) else None
+    has_empty_semantic_categories = bool(
+        isinstance(semantic_categories, list)
+        and not any(isinstance(item, dict) for item in semantic_categories)
+    )
 
     draft_input: dict = payload
     source_kind = "payload"
@@ -1032,7 +1049,14 @@ def cmd_changelog_ai_draft(args: argparse.Namespace) -> int:
     release_notes_stage_cfg = pipeline_config.stages["release_notes"]
 
     if run_triage:
-        if run_emergency_triage:
+        if has_empty_semantic_categories:
+            print(
+                "AI triage skipped: semantic payload has no categories; "
+                "drafting directly from deterministic payload."
+            )
+            run_triage = False
+            run_emergency_triage = False
+        if run_triage and run_emergency_triage:
             emergency_provider = build_ai_provider_from_args(
                 args,
                 repo_root=repo_root,
@@ -1074,47 +1098,52 @@ def cmd_changelog_ai_draft(args: argparse.Namespace) -> int:
             print("Emergency triage: artifact write end")
             if emergency_output != "-":
                 print(f"Wrote emergency triage artifact to {Path(emergency_output).resolve()}")
-            if semantic_payload is not None:
+            if semantic_payload is not None and emergency_result.items:
                 triage_input_payload = build_triage_input_from_emergency_result(
                     semantic_payload,
                     emergency_result,
                 )
                 triage_input_mode = "synthesized_semantic"
+            else:
+                print(
+                    "Emergency triage produced zero synthesized items; "
+                    "falling back to raw semantic triage input."
+                )
+        if run_triage:
+            triage_provider = build_ai_provider_from_args(args, repo_root=repo_root, stage="triage")
+            try:
+                triage_result = run_triage_stage(
+                    triage_input_payload,
+                    provider=triage_provider,
+                    provider_kind=pipeline_config.provider,
+                    reasoning_effort=triage_stage_cfg.reasoning_effort,
+                    structured_mode=triage_stage_cfg.structured_mode,
+                    temperature=triage_stage_cfg.temperature,
+                    max_output_tokens_policy=triage_stage_cfg.max_output_tokens,
+                    input_mode=triage_input_mode,
+                )
+            except Exception as exc:
+                _capture_stage_failure_artifact(
+                    repo_root=repo_root,
+                    args=args,
+                    stage="triage",
+                    pipeline_config=pipeline_config,
+                    provider=triage_provider,
+                    exc=exc,
+                    stage_settings={
+                        "structured_mode": triage_stage_cfg.structured_mode,
+                        "reasoning_effort": triage_stage_cfg.reasoning_effort,
+                        "temperature": triage_stage_cfg.temperature,
+                        "max_output_tokens_policy": str(triage_stage_cfg.max_output_tokens),
+                    },
+                )
+                raise _stage_failure("Triage", exc) from exc
+            draft_input = build_triage_ir_payload(triage_result)
+            source_kind = "triage"
 
-        triage_provider = build_ai_provider_from_args(args, repo_root=repo_root, stage="triage")
-        try:
-            triage_result = run_triage_stage(
-                triage_input_payload,
-                provider=triage_provider,
-                provider_kind=pipeline_config.provider,
-                reasoning_effort=triage_stage_cfg.reasoning_effort,
-                structured_mode=triage_stage_cfg.structured_mode,
-                temperature=triage_stage_cfg.temperature,
-                max_output_tokens_policy=triage_stage_cfg.max_output_tokens,
-                input_mode=triage_input_mode,
-            )
-        except Exception as exc:
-            _capture_stage_failure_artifact(
-                repo_root=repo_root,
-                args=args,
-                stage="triage",
-                pipeline_config=pipeline_config,
-                provider=triage_provider,
-                exc=exc,
-                stage_settings={
-                    "structured_mode": triage_stage_cfg.structured_mode,
-                    "reasoning_effort": triage_stage_cfg.reasoning_effort,
-                    "temperature": triage_stage_cfg.temperature,
-                    "max_output_tokens_policy": str(triage_stage_cfg.max_output_tokens),
-                },
-            )
-            raise _stage_failure("Triage", exc) from exc
-        draft_input = build_triage_ir_payload(triage_result)
-        source_kind = "triage"
-
-        if args.save_triage_json:
-            write_output(render_triage_result_json(triage_result), args.save_triage_json)
-            print(f"Wrote AI triage JSON to {Path(args.save_triage_json).resolve()}")
+            if args.save_triage_json:
+                write_output(render_triage_result_json(triage_result), args.save_triage_json)
+                print(f"Wrote AI triage JSON to {Path(args.save_triage_json).resolve()}")
 
     try:
         draft = generate_draft_from_payload(
@@ -1343,6 +1372,30 @@ def _run_changelog_release_with_settings(
         if release_notes_content is not None:
             write_output(release_notes_content, release_notes_output)
             _print_status(f"Wrote release notes artifact to {Path(release_notes_output).resolve()}")
+        release_notes_path = Path(release_notes_output)
+        if not release_notes_path.is_absolute():
+            release_notes_path = (repo_root / release_notes_path).resolve()
+        release_notes_generated = False
+        if isinstance(release_notes_content, str) and release_notes_content.strip():
+            release_notes_generated = True
+        elif release_notes_path.is_file():
+            existing_release_notes = release_notes_path.read_text(encoding="utf-8")
+            release_notes_generated = bool(existing_release_notes.strip())
+        selection_output = getattr(args, "selection_output", None)
+        if selection_output:
+            selection_metadata = {
+                "schema_version": "vaulthalla.release.changelog_selection.v1",
+                "selected_path": selection.path,
+                "source_path": str(selection.source_path) if selection.source_path is not None else None,
+                "release_notes_generated": release_notes_generated,
+                "release_notes_output": str(release_notes_path),
+                "ai_mode": env_settings.mode,
+                "openai_profile": env_settings.openai_profile,
+                "local_profile": env_settings.local_profile,
+                "local_enabled": env_settings.local_enabled,
+            }
+            write_output(json.dumps(selection_metadata, indent=2) + "\n", selection_output)
+            _print_status(f"Wrote changelog selection metadata to {Path(selection_output).resolve()}")
         if selection.path == "local" and env_settings.local_base_url_override:
             if selection.local_base_url_overrode_profile:
                 _print_status("Local base_url override status: applied from RELEASE_LOCAL_LLM_BASE_URL.")
