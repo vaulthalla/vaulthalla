@@ -1,3 +1,0 @@
-pkgroot/usr/share/vaulthalla-web/* usr/share/vaulthalla-web/
-deploy/nginx/vaulthalla.conf etc/nginx/sites-available/vaulthalla
-deploy/systemd/vaulthalla-web.service etc/systemd/system/vaulthalla-web.service

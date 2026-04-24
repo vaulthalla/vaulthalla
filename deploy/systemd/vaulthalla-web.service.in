@@ -11,6 +11,8 @@ WorkingDirectory=/usr/share/vaulthalla-web
 Environment=NODE_ENV=production
 Environment=PORT=36968
 Environment=HOSTNAME=127.0.0.1
+Environment=VAULTHALLA_WEB_INTERNAL_ORIGIN=http://127.0.0.1:36968
+Environment=NEXT_PUBLIC_SERVER_ADDR=https://demo.vaulthalla.io
 
 [Install]
 WantedBy=multi-user.target
