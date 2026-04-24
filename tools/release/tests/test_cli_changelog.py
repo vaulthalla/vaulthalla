@@ -1040,6 +1040,7 @@ profiles:
                 structured_mode=None,
                 temperature=0.0,
                 max_output_tokens_policy=AIDynamicRatioTokenBudget(mode="dynamic_ratio", ratio=0.55, min=1200, max=12000),
+                progress_logger=print,
             )
             build_triage_input.assert_called_once_with(
                 {
