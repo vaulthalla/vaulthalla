@@ -340,7 +340,11 @@ interactive_select_local_user() {
 
 run_apt_install_flow() {
     local -a apt_opts=()
-    local -a install_env=("DEBIAN_FRONTEND=noninteractive")
+    local -a install_env=(
+        "DEBIAN_FRONTEND=noninteractive"
+        "NEEDRESTART_MODE=a"
+        "NEEDRESTART_SUSPEND=1"
+    )
 
     case "$PROFILE" in
         lean)
@@ -360,7 +364,7 @@ run_apt_install_flow() {
     esac
 
     log "Running apt-get update."
-    run_priv env DEBIAN_FRONTEND=noninteractive apt-get update
+    run_priv env "${install_env[@]}" apt-get update
 
     log "Installing vaulthalla package (profile: ${PROFILE})."
     run_priv env "${install_env[@]}" apt-get install -y "${apt_opts[@]}" vaulthalla
