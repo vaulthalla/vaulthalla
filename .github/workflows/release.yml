@@ -38,22 +38,58 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Python release-tooling dependencies
+      - name: Install OS packages required for Python venv
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m pip install -r requirements.txt
+          if ! command -v apt-get >/dev/null 2>&1; then
+            echo "::error::Expected apt-based runner for venv provisioning."
+            exit 1
+          fi
+          APT_PREFIX=""
+          if command -v sudo >/dev/null 2>&1; then
+            APT_PREFIX="sudo"
+          fi
+          ${APT_PREFIX} apt-get update
+          if apt-cache show python3.12-venv >/dev/null 2>&1; then
+            ${APT_PREFIX} apt-get install -y python3.12-venv
+            echo "RELEASE_VENV_OS_PACKAGE=python3.12-venv" >> "$GITHUB_ENV"
+          elif apt-cache show python3-venv >/dev/null 2>&1; then
+            ${APT_PREFIX} apt-get install -y python3-venv
+            echo "RELEASE_VENV_OS_PACKAGE=python3-venv" >> "$GITHUB_ENV"
+          else
+            echo "::error::Could not find python3.12-venv or python3-venv packages."
+            exit 1
+          fi
 
-      - name: Verify Python release-tooling environment
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Create release-tooling venv and install dependencies
         shell: bash
         run: |
           set -euo pipefail
-          python3 -c "import openai"
+          python -m venv .venv
+          .venv/bin/python --version
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install -r requirements.txt
+          echo "RELEASE_PYTHON=${GITHUB_WORKSPACE}/.venv/bin/python" >> "$GITHUB_ENV"
+
+      - name: Verify release-tooling interpreter and SDK imports
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Using OS venv package: ${RELEASE_VENV_OS_PACKAGE:-<unset>}"
+          "${RELEASE_PYTHON}" --version
+          "${RELEASE_PYTHON}" -m pip --version
+          "${RELEASE_PYTHON}" -c "import openai"
 
       - name: Validate release state
         shell: bash
         run: |
-          python3 -m tools.release check
+          "${RELEASE_PYTHON}" -m tools.release check
 
       - name: Build core
         uses: ./.github/actions/build
@@ -64,7 +100,7 @@ jobs:
       - name: Run release tooling tests
         shell: bash
         run: |
-          python3 -m unittest discover -s tools/release/tests -p 'test_*.py'
+          "${RELEASE_PYTHON}" -m unittest discover -s tools/release/tests -p 'test_*.py'
 
       - name: Setup web toolchain
         uses: ./.github/actions/setup_web
@@ -80,6 +116,7 @@ jobs:
         uses: ./.github/actions/package
         with:
           output_dir: release
+          python_executable: ${{ env.RELEASE_PYTHON }}
 
       - name: Verify release artifact directory before upload
         shell: bash
@@ -178,7 +215,7 @@ jobs:
             publish_args+=(--require-enabled)
           fi
 
-          if ! python3 -m tools.release publish-deb "${publish_args[@]}"; then
+          if ! "${RELEASE_PYTHON}" -m tools.release publish-deb "${publish_args[@]}"; then
             echo "::error::Debian publication stage failed. Review publication logs for configuration, artifact selection, and upload diagnostics."
             exit 1
           fi

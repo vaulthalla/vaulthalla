@@ -6,6 +6,10 @@ inputs:
     description: Relative output directory where build artifacts are written.
     required: false
     default: release
+  python_executable:
+    description: Python interpreter used for release tooling commands.
+    required: false
+    default: python3
 
 outputs:
   artifact_dir:
@@ -19,7 +23,14 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        PYTHON_BIN="${{ inputs.python_executable }}"
         echo "[preflight] validating runner + release environment assumptions"
+        echo "[preflight] PYTHON_BIN=${PYTHON_BIN}"
+        if [ ! -x "$PYTHON_BIN" ] && ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+          echo "::error::Configured python executable is not available: ${PYTHON_BIN}"
+          exit 1
+        fi
+        "$PYTHON_BIN" --version
         echo "[preflight] RELEASE_AI_MODE=${RELEASE_AI_MODE:-<unset>}"
         echo "[preflight] RELEASE_AI_PROFILE_OPENAI=${RELEASE_AI_PROFILE_OPENAI:-<unset>}"
         echo "[preflight] RELEASE_LOCAL_LLM_ENABLED=${RELEASE_LOCAL_LLM_ENABLED:-<unset>}"
@@ -80,7 +91,6 @@ runs:
           exit 1
         fi
 
-        command -v python3 >/dev/null 2>&1 || { echo "::error::python3 is not available on runner PATH."; exit 1; }
         command -v pnpm >/dev/null 2>&1 || { echo "::error::pnpm is not available on runner PATH."; exit 1; }
         command -v dpkg-buildpackage >/dev/null 2>&1 || { echo "::error::dpkg-buildpackage is not available on runner PATH."; exit 1; }
         command -v dpkg-deb >/dev/null 2>&1 || { echo "::error::dpkg-deb is not available on runner PATH."; exit 1; }
@@ -90,6 +100,7 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        PYTHON_BIN="${{ inputs.python_executable }}"
         scratch_dir=".changelog_scratch"
         artifact_dir="${{ inputs.output_dir }}"
         if [ -z "$artifact_dir" ] || [ "$artifact_dir" = "/" ] || [ "$artifact_dir" = "." ]; then
@@ -100,7 +111,7 @@ runs:
         rm -rf "$scratch_dir" "$artifact_dir"
         mkdir -p "$artifact_dir"
         echo "[changelog] starting changelog generation/validation"
-        if ! python3 -m tools.release changelog release \
+        if ! "$PYTHON_BIN" -m tools.release changelog release \
           --output "${{ inputs.output_dir }}/changelog.release.md" \
           --raw-output "${{ inputs.output_dir }}/changelog.raw.md" \
           --payload-output "${{ inputs.output_dir }}/changelog.payload.json" \
@@ -115,8 +126,9 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        PYTHON_BIN="${{ inputs.python_executable }}"
         echo "[package] starting Debian + web artifact build"
-        if ! python3 -m tools.release build-deb --output-dir "${{ inputs.output_dir }}"; then
+        if ! "$PYTHON_BIN" -m tools.release build-deb --output-dir "${{ inputs.output_dir }}"; then
           echo "::error::Packaging stage failed (Debian build, web build, or artifact staging)."
           exit 1
         fi
@@ -126,8 +138,9 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        PYTHON_BIN="${{ inputs.python_executable }}"
         echo "[validate] validating staged release artifact contract"
-        if ! python3 -m tools.release validate-release-artifacts --output-dir "${{ inputs.output_dir }}"; then
+        if ! "$PYTHON_BIN" -m tools.release validate-release-artifacts --output-dir "${{ inputs.output_dir }}"; then
           echo "::error::Release artifact validation failed. Missing/invalid outputs were reported above."
           exit 1
         fi
