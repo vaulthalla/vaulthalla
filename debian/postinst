@@ -633,6 +633,31 @@ bootstrap_db_if_safe() {
     perform_fresh_local_db_bootstrap
 }
 
+setup_web_runtime_cache() {
+    WEB_ROOT="/usr/share/vaulthalla-web"
+    CACHE_DIR="/var/cache/vaulthalla-web"
+    CACHE_LINK="${WEB_ROOT}/.next/cache"
+
+    if [ ! -d "${WEB_ROOT}/.next" ]; then
+        echo "[${PKG}] Web cache: skipped (${WEB_ROOT}/.next not present)."
+        return 0
+    fi
+
+    install -d -m 0750 -o "$DB_USER" -g "$DB_USER" "$CACHE_DIR"
+
+    if [ -e "$CACHE_LINK" ] && [ ! -L "$CACHE_LINK" ]; then
+        rm -rf "$CACHE_LINK"
+    fi
+
+    if [ ! -e "$CACHE_LINK" ]; then
+        ln -s "$CACHE_DIR" "$CACHE_LINK"
+    fi
+
+    chown -h "$DB_USER:$DB_USER" "$CACHE_LINK" 2>/dev/null || true
+
+    echo "[${PKG}] Web cache: ${CACHE_LINK} -> ${CACHE_DIR}"
+}
+
 nginx_installed() {
     has_command nginx && [ -d /etc/nginx ]
 }
@@ -745,6 +770,7 @@ case "$1" in
     create_dir /run/vaulthalla     0750 "$DB_USER" "$DB_USER"
     install -d -m 0755 /etc/vaulthalla
     [ -d /mnt/vaulthalla ] || create_dir /mnt/vaulthalla 0755 "$DB_USER" "$DB_USER"
+    setup_web_runtime_cache
     ensure_fuse_allow_other
     align_config_file_permissions /etc/vaulthalla/config.yaml
     align_config_file_permissions /etc/vaulthalla/config_template.yaml.in

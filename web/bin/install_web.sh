@@ -31,6 +31,27 @@ require_command() {
   fi
 }
 
+setup_web_runtime_cache() {
+    local web_root="${WEB_INSTALL_DIR:-/usr/share/vaulthalla-web}"
+    local cache_dir="/var/cache/vaulthalla-web"
+    local cache_link="${web_root}/.next/cache"
+
+    sudo install -d -m 0750 -o vaulthalla -g vaulthalla "$cache_dir"
+    sudo install -d -m 0755 "$web_root/.next"
+
+    if [[ -e "$cache_link" && ! -L "$cache_link" ]]; then
+        sudo rm -rf "$cache_link"
+    fi
+
+    if [[ ! -e "$cache_link" ]]; then
+        sudo ln -s "$cache_dir" "$cache_link"
+    fi
+
+    sudo chown -h vaulthalla:vaulthalla "$cache_link" || true
+
+    echo "[install_web] runtime cache ready: ${cache_link} -> ${cache_dir}"
+}
+
 run_in_web_dir() {
   (
     cd "$WEB_DIR"
@@ -75,6 +96,11 @@ sudo cp -a "$WEB_STATIC_DIR" "$WEB_INSTALL_DIR/.next/"
 if [[ -d "$WEB_PUBLIC_DIR" ]]; then
   sudo cp -a "$WEB_PUBLIC_DIR" "$WEB_INSTALL_DIR/"
 fi
+
+# Debian package payload ownership at rest is root-owned.
+sudo chown -R root:root "$WEB_INSTALL_DIR"
+
+setup_web_runtime_cache
 
 # Debian package payload ownership at rest is root-owned.
 sudo chown -R root:root "$WEB_INSTALL_DIR"
