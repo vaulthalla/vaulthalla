@@ -32,6 +32,7 @@ from tools.release.changelog.ai.stages.emergency_triage import (
     run_emergency_triage_stage,
 )
 from tools.release.changelog.ai.stages.polish import run_polish_stage
+from tools.release.changelog.ai.stages.release_notes import run_release_notes_stage
 from tools.release.changelog.ai.stages.triage import run_triage_stage
 from tools.release.version.adapters.debian import CHANGELOG_HEADER_PATTERN, parse_debian_version
 from tools.release.version.adapters.version_file import read_version_file
@@ -81,6 +82,7 @@ class ReleaseChangelogSelection:
     content: str
     source_path: Path | None = None
     local_base_url_overrode_profile: bool = False
+    release_notes_content: str | None = None
 
 
 @dataclass(frozen=True)
@@ -156,7 +158,7 @@ def resolve_release_changelog(
                 emit(f"Skipping OpenAI path: {reason}")
                 continue
             try:
-                content = _generate_openai_release_changelog(
+                content, release_notes_content = _generate_openai_release_changelog(
                     repo_root=repo_root,
                     payload=payload,
                     semantic_payload=semantic_payload,
@@ -167,7 +169,11 @@ def resolve_release_changelog(
                 emit(f"OpenAI path failed, falling back: {exc}")
                 continue
             emit("Selected changelog path: OpenAI")
-            return ReleaseChangelogSelection(path="openai", content=content)
+            return ReleaseChangelogSelection(
+                path="openai",
+                content=content,
+                release_notes_content=release_notes_content,
+            )
 
         if candidate == "local":
             can_use_local, reason = _can_attempt_local(settings)
@@ -175,7 +181,7 @@ def resolve_release_changelog(
                 emit(f"Skipping local LLM path: {reason}")
                 continue
             try:
-                content, used_override = _generate_local_release_changelog(
+                content, release_notes_content, used_override = _generate_local_release_changelog(
                     repo_root=repo_root,
                     payload=payload,
                     semantic_payload=semantic_payload,
@@ -190,6 +196,7 @@ def resolve_release_changelog(
                 path="local",
                 content=content,
                 local_base_url_overrode_profile=used_override,
+                release_notes_content=release_notes_content,
             )
 
         if candidate == "cached-draft":
@@ -435,7 +442,7 @@ def _generate_openai_release_changelog(
     semantic_payload: dict | None,
     settings: ReleaseAISettings,
     logger: Callable[[str], None],
-) -> str:
+) -> tuple[str, str | None]:
     pipeline = resolve_ai_pipeline_config(
         repo_root=repo_root,
         profile_slug=settings.openai_profile,
@@ -458,7 +465,7 @@ def _generate_local_release_changelog(
     semantic_payload: dict | None,
     settings: ReleaseAISettings,
     logger: Callable[[str], None],
-) -> tuple[str, bool]:
+) -> tuple[str, str | None, bool]:
     assert settings.local_profile is not None
     pipeline, profile_base_url, override_applied = resolve_local_release_pipeline_config(
         repo_root=repo_root,
@@ -476,7 +483,7 @@ def _generate_local_release_changelog(
     if settings.local_api_key:
         logger("Using RELEASE_LOCAL_LLM_API_KEY for local OpenAI-compatible gateway authentication.")
     logger(f"Attempting local profile `{settings.local_profile}`.")
-    content = _run_release_ai_pipeline(
+    content, release_notes = _run_release_ai_pipeline(
         repo_root=repo_root,
         payload=payload,
         semantic_payload=semantic_payload,
@@ -484,7 +491,7 @@ def _generate_local_release_changelog(
         local_api_key=settings.local_api_key,
         logger=logger,
     )
-    return content, override_applied
+    return content, release_notes, override_applied
 
 
 def _run_release_ai_pipeline(
@@ -495,16 +502,19 @@ def _run_release_ai_pipeline(
     pipeline: AIPipelineConfig,
     local_api_key: str | None = None,
     logger: Callable[[str], None],
-) -> str:
+) -> tuple[str, str | None]:
+    emit = logger or (lambda _line: None)
     run_triage = pipeline.is_stage_enabled("triage")
     run_emergency_triage = pipeline.is_stage_enabled("emergency_triage") and run_triage
     run_polish = pipeline.is_stage_enabled("polish")
+    run_release_notes = pipeline.is_stage_enabled("release_notes")
 
     providers = _build_stage_providers(
         pipeline=pipeline,
         include_emergency_triage=run_emergency_triage,
         include_triage=run_triage,
         include_polish=run_polish,
+        include_release_notes=run_release_notes,
         local_api_key=local_api_key if pipeline.provider == "openai-compatible" else None,
         logger=logger,
     )
@@ -517,6 +527,7 @@ def _run_release_ai_pipeline(
     triage_cfg = pipeline.stages["triage"]
     draft_cfg = pipeline.stages["draft"]
     polish_cfg = pipeline.stages["polish"]
+    release_notes_cfg = pipeline.stages["release_notes"]
 
     if run_triage:
         if run_emergency_triage and isinstance(semantic_payload, dict):
@@ -613,6 +624,36 @@ def _run_release_ai_pipeline(
         )
         raise ValueError(f"Draft stage failed: {exc}") from exc
 
+    draft_markdown = render_draft_markdown(draft)
+    release_notes_markdown: str | None = None
+    if run_release_notes:
+        try:
+            release_notes_result = run_release_notes_stage(
+                draft_markdown,
+                provider=providers["release_notes"],
+                provider_kind=pipeline.provider,
+                reasoning_effort=release_notes_cfg.reasoning_effort,
+                structured_mode=release_notes_cfg.structured_mode,
+                temperature=release_notes_cfg.temperature,
+                max_output_tokens_policy=release_notes_cfg.max_output_tokens,
+            )
+            release_notes_markdown = release_notes_result.markdown
+        except Exception as exc:
+            _capture_release_stage_failure_artifact(
+                repo_root=repo_root,
+                pipeline=pipeline,
+                stage="release_notes",
+                provider=providers["release_notes"],
+                exc=exc,
+                stage_settings={
+                    "structured_mode": release_notes_cfg.structured_mode,
+                    "reasoning_effort": release_notes_cfg.reasoning_effort,
+                    "temperature": release_notes_cfg.temperature,
+                    "max_output_tokens_policy": str(release_notes_cfg.max_output_tokens),
+                },
+            )
+            raise ValueError(f"Release notes stage failed: {exc}") from exc
+
     polish_result: AIPolishResult | None = None
     if run_polish:
         try:
@@ -642,8 +683,8 @@ def _run_release_ai_pipeline(
             raise ValueError(f"Polish stage failed: {exc}") from exc
 
     if polish_result is not None:
-        return render_polish_markdown(polish_result)
-    return render_draft_markdown(draft)
+        return render_polish_markdown(polish_result), release_notes_markdown
+    return draft_markdown, release_notes_markdown
 
 
 def _build_stage_providers(
@@ -652,6 +693,7 @@ def _build_stage_providers(
     include_emergency_triage: bool,
     include_triage: bool,
     include_polish: bool,
+    include_release_notes: bool,
     local_api_key: str | None,
     logger: Callable[[str], None],
 ) -> dict[AIStageName, StructuredJSONProvider]:
@@ -663,6 +705,8 @@ def _build_stage_providers(
     stage_order.append("draft")
     if include_polish:
         stage_order.append("polish")
+    if include_release_notes:
+        stage_order.append("release_notes")
 
     providers_by_fingerprint: dict[tuple[str, str, str | None, str | None], StructuredJSONProvider] = {}
     stage_providers: dict[AIStageName, StructuredJSONProvider] = {}

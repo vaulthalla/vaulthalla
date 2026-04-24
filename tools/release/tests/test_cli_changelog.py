@@ -335,6 +335,7 @@ class CliChangelogReleaseTests(unittest.TestCase):
         raw_output: str = ".changelog_scratch/changelog.raw.md",
         payload_output: str = ".changelog_scratch/changelog.payload.json",
         semantic_payload_output: str = ".changelog_scratch/changelog.semantic_payload.json",
+        release_notes_output: str = ".changelog_scratch/release_notes.md",
         manual_changelog_path: str = "debian/changelog",
         cached_draft_path: str = ".changelog_scratch/changelog.draft.md",
         debian_distribution: str | None = None,
@@ -347,6 +348,7 @@ class CliChangelogReleaseTests(unittest.TestCase):
             raw_output=raw_output,
             payload_output=payload_output,
             semantic_payload_output=semantic_payload_output,
+            release_notes_output=release_notes_output,
             manual_changelog_path=manual_changelog_path,
             cached_draft_path=cached_draft_path,
             debian_distribution=debian_distribution,
@@ -419,6 +421,71 @@ class CliChangelogReleaseTests(unittest.TestCase):
             self.assertIn("Wrote changelog semantic payload evidence to", rendered)
             self.assertIn("Wrote release changelog to", rendered)
             self.assertIn("Debian changelog entry update skipped", rendered)
+
+    def test_release_command_writes_release_notes_artifact_when_selection_includes_it(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "release.md"
+            raw_target = Path(temp_dir) / "raw.md"
+            payload_target = Path(temp_dir) / "payload.json"
+            semantic_payload_target = Path(temp_dir) / "semantic-payload.json"
+            release_notes_target = Path(temp_dir) / "release-notes.md"
+            args = self._args(
+                output=str(target),
+                raw_output=str(raw_target),
+                payload_output=str(payload_target),
+                semantic_payload_output=str(semantic_payload_target),
+                release_notes_output=str(release_notes_target),
+            )
+            out = StringIO()
+
+            with (
+                patch("tools.release.cli.build_changelog_context", return_value=object()),
+                patch("tools.release.cli.render_release_changelog", return_value="# Raw Draft\n"),
+                patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
+                patch("tools.release.cli.render_ai_payload_json", return_value='{"schema_version":"x"}\n'),
+                patch("tools.release.cli.build_semantic_ai_payload", return_value={"schema_version": "semantic-x"}),
+                patch(
+                    "tools.release.cli.render_semantic_ai_payload_json",
+                    return_value='{"schema_version":"semantic-x"}\n',
+                ),
+                patch(
+                    "tools.release.cli.parse_release_ai_settings",
+                    return_value=type(
+                        "_ReleaseSettings",
+                        (),
+                        {
+                            "mode": "auto",
+                            "openai_profile": "openai-balanced",
+                            "openai_api_key_present": True,
+                            "local_enabled": False,
+                            "local_profile": None,
+                            "local_base_url_override": None,
+                            "local_api_key": None,
+                        },
+                    )(),
+                ),
+                patch(
+                    "tools.release.cli.resolve_release_changelog",
+                    return_value=type(
+                        "_Selection",
+                        (),
+                        {
+                            "path": "openai",
+                            "content": "# Final Changelog\n",
+                            "release_notes_content": "# Public Notes\n",
+                            "local_base_url_overrode_profile": False,
+                        },
+                    )(),
+                ),
+                patch("tools.release.cli.refresh_debian_changelog_entry") as refresh,
+                redirect_stdout(out),
+            ):
+                rc = cli.cmd_changelog_release(args)
+
+            self.assertEqual(rc, 0)
+            self.assertEqual(release_notes_target.read_text(encoding="utf-8"), "# Public Notes\n")
+            refresh.assert_called_once()
+            self.assertIn("Wrote release notes artifact to", out.getvalue())
 
     def test_release_command_refreshes_debian_changelog_for_generated_selection(self) -> None:
         with TemporaryDirectory() as temp_dir:

@@ -306,6 +306,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output path for deterministic semantic payload evidence JSON.",
     )
     changelog_release_parser.add_argument(
+        "--release-notes-output",
+        default=DEFAULT_RELEASE_NOTES_OUTPUT,
+        help="Output path for optional release_notes markdown when AI path and profile stage enable it.",
+    )
+    changelog_release_parser.add_argument(
         "--manual-changelog-path",
         default="debian/changelog",
         help="Debian changelog file used for manual fallback and release entry updates.",
@@ -878,6 +883,7 @@ def cmd_changelog_ai_release(args: argparse.Namespace) -> int:
         raw_output=args.raw_output,
         payload_output=args.payload_output,
         semantic_payload_output=args.semantic_payload_output,
+        release_notes_output=args.release_notes_output,
         manual_changelog_path=args.manual_changelog_path,
         cached_draft_path=draft_output,
         debian_distribution=args.debian_distribution,
@@ -1332,6 +1338,11 @@ def _run_changelog_release_with_settings(
         _print_status("Changelog release stage: write selected release changelog")
         write_output(selection.content, args.output)
         _print_status(f"Wrote release changelog to {Path(args.output).resolve()}")
+        release_notes_output = getattr(args, "release_notes_output", DEFAULT_RELEASE_NOTES_OUTPUT)
+        release_notes_content = getattr(selection, "release_notes_content", None)
+        if release_notes_content is not None:
+            write_output(release_notes_content, release_notes_output)
+            _print_status(f"Wrote release notes artifact to {Path(release_notes_output).resolve()}")
         if selection.path == "local" and env_settings.local_base_url_override:
             if selection.local_base_url_overrode_profile:
                 _print_status("Local base_url override status: applied from RELEASE_LOCAL_LLM_BASE_URL.")

@@ -52,7 +52,7 @@ class ReleaseWorkflowSelectionTests(unittest.TestCase):
             with (
                 patch(
                     "tools.release.changelog.release_workflow._generate_openai_release_changelog",
-                    return_value="# OpenAI Draft\n",
+                    return_value=("# OpenAI Draft\n", "# OpenAI Release Notes\n"),
                 ) as openai_path,
                 patch("tools.release.changelog.release_workflow._generate_local_release_changelog") as local_path,
                 patch("tools.release.changelog.release_workflow.validate_manual_changelog_current") as manual_path,
@@ -66,6 +66,7 @@ class ReleaseWorkflowSelectionTests(unittest.TestCase):
 
             self.assertEqual(result.path, "openai")
             self.assertEqual(result.content, "# OpenAI Draft\n")
+            self.assertEqual(result.release_notes_content, "# OpenAI Release Notes\n")
             openai_path.assert_called_once()
             local_path.assert_not_called()
             manual_path.assert_not_called()

@@ -103,7 +103,8 @@ runs:
         if ! python3 -m tools.release changelog release \
           --output "${{ inputs.output_dir }}/changelog.release.md" \
           --raw-output "${{ inputs.output_dir }}/changelog.raw.md" \
-          --payload-output "${{ inputs.output_dir }}/changelog.payload.json"; then
+          --payload-output "${{ inputs.output_dir }}/changelog.payload.json" \
+          --release-notes-output "${{ inputs.output_dir }}/release_notes.md"; then
           echo "::error::Changelog stage failed. See logs above for path selection/fallback/stale-check diagnostics."
           exit 1
         fi
