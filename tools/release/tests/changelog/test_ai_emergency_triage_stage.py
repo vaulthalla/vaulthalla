@@ -108,6 +108,21 @@ class _BatchDriftProvider:
         }
 
 
+class _MonotonicFeeder:
+    def __init__(self, values: list[float]) -> None:
+        self._values = values
+        self._index = 0
+
+    def __call__(self) -> float:
+        if not self._values:
+            return 0.0
+        if self._index >= len(self._values):
+            return self._values[-1]
+        value = self._values[self._index]
+        self._index += 1
+        return value
+
+
 def _sample_semantic_payload() -> dict:
     return {
         "schema_version": "vaulthalla.release.semantic_payload.v1",
@@ -250,19 +265,61 @@ class AIEmergencyTriageStageTests(unittest.TestCase):
             ):
                 _ = run_emergency_triage_stage(payload, provider=provider)
 
-    def test_run_stage_defaults_to_per_item_requests_for_identity_safety(self) -> None:
+    def test_run_stage_defaults_to_bounded_request_scope(self) -> None:
         payload = _sample_semantic_payload_with_hunks(3)
         provider = _BatchEchoProvider()
         result = run_emergency_triage_stage(payload, provider=provider)
 
         self.assertEqual(len(result.items), 3)
-        self.assertEqual(len(provider.calls), 3)
+        self.assertEqual(len(provider.calls), 1)
         marker = "Emergency triage input payload:\n"
         scoped_ids = [
             [entry["id"] for entry in json.loads(call["user_prompt"].split(marker, 1)[1])["items"]]
             for call in provider.calls
         ]
-        self.assertEqual(scoped_ids, [["tools:1"], ["tools:2"], ["tools:3"]])
+        self.assertEqual(scoped_ids, [["tools:1", "tools:2", "tools:3"]])
+
+    def test_no_progress_timeout_resets_after_successful_batch_completion(self) -> None:
+        payload = _sample_semantic_payload_with_hunks(3)
+        provider = _BatchEchoProvider()
+        # Call pattern with batch_size=1:
+        # init, check, provider_start, provider_end, progress_update (per batch).
+        monotonic = _MonotonicFeeder(
+            [
+                0.0,
+                5.0, 5.0, 15.0, 16.0,
+                45.0, 45.0, 55.0, 56.0,
+                85.0, 85.0, 95.0, 96.0,
+            ]
+        )
+        with (
+            patch("tools.release.changelog.ai.stages.emergency_triage._EMERGENCY_TRIAGE_BATCH_SIZE", 1),
+            patch("tools.release.changelog.ai.stages.emergency_triage._EMERGENCY_TRIAGE_NO_PROGRESS_TIMEOUT_SECONDS", 30.0),
+            patch("tools.release.changelog.ai.stages.emergency_triage.time.monotonic", new=monotonic),
+        ):
+            result = run_emergency_triage_stage(payload, provider=provider)
+
+        self.assertEqual(len(result.items), 3)
+        self.assertEqual(len(provider.calls), 3)
+
+    def test_no_progress_timeout_still_fails_true_stall(self) -> None:
+        payload = _sample_semantic_payload_with_hunks(3)
+        provider = _BatchEchoProvider()
+        # First batch completes, then no progress for too long before next dispatch check.
+        monotonic = _MonotonicFeeder(
+            [
+                0.0,
+                5.0, 5.0, 10.0, 11.0,
+                50.0,
+            ]
+        )
+        with (
+            patch("tools.release.changelog.ai.stages.emergency_triage._EMERGENCY_TRIAGE_BATCH_SIZE", 1),
+            patch("tools.release.changelog.ai.stages.emergency_triage._EMERGENCY_TRIAGE_NO_PROGRESS_TIMEOUT_SECONDS", 30.0),
+            patch("tools.release.changelog.ai.stages.emergency_triage.time.monotonic", new=monotonic),
+        ):
+            with self.assertRaisesRegex(TimeoutError, r"no forward progress.*batch=2/3"):
+                _ = run_emergency_triage_stage(payload, provider=provider)
 
     def test_build_synthesized_triage_input_payload(self) -> None:
         payload = _sample_semantic_payload()

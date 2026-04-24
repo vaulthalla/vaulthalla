@@ -1033,6 +1033,7 @@ def cmd_changelog_ai_draft(args: argparse.Namespace) -> int:
                 stage="emergency_triage",
             )
             try:
+                print("Emergency triage: batch aggregation start")
                 emergency_result = run_emergency_triage_stage(
                     semantic_payload if semantic_payload is not None else payload,
                     provider=emergency_provider,
@@ -1041,7 +1042,9 @@ def cmd_changelog_ai_draft(args: argparse.Namespace) -> int:
                     structured_mode=emergency_triage_stage_cfg.structured_mode,
                     temperature=emergency_triage_stage_cfg.temperature,
                     max_output_tokens_policy=emergency_triage_stage_cfg.max_output_tokens,
+                    progress_logger=print,
                 )
+                print("Emergency triage: batch aggregation end")
             except Exception as exc:
                 _capture_stage_failure_artifact(
                     repo_root=repo_root,
@@ -1060,7 +1063,9 @@ def cmd_changelog_ai_draft(args: argparse.Namespace) -> int:
                 raise _stage_failure("Emergency triage", exc) from exc
 
             emergency_output = str((repo_root / DEFAULT_CHANGELOG_SCRATCH_DIR / "emergency_triage.json").resolve())
+            print("Emergency triage: artifact write start")
             write_output(render_emergency_triage_result_json(emergency_result), emergency_output)
+            print("Emergency triage: artifact write end")
             if emergency_output != "-":
                 print(f"Wrote emergency triage artifact to {Path(emergency_output).resolve()}")
             if semantic_payload is not None:
@@ -1578,7 +1583,18 @@ def build_ai_provider_config_from_args(
     stage: AIStageName = "draft",
 ) -> AIProviderConfig:
     pipeline = build_ai_pipeline_config_from_args(args, repo_root=repo_root)
-    return pipeline.provider_config_for_stage(stage)
+    base = pipeline.provider_config_for_stage(stage)
+    timeout_seconds = _resolve_stage_provider_timeout_seconds(stage)
+    if timeout_seconds is None:
+        return base
+    return AIProviderConfig(
+        kind=base.kind,
+        model=base.model,
+        base_url=base.base_url,
+        api_key_env_var=base.api_key_env_var,
+        api_key=base.api_key,
+        timeout_seconds=timeout_seconds,
+    )
 
 
 def build_ai_provider_from_config(config: AIProviderConfig) -> StructuredJSONProvider:
@@ -1594,6 +1610,21 @@ def build_ai_provider_from_args(
     return build_ai_provider_from_config(
         build_ai_provider_config_from_args(args, repo_root=repo_root, stage=stage)
     )
+
+
+def _resolve_stage_provider_timeout_seconds(stage: AIStageName) -> float | None:
+    if stage != "emergency_triage":
+        return None
+    raw = os.getenv("RELEASE_AI_EMERGENCY_TRIAGE_PROVIDER_TIMEOUT_SECONDS", "45").strip()
+    if not raw:
+        return 45.0
+    try:
+        value = float(raw)
+    except ValueError:
+        return 45.0
+    if value <= 0:
+        return 45.0
+    return value
 
 
 def _run_stage_preflight(

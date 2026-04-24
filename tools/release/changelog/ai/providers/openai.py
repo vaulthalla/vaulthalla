@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from typing import Any
 from uuid import uuid4
 
@@ -78,6 +79,12 @@ _SECRET_KEY_SUFFIXES = (
     "_password",
     "_secret",
 )
+_PROGRESS_LOG_ENABLED = os.getenv("RELEASE_AI_EMERGENCY_TRIAGE_PROGRESS", "1").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
+}
 
 
 class _AttemptFailure(Exception):
@@ -257,6 +264,10 @@ class OpenAIProvider:
         errors: list[str] = []
 
         for mode_index, mode in enumerate(mode_chain):
+            _emit_generation_progress(
+                stage=stage,
+                message=f"provider attempt start (mode={mode}, attempt={mode_index + 1}/{len(mode_chain)})",
+            )
             attempt_reasoning_effort = _resolve_attempt_reasoning_effort(
                 provider_kind=self.provider_kind,
                 model=self.model,
@@ -335,6 +346,10 @@ class OpenAIProvider:
                 trace["parsed_json_preview"] = _sanitize_for_evidence(parsed)
                 trace["status"] = "success"
                 self._last_generation_evidence = trace
+                _emit_generation_progress(
+                    stage=stage,
+                    message=f"provider attempt end (mode={mode}, result=success)",
+                )
                 return parsed
             except _AttemptFailure as exc:
                 message = str(exc)
@@ -375,6 +390,13 @@ class OpenAIProvider:
             errors.append(f"{mode_label}: {message}")
             has_next_mode = mode_index < len(mode_chain) - 1
             if has_next_mode and _is_mode_recoverable_error(message):
+                _emit_generation_progress(
+                    stage=stage,
+                    message=(
+                        f"provider fallback transition (from={mode}, "
+                        f"to={mode_chain[mode_index + 1]}, reason={_truncate_text(message, limit=180)})"
+                    ),
+                )
                 continue
             break
 
@@ -1110,6 +1132,14 @@ def _resolve_attempt_max_output_tokens(
 
 def _is_hosted_gpt5_model(*, provider_kind: AIProviderKind, model: str) -> bool:
     return provider_kind == "openai" and model.strip().lower().startswith("gpt-5")
+
+
+def _emit_generation_progress(*, stage: AIStageName | None, message: str) -> None:
+    if stage != "emergency_triage":
+        return
+    if not _PROGRESS_LOG_ENABLED:
+        return
+    print(f"emergency_triage: {message}", file=sys.stderr, flush=True)
 
 
 def _detect_likely_truncated_json(exc: JSONParseError) -> bool:

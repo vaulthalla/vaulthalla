@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
+import os
 import re
-from typing import Any
+import sys
+import time
+from typing import Any, Callable
 
 from tools.release.changelog.ai.config import (
     AIMaxOutputTokensPolicy,
@@ -31,9 +34,17 @@ from tools.release.changelog.ai.providers.openai import OpenAIProvider
 
 AI_TRIAGE_SYNTHESIZED_INPUT_SCHEMA_VERSION = "vaulthalla.release.triage_input.synthesized.v1"
 _ID_SLUG_RE = re.compile(r"[^a-z0-9]+")
-# Keep emergency triage unit-scoped in v1 so request scope and identity invariants
-# are trivially aligned (one input evidence unit -> one synthesized output unit).
-_EMERGENCY_TRIAGE_BATCH_SIZE = 1
+# Keep emergency triage bounded while avoiding oversized single-call payloads.
+_EMERGENCY_TRIAGE_BATCH_SIZE = 6
+_EMERGENCY_TRIAGE_NO_PROGRESS_TIMEOUT_SECONDS = float(
+    os.getenv(
+        "RELEASE_AI_EMERGENCY_TRIAGE_NO_PROGRESS_TIMEOUT_SECONDS",
+        os.getenv("RELEASE_AI_EMERGENCY_TRIAGE_STAGE_TIMEOUT_SECONDS", "180"),
+    )
+)
+_EMERGENCY_TRIAGE_PROGRESS_ENABLED = (
+    os.getenv("RELEASE_AI_EMERGENCY_TRIAGE_PROGRESS", "1").strip().lower() not in {"0", "false", "no", "off"}
+)
 
 
 def run_emergency_triage_stage(
@@ -46,15 +57,23 @@ def run_emergency_triage_stage(
     structured_mode: AIStructuredMode | None = None,
     temperature: float | None = None,
     max_output_tokens_policy: AIMaxOutputTokensPolicy | None = None,
+    progress_logger: Callable[[str], None] | None = None,
 ) -> AIEmergencyTriageResult:
+    last_progress_at = time.monotonic()
     active_provider = provider or OpenAIProvider(
         model=model or DEFAULT_AI_EMERGENCY_TRIAGE_MODEL,
         provider_kind=provider_kind
     )
+    _emit_progress(progress_logger, "emergency_triage: batch construction start")
     projection = build_emergency_triage_input_payload(semantic_payload)
     expected_item_ids = tuple(_read_nested_string(item, "id") or "" for item in _as_sequence(projection.get("items")))
     expected_item_ids = tuple(item_id for item_id in expected_item_ids if item_id)
     payload_version = _read_nested_string(semantic_payload, "version") or _read_nested_string(projection, "version") or ""
+    _emit_progress(
+        progress_logger,
+        "emergency_triage: batch construction end "
+        f"(items={len(expected_item_ids)}, batch_size={_EMERGENCY_TRIAGE_BATCH_SIZE})",
+    )
     if not expected_item_ids:
         return AIEmergencyTriageResult(
             schema_version=AI_EMERGENCY_TRIAGE_SCHEMA_VERSION,
@@ -68,7 +87,20 @@ def run_emergency_triage_stage(
     resolved_version = payload_version or None
 
     all_items = _as_sequence(projection.get("items"))
-    for start in range(0, len(all_items), _EMERGENCY_TRIAGE_BATCH_SIZE):
+    total_batches = (len(all_items) + _EMERGENCY_TRIAGE_BATCH_SIZE - 1) // _EMERGENCY_TRIAGE_BATCH_SIZE
+    _emit_progress(progress_logger, f"emergency_triage: batch loop start (total_batches={total_batches})")
+
+    for batch_index, start in enumerate(range(0, len(all_items), _EMERGENCY_TRIAGE_BATCH_SIZE), start=1):
+        stalled_for = time.monotonic() - last_progress_at
+        if (
+            _EMERGENCY_TRIAGE_NO_PROGRESS_TIMEOUT_SECONDS > 0
+            and stalled_for > _EMERGENCY_TRIAGE_NO_PROGRESS_TIMEOUT_SECONDS
+        ):
+            raise TimeoutError(
+                "Emergency triage timed out due to no forward progress before dispatching next batch "
+                f"(stalled_for={stalled_for:.1f}s, timeout={_EMERGENCY_TRIAGE_NO_PROGRESS_TIMEOUT_SECONDS:.1f}s, "
+                f"batch={batch_index}/{total_batches})."
+            )
         batch_items = all_items[start : start + _EMERGENCY_TRIAGE_BATCH_SIZE]
         batch_payload = _build_emergency_triage_batch_payload(projection, batch_items=batch_items)
         # Batch identity source of truth: expected ids are read from the exact payload
@@ -82,12 +114,18 @@ def run_emergency_triage_stage(
         )
         if not batch_expected_ids:
             continue
+        _emit_progress(
+            progress_logger,
+            f"emergency_triage: batch {batch_index}/{total_batches} dispatch start "
+            f"(ids={','.join(batch_expected_ids)}, count={len(batch_expected_ids)})",
+        )
         batch_schema = _build_emergency_triage_batch_response_schema(expected_item_ids=batch_expected_ids)
         user_prompt = build_emergency_triage_user_prompt(batch_payload)
         max_output_tokens = compute_max_output_tokens(
             policy,
             input_size=estimate_input_size_units(system_prompt, user_prompt),
         )
+        provider_started = time.monotonic()
         structured = active_provider.generate_structured_json(
             stage="emergency_triage",
             system_prompt=system_prompt,
@@ -98,10 +136,19 @@ def run_emergency_triage_stage(
             temperature=temperature,
             max_output_tokens=max_output_tokens,
         )
+        provider_elapsed = time.monotonic() - provider_started
+        _emit_progress(
+            progress_logger,
+            f"emergency_triage: batch {batch_index}/{total_batches} provider call end "
+            f"(elapsed={provider_elapsed:.2f}s)",
+        )
+        _emit_provider_mode_progress(active_provider, progress_logger, batch_index=batch_index, total_batches=total_batches)
+        _emit_progress(progress_logger, f"emergency_triage: batch {batch_index}/{total_batches} parse start")
         parsed_batch = parse_ai_emergency_triage_response(
             structured,
             expected_item_ids=batch_expected_ids,
         )
+        _emit_progress(progress_logger, f"emergency_triage: batch {batch_index}/{total_batches} parse end")
         if payload_version and parsed_batch.version != payload_version:
             raise ValueError(
                 "AI emergency_triage response version mismatch: "
@@ -109,8 +156,20 @@ def run_emergency_triage_stage(
             )
         if resolved_version is None:
             resolved_version = parsed_batch.version
+        _emit_progress(
+            progress_logger,
+            f"emergency_triage: batch {batch_index}/{total_batches} aggregation start "
+            f"(batch_items={len(parsed_batch.items)}, total_before={len(collected_items)})",
+        )
         collected_items.extend(parsed_batch.items)
+        last_progress_at = time.monotonic()
+        _emit_progress(
+            progress_logger,
+            f"emergency_triage: batch {batch_index}/{total_batches} aggregation end "
+            f"(total_after={len(collected_items)})",
+        )
 
+    _emit_progress(progress_logger, "emergency_triage: batch loop end")
     return AIEmergencyTriageResult(
         schema_version=AI_EMERGENCY_TRIAGE_SCHEMA_VERSION,
         version=resolved_version or "unknown",
@@ -393,3 +452,44 @@ def _as_sequence(raw: Any) -> list[Any]:
     if isinstance(raw, tuple):
         return list(raw)
     return []
+
+
+def _emit_progress(logger: Callable[[str], None] | None, message: str) -> None:
+    if logger is not None:
+        logger(message)
+        return
+    if _EMERGENCY_TRIAGE_PROGRESS_ENABLED:
+        print(message, file=sys.stderr, flush=True)
+
+
+def _emit_provider_mode_progress(
+    provider: StructuredJSONProvider,
+    logger: Callable[[str], None] | None,
+    *,
+    batch_index: int,
+    total_batches: int,
+) -> None:
+    snapshot = getattr(provider, "failure_evidence_snapshot", None)
+    if not callable(snapshot):
+        return
+    value = snapshot()
+    if not isinstance(value, dict):
+        return
+    mode_chain_raw = value.get("mode_chain")
+    successful_mode = value.get("successful_mode")
+    if isinstance(mode_chain_raw, list):
+        mode_chain = [mode for mode in mode_chain_raw if isinstance(mode, str)]
+    else:
+        mode_chain = []
+    if mode_chain:
+        _emit_progress(
+            logger,
+            f"emergency_triage: batch {batch_index}/{total_batches} provider attempts end "
+            f"(mode_chain={' -> '.join(mode_chain)}, successful_mode={successful_mode})",
+        )
+        if isinstance(successful_mode, str) and successful_mode and successful_mode != mode_chain[0]:
+            _emit_progress(
+                logger,
+                f"emergency_triage: batch {batch_index}/{total_batches} fallback transition "
+                f"{mode_chain[0]} -> {successful_mode}",
+            )

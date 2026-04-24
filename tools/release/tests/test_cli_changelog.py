@@ -2155,7 +2155,7 @@ profiles:
             self.assertTrue(artifact.is_file())
             self.assertIn("## Profile: openai-cheap", artifact.read_text(encoding="utf-8"))
 
-    def test_ai_compare_emergency_triage_defaults_to_per_item_scope(self) -> None:
+    def test_ai_compare_emergency_triage_defaults_to_bounded_scope(self) -> None:
         with TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
             _ = self._write_repo_basics(repo_root)
@@ -2250,7 +2250,6 @@ profiles:
                         projection = json.loads(kwargs["user_prompt"].split(marker, 1)[1])
                         items = projection.get("items", [])
                         self.emergency_batch_sizes.append(len(items))
-                        item = items[0]
                         return {
                             "schema_version": "vaulthalla.release.ai_emergency_triage.v1",
                             "version": "0.34.0",
@@ -2264,6 +2263,7 @@ profiles:
                                     "insufficient_context_reason": None,
                                     "evidence_refs": [],
                                 }
+                                for item in items
                             ],
                         }
                     if stage == "triage":
@@ -2303,7 +2303,7 @@ profiles:
                 rc = cli.cmd_changelog_ai_compare(args)
 
             self.assertEqual(rc, 0)
-            self.assertEqual(provider.emergency_batch_sizes, [1, 1, 1])
+            self.assertEqual(provider.emergency_batch_sizes, [3])
 
 
 class CliChangelogContextHelperTests(unittest.TestCase):

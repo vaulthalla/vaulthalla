@@ -521,6 +521,7 @@ def _run_release_ai_pipeline(
     if run_triage:
         if run_emergency_triage and isinstance(semantic_payload, dict):
             try:
+                emit("Emergency triage: batch aggregation start")
                 emergency_triage_result = run_emergency_triage_stage(
                     semantic_payload,
                     provider=providers["emergency_triage"],
@@ -529,7 +530,9 @@ def _run_release_ai_pipeline(
                     structured_mode=emergency_triage_cfg.structured_mode,
                     temperature=emergency_triage_cfg.temperature,
                     max_output_tokens_policy=emergency_triage_cfg.max_output_tokens,
+                    progress_logger=emit,
                 )
+                emit("Emergency triage: batch aggregation end")
             except Exception as exc:
                 _capture_release_stage_failure_artifact(
                     repo_root=repo_root,
@@ -545,7 +548,9 @@ def _run_release_ai_pipeline(
                     },
                 )
                 raise ValueError(f"Emergency triage stage failed: {exc}") from exc
+            emit("Emergency triage: artifact write start")
             _write_emergency_triage_artifact(repo_root=repo_root, content=render_emergency_triage_result_json(emergency_triage_result))
+            emit("Emergency triage: artifact write end")
             triage_input_payload = build_triage_input_from_emergency_result(
                 semantic_payload,
                 emergency_triage_result,
@@ -669,12 +674,14 @@ def _build_stage_providers(
             model=stage_cfg.model,
             base_url=pipeline.base_url,
             api_key=local_api_key,
+            timeout_seconds=_resolve_stage_provider_timeout_seconds(stage),
         )
         fingerprint = (
             provider_cfg.kind,
             provider_cfg.model,
             provider_cfg.base_url,
             provider_cfg.api_key,
+            str(provider_cfg.timeout_seconds),
         )
         provider = providers_by_fingerprint.get(fingerprint)
         if provider is None:
@@ -738,6 +745,21 @@ def _capture_release_stage_failure_artifact(
         )
     except Exception:
         return
+
+
+def _resolve_stage_provider_timeout_seconds(stage: AIStageName) -> float | None:
+    if stage != "emergency_triage":
+        return None
+    raw = os.getenv("RELEASE_AI_EMERGENCY_TRIAGE_PROVIDER_TIMEOUT_SECONDS", "45").strip()
+    if not raw:
+        return 45.0
+    try:
+        value = float(raw)
+    except ValueError:
+        return 45.0
+    if value <= 0:
+        return 45.0
+    return value
 
 
 def _parse_release_ai_mode(raw: str | None) -> ReleaseAIMode:
