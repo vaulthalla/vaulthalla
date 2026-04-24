@@ -370,13 +370,6 @@ def render_managed_nginx_config(projection: dict[str, dict[str, Any]], domain: s
     out.append(f"    server_name {server_name};")
     out.append("")
 
-    out.append("    location ^~ /.well-known/acme-challenge/ {")
-    out.append("        root /var/www/certbot;")
-    out.append("        default_type \"text/plain\";")
-    out.append("        try_files $uri =404;")
-    out.append("    }")
-    out.append("")
-
     if bool(websocket.get("enabled", True)):
         ws_port = int(websocket.get("port", 33369))
         out.extend([
