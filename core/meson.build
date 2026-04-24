@@ -87,6 +87,7 @@ deps = [
     dependency('libturbojpeg', required: true),
     dependency('tss2-esys', required: true),
     dependency('tss2-tctildr', required: true),
+    dependency('tss2-rc', required: true),
     dependency('openssl', version: '>=3.0', required: true),
     dependency('zlib', required: true),
     fmt_dep
