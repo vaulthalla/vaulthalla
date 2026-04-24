@@ -75,6 +75,25 @@ VH_SKIP_DB_BOOTSTRAP=1 sudo -E apt install vaulthalla
 VH_SKIP_NGINX_CONFIG=1 sudo -E apt install vaulthalla
 ```
 
+Removal behavior:
+
+- `sudo apt remove vaulthalla` preserves local PostgreSQL role/database data.
+- `sudo apt purge vaulthalla` can offer optional destructive local PostgreSQL
+  role/database removal when interactive; default is preserve.
+- Noninteractive purge preserves local PostgreSQL resources.
+- Manual local DB teardown: `sudo vh teardown db`.
+
+Reinstall behavior with preserved local PostgreSQL resources:
+
+- Interactive package install prompts to reuse existing DB with password-file
+  handoff, destructive drop/recreate, or exit without DB changes.
+- Noninteractive install preserves DB/role and requires manual reseed of
+  `/run/vaulthalla/db_password` before restarting service if reusing preserved DB.
+- Manual reseed helper:
+  - `sudo install -d -m 0755 /run/vaulthalla`
+  - `sudo install -m 0600 -o vaulthalla -g vaulthalla /path/to/db_password /run/vaulthalla/db_password`
+  - `sudo systemctl restart vaulthalla`
+
 `apt install` provisions package payloads, services, and conservative optional integration behavior.
 It does not replace explicit operator setup flows.
 Package install may stage a baseline nginx template at

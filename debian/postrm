@@ -2,6 +2,8 @@
 set -e
 
 PKG="vaulthalla"
+DB_USER="vaulthalla"
+DB_NAME="vaulthalla"
 NGINX_SITE_AVAIL="/etc/nginx/sites-available/vaulthalla"
 NGINX_SITE_ENABLED="/etc/nginx/sites-enabled/vaulthalla"
 NGINX_MANAGED_MARKER="/var/lib/vaulthalla/nginx_site_managed"
@@ -10,6 +12,149 @@ PENDING_DB_PASS_FILE="/run/vaulthalla/db_password"
 
 has_command() {
     command -v "$1" >/dev/null 2>&1
+}
+
+run_as_postgres() {
+    if has_command runuser; then
+        runuser -u postgres -- "$@"
+        return $?
+    fi
+    if has_command sudo; then
+        sudo -u postgres "$@"
+        return $?
+    fi
+    return 1
+}
+
+psql_q() {
+    run_as_postgres psql -X -v ON_ERROR_STOP=1 -tAc "$1" "${2:-postgres}"
+}
+
+postgresql_server_ready() {
+    if has_command pg_isready; then
+        run_as_postgres pg_isready -q >/dev/null 2>&1
+        return $?
+    fi
+    run_as_postgres psql -X -v ON_ERROR_STOP=1 -d postgres -tAc 'SELECT 1' >/dev/null 2>&1
+}
+
+is_noninteractive_context() {
+    if [ "${DEBIAN_FRONTEND:-}" = "noninteractive" ]; then
+        return 0
+    fi
+    if [ ! -t 0 ] || [ ! -t 1 ]; then
+        return 0
+    fi
+    return 1
+}
+
+confirm_postgres_resource_removal() {
+    printf '%s\n' "[${PKG}] Vaulthalla local PostgreSQL resources were detected:"
+    if [ "${DB_EXISTS:-0}" = "1" ]; then
+        printf '%s\n' "[${PKG}]   database: ${DB_NAME}"
+    fi
+    if [ "${ROLE_EXISTS:-0}" = "1" ]; then
+        printf '%s\n' "[${PKG}]   role: ${DB_USER}"
+    fi
+    printf '%s' "[${PKG}] Remove these PostgreSQL resources? This will permanently delete the local Vaulthalla database. [y/N] "
+
+    answer=""
+    if [ -r /dev/tty ]; then
+        IFS= read -r answer </dev/tty || true
+    else
+        IFS= read -r answer || true
+    fi
+
+    case "$answer" in
+        y|Y|yes|YES)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+drop_local_postgres_resources_if_confirmed() {
+    # Use direct SQL here because package binaries/lifecycle payloads may already be absent in postrm purge.
+    if ! has_command psql; then
+        echo "[${PKG}] Local PostgreSQL resources preserved (psql not installed)."
+        echo "[${PKG}] To remove local DB resources manually later: sudo vh teardown db"
+        return 0
+    fi
+
+    if ! id postgres >/dev/null 2>&1; then
+        echo "[${PKG}] Local PostgreSQL resources preserved (postgres user missing)."
+        echo "[${PKG}] To remove local DB resources manually later: sudo vh teardown db"
+        return 0
+    fi
+
+    if ! run_as_postgres true >/dev/null 2>&1; then
+        echo "[${PKG}] Local PostgreSQL resources preserved (cannot execute commands as postgres)."
+        echo "[${PKG}] To remove local DB resources manually later: sudo vh teardown db"
+        return 0
+    fi
+
+    if ! postgresql_server_ready; then
+        echo "[${PKG}] Local PostgreSQL resources preserved (server not ready)."
+        echo "[${PKG}] To remove local DB resources manually later: sudo vh teardown db"
+        return 0
+    fi
+
+    if ! ROLE_EXISTS_RAW="$(psql_q "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'")"; then
+        echo "[${PKG}] WARNING: Unable to detect PostgreSQL role state for '${DB_USER}'. Preserving local DB resources."
+        echo "[${PKG}] To remove local DB resources manually later: sudo vh teardown db"
+        return 0
+    fi
+    if ! DB_EXISTS_RAW="$(psql_q "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'")"; then
+        echo "[${PKG}] WARNING: Unable to detect PostgreSQL database state for '${DB_NAME}'. Preserving local DB resources."
+        echo "[${PKG}] To remove local DB resources manually later: sudo vh teardown db"
+        return 0
+    fi
+    ROLE_EXISTS="$(printf '%s' "$ROLE_EXISTS_RAW" | tr -d '[:space:]')"
+    DB_EXISTS="$(printf '%s' "$DB_EXISTS_RAW" | tr -d '[:space:]')"
+
+    if [ "$ROLE_EXISTS" != "1" ] && [ "$DB_EXISTS" != "1" ]; then
+        echo "[${PKG}] No local PostgreSQL resources detected for role/database '${DB_USER}'."
+        return 0
+    fi
+
+    if is_noninteractive_context; then
+        echo "[${PKG}] Noninteractive purge detected; local PostgreSQL resources preserved by default."
+        echo "[${PKG}] To remove local DB resources manually later: sudo vh teardown db"
+        return 0
+    fi
+
+    if ! confirm_postgres_resource_removal; then
+        echo "[${PKG}] Local PostgreSQL resources preserved by operator choice."
+        echo "[${PKG}] To remove local DB resources manually later: sudo vh teardown db"
+        return 0
+    fi
+
+    echo "[${PKG}] Removing local PostgreSQL resources for '${DB_USER}'..."
+
+    if [ "$DB_EXISTS" = "1" ]; then
+        if ! run_as_postgres psql -X -v ON_ERROR_STOP=1 postgres <<EOF
+SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${DB_NAME}' AND pid <> pg_backend_pid();
+DROP DATABASE IF EXISTS ${DB_NAME};
+EOF
+        then
+            echo "[${PKG}] WARNING: Failed to drop PostgreSQL database '${DB_NAME}'. Continuing purge."
+            echo "[${PKG}] WARNING: You can retry manual cleanup with: sudo vh teardown db"
+            return 0
+        fi
+    fi
+
+    if [ "$ROLE_EXISTS" = "1" ]; then
+        if ! run_as_postgres psql -X -v ON_ERROR_STOP=1 -c "DROP ROLE IF EXISTS ${DB_USER};" postgres; then
+            echo "[${PKG}] WARNING: Failed to drop PostgreSQL role '${DB_USER}'. Continuing purge."
+            echo "[${PKG}] WARNING: You can retry manual cleanup with: sudo vh teardown db"
+            return 0
+        fi
+    fi
+
+    echo "[${PKG}] Removed local PostgreSQL resources (database/role: ${DB_NAME}/${DB_USER})."
+    return 0
 }
 
 safe_systemctl() {
@@ -64,6 +209,7 @@ case "$1" in
         fi
         rm -f "$NGINX_MANAGED_MARKER"
         reload_nginx_if_safe
+        drop_local_postgres_resources_if_confirmed
 
         deluser --system --quiet vaulthalla || true
         delgroup --system --quiet vaulthalla || true

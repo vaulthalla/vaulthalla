@@ -50,6 +50,7 @@ driven by conservative runtime checks and optional environment overrides.
 - Creates runtime/state dirs and `/mnt/vaulthalla` when missing.
 - Optionally initializes local PostgreSQL role/db when local PostgreSQL is present and healthy.
 - Seeds `/run/vaulthalla/db_password` only when a new DB role password was generated.
+- If local DB resources already exist, supports interactive recovery choice (reuse via password-file handoff, destructive recreate, or exit) and preserves by default in noninteractive mode.
 - Presets core/cli/web units; explicitly enables `vaulthalla-web.service`.
 - Applies nginx integration only under safety checks.
 - Removes legacy `/run/vaulthalla/superadmin_uid` seed to avoid package-time ownership binding.
@@ -63,6 +64,8 @@ driven by conservative runtime checks and optional environment overrides.
 `postrm purge` (superset of remove cleanup):
 
 - Removes package nginx symlink and removes site file only when package-managed marker exists.
+- Preserves local PostgreSQL role/database by default; may prompt for optional destructive cleanup only in interactive purge when local resources are detected.
+- Noninteractive purge preserves local PostgreSQL resources (manual path: `sudo vh teardown db`).
 - Purges `/var/lib/vaulthalla`, `/var/log/vaulthalla`, attempts empty `/mnt/vaulthalla` removal.
 - Deletes `vaulthalla` system user (best-effort).
 

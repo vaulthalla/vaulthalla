@@ -46,6 +46,42 @@ If a new role password is generated, it is seeded to:
 
 - `/run/vaulthalla/db_password`
 
+Reinstall recovery when local DB resources already exist
+========================================================
+
+When local role/database `vaulthalla` already exist during postinst bootstrap:
+
+- Interactive installs prompt for recovery choice:
+  1. reuse existing DB by providing a password file (seeded to `/run/vaulthalla/db_password`)
+  2. destructive drop/recreate (typed confirmation required)
+  3. exit without DB changes
+- Noninteractive installs preserve local DB resources by default and do not
+  reseed runtime password handoff automatically.
+- Reuse path intentionally relies on normal runtime startup to consume
+  `/run/vaulthalla/db_password`, seal/store through existing runtime secret
+  flow, and remove the handoff file.
+
+Manual reseed example (reuse preserved DB):
+
+- `sudo install -d -m 0755 /run/vaulthalla`
+- `sudo install -m 0600 -o vaulthalla -g vaulthalla /path/to/db_password /run/vaulthalla/db_password`
+- `sudo systemctl restart vaulthalla`
+
+DB teardown behavior on remove/purge
+====================================
+
+- `apt remove vaulthalla` preserves local PostgreSQL role/database resources.
+- `apt purge vaulthalla` may offer an interactive destructive confirmation to
+  remove local PostgreSQL resources when role/database `vaulthalla` are
+  detected and local PostgreSQL is reachable.
+- Default answer is preserve (`No`).
+- Noninteractive purge (`DEBIAN_FRONTEND=noninteractive` or no TTY) does not
+  prompt and preserves local PostgreSQL resources.
+
+Manual cleanup remains available via:
+
+- `sudo vh teardown db`
+
 Automatic nginx behavior
 ========================
 

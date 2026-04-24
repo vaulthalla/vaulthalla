@@ -13,6 +13,7 @@ readonly SOURCE_LINE="deb [arch=${REPO_ARCH} signed-by=${KEY_FILE}] ${REPO_URL} 
 
 readonly VH_GROUP="vaulthalla"
 readonly DEFAULT_PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+readonly ADMIN_ASSIGN_TIMEOUT_SECONDS="${VH_ADMIN_ASSIGN_TIMEOUT_SECONDS:-20}"
 
 INTERACTIVE_MODE=0
 PROFILE="standard"
@@ -401,6 +402,8 @@ attempt_admin_assignment() {
         return
     }
 
+    log "Starting admin assignment check for user '${user}' (timeout: ${ADMIN_ASSIGN_TIMEOUT_SECONDS}s)."
+
     local vh_bin="/usr/bin/vh"
     if [[ ! -x "$vh_bin" ]]; then
         vh_bin="$(command -v vh || true)"
@@ -411,19 +414,39 @@ attempt_admin_assignment() {
         return
     }
 
+    if ! command -v timeout >/dev/null 2>&1; then
+        ADMIN_STATUS="pending (timeout utility not available)"
+        ADMIN_DETAIL="Skipped automatic admin assignment to avoid unbounded wait. Run manually: vh setup assign-admin"
+        return
+    fi
+
+    local timeout_status=124
     local output=""
-    if output="$(run_as_user "$user" env PATH="$DEFAULT_PATH" "$vh_bin" setup assign-admin 2>&1)"; then
+    if output="$(run_as_user "$user" env PATH="$DEFAULT_PATH" timeout "${ADMIN_ASSIGN_TIMEOUT_SECONDS}" "$vh_bin" setup assign-admin 2>&1)"; then
         ADMIN_STATUS="completed (user: ${user})"
         ADMIN_DETAIL="$(printf '%s\n' "$output" | head -n 1)"
+        return
+    fi
+    timeout_status=$?
+
+    if [[ "$timeout_status" -eq 124 ]]; then
+        ADMIN_STATUS="pending (timed out, user: ${user})"
+        ADMIN_DETAIL="vh setup assign-admin exceeded ${ADMIN_ASSIGN_TIMEOUT_SECONDS}s; run manually after service health check."
         return
     fi
 
     if command -v sg >/dev/null 2>&1; then
         local sg_cmd
         printf -v sg_cmd '%q %q %q' "$vh_bin" "setup" "assign-admin"
-        if output="$(run_as_user "$user" env PATH="$DEFAULT_PATH" sg "$VH_GROUP" -c "$sg_cmd" 2>&1)"; then
+        if output="$(run_as_user "$user" env PATH="$DEFAULT_PATH" timeout "${ADMIN_ASSIGN_TIMEOUT_SECONDS}" sg "$VH_GROUP" -c "$sg_cmd" 2>&1)"; then
             ADMIN_STATUS="completed via sg handoff (user: ${user})"
             ADMIN_DETAIL="$(printf '%s\n' "$output" | head -n 1)"
+            return
+        fi
+        timeout_status=$?
+        if [[ "$timeout_status" -eq 124 ]]; then
+            ADMIN_STATUS="pending (timed out via sg handoff, user: ${user})"
+            ADMIN_DETAIL="sg vh setup assign-admin exceeded ${ADMIN_ASSIGN_TIMEOUT_SECONDS}s; run manually after service health check."
             return
         fi
     fi
@@ -518,6 +541,7 @@ main() {
 
     ensure_repo_bootstrap
     run_apt_install_flow
+    log "apt install flow completed."
 
     getent group "$VH_GROUP" >/dev/null 2>&1 || die "Group '${VH_GROUP}' was not created by package install."
 
@@ -536,6 +560,7 @@ main() {
     if [[ "$ADMIN_MODE" == "skip" ]]; then
         ADMIN_STATUS="skipped by operator choice"
     else
+        log "Beginning optional admin assignment step."
         attempt_admin_assignment "$ASSIGN_TARGET_USER"
     fi
 
