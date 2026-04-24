@@ -31,11 +31,16 @@ profiles:
     provider: openai
 
     default_max_output_tokens:
-      triage: 3000
-      draft: 5000
-      polish: 4000
+      emergency_triage: 7000
+      triage: 5000
+      draft: 6500
+      polish: 5000
+      release_notes: 7000
 
     stages:
+      emergency_triage:
+        model: gpt-5-nano
+        reasoning_effort: low
       triage:
         model: gpt-5-nano
         reasoning_effort: low
@@ -46,16 +51,24 @@ profiles:
       polish:
         model: gpt-5.4
         reasoning_effort: medium
+      release_notes:
+        model: gpt-5-mini
+        reasoning_effort: medium
 
   openai-premium:
     provider: openai
 
     default_max_output_tokens:
-      triage: 8000
+      emergency_triage: 9000
+      triage: 7000
       draft: 12000
       polish: 10000
+      release_notes: 12000
 
     stages:
+      emergency_triage:
+        model: gpt-5-nano
+        reasoning_effort: low
       triage:
         model: gpt-5-nano
         reasoning_effort: low
@@ -66,17 +79,24 @@ profiles:
       polish:
         model: gpt-5.4
         reasoning_effort: high
+      release_notes:
+        model: gpt-5.4
+        reasoning_effort: medium
 
   openai-premium-deep-triage:
     provider: openai
 
     default_max_output_tokens:
-      triage: 9000
-      draft: 12000
-      polish: 10000
+      emergency_triage: 10000
+      triage: 10000
+      draft: 14000
+      polish: 12000
       release_notes: 25000
 
     stages:
+      emergency_triage:
+        model: gpt-5-nano
+        reasoning_effort: low
       triage:
         model: gpt-5-nano
         reasoning_effort: medium
