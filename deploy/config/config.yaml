@@ -9,7 +9,7 @@
 # using low-latency sockets and a command protocol to support interactive features,
 # including file uploads, notifications, and other interactive features.
 websocket_server:
-  enabled: false  # disabled for now, vaulthalla-web will be shipping shortly after the initial release, not needed for CLI
+  enabled: true
   host: 0.0.0.0
   port: 36969
   max_connections: 1024
@@ -20,7 +20,7 @@ websocket_server:
 # The HTTP preview server serves file previews and thumbnails,
 # allowing users to view files directly in their browsers without downloading them.
 http_preview_server:
-  enabled: false  # disabled for now, vaulthalla-web will be shipping shortly after the initial release, not needed for CLI
+  enabled: true
   host: 0.0.0.0
   port: 36970
   max_connections: 512
