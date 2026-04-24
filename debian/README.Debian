@@ -38,6 +38,9 @@ During postinst, Vaulthalla selects a TPM backend deterministically:
 - if no hardware TPM exists, postinst provisions/starts managed `swtpm`
   (`vaulthalla-swtpm.service`) and configures `TSS2_TCTI` for
   `vaulthalla.service`
+- if managed `swtpm` fails initial startup and a swtpm AppArmor profile exists,
+  postinst applies a targeted local AppArmor override for Vaulthalla's swtpm
+  state path, reloads the profile, and retries startup
 - if neither hardware TPM nor `swtpm` is available, configure fails with a
   clear install-time error and remediation steps
 

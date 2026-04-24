@@ -31,6 +31,8 @@ SWTPM_BASE_DIR="/var/lib/swtpm"
 SWTPM_STATE_DIR="${SWTPM_BASE_DIR}/vaulthalla"
 TPM_BACKEND_OVERRIDE_DIR="/etc/systemd/system/vaulthalla.service.d"
 TPM_BACKEND_OVERRIDE_FILE="${TPM_BACKEND_OVERRIDE_DIR}/tpm-backend.conf"
+APPARMOR_SWTPM_PROFILE=""
+APPARMOR_SWTPM_LOCAL_OVERRIDE=""
 
 DB_BOOTSTRAP_STATUS="skipped"
 NGINX_CONFIG_STATUS="skipped"
@@ -154,6 +156,106 @@ EOF
     chmod 0644 "$TPM_BACKEND_OVERRIDE_FILE"
 }
 
+find_swtpm_apparmor_profile() {
+    APPARMOR_SWTPM_PROFILE=""
+    for candidate in /etc/apparmor.d/usr.bin.swtpm /etc/apparmor.d/swtpm; do
+        if [ -f "$candidate" ]; then
+            APPARMOR_SWTPM_PROFILE="$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+resolve_swtpm_apparmor_local_override() {
+    profile_path="$1"
+    APPARMOR_SWTPM_LOCAL_OVERRIDE=""
+    include_rel="$(sed -n 's/^[[:space:]]*#include[[:space:]]*<\(local\/[^>]*\)>.*/\1/p' "$profile_path" | head -n 1)"
+    if [ -n "$include_rel" ]; then
+        APPARMOR_SWTPM_LOCAL_OVERRIDE="/etc/apparmor.d/${include_rel}"
+        return 0
+    fi
+
+    case "$(basename "$profile_path")" in
+        usr.bin.swtpm)
+            APPARMOR_SWTPM_LOCAL_OVERRIDE="/etc/apparmor.d/local/usr.bin.swtpm"
+            ;;
+        swtpm)
+            APPARMOR_SWTPM_LOCAL_OVERRIDE="/etc/apparmor.d/local/swtpm"
+            ;;
+        *)
+            APPARMOR_SWTPM_LOCAL_OVERRIDE="/etc/apparmor.d/local/usr.bin.swtpm"
+            ;;
+    esac
+    return 0
+}
+
+append_unique_line() {
+    target_file="$1"
+    target_line="$2"
+    if grep -Fqx "$target_line" "$target_file" 2>/dev/null; then
+        return 0
+    fi
+    printf '%s\n' "$target_line" >> "$target_file"
+    APPARMOR_OVERRIDE_CHANGED="1"
+}
+
+configure_swtpm_apparmor_override_if_possible() {
+    APPARMOR_OVERRIDE_CHANGED="0"
+
+    if [ ! -d /sys/module/apparmor ]; then
+        echo "[${PKG}] WARNING: AppArmor module not detected; skipping swtpm AppArmor override handling."
+        return 1
+    fi
+
+    if ! find_swtpm_apparmor_profile; then
+        echo "[${PKG}] WARNING: swtpm AppArmor profile not found; skipping local override."
+        return 1
+    fi
+    resolve_swtpm_apparmor_local_override "$APPARMOR_SWTPM_PROFILE"
+    install -d -m 0755 "$(dirname "$APPARMOR_SWTPM_LOCAL_OVERRIDE")"
+    if [ ! -f "$APPARMOR_SWTPM_LOCAL_OVERRIDE" ]; then
+        : > "$APPARMOR_SWTPM_LOCAL_OVERRIDE"
+        chmod 0644 "$APPARMOR_SWTPM_LOCAL_OVERRIDE"
+    fi
+
+    append_unique_line "$APPARMOR_SWTPM_LOCAL_OVERRIDE" "# Allow Vaulthalla-managed swtpm state."
+    append_unique_line "$APPARMOR_SWTPM_LOCAL_OVERRIDE" "${SWTPM_STATE_DIR}/ rw,"
+    append_unique_line "$APPARMOR_SWTPM_LOCAL_OVERRIDE" "${SWTPM_STATE_DIR}/** rwk,"
+
+    if [ "$APPARMOR_OVERRIDE_CHANGED" = "1" ]; then
+        echo "[${PKG}] Installed swtpm AppArmor local override at ${APPARMOR_SWTPM_LOCAL_OVERRIDE}."
+    else
+        echo "[${PKG}] swtpm AppArmor local override already includes Vaulthalla state rules."
+    fi
+
+    if ! has_command apparmor_parser; then
+        echo "[${PKG}] WARNING: apparmor_parser is unavailable; cannot reload swtpm AppArmor profile." >&2
+        return 1
+    fi
+
+    if ! apparmor_parser -r "$APPARMOR_SWTPM_PROFILE" >/dev/null 2>&1; then
+        echo "[${PKG}] WARNING: Failed to reload AppArmor profile: ${APPARMOR_SWTPM_PROFILE}" >&2
+        return 1
+    fi
+
+    echo "[${PKG}] Reloaded AppArmor profile: ${APPARMOR_SWTPM_PROFILE}."
+    return 0
+}
+
+start_and_validate_swtpm_service() {
+    if ! systemctl --system enable --now "$SWTPM_SYSTEMD_UNIT" >/dev/null 2>&1; then
+        return 1
+    fi
+    if ! systemctl --system --quiet is-active "$SWTPM_SYSTEMD_UNIT" >/dev/null 2>&1; then
+        return 1
+    fi
+    if ! swtpm_listening_locally; then
+        return 1
+    fi
+    return 0
+}
+
 configure_tpm_backend_if_safe() {
     if has_hardware_tpm; then
         TPM_BACKEND_STATUS="hardware (device-backed TPM detected)"
@@ -190,30 +292,32 @@ configure_tpm_backend_if_safe() {
         return 1
     fi
 
-    if ! systemctl --system enable --now "$SWTPM_SYSTEMD_UNIT" >/dev/null 2>&1; then
-        TPM_BACKEND_STATUS="error (failed to start ${SWTPM_SYSTEMD_UNIT})"
-        echo "[${PKG}] ERROR: Failed to start ${SWTPM_SYSTEMD_UNIT}." >&2
-        echo "[${PKG}] ERROR: Check logs with: journalctl -u ${SWTPM_SYSTEMD_UNIT}" >&2
-        return 1
+    if start_and_validate_swtpm_service; then
+        TPM_BACKEND_STATUS="swtpm (managed fallback active)"
+        echo "[${PKG}] TPM backend: managed swtpm fallback active."
+        return 0
     fi
 
-    if ! systemctl --system --quiet is-active "$SWTPM_SYSTEMD_UNIT" >/dev/null 2>&1; then
-        TPM_BACKEND_STATUS="error (${SWTPM_SYSTEMD_UNIT} is not active)"
-        echo "[${PKG}] ERROR: ${SWTPM_SYSTEMD_UNIT} is not active after startup." >&2
-        echo "[${PKG}] ERROR: Check logs with: journalctl -u ${SWTPM_SYSTEMD_UNIT}" >&2
-        return 1
+    echo "[${PKG}] WARNING: ${SWTPM_SYSTEMD_UNIT} failed initial start; checking AppArmor local override path."
+
+    if configure_swtpm_apparmor_override_if_possible; then
+        systemctl --system reset-failed "$SWTPM_SYSTEMD_UNIT" >/dev/null 2>&1 || true
+        if start_and_validate_swtpm_service; then
+            TPM_BACKEND_STATUS="swtpm (managed fallback active; AppArmor local override applied)"
+            echo "[${PKG}] TPM backend: managed swtpm fallback active after AppArmor override reload."
+            return 0
+        fi
     fi
 
-    if ! swtpm_listening_locally; then
-        TPM_BACKEND_STATUS="error (swtpm listener not detected on 127.0.0.1:2321)"
-        echo "[${PKG}] ERROR: swtpm did not expose expected local TPM socket on 127.0.0.1:2321." >&2
-        echo "[${PKG}] ERROR: Check logs with: journalctl -u ${SWTPM_SYSTEMD_UNIT}" >&2
-        return 1
+    TPM_BACKEND_STATUS="error (failed to start ${SWTPM_SYSTEMD_UNIT})"
+    echo "[${PKG}] ERROR: Failed to start ${SWTPM_SYSTEMD_UNIT}." >&2
+    echo "[${PKG}] ERROR: Check logs with: journalctl -u ${SWTPM_SYSTEMD_UNIT}" >&2
+    if [ -n "$APPARMOR_SWTPM_LOCAL_OVERRIDE" ]; then
+        echo "[${PKG}] ERROR: Check AppArmor local override: ${APPARMOR_SWTPM_LOCAL_OVERRIDE}" >&2
     fi
-
-    TPM_BACKEND_STATUS="swtpm (managed fallback active)"
-    echo "[${PKG}] TPM backend: managed swtpm fallback active."
-    return 0
+    echo "[${PKG}] ERROR: Last-resort debug command (not default packaging behavior):" >&2
+    echo "[${PKG}] ERROR:   sudo aa-complain swtpm || sudo aa-complain /usr/bin/swtpm" >&2
+    return 1
 }
 
 is_noninteractive_context() {
