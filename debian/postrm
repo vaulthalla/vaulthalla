@@ -10,6 +10,8 @@ NGINX_MANAGED_MARKER="/var/lib/vaulthalla/nginx_site_managed"
 LEGACY_PENDING_SUPERADMIN_UID_FILE="/run/vaulthalla/superadmin_uid"
 PENDING_DB_PASS_FILE="/run/vaulthalla/db_password"
 TPM_BACKEND_OVERRIDE_FILE="/etc/systemd/system/vaulthalla.service.d/tpm-backend.conf"
+SWTPM_BASE_DIR="/var/lib/swtpm"
+SWTPM_STATE_DIR="${SWTPM_BASE_DIR}/vaulthalla"
 
 has_command() {
     command -v "$1" >/dev/null 2>&1
@@ -216,6 +218,8 @@ case "$1" in
 
         deluser --system --quiet vaulthalla || true
         delgroup --system --quiet vaulthalla || true
+        rm -rf "$SWTPM_STATE_DIR"
+        rmdir "$SWTPM_BASE_DIR" >/dev/null 2>&1 || true
         rm -rf /var/lib/vaulthalla /var/log/vaulthalla
         rmdir /run/vaulthalla >/dev/null 2>&1 || true
         rmdir /mnt/vaulthalla >/dev/null 2>&1 || true

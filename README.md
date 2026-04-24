@@ -144,7 +144,7 @@ sudo journalctl -fu vaulthalla.service
 - Main config: `/etc/vaulthalla/config.yaml`
 - Runtime directory: `/run/vaulthalla`
 - State directory: `/var/lib/vaulthalla`
-- Software TPM state directory: `/var/lib/vaulthalla/swtpm` (when swtpm fallback is active)
+- Software TPM state directory: `/var/lib/swtpm/vaulthalla` (when swtpm fallback is active; AppArmor-friendly `swtpm` namespace)
 - Log directory: `/var/log/vaulthalla`
 - SQL deploy assets: `/usr/share/vaulthalla/psql`
 - Web runtime payload: `/usr/share/vaulthalla-web`

@@ -9,14 +9,14 @@ Before=vaulthalla.service
 Type=simple
 User=vaulthalla
 Group=vaulthalla
-ExecStart=/usr/bin/swtpm socket --tpm2 --tpmstate dir=/var/lib/vaulthalla/swtpm --server type=tcp,host=127.0.0.1,port=2321 --ctrl type=tcp,host=127.0.0.1,port=2322 --flags not-need-init
+ExecStart=/usr/bin/swtpm socket --tpm2 --tpmstate dir=/var/lib/swtpm/vaulthalla --server type=tcp,port=2321 --ctrl type=tcp,port=2322 --flags not-need-init
 Restart=on-failure
 RestartSec=2
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/vaulthalla/swtpm
+ReadWritePaths=/var/lib/swtpm/vaulthalla
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 
 [Install]

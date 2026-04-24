@@ -43,7 +43,8 @@ During postinst, Vaulthalla selects a TPM backend deterministically:
 
 Managed `swtpm` state path:
 
-- `/var/lib/vaulthalla/swtpm` (owner `vaulthalla:vaulthalla`, mode `0700`)
+- `/var/lib/swtpm/vaulthalla` (owner `vaulthalla:vaulthalla`, mode `0700`)
+  - Uses distro `swtpm` AppArmor-friendly state namespace under `/var/lib/swtpm`.
 
 Automatic DB behavior
 =====================

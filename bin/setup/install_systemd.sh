@@ -13,7 +13,8 @@ source "$ROOT_DIR/bin/lib/dev_mode.sh"
 : "${VH_USER:=vaulthalla}"
 : "${VH_GROUP:=vaulthalla}"
 
-SWTPM_STATE_DIR="/var/lib/vaulthalla/swtpm"
+SWTPM_BASE_DIR="/var/lib/swtpm"
+SWTPM_STATE_DIR="$SWTPM_BASE_DIR/vaulthalla"
 TPM_BACKEND_DROPIN="$SYSTEMD_UNIT_DIR/vaulthalla.service.d/tpm-backend.conf"
 TPM_BACKEND_MODE="hardware"
 
@@ -72,6 +73,7 @@ configure_tpm_backend() {
     exit 1
   fi
 
+  sudo install -d -m 0755 "$SWTPM_BASE_DIR"
   sudo install -d -m 0700 -o "$VH_USER" -g "$VH_GROUP" "$SWTPM_STATE_DIR"
   sudo install -d -m 0755 "$(dirname "$TPM_BACKEND_DROPIN")"
   printf '[Service]\nEnvironment=TSS2_TCTI=swtpm:host=127.0.0.1,port=2321\n' \

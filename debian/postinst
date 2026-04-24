@@ -27,7 +27,8 @@ NGINX_TEMPLATE="/usr/share/vaulthalla/nginx/vaulthalla"
 NGINX_SITE_AVAIL="/etc/nginx/sites-available/vaulthalla"
 NGINX_SITE_ENABLED="/etc/nginx/sites-enabled/vaulthalla"
 NGINX_MANAGED_MARKER="/var/lib/vaulthalla/nginx_site_managed"
-SWTPM_STATE_DIR="/var/lib/vaulthalla/swtpm"
+SWTPM_BASE_DIR="/var/lib/swtpm"
+SWTPM_STATE_DIR="${SWTPM_BASE_DIR}/vaulthalla"
 TPM_BACKEND_OVERRIDE_DIR="/etc/systemd/system/vaulthalla.service.d"
 TPM_BACKEND_OVERRIDE_FILE="${TPM_BACKEND_OVERRIDE_DIR}/tpm-backend.conf"
 
@@ -173,6 +174,7 @@ configure_tpm_backend_if_safe() {
         return 1
     fi
 
+    create_dir "$SWTPM_BASE_DIR" 755 root root
     create_dir "$SWTPM_STATE_DIR" 700 "$DB_USER" "$DB_USER"
     write_swtpm_tcti_override
 
