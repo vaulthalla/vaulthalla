@@ -26,19 +26,11 @@ runs:
         #   @/fa-regular/example.svg
         #
         # Private source:
-        #   ~/vaulthalla-web-icons/fa/fa-regular/example.svg
+        #   ~/vaulthalla-web-icons/fa/regular/example.svg
         #
         # Public destination:
         #   web/public/icons/fa/regular/example.svg
-        declare -A ICON_ALIAS_SRC=(
-          ["fa-regular"]="fa/fa-regular"
-          ["fa-light"]="fa/fa-light"
-          ["fa-duotone"]="fa/fa-duotone"
-          ["fa-duotone-regular"]="fa/fa-duotone-regular"
-          ["fa-brands"]="fa/fa-brands"
-        )
-
-        declare -A ICON_ALIAS_DST=(
+        declare -A ICON_ALIAS_DIR=(
           ["fa-regular"]="fa/regular"
           ["fa-light"]="fa/light"
           ["fa-duotone"]="fa/duotone"
@@ -60,11 +52,11 @@ runs:
           exit 0
         fi
 
-        # Clear only the managed Font Awesome destination directories so stale icons
+        # Clear only managed Font Awesome destination directories so stale icons
         # do not survive from previous builds.
-        for alias in "${!ICON_ALIAS_DST[@]}"; do
-          rm -rf "$ICON_DST/${ICON_ALIAS_DST[$alias]}"
-          mkdir -p "$ICON_DST/${ICON_ALIAS_DST[$alias]}"
+        for alias in "${!ICON_ALIAS_DIR[@]}"; do
+          rm -rf "$ICON_DST/${ICON_ALIAS_DIR[$alias]}"
+          mkdir -p "$ICON_DST/${ICON_ALIAS_DIR[$alias]}"
         done
 
         missing=0
@@ -74,17 +66,16 @@ runs:
           alias="${import_path%%/*}"
           icon_rel="${import_path#*/}"
 
-          src_dir="${ICON_ALIAS_SRC[$alias]:-}"
-          dst_dir="${ICON_ALIAS_DST[$alias]:-}"
+          icon_dir="${ICON_ALIAS_DIR[$alias]:-}"
 
-          if [[ -z "$src_dir" || -z "$dst_dir" ]]; then
+          if [[ -z "$icon_dir" ]]; then
             echo "❌ Unsupported private icon alias: $alias"
             missing=1
             continue
           fi
 
-          src_file="$ICON_SRC/$src_dir/$icon_rel"
-          dst_file="$ICON_DST/$dst_dir/$icon_rel"
+          src_file="$ICON_SRC/$icon_dir/$icon_rel"
+          dst_file="$ICON_DST/$icon_dir/$icon_rel"
 
           if [[ ! -f "$src_file" ]]; then
             echo "❌ Missing icon: $src_file"
