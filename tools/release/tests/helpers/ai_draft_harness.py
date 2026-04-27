@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-from unittest.mock import call, patch
+from unittest.mock import call
 
 from tools.release.changelog.ai.config import AIDynamicRatioTokenBudget
 from tools.release.tests.helpers.cli_harness import CliHarness
+from tools.release.version.models import Version
 
 class AIDraftHarness(CliHarness):
     default_payload = {"schema_version": "x"}
@@ -21,10 +22,7 @@ class AIDraftHarness(CliHarness):
         self.polish = object()
         self.release_notes = None
 
-        self.patch(
-            "tools.release.cli_tools.commands.changelog.build.build_changelog_context",
-            return_value=self.context,
-        )
+        self.mock_build_changelog_context(self.context)
 
         self.mock_payload(self.default_payload)
         self.mock_semantic_payload(self.default_semantic_payload)
@@ -42,12 +40,13 @@ class AIDraftHarness(CliHarness):
         self.mock_polish_markdown("# AI Polished\n")
         self.mock_polish_json('{"schema_version":"polish"}\n')
 
-        self.patch("tools.release.changelog.ai.run_emergency_triage_stage")
-        self.patch("tools.release.changelog.ai.render_emergency_triage_result_json")
-        self.patch("tools.release.changelog.ai.build_triage_input_from_emergency_result")
+        self.mock_emergency_triage_result()
+        self.mock_emergency_triage_json('{"schema_version":"emergency_triage"}\n')
+        self.mock_synthesized_triage_input(self.default_triage_payload)
 
-        self.patch("tools.release.changelog.ai.run_release_notes_stage")
-        self.patch("tools.release.changelog.ai.run_provider_preflight")
+        self.mock_release_notes_stage()
+        self.patch_symbol(self.CHANGELOG_MODULES.run, "run_provider_preflight")
+        self.patch_symbol(self.CHANGELOG_MODULES.draft, "read_version_file", return_value=Version(1, 2, 3))
 
         return self
 
@@ -56,56 +55,61 @@ class AIDraftHarness(CliHarness):
     # -------------------------
 
     def mock_payload(self, payload: dict[str, Any]):
-        return self.patch("tools.release.changelog.build_ai_payload", return_value=payload)
+        return self.mock_build_ai_payload(payload)
 
     def mock_semantic_payload(self, payload: dict[str, Any]):
-        return self.patch("tools.release.changelog.build_semantic_ai_payload", return_value=payload)
+        return self.mock_build_semantic_ai_payload(payload)
 
     def mock_provider(self, provider: object):
-        self.provider = provider
-        return self.patch(
-            "tools.release.cli_tools.commands.changelog.build.build_ai_provider_from_args",
-            return_value=provider,
-        )
+        return self.mock_ai_provider_from_args(provider)
 
     def mock_draft_result(self, result: object):
-        return self.patch("tools.release.changelog.ai.generate_draft_from_payload", return_value=result)
+        return self.mock_generate_draft_from_payload(result)
 
     def mock_draft_markdown(self, markdown: str):
-        return self.patch("tools.release.changelog.ai.render_draft_markdown", return_value=markdown)
+        return self.mock_render_draft_markdown(markdown)
 
     def mock_draft_json(self, json: str):
-        return self.patch("tools.release.changelog.ai.render_draft_result_json", return_value=json)
+        return self.mock_render_draft_result_json(json)
 
     def mock_triage_result(self, result: object):
-        return self.patch("tools.release.changelog.ai.run_triage_stage", return_value=result)
+        return self.mock_run_triage_stage(result)
 
     def mock_triage_json(self, json: str):
-        return self.patch("tools.release.changelog.ai.render_triage_result_json", return_value=json)
+        return self.mock_render_triage_result_json(json)
 
     def mock_triage_ir_payload(self, payload: dict[str, Any]):
-        return self.patch("tools.release.changelog.ai.build_triage_ir_payload", return_value=payload)
+        return self.mock_build_triage_ir_payload(payload)
 
     def mock_emergency_triage(self, result: object, json: str):
-        self.patch("tools.release.changelog.ai.run_emergency_triage_stage", return_value=result)
-        return self.patch("tools.release.changelog.ai.render_emergency_triage_result_json", return_value=json)
+        self.mock_emergency_triage_result(result)
+        return self.mock_emergency_triage_json(json)
 
     def mock_synthesized_triage_input(self, payload: dict[str, Any]):
-        return self.patch("tools.release.changelog.ai.build_triage_input_from_emergency_result", return_value=payload)
+        return self.mock_build_triage_input_from_emergency_result(payload)
+
+    def mock_emergency_triage_result(self, result: object = None):
+        return self.mock_run_emergency_triage_stage(result)
+
+    def mock_emergency_triage_json(self, json: str):
+        return self.mock_render_emergency_triage_result_json(json)
 
     def mock_polish_result(self, result: object):
-        return self.patch("tools.release.changelog.ai.run_polish_stage", return_value=result)
+        return self.mock_run_polish_stage(result)
 
     def mock_polish_markdown(self, markdown: str):
-        return self.patch("tools.release.changelog.ai.render_polish_markdown", return_value=markdown)
+        return self.mock_render_polish_markdown(markdown)
 
     def mock_polish_json(self, json: str):
-        return self.patch("tools.release.changelog.ai.render_polish_result_json", return_value=json)
+        return self.mock_render_polish_result_json(json)
 
     def mock_release_notes_result(self, markdown: str):
         result = type("ReleaseNotesResult", (), {"markdown": markdown})()
         self.release_notes = result
-        return self.patch("tools.release.changelog.ai.run_release_notes_stage", return_value=result)
+        return self.mock_release_notes_stage(result)
+
+    def mock_release_notes_stage(self, result: object = None):
+        return self.mock_run_release_notes_stage(result)
 
     # -------------------------
     # Common policies

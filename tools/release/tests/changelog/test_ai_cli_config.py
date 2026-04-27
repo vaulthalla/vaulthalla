@@ -5,7 +5,10 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from tools.release import cli
+from tools.release.cli_tools.commands.changelog.build import (
+    build_ai_pipeline_config_from_args,
+    build_ai_provider_config_from_args,
+)
 
 
 def _write_profile(repo_root: Path, content: str) -> None:
@@ -64,12 +67,12 @@ profiles:
             )
             args = self._args(repo_root=str(repo_root), ai_profile="openai-balanced")
 
-            triage_cfg = cli.build_ai_provider_config_from_args(args, stage="triage")
-            emergency_cfg = cli.build_ai_provider_config_from_args(args, stage="emergency_triage")
-            draft_cfg = cli.build_ai_provider_config_from_args(args, stage="draft")
-            polish_cfg = cli.build_ai_provider_config_from_args(args, stage="polish")
-            release_notes_cfg = cli.build_ai_provider_config_from_args(args, stage="release_notes")
-            pipeline = cli.build_ai_pipeline_config_from_args(args)
+            triage_cfg = build_ai_provider_config_from_args(args, stage="triage")
+            emergency_cfg = build_ai_provider_config_from_args(args, stage="emergency_triage")
+            draft_cfg = build_ai_provider_config_from_args(args, stage="draft")
+            polish_cfg = build_ai_provider_config_from_args(args, stage="polish")
+            release_notes_cfg = build_ai_provider_config_from_args(args, stage="release_notes")
+            pipeline = build_ai_pipeline_config_from_args(args)
 
         self.assertEqual(emergency_cfg.model, "gpt-5-nano")
         self.assertEqual(triage_cfg.model, "gpt-5-nano")
@@ -107,7 +110,7 @@ profiles:
 """,
             )
             args = self._args(repo_root=str(repo_root), ai_profile="tuned")
-            pipeline = cli.build_ai_pipeline_config_from_args(args)
+            pipeline = build_ai_pipeline_config_from_args(args)
 
         self.assertEqual(pipeline.stages["draft"].temperature, 0.1)
         self.assertEqual(pipeline.stages["draft"].max_output_tokens, 1200)
@@ -138,9 +141,9 @@ profiles:
                 model="Qwen3.5-122B",
             )
 
-            triage_cfg = cli.build_ai_provider_config_from_args(args, stage="triage")
-            draft_cfg = cli.build_ai_provider_config_from_args(args, stage="draft")
-            polish_cfg = cli.build_ai_provider_config_from_args(args, stage="polish")
+            triage_cfg = build_ai_provider_config_from_args(args, stage="triage")
+            draft_cfg = build_ai_provider_config_from_args(args, stage="draft")
+            polish_cfg = build_ai_provider_config_from_args(args, stage="polish")
 
         self.assertEqual(triage_cfg.model, "Qwen3.5-122B")
         self.assertEqual(draft_cfg.model, "Qwen3.5-122B")
@@ -164,9 +167,9 @@ profiles:
             )
             args = self._args(repo_root=str(repo_root), ai_profile="custom")
 
-            triage_cfg = cli.build_ai_provider_config_from_args(args, stage="triage")
-            draft_cfg = cli.build_ai_provider_config_from_args(args, stage="draft")
-            polish_cfg = cli.build_ai_provider_config_from_args(args, stage="polish")
+            triage_cfg = build_ai_provider_config_from_args(args, stage="triage")
+            draft_cfg = build_ai_provider_config_from_args(args, stage="draft")
+            polish_cfg = build_ai_provider_config_from_args(args, stage="polish")
 
         self.assertEqual(triage_cfg.model, "gpt-fallback")
         self.assertEqual(draft_cfg.model, "gpt-draft")
@@ -182,7 +185,7 @@ profiles:
                 model="Qwen3.5-122B",
             )
 
-            cfg = cli.build_ai_provider_config_from_args(args, stage="draft")
+            cfg = build_ai_provider_config_from_args(args, stage="draft")
 
         self.assertEqual(cfg.kind, "openai-compatible")
         self.assertEqual(cfg.base_url, "http://localhost:8888/v1")
@@ -193,7 +196,7 @@ profiles:
             repo_root = Path(temp_dir)
             args = self._args(repo_root=str(repo_root), ai_profile="local-gemma")
             with self.assertRaises(ValueError) as ctx:
-                _ = cli.build_ai_provider_config_from_args(args, stage="draft")
+                _ = build_ai_provider_config_from_args(args, stage="draft")
 
         self.assertIn("config file is missing", str(ctx.exception))
 

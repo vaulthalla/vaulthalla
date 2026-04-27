@@ -90,9 +90,9 @@ class DebianInstallFlowContractTests(unittest.TestCase):
             "vh setup db",
             "vh setup remote-db",
             "vh setup nginx",
-            "vh setup nginx --certbot --domain <domain>",
+            "sudo vh setup nginx --domain <domain> --certbot",
             "vh teardown nginx",
-            "Schema/migration ownership remains with runtime startup (`SqlDeployer`)",
+            "The CLI is the control plane.",
         )
         forbidden = (
             "Debian Install Prompts",

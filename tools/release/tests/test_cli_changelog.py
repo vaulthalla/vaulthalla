@@ -48,18 +48,14 @@ class CliChangelogDraftTests(unittest.TestCase):
 
     def test_changelog_draft_raw_to_stdout(self) -> None:
         args = self._args(fmt="raw")
-        out = StringIO()
-
-        with (
-            patch("tools.release.cli_tools.commands.changelog.build.build_changelog_context", return_value=object()) as build_context,
-            patch("tools.release.changelog.render_release_changelog", return_value="# Release Draft\n") as render_raw,
-            patch("tools.release.changelog.render_debug_json") as render_json,
-            redirect_stdout(out),
-        ):
+        with CliHarness(self) as h:
+            build_context = h.mock_build_changelog_context(object(), module="basic")
+            render_raw = h.mock_render_release_changelog("# Release Draft\n")
+            render_json = h.mock_render_debug_json('{"ok":true}')
             result = cmd_changelog_draft(args)
 
         self.assertEqual(result, 0)
-        self.assertEqual(out.getvalue(), "# Release Draft\n")
+        self.assertEqual(h.stdout(), "# Release Draft\n")
         build_context.assert_called_once()
         self.assertEqual(build_context.call_args.args[1], None)
         render_raw.assert_called_once()
@@ -67,30 +63,22 @@ class CliChangelogDraftTests(unittest.TestCase):
 
     def test_changelog_draft_json_to_stdout(self) -> None:
         args = self._args(fmt="json")
-        out = StringIO()
-
-        with (
-            patch("tools.release.cli_tools.commands.changelog.build.build_changelog_context", return_value=object()),
-            patch("tools.release.changelog.render_release_changelog") as render_raw,
-            patch("tools.release.changelog.render_debug_json", return_value='{"ok":true}') as render_json,
-            redirect_stdout(out),
-        ):
+        with CliHarness(self) as h:
+            h.mock_build_changelog_context(object(), module="basic")
+            render_raw = h.mock_render_release_changelog("# Release Draft\n")
+            render_json = h.mock_render_debug_json('{"ok":true}')
             result = cmd_changelog_draft(args)
 
         self.assertEqual(result, 0)
-        self.assertEqual(out.getvalue(), '{"ok":true}\n')
+        self.assertEqual(h.stdout(), '{"ok":true}\n')
         render_json.assert_called_once()
         render_raw.assert_not_called()
 
     def test_since_tag_override_is_forwarded(self) -> None:
         args = self._args(since_tag="v0.27.0")
-        out = StringIO()
-
-        with (
-            patch("tools.release.build_changelog_context", return_value=object()) as build_context,
-            patch("tools.release.cli.render_release_changelog", return_value="# Draft\n"),
-            redirect_stdout(out),
-        ):
+        with CliHarness(self) as h:
+            build_context = h.mock_build_changelog_context(object(), module="basic")
+            h.mock_render_release_changelog("# Draft\n")
             result = cmd_changelog_draft(args)
 
         self.assertEqual(result, 0)
@@ -100,19 +88,15 @@ class CliChangelogDraftTests(unittest.TestCase):
         with TemporaryDirectory() as temp_dir:
             target = Path(temp_dir) / "release.md"
             args = self._args(output=str(target))
-            out = StringIO()
-
-            with (
-                patch("tools.release.build_changelog_context", return_value=object()),
-                patch("tools.release.cli.render_release_changelog", return_value="# File Draft\n"),
-                redirect_stdout(out),
-            ):
+            with CliHarness(self) as h:
+                h.mock_build_changelog_context(object(), module="basic")
+                h.mock_render_release_changelog("# File Draft\n")
                 result = cmd_changelog_draft(args)
 
             self.assertEqual(result, 0)
             self.assertTrue(target.is_file())
             self.assertEqual(target.read_text(encoding="utf-8"), "# File Draft\n")
-            self.assertIn("Wrote changelog draft to", out.getvalue())
+            self.assertIn("Wrote changelog draft to", h.stdout())
 
     def test_existing_version_commands_still_parse(self) -> None:
         parser = cli.build_parser()
@@ -300,18 +284,14 @@ class CliChangelogPayloadTests(unittest.TestCase):
 
     def test_payload_to_stdout(self) -> None:
         args = self._args(since_tag="v0.1.0")
-        out = StringIO()
-
-        with (
-            patch("tools.release.build_changelog_context", return_value=object()) as build_context,
-            patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}) as build_payload,
-            patch("tools.release.cli.render_ai_payload_json", return_value='{"schema_version":"x"}\n') as render_payload,
-            redirect_stdout(out),
-        ):
+        with CliHarness(self) as h:
+            build_context = h.mock_build_changelog_context(object(), module="basic")
+            build_payload = h.mock_build_ai_payload({"schema_version": "x"}, module="basic")
+            render_payload = h.mock_render_ai_payload_json('{"schema_version":"x"}\n')
             result = cmd_changelog_payload(args)
 
         self.assertEqual(result, 0)
-        self.assertEqual(out.getvalue(), '{"schema_version":"x"}\n')
+        self.assertEqual(h.stdout(), '{"schema_version":"x"}\n')
         self.assertEqual(build_context.call_args.args[1], "v0.1.0")
         build_payload.assert_called_once()
         render_payload.assert_called_once()
@@ -320,20 +300,16 @@ class CliChangelogPayloadTests(unittest.TestCase):
         with TemporaryDirectory() as temp_dir:
             target = Path(temp_dir) / "payload.json"
             args = self._args(output=str(target))
-            out = StringIO()
-
-            with (
-                patch("tools.release.build_changelog_context", return_value=object()),
-                patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
-                patch("tools.release.cli.render_ai_payload_json", return_value='{"schema_version":"x"}\n'),
-                redirect_stdout(out),
-            ):
+            with CliHarness(self) as h:
+                h.mock_build_changelog_context(object(), module="basic")
+                h.mock_build_ai_payload({"schema_version": "x"}, module="basic")
+                h.mock_render_ai_payload_json('{"schema_version":"x"}\n')
                 result = cmd_changelog_payload(args)
 
             self.assertEqual(result, 0)
             self.assertTrue(target.is_file())
             self.assertEqual(target.read_text(encoding="utf-8"), '{"schema_version":"x"}\n')
-            self.assertIn("Wrote changelog payload to", out.getvalue())
+            self.assertIn("Wrote changelog payload to", h.stdout())
 
 
 class CliChangelogReleaseTests(unittest.TestCase):
@@ -380,21 +356,15 @@ class CliChangelogReleaseTests(unittest.TestCase):
                 payload_output=str(payload_target),
                 semantic_payload_output=str(semantic_payload_target),
             )
-            out = StringIO()
-
-            with (
-                patch("tools.release.build_changelog_context", return_value=object()),
-                patch("tools.release.cli.render_release_changelog", return_value="# Raw Draft\n"),
-                patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
-                patch("tools.release.cli.render_ai_payload_json", return_value='{"schema_version":"x"}\n'),
-                patch("tools.release.cli.build_semantic_ai_payload", return_value={"schema_version": "semantic-x"}),
-                patch(
-                    "tools.release.cli.render_semantic_ai_payload_json",
-                    return_value='{"schema_version":"semantic-x"}\n',
-                ),
-                patch(
-                    "tools.release.cli.parse_release_ai_settings",
-                    return_value=type(
+            with CliHarness(self) as h:
+                h.mock_build_changelog_context(object(), module="run")
+                h.mock_render_release_changelog("# Raw Draft\n", module="run")
+                h.mock_build_ai_payload({"schema_version": "x"}, module="run")
+                h.mock_render_ai_payload_json('{"schema_version":"x"}\n', module="run")
+                h.mock_build_semantic_ai_payload({"schema_version": "semantic-x"}, module="run")
+                h.mock_render_semantic_ai_payload_json('{"schema_version":"semantic-x"}\n')
+                h.mock_parse_release_ai_settings(
+                    type(
                         "_ReleaseSettings",
                         (),
                         {
@@ -407,18 +377,15 @@ class CliChangelogReleaseTests(unittest.TestCase):
                             "local_api_key": None,
                         },
                     )(),
-                ),
-                patch(
-                    "tools.release.cli.resolve_release_changelog",
-                    return_value=type(
+                )
+                h.mock_resolve_release_changelog(
+                    type(
                         "_Selection",
                         (),
                         {"path": "manual", "content": "# Manual Changelog\n", "local_base_url_overrode_profile": False},
                     )(),
-                ),
-                redirect_stdout(out),
-            ):
-                rc = cmd_changelog_payload(args)
+                )
+                rc = cmd_changelog_release(args)
 
             self.assertEqual(rc, 0)
             self.assertEqual(target.read_text(encoding="utf-8"), "# Manual Changelog\n")
@@ -428,7 +395,7 @@ class CliChangelogReleaseTests(unittest.TestCase):
                 semantic_payload_target.read_text(encoding="utf-8"),
                 '{"schema_version":"semantic-x"}\n',
             )
-            rendered = out.getvalue()
+            rendered = h.stdout()
             self.assertIn("Wrote changelog raw evidence to", rendered)
             self.assertIn("Wrote changelog payload evidence to", rendered)
             self.assertIn("Wrote changelog semantic payload evidence to", rendered)
@@ -449,21 +416,15 @@ class CliChangelogReleaseTests(unittest.TestCase):
                 semantic_payload_output=str(semantic_payload_target),
                 release_notes_output=str(release_notes_target),
             )
-            out = StringIO()
-
-            with (
-                patch("tools.release.build_changelog_context", return_value=object()),
-                patch("tools.release.cli.render_release_changelog", return_value="# Raw Draft\n"),
-                patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
-                patch("tools.release.cli.render_ai_payload_json", return_value='{"schema_version":"x"}\n'),
-                patch("tools.release.cli.build_semantic_ai_payload", return_value={"schema_version": "semantic-x"}),
-                patch(
-                    "tools.release.cli.render_semantic_ai_payload_json",
-                    return_value='{"schema_version":"semantic-x"}\n',
-                ),
-                patch(
-                    "tools.release.cli.parse_release_ai_settings",
-                    return_value=type(
+            with CliHarness(self) as h:
+                h.mock_build_changelog_context(object(), module="run")
+                h.mock_render_release_changelog("# Raw Draft\n", module="run")
+                h.mock_build_ai_payload({"schema_version": "x"}, module="run")
+                h.mock_render_ai_payload_json('{"schema_version":"x"}\n', module="run")
+                h.mock_build_semantic_ai_payload({"schema_version": "semantic-x"}, module="run")
+                h.mock_render_semantic_ai_payload_json('{"schema_version":"semantic-x"}\n')
+                h.mock_parse_release_ai_settings(
+                    type(
                         "_ReleaseSettings",
                         (),
                         {
@@ -476,10 +437,9 @@ class CliChangelogReleaseTests(unittest.TestCase):
                             "local_api_key": None,
                         },
                     )(),
-                ),
-                patch(
-                    "tools.release.cli.resolve_release_changelog",
-                    return_value=type(
+                )
+                h.mock_resolve_release_changelog(
+                    type(
                         "_Selection",
                         (),
                         {
@@ -489,16 +449,28 @@ class CliChangelogReleaseTests(unittest.TestCase):
                             "local_base_url_overrode_profile": False,
                         },
                     )(),
-                ),
-                patch("tools.release.cli.refresh_debian_changelog_entry") as refresh,
-                redirect_stdout(out),
-            ):
+                )
+                refresh = h.mock_refresh_debian_changelog_entry(
+                    type(
+                        "_DebianUpdate",
+                        (),
+                        {
+                            "path": Path(temp_dir) / "debian" / "changelog",
+                            "package": "vaulthalla",
+                            "full_version": "1.2.3-1",
+                            "distribution": "unstable",
+                            "urgency": "medium",
+                            "maintainer": "Test User <test@example.com>",
+                            "timestamp": "Tue, 21 Apr 2026 20:00:00 +0000",
+                        },
+                    )(),
+                )
                 rc = cmd_changelog_release(args)
 
             self.assertEqual(rc, 0)
             self.assertEqual(release_notes_target.read_text(encoding="utf-8"), "# Public Notes\n")
             refresh.assert_called_once()
-            self.assertIn("Wrote release notes artifact to", out.getvalue())
+            self.assertIn("Wrote release notes artifact to", h.stdout())
 
     def test_release_command_writes_selection_metadata_when_requested(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -516,21 +488,15 @@ class CliChangelogReleaseTests(unittest.TestCase):
                 release_notes_output=str(release_notes_target),
                 selection_output=str(selection_target),
             )
-            out = StringIO()
-
-            with (
-                patch("tools.release.build_changelog_context", return_value=object()),
-                patch("tools.release.cli.render_release_changelog", return_value="# Raw Draft\n"),
-                patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
-                patch("tools.release.cli.render_ai_payload_json", return_value='{"schema_version":"x"}\n'),
-                patch("tools.release.cli.build_semantic_ai_payload", return_value={"schema_version": "semantic-x"}),
-                patch(
-                    "tools.release.cli.render_semantic_ai_payload_json",
-                    return_value='{"schema_version":"semantic-x"}\n',
-                ),
-                patch(
-                    "tools.release.cli.parse_release_ai_settings",
-                    return_value=type(
+            with CliHarness(self) as h:
+                h.mock_build_changelog_context(object(), module="run")
+                h.mock_render_release_changelog("# Raw Draft\n", module="run")
+                h.mock_build_ai_payload({"schema_version": "x"}, module="run")
+                h.mock_render_ai_payload_json('{"schema_version":"x"}\n', module="run")
+                h.mock_build_semantic_ai_payload({"schema_version": "semantic-x"}, module="run")
+                h.mock_render_semantic_ai_payload_json('{"schema_version":"semantic-x"}\n')
+                h.mock_parse_release_ai_settings(
+                    type(
                         "_ReleaseSettings",
                         (),
                         {
@@ -543,10 +509,9 @@ class CliChangelogReleaseTests(unittest.TestCase):
                             "local_api_key": None,
                         },
                     )(),
-                ),
-                patch(
-                    "tools.release.cli.resolve_release_changelog",
-                    return_value=type(
+                )
+                h.mock_resolve_release_changelog(
+                    type(
                         "_Selection",
                         (),
                         {
@@ -557,10 +522,22 @@ class CliChangelogReleaseTests(unittest.TestCase):
                             "local_base_url_overrode_profile": False,
                         },
                     )(),
-                ),
-                patch("tools.release.cli.refresh_debian_changelog_entry"),
-                redirect_stdout(out),
-            ):
+                )
+                h.mock_refresh_debian_changelog_entry(
+                    type(
+                        "_DebianUpdate",
+                        (),
+                        {
+                            "path": Path(temp_dir) / "debian" / "changelog",
+                            "package": "vaulthalla",
+                            "full_version": "1.2.3-1",
+                            "distribution": "unstable",
+                            "urgency": "medium",
+                            "maintainer": "Test User <test@example.com>",
+                            "timestamp": "Tue, 21 Apr 2026 20:00:00 +0000",
+                        },
+                    )(),
+                )
                 rc = cmd_changelog_release(args)
 
             self.assertEqual(rc, 0)
@@ -569,7 +546,7 @@ class CliChangelogReleaseTests(unittest.TestCase):
             self.assertTrue(metadata["release_notes_generated"])
             self.assertEqual(metadata["ai_mode"], "auto")
             self.assertEqual(metadata["openai_profile"], "openai-balanced")
-            self.assertIn("Wrote changelog selection metadata to", out.getvalue())
+            self.assertIn("Wrote changelog selection metadata to", h.stdout())
 
     def test_release_command_selection_metadata_marks_existing_release_notes_as_generated(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -589,19 +566,15 @@ class CliChangelogReleaseTests(unittest.TestCase):
                 selection_output=str(selection_target),
             )
 
-            with (
-                patch("tools.release.build_changelog_context", return_value=object()),
-                patch("tools.release.cli.render_release_changelog", return_value="# Raw Draft\n"),
-                patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
-                patch("tools.release.cli.render_ai_payload_json", return_value='{"schema_version":"x"}\n'),
-                patch("tools.release.cli.build_semantic_ai_payload", return_value={"schema_version": "semantic-x"}),
-                patch(
-                    "tools.release.cli.render_semantic_ai_payload_json",
-                    return_value='{"schema_version":"semantic-x"}\n',
-                ),
-                patch(
-                    "tools.release.cli.parse_release_ai_settings",
-                    return_value=type(
+            with CliHarness(self) as h:
+                h.mock_build_changelog_context(object(), module="run")
+                h.mock_render_release_changelog("# Raw Draft\n", module="run")
+                h.mock_build_ai_payload({"schema_version": "x"}, module="run")
+                h.mock_render_ai_payload_json('{"schema_version":"x"}\n', module="run")
+                h.mock_build_semantic_ai_payload({"schema_version": "semantic-x"}, module="run")
+                h.mock_render_semantic_ai_payload_json('{"schema_version":"semantic-x"}\n')
+                h.mock_parse_release_ai_settings(
+                    type(
                         "_ReleaseSettings",
                         (),
                         {
@@ -614,10 +587,9 @@ class CliChangelogReleaseTests(unittest.TestCase):
                             "local_api_key": None,
                         },
                     )(),
-                ),
-                patch(
-                    "tools.release.cli.resolve_release_changelog",
-                    return_value=type(
+                )
+                h.mock_resolve_release_changelog(
+                    type(
                         "_Selection",
                         (),
                         {
@@ -628,9 +600,22 @@ class CliChangelogReleaseTests(unittest.TestCase):
                             "local_base_url_overrode_profile": False,
                         },
                     )(),
-                ),
-                patch("tools.release.cli.refresh_debian_changelog_entry"),
-            ):
+                )
+                h.mock_refresh_debian_changelog_entry(
+                    type(
+                        "_DebianUpdate",
+                        (),
+                        {
+                            "path": Path(temp_dir) / "debian" / "changelog",
+                            "package": "vaulthalla",
+                            "full_version": "1.2.3-1",
+                            "distribution": "unstable",
+                            "urgency": "medium",
+                            "maintainer": "Test User <test@example.com>",
+                            "timestamp": "Tue, 21 Apr 2026 20:00:00 +0000",
+                        },
+                    )(),
+                )
                 rc = cmd_changelog_release(args)
 
             self.assertEqual(rc, 0)
@@ -655,21 +640,15 @@ class CliChangelogReleaseTests(unittest.TestCase):
                 debian_distribution="stable",
                 debian_urgency="high",
             )
-            out = StringIO()
-
-            with (
-                patch("tools.release.build_changelog_context", return_value=object()),
-                patch("tools.release.cli.render_release_changelog", return_value="# Raw Draft\n"),
-                patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
-                patch("tools.release.cli.render_ai_payload_json", return_value='{"schema_version":"x"}\n'),
-                patch("tools.release.cli.build_semantic_ai_payload", return_value={"schema_version": "semantic-x"}),
-                patch(
-                    "tools.release.cli.render_semantic_ai_payload_json",
-                    return_value='{"schema_version":"semantic-x"}\n',
-                ),
-                patch(
-                    "tools.release.cli.parse_release_ai_settings",
-                    return_value=type(
+            with CliHarness(self) as h:
+                h.mock_build_changelog_context(object(), module="run")
+                h.mock_render_release_changelog("# Raw Draft\n", module="run")
+                h.mock_build_ai_payload({"schema_version": "x"}, module="run")
+                h.mock_render_ai_payload_json('{"schema_version":"x"}\n', module="run")
+                h.mock_build_semantic_ai_payload({"schema_version": "semantic-x"}, module="run")
+                h.mock_render_semantic_ai_payload_json('{"schema_version":"semantic-x"}\n')
+                h.mock_parse_release_ai_settings(
+                    type(
                         "_ReleaseSettings",
                         (),
                         {
@@ -682,18 +661,16 @@ class CliChangelogReleaseTests(unittest.TestCase):
                             "local_api_key": None,
                         },
                     )(),
-                ),
-                patch(
-                    "tools.release.cli.resolve_release_changelog",
-                    return_value=type(
+                )
+                h.mock_resolve_release_changelog(
+                    type(
                         "_Selection",
                         (),
                         {"path": "openai", "content": "# Release\n- change one\n", "local_base_url_overrode_profile": False},
                     )(),
-                ),
-                patch(
-                    "tools.release.cli.refresh_debian_changelog_entry",
-                    return_value=type(
+                )
+                refresh_entry = h.mock_refresh_debian_changelog_entry(
+                    type(
                         "_DebianUpdate",
                         (),
                         {
@@ -706,9 +683,7 @@ class CliChangelogReleaseTests(unittest.TestCase):
                             "timestamp": "Tue, 21 Apr 2026 20:00:00 +0000",
                         },
                     )(),
-                ) as refresh_entry,
-                redirect_stdout(out),
-            ):
+                )
                 rc = cmd_changelog_release(args)
 
             self.assertEqual(rc, 0)
@@ -750,21 +725,13 @@ class CliChangelogAIReleaseTests(unittest.TestCase):
 
     def test_ai_release_runs_ai_draft_then_forced_cached_release(self) -> None:
         args = self._args()
-        out = StringIO()
         observed_modes: list[str | None] = []
 
-        with (
-            patch(
-                "tools.release.cli_tools.commands.changelog.release.cmd_changelog_ai_draft",
-                return_value=0,
-            ) as run_ai_draft,
-            patch(
-                "tools.release.cli_tools.commands.changelog.release.cmd_changelog_release",
+        with CliHarness(self) as h, patch.dict("os.environ", {"RELEASE_AI_MODE": "auto"}, clear=False):
+            run_ai_draft = h.mock_changelog_ai_draft(0)
+            run_release = h.mock_changelog_release(
                 side_effect=lambda _release_args: observed_modes.append(os.environ.get("RELEASE_AI_MODE")) or 0,
-            ) as run_release,
-            patch.dict("os.environ", {"RELEASE_AI_MODE": "auto"}, clear=False),
-            redirect_stdout(out),
-        ):
+            )
             rc = cmd_changelog_ai_release(args)
             self.assertEqual(os.environ.get("RELEASE_AI_MODE"), "auto")
 
@@ -782,16 +749,9 @@ class CliChangelogAIReleaseTests(unittest.TestCase):
 
     def test_ai_release_skips_release_stage_when_draft_returns_nonzero(self) -> None:
         args = self._args()
-        with (
-            patch(
-                "tools.release.cli_tools.commands.changelog.release.cmd_changelog_ai_draft",
-                return_value=2,
-            ) as run_ai_draft,
-            patch(
-                "tools.release.cli_tools.commands.changelog.release.cmd_changelog_release",
-                return_value=0,
-            ) as run_release,
-        ):
+        with CliHarness(self) as h:
+            run_ai_draft = h.mock_changelog_ai_draft(2)
+            run_release = h.mock_changelog_release(0)
             rc = cmd_changelog_ai_release(args)
 
         self.assertEqual(rc, 2)
@@ -849,18 +809,14 @@ class CliChangelogAIReleaseTests(unittest.TestCase):
                 release_notes_output=str(repo_root / ".changelog_scratch" / "release_notes.md"),
             )
 
-            with (
-                patch("tools.release.cmd_changelog_ai_draft", side_effect=_fake_ai_draft),
-                patch("tools.release.build_changelog_context", return_value=object()),
-                patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"}),
-                patch("tools.release.cli.render_release_changelog", return_value="# Raw Draft\n"),
-                patch("tools.release.cli.render_ai_payload_json", return_value='{"schema_version":"x"}\n'),
-                patch("tools.release.cli.build_semantic_ai_payload", return_value={"schema_version": "semantic-x"}),
-                patch(
-                    "tools.release.cli.render_semantic_ai_payload_json",
-                    return_value='{"schema_version":"semantic-x"}\n',
-                ),
-            ):
+            with CliHarness(self) as h:
+                h.mock_changelog_ai_draft(side_effect=_fake_ai_draft)
+                h.mock_build_changelog_context(object(), module="run")
+                h.mock_build_ai_payload({"schema_version": "x"}, module="run")
+                h.mock_render_release_changelog("# Raw Draft\n", module="run")
+                h.mock_render_ai_payload_json('{"schema_version":"x"}\n', module="run")
+                h.mock_build_semantic_ai_payload({"schema_version": "semantic-x"}, module="run")
+                h.mock_render_semantic_ai_payload_json('{"schema_version":"semantic-x"}\n')
                 rc = cmd_changelog_ai_release(args)
 
             self.assertEqual(rc, 0)
@@ -897,37 +853,29 @@ class CliChangelogAICheckTests(unittest.TestCase):
             discovered_models=("Qwen3.5-122B", "Gemma-4-31B"),
             model_found=True,
         )
-        with (
-            patch("tools.release.cli.build_ai_provider_config_from_args") as build_config,
-            patch("tools.release.cli.build_ai_provider_from_config", return_value=object()) as build_provider,
-            patch("tools.release.cli.run_provider_preflight", return_value=result_obj) as run_preflight,
-            redirect_stdout(out),
-        ):
+        with CliHarness(self) as h:
+            build_config = h.mock_ai_provider_config_from_args(object())
+            build_provider = h.mock_ai_provider_from_config(object())
+            run_preflight = h.mock_run_provider_preflight(result_obj)
             rc = cmd_changelog_ai_check(args)
+            rendered = h.stdout()
 
         self.assertEqual(rc, 0)
         build_config.assert_called_once_with(args)
         build_provider.assert_called_once()
         run_preflight.assert_called_once()
-        rendered = out.getvalue()
         self.assertIn("AI provider check", rendered)
         self.assertIn("openai-compatible", rendered)
         self.assertIn("Qwen3.5-122B", rendered)
         self.assertIn("Gemma-4-31B", rendered)
 
     def test_main_ai_check_surfaces_preflight_errors(self) -> None:
-        err = StringIO()
-        with (
-            patch(
-                "tools.release.cli_tools.commands.changelog.check.build_ai_provider_from_config",
-                return_value=object(),
-            ),
-            patch(
-                "tools.release.cli_tools.commands.changelog.check.run_provider_preflight",
+        with CliHarness(self) as h:
+            h.patch_stderr()
+            h.mock_ai_provider_from_config(object())
+            h.mock_run_provider_preflight(
                 side_effect=ValueError("Could not reach OpenAI-compatible endpoint"),
-            ),
-            patch("sys.stderr", new=err),
-        ):
+            )
             rc = cli.main(
                 [
                     "changelog",
@@ -942,7 +890,7 @@ class CliChangelogAICheckTests(unittest.TestCase):
             )
 
         self.assertEqual(rc, 1)
-        self.assertIn("ERROR: Could not reach OpenAI-compatible endpoint", err.getvalue())
+        h.assert_stderr_contains("ERROR: Could not reach OpenAI-compatible endpoint")
 
 
 class CliChangelogAIDraftTests(unittest.TestCase):
@@ -1345,10 +1293,7 @@ class CliChangelogAIDraftTests(unittest.TestCase):
             with AIDraftHarness(self) as h:
                 h.mock_draft_markdown("# Draft Output\n- d\n")
                 h.mock_polish_markdown("# Polished Output\n- p\n")
-                h.patch(
-                    "tools.release.cli.run_release_notes_stage",
-                    side_effect=ValueError("notes parse failure"),
-                )
+                h.mock_run_release_notes_stage(side_effect=ValueError("notes parse failure"))
 
                 with self.assertRaisesRegex(
                         ValueError,
@@ -1359,15 +1304,8 @@ class CliChangelogAIDraftTests(unittest.TestCase):
     def test_main_fails_when_triage_requested_and_invalid(self) -> None:
         with AIDraftHarness(self) as h:
             h.patch_stderr()
-            h.patch("tools.release.cli_tools.commands.changelog.draft.build_changelog_context", return_value=object())
-            h.patch("tools.release.cli_tools.commands.changelog.draft.build_ai_payload", return_value={"schema_version": "x"})
-            h.patch(
-                "tools.release.cli_tools.commands.changelog.draft.build_semantic_ai_payload",
-                return_value={"schema_version": "semantic-x", "categories": [{}]},
-            )
-            h.patch("tools.release.cli_tools.commands.changelog.draft.build_ai_provider_from_args", return_value=object())
-            h.patch(
-                "tools.release.cli_tools.commands.changelog.draft.run_triage_stage",
+            h.mock_build_semantic_ai_payload({"schema_version": "semantic-x", "categories": [{}]})
+            h.mock_run_triage_stage(
                 side_effect=ValueError("AI triage response must include non-empty `categories` list."),
             )
 
@@ -1380,15 +1318,8 @@ class CliChangelogAIDraftTests(unittest.TestCase):
     def test_main_fails_with_stage_specific_triage_missing_schema_version_message(self) -> None:
         with AIDraftHarness(self) as h:
             h.patch_stderr()
-            h.patch("tools.release.cli_tools.commands.changelog.draft.build_changelog_context", return_value=object())
-            h.patch("tools.release.cli_tools.commands.changelog.draft.build_ai_payload", return_value={"schema_version": "x"})
-            h.patch(
-                "tools.release.cli_tools.commands.changelog.draft.build_semantic_ai_payload",
-                return_value={"schema_version": "semantic-x", "categories": [{}]},
-            )
-            h.patch("tools.release.cli_tools.commands.changelog.draft.build_ai_provider_from_args", return_value=object())
-            h.patch(
-                "tools.release.cli_tools.commands.changelog.draft.run_triage_stage",
+            h.mock_build_semantic_ai_payload({"schema_version": "semantic-x", "categories": [{}]})
+            h.mock_run_triage_stage(
                 side_effect=ValueError("`schema_version` must be a non-empty string."),
             )
 
@@ -1400,8 +1331,7 @@ class CliChangelogAIDraftTests(unittest.TestCase):
     def test_main_fails_when_polish_requested_and_invalid(self) -> None:
         with AIDraftHarness(self) as h:
             h.patch_stderr()
-            h.patch(
-                "tools.release.cli.run_polish_stage",
+            h.mock_run_polish_stage(
                 side_effect=ValueError("AI polish response must include non-empty `sections` list."),
             )
 
@@ -1414,8 +1344,7 @@ class CliChangelogAIDraftTests(unittest.TestCase):
     def test_main_fails_with_stage_specific_draft_missing_title_message(self) -> None:
         with AIDraftHarness(self) as h:
             h.patch_stderr()
-            h.patch(
-                "tools.release.cli.generate_draft_from_payload",
+            h.mock_generate_draft_from_payload(
                 side_effect=ValueError("`title` must be a non-empty string."),
             )
 
@@ -1445,8 +1374,8 @@ class CliChangelogAIDraftTests(unittest.TestCase):
     def test_main_reports_missing_api_key_error_cleanly(self) -> None:
         with AIDraftHarness(self) as h:
             h.patch_stderr()
-            h.patch(
-                "tools.release.cli.build_ai_provider_from_args",
+            h.mock_ai_provider_from_args(
+                object(),
                 side_effect=ValueError("OPENAI_API_KEY is not set."),
             )
 
@@ -1457,8 +1386,8 @@ class CliChangelogAIDraftTests(unittest.TestCase):
 
     def test_main_openai_rejects_base_url_flag(self) -> None:
         with CliHarness(self) as h:
-            h.patch("tools.release.build_changelog_context", return_value=object())
-            h.patch("tools.release.cli.build_ai_payload", return_value={"schema_version": "x"})
+            h.mock_build_changelog_context(object())
+            h.mock_build_ai_payload({"schema_version": "x"})
             h.patch_stderr()
 
             rc = cli.main(
@@ -1601,11 +1530,10 @@ class CliChangelogAICompareTests(unittest.TestCase):
                 changelog_path.write_text(f"effective debian from {heading}\n", encoding="utf-8")
                 return SimpleNamespace(path=changelog_path)
 
-            with (
-                patch("tools.release.cmd_changelog_ai_draft", side_effect=_fake_draft) as run_draft,
-                patch("tools.release.cli.build_ai_pipeline_config_from_args", side_effect=_fake_pipeline),
-                patch("tools.release.cli.refresh_debian_changelog_entry", side_effect=_fake_refresh) as refresh_entry,
-            ):
+            with CliHarness(self) as h:
+                run_draft = h.mock_changelog_ai_draft(side_effect=_fake_draft, module="compare")
+                h.mock_build_ai_pipeline_config_from_args(module="compare", side_effect=_fake_pipeline)
+                refresh_entry = h.mock_refresh_debian_changelog_entry(side_effect=_fake_refresh, module="compare")
                 rc = cmd_changelog_ai_compare(args)
 
             self.assertEqual(rc, 0)
@@ -1799,10 +1727,9 @@ profiles:
                     raise AssertionError(f"Unexpected stage: {stage}")
 
             provider = _StageAwareProvider()
-            with (
-                patch("tools.release.build_changelog_context", return_value=context),
-                patch("tools.release.cli.build_ai_provider_from_args", return_value=provider),
-            ):
+            with CliHarness(self) as h:
+                h.mock_build_changelog_context(context)
+                h.mock_ai_provider_from_args(provider)
                 rc = cmd_changelog_ai_compare(args)
 
             self.assertEqual(rc, 0)
@@ -1814,10 +1741,9 @@ class CliChangelogContextHelperTests(unittest.TestCase):
         repo_root = Path("/tmp/repo")
         context_obj = object()
 
-        with (
-            patch("tools.release.cli.read_version_file", return_value=Version(1, 2, 3)) as read_version,
-            patch("tools.release.cli.build_release_context", return_value=context_obj) as build_context,
-        ):
+        with CliHarness(self) as h:
+            read_version = h.mock_read_version_file(Version(1, 2, 3))
+            build_context = h.mock_build_release_context(context_obj)
             context = build_changelog_context(repo_root, "v0.9.0")
 
         self.assertIs(context, context_obj)

@@ -8,7 +8,6 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from tools.release import cli
 from tools.release.changelog.ai.config import AIPipelineConfig, AIPipelineStageConfig
 from tools.release.changelog.ai.failure_artifacts import (
     FAILURE_ARTIFACT_VERBOSE_ENV_VAR,
@@ -16,6 +15,7 @@ from tools.release.changelog.ai.failure_artifacts import (
     provider_response_observed,
     write_failure_artifact,
 )
+from tools.release.cli_tools.changelog.failure import capture_stage_failure_artifact
 
 
 class _FakeProvider:
@@ -185,7 +185,7 @@ class FailureArtifactTests(unittest.TestCase):
                 ai_profile="openai-cheap",
             )
             provider = _FakeProvider({"attempts": [{"response_received": True}]})
-            cli._capture_stage_failure_artifact(
+            capture_stage_failure_artifact(
                 repo_root=repo_root,
                 args=args,
                 stage="draft",
@@ -203,7 +203,7 @@ class FailureArtifactTests(unittest.TestCase):
             self.assertTrue((failures[0] / "response.json").is_file())
 
             no_response_provider = _FakeProvider({"attempts": [{"response_received": False}]})
-            cli._capture_stage_failure_artifact(
+            capture_stage_failure_artifact(
                 repo_root=repo_root,
                 args=args,
                 stage="draft",
