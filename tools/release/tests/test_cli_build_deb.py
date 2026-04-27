@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from tools.release import cli
+from tools.release.cli_tools.commands.debian import cmd_publish_deb, cmd_validate_release_artifacts, cmd_build_deb
 from tools.release.packaging import DebianBuildResult, DebianPublicationResult
 
 
@@ -70,7 +71,8 @@ class CliBuildDebParsingTests(unittest.TestCase):
 
 
 class CliBuildDebCommandTests(unittest.TestCase):
-    def _args(self, *, repo_root: str = ".", output_dir: str = "release", dry_run: bool = False) -> argparse.Namespace:
+    @staticmethod
+    def _args(*, repo_root: str = ".", output_dir: str = "release", dry_run: bool = False) -> argparse.Namespace:
         return argparse.Namespace(repo_root=repo_root, output_dir=output_dir, dry_run=dry_run)
 
     def test_cmd_build_deb_dry_run_prints_plan(self) -> None:
@@ -88,10 +90,10 @@ class CliBuildDebCommandTests(unittest.TestCase):
         )
 
         with (
-            patch("tools.release.cli.build_debian_package", return_value=fake_result) as build_deb,
+            patch("tools.release.cli_tools.commands.debian.build_debian_package", return_value=fake_result) as build_deb,
             redirect_stdout(out),
         ):
-            rc = cli.cmd_build_deb(args)
+            rc = cmd_build_deb(args)
 
         self.assertEqual(rc, 0)
         build_deb.assert_called_once()
@@ -114,10 +116,10 @@ class CliBuildDebCommandTests(unittest.TestCase):
         )
 
         with (
-            patch("tools.release.cli.build_debian_package", return_value=fake_result),
+            patch("tools.release.cli_tools.commands.debian.build_debian_package", return_value=fake_result),
             redirect_stdout(out),
         ):
-            rc = cli.cmd_build_deb(args)
+            rc = cmd_build_deb(args)
 
         self.assertEqual(rc, 0)
         rendered = out.getvalue()
@@ -128,7 +130,7 @@ class CliBuildDebCommandTests(unittest.TestCase):
     def test_main_reports_build_deb_error_cleanly(self) -> None:
         err = StringIO()
         with (
-            patch("tools.release.cli.build_debian_package", side_effect=ValueError("build failed")),
+            patch("tools.release.cli_tools.commands.debian.build_debian_package", side_effect=ValueError("build failed")),
             patch("sys.stderr", new=err),
         ):
             rc = cli.main(["build-deb"])
@@ -156,10 +158,10 @@ class CliBuildDebCommandTests(unittest.TestCase):
         )()
 
         with (
-            patch("tools.release.cli.validate_release_artifacts", return_value=fake_result) as validate,
+            patch("tools.release.cli_tools.commands.debian.validate_release_artifacts", return_value=fake_result) as validate,
             redirect_stdout(out),
         ):
-            rc = cli.cmd_validate_release_artifacts(args)
+            rc = cmd_validate_release_artifacts(args)
 
         self.assertEqual(rc, 0)
         validate.assert_called_once()
@@ -200,11 +202,17 @@ class CliBuildDebCommandTests(unittest.TestCase):
         )
 
         with (
-            patch("tools.release.cli.resolve_debian_publication_settings", return_value=fake_settings),
-            patch("tools.release.cli.publish_debian_artifacts", return_value=fake_result) as publish,
+            patch(
+                "tools.release.cli_tools.commands.debian.resolve_debian_publication_settings",
+                return_value=fake_settings,
+            ),
+            patch(
+                "tools.release.cli_tools.commands.debian.publish_debian_artifacts",
+                return_value=fake_result,
+            ) as publish,
             redirect_stdout(out),
         ):
-            rc = cli.cmd_publish_deb(args)
+            rc = cmd_publish_deb(args)
 
         self.assertEqual(rc, 0)
         publish.assert_called_once()
@@ -253,11 +261,11 @@ class CliBuildDebCommandTests(unittest.TestCase):
         )
 
         with (
-            patch("tools.release.cli.resolve_debian_publication_settings", return_value=fake_settings),
-            patch("tools.release.cli.publish_debian_artifacts", return_value=fake_result) as publish,
+            patch("tools.release.cli_tools.commands.debian.resolve_debian_publication_settings", return_value=fake_settings),
+            patch("tools.release.cli_tools.commands.debian.publish_debian_artifacts", return_value=fake_result) as publish,
             redirect_stdout(out),
         ):
-            rc = cli.cmd_publish_deb(args)
+            rc = cmd_publish_deb(args)
 
         self.assertEqual(rc, 0)
         publish.assert_called_once()
@@ -277,7 +285,7 @@ class CliBuildDebCommandTests(unittest.TestCase):
         err = StringIO()
         with (
             patch(
-                "tools.release.cli.resolve_debian_publication_settings",
+                "tools.release.cli_tools.commands.debian.resolve_debian_publication_settings",
                 return_value=type(
                     "_Settings",
                     (),
@@ -290,7 +298,7 @@ class CliBuildDebCommandTests(unittest.TestCase):
                 )(),
             ),
             patch(
-                "tools.release.cli.publish_debian_artifacts",
+                "tools.release.cli_tools.commands.debian.publish_debian_artifacts",
                 side_effect=ValueError("Debian publication is required for this run, but RELEASE_PUBLISH_MODE is disabled."),
             ),
             patch("sys.stderr", new=err),
