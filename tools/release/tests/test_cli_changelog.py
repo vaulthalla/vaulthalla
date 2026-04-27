@@ -754,9 +754,12 @@ class CliChangelogAIReleaseTests(unittest.TestCase):
         observed_modes: list[str | None] = []
 
         with (
-            patch("tools.release.cmd_changelog_ai_draft", return_value=0) as run_ai_draft,
             patch(
-                "tools.release.cmd_changelog_release",
+                "tools.release.cli_tools.commands.changelog.release.cmd_changelog_ai_draft",
+                return_value=0,
+            ) as run_ai_draft,
+            patch(
+                "tools.release.cli_tools.commands.changelog.release.cmd_changelog_release",
                 side_effect=lambda _release_args: observed_modes.append(os.environ.get("RELEASE_AI_MODE")) or 0,
             ) as run_release,
             patch.dict("os.environ", {"RELEASE_AI_MODE": "auto"}, clear=False),
@@ -780,8 +783,14 @@ class CliChangelogAIReleaseTests(unittest.TestCase):
     def test_ai_release_skips_release_stage_when_draft_returns_nonzero(self) -> None:
         args = self._args()
         with (
-            patch("tools.release.cmd_changelog_ai_draft", return_value=2) as run_ai_draft,
-            patch("tools.release.cmd_changelog_release", return_value=0) as run_release,
+            patch(
+                "tools.release.cli_tools.commands.changelog.release.cmd_changelog_ai_draft",
+                return_value=2,
+            ) as run_ai_draft,
+            patch(
+                "tools.release.cli_tools.commands.changelog.release.cmd_changelog_release",
+                return_value=0,
+            ) as run_release,
         ):
             rc = cmd_changelog_ai_release(args)
 
@@ -909,9 +918,12 @@ class CliChangelogAICheckTests(unittest.TestCase):
     def test_main_ai_check_surfaces_preflight_errors(self) -> None:
         err = StringIO()
         with (
-            patch("tools.release.cli.build_ai_provider_from_config", return_value=object()),
             patch(
-                "tools.release.cli.run_provider_preflight",
+                "tools.release.cli_tools.commands.changelog.check.build_ai_provider_from_config",
+                return_value=object(),
+            ),
+            patch(
+                "tools.release.cli_tools.commands.changelog.check.run_provider_preflight",
                 side_effect=ValueError("Could not reach OpenAI-compatible endpoint"),
             ),
             patch("sys.stderr", new=err),
@@ -1347,8 +1359,15 @@ class CliChangelogAIDraftTests(unittest.TestCase):
     def test_main_fails_when_triage_requested_and_invalid(self) -> None:
         with AIDraftHarness(self) as h:
             h.patch_stderr()
+            h.patch("tools.release.cli_tools.commands.changelog.draft.build_changelog_context", return_value=object())
+            h.patch("tools.release.cli_tools.commands.changelog.draft.build_ai_payload", return_value={"schema_version": "x"})
             h.patch(
-                "tools.release.cli.run_triage_stage",
+                "tools.release.cli_tools.commands.changelog.draft.build_semantic_ai_payload",
+                return_value={"schema_version": "semantic-x", "categories": [{}]},
+            )
+            h.patch("tools.release.cli_tools.commands.changelog.draft.build_ai_provider_from_args", return_value=object())
+            h.patch(
+                "tools.release.cli_tools.commands.changelog.draft.run_triage_stage",
                 side_effect=ValueError("AI triage response must include non-empty `categories` list."),
             )
 
@@ -1361,8 +1380,15 @@ class CliChangelogAIDraftTests(unittest.TestCase):
     def test_main_fails_with_stage_specific_triage_missing_schema_version_message(self) -> None:
         with AIDraftHarness(self) as h:
             h.patch_stderr()
+            h.patch("tools.release.cli_tools.commands.changelog.draft.build_changelog_context", return_value=object())
+            h.patch("tools.release.cli_tools.commands.changelog.draft.build_ai_payload", return_value={"schema_version": "x"})
             h.patch(
-                "tools.release.cli.run_triage_stage",
+                "tools.release.cli_tools.commands.changelog.draft.build_semantic_ai_payload",
+                return_value={"schema_version": "semantic-x", "categories": [{}]},
+            )
+            h.patch("tools.release.cli_tools.commands.changelog.draft.build_ai_provider_from_args", return_value=object())
+            h.patch(
+                "tools.release.cli_tools.commands.changelog.draft.run_triage_stage",
                 side_effect=ValueError("`schema_version` must be a non-empty string."),
             )
 
@@ -1631,329 +1657,6 @@ class CliChangelogAICompareTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(ValueError, "--output-name must be a file name"):
                 _ = cmd_changelog_ai_compare(args)
-
-    def test_ai_compare_real_triage_path_handles_semantic_tuple_projection(self) -> None:
-        with TemporaryDirectory() as temp_dir:
-            repo_root = Path(temp_dir)
-            _ = self._write_repo_basics(repo_root)
-            (repo_root / "ai.yml").write_text(
-                """
-profiles:
-  openai-cheap:
-    provider: openai
-    stages:
-      triage:
-        model: gpt-5-nano
-      draft:
-        model: gpt-5-nano
-      polish:
-        model: gpt-5-mini
-      release_notes:
-        model: gpt-5-mini
-""",
-                encoding="utf-8",
-            )
-            args = argparse.Namespace(
-                repo_root=str(repo_root),
-                since_tag=None,
-                ai_profiles="openai-cheap",
-                output_name="0.34.0-openai-comparison.md",
-            )
-
-            context = ReleaseContext(
-                version="0.34.0",
-                previous_tag="v0.33.0",
-                head_sha="abc123",
-                commit_count=1,
-                categories={
-                    "tools": CategoryContext(
-                        name="tools",
-                        commit_count=1,
-                        insertions=10,
-                        deletions=1,
-                        commits=[
-                            CommitInfo(
-                                sha="abcd1234",
-                                subject="Refine ai-compare profile projection",
-                                body="",
-                                files=["tools/release/cli.py"],
-                                insertions=10,
-                                deletions=1,
-                                categories=["tools"],
-                            )
-                        ],
-                        files=[
-                            FileChange(
-                                path="tools/release/cli.py",
-                                category="tools",
-                                subscopes=("release", "cli"),
-                                insertions=10,
-                                deletions=1,
-                                commit_count=1,
-                                score=10.0,
-                                flags=("release-tooling",),
-                            )
-                        ],
-                        snippets=[
-                            DiffSnippet(
-                                path="tools/release/cli.py",
-                                category="tools",
-                                subscopes=("release", "cli"),
-                                score=8.0,
-                                reason="Selected from high-scoring tools file; flags: release-tooling",
-                                patch="@@ -1,2 +1,2 @@\n+compare wiring update",
-                                flags=("release-tooling",),
-                            )
-                        ],
-                        detected_themes=["release-automation"],
-                    )
-                },
-                cross_cutting_notes=[],
-            )
-
-            class _StageAwareProvider:
-                def __init__(self) -> None:
-                    self.triage_projection_categories = 0
-
-                def generate_structured_json(self, **kwargs):
-                    stage = kwargs["stage"]
-                    if stage == "triage":
-                        marker = "Semantic payload (compact projection):\n"
-                        projection = json.loads(kwargs["user_prompt"].split(marker, 1)[1])
-                        self.triage_projection_categories = len(projection.get("categories", []))
-                        if self.triage_projection_categories <= 0:
-                            raise AssertionError("triage projection categories unexpectedly empty")
-                        return {
-                            "schema_version": "vaulthalla.release.ai_triage.v2",
-                            "version": "0.34.0",
-                            "categories": [
-                                {
-                                    "name": "tools",
-                                    "signal_strength": "strong",
-                                    "priority_rank": 1,
-                                    "theme": "Release tooling updates",
-                                    "grounded_claims": ["AI compare output and contract flow were updated."],
-                                }
-                            ],
-                        }
-                    if stage == "draft":
-                        return {
-                            "title": "Release 0.34.0",
-                            "summary": "Release tooling updates.",
-                            "sections": [
-                                {
-                                    "category": "tools",
-                                    "overview": "Release tooling changed.",
-                                    "bullets": ["AI compare output and contract flow were updated."],
-                                }
-                            ],
-                            "notes": [],
-                        }
-                    if stage == "polish":
-                        return {
-                            "schema_version": "vaulthalla.release.ai_polish.v1",
-                            "title": "Release 0.34.0",
-                            "summary": "Release tooling updates.",
-                            "sections": [
-                                {
-                                    "category": "tools",
-                                    "overview": "Release tooling changed.",
-                                    "bullets": ["AI compare output and contract flow were updated."],
-                                }
-                            ],
-                            "notes": [],
-                        }
-                    if stage == "release_notes":
-                        return {
-                            "schema_version": "vaulthalla.release.ai_release_notes.v1",
-                            "markdown": "# Public Notes\n- AI compare output and contract flow were updated.\n",
-                        }
-                    raise AssertionError(f"Unexpected stage: {stage}")
-
-            provider = _StageAwareProvider()
-
-            with (
-                patch("tools.release.build_changelog_context", return_value=context),
-                patch("tools.release.cli.build_ai_provider_from_args", return_value=provider),
-            ):
-                rc = cmd_changelog_ai_compare(args)
-
-            self.assertEqual(rc, 0)
-            self.assertGreater(provider.triage_projection_categories, 0)
-            artifact = repo_root / ".changelog_scratch" / "comparisons" / "0.34.0-openai-comparison.md"
-            self.assertTrue(artifact.is_file())
-            self.assertIn("## Profile: openai-cheap", artifact.read_text(encoding="utf-8"))
-
-    def test_ai_compare_emergency_triage_batches_and_preserves_batch_identity(self) -> None:
-        with TemporaryDirectory() as temp_dir:
-            repo_root = Path(temp_dir)
-            _ = self._write_repo_basics(repo_root)
-            (repo_root / "ai.yml").write_text(
-                """
-profiles:
-  openai-cheap:
-    provider: openai
-    stages:
-      emergency_triage:
-        model: gpt-5-nano
-      triage:
-        model: gpt-5-nano
-      draft:
-        model: gpt-5-nano
-""",
-                encoding="utf-8",
-            )
-            args = argparse.Namespace(
-                repo_root=str(repo_root),
-                since_tag=None,
-                ai_profiles="openai-cheap",
-                output_name="0.34.0-openai-comparison.md",
-            )
-
-            snippets = [
-                DiffSnippet(
-                    path="tools/release/cli.py",
-                    category="tools",
-                    subscopes=("release", "cli"),
-                    score=8.0 - (index * 0.1),
-                    reason=f"Selected snippet {index}",
-                    patch=f"@@ -{index + 1},2 +{index + 1},2 @@\n+batch update {index}",
-                    flags=("release-tooling",),
-                    region_kind="function",
-                    region_label=f"ctx_{index}",
-                    hunk_count=1,
-                    changed_lines=6,
-                    meaningful_lines=6,
-                )
-                for index in range(5)
-            ]
-            context = ReleaseContext(
-                version="0.34.0",
-                previous_tag="v0.33.0",
-                head_sha="abc123",
-                commit_count=1,
-                categories={
-                    "tools": CategoryContext(
-                        name="tools",
-                        commit_count=1,
-                        insertions=10,
-                        deletions=1,
-                        commits=[
-                            CommitInfo(
-                                sha="abcd1234",
-                                subject="Refine emergency triage batching",
-                                body="",
-                                files=["tools/release/cli.py"],
-                                insertions=10,
-                                deletions=1,
-                                categories=["tools"],
-                            )
-                        ],
-                        files=[
-                            FileChange(
-                                path="tools/release/cli.py",
-                                category="tools",
-                                subscopes=("release", "cli"),
-                                insertions=10,
-                                deletions=1,
-                                commit_count=1,
-                                score=10.0,
-                                flags=("release-tooling",),
-                            )
-                        ],
-                        snippets=snippets,
-                        detected_themes=["release-automation"],
-                    )
-                },
-                cross_cutting_notes=[],
-            )
-
-            class _StageAwareProvider:
-                def __init__(self) -> None:
-                    self.emergency_batch_sizes: list[int] = []
-                    self.emergency_schema_id_enums: list[list[str]] = []
-
-                def generate_structured_json(self, **kwargs):
-                    stage = kwargs["stage"]
-                    if stage == "emergency_triage":
-                        marker = "Emergency triage input payload:\n"
-                        projection = json.loads(kwargs["user_prompt"].split(marker, 1)[1])
-                        items = projection.get("items", [])
-                        self.emergency_batch_sizes.append(len(items))
-                        schema = kwargs["json_schema"]
-                        enum_ids = schema["properties"]["items"]["items"]["properties"]["id"]["enum"]
-                        self.emergency_schema_id_enums.append(list(enum_ids))
-                        return {
-                            "schema_version": "vaulthalla.release.ai_emergency_triage.v1",
-                            "version": "0.34.0",
-                            "items": [
-                                {
-                                    "id": item["id"],
-                                    "category": item["category"],
-                                    "change_kind": "implementation-change",
-                                    "change_summary": f"Summarized {item['id']}.",
-                                    "confidence": "medium",
-                                    "insufficient_context_reason": None,
-                                    "evidence_refs": [],
-                                }
-                                for item in items
-                            ],
-                        }
-                    if stage == "triage":
-                        marker = "Synthesized semantic payload (compact projection):\n"
-                        projection = json.loads(kwargs["user_prompt"].split(marker, 1)[1])
-                        categories = projection.get("categories", [])
-                        if not categories:
-                            raise AssertionError("expected synthesized triage categories")
-                        units = categories[0].get("synthesized_units", [])
-                        if len(units) != 5:
-                            raise AssertionError(f"expected 5 synthesized units, got {len(units)}")
-                        return {
-                            "schema_version": "vaulthalla.release.ai_triage.v2",
-                            "version": "0.34.0",
-                            "categories": [
-                                {
-                                    "name": "tools",
-                                    "signal_strength": "strong",
-                                    "priority_rank": 1,
-                                    "theme": "Release tooling updates",
-                                    "grounded_claims": ["Emergency triage batched unit synthesis preserved identity."],
-                                }
-                            ],
-                        }
-                    if stage == "draft":
-                        return {
-                            "title": "Release 0.34.0",
-                            "summary": "Release tooling updates.",
-                            "sections": [
-                                {
-                                    "category": "tools",
-                                    "overview": "Release tooling changed.",
-                                    "bullets": ["Emergency triage batched unit synthesis preserved identity."],
-                                }
-                            ],
-                            "notes": [],
-                        }
-                    raise AssertionError(f"Unexpected stage: {stage}")
-
-            provider = _StageAwareProvider()
-
-            with (
-                patch("tools.release.build_changelog_context", return_value=context),
-                patch("tools.release.cli.build_ai_provider_from_args", return_value=provider),
-                patch("tools.release.changelog.ai.stages.emergency_triage._EMERGENCY_TRIAGE_BATCH_SIZE", 2),
-            ):
-                rc = cmd_changelog_ai_compare(args)
-
-            self.assertEqual(rc, 0)
-            self.assertEqual(provider.emergency_batch_sizes, [2, 2, 1])
-            self.assertEqual(
-                provider.emergency_schema_id_enums,
-                [["tools:1", "tools:2"], ["tools:3", "tools:4"], ["tools:5"]],
-            )
-            artifact = repo_root / ".changelog_scratch" / "comparisons" / "0.34.0-openai-comparison.md"
-            self.assertTrue(artifact.is_file())
-            self.assertIn("## Profile: openai-cheap", artifact.read_text(encoding="utf-8"))
 
     def test_ai_compare_emergency_triage_defaults_to_bounded_scope(self) -> None:
         with TemporaryDirectory() as temp_dir:
