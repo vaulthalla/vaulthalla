@@ -2,7 +2,23 @@
 # ⚒️  Forge build & deployment targets
 # =========================================
 
-.PHONY: all build install dev clean uninstall
+.PHONY: \
+	all \
+	build \
+	install \
+	dev \
+	test \
+	run_test \
+	run-test \
+	clean-test \
+	deb \
+	release \
+	doctor \
+	uninstall \
+	clean \
+	clean-full \
+	clean-package \
+	purge-builds
 
 # Default target: build
 all: build
@@ -36,7 +52,7 @@ run_test:
 	@echo "🛡️  Running integration tests install script..."
 	./bin/tests/install.sh --run
 
-clean_test:
+clean-test:
 	@echo "💣 Running integration tests uninstall script..."
 	./bin/tests/uninstall.sh
 
@@ -53,7 +69,16 @@ doctor:
 	./bin/doctor.sh
 
 ## 🧼 Uninstall everything
-clean uninstall:
+uninstall:
 	@echo "💣 Running uninstall script..."
 	./bin/uninstall.sh
 	./bin/tests/uninstall.sh
+
+clean:
+	./bin/clean.sh
+
+clean-full purge-builds:
+	./bin/clean.sh --full
+
+clean-package:
+	./bin/clean.sh --package

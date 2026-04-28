@@ -17,7 +17,11 @@ enable_dev_mode
 /.bashrc
 
 # Core build (also cover root-level build artifacts)
-/build
+/build/
+/build-asan/
+/build-check/
+/build-check-install/
+/build-install/
 /core/build/
 
 # Production artifacts (multi-project)
@@ -45,6 +49,7 @@ yarn-error.log*
 /debian/tmp
 /debian/vaulthalla
 /release/
+/obj-x86_64-linux-gnu/
 /.changelog_scratch
 
 # ═══════════════════════════════════════════════════════
