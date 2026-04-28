@@ -6,7 +6,6 @@ Quick map of deploy-time assets and how they feed packaging.
 For maintainer-script lifecycle details, use:
 
 - `.codex/context/debian-packaging-lifecycle.md`
-- `.codex/context/debian-bin-lifecycle-audit.md`
 
 ## Deploy Assets (`deploy/`)
 

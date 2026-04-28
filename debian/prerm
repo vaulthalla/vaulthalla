@@ -7,6 +7,10 @@ CLI_SYSTEMD_UNIT="vaulthalla-cli.service"
 CLI_SOCKET_SYSTEMD_UNIT="vaulthalla-cli.socket"
 WEB_SYSTEMD_UNIT="vaulthalla-web.service"
 SWTPM_SYSTEMD_UNIT="vaulthalla-swtpm.service"
+SYSTEMCTL_COMMAND_TIMEOUT_SECONDS=10
+SYSTEMCTL_STOP_WAIT_SECONDS=20
+SYSTEMCTL_STOP_POLL_INTERVAL_SECONDS=1
+SYSTEMCTL_UNAVAILABLE_LOGGED="0"
 NGINX_SITE_AVAIL="/etc/nginx/sites-available/vaulthalla"
 NGINX_SITE_ENABLED="/etc/nginx/sites-enabled/vaulthalla"
 LEGACY_PENDING_SUPERADMIN_UID_FILE="/run/vaulthalla/superadmin_uid"
@@ -17,11 +21,61 @@ has_command() {
     command -v "$1" >/dev/null 2>&1
 }
 
+log_systemctl_unavailable_once() {
+    if [ "$SYSTEMCTL_UNAVAILABLE_LOGGED" = "0" ]; then
+        echo "[${PKG}] systemctl unavailable; skipping systemd teardown actions."
+        SYSTEMCTL_UNAVAILABLE_LOGGED="1"
+    fi
+}
+
+run_systemctl_quiet() {
+    if ! has_command systemctl; then
+        return 127
+    fi
+    if has_command timeout; then
+        timeout "$SYSTEMCTL_COMMAND_TIMEOUT_SECONDS" systemctl --system "$@" >/dev/null 2>&1
+        return $?
+    fi
+    systemctl --system "$@" >/dev/null 2>&1
+}
+
 safe_systemctl() {
     if ! has_command systemctl; then
+        log_systemctl_unavailable_once
         return 0
     fi
-    systemctl --system "$@" >/dev/null 2>&1 || true
+    if ! run_systemctl_quiet "$@"; then
+        echo "[${PKG}] WARNING: systemctl --system $* failed; continuing."
+    fi
+    return 0
+}
+
+stop_service_bounded() {
+    unit="$1"
+
+    if ! has_command systemctl; then
+        log_systemctl_unavailable_once
+        return 0
+    fi
+
+    echo "[${PKG}] Stopping ${unit} (bounded wait: ${SYSTEMCTL_STOP_WAIT_SECONDS}s)..."
+    if ! run_systemctl_quiet stop --no-block "$unit"; then
+        echo "[${PKG}] WARNING: Failed to submit stop job for ${unit}; continuing."
+    fi
+
+    waited=0
+    while [ "$waited" -lt "$SYSTEMCTL_STOP_WAIT_SECONDS" ]; do
+        if ! run_systemctl_quiet is-active --quiet "$unit"; then
+            return 0
+        fi
+        sleep "$SYSTEMCTL_STOP_POLL_INTERVAL_SECONDS"
+        waited=$((waited + SYSTEMCTL_STOP_POLL_INTERVAL_SECONDS))
+    done
+
+    echo "[${PKG}] WARNING: ${unit} did not stop within ${SYSTEMCTL_STOP_WAIT_SECONDS}s; forcing unit kill and continuing removal."
+    safe_systemctl kill "$unit"
+    safe_systemctl reset-failed "$unit"
+    return 0
 }
 
 disable_nginx_site_link_if_package_path() {
@@ -46,11 +100,12 @@ disable_nginx_site_link_if_package_path() {
 
 case "$1" in
     remove|deconfigure)
-        safe_systemctl stop "$CLI_SOCKET_SYSTEMD_UNIT"
-        safe_systemctl stop "$CLI_SYSTEMD_UNIT"
-        safe_systemctl stop "$CORE_SYSTEMD_UNIT"
-        safe_systemctl stop "$WEB_SYSTEMD_UNIT"
-        safe_systemctl stop "$SWTPM_SYSTEMD_UNIT"
+        # Stop frontend/client-facing units first to drain websocket/socket traffic before backend stop.
+        stop_service_bounded "$WEB_SYSTEMD_UNIT"
+        stop_service_bounded "$CLI_SOCKET_SYSTEMD_UNIT"
+        stop_service_bounded "$CLI_SYSTEMD_UNIT"
+        stop_service_bounded "$CORE_SYSTEMD_UNIT"
+        stop_service_bounded "$SWTPM_SYSTEMD_UNIT"
         safe_systemctl disable "$CLI_SYSTEMD_UNIT"
         safe_systemctl disable "$CLI_SOCKET_SYSTEMD_UNIT"
         safe_systemctl disable "$CORE_SYSTEMD_UNIT"

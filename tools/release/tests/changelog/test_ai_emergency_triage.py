@@ -5,9 +5,12 @@ import unittest
 from unittest.mock import patch
 
 from tools.release.changelog.ai.contracts.emergency_triage import (
+    AI_EMERGENCY_TRIAGE_RESPONSE_JSON_SCHEMA,
     AI_EMERGENCY_TRIAGE_SCHEMA_VERSION,
     AIEmergencyTriageItem,
     AIEmergencyTriageResult,
+    ai_emergency_triage_result_to_dict,
+    parse_ai_emergency_triage_response,
 )
 from tools.release.changelog.ai.stages.emergency_triage import (
     AI_TRIAGE_SYNTHESIZED_INPUT_SCHEMA_VERSION,
@@ -15,6 +18,83 @@ from tools.release.changelog.ai.stages.emergency_triage import (
     build_triage_input_from_emergency_result,
     run_emergency_triage_stage,
 )
+
+
+class AIEmergencyTriageContractsTests(unittest.TestCase):
+    def test_parse_valid_response_with_expected_ids(self) -> None:
+        raw = {
+            "schema_version": AI_EMERGENCY_TRIAGE_SCHEMA_VERSION,
+            "version": "0.34.1",
+            "items": [
+                {
+                    "id": "tools:1",
+                    "category": "tools",
+                    "change_kind": "api-contract",
+                    "change_summary": "Updated request/response payload shaping and parsing.",
+                    "confidence": "high",
+                    "evidence_refs": ["tools/release/changelog/ai/providers/openai.py"],
+                },
+                {
+                    "id": "tools:2",
+                    "category": "tools",
+                    "change_kind": "output-artifact",
+                    "change_summary": "Added comparison artifact writing for profile runs.",
+                    "confidence": "medium",
+                },
+            ],
+        }
+        parsed = parse_ai_emergency_triage_response(
+            raw,
+            expected_item_ids=("tools:1", "tools:2"),
+        )
+        self.assertIsInstance(parsed, AIEmergencyTriageResult)
+        self.assertEqual(parsed.version, "0.34.1")
+        self.assertEqual(parsed.items[0].id, "tools:1")
+        self.assertEqual(parsed.items[1].change_kind, "output-artifact")
+
+    def test_parse_rejects_identity_drift(self) -> None:
+        raw = {
+            "schema_version": AI_EMERGENCY_TRIAGE_SCHEMA_VERSION,
+            "version": "0.34.1",
+            "items": [
+                {
+                    "id": "tools:1",
+                    "category": "tools",
+                    "change_kind": "api-contract",
+                    "change_summary": "Updated request/response payload shaping and parsing.",
+                    "confidence": "high",
+                }
+            ],
+        }
+        with self.assertRaisesRegex(ValueError, "preserve 1:1 item identity"):
+            parse_ai_emergency_triage_response(raw, expected_item_ids=("tools:1", "tools:2"))
+
+    def test_to_dict_omits_optional_fields_when_empty(self) -> None:
+        parsed = parse_ai_emergency_triage_response(
+            {
+                "schema_version": AI_EMERGENCY_TRIAGE_SCHEMA_VERSION,
+                "version": "0.34.1",
+                "items": [
+                    {
+                        "id": "tools:1",
+                        "category": "tools",
+                        "change_kind": "api-contract",
+                        "change_summary": "Updated request/response payload shaping and parsing.",
+                        "confidence": "high",
+                    }
+                ],
+            }
+        )
+        rendered = ai_emergency_triage_result_to_dict(parsed)
+        self.assertNotIn("insufficient_context_reason", rendered["items"][0])
+        self.assertNotIn("evidence_refs", rendered["items"][0])
+
+    def test_strict_schema_item_required_matches_item_properties(self) -> None:
+        item_schema = AI_EMERGENCY_TRIAGE_RESPONSE_JSON_SCHEMA["properties"]["items"]["items"]
+        required = set(item_schema["required"])
+        properties = set(item_schema["properties"].keys())
+        self.assertSetEqual(required, properties)
+
 
 
 class _FakeProvider:
@@ -352,6 +432,7 @@ class AIEmergencyTriageStageTests(unittest.TestCase):
         self.assertEqual(len(units), 2)
         self.assertEqual(units[0]["source_kind"], "output-artifact")
         self.assertEqual(units[0]["source_path"], "tools/release/cli.py")
+
 
 
 if __name__ == "__main__":

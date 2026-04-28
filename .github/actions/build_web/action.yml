@@ -7,18 +7,93 @@ runs:
     - name: Install private assets
       shell: bash
       run: |
+        set -euo pipefail
+
+        WEB_DIR="${{ github.workspace }}/web"
         ICON_SRC="$HOME/vaulthalla-web-icons"
-        ICON_DST="${{ github.workspace }}/web/public/icons"
+        ICON_DST="$WEB_DIR/public/icons"
 
         if [[ ! -d "$ICON_SRC" ]]; then
           echo "❌ Missing private icon directory: $ICON_SRC"
           exit 1
         fi
 
-        mkdir -p "$ICON_DST"
-        rsync -a --delete "$ICON_SRC/" "$ICON_DST/"
+        mkdir -p "$ICON_DST/fa"
 
-        echo "✅ Icons synced"
+        # Keep this aligned with web/tsconfig.json path aliases.
+        #
+        # Alias import:
+        #   @/fa-regular/example.svg
+        #
+        # Private source:
+        #   ~/vaulthalla-web-icons/fa/regular/example.svg
+        #
+        # Public destination:
+        #   web/public/icons/fa/regular/example.svg
+        declare -A ICON_ALIAS_DIR=(
+          ["fa-regular"]="fa/regular"
+          ["fa-light"]="fa/light"
+          ["fa-duotone"]="fa/duotone"
+          ["fa-duotone-regular"]="fa/duotone-regular"
+          ["fa-brands"]="fa/brands"
+        )
+
+        echo "🔎 Scanning web source for consumed private icons..."
+
+        mapfile -t ICON_IMPORTS < <(
+          grep -RhoE "['\"]@/(fa-regular|fa-light|fa-duotone|fa-duotone-regular|fa-brands)/[^'\"]+\.svg['\"]" "$WEB_DIR/src" \
+            | tr -d "'\"" \
+            | sed 's#^@/##' \
+            | sort -u
+        )
+
+        if [[ "${#ICON_IMPORTS[@]}" -eq 0 ]]; then
+          echo "⚠️ No private icon imports found under $WEB_DIR/src"
+          exit 0
+        fi
+
+        # Clear only managed Font Awesome destination directories so stale icons
+        # do not survive from previous builds.
+        for alias in "${!ICON_ALIAS_DIR[@]}"; do
+          rm -rf "$ICON_DST/${ICON_ALIAS_DIR[$alias]}"
+          mkdir -p "$ICON_DST/${ICON_ALIAS_DIR[$alias]}"
+        done
+
+        missing=0
+        copied=0
+
+        for import_path in "${ICON_IMPORTS[@]}"; do
+          alias="${import_path%%/*}"
+          icon_rel="${import_path#*/}"
+
+          icon_dir="${ICON_ALIAS_DIR[$alias]:-}"
+
+          if [[ -z "$icon_dir" ]]; then
+            echo "❌ Unsupported private icon alias: $alias"
+            missing=1
+            continue
+          fi
+
+          src_file="$ICON_SRC/$icon_dir/$icon_rel"
+          dst_file="$ICON_DST/$icon_dir/$icon_rel"
+
+          if [[ ! -f "$src_file" ]]; then
+            echo "❌ Missing icon: $src_file"
+            missing=1
+            continue
+          fi
+
+          mkdir -p "$(dirname "$dst_file")"
+          cp "$src_file" "$dst_file"
+          copied=$((copied + 1))
+        done
+
+        if [[ "$missing" -ne 0 ]]; then
+          echo "❌ One or more consumed private icons are missing."
+          exit 1
+        fi
+
+        echo "✅ Synced $copied consumed private icon(s)"
 
     - name: Install dependencies
       shell: bash

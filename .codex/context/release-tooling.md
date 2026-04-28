@@ -1,115 +1,82 @@
-# Release Tooling Map (`tools/release/`)
+# Release Tooling Contract
 
-## Current Mode: Stable Release Maintenance
-
-The release/changelog/package/install/publication spine is implemented and operational.  
-Current work in this area is maintenance, diagnostics, and live-runtime validation follow-through (not foundational pipeline buildout).
+Persistent reference for `tools/release` + release CI behavior that future agents must preserve.
 
 ## Canonical Entrypoints
 
-- CLI: `python3 -m tools.release`
-- Canonical packaging entrypoint: `.github/actions/package/action.yml`
-- Canonical orchestration workflow: `.github/workflows/release.yml`
+- CLI module: `python3 -m tools.release`
+- CI packaging action: `.github/actions/package/action.yml`
+- End-to-end release workflow: `.github/workflows/release.yml`
 
-`package/action.yml` remains the single CI packaging path.  
-`release.yml` wraps it with upload/publication/release-attachment policy.
+## Release Pipeline Shape
 
-## Current Release Spine
+1. Build deterministic changelog evidence from git context.
+2. Resolve changelog source by policy (`RELEASE_AI_MODE`).
+3. Write selected changelog + selection metadata artifacts.
+4. Refresh Debian changelog top entry when source is generated (not manual fallback).
+5. Build Debian/web artifacts and validate release artifact contract.
+6. Optionally publish Debian artifacts based on publication policy.
 
-1. `tools.release check` validates release state.
-2. Core + web build/test stages run.
-3. Package action runs preflight checks and resolves changelog (`changelog.release.md`, `changelog.raw.md`, `changelog.payload.json`).
-4. Package action builds and stages artifacts (`build-deb`) and enforces artifact contract checks (`validate-release-artifacts`).
-5. Workflow uploads staged artifacts.
-6. Publication policy is resolved (`RELEASE_PUBLISH_REQUIRED=auto|true|false`):
-   - tag refs default to required publication under `auto`
-   - non-tag runs default to optional publication under `auto`
-7. Debian publication runs through `publish-deb` (Nexus or disabled mode).
-8. Tag runs attach deduped staged assets to GitHub Release (`softprops/action-gh-release`, `overwrite_files: true`).
+## Changelog Source Resolution (Stable)
 
-## Changelog Resolution Contract
+`resolve_release_changelog` candidate order is mode-specific:
 
-Environment:
+- `auto`: `openai` -> `local` -> `cached-draft` -> `manual`
+- `openai-only`: `openai` -> `cached-draft` -> `manual`
+- `local-only`: `local` -> `cached-draft` -> `manual`
+- `disabled`: `cached-draft` -> `manual`
 
-- `RELEASE_AI_MODE=auto|openai-only|local-only|disabled`
-- `OPENAI_API_KEY`
-- `RELEASE_AI_PROFILE_OPENAI`
-- `RELEASE_LOCAL_LLM_ENABLED=true|false`
-- `RELEASE_LOCAL_LLM_PROFILE`
-- `RELEASE_LOCAL_LLM_BASE_URL`
-- `RELEASE_LOCAL_LLM_API_KEY` (optional)
+`manual` fallback is stale-checked against `VERSION` and must fail if stale.
 
-Deterministic provider order:
+## AI + Semantic/Triage Contracts
 
-- hosted OpenAI
-- local OpenAI-compatible endpoint (explicitly gated by `RELEASE_LOCAL_LLM_ENABLED=true`)
-- cached local draft (`.changelog_scratch/changelog.draft.md`)
-- manual/no-AI path with changelog stale check against `VERSION`
+- Forensic payload schema version: `vaulthalla.release.ai_payload.v1`.
+- Semantic payload schema version: `vaulthalla.release.semantic_payload.v1`.
+- Triage schema version: `vaulthalla.release.ai_triage.v2`.
+- `changelog ai-release` is a two-step path:
+  - generate cached draft via `ai-draft`
+  - finalize via `changelog release` with `RELEASE_AI_MODE=disabled` and cached draft source
+- Triage path is semantic-first (`raw_semantic` by default) with emergency synthesis fallback before draft/polish stages.
 
-When set, `RELEASE_LOCAL_LLM_BASE_URL` explicitly overrides the local profile `base_url` and is logged.
+## Artifact + Metadata Contract
 
-Debian changelog generation contract:
+Package action expects/produces:
 
-- `python3 -m tools.release changelog release` writes release evidence artifacts and the selected release markdown.
-- `python3 -m tools.release changelog ai-draft` writes a cached draft artifact under `.changelog_scratch` by default.
-- `python3 -m tools.release changelog ai-release` runs AI draft generation and then finalizes Debian changelog from the freshly cached draft path (no manual copy/paste handoff).
-- For generated paths (`openai` or `local`), it also refreshes the top `debian/changelog` entry as a full Debian record:
-  - package name + full Debian version
-  - distribution token
-  - urgency token
-  - summary bullet body
-  - maintainer signature line
-  - RFC-2822 timestamp
-- Distribution/urgency resolution is explicit and validated:
-  - CLI flags: `--debian-distribution`, `--debian-urgency`
-  - env fallbacks: `RELEASE_DEBIAN_DISTRIBUTION`, `RELEASE_DEBIAN_URGENCY`
-  - final fallback: existing top-entry values
-- Manual/no-AI path (`debian/changelog` fallback) is stale-checked, explicitly logged as fallback, and does not blindly rewrite the changelog.
+- `changelog.release.md`
+- `changelog.raw.md`
+- `changelog.payload.json`
+- `changelog.semantic_payload.json`
+- `release_notes.md`
+- `changelog.selection.json`
 
-Scratch artifact policy:
+Selection metadata schema marker:
 
-- `.changelog_scratch/` is volatile local generation state, not canonical release truth.
-- Scratch artifacts are cleared on version transitions driven by `set-version`, `bump`, and `sync` when upstream version alignment changes.
+- `vaulthalla.release.changelog_selection.v1`
 
-## Artifact/Packaging Contract
+If selected path is `manual`, Debian top-entry refresh is intentionally skipped.
 
-`build-deb` produces staged Debian and web deliverables.  
-`validate-release-artifacts` enforces artifact classes and completeness checks, including Debian package payload and web archive runtime layout.
+## Publication Policy
 
-This contract validates more than "build completed": it checks shipped output completeness against current install/deploy expectations.
+- `RELEASE_PUBLISH_REQUIRED=auto` resolves to:
+  - `true` for tag refs (`refs/tags/*`)
+  - `false` otherwise
+- `publish-deb` with `--require-enabled` must fail when publication mode is disabled.
+- Supported publication modes: `disabled`, `nexus`.
 
-## Debian Install/Runtime/Lifecycle (High-Level)
+## Test Guardrails
 
-- Web runtime is installed under `/usr/share/vaulthalla-web`.
-- `vaulthalla-web.service` and runtime paths are aligned with packaged layout.
-- Routine debconf prompt scaffolding is intentionally removed for default installs.
-- Package install supports low-prompt default, lean `--no-install-recommends`, and explicit env-var opt-out overrides.
-- Nginx integration is conservative and safe-skip oriented.
-- Maintainer scripts now enforce explicit remove vs purge semantics and idempotent lifecycle handling.
+High-signal tests future changes should keep green:
 
-## Publication and Release Attachment
+- `tools/release/tests/changelog/test_release_workflow.py`
+- `tools/release/tests/changelog/test_ai_semantic_downstream_regression.py`
+- `tools/release/tests/changelog/test_ai_provider_resolution.py`
+- `tools/release/tests/changelog/test_ai_openai_client.py`
+- `tools/release/tests/changelog/test_ai_openai_compatible_client.py`
+- `tools/release/tests/packaging/test_debian_install_flow_contract.py`
+- `tools/release/tests/packaging/test_release_artifact_validation.py`
 
-Publication command:
+## Safety/Determinism Expectations
 
-- `python3 -m tools.release publish-deb --output-dir <artifact_dir> [--require-enabled]`
-
-Config:
-
-- `RELEASE_PUBLISH_MODE=disabled|nexus`
-- `NEXUS_REPO_URL`, `NEXUS_USER`, `NEXUS_PASS`
-
-Behavior:
-
-- Optional runs may skip when disabled.
-- Required runs (default on tags via policy resolution) fail if publication is disabled/misconfigured or upload fails.
-- Nexus upload uses the configured base repository URL with explicit upload diagnostics.
-
-GitHub release attachment:
-
-- Uses a deduped staged asset list prepared in-workflow.
-- Tag reruns are handled with overwrite mode to reduce attachment fragility.
-
-## Intentionally Deferred
-
-1. Phase 12b live APT/runtime validation on clean-host install/upgrade paths.
-2. Broader repository promotion/orchestration beyond current Nexus upload boundary.
+- Unit tests must not require live OpenAI/local providers; provider calls are mocked/faked.
+- Release tooling must keep explicit stale-check failures for manual/cached draft inputs.
+- Changelog generation should remain deterministic-first: evidence artifacts are always written before source selection.

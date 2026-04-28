@@ -6,7 +6,7 @@ import CircleNotchLoader from '@/components/loading/CircleNotchLoader'
 import { useAuthStore } from '@/stores/authStore'
 
 const PUBLIC_ROUTES = new Set<string>(['/login'])
-const CHANGE_PASSWORD_ROUTE = '/dashboard/users/admin/change-password'
+const CHANGE_PASSWORD_ROUTE = '/users/admin/change-password'
 
 export default function RequireAuth({ children }: { children: React.ReactNode }) {
   const router = useRouter()
@@ -51,7 +51,7 @@ export default function RequireAuth({ children }: { children: React.ReactNode })
         if (disposed || id !== requestId.current) return
 
         if (
-          !process.env.NEXT_PUBLIC_VAULTHALLA_DEV_MODE
+          (!process.env.NEXT_PUBLIC_VAULTHALLA_DEV_MODE || process.env.NEXT_PUBLIC_VAULTHALLA_DEV_MODE == 'false')
           && adminPasswordIsDefault
           && pathname !== CHANGE_PASSWORD_ROUTE
         ) {

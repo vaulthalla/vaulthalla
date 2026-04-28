@@ -16,3 +16,4 @@ typing-inspection==0.4.2
 typing_extensions==4.15.0
 pyyaml==6.0.3
 unidiff==0.7.5
+pytest==7.4.2

@@ -1,78 +1,75 @@
 # Debian Packaging + Lifecycle Contract
 
-High-signal reference for the active Debian package surface under `/debian`.
+High-signal reference for maintainer-script behavior under `/debian`.
 
 ## Scope
 
-Package: `vaulthalla`  
-Primary build/runtime sources: `core/`, `web/`, `deploy/`, `/debian` maintainer scripts.
+- Package: `vaulthalla`
+- Lifecycle source of truth: `debian/postinst`, `debian/prerm`, `debian/postrm`
+- `/bin` scripts are operator helpers, not Debian lifecycle truth
 
-## File Index (`/debian`)
+## Dependency Policy (Current)
 
-| File | Responsibility |
-| --- | --- |
-| `debian/control` | Package metadata, hard runtime deps in `Depends`, PostgreSQL/nginx in `Recommends`. |
-| `debian/rules` | Meson build from `core/`; stages non-Meson payloads into `debian/tmp` (config, systemd units, nginx template, docs, web standalone payload, udev/tmpfiles, CLI symlinks). |
-| `debian/install` | Final install manifest mapping staged files into package paths. Includes multiarch mappings for libs/udev/tmpfiles. |
-| `debian/postinst` | `configure` lifecycle logic: user/group/runtime dirs, optional conservative DB/nginx setup via runtime detection + `VH_SKIP_*` env overrides, systemd preset/enable. |
-| `debian/prerm` | `remove|deconfigure` handling: stop/disable core/cli/web units, clear run seeds, disable nginx symlink only when package site path is targeted. |
-| `debian/postrm` | `remove` seed cleanup; `purge` state/nginx cleanup with marker checks and conservative boundaries. |
-| `debian/tmpfiles.d/vaulthalla.conf` | Runtime/log tmpfiles policy. |
-| `debian/vaulthalla.udev` | TPM device group/mode rules. |
-| `debian/README.Debian` | Operator-facing install/runtime/remove/purge behavior summary. |
-| `debian/README`, `debian/README.source` | Template placeholders; not authoritative contract docs. |
-| `debian/copyright` | Debian copyright-format metadata (also shipped in `/usr/share/doc/vaulthalla/copyright`). |
+- Hard runtime deps in `Depends`: includes `adduser`, `nodejs`, `openssl`.
+- Optional integrations in `Recommends`: includes `postgresql`, `nginx`, `swtpm`, `swtpm-tools`.
+- Maintainer scripts must tolerate recommended components being absent.
 
-## Installed Payload Contract (Current)
-
-Key package-managed paths:
+## Installed Payload (Key Paths)
 
 - Binaries: `/usr/bin/vaulthalla-server`, `/usr/bin/vaulthalla-cli`, `/usr/bin/vaulthalla`, `/usr/bin/vh`
 - Config: `/etc/vaulthalla/config.yaml`, `/etc/vaulthalla/config_template.yaml.in`
-- Units: `/lib/systemd/system/vaulthalla.service`, `vaulthalla-cli.service`, `vaulthalla-cli.socket`, `vaulthalla-web.service`
-- Web runtime: `/usr/share/vaulthalla-web` (Next standalone payload + static assets)
-- Nginx template: `/usr/share/vaulthalla/nginx/vaulthalla.conf`
+- Units: `vaulthalla.service`, `vaulthalla-cli.service`, `vaulthalla-cli.socket`, `vaulthalla-web.service`, `vaulthalla-swtpm.service`
+- Web runtime: `/usr/share/vaulthalla-web`
 - SQL deploy assets: `/usr/share/vaulthalla/psql`
-- TPM/tmpfiles: `/usr/lib/*/udev/rules.d/60-vaulthalla-tpm.rules`, `/usr/lib/*/tmpfiles.d/vaulthalla.conf`
-- Docs: `/usr/share/doc/vaulthalla/LICENSE`, `/usr/share/doc/vaulthalla/copyright`
+- Nginx template payload path: `/usr/share/vaulthalla/nginx/vaulthalla`
+- Udev/tmpfiles payload: `/usr/lib/*/udev/rules.d/60-vaulthalla-tpm.rules`, `/usr/lib/*/tmpfiles.d/vaulthalla.conf`
 
-## Prompt Flow
+## `postinst configure` Contract
 
-Phase 2 policy removes routine debconf prompting for install setup decisions.
-Package install is low-prompt by default; optional integration behavior is
-driven by conservative runtime checks and optional environment overrides.
+- Handles both fresh install and upgrade (`is_upgrade` derives from non-empty `$2` on `configure`).
+- Creates/converges `vaulthalla` user/group + `tss` membership idempotently.
+- Converges runtime/state dirs (`/var/lib/vaulthalla`, `/var/log/vaulthalla`, `/run/vaulthalla`, `/etc/vaulthalla`) and creates `/mnt/vaulthalla` only when absent.
+- Requires packaged SQL runtime assets at `/usr/share/vaulthalla/psql` and fails if missing/empty (package integrity guard).
+- Aligns ownership/mode for package config files without overwriting content.
+- Web cache setup is non-destructive:
+  - keeps existing real `.next/cache` directory untouched
+  - keeps unexpected symlink targets untouched
+  - only creates expected symlink when cache path is absent
+- Optional DB bootstrap is conservative:
+  - skipped when local PostgreSQL is unavailable
+  - existing DB/role are preserved during upgrade with no recovery prompt/reseed
+  - install-time recovery prompt path only applies to non-upgrade interactive installs
+- Optional nginx setup is conservative:
+  - requires nginx installed + active + safe layout
+  - never overwrites existing `sites-available/vaulthalla`
+  - refuses non-symlink `sites-enabled/vaulthalla`
+  - reverts newly created enablement link if `nginx -t` fails
+- TPM/swtpm behavior:
+  - hardware TPM path disables swtpm fallback
+  - no-hardware path provisions swtpm fallback when possible
+  - swtpm provisioning failure is non-fatal on upgrade, fatal on fresh install
+- Most steady-state `systemctl` calls are wrapped best-effort; swtpm start/validation remains a fresh-install failure path when no hardware TPM fallback can be validated.
 
-## Lifecycle Semantics
+## `prerm remove|deconfigure` Contract
 
-`postinst configure`:
-
-- Ensures `vaulthalla` system user/group and `tss` group membership.
-- Creates runtime/state dirs and `/mnt/vaulthalla` when missing.
-- Optionally initializes local PostgreSQL role/db when local PostgreSQL is present and healthy.
-- Seeds `/run/vaulthalla/db_password` only when a new DB role password was generated.
-- If local DB resources already exist, supports interactive recovery choice (reuse via password-file handoff, destructive recreate, or exit) and preserves by default in noninteractive mode.
-- Presets core/cli/web units; explicitly enables `vaulthalla-web.service`.
-- Applies nginx integration only under safety checks.
-- Removes legacy `/run/vaulthalla/superadmin_uid` seed to avoid package-time ownership binding.
-
-`prerm remove|deconfigure`:
-
-- Stops/disables core/cli/web units.
-- Removes pending run-seed files.
+- Stops/disables package services via safe `systemctl` wrapper.
+- Removes transient runtime seed files (`/run/vaulthalla/superadmin_uid`, `/run/vaulthalla/db_password`).
+- Removes TPM backend override file.
 - Removes nginx enabled symlink only when it points to package site path.
 
-`postrm purge` (superset of remove cleanup):
+## `postrm` Contract
 
-- Removes package nginx symlink and removes site file only when package-managed marker exists.
-- Preserves local PostgreSQL role/database by default; may prompt for optional destructive cleanup only in interactive purge when local resources are detected.
-- Noninteractive purge preserves local PostgreSQL resources (manual path: `sudo vh teardown db`).
-- Purges `/var/lib/vaulthalla`, `/var/log/vaulthalla`, attempts empty `/mnt/vaulthalla` removal.
-- Deletes `vaulthalla` system user (best-effort).
+- `remove`: transient cleanup only (no destructive DB/state teardown).
+- `purge` is destructive boundary for package-owned local state.
+- Purge nginx site-file removal is marker-gated (`/var/lib/vaulthalla/nginx_site_managed`).
+- Purge PostgreSQL cleanup is conservative:
+  - preserves by default in noninteractive contexts
+  - may prompt in interactive purge
+  - falls back to preserve on detection/command failures
 
-## Conservative Boundaries / Invariants
+## Invariants Future Changes Must Preserve
 
-- No secrets are written into `/etc/vaulthalla/config.yaml` by maintainer scripts.
-- Nginx automation is safe-skip, not force-apply.
-- Remove is conservative; purge is the destructive boundary.
-- Package-owned nginx cleanup is marker-gated (`/var/lib/vaulthalla/nginx_site_managed`).
-- Repeated script invocation is expected to be non-fatal and mostly idempotent.
+- Maintainer scripts remain idempotent under repeated `configure` and upgrades.
+- Upgrade path must not overwrite `/etc/vaulthalla/config.yaml`.
+- Upgrade path must not destructively reset existing DB, nginx, TPM state, or web cache directories.
+- Optional integrations (nginx/PostgreSQL/swtpm/systemd) must not hard-fail package upgrades when unavailable.

@@ -10,9 +10,8 @@ This folder is the Codex memory map for the monorepo.
 4. `web-client.md` for Next.js app wiring and websocket surface.
 5. `deploy-packaging.md` for systemd, PostgreSQL bootstrap, Debian payload.
 6. `debian-packaging-lifecycle.md` for maintainer scripts, prompts, install/remove/purge contract.
-7. `debian-bin-lifecycle-audit.md` for `/debian` vs `/bin` semantic drift boundaries.
-8. `release-tooling.md` for version/changelog/release/publication automation.
-9. `testing-ci.md` for CI and local verification paths.
+7. `release-tooling.md` for version/changelog/release/publication automation.
+8. `testing-ci.md` for CI and local verification paths.
 
 ## Fast Reality Checks
 

@@ -37,10 +37,16 @@ APPARMOR_SWTPM_LOCAL_OVERRIDE=""
 DB_BOOTSTRAP_STATUS="skipped"
 NGINX_CONFIG_STATUS="skipped"
 TPM_BACKEND_STATUS="unknown"
+POSTINST_ACTION="${1:-}"
+LAST_CONFIGURED_VERSION="${2:-}"
 
 create_dir() {
     # create_dir path mode owner group
     install -d -m "$2" -o "$3" -g "$4" "$1"
+}
+
+is_upgrade() {
+    [ "$POSTINST_ACTION" = "configure" ] && [ -n "$LAST_CONFIGURED_VERSION" ]
 }
 
 has_command() {
@@ -626,6 +632,12 @@ bootstrap_db_if_safe() {
     DB_EXISTS="$(printf '%s' "$DB_EXISTS" | tr -d '[:space:]')"
 
     if [ "$ROLE_EXISTS" = "1" ] || [ "$DB_EXISTS" = "1" ]; then
+        if is_upgrade; then
+            DB_BOOTSTRAP_STATUS="reused (existing local DB resources preserved during upgrade)"
+            echo "[${PKG}] Existing Vaulthalla PostgreSQL resources detected during upgrade; preserving role/database state."
+            echo "[${PKG}] Runtime DB password reseed is skipped during upgrade."
+            return 0
+        fi
         handle_existing_local_db_resources "$ROLE_EXISTS" "$DB_EXISTS"
         return 0
     fi
@@ -637,6 +649,7 @@ setup_web_runtime_cache() {
     WEB_ROOT="/usr/share/vaulthalla-web"
     CACHE_DIR="/var/cache/vaulthalla-web"
     CACHE_LINK="${WEB_ROOT}/.next/cache"
+    CACHE_LINK_TARGET=""
 
     if [ ! -d "${WEB_ROOT}/.next" ]; then
         echo "[${PKG}] Web cache: skipped (${WEB_ROOT}/.next not present)."
@@ -645,15 +658,22 @@ setup_web_runtime_cache() {
 
     install -d -m 0750 -o "$DB_USER" -g "$DB_USER" "$CACHE_DIR"
 
-    if [ -e "$CACHE_LINK" ] && [ ! -L "$CACHE_LINK" ]; then
-        rm -rf "$CACHE_LINK"
-    fi
-
-    if [ ! -e "$CACHE_LINK" ]; then
+    if [ -L "$CACHE_LINK" ]; then
+        CACHE_LINK_TARGET="$(readlink "$CACHE_LINK" 2>/dev/null || true)"
+        if [ "$CACHE_LINK_TARGET" != "$CACHE_DIR" ]; then
+            echo "[${PKG}] WARNING: Web cache link exists with unexpected target; leaving unchanged: ${CACHE_LINK} -> ${CACHE_LINK_TARGET}"
+            return 0
+        fi
+    elif [ -e "$CACHE_LINK" ]; then
+        echo "[${PKG}] WARNING: Web cache path exists and is not a symlink; leaving unchanged: ${CACHE_LINK}"
+        return 0
+    else
         ln -s "$CACHE_DIR" "$CACHE_LINK"
     fi
 
-    chown -h "$DB_USER:$DB_USER" "$CACHE_LINK" 2>/dev/null || true
+    if [ -L "$CACHE_LINK" ]; then
+        chown -h "$DB_USER:$DB_USER" "$CACHE_LINK" 2>/dev/null || true
+    fi
 
     echo "[${PKG}] Web cache: ${CACHE_LINK} -> ${CACHE_DIR}"
 }
@@ -731,12 +751,21 @@ configure_nginx_if_safe() {
     fi
 
     CREATED_SITE_LINK="false"
-    if [ -e "$NGINX_SITE_ENABLED" ] && [ ! -L "$NGINX_SITE_ENABLED" ]; then
+    if [ -L "$NGINX_SITE_ENABLED" ]; then
+        existing_target="$(readlink "$NGINX_SITE_ENABLED" 2>/dev/null || true)"
+        case "$existing_target" in
+            "$NGINX_SITE_AVAIL"|../sites-available/vaulthalla)
+                :
+                ;;
+            *)
+                NGINX_CONFIG_STATUS="skipped (${NGINX_SITE_ENABLED} symlink target is managed externally)"
+                return 0
+                ;;
+        esac
+    elif [ -e "$NGINX_SITE_ENABLED" ]; then
         NGINX_CONFIG_STATUS="skipped (${NGINX_SITE_ENABLED} exists and is not a symlink)"
         return 0
-    fi
-
-    if [ ! -e "$NGINX_SITE_ENABLED" ]; then
+    else
         ln -s "$NGINX_SITE_AVAIL" "$NGINX_SITE_ENABLED"
         CREATED_SITE_LINK="true"
     fi
@@ -775,7 +804,14 @@ case "$1" in
     align_config_file_permissions /etc/vaulthalla/config.yaml
     align_config_file_permissions /etc/vaulthalla/config_template.yaml.in
     require_runtime_assets
-    configure_tpm_backend_if_safe
+    if ! configure_tpm_backend_if_safe; then
+        if is_upgrade; then
+            echo "[${PKG}] WARNING: TPM backend provisioning failed during upgrade; preserving existing TPM backend state."
+            TPM_BACKEND_STATUS="${TPM_BACKEND_STATUS} (non-fatal during upgrade)"
+        else
+            exit 1
+        fi
+    fi
 
     # Remove any stale super-admin seed from older package revisions.
     rm -f "$LEGACY_PENDING_SUPERADMIN_UID_FILE"

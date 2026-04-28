@@ -1,84 +1,98 @@
 from __future__ import annotations
 
-import json
-from pathlib import Path
 import unittest
 
 from tools.release.changelog.ai.prompts.draft import build_draft_user_prompt
 from tools.release.changelog.ai.prompts.polish import build_polish_user_prompt
 from tools.release.changelog.ai.prompts.release_notes import build_release_notes_user_prompt
 from tools.release.changelog.ai.prompts.triage import build_triage_user_prompt
-
-
-FIXTURES_DIR = Path(__file__).parent / "fixtures"
-
-
-def _load_json_fixture(name: str) -> dict:
-    return json.loads((FIXTURES_DIR / name).read_text(encoding="utf-8"))
+from tools.release.tests.changelog._support import (
+    assert_contains_all,
+    assert_not_contains_any,
+    load_json_fixture,
+)
 
 
 class AISemanticDownstreamRegressionTests(unittest.TestCase):
     def test_triage_projection_uses_semantic_payload_fields(self) -> None:
-        payload = _load_json_fixture("semantic_payload_realistic.json")
+        payload = load_json_fixture(__file__, "semantic_payload_realistic.json")
         user_prompt = build_triage_user_prompt(payload)
         lower = user_prompt.lower()
 
-        self.assertIn("semantic payload (compact projection)", lower)
-        self.assertIn("summary_hint", lower)
-        self.assertIn("semantic_hunks", lower)
-        self.assertIn("candidate_commits", lower)
-        self.assertIn("all_commits", lower)
-        self.assertIn("kind", lower)
-        self.assertIn("why_selected", lower)
-        self.assertIn("grounded_claims", lower)
-        self.assertNotIn("important_files", lower)
-        self.assertNotIn("retained_snippets", lower)
+        assert_contains_all(
+            self,
+            lower,
+            (
+                "semantic payload (compact projection)",
+                "summary_hint",
+                "semantic_hunks",
+                "candidate_commits",
+                "all_commits",
+                "kind",
+                "why_selected",
+                "grounded_claims",
+            ),
+        )
+        assert_not_contains_any(self, lower, ("important_files", "retained_snippets"))
 
-    def test_draft_prompt_pushes_claim_centric_triage_handoff(self) -> None:
-        triage_ir = {
-            "schema_version": "vaulthalla.release.ai_triage.v2",
-            "version": "2.5.0",
-            "summary_points": ["Release tooling and core reliability updates dominate this cycle."],
-            "categories": [
-                {
-                    "name": "tools",
-                    "signal_strength": "strong",
-                    "priority_rank": 1,
-                    "theme": "Release tooling contract and workflow updates",
-                    "grounded_claims": ["Triage schema now requires theme and grounded claims."],
-                    "evidence_refs": ["tools/release/changelog/ai/contracts/triage.py#schema-change"],
-                }
-            ],
-        }
-        user_prompt = build_draft_user_prompt(triage_ir, source_kind="triage").lower()
-        self.assertIn("theme", user_prompt)
-        self.assertIn("grounded_claims", user_prompt)
-        self.assertIn("do not echo file paths/lists", user_prompt)
-        self.assertIn("slot-by-slot recap language", user_prompt)
-
-    def test_polish_and_release_notes_prompts_remove_classifier_residue(self) -> None:
-        polish_prompt = build_polish_user_prompt(
-            {
-                "schema_version": "vaulthalla.release.ai_draft.v1",
-                "title": "Release 2.5.0",
-                "summary": "Priority rank 1 category and evidence refs dominate.",
-                "sections": [
+    def test_downstream_prompts_preserve_semantic_handoff_and_cleanup_rules(self) -> None:
+        prompt_cases = (
+            (
+                "draft-triage-handoff",
+                build_draft_user_prompt(
                     {
-                        "category": "tools",
-                        "overview": "Evidence refs indicate tools/release/changelog/ai/contracts/triage.py changed.",
-                        "bullets": ["important files: tools/release/changelog/ai/contracts/triage.py"],
+                        "schema_version": "vaulthalla.release.ai_triage.v2",
+                        "version": "2.5.0",
+                        "summary_points": ["Release tooling and core reliability updates dominate this cycle."],
+                        "categories": [
+                            {
+                                "name": "tools",
+                                "signal_strength": "strong",
+                                "priority_rank": 1,
+                                "theme": "Release tooling contract and workflow updates",
+                                "grounded_claims": ["Triage schema now requires theme and grounded claims."],
+                                "evidence_refs": ["tools/release/changelog/ai/contracts/triage.py#schema-change"],
+                            }
+                        ],
+                    },
+                    source_kind="triage",
+                ).lower(),
+                ("theme", "grounded_claims", "do not echo file paths/lists", "slot-by-slot recap language"),
+                (),
+            ),
+            (
+                "polish-cleanup",
+                build_polish_user_prompt(
+                    {
+                        "schema_version": "vaulthalla.release.ai_draft.v1",
+                        "title": "Release 2.5.0",
+                        "summary": "Priority rank 1 category and evidence refs dominate.",
+                        "sections": [
+                            {
+                                "category": "tools",
+                                "overview": "Evidence refs indicate tools/release/changelog/ai/contracts/triage.py changed.",
+                                "bullets": ["important files: tools/release/changelog/ai/contracts/triage.py"],
+                            }
+                        ],
                     }
-                ],
-            }
-        ).lower()
-        notes_prompt = build_release_notes_user_prompt(
-            "# Release\n- evidence_refs: tools/release/changelog/ai/contracts/triage.py#schema-change\n"
-        ).lower()
+                ).lower(),
+                ("classifier/audit residue", "path-heavy recap"),
+                (),
+            ),
+            (
+                "release-notes-cleanup",
+                build_release_notes_user_prompt(
+                    "# Release\n- evidence_refs: tools/release/changelog/ai/contracts/triage.py#schema-change\n"
+                ).lower(),
+                ("remove classifier residue",),
+                ("brand voice reference",),
+            ),
+        )
 
-        self.assertIn("classifier/audit residue", polish_prompt)
-        self.assertIn("path-heavy recap", polish_prompt)
-        self.assertIn("remove classifier residue", notes_prompt)
-        self.assertNotIn("brand voice reference", notes_prompt)
+        for label, prompt, required, forbidden in prompt_cases:
+            with self.subTest(label=label):
+                assert_contains_all(self, prompt, required)
+                assert_not_contains_any(self, prompt, forbidden)
 
 
 if __name__ == "__main__":
