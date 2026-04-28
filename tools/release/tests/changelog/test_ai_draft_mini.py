@@ -1,32 +1,14 @@
 from __future__ import annotations
 
-import json
-from pathlib import Path
 import unittest
 
 from tools.release.changelog.ai.render.markdown import render_draft_markdown
 from tools.release.changelog.ai.stages.draft import generate_draft_from_payload, render_draft_result_json
-
-
-FIXTURES_DIR = Path(__file__).parent / "fixtures"
-
-
-def _load_json_fixture(name: str) -> dict:
-    return json.loads((FIXTURES_DIR / name).read_text(encoding="utf-8"))
-
-
-def _load_text_fixture(name: str) -> str:
-    return (FIXTURES_DIR / name).read_text(encoding="utf-8")
-
-
-class _FakeOpenAIClient:
-    def __init__(self, response: dict) -> None:
-        self._response = response
-        self.calls: list[dict] = []
-
-    def generate_structured_json(self, **kwargs):
-        self.calls.append(kwargs)
-        return self._response
+from tools.release.tests.changelog._support import (
+    RecordingStructuredProvider,
+    load_json_fixture,
+    load_text_fixture,
+)
 
 
 class AIDraftMiniStageTests(unittest.TestCase):
@@ -38,7 +20,7 @@ class AIDraftMiniStageTests(unittest.TestCase):
             "metadata": {"version": "2.4.0"},
             "categories": [],
         }
-        fake = _FakeOpenAIClient(_load_json_fixture("ai_draft_valid.json"))
+        fake = RecordingStructuredProvider(load_json_fixture(__file__, "ai_draft_valid.json"))
 
         draft = generate_draft_from_payload(payload, provider=fake)
 
@@ -58,7 +40,7 @@ class AIDraftMiniStageTests(unittest.TestCase):
             "summary_points": ["Core work dominates."],
             "categories": [],
         }
-        fake = _FakeOpenAIClient(_load_json_fixture("ai_draft_valid.json"))
+        fake = RecordingStructuredProvider(load_json_fixture(__file__, "ai_draft_valid.json"))
 
         _ = generate_draft_from_payload(triage_ir, provider=fake, source_kind="triage")
         call = fake.calls[0]
@@ -67,7 +49,7 @@ class AIDraftMiniStageTests(unittest.TestCase):
 
     def test_generate_draft_passes_reasoning_and_structured_mode(self) -> None:
         payload = {"schema_version": "x", "metadata": {}, "categories": []}
-        fake = _FakeOpenAIClient(_load_json_fixture("ai_draft_valid.json"))
+        fake = RecordingStructuredProvider(load_json_fixture(__file__, "ai_draft_valid.json"))
 
         _ = generate_draft_from_payload(
             payload,
@@ -87,15 +69,15 @@ class AIDraftMiniStageTests(unittest.TestCase):
     def test_markdown_render_matches_fixture(self) -> None:
         draft = generate_draft_from_payload(
             {"schema_version": "x", "metadata": {}, "categories": []},
-            provider=_FakeOpenAIClient(_load_json_fixture("ai_draft_valid.json")),
+            provider=RecordingStructuredProvider(load_json_fixture(__file__, "ai_draft_valid.json")),
         )
         rendered = render_draft_markdown(draft)
-        self.assertEqual(rendered, _load_text_fixture("ai_draft_markdown.md"))
+        self.assertEqual(rendered, load_text_fixture(__file__, "ai_draft_markdown.md"))
 
     def test_json_render_is_structured_and_stable(self) -> None:
         draft = generate_draft_from_payload(
             {"schema_version": "x", "metadata": {}, "categories": []},
-            provider=_FakeOpenAIClient(_load_json_fixture("ai_draft_valid.json")),
+            provider=RecordingStructuredProvider(load_json_fixture(__file__, "ai_draft_valid.json")),
         )
         first = render_draft_result_json(draft)
         second = render_draft_result_json(draft)

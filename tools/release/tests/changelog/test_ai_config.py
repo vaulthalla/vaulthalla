@@ -21,6 +21,42 @@ def _write_profile(repo_root: Path, content: str) -> None:
     (repo_root / "ai.yml").write_text(content, encoding="utf-8")
 
 
+def _resolve_profile(
+    profile: str,
+    *,
+    slug: str,
+    overrides: AIPipelineCLIOverrides | None = None,
+):
+    with TemporaryDirectory() as temp_dir:
+        repo_root = Path(temp_dir)
+        _write_profile(repo_root, profile)
+        return resolve_ai_pipeline_config(
+            repo_root=repo_root,
+            profile_slug=slug,
+            cli_overrides=overrides or AIPipelineCLIOverrides(),
+        )
+
+
+def _assert_config_error(
+    case: unittest.TestCase,
+    profile: str,
+    *,
+    slug: str,
+    message: str,
+    overrides: AIPipelineCLIOverrides | None = None,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        repo_root = Path(temp_dir)
+        _write_profile(repo_root, profile)
+        with case.assertRaises(ValueError) as ctx:
+            resolve_ai_pipeline_config(
+                repo_root=repo_root,
+                profile_slug=slug,
+                cli_overrides=overrides or AIPipelineCLIOverrides(),
+            )
+    case.assertIn(message, str(ctx.exception))
+
+
 class AIConfigResolutionTests(unittest.TestCase):
     def _args(
         self,
@@ -70,16 +106,7 @@ profiles:
 
         for label, profile in cases:
             with self.subTest(label=label):
-                with TemporaryDirectory() as temp_dir:
-                    repo_root = Path(temp_dir)
-                    _write_profile(repo_root, profile)
-
-                    resolved = resolve_ai_pipeline_config(
-                        repo_root=repo_root,
-                        profile_slug="local-gemma",
-                        cli_overrides=AIPipelineCLIOverrides(),
-                    )
-
+                resolved = _resolve_profile(profile, slug="local-gemma")
                 self.assertEqual(resolved.provider, "openai-compatible")
 
     def test_profile_config_rejects_invalid_schema_version_values(self) -> None:
@@ -114,18 +141,7 @@ profiles:
 
         for label, profile, message in cases:
             with self.subTest(label=label):
-                with TemporaryDirectory() as temp_dir:
-                    repo_root = Path(temp_dir)
-                    _write_profile(repo_root, profile)
-
-                    with self.assertRaises(ValueError) as ctx:
-                        resolve_ai_pipeline_config(
-                            repo_root=repo_root,
-                            profile_slug="local-gemma",
-                            cli_overrides=AIPipelineCLIOverrides(),
-                        )
-
-                self.assertIn(message, str(ctx.exception))
+                _assert_config_error(self, profile, slug="local-gemma", message=message)
 
     def test_invalid_yaml_and_unknown_profile_surface_clear_errors(self) -> None:
         cases = (
@@ -143,18 +159,7 @@ profiles:
 
         for profile, slug, message in cases:
             with self.subTest(slug=slug):
-                with TemporaryDirectory() as temp_dir:
-                    repo_root = Path(temp_dir)
-                    _write_profile(repo_root, profile)
-
-                    with self.assertRaises(ValueError) as ctx:
-                        resolve_ai_pipeline_config(
-                            repo_root=repo_root,
-                            profile_slug=slug,
-                            cli_overrides=AIPipelineCLIOverrides(),
-                        )
-
-                self.assertIn(message, str(ctx.exception))
+                _assert_config_error(self, profile, slug=slug, message=message)
 
     def test_profile_shape_and_required_stage_validation_errors(self) -> None:
         cases = (
@@ -197,25 +202,11 @@ profiles:
 
         for label, profile, message in cases:
             with self.subTest(label=label):
-                with TemporaryDirectory() as temp_dir:
-                    repo_root = Path(temp_dir)
-                    _write_profile(repo_root, profile)
-
-                    with self.assertRaises(ValueError) as ctx:
-                        resolve_ai_pipeline_config(
-                            repo_root=repo_root,
-                            profile_slug="bad",
-                            cli_overrides=AIPipelineCLIOverrides(),
-                        )
-
-                self.assertIn(message, str(ctx.exception))
+                _assert_config_error(self, profile, slug="bad", message=message)
 
     def test_pipeline_profile_values_apply_without_cli_overrides(self) -> None:
-        with TemporaryDirectory() as temp_dir:
-            repo_root = Path(temp_dir)
-            _write_profile(
-                repo_root,
-                """
+        resolved = _resolve_profile(
+            """
 profiles:
   balanced:
     provider: openai-compatible
@@ -229,13 +220,8 @@ profiles:
         reasoning_effort: high
         structured_mode: prompt_json
 """,
-            )
-
-            resolved = resolve_ai_pipeline_config(
-                repo_root=repo_root,
-                profile_slug="balanced",
-                cli_overrides=AIPipelineCLIOverrides(),
-            )
+            slug="balanced",
+        )
 
         self.assertEqual(resolved.provider, "openai-compatible")
         self.assertEqual(resolved.base_url, "http://127.0.0.1:9999/v1")
@@ -400,24 +386,16 @@ profiles:
         self.assertIn("config file is missing", str(provider_ctx.exception))
 
     def test_provider_base_url_resolution_stable_per_stage(self) -> None:
-        with TemporaryDirectory() as temp_dir:
-            repo_root = Path(temp_dir)
-            _write_profile(
-                repo_root,
-                """
+        resolved = _resolve_profile(
+            """
 profiles:
   local:
     provider: openai-compatible
     base_url: http://127.0.0.1:8888/v1
     model: local-model
 """,
-            )
-
-            resolved = resolve_ai_pipeline_config(
-                repo_root=repo_root,
-                profile_slug="local",
-                cli_overrides=AIPipelineCLIOverrides(),
-            )
+            slug="local",
+        )
 
         for stage in ("triage", "draft", "polish"):
             with self.subTest(stage=stage):
@@ -479,25 +457,11 @@ profiles:
 
         for label, profile, message in cases:
             with self.subTest(label=label):
-                with TemporaryDirectory() as temp_dir:
-                    repo_root = Path(temp_dir)
-                    _write_profile(repo_root, profile)
-
-                    with self.assertRaises(ValueError) as ctx:
-                        resolve_ai_pipeline_config(
-                            repo_root=repo_root,
-                            profile_slug="bad",
-                            cli_overrides=AIPipelineCLIOverrides(),
-                        )
-
-                self.assertIn(message, str(ctx.exception))
+                _assert_config_error(self, profile, slug="bad", message=message)
 
     def test_enabled_stages_use_fixed_contract_order(self) -> None:
-        with TemporaryDirectory() as temp_dir:
-            repo_root = Path(temp_dir)
-            _write_profile(
-                repo_root,
-                """
+        resolved = _resolve_profile(
+            """
 profiles:
   ordered:
     provider: openai
@@ -509,13 +473,8 @@ profiles:
       triage:
         model: triage-x
 """,
-            )
-
-            resolved = resolve_ai_pipeline_config(
-                repo_root=repo_root,
-                profile_slug="ordered",
-                cli_overrides=AIPipelineCLIOverrides(),
-            )
+            slug="ordered",
+        )
 
         self.assertEqual(resolved.enabled_stages, ("triage", "draft", "polish"))
 
@@ -573,32 +532,16 @@ profiles:
 
         for label, profile, expected_stages, error in cases:
             with self.subTest(label=label):
-                with TemporaryDirectory() as temp_dir:
-                    repo_root = Path(temp_dir)
-                    _write_profile(repo_root, profile)
-
-                    if error is not None:
-                        with self.assertRaises(ValueError) as ctx:
-                            resolve_ai_pipeline_config(
-                                repo_root=repo_root,
-                                profile_slug="bad" if "bad:" in profile else "ordered",
-                                cli_overrides=AIPipelineCLIOverrides(),
-                            )
-                        self.assertIn(error, str(ctx.exception))
-                    else:
-                        resolved = resolve_ai_pipeline_config(
-                            repo_root=repo_root,
-                            profile_slug="ordered",
-                            cli_overrides=AIPipelineCLIOverrides(),
-                        )
-                        self.assertEqual(resolved.enabled_stages, expected_stages)
+                slug = "bad" if "bad:" in profile else "ordered"
+                if error is not None:
+                    _assert_config_error(self, profile, slug=slug, message=error)
+                else:
+                    resolved = _resolve_profile(profile, slug=slug)
+                    self.assertEqual(resolved.enabled_stages, expected_stages)
 
     def test_temperature_defaults_and_stage_override(self) -> None:
-        with TemporaryDirectory() as temp_dir:
-            repo_root = Path(temp_dir)
-            _write_profile(
-                repo_root,
-                """
+        resolved = _resolve_profile(
+            """
 profiles:
   tuned:
     provider: openai
@@ -612,23 +555,16 @@ profiles:
         model: gpt-triage
         temperature: 0.05
 """,
-            )
-            resolved = resolve_ai_pipeline_config(
-                repo_root=repo_root,
-                profile_slug="tuned",
-                cli_overrides=AIPipelineCLIOverrides(),
-            )
+            slug="tuned",
+        )
 
         self.assertEqual(resolved.stages["triage"].temperature, 0.05)
         self.assertEqual(resolved.stages["draft"].temperature, 0.3)
         self.assertEqual(resolved.stages["polish"].temperature, 0.0)
 
     def test_max_output_tokens_defaults_and_stage_override(self) -> None:
-        with TemporaryDirectory() as temp_dir:
-            repo_root = Path(temp_dir)
-            _write_profile(
-                repo_root,
-                """
+        resolved = _resolve_profile(
+            """
 profiles:
   tuned:
     provider: openai
@@ -646,23 +582,17 @@ profiles:
         model: gpt-polish
         max_output_tokens: 900
 """,
-            )
-            resolved = resolve_ai_pipeline_config(
-                repo_root=repo_root,
-                profile_slug="tuned",
-                cli_overrides=AIPipelineCLIOverrides(),
-            )
+            slug="tuned",
+        )
 
         self.assertEqual(resolved.stages["triage"].max_output_tokens, 200)
         self.assertEqual(resolved.stages["polish"].max_output_tokens, 900)
         self.assertIsInstance(resolved.stages["draft"].max_output_tokens, AIDynamicRatioTokenBudget)
 
     def test_invalid_dynamic_ratio_shape_rejected(self) -> None:
-        with TemporaryDirectory() as temp_dir:
-            repo_root = Path(temp_dir)
-            _write_profile(
-                repo_root,
-                """
+        _assert_config_error(
+            self,
+            """
 profiles:
   bad:
     provider: openai
@@ -674,16 +604,9 @@ profiles:
           ratio: 0.2
           min: 800
 """,
-            )
-
-            with self.assertRaises(ValueError) as ctx:
-                resolve_ai_pipeline_config(
-                    repo_root=repo_root,
-                    profile_slug="bad",
-                    cli_overrides=AIPipelineCLIOverrides(),
-                )
-
-        self.assertIn("dynamic_ratio requires", str(ctx.exception))
+            slug="bad",
+            message="dynamic_ratio requires",
+        )
 
     def test_dynamic_ratio_budget_clamps_min_and_max(self) -> None:
         policy = AIDynamicRatioTokenBudget(mode="dynamic_ratio", ratio=0.5, min=100, max=400)

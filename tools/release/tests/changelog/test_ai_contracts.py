@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-from pathlib import Path
 import unittest
 
 from tools.release.changelog.ai.contracts.draft import (
@@ -10,13 +8,7 @@ from tools.release.changelog.ai.contracts.draft import (
     ai_draft_result_to_dict,
     parse_ai_draft_response,
 )
-
-
-FIXTURES_DIR = Path(__file__).parent / "fixtures"
-
-
-def _load_json_fixture(name: str) -> dict:
-    return json.loads((FIXTURES_DIR / name).read_text(encoding="utf-8"))
+from tools.release.tests.changelog._support import load_json_fixture
 
 
 class AIDraftContractsTests(unittest.TestCase):
@@ -28,7 +20,7 @@ class AIDraftContractsTests(unittest.TestCase):
         )
 
     def test_parse_valid_response_fixture(self) -> None:
-        raw = _load_json_fixture("ai_draft_valid.json")
+        raw = load_json_fixture(__file__, "ai_draft_valid.json")
         parsed = parse_ai_draft_response(raw)
 
         self.assertIsInstance(parsed, AIDraftResult)

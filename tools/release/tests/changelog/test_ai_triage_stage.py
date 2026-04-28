@@ -1,28 +1,11 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import unittest
 
 from tools.release.changelog.ai.contracts.triage import AI_TRIAGE_SCHEMA_VERSION
 from tools.release.changelog.ai.stages.triage import render_triage_result_json, run_triage_stage
-
-
-FIXTURES_DIR = Path(__file__).parent / "fixtures"
-
-
-def _load_json_fixture(name: str) -> dict:
-    return json.loads((FIXTURES_DIR / name).read_text(encoding="utf-8"))
-
-
-class _FakeProvider:
-    def __init__(self, response: dict) -> None:
-        self._response = response
-        self.calls: list[dict] = []
-
-    def generate_structured_json(self, **kwargs):
-        self.calls.append(kwargs)
-        return self._response
+from tools.release.tests.changelog._support import RecordingStructuredProvider, load_json_fixture
 
 
 class AITriageStageTests(unittest.TestCase):
@@ -32,7 +15,7 @@ class AITriageStageTests(unittest.TestCase):
             "version": "2.4.0",
             "categories": [],
         }
-        fake = _FakeProvider(_load_json_fixture("ai_triage_valid.json"))
+        fake = RecordingStructuredProvider(load_json_fixture(__file__, "ai_triage_valid.json"))
 
         triage = run_triage_stage(payload, provider=fake)
 
@@ -45,13 +28,13 @@ class AITriageStageTests(unittest.TestCase):
         self.assertIn("vaulthalla.release.semantic_payload.v1", call["user_prompt"])
 
     def test_run_triage_stage_rejects_invalid_response(self) -> None:
-        invalid = _load_json_fixture("ai_triage_valid.json")
+        invalid = load_json_fixture(__file__, "ai_triage_valid.json")
         invalid["categories"] = []
 
         with self.assertRaisesRegex(ValueError, "categories"):
             run_triage_stage(
                 {"schema_version": "x", "metadata": {}, "categories": []},
-                provider=_FakeProvider(invalid),
+                provider=RecordingStructuredProvider(invalid),
             )
 
     def test_run_triage_stage_passes_reasoning_and_structured_mode(self) -> None:
@@ -60,7 +43,7 @@ class AITriageStageTests(unittest.TestCase):
             "version": "2.4.0",
             "categories": [],
         }
-        fake = _FakeProvider(_load_json_fixture("ai_triage_valid.json"))
+        fake = RecordingStructuredProvider(load_json_fixture(__file__, "ai_triage_valid.json"))
 
         _ = run_triage_stage(
             payload,
@@ -83,7 +66,7 @@ class AITriageStageTests(unittest.TestCase):
             "version": "2.4.0",
             "categories": [],
         }
-        fake = _FakeProvider(_load_json_fixture("ai_triage_valid.json"))
+        fake = RecordingStructuredProvider(load_json_fixture(__file__, "ai_triage_valid.json"))
 
         _ = run_triage_stage(
             payload,
@@ -101,7 +84,7 @@ class AITriageStageTests(unittest.TestCase):
             "version": "2.4.0",
             "categories": [],
         }
-        fake = _FakeProvider(_load_json_fixture("ai_triage_valid.json"))
+        fake = RecordingStructuredProvider(load_json_fixture(__file__, "ai_triage_valid.json"))
 
         _ = run_triage_stage(
             payload,
@@ -116,7 +99,7 @@ class AITriageStageTests(unittest.TestCase):
     def test_render_triage_json_is_stable(self) -> None:
         triage = run_triage_stage(
             {"schema_version": "x", "metadata": {}, "categories": []},
-            provider=_FakeProvider(_load_json_fixture("ai_triage_valid.json")),
+            provider=RecordingStructuredProvider(load_json_fixture(__file__, "ai_triage_valid.json")),
         )
         first = render_triage_result_json(triage)
         second = render_triage_result_json(triage)
@@ -146,7 +129,7 @@ class AITriageStageTests(unittest.TestCase):
             ],
             "operator_note": None,
         }
-        triage = run_triage_stage(payload, provider=_FakeProvider(response))
+        triage = run_triage_stage(payload, provider=RecordingStructuredProvider(response))
         category = triage.categories[0]
         self.assertEqual(category.evidence_refs, ("service.py#error-handling",))
         self.assertIsNone(category.operator_note)
@@ -158,10 +141,10 @@ class AITriageStageTests(unittest.TestCase):
             "version": "2.4.0",
             "categories": [],
         }
-        response = _load_json_fixture("ai_triage_valid.json")
+        response = load_json_fixture(__file__, "ai_triage_valid.json")
         response.pop("summary_points", None)
 
-        triage = run_triage_stage(payload, provider=_FakeProvider(response))
+        triage = run_triage_stage(payload, provider=RecordingStructuredProvider(response))
         self.assertEqual(triage.summary_points, ())
 
     def test_run_triage_stage_compact_projection_accepts_tuple_payload_arrays(self) -> None:
@@ -187,7 +170,7 @@ class AITriageStageTests(unittest.TestCase):
             ),
             "notes": ("note a",),
         }
-        fake = _FakeProvider(_load_json_fixture("ai_triage_valid.json"))
+        fake = RecordingStructuredProvider(load_json_fixture(__file__, "ai_triage_valid.json"))
 
         _ = run_triage_stage(payload, provider=fake)
         call = fake.calls[0]
@@ -226,7 +209,7 @@ class AITriageStageTests(unittest.TestCase):
                 }
             ],
         }
-        fake = _FakeProvider(_load_json_fixture("ai_triage_valid.json"))
+        fake = RecordingStructuredProvider(load_json_fixture(__file__, "ai_triage_valid.json"))
 
         _ = run_triage_stage(payload, provider=fake, input_mode="synthesized_semantic")
         call = fake.calls[0]

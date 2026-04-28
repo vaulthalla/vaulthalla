@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-from pathlib import Path
 import unittest
 
 from tools.release.changelog.ai.contracts.polish import (
@@ -11,13 +9,7 @@ from tools.release.changelog.ai.contracts.polish import (
     ai_polish_result_to_dict,
     parse_ai_polish_response,
 )
-
-
-FIXTURES_DIR = Path(__file__).parent / "fixtures"
-
-
-def _load_json_fixture(name: str) -> dict:
-    return json.loads((FIXTURES_DIR / name).read_text(encoding="utf-8"))
+from tools.release.tests.changelog._support import load_json_fixture
 
 
 class AIPolishContractsTests(unittest.TestCase):
@@ -29,7 +21,7 @@ class AIPolishContractsTests(unittest.TestCase):
         )
 
     def test_parse_valid_response_fixture(self) -> None:
-        raw = _load_json_fixture("ai_polish_valid.json")
+        raw = load_json_fixture(__file__, "ai_polish_valid.json")
         parsed = parse_ai_polish_response(raw)
 
         self.assertIsInstance(parsed, AIPolishResult)
@@ -48,13 +40,13 @@ class AIPolishContractsTests(unittest.TestCase):
             parse_ai_polish_response(invalid)
 
     def test_parse_rejects_missing_schema_version(self) -> None:
-        invalid = _load_json_fixture("ai_polish_valid.json")
+        invalid = load_json_fixture(__file__, "ai_polish_valid.json")
         invalid.pop("schema_version", None)
         with self.assertRaisesRegex(ValueError, "schema_version"):
             parse_ai_polish_response(invalid)
 
     def test_parse_rejects_empty_bullet(self) -> None:
-        invalid = _load_json_fixture("ai_polish_valid.json")
+        invalid = load_json_fixture(__file__, "ai_polish_valid.json")
         invalid["sections"][0]["bullets"] = [""]
 
         with self.assertRaisesRegex(ValueError, "bullets"):
