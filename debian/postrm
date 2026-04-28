@@ -4,6 +4,8 @@ set -e
 PKG="vaulthalla"
 DB_USER="vaulthalla"
 DB_NAME="vaulthalla"
+SYSTEMCTL_COMMAND_TIMEOUT_SECONDS=10
+SYSTEMCTL_UNAVAILABLE_LOGGED="0"
 NGINX_SITE_AVAIL="/etc/nginx/sites-available/vaulthalla"
 NGINX_SITE_ENABLED="/etc/nginx/sites-enabled/vaulthalla"
 NGINX_MANAGED_MARKER="/var/lib/vaulthalla/nginx_site_managed"
@@ -15,6 +17,24 @@ SWTPM_STATE_DIR="${SWTPM_BASE_DIR}/vaulthalla"
 
 has_command() {
     command -v "$1" >/dev/null 2>&1
+}
+
+log_systemctl_unavailable_once() {
+    if [ "$SYSTEMCTL_UNAVAILABLE_LOGGED" = "0" ]; then
+        echo "[${PKG}] systemctl unavailable; skipping systemd post-remove actions."
+        SYSTEMCTL_UNAVAILABLE_LOGGED="1"
+    fi
+}
+
+run_systemctl_quiet() {
+    if ! has_command systemctl; then
+        return 127
+    fi
+    if has_command timeout; then
+        timeout "$SYSTEMCTL_COMMAND_TIMEOUT_SECONDS" systemctl --system "$@" >/dev/null 2>&1
+        return $?
+    fi
+    systemctl --system "$@" >/dev/null 2>&1
 }
 
 run_as_postgres() {
@@ -162,9 +182,13 @@ EOF
 
 safe_systemctl() {
     if ! has_command systemctl; then
+        log_systemctl_unavailable_once
         return 0
     fi
-    systemctl --system "$@" >/dev/null 2>&1 || true
+    if ! run_systemctl_quiet "$@"; then
+        echo "[${PKG}] WARNING: systemctl --system $* failed; continuing."
+    fi
+    return 0
 }
 
 cleanup_nginx_site_link_if_package_path() {

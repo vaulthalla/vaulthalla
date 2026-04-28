@@ -51,6 +51,30 @@ class DebianInstallFlowContractTests(unittest.TestCase):
         self.assertNotIn("/usr/share/debconf/confmodule", postrm)
         self.assertNotIn("db_purge", postrm)
 
+    def test_prerm_uses_bounded_service_stops_with_frontend_first_order(self) -> None:
+        prerm = (self._repo_root() / "debian" / "prerm").read_text(encoding="utf-8")
+        required_fragments = (
+            "SYSTEMCTL_STOP_WAIT_SECONDS",
+            "run_systemctl_quiet()",
+            "stop_service_bounded()",
+            "systemctl --system $* failed; continuing.",
+            "stop --no-block",
+            "safe_systemctl kill \"$unit\"",
+            "safe_systemctl reset-failed \"$unit\"",
+            "stop_service_bounded \"$WEB_SYSTEMD_UNIT\"",
+            "stop_service_bounded \"$CLI_SOCKET_SYSTEMD_UNIT\"",
+            "stop_service_bounded \"$CLI_SYSTEMD_UNIT\"",
+            "stop_service_bounded \"$CORE_SYSTEMD_UNIT\"",
+            "stop_service_bounded \"$SWTPM_SYSTEMD_UNIT\"",
+        )
+        for fragment in required_fragments:
+            self.assertIn(fragment, prerm)
+
+        self.assertLess(
+            prerm.index('stop_service_bounded "$WEB_SYSTEMD_UNIT"'),
+            prerm.index('stop_service_bounded "$CORE_SYSTEMD_UNIT"'),
+        )
+
     def test_control_uses_recommends_for_postgresql_and_nginx(self) -> None:
         control = (self._repo_root() / "debian" / "control").read_text(encoding="utf-8")
         self.assertIn("Depends:\n adduser,\n nodejs,\n openssl,", control)
