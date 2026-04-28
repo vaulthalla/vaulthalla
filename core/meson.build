@@ -201,6 +201,9 @@ if get_option('build_unit_tests')
 endif
 
 if get_option('build_unit_tests')
+    unit_test_env = environment()
+    unit_test_env.set('VH_PATH_TO_CONFIG', join_paths(repo_root, 'deploy/config/config.yaml'))
+
     all_test_sources = sources
     foreach f : run_command('find', tests_src, '-type', 'f', '-name', '*.cpp', check: true).stdout().strip().split('\n')
         all_test_sources += files(f)
@@ -215,7 +218,7 @@ if get_option('build_unit_tests')
         install: false,
     )
 
-    test('vh_unit_tests', vh_unit_tests, workdir: meson.current_build_dir())
+    test('vh_unit_tests', vh_unit_tests, env: unit_test_env, workdir: meson.current_build_dir())
 endif
 
 if get_option('integration_tests')

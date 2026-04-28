@@ -5,6 +5,20 @@ option(
     description: 'Directory for systemd service files'
 )
 
+option(
+    'udev_rules_dir',
+    type: 'string',
+    value: '/usr/lib/udev/rules.d',
+    description: 'Directory for udev rules'
+)
+
+option(
+    'tmpfiles_dir',
+    type: 'string',
+    value: '/usr/lib/tmpfiles.d',
+    description: 'Directory for systemd-tmpfiles declarations'
+)
+
 option('manpage', type: 'boolean', value: true, description: 'Build and install manpage via pandoc')
 
 option(
