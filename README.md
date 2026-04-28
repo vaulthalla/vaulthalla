@@ -11,51 +11,41 @@ Vaulthalla is a Linux-native self-hosted cloud platform built around a compiled 
 
 It is designed for operators who want cloud storage to behave like infrastructure again: mounted, controlled, encrypted, inspectable, and owned by the machine it runs on.
 
-## ⚠️ Read This First, Seriously
+## ⚠️ Read This First
 
-Vaulthalla is system-level software.
+Vaulthalla is system-level Linux software.
 
-It is not a single-directory web app, a toy Docker compose stack, or a dashboard that politely stays in its lane. Vaulthalla is designed to run as Linux infrastructure. It installs services, prepares runtime directories, mounts a native FUSE filesystem, manages local control sockets, uses PostgreSQL for runtime state, and can integrate with TPM/swtpm, Nginx, and Certbot.
+It installs services, prepares runtime directories, mounts a native FUSE filesystem, manages local control sockets, uses PostgreSQL for runtime state, and can integrate with TPM/swtpm, Nginx, and Certbot.
 
-That is intentional. It is also why you should understand the operational contract before installing it.
+That is intentional. Vaulthalla is designed to run as host infrastructure, not as a self-contained web app.
 
-### What installation may change
+### What installation may prepare
 
 Installing Vaulthalla with `sudo apt install vaulthalla` or the hosted installer may:
 
 * create the `vaulthalla` system user and group
-* install and enable systemd units
+* install systemd units
 * prepare `/etc/vaulthalla`, `/var/lib/vaulthalla`, `/run/vaulthalla`, and `/var/log/vaulthalla`
 * prepare the default FUSE mount path at `/mnt/vaulthalla`
-* configure runtime permissions needed by the daemon and CLI socket
+* configure runtime permissions for the daemon and CLI socket
 * prepare or reuse local PostgreSQL resources when the local DB flow is enabled
 * use hardware TPM2 when available
 * provision managed `swtpm` fallback when hardware TPM is unavailable
 * stage packaged web console assets under `/usr/share/vaulthalla-web`
 * prepare writable web runtime cache under `/var/cache/vaulthalla-web`
-* install a managed Nginx site when explicitly requested with `vh setup nginx`
-* allow Certbot to modify the managed Vaulthalla Nginx site when explicitly requested with `--certbot`
 
-Package installation is conservative by default. Vaulthalla does not blindly take over unrelated Nginx sites, does not silently drop preserved PostgreSQL data, and does not claim initial super-admin ownership behind your back. Destructive or environment-specific operations are kept behind explicit CLI flows where possible.
+Optional host integrations are handled through explicit setup commands:
 
-### Vaulthalla may not be for you if...
+* `vh setup nginx` installs the managed Vaulthalla Nginx site
+* `vh setup nginx --certbot` allows Certbot to modify that managed site
 
-Vaulthalla may not be the right fit for a host if you are uncomfortable with software that:
+Package installation is conservative by default. Environment-specific setup is kept behind explicit CLI flows where possible.
 
-* uses root privileges during install
-* runs long-lived systemd services
-* mounts a privileged filesystem
-* manages runtime state under `/var` and `/run`
-* integrates with PostgreSQL
-* uses TPM-backed or software-TPM-backed secret storage
-* expects Nginx/Certbot integration to be an operator-controlled host-level action
-* treats the CLI as the control plane for privileged setup
+### Operational expectations
 
-That is the deal.
+Vaulthalla is probably not the right fit if you want a self-contained web app that never touches the host beyond one process and one config file.
 
-If you want a self-contained web app that never touches the host beyond one process and one config file, Vaulthalla is probably not your beast.
-
-If you want Linux-native self-hosted storage with a real daemon, a real filesystem surface, encrypted workflows, RBAC, TPM-aware secret handling, and explicit operator control, proceed.
+It is built for operators who want Linux-native self-hosted storage with a real daemon, a real filesystem surface, encrypted workflows, RBAC, TPM-aware secret handling, and explicit host-level control.
 
 Welcome to the kernel, brother.
 
