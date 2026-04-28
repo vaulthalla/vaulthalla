@@ -34,6 +34,14 @@ if [[ -f "web/.nvmrc" ]]; then
   log "web/.nvmrc: $wanted"
 fi
 
+if [[ ! -f "meson.build" ]]; then
+  warn "missing meson.build"
+fi
+
+if [[ ! -f "meson.options" ]]; then
+  warn "missing meson.options"
+fi
+
 if [[ ! -f "core/meson.build" ]]; then
   warn "missing core/meson.build"
 fi

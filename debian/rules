@@ -1,42 +1,16 @@
 #!/usr/bin/make -f
-DEB_HOST_MULTIARCH ?= $(shell dpkg-architecture -qDEB_HOST_MULTIARCH)
 
 %:
 	dh $@ --buildsystem=meson
 
 override_dh_auto_configure:
-	dh_auto_configure --sourcedirectory=core -- -Dmanpage=true
+	dh_auto_configure -- -Dmanpage=true
 
 override_dh_auto_install:
-	dh_auto_install --sourcedirectory=core --destdir=debian/tmp
+	dh_auto_install --destdir=debian/tmp
 
-	# Stage packaging payloads that are not emitted by Meson install targets.
-	install -d debian/tmp/etc/vaulthalla
-	install -d debian/tmp/lib/systemd/system
-	install -d debian/tmp/usr/share/doc/vaulthalla
-	install -d debian/tmp/usr/share/vaulthalla/nginx
-	install -d debian/tmp/usr/share/vaulthalla/psql
-	install -d debian/tmp/usr/lib/vaulthalla
+	# Stage packaging payloads that are still assembled outside Meson.
 	install -d debian/tmp/usr/share/vaulthalla-web
-	install -d debian/tmp/usr/lib/$(DEB_HOST_MULTIARCH)/udev/rules.d
-	install -d debian/tmp/usr/lib/$(DEB_HOST_MULTIARCH)/tmpfiles.d
-
-	install -m 0644 deploy/config/config.yaml debian/tmp/etc/vaulthalla/config.yaml
-	install -m 0644 deploy/config/config_template.yaml.in debian/tmp/etc/vaulthalla/config_template.yaml.in
-
-	sed 's|@BINDIR@|/usr/bin|g' deploy/systemd/vaulthalla.service.in > debian/tmp/lib/systemd/system/vaulthalla.service
-	sed 's|@BINDIR@|/usr/bin|g' deploy/systemd/vaulthalla-cli.service.in > debian/tmp/lib/systemd/system/vaulthalla-cli.service
-	sed 's|@BINDIR@|/usr/bin|g' deploy/systemd/vaulthalla-web.service.in > debian/tmp/lib/systemd/system/vaulthalla-web.service
-	sed 's|@BINDIR@|/usr/bin|g' deploy/systemd/vaulthalla-swtpm.service.in > debian/tmp/lib/systemd/system/vaulthalla-swtpm.service
-	install -m 0644 deploy/systemd/vaulthalla-cli.socket debian/tmp/lib/systemd/system/vaulthalla-cli.socket
-	install -m 0644 deploy/nginx/vaulthalla.conf debian/tmp/usr/share/vaulthalla/nginx/vaulthalla
-	cp -a deploy/psql/. debian/tmp/usr/share/vaulthalla/psql/
-	install -m 0755 deploy/lifecycle/main.py debian/tmp/usr/lib/vaulthalla/lifecycle
-	install -m 0644 LICENSE debian/tmp/usr/share/doc/vaulthalla/LICENSE
-	install -m 0644 debian/copyright debian/tmp/usr/share/doc/vaulthalla/copyright
-
-	ln -sf vaulthalla-cli debian/tmp/usr/bin/vaulthalla
-	ln -sf vaulthalla-cli debian/tmp/usr/bin/vh
 
 	@if [ ! -d web/.next/standalone ]; then \
 		echo "Missing web/.next/standalone. Run web production build before Debian packaging."; \
@@ -50,6 +24,3 @@ override_dh_auto_install:
 	install -d debian/tmp/usr/share/vaulthalla-web/.next
 	cp -a web/.next/static debian/tmp/usr/share/vaulthalla-web/.next/
 	if [ -d web/public ]; then cp -a web/public debian/tmp/usr/share/vaulthalla-web/; fi
-
-	install -m 0644 debian/vaulthalla.udev debian/tmp/usr/lib/$(DEB_HOST_MULTIARCH)/udev/rules.d/60-vaulthalla-tpm.rules
-	install -m 0644 debian/tmpfiles.d/vaulthalla.conf debian/tmp/usr/lib/$(DEB_HOST_MULTIARCH)/tmpfiles.d/vaulthalla.conf

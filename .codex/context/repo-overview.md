@@ -14,7 +14,7 @@
 
 `VERSION` is canonical. Managed files that must stay aligned:
 
-- `core/meson.build`
+- `meson.build`
 - `web/package.json`
 - `debian/changelog` (upstream version + revision)
 

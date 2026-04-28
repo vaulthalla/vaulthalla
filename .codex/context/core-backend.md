@@ -2,11 +2,12 @@
 
 ## Build System Snapshot
 
-`core/meson.build` defines a C++23 build with unity mode and many native deps.
+The repo-level Meson entrypoint lives at `meson.build` and enters the C++ subsystem with `subdir('core')`.
+`core/meson.build` defines the C++23 subsystem build with unity mode and many native deps.
 
 ```meson
 project('vaulthalla', 'cpp',
-  version: '0.28.1',
+  version: '1.0.3',
   default_options: [
     'cpp_std=c++23',
     'unity=on',
@@ -24,7 +25,7 @@ Primary binaries/libraries:
 - `vh_usage` (manpage markdown generator)
 - static libs: `vaulthalla`, `vhseed`, `vhusage`
 
-Meson options (`core/meson.options`):
+Meson options (`meson.options`):
 
 - `manpage` (default `true`)
 - `install_data` (default `true`)

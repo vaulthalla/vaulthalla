@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <cstdlib>
 #include <filesystem>
 #include <paths.h>
 
@@ -12,6 +13,9 @@ int main(int argc, char** argv) {
 
     try {
         vh::paths::setLogPathForTesting();
+        if (const auto* configPath = std::getenv("VH_PATH_TO_CONFIG")) {
+            vh::paths::configPath = configPath;
+        }
         vh::config::Registry::init();
         vh::log::Registry::init();
 

@@ -32,6 +32,6 @@ def write_meson_version(path: Path, version: Version) -> None:
 
 
 if __name__ == "__main__":
-    path = Path('../../../core/meson.build')
+    path = Path("../../../meson.build")
     version = read_meson_version(path)
     print(version)

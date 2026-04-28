@@ -67,7 +67,7 @@ bash .codex/scripts/verify.sh web
 Use the CI-style Meson build path:
 
 ```bash
-meson setup build core --buildtype=debug -Dbuild_unit_tests=true -Dinstall_data=false
+meson setup build --buildtype=debug -Dbuild_unit_tests=true -Dinstall_data=false
 meson compile -C build
 meson test -C build
 ```
@@ -99,7 +99,7 @@ FUSE changes without Linux runtime validation are incomplete.
 If you changed CLI parsing, usage text, shell protocol behavior, or lifecycle commands:
 
 ```bash
-meson setup build core --buildtype=debug -Dbuild_unit_tests=true -Dinstall_data=false
+meson setup build --buildtype=debug -Dbuild_unit_tests=true -Dinstall_data=false
 meson compile -C build
 ./bin/tests/install.sh --run
 ```

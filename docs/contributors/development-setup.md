@@ -146,14 +146,16 @@ For destructive dev-mode reinstall behavior, the `Makefile` target is just wrapp
 The current CI-style core build path is Meson-based:
 
 ```bash
-meson setup build core --buildtype=debug -Dbuild_unit_tests=true -Dinstall_data=false
+meson setup build --buildtype=debug -Dbuild_unit_tests=true -Dinstall_data=false
 meson compile -C build
 meson test -C build
 ```
 
 That matches the shape used in `.github/actions/build/action.yml` and `.github/actions/test/action.yml`.
 
-If your work needs an installed runtime rather than just a compiled binary, the repository also provides higher-level install and test helpers under `bin/` and `core/bin/`.
+The repo root is the Meson project root. `core/` remains the C++ subsystem, and `compile_commands.json` is emitted at `build/compile_commands.json`.
+
+If your work needs an installed runtime rather than just a compiled binary, the repository also provides higher-level install and test helpers under `bin/`.
 
 ## Integration And Runtime Test Path
 

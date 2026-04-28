@@ -2,10 +2,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-CORE_DIR="$ROOT_DIR/core"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+BIN_DIR="$REPO_ROOT/bin"
 
-source "$ROOT_DIR/bin/lib/dev_mode.sh"
+source "$BIN_DIR/lib/dev_mode.sh"
 
 echo "🗡️  Initiating Vaulthalla uninstallation sequence..."
 
@@ -65,31 +65,31 @@ while [[ $# -gt 0 ]]; do
 done
 
 # 1) Make sure FUSE is fully unmounted
-"$CORE_DIR/bin/teardown/unmount_fuse.sh"
+"$BIN_DIR/teardown/unmount_fuse.sh"
 
 # 2) Stop and remove systemd services
-"$ROOT_DIR/bin/teardown/uninstall_systemd.sh"
+"$BIN_DIR/teardown/uninstall_systemd.sh"
 
 # 3) Remove installed binaries/artifacts
-"$ROOT_DIR/bin/teardown/uninstall_binaries.sh"
-"$ROOT_DIR/web/bin/teardown_web.sh"
+"$BIN_DIR/teardown/uninstall_binaries.sh"
+"$REPO_ROOT/web/bin/teardown_web.sh"
 
 # 4) Remove runtime/config dirs
-"$ROOT_DIR/bin/teardown/uninstall_dirs.sh"
+"$BIN_DIR/teardown/uninstall_dirs.sh"
 
 # 5) Optionally remove DB
 if [[ "$REMOVE_DB" == true ]]; then
-  "$ROOT_DIR/bin/teardown/uninstall_db.sh"
+  "$BIN_DIR/teardown/uninstall_db.sh"
 fi
 
 # 6) Optionally remove system user/group
 if [[ "$REMOVE_USERS" == true ]]; then
-  "$ROOT_DIR/bin/teardown/uninstall_users.sh"
+  "$BIN_DIR/teardown/uninstall_users.sh"
 fi
 
 # 7) Optionally purge dependencies
 if [[ "$PURGE_DEPS" == true ]]; then
-  "$ROOT_DIR/bin/teardown/uninstall_deps.sh"
+  "$BIN_DIR/teardown/uninstall_deps.sh"
 fi
 
 echo

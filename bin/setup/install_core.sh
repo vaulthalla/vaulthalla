@@ -2,10 +2,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CORE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-ROOT_DIR="$(cd "$CORE_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+CORE_DIR="$REPO_ROOT/core"
+BIN_DIR="$REPO_ROOT/bin"
+BUILD_DIR="$REPO_ROOT/build"
 
-source "$ROOT_DIR/bin/lib/dev_mode.sh"
+source "$BIN_DIR/lib/dev_mode.sh"
 
 echo "🏗️  Building Vaulthalla core..."
 
@@ -52,13 +54,13 @@ else
   MESON_ARGS+=("-Dmanpage=false")
 fi
 
-if [[ "$CLEAN_BUILD" == true && -d "$CORE_DIR/build" ]]; then
-  rm -rf "$CORE_DIR/build"
+if [[ "$CLEAN_BUILD" == true && -d "$BUILD_DIR" ]]; then
+  rm -rf "$BUILD_DIR"
 fi
 
-mkdir -p "$CORE_DIR/build"
+mkdir -p "$BUILD_DIR"
 
-meson setup "$CORE_DIR/build" "$CORE_DIR" "${MESON_ARGS[@]}" -Db_sanitize=address,undefined --reconfigure
-meson compile -C "$CORE_DIR/build"
-sudo meson install -C "$CORE_DIR/build"
+meson setup "$BUILD_DIR" "$REPO_ROOT" "${MESON_ARGS[@]}" -Db_sanitize=address,undefined --reconfigure
+meson compile -C "$BUILD_DIR"
+sudo meson install -C "$BUILD_DIR"
 sudo ldconfig

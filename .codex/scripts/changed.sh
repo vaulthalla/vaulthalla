@@ -7,7 +7,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 mode="${1:-all}"
 
 mapfile -t web_changed < <(git diff --name-only --diff-filter=ACMRTUXB -- 'web/**/*.ts' 'web/**/*.tsx' 'web/**/*.js' 'web/**/*.jsx')
-mapfile -t release_changed < <(git diff --name-only --diff-filter=ACMRTUXB -- 'tools/release/**/*.py' 'VERSION' 'core/meson.build' 'web/package.json' 'debian/changelog')
+mapfile -t release_changed < <(git diff --name-only --diff-filter=ACMRTUXB -- 'tools/release/**/*.py' 'VERSION' 'meson.build' 'web/package.json' 'debian/changelog')
 
 run_web_changed_checks() {
   if [[ "${#web_changed[@]}" -eq 0 ]]; then

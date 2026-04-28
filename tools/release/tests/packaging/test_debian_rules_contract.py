@@ -5,60 +5,80 @@ import unittest
 
 
 class DebianRulesContractTests(unittest.TestCase):
-    def test_debian_rules_uses_core_as_meson_source_directory(self) -> None:
+    def test_debian_rules_uses_repo_root_meson_entrypoint(self) -> None:
         repo_root = Path(__file__).resolve().parents[4]
         rules_path = repo_root / "debian" / "rules"
         rules = rules_path.read_text(encoding="utf-8")
 
         self.assertIn(
-            "dh_auto_configure --sourcedirectory=core -- -Dmanpage=true",
+            "dh_auto_configure -- -Dmanpage=true",
             rules,
         )
         self.assertIn(
-            "dh_auto_install --sourcedirectory=core --destdir=debian/tmp",
+            "dh_auto_install --destdir=debian/tmp",
             rules,
         )
 
-    def test_debian_rules_stages_non_meson_runtime_payloads(self) -> None:
+    def test_debian_rules_leaves_static_payloads_to_meson(self) -> None:
         repo_root = Path(__file__).resolve().parents[4]
         rules = (repo_root / "debian" / "rules").read_text(encoding="utf-8")
 
-        required_fragments = (
-            "install -m 0644 deploy/config/config.yaml debian/tmp/etc/vaulthalla/config.yaml",
-            "install -m 0644 deploy/config/config_template.yaml.in debian/tmp/etc/vaulthalla/config_template.yaml.in",
-            "sed 's|@BINDIR@|/usr/bin|g' deploy/systemd/vaulthalla.service.in > debian/tmp/lib/systemd/system/vaulthalla.service",
-            "sed 's|@BINDIR@|/usr/bin|g' deploy/systemd/vaulthalla-cli.service.in > debian/tmp/lib/systemd/system/vaulthalla-cli.service",
-            "sed 's|@BINDIR@|/usr/bin|g' deploy/systemd/vaulthalla-web.service.in > debian/tmp/lib/systemd/system/vaulthalla-web.service",
-            "sed 's|@BINDIR@|/usr/bin|g' deploy/systemd/vaulthalla-swtpm.service.in > debian/tmp/lib/systemd/system/vaulthalla-swtpm.service",
-            "install -m 0644 deploy/systemd/vaulthalla-cli.socket debian/tmp/lib/systemd/system/vaulthalla-cli.socket",
-            "install -m 0644 deploy/nginx/vaulthalla.conf debian/tmp/usr/share/vaulthalla/nginx/vaulthalla",
-            "cp -a deploy/psql/. debian/tmp/usr/share/vaulthalla/psql/",
-            "install -m 0644 LICENSE debian/tmp/usr/share/doc/vaulthalla/LICENSE",
-            "install -m 0644 debian/copyright debian/tmp/usr/share/doc/vaulthalla/copyright",
-            "ln -sf vaulthalla-cli debian/tmp/usr/bin/vaulthalla",
-            "ln -sf vaulthalla-cli debian/tmp/usr/bin/vh",
+        meson_owned_fragments = (
+            "deploy/config/config.yaml",
+            "deploy/config/config_template.yaml.in",
+            "deploy/systemd/vaulthalla.service.in",
+            "deploy/systemd/vaulthalla-cli.service.in",
+            "deploy/systemd/vaulthalla-web.service.in",
+            "deploy/systemd/vaulthalla-swtpm.service.in",
+            "deploy/systemd/vaulthalla-cli.socket",
+            "deploy/nginx/vaulthalla.conf",
+            "deploy/psql/.",
+            "deploy/lifecycle/main.py",
+            "debian/vaulthalla.udev",
+            "debian/tmpfiles.d/vaulthalla.conf",
+        )
+        for fragment in meson_owned_fragments:
+            self.assertNotIn(fragment, rules)
+
+        debian_assembled_fragments = (
             "cp -a web/.next/standalone/. debian/tmp/usr/share/vaulthalla-web/",
             "cp -a web/.next/static debian/tmp/usr/share/vaulthalla-web/.next/",
-            "install -m 0644 debian/vaulthalla.udev debian/tmp/usr/lib/$(DEB_HOST_MULTIARCH)/udev/rules.d/60-vaulthalla-tpm.rules",
-            "install -m 0644 debian/tmpfiles.d/vaulthalla.conf debian/tmp/usr/lib/$(DEB_HOST_MULTIARCH)/tmpfiles.d/vaulthalla.conf",
         )
-        for fragment in required_fragments:
+        for fragment in debian_assembled_fragments:
             self.assertIn(fragment, rules)
 
-    def test_debian_install_uses_multiarch_globs(self) -> None:
+    def test_root_meson_installs_static_runtime_payloads_when_enabled(self) -> None:
+        repo_root = Path(__file__).resolve().parents[4]
+        meson = (repo_root / "meson.build").read_text(encoding="utf-8")
+
+        required_fragments = (
+            "if get_option('install_data')",
+            "install_emptydir(state_dir)",
+            "install_emptydir(log_dir)",
+            "'deploy/config/config.yaml'",
+            "'deploy/config/config_template.yaml.in'",
+            "install_subdir(\n        'deploy/psql'",
+            "'deploy/nginx/vaulthalla.conf'",
+            "'deploy/lifecycle/main.py'",
+            "'deploy/systemd/vaulthalla-cli.socket'",
+            "'debian/vaulthalla.udev'",
+            "'debian/tmpfiles.d/vaulthalla.conf'",
+            "install_symlink(\n        'vaulthalla'",
+            "install_symlink(\n        'vh'",
+        )
+        for fragment in required_fragments:
+            self.assertIn(fragment, meson)
+
+    def test_debian_install_declares_meson_staged_payloads(self) -> None:
         repo_root = Path(__file__).resolve().parents[4]
         install_manifest = (repo_root / "debian" / "install").read_text(encoding="utf-8")
 
         self.assertIn("usr/lib/*/libvaulthalla.a usr/lib/libvaulthalla.a", install_manifest)
         self.assertIn("usr/lib/*/libvhusage.a usr/lib/libvhusage.a", install_manifest)
-        self.assertIn(
-            "usr/lib/*/udev/rules.d/60-vaulthalla-tpm.rules usr/lib/udev/rules.d/60-vaulthalla-tpm.rules",
-            install_manifest,
-        )
-        self.assertIn(
-            "usr/lib/*/tmpfiles.d/vaulthalla.conf usr/lib/tmpfiles.d/",
-            install_manifest,
-        )
+        self.assertIn("var/lib/vaulthalla", install_manifest)
+        self.assertIn("var/log/vaulthalla", install_manifest)
+        self.assertIn("usr/lib/udev/rules.d/60-vaulthalla-tpm.rules", install_manifest)
+        self.assertIn("usr/lib/tmpfiles.d/vaulthalla.conf", install_manifest)
         self.assertIn(
             "lib/systemd/system/vaulthalla-web.service",
             install_manifest,

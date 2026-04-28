@@ -27,7 +27,7 @@ class ReleasePaths:
         return cls(
             repo_root=root,
             version_file=root / "VERSION",
-            meson_file=root / "core" / "meson.build",
+            meson_file=root / "meson.build",
             package_json_file=root / "web" / "package.json",
             debian_changelog_file=root / "debian" / "changelog",
         )

@@ -2,10 +2,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
-CORE_DIR="$ROOT_DIR/core"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+BIN_DIR="$REPO_ROOT/bin"
 
-source "$ROOT_DIR/bin/lib/dev_mode.sh"
+source "$BIN_DIR/lib/dev_mode.sh"
 
 echo "🗡️  Initiating Vaulthalla integration test environment setup..."
 
@@ -47,14 +47,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-"$ROOT_DIR/bin/setup/install_deps.sh"
-"$ROOT_DIR/bin/setup/install_users.sh"
-"$ROOT_DIR/bin/tests/install_dirs.sh"
-"$ROOT_DIR/bin/tests/install_db.sh"
+"$BIN_DIR/setup/install_deps.sh"
+"$BIN_DIR/setup/install_users.sh"
+"$BIN_DIR/tests/install_dirs.sh"
+"$BIN_DIR/tests/install_db.sh"
 
 if [[ "$RUN_TEST" == true ]]; then
   CORE_ARGS=()
   [[ "$CLEAN_BUILD" == true ]] && CORE_ARGS+=("--clean")
   [[ "$RUN_TEST" == true ]] && CORE_ARGS+=("--run")
-  "$CORE_DIR/bin/tests/install.sh" "${CORE_ARGS[@]}"
+  "$BIN_DIR/tests/install_core.sh" "${CORE_ARGS[@]}"
 fi

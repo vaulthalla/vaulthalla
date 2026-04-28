@@ -2,10 +2,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
-CORE_DIR="$ROOT_DIR/core"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+BIN_DIR="$REPO_ROOT/bin"
 
-source "$ROOT_DIR/bin/lib/dev_mode.sh"
+source "$BIN_DIR/lib/dev_mode.sh"
 
 echo "🗡️  Initiating Vaulthalla integration test teardown..."
 
@@ -18,19 +18,19 @@ echo "🔍 Build mode: ${VH_BUILD_MODE:-unset}"
 echo "🔍 Dev mode active: $DEV_MODE"
 
 # === 0) Unmount FUSE test mount(s) ===
-"$CORE_DIR/bin/tests/unmount_fuse.sh"
+"$BIN_DIR/tests/unmount_fuse.sh"
 
 # === 1) Remove installed binaries/artifacts ===
-"$ROOT_DIR/bin/teardown/uninstall_binaries.sh"
+"$BIN_DIR/teardown/uninstall_binaries.sh"
 
 # === 2) Remove integration test runtime/config dirs ===
-"$ROOT_DIR/bin/tests/uninstall_dirs.sh"
+"$BIN_DIR/tests/uninstall_dirs.sh"
 
 # === 3) Remove integration test DB and user ===
-"$ROOT_DIR/bin/tests/uninstall_db.sh"
+"$BIN_DIR/tests/uninstall_db.sh"
 
 # === 4) Remove system user/group ===
-"$ROOT_DIR/bin/teardown/uninstall_users.sh"
+"$BIN_DIR/teardown/uninstall_users.sh"
 
 echo
 echo "✅ Vaulthalla integration test environment has been removed."

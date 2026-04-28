@@ -16,7 +16,8 @@ This folder is the Codex memory map for the monorepo.
 ## Fast Reality Checks
 
 - Canonical version file: `VERSION`
-- Core build manifest: `core/meson.build`
+- Meson project entrypoint: `meson.build`
+- Core build graph: `core/meson.build`
 - Web package manifest: `web/package.json`
 - Runtime config: `deploy/config/config.yaml`
 - Debian package metadata: `debian/control`, `debian/install`, `debian/changelog`

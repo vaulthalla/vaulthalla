@@ -1,17 +1,3 @@
-project('vaulthalla', 'cpp',
-        version: '1.0.3',
-        license: 'AGPL-3.0-or-later',
-        default_options: [
-            'warning_level=3',
-            'werror=false',
-            'cpp_std=c++23',
-            'unity=on',
-            'unity_size=9',
-            'prefix=/usr',
-            'cpp_args=-D_GLIBCXX_USE_CXX11_ABI=1'
-        ]
-)
-
 fs = import('fs')
 
 # ╭──────────────────────────────── VERSION HEADER ─────────────────────────────────╮
@@ -37,8 +23,8 @@ vh_version_header = configure_file(
 
 # ╭──────────────────────────────── PATH HEADER ─────────────────────────────────╮
 
-source_root = meson.project_source_root()
-parent = join_paths(source_root, '..')
+repo_root = meson.project_source_root()
+core_root = meson.current_source_dir()
 config_dir = join_paths(get_option('sysconfdir'), meson.project_name())
 log_dir = join_paths(get_option('localstatedir'), 'log', meson.project_name())
 state_dir = join_paths(get_option('localstatedir'), 'lib', meson.project_name())
@@ -54,8 +40,8 @@ conf.set_quoted('VH_BACKING_PATH', state_dir)
 conf.set_quoted('VH_RUNTIME_PATH', runtime_dir)
 conf.set_quoted('VH_CACHE_PATH', '/.cache')
 conf.set_quoted('VH_PSQL_SCHEMAS_PATH', psql_dir)
-conf.set_quoted('VH_PSQL_TEST_SCHEMAS_PATH', join_paths(parent, 'deploy/psql'))
-conf.set_quoted('VH_TEST_ENV_PATH', join_paths(parent, 'deploy/vaulthalla.env'))
+conf.set_quoted('VH_PSQL_TEST_SCHEMAS_PATH', join_paths(repo_root, 'deploy/psql'))
+conf.set_quoted('VH_TEST_ENV_PATH', join_paths(repo_root, 'deploy/vaulthalla.env'))
 
 vh_paths_header = configure_file(
     input: 'deploy/path/paths.h.in',
@@ -99,9 +85,9 @@ test_deps = deps + dependency('gtest', required: true, main: false)
 # ╭────────────────────────────────   FILES   ──────────────────────────────────╮
 
 inc         = include_directories('include', 'vendor', 'usage/include')
-src         = join_paths(source_root, 'src')
-tests_src   = join_paths(source_root, 'tests/unit')
-main        = files(join_paths(source_root, 'main/main.cpp'))
+src         = join_paths(core_root, 'src')
+tests_src   = join_paths(core_root, 'tests/unit')
+main        = files(join_paths(core_root, 'main/main.cpp'))
 
 sources = []
 foreach f : run_command('find', src, '-type', 'f', '-name', '*.cpp', check: true).stdout().strip().split('\n')
@@ -109,8 +95,8 @@ foreach f : run_command('find', src, '-type', 'f', '-name', '*.cpp', check: true
 endforeach
 
 usage_inc = include_directories('usage/include')
-usage_src = join_paths(source_root, 'usage/src')
-main_usage = files(join_paths(source_root, 'main/usage.cpp'))
+usage_src = join_paths(core_root, 'usage/src')
+main_usage = files(join_paths(core_root, 'main/usage.cpp'))
 
 usage_sources = []
 foreach f : run_command('find', usage_src, '-type', 'f', '-name', '*.cpp', check: true).stdout().strip().split('\n')
@@ -128,7 +114,7 @@ lib_core = static_library(
     install: true
 )
 
-lib_seed = static_library('vhseed', files(join_paths(source_root, 'seed/src/seed_db.cpp')),
+lib_seed = static_library('vhseed', files(join_paths(core_root, 'seed/src/seed_db.cpp')),
                           include_directories: include_directories('seed/include', 'include', 'vendor'),
                           link_with: lib_core
 )
@@ -167,7 +153,7 @@ executable('vaulthalla-server', main,
            install: true
 )
 
-executable('vaulthalla-cli', files(join_paths(source_root, 'main/cli.cpp')),
+executable('vaulthalla-cli', files(join_paths(core_root, 'main/cli.cpp')),
            include_directories: include_directories('vendor'),
            dependencies: fmt_dep,
            install: true
@@ -215,6 +201,9 @@ if get_option('build_unit_tests')
 endif
 
 if get_option('build_unit_tests')
+    unit_test_env = environment()
+    unit_test_env.set('VH_PATH_TO_CONFIG', join_paths(repo_root, 'deploy/config/config.yaml'))
+
     all_test_sources = sources
     foreach f : run_command('find', tests_src, '-type', 'f', '-name', '*.cpp', check: true).stdout().strip().split('\n')
         all_test_sources += files(f)
@@ -229,7 +218,7 @@ if get_option('build_unit_tests')
         install: false,
     )
 
-    test('vh_unit_tests', vh_unit_tests)
+    test('vh_unit_tests', vh_unit_tests, env: unit_test_env, workdir: meson.current_build_dir())
 endif
 
 if get_option('integration_tests')
@@ -240,7 +229,7 @@ if get_option('integration_tests')
         'vendor'
     )
 
-    cli_test_src = join_paths(source_root, 'tests/integrations/src')
+    cli_test_src = join_paths(core_root, 'tests/integrations/src')
     cli_test_sources = []
 
     foreach f : run_command('find', cli_test_src, '-type', 'f', '-name', '*.cpp', check: true).stdout().strip().split('\n')
@@ -249,12 +238,12 @@ if get_option('integration_tests')
 
     vh_integration_tests = executable(
         'vh_integration_tests',
-        cli_test_sources + join_paths(source_root, 'tests/integrations/main.cpp'),
+        cli_test_sources + join_paths(core_root, 'tests/integrations/main.cpp'),
         include_directories: cli_test_inc,
         link_with: [lib_core, lib_seed, lib_usage],
         dependencies: deps,
         install: false,
     )
 
-    test('vh_integration_tests', vh_integration_tests)
+    test('vh_integration_tests', vh_integration_tests, workdir: meson.current_build_dir())
 endif

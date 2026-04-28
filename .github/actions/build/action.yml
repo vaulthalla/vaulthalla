@@ -45,7 +45,7 @@ runs:
       shell: bash
       working-directory: ${{ github.workspace }}
       run: |
-        meson setup build core --buildtype=${{ inputs.build_type }} -Dbuild_unit_tests=true -Dinstall_data=false
+        meson setup build --buildtype=${{ inputs.build_type }} -Dbuild_unit_tests=true -Dinstall_data=false
         meson compile -C build
         sudo meson install -C build
         sudo ldconfig

@@ -5,7 +5,8 @@
 # Dev
 /**/.idea
 ~/*
-.env
+/.env
+/.venv
 /config.yaml
 enable_dev_mode
 
@@ -13,6 +14,7 @@ enable_dev_mode
 /deploy/vaulthalla.env
 /deploy/hash_password
 /deploy/bashrc
+/.bashrc
 
 # Core build (also cover root-level build artifacts)
 /build
@@ -40,6 +42,8 @@ yarn-error.log*
 /debian/vaulthalla-server
 /debian/vaulthalla.substvars
 /debian/files
+/debian/tmp
+/debian/vaulthalla
 /release/
 /.changelog_scratch
 

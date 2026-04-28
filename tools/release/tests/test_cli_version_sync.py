@@ -17,7 +17,7 @@ def _write(path: Path, content: str) -> None:
 def _make_repo(repo_root: Path, *, canonical: str, debian_full: str) -> None:
     _write(repo_root / "VERSION", f"{canonical}\n")
     _write(
-        repo_root / "core" / "meson.build",
+        repo_root / "meson.build",
         (
             "project('vaulthalla', 'cpp',\n"
             f"  version: '{canonical}'\n"
