@@ -2,10 +2,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-CORE_DIR="$ROOT_DIR/core"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+BIN_DIR="$REPO_ROOT/bin"
 
-source "$ROOT_DIR/bin/lib/dev_mode.sh"
+source "$BIN_DIR/lib/dev_mode.sh"
 
 echo "🗡️  Initiating Vaulthalla installation sequence..."
 
@@ -41,10 +41,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-"$ROOT_DIR/bin/setup/install_deps.sh"
-"$ROOT_DIR/bin/setup/install_users.sh"
-"$ROOT_DIR/bin/setup/install_dirs.sh"
-"$CORE_DIR/bin/install.sh" "${CORE_ARGS[@]}"
-"$ROOT_DIR/web/bin/install_web.sh"
-"$ROOT_DIR/bin/setup/install_db.sh"
-"$ROOT_DIR/bin/setup/install_systemd.sh"
+"$BIN_DIR/setup/install_deps.sh"
+"$BIN_DIR/setup/install_users.sh"
+"$BIN_DIR/setup/install_dirs.sh"
+"$BIN_DIR/setup/install_core.sh" "${CORE_ARGS[@]}"
+"$REPO_ROOT/web/bin/install_web.sh"
+"$BIN_DIR/setup/install_db.sh"
+"$BIN_DIR/setup/install_systemd.sh"

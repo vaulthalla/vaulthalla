@@ -8,6 +8,41 @@ MOUNT="/mnt/vaulthalla"
 
 log(){ printf '[nuke-vaulthalla] %s\n' "$*"; }
 
+ancestor_pids() {
+  local pid="$$"
+  while [[ -n "${pid:-}" && "$pid" -gt 1 ]]; do
+    printf '%s\n' "$pid"
+    pid="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d '[:space:]' || true)"
+  done
+}
+
+PROTECTED_PIDS="$(ancestor_pids)"
+
+is_protected_pid() {
+  local candidate="$1"
+  grep -Fxq "$candidate" <<<"$PROTECTED_PIDS"
+}
+
+kill_matching_processes() {
+  local pat="$1"
+  local pids=()
+  local pid=""
+
+  while read -r pid; do
+    [[ -n "$pid" ]] || continue
+    if is_protected_pid "$pid"; then
+      log "SKIP (pgrep:$pat): protected PID $pid"
+      continue
+    fi
+    pids+=("$pid")
+  done < <(sudo pgrep -f "$pat" 2>/dev/null || true)
+
+  if [[ "${#pids[@]}" -gt 0 ]]; then
+    log "KILL (pgrep:$pat): ${pids[*]}"
+    sudo kill -9 "${pids[@]}" 2>/dev/null || true
+  fi
+}
+
 is_mounted() {
   # Reliable mount detection: findmnt -T, then /proc/self/mountinfo
   if command -v findmnt >/dev/null 2>&1; then
@@ -34,11 +69,7 @@ fi
 
 # 3) Belt & suspenders: kill obvious stragglers by pattern
 for pat in 'vaulthalla-serv' 'vaulthalla' 'vaulthalla-fuse' 'fuse.vaulthalla'; do
-  if sudo pgrep -f "$pat" >/dev/null 2>&1; then
-    PIDS="$(sudo pgrep -f "$pat" | tr '\n' ' ')"
-    log "KILL (pgrep:$pat): $PIDS"
-    sudo kill -9 $PIDS 2>/dev/null || true
-  fi
+  kill_matching_processes "$pat"
 done
 
 # If we can read the cgroup’s procs, double-tap them

@@ -155,7 +155,7 @@ That matches the shape used in `.github/actions/build/action.yml` and `.github/a
 
 The repo root is the Meson project root. `core/` remains the C++ subsystem, and `compile_commands.json` is emitted at `build/compile_commands.json`.
 
-If your work needs an installed runtime rather than just a compiled binary, the repository also provides higher-level install and test helpers under `bin/` and `core/bin/`.
+If your work needs an installed runtime rather than just a compiled binary, the repository also provides higher-level install and test helpers under `bin/`.
 
 ## Integration And Runtime Test Path
 
