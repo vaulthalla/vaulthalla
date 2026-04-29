@@ -33,6 +33,7 @@ constexpr std::string_view kUploadChunk = "share.upload.chunk";
 constexpr std::string_view kUploadFinish = "share.upload.finish";
 constexpr std::string_view kUploadCancel = "share.upload.cancel";
 constexpr std::string_view kUploadFail = "share.upload.fail";
+constexpr std::string_view kUploadStaleSweep = "share.upload.stale_sweep";
 
 class QueryShareStore final : public ShareStore {
 public:
@@ -171,6 +172,13 @@ public:
 
     uint64_t countCompletedUploadFiles(const std::string& shareId) override {
         return db::query::share::Upload::countCompletedFiles(shareId);
+    }
+
+    std::vector<std::shared_ptr<Upload>> listStaleActiveUploads(
+        const std::time_t olderThanSeconds,
+        const uint64_t limit
+    ) override {
+        return db::query::share::Upload::listStaleActive(olderThanSeconds, limit);
     }
 };
 
@@ -998,6 +1006,42 @@ void Manager::failUpload(const Principal& principal, const std::string& uploadId
 
     store_->failUpload(uploadId, std::move(error));
     store_->appendAuditEvent(audit);
+}
+
+StaleUploadSweepResult Manager::sweepStaleUploads(StaleUploadSweepRequest request) {
+    const auto olderThan = request.older_than_seconds > 0
+                               ? request.older_than_seconds
+                               : options_.stale_upload_ttl_seconds;
+    const auto limit = request.limit > 0 ? request.limit : options_.stale_upload_sweep_limit;
+    if (olderThan <= 0) throw std::invalid_argument("Share stale upload sweep age must be positive");
+    if (limit == 0) return {};
+
+    StaleUploadSweepResult result;
+    const auto uploads = store_->listStaleActiveUploads(olderThan, limit);
+    result.scanned = uploads.size();
+
+    for (const auto& upload : uploads) {
+        if (!upload || upload->isTerminal()) continue;
+
+        auto audit = auditEvent(std::string(kUploadStaleSweep), AuditStatus::Failed, upload->share_id, upload->share_session_id);
+        audit->target_entry_id = upload->target_parent_entry_id;
+        audit->target_path = upload->target_path;
+        audit->bytes_transferred = upload->received_size_bytes;
+        audit->error_code = "stale_upload_sweep";
+        audit->error_message = "stale_upload_sweep";
+
+        try {
+            store_->failUpload(upload->id, "stale_upload_sweep");
+            ++result.failed;
+        } catch (...) {
+            setDenied(*audit, "stale_upload_sweep_failed");
+            store_->appendAuditEvent(audit);
+            throw;
+        }
+        store_->appendAuditEvent(audit);
+    }
+
+    return result;
 }
 
 }

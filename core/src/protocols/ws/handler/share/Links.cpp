@@ -41,10 +41,10 @@ namespace {
     return payload;
 }
 
-[[nodiscard]] rbac::Actor actorFromSession(const std::shared_ptr<Session>& session) {
+[[nodiscard]] vh::rbac::Actor actorFromSession(const std::shared_ptr<Session>& session) {
     if (!session || !session->user)
         throw std::runtime_error("Share management requires an authenticated user");
-    return rbac::Actor::human(session->user);
+    return vh::rbac::Actor::human(session->user);
 }
 
 [[nodiscard]] std::string requiredString(const json& payload, const char* field) {

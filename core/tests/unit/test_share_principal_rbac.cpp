@@ -40,8 +40,8 @@ Link makeLink() {
     return link;
 }
 
-Session makeSession(const std::string& shareId) {
-    Session session;
+vh::share::Session makeSession(const std::string& shareId) {
+    vh::share::Session session;
     session.id = "00000000-0000-4000-8000-000000000201";
     session.share_id = shareId;
     session.session_token_lookup_id = "00000000-0000-4000-8000-000000000202";

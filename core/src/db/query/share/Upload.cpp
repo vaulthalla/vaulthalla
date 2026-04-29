@@ -131,4 +131,18 @@ std::vector<std::shared_ptr<vh::share::Upload>> Upload::listForShare(const std::
     });
 }
 
+std::vector<std::shared_ptr<vh::share::Upload>> Upload::listStaleActive(
+    const std::time_t older_than_seconds,
+    const uint64_t limit
+) {
+    if (older_than_seconds <= 0) throw std::invalid_argument("Share stale upload age must be positive");
+    if (limit == 0) return {};
+    return Transactions::exec("share::Upload::listStaleActive", [&](pqxx::work& txn) {
+        pqxx::params p;
+        p.append(static_cast<long long>(older_than_seconds));
+        p.append(static_cast<long long>(limit));
+        return upload_query_detail::uploads_from_result(txn.exec(pqxx::prepped{"share_upload_list_stale_active"}, p));
+    });
+}
+
 }

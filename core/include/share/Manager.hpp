@@ -101,6 +101,9 @@ public:
     virtual uint64_t countCompletedUploadFiles(const std::string&) {
         throw std::logic_error("Share upload store is unavailable");
     }
+    virtual std::vector<std::shared_ptr<Upload>> listStaleActiveUploads(std::time_t, uint64_t) {
+        throw std::logic_error("Share upload store is unavailable");
+    }
 };
 
 struct ManagerOptions {
@@ -109,6 +112,8 @@ struct ManagerOptions {
     uint32_t challenge_max_attempts{6};
     uint64_t default_max_upload_size_bytes{64u * 1024u * 1024u};
     uint64_t max_upload_chunk_size_bytes{256u * 1024u};
+    std::time_t stale_upload_ttl_seconds{6 * 60 * 60};
+    uint64_t stale_upload_sweep_limit{100};
     std::function<std::time_t()> clock{[] { return std::time(nullptr); }};
     std::function<std::string()> challenge_code_generator{};
 };
@@ -211,6 +216,16 @@ struct FinishUploadRequest {
     std::optional<std::string> mime_type;
 };
 
+struct StaleUploadSweepRequest {
+    std::time_t older_than_seconds{};
+    uint64_t limit{};
+};
+
+struct StaleUploadSweepResult {
+    uint64_t scanned{};
+    uint64_t failed{};
+};
+
 class Manager {
 public:
     Manager();
@@ -262,6 +277,7 @@ public:
     void finishUpload(FinishUploadRequest request);
     void cancelUpload(const Principal& principal, const std::string& uploadId);
     void failUpload(const Principal& principal, const std::string& uploadId, std::string error);
+    [[nodiscard]] StaleUploadSweepResult sweepStaleUploads(StaleUploadSweepRequest request = {});
 
 private:
     std::shared_ptr<ShareStore> store_;

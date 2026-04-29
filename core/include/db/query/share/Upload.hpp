@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <ctime>
 #include <memory>
 #include <string>
 #include <vector>
@@ -20,6 +21,7 @@ struct Upload {
     static uint64_t sumCompletedBytes(const std::string& share_id);
     static uint64_t countCompletedFiles(const std::string& share_id);
     static std::vector<std::shared_ptr<vh::share::Upload>> listForShare(const std::string& share_id, const db::model::ListQueryParams& params);
+    static std::vector<std::shared_ptr<vh::share::Upload>> listStaleActive(std::time_t older_than_seconds, uint64_t limit);
 };
 
 }

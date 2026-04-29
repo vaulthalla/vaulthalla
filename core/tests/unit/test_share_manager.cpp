@@ -306,6 +306,21 @@ public:
                 ++total;
         return total;
     }
+
+    std::vector<std::shared_ptr<Upload>> listStaleActiveUploads(
+        const std::time_t olderThanSeconds,
+        const uint64_t limit
+    ) override {
+        std::vector<std::shared_ptr<Upload>> out;
+        const auto cutoff = kManagerNow - olderThanSeconds;
+        for (auto& [_, upload] : uploads) {
+            if (out.size() >= limit) break;
+            if (upload->isTerminal()) continue;
+            if (upload->started_at >= cutoff) continue;
+            out.push_back(upload);
+        }
+        return out;
+    }
 };
 
 Link makeManagerLink(const AccessMode mode = AccessMode::Public) {
@@ -784,4 +799,72 @@ TEST_F(ShareManagerTest, UploadCancelAndFailRecordTerminalStatusWithoutLeakingSe
     EXPECT_EQ(store->getUpload(failed.upload->id)->status, UploadStatus::Failed);
     EXPECT_EQ(store->getUpload(failed.upload->id)->error, "write_failed");
     EXPECT_FALSE(store->getUpload(failed.upload->id)->tmp_path.has_value());
+}
+
+TEST_F(ShareManagerTest, SweepStaleUploadsFailsOnlyOldActiveRecords) {
+    const auto created = create();
+    auto opened = manager->openPublicSession(created.public_token);
+    auto principal = manager->resolvePrincipal(opened.session_token);
+
+    auto stalePending = manager->startUpload({
+        .principal = *principal,
+        .target_parent_entry_id = 77,
+        .target_path = "/reports/stale-pending.txt",
+        .original_filename = "stale-pending.txt",
+        .resolved_filename = "stale-pending.txt",
+        .expected_size_bytes = 4,
+        .mime_type = "text/plain"
+    });
+    auto staleReceiving = manager->startUpload({
+        .principal = *principal,
+        .target_parent_entry_id = 77,
+        .target_path = "/reports/stale-receiving.txt",
+        .original_filename = "stale-receiving.txt",
+        .resolved_filename = "stale-receiving.txt",
+        .expected_size_bytes = 4,
+        .mime_type = "text/plain"
+    });
+    auto fresh = manager->startUpload({
+        .principal = *principal,
+        .target_parent_entry_id = 77,
+        .target_path = "/reports/fresh.txt",
+        .original_filename = "fresh.txt",
+        .resolved_filename = "fresh.txt",
+        .expected_size_bytes = 4,
+        .mime_type = "text/plain"
+    });
+    auto completed = manager->startUpload({
+        .principal = *principal,
+        .target_parent_entry_id = 77,
+        .target_path = "/reports/complete.txt",
+        .original_filename = "complete.txt",
+        .resolved_filename = "complete.txt",
+        .expected_size_bytes = 4,
+        .mime_type = "text/plain"
+    });
+
+    manager->recordUploadChunk(*principal, staleReceiving.upload->id, 1);
+    manager->recordUploadChunk(*principal, completed.upload->id, 4);
+    manager->finishUpload({
+        .principal = *principal,
+        .upload_id = completed.upload->id,
+        .created_entry_id = 101,
+        .content_hash = "complete-hash",
+        .mime_type = "text/plain"
+    });
+
+    store->getUpload(stalePending.upload->id)->started_at = kManagerNow - 7200;
+    store->getUpload(staleReceiving.upload->id)->started_at = kManagerNow - 7200;
+
+    const auto result = manager->sweepStaleUploads({.older_than_seconds = 3600, .limit = 10});
+    EXPECT_EQ(result.scanned, 2u);
+    EXPECT_EQ(result.failed, 2u);
+    EXPECT_EQ(store->getUpload(stalePending.upload->id)->status, UploadStatus::Failed);
+    EXPECT_EQ(store->getUpload(staleReceiving.upload->id)->status, UploadStatus::Failed);
+    EXPECT_EQ(store->getUpload(stalePending.upload->id)->error, "stale_upload_sweep");
+    EXPECT_EQ(store->getUpload(fresh.upload->id)->status, UploadStatus::Pending);
+    EXPECT_EQ(store->getUpload(completed.upload->id)->status, UploadStatus::Complete);
+
+    const auto second = manager->sweepStaleUploads({.older_than_seconds = 3600, .limit = 10});
+    EXPECT_EQ(second.failed, 0u);
 }

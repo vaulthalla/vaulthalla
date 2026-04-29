@@ -41,4 +41,12 @@ void vh::db::Connection::initPreparedShareUploads() const {
                    "SELECT COUNT(*) FROM share_upload WHERE share_id = $1 AND status = 'complete'");
     conn_->prepare("share_upload_list_for_share",
                    "SELECT * FROM share_upload WHERE share_id = $1 ORDER BY started_at DESC LIMIT $2 OFFSET $3");
+    conn_->prepare("share_upload_list_stale_active", R"SQL(
+        SELECT *
+        FROM share_upload
+        WHERE status IN ('pending', 'receiving')
+          AND started_at < CURRENT_TIMESTAMP - ($1::bigint * INTERVAL '1 second')
+        ORDER BY started_at ASC
+        LIMIT $2
+    )SQL");
 }

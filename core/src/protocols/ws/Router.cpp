@@ -3,6 +3,7 @@
 #include "auth/session/Manager.hpp"
 #include "log/Registry.hpp"
 #include "protocols/ws/Session.hpp"
+#include "protocols/ws/ShareRateLimit.hpp"
 #include "protocols/ws/core/handler_templates.hpp"
 #include "runtime/Deps.hpp"
 
@@ -21,6 +22,11 @@ bool containsCommand(const std::array<std::string_view, N>& commands, const std:
 
 bool isAuthCommand(const std::string_view command) {
     return command.starts_with("auth");
+}
+
+ShareRateLimit& shareRateLimit() {
+    static ShareRateLimit limiter;
+    return limiter;
 }
 }
 
@@ -162,6 +168,17 @@ void Router::routeMessage(json&& msg, const SessionPtr& session) {
             !runtime::Deps::get().sessionManager->validate(session, accessToken)) {
             log::Registry::ws()->warn("[Router] Unauthorized access attempt for command: {}", command);
             Response::UNAUTHORIZED(std::move(command), std::move(msg))(session);
+            return;
+        }
+
+        const auto rateLimit = shareRateLimit().check(command, msg, *session);
+        if (!rateLimit.allowed) {
+            log::Registry::ws()->warn(
+                "[Router] Share command rate limited: {} for IP {}",
+                command,
+                session->ipAddress.empty() ? "unknown" : session->ipAddress
+            );
+            Response::ERROR(std::move(command), std::move(msg), "Share command rate limit exceeded. Try again later.")(session);
             return;
         }
 
