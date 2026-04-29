@@ -45,14 +45,16 @@ export const FilesystemClient: React.FC<FilesystemClientProps> = memo(({ rows })
         if (downloading || previewing) return
         const path = f.path || f.name
         previewFile(path).catch(() => {
-          downloadFile(path).catch(err => console.error('Error downloading shared file:', err))
+          downloadFile(path)
+            .then(() => clearSharePreview())
+            .catch(err => console.error('Error downloading shared file:', err))
         })
         return
       }
 
       setSelectedFile(f)
     },
-    [downloadFile, downloading, mode, previewFile, previewing],
+    [clearSharePreview, downloadFile, downloading, mode, previewFile, previewing],
   )
 
   const handleRowContextMenu = React.useCallback((e: React.MouseEvent, row: FilesystemRow) => {

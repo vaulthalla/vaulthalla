@@ -14,15 +14,6 @@ const parentPath = (path: string) => {
   return parts.length ? `/${parts.join('/')}` : '/'
 }
 
-const StatusPill = ({ active, children }: { active: boolean; children: React.ReactNode }) => (
-  <span
-    className={`rounded border px-2 py-1 text-xs ${
-      active ? 'border-cyan-400/40 bg-cyan-950/40 text-cyan-100' : 'border-gray-700 bg-gray-900 text-gray-500'
-    }`}>
-    {children}
-  </span>
-)
-
 const Alert = ({ tone = 'info', children }: { tone?: 'info' | 'error' | 'success'; children: React.ReactNode }) => {
   const styles =
     tone === 'error' ? 'border-red-500/40 bg-red-950/40 text-red-100'
@@ -61,11 +52,13 @@ const SharePageClient = ({ token }: { token: string }) => {
     uploadProgress,
     previewing,
     previewError,
+    sharePreview,
     downloading,
     downloadLabel,
     downloadProgress,
     downloadError,
     downloadFile,
+    previewFile,
   } = useFSStore()
 
   const canList = hasShareOperation(share?.allowed_ops, 'list')
@@ -91,6 +84,11 @@ const SharePageClient = ({ token }: { token: string }) => {
   useEffect(() => {
     if (status === 'ready' && canList) fetchFiles().catch(() => undefined)
   }, [canList, fetchFiles, status])
+
+  useEffect(() => {
+    if (status !== 'ready' || !isFileShare || !canPreview || previewing || previewError || sharePreview) return
+    previewFile('/').catch(() => undefined)
+  }, [canPreview, isFileShare, previewError, previewFile, previewing, sharePreview, status])
 
   const submitEmail = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -120,12 +118,10 @@ const SharePageClient = ({ token }: { token: string }) => {
             </div>
 
             {share && (
-              <div className="flex flex-wrap gap-2 md:justify-end">
-                <StatusPill active={canList}>List</StatusPill>
-                <StatusPill active={canPreview}>Preview</StatusPill>
-                <StatusPill active={canDownload}>Download</StatusPill>
-                <StatusPill active={canUpload}>Upload</StatusPill>
-                <StatusPill active={share.access_mode === 'email_validated'}>Email verified</StatusPill>
+              <div className="max-w-sm text-sm text-gray-300 md:text-right">
+                <div className="text-xs uppercase tracking-wide text-gray-500">Allowed actions</div>
+                <div className="mt-1">{shareOperationLabel(share.allowed_ops)}</div>
+                {share.access_mode === 'email_validated' && <div className="mt-1 text-cyan-200">Email verified</div>}
               </div>
             )}
           </div>
@@ -260,16 +256,35 @@ const SharePageClient = ({ token }: { token: string }) => {
               </Alert>
             )}
 
-            {isFileShare && canDownload && (
+            {isFileShare && (
               <section className="rounded border border-white/10 bg-gray-900 p-5">
                 <h2 className="text-lg font-semibold">Shared file</h2>
-                <p className="mt-2 text-sm text-gray-300">This share points to a single file.</p>
-                <button
-                  className="mt-4 rounded bg-cyan-500 px-4 py-2 font-medium text-gray-950 disabled:opacity-60"
-                  onClick={downloadRootFile}
-                  disabled={downloading}>
-                  Download File
-                </button>
+                <p className="mt-2 text-sm text-gray-300">
+                  {canPreview ? 'Preview opens automatically when supported.' : 'Preview is not available for this share.'}
+                </p>
+                {sharePreview && (
+                  <div className="mt-4 overflow-hidden rounded border border-gray-800 bg-black/40">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      className="mx-auto max-h-[70vh] max-w-full object-contain"
+                      src={`data:${sharePreview.mime_type};base64,${sharePreview.data_base64}`}
+                      alt={sharePreview.filename}
+                    />
+                  </div>
+                )}
+                {!sharePreview && canPreview && !previewError && (
+                  <div className="mt-4 rounded border border-gray-800 bg-gray-950 p-6 text-sm text-gray-300">
+                    {previewing ? 'Preparing preview...' : 'Preview will appear here when available.'}
+                  </div>
+                )}
+                {canDownload && (
+                  <button
+                    className="mt-4 rounded bg-cyan-500 px-4 py-2 font-medium text-gray-950 disabled:opacity-60"
+                    onClick={downloadRootFile}
+                    disabled={downloading}>
+                    Download File
+                  </button>
+                )}
               </section>
             )}
 

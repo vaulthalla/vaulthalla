@@ -199,6 +199,7 @@ json Storage::listDir(const json& payload, const std::shared_ptr<Session>& sessi
     return {
         {"vault", engine->vault->name},
         {"path", path.string()},
+        {"entry", *entry},
         {"files", entries}
     };
 }

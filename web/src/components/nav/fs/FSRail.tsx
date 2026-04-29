@@ -3,6 +3,7 @@ import { NavList } from '@/components/nav/NavList'
 import type { NavConfig } from '@/components/nav/types'
 import { NavSpacer, ToggleNavButton } from '@/components/nav/util'
 import { LogoutButton } from '@/components/nav/LogoutButton'
+import { FSRailActions } from '@/components/nav/fs/FSRailActions'
 
 export const FSRail = ({ config }: { config: NavConfig }) => {
   const btnProps = { isCompact: true }
@@ -19,6 +20,8 @@ export const FSRail = ({ config }: { config: NavConfig }) => {
         <nav className="bg-secondary text-primary w-[85%] rounded-xl p-2 shadow-lg">
           <NavList items={config.items} compact />
         </nav>
+
+        <FSRailActions />
 
         <NavSpacer />
         <LogoutButton isCompact={true} />

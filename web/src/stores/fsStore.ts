@@ -8,6 +8,7 @@ import { useVaultStore } from '@/stores/vaultStore'
 import { FileWithRelativePath } from '@/models/systemFile'
 import { Directory } from '@/models/directory'
 import { useShareWebSocketStore } from '@/stores/useShareWebSocket'
+import { useVaultShareStore } from '@/stores/vaultShareStore'
 import { ShareEntry, SharePreviewResponse } from '@/models/linkShare'
 
 type FsMode = 'authenticated' | 'share'
@@ -28,6 +29,7 @@ interface FsStore {
   previewing: boolean
   previewError: string | null
   sharePreview: SharePreviewResponse | null
+  currentDirectory: Directory | null
   files: FsEntry[]
   copiedItem: FsEntry | null
   enterShareMode: () => void
@@ -112,6 +114,12 @@ const shareEntryToFsEntry = (entry: ShareEntry): FsEntry => {
   })
 }
 
+const wireEntryToFsEntry = (entry: FsEntry): FsEntry => {
+  if ('file_count' in entry || 'subdirectory_count' in entry || (entry as { type?: string }).type === 'directory')
+    return new Directory(entry)
+  return new DBFile(entry)
+}
+
 const shareUploadTarget = (targetPath: string | undefined, currentPath: string, filename: string) => {
   if (!targetPath || normalizeSharePath(targetPath) === normalizeSharePath(currentPath)) {
     return { path: normalizeSharePath(currentPath), filename }
@@ -155,6 +163,21 @@ const saveBrowserDownload = (filename: string, chunks: Uint8Array<ArrayBuffer>[]
   window.URL.revokeObjectURL(url)
 }
 
+const requireReadyShareSession = () => {
+  const share = useVaultShareStore.getState()
+  const ws = useShareWebSocketStore.getState()
+  if (share.status !== 'ready' || !share.sessionToken) throw new Error('Share session is not ready')
+  if (!ws.connected || !ws.socket || ws.socket.readyState !== WebSocket.OPEN)
+    throw new Error('Share session disconnected. Reopen the share link and try again.')
+}
+
+const waitForBufferedAmount = async (socket: WebSocket, maxBufferedBytes = 1024 * 1024) => {
+  while (socket.bufferedAmount > maxBufferedBytes) {
+    await new Promise(resolve => window.setTimeout(resolve, 25))
+    if (socket.readyState !== WebSocket.OPEN) throw new Error('Share upload connection closed')
+  }
+}
+
 export const useFSStore = create<FsStore>()(
   persist(
     (set, get) => ({
@@ -172,6 +195,7 @@ export const useFSStore = create<FsStore>()(
       previewing: false,
       previewError: null,
       sharePreview: null,
+      currentDirectory: null,
       files: [],
       copiedItem: null,
 
@@ -193,6 +217,7 @@ export const useFSStore = create<FsStore>()(
           previewing: false,
           previewError: null,
           sharePreview: null,
+          currentDirectory: null,
         })
       },
 
@@ -213,6 +238,7 @@ export const useFSStore = create<FsStore>()(
           previewing: false,
           previewError: null,
           sharePreview: null,
+          currentDirectory: null,
         })
       },
 
@@ -249,9 +275,10 @@ export const useFSStore = create<FsStore>()(
 
         if (mode === 'share') {
           const ws = useShareWebSocketStore.getState()
+          requireReadyShareSession()
           await ws.waitForConnection()
           const response = await ws.sendCommand('share.fs.list', { path: normalizeSharePath(path) })
-          set({ path: normalizeSharePath(response.path), files: response.entries.map(shareEntryToFsEntry) })
+          set({ path: normalizeSharePath(response.path), currentDirectory: null, files: response.entries.map(shareEntryToFsEntry) })
           return
         }
 
@@ -265,8 +292,8 @@ export const useFSStore = create<FsStore>()(
 
         try {
           const response = await ws.sendCommand('fs.dir.list', { vault_id: currVault.id, path })
-          const files = response.files.map(file => new DBFile(file))
-          set({ files })
+          const files = response.files.map(wireEntryToFsEntry)
+          set({ currentDirectory: response.entry ? new Directory(response.entry) : null, files })
         } catch (error) {
           console.error('Error fetching files:', error)
           throw error
@@ -310,6 +337,7 @@ export const useFSStore = create<FsStore>()(
         if (get().downloading) throw new Error('A download is already running')
 
         const ws = useShareWebSocketStore.getState()
+        requireReadyShareSession()
         await ws.waitForConnection()
 
         const normalizedPath = normalizeSharePath(path)
@@ -325,20 +353,27 @@ export const useFSStore = create<FsStore>()(
           const chunkSize = startResp.chunk_size || 256 * 1024
           const chunks: Uint8Array<ArrayBuffer>[] = []
           let offset = 0
-          let complete = false
+          const totalSize = Math.max(0, startResp.size_bytes || 0)
 
-          while (!complete) {
+          if (totalSize === 0) {
+            saveBrowserDownload(startResp.filename, [], startResp.mime_type)
+            await ws.sendCommand('share.download.cancel', { transfer_id: transferId }).catch(() => undefined)
+            set({ downloading: false, downloadProgress: 100 })
+            return
+          }
+
+          while (offset < totalSize) {
+            const length = Math.min(chunkSize, totalSize - offset)
             const chunk = await ws.sendCommand('share.download.chunk', {
               transfer_id: startResp.transfer_id,
               offset,
-              length: chunkSize,
+              length,
             })
 
             chunks.push(decodeBase64(chunk.data_base64))
             if (!chunk.complete && chunk.next_offset <= offset) throw new Error('Download did not advance')
             offset = chunk.next_offset
-            complete = chunk.complete
-            const progress = startResp.size_bytes > 0 ? Math.min(100, (offset / startResp.size_bytes) * 100) : complete ? 100 : 0
+            const progress = Math.min(100, (offset / totalSize) * 100)
             set({ downloadProgress: progress })
           }
 
@@ -356,6 +391,7 @@ export const useFSStore = create<FsStore>()(
         if (get().mode !== 'share') throw new Error('Authenticated previews use the existing preview route')
 
         const ws = useShareWebSocketStore.getState()
+        requireReadyShareSession()
         await ws.waitForConnection()
 
         set({ previewing: true, previewError: null, sharePreview: null })
@@ -377,6 +413,7 @@ export const useFSStore = create<FsStore>()(
       async uploadFile({ file, targetPath = get().path, onProgress }) {
         if (get().mode === 'share') {
           const ws = useShareWebSocketStore.getState()
+          requireReadyShareSession()
           await ws.waitForConnection()
 
           const target = shareUploadTarget(targetPath, get().path, file.name)
@@ -395,14 +432,18 @@ export const useFSStore = create<FsStore>()(
 
           try {
             while (offset < file.size) {
+              requireReadyShareSession()
               const slice = file.slice(offset, Math.min(offset + chunkSize, file.size))
               const arrayBuffer = await slice.arrayBuffer()
+              if (wsInstance.readyState !== WebSocket.OPEN) throw new Error('Share upload connection closed')
               wsInstance.send(arrayBuffer)
+              await waitForBufferedAmount(wsInstance)
 
               offset += slice.size
               onProgress?.(slice.size)
             }
 
+            requireReadyShareSession()
             await ws.sendCommand('share.upload.finish', { upload_id: startResp.upload_id })
           } catch (error) {
             await ws.sendCommand('share.upload.cancel', { upload_id: startResp.upload_id }).catch(() => undefined)
