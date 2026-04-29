@@ -145,6 +145,7 @@ void Connection::initPrepared() const {
     initPreparedShareEmailChallenges();
     initPreparedShareUploads();
     initPreparedShareAuditEvents();
+    initPreparedShareVaultRoles();
 
     // Admin
     initPreparedSecrets();

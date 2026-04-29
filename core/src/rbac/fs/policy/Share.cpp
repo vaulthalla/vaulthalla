@@ -6,10 +6,12 @@
 #include "rbac/permission/Permission.hpp"
 #include "rbac/permission/Selector.hpp"
 #include "rbac/role/Vault.hpp"
+#include "share/Grant.hpp"
 #include "share/Principal.hpp"
 #include "share/Scope.hpp"
 #include "share/TargetResolver.hpp"
 
+#include <array>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -25,11 +27,11 @@ using FilePermission = permission::vault::fs::FilePermissions;
     return permissions;
 }
 
-[[nodiscard]] std::vector<std::string> patternsFor(const vh::share::Principal& principal) {
-    const auto root = vh::share::Scope::normalizeVaultPath(principal.root_path);
+[[nodiscard]] std::vector<std::string> patternsFor(const vh::share::Grant& grant) {
+    const auto root = vh::share::Scope::normalizeVaultPath(grant.root_path);
     std::vector<std::string> patterns{root};
 
-    if (principal.grant.target_type == vh::share::TargetType::Directory)
+    if (grant.target_type == vh::share::TargetType::Directory)
         patterns.push_back(root == "/" ? std::string{"/**"} : root + "/**");
 
     return patterns;
@@ -97,28 +99,67 @@ void addOverridesForAction(
             addDirectoryOverrides(overrides, patterns, *directoryPermission);
     }
 }
+
+[[nodiscard]] role::Vault emptyScopedVaultRole(
+    const std::string& shareId,
+    const vh::share::Grant& grant
+) {
+    auto role = role::Vault::ImplicitDeny();
+    role.name = shareId.empty() ? "share_scoped_effective" : "share_link_" + shareId;
+    role.description = "Scoped vault role for link share " + (shareId.empty() ? std::string{"runtime"} : shareId);
+    role.assignment = role::Vault::AssignmentInfo{
+        .subject_id = grant.root_entry_id,
+        .vault_id = grant.vault_id,
+        .subject_type = "share"
+    };
+    return role;
+}
+
+constexpr std::array shareOperations{
+    vh::share::Operation::Metadata,
+    vh::share::Operation::List,
+    vh::share::Operation::Preview,
+    vh::share::Operation::Download,
+    vh::share::Operation::Upload,
+    vh::share::Operation::Mkdir,
+    vh::share::Operation::Overwrite
+};
 }
 
 role::Vault Share::effectiveVaultRole(
     const vh::share::Principal& principal,
     const vh::share::Operation operation
 ) {
-    auto role = role::Vault::ImplicitDeny();
-    role.name = "share_scoped_effective";
-    role.description = "In-memory scoped vault role derived from a share grant.";
-    role.assignment = role::Vault::AssignmentInfo{
-        .subject_id = principal.root_entry_id,
-        .vault_id = principal.vault_id,
-        .subject_type = "share"
-    };
+    auto role = emptyScopedVaultRole(principal.share_id, principal.grant);
 
     if (!principal.allows(operation) || !supportsOperation(operation)) return role;
 
-    const auto patterns = patternsFor(principal);
+    const auto patterns = patternsFor(principal.grant);
     auto& overrides = role.fs.overrides;
 
     if (const auto action = actionForOperation(operation))
         addOverridesForAction(overrides, patterns, *action, principal.grant.target_type);
+
+    return role;
+}
+
+role::Vault Share::effectiveVaultRole(const vh::share::Principal& principal) {
+    return scopedVaultRoleForGrant(principal.share_id, principal.grant);
+}
+
+role::Vault Share::scopedVaultRoleForGrant(
+    const std::string& shareId,
+    const vh::share::Grant& grant
+) {
+    auto role = emptyScopedVaultRole(shareId, grant);
+    const auto patterns = patternsFor(grant);
+
+    auto& overrides = role.fs.overrides;
+    for (const auto operation : shareOperations) {
+        if (!grant.allows(operation) || !supportsOperation(operation)) continue;
+        if (const auto action = actionForOperation(operation))
+            addOverridesForAction(overrides, patterns, *action, grant.target_type);
+    }
 
     return role;
 }
@@ -169,7 +210,9 @@ Decision Share::evaluate(const vh::share::Principal& principal, const ShareReque
             .evaluated_path = normalizedPath
         };
 
-    const auto role = effectiveVaultRole(principal, request.operation);
+    const auto role = principal.scoped_vault_role
+                          ? *principal.scoped_vault_role
+                          : effectiveVaultRole(principal, request.operation);
     return Evaluator::evaluate(role.fs, {
         .action = *action,
         .vaultPath = normalizedPath,

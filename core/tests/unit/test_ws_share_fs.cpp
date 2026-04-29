@@ -3,7 +3,9 @@
 #include "identities/User.hpp"
 #include "protocols/ws/Router.hpp"
 #include "protocols/ws/Session.hpp"
+#include "protocols/ws/handler/fs/Storage.hpp"
 #include "protocols/ws/handler/share/Filesystem.hpp"
+#include "rbac/role/Vault.hpp"
 #include "share/AuditEvent.hpp"
 #include "share/EmailChallenge.hpp"
 #include "share/Manager.hpp"
@@ -21,6 +23,8 @@
 #include <unordered_map>
 
 namespace vh::protocols::ws::handler::share::test_fs {
+namespace ws_fs = vh::protocols::ws::handler::fs;
+
 constexpr std::time_t kNow = 1'800'000'000;
 
 std::string uuidFor(const uint32_t value) {
@@ -57,6 +61,7 @@ public:
     std::unordered_map<std::string, std::shared_ptr<vh::share::Session>> sessions;
     std::unordered_map<std::string, std::string> session_by_lookup;
     std::unordered_map<std::string, std::shared_ptr<vh::share::EmailChallenge>> challenges;
+    std::unordered_map<std::string, std::shared_ptr<vh::rbac::role::Vault>> vault_roles;
     std::vector<std::shared_ptr<vh::share::AuditEvent>> audits;
     uint32_t next_link{100};
     uint32_t next_session{200};
@@ -141,6 +146,27 @@ public:
         auto link = getLink(id);
         if (!link) throw std::runtime_error("missing link");
         ++link->download_count;
+    }
+
+    void upsertVaultRoleForShare(
+        const std::string& shareId,
+        uint32_t,
+        const std::shared_ptr<vh::rbac::role::Vault>& role
+    ) override {
+        if (!role) {
+            vault_roles.erase(shareId);
+            return;
+        }
+        vault_roles[shareId] = std::make_shared<vh::rbac::role::Vault>(*role);
+    }
+
+    std::shared_ptr<vh::rbac::role::Vault> getVaultRoleForShare(const std::string& shareId) override {
+        if (!vault_roles.contains(shareId)) return nullptr;
+        return std::make_shared<vh::rbac::role::Vault>(*vault_roles.at(shareId));
+    }
+
+    void removeVaultRoleForShare(const std::string& shareId) override {
+        vault_roles.erase(shareId);
     }
 
     std::shared_ptr<vh::share::Session> createSession(const std::shared_ptr<vh::share::Session>& session) override {
@@ -413,11 +439,87 @@ TEST_F(WsShareFsTest, RouterAllowsShareFsOnlyForReadyShareMode) {
 
     using Decision = Router::CommandAuthDecision;
     EXPECT_EQ(Decision::Deny, Router::classifyCommand("share.fs.metadata", *unauth));
+    EXPECT_EQ(Decision::Deny, Router::classifyCommand("fs.metadata", *unauth));
+    EXPECT_EQ(Decision::Deny, Router::classifyCommand("fs.list", *unauth));
     EXPECT_EQ(Decision::Deny, Router::classifyCommand("share.fs.list", *human));
+    EXPECT_EQ(Decision::RequireHumanAuth, Router::classifyCommand("fs.metadata", *human));
+    EXPECT_EQ(Decision::RequireHumanAuth, Router::classifyCommand("fs.list", *human));
     EXPECT_EQ(Decision::Deny, Router::classifyCommand("share.fs.metadata", *pending));
+    EXPECT_EQ(Decision::Deny, Router::classifyCommand("fs.metadata", *pending));
+    EXPECT_EQ(Decision::Deny, Router::classifyCommand("fs.list", *pending));
     EXPECT_EQ(Decision::Allow, Router::classifyCommand("share.fs.metadata", *share));
+    EXPECT_EQ(Decision::Allow, Router::classifyCommand("fs.metadata", *share));
+    EXPECT_EQ(Decision::Allow, Router::classifyCommand("fs.list", *share));
     EXPECT_EQ(Decision::Deny, Router::classifyCommand("fs.dir.list", *share));
+    EXPECT_EQ(Decision::Deny, Router::classifyCommand("fs.upload.start", *share));
     EXPECT_EQ(Decision::Deny, Router::classifyCommand("share.link.create", *share));
+}
+
+TEST_F(WsShareFsTest, NativeMetadataUsesShareActorWithoutSessionUser) {
+    auto session = readySession(vh::share::bit(vh::share::Operation::Metadata));
+    ASSERT_EQ(session->user, nullptr);
+    ASSERT_NE(session->sharePrincipal(), nullptr);
+    ASSERT_NE(session->sharePrincipal()->scoped_vault_role, nullptr);
+    const auto actor = session->rbacActor();
+    EXPECT_TRUE(actor.isShare());
+    EXPECT_EQ(actor.user(), nullptr);
+
+    const auto response = ws_fs::Storage::metadata({{"path", "/q1.pdf"}}, session);
+
+    EXPECT_EQ(session->user, nullptr);
+    EXPECT_EQ(response.at("path").get<std::string>(), "/q1.pdf");
+    const auto& entry = response.at("entry");
+    EXPECT_EQ(entry.at("id").get<uint32_t>(), 78u);
+    EXPECT_EQ(entry.at("path").get<std::string>(), "/q1.pdf");
+    EXPECT_EQ(entry.at("type").get<std::string>(), "file");
+    EXPECT_FALSE(response.contains("vault"));
+    expectNoSecretOrInternalFields(response);
+}
+
+TEST_F(WsShareFsTest, NativeMetadataAcceptsExplicitVaultRelativePath) {
+    auto session = readySession(vh::share::bit(vh::share::Operation::Metadata));
+
+    const auto response = ws_fs::Storage::metadata({{"vault_id", 42}, {"path", "/reports/q1.pdf"}}, session);
+
+    EXPECT_EQ(response.at("path").get<std::string>(), "/q1.pdf");
+    EXPECT_EQ(response.at("entry").at("id").get<uint32_t>(), 78u);
+}
+
+TEST_F(WsShareFsTest, NativeListReturnsNativeShapeUnderShareRoot) {
+    auto session = readySession(
+        vh::share::bit(vh::share::Operation::Metadata) |
+        vh::share::bit(vh::share::Operation::List)
+    );
+
+    const auto response = ws_fs::Storage::list({{"path", "/"}}, session);
+
+    EXPECT_EQ(response.at("path").get<std::string>(), "/");
+    EXPECT_EQ(response.at("entry").at("path").get<std::string>(), "/");
+    ASSERT_TRUE(response.contains("files"));
+    ASSERT_FALSE(response.contains("entries"));
+    ASSERT_EQ(response.at("files").size(), 2u);
+    EXPECT_EQ(response.at("files").at(0).at("path").get<std::string>(), "/q1.pdf");
+    EXPECT_EQ(response.at("files").at(1).at("path").get<std::string>(), "/team");
+    expectNoSecretOrInternalFields(response);
+}
+
+TEST_F(WsShareFsTest, NativeReadDeniesMissingGrantScopeEscapePrefixAndDuplicateSlashes) {
+    auto metadataOnly = readySession(vh::share::bit(vh::share::Operation::Metadata));
+    EXPECT_THROW({ (void)ws_fs::Storage::list({{"path", "/"}}, metadataOnly); }, std::runtime_error);
+
+    auto session = readySession(
+        vh::share::bit(vh::share::Operation::Metadata) |
+        vh::share::bit(vh::share::Operation::List)
+    );
+
+    EXPECT_THROW({ (void)ws_fs::Storage::metadata({{"path", "/../secret.txt"}}, session); }, std::runtime_error);
+    EXPECT_THROW({ (void)ws_fs::Storage::metadata({{"path", "//q1.pdf"}}, session); }, std::runtime_error);
+    EXPECT_THROW({
+        (void)ws_fs::Storage::metadata({{"vault_id", 42}, {"path", "/reports_evil"}}, session);
+    }, std::runtime_error);
+    EXPECT_THROW({
+        (void)ws_fs::Storage::metadata({{"vault_id", 99}, {"path", "/reports/q1.pdf"}}, session);
+    }, std::runtime_error);
 }
 
 TEST_F(WsShareFsTest, MetadataReturnsSafeShareRelativeEntry) {
@@ -446,6 +548,22 @@ TEST_F(WsShareFsTest, ListReturnsSafeChildrenUnderShareRoot) {
     EXPECT_EQ(response.at("entries").at(0).at("path").get<std::string>(), "/q1.pdf");
     EXPECT_EQ(response.at("entries").at(1).at("path").get<std::string>(), "/team");
     expectNoSecretOrInternalFields(response);
+}
+
+TEST_F(WsShareFsTest, ShareCompatibilityWrappersKeepLegacyResponseShape) {
+    auto session = readySession(
+        vh::share::bit(vh::share::Operation::Metadata) |
+        vh::share::bit(vh::share::Operation::List)
+    );
+
+    const auto metadata = Filesystem::metadata({{"path", "/reports/q1.pdf"}}, session);
+    EXPECT_TRUE(metadata.contains("entry"));
+    EXPECT_FALSE(metadata.contains("path"));
+
+    const auto listing = Filesystem::list({{"path", "/"}}, session);
+    EXPECT_EQ(listing.at("path").get<std::string>(), "/");
+    EXPECT_TRUE(listing.contains("entries"));
+    EXPECT_FALSE(listing.contains("files"));
 }
 
 TEST_F(WsShareFsTest, DeniesMissingGrantEscapeAndPrefixTrick) {

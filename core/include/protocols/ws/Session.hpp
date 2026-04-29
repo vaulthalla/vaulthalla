@@ -5,6 +5,8 @@
 #include <boost/beast/http.hpp>
 #include <boost/beast/websocket.hpp>
 
+#include "rbac/Actor.hpp"
+
 #include <atomic>
 #include <deque>
 #include <memory>
@@ -68,6 +70,7 @@ public:
     [[nodiscard]] bool isShareMode() const noexcept { return mode_ == SessionMode::Share; }
     [[nodiscard]] bool isShareSession() const noexcept { return isSharePending() || isShareMode(); }
     [[nodiscard]] std::shared_ptr<vh::share::Principal> sharePrincipal() const noexcept { return sharePrincipal_; }
+    [[nodiscard]] vh::rbac::Actor rbacActor() const;
     [[nodiscard]] const std::string& shareSessionId() const noexcept { return shareSessionId_; }
     [[nodiscard]] const std::string& shareSessionToken() const noexcept { return shareSessionToken_; }
 

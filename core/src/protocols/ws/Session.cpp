@@ -9,6 +9,7 @@
 #include "runtime/Deps.hpp"
 #include "identities/User.hpp"
 #include "protocols/cookie.hpp"
+#include "rbac/Actor.hpp"
 #include "share/Principal.hpp"
 
 #include <boost/beast/http.hpp>
@@ -98,6 +99,12 @@ void Session::setHandshakeRequest(const RequestType& req) { handshakeRequest_ = 
 std::shared_ptr<handler::fs::Upload> Session::getUploadHandler() {
     if (!uploadHandler_) uploadHandler_ = std::make_shared<handler::fs::Upload>(shared_from_this());
     return uploadHandler_;
+}
+
+vh::rbac::Actor Session::rbacActor() const {
+    if (user) return vh::rbac::Actor::human(user);
+    if (mode_ == SessionMode::Share && sharePrincipal_) return vh::rbac::Actor::share(sharePrincipal_);
+    throw std::runtime_error("Unauthorized");
 }
 
 void Session::logFail(std::string_view where, const beast::error_code& ec) {

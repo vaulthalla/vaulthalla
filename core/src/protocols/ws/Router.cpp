@@ -75,6 +75,16 @@ bool Router::isShareFilesystemCommand(const std::string_view command) {
     return containsCommand(commands, command);
 }
 
+namespace {
+bool isShareNativeFilesystemCommand(const std::string_view command) {
+    constexpr std::array commands{
+        std::string_view{"fs.metadata"},
+        std::string_view{"fs.list"}
+    };
+    return containsCommand(commands, command);
+}
+}
+
 bool Router::isShareDownloadCommand(const std::string_view command) {
     constexpr std::array commands{
         std::string_view{"share.download.start"},
@@ -103,6 +113,7 @@ bool Router::isShareUploadCommand(const std::string_view command) {
 bool Router::isShareModeCommand(const std::string_view command) {
     return isPublicShareCommand(command) ||
            isShareFilesystemCommand(command) ||
+           isShareNativeFilesystemCommand(command) ||
            isShareDownloadCommand(command) ||
            isSharePreviewCommand(command) ||
            isShareUploadCommand(command);

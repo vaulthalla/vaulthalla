@@ -11,6 +11,7 @@
 #include <optional>
 
 namespace vh::share {
+struct Grant;
 struct Principal;
 struct ResolvedTarget;
 }
@@ -29,6 +30,12 @@ class Share {
 public:
     [[nodiscard]]
     static role::Vault effectiveVaultRole(const share::Principal& principal, share::Operation operation);
+
+    [[nodiscard]]
+    static role::Vault effectiveVaultRole(const share::Principal& principal);
+
+    [[nodiscard]]
+    static role::Vault scopedVaultRoleForGrant(const std::string& shareId, const share::Grant& grant);
 
     [[nodiscard]]
     static std::optional<permission::vault::FilesystemAction> actionForOperation(share::Operation operation);

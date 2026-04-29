@@ -20,7 +20,7 @@ using vh::share::RateLimiter;
 constexpr std::string_view kPublicToken = "vhs_00000000-0000-4000-8000-000000000001_secretA";
 constexpr std::string_view kSameLookupDifferentSecret = "vhs_00000000-0000-4000-8000-000000000001_secretB";
 
-std::shared_ptr<Session> publicSession() {
+std::shared_ptr<Session> rateLimitedPublicSession() {
     auto session = std::make_shared<Session>(std::make_shared<Router>());
     session->ipAddress = "203.0.113.10";
     session->userAgent = "rate-limit-test";
@@ -58,7 +58,7 @@ TEST(ShareRateLimiterTest, PrunesIdleBuckets) {
 
 TEST(ShareRateLimiterTest, PublicSessionOpenUsesLookupIdNotRawSecret) {
     ShareRateLimit limiter;
-    const auto session = publicSession();
+    const auto session = rateLimitedPublicSession();
     const auto now = ShareRateLimit::Clock::time_point{} + std::chrono::seconds{1000};
 
     nlohmann::json first = {{"payload", {{"public_token", std::string(kPublicToken)}}}};
@@ -72,7 +72,7 @@ TEST(ShareRateLimiterTest, PublicSessionOpenUsesLookupIdNotRawSecret) {
 
 TEST(ShareRateLimiterTest, EmailConfirmLimitsBySessionAndChallenge) {
     ShareRateLimit limiter;
-    const auto session = publicSession();
+    const auto session = rateLimitedPublicSession();
     session->setPendingShareSession("session-1", "vhss_pending");
     const auto now = ShareRateLimit::Clock::time_point{} + std::chrono::seconds{2000};
     nlohmann::json msg = {{"payload", {{"challenge_id", "challenge-1"}, {"code", "123456"}}}};
@@ -89,6 +89,8 @@ TEST(ShareRateLimiterTest, CoversPublicAndTransferCommandsButNotCleanupCommands)
     EXPECT_TRUE(ShareRateLimit::isLimitedCommand("share.email.challenge.confirm"));
     EXPECT_TRUE(ShareRateLimit::isLimitedCommand("share.fs.metadata"));
     EXPECT_TRUE(ShareRateLimit::isLimitedCommand("share.fs.list"));
+    EXPECT_TRUE(ShareRateLimit::isLimitedCommand("fs.metadata"));
+    EXPECT_TRUE(ShareRateLimit::isLimitedCommand("fs.list"));
     EXPECT_TRUE(ShareRateLimit::isLimitedCommand("share.preview.get"));
     EXPECT_TRUE(ShareRateLimit::isLimitedCommand("share.download.start"));
     EXPECT_TRUE(ShareRateLimit::isLimitedCommand("share.download.chunk"));

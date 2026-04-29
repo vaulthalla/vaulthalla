@@ -10,6 +10,7 @@
 #include <vector>
 
 namespace vh::fs::model { struct Entry; }
+namespace vh::rbac { class Actor; }
 
 namespace vh::share {
 
@@ -54,8 +55,13 @@ public:
     explicit TargetResolver(std::shared_ptr<TargetEntryProvider> provider);
 
     [[nodiscard]] ResolvedTarget resolve(const Principal& principal, TargetResolveRequest request) const;
+    [[nodiscard]] ResolvedTarget resolve(const rbac::Actor& actor, TargetResolveRequest request) const;
     [[nodiscard]] std::vector<std::shared_ptr<fs::model::Entry>> listChildren(
         const Principal& principal,
+        const ResolvedTarget& target
+    ) const;
+    [[nodiscard]] std::vector<std::shared_ptr<fs::model::Entry>> listChildren(
+        const rbac::Actor& actor,
         const ResolvedTarget& target
     ) const;
 

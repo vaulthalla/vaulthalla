@@ -3,8 +3,11 @@
 #include "share/Grant.hpp"
 
 #include <ctime>
+#include <memory>
 #include <optional>
 #include <string>
+
+namespace vh::rbac::role { struct Vault; }
 
 namespace vh::share {
 
@@ -19,6 +22,7 @@ struct Principal {
     std::time_t expires_at{};
     std::optional<std::string> ip_address;
     std::optional<std::string> user_agent;
+    std::shared_ptr<rbac::role::Vault> scoped_vault_role;
 
     [[nodiscard]] bool isExpired(std::time_t now) const;
     [[nodiscard]] bool isActive(std::time_t now) const;

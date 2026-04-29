@@ -60,6 +60,8 @@ void Handler::registerFileSystemHandlers(const std::shared_ptr<Router>& r) {
     r->registerPayload("fs.upload.finish", &handler::fs::Storage::finishUpload);
     r->registerPayload("fs.dir.create", &handler::fs::Storage::mkdir);
     r->registerPayload("fs.dir.list", &handler::fs::Storage::listDir);
+    r->registerPayload("fs.metadata", &handler::fs::Storage::metadata);
+    r->registerPayload("fs.list", &handler::fs::Storage::list);
     r->registerPayload("fs.entry.delete", &handler::fs::Storage::remove);
     r->registerPayload("fs.entry.move", &handler::fs::Storage::move);
     r->registerPayload("fs.entry.rename", &handler::fs::Storage::rename);

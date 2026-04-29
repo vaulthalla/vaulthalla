@@ -5,8 +5,13 @@
 #include "db/query/share/Link.hpp"
 #include "db/query/share/Session.hpp"
 #include "db/query/share/Upload.hpp"
+#include "db/query/share/VaultRole.hpp"
 #include "db/model/ListQueryParams.hpp"
+#include "rbac/fs/policy/Share.hpp"
+#include "rbac/role/Vault.hpp"
+#include "db/query/rbac/role/Vault.hpp"
 #include "seed/include/init_db_tables.hpp"
+#include "seed/include/seed_db.hpp"
 #include "share/AuditEvent.hpp"
 #include "share/EmailChallenge.hpp"
 #include "share/Link.hpp"
@@ -45,6 +50,7 @@ protected:
         db::Transactions::init();
         db::seed::nuke_and_recreate_schema_public();
         db::Transactions::dbPool_->initPreparedStatements();
+        seed::initPermissions();
         share::Token::setPepperForTesting(std::vector<uint8_t>(32, 0x51));
 
         db::Transactions::exec("ShareQueryTest::seed", [&](pqxx::work& txn) {
@@ -167,6 +173,60 @@ TEST_F(ShareQueryTest, DuplicateLookupIdFails) {
     ASSERT_NE(created, nullptr);
     link->token_hash = share::Token::hashSecret(share::TokenKind::PublicShare, "different-secret");
     EXPECT_THROW(db::query::share::Link::create(link), std::exception);
+}
+
+TEST_F(ShareQueryTest, ShareVaultRoleMappingRoundTripsScopedOverrides) {
+    auto link = db::query::share::Link::create(makeLink());
+    ASSERT_NE(link, nullptr);
+
+    auto role = std::make_shared<rbac::role::Vault>(
+        rbac::fs::policy::Share::scopedVaultRoleForGrant(link->id, link->grant())
+    );
+    ASSERT_GT(role->fs.overrides.size(), 0u);
+
+    const auto mappingId = db::query::share::VaultRole::upsertForShare(link->id, link->vault_id, role);
+    EXPECT_GT(mappingId, 0u);
+    ASSERT_GT(role->id, 0u);
+    const auto persistedRoleId = role->id;
+
+    auto loaded = db::query::share::VaultRole::getForShare(link->id);
+    ASSERT_NE(loaded, nullptr);
+    EXPECT_EQ(loaded->id, persistedRoleId);
+    EXPECT_EQ(loaded->name, "share_link_" + link->id);
+    EXPECT_EQ(loaded->fs.files.toBitString(), rbac::role::Vault::ImplicitDeny().fs.files.toBitString());
+    EXPECT_EQ(loaded->fs.directories.toBitString(), rbac::role::Vault::ImplicitDeny().fs.directories.toBitString());
+    EXPECT_GT(loaded->fs.overrides.size(), 0u);
+
+    share::Principal principal;
+    principal.share_id = link->id;
+    principal.share_session_id = "00000000-0000-4000-8000-000000000901";
+    principal.vault_id = link->vault_id;
+    principal.root_entry_id = link->root_entry_id;
+    principal.root_path = link->root_path;
+    principal.grant = link->grant();
+    principal.scoped_vault_role = loaded;
+
+    auto decision = rbac::fs::policy::Share::evaluate(principal, {
+        .vault_id = link->vault_id,
+        .vault_path = "/roundtrip.txt",
+        .operation = share::Operation::Download,
+        .target_type = share::TargetType::File,
+        .target_exists = true
+    });
+    EXPECT_TRUE(decision.allowed);
+
+    decision = rbac::fs::policy::Share::evaluate(principal, {
+        .vault_id = link->vault_id,
+        .vault_path = "/roundtrip.txt",
+        .operation = share::Operation::Preview,
+        .target_type = share::TargetType::File,
+        .target_exists = true
+    });
+    EXPECT_FALSE(decision.allowed);
+
+    db::query::share::VaultRole::removeForShare(link->id);
+    EXPECT_EQ(db::query::share::VaultRole::getForShare(link->id), nullptr);
+    EXPECT_FALSE(db::query::rbac::role::Vault::exists(persistedRoleId));
 }
 
 TEST_F(ShareQueryTest, SessionChallengeUploadAndAuditRoundTrips) {

@@ -62,6 +62,7 @@ class Connection {
     void initPreparedShareEmailChallenges() const;
     void initPreparedShareUploads() const;
     void initPreparedShareAuditEvents() const;
+    void initPreparedShareVaultRoles() const;
 
     // Admin
     void initPreparedSecrets() const;

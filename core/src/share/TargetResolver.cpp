@@ -6,6 +6,7 @@
 #include "fs/model/Directory.hpp"
 #include "fs/model/Entry.hpp"
 #include "fs/model/File.hpp"
+#include "rbac/Actor.hpp"
 #include "rbac/fs/policy/Share.hpp"
 #include "share/Scope.hpp"
 
@@ -191,6 +192,12 @@ ResolvedTarget TargetResolver::resolve(const Principal& principal, TargetResolve
     return resolved;
 }
 
+ResolvedTarget TargetResolver::resolve(const rbac::Actor& actor, TargetResolveRequest request) const {
+    if (!actor.isShare() || !actor.sharePrincipal())
+        throw std::runtime_error("Share filesystem actor is required");
+    return resolve(*actor.sharePrincipal(), std::move(request));
+}
+
 std::vector<std::shared_ptr<fs::model::Entry>> TargetResolver::listChildren(
     const Principal& principal,
     const ResolvedTarget& target
@@ -208,6 +215,15 @@ std::vector<std::shared_ptr<fs::model::Entry>> TargetResolver::listChildren(
             throw std::runtime_error("Share filesystem list contains entry outside share root");
     }
     return entries;
+}
+
+std::vector<std::shared_ptr<fs::model::Entry>> TargetResolver::listChildren(
+    const rbac::Actor& actor,
+    const ResolvedTarget& target
+) const {
+    if (!actor.isShare() || !actor.sharePrincipal())
+        throw std::runtime_error("Share filesystem actor is required");
+    return listChildren(*actor.sharePrincipal(), target);
 }
 
 }

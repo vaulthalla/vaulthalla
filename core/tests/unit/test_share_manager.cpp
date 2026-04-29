@@ -4,6 +4,7 @@
 #include "share/EmailChallenge.hpp"
 #include "share/Manager.hpp"
 #include "share/Token.hpp"
+#include "rbac/role/Vault.hpp"
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
@@ -60,6 +61,7 @@ public:
     std::unordered_map<std::string, std::string> session_by_lookup;
     std::unordered_map<std::string, std::shared_ptr<EmailChallenge>> challenges;
     std::unordered_map<std::string, std::shared_ptr<Upload>> uploads;
+    std::unordered_map<std::string, std::shared_ptr<rbac::role::Vault>> vault_roles;
     std::vector<std::shared_ptr<AuditEvent>> audits;
 
     uint32_t next_link{100};
@@ -148,6 +150,23 @@ public:
         auto link = getLink(id);
         if (!link) throw std::runtime_error("missing link");
         ++link->upload_count;
+    }
+
+    void upsertVaultRoleForShare(
+        const std::string& shareId,
+        uint32_t,
+        const std::shared_ptr<rbac::role::Vault>& role
+    ) override {
+        vault_roles[shareId] = std::make_shared<rbac::role::Vault>(*role);
+    }
+
+    std::shared_ptr<rbac::role::Vault> getVaultRoleForShare(const std::string& shareId) override {
+        if (!vault_roles.contains(shareId)) return nullptr;
+        return vault_roles.at(shareId);
+    }
+
+    void removeVaultRoleForShare(const std::string& shareId) override {
+        vault_roles.erase(shareId);
     }
 
     std::shared_ptr<Session> createSession(const std::shared_ptr<Session>& session) override {
@@ -397,6 +416,27 @@ TEST_F(ShareManagerTest, CreatePublicShareSucceedsWhenAuthorizerAllows) {
     EXPECT_FALSE(store->audits.empty());
 }
 
+TEST_F(ShareManagerTest, CreatePersistsScopedVaultRoleAndResolvedPrincipalUsesIt) {
+    const auto result = create();
+    ASSERT_TRUE(store->vault_roles.contains(result.link->id));
+    const auto role = store->vault_roles.at(result.link->id);
+    ASSERT_NE(role, nullptr);
+    EXPECT_EQ(role->name, "share_link_" + result.link->id);
+    EXPECT_GT(role->fs.overrides.size(), 0u);
+
+    auto opened = manager->openPublicSession(result.public_token);
+    auto principal = manager->resolvePrincipal(opened.session_token);
+    ASSERT_NE(principal, nullptr);
+    ASSERT_NE(principal->scoped_vault_role, nullptr);
+    EXPECT_EQ(principal->scoped_vault_role->name, role->name);
+
+    auto decision = manager->authorize(*principal, Operation::Download, "/reports/file.txt", TargetType::File);
+    EXPECT_TRUE(decision.allowed);
+
+    decision = manager->authorize(*principal, Operation::Preview, "/reports/file.txt", TargetType::File);
+    EXPECT_FALSE(decision.allowed);
+}
+
 TEST_F(ShareManagerTest, CreatePublicShareFailsWhenAuthorizerDenies) {
     authorizer->allow_create = false;
     EXPECT_THROW({ (void)create(); }, std::runtime_error);
@@ -426,12 +466,14 @@ TEST_F(ShareManagerTest, RevokeLinkMarksInactiveAndRevokesSessions) {
     auto created = create();
     auto opened = manager->openPublicSession(created.public_token);
     ASSERT_TRUE(opened.session->isActive(kManagerNow));
+    ASSERT_TRUE(store->vault_roles.contains(created.link->id));
 
     manager->revokeLink(humanActor(), created.link->id);
 
     EXPECT_TRUE(created.link->isRevoked());
     EXPECT_FALSE(created.link->isActive(kManagerNow));
     EXPECT_TRUE(opened.session->isRevoked());
+    EXPECT_FALSE(store->vault_roles.contains(created.link->id));
 }
 
 TEST_F(ShareManagerTest, RotateTokenChangesLookupHashAndInvalidatesOldTokenAndSessions) {

@@ -17,7 +17,10 @@
 #include <string_view>
 #include <vector>
 
+namespace vh::rbac::role { struct Vault; }
+
 namespace vh::share {
+namespace rbac_role = vh::rbac::role;
 
 struct AuditEvent;
 struct EmailChallenge;
@@ -57,6 +60,9 @@ public:
     virtual void touchLinkAccess(const std::string& id) = 0;
     virtual void incrementDownload(const std::string& id) = 0;
     virtual void incrementUpload(const std::string&) { throw std::logic_error("Share upload store is unavailable"); }
+    virtual void upsertVaultRoleForShare(const std::string&, uint32_t, const std::shared_ptr<rbac_role::Vault>&) {}
+    virtual std::shared_ptr<rbac_role::Vault> getVaultRoleForShare(const std::string&) { return nullptr; }
+    virtual void removeVaultRoleForShare(const std::string&) {}
 
     virtual std::shared_ptr<Session> createSession(const std::shared_ptr<Session>& session) = 0;
     virtual std::shared_ptr<Session> getSession(const std::string& id) = 0;

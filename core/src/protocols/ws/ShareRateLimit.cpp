@@ -22,7 +22,8 @@ using vh::share::TokenKind;
         return RateLimitPolicy{.max_attempts = 5, .window = 15min};
     if (command == "share.email.challenge.confirm")
         return RateLimitPolicy{.max_attempts = 8, .window = 15min};
-    if (command == "share.fs.metadata" || command == "share.fs.list")
+    if (command == "share.fs.metadata" || command == "share.fs.list" ||
+        command == "fs.metadata" || command == "fs.list")
         return RateLimitPolicy{.max_attempts = 120, .window = 1min};
     if (command == "share.preview.get")
         return RateLimitPolicy{.max_attempts = 60, .window = 1min};
@@ -110,6 +111,8 @@ using vh::share::TokenKind;
 
     if (command == "share.fs.metadata" ||
         command == "share.fs.list" ||
+        command == "fs.metadata" ||
+        command == "fs.list" ||
         command == "share.preview.get" ||
         command == "share.download.start" ||
         command == "share.upload.start") {
@@ -129,6 +132,9 @@ vh::share::RateLimitDecision ShareRateLimit::check(
     const Session& session,
     const Clock::time_point now
 ) {
+    if ((command == "fs.metadata" || command == "fs.list") && !session.isShareMode())
+        return {.allowed = true, .remaining = 0, .retry_after = std::chrono::seconds{0}};
+
     const auto policy = policyFor(command);
     if (!policy) return {.allowed = true, .remaining = 0, .retry_after = std::chrono::seconds{0}};
     return limiter_.check(keyFor(command, message, session), *policy, now);

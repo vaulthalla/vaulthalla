@@ -5,6 +5,7 @@
 #include "db/query/share/Link.hpp"
 #include "db/query/share/Session.hpp"
 #include "db/query/share/Upload.hpp"
+#include "db/query/share/VaultRole.hpp"
 #include "identities/User.hpp"
 #include "rbac/fs/policy/Share.hpp"
 #include "rbac/permission/vault/Filesystem.hpp"
@@ -84,6 +85,22 @@ public:
     void incrementDownload(const std::string& id) override { db::query::share::Link::incrementDownload(id); }
 
     void incrementUpload(const std::string& id) override { db::query::share::Link::incrementUpload(id); }
+
+    void upsertVaultRoleForShare(
+        const std::string& shareId,
+        const uint32_t vaultId,
+        const std::shared_ptr<rbac::role::Vault>& role
+    ) override {
+        db::query::share::VaultRole::upsertForShare(shareId, vaultId, role);
+    }
+
+    std::shared_ptr<rbac::role::Vault> getVaultRoleForShare(const std::string& shareId) override {
+        return db::query::share::VaultRole::getForShare(shareId);
+    }
+
+    void removeVaultRoleForShare(const std::string& shareId) override {
+        db::query::share::VaultRole::removeForShare(shareId);
+    }
 
     std::shared_ptr<Session> createSession(const std::shared_ptr<Session>& session) override {
         return db::query::share::Session::create(session);
@@ -382,6 +399,27 @@ void normalizeAndValidate(Link& link) {
     link.grant().requireValid();
 }
 
+[[nodiscard]] std::shared_ptr<rbac::role::Vault> buildScopedVaultRole(const Link& link) {
+    auto role = std::make_shared<rbac::role::Vault>(
+        rbac::fs::policy::Share::scopedVaultRoleForGrant(link.id, link.grant())
+    );
+    return role;
+}
+
+void persistScopedVaultRole(ShareStore& store, const Link& link) {
+    if (link.id.empty()) throw std::runtime_error("Share link id is required for scoped vault role persistence");
+    store.upsertVaultRoleForShare(link.id, link.vault_id, buildScopedVaultRole(link));
+}
+
+void attachScopedVaultRole(ShareStore& store, const Link& link, Principal& principal) {
+    auto role = store.getVaultRoleForShare(link.id);
+    if (!role) {
+        role = buildScopedVaultRole(link);
+        store.upsertVaultRoleForShare(link.id, link.vault_id, role);
+    }
+    principal.scoped_vault_role = std::move(role);
+}
+
 [[nodiscard]] std::string toLower(std::string value) {
     std::ranges::transform(value, value.begin(), [](const unsigned char c) {
         return static_cast<char>(std::tolower(c));
@@ -567,6 +605,12 @@ CreateLinkResult Manager::createLink(const rbac::Actor& actor, CreateLinkRequest
         link->token_lookup_id = token.lookup_id;
         link->token_hash = token.hash;
         auto created = store_->createLink(link);
+        try {
+            persistScopedVaultRole(*store_, *created);
+        } catch (...) {
+            store_->revokeLink(created->id, created->created_by);
+            throw;
+        }
         attachLink(*audit, *created);
         store_->appendAuditEvent(audit);
         return {
@@ -628,6 +672,7 @@ std::shared_ptr<Link> Manager::updateLink(const rbac::Actor& actor, UpdateLinkRe
 
     try {
         requireAllowed(authorizer_->canUpdateLink(actor, *existing, *updated), "update");
+        persistScopedVaultRole(*store_, *updated);
         auto saved = store_->updateLink(updated);
         store_->appendAuditEvent(audit);
         return saved;
@@ -647,6 +692,7 @@ void Manager::revokeLink(const rbac::Actor& actor, const std::string& id) {
     const auto user = humanUser(actor);
     store_->revokeLink(link->id, user ? user->id : 0);
     store_->revokeSessionsForShare(link->id);
+    store_->removeVaultRoleForShare(link->id);
     store_->appendAuditEvent(audit);
 }
 
@@ -820,6 +866,7 @@ std::shared_ptr<Principal> Manager::resolvePrincipal(
         auto link = requirePtr(store_->getLink(session->share_id), "Share link not found");
         attachLink(*audit, *link);
         auto principal = PrincipalResolver::resolve(*link, *session, now(options_));
+        attachScopedVaultRole(*store_, *link, *principal);
         store_->touchSession(session->id);
         store_->appendAuditEvent(audit);
         return principal;
