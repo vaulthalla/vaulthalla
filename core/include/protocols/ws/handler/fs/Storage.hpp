@@ -29,6 +29,8 @@ public:
 
     static json finishUpload(const json& payload, const std::shared_ptr<Session>& session);
 
+    static json cancelUpload(const json& payload, const std::shared_ptr<Session>& session);
+
     static json mkdir(const json& payload, const std::shared_ptr<Session>& session);
 
     static json move(const json& payload, const std::shared_ptr<Session>& session);

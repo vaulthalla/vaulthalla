@@ -5,6 +5,7 @@
 #include "fs/model/Path.hpp"
 #include "protocols/ws/Session.hpp"
 #include "protocols/ws/handler/fs/Upload.hpp"
+#include "rbac/Actor.hpp"
 #include "runtime/Deps.hpp"
 #include "share/Manager.hpp"
 #include "share/Principal.hpp"
@@ -25,6 +26,8 @@ namespace vh::protocols::ws::handler::share {
 namespace share_upload_handler_detail {
 constexpr uint64_t kDefaultMaxUploadSize = 64u * 1024u * 1024u;
 constexpr uint64_t kMaxChunkSize = 256u * 1024u;
+
+enum class CommandSurface { Compatibility, Native };
 
 class DefaultUploadWriter final : public UploadWriter {
 public:
@@ -127,15 +130,19 @@ void requireShareMode(const std::shared_ptr<Session>& session) {
     return principal;
 }
 
-[[nodiscard]] std::string requestedPath(const json& payload, const vh::share::Principal& principal) {
-    if (!payload.contains("path") || payload.at("path").is_null()) return principal.root_path;
+[[nodiscard]] bool hasDuplicateSlash(const std::string_view path) {
+    return path.find("//") != std::string_view::npos;
+}
+
+[[nodiscard]] std::string requestedPathString(const json& payload) {
+    if (!payload.contains("path") || payload.at("path").is_null()) return "/";
     auto path = payload.at("path").get<std::string>();
-    if (path == "/") return principal.root_path;
+    if (path.empty()) return "/";
+    if (hasDuplicateSlash(path)) throw std::runtime_error("Share upload path contains duplicate slash");
     return path;
 }
 
-[[nodiscard]] std::string requireFilename(const json& payload) {
-    auto filename = payload.at("filename").get<std::string>();
+[[nodiscard]] std::string sanitizeFilename(std::string filename) {
     if (filename.empty()) throw std::invalid_argument("Share upload filename is required");
     if (filename == "." || filename == "..") throw std::invalid_argument("Share upload filename is invalid");
     if (filename.find('/') != std::string::npos || filename.find('\\') != std::string::npos)
@@ -143,6 +150,46 @@ void requireShareMode(const std::shared_ptr<Session>& session) {
     if (filename.find('\0') != std::string::npos)
         throw std::invalid_argument("Share upload filename contains invalid byte");
     return filename;
+}
+
+[[nodiscard]] std::string requireFilename(const json& payload) {
+    return sanitizeFilename(payload.at("filename").get<std::string>());
+}
+
+struct UploadTargetRequest {
+    std::string parent_path{"/"};
+    vh::share::TargetPathMode parent_mode{vh::share::TargetPathMode::VaultRelative};
+    std::string filename;
+};
+
+[[nodiscard]] UploadTargetRequest uploadTargetRequest(
+    const json& payload,
+    const vh::share::Principal& principal,
+    const CommandSurface surface
+) {
+    auto path = requestedPathString(payload);
+    const bool explicitVaultPath = payload.contains("vault_id") && !payload.at("vault_id").is_null();
+
+    if (surface == CommandSurface::Native) {
+        const auto mode = explicitVaultPath
+                              ? vh::share::TargetPathMode::VaultRelative
+                              : vh::share::TargetPathMode::ShareRelative;
+        if (payload.contains("filename") && !payload.at("filename").is_null())
+            return {.parent_path = std::move(path), .parent_mode = mode, .filename = requireFilename(payload)};
+
+        const auto fullPath = std::filesystem::path(path);
+        auto filename = sanitizeFilename(fullPath.filename().string());
+        auto parent = fullPath.parent_path().string();
+        if (parent.empty()) parent = "/";
+        return {.parent_path = std::move(parent), .parent_mode = mode, .filename = std::move(filename)};
+    }
+
+    if (path == "/") path = principal.root_path;
+    return {
+        .parent_path = std::move(path),
+        .parent_mode = vh::share::TargetPathMode::VaultRelative,
+        .filename = requireFilename(payload)
+    };
 }
 
 [[nodiscard]] uint64_t expectedSize(const json& payload) {
@@ -163,15 +210,16 @@ void requireShareMode(const std::shared_ptr<Session>& session) {
 
 void ensureNoExistingTarget(
     vh::share::TargetResolver& resolver,
-    const vh::share::Principal& principal,
+    const vh::rbac::Actor& actor,
+    const uint32_t vaultId,
     const std::string& finalVaultPath
 ) {
     try {
-        (void)resolver.resolve(principal, {
+        (void)resolver.resolve(actor, {
             .path = finalVaultPath,
             .operation = vh::share::Operation::Upload,
             .path_mode = vh::share::TargetPathMode::VaultRelative,
-            .vault_id = principal.vault_id
+            .vault_id = vaultId
         });
     } catch (const std::exception& e) {
         const std::string message = e.what();
@@ -179,7 +227,9 @@ void ensureNoExistingTarget(
         throw;
     }
 
-    if (principal.grant.duplicate_policy == vh::share::DuplicatePolicy::Reject)
+    const auto principal = actor.sharePrincipal();
+    if (!principal) throw std::runtime_error("Share upload actor principal is missing");
+    if (principal->grant.duplicate_policy == vh::share::DuplicatePolicy::Reject)
         throw std::runtime_error("Share upload target already exists");
     throw std::runtime_error("Share upload duplicate policy is not supported in this pass");
 }
@@ -200,33 +250,56 @@ void requireAcceptedDuplicatePolicy(const json& payload) {
     const auto policy = payload.at("duplicate_policy").get<std::string>();
     if (policy != "reject") throw std::runtime_error("Share upload duplicate policy is not supported in this pass");
 }
+
+[[nodiscard]] std::string uploadIdFromPayload(
+    const json& payload,
+    const std::shared_ptr<Session>& session
+) {
+    if (payload.contains("upload_id") && !payload.at("upload_id").is_null())
+        return payload.at("upload_id").get<std::string>();
+    if (payload.contains("transfer_id") && !payload.at("transfer_id").is_null())
+        return payload.at("transfer_id").get<std::string>();
+    if (session) {
+        if (const auto active = session->getUploadHandler()->activeShareUploadId()) return *active;
+    }
+    throw std::invalid_argument("Share upload id is required");
 }
-namespace up_detail = share_upload_handler_detail;
 
-json Upload::start(const json& payload, const std::shared_ptr<Session>& session) {
-    up_detail::requireShareMode(session);
-    const auto& body = up_detail::objectPayload(payload);
-    up_detail::requireAcceptedDuplicatePolicy(body);
+[[nodiscard]] json startImpl(
+    const json& payload,
+    const std::shared_ptr<Session>& session,
+    const CommandSurface surface
+) {
+    requireShareMode(session);
+    const auto& body = objectPayload(payload);
+    requireAcceptedDuplicatePolicy(body);
 
-    auto mgr = up_detail::manager();
-    auto principal = up_detail::refreshPrincipal(session, *mgr);
-    auto resolver = up_detail::resolver();
-    auto writer = up_detail::writer();
+    auto mgr = manager();
+    auto principal = refreshPrincipal(session, *mgr);
+    const auto actor = session->rbacActor();
+    auto resolver = share_upload_handler_detail::resolver();
+    auto writer = share_upload_handler_detail::writer();
 
-    const auto filename = up_detail::requireFilename(body);
-    const auto size = up_detail::expectedSize(body);
-    const auto parent = resolver->resolve(*principal, {
-        .path = up_detail::requestedPath(body, *principal),
+    auto targetRequest = uploadTargetRequest(body, *principal, surface);
+    const auto size = expectedSize(body);
+    std::optional<uint32_t> requestedVaultId;
+    if (body.contains("vault_id") && !body.at("vault_id").is_null())
+        requestedVaultId = body.at("vault_id").get<uint32_t>();
+
+    const auto parent = resolver->resolve(actor, {
+        .path = std::move(targetRequest.parent_path),
         .operation = vh::share::Operation::Upload,
-        .path_mode = vh::share::TargetPathMode::VaultRelative,
-        .expected_target_type = vh::share::TargetType::Directory
+        .path_mode = targetRequest.parent_mode,
+        .expected_target_type = vh::share::TargetType::Directory,
+        .vault_id = requestedVaultId
     });
-    const auto finalVaultPath = up_detail::joinVaultPath(parent.vault_path, filename);
-    const auto scope = mgr->authorize(*principal, vh::share::Operation::Upload, finalVaultPath,
+    const auto filename = std::move(targetRequest.filename);
+    const auto finalVaultPath = joinVaultPath(parent.vault_path, filename);
+    const auto scope = mgr->authorize(actor, vh::share::Operation::Upload, finalVaultPath,
                                       vh::share::TargetType::File, parent.vault_id);
     if (!scope.allowed) throw std::runtime_error("Share upload scope denied: " + scope.reason);
 
-    up_detail::ensureNoExistingTarget(*resolver, *principal, finalVaultPath);
+    ensureNoExistingTarget(*resolver, actor, parent.vault_id, finalVaultPath);
 
     auto started = mgr->startUpload({
         .principal = *principal,
@@ -235,7 +308,7 @@ json Upload::start(const json& payload, const std::shared_ptr<Session>& session)
         .original_filename = filename,
         .resolved_filename = filename,
         .expected_size_bytes = size,
-        .mime_type = up_detail::mimeType(body)
+        .mime_type = mimeType(body)
     });
 
     const auto uploadId = started.upload->id;
@@ -249,9 +322,10 @@ json Upload::start(const json& payload, const std::shared_ptr<Session>& session)
         .uploadId = uploadId,
         .shareId = shareId,
         .shareSessionId = shareSessionId,
+        .websocketSessionUuid = session->uuid,
         .expectedSize = size,
-        .maxChunkSize = started.max_chunk_size_bytes ? started.max_chunk_size_bytes : up_detail::kMaxChunkSize,
-        .maxTransferSize = started.max_transfer_size_bytes ? started.max_transfer_size_bytes : up_detail::kDefaultMaxUploadSize,
+        .maxChunkSize = started.max_chunk_size_bytes ? started.max_chunk_size_bytes : kMaxChunkSize,
+        .maxTransferSize = started.max_transfer_size_bytes ? started.max_transfer_size_bytes : kDefaultMaxUploadSize,
         .onChunk = [mgr, sessionToken, uploadId, session](const uint64_t bytes) {
             auto refreshed = mgr->resolvePrincipal(
                 sessionToken,
@@ -259,6 +333,7 @@ json Upload::start(const json& payload, const std::shared_ptr<Session>& session)
                 session->userAgent.empty() ? std::nullopt : std::make_optional(session->userAgent)
             );
             session->setSharePrincipal(refreshed, sessionToken);
+            (void)session->rbacActor();
             mgr->recordUploadChunk(*refreshed, uploadId, bytes);
         },
         .onFinish = [mgr, resolver, writer, sessionToken, session, uploadId, parentPath, finalVaultPath](
@@ -270,16 +345,17 @@ json Upload::start(const json& payload, const std::shared_ptr<Session>& session)
                 session->userAgent.empty() ? std::nullopt : std::make_optional(session->userAgent)
             );
             session->setSharePrincipal(refreshed, sessionToken);
-            auto currentParent = resolver->resolve(*refreshed, {
+            const auto actor = session->rbacActor();
+            auto currentParent = resolver->resolve(actor, {
                 .path = parentPath,
                 .operation = vh::share::Operation::Upload,
                 .path_mode = vh::share::TargetPathMode::VaultRelative,
                 .expected_target_type = vh::share::TargetType::Directory
             });
-            auto scope = mgr->authorize(*refreshed, vh::share::Operation::Upload, finalVaultPath,
+            auto scope = mgr->authorize(actor, vh::share::Operation::Upload, finalVaultPath,
                                         vh::share::TargetType::File, currentParent.vault_id);
             if (!scope.allowed) throw std::runtime_error("Share upload scope denied: " + scope.reason);
-            up_detail::ensureNoExistingTarget(*resolver, *refreshed, finalVaultPath);
+            ensureNoExistingTarget(*resolver, actor, currentParent.vault_id, finalVaultPath);
 
             auto file = writer->createFile(currentParent, finalVaultPath, bytes);
             if (!file) throw std::runtime_error("Share upload file creation failed");
@@ -315,20 +391,20 @@ json Upload::start(const json& payload, const std::shared_ptr<Session>& session)
     };
 }
 
-json Upload::finish(const json& payload, const std::shared_ptr<Session>& session) {
-    up_detail::requireShareMode(session);
-    const auto& body = up_detail::objectPayload(payload);
-    const auto uploadId = body.at("upload_id").get<std::string>();
+[[nodiscard]] json finishImpl(const json& payload, const std::shared_ptr<Session>& session) {
+    requireShareMode(session);
+    const auto& body = objectPayload(payload);
+    const auto uploadId = uploadIdFromPayload(body, session);
 
-    auto mgr = up_detail::manager();
-    auto principal = up_detail::refreshPrincipal(session, *mgr);
+    auto mgr = manager();
+    auto principal = refreshPrincipal(session, *mgr);
 
     try {
         auto file = session->getUploadHandler()->finishShareUpload(uploadId, principal->share_session_id);
         return {
             {"upload_id", uploadId},
             {"complete", true},
-            {"entry", up_detail::safeFileJson(*file, *principal)}
+            {"entry", safeFileJson(*file, *principal)}
         };
     } catch (const std::exception& e) {
         try {
@@ -339,15 +415,41 @@ json Upload::finish(const json& payload, const std::shared_ptr<Session>& session
     }
 }
 
-json Upload::cancel(const json& payload, const std::shared_ptr<Session>& session) {
-    up_detail::requireShareMode(session);
-    const auto& body = up_detail::objectPayload(payload);
-    const auto uploadId = body.at("upload_id").get<std::string>();
+[[nodiscard]] json cancelImpl(const json& payload, const std::shared_ptr<Session>& session) {
+    requireShareMode(session);
+    const auto& body = objectPayload(payload);
+    const auto uploadId = uploadIdFromPayload(body, session);
 
-    auto mgr = up_detail::manager();
-    auto principal = up_detail::refreshPrincipal(session, *mgr);
+    auto mgr = manager();
+    auto principal = refreshPrincipal(session, *mgr);
     session->getUploadHandler()->cancelShareUpload(uploadId, principal->share_session_id);
     return {{"cancelled", true}, {"upload_id", uploadId}};
+}
+}
+namespace up_detail = share_upload_handler_detail;
+
+json Upload::start(const json& payload, const std::shared_ptr<Session>& session) {
+    return up_detail::startImpl(payload, session, up_detail::CommandSurface::Compatibility);
+}
+
+json Upload::finish(const json& payload, const std::shared_ptr<Session>& session) {
+    return up_detail::finishImpl(payload, session);
+}
+
+json Upload::cancel(const json& payload, const std::shared_ptr<Session>& session) {
+    return up_detail::cancelImpl(payload, session);
+}
+
+json Upload::nativeStart(const json& payload, const std::shared_ptr<Session>& session) {
+    return up_detail::startImpl(payload, session, up_detail::CommandSurface::Native);
+}
+
+json Upload::nativeFinish(const json& payload, const std::shared_ptr<Session>& session) {
+    return up_detail::finishImpl(payload, session);
+}
+
+json Upload::nativeCancel(const json& payload, const std::shared_ptr<Session>& session) {
+    return up_detail::cancelImpl(payload, session);
 }
 
 void Upload::setManagerFactoryForTesting(ManagerFactory factory) {

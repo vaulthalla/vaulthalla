@@ -39,6 +39,7 @@ struct ShareUploadArgs {
     std::string uploadId;
     std::string shareId;
     std::string shareSessionId;
+    std::string websocketSessionUuid;
     uint64_t expectedSize = 0;
     uint64_t maxChunkSize = 256u * 1024u;
     uint64_t maxTransferSize = 64u * 1024u * 1024u;

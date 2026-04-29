@@ -31,7 +31,7 @@ using vh::share::TokenKind;
         return RateLimitPolicy{.max_attempts = 30, .window = 1min};
     if (command == "share.download.chunk" || command == "fs.download.chunk")
         return RateLimitPolicy{.max_attempts = 1200, .window = 1min};
-    if (command == "share.upload.start")
+    if (command == "share.upload.start" || command == "fs.upload.start")
         return RateLimitPolicy{.max_attempts = 20, .window = 1min};
 
     return std::nullopt;
@@ -116,7 +116,8 @@ using vh::share::TokenKind;
         command == "share.preview.get" ||
         command == "share.download.start" ||
         command == "fs.download.start" ||
-        command == "share.upload.start") {
+        command == "share.upload.start" ||
+        command == "fs.upload.start") {
         const auto principal = session.sharePrincipal();
         const auto share = principal && !principal->share_id.empty() ? principal->share_id : "unknown";
         const auto shareSession = !session.shareSessionId().empty() ? session.shareSessionId() : "unknown";
@@ -134,7 +135,8 @@ vh::share::RateLimitDecision ShareRateLimit::check(
     const Clock::time_point now
 ) {
     if ((command == "fs.metadata" || command == "fs.list" ||
-         command == "fs.download.start" || command == "fs.download.chunk") &&
+         command == "fs.download.start" || command == "fs.download.chunk" ||
+         command == "fs.upload.start") &&
         !session.isShareMode())
         return {.allowed = true, .remaining = 0, .retry_after = std::chrono::seconds{0}};
 

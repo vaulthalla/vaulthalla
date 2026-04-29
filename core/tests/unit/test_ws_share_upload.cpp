@@ -5,6 +5,7 @@
 #include "protocols/ws/Session.hpp"
 #include "protocols/ws/handler/fs/Upload.hpp"
 #include "protocols/ws/handler/share/Upload.hpp"
+#include "rbac/role/Vault.hpp"
 #include "share/AuditEvent.hpp"
 #include "share/EmailChallenge.hpp"
 #include "share/Manager.hpp"
@@ -65,6 +66,7 @@ public:
     std::unordered_map<std::string, std::string> session_by_lookup;
     std::unordered_map<std::string, std::shared_ptr<vh::share::EmailChallenge>> challenges;
     std::unordered_map<std::string, std::shared_ptr<vh::share::Upload>> uploads;
+    std::unordered_map<std::string, std::shared_ptr<vh::rbac::role::Vault>> vault_roles;
     std::vector<std::shared_ptr<vh::share::AuditEvent>> audits;
     uint32_t next_link{100};
     uint32_t next_session{200};
@@ -141,6 +143,27 @@ public:
         auto link = getLink(id);
         if (!link) throw std::runtime_error("missing link");
         ++link->upload_count;
+    }
+
+    void upsertVaultRoleForShare(
+        const std::string& shareId,
+        uint32_t,
+        const std::shared_ptr<vh::rbac::role::Vault>& role
+    ) override {
+        if (!role) {
+            vault_roles.erase(shareId);
+            return;
+        }
+        vault_roles[shareId] = std::make_shared<vh::rbac::role::Vault>(*role);
+    }
+
+    std::shared_ptr<vh::rbac::role::Vault> getVaultRoleForShare(const std::string& shareId) override {
+        if (!vault_roles.contains(shareId)) return nullptr;
+        return std::make_shared<vh::rbac::role::Vault>(*vault_roles.at(shareId));
+    }
+
+    void removeVaultRoleForShare(const std::string& shareId) override {
+        vault_roles.erase(shareId);
     }
 
     std::shared_ptr<vh::share::Session> createSession(const std::shared_ptr<vh::share::Session>& session) override {
@@ -490,7 +513,15 @@ TEST_F(WsShareUploadTest, RouterAllowsUploadOnlyForReadyShareMode) {
     EXPECT_EQ(Decision::Allow, Router::classifyCommand("share.upload.start", *share));
     EXPECT_EQ(Decision::Allow, Router::classifyCommand("share.upload.finish", *share));
     EXPECT_EQ(Decision::Allow, Router::classifyCommand("share.upload.cancel", *share));
-    EXPECT_EQ(Decision::Deny, Router::classifyCommand("fs.upload.start", *share));
+    EXPECT_EQ(Decision::Deny, Router::classifyCommand("fs.upload.start", *unauth));
+    EXPECT_EQ(Decision::RequireHumanAuth, Router::classifyCommand("fs.upload.start", *human));
+    EXPECT_EQ(Decision::Deny, Router::classifyCommand("fs.upload.start", *pending));
+    EXPECT_EQ(Decision::Allow, Router::classifyCommand("fs.upload.start", *share));
+    EXPECT_EQ(Decision::Allow, Router::classifyCommand("fs.upload.finish", *share));
+    EXPECT_EQ(Decision::Allow, Router::classifyCommand("fs.upload.cancel", *share));
+    EXPECT_EQ(Decision::Deny, Router::classifyCommand("fs.entry.copy", *share));
+    EXPECT_EQ(Decision::Deny, Router::classifyCommand("fs.entry.move", *share));
+    EXPECT_EQ(Decision::Deny, Router::classifyCommand("fs.entry.delete", *share));
     EXPECT_EQ(Decision::Deny, Router::classifyCommand("share.link.create", *share));
 }
 
@@ -504,6 +535,56 @@ TEST_F(WsShareUploadTest, StartRejectsUnauthHumanAndUnsafeFilenames) {
     EXPECT_THROW({ (void)WsShareUploadHandler::start({{"path", "/reports"}, {"filename", "../x.txt"}, {"size_bytes", 4}}, session); }, std::exception);
     EXPECT_THROW({ (void)WsShareUploadHandler::start({{"path", "/reports"}, {"filename", "nested/x.txt"}, {"size_bytes", 4}}, session); }, std::exception);
     EXPECT_THROW({ (void)WsShareUploadHandler::start({{"path", "/reports"}, {"filename", "nested\\x.txt"}, {"size_bytes", 4}}, session); }, std::exception);
+}
+
+TEST_F(WsShareUploadTest, NativeStartUsesShareActorDurableRoleAndActiveContext) {
+    auto session = readySession();
+    ASSERT_EQ(session->user, nullptr);
+    ASSERT_TRUE(session->sharePrincipal());
+    ASSERT_TRUE(session->sharePrincipal()->scoped_vault_role);
+
+    const auto actor = session->rbacActor();
+    EXPECT_TRUE(actor.isShare());
+    EXPECT_FALSE(actor.canUseHumanPrivileges());
+
+    const auto start = WsShareUploadHandler::nativeStart({
+        {"path", "/native.txt"},
+        {"size", 4},
+        {"mime_type", "text/plain"}
+    }, session);
+
+    EXPECT_TRUE(start.at("upload_id").get<std::string>().size() > 20);
+    EXPECT_EQ(start.at("transfer_id"), start.at("upload_id"));
+    EXPECT_EQ(start.at("path"), "/native.txt");
+    EXPECT_EQ(session->getUploadHandler()->activeShareUploadId(), start.at("upload_id").get<std::string>());
+    expectNoSecretOrInternalFields(start);
+    EXPECT_EQ(session->user, nullptr);
+
+    const auto cancelled = WsShareUploadHandler::nativeCancel(nlohmann::json::object(), session);
+    EXPECT_TRUE(cancelled.at("cancelled").get<bool>());
+}
+
+TEST_F(WsShareUploadTest, NativeAndCompatibilityStartUseSameShareUploadContext) {
+    auto session = readySession();
+
+    const auto native = WsShareUploadHandler::nativeStart({
+        {"path", "/team/native.txt"},
+        {"size_bytes", 1}
+    }, session);
+    EXPECT_EQ(native.at("path"), "/team/native.txt");
+    EXPECT_TRUE(session->getUploadHandler()->shareUploadInProgress());
+    EXPECT_EQ(session->getUploadHandler()->activeShareUploadId(), native.at("upload_id").get<std::string>());
+    (void)WsShareUploadHandler::nativeCancel({{"transfer_id", native.at("transfer_id").get<std::string>()}}, session);
+
+    const auto compatibility = WsShareUploadHandler::start({
+        {"path", "/reports/team"},
+        {"filename", "compat.txt"},
+        {"size_bytes", 1}
+    }, session);
+    EXPECT_EQ(compatibility.at("path"), "/team/compat.txt");
+    EXPECT_TRUE(session->getUploadHandler()->shareUploadInProgress());
+    EXPECT_EQ(session->getUploadHandler()->activeShareUploadId(), compatibility.at("upload_id").get<std::string>());
+    (void)WsShareUploadHandler::cancel({{"upload_id", compatibility.at("upload_id").get<std::string>()}}, session);
 }
 
 TEST_F(WsShareUploadTest, BinaryUploadFinishesThroughWriterAndManager) {
@@ -535,14 +616,42 @@ TEST_F(WsShareUploadTest, BinaryUploadFinishesThroughWriterAndManager) {
     EXPECT_EQ(store->getUpload(start.at("upload_id").get<std::string>())->status, vh::share::UploadStatus::Complete);
 }
 
+TEST_F(WsShareUploadTest, NativeBinaryUploadFinishesThroughSharedUploadHandler) {
+    auto session = readySession();
+    const auto start = WsShareUploadHandler::nativeStart({
+        {"path", "/native-finish.txt"},
+        {"size", 2},
+        {"mime_type", "text/plain"}
+    }, session);
+
+    auto buffer = binaryBuffer({'o', 'k'});
+    session->getUploadHandler()->handleBinaryFrame(buffer);
+
+    const auto finish = WsShareUploadHandler::nativeFinish(nlohmann::json::object(), session);
+
+    EXPECT_TRUE(finish.at("complete").get<bool>());
+    EXPECT_EQ(finish.at("entry").at("path"), "/native-finish.txt");
+    EXPECT_EQ(writer->bytes_by_path.at("/reports/native-finish.txt"), std::vector<uint8_t>({'o', 'k'}));
+    EXPECT_EQ(store->getUpload(start.at("upload_id").get<std::string>())->status, vh::share::UploadStatus::Complete);
+}
+
 TEST_F(WsShareUploadTest, MissingGrantPathEscapePrefixAndDuplicateAreDenied) {
     auto noGrant = readySession(vh::share::bit(vh::share::Operation::Metadata));
     EXPECT_THROW({ (void)WsShareUploadHandler::start({{"path", "/reports"}, {"filename", "new.txt"}, {"size_bytes", 1}}, noGrant); }, std::runtime_error);
+    EXPECT_THROW({ (void)WsShareUploadHandler::nativeStart({{"path", "/new.txt"}, {"size_bytes", 1}}, noGrant); }, std::runtime_error);
 
     auto session = readySession();
     EXPECT_THROW({ (void)WsShareUploadHandler::start({{"path", "/reports/../secret"}, {"filename", "new.txt"}, {"size_bytes", 1}}, session); }, std::runtime_error);
     EXPECT_THROW({ (void)WsShareUploadHandler::start({{"path", "/reports_evil"}, {"filename", "new.txt"}, {"size_bytes", 1}}, session); }, std::runtime_error);
     EXPECT_THROW({ (void)WsShareUploadHandler::start({{"path", "/reports"}, {"filename", "existing.txt"}, {"size_bytes", 1}}, session); }, std::runtime_error);
+    EXPECT_THROW({ (void)WsShareUploadHandler::nativeStart({{"path", "/../secret/new.txt"}, {"size_bytes", 1}}, session); }, std::runtime_error);
+    EXPECT_THROW({ (void)WsShareUploadHandler::nativeStart({{"path", "/team//new.txt"}, {"size_bytes", 1}}, session); }, std::runtime_error);
+    EXPECT_THROW({ (void)WsShareUploadHandler::nativeStart({
+        {"vault_id", 42},
+        {"path", "/reports_evil/new.txt"},
+        {"size_bytes", 1}
+    }, session); }, std::runtime_error);
+    EXPECT_THROW({ (void)WsShareUploadHandler::nativeStart({{"path", "/existing.txt"}, {"size_bytes", 1}}, session); }, std::runtime_error);
     EXPECT_THROW({ (void)WsShareUploadHandler::start({
         {"path", "/reports"},
         {"filename", "new.txt"},
@@ -562,6 +671,15 @@ TEST_F(WsShareUploadTest, ChunkBoundsSessionBindingAndCancelAreEnforced) {
 
     auto second = readySession();
     EXPECT_THROW({ (void)second->getUploadHandler()->finishShareUpload(uploadId, session->shareSessionId()); }, std::runtime_error);
+
+    auto ownerChanged = readySession();
+    const auto ownedStart = WsShareUploadHandler::nativeStart({{"path", "/owned.txt"}, {"size_bytes", 1}}, ownerChanged);
+    const auto ownedUploadId = ownedStart.at("upload_id").get<std::string>();
+    auto differentShareSession = readySession();
+    ownerChanged->setSharePrincipal(differentShareSession->sharePrincipal(), differentShareSession->shareSessionToken());
+    auto ownedFrame = binaryBuffer({'x'});
+    EXPECT_THROW({ ownerChanged->getUploadHandler()->handleBinaryFrame(ownedFrame); }, std::runtime_error);
+    EXPECT_EQ(store->getUpload(ownedUploadId)->status, vh::share::UploadStatus::Failed);
 
     auto cancelStart = WsShareUploadHandler::start({{"path", "/reports"}, {"filename", "cancel.txt"}, {"size_bytes", 2}}, session);
     const auto cancelId = cancelStart.at("upload_id").get<std::string>();

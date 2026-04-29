@@ -451,7 +451,9 @@ TEST_F(WsShareFsTest, RouterAllowsShareFsOnlyForReadyShareMode) {
     EXPECT_EQ(Decision::Allow, Router::classifyCommand("fs.metadata", *share));
     EXPECT_EQ(Decision::Allow, Router::classifyCommand("fs.list", *share));
     EXPECT_EQ(Decision::Deny, Router::classifyCommand("fs.dir.list", *share));
-    EXPECT_EQ(Decision::Deny, Router::classifyCommand("fs.upload.start", *share));
+    EXPECT_EQ(Decision::Allow, Router::classifyCommand("fs.upload.start", *share));
+    EXPECT_EQ(Decision::Allow, Router::classifyCommand("fs.upload.finish", *share));
+    EXPECT_EQ(Decision::Allow, Router::classifyCommand("fs.upload.cancel", *share));
     EXPECT_EQ(Decision::Deny, Router::classifyCommand("share.link.create", *share));
 }
 

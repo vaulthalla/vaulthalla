@@ -925,6 +925,19 @@ ScopeDecision Manager::authorize(
     }
 }
 
+ScopeDecision Manager::authorize(
+    const rbac::Actor& actor,
+    const Operation operation,
+    const std::string_view requestedPath,
+    const std::optional<TargetType> targetType,
+    const std::optional<uint32_t> vaultId
+) {
+    if (!actor.isShare() || actor.canUseHumanPrivileges() || !actor.sharePrincipal())
+        throw std::runtime_error("Share actor is required");
+
+    return authorize(*actor.sharePrincipal(), operation, requestedPath, targetType, vaultId);
+}
+
 void Manager::appendAccessAuditEvent(const Principal& principal, ShareAccessAuditRequest request) {
     if (request.event_type.empty()) throw std::invalid_argument("Share access audit event type is required");
     if (request.target.vault_id == 0) throw std::invalid_argument("Share access audit vault is required");

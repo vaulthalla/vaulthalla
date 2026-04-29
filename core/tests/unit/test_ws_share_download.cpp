@@ -476,7 +476,9 @@ TEST_F(WsShareDownloadTest, RouterAllowsDownloadOnlyForReadyShareMode) {
     EXPECT_EQ(Decision::Allow, Router::classifyCommand("fs.download.chunk", *share));
     EXPECT_EQ(Decision::Allow, Router::classifyCommand("fs.download.cancel", *share));
     EXPECT_EQ(Decision::Deny, Router::classifyCommand("fs.dir.list", *share));
-    EXPECT_EQ(Decision::Deny, Router::classifyCommand("fs.upload.start", *share));
+    EXPECT_EQ(Decision::Allow, Router::classifyCommand("fs.upload.start", *share));
+    EXPECT_EQ(Decision::Allow, Router::classifyCommand("fs.upload.finish", *share));
+    EXPECT_EQ(Decision::Allow, Router::classifyCommand("fs.upload.cancel", *share));
     EXPECT_EQ(Decision::Deny, Router::classifyCommand("fs.entry.delete", *share));
     EXPECT_EQ(Decision::Deny, Router::classifyCommand("share.link.create", *share));
 }

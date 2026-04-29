@@ -11,6 +11,7 @@
 #include "vault/model/Vault.hpp"
 #include "identities/User.hpp"
 #include "protocols/ws/handler/fs/Upload.hpp"
+#include "protocols/ws/handler/share/Upload.hpp"
 #include "storage/Engine.hpp"
 #include "runtime/Deps.hpp"
 #include "fs/Filesystem.hpp"
@@ -239,6 +240,9 @@ void requireShareMode(const std::shared_ptr<vh::protocols::ws::Session>& session
 }
 
 json Storage::startUpload(const json& payload, const std::shared_ptr<Session>& session) {
+    if (session && session->isShareMode())
+        return vh::protocols::ws::handler::share::Upload::nativeStart(payload, session);
+
     const auto vaultId = payload.at("vault_id").get<uint32_t>();
     const auto path = std::filesystem::path(payload.at("path").get<std::string>());
 
@@ -271,6 +275,9 @@ json Storage::startUpload(const json& payload, const std::shared_ptr<Session>& s
 }
 
 json Storage::finishUpload(const json& payload, const std::shared_ptr<Session>& session) {
+    if (session && session->isShareMode())
+        return vh::protocols::ws::handler::share::Upload::nativeFinish(payload, session);
+
     const auto vaultId = payload.at("vault_id").get<uint32_t>();
     const auto path = std::filesystem::path(payload.at("path").get<std::string>());
 
@@ -287,6 +294,15 @@ json Storage::finishUpload(const json& payload, const std::shared_ptr<Session>& 
 
     session->getUploadHandler()->finishUpload();
     return {{"path", path.string()}};
+}
+
+json Storage::cancelUpload(const json& payload, const std::shared_ptr<Session>& session) {
+    if (session && session->isShareMode())
+        return vh::protocols::ws::handler::share::Upload::nativeCancel(payload, session);
+
+    if (!session || !session->user) throw std::runtime_error("Unauthorized");
+    session->getUploadHandler()->abortActiveUpload("upload_cancelled");
+    return {{"cancelled", true}};
 }
 
 json Storage::mkdir(const json& payload, const std::shared_ptr<Session>& session) {

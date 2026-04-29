@@ -43,6 +43,9 @@ namespace vh::protocols::ws::handler::fs {
         if (args.uploadId.empty()) throw std::invalid_argument("Share upload id is required");
         if (args.shareId.empty()) throw std::invalid_argument("Share upload share id is required");
         if (args.shareSessionId.empty()) throw std::invalid_argument("Share upload session id is required");
+        if (args.websocketSessionUuid.empty()) throw std::invalid_argument("Share upload websocket session id is required");
+        if (!session_ || session_->uuid != args.websocketSessionUuid)
+            throw std::runtime_error("Share upload websocket session mismatch");
         if (!args.onChunk || !args.onFinish || !args.onCancel || !args.onFail)
             throw std::invalid_argument("Share upload callbacks are required");
 
@@ -54,6 +57,10 @@ namespace vh::protocols::ws::handler::fs {
             auto& upload = *currentShareUpload_;
             const auto size = static_cast<uint64_t>(buffer.size());
             try {
+                if (!session_ || upload.websocketSessionUuid != session_->uuid)
+                    throw std::runtime_error("Share upload does not belong to this websocket session");
+                if (upload.shareSessionId != session_->shareSessionId())
+                    throw std::runtime_error("Share upload does not belong to this share session");
                 if (size == 0) throw std::runtime_error("Empty upload chunk");
                 if (size > upload.maxChunkSize) throw std::runtime_error("Upload chunk exceeds maximum size");
                 if (upload.bytesReceived > upload.expectedSize ||

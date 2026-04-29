@@ -275,6 +275,13 @@ public:
         std::optional<TargetType> targetType = std::nullopt,
         std::optional<uint32_t> vaultId = std::nullopt
     );
+    [[nodiscard]] ScopeDecision authorize(
+        const rbac::Actor& actor,
+        Operation operation,
+        std::string_view requestedPath,
+        std::optional<TargetType> targetType = std::nullopt,
+        std::optional<uint32_t> vaultId = std::nullopt
+    );
     void appendAccessAuditEvent(const Principal& principal, ShareAccessAuditRequest request);
     void incrementDownloadCount(const Principal& principal);
 
