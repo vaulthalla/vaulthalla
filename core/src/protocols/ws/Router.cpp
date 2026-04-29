@@ -78,6 +78,13 @@ bool Router::isShareDownloadCommand(const std::string_view command) {
     return containsCommand(commands, command);
 }
 
+bool Router::isSharePreviewCommand(const std::string_view command) {
+    constexpr std::array commands{
+        std::string_view{"share.preview.get"}
+    };
+    return containsCommand(commands, command);
+}
+
 bool Router::isShareUploadCommand(const std::string_view command) {
     constexpr std::array commands{
         std::string_view{"share.upload.start"},
@@ -91,6 +98,7 @@ bool Router::isShareModeCommand(const std::string_view command) {
     return isPublicShareCommand(command) ||
            isShareFilesystemCommand(command) ||
            isShareDownloadCommand(command) ||
+           isSharePreviewCommand(command) ||
            isShareUploadCommand(command);
 }
 
@@ -119,6 +127,7 @@ Router::CommandAuthDecision Router::classifyCommand(const std::string_view comma
         if (isPublicShareCommand(command) ||
             isShareFilesystemCommand(command) ||
             isShareDownloadCommand(command) ||
+            isSharePreviewCommand(command) ||
             isShareUploadCommand(command))
             return CommandAuthDecision::Deny;
         if (isAuthCommand(command)) return CommandAuthDecision::Allow;

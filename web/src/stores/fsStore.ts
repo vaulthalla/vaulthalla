@@ -8,7 +8,7 @@ import { useVaultStore } from '@/stores/vaultStore'
 import { FileWithRelativePath } from '@/models/systemFile'
 import { Directory } from '@/models/directory'
 import { useShareWebSocketStore } from '@/stores/useShareWebSocket'
-import { ShareEntry } from '@/models/linkShare'
+import { ShareEntry, SharePreviewResponse } from '@/models/linkShare'
 
 type FsMode = 'authenticated' | 'share'
 type FsEntry = DBFile | Directory
@@ -25,6 +25,9 @@ interface FsStore {
   downloadProgress: number
   downloadError: string | null
   downloadLabel: string | null
+  previewing: boolean
+  previewError: string | null
+  sharePreview: SharePreviewResponse | null
   files: FsEntry[]
   copiedItem: FsEntry | null
   enterShareMode: () => void
@@ -43,6 +46,8 @@ interface FsStore {
     onProgress?: (bytes: number) => void
   }) => Promise<void>
   downloadFile: (path: string) => Promise<void>
+  previewFile: (path: string) => Promise<SharePreviewResponse>
+  clearSharePreview: () => void
   delete: (name: string) => Promise<void>
   mkdir: (payload: WSCommandPayload<'fs.dir.create'>) => Promise<void>
   move: (payload: WSCommandPayload<'fs.entry.move'>) => Promise<void>
@@ -164,6 +169,9 @@ export const useFSStore = create<FsStore>()(
       downloadProgress: 0,
       downloadError: null,
       downloadLabel: null,
+      previewing: false,
+      previewError: null,
+      sharePreview: null,
       files: [],
       copiedItem: null,
 
@@ -182,6 +190,9 @@ export const useFSStore = create<FsStore>()(
           downloading: false,
           downloadError: null,
           downloadLabel: null,
+          previewing: false,
+          previewError: null,
+          sharePreview: null,
         })
       },
 
@@ -199,6 +210,9 @@ export const useFSStore = create<FsStore>()(
           downloading: false,
           downloadError: null,
           downloadLabel: null,
+          previewing: false,
+          previewError: null,
+          sharePreview: null,
         })
       },
 
@@ -336,6 +350,28 @@ export const useFSStore = create<FsStore>()(
           set({ downloading: false, downloadProgress: 0, downloadError: message })
           throw error
         }
+      },
+
+      async previewFile(path) {
+        if (get().mode !== 'share') throw new Error('Authenticated previews use the existing preview route')
+
+        const ws = useShareWebSocketStore.getState()
+        await ws.waitForConnection()
+
+        set({ previewing: true, previewError: null, sharePreview: null })
+        try {
+          const response = await ws.sendCommand('share.preview.get', { path: normalizeSharePath(path), size: 1024 })
+          set({ previewing: false, sharePreview: response })
+          return response
+        } catch (error) {
+          const message = errorMessage(error, 'Preview failed')
+          set({ previewing: false, previewError: message, sharePreview: null })
+          throw error
+        }
+      },
+
+      clearSharePreview() {
+        set({ sharePreview: null, previewError: null })
       },
 
       async uploadFile({ file, targetPath = get().path, onProgress }) {

@@ -22,6 +22,7 @@ import {
   ShareLinkUpdatePayload,
   ShareListResponse,
   ShareMetadataResponse,
+  SharePreviewResponse,
   ShareSessionOpenResponse,
   ShareUploadCancelResponse,
   ShareUploadFinishResponse,
@@ -227,6 +228,8 @@ export interface WebSocketCommandMap {
   }
 
   'share.download.cancel': { payload: { transfer_id: string }; response: ShareDownloadCancelResponse }
+
+  'share.preview.get': { payload: { path?: string; size?: number }; response: SharePreviewResponse }
 
   'share.upload.start': {
     payload: { path?: string; filename: string; size_bytes: number; mime_type?: string | null; duplicate_policy?: 'reject' }

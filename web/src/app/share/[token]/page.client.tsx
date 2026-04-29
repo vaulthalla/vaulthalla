@@ -59,6 +59,8 @@ const SharePageClient = ({ token }: { token: string }) => {
     uploadLabel,
     uploading,
     uploadProgress,
+    previewing,
+    previewError,
     downloading,
     downloadLabel,
     downloadProgress,
@@ -67,6 +69,7 @@ const SharePageClient = ({ token }: { token: string }) => {
   } = useFSStore()
 
   const canList = hasShareOperation(share?.allowed_ops, 'list')
+  const canPreview = hasShareOperation(share?.allowed_ops, 'preview')
   const canDownload = hasShareOperation(share?.allowed_ops, 'download')
   const canUpload = hasShareOperation(share?.allowed_ops, 'upload')
   const isFileShare = share?.target_type === 'file'
@@ -119,6 +122,7 @@ const SharePageClient = ({ token }: { token: string }) => {
             {share && (
               <div className="flex flex-wrap gap-2 md:justify-end">
                 <StatusPill active={canList}>List</StatusPill>
+                <StatusPill active={canPreview}>Preview</StatusPill>
                 <StatusPill active={canDownload}>Download</StatusPill>
                 <StatusPill active={canUpload}>Upload</StatusPill>
                 <StatusPill active={share.access_mode === 'email_validated'}>Email verified</StatusPill>
@@ -224,7 +228,11 @@ const SharePageClient = ({ token }: { token: string }) => {
               </div>
               <div className="rounded border border-white/10 bg-gray-900 p-3">
                 <div className="text-xs text-gray-500">Download</div>
-                <div className="mt-1 text-sm text-gray-200">{canDownload ? 'Click a file to download it.' : 'Not allowed for this share.'}</div>
+                <div className="mt-1 text-sm text-gray-200">
+                  {canPreview ? 'Click a file to preview it.'
+                  : canDownload ? 'Click a file to download it.'
+                  : 'Not allowed for this share.'}
+                </div>
               </div>
               <div className="rounded border border-white/10 bg-gray-900 p-3">
                 <div className="text-xs text-gray-500">Upload</div>
@@ -237,6 +245,12 @@ const SharePageClient = ({ token }: { token: string }) => {
             {(downloading || downloadError) && (
               <Alert tone={downloadError ? 'error' : 'info'}>
                 {downloadError || `Downloading ${downloadLabel || 'file'}... ${Math.round(downloadProgress)}%`}
+              </Alert>
+            )}
+
+            {(previewing || previewError) && (
+              <Alert tone={previewError ? 'error' : 'info'}>
+                {previewError || 'Preparing preview...'}
               </Alert>
             )}
 

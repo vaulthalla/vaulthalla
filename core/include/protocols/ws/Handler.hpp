@@ -24,6 +24,7 @@ class Handler {
     static void registerShareSessionHandlers(const std::shared_ptr<Router>& r);
     static void registerShareFilesystemHandlers(const std::shared_ptr<Router>& r);
     static void registerShareDownloadHandlers(const std::shared_ptr<Router>& r);
+    static void registerSharePreviewHandlers(const std::shared_ptr<Router>& r);
     static void registerShareUploadHandlers(const std::shared_ptr<Router>& r);
 };
 

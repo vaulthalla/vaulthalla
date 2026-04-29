@@ -32,19 +32,27 @@ export const FilesystemClient: React.FC<FilesystemClientProps> = memo(({ rows })
     mode,
     downloadFile,
     downloading,
+    previewFile,
+    previewing,
+    previewError,
+    sharePreview,
+    clearSharePreview,
   } = useFSStore()
 
   const handleOpenFile = React.useCallback(
     (f: FileModel) => {
       if (mode === 'share') {
-        if (downloading) return
-        downloadFile(f.path || f.name).catch(err => console.error('Error downloading shared file:', err))
+        if (downloading || previewing) return
+        const path = f.path || f.name
+        previewFile(path).catch(() => {
+          downloadFile(path).catch(err => console.error('Error downloading shared file:', err))
+        })
         return
       }
 
       setSelectedFile(f)
     },
-    [downloadFile, downloading, mode],
+    [downloadFile, downloading, mode, previewFile, previewing],
   )
 
   const handleRowContextMenu = React.useCallback((e: React.MouseEvent, row: FilesystemRow) => {
@@ -114,7 +122,20 @@ export const FilesystemClient: React.FC<FilesystemClientProps> = memo(({ rows })
         </CardContent>
       </Card>
 
-      <FilePreviewModal file={selectedFile} onClose={() => setSelectedFile(null)} />
+      {mode === 'share' && previewError && !downloading && (
+        <div className="mt-3 rounded border border-amber-500/40 bg-amber-950/30 p-3 text-sm text-amber-100">
+          Preview unavailable. Falling back to download when permitted.
+        </div>
+      )}
+
+      <FilePreviewModal
+        file={selectedFile}
+        sharePreview={sharePreview}
+        onClose={() => {
+          setSelectedFile(null)
+          clearSharePreview()
+        }}
+      />
 
       {contextMenu && (
         <ContextMenu

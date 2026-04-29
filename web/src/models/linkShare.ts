@@ -175,6 +175,15 @@ export interface ShareDownloadCancelResponse {
   transfer_id: string
 }
 
+export interface SharePreviewResponse {
+  path: string
+  filename: string
+  source_mime_type: string
+  mime_type: string
+  size_bytes: number
+  data_base64: string
+}
+
 export interface ShareUploadStartResponse {
   upload_id: string
   transfer_id: string

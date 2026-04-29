@@ -5,25 +5,28 @@ import * as motion from 'motion/react-client'
 import { AnimatePresence } from 'motion/react'
 import Image from 'next/image'
 import type { File as FileModel } from '@/models/file'
+import type { SharePreviewResponse } from '@/models/linkShare'
 import { getPreviewUrl } from '@/util/getUrl'
 import X from '@/fa-duotone/x.svg'
 
 interface FilePreviewModalProps {
   file: FileModel | null
+  sharePreview?: SharePreviewResponse | null
   onClose: () => void
 }
 
-export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({ file, onClose }) => {
-  if (!file) return null
+export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({ file, sharePreview, onClose }) => {
+  if (!file && !sharePreview) return null
 
-  const previewUrl = `${getPreviewUrl()}?vault_id=${file.vault_id}&path=${encodeURIComponent(file.path || file.name)}&size=1024`
-  const canPreview = file.vault_id > 0
+  const previewUrl = file ? `${getPreviewUrl()}?vault_id=${file.vault_id}&path=${encodeURIComponent(file.path || file.name)}&size=1024` : ''
+  const sharePreviewUrl = sharePreview ? `data:${sharePreview.mime_type};base64,${sharePreview.data_base64}` : ''
+  const canPreview = !!sharePreview || !!file?.vault_id
 
   const meta = [
-    { label: 'Name', value: file.name },
-    { label: 'Size', value: formatSize(file.size_bytes) },
-    { label: 'MIME', value: file.mime_type || 'unknown' },
-    { label: 'Last Modified', value: new Date(file.updated_at).toLocaleString() },
+    { label: 'Name', value: sharePreview?.filename || file?.name || 'Preview' },
+    { label: 'Size', value: formatSize(sharePreview?.size_bytes ?? file?.size_bytes ?? 0) },
+    { label: 'MIME', value: sharePreview?.source_mime_type || file?.mime_type || 'unknown' },
+    ...(file ? [{ label: 'Last Modified', value: new Date(file.updated_at).toLocaleString() }] : []),
   ]
 
   return (
@@ -50,7 +53,17 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({ file, onClos
 
           <div className="grid grid-cols-1 gap-0 md:grid-cols-3">
             <div className="relative col-span-2 flex aspect-video h-75 items-center justify-center bg-gray-800 md:aspect-auto md:h-[500px]">
-              {canPreview ?
+              {sharePreview ?
+                <Image
+                  src={sharePreviewUrl}
+                  alt={sharePreview.filename}
+                  fill
+                  className="rounded-l-2xl object-contain"
+                  sizes="(max-width: 768px) 100vw, 66vw"
+                  priority
+                  unoptimized
+                />
+              : canPreview && file ?
                 <Image
                   src={previewUrl}
                   alt={file.name}
@@ -60,10 +73,10 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({ file, onClos
                   priority
                   unoptimized
                 />
-              : <div className="px-6 text-center text-sm text-gray-300">Preview is unavailable for public share files.</div>}
+              : <div className="px-6 text-center text-sm text-gray-300">Preview is unavailable for this file.</div>}
             </div>
             <div className="flex flex-col justify-center space-y-4 p-6 text-white">
-              <h2 className="text-xl font-semibold">{file.name}</h2>
+              <h2 className="text-xl font-semibold">{sharePreview?.filename || file?.name || 'Preview'}</h2>
               <div className="space-y-2 text-sm">
                 {meta.map(m => (
                   <div key={m.label} className="flex justify-between border-b border-gray-700 pb-1">

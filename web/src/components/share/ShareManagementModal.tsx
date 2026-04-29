@@ -22,8 +22,8 @@ interface ShareManagementModalProps {
 
 const operationsForPreset = (preset: SharePreset, isDirectory: boolean): ShareOperation[] => {
   if (preset === 'upload') return ['metadata', 'list', 'upload']
-  if (preset === 'download') return isDirectory ? ['metadata', 'list', 'download'] : ['metadata', 'download']
-  return isDirectory ? ['metadata', 'list', 'download'] : ['metadata', 'download']
+  if (preset === 'download') return isDirectory ? ['metadata', 'list', 'preview', 'download'] : ['metadata', 'preview', 'download']
+  return isDirectory ? ['metadata', 'list', 'preview', 'download'] : ['metadata', 'preview', 'download']
 }
 
 const linkTypeForPreset = (preset: SharePreset): ShareLinkType => {
