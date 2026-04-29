@@ -7,10 +7,12 @@ import Sliders from '@/fa-duotone/sliders.svg'
 import ShieldKeyhole from '@/fa-duotone/shield-keyhole.svg'
 import UserShield from '@/fa-duotone/user-shield.svg'
 import VaultShield from '@/fa-duotone/file-shield.svg'
+import ShareNodes from '@/fa-duotone/share-nodes.svg'
 
 export const adminNavItems: NavItem[] = [
   { label: 'Dashboard', href: '/dashboard', icon: Vault },
   { label: 'Vaults', href: '/vaults', icon: Vault },
+  { label: 'Shares', href: '/shares', icon: ShareNodes },
   { label: 'API Keys', href: '/api-keys', icon: KeySkeleton },
   { label: 'Users', href: '/users', icon: UserGroup },
   {

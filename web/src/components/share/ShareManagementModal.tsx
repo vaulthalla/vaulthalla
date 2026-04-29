@@ -7,9 +7,10 @@ import CopyIcon from '@/fa-duotone/copy.svg'
 import RotateIcon from '@/fa-duotone/rotate-right.svg'
 import BanIcon from '@/fa-duotone/ban.svg'
 import { FilesystemRow } from '@/components/fs/types'
-import { ShareLink, ShareLinkType, ShareAccessMode, ShareOperation } from '@/models/linkShare'
+import { ShareLinkType, ShareAccessMode, ShareOperation } from '@/models/linkShare'
 import { useShareManagementStore } from '@/stores/shareManagementStore'
 import { Vault } from '@/models/vaults'
+import { managementStatusLabel, shareOperationLabel, shareUrl } from '@/util/shareOperations'
 
 type SharePreset = 'download' | 'access' | 'upload'
 
@@ -17,16 +18,6 @@ interface ShareManagementModalProps {
   target: FilesystemRow
   vault: Vault
   onClose: () => void
-}
-
-const opBits: Record<ShareOperation, number> = {
-  metadata: 1 << 0,
-  list: 1 << 1,
-  preview: 1 << 2,
-  download: 1 << 3,
-  upload: 1 << 4,
-  mkdir: 1 << 5,
-  overwrite: 1 << 6,
 }
 
 const operationsForPreset = (preset: SharePreset, isDirectory: boolean): ShareOperation[] => {
@@ -39,25 +30,6 @@ const linkTypeForPreset = (preset: SharePreset): ShareLinkType => {
   if (preset === 'upload') return 'upload'
   if (preset === 'download') return 'download'
   return 'access'
-}
-
-const labelForOps = (allowedOps: ShareLink['allowed_ops']) => {
-  const ops = typeof allowedOps === 'number'
-    ? Object.entries(opBits).filter(([, bit]) => (allowedOps & bit) !== 0).map(([op]) => op)
-    : allowedOps
-  return ops.join(', ')
-}
-
-const statusForShare = (share: ShareLink) => {
-  if (share.revoked_at) return 'revoked'
-  if (share.disabled_at) return 'disabled'
-  if (share.expires_at && Date.parse(share.expires_at) < Date.now()) return 'expired'
-  return 'active'
-}
-
-const shareUrl = (publicUrlPath: string) => {
-  if (typeof window === 'undefined') return publicUrlPath
-  return new URL(publicUrlPath, window.location.origin).toString()
 }
 
 export const ShareManagementModal: React.FC<ShareManagementModalProps> = ({ target, vault, onClose }) => {
@@ -203,9 +175,9 @@ export const ShareManagementModal: React.FC<ShareManagementModalProps> = ({ targ
                       <div className="min-w-0">
                         <div className="truncate font-medium">{share.public_label || share.name || share.id}</div>
                         <div className="mt-1 text-xs text-gray-400">
-                          {share.link_type} · {share.access_mode} · {statusForShare(share)}
+                          {share.link_type} · {share.access_mode} · {managementStatusLabel(share)}
                         </div>
-                        <div className="mt-1 text-xs text-gray-500">{labelForOps(share.allowed_ops)}</div>
+                        <div className="mt-1 text-xs text-gray-500">{shareOperationLabel(share.allowed_ops)}</div>
                       </div>
                       <div className="flex shrink-0 gap-2">
                         <button className="rounded border border-gray-700 p-2 hover:bg-white/10" onClick={() => rotate(share.id)} title="Rotate token">

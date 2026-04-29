@@ -10,6 +10,9 @@ interface VaultShareStore {
   challengeId: string | null
   share: PublicShare | null
   error: string | null
+  emailSubmitting: boolean
+  codeSubmitting: boolean
+  challengeStartedAt: number | null
 
   openSession: (publicToken: string) => Promise<void>
   startEmailChallenge: (email: string) => Promise<void>
@@ -25,6 +28,9 @@ export const useVaultShareStore = create<VaultShareStore>()((set, get) => ({
   challengeId: null,
   share: null,
   error: null,
+  emailSubmitting: false,
+  codeSubmitting: false,
+  challengeStartedAt: null,
 
   async openSession(publicToken) {
     const ws = useShareWebSocketStore.getState()
@@ -36,6 +42,9 @@ export const useVaultShareStore = create<VaultShareStore>()((set, get) => ({
       challengeId: null,
       share: null,
       error: null,
+      emailSubmitting: false,
+      codeSubmitting: false,
+      challengeStartedAt: null,
     })
 
     try {
@@ -63,6 +72,8 @@ export const useVaultShareStore = create<VaultShareStore>()((set, get) => ({
     const ws = useShareWebSocketStore.getState()
     if (!publicToken && !sessionToken) throw new Error('No share token is available')
 
+    set({ emailSubmitting: true, error: null })
+
     try {
       const response = await ws.sendCommand('share.email.challenge.start', {
         email,
@@ -76,9 +87,15 @@ export const useVaultShareStore = create<VaultShareStore>()((set, get) => ({
         challengeId: response.challenge_id,
         share: response.share,
         error: null,
+        emailSubmitting: false,
+        challengeStartedAt: Date.now(),
       })
     } catch (error) {
-      set({ status: 'error', error: error instanceof Error ? error.message : 'Unable to start email challenge' })
+      set({
+        status: 'email_required',
+        emailSubmitting: false,
+        error: error instanceof Error ? error.message : 'Unable to start email challenge',
+      })
       throw error
     }
   },
@@ -89,6 +106,7 @@ export const useVaultShareStore = create<VaultShareStore>()((set, get) => ({
     if (!sessionId || !sessionToken) throw new Error('No share session is active')
 
     const ws = useShareWebSocketStore.getState()
+    set({ codeSubmitting: true, error: null })
     try {
       const response = await ws.sendCommand('share.email.challenge.confirm', {
         challenge_id: challengeId,
@@ -101,9 +119,14 @@ export const useVaultShareStore = create<VaultShareStore>()((set, get) => ({
         sessionId: response.session_id,
         challengeId: response.verified ? null : challengeId,
         error: null,
+        codeSubmitting: false,
       })
     } catch (error) {
-      set({ status: 'error', error: error instanceof Error ? error.message : 'Unable to confirm email challenge' })
+      set({
+        status: 'email_required',
+        codeSubmitting: false,
+        error: error instanceof Error ? error.message : 'Unable to confirm email challenge',
+      })
       throw error
     }
   },
@@ -118,6 +141,9 @@ export const useVaultShareStore = create<VaultShareStore>()((set, get) => ({
       challengeId: null,
       share: null,
       error: null,
+      emailSubmitting: false,
+      codeSubmitting: false,
+      challengeStartedAt: null,
     })
   },
 }))

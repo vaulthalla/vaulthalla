@@ -19,6 +19,12 @@ interface FsStore {
   path: string
   uploading: boolean
   uploadProgress: number
+  uploadError: string | null
+  uploadLabel: string | null
+  downloading: boolean
+  downloadProgress: number
+  downloadError: string | null
+  downloadLabel: string | null
   files: FsEntry[]
   copiedItem: FsEntry | null
   enterShareMode: () => void
@@ -36,6 +42,7 @@ interface FsStore {
     targetPath?: string
     onProgress?: (bytes: number) => void
   }) => Promise<void>
+  downloadFile: (path: string) => Promise<void>
   delete: (name: string) => Promise<void>
   mkdir: (payload: WSCommandPayload<'fs.dir.create'>) => Promise<void>
   move: (payload: WSCommandPayload<'fs.entry.move'>) => Promise<void>
@@ -116,6 +123,33 @@ const requireAuthenticatedMode = (mode: FsMode, action: string) => {
   if (mode === 'share') throw new Error(`${action} is not available in public share mode`)
 }
 
+const errorMessage = (error: unknown, fallback: string) => (error instanceof Error && error.message ? error.message : fallback)
+
+const decodeBase64 = (value: string): Uint8Array<ArrayBuffer> => {
+  const binary = window.atob(value)
+  const bytes = new Uint8Array(new ArrayBuffer(binary.length))
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i)
+  return bytes
+}
+
+const safeDownloadName = (filename: string) => {
+  const cleaned = filename.replace(/[\/\\\u0000]/g, '_').trim()
+  return cleaned && cleaned !== '.' && cleaned !== '..' ? cleaned : 'download'
+}
+
+const saveBrowserDownload = (filename: string, chunks: Uint8Array<ArrayBuffer>[], mimeType?: string | null) => {
+  const blob = new Blob(chunks, { type: mimeType || 'application/octet-stream' })
+  const url = window.URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = safeDownloadName(filename)
+  anchor.style.display = 'none'
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  window.URL.revokeObjectURL(url)
+}
+
 export const useFSStore = create<FsStore>()(
   persist(
     (set, get) => ({
@@ -124,15 +158,48 @@ export const useFSStore = create<FsStore>()(
       path: '',
       uploading: false,
       uploadProgress: 0,
+      uploadError: null,
+      uploadLabel: null,
+      downloading: false,
+      downloadProgress: 0,
+      downloadError: null,
+      downloadLabel: null,
       files: [],
       copiedItem: null,
 
       enterShareMode() {
-        set({ mode: 'share', currVault: null, path: '/', files: [], copiedItem: null, uploadProgress: 0, uploading: false })
+        set({
+          mode: 'share',
+          currVault: null,
+          path: '/',
+          files: [],
+          copiedItem: null,
+          uploadProgress: 0,
+          uploading: false,
+          uploadError: null,
+          uploadLabel: null,
+          downloadProgress: 0,
+          downloading: false,
+          downloadError: null,
+          downloadLabel: null,
+        })
       },
 
       exitShareMode() {
-        set({ mode: 'authenticated', path: '', files: [], copiedItem: null, uploadProgress: 0, uploading: false })
+        set({
+          mode: 'authenticated',
+          path: '',
+          files: [],
+          copiedItem: null,
+          uploadProgress: 0,
+          uploading: false,
+          uploadError: null,
+          uploadLabel: null,
+          downloadProgress: 0,
+          downloading: false,
+          downloadError: null,
+          downloadLabel: null,
+        })
       },
 
       setCopiedItem(item) {
@@ -195,13 +262,14 @@ export const useFSStore = create<FsStore>()(
       async upload(files: FileWithRelativePath[]) {
         const { uploadFile, fetchFiles, path } = get()
 
-        set({ uploading: true, uploadProgress: 0 })
+        set({ uploading: true, uploadProgress: 0, uploadError: null, uploadLabel: files.length === 1 ? files[0].name : `${files.length} files` })
 
         const totalBytes = files.reduce((sum, f) => sum + f.size, 0)
         let uploadedBytes = 0
 
         try {
           for (const file of files) {
+            set({ uploadLabel: file.name })
             await uploadFile({
               file,
               targetPath: `${path}/${file.relativePath}`,
@@ -216,9 +284,57 @@ export const useFSStore = create<FsStore>()(
           await fetchFiles()
         } catch (err) {
           console.error('[FsStore] upload() batch failed:', err)
+          set({ uploadError: errorMessage(err, 'Upload failed') })
           throw err
         } finally {
-          set({ uploading: false })
+          set({ uploading: false, uploadLabel: null })
+        }
+      },
+
+      async downloadFile(path) {
+        if (get().mode !== 'share') throw new Error('Authenticated downloads are not wired through fsStore')
+        if (get().downloading) throw new Error('A download is already running')
+
+        const ws = useShareWebSocketStore.getState()
+        await ws.waitForConnection()
+
+        const normalizedPath = normalizeSharePath(path)
+        let transferId: string | null = null
+
+        set({ downloading: true, downloadProgress: 0, downloadError: null, downloadLabel: baseName(normalizedPath, 'download') })
+
+        try {
+          const startResp = await ws.sendCommand('share.download.start', { path: normalizedPath })
+          transferId = startResp.transfer_id
+          set({ downloadLabel: startResp.filename })
+
+          const chunkSize = startResp.chunk_size || 256 * 1024
+          const chunks: Uint8Array<ArrayBuffer>[] = []
+          let offset = 0
+          let complete = false
+
+          while (!complete) {
+            const chunk = await ws.sendCommand('share.download.chunk', {
+              transfer_id: startResp.transfer_id,
+              offset,
+              length: chunkSize,
+            })
+
+            chunks.push(decodeBase64(chunk.data_base64))
+            if (!chunk.complete && chunk.next_offset <= offset) throw new Error('Download did not advance')
+            offset = chunk.next_offset
+            complete = chunk.complete
+            const progress = startResp.size_bytes > 0 ? Math.min(100, (offset / startResp.size_bytes) * 100) : complete ? 100 : 0
+            set({ downloadProgress: progress })
+          }
+
+          saveBrowserDownload(startResp.filename, chunks, startResp.mime_type)
+          set({ downloading: false, downloadProgress: 100 })
+        } catch (error) {
+          if (transferId) await ws.sendCommand('share.download.cancel', { transfer_id: transferId }).catch(() => undefined)
+          const message = errorMessage(error, 'Download failed')
+          set({ downloading: false, downloadProgress: 0, downloadError: message })
+          throw error
         }
       },
 

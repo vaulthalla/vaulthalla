@@ -21,9 +21,31 @@ export const FilesystemClient: React.FC<FilesystemClientProps> = memo(({ rows })
   const [contextMenu, setContextMenu] = useState<{ mouseX: number; mouseY: number; row: FilesystemRow } | null>(null)
   const tableRef = useRef<HTMLDivElement>(null)
 
-  const { setCopiedItem, copiedItem, pasteCopiedItem, setPath, fetchFiles, delete: deleteItem, currVault, mode } = useFSStore()
+  const {
+    setCopiedItem,
+    copiedItem,
+    pasteCopiedItem,
+    setPath,
+    fetchFiles,
+    delete: deleteItem,
+    currVault,
+    mode,
+    downloadFile,
+    downloading,
+  } = useFSStore()
 
-  const handleOpenFile = React.useCallback((f: FileModel) => setSelectedFile(f), [])
+  const handleOpenFile = React.useCallback(
+    (f: FileModel) => {
+      if (mode === 'share') {
+        if (downloading) return
+        downloadFile(f.path || f.name).catch(err => console.error('Error downloading shared file:', err))
+        return
+      }
+
+      setSelectedFile(f)
+    },
+    [downloadFile, downloading, mode],
+  )
 
   const handleRowContextMenu = React.useCallback((e: React.MouseEvent, row: FilesystemRow) => {
     setContextMenu({ mouseX: e.clientX, mouseY: e.clientY, row })
