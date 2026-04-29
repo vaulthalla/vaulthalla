@@ -94,9 +94,12 @@ TEST(ShareRateLimiterTest, CoversPublicAndTransferCommandsButNotCleanupCommands)
     EXPECT_TRUE(ShareRateLimit::isLimitedCommand("share.preview.get"));
     EXPECT_TRUE(ShareRateLimit::isLimitedCommand("share.download.start"));
     EXPECT_TRUE(ShareRateLimit::isLimitedCommand("share.download.chunk"));
+    EXPECT_TRUE(ShareRateLimit::isLimitedCommand("fs.download.start"));
+    EXPECT_TRUE(ShareRateLimit::isLimitedCommand("fs.download.chunk"));
     EXPECT_TRUE(ShareRateLimit::isLimitedCommand("share.upload.start"));
 
     EXPECT_FALSE(ShareRateLimit::isLimitedCommand("share.download.cancel"));
+    EXPECT_FALSE(ShareRateLimit::isLimitedCommand("fs.download.cancel"));
     EXPECT_FALSE(ShareRateLimit::isLimitedCommand("share.upload.finish"));
     EXPECT_FALSE(ShareRateLimit::isLimitedCommand("share.upload.cancel"));
     EXPECT_FALSE(ShareRateLimit::isLimitedCommand("share.link.create"));

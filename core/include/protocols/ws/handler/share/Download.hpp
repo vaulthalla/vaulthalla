@@ -35,6 +35,9 @@ public:
     static json start(const json& payload, const std::shared_ptr<Session>& session);
     static json chunk(const json& payload, const std::shared_ptr<Session>& session);
     static json cancel(const json& payload, const std::shared_ptr<Session>& session);
+    static json nativeStart(const json& payload, const std::shared_ptr<Session>& session);
+    static json nativeChunk(const json& payload, const std::shared_ptr<Session>& session);
+    static json nativeCancel(const json& payload, const std::shared_ptr<Session>& session);
 
     static void setManagerFactoryForTesting(ManagerFactory factory);
     static void resetManagerFactoryForTesting();

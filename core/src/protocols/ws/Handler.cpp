@@ -58,6 +58,9 @@ void Handler::registerAuthHandlers(const std::shared_ptr<Router>& r) {
 void Handler::registerFileSystemHandlers(const std::shared_ptr<Router>& r) {
     r->registerPayload("fs.upload.start", &handler::fs::Storage::startUpload);
     r->registerPayload("fs.upload.finish", &handler::fs::Storage::finishUpload);
+    r->registerPayload("fs.download.start", &handler::share::Download::nativeStart);
+    r->registerPayload("fs.download.chunk", &handler::share::Download::nativeChunk);
+    r->registerPayload("fs.download.cancel", &handler::share::Download::nativeCancel);
     r->registerPayload("fs.dir.create", &handler::fs::Storage::mkdir);
     r->registerPayload("fs.dir.list", &handler::fs::Storage::listDir);
     r->registerPayload("fs.metadata", &handler::fs::Storage::metadata);

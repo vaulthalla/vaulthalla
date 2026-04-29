@@ -30,6 +30,8 @@ constexpr uint64_t kMaxTransferSize = 64u * 1024u * 1024u;
 constexpr uint32_t kMaxActiveTransfers = 128;
 constexpr uint32_t kMaxTransfersPerSession = 4;
 
+enum class CommandSurface { Compatibility, Native };
+
 struct TransferContext {
     std::string transfer_id;
     std::string websocket_session_uuid;
@@ -153,11 +155,41 @@ void requireShareMode(const std::shared_ptr<Session>& session) {
     return principal;
 }
 
-[[nodiscard]] std::string requestedPath(const json& payload, const vh::share::Principal& principal) {
-    if (!payload.contains("path") || payload.at("path").is_null()) return principal.root_path;
+[[nodiscard]] bool hasDuplicateSlash(const std::string_view path) {
+    return path.find("//") != std::string_view::npos;
+}
+
+[[nodiscard]] std::string requestedPathString(const json& payload) {
+    if (!payload.contains("path") || payload.at("path").is_null()) return "/";
     auto path = payload.at("path").get<std::string>();
-    if (path == "/") return principal.root_path;
+    if (path.empty()) return "/";
+    if (hasDuplicateSlash(path)) throw std::runtime_error("Share download path contains duplicate slash");
     return path;
+}
+
+struct RequestedDownloadPath {
+    std::string path{"/"};
+    vh::share::TargetPathMode mode{vh::share::TargetPathMode::VaultRelative};
+};
+
+[[nodiscard]] RequestedDownloadPath requestedPath(
+    const json& payload,
+    const vh::share::Principal& principal,
+    const CommandSurface surface
+) {
+    auto path = requestedPathString(payload);
+    if (surface == CommandSurface::Native) {
+        const bool explicitVaultPath = payload.contains("vault_id") && !payload.at("vault_id").is_null();
+        return {
+            .path = std::move(path),
+            .mode = explicitVaultPath
+                        ? vh::share::TargetPathMode::VaultRelative
+                        : vh::share::TargetPathMode::ShareRelative
+        };
+    }
+
+    if (path == "/") path = principal.root_path;
+    return {.path = std::move(path), .mode = vh::share::TargetPathMode::VaultRelative};
 }
 
 [[nodiscard]] vh::share::ShareAccessAuditTarget auditTarget(const TransferContext& transfer) {
@@ -260,13 +292,16 @@ struct ChunkResult {
     if (!transfer.bytes) throw std::runtime_error("Share download transfer data is unavailable");
     if (offset != transfer.bytes_sent)
         throw std::runtime_error("Share download chunk offset is not the next expected offset");
-    if (offset > transfer.bytes->size() || length > transfer.bytes->size() - offset)
+    if (offset > transfer.bytes->size())
         throw std::runtime_error("Share download chunk range exceeds transfer size");
+
+    const auto remaining = static_cast<uint64_t>(transfer.bytes->size()) - offset;
+    const auto actualLength = std::min(length, remaining);
 
     ChunkResult result;
     result.bytes.insert(result.bytes.end(), transfer.bytes->begin() + static_cast<std::ptrdiff_t>(offset),
-                        transfer.bytes->begin() + static_cast<std::ptrdiff_t>(offset + length));
-    transfer.bytes_sent += length;
+                        transfer.bytes->begin() + static_cast<std::ptrdiff_t>(offset + actualLength));
+    transfer.bytes_sent += actualLength;
     result.next_offset = transfer.bytes_sent;
     result.bytes_sent = transfer.bytes_sent;
     result.complete = transfer.bytes_sent == transfer.bytes->size();
@@ -287,13 +322,15 @@ struct ChunkResult {
 
 void revalidateTransferTarget(
     const TransferContext& transfer,
-    const vh::share::Principal& principal,
+    const vh::rbac::Actor& actor,
     vh::share::TargetResolver& resolver
 ) {
-    if (principal.share_id != transfer.share_id || principal.share_session_id != transfer.share_session_id)
+    const auto principal = actor.sharePrincipal();
+    if (!principal) throw std::runtime_error("Share download transfer principal is missing");
+    if (principal->share_id != transfer.share_id || principal->share_session_id != transfer.share_session_id)
         throw std::runtime_error("Share download transfer principal mismatch");
 
-    const auto target = resolver.resolve(principal, {
+    const auto target = resolver.resolve(actor, {
         .path = transfer.vault_path,
         .operation = vh::share::Operation::Download,
         .path_mode = vh::share::TargetPathMode::VaultRelative,
@@ -303,32 +340,40 @@ void revalidateTransferTarget(
     if (!target.entry || target.entry->id != transfer.target_entry_id || target.vault_path != transfer.vault_path)
         throw std::runtime_error("Share download target changed");
 }
-}
-namespace dl_detail = share_download_handler_detail;
 
-json Download::start(const json& payload, const std::shared_ptr<Session>& session) {
-    dl_detail::requireShareMode(session);
-    const auto& body = dl_detail::objectPayload(payload);
-    auto mgr = dl_detail::manager();
-    auto principal = dl_detail::refreshPrincipal(session, *mgr);
-    auto resolver = dl_detail::resolver();
+[[nodiscard]] json startImpl(
+    const json& payload,
+    const std::shared_ptr<Session>& session,
+    const CommandSurface surface
+) {
+    requireShareMode(session);
+    const auto& body = objectPayload(payload);
+    auto mgr = manager();
+    auto principal = refreshPrincipal(session, *mgr);
+    const auto actor = session->rbacActor();
+    auto resolver = share_download_handler_detail::resolver();
+    auto requested = requestedPath(body, *principal, surface);
+    std::optional<uint32_t> requestedVaultId;
+    if (body.contains("vault_id") && !body.at("vault_id").is_null())
+        requestedVaultId = body.at("vault_id").get<uint32_t>();
 
-    auto target = resolver->resolve(*principal, {
-        .path = dl_detail::requestedPath(body, *principal),
+    auto target = resolver->resolve(actor, {
+        .path = std::move(requested.path),
         .operation = vh::share::Operation::Download,
-        .path_mode = vh::share::TargetPathMode::VaultRelative,
-        .expected_target_type = vh::share::TargetType::File
+        .path_mode = requested.mode,
+        .expected_target_type = vh::share::TargetType::File,
+        .vault_id = requestedVaultId
     });
 
     const auto file = std::dynamic_pointer_cast<vh::fs::model::File>(target.entry);
     if (!file) throw std::runtime_error("Share download target is not a file");
 
-    auto bytes = std::make_shared<std::vector<uint8_t>>(dl_detail::reader()->readFile(target));
-    if (bytes->size() > dl_detail::kMaxTransferSize)
+    auto bytes = std::make_shared<std::vector<uint8_t>>(reader()->readFile(target));
+    if (bytes->size() > kMaxTransferSize)
         throw std::runtime_error("Share download exceeds maximum in-memory transfer size");
 
     const auto transferId = Session::generateUUIDv4();
-    dl_detail::TransferContext transfer{
+    TransferContext transfer{
         .transfer_id = transferId,
         .websocket_session_uuid = session->uuid,
         .share_id = principal->share_id,
@@ -344,12 +389,12 @@ json Download::start(const json& payload, const std::shared_ptr<Session>& sessio
         .principal_snapshot = *principal
     };
 
-    dl_detail::registerTransfer(transfer);
+    registerTransfer(transfer);
     try {
-        dl_detail::appendAudit(*mgr, *principal, "share.download.start", dl_detail::auditTarget(target),
-                               vh::share::AuditStatus::Success, 0);
+        appendAudit(*mgr, *principal, "share.download.start", auditTarget(target),
+                    vh::share::AuditStatus::Success, 0);
     } catch (...) {
-        dl_detail::eraseTransfer(transferId);
+        eraseTransfer(transferId);
         throw;
     }
 
@@ -359,66 +404,93 @@ json Download::start(const json& payload, const std::shared_ptr<Session>& sessio
         {"path", target.share_path},
         {"size_bytes", bytes->size()},
         {"mime_type", file->mime_type ? json(*file->mime_type) : json(nullptr)},
-        {"chunk_size", dl_detail::kDefaultChunkSize}
+        {"chunk_size", kDefaultChunkSize}
     };
 }
 
-json Download::chunk(const json& payload, const std::shared_ptr<Session>& session) {
-    dl_detail::requireShareMode(session);
-    const auto& body = dl_detail::objectPayload(payload);
+[[nodiscard]] json chunkImpl(const json& payload, const std::shared_ptr<Session>& session) {
+    requireShareMode(session);
+    const auto& body = objectPayload(payload);
     if (body.contains("path")) throw std::runtime_error("Share download chunk cannot change path");
 
     const auto transferId = body.at("transfer_id").get<std::string>();
     const auto offset = body.at("offset").get<uint64_t>();
-    const auto length = body.value("length", dl_detail::kDefaultChunkSize);
+    const auto length = body.value("length", kDefaultChunkSize);
 
-    auto mgr = dl_detail::manager();
-    auto resolver = dl_detail::resolver();
-    auto transfer = dl_detail::transferForSession(transferId, session);
+    auto mgr = manager();
+    auto resolver = share_download_handler_detail::resolver();
+    auto transfer = transferForSession(transferId, session);
 
     try {
-        auto principal = dl_detail::refreshPrincipal(session, *mgr);
-        dl_detail::revalidateTransferTarget(transfer, *principal, *resolver);
-        const auto chunk = dl_detail::takeChunk(transferId, session, offset, length);
+        auto principal = refreshPrincipal(session, *mgr);
+        const auto actor = session->rbacActor();
+        revalidateTransferTarget(transfer, actor, *resolver);
+        const auto chunk = takeChunk(transferId, session, offset, length);
 
         if (chunk.complete) {
             mgr->incrementDownloadCount(*principal);
-            dl_detail::appendAudit(*mgr, *principal, "share.download.finish", dl_detail::auditTarget(transfer),
-                                   vh::share::AuditStatus::Success, chunk.bytes_sent);
+            appendAudit(*mgr, *principal, "share.download.finish", auditTarget(transfer),
+                        vh::share::AuditStatus::Success, chunk.bytes_sent);
         }
 
         return {
             {"transfer_id", transferId},
             {"offset", offset},
             {"bytes", chunk.bytes.size()},
-            {"data_base64", dl_detail::base64Encode(chunk.bytes)},
+            {"data_base64", base64Encode(chunk.bytes)},
             {"next_offset", chunk.next_offset},
             {"complete", chunk.complete}
         };
     } catch (const std::exception& e) {
-        dl_detail::eraseTransfer(transferId);
-        dl_detail::appendAudit(*mgr, transfer.principal_snapshot, "share.download.fail", dl_detail::auditTarget(transfer),
-                               vh::share::AuditStatus::Failed, transfer.bytes_sent,
-                               "share_download_failed", e.what());
+        eraseTransfer(transferId);
+        appendAudit(*mgr, transfer.principal_snapshot, "share.download.fail", auditTarget(transfer),
+                    vh::share::AuditStatus::Failed, transfer.bytes_sent,
+                    "share_download_failed", e.what());
         throw;
     }
 }
 
-json Download::cancel(const json& payload, const std::shared_ptr<Session>& session) {
-    dl_detail::requireShareMode(session);
-    const auto& body = dl_detail::objectPayload(payload);
+[[nodiscard]] json cancelImpl(const json& payload, const std::shared_ptr<Session>& session) {
+    requireShareMode(session);
+    const auto& body = objectPayload(payload);
     const auto transferId = body.at("transfer_id").get<std::string>();
 
-    auto mgr = dl_detail::manager();
-    auto transfer = dl_detail::transferForSession(transferId, session);
-    auto principal = dl_detail::refreshPrincipal(session, *mgr);
+    auto mgr = manager();
+    auto transfer = transferForSession(transferId, session);
+    auto principal = refreshPrincipal(session, *mgr);
     if (principal->share_id != transfer.share_id || principal->share_session_id != transfer.share_session_id)
         throw std::runtime_error("Share download transfer principal mismatch");
 
-    dl_detail::eraseTransfer(transferId);
-    dl_detail::appendAudit(*mgr, *principal, "share.download.cancel", dl_detail::auditTarget(transfer),
-                           vh::share::AuditStatus::Success, transfer.bytes_sent);
+    eraseTransfer(transferId);
+    appendAudit(*mgr, *principal, "share.download.cancel", auditTarget(transfer),
+                vh::share::AuditStatus::Success, transfer.bytes_sent);
     return {{"cancelled", true}, {"transfer_id", transferId}};
+}
+}
+namespace dl_detail = share_download_handler_detail;
+
+json Download::start(const json& payload, const std::shared_ptr<Session>& session) {
+    return dl_detail::startImpl(payload, session, dl_detail::CommandSurface::Compatibility);
+}
+
+json Download::chunk(const json& payload, const std::shared_ptr<Session>& session) {
+    return dl_detail::chunkImpl(payload, session);
+}
+
+json Download::cancel(const json& payload, const std::shared_ptr<Session>& session) {
+    return dl_detail::cancelImpl(payload, session);
+}
+
+json Download::nativeStart(const json& payload, const std::shared_ptr<Session>& session) {
+    return dl_detail::startImpl(payload, session, dl_detail::CommandSurface::Native);
+}
+
+json Download::nativeChunk(const json& payload, const std::shared_ptr<Session>& session) {
+    return dl_detail::chunkImpl(payload, session);
+}
+
+json Download::nativeCancel(const json& payload, const std::shared_ptr<Session>& session) {
+    return dl_detail::cancelImpl(payload, session);
 }
 
 void Download::setManagerFactoryForTesting(ManagerFactory factory) {

@@ -4,6 +4,7 @@
 #include "protocols/ws/Router.hpp"
 #include "protocols/ws/Session.hpp"
 #include "protocols/ws/handler/share/Download.hpp"
+#include "rbac/role/Vault.hpp"
 #include "share/AuditEvent.hpp"
 #include "share/EmailChallenge.hpp"
 #include "share/Manager.hpp"
@@ -59,6 +60,7 @@ public:
     std::unordered_map<std::string, std::shared_ptr<vh::share::Session>> sessions;
     std::unordered_map<std::string, std::string> session_by_lookup;
     std::unordered_map<std::string, std::shared_ptr<vh::share::EmailChallenge>> challenges;
+    std::unordered_map<std::string, std::shared_ptr<vh::rbac::role::Vault>> vault_roles;
     std::vector<std::shared_ptr<vh::share::AuditEvent>> audits;
     uint32_t next_link{100};
     uint32_t next_session{200};
@@ -143,6 +145,27 @@ public:
         auto link = getLink(id);
         if (!link) throw std::runtime_error("missing link");
         ++link->download_count;
+    }
+
+    void upsertVaultRoleForShare(
+        const std::string& shareId,
+        uint32_t,
+        const std::shared_ptr<vh::rbac::role::Vault>& role
+    ) override {
+        if (!role) {
+            vault_roles.erase(shareId);
+            return;
+        }
+        vault_roles[shareId] = std::make_shared<vh::rbac::role::Vault>(*role);
+    }
+
+    std::shared_ptr<vh::rbac::role::Vault> getVaultRoleForShare(const std::string& shareId) override {
+        if (!vault_roles.contains(shareId)) return nullptr;
+        return std::make_shared<vh::rbac::role::Vault>(*vault_roles.at(shareId));
+    }
+
+    void removeVaultRoleForShare(const std::string& shareId) override {
+        vault_roles.erase(shareId);
     }
 
     std::shared_ptr<vh::share::Session> createSession(const std::shared_ptr<vh::share::Session>& session) override {
@@ -386,6 +409,9 @@ protected:
         provider->add(file(78, 42, "/reports/q1.txt", 77));
         provider->add(dir(79, 42, "/reports/team", 77));
         provider->add(file(80, 42, "/reports/team/notes.txt", 79));
+        auto empty = file(81, 42, "/reports/empty.txt", 77);
+        empty->size_bytes = 0;
+        provider->add(empty);
         provider->add(dir(99, 42, "/reports_evil"));
         provider->add(file(100, 42, "/reports_evil/q1.txt", 99));
         resolver = std::make_shared<vh::share::TargetResolver>(provider);
@@ -393,6 +419,7 @@ protected:
         reader = std::make_shared<FakeDownloadReader>();
         reader->bytes_by_entry[78] = {'h', 'e', 'l', 'l', 'o', ' ', 'w', 'o', 'r', 'l', 'd'};
         reader->bytes_by_entry[80] = {'n', 'o', 't', 'e', 's'};
+        reader->bytes_by_entry[81] = {};
 
         Download::setManagerFactoryForTesting([this] { return manager; });
         Download::setResolverFactoryForTesting([this] { return resolver; });
@@ -442,7 +469,15 @@ TEST_F(WsShareDownloadTest, RouterAllowsDownloadOnlyForReadyShareMode) {
     EXPECT_EQ(Decision::Allow, Router::classifyCommand("share.download.start", *share));
     EXPECT_EQ(Decision::Allow, Router::classifyCommand("share.download.chunk", *share));
     EXPECT_EQ(Decision::Allow, Router::classifyCommand("share.download.cancel", *share));
+    EXPECT_EQ(Decision::Deny, Router::classifyCommand("fs.download.start", *unauth));
+    EXPECT_EQ(Decision::RequireHumanAuth, Router::classifyCommand("fs.download.start", *human));
+    EXPECT_EQ(Decision::Deny, Router::classifyCommand("fs.download.start", *pending));
+    EXPECT_EQ(Decision::Allow, Router::classifyCommand("fs.download.start", *share));
+    EXPECT_EQ(Decision::Allow, Router::classifyCommand("fs.download.chunk", *share));
+    EXPECT_EQ(Decision::Allow, Router::classifyCommand("fs.download.cancel", *share));
     EXPECT_EQ(Decision::Deny, Router::classifyCommand("fs.dir.list", *share));
+    EXPECT_EQ(Decision::Deny, Router::classifyCommand("fs.upload.start", *share));
+    EXPECT_EQ(Decision::Deny, Router::classifyCommand("fs.entry.delete", *share));
     EXPECT_EQ(Decision::Deny, Router::classifyCommand("share.link.create", *share));
 }
 
@@ -486,30 +521,64 @@ TEST_F(WsShareDownloadTest, StartAndChunksCompleteDownloadWithGrant) {
     }, session); }, std::runtime_error);
 }
 
+TEST_F(WsShareDownloadTest, NativeStartUsesShareActorAndDurableScopedRole) {
+    const auto session = readySession();
+    ASSERT_EQ(session->user, nullptr);
+    ASSERT_TRUE(session->sharePrincipal());
+    ASSERT_TRUE(session->sharePrincipal()->scoped_vault_role);
+
+    const auto actor = session->rbacActor();
+    EXPECT_TRUE(actor.isShare());
+    EXPECT_FALSE(actor.canUseHumanPrivileges());
+
+    const auto start = Download::nativeStart({{"path", "/q1.txt"}}, session);
+
+    EXPECT_TRUE(start.at("transfer_id").get<std::string>().size() > 20);
+    EXPECT_EQ(start.at("filename"), "q1.txt");
+    EXPECT_EQ(start.at("path"), "/q1.txt");
+    EXPECT_EQ(start.at("size_bytes"), 11u);
+    expectNoSecretOrInternalFields(start);
+    EXPECT_EQ(session->user, nullptr);
+
+    const auto explicitVaultPath = Download::nativeStart({
+        {"vault_id", 42},
+        {"path", "/reports/q1.txt"}
+    }, session);
+    EXPECT_EQ(explicitVaultPath.at("path"), "/q1.txt");
+}
+
 TEST_F(WsShareDownloadTest, DeniesMissingGrantDirectoryEscapeAndPrefixTrick) {
     auto noGrant = readySession(vh::share::bit(vh::share::Operation::Metadata));
     EXPECT_THROW({ (void)Download::start({{"path", "/reports/q1.txt"}}, noGrant); }, std::runtime_error);
+    EXPECT_THROW({ (void)Download::nativeStart({{"path", "/q1.txt"}}, noGrant); }, std::runtime_error);
 
     auto session = readySession();
     EXPECT_THROW({ (void)Download::start({{"path", "/reports"}}, session); }, std::runtime_error);
     EXPECT_THROW({ (void)Download::start({{"path", "/reports/../secret.txt"}}, session); }, std::runtime_error);
     EXPECT_THROW({ (void)Download::start({{"path", "/reports_evil/q1.txt"}}, session); }, std::runtime_error);
+    EXPECT_THROW({ (void)Download::nativeStart({{"path", "/"}}, session); }, std::runtime_error);
+    EXPECT_THROW({ (void)Download::nativeStart({{"path", "/../secret.txt"}}, session); }, std::runtime_error);
+    EXPECT_THROW({ (void)Download::nativeStart({{"path", "/team//notes.txt"}}, session); }, std::runtime_error);
+    EXPECT_THROW({ (void)Download::nativeStart({
+        {"vault_id", 42},
+        {"path", "/reports_evil/q1.txt"}
+    }, session); }, std::runtime_error);
 }
 
 TEST_F(WsShareDownloadTest, TransferIdIsSessionBoundAndChunkCannotChangePath) {
     auto session = readySession();
-    const auto start = Download::start({{"path", "/reports/q1.txt"}}, session);
+    const auto start = Download::nativeStart({{"path", "/q1.txt"}}, session);
     const auto transferId = start.at("transfer_id").get<std::string>();
 
     auto otherSession = publicSession();
     otherSession->setSharePrincipal(session->sharePrincipal(), session->shareSessionToken());
-    EXPECT_THROW({ (void)Download::chunk({
+    EXPECT_THROW({ (void)Download::nativeChunk({
         {"transfer_id", transferId},
         {"offset", 0},
         {"length", 1}
     }, otherSession); }, std::runtime_error);
 
-    EXPECT_THROW({ (void)Download::chunk({
+    EXPECT_THROW({ (void)Download::nativeChunk({
         {"transfer_id", transferId},
         {"offset", 0},
         {"length", 1},
@@ -519,26 +588,49 @@ TEST_F(WsShareDownloadTest, TransferIdIsSessionBoundAndChunkCannotChangePath) {
 
 TEST_F(WsShareDownloadTest, ChunkBoundsAndMaxChunkSizeAreEnforced) {
     auto session = readySession();
-    const auto start = Download::start({{"path", "/reports/q1.txt"}}, session);
-    const auto transferId = start.at("transfer_id").get<std::string>();
+    const auto wrongOffsetStart = Download::nativeStart({{"path", "/q1.txt"}}, session);
+    const auto wrongOffsetId = wrongOffsetStart.at("transfer_id").get<std::string>();
 
-    EXPECT_THROW({ (void)Download::chunk({
-        {"transfer_id", transferId},
+    EXPECT_THROW({ (void)Download::nativeChunk({
+        {"transfer_id", wrongOffsetId},
         {"offset", 1},
         {"length", 1}
     }, session); }, std::runtime_error);
 
-    EXPECT_THROW({ (void)Download::chunk({
-        {"transfer_id", transferId},
+    const auto tooLargeStart = Download::nativeStart({{"path", "/q1.txt"}}, session);
+    const auto tooLargeId = tooLargeStart.at("transfer_id").get<std::string>();
+    EXPECT_THROW({ (void)Download::nativeChunk({
+        {"transfer_id", tooLargeId},
         {"offset", 0},
         {"length", 300000}
     }, session); }, std::runtime_error);
 
-    EXPECT_THROW({ (void)Download::chunk({
-        {"transfer_id", transferId},
+    const auto clampedStart = Download::nativeStart({{"path", "/q1.txt"}}, session);
+    const auto clamped = Download::nativeChunk({
+        {"transfer_id", clampedStart.at("transfer_id").get<std::string>()},
         {"offset", 0},
         {"length", 12}
-    }, session); }, std::runtime_error);
+    }, session);
+    EXPECT_EQ(clamped.at("bytes"), 11u);
+    EXPECT_EQ(clamped.at("next_offset"), 11u);
+    EXPECT_TRUE(clamped.at("complete").get<bool>());
+}
+
+TEST_F(WsShareDownloadTest, NativeZeroSizeFileCompletesEmptyChunkSafely) {
+    auto session = readySession();
+    const auto start = Download::nativeStart({{"path", "/empty.txt"}}, session);
+    EXPECT_EQ(start.at("size_bytes"), 0u);
+
+    const auto chunk = Download::nativeChunk({
+        {"transfer_id", start.at("transfer_id").get<std::string>()},
+        {"offset", 0},
+        {"length", 1}
+    }, session);
+
+    EXPECT_EQ(chunk.at("bytes"), 0u);
+    EXPECT_EQ(chunk.at("data_base64"), "");
+    EXPECT_EQ(chunk.at("next_offset"), 0u);
+    EXPECT_TRUE(chunk.at("complete").get<bool>());
 }
 
 TEST_F(WsShareDownloadTest, RevokedSessionFailsClosedDuringChunkRevalidation) {
@@ -561,18 +653,24 @@ TEST_F(WsShareDownloadTest, RevokedSessionFailsClosedDuringChunkRevalidation) {
 
 TEST_F(WsShareDownloadTest, CancelClearsTransferContext) {
     auto session = readySession();
-    const auto start = Download::start({{"path", "/reports/q1.txt"}}, session);
+    const auto start = Download::nativeStart({{"path", "/q1.txt"}}, session);
     const auto transferId = start.at("transfer_id").get<std::string>();
 
-    const auto cancelled = Download::cancel({{"transfer_id", transferId}}, session);
+    const auto cancelled = Download::nativeCancel({{"transfer_id", transferId}}, session);
 
     EXPECT_TRUE(cancelled.at("cancelled").get<bool>());
     expectNoSecretOrInternalFields(cancelled);
-    EXPECT_THROW({ (void)Download::chunk({
+    EXPECT_THROW({ (void)Download::nativeChunk({
         {"transfer_id", transferId},
         {"offset", 0},
         {"length", 1}
     }, session); }, std::runtime_error);
+
+    const auto compatibilityStart = Download::start({{"path", "/reports/q1.txt"}}, session);
+    const auto compatibilityCancelled = Download::cancel({
+        {"transfer_id", compatibilityStart.at("transfer_id").get<std::string>()}
+    }, session);
+    EXPECT_TRUE(compatibilityCancelled.at("cancelled").get<bool>());
 }
 
 }

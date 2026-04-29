@@ -27,9 +27,9 @@ using vh::share::TokenKind;
         return RateLimitPolicy{.max_attempts = 120, .window = 1min};
     if (command == "share.preview.get")
         return RateLimitPolicy{.max_attempts = 60, .window = 1min};
-    if (command == "share.download.start")
+    if (command == "share.download.start" || command == "fs.download.start")
         return RateLimitPolicy{.max_attempts = 30, .window = 1min};
-    if (command == "share.download.chunk")
+    if (command == "share.download.chunk" || command == "fs.download.chunk")
         return RateLimitPolicy{.max_attempts = 1200, .window = 1min};
     if (command == "share.upload.start")
         return RateLimitPolicy{.max_attempts = 20, .window = 1min};
@@ -104,7 +104,7 @@ using vh::share::TokenKind;
                            challengeId.empty() ? "none" : challengeId);
     }
 
-    if (command == "share.download.chunk") {
+    if (command == "share.download.chunk" || command == "fs.download.chunk") {
         return std::format("{}|ip:{}|session:{}", command, ip,
                            session.shareSessionId().empty() ? "unknown" : session.shareSessionId());
     }
@@ -115,6 +115,7 @@ using vh::share::TokenKind;
         command == "fs.list" ||
         command == "share.preview.get" ||
         command == "share.download.start" ||
+        command == "fs.download.start" ||
         command == "share.upload.start") {
         const auto principal = session.sharePrincipal();
         const auto share = principal && !principal->share_id.empty() ? principal->share_id : "unknown";
@@ -132,7 +133,9 @@ vh::share::RateLimitDecision ShareRateLimit::check(
     const Session& session,
     const Clock::time_point now
 ) {
-    if ((command == "fs.metadata" || command == "fs.list") && !session.isShareMode())
+    if ((command == "fs.metadata" || command == "fs.list" ||
+         command == "fs.download.start" || command == "fs.download.chunk") &&
+        !session.isShareMode())
         return {.allowed = true, .remaining = 0, .retry_after = std::chrono::seconds{0}};
 
     const auto policy = policyFor(command);
