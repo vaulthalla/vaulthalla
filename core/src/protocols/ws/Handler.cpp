@@ -10,6 +10,7 @@
 #include "protocols/ws/handler/rbac/roles/Vault.hpp"
 #include "protocols/ws/handler/vault/Vaults.hpp"
 #include "protocols/ws/handler/vault/APIKeys.hpp"
+#include "protocols/ws/handler/share/Download.hpp"
 #include "protocols/ws/handler/share/Filesystem.hpp"
 #include "protocols/ws/handler/share/Links.hpp"
 #include "protocols/ws/handler/share/Sessions.hpp"
@@ -30,6 +31,7 @@ void Handler::registerAllHandlers(const std::shared_ptr<Router>& r) {
     registerShareManagementHandlers(r);
     registerShareSessionHandlers(r);
     registerShareFilesystemHandlers(r);
+    registerShareDownloadHandlers(r);
 
     log::Registry::ws()->debug("[WebSocketHandler] All handlers registered successfully.");
 }
@@ -143,4 +145,10 @@ void Handler::registerShareSessionHandlers(const std::shared_ptr<Router>& r) {
 void Handler::registerShareFilesystemHandlers(const std::shared_ptr<Router>& r) {
     r->registerPayload("share.fs.metadata", &handler::share::Filesystem::metadata);
     r->registerPayload("share.fs.list", &handler::share::Filesystem::list);
+}
+
+void Handler::registerShareDownloadHandlers(const std::shared_ptr<Router>& r) {
+    r->registerPayload("share.download.start", &handler::share::Download::start);
+    r->registerPayload("share.download.chunk", &handler::share::Download::chunk);
+    r->registerPayload("share.download.cancel", &handler::share::Download::cancel);
 }

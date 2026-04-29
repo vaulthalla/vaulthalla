@@ -140,6 +140,12 @@ public:
         link->last_accessed_at = kNow;
     }
 
+    void incrementDownload(const std::string& id) override {
+        auto link = getLink(id);
+        if (!link) throw std::runtime_error("missing link");
+        ++link->download_count;
+    }
+
     std::shared_ptr<vh::share::Session> createSession(
         const std::shared_ptr<vh::share::Session>& session
     ) override {

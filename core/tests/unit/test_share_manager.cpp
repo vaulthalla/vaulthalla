@@ -136,6 +136,12 @@ public:
         ++link->access_count;
     }
 
+    void incrementDownload(const std::string& id) override {
+        auto link = getLink(id);
+        if (!link) throw std::runtime_error("missing link");
+        ++link->download_count;
+    }
+
     std::shared_ptr<Session> createSession(const std::shared_ptr<Session>& session) override {
         auto stored = std::make_shared<Session>(*session);
         if (stored->id.empty()) stored->id = uuidFor(next_session++);

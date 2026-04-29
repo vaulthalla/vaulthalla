@@ -3,7 +3,7 @@
 #include "identities/User.hpp"
 #include "protocols/ws/Router.hpp"
 #include "protocols/ws/Session.hpp"
-#include "protocols/ws/handler/share/Filesystem.hpp"
+#include "protocols/ws/handler/share/Download.hpp"
 #include "share/AuditEvent.hpp"
 #include "share/EmailChallenge.hpp"
 #include "share/Manager.hpp"
@@ -18,9 +18,11 @@
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <unordered_map>
+#include <vector>
 
-namespace vh::protocols::ws::handler::share::test_fs {
+namespace vh::protocols::ws::handler::share::test_download {
 constexpr std::time_t kNow = 1'800'000'000;
 
 std::string uuidFor(const uint32_t value) {
@@ -270,6 +272,17 @@ private:
     }
 };
 
+class FakeDownloadReader final : public DownloadReader {
+public:
+    std::unordered_map<uint32_t, std::vector<uint8_t>> bytes_by_entry;
+
+    std::vector<uint8_t> readFile(const vh::share::ResolvedTarget& target) const override {
+        if (!target.entry) throw std::runtime_error("missing target");
+        if (!bytes_by_entry.contains(target.entry->id)) throw std::runtime_error("missing file bytes");
+        return bytes_by_entry.at(target.entry->id);
+    }
+};
+
 std::shared_ptr<vh::fs::model::Directory> dir(
     const uint32_t id,
     const uint32_t vaultId,
@@ -282,8 +295,6 @@ std::shared_ptr<vh::fs::model::Directory> dir(
     entry->parent_id = parentId;
     entry->path = path;
     entry->name = path == "/" ? "" : std::filesystem::path(path).filename().string();
-    entry->file_count = 1;
-    entry->subdirectory_count = 1;
     entry->created_at = entry->updated_at = kNow;
     return entry;
 }
@@ -300,8 +311,9 @@ std::shared_ptr<vh::fs::model::File> file(
     entry->parent_id = parentId;
     entry->path = path;
     entry->name = std::filesystem::path(path).filename().string();
-    entry->mime_type = "application/pdf";
-    entry->size_bytes = 1234;
+    entry->mime_type = "text/plain";
+    entry->content_hash = "safe-content-digest";
+    entry->size_bytes = 11;
     entry->created_at = entry->updated_at = kNow;
     return entry;
 }
@@ -322,7 +334,7 @@ vh::share::Link makeLink(const uint32_t ops) {
 std::shared_ptr<Session> publicSession() {
     auto session = std::make_shared<Session>(std::make_shared<Router>());
     session->ipAddress = "127.0.0.1";
-    session->userAgent = "ws-share-fs-test";
+    session->userAgent = "ws-share-download-test";
     return session;
 }
 
@@ -350,13 +362,14 @@ void expectNoSecretOrInternalFields(const nlohmann::json& value) {
     EXPECT_FALSE(dump.contains("mode"));
 }
 
-class WsShareFsTest : public ::testing::Test {
+class WsShareDownloadTest : public ::testing::Test {
 protected:
     std::shared_ptr<FakeStore> store;
     std::shared_ptr<FakeAuthorizer> authorizer;
     std::shared_ptr<vh::share::Manager> manager;
     std::shared_ptr<FakeEntryProvider> provider;
     std::shared_ptr<vh::share::TargetResolver> resolver;
+    std::shared_ptr<FakeDownloadReader> reader;
     std::shared_ptr<identities::User> user;
 
     void SetUp() override {
@@ -370,14 +383,21 @@ protected:
 
         provider = std::make_shared<FakeEntryProvider>();
         provider->add(dir(77, 42, "/reports"));
-        provider->add(file(78, 42, "/reports/q1.pdf", 77));
+        provider->add(file(78, 42, "/reports/q1.txt", 77));
         provider->add(dir(79, 42, "/reports/team", 77));
-        provider->add(file(80, 42, "/reports/team/notes.pdf", 79));
+        provider->add(file(80, 42, "/reports/team/notes.txt", 79));
         provider->add(dir(99, 42, "/reports_evil"));
+        provider->add(file(100, 42, "/reports_evil/q1.txt", 99));
         resolver = std::make_shared<vh::share::TargetResolver>(provider);
 
-        Filesystem::setManagerFactoryForTesting([this] { return manager; });
-        Filesystem::setResolverFactoryForTesting([this] { return resolver; });
+        reader = std::make_shared<FakeDownloadReader>();
+        reader->bytes_by_entry[78] = {'h', 'e', 'l', 'l', 'o', ' ', 'w', 'o', 'r', 'l', 'd'};
+        reader->bytes_by_entry[80] = {'n', 'o', 't', 'e', 's'};
+
+        Download::setManagerFactoryForTesting([this] { return manager; });
+        Download::setResolverFactoryForTesting([this] { return resolver; });
+        Download::setReaderFactoryForTesting([this] { return reader; });
+        Download::resetTransfersForTesting();
 
         user = std::make_shared<identities::User>();
         user->id = 7;
@@ -385,8 +405,10 @@ protected:
     }
 
     void TearDown() override {
-        Filesystem::resetManagerFactoryForTesting();
-        Filesystem::resetResolverFactoryForTesting();
+        Download::resetTransfersForTesting();
+        Download::resetManagerFactoryForTesting();
+        Download::resetResolverFactoryForTesting();
+        Download::resetReaderFactoryForTesting();
         vh::share::Token::clearPepperForTesting();
     }
 
@@ -394,7 +416,9 @@ protected:
         return manager->createLink(rbac::Actor::human(user), {.link = makeLink(ops)});
     }
 
-    std::shared_ptr<Session> readySession(const uint32_t ops) {
+    std::shared_ptr<Session> readySession(
+        const uint32_t ops = vh::share::bit(vh::share::Operation::Download)
+    ) {
         const auto created = create(ops);
         auto opened = manager->openPublicSession(created.public_token);
         auto principal = manager->resolvePrincipal(opened.session_token);
@@ -404,65 +428,151 @@ protected:
     }
 };
 
-TEST_F(WsShareFsTest, RouterAllowsShareFsOnlyForReadyShareMode) {
+TEST_F(WsShareDownloadTest, RouterAllowsDownloadOnlyForReadyShareMode) {
     auto unauth = publicSession();
     auto human = humanSession();
     auto pending = publicSession();
     pending->setPendingShareSession(uuidFor(10), "vhss_pending");
-    auto share = readySession(vh::share::bit(vh::share::Operation::Metadata));
+    auto share = readySession();
 
     using Decision = Router::CommandAuthDecision;
-    EXPECT_EQ(Decision::Deny, Router::classifyCommand("share.fs.metadata", *unauth));
-    EXPECT_EQ(Decision::Deny, Router::classifyCommand("share.fs.list", *human));
-    EXPECT_EQ(Decision::Deny, Router::classifyCommand("share.fs.metadata", *pending));
-    EXPECT_EQ(Decision::Allow, Router::classifyCommand("share.fs.metadata", *share));
+    EXPECT_EQ(Decision::Deny, Router::classifyCommand("share.download.start", *unauth));
+    EXPECT_EQ(Decision::Deny, Router::classifyCommand("share.download.start", *human));
+    EXPECT_EQ(Decision::Deny, Router::classifyCommand("share.download.start", *pending));
+    EXPECT_EQ(Decision::Allow, Router::classifyCommand("share.download.start", *share));
+    EXPECT_EQ(Decision::Allow, Router::classifyCommand("share.download.chunk", *share));
+    EXPECT_EQ(Decision::Allow, Router::classifyCommand("share.download.cancel", *share));
     EXPECT_EQ(Decision::Deny, Router::classifyCommand("fs.dir.list", *share));
     EXPECT_EQ(Decision::Deny, Router::classifyCommand("share.link.create", *share));
 }
 
-TEST_F(WsShareFsTest, MetadataReturnsSafeShareRelativeEntry) {
-    auto session = readySession(vh::share::bit(vh::share::Operation::Metadata));
+TEST_F(WsShareDownloadTest, StartAndChunksCompleteDownloadWithGrant) {
+    const auto session = readySession();
+    const auto shareId = session->sharePrincipal()->share_id;
 
-    const auto response = Filesystem::metadata({{"path", "/reports/q1.pdf"}}, session);
+    const auto start = Download::start({{"path", "/reports/q1.txt"}}, session);
 
-    const auto& entry = response.at("entry");
-    EXPECT_EQ(entry.at("id").get<uint32_t>(), 78u);
-    EXPECT_EQ(entry.at("path").get<std::string>(), "/q1.pdf");
-    EXPECT_EQ(entry.at("type").get<std::string>(), "file");
-    EXPECT_EQ(entry.at("mime_type").get<std::string>(), "application/pdf");
-    expectNoSecretOrInternalFields(response);
+    EXPECT_TRUE(start.at("transfer_id").get<std::string>().size() > 20);
+    EXPECT_EQ(start.at("filename"), "q1.txt");
+    EXPECT_EQ(start.at("path"), "/q1.txt");
+    EXPECT_EQ(start.at("size_bytes"), 11u);
+    EXPECT_EQ(start.at("chunk_size"), 65536u);
+    expectNoSecretOrInternalFields(start);
+
+    const auto first = Download::chunk({
+        {"transfer_id", start.at("transfer_id").get<std::string>()},
+        {"offset", 0},
+        {"length", 5}
+    }, session);
+    EXPECT_EQ(first.at("bytes"), 5u);
+    EXPECT_EQ(first.at("next_offset"), 5u);
+    EXPECT_FALSE(first.at("complete").get<bool>());
+    EXPECT_FALSE(first.at("data_base64").get<std::string>().empty());
+    expectNoSecretOrInternalFields(first);
+
+    const auto second = Download::chunk({
+        {"transfer_id", start.at("transfer_id").get<std::string>()},
+        {"offset", 5},
+        {"length", 6}
+    }, session);
+    EXPECT_EQ(second.at("bytes"), 6u);
+    EXPECT_EQ(second.at("next_offset"), 11u);
+    EXPECT_TRUE(second.at("complete").get<bool>());
+    EXPECT_EQ(store->getLink(shareId)->download_count, 1u);
+    EXPECT_THROW({ (void)Download::chunk({
+        {"transfer_id", start.at("transfer_id").get<std::string>()},
+        {"offset", 11},
+        {"length", 1}
+    }, session); }, std::runtime_error);
 }
 
-TEST_F(WsShareFsTest, ListReturnsSafeChildrenUnderShareRoot) {
-    auto session = readySession(
-        vh::share::bit(vh::share::Operation::Metadata) |
-        vh::share::bit(vh::share::Operation::List)
-    );
+TEST_F(WsShareDownloadTest, DeniesMissingGrantDirectoryEscapeAndPrefixTrick) {
+    auto noGrant = readySession(vh::share::bit(vh::share::Operation::Metadata));
+    EXPECT_THROW({ (void)Download::start({{"path", "/reports/q1.txt"}}, noGrant); }, std::runtime_error);
 
-    const auto response = Filesystem::list({{"path", "/"}}, session);
-
-    EXPECT_EQ(response.at("path").get<std::string>(), "/");
-    ASSERT_EQ(response.at("entries").size(), 2u);
-    EXPECT_EQ(response.at("entries").at(0).at("path").get<std::string>(), "/q1.pdf");
-    EXPECT_EQ(response.at("entries").at(1).at("path").get<std::string>(), "/team");
-    expectNoSecretOrInternalFields(response);
+    auto session = readySession();
+    EXPECT_THROW({ (void)Download::start({{"path", "/reports"}}, session); }, std::runtime_error);
+    EXPECT_THROW({ (void)Download::start({{"path", "/reports/../secret.txt"}}, session); }, std::runtime_error);
+    EXPECT_THROW({ (void)Download::start({{"path", "/reports_evil/q1.txt"}}, session); }, std::runtime_error);
 }
 
-TEST_F(WsShareFsTest, DeniesMissingGrantEscapeAndPrefixTrick) {
-    auto session = readySession(vh::share::bit(vh::share::Operation::Metadata));
+TEST_F(WsShareDownloadTest, TransferIdIsSessionBoundAndChunkCannotChangePath) {
+    auto session = readySession();
+    const auto start = Download::start({{"path", "/reports/q1.txt"}}, session);
+    const auto transferId = start.at("transfer_id").get<std::string>();
 
-    EXPECT_THROW({ (void)Filesystem::list({{"path", "/reports"}}, session); }, std::runtime_error);
-    EXPECT_THROW({ (void)Filesystem::metadata({{"path", "/reports/../secret.txt"}}, session); }, std::runtime_error);
-    EXPECT_THROW({ (void)Filesystem::metadata({{"path", "/reports_evil"}}, session); }, std::runtime_error);
+    auto otherSession = publicSession();
+    otherSession->setSharePrincipal(session->sharePrincipal(), session->shareSessionToken());
+    EXPECT_THROW({ (void)Download::chunk({
+        {"transfer_id", transferId},
+        {"offset", 0},
+        {"length", 1}
+    }, otherSession); }, std::runtime_error);
+
+    EXPECT_THROW({ (void)Download::chunk({
+        {"transfer_id", transferId},
+        {"offset", 0},
+        {"length", 1},
+        {"path", "/reports/team/notes.txt"}
+    }, session); }, std::runtime_error);
 }
 
-TEST_F(WsShareFsTest, RejectsUnauthenticatedHumanAndPendingSessions) {
-    auto pending = publicSession();
-    pending->setPendingShareSession(uuidFor(10), "vhss_pending");
+TEST_F(WsShareDownloadTest, ChunkBoundsAndMaxChunkSizeAreEnforced) {
+    auto session = readySession();
+    const auto start = Download::start({{"path", "/reports/q1.txt"}}, session);
+    const auto transferId = start.at("transfer_id").get<std::string>();
 
-    EXPECT_THROW({ (void)Filesystem::metadata({{"path", "/reports"}}, publicSession()); }, std::runtime_error);
-    EXPECT_THROW({ (void)Filesystem::metadata({{"path", "/reports"}}, humanSession()); }, std::runtime_error);
-    EXPECT_THROW({ (void)Filesystem::metadata({{"path", "/reports"}}, pending); }, std::runtime_error);
+    EXPECT_THROW({ (void)Download::chunk({
+        {"transfer_id", transferId},
+        {"offset", 1},
+        {"length", 1}
+    }, session); }, std::runtime_error);
+
+    EXPECT_THROW({ (void)Download::chunk({
+        {"transfer_id", transferId},
+        {"offset", 0},
+        {"length", 300000}
+    }, session); }, std::runtime_error);
+
+    EXPECT_THROW({ (void)Download::chunk({
+        {"transfer_id", transferId},
+        {"offset", 0},
+        {"length", 12}
+    }, session); }, std::runtime_error);
+}
+
+TEST_F(WsShareDownloadTest, RevokedSessionFailsClosedDuringChunkRevalidation) {
+    auto session = readySession();
+    const auto start = Download::start({{"path", "/reports/q1.txt"}}, session);
+    store->revokeSession(session->shareSessionId());
+
+    EXPECT_THROW({ (void)Download::chunk({
+        {"transfer_id", start.at("transfer_id").get<std::string>()},
+        {"offset", 0},
+        {"length", 5}
+    }, session); }, std::runtime_error);
+
+    EXPECT_THROW({ (void)Download::chunk({
+        {"transfer_id", start.at("transfer_id").get<std::string>()},
+        {"offset", 0},
+        {"length", 5}
+    }, session); }, std::runtime_error);
+}
+
+TEST_F(WsShareDownloadTest, CancelClearsTransferContext) {
+    auto session = readySession();
+    const auto start = Download::start({{"path", "/reports/q1.txt"}}, session);
+    const auto transferId = start.at("transfer_id").get<std::string>();
+
+    const auto cancelled = Download::cancel({{"transfer_id", transferId}}, session);
+
+    EXPECT_TRUE(cancelled.at("cancelled").get<bool>());
+    expectNoSecretOrInternalFields(cancelled);
+    EXPECT_THROW({ (void)Download::chunk({
+        {"transfer_id", transferId},
+        {"offset", 0},
+        {"length", 1}
+    }, session); }, std::runtime_error);
 }
 
 }

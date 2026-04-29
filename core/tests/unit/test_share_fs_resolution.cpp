@@ -84,7 +84,7 @@ private:
     }
 };
 
-Principal makePrincipal() {
+Principal makeFsPrincipal() {
     Principal principal;
     principal.share_id = "00000000-0000-4000-8000-000000000101";
     principal.share_session_id = "00000000-0000-4000-8000-000000000201";
@@ -115,7 +115,7 @@ std::shared_ptr<FakeEntryProvider> providerWithSharedTree() {
 TEST(ShareFsResolutionTest, ResolvesRootPathAndMetadataGrant) {
     const auto provider = providerWithSharedTree();
     const TargetResolver resolver(provider);
-    const auto principal = makePrincipal();
+    const auto principal = makeFsPrincipal();
 
     const auto target = resolver.resolve(principal, {
         .path = "/shared",
@@ -133,7 +133,7 @@ TEST(ShareFsResolutionTest, ResolvesRootPathAndMetadataGrant) {
 TEST(ShareFsResolutionTest, ResolvesNormalizedDescendantAndDuplicateSlashes) {
     const auto provider = providerWithSharedTree();
     const TargetResolver resolver(provider);
-    const auto principal = makePrincipal();
+    const auto principal = makeFsPrincipal();
 
     const auto target = resolver.resolve(principal, {
         .path = "//shared//reports///q1.pdf",
@@ -148,7 +148,7 @@ TEST(ShareFsResolutionTest, ResolvesNormalizedDescendantAndDuplicateSlashes) {
 TEST(ShareFsResolutionTest, DeniesPathEscapeAndPrefixTrick) {
     const auto provider = providerWithSharedTree();
     const TargetResolver resolver(provider);
-    const auto principal = makePrincipal();
+    const auto principal = makeFsPrincipal();
 
     EXPECT_THROW({ (void)resolver.resolve(principal, {
         .path = "/shared/../secret.txt",
@@ -169,7 +169,7 @@ TEST(ShareFsResolutionTest, DeniesPathEscapeAndPrefixTrick) {
 TEST(ShareFsResolutionTest, DeniesCrossVaultAndMissingOperation) {
     const auto provider = providerWithSharedTree();
     const TargetResolver resolver(provider);
-    auto principal = makePrincipal();
+    auto principal = makeFsPrincipal();
 
     EXPECT_THROW({ (void)resolver.resolve(principal, {
         .path = "/shared/reports",
@@ -188,7 +188,7 @@ TEST(ShareFsResolutionTest, DeniesCrossVaultAndMissingOperation) {
 TEST(ShareFsResolutionTest, EnforcesListDirectoryTargetAndRejectsFileTargetList) {
     const auto provider = providerWithSharedTree();
     const TargetResolver resolver(provider);
-    auto principal = makePrincipal();
+    auto principal = makeFsPrincipal();
 
     const auto target = resolver.resolve(principal, {
         .path = "/shared/reports",
@@ -219,7 +219,7 @@ TEST(ShareFsResolutionTest, EnforcesListDirectoryTargetAndRejectsFileTargetList)
 TEST(ShareFsResolutionTest, FailsClosedWhenRootEntryMovedOrTargetMissing) {
     const auto provider = providerWithSharedTree();
     const TargetResolver resolver(provider);
-    auto principal = makePrincipal();
+    auto principal = makeFsPrincipal();
 
     provider->by_id.at(10)->path = "/renamed";
     EXPECT_THROW({ (void)resolver.resolve(principal, {
@@ -237,7 +237,7 @@ TEST(ShareFsResolutionTest, FailsClosedWhenRootEntryMovedOrTargetMissing) {
 TEST(ShareFsResolutionTest, ListsChildrenOnlyWhenTheyRemainInsideScope) {
     const auto provider = providerWithSharedTree();
     const TargetResolver resolver(provider);
-    const auto principal = makePrincipal();
+    const auto principal = makeFsPrincipal();
 
     const auto target = resolver.resolve(principal, {
         .path = "/shared",
@@ -254,7 +254,7 @@ TEST(ShareFsResolutionTest, ListsChildrenOnlyWhenTheyRemainInsideScope) {
 TEST(ShareFsResolutionTest, CanConvertShareRelativePathForInternalCallers) {
     const auto provider = providerWithSharedTree();
     const TargetResolver resolver(provider);
-    const auto principal = makePrincipal();
+    const auto principal = makeFsPrincipal();
 
     const auto target = resolver.resolve(principal, {
         .path = "/reports/q1.pdf",

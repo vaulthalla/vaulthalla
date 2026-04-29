@@ -72,6 +72,8 @@ public:
 
     void touchLinkAccess(const std::string& id) override { db::query::share::Link::touchAccess(id); }
 
+    void incrementDownload(const std::string& id) override { db::query::share::Link::incrementDownload(id); }
+
     std::shared_ptr<Session> createSession(const std::shared_ptr<Session>& session) override {
         return db::query::share::Session::create(session);
     }
@@ -694,6 +696,30 @@ ScopeDecision Manager::authorize(
         store_->appendAuditEvent(audit);
         throw;
     }
+}
+
+void Manager::appendAccessAuditEvent(const Principal& principal, ShareAccessAuditRequest request) {
+    if (request.event_type.empty()) throw std::invalid_argument("Share access audit event type is required");
+    if (request.target.vault_id == 0) throw std::invalid_argument("Share access audit vault is required");
+    if (request.target.target_entry_id == 0) throw std::invalid_argument("Share access audit target is required");
+    if (request.target.target_path.empty()) throw std::invalid_argument("Share access audit target path is required");
+
+    auto audit = auditEvent(std::move(request.event_type), request.status, principal.share_id, principal.share_session_id);
+    attachPrincipal(*audit, principal);
+    audit->vault_id = request.target.vault_id;
+    audit->target_entry_id = request.target.target_entry_id;
+    audit->target_path = std::move(request.target.target_path);
+    audit->bytes_transferred = request.bytes_transferred;
+    audit->error_code = std::move(request.error_code);
+    audit->error_message = std::move(request.error_message);
+    audit->ip_address = principal.ip_address;
+    audit->user_agent = principal.user_agent;
+    store_->appendAuditEvent(audit);
+}
+
+void Manager::incrementDownloadCount(const Principal& principal) {
+    if (principal.share_id.empty()) throw std::runtime_error("Share principal has no share id");
+    store_->incrementDownload(principal.share_id);
 }
 
 }

@@ -53,6 +53,7 @@ public:
         uint32_t updatedBy
     ) = 0;
     virtual void touchLinkAccess(const std::string& id) = 0;
+    virtual void incrementDownload(const std::string& id) = 0;
 
     virtual std::shared_ptr<Session> createSession(const std::shared_ptr<Session>& session) = 0;
     virtual std::shared_ptr<Session> getSession(const std::string& id) = 0;
@@ -140,6 +141,21 @@ struct ConfirmEmailChallengeResult {
     bool verified{false};
 };
 
+struct ShareAccessAuditTarget {
+    uint32_t vault_id{};
+    uint32_t target_entry_id{};
+    std::string target_path;
+};
+
+struct ShareAccessAuditRequest {
+    std::string event_type;
+    ShareAccessAuditTarget target;
+    AuditStatus status{AuditStatus::Success};
+    std::optional<uint64_t> bytes_transferred;
+    std::optional<std::string> error_code;
+    std::optional<std::string> error_message;
+};
+
 class Manager {
 public:
     Manager();
@@ -183,6 +199,8 @@ public:
         std::optional<TargetType> targetType = std::nullopt,
         std::optional<uint32_t> vaultId = std::nullopt
     );
+    void appendAccessAuditEvent(const Principal& principal, ShareAccessAuditRequest request);
+    void incrementDownloadCount(const Principal& principal);
 
 private:
     std::shared_ptr<ShareStore> store_;

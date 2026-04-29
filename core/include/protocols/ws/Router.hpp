@@ -41,6 +41,7 @@ class Router {
 
     [[nodiscard]] static bool isPublicShareCommand(std::string_view command);
     [[nodiscard]] static bool isShareFilesystemCommand(std::string_view command);
+    [[nodiscard]] static bool isShareDownloadCommand(std::string_view command);
     [[nodiscard]] static bool isShareModeCommand(std::string_view command);
     [[nodiscard]] static bool isAuthenticatedShareManagementCommand(std::string_view command);
     [[nodiscard]] static CommandAuthDecision classifyCommand(std::string_view command, const Session& session);
