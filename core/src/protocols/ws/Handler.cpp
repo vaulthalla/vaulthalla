@@ -11,6 +11,7 @@
 #include "protocols/ws/handler/vault/Vaults.hpp"
 #include "protocols/ws/handler/vault/APIKeys.hpp"
 #include "protocols/ws/handler/share/Links.hpp"
+#include "protocols/ws/handler/share/Sessions.hpp"
 #include "log/Registry.hpp"
 
 using namespace vh::protocols::ws;
@@ -26,6 +27,7 @@ void Handler::registerAllHandlers(const std::shared_ptr<Router>& r) {
     registerGroupHandlers(r);
     registerStatHandlers(r);
     registerShareManagementHandlers(r);
+    registerShareSessionHandlers(r);
 
     log::Registry::ws()->debug("[WebSocketHandler] All handlers registered successfully.");
 }
@@ -128,4 +130,10 @@ void Handler::registerShareManagementHandlers(const std::shared_ptr<Router>& r) 
     r->registerPayload("share.link.update", &handler::share::Links::update);
     r->registerPayload("share.link.revoke", &handler::share::Links::revoke);
     r->registerPayload("share.link.rotate_token", &handler::share::Links::rotateToken);
+}
+
+void Handler::registerShareSessionHandlers(const std::shared_ptr<Router>& r) {
+    r->registerPayload("share.session.open", &handler::share::Sessions::open);
+    r->registerPayload("share.email.challenge.start", &handler::share::Sessions::startEmailChallenge);
+    r->registerPayload("share.email.challenge.confirm", &handler::share::Sessions::confirmEmailChallenge);
 }

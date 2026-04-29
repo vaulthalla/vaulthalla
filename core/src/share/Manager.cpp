@@ -305,6 +305,10 @@ void setDenied(AuditEvent& event, std::string code, std::string message = {}) {
     return options.clock();
 }
 
+[[nodiscard]] std::string challengeCode(const ManagerOptions& options) {
+    return options.challenge_code_generator ? options.challenge_code_generator() : EmailChallenge::generateCode();
+}
+
 void requireAllowed(const AuthorizationDecision& decision, const std::string_view operation) {
     if (!decision.allowed)
         throw std::runtime_error("Share " + std::string(operation) + " denied: " + decision.reason);
@@ -565,7 +569,7 @@ StartEmailChallengeResult Manager::startEmailChallenge(StartEmailChallengeReques
 
     const auto normalizedEmail = EmailChallenge::normalizeEmail(request.email);
     const auto emailHash = EmailChallenge::hashEmail(normalizedEmail);
-    const auto code = EmailChallenge::generateCode();
+    const auto code = challengeCode(options_);
 
     auto challenge = std::make_shared<EmailChallenge>();
     challenge->share_id = link->id;

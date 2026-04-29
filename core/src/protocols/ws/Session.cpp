@@ -9,6 +9,7 @@
 #include "runtime/Deps.hpp"
 #include "identities/User.hpp"
 #include "protocols/cookie.hpp"
+#include "share/Principal.hpp"
 
 #include <boost/beast/http.hpp>
 #include <boost/uuid/uuid.hpp>
@@ -56,9 +57,40 @@ std::string Session::getUserAgent() const {
 }
 
 void Session::setAuthenticatedUser(const std::shared_ptr<User>& u) {
+    clearShareSession();
     user = u;
+    mode_ = SessionMode::Human;
     if (!tokens->refreshToken) throw std::runtime_error("Cannot set authenticated user without a refresh token in session");
     tokens->refreshToken->userId = user->id;
+}
+
+void Session::setPendingShareSession(std::string sessionId, std::string sessionToken) {
+    if (user) throw std::runtime_error("Cannot attach share session to authenticated user session");
+    if (sessionId.empty()) throw std::invalid_argument("Share session id is required");
+    if (sessionToken.empty()) throw std::invalid_argument("Share session token is required");
+
+    sharePrincipal_.reset();
+    shareSessionId_ = std::move(sessionId);
+    shareSessionToken_ = std::move(sessionToken);
+    mode_ = SessionMode::SharePending;
+}
+
+void Session::setSharePrincipal(std::shared_ptr<vh::share::Principal> principal, std::string sessionToken) {
+    if (user) throw std::runtime_error("Cannot attach share principal to authenticated user session");
+    if (!principal) throw std::invalid_argument("Share principal is required");
+    if (sessionToken.empty()) throw std::invalid_argument("Share session token is required");
+
+    shareSessionId_ = principal->share_session_id;
+    shareSessionToken_ = std::move(sessionToken);
+    sharePrincipal_ = std::move(principal);
+    mode_ = SessionMode::Share;
+}
+
+void Session::clearShareSession() {
+    sharePrincipal_.reset();
+    shareSessionId_.clear();
+    shareSessionToken_.clear();
+    mode_ = user ? SessionMode::Human : SessionMode::Unauthenticated;
 }
 
 void Session::setHandshakeRequest(const RequestType& req) { handshakeRequest_ = req; }

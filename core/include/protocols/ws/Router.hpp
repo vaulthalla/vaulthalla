@@ -4,6 +4,7 @@
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 
@@ -15,6 +16,8 @@ using json = nlohmann::json;
 
 class Router {
   public:
+    enum class CommandAuthDecision { Allow, RequireHumanAuth, Deny };
+
     using SessionPtr = std::shared_ptr<Session>;
     using Handler = std::function<void(json&&, const SessionPtr&)>;
 
@@ -35,6 +38,11 @@ class Router {
     void registerHandler(const std::string& cmd, Handler h);
 
     void routeMessage(json&& msg, const SessionPtr& session);
+
+    [[nodiscard]] static bool isPublicShareCommand(std::string_view command);
+    [[nodiscard]] static bool isShareModeCommand(std::string_view command);
+    [[nodiscard]] static bool isAuthenticatedShareManagementCommand(std::string_view command);
+    [[nodiscard]] static CommandAuthDecision classifyCommand(std::string_view command, const Session& session);
 
     // ---------------------------
     // Member-function-pointer overloads

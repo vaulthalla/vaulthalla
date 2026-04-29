@@ -6,9 +6,23 @@
 #include "protocols/ws/core/handler_templates.hpp"
 #include "runtime/Deps.hpp"
 
+#include <algorithm>
+#include <array>
+
 using namespace vh::protocols::ws;
 using namespace vh::protocols::ws::core;
 using namespace vh::protocols::ws::model;
+
+namespace {
+template<size_t N>
+bool containsCommand(const std::array<std::string_view, N>& commands, const std::string_view command) {
+    return std::ranges::find(commands, command) != commands.end();
+}
+
+bool isAuthCommand(const std::string_view command) {
+    return command.starts_with("auth");
+}
+}
 
 void Router::registerWs(const std::string& cmd, RawWsHandler fn) {
     handlers_[cmd] = makeWsHandler(cmd, std::move(fn));
@@ -38,6 +52,46 @@ void Router::registerHandler(const std::string& cmd, Handler h) {
     handlers_[cmd] = std::move(h);
 }
 
+bool Router::isPublicShareCommand(const std::string_view command) {
+    constexpr std::array commands{
+        std::string_view{"share.session.open"},
+        std::string_view{"share.email.challenge.start"},
+        std::string_view{"share.email.challenge.confirm"}
+    };
+    return containsCommand(commands, command);
+}
+
+bool Router::isShareModeCommand(const std::string_view command) {
+    return isPublicShareCommand(command);
+}
+
+bool Router::isAuthenticatedShareManagementCommand(const std::string_view command) {
+    constexpr std::array commands{
+        std::string_view{"share.link.create"},
+        std::string_view{"share.link.get"},
+        std::string_view{"share.link.list"},
+        std::string_view{"share.link.update"},
+        std::string_view{"share.link.revoke"},
+        std::string_view{"share.link.rotate_token"}
+    };
+    return containsCommand(commands, command);
+}
+
+Router::CommandAuthDecision Router::classifyCommand(const std::string_view command, const Session& session) {
+    if (session.isShareSession()) {
+        return isShareModeCommand(command) ? CommandAuthDecision::Allow : CommandAuthDecision::Deny;
+    }
+
+    if (session.user) {
+        if (isPublicShareCommand(command)) return CommandAuthDecision::Deny;
+        if (isAuthCommand(command)) return CommandAuthDecision::Allow;
+        return CommandAuthDecision::RequireHumanAuth;
+    }
+
+    if (isAuthCommand(command) || isPublicShareCommand(command)) return CommandAuthDecision::Allow;
+    return CommandAuthDecision::Deny;
+}
+
 void Router::routeMessage(json&& msg, const SessionPtr& session) {
     try {
         if (!session) {
@@ -50,7 +104,16 @@ void Router::routeMessage(json&& msg, const SessionPtr& session) {
         auto command = msg.at("command").get<std::string>();
         const std::string accessToken = msg.value("token", "");
 
-        if (!command.starts_with("auth") && !runtime::Deps::get().sessionManager->validate(session, accessToken)) {
+        const auto decision = classifyCommand(command, *session);
+
+        if (decision == CommandAuthDecision::Deny) {
+            log::Registry::ws()->warn("[Router] Unauthorized access attempt for command: {}", command);
+            Response::UNAUTHORIZED(std::move(command), std::move(msg))(session);
+            return;
+        }
+
+        if (decision == CommandAuthDecision::RequireHumanAuth &&
+            !runtime::Deps::get().sessionManager->validate(session, accessToken)) {
             log::Registry::ws()->warn("[Router] Unauthorized access attempt for command: {}", command);
             Response::UNAUTHORIZED(std::move(command), std::move(msg))(session);
             return;

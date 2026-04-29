@@ -79,6 +79,7 @@ struct ManagerOptions {
     std::time_t challenge_ttl_seconds{900};
     uint32_t challenge_max_attempts{6};
     std::function<std::time_t()> clock{[] { return std::time(nullptr); }};
+    std::function<std::string()> challenge_code_generator{};
 };
 
 struct CreateLinkRequest {
