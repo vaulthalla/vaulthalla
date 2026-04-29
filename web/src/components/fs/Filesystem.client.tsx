@@ -11,15 +11,17 @@ import { FilePreviewModal } from './FilePreviewModal'
 import { ContextMenu } from '@/components/fs/ContextMenu'
 import Row from '@/components/fs/Row'
 import type { FilesystemRow } from '@/components/fs/types'
+import { ShareManagementModal } from '@/components/share/ShareManagementModal'
 
 type FilesystemClientProps = { rows: FilesystemRow[] }
 
 export const FilesystemClient: React.FC<FilesystemClientProps> = memo(({ rows }) => {
   const [selectedFile, setSelectedFile] = useState<FileModel | null>(null)
+  const [shareTarget, setShareTarget] = useState<FilesystemRow | null>(null)
   const [contextMenu, setContextMenu] = useState<{ mouseX: number; mouseY: number; row: FilesystemRow } | null>(null)
   const tableRef = useRef<HTMLDivElement>(null)
 
-  const { setCopiedItem, copiedItem, pasteCopiedItem, setPath, fetchFiles, delete: deleteItem } = useFSStore()
+  const { setCopiedItem, copiedItem, pasteCopiedItem, setPath, fetchFiles, delete: deleteItem, currVault, mode } = useFSStore()
 
   const handleOpenFile = React.useCallback((f: FileModel) => setSelectedFile(f), [])
 
@@ -99,7 +101,12 @@ export const FilesystemClient: React.FC<FilesystemClientProps> = memo(({ rows })
           onClose={() => setContextMenu(null)}
           onDelete={row => handleDelete(row.name)}
           onCopy={row => setCopiedItem(row)}
+          onShare={row => setShareTarget(row)}
         />
+      )}
+
+      {shareTarget && currVault && mode === 'authenticated' && (
+        <ShareManagementModal target={shareTarget} vault={currVault} onClose={() => setShareTarget(null)} />
       )}
     </>
   )

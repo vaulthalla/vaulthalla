@@ -6,6 +6,7 @@ import TrashIcon from '@/fa-duotone/trash.svg'
 import EditIcon from '@/fa-duotone/pen-to-square.svg'
 import CopyIcon from '@/fa-duotone/copy.svg'
 import PasteIcon from '@/fa-duotone/paste.svg'
+import ShareIcon from '@/fa-duotone/share-nodes.svg'
 import { useFSStore } from '@/stores/fsStore'
 
 interface ContextMenuProps<T extends { name: string }> {
@@ -15,11 +16,12 @@ interface ContextMenuProps<T extends { name: string }> {
   onDelete: (item: T) => void
   onCopy?: (item: T) => void
   onRename?: (item: T) => void
+  onShare?: (item: T) => void
 }
 
 export function ContextMenu<
   T extends { name: string; path?: string; file_count?: number; subdirectory_count?: number },
->({ data, position, onClose, onDelete, onCopy, onRename }: ContextMenuProps<T>) {
+>({ data, position, onClose, onDelete, onCopy, onRename, onShare }: ContextMenuProps<T>) {
   const menuRef = useRef<HTMLDivElement>(null)
 
   const { copiedItem, pasteCopiedItem, mode } = useFSStore()
@@ -71,6 +73,10 @@ export function ContextMenu<
               <ContextButton onClick={() => onCopy?.(data)}>
                 <CopyIcon className="text-primary my-1 fill-current" />
                 Copy
+              </ContextButton>
+              <ContextButton onClick={() => onShare?.(data)}>
+                <ShareIcon className="text-primary my-1 fill-current" />
+                Share
               </ContextButton>
               <ContextButton onClick={() => onDelete(data)}>
                 <TrashIcon className="text-destructive my-1 fill-current" />
