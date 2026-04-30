@@ -9,6 +9,7 @@ import BanIcon from '@/fa-duotone/ban.svg'
 import { FilesystemRow } from '@/components/fs/types'
 import { ShareLinkType, ShareAccessMode, ShareOperation } from '@/models/linkShare'
 import { useShareManagementStore } from '@/stores/shareManagementStore'
+import { useVaultRoleStore } from '@/stores/useVaultRoleStore'
 import { Vault } from '@/models/vaults'
 import { managementStatusLabel, shareOperationLabel, shareUrl } from '@/util/shareOperations'
 
@@ -32,8 +33,17 @@ const linkTypeForPreset = (preset: SharePreset): ShareLinkType => {
   return 'access'
 }
 
+const roleNameForPreset = (preset: SharePreset): string => {
+  if (preset === 'upload') return 'share_upload_dropbox'
+  if (preset === 'download') return 'share_download_only'
+  return 'share_browse_download'
+}
+
+type RecipientDraft = { id: string; email: string; roleId: number }
+
 export const ShareManagementModal: React.FC<ShareManagementModalProps> = ({ target, vault, onClose }) => {
   const { shares, loading, error, createShare, fetchShares, revokeShare, rotateToken } = useShareManagementStore()
+  const { vaultRoles, fetchVaultRoles } = useVaultRoleStore()
   const isDirectory = target.entryType === 'directory'
   const [preset, setPreset] = useState<SharePreset>(isDirectory ? 'access' : 'download')
   const [accessMode, setAccessMode] = useState<ShareAccessMode>('public')
@@ -41,6 +51,25 @@ export const ShareManagementModal: React.FC<ShareManagementModalProps> = ({ targ
   const [expiresAt, setExpiresAt] = useState('')
   const [oneTimeUrl, setOneTimeUrl] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  const [publicRoleId, setPublicRoleId] = useState(0)
+  const [recipientEmail, setRecipientEmail] = useState('')
+  const [recipientRoleId, setRecipientRoleId] = useState(0)
+  const [recipients, setRecipients] = useState<RecipientDraft[]>([])
+
+  const roleOptions = useMemo(
+    () => vaultRoles.filter(role => role.type === 'vault'),
+    [vaultRoles],
+  )
+
+  const implicitDenyRole = useMemo(
+    () => roleOptions.find(role => role.name === 'implicit_deny') ?? null,
+    [roleOptions],
+  )
+
+  const shortcutRole = useMemo(
+    () => roleOptions.find(role => role.name === roleNameForPreset(preset)) ?? null,
+    [preset, roleOptions],
+  )
 
   const targetShares = useMemo(
     () => shares.filter(share => share.vault_id === vault.id && share.root_entry_id === target.id),
@@ -49,7 +78,18 @@ export const ShareManagementModal: React.FC<ShareManagementModalProps> = ({ targ
 
   useEffect(() => {
     fetchShares({ vault_id: vault.id }).catch(() => undefined)
-  }, [fetchShares, vault.id])
+    fetchVaultRoles().catch(() => undefined)
+  }, [fetchShares, fetchVaultRoles, vault.id])
+
+  useEffect(() => {
+    if (shortcutRole) {
+      setPublicRoleId(shortcutRole.id)
+      if (!recipientRoleId) setRecipientRoleId(shortcutRole.id)
+      return
+    }
+    if (implicitDenyRole && !publicRoleId) setPublicRoleId(implicitDenyRole.id)
+    if (implicitDenyRole && !recipientRoleId) setRecipientRoleId(implicitDenyRole.id)
+  }, [implicitDenyRole, publicRoleId, recipientRoleId, shortcutRole])
 
   const copyUrl = async (url: string) => {
     await navigator.clipboard.writeText(url)
@@ -60,6 +100,8 @@ export const ShareManagementModal: React.FC<ShareManagementModalProps> = ({ targ
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const ops = operationsForPreset(preset, isDirectory)
+    const roleId = publicRoleId || implicitDenyRole?.id
+    if (!roleId) throw new Error('Implicit deny vault role template is not available.')
     const result = await createShare({
       vault_id: vault.id,
       root_entry_id: target.id,
@@ -72,6 +114,15 @@ export const ShareManagementModal: React.FC<ShareManagementModalProps> = ({ targ
       public_label: label,
       expires_at: expiresAt ? new Date(expiresAt).toISOString() : null,
       duplicate_policy: 'reject',
+      public_role_assignment: { vault_role_id: roleId },
+      recipient_role_assignments: accessMode === 'email_validated' ?
+        recipients
+          .filter(recipient => recipient.email.trim() && recipient.roleId)
+          .map(recipient => ({
+            email: recipient.email.trim(),
+            role_assignment: { vault_role_id: recipient.roleId },
+          }))
+      : [],
     })
     setOneTimeUrl(shareUrl(result.publicUrlPath))
   }
@@ -79,6 +130,17 @@ export const ShareManagementModal: React.FC<ShareManagementModalProps> = ({ targ
   const rotate = async (id: string) => {
     const result = await rotateToken(id)
     setOneTimeUrl(shareUrl(result.publicUrlPath))
+  }
+
+  const addRecipient = () => {
+    const email = recipientEmail.trim()
+    const roleId = recipientRoleId || publicRoleId || implicitDenyRole?.id || 0
+    if (!email || !roleId) return
+    setRecipients(current => [
+      ...current,
+      { id: `${email}-${Date.now()}`, email, roleId },
+    ])
+    setRecipientEmail('')
   }
 
   return createPortal(
@@ -108,7 +170,7 @@ export const ShareManagementModal: React.FC<ShareManagementModalProps> = ({ targ
             </label>
 
             <label className="block text-sm">
-              <span className="mb-1 block text-gray-300">Preset</span>
+              <span className="mb-1 block text-gray-300">Permission Shortcut</span>
               <select
                 className="w-full rounded border border-gray-700 bg-gray-950 px-3 py-2"
                 value={preset}
@@ -116,6 +178,20 @@ export const ShareManagementModal: React.FC<ShareManagementModalProps> = ({ targ
                 <option value="download">Download</option>
                 <option value="access">Browse and download</option>
                 {isDirectory && <option value="upload">Upload dropbox</option>}
+              </select>
+            </label>
+
+            <label className="block text-sm">
+              <span className="mb-1 block text-gray-300">Public Role Template</span>
+              <select
+                className="w-full rounded border border-gray-700 bg-gray-950 px-3 py-2"
+                value={publicRoleId}
+                onChange={event => setPublicRoleId(Number(event.target.value))}
+                required>
+                <option value={0}>Select role template</option>
+                {roleOptions.map(role => (
+                  <option key={role.id} value={role.id}>{role.name}</option>
+                ))}
               </select>
             </label>
 
@@ -129,6 +205,54 @@ export const ShareManagementModal: React.FC<ShareManagementModalProps> = ({ targ
                 <option value="email_validated">Email validated</option>
               </select>
             </label>
+
+            {accessMode === 'email_validated' && (
+              <div className="space-y-2 rounded border border-gray-800 bg-gray-950 p-3 text-sm">
+                <div className="font-medium text-gray-200">Email Recipients</div>
+                <div className="grid gap-2">
+                  <input
+                    className="w-full rounded border border-gray-700 bg-gray-900 px-3 py-2"
+                    type="email"
+                    placeholder="recipient@example.com"
+                    value={recipientEmail}
+                    onChange={event => setRecipientEmail(event.target.value)}
+                  />
+                  <select
+                    className="w-full rounded border border-gray-700 bg-gray-900 px-3 py-2"
+                    value={recipientRoleId}
+                    onChange={event => setRecipientRoleId(Number(event.target.value))}>
+                    <option value={0}>Select recipient role</option>
+                    {roleOptions.map(role => (
+                      <option key={role.id} value={role.id}>{role.name}</option>
+                    ))}
+                  </select>
+                  <button
+                    className="rounded border border-gray-700 px-2 py-1 text-gray-200 hover:bg-white/10"
+                    type="button"
+                    onClick={addRecipient}>
+                    Add Recipient
+                  </button>
+                </div>
+                {recipients.length > 0 && (
+                  <div className="space-y-2">
+                    {recipients.map(recipient => {
+                      const role = roleOptions.find(candidate => candidate.id === recipient.roleId)
+                      return (
+                        <div key={recipient.id} className="flex items-center justify-between gap-2 rounded border border-gray-800 px-2 py-1">
+                          <span className="min-w-0 truncate text-gray-300">{recipient.email} · {role?.name ?? recipient.roleId}</span>
+                          <button
+                            className="shrink-0 text-xs text-red-300 hover:text-red-200"
+                            type="button"
+                            onClick={() => setRecipients(current => current.filter(item => item.id !== recipient.id))}>
+                            Remove
+                          </button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
 
             <label className="block text-sm">
               <span className="mb-1 block text-gray-300">Expires</span>

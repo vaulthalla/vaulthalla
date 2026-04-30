@@ -6,6 +6,25 @@ export type ShareDuplicatePolicy = 'reject' | 'rename' | 'overwrite'
 
 export type ShareStatus = 'idle' | 'opening' | 'email_required' | 'ready' | 'expired' | 'revoked' | 'error'
 
+export interface SharePermissionOverridePayload {
+  permission_id?: number
+  permission_qualified?: string
+  enabled: boolean
+  effect: 'allow' | 'deny'
+  pattern: string
+}
+
+export interface ShareRoleAssignmentPayload {
+  vault_role_id?: number
+  vault_role_name?: string
+  permission_overrides?: SharePermissionOverridePayload[]
+}
+
+export interface ShareRecipientRoleAssignmentPayload {
+  email: string
+  role_assignment: ShareRoleAssignmentPayload
+}
+
 export interface ShareConstraints {
   max_downloads?: number | null
   max_upload_files?: number | null
@@ -52,6 +71,8 @@ export interface ShareLink {
   allowed_extensions?: string[]
   blocked_extensions?: string[]
   metadata?: Record<string, unknown>
+  public_role_assignment?: ShareRoleAssignmentPayload | null
+  recipient_role_assignments?: ShareRecipientRoleAssignmentPayload[]
 }
 
 export interface PublicShare {
@@ -89,6 +110,8 @@ export interface ShareLinkCreatePayload {
   allowed_extensions?: string[]
   blocked_extensions?: string[]
   metadata?: Record<string, unknown>
+  public_role_assignment?: ShareRoleAssignmentPayload | null
+  recipient_role_assignments?: ShareRecipientRoleAssignmentPayload[]
 }
 
 export type ShareLinkUpdatePayload = Partial<Omit<ShareLinkCreatePayload, 'vault_id' | 'root_entry_id' | 'root_path' | 'target_type'>> & {
