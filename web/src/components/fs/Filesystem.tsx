@@ -1,7 +1,7 @@
 import React from 'react'
 import type { File as FileModel } from '@/models/file'
 import type { Directory } from '@/models/directory'
-import { getPreviewUrl } from '@/util/getUrl'
+import { buildPreviewUrl } from '@/util/previewUrl'
 import { formatSize } from '@/util/formatSize'
 import type { FileSystemProps, FilesystemEntry, FilesystemRow } from '@/components/fs/types'
 import { FilesystemClient } from './Filesystem.client'
@@ -31,7 +31,7 @@ function buildRows(files: FilesystemEntry[]): FilesystemRow[] {
       entryType: 'file',
       size: formatSize(f),
       modified: new Date(f.updated_at).toLocaleString(),
-      previewUrl: explicitPreviewUrl || (f.vault_id ? `${getPreviewUrl()}?vault_id=${f.vault_id}&path=${encodeURIComponent(f.path || f.name)}&size=64` : null),
+      previewUrl: explicitPreviewUrl || buildPreviewUrl({ mode: 'authenticated', vaultId: f.vault_id, path: f.path || f.name, size: 64 }),
     }
   })
 }

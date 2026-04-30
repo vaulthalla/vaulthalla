@@ -6,7 +6,7 @@ import { AnimatePresence } from 'motion/react'
 import Image from 'next/image'
 import type { File as FileModel } from '@/models/file'
 import type { SharePreviewResponse } from '@/models/linkShare'
-import { getPreviewUrl } from '@/util/getUrl'
+import { buildPreviewUrl } from '@/util/previewUrl'
 import { useFSStore } from '@/stores/fsStore'
 import X from '@/fa-duotone/x.svg'
 
@@ -22,17 +22,20 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({ file, shareP
   if (!file && !sharePreview) return null
 
   const filePath = file?.path || file?.name || '/'
-  const previewUrl = file ?
-    mode === 'share' ?
-      `${getPreviewUrl()}?share=1&path=${encodeURIComponent(filePath)}&size=1024`
-    : `${getPreviewUrl()}?vault_id=${file.vault_id}&path=${encodeURIComponent(filePath)}&size=1024`
-  : ''
+  const previewUrl = file ? buildPreviewUrl({
+    mode: mode === 'share' ? 'share' : 'authenticated',
+    vaultId: file.vault_id,
+    path: filePath,
+    size: 1024,
+  }) || '' : ''
   const sharePreviewUrl = sharePreview ? `data:${sharePreview.mime_type};base64,${sharePreview.data_base64}` : ''
   const sourceUrl = sharePreview ? sharePreviewUrl : previewUrl
-  const previewMime = sharePreview?.mime_type || file?.mime_type || ''
-  const isPdf = previewMime === 'application/pdf'
-  const isImage = !previewMime || previewMime.startsWith('image/')
-  const canPreview = !!sharePreview || mode === 'share' || !!file?.vault_id
+  const sourceMime = sharePreview?.source_mime_type || file?.mime_type || ''
+  const previewMime = sharePreview?.mime_type || sourceMime
+  const httpPreviewRendersImage = !sharePreview && (sourceMime.startsWith('image/') || sourceMime === 'application/pdf')
+  const isPdf = !httpPreviewRendersImage && previewMime === 'application/pdf'
+  const isImage = previewMime.startsWith('image/') || httpPreviewRendersImage
+  const canPreview = Boolean(sourceUrl && (isPdf || isImage))
 
   const meta = [
     { label: 'Name', value: sharePreview?.filename || file?.name || 'Preview' },

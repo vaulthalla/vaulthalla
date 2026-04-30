@@ -11,7 +11,7 @@ import { useShareWebSocketStore } from '@/stores/useShareWebSocket'
 import { useVaultShareStore } from '@/stores/vaultShareStore'
 import { ShareEntry, SharePreviewResponse } from '@/models/linkShare'
 import { hasShareOperation } from '@/util/shareOperations'
-import { getPreviewUrl } from '@/util/getUrl'
+import { buildPreviewUrl } from '@/util/previewUrl'
 
 type FsMode = 'authenticated' | 'share'
 type FsEntry = DBFile | Directory
@@ -86,7 +86,7 @@ const baseName = (path: string, fallback: string) => {
 
 const shareHttpPreviewUrl = (path?: string, size = 64) => {
   if (!path) return null
-  return `${getPreviewUrl()}?share=1&path=${encodeURIComponent(normalizeSharePath(path))}&size=${size}`
+  return buildPreviewUrl({ mode: 'share', path: normalizeSharePath(path), size })
 }
 
 const timestampToEpoch = (value?: string) => {
@@ -120,8 +120,9 @@ const shareEntryToFsEntry = (entry: ShareEntry): FsEntry => {
     mime_type: entry.mime_type ?? undefined,
   })
 
-  const share = useVaultShareStore.getState().share
-  if (hasShareOperation(share?.allowed_ops, 'preview') && entry.path && entry.mime_type &&
+  const shareState = useVaultShareStore.getState()
+  if (shareState.status === 'ready' && shareState.sessionToken &&
+    hasShareOperation(shareState.share?.allowed_ops, 'preview') && entry.path && entry.mime_type &&
     (entry.mime_type.startsWith('image/') || entry.mime_type === 'application/pdf')) {
     ;(file as DBFile & { previewUrl?: string | null }).previewUrl = shareHttpPreviewUrl(entry.path, 64)
   }
