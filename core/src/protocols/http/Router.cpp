@@ -22,12 +22,68 @@
 #include "../../../include/identities/User.hpp"
 
 #include <nlohmann/json.hpp>
+#include <memory>
 #include <optional>
+#include <stdexcept>
+#include <utility>
 
 using namespace vh::config;
 using namespace vh::stats::model;
 using namespace vh::fs::model;
 using namespace vh::fs::ops;
+
+namespace {
+[[nodiscard]] std::shared_ptr<vh::protocols::ws::Session> defaultPreviewSessionResolver(
+    const vh::protocols::http::request& req
+) {
+    const auto refresh = vh::protocols::extractCookie(req, "refresh");
+    if (refresh.empty()) throw std::runtime_error("Refresh token not set");
+    try {
+        return vh::runtime::Deps::get().sessionManager->validateRawRefreshToken(refresh);
+    } catch (const std::exception& humanError) {
+        try {
+            return vh::runtime::Deps::get().sessionManager->validateRawShareRefreshToken(refresh);
+        } catch (const std::exception& shareError) {
+            throw std::runtime_error(
+                std::string("human session rejected: ") + humanError.what() +
+                "; share session rejected: " + shareError.what()
+            );
+        }
+    }
+}
+
+[[nodiscard]] std::shared_ptr<vh::share::Manager> defaultSharePreviewManager() {
+    return std::make_shared<vh::share::Manager>();
+}
+
+[[nodiscard]] std::shared_ptr<vh::share::TargetResolver> defaultSharePreviewResolver() {
+    return std::make_shared<vh::share::TargetResolver>();
+}
+
+[[nodiscard]] std::shared_ptr<vh::storage::Engine> defaultPreviewEngine(const uint32_t vaultId) {
+    return vh::runtime::Deps::get().storageManager->getEngine(vaultId);
+}
+
+[[nodiscard]] vh::protocols::http::Router::PreviewSessionResolver& previewSessionResolver() {
+    static vh::protocols::http::Router::PreviewSessionResolver resolver = defaultPreviewSessionResolver;
+    return resolver;
+}
+
+[[nodiscard]] vh::protocols::http::Router::SharePreviewManagerFactory& sharePreviewManagerFactory() {
+    static vh::protocols::http::Router::SharePreviewManagerFactory factory = defaultSharePreviewManager;
+    return factory;
+}
+
+[[nodiscard]] vh::protocols::http::Router::SharePreviewResolverFactory& sharePreviewResolverFactory() {
+    static vh::protocols::http::Router::SharePreviewResolverFactory factory = defaultSharePreviewResolver;
+    return factory;
+}
+
+[[nodiscard]] vh::protocols::http::Router::PreviewEngineResolver& previewEngineResolver() {
+    static vh::protocols::http::Router::PreviewEngineResolver resolver = defaultPreviewEngine;
+    return resolver;
+}
+}
 
 static std::string url_decode(const std::string& value) {
     std::ostringstream result;
@@ -85,7 +141,7 @@ static std::unique_ptr<vh::protocols::http::model::preview::Request> preparePrev
     const std::unordered_map<std::string, std::string>& params
 ) {
     auto pr = std::make_unique<vh::protocols::http::model::preview::Request>(params);
-    pr->engine = vh::runtime::Deps::get().storageManager->getEngine(pr->vault_id);
+    pr->engine = previewEngineResolver()(pr->vault_id);
     if (!pr->engine)
         throw std::runtime_error("No storage engine found for vault with id " + std::to_string(pr->vault_id));
 
@@ -103,16 +159,25 @@ static std::unique_ptr<vh::protocols::http::model::preview::Request> prepareShar
 ) {
     if (!params.contains("share"))
         throw std::runtime_error("Share preview requests must use the share preview lane");
+    if (!session || !session->isShareMode() || session->user)
+        throw std::runtime_error("Share preview requires a ready share session");
+    if (session->shareSessionToken().empty())
+        throw std::runtime_error("Share session token is missing");
 
-    vh::share::Manager manager;
-    auto principal = manager.resolvePrincipal(
+    auto manager = sharePreviewManagerFactory()();
+    if (!manager) throw std::runtime_error("Share preview manager is unavailable");
+    auto resolver = sharePreviewResolverFactory()();
+    if (!resolver) throw std::runtime_error("Share preview resolver is unavailable");
+
+    auto principal = manager->resolvePrincipal(
         session->shareSessionToken(),
         session->ipAddress.empty() ? std::nullopt : std::make_optional(session->ipAddress),
         session->userAgent.empty() ? std::nullopt : std::make_optional(session->userAgent)
     );
+    session->setSharePrincipal(principal, session->shareSessionToken());
 
-    vh::share::TargetResolver resolver;
-    const auto target = resolver.resolve(*principal, {
+    const auto actor = session->rbacActor();
+    const auto target = resolver->resolve(actor, {
         .path = params.contains("path") ? params.at("path") : std::string{"/"},
         .operation = vh::share::Operation::Preview,
         .path_mode = vh::share::TargetPathMode::ShareRelative,
@@ -127,7 +192,7 @@ static std::unique_ptr<vh::protocols::http::model::preview::Request> prepareShar
     if (params.contains("scale")) scopedParams["scale"] = params.at("scale");
 
     auto pr = std::make_unique<vh::protocols::http::model::preview::Request>(scopedParams);
-    pr->engine = vh::runtime::Deps::get().storageManager->getEngine(pr->vault_id);
+    pr->engine = previewEngineResolver()(pr->vault_id);
     if (!pr->engine)
         throw std::runtime_error("No storage engine found for scoped share preview");
 
@@ -135,7 +200,7 @@ static std::unique_ptr<vh::protocols::http::model::preview::Request> prepareShar
     if (!file) throw std::runtime_error("Share preview target is not a file");
     pr->file = file;
 
-    manager.appendAccessAuditEvent(*principal, {
+    manager->appendAccessAuditEvent(*principal, {
         .event_type = "share.preview.http",
         .target = {
             .vault_id = target.vault_id,
@@ -204,6 +269,42 @@ std::string Router::authenticateRequest(const request& req) {
     }
 }
 
+void Router::setPreviewSessionResolverForTesting(PreviewSessionResolver resolver) {
+    if (!resolver) throw std::invalid_argument("Preview session resolver is required");
+    previewSessionResolver() = std::move(resolver);
+}
+
+void Router::resetPreviewSessionResolverForTesting() {
+    previewSessionResolver() = defaultPreviewSessionResolver;
+}
+
+void Router::setSharePreviewManagerFactoryForTesting(SharePreviewManagerFactory factory) {
+    if (!factory) throw std::invalid_argument("Share preview manager factory is required");
+    sharePreviewManagerFactory() = std::move(factory);
+}
+
+void Router::resetSharePreviewManagerFactoryForTesting() {
+    sharePreviewManagerFactory() = defaultSharePreviewManager;
+}
+
+void Router::setSharePreviewResolverFactoryForTesting(SharePreviewResolverFactory factory) {
+    if (!factory) throw std::invalid_argument("Share preview resolver factory is required");
+    sharePreviewResolverFactory() = std::move(factory);
+}
+
+void Router::resetSharePreviewResolverFactoryForTesting() {
+    sharePreviewResolverFactory() = defaultSharePreviewResolver;
+}
+
+void Router::setPreviewEngineResolverForTesting(PreviewEngineResolver resolver) {
+    if (!resolver) throw std::invalid_argument("Preview engine resolver is required");
+    previewEngineResolver() = std::move(resolver);
+}
+
+void Router::resetPreviewEngineResolverForTesting() {
+    previewEngineResolver() = defaultPreviewEngine;
+}
+
 Response Router::handlePreview(request&& req) {
     if (req.method() != verb::get || !req.target().starts_with("/preview"))
         return makeErrorResponse(
@@ -211,20 +312,7 @@ Response Router::handlePreview(request&& req) {
 
     std::shared_ptr<vh::protocols::ws::Session> session;
     try {
-        const auto refresh = protocols::extractCookie(req, "refresh");
-        if (refresh.empty()) throw std::runtime_error("Refresh token not set");
-        try {
-            session = runtime::Deps::get().sessionManager->validateRawRefreshToken(refresh);
-        } catch (const std::exception& humanError) {
-            try {
-                session = runtime::Deps::get().sessionManager->validateRawShareRefreshToken(refresh);
-            } catch (const std::exception& shareError) {
-                throw std::runtime_error(
-                    std::string("human session rejected: ") + humanError.what() +
-                    "; share session rejected: " + shareError.what()
-                );
-            }
-        }
+        session = previewSessionResolver()(req);
     } catch (const std::exception& e) {
         return makeErrorResponse(req, "Unauthorized: " + std::string(e.what()), status::unauthorized);
     }
