@@ -1,7 +1,11 @@
+#include "auth/model/RefreshToken.hpp"
+#include "auth/model/TokenPair.hpp"
+#include "auth/session/Manager.hpp"
 #include "identities/User.hpp"
 #include "protocols/ws/Router.hpp"
 #include "protocols/ws/Session.hpp"
 #include "protocols/ws/handler/share/Sessions.hpp"
+#include "runtime/Deps.hpp"
 #include "share/AuditEvent.hpp"
 #include "share/EmailChallenge.hpp"
 #include "share/Manager.hpp"
@@ -11,6 +15,7 @@
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 
+#include <chrono>
 #include <format>
 #include <memory>
 #include <stdexcept>
@@ -261,6 +266,19 @@ std::shared_ptr<Session> publicSession() {
     return session;
 }
 
+void attachRefreshToken(const std::shared_ptr<Session>& session, const std::string& jti) {
+    auto token = std::make_shared<vh::auth::model::RefreshToken>();
+    token->jti = jti;
+    token->rawToken = "raw-" + jti;
+    token->hashedToken = "hashed-" + jti;
+    token->subject = session->ipAddress + ":" + session->userAgent;
+    token->issuedAt = std::chrono::system_clock::now() - std::chrono::minutes(1);
+    token->expiresAt = std::chrono::system_clock::now() + std::chrono::hours(1);
+    token->userAgent = session->userAgent;
+    token->ipAddress = session->ipAddress;
+    session->tokens->refreshToken = std::move(token);
+}
+
 std::shared_ptr<Session> humanSession() {
     auto session = publicSession();
     auto user = std::make_shared<identities::User>();
@@ -294,9 +312,12 @@ protected:
     std::shared_ptr<FakeAuthorizer> authorizer;
     std::shared_ptr<vh::share::Manager> manager;
     std::shared_ptr<identities::User> user;
+    std::shared_ptr<vh::auth::session::Manager> oldSessionManager;
 
     void SetUp() override {
         vh::share::Token::setPepperForTesting(std::vector<uint8_t>(32, 0x61));
+        oldSessionManager = vh::runtime::Deps::get().sessionManager;
+        vh::runtime::Deps::get().sessionManager = std::make_shared<vh::auth::session::Manager>();
         store = std::make_shared<FakeStore>();
         authorizer = std::make_shared<FakeAuthorizer>();
         vh::share::ManagerOptions options;
@@ -315,6 +336,7 @@ protected:
 
     void TearDown() override {
         Sessions::resetManagerFactoryForTesting();
+        vh::runtime::Deps::get().sessionManager = oldSessionManager;
         vh::share::Token::clearPepperForTesting();
     }
 
@@ -368,6 +390,24 @@ TEST_F(WsShareSessionsTest, ValidPublicTokenOpensReadyShareSession) {
     expectNoSecretFields(response);
 }
 
+TEST_F(WsShareSessionsTest, PublicOpenMovesExistingRefreshJtiToReadyShareStorage) {
+    const auto created = create();
+    auto session = publicSession();
+    attachRefreshToken(session, "refresh-jti-ready");
+    vh::runtime::Deps::get().sessionManager->cache(session);
+
+    ASSERT_EQ(session, vh::runtime::Deps::get().sessionManager->get("refresh-jti-ready"));
+    ASSERT_EQ(nullptr, vh::runtime::Deps::get().sessionManager->getShareByRefreshJti("refresh-jti-ready"));
+
+    const auto response = Sessions::open({{"public_token", created.public_token}}, session);
+
+    EXPECT_EQ("ready", response.at("status").get<std::string>());
+    EXPECT_EQ(nullptr, vh::runtime::Deps::get().sessionManager->get("refresh-jti-ready"));
+    EXPECT_EQ(session, vh::runtime::Deps::get().sessionManager->getShareByRefreshJti("refresh-jti-ready"));
+    EXPECT_TRUE(session->isShareMode());
+    EXPECT_FALSE(session->user);
+}
+
 TEST_F(WsShareSessionsTest, PublicSessionRejectsMalformedWrongOrInactiveTokens) {
     const auto created = create();
 
@@ -398,6 +438,32 @@ TEST_F(WsShareSessionsTest, EmailValidatedShareOpensPendingAndDoesNotGrantPrinci
     EXPECT_EQ(nullptr, session->sharePrincipal());
     EXPECT_THROW({ (void)manager->resolvePrincipal(session->shareSessionToken()); }, std::runtime_error);
     expectNoSecretFields(response);
+}
+
+TEST_F(WsShareSessionsTest, EmailConfirmPromotesExistingRefreshJtiToReadyShareStorage) {
+    const auto created = create(vh::share::AccessMode::EmailValidated);
+    auto session = publicSession();
+    attachRefreshToken(session, "refresh-jti-email");
+    vh::runtime::Deps::get().sessionManager->cache(session);
+
+    const auto opened = Sessions::open({{"public_token", created.public_token}}, session);
+
+    EXPECT_EQ("email_required", opened.at("status").get<std::string>());
+    ASSERT_EQ(nullptr, vh::runtime::Deps::get().sessionManager->get("refresh-jti-email"));
+    ASSERT_EQ(session, vh::runtime::Deps::get().sessionManager->getShareByRefreshJti("refresh-jti-email"));
+    EXPECT_TRUE(session->isSharePending());
+
+    const auto challenge = Sessions::startEmailChallenge({{"email", " Email@Example.COM "}}, session);
+    const auto confirmed = Sessions::confirmEmailChallenge({
+        {"challenge_id", challenge.at("challenge_id").get<std::string>()},
+        {"code", std::string(kChallengeCode)}
+    }, session);
+
+    EXPECT_EQ("ready", confirmed.at("status").get<std::string>());
+    EXPECT_EQ(nullptr, vh::runtime::Deps::get().sessionManager->get("refresh-jti-email"));
+    EXPECT_EQ(session, vh::runtime::Deps::get().sessionManager->getShareByRefreshJti("refresh-jti-email"));
+    EXPECT_TRUE(session->isShareMode());
+    EXPECT_FALSE(session->user);
 }
 
 TEST_F(WsShareSessionsTest, ChallengeStartAndConfirmEstablishShareModeWithoutReturningCode) {

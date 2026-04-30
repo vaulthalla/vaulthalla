@@ -28,6 +28,7 @@ public:
     void invalidate(const std::shared_ptr<protocols::ws::Session>& session);
 
     std::shared_ptr<protocols::ws::Session> get(const std::string& token);
+    std::shared_ptr<protocols::ws::Session> getShareByRefreshJti(const std::string& token);
     std::vector<std::shared_ptr<protocols::ws::Session>> getSessions(const std::shared_ptr<identities::User>& user);
     std::vector<std::shared_ptr<protocols::ws::Session>> getSessionsByUserId(uint32_t userId);
 

@@ -28,12 +28,9 @@ void Manager::tryRehydrate(const std::shared_ptr<Session>& session) {
 
         Validator::validateRefreshToken(session); // May throw if invalid
         Issuer::accessToken(session); // Assign new access token
+        // Preserve valid anonymous refresh JTIs so share bootstrap can promote the
+        // browser's current cookie into the typed share-session map.
         cache(session);
-
-        if (!session->user) {
-            Issuer::refreshToken(session);
-            cache(session);
-        }
     } catch (const std::exception& ex) {
         log::Registry::ws()->debug(
             "[session::Manager] Rehydration failed for session UUID: {}. Reason: {}",
@@ -249,6 +246,14 @@ std::shared_ptr<Session> Manager::get(const std::string& token) {
 
     if (sessionsByUUID_.contains(token)) return sessionsByUUID_[token];
     if (sessionsByRefreshJti_.contains(token)) return sessionsByRefreshJti_[token];
+
+    return nullptr;
+}
+
+std::shared_ptr<Session> Manager::getShareByRefreshJti(const std::string& token) {
+    std::lock_guard lock(sessionMutex_);
+
+    if (shareSessionsByRefreshJti_.contains(token)) return shareSessionsByRefreshJti_[token];
 
     return nullptr;
 }

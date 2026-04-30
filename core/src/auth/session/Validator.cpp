@@ -69,7 +69,8 @@ bool Validator::tryRehydrateFromPriorSession(const std::shared_ptr<Session>& ses
 
     const auto priorSession = runtime::Deps::get().sessionManager->get(claims->jti);
     if (!priorSession || priorSession.get() == session.get()) return false;
-    if (!priorSession->tokens || !priorSession->tokens->refreshToken || !priorSession->user) return false;
+    if (!priorSession->tokens || !priorSession->tokens->refreshToken) return false;
+    if (priorSession->isShareSession()) return false;
 
     const auto& priorToken = priorSession->tokens->refreshToken;
 
@@ -87,9 +88,9 @@ bool Validator::tryRehydrateFromPriorSession(const std::shared_ptr<Session>& ses
             return false;
         }
 
-        session->user = priorSession->user;
         session->tokens->refreshToken = std::make_shared<auth::model::RefreshToken>(*priorToken);
         session->tokens->refreshToken->rawToken = rawToken;
+        if (priorSession->user) session->user = priorSession->user;
 
         log::Registry::auth()->debug(
             "[session::Validator] Rehydrated refresh token from prior session for JTI: {}",
