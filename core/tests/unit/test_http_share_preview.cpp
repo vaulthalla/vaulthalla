@@ -1,7 +1,12 @@
 #include "fs/model/Directory.hpp"
 #include "fs/model/File.hpp"
 #include "fs/model/Path.hpp"
+#include "auth/model/RefreshToken.hpp"
+#include "auth/model/TokenPair.hpp"
+#include "auth/session/Issuer.hpp"
+#include "auth/session/Manager.hpp"
 #include "config/Registry.hpp"
+#include "identities/User.hpp"
 #include "protocols/http/Router.hpp"
 #include "protocols/ws/Session.hpp"
 #include "runtime/Deps.hpp"
@@ -181,6 +186,7 @@ protected:
     std::shared_ptr<vh::share::Manager> manager;
     std::shared_ptr<vh::storage::Engine> engine;
     std::shared_ptr<vh::fs::model::File> file;
+    std::shared_ptr<vh::auth::session::Manager> oldSessionManager;
     vh::share::GeneratedToken sessionToken;
     std::filesystem::path oldBackingPath;
     std::filesystem::path oldMountPath;
@@ -190,6 +196,9 @@ protected:
     void SetUp() override {
         vh::share::Token::setPepperForTesting(std::vector<uint8_t>(32, 7));
         vh::runtime::Deps::get().httpCacheStats = std::make_shared<vh::stats::model::CacheStats>();
+        oldSessionManager = vh::runtime::Deps::get().sessionManager;
+        vh::runtime::Deps::get().sessionManager = std::make_shared<vh::auth::session::Manager>();
+        vh::auth::session::Issuer::setJwtSecretForTesting("http-share-preview-test-secret");
         oldBackingPath = vh::paths::backingPath;
         oldMountPath = vh::paths::mountPath;
         testRoot = std::filesystem::temp_directory_path() / "vh_http_share_preview_unit";
@@ -247,6 +256,8 @@ protected:
         vh::share::Token::clearPepperForTesting();
         if (engine && engine->paths)
             std::filesystem::remove_all(engine->paths->thumbnailRoot / file->base32_alias);
+        vh::runtime::Deps::get().sessionManager = oldSessionManager;
+        vh::auth::session::Issuer::clearJwtSecretForTesting();
         vh::paths::backingPath = oldBackingPath;
         vh::paths::mountPath = oldMountPath;
         std::filesystem::remove_all(testRoot);
@@ -254,6 +265,10 @@ protected:
 
     void installSharePreviewHooks(const std::shared_ptr<vh::protocols::ws::Session>& session) {
         Router::setPreviewSessionResolverForTesting([session](const request&) { return session; });
+        installSharePreviewDependencies();
+    }
+
+    void installSharePreviewDependencies() {
         Router::setSharePreviewManagerFactoryForTesting([manager = manager] { return manager; });
         Router::setSharePreviewResolverFactoryForTesting([provider = provider] {
             return std::make_shared<vh::share::TargetResolver>(provider);
@@ -298,14 +313,25 @@ protected:
         principal->expires_at = kNow + 3600;
 
         auto session = std::make_shared<vh::protocols::ws::Session>(std::make_shared<vh::protocols::ws::Router>());
+        session->ipAddress = "127.0.0.1";
+        session->userAgent = "http-share-preview-test";
         session->setSharePrincipal(principal, sessionToken.raw);
         return session;
+    }
+
+    std::string issueShareRefresh(const std::shared_ptr<vh::protocols::ws::Session>& session) {
+        vh::runtime::Deps::get().sessionManager->rotateShareRefreshToken(session);
+        return session->tokens->shareRefreshToken->rawToken;
+    }
+
+    std::string issueHumanRefresh(const std::shared_ptr<vh::protocols::ws::Session>& session) {
+        vh::runtime::Deps::get().sessionManager->rotateRefreshToken(session);
+        return session->tokens->refreshToken->rawToken;
     }
 };
 
 request previewRequest(const std::string& target) {
     request req{verb::get, target, 11};
-    req.set(field::cookie, "refresh=test-refresh");
     return req;
 }
 
@@ -333,6 +359,98 @@ TEST_F(HttpSharePreviewTest, RejectsMissingSessionCookie) {
 
     EXPECT_EQ(status::unauthorized, responseStatus(response));
     EXPECT_NE(std::string::npos, stringBody(response).find("missing session"));
+}
+
+TEST_F(HttpSharePreviewTest, SharePreviewReadsShareRefreshCookieAndIgnoresHumanRefreshCookie) {
+    auto session = readySession(vh::share::bit(vh::share::Operation::Preview));
+    std::string shareRefresh;
+    try {
+        shareRefresh = issueShareRefresh(session);
+    } catch (const std::exception& ex) {
+        GTEST_SKIP() << "JWT secret store unavailable: " << ex.what();
+    }
+    installSharePreviewDependencies();
+
+    auto req = previewRequest("/preview?share=1&path=%2Freport.jpg&size=" + std::to_string(previewSize));
+    req.set(field::cookie, "refresh=not-a-share-token; share_refresh=" + shareRefresh);
+
+    auto response = Router::handlePreview(std::move(req));
+
+    EXPECT_EQ(status::ok, responseStatus(response));
+    EXPECT_EQ("cached-thumbnail", vectorBody(response));
+    EXPECT_FALSE(session->user);
+}
+
+TEST_F(HttpSharePreviewTest, SharePreviewRejectsMissingShareRefreshCookie) {
+    auto response = Router::handlePreview(previewRequest("/preview?share=1&path=%2Freport.jpg&size=128"));
+
+    EXPECT_EQ(status::unauthorized, responseStatus(response));
+    EXPECT_NE(std::string::npos, stringBody(response).find("Share refresh token not set"));
+}
+
+TEST_F(HttpSharePreviewTest, SharePreviewRejectsPendingShareRefreshSession) {
+    auto session = std::make_shared<vh::protocols::ws::Session>(std::make_shared<vh::protocols::ws::Router>());
+    session->ipAddress = "127.0.0.1";
+    session->userAgent = "http-share-preview-test";
+    session->setPendingShareSession("share-session-1", "vhss_pending");
+    std::string shareRefresh;
+    try {
+        shareRefresh = issueShareRefresh(session);
+    } catch (const std::exception& ex) {
+        GTEST_SKIP() << "JWT secret store unavailable: " << ex.what();
+    }
+
+    auto req = previewRequest("/preview?share=1&path=%2Freport.jpg&size=128");
+    req.set(field::cookie, "share_refresh=" + shareRefresh);
+
+    auto response = Router::handlePreview(std::move(req));
+
+    EXPECT_EQ(status::unauthorized, responseStatus(response));
+    EXPECT_FALSE(session->user);
+}
+
+TEST_F(HttpSharePreviewTest, SharePreviewDoesNotAcceptHumanRefreshCookie) {
+    auto session = std::make_shared<vh::protocols::ws::Session>(std::make_shared<vh::protocols::ws::Router>());
+    session->ipAddress = "127.0.0.1";
+    session->userAgent = "http-share-preview-test";
+    auto user = std::make_shared<vh::identities::User>();
+    user->id = 9;
+    user->name = "preview-human";
+
+    std::string humanRefresh;
+    try {
+        humanRefresh = issueHumanRefresh(session);
+        session->setAuthenticatedUser(user);
+        vh::runtime::Deps::get().sessionManager->cache(session);
+    } catch (const std::exception& ex) {
+        GTEST_SKIP() << "JWT secret store unavailable: " << ex.what();
+    }
+
+    auto req = previewRequest("/preview?share=1&path=%2Freport.jpg&size=128");
+    req.set(field::cookie, "refresh=" + humanRefresh);
+
+    auto response = Router::handlePreview(std::move(req));
+
+    EXPECT_EQ(status::unauthorized, responseStatus(response));
+    EXPECT_NE(std::string::npos, stringBody(response).find("Share refresh token not set"));
+}
+
+TEST_F(HttpSharePreviewTest, NonSharePreviewDoesNotAcceptShareRefreshCookie) {
+    auto session = readySession(vh::share::bit(vh::share::Operation::Preview));
+    std::string shareRefresh;
+    try {
+        shareRefresh = issueShareRefresh(session);
+    } catch (const std::exception& ex) {
+        GTEST_SKIP() << "JWT secret store unavailable: " << ex.what();
+    }
+
+    auto req = previewRequest("/preview?vault_id=42&path=%2Fshared%2Freport.jpg&size=128");
+    req.set(field::cookie, "share_refresh=" + shareRefresh);
+
+    auto response = Router::handlePreview(std::move(req));
+
+    EXPECT_EQ(status::unauthorized, responseStatus(response));
+    EXPECT_NE(std::string::npos, stringBody(response).find("Refresh token not set"));
 }
 
 TEST_F(HttpSharePreviewTest, RejectsPendingShareSession) {

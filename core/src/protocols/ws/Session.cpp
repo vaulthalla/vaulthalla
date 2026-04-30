@@ -17,6 +17,7 @@
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
 #include <boost/asio.hpp>
+#include <string_view>
 
 #include "config/Registry.hpp"
 
@@ -25,6 +26,12 @@ namespace beast      = boost::beast;
 namespace beast_http = boost::beast::http;
 namespace websocket  = beast::websocket;
 namespace asio       = boost::asio;
+
+bool isShareHandshakeTarget(const std::string_view target) {
+    constexpr std::string_view sharePath{"/ws/share"};
+    return target == sharePath ||
+           (target.starts_with(sharePath) && target.size() > sharePath.size() && target[sharePath.size()] == '?');
+}
 } // namespace
 
 using namespace vh::identities;
@@ -153,11 +160,25 @@ void Session::hydrateFromRequest(const RequestType& req) {
     handshakeRequest_ = req;
     ipAddress = getIPAddress();
     userAgent = getUserAgent();
+    shareHandshake_ = isShareHandshakeTarget(std::string_view{req.target().data(), req.target().size()});
 
-    log::Registry::ws()->debug("[ws::Session] Attempting to hydrate session from request. IP: {}, User-Agent: {}", ipAddress, userAgent);
+    log::Registry::ws()->debug(
+        "[ws::Session] Attempting to hydrate {} session from request. IP: {}, User-Agent: {}",
+        shareHandshake_ ? "share" : "human",
+        ipAddress,
+        userAgent
+    );
+
+    if (shareHandshake_) {
+        auth::model::RefreshToken::addShareToSession(shared_from_this(), extractCookie(req, "share_refresh"));
+        runtime::Deps::get().sessionManager->tryRehydrateShareRefresh(shared_from_this());
+        log::Registry::ws()->debug("[ws::Session] Share refresh cookie {} present", tokens->shareRefreshToken && !tokens->shareRefreshToken->rawToken.empty() ? "is" : "is not");
+        installHandshakeDecorator();
+        return;
+    }
+
     auth::model::RefreshToken::addToSession(shared_from_this(), extractCookie(req, "refresh"));
-
-    log::Registry::ws()->debug("[ws::Session] Extracted refresh token from cookies: {}", tokens->refreshToken ? tokens->refreshToken->rawToken : "none");
+    log::Registry::ws()->debug("[ws::Session] Human refresh cookie {} present", tokens->refreshToken && !tokens->refreshToken->rawToken.empty() ? "is" : "is not");
     runtime::Deps::get().sessionManager->tryRehydrate(shared_from_this());
 
     if (user) log::Registry::ws()->debug("[ws::Session] Session hydrated with user: {} (ID: {})", user->name, user->id);
@@ -169,21 +190,26 @@ void Session::hydrateFromRequest(const RequestType& req) {
 }
 
 void Session::installHandshakeDecorator() const {
-    if (!tokens || !tokens->refreshToken) {
+    const auto token = shareHandshake_
+                           ? (tokens ? tokens->shareRefreshToken : nullptr)
+                           : (tokens ? tokens->refreshToken : nullptr);
+
+    if (!token) {
         log::Registry::ws()->debug("[ws::Session] No refresh token available, skipping handshake decorator installation");
         return;
     }
 
-    const auto t = tokens->refreshToken->rawToken;
+    const auto t = token->rawToken;
+    const auto cookieName = shareHandshake_ ? std::string{"share_refresh"} : std::string{"refresh"};
     ws_->set_option(websocket::stream_base::timeout::suggested(beast::role_type::server));
     ws_->set_option(websocket::stream_base::decorator(
-        [t](websocket::response_type& res) {
+        [t, cookieName](websocket::response_type& res) {
             res.set(beast_http::field::server, "Vaulthalla");
 
             const bool isDev = config::Registry::get().dev.enabled;
             const std::string sameSite = isDev ? "Lax" : "Lax"; // keep Lax unless *need* Strict
 
-            std::string cookie = "refresh=" + t +
+            std::string cookie = cookieName + "=" + t +
                 "; Path=/" +
                 "; HttpOnly" +
                 "; SameSite=" + sameSite +

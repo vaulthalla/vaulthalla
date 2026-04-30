@@ -112,6 +112,7 @@ private:
     std::shared_ptr<vh::share::Principal> sharePrincipal_{nullptr};
     std::string shareSessionId_;
     std::string shareSessionToken_;
+    bool shareHandshake_{false};
 
     std::atomic_bool closing_{false};
 

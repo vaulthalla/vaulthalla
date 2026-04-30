@@ -60,6 +60,10 @@ void RefreshToken::addToSession(const std::shared_ptr<protocols::ws::Session>& s
     session->tokens->refreshToken = std::make_shared<RefreshToken>(std::move(token));
 }
 
+void RefreshToken::addShareToSession(const std::shared_ptr<protocols::ws::Session>& session, std::string token) {
+    session->tokens->shareRefreshToken = std::make_shared<RefreshToken>(std::move(token));
+}
+
 bool operator==(const std::shared_ptr<RefreshToken>& lhs, const std::shared_ptr<RefreshToken>& rhs) {
     return lhs->revoked == rhs->revoked && lhs->jti == rhs->jti && lhs->hashedToken == rhs->hashedToken &&
            lhs->userAgent == rhs->userAgent && lhs->ipAddress == rhs->ipAddress &&

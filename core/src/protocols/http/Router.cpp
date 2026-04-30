@@ -19,12 +19,13 @@
 #include "auth/session/Manager.hpp"
 #include "share/Manager.hpp"
 #include "share/TargetResolver.hpp"
-#include "../../../include/identities/User.hpp"
+#include "identities/User.hpp"
 
 #include <nlohmann/json.hpp>
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <unordered_map>
 #include <utility>
 
 using namespace vh::config;
@@ -32,24 +33,22 @@ using namespace vh::stats::model;
 using namespace vh::fs::model;
 using namespace vh::fs::ops;
 
+static std::unordered_map<std::string, std::string> parse_query_params(const std::string& target);
+static bool isSharePreviewRequestTarget(const std::string& target);
+
 namespace {
 [[nodiscard]] std::shared_ptr<vh::protocols::ws::Session> defaultPreviewSessionResolver(
     const vh::protocols::http::request& req
 ) {
+    if (isSharePreviewRequestTarget(std::string(req.target()))) {
+        const auto shareRefresh = vh::protocols::extractCookie(req, "share_refresh");
+        if (shareRefresh.empty()) throw std::runtime_error("Share refresh token not set");
+        return vh::runtime::Deps::get().sessionManager->validateRawShareRefreshToken(shareRefresh);
+    }
+
     const auto refresh = vh::protocols::extractCookie(req, "refresh");
     if (refresh.empty()) throw std::runtime_error("Refresh token not set");
-    try {
-        return vh::runtime::Deps::get().sessionManager->validateRawRefreshToken(refresh);
-    } catch (const std::exception& humanError) {
-        try {
-            return vh::runtime::Deps::get().sessionManager->validateRawShareRefreshToken(refresh);
-        } catch (const std::exception& shareError) {
-            throw std::runtime_error(
-                std::string("human session rejected: ") + humanError.what() +
-                "; share session rejected: " + shareError.what()
-            );
-        }
-    }
+    return vh::runtime::Deps::get().sessionManager->validateRawRefreshToken(refresh);
 }
 
 [[nodiscard]] std::shared_ptr<vh::share::Manager> defaultSharePreviewManager() {
@@ -122,6 +121,11 @@ static std::unordered_map<std::string, std::string> parse_query_params(const std
     return params;
 }
 
+static bool isSharePreviewRequestTarget(const std::string& target) {
+    const auto params = parse_query_params(target);
+    return params.contains("share") && params.at("share") == "1";
+}
+
 static std::vector<uint8_t> tryCacheRead(const std::shared_ptr<File>& f, const std::filesystem::path& thumbnailRoot,
                                          const unsigned int size) {
     if (const auto thumbnail_sizes = Registry::get().caching.thumbnails.sizes;
@@ -157,7 +161,7 @@ static std::unique_ptr<vh::protocols::http::model::preview::Request> prepareShar
     const std::unordered_map<std::string, std::string>& params,
     const std::shared_ptr<vh::protocols::ws::Session>& session
 ) {
-    if (!params.contains("share"))
+    if (!params.contains("share") || params.at("share") != "1")
         throw std::runtime_error("Share preview requests must use the share preview lane");
     if (!session || !session->isShareMode() || session->user)
         throw std::runtime_error("Share preview requires a ready share session");
@@ -310,6 +314,9 @@ Response Router::handlePreview(request&& req) {
         return makeErrorResponse(
             req, "Invalid request", status::bad_request);
 
+    const auto params = parse_query_params(std::string(req.target()));
+    const auto sharePreview = isSharePreviewRequestTarget(std::string(req.target()));
+
     std::shared_ptr<vh::protocols::ws::Session> session;
     try {
         session = previewSessionResolver()(req);
@@ -319,11 +326,14 @@ Response Router::handlePreview(request&& req) {
 
     std::unique_ptr<Request> pr;
     try {
-        const auto params = parse_query_params(req.target());
-        if (session && session->isShareMode()) pr = prepareSharePreviewRequest(params, session);
+        if (sharePreview) {
+            if (!session || !session->isShareMode() || session->user)
+                return makeErrorResponse(req, "Unauthorized: preview requires a ready share session", status::unauthorized);
+            pr = prepareSharePreviewRequest(params, session);
+        }
         else {
             if (!session || !session->user)
-                return makeErrorResponse(req, "Unauthorized: preview requires a user or ready share session", status::unauthorized);
+                return makeErrorResponse(req, "Unauthorized: preview requires a user", status::unauthorized);
             pr = preparePreviewRequest(params);
         }
     } catch (const std::exception& e) {

@@ -26,6 +26,7 @@ struct RefreshToken final : Token {
     [[nodiscard]] Type type() const override { return Type::Refresh; }
 
     static void addToSession(const std::shared_ptr<protocols::ws::Session>& session, std::string token);
+    static void addShareToSession(const std::shared_ptr<protocols::ws::Session>& session, std::string token);
 };
 
 bool operator==(const std::shared_ptr<RefreshToken>& lhs, const std::shared_ptr<RefreshToken>& rhs);

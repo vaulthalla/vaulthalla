@@ -30,7 +30,7 @@ std::shared_ptr<vh::fs::model::Directory> dir(
     return entry;
 }
 
-std::shared_ptr<vh::fs::model::File> file(
+std::shared_ptr<vh::fs::model::File> makeFile(
     const uint32_t id,
     const uint32_t vaultId,
     const std::string& path,
@@ -104,8 +104,8 @@ std::shared_ptr<FakeEntryProvider> providerWithSharedTree() {
     auto provider = std::make_shared<FakeEntryProvider>();
     provider->add(dir(10, 42, "/shared"));
     provider->add(dir(11, 42, "/shared/reports", 10));
-    provider->add(file(12, 42, "/shared/reports/q1.pdf", 11));
-    provider->add(file(13, 42, "/shared/readme.txt", 10));
+    provider->add(makeFile(12, 42, "/shared/reports/q1.pdf", 11));
+    provider->add(makeFile(13, 42, "/shared/readme.txt", 10));
     provider->add(dir(20, 42, "/shared_evil"));
     return provider;
 }
@@ -247,7 +247,7 @@ TEST(ShareFsResolutionTest, ListsChildrenOnlyWhenTheyRemainInsideScope) {
     auto children = resolver.listChildren(principal, target);
     ASSERT_EQ(children.size(), 2u);
 
-    provider->children[10].push_back(file(99, 42, "/outside.txt", 10));
+    provider->children[10].push_back(makeFile(99, 42, "/outside.txt", 10));
     EXPECT_THROW({ (void)resolver.listChildren(principal, target); }, std::runtime_error);
 }
 

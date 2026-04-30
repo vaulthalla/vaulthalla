@@ -13,10 +13,24 @@
 #include <uuid/uuid.h>
 #include <jwt-cpp/jwt.h>
 #include <jwt-cpp/traits/nlohmann-json/traits.h>
+#include <nlohmann/json.hpp>
+#include <utility>
 
 using namespace vh::protocols::ws;
 
 namespace vh::auth::session {
+
+namespace {
+std::optional<std::string>& jwtSecretForTesting() {
+    static std::optional<std::string> secret;
+    return secret;
+}
+
+std::string jwtSecret() {
+    if (const auto& secret = jwtSecretForTesting()) return *secret;
+    return vh::runtime::Deps::get().secretsManager->jwtSecret();
+}
+}
 
 static std::string generateUUID() {
     uuid_t uuid;
@@ -26,7 +40,12 @@ static std::string generateUUID() {
     return {uuidStr};
 }
 
-static void finalizeAndSignToken(const std::shared_ptr<Session>& session, const std::shared_ptr<model::Token>& t, const std::chrono::system_clock::duration ttl) {
+static void finalizeAndSignToken(
+    const std::shared_ptr<Session>& session,
+    const std::shared_ptr<model::Token>& t,
+    const std::chrono::system_clock::duration ttl,
+    const std::string_view tokenKind
+) {
     const auto now = std::chrono::time_point_cast<std::chrono::seconds>(
         std::chrono::system_clock::now()
     );
@@ -37,20 +56,29 @@ static void finalizeAndSignToken(const std::shared_ptr<Session>& session, const 
     t->jti = generateUUID();
     if (session->user) t->userId = session->user->id;
 
-    t->rawToken =
+    auto builder =
         jwt::create<jwt::traits::nlohmann_json>()
         .set_issuer("Vaulthalla")
         .set_subject(t->subject)
         .set_issued_at(now)
         .set_expires_at(exp)
-        .set_id(t->jti)
-        .sign(jwt::algorithm::hs256{vh::runtime::Deps::get().secretsManager->jwtSecret()});
+        .set_id(t->jti);
+
+    if (!tokenKind.empty())
+        builder.set_payload_claim("token_kind", nlohmann::json(std::string(tokenKind)));
+
+    t->rawToken = builder.sign(jwt::algorithm::hs256{jwtSecret()});
 }
 
 void Issuer::accessToken(const std::shared_ptr<Session>& session) {
     const auto t = std::make_shared<model::Token>();
     t->subject = buildAccessTokenSubject(session);
-    finalizeAndSignToken(session, t, std::chrono::minutes(vh::config::Registry::get().auth.access_token_expiry_minutes));
+    finalizeAndSignToken(
+        session,
+        t,
+        std::chrono::minutes(vh::config::Registry::get().auth.access_token_expiry_minutes),
+        accessTokenKind()
+    );
     session->tokens->accessToken = t;
     session->sendAccessTokenOnNextResponse();
 }
@@ -60,7 +88,12 @@ void Issuer::refreshToken(const std::shared_ptr<Session>& session) {
     t->subject = buildRefreshTokenSubject(session);
     t->userAgent = session->userAgent;
     t->ipAddress = session->ipAddress;
-    finalizeAndSignToken(session, t, std::chrono::days(vh::config::Registry::get().auth.refresh_token_expiry_days));
+    finalizeAndSignToken(
+        session,
+        t,
+        std::chrono::days(vh::config::Registry::get().auth.refresh_token_expiry_days),
+        refreshTokenKind()
+    );
     t->hashedToken = crypto::hash::password(t->rawToken);
 
     if (t->hashedToken.empty()) {
@@ -76,19 +109,50 @@ void Issuer::refreshToken(const std::shared_ptr<Session>& session) {
     }
 }
 
+void Issuer::shareRefreshToken(const std::shared_ptr<Session>& session) {
+    const auto t = std::make_shared<model::RefreshToken>();
+    t->subject = buildRefreshTokenSubject(session);
+    t->userAgent = session->userAgent;
+    t->ipAddress = session->ipAddress;
+    finalizeAndSignToken(
+        session,
+        t,
+        std::chrono::days(vh::config::Registry::get().auth.refresh_token_expiry_days),
+        shareRefreshTokenKind()
+    );
+    t->hashedToken = crypto::hash::password(t->rawToken);
+
+    if (t->hashedToken.empty()) {
+        log::Registry::auth()->error("[session::Issuer] Failed to hash share refresh token for session {}", session->uuid);
+        throw std::runtime_error("Failed to hash share refresh token");
+    }
+
+    session->tokens->shareRefreshToken = t;
+
+    if (session->tokens->shareRefreshToken != t) {
+        log::Registry::auth()->error("[session::Issuer] Failed to assign share refresh token to session {}", session->uuid);
+        throw std::runtime_error("Failed to assign share refresh token to session");
+    }
+}
+
 std::optional<TokenClaims> Issuer::decode(const std::string& refreshToken) {
     try {
         const auto decoded = jwt::decode<jwt::traits::nlohmann_json>(refreshToken);
 
         const auto verifier = jwt::verify<jwt::traits::nlohmann_json>()
-            .allow_algorithm(jwt::algorithm::hs256{runtime::Deps::get().secretsManager->jwtSecret()})
+            .allow_algorithm(jwt::algorithm::hs256{jwtSecret()})
             .with_issuer("Vaulthalla");
 
         verifier.verify(decoded);
 
+        const auto tokenKind = decoded.has_payload_claim("token_kind")
+                                   ? decoded.get_payload_claim("token_kind").as_string()
+                                   : std::string{};
+
         return TokenClaims {
             .jti = decoded.get_id(),
             .subject = decoded.get_subject(),
+            .tokenKind = tokenKind,
             .issuedAt = decoded.get_issued_at(),
             .expiresAt = decoded.get_expires_at()
         };
@@ -104,6 +168,14 @@ std::string Issuer::buildAccessTokenSubject(const std::shared_ptr<Session>& sess
 
 std::string Issuer::buildRefreshTokenSubject(const std::shared_ptr<Session>& session) {
     return session->ipAddress + ":" + session->userAgent;
+}
+
+void Issuer::setJwtSecretForTesting(std::string secret) {
+    jwtSecretForTesting() = std::move(secret);
+}
+
+void Issuer::clearJwtSecretForTesting() {
+    jwtSecretForTesting().reset();
 }
 
 }

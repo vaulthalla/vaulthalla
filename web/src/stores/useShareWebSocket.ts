@@ -72,7 +72,7 @@ export const useShareWebSocketStore = create<ShareWebSocketStore>()(
         if (connected || socket || isConnecting) return
         isConnecting = true
 
-        const ws = new WebSocket(getWebsocketUrl())
+        const ws = new WebSocket(getWebsocketUrl('/ws/share'))
 
         ws.onopen = () => {
           set({ connected: true })

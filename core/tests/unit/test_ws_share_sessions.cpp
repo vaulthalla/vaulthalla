@@ -266,7 +266,7 @@ std::shared_ptr<Session> publicSession() {
     return session;
 }
 
-void attachRefreshToken(const std::shared_ptr<Session>& session, const std::string& jti) {
+void attachShareRefreshToken(const std::shared_ptr<Session>& session, const std::string& jti) {
     auto token = std::make_shared<vh::auth::model::RefreshToken>();
     token->jti = jti;
     token->rawToken = "raw-" + jti;
@@ -276,7 +276,7 @@ void attachRefreshToken(const std::shared_ptr<Session>& session, const std::stri
     token->expiresAt = std::chrono::system_clock::now() + std::chrono::hours(1);
     token->userAgent = session->userAgent;
     token->ipAddress = session->ipAddress;
-    session->tokens->refreshToken = std::move(token);
+    session->tokens->shareRefreshToken = std::move(token);
 }
 
 std::shared_ptr<Session> humanSession() {
@@ -390,20 +390,20 @@ TEST_F(WsShareSessionsTest, ValidPublicTokenOpensReadyShareSession) {
     expectNoSecretFields(response);
 }
 
-TEST_F(WsShareSessionsTest, PublicOpenMovesExistingRefreshJtiToReadyShareStorage) {
+TEST_F(WsShareSessionsTest, PublicOpenPromotesExistingShareRefreshJtiToReadyShareStorage) {
     const auto created = create();
     auto session = publicSession();
-    attachRefreshToken(session, "refresh-jti-ready");
+    attachShareRefreshToken(session, "share-refresh-jti-ready");
     vh::runtime::Deps::get().sessionManager->cache(session);
 
-    ASSERT_EQ(session, vh::runtime::Deps::get().sessionManager->get("refresh-jti-ready"));
-    ASSERT_EQ(nullptr, vh::runtime::Deps::get().sessionManager->getShareByRefreshJti("refresh-jti-ready"));
+    ASSERT_EQ(nullptr, vh::runtime::Deps::get().sessionManager->get("share-refresh-jti-ready"));
+    ASSERT_EQ(session, vh::runtime::Deps::get().sessionManager->getShareByRefreshJti("share-refresh-jti-ready"));
 
     const auto response = Sessions::open({{"public_token", created.public_token}}, session);
 
     EXPECT_EQ("ready", response.at("status").get<std::string>());
-    EXPECT_EQ(nullptr, vh::runtime::Deps::get().sessionManager->get("refresh-jti-ready"));
-    EXPECT_EQ(session, vh::runtime::Deps::get().sessionManager->getShareByRefreshJti("refresh-jti-ready"));
+    EXPECT_EQ(nullptr, vh::runtime::Deps::get().sessionManager->get("share-refresh-jti-ready"));
+    EXPECT_EQ(session, vh::runtime::Deps::get().sessionManager->getShareByRefreshJti("share-refresh-jti-ready"));
     EXPECT_TRUE(session->isShareMode());
     EXPECT_FALSE(session->user);
 }
@@ -440,17 +440,17 @@ TEST_F(WsShareSessionsTest, EmailValidatedShareOpensPendingAndDoesNotGrantPrinci
     expectNoSecretFields(response);
 }
 
-TEST_F(WsShareSessionsTest, EmailConfirmPromotesExistingRefreshJtiToReadyShareStorage) {
+TEST_F(WsShareSessionsTest, EmailConfirmPromotesExistingShareRefreshJtiToReadyShareStorage) {
     const auto created = create(vh::share::AccessMode::EmailValidated);
     auto session = publicSession();
-    attachRefreshToken(session, "refresh-jti-email");
+    attachShareRefreshToken(session, "share-refresh-jti-email");
     vh::runtime::Deps::get().sessionManager->cache(session);
 
     const auto opened = Sessions::open({{"public_token", created.public_token}}, session);
 
     EXPECT_EQ("email_required", opened.at("status").get<std::string>());
-    ASSERT_EQ(nullptr, vh::runtime::Deps::get().sessionManager->get("refresh-jti-email"));
-    ASSERT_EQ(session, vh::runtime::Deps::get().sessionManager->getShareByRefreshJti("refresh-jti-email"));
+    ASSERT_EQ(nullptr, vh::runtime::Deps::get().sessionManager->get("share-refresh-jti-email"));
+    ASSERT_EQ(session, vh::runtime::Deps::get().sessionManager->getShareByRefreshJti("share-refresh-jti-email"));
     EXPECT_TRUE(session->isSharePending());
 
     const auto challenge = Sessions::startEmailChallenge({{"email", " Email@Example.COM "}}, session);
@@ -460,8 +460,8 @@ TEST_F(WsShareSessionsTest, EmailConfirmPromotesExistingRefreshJtiToReadyShareSt
     }, session);
 
     EXPECT_EQ("ready", confirmed.at("status").get<std::string>());
-    EXPECT_EQ(nullptr, vh::runtime::Deps::get().sessionManager->get("refresh-jti-email"));
-    EXPECT_EQ(session, vh::runtime::Deps::get().sessionManager->getShareByRefreshJti("refresh-jti-email"));
+    EXPECT_EQ(nullptr, vh::runtime::Deps::get().sessionManager->get("share-refresh-jti-email"));
+    EXPECT_EQ(session, vh::runtime::Deps::get().sessionManager->getShareByRefreshJti("share-refresh-jti-email"));
     EXPECT_TRUE(session->isShareMode());
     EXPECT_FALSE(session->user);
 }
