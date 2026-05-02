@@ -83,6 +83,8 @@ const roleLabel = (role?: VaultRole | null) => role?.name.replace(/_/g, ' ') ?? 
 
 const shortcutRoleName = (shortcut: ShareShortcut) => shortcut === 'custom' ? null : roleNameForPreset(shortcut)
 
+const isPublicShareRoute = () => typeof window !== 'undefined' && window.location.pathname.startsWith('/share/')
+
 const matchesShortcutRole = (shortcut: ShareShortcut, roleId: number, rolesByShortcut: Record<SharePreset, VaultRole | null>) => {
   if (shortcut === 'custom') return false
   return rolesByShortcut[shortcut]?.id === roleId
@@ -246,11 +248,6 @@ export const ShareManagementModal: React.FC<ShareManagementModalProps> = ({ targ
     [publicRoleId, roleOptions],
   )
 
-  const recipientRole = useMemo(
-    () => roleOptions.find(role => role.id === recipientRoleId) ?? null,
-    [recipientRoleId, roleOptions],
-  )
-
   const targetShares = useMemo(
     () => shares.filter(share => share.vault_id === vault.id && share.root_entry_id === target.id),
     [shares, target.id, vault.id],
@@ -261,6 +258,8 @@ export const ShareManagementModal: React.FC<ShareManagementModalProps> = ({ targ
   const selectedShortcutRoleName = shortcutRoleName(shortcut)
 
   useEffect(() => {
+    if (isPublicShareRoute()) return
+
     let mounted = true
     const init = async () => {
       setIsRefreshing(true)

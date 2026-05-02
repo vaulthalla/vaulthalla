@@ -40,6 +40,7 @@ export const FilesystemClient: React.FC<FilesystemClientProps> = memo(({ rows })
   const share = useVaultShareStore(state => state.share)
   const canSharePreview = hasShareOperation(share?.allowed_ops, 'preview')
   const canShareDownload = hasShareOperation(share?.allowed_ops, 'download')
+  const canManageShares = mode === 'authenticated'
 
   const sharePath = React.useCallback((row: { path?: string; name: string }) => row.path || row.name, [])
   const isPreviewable = React.useCallback((file: FileModel) => Boolean(file.mime_type?.startsWith('image/') || file.mime_type === 'application/pdf'), [])
@@ -175,14 +176,14 @@ export const FilesystemClient: React.FC<FilesystemClientProps> = memo(({ rows })
           onClose={() => setContextMenu(null)}
           onDelete={row => handleDelete(row.name)}
           onCopy={row => setCopiedItem(row)}
-          onShare={row => setShareTarget(row)}
+          onShare={canManageShares ? row => setShareTarget(row) : undefined}
           onOpen={handleShareOpen}
           onPreview={handleSharePreview}
           onDownload={handleDownload}
         />
       )}
 
-      {shareTarget && currVault && mode === 'authenticated' && (
+      {shareTarget && currVault && canManageShares && (
         <ShareManagementModal target={shareTarget} vault={currVault} onClose={() => setShareTarget(null)} />
       )}
     </>

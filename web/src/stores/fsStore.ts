@@ -25,6 +25,7 @@ interface FsStore {
   uploading: boolean
   uploadProgress: number
   uploadError: string | null
+  uploadSuccess: string | null
   uploadLabel: string | null
   downloading: boolean
   downloadProgress: number
@@ -194,11 +195,30 @@ const requireAuthenticatedMode = (mode: FsMode, action: string) => {
 
 const errorMessage = (error: unknown, fallback: string) => (error instanceof Error && error.message ? error.message : fallback)
 
+const isDuplicateUploadTargetError = (message: string) => {
+  const normalized = message.toLowerCase()
+  return normalized.includes('share upload target already exists') ||
+    normalized.includes('upload target already exists') ||
+    normalized.includes('target already exists')
+}
+
+const uploadErrorMessage = (error: unknown, fallback: string, mode: FsMode) => {
+  const message = errorMessage(error, fallback)
+  if (mode === 'share' && isDuplicateUploadTargetError(message)) return 'A file with that name already exists in this share.'
+  return message
+}
+
+const uploadSuccessMessage = (files: FileWithRelativePath[]) => {
+  if (files.length === 1) return `${files[0].name} uploaded.`
+  return `${files.length} files uploaded.`
+}
+
 const clearTransferState = () => ({
   copiedItem: null,
   uploadProgress: 0,
   uploading: false,
   uploadError: null,
+  uploadSuccess: null,
   uploadLabel: null,
   downloadProgress: 0,
   downloading: false,
@@ -249,6 +269,7 @@ export const useFSStore = create<FsStore>()(
       uploading: false,
       uploadProgress: 0,
       uploadError: null,
+      uploadSuccess: null,
       uploadLabel: null,
       downloading: false,
       downloadProgress: 0,
@@ -271,6 +292,7 @@ export const useFSStore = create<FsStore>()(
           uploadProgress: 0,
           uploading: false,
           uploadError: null,
+          uploadSuccess: null,
           uploadLabel: null,
           downloadProgress: 0,
           downloading: false,
@@ -292,6 +314,7 @@ export const useFSStore = create<FsStore>()(
           uploadProgress: 0,
           uploading: false,
           uploadError: null,
+          uploadSuccess: null,
           uploadLabel: null,
           downloadProgress: 0,
           downloading: false,
@@ -440,9 +463,11 @@ export const useFSStore = create<FsStore>()(
             if (hasShareOperation(shareState.share?.allowed_ops, 'list') || shareState.share?.target_type === 'file')
               await fetchFiles()
           }
+
+          set({ uploadProgress: 100, uploadError: null, uploadSuccess: uploadSuccessMessage(files) })
         } catch (err) {
           console.error('[FsStore] upload() batch failed:', err)
-          set({ uploadError: errorMessage(err, 'Upload failed') })
+          set({ uploadError: uploadErrorMessage(err, 'Upload failed', get().mode) })
           throw err
         } finally {
           set({ uploading: false, uploadLabel: null })

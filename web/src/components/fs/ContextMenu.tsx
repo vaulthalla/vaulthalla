@@ -86,10 +86,12 @@ export function ContextMenu<
                 <CopyIcon className="text-primary my-1 fill-current" />
                 Copy
               </ContextButton>
-              <ContextButton onClick={() => onShare?.(data)}>
-                <ShareIcon className="text-primary my-1 fill-current" />
-                Share
-              </ContextButton>
+              {onShare && (
+                <ContextButton onClick={() => onShare(data)}>
+                  <ShareIcon className="text-primary my-1 fill-current" />
+                  Share
+                </ContextButton>
+              )}
               <ContextButton onClick={() => onDownload?.(data)}>
                 <DownloadIcon className="text-primary my-1 fill-current" />
                 Download

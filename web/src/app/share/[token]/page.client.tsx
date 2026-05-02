@@ -1,6 +1,6 @@
 'use client'
 
-import React, { FormEvent, useEffect, useState } from 'react'
+import React, { FormEvent, useEffect, useRef, useState } from 'react'
 import { Filesystem } from '@/components/fs/Filesystem'
 import { FileDropOverlay } from '@/components/fs/FileDropOverlay'
 import { Breadcrumbs } from '@/components/fs/breadcrumbs/Breadcrumbs'
@@ -10,6 +10,7 @@ import CircleNotch from '@/fa-duotone/circle-notch.svg'
 import { useFSStore } from '@/stores/fsStore'
 import { useVaultShareStore } from '@/stores/vaultShareStore'
 import { hasShareOperation } from '@/util/shareOperations'
+import type { FileWithRelativePath } from '@/models/systemFile'
 
 const Alert = ({ tone = 'info', children }: { tone?: 'info' | 'error' | 'success'; children: React.ReactNode }) => {
   const styles =
@@ -37,6 +38,7 @@ const ShareLoadingState = () => (
 const SharePageClient = ({ token }: { token: string }) => {
   const [email, setEmail] = useState('')
   const [code, setCode] = useState('')
+  const uploadInputRef = useRef<HTMLInputElement>(null)
   const status = useVaultShareStore(state => state.status)
   const share = useVaultShareStore(state => state.share)
   const error = useVaultShareStore(state => state.error)
@@ -50,6 +52,7 @@ const SharePageClient = ({ token }: { token: string }) => {
   const challengeStartedAt = useVaultShareStore(state => state.challengeStartedAt)
   const files = useFSStore(state => state.files)
   const fetchFiles = useFSStore(state => state.fetchFiles)
+  const uploadFiles = useFSStore(state => state.upload)
   const enterShareMode = useFSStore(state => state.enterShareMode)
   const exitShareMode = useFSStore(state => state.exitShareMode)
   const uploadError = useFSStore(state => state.uploadError)
@@ -60,12 +63,16 @@ const SharePageClient = ({ token }: { token: string }) => {
   const downloadLabel = useFSStore(state => state.downloadLabel)
   const downloadProgress = useFSStore(state => state.downloadProgress)
   const downloadError = useFSStore(state => state.downloadError)
+  const mode = useFSStore(state => state.mode)
+  const uploadSuccess = useFSStore(state => state.uploadSuccess)
 
   const canList = hasShareOperation(share?.allowed_ops, 'list')
   const canUpload = hasShareOperation(share?.allowed_ops, 'upload')
   const isFileShare = share?.target_type === 'file'
   const isDirectoryShare = share?.target_type === 'directory'
-  const canShowFileSurface = canList || isFileShare || (canUpload && isDirectoryShare)
+  const canBrowseShare = canList || isFileShare
+  const isUploadOnlyDirectoryShare = canUpload && isDirectoryShare && !canList
+  const canShowFileSurface = canBrowseShare || isUploadOnlyDirectoryShare
 
   useEffect(() => {
     enterShareMode()
@@ -108,8 +115,8 @@ const SharePageClient = ({ token }: { token: string }) => {
   }, [openSession, token])
 
   useEffect(() => {
-    if (status === 'ready' && (canList || isFileShare)) fetchFiles().catch(() => undefined)
-  }, [canList, fetchFiles, isFileShare, status])
+    if (mode === 'share' && status === 'ready' && canBrowseShare) fetchFiles().catch(() => undefined)
+  }, [canBrowseShare, fetchFiles, mode, status])
 
   const submitEmail = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -119,6 +126,22 @@ const SharePageClient = ({ token }: { token: string }) => {
   const submitCode = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     await confirmEmailChallenge(code).catch(() => undefined)
+  }
+
+  const handleUploadInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const selected = Array.from(event.target.files ?? [])
+    if (!selected.length) return
+
+    const files = selected.map(file => {
+      Object.defineProperty(file, 'relativePath', { value: file.name, writable: false })
+      return file as FileWithRelativePath
+    })
+
+    uploadFiles(files)
+      .catch(() => undefined)
+      .finally(() => {
+        event.target.value = ''
+      })
   }
 
   return (
@@ -183,12 +206,16 @@ const SharePageClient = ({ token }: { token: string }) => {
           </section>
         )}
 
-        {status === 'ready' && (
+        {status === 'ready' && mode !== 'share' && <ShareLoadingState />}
+
+        {status === 'ready' && mode === 'share' && (
           <>
-            <div className="flex items-center justify-between gap-3">
-              <Breadcrumbs className="min-w-0 flex-1" />
-              <DownloadCurrentDirectoryButton />
-            </div>
+            {!isUploadOnlyDirectoryShare && (
+              <div className="flex items-center justify-between gap-3">
+                <Breadcrumbs className="min-w-0 flex-1" />
+                <DownloadCurrentDirectoryButton />
+              </div>
+            )}
 
             {(downloading || downloadError) && (
               <Alert tone={downloadError ? 'error' : 'info'}>
@@ -202,7 +229,38 @@ const SharePageClient = ({ token }: { token: string }) => {
               </Alert>
             )}
 
-            {canShowFileSurface ? (
+            {isUploadOnlyDirectoryShare ? (
+              <FileDropOverlay disabled={!canUpload || !isDirectoryShare} disabledMessage="Upload is not available for this share">
+                <UploadProgress />
+                <section className="rounded border border-dashed border-cyan-500/35 bg-gray-900 p-8 text-center text-gray-200">
+                  <h2 className="text-xl font-semibold text-white">Upload files to this share</h2>
+                  <p className="mt-2 text-sm text-gray-400">Uploaded files may not be visible after upload.</p>
+                  {uploadSuccess && (
+                    <div className="mt-5 rounded border border-emerald-500/40 bg-emerald-950/30 p-3 text-sm text-emerald-100">
+                      {uploadSuccess}
+                    </div>
+                  )}
+                  <div className="mt-5 flex flex-col items-center gap-3 text-sm text-cyan-200 sm:flex-row sm:justify-center">
+                    <input
+                      ref={uploadInputRef}
+                      className="hidden"
+                      type="file"
+                      multiple
+                      onChange={handleUploadInputChange}
+                      disabled={uploading}
+                    />
+                    <button
+                      type="button"
+                      className="rounded bg-cyan-400 px-4 py-2 font-medium text-gray-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
+                      disabled={uploading}
+                      onClick={() => uploadInputRef.current?.click()}>
+                      Select files
+                    </button>
+                    <span>or drop files here.</span>
+                  </div>
+                </section>
+              </FileDropOverlay>
+            ) : canShowFileSurface ? (
               <FileDropOverlay disabled={!canUpload || !isDirectoryShare} disabledMessage="Upload is not available for this share">
                 <UploadProgress />
                 {files.length === 0 ? (

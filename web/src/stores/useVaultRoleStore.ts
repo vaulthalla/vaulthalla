@@ -105,18 +105,6 @@ export const useVaultRoleStore = create<VaultRoleStore>()(
     {
       name: 'vaulthalla-vault-roles',
       partialize: state => ({ vaultRoles: state.vaultRoles, assignedRolesByVault: state.assignedRolesByVault }),
-      onRehydrateStorage: state => {
-        console.log('[VaultRoleStore] Rehydrating...')
-        return async () => {
-          try {
-            await useWebSocketStore.getState().waitForConnection()
-            await state?.fetchVaultRoles?.()
-            console.log('[VaultRoleStore] Vault roles fetch complete')
-          } catch (err) {
-            console.error('[VaultRoleStore] Rehydrate fetch failed:', err)
-          }
-        }
-      },
     },
   ),
 )
