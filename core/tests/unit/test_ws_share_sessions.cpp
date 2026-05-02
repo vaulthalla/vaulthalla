@@ -1,10 +1,12 @@
 #include "auth/model/RefreshToken.hpp"
 #include "auth/model/TokenPair.hpp"
 #include "auth/session/Manager.hpp"
+#include "db/encoding/bytea.hpp"
 #include "identities/User.hpp"
 #include "protocols/ws/Router.hpp"
 #include "protocols/ws/Session.hpp"
 #include "protocols/ws/handler/share/Sessions.hpp"
+#include "rbac/role/Vault.hpp"
 #include "runtime/Deps.hpp"
 #include "share/AuditEvent.hpp"
 #include "share/EmailChallenge.hpp"
@@ -65,10 +67,14 @@ public:
     std::unordered_map<std::string, std::shared_ptr<vh::share::Session>> sessions;
     std::unordered_map<std::string, std::string> session_by_lookup;
     std::unordered_map<std::string, std::shared_ptr<vh::share::EmailChallenge>> challenges;
+    std::unordered_map<std::string, std::shared_ptr<vh::rbac::role::Vault>> vault_roles;
+    std::unordered_map<std::string, uint32_t> recipients_by_hash;
+    std::unordered_map<std::string, std::shared_ptr<vh::rbac::role::Vault>> recipient_roles;
     std::vector<std::shared_ptr<vh::share::AuditEvent>> audits;
     uint32_t next_link{100};
     uint32_t next_session{200};
     uint32_t next_challenge{300};
+    uint32_t next_recipient{400};
 
     std::shared_ptr<vh::share::Link> createLink(const std::shared_ptr<vh::share::Link>& link) override {
         auto stored = std::make_shared<vh::share::Link>(*link);
@@ -149,6 +155,55 @@ public:
         auto link = getLink(id);
         if (!link) throw std::runtime_error("missing link");
         ++link->download_count;
+    }
+
+    void upsertVaultRoleForShare(
+        const std::string& shareId,
+        uint32_t,
+        const std::shared_ptr<vh::rbac::role::Vault>& role
+    ) override {
+        vault_roles[shareId] = std::make_shared<vh::rbac::role::Vault>(*role);
+    }
+
+    std::shared_ptr<vh::rbac::role::Vault> getVaultRoleForShare(const std::string& shareId) override {
+        if (!vault_roles.contains(shareId)) return nullptr;
+        return vault_roles.at(shareId);
+    }
+
+    std::shared_ptr<vh::rbac::role::Vault> getRecipientVaultRoleForShare(
+        const std::string& shareId,
+        const std::vector<uint8_t>& emailHash
+    ) override {
+        const auto key = shareId + ":" + db::encoding::to_hex_bytea(emailHash);
+        if (!recipient_roles.contains(key)) return nullptr;
+        return recipient_roles.at(key);
+    }
+
+    uint32_t upsertValidatedRecipient(
+        const std::string& shareId,
+        const std::vector<uint8_t>& emailHash
+    ) override {
+        const auto key = shareId + ":" + db::encoding::to_hex_bytea(emailHash);
+        if (recipients_by_hash.contains(key)) return recipients_by_hash.at(key);
+        const auto id = next_recipient++;
+        recipients_by_hash[key] = id;
+        return id;
+    }
+
+    void upsertRecipientVaultRoleAssignment(
+        const std::string& shareId,
+        const uint32_t vaultId,
+        const uint32_t recipientId,
+        const uint32_t roleId,
+        const std::vector<rbac::permission::Override>& overrides
+    ) override {
+        auto role = getVaultRoleTemplate(roleId);
+        auto assigned = std::make_shared<vh::rbac::role::Vault>(*role);
+        assigned->assign(recipientId, "actor", vaultId);
+        assigned->fs.overrides = overrides;
+        for (const auto& [key, id] : recipients_by_hash)
+            if (id == recipientId && key.starts_with(shareId + ":"))
+                recipient_roles[key] = assigned;
     }
 
     std::shared_ptr<vh::share::Session> createSession(
@@ -341,7 +396,24 @@ protected:
     }
 
     vh::share::CreateLinkResult create(const vh::share::AccessMode mode = vh::share::AccessMode::Public) {
-        return manager->createLink(rbac::Actor::human(user), {.link = makeLink(mode)});
+        std::vector<vh::share::RecipientRoleAssignmentRequest> recipients;
+        if (mode == vh::share::AccessMode::EmailValidated) {
+            recipients.push_back({
+                .email = "email@example.com",
+                .role = vh::share::RoleAssignmentRequest{.vault_role_name = rbac::role::Vault::Reader().name}
+            });
+            recipients.push_back({
+                .email = "recipient@example.com",
+                .role = vh::share::RoleAssignmentRequest{.vault_role_name = rbac::role::Vault::Reader().name}
+            });
+        }
+        return manager->createLink(rbac::Actor::human(user), {
+            .link = makeLink(mode),
+            .public_role = mode == vh::share::AccessMode::EmailValidated
+                               ? vh::share::RoleAssignmentRequest{.vault_role_name = rbac::role::Vault::ImplicitDeny().name}
+                               : vh::share::RoleAssignmentRequest{.vault_role_name = rbac::role::Vault::Reader().name},
+            .recipients = std::move(recipients)
+        });
     }
 
     std::string wrongSecret(const std::string& token) const {

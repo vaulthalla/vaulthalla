@@ -87,7 +87,7 @@ private:
     void abortHumanUpload(const std::string& reason) noexcept;
     void abortShareUpload(const std::string& reason) noexcept;
 
-    std::shared_ptr<Session> session_;
+    std::weak_ptr<Session> session_;
     std::optional<UploadContext> currentUpload_;
     std::optional<ShareUploadContext> currentShareUpload_;
 };

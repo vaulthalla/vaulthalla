@@ -16,7 +16,7 @@ namespace vh::rbac::role {
     struct Vault final : Meta, vault::Base, std::enable_shared_from_this<Vault> {
         struct AssignmentInfo {
             uint32_t subject_id{}, vault_id{};
-            std::string subject_type{}; // 'user' or 'group'
+            std::string subject_type{}; // 'user', 'group', 'public', or 'actor'
 
             [[nodiscard]] std::string toString(uint8_t indent) const;
         };

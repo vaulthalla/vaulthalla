@@ -6,6 +6,7 @@
 #include "db/query/share/Session.hpp"
 #include "db/query/share/Upload.hpp"
 #include "db/query/share/VaultRole.hpp"
+#include "db/query/rbac/role/Vault.hpp"
 #include "identities/User.hpp"
 #include "rbac/fs/policy/Share.hpp"
 #include "rbac/permission/vault/Filesystem.hpp"
@@ -96,6 +97,53 @@ public:
 
     std::shared_ptr<rbac::role::Vault> getVaultRoleForShare(const std::string& shareId) override {
         return db::query::share::VaultRole::getForShare(shareId);
+    }
+
+    std::shared_ptr<rbac::role::Vault> getRecipientVaultRoleForShare(
+        const std::string& shareId,
+        const std::vector<uint8_t>& emailHash
+    ) override {
+        return db::query::share::VaultRole::getRecipientAssignment(shareId, emailHash);
+    }
+
+    std::shared_ptr<rbac::role::Vault> getVaultRoleTemplate(const uint32_t roleId) override {
+        return db::query::rbac::role::Vault::get(roleId);
+    }
+
+    std::shared_ptr<rbac::role::Vault> getVaultRoleTemplateByName(const std::string& name) override {
+        return db::query::rbac::role::Vault::get(name);
+    }
+
+    void upsertPublicVaultRoleAssignment(
+        const std::string& shareId,
+        const uint32_t vaultId,
+        const uint32_t roleId,
+        const std::vector<rbac::permission::Override>& overrides
+    ) override {
+        db::query::share::VaultRole::upsertPublicAssignment(shareId, vaultId, roleId, overrides);
+    }
+
+    uint32_t upsertValidatedRecipient(
+        const std::string& shareId,
+        const std::vector<uint8_t>& emailHash
+    ) override {
+        return db::query::share::VaultRole::upsertRecipient(shareId, emailHash);
+    }
+
+    void upsertRecipientVaultRoleAssignment(
+        const std::string& shareId,
+        const uint32_t vaultId,
+        const uint32_t recipientId,
+        const uint32_t roleId,
+        const std::vector<rbac::permission::Override>& overrides
+    ) override {
+        db::query::share::VaultRole::upsertRecipientAssignment(
+            shareId,
+            vaultId,
+            recipientId,
+            roleId,
+            overrides
+        );
     }
 
     void removeVaultRoleForShare(const std::string& shareId) override {
@@ -399,24 +447,86 @@ void normalizeAndValidate(Link& link) {
     link.grant().requireValid();
 }
 
-[[nodiscard]] std::shared_ptr<rbac::role::Vault> buildScopedVaultRole(const Link& link) {
-    auto role = std::make_shared<rbac::role::Vault>(
-        rbac::fs::policy::Share::scopedVaultRoleForGrant(link.id, link.grant())
-    );
+[[nodiscard]] std::shared_ptr<rbac::role::Vault> roleTemplateForAssignment(
+    ShareStore& store,
+    const std::optional<RoleAssignmentRequest>& request
+) {
+    std::shared_ptr<rbac::role::Vault> role;
+
+    if (request && request->vault_role_id)
+        role = store.getVaultRoleTemplate(*request->vault_role_id);
+    else if (request && request->vault_role_name)
+        role = store.getVaultRoleTemplateByName(*request->vault_role_name);
+    else
+        role = store.getVaultRoleTemplateByName(rbac::role::Vault::ImplicitDeny().name);
+
+    if (!role)
+        throw std::runtime_error("Share vault role template is missing from the database");
+    if (role->id == 0)
+        throw std::runtime_error("Share vault role template is not persisted");
     return role;
 }
 
-void persistScopedVaultRole(ShareStore& store, const Link& link) {
-    if (link.id.empty()) throw std::runtime_error("Share link id is required for scoped vault role persistence");
-    store.upsertVaultRoleForShare(link.id, link.vault_id, buildScopedVaultRole(link));
+void persistPublicAssignment(
+    ShareStore& store,
+    const Link& link,
+    const std::optional<RoleAssignmentRequest>& request
+) {
+    if (link.id.empty()) throw std::runtime_error("Share link id is required for role assignment persistence");
+    const auto role = roleTemplateForAssignment(store, request);
+    store.upsertPublicVaultRoleAssignment(
+        link.id,
+        link.vault_id,
+        role->id,
+        request ? request->overrides : std::vector<rbac::permission::Override>{}
+    );
 }
 
-void attachScopedVaultRole(ShareStore& store, const Link& link, Principal& principal) {
-    auto role = store.getVaultRoleForShare(link.id);
-    if (!role) {
-        role = buildScopedVaultRole(link);
-        store.upsertVaultRoleForShare(link.id, link.vault_id, role);
+void persistRecipientAssignments(
+    ShareStore& store,
+    const Link& link,
+    const std::vector<RecipientRoleAssignmentRequest>& recipients
+) {
+    for (const auto& recipient : recipients) {
+        const auto normalizedEmail = EmailChallenge::normalizeEmail(recipient.email);
+        const auto emailHash = EmailChallenge::hashEmail(normalizedEmail);
+        const auto recipientId = store.upsertValidatedRecipient(link.id, emailHash);
+        const auto role = roleTemplateForAssignment(store, std::make_optional(recipient.role));
+        store.upsertRecipientVaultRoleAssignment(
+            link.id,
+            link.vault_id,
+            recipientId,
+            role->id,
+            recipient.role.overrides
+        );
     }
+}
+
+void persistRoleAssignments(
+    ShareStore& store,
+    const Link& link,
+    const std::optional<RoleAssignmentRequest>& publicRole,
+    const std::vector<RecipientRoleAssignmentRequest>& recipients
+) {
+    persistPublicAssignment(store, link, publicRole);
+    persistRecipientAssignments(store, link, recipients);
+}
+
+void attachScopedVaultRole(ShareStore& store, const Link& link, const Session& session, Principal& principal) {
+    std::shared_ptr<rbac::role::Vault> role;
+    if (link.requiresEmail() && session.email_hash) {
+        role = store.getRecipientVaultRoleForShare(link.id, *session.email_hash);
+        if (!role) {
+            auto legacy = store.getVaultRoleForShare(link.id);
+            if (legacy && !legacy->assignment) role = std::move(legacy);
+        }
+    } else if (link.requiresEmail()) {
+        throw std::runtime_error("Share recipient is not verified");
+    } else {
+        role = store.getVaultRoleForShare(link.id);
+    }
+    if (!role)
+        throw std::runtime_error("Share vault role assignment is missing");
     principal.scoped_vault_role = std::move(role);
 }
 
@@ -606,7 +716,7 @@ CreateLinkResult Manager::createLink(const rbac::Actor& actor, CreateLinkRequest
         link->token_hash = token.hash;
         auto created = store_->createLink(link);
         try {
-            persistScopedVaultRole(*store_, *created);
+            persistRoleAssignments(*store_, *created, request.public_role, request.recipients);
         } catch (...) {
             store_->revokeLink(created->id, created->created_by);
             throw;
@@ -672,7 +782,8 @@ std::shared_ptr<Link> Manager::updateLink(const rbac::Actor& actor, UpdateLinkRe
 
     try {
         requireAllowed(authorizer_->canUpdateLink(actor, *existing, *updated), "update");
-        persistScopedVaultRole(*store_, *updated);
+        if (request.public_role) persistPublicAssignment(*store_, *updated, request.public_role);
+        if (request.recipients) persistRecipientAssignments(*store_, *updated, *request.recipients);
         auto saved = store_->updateLink(updated);
         store_->appendAuditEvent(audit);
         return saved;
@@ -870,7 +981,7 @@ std::shared_ptr<Principal> Manager::resolvePrincipal(
         auto link = requirePtr(store_->getLink(session->share_id), "Share link not found");
         attachLink(*audit, *link);
         auto principal = PrincipalResolver::resolve(*link, *session, now(options_));
-        attachScopedVaultRole(*store_, *link, *principal);
+        attachScopedVaultRole(*store_, *link, *session, *principal);
         store_->touchSession(session->id);
         store_->appendAuditEvent(audit);
         return principal;

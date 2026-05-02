@@ -51,6 +51,7 @@ protected:
         db::seed::nuke_and_recreate_schema_public();
         db::Transactions::dbPool_->initPreparedStatements();
         seed::initPermissions();
+        seed::initRoles();
         share::Token::setPepperForTesting(std::vector<uint8_t>(32, 0x51));
 
         db::Transactions::exec("ShareQueryTest::seed", [&](pqxx::work& txn) {
@@ -179,20 +180,22 @@ TEST_F(ShareQueryTest, ShareVaultRoleMappingRoundTripsScopedOverrides) {
     auto link = db::query::share::Link::create(makeLink());
     ASSERT_NE(link, nullptr);
 
-    auto role = std::make_shared<rbac::role::Vault>(
-        rbac::fs::policy::Share::scopedVaultRoleForGrant(link->id, link->grant())
-    );
+    auto role = db::query::rbac::role::Vault::get(rbac::role::Vault::ImplicitDeny().name);
+    ASSERT_NE(role, nullptr);
+    role->fs.overrides = rbac::fs::policy::Share::scopedVaultRoleForGrant(link->id, link->grant()).fs.overrides;
     ASSERT_GT(role->fs.overrides.size(), 0u);
+    const auto persistedRoleId = role->id;
 
     const auto mappingId = db::query::share::VaultRole::upsertForShare(link->id, link->vault_id, role);
     EXPECT_GT(mappingId, 0u);
-    ASSERT_GT(role->id, 0u);
-    const auto persistedRoleId = role->id;
 
     auto loaded = db::query::share::VaultRole::getForShare(link->id);
     ASSERT_NE(loaded, nullptr);
     EXPECT_EQ(loaded->id, persistedRoleId);
-    EXPECT_EQ(loaded->name, "share_link_" + link->id);
+    EXPECT_EQ(loaded->name, rbac::role::Vault::ImplicitDeny().name);
+    ASSERT_TRUE(loaded->assignment);
+    EXPECT_EQ(loaded->assignment->subject_type, "public");
+    EXPECT_EQ(loaded->assignment->vault_id, link->vault_id);
     EXPECT_EQ(loaded->fs.files.toBitString(), rbac::role::Vault::ImplicitDeny().fs.files.toBitString());
     EXPECT_EQ(loaded->fs.directories.toBitString(), rbac::role::Vault::ImplicitDeny().fs.directories.toBitString());
     EXPECT_GT(loaded->fs.overrides.size(), 0u);
@@ -226,7 +229,7 @@ TEST_F(ShareQueryTest, ShareVaultRoleMappingRoundTripsScopedOverrides) {
 
     db::query::share::VaultRole::removeForShare(link->id);
     EXPECT_EQ(db::query::share::VaultRole::getForShare(link->id), nullptr);
-    EXPECT_FALSE(db::query::rbac::role::Vault::exists(persistedRoleId));
+    EXPECT_TRUE(db::query::rbac::role::Vault::exists(persistedRoleId));
 }
 
 TEST_F(ShareQueryTest, SessionChallengeUploadAndAuditRoundTrips) {

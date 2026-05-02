@@ -23,13 +23,14 @@ namespace vh::protocols::ws::handler::fs {
                                  args.uploadId, args.tmpPath.string(), args.finalPath.string(),
                                  args.fuseFrom.string(), args.fuseTo.string(), args.expectedSize);
 
+        auto session = session_.lock();
         if (uploadInProgress()) throw std::runtime_error("Upload already in progress");
-        if (!session_ || !session_->user) throw std::runtime_error("Authenticated user upload requires a human session");
+        if (!session || !session->user) throw std::runtime_error("Authenticated user upload requires a human session");
 
         if (std::filesystem::is_directory(args.finalPath))
             throw std::runtime_error("Upload final path is a directory — filename must be provided");
 
-        if (const auto err = Filesystem::mkdir(args.fuseFrom.parent_path(), 0755, session_->user->id, args.engine); err)
+        if (const auto err = Filesystem::mkdir(args.fuseFrom.parent_path(), 0755, session->user->id, args.engine); err)
             throw std::runtime_error(std::string("Failed to create directory ") + args.fuseFrom.parent_path().string());
 
         currentUpload_.emplace(args);
@@ -44,7 +45,8 @@ namespace vh::protocols::ws::handler::fs {
         if (args.shareId.empty()) throw std::invalid_argument("Share upload share id is required");
         if (args.shareSessionId.empty()) throw std::invalid_argument("Share upload session id is required");
         if (args.websocketSessionUuid.empty()) throw std::invalid_argument("Share upload websocket session id is required");
-        if (!session_ || session_->uuid != args.websocketSessionUuid)
+        auto session = session_.lock();
+        if (!session || session->uuid != args.websocketSessionUuid)
             throw std::runtime_error("Share upload websocket session mismatch");
         if (!args.onChunk || !args.onFinish || !args.onCancel || !args.onFail)
             throw std::invalid_argument("Share upload callbacks are required");
@@ -57,9 +59,10 @@ namespace vh::protocols::ws::handler::fs {
             auto& upload = *currentShareUpload_;
             const auto size = static_cast<uint64_t>(buffer.size());
             try {
-                if (!session_ || upload.websocketSessionUuid != session_->uuid)
+                auto session = session_.lock();
+                if (!session || upload.websocketSessionUuid != session->uuid)
                     throw std::runtime_error("Share upload does not belong to this websocket session");
-                if (upload.shareSessionId != session_->shareSessionId())
+                if (upload.shareSessionId != session->shareSessionId())
                     throw std::runtime_error("Share upload does not belong to this share session");
                 if (size == 0) throw std::runtime_error("Empty upload chunk");
                 if (size > upload.maxChunkSize) throw std::runtime_error("Upload chunk exceeds maximum size");
@@ -166,10 +169,13 @@ namespace vh::protocols::ws::handler::fs {
             throw std::runtime_error("Upload size mismatch");
         }
 
-        log::Registry::ws()->debug("[UploadHandler] Finishing upload (uploadId: {}, fuseFrom: {}, fuseTo: {}, userId: {})",
-                                 upload.uploadId, upload.fuseFrom.string(), upload.fuseTo.string(), session_->user->id);
+        auto session = session_.lock();
+        if (!session || !session->user) throw std::runtime_error("Authenticated user upload requires a human session");
 
-        if (const auto err = Filesystem::rename(upload.fuseFrom, upload.fuseTo, session_->user->id, upload.engine); err) {
+        log::Registry::ws()->debug("[UploadHandler] Finishing upload (uploadId: {}, fuseFrom: {}, fuseTo: {}, userId: {})",
+                                 upload.uploadId, upload.fuseFrom.string(), upload.fuseTo.string(), session->user->id);
+
+        if (const auto err = Filesystem::rename(upload.fuseFrom, upload.fuseTo, session->user->id, upload.engine); err) {
             abortHumanUpload("upload_finish_failed");
             throw std::runtime_error(std::string("Failed to move uploaded file to final location: ") + std::strerror(err));
         }

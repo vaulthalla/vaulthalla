@@ -1,4 +1,5 @@
 #include "identities/User.hpp"
+#include "db/encoding/bytea.hpp"
 #include "rbac/Actor.hpp"
 #include "share/AuditEvent.hpp"
 #include "share/EmailChallenge.hpp"
@@ -62,12 +63,29 @@ public:
     std::unordered_map<std::string, std::shared_ptr<EmailChallenge>> challenges;
     std::unordered_map<std::string, std::shared_ptr<Upload>> uploads;
     std::unordered_map<std::string, std::shared_ptr<rbac::role::Vault>> vault_roles;
+    std::unordered_map<uint32_t, std::shared_ptr<rbac::role::Vault>> role_templates;
+    std::unordered_map<std::string, uint32_t> role_template_by_name;
+    std::unordered_map<std::string, uint32_t> recipients_by_hash;
+    std::unordered_map<std::string, std::shared_ptr<rbac::role::Vault>> recipient_roles;
     std::vector<std::shared_ptr<AuditEvent>> audits;
 
     uint32_t next_link{100};
     uint32_t next_session{200};
     uint32_t next_challenge{300};
     uint32_t next_upload{400};
+    uint32_t next_recipient{500};
+
+    FakeStore() {
+        addTemplate(1, rbac::role::Vault::ImplicitDeny());
+        addTemplate(2, rbac::role::Vault::Reader());
+        addTemplate(3, rbac::role::Vault::Contributor());
+    }
+
+    void addTemplate(const uint32_t id, rbac::role::Vault role) {
+        role.id = id;
+        role_templates[id] = std::make_shared<rbac::role::Vault>(std::move(role));
+        role_template_by_name[role_templates[id]->name] = id;
+    }
 
     std::shared_ptr<Link> createLink(const std::shared_ptr<Link>& link) override {
         auto stored = std::make_shared<Link>(*link);
@@ -165,8 +183,74 @@ public:
         return vault_roles.at(shareId);
     }
 
+    std::shared_ptr<rbac::role::Vault> getRecipientVaultRoleForShare(
+        const std::string& shareId,
+        const std::vector<uint8_t>& emailHash
+    ) override {
+        const auto key = shareId + ":" + db::encoding::to_hex_bytea(emailHash);
+        if (!recipient_roles.contains(key)) return nullptr;
+        return recipient_roles.at(key);
+    }
+
+    std::shared_ptr<rbac::role::Vault> getVaultRoleTemplate(const uint32_t id) override {
+        if (!role_templates.contains(id)) return nullptr;
+        return role_templates.at(id);
+    }
+
+    std::shared_ptr<rbac::role::Vault> getVaultRoleTemplateByName(const std::string& name) override {
+        if (!role_template_by_name.contains(name)) return nullptr;
+        return getVaultRoleTemplate(role_template_by_name.at(name));
+    }
+
+    void upsertPublicVaultRoleAssignment(
+        const std::string& shareId,
+        const uint32_t vaultId,
+        const uint32_t roleId,
+        const std::vector<rbac::permission::Override>& overrides
+    ) override {
+        auto role = getVaultRoleTemplate(roleId);
+        if (!role) throw std::runtime_error("missing role template");
+        auto assigned = std::make_shared<rbac::role::Vault>(*role);
+        assigned->assignment_id = 900 + static_cast<uint32_t>(vault_roles.size());
+        assigned->assign(assigned->assignment_id, "public", vaultId);
+        assigned->fs.overrides = overrides;
+        vault_roles[shareId] = assigned;
+    }
+
+    uint32_t upsertValidatedRecipient(
+        const std::string& shareId,
+        const std::vector<uint8_t>& emailHash
+    ) override {
+        const auto key = shareId + ":" + db::encoding::to_hex_bytea(emailHash);
+        if (recipients_by_hash.contains(key)) return recipients_by_hash.at(key);
+        const auto id = next_recipient++;
+        recipients_by_hash[key] = id;
+        return id;
+    }
+
+    void upsertRecipientVaultRoleAssignment(
+        const std::string& shareId,
+        const uint32_t vaultId,
+        const uint32_t recipientId,
+        const uint32_t roleId,
+        const std::vector<rbac::permission::Override>& overrides
+    ) override {
+        auto role = getVaultRoleTemplate(roleId);
+        if (!role) throw std::runtime_error("missing role template");
+        auto assigned = std::make_shared<rbac::role::Vault>(*role);
+        assigned->assignment_id = 1000 + recipientId;
+        assigned->assign(recipientId, "actor", vaultId);
+        assigned->fs.overrides = overrides;
+        for (const auto& [key, id] : recipients_by_hash)
+            if (id == recipientId && key.starts_with(shareId + ":"))
+                recipient_roles[key] = assigned;
+    }
+
     void removeVaultRoleForShare(const std::string& shareId) override {
         vault_roles.erase(shareId);
+        for (auto it = recipient_roles.begin(); it != recipient_roles.end();)
+            if (it->first.starts_with(shareId + ":")) it = recipient_roles.erase(it);
+            else ++it;
     }
 
     std::shared_ptr<Session> createSession(const std::shared_ptr<Session>& session) override {
@@ -390,8 +474,28 @@ protected:
 
     [[nodiscard]] rbac::Actor humanActor() const { return rbac::Actor::human(user); }
 
-    [[nodiscard]] CreateLinkResult create(const AccessMode mode = AccessMode::Public) {
-        return manager->createLink(humanActor(), {.link = makeManagerLink(mode)});
+    [[nodiscard]] CreateLinkResult create(
+        const AccessMode mode = AccessMode::Public,
+        const std::string& roleName = rbac::role::Vault::Reader().name
+    ) {
+        std::vector<RecipientRoleAssignmentRequest> recipients;
+        if (mode == AccessMode::EmailValidated) {
+            recipients.push_back({
+                .email = "recipient@example.com",
+                .role = RoleAssignmentRequest{.vault_role_name = roleName}
+            });
+            recipients.push_back({
+                .email = "email@example.com",
+                .role = RoleAssignmentRequest{.vault_role_name = roleName}
+            });
+        }
+        return manager->createLink(humanActor(), {
+            .link = makeManagerLink(mode),
+            .public_role = mode == AccessMode::EmailValidated
+                               ? RoleAssignmentRequest{.vault_role_name = rbac::role::Vault::ImplicitDeny().name}
+                               : RoleAssignmentRequest{.vault_role_name = roleName},
+            .recipients = std::move(recipients)
+        });
     }
 
     [[nodiscard]] std::string wrongSecret(const std::string& token) const {
@@ -421,8 +525,9 @@ TEST_F(ShareManagerTest, CreatePersistsScopedVaultRoleAndResolvedPrincipalUsesIt
     ASSERT_TRUE(store->vault_roles.contains(result.link->id));
     const auto role = store->vault_roles.at(result.link->id);
     ASSERT_NE(role, nullptr);
-    EXPECT_EQ(role->name, "share_link_" + result.link->id);
-    EXPECT_GT(role->fs.overrides.size(), 0u);
+    EXPECT_EQ(role->name, rbac::role::Vault::Reader().name);
+    ASSERT_TRUE(role->assignment);
+    EXPECT_EQ(role->assignment->subject_type, "public");
 
     auto opened = manager->openPublicSession(result.public_token);
     auto principal = manager->resolvePrincipal(opened.session_token);
@@ -434,6 +539,20 @@ TEST_F(ShareManagerTest, CreatePersistsScopedVaultRoleAndResolvedPrincipalUsesIt
     EXPECT_TRUE(decision.allowed);
 
     decision = manager->authorize(*principal, Operation::Preview, "/reports/file.txt", TargetType::File);
+    EXPECT_FALSE(decision.allowed);
+}
+
+TEST_F(ShareManagerTest, CreateWithoutPublicRoleDefaultsToPersistedImplicitDenyTemplate) {
+    const auto result = manager->createLink(humanActor(), {.link = makeManagerLink()});
+    ASSERT_TRUE(store->vault_roles.contains(result.link->id));
+    const auto role = store->vault_roles.at(result.link->id);
+    ASSERT_NE(role, nullptr);
+    EXPECT_EQ(role->name, rbac::role::Vault::ImplicitDeny().name);
+
+    auto opened = manager->openPublicSession(result.public_token);
+    auto principal = manager->resolvePrincipal(opened.session_token);
+    ASSERT_NE(principal, nullptr);
+    auto decision = manager->authorize(*principal, Operation::Download, "/reports/file.txt", TargetType::File);
     EXPECT_FALSE(decision.allowed);
 }
 
@@ -600,6 +719,52 @@ TEST_F(ShareManagerTest, ConfirmEmailChallengeVerifiesSessionAndPreventsReuse) {
         .session_id = challenge.session->id,
         .code = challenge.verification_code
     }); }, std::runtime_error);
+}
+
+TEST_F(ShareManagerTest, EmailRecipientAssignmentTakesPrecedenceOverPublicImplicitDeny) {
+    const auto created = create(AccessMode::EmailValidated);
+    auto challenge = manager->startEmailChallenge(StartEmailChallengeRequest{
+        .public_token = created.public_token,
+        .session_token = std::nullopt,
+        .email = "recipient@example.com",
+        .ip_address = std::nullopt,
+        .user_agent = std::nullopt
+    });
+
+    auto confirmed = manager->confirmEmailChallenge({
+        .challenge_id = challenge.challenge->id,
+        .session_id = challenge.session->id,
+        .code = challenge.verification_code
+    });
+    ASSERT_TRUE(confirmed.verified);
+
+    auto principal = manager->resolvePrincipal(challenge.session_token);
+    ASSERT_NE(principal, nullptr);
+    ASSERT_NE(principal->scoped_vault_role, nullptr);
+    ASSERT_TRUE(principal->scoped_vault_role->assignment);
+    EXPECT_EQ(principal->scoped_vault_role->assignment->subject_type, "actor");
+
+    auto decision = manager->authorize(*principal, Operation::Download, "/reports/file.txt", TargetType::File);
+    EXPECT_TRUE(decision.allowed);
+}
+
+TEST_F(ShareManagerTest, UnmatchedEmailRecipientFailsClosedAfterVerification) {
+    const auto created = create(AccessMode::EmailValidated);
+    auto challenge = manager->startEmailChallenge(StartEmailChallengeRequest{
+        .public_token = created.public_token,
+        .session_token = std::nullopt,
+        .email = "unmatched@example.com",
+        .ip_address = std::nullopt,
+        .user_agent = std::nullopt
+    });
+
+    auto confirmed = manager->confirmEmailChallenge({
+        .challenge_id = challenge.challenge->id,
+        .session_id = challenge.session->id,
+        .code = challenge.verification_code
+    });
+    ASSERT_TRUE(confirmed.verified);
+    EXPECT_THROW({ (void)manager->resolvePrincipal(challenge.session_token); }, std::runtime_error);
 }
 
 TEST_F(ShareManagerTest, SessionTokenResolvesPrincipalAndRejectsInactiveSessions) {

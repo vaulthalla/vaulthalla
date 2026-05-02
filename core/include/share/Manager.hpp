@@ -2,6 +2,8 @@
 
 #include "db/model/ListQueryParams.hpp"
 #include "rbac/Actor.hpp"
+#include "rbac/permission/Override.hpp"
+#include "rbac/role/Vault.hpp"
 #include "share/Link.hpp"
 #include "share/Principal.hpp"
 #include "share/Scope.hpp"
@@ -16,8 +18,6 @@
 #include <string>
 #include <string_view>
 #include <vector>
-
-namespace vh::rbac::role { struct Vault; }
 
 namespace vh::share {
 namespace rbac_role = vh::rbac::role;
@@ -62,6 +62,64 @@ public:
     virtual void incrementUpload(const std::string&) { throw std::logic_error("Share upload store is unavailable"); }
     virtual void upsertVaultRoleForShare(const std::string&, uint32_t, const std::shared_ptr<rbac_role::Vault>&) {}
     virtual std::shared_ptr<rbac_role::Vault> getVaultRoleForShare(const std::string&) { return nullptr; }
+    virtual std::shared_ptr<rbac_role::Vault> getRecipientVaultRoleForShare(
+        const std::string&,
+        const std::vector<uint8_t>&
+    ) { return nullptr; }
+    virtual std::shared_ptr<rbac_role::Vault> getVaultRoleTemplate(uint32_t id) {
+        auto role = std::make_shared<rbac_role::Vault>(
+            id == 2 ? rbac_role::Vault::Reader() :
+            id == 3 ? rbac_role::Vault::Contributor() :
+            rbac_role::Vault::ImplicitDeny()
+        );
+        role->id = id == 0 ? 1 : id;
+        return role;
+    }
+    virtual std::shared_ptr<rbac_role::Vault> getVaultRoleTemplateByName(const std::string& name) {
+        auto role = std::make_shared<rbac_role::Vault>(
+            name == "reader" || name == "share_browse_download" ? rbac_role::Vault::Reader() :
+            name == "contributor" || name == "share_upload_dropbox" || name == "share_contributor_scoped" ? rbac_role::Vault::Contributor() :
+            name == "share_download_only" ? rbac_role::Vault::Custom(
+                "share_download_only",
+                "Share-focused role template for downloading files without broader mutation privileges.",
+                rbac::role::vault::Base::Custom(
+                    rbac::permission::vault::Roles::None(),
+                    rbac::permission::vault::Sync::None(),
+                    rbac::permission::vault::Filesystem::DownloadOnly()
+                )
+            ) :
+            name == "share_preview_read" ? rbac_role::Vault::Guest() :
+            rbac_role::Vault::ImplicitDeny()
+        );
+        role->id = name == "implicit_deny" ? 1 :
+                   name == "contributor" || name == "share_upload_dropbox" || name == "share_contributor_scoped" ? 3 :
+                   2;
+        return role;
+    }
+    virtual void upsertPublicVaultRoleAssignment(
+        const std::string& shareId,
+        uint32_t vaultId,
+        uint32_t roleId,
+        const std::vector<rbac::permission::Override>& overrides
+    ) {
+        auto role = getVaultRoleTemplate(roleId);
+        if (!role) throw std::runtime_error("Share vault role template is unavailable");
+        role = std::make_shared<rbac_role::Vault>(*role);
+        role->assignment_id = roleId;
+        role->assign(roleId, "public", vaultId);
+        role->fs.overrides = overrides;
+        upsertVaultRoleForShare(shareId, vaultId, role);
+    }
+    virtual uint32_t upsertValidatedRecipient(const std::string&, const std::vector<uint8_t>&) {
+        throw std::logic_error("Share recipient store is unavailable");
+    }
+    virtual void upsertRecipientVaultRoleAssignment(
+        const std::string&,
+        uint32_t,
+        uint32_t,
+        uint32_t,
+        const std::vector<rbac::permission::Override>&
+    ) {}
     virtual void removeVaultRoleForShare(const std::string&) {}
 
     virtual std::shared_ptr<Session> createSession(const std::shared_ptr<Session>& session) = 0;
@@ -124,8 +182,21 @@ struct ManagerOptions {
     std::function<std::string()> challenge_code_generator{};
 };
 
+struct RoleAssignmentRequest {
+    std::optional<uint32_t> vault_role_id;
+    std::optional<std::string> vault_role_name;
+    std::vector<rbac::permission::Override> overrides;
+};
+
+struct RecipientRoleAssignmentRequest {
+    std::string email;
+    RoleAssignmentRequest role;
+};
+
 struct CreateLinkRequest {
     Link link;
+    std::optional<RoleAssignmentRequest> public_role;
+    std::vector<RecipientRoleAssignmentRequest> recipients;
 };
 
 struct CreateLinkResult {
@@ -136,6 +207,8 @@ struct CreateLinkResult {
 
 struct UpdateLinkRequest {
     std::shared_ptr<Link> link;
+    std::optional<RoleAssignmentRequest> public_role;
+    std::optional<std::vector<RecipientRoleAssignmentRequest>> recipients;
 };
 
 struct RotateLinkTokenResult {

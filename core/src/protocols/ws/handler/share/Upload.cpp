@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -317,6 +318,7 @@ void requireAcceptedDuplicatePolicy(const json& payload) {
     const auto sessionToken = session->shareSessionToken();
     const auto principalSnapshot = *principal;
     const auto parentPath = parent.vault_path;
+    const std::weak_ptr<Session> weakSession = session;
 
     session->getUploadHandler()->startShareUpload({
         .uploadId = uploadId,
@@ -326,7 +328,9 @@ void requireAcceptedDuplicatePolicy(const json& payload) {
         .expectedSize = size,
         .maxChunkSize = started.max_chunk_size_bytes ? started.max_chunk_size_bytes : kMaxChunkSize,
         .maxTransferSize = started.max_transfer_size_bytes ? started.max_transfer_size_bytes : kDefaultMaxUploadSize,
-        .onChunk = [mgr, sessionToken, uploadId, session](const uint64_t bytes) {
+        .onChunk = [mgr, sessionToken, uploadId, weakSession](const uint64_t bytes) {
+            auto session = weakSession.lock();
+            if (!session) throw std::runtime_error("Share upload connection closed");
             auto refreshed = mgr->resolvePrincipal(
                 sessionToken,
                 session->ipAddress.empty() ? std::nullopt : std::make_optional(session->ipAddress),
@@ -336,9 +340,11 @@ void requireAcceptedDuplicatePolicy(const json& payload) {
             (void)session->rbacActor();
             mgr->recordUploadChunk(*refreshed, uploadId, bytes);
         },
-        .onFinish = [mgr, resolver, writer, sessionToken, session, uploadId, parentPath, finalVaultPath](
+        .onFinish = [mgr, resolver, writer, sessionToken, weakSession, uploadId, parentPath, finalVaultPath](
             const std::vector<uint8_t>& bytes
         ) {
+            auto session = weakSession.lock();
+            if (!session) throw std::runtime_error("Share upload connection closed");
             auto refreshed = mgr->resolvePrincipal(
                 sessionToken,
                 session->ipAddress.empty() ? std::nullopt : std::make_optional(session->ipAddress),

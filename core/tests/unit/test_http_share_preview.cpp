@@ -291,6 +291,10 @@ protected:
         link->created_at = kNow;
         link->updated_at = kNow;
         store->createLink(link);
+        auto role = std::make_shared<vh::rbac::role::Vault>(vh::rbac::role::Vault::Reader());
+        role->id = 2;
+        role->assign(2, "public", link->vault_id);
+        store->upsertVaultRoleForShare(link->id, link->vault_id, role);
 
         sessionToken = vh::share::Token::generate(vh::share::TokenKind::ShareSession);
         auto shareSession = std::make_shared<vh::share::Session>();
@@ -311,6 +315,7 @@ protected:
         principal->root_path = "/shared";
         principal->grant = link->grant();
         principal->expires_at = kNow + 3600;
+        principal->scoped_vault_role = role;
 
         auto session = std::make_shared<vh::protocols::ws::Session>(std::make_shared<vh::protocols::ws::Router>());
         session->ipAddress = "127.0.0.1";

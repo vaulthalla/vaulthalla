@@ -440,7 +440,10 @@ protected:
     }
 
     vh::share::CreateLinkResult create(const uint32_t ops) {
-        return manager->createLink(rbac::Actor::human(user), {.link = makeLink(ops)});
+        return manager->createLink(rbac::Actor::human(user), {
+            .link = makeLink(ops),
+            .public_role = vh::share::RoleAssignmentRequest{.vault_role_name = rbac::role::Vault::Reader().name}
+        });
     }
 
     std::shared_ptr<Session> readySession(

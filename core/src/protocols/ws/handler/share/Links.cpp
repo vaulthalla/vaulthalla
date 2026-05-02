@@ -5,6 +5,9 @@
 #include "identities/User.hpp"
 #include "protocols/ws/Session.hpp"
 #include "rbac/Actor.hpp"
+#include "rbac/fs/glob/model/Pattern.hpp"
+#include "rbac/permission/Override.hpp"
+#include "rbac/permission/Permission.hpp"
 #include "share/Link.hpp"
 #include "share/Manager.hpp"
 #include "share/Types.hpp"
@@ -76,6 +79,86 @@ namespace {
         ops |= vh::share::bit(vh::share::operation_from_string(op.get<std::string>()));
     }
     return ops;
+}
+
+[[nodiscard]] vh::rbac::permission::Override parsePermissionOverride(const json& value) {
+    if (!value.is_object()) throw std::invalid_argument("permission override must be an object");
+
+    vh::rbac::permission::Override override;
+    if (value.contains("permission_id") && !value.at("permission_id").is_null())
+        override.permission.id = value.at("permission_id").get<uint32_t>();
+    if (value.contains("permission_qualified") && !value.at("permission_qualified").is_null())
+        override.permission.qualified_name = value.at("permission_qualified").get<std::string>();
+    else if (value.contains("qualified") && !value.at("qualified").is_null())
+        override.permission.qualified_name = value.at("qualified").get<std::string>();
+    if (override.permission.id == 0 && override.permission.qualified_name.empty())
+        throw std::invalid_argument("permission override requires permission_id or permission_qualified");
+
+    override.enabled = !value.contains("enabled") || value.at("enabled").is_null()
+                           ? true
+                           : value.at("enabled").get<bool>();
+    override.effect = vh::rbac::permission::overrideOptFromString(
+        value.value("effect", std::string{"allow"})
+    );
+    const auto pattern = value.value("glob_path", value.value("pattern", std::string{"/"}));
+    override.pattern = vh::rbac::fs::glob::model::Pattern::make(pattern.empty() ? "/" : pattern);
+    return override;
+}
+
+[[nodiscard]] std::vector<vh::rbac::permission::Override> parsePermissionOverrides(
+    const json& payload,
+    const char* field
+) {
+    if (!payload.contains(field) || payload.at(field).is_null()) return {};
+    const auto& value = payload.at(field);
+    if (!value.is_array()) throw std::invalid_argument(std::string(field) + " must be an array");
+
+    std::vector<vh::rbac::permission::Override> overrides;
+    overrides.reserve(value.size());
+    for (const auto& item : value) overrides.push_back(parsePermissionOverride(item));
+    return overrides;
+}
+
+[[nodiscard]] std::optional<vh::share::RoleAssignmentRequest> parseRoleAssignment(
+    const json& payload,
+    const char* field
+) {
+    if (!payload.contains(field) || payload.at(field).is_null()) return std::nullopt;
+    const auto& value = payload.at(field);
+    if (!value.is_object()) throw std::invalid_argument(std::string(field) + " must be an object");
+
+    vh::share::RoleAssignmentRequest request;
+    if (value.contains("vault_role_id") && !value.at("vault_role_id").is_null())
+        request.vault_role_id = value.at("vault_role_id").get<uint32_t>();
+    if (value.contains("vault_role_name") && !value.at("vault_role_name").is_null())
+        request.vault_role_name = value.at("vault_role_name").get<std::string>();
+    if (!request.vault_role_id && !request.vault_role_name)
+        throw std::invalid_argument(std::string(field) + " requires vault_role_id or vault_role_name");
+    request.overrides = parsePermissionOverrides(value, "permission_overrides");
+    return request;
+}
+
+[[nodiscard]] std::vector<vh::share::RecipientRoleAssignmentRequest> parseRecipientAssignments(
+    const json& payload,
+    const char* field
+) {
+    if (!payload.contains(field) || payload.at(field).is_null()) return {};
+    const auto& value = payload.at(field);
+    if (!value.is_array()) throw std::invalid_argument(std::string(field) + " must be an array");
+
+    std::vector<vh::share::RecipientRoleAssignmentRequest> recipients;
+    recipients.reserve(value.size());
+    for (const auto& item : value) {
+        if (!item.is_object()) throw std::invalid_argument(std::string(field) + " entries must be objects");
+        auto role = parseRoleAssignment(item, "role_assignment");
+        if (!role) role = parseRoleAssignment(item, "role");
+        if (!role) throw std::invalid_argument("recipient assignment requires role_assignment");
+        recipients.push_back({
+            .email = requiredString(item, "email"),
+            .role = std::move(*role)
+        });
+    }
+    return recipients;
 }
 
 [[nodiscard]] std::optional<std::time_t> parseOptionalTime(const json& payload, const char* field) {
@@ -241,7 +324,11 @@ json Links::create(const json& payload, const std::shared_ptr<Session>& session)
     const auto& body = objectPayload(payload);
     const auto actor = actorFromSession(session);
     auto mgr = manager();
-    auto result = mgr->createLink(actor, {.link = linkFromCreatePayload(body)});
+    auto result = mgr->createLink(actor, {
+        .link = linkFromCreatePayload(body),
+        .public_role = parseRoleAssignment(body, "public_role_assignment"),
+        .recipients = parseRecipientAssignments(body, "recipient_role_assignments")
+    });
     return {
         {"share", safeLinkJson(*result.link)},
         {"public_token", result.public_token},
@@ -278,7 +365,15 @@ json Links::update(const json& payload, const std::shared_ptr<Session>& session)
     auto updated = std::make_shared<vh::share::Link>(*link);
     applyMutableFields(*updated, body);
 
-    auto saved = mgr->updateLink(actor, {.link = std::move(updated)});
+    std::optional<std::vector<vh::share::RecipientRoleAssignmentRequest>> recipients;
+    if (body.contains("recipient_role_assignments"))
+        recipients = parseRecipientAssignments(body, "recipient_role_assignments");
+
+    auto saved = mgr->updateLink(actor, {
+        .link = std::move(updated),
+        .public_role = parseRoleAssignment(body, "public_role_assignment"),
+        .recipients = std::move(recipients)
+    });
     return {{"share", safeLinkJson(*saved)}};
 }
 

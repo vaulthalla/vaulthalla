@@ -53,6 +53,53 @@ using namespace vh::crypto;
 using namespace vh::sync::model;
 using namespace vh::fs::model;
 
+namespace {
+
+vh::rbac::role::Vault shareDownloadOnlyRole() {
+    namespace role = vh::rbac::role;
+    namespace permission = vh::rbac::permission;
+    return role::Vault::Custom(
+        "share_download_only",
+        "Share-focused role template for downloading files without broader mutation privileges.",
+        role::vault::Base::Custom(
+            permission::vault::Roles::None(),
+            permission::vault::Sync::None(),
+            permission::vault::Filesystem::DownloadOnly()
+        )
+    );
+}
+
+vh::rbac::role::Vault shareUploadDropboxRole() {
+    namespace role = vh::rbac::role;
+    namespace permission = vh::rbac::permission;
+    namespace fs = vh::rbac::permission::vault::fs;
+
+    auto files = fs::Files::Custom(
+        static_cast<fs::Files::SetMask>(fs::FilePermissions::Upload),
+        fs::Share::None(std::string{fs::Files::FLAG_PREFIX})
+    );
+    auto dirs = fs::Directories::Custom(
+        static_cast<fs::Directories::SetMask>(
+            static_cast<fs::Directories::SetMask>(fs::DirectoryPermissions::List) |
+            static_cast<fs::Directories::SetMask>(fs::DirectoryPermissions::Upload) |
+            static_cast<fs::Directories::SetMask>(fs::DirectoryPermissions::Touch)
+        ),
+        fs::Share::None(std::string{fs::Directories::FLAG_PREFIX})
+    );
+
+    return role::Vault::Custom(
+        "share_upload_dropbox",
+        "Share-focused role template for directory dropbox uploads without download access.",
+        role::vault::Base::Custom(
+            permission::vault::Roles::None(),
+            permission::vault::Sync::None(),
+            permission::vault::Filesystem::Custom(std::move(files), std::move(dirs))
+        )
+    );
+}
+
+}
+
 void vh::seed::seed_database() {
     log::Registry::audit()->info("Initializing database for Vaulthalla v{}", VH_VERSION);
     log::Registry::vaulthalla()->debug("Initializing database for Vaulthalla v{}", VH_VERSION);
@@ -103,6 +150,23 @@ void vh::seed::initRoles() {
         role::Vault::ImplicitDeny(),
         role::Vault::Guest(),
         role::Vault::Reader(),
+        role::Vault::Custom(
+            "share_preview_read",
+            "Share-focused role template for listing and previewing scoped content.",
+            role::vault::Base::BrowseOnly()
+        ),
+        shareDownloadOnlyRole(),
+        role::Vault::Custom(
+            "share_browse_download",
+            "Share-focused role template for browsing, previewing, and downloading scoped content.",
+            role::vault::Base::Reader()
+        ),
+        shareUploadDropboxRole(),
+        role::Vault::Custom(
+            "share_contributor_scoped",
+            "Share-focused role template for scoped collaborative upload and download access.",
+            role::vault::Base::Contributor()
+        ),
         role::Vault::Contributor(),
         role::Vault::Editor(),
         role::Vault::Manager(),
