@@ -3,6 +3,7 @@ import type { File as FileModel } from '@/models/file'
 import type { Directory } from '@/models/directory'
 import { buildPreviewUrl } from '@/util/previewUrl'
 import { formatSize } from '@/util/formatSize'
+import { formatTimestamp } from '@/util/formatTimestamp'
 import type { FileSystemProps, FilesystemEntry, FilesystemRow } from '@/components/fs/types'
 import { FilesystemClient } from './Filesystem.client'
 
@@ -18,7 +19,7 @@ function buildRows(files: FilesystemEntry[]): FilesystemRow[] {
         key,
         entryType: 'directory',
         size: formatSize(f),
-        modified: new Date(f.updated_at).toLocaleString(),
+        modified: formatTimestamp(f.updated_at),
         previewUrl: null,
       }
     }
@@ -30,7 +31,7 @@ function buildRows(files: FilesystemEntry[]): FilesystemRow[] {
       key,
       entryType: 'file',
       size: formatSize(f),
-      modified: new Date(f.updated_at).toLocaleString(),
+      modified: formatTimestamp(f.updated_at),
       previewUrl: explicitPreviewUrl || buildPreviewUrl({ mode: 'authenticated', vaultId: f.vault_id, path: f.path || f.name, size: 64 }),
     }
   })

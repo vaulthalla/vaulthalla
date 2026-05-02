@@ -12,6 +12,7 @@ import { useVaultShareStore } from '@/stores/vaultShareStore'
 import { ShareEntry, SharePreviewResponse } from '@/models/linkShare'
 import { hasShareOperation } from '@/util/shareOperations'
 import { buildPreviewUrl } from '@/util/previewUrl'
+import { parseTimestamp } from '@/util/formatTimestamp'
 
 type FsMode = 'authenticated' | 'share'
 type FsEntry = DBFile | Directory
@@ -89,10 +90,9 @@ const shareHttpPreviewUrl = (path?: string, size = 64) => {
   return buildPreviewUrl({ mode: 'share', path: normalizeSharePath(path), size })
 }
 
-const timestampToEpoch = (value?: string) => {
-  if (!value) return 0
-  const parsed = Date.parse(value)
-  return Number.isNaN(parsed) ? 0 : Math.floor(parsed / 1000)
+const timestampToEpoch = (value?: string | number | null) => {
+  const parsed = parseTimestamp(value)
+  return parsed ? Math.floor(parsed.getTime() / 1000) : 0
 }
 
 const shareEntryToFsEntry = (entry: ShareEntry): FsEntry => {

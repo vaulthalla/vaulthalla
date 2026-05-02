@@ -16,7 +16,8 @@ export const VaultSelector = () => {
 const ShareRootSelector = () => {
   const share = useVaultShareStore(state => state.share)
   const setPath = useFSStore(state => state.setPath)
-  const label = share?.public_label || share?.metadata?.label?.toString() || 'Shared Files'
+  const rootName = share?.root_path?.split('/').filter(Boolean).at(-1)
+  const label = share?.public_label || share?.metadata?.label?.toString() || rootName || 'Shared Files'
 
   return (
     <span className="cursor-pointer font-medium text-cyan-400 hover:underline" onClick={() => setPath('/')}>

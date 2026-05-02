@@ -159,8 +159,8 @@ export interface ShareEntry {
   path: string
   type: ShareTargetType
   size_bytes: number
-  created_at?: string
-  updated_at?: string
+  created_at?: string | number | null
+  updated_at?: string | number | null
   file_count?: number
   subdirectory_count?: number
   mime_type?: string | null

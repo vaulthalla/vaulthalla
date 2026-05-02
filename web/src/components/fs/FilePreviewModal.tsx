@@ -7,6 +7,7 @@ import Image from 'next/image'
 import type { File as FileModel } from '@/models/file'
 import type { SharePreviewResponse } from '@/models/linkShare'
 import { buildPreviewUrl } from '@/util/previewUrl'
+import { formatTimestamp } from '@/util/formatTimestamp'
 import { useFSStore } from '@/stores/fsStore'
 import X from '@/fa-duotone/x.svg'
 
@@ -41,7 +42,7 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({ file, shareP
     { label: 'Name', value: sharePreview?.filename || file?.name || 'Preview' },
     { label: 'Size', value: formatSize(sharePreview?.size_bytes ?? file?.size_bytes ?? 0) },
     { label: 'MIME', value: sharePreview?.source_mime_type || file?.mime_type || 'unknown' },
-    ...(file ? [{ label: 'Last Modified', value: new Date(file.updated_at).toLocaleString() }] : []),
+    ...(file ? [{ label: 'Last Modified', value: formatTimestamp(file.updated_at) }] : []),
   ]
 
   return (

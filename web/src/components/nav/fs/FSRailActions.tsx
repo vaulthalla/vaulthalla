@@ -7,6 +7,7 @@ import { ShareManagementModal } from '@/components/share/ShareManagementModal'
 import type { FilesystemRow } from '@/components/fs/types'
 import { useFSStore } from '@/stores/fsStore'
 import { Directory } from '@/models/directory'
+import { formatTimestamp } from '@/util/formatTimestamp'
 
 const joinPath = (base: string, name: string) => {
   const cleanName = name.trim().replace(/^\/+|\/+$/g, '')
@@ -59,7 +60,7 @@ export const FSRailActions = () => {
       key: `${directory.vault_id}:${directory.path ?? directory.name}`,
       entryType: 'directory',
       size: 'Directory',
-      modified: new Date(directory.updated_at).toLocaleString(),
+      modified: formatTimestamp(directory.updated_at),
       previewUrl: null,
     })
     setShareOpen(true)

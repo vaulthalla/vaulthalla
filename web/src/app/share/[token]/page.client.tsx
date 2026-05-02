@@ -8,6 +8,7 @@ import UploadProgress from '@/components/loading/UploadProgress'
 import { useFSStore } from '@/stores/fsStore'
 import { useVaultShareStore } from '@/stores/vaultShareStore'
 import { formatShareDate, hasShareOperation } from '@/util/shareOperations'
+import DownloadIcon from '@/fa-duotone/download.svg'
 
 const Alert = ({ tone = 'info', children }: { tone?: 'info' | 'error' | 'success'; children: React.ReactNode }) => {
   const styles =
@@ -46,7 +47,6 @@ const SharePageClient = ({ token }: { token: string }) => {
   const downloadError = useFSStore(state => state.downloadError)
 
   const canList = hasShareOperation(share?.allowed_ops, 'list')
-  const canPreview = hasShareOperation(share?.allowed_ops, 'preview')
   const canDownload = hasShareOperation(share?.allowed_ops, 'download')
   const canUpload = hasShareOperation(share?.allowed_ops, 'upload')
   const isFileShare = share?.target_type === 'file'
@@ -83,27 +83,13 @@ const SharePageClient = ({ token }: { token: string }) => {
     <main className="min-h-screen bg-gray-950 px-3 py-4 text-white sm:px-6">
       <div className="mx-auto flex max-w-7xl flex-col gap-4">
         <header className="rounded-lg border border-white/10 bg-gray-900/90 p-3 shadow-lg">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div className="min-w-0">
-              <p className="text-xs font-medium uppercase tracking-wide text-cyan-300">Vaulthalla Share</p>
-              <h1 className="truncate text-xl font-semibold">{title}</h1>
-              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-400">
-                {share?.root_path && <span className="truncate">{share.root_path}</span>}
-                {expiresAt && <span>Expires {expiresAt}</span>}
-              </div>
+          <div className="min-w-0">
+            <p className="text-xs font-medium uppercase tracking-wide text-cyan-300">Vaulthalla Share</p>
+            <h1 className="truncate text-xl font-semibold">{title}</h1>
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-400">
+              {share?.root_path && <span className="truncate">{share.root_path}</span>}
+              {expiresAt && <span>Expires {expiresAt}</span>}
             </div>
-
-            {share && (
-              <div className="flex flex-wrap items-center gap-2 text-xs text-gray-300 md:justify-end">
-                {canList && <span className="rounded border border-white/10 bg-white/5 px-2 py-1">List</span>}
-                {canPreview && <span className="rounded border border-white/10 bg-white/5 px-2 py-1">Preview</span>}
-                {canDownload && <span className="rounded border border-white/10 bg-white/5 px-2 py-1">Download</span>}
-                {canUpload && <span className="rounded border border-white/10 bg-white/5 px-2 py-1">Upload</span>}
-                {share.access_mode === 'email_validated' && (
-                  <span className="rounded border border-cyan-500/30 bg-cyan-950/40 px-2 py-1 text-cyan-100">Email verified</span>
-                )}
-              </div>
-            )}
           </div>
         </header>
 
@@ -173,8 +159,18 @@ const SharePageClient = ({ token }: { token: string }) => {
 
         {status === 'ready' && (
           <>
-            <div className="rounded border border-white/10 bg-gray-900/80 px-3 py-2">
-              <Breadcrumbs />
+            <div className="flex items-center justify-between gap-3">
+              <Breadcrumbs className="min-w-0 flex-1" />
+              {canDownload && isDirectoryShare && (
+                <button
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-white/10 text-cyan-200 opacity-45"
+                  type="button"
+                  title="Directory archive download is not available yet"
+                  aria-label="Directory archive download is not available yet"
+                  disabled>
+                  <DownloadIcon className="h-4 w-4 fill-current" />
+                </button>
+              )}
             </div>
 
             {(downloading || downloadError) && (
