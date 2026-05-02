@@ -146,6 +146,23 @@ public:
         );
     }
 
+    void replaceRecipientVaultRoleAssignments(
+        const std::string& shareId,
+        const uint32_t vaultId,
+        const std::vector<RecipientAssignmentInput>& assignments
+    ) override {
+        std::vector<db::query::share::VaultRole::RecipientAssignmentInput> dbAssignments;
+        dbAssignments.reserve(assignments.size());
+        for (const auto& assignment : assignments) {
+            dbAssignments.push_back({
+                .email_hash = assignment.email_hash,
+                .vault_role_id = assignment.vault_role_id,
+                .overrides = assignment.overrides
+            });
+        }
+        db::query::share::VaultRole::replaceRecipientAssignments(shareId, vaultId, dbAssignments);
+    }
+
     void removeVaultRoleForShare(const std::string& shareId) override {
         db::query::share::VaultRole::removeForShare(shareId);
     }
@@ -482,24 +499,50 @@ void persistPublicAssignment(
     );
 }
 
+std::vector<ShareStore::RecipientAssignmentInput> recipientAssignmentInputs(
+    ShareStore& store,
+    const std::vector<RecipientRoleAssignmentRequest>& recipients
+) {
+    std::vector<ShareStore::RecipientAssignmentInput> inputs;
+    inputs.reserve(recipients.size());
+    for (const auto& recipient : recipients) {
+        const auto normalizedEmail = EmailChallenge::normalizeEmail(recipient.email);
+        const auto emailHash = EmailChallenge::hashEmail(normalizedEmail);
+        const auto role = roleTemplateForAssignment(store, std::make_optional(recipient.role));
+        inputs.push_back({
+            .email_hash = emailHash,
+            .vault_role_id = role->id,
+            .overrides = recipient.role.overrides
+        });
+    }
+    return inputs;
+}
+
 void persistRecipientAssignments(
     ShareStore& store,
     const Link& link,
     const std::vector<RecipientRoleAssignmentRequest>& recipients
 ) {
-    for (const auto& recipient : recipients) {
-        const auto normalizedEmail = EmailChallenge::normalizeEmail(recipient.email);
-        const auto emailHash = EmailChallenge::hashEmail(normalizedEmail);
-        const auto recipientId = store.upsertValidatedRecipient(link.id, emailHash);
-        const auto role = roleTemplateForAssignment(store, std::make_optional(recipient.role));
+    if (link.id.empty()) throw std::runtime_error("Share link id is required for recipient assignment persistence");
+    for (const auto& recipient : recipientAssignmentInputs(store, recipients)) {
+        const auto recipientId = store.upsertValidatedRecipient(link.id, recipient.email_hash);
         store.upsertRecipientVaultRoleAssignment(
             link.id,
             link.vault_id,
             recipientId,
-            role->id,
-            recipient.role.overrides
+            recipient.vault_role_id,
+            recipient.overrides
         );
     }
+}
+
+void replaceRecipientAssignments(
+    ShareStore& store,
+    const Link& link,
+    const std::vector<RecipientRoleAssignmentRequest>& recipients
+) {
+    if (link.id.empty()) throw std::runtime_error("Share link id is required for recipient assignment persistence");
+    store.replaceRecipientVaultRoleAssignments(link.id, link.vault_id, recipientAssignmentInputs(store, recipients));
 }
 
 void persistRoleAssignments(
@@ -783,7 +826,7 @@ std::shared_ptr<Link> Manager::updateLink(const rbac::Actor& actor, UpdateLinkRe
     try {
         requireAllowed(authorizer_->canUpdateLink(actor, *existing, *updated), "update");
         if (request.public_role) persistPublicAssignment(*store_, *updated, request.public_role);
-        if (request.recipients) persistRecipientAssignments(*store_, *updated, *request.recipients);
+        if (request.recipients) replaceRecipientAssignments(*store_, *updated, *request.recipients);
         auto saved = store_->updateLink(updated);
         store_->appendAuditEvent(audit);
         return saved;
@@ -926,8 +969,12 @@ ConfirmEmailChallengeResult Manager::confirmEmailChallenge(ConfirmEmailChallenge
     auto loadedChallenge = store_->getEmailChallenge(request.challenge_id);
     if (!loadedChallenge) throw std::runtime_error("Share email challenge not found");
 
-    auto loadedSession = store_->getSession(request.session_id);
-    if (!loadedSession) throw std::runtime_error("Share session not found");
+    if (request.session_id.empty()) throw std::invalid_argument("Share session id is required");
+    if (request.session_token.empty()) throw std::invalid_argument("Share session token is required");
+
+    auto loadedSession = sessionFromToken(*store_, request.session_token, now(options_));
+    if (loadedSession->id != request.session_id)
+        throw std::runtime_error("Share session token does not match session");
 
     auto link = requirePtr(store_->getLink(loadedChallenge->share_id), "Share link not found");
     auto audit = auditEvent(std::string(kChallengeConfirm), AuditStatus::Success, link->id, loadedSession->id);
@@ -944,6 +991,8 @@ ConfirmEmailChallengeResult Manager::confirmEmailChallenge(ConfirmEmailChallenge
             throw std::runtime_error("Share email challenge does not belong to session share");
         if (loadedChallenge->share_session_id && *loadedChallenge->share_session_id != loadedSession->id)
             throw std::runtime_error("Share email challenge session mismatch");
+        if (!store_->getRecipientVaultRoleForShare(link->id, loadedChallenge->email_hash))
+            throw std::runtime_error("Share email recipient is not authorized");
         if (!loadedChallenge->canAttempt(now(options_)))
             throw std::runtime_error("Share email challenge cannot be attempted");
 

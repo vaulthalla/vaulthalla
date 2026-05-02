@@ -42,6 +42,12 @@ public:
 
 class ShareStore {
 public:
+    struct RecipientAssignmentInput {
+        std::vector<uint8_t> email_hash;
+        uint32_t vault_role_id{};
+        std::vector<rbac::permission::Override> overrides;
+    };
+
     virtual ~ShareStore() = default;
 
     virtual std::shared_ptr<Link> createLink(const std::shared_ptr<Link>& link) = 0;
@@ -120,6 +126,13 @@ public:
         uint32_t,
         const std::vector<rbac::permission::Override>&
     ) {}
+    virtual void replaceRecipientVaultRoleAssignments(
+        const std::string&,
+        uint32_t,
+        const std::vector<RecipientAssignmentInput>&
+    ) {
+        throw std::logic_error("Share recipient replacement store is unavailable");
+    }
     virtual void removeVaultRoleForShare(const std::string&) {}
 
     virtual std::shared_ptr<Session> createSession(const std::shared_ptr<Session>& session) = 0;
@@ -247,6 +260,7 @@ struct StartEmailChallengeResult {
 struct ConfirmEmailChallengeRequest {
     std::string challenge_id;
     std::string session_id;
+    std::string session_token;
     std::string code;
 };
 

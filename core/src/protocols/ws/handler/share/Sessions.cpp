@@ -177,6 +177,7 @@ json Sessions::confirmEmailChallenge(const json& payload, const std::shared_ptr<
     auto result = mgr->confirmEmailChallenge(vh::share::ConfirmEmailChallengeRequest{
         .challenge_id = detail::requiredString(body, "challenge_id"),
         .session_id = sessionId,
+        .session_token = sessionToken,
         .code = detail::requiredString(body, "code")
     });
 

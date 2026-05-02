@@ -21,6 +21,12 @@ struct VaultRole {
         std::vector<vh::rbac::permission::Override> overrides;
     };
 
+    struct RecipientAssignmentInput {
+        std::vector<uint8_t> email_hash;
+        uint32_t vault_role_id{};
+        std::vector<vh::rbac::permission::Override> overrides;
+    };
+
     static uint32_t upsertForShare(
         const std::string& shareId,
         uint32_t vaultId,
@@ -44,6 +50,11 @@ struct VaultRole {
         uint32_t recipientId,
         uint32_t vaultRoleId,
         const std::vector<vh::rbac::permission::Override>& overrides = {}
+    );
+    static void replaceRecipientAssignments(
+        const std::string& shareId,
+        uint32_t vaultId,
+        const std::vector<RecipientAssignmentInput>& assignments
     );
 
     static std::shared_ptr<vh::rbac::role::Vault> getForShare(const std::string& shareId);

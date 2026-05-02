@@ -186,6 +186,31 @@ void vh::db::Connection::initPreparedShareVaultRoles() const {
     );
 
     conn_->prepare(
+        "share_vault_role_assignment_disable_stale_recipient_actors",
+        R"SQL(
+            UPDATE share_vault_role_assignment
+            SET
+                enabled = FALSE,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE share_id = $1
+              AND subject_type = 'actor'
+              AND NOT (subject_id = ANY($2::integer[]))
+        )SQL"
+    );
+
+    conn_->prepare(
+        "share_validated_recipient_disable_stale",
+        R"SQL(
+            UPDATE share_validated_recipient
+            SET
+                enabled = FALSE,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE share_id = $1
+              AND NOT (id = ANY($2::integer[]))
+        )SQL"
+    );
+
+    conn_->prepare(
         "share_vault_role_assignment_delete_overrides",
         R"SQL(
             DELETE FROM share_vault_role_assignment_override

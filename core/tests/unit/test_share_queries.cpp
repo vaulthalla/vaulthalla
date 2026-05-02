@@ -232,6 +232,51 @@ TEST_F(ShareQueryTest, ShareVaultRoleMappingRoundTripsScopedOverrides) {
     EXPECT_TRUE(db::query::rbac::role::Vault::exists(persistedRoleId));
 }
 
+TEST_F(ShareQueryTest, ShareRecipientRoleReplacementDisablesAbsentRecipientsAndPreservesPublicAssignment) {
+    auto link = db::query::share::Link::create(makeLink());
+    ASSERT_NE(link, nullptr);
+
+    const auto reader = db::query::rbac::role::Vault::get(rbac::role::Vault::Reader().name);
+    const auto contributor = db::query::rbac::role::Vault::get(rbac::role::Vault::Contributor().name);
+    ASSERT_NE(reader, nullptr);
+    ASSERT_NE(contributor, nullptr);
+
+    db::query::share::VaultRole::upsertPublicAssignment(link->id, link->vault_id, reader->id);
+    const auto keptHash = share::EmailChallenge::hashEmail("kept@vaulthalla.test");
+    const auto removedHash = share::EmailChallenge::hashEmail("removed@vaulthalla.test");
+
+    db::query::share::VaultRole::replaceRecipientAssignments(link->id, link->vault_id, {
+        db::query::share::VaultRole::RecipientAssignmentInput{
+            .email_hash = keptHash,
+            .vault_role_id = reader->id,
+            .overrides = {}
+        },
+        db::query::share::VaultRole::RecipientAssignmentInput{
+            .email_hash = removedHash,
+            .vault_role_id = contributor->id,
+            .overrides = {}
+        }
+    });
+    ASSERT_NE(db::query::share::VaultRole::getPublicAssignment(link->id), nullptr);
+    ASSERT_NE(db::query::share::VaultRole::getRecipientAssignment(link->id, keptHash), nullptr);
+    ASSERT_NE(db::query::share::VaultRole::getRecipientAssignment(link->id, removedHash), nullptr);
+
+    db::query::share::VaultRole::replaceRecipientAssignments(link->id, link->vault_id, {
+        db::query::share::VaultRole::RecipientAssignmentInput{
+            .email_hash = keptHash,
+            .vault_role_id = reader->id,
+            .overrides = {}
+        }
+    });
+    EXPECT_NE(db::query::share::VaultRole::getPublicAssignment(link->id), nullptr);
+    EXPECT_NE(db::query::share::VaultRole::getRecipientAssignment(link->id, keptHash), nullptr);
+    EXPECT_EQ(db::query::share::VaultRole::getRecipientAssignment(link->id, removedHash), nullptr);
+
+    db::query::share::VaultRole::replaceRecipientAssignments(link->id, link->vault_id, {});
+    EXPECT_NE(db::query::share::VaultRole::getPublicAssignment(link->id), nullptr);
+    EXPECT_EQ(db::query::share::VaultRole::getRecipientAssignment(link->id, keptHash), nullptr);
+}
+
 TEST_F(ShareQueryTest, SessionChallengeUploadAndAuditRoundTrips) {
     auto link = db::query::share::Link::create(makeLink());
     ASSERT_NE(link, nullptr);

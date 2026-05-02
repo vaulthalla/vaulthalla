@@ -8,7 +8,9 @@
 
 #include <pqxx/pqxx>
 
+#include <cstddef>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 
 namespace vh::db::query::share {
@@ -56,6 +58,32 @@ uint32_t upsertAssignmentRow(pqxx::work& txn, const VaultRole::AssignmentInput& 
     );
     if (res.empty()) throw std::runtime_error("Failed to persist share vault role assignment");
     return res.one_row()["id"].as<uint32_t>();
+}
+
+uint32_t upsertRecipientRow(
+    pqxx::work& txn,
+    const std::string& shareId,
+    const std::vector<uint8_t>& emailHash
+) {
+    requireShareId(shareId);
+    if (emailHash.empty()) throw std::invalid_argument("Share recipient email hash is required");
+
+    const auto res = txn.exec(
+        pqxx::prepped{"share_validated_recipient_upsert"},
+        pqxx::params{shareId, vh::db::encoding::to_hex_bytea(emailHash)}
+    );
+    if (res.empty()) throw std::runtime_error("Failed to persist share recipient");
+    return res.one_row()["id"].as<uint32_t>();
+}
+
+std::string pgIntArray(const std::vector<uint32_t>& values) {
+    std::string result{"{"};
+    for (std::size_t i = 0; i < values.size(); ++i) {
+        if (i != 0) result += ",";
+        result += std::to_string(values[i]);
+    }
+    result += "}";
+    return result;
 }
 
 uint32_t permissionIdForOverride(pqxx::work& txn, const vh::rbac::permission::Override& override) {
@@ -172,12 +200,7 @@ uint32_t VaultRole::upsertRecipient(
     if (emailHash.empty()) throw std::invalid_argument("Share recipient email hash is required");
 
     return Transactions::exec("share::VaultRole::upsertRecipient", [&](pqxx::work& txn) {
-        const auto res = txn.exec(
-            pqxx::prepped{"share_validated_recipient_upsert"},
-            pqxx::params{shareId, vh::db::encoding::to_hex_bytea(emailHash)}
-        );
-        if (res.empty()) throw std::runtime_error("Failed to persist share recipient");
-        return res.one_row()["id"].as<uint32_t>();
+        return upsertRecipientRow(txn, shareId, emailHash);
     });
 }
 
@@ -195,6 +218,44 @@ uint32_t VaultRole::upsertRecipientAssignment(
         .subject_type = "actor",
         .subject_id = recipientId,
         .overrides = overrides
+    });
+}
+
+void VaultRole::replaceRecipientAssignments(
+    const std::string& shareId,
+    const uint32_t vaultId,
+    const std::vector<RecipientAssignmentInput>& assignments
+) {
+    requireShareId(shareId);
+    if (vaultId == 0) throw std::invalid_argument("Share vault id is required");
+
+    Transactions::exec("share::VaultRole::replaceRecipientAssignments", [&](pqxx::work& txn) {
+        std::vector<uint32_t> activeRecipientIds;
+        activeRecipientIds.reserve(assignments.size());
+
+        for (const auto& assignment : assignments) {
+            const auto recipientId = upsertRecipientRow(txn, shareId, assignment.email_hash);
+            activeRecipientIds.push_back(recipientId);
+            const auto assignmentId = upsertAssignmentRow(txn, {
+                .share_id = shareId,
+                .vault_id = vaultId,
+                .vault_role_id = assignment.vault_role_id,
+                .subject_type = "actor",
+                .subject_id = recipientId,
+                .overrides = assignment.overrides
+            });
+            replaceAssignmentOverrides(txn, assignmentId, assignment.overrides);
+        }
+
+        const auto keepIds = pgIntArray(activeRecipientIds);
+        txn.exec(
+            pqxx::prepped{"share_vault_role_assignment_disable_stale_recipient_actors"},
+            pqxx::params{shareId, keepIds}
+        );
+        txn.exec(
+            pqxx::prepped{"share_validated_recipient_disable_stale"},
+            pqxx::params{shareId, keepIds}
+        );
     });
 }
 

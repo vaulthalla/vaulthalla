@@ -246,6 +246,33 @@ public:
                 recipient_roles[key] = assigned;
     }
 
+    void replaceRecipientVaultRoleAssignments(
+        const std::string& shareId,
+        const uint32_t vaultId,
+        const std::vector<RecipientAssignmentInput>& assignments
+    ) override {
+        std::vector<std::string> activeKeys;
+        activeKeys.reserve(assignments.size());
+        for (const auto& assignment : assignments) {
+            const auto key = shareId + ":" + db::encoding::to_hex_bytea(assignment.email_hash);
+            const auto recipientId = upsertValidatedRecipient(shareId, assignment.email_hash);
+            activeKeys.push_back(key);
+            upsertRecipientVaultRoleAssignment(
+                shareId,
+                vaultId,
+                recipientId,
+                assignment.vault_role_id,
+                assignment.overrides
+            );
+        }
+
+        for (auto it = recipient_roles.begin(); it != recipient_roles.end();) {
+            const auto active = std::find(activeKeys.begin(), activeKeys.end(), it->first) != activeKeys.end();
+            if (it->first.starts_with(shareId + ":") && !active) it = recipient_roles.erase(it);
+            else ++it;
+        }
+    }
+
     void removeVaultRoleForShare(const std::string& shareId) override {
         vault_roles.erase(shareId);
         for (auto it = recipient_roles.begin(); it != recipient_roles.end();)
@@ -668,6 +695,7 @@ TEST_F(ShareManagerTest, EmailChallengeStoresHashesAndRejectsWrongExpiredOrConsu
     EXPECT_THROW({ (void)manager->confirmEmailChallenge(ConfirmEmailChallengeRequest{
         .challenge_id = challenge.challenge->id,
         .session_id = challenge.session->id,
+        .session_token = challenge.session_token,
         .code = "000000"
     }); }, std::runtime_error);
     EXPECT_EQ(challenge.challenge->attempts, 1u);
@@ -676,6 +704,7 @@ TEST_F(ShareManagerTest, EmailChallengeStoresHashesAndRejectsWrongExpiredOrConsu
     EXPECT_THROW({ (void)manager->confirmEmailChallenge(ConfirmEmailChallengeRequest{
         .challenge_id = challenge.challenge->id,
         .session_id = challenge.session->id,
+        .session_token = challenge.session_token,
         .code = challenge.verification_code
     }); }, std::runtime_error);
 
@@ -690,6 +719,7 @@ TEST_F(ShareManagerTest, EmailChallengeStoresHashesAndRejectsWrongExpiredOrConsu
     EXPECT_THROW({ (void)manager->confirmEmailChallenge(ConfirmEmailChallengeRequest{
         .challenge_id = consumed.challenge->id,
         .session_id = consumed.session->id,
+        .session_token = challenge.session_token,
         .code = consumed.verification_code
     }); }, std::runtime_error);
 }
@@ -707,6 +737,7 @@ TEST_F(ShareManagerTest, ConfirmEmailChallengeVerifiesSessionAndPreventsReuse) {
     auto confirmed = manager->confirmEmailChallenge({
         .challenge_id = challenge.challenge->id,
         .session_id = challenge.session->id,
+        .session_token = challenge.session_token,
         .code = challenge.verification_code
     });
 
@@ -717,6 +748,7 @@ TEST_F(ShareManagerTest, ConfirmEmailChallengeVerifiesSessionAndPreventsReuse) {
     EXPECT_THROW({ (void)manager->confirmEmailChallenge(ConfirmEmailChallengeRequest{
         .challenge_id = challenge.challenge->id,
         .session_id = challenge.session->id,
+        .session_token = challenge.session_token,
         .code = challenge.verification_code
     }); }, std::runtime_error);
 }
@@ -734,6 +766,7 @@ TEST_F(ShareManagerTest, EmailRecipientAssignmentTakesPrecedenceOverPublicImplic
     auto confirmed = manager->confirmEmailChallenge({
         .challenge_id = challenge.challenge->id,
         .session_id = challenge.session->id,
+        .session_token = challenge.session_token,
         .code = challenge.verification_code
     });
     ASSERT_TRUE(confirmed.verified);
@@ -748,7 +781,72 @@ TEST_F(ShareManagerTest, EmailRecipientAssignmentTakesPrecedenceOverPublicImplic
     EXPECT_TRUE(decision.allowed);
 }
 
-TEST_F(ShareManagerTest, UnmatchedEmailRecipientFailsClosedAfterVerification) {
+TEST_F(ShareManagerTest, UpdateRecipientAssignmentsReplacesSetAndPreservesPublicAssignment) {
+    const auto created = create(AccessMode::EmailValidated);
+    const auto keptHash = EmailChallenge::hashEmail(EmailChallenge::normalizeEmail("recipient@example.com"));
+    const auto removedHash = EmailChallenge::hashEmail(EmailChallenge::normalizeEmail("email@example.com"));
+    const auto keptKey = created.link->id + ":" + db::encoding::to_hex_bytea(keptHash);
+    const auto removedKey = created.link->id + ":" + db::encoding::to_hex_bytea(removedHash);
+
+    ASSERT_TRUE(store->vault_roles.contains(created.link->id));
+    ASSERT_TRUE(store->recipient_roles.contains(keptKey));
+    ASSERT_TRUE(store->recipient_roles.contains(removedKey));
+
+    auto update = std::make_shared<Link>(*created.link);
+    const std::vector<RecipientRoleAssignmentRequest> replacementRecipients{
+        RecipientRoleAssignmentRequest{
+            .email = "recipient@example.com",
+            .role = RoleAssignmentRequest{.vault_role_name = rbac::role::Vault::Reader().name}
+        }
+    };
+    auto updated = manager->updateLink(humanActor(), {
+        .link = update,
+        .public_role = std::nullopt,
+        .recipients = replacementRecipients
+    });
+    ASSERT_NE(updated, nullptr);
+
+    ASSERT_TRUE(store->vault_roles.contains(created.link->id));
+    ASSERT_TRUE(store->vault_roles.at(created.link->id)->assignment.has_value());
+    EXPECT_EQ(store->vault_roles.at(created.link->id)->assignment->subject_type, "public");
+    EXPECT_TRUE(store->recipient_roles.contains(keptKey));
+    EXPECT_FALSE(store->recipient_roles.contains(removedKey));
+
+    auto keptChallenge = manager->startEmailChallenge(StartEmailChallengeRequest{
+        .public_token = created.public_token,
+        .session_token = std::nullopt,
+        .email = "recipient@example.com",
+        .ip_address = std::nullopt,
+        .user_agent = std::nullopt
+    });
+    auto keptConfirmed = manager->confirmEmailChallenge({
+        .challenge_id = keptChallenge.challenge->id,
+        .session_id = keptChallenge.session->id,
+        .session_token = keptChallenge.session_token,
+        .code = keptChallenge.verification_code
+    });
+    EXPECT_TRUE(keptConfirmed.verified);
+    EXPECT_NO_THROW({ (void)manager->resolvePrincipal(keptChallenge.session_token); });
+
+    auto removedChallenge = manager->startEmailChallenge(StartEmailChallengeRequest{
+        .public_token = created.public_token,
+        .session_token = std::nullopt,
+        .email = "email@example.com",
+        .ip_address = std::nullopt,
+        .user_agent = std::nullopt
+    });
+    EXPECT_THROW({ (void)manager->confirmEmailChallenge(ConfirmEmailChallengeRequest{
+        .challenge_id = removedChallenge.challenge->id,
+        .session_id = removedChallenge.session->id,
+        .session_token = removedChallenge.session_token,
+        .code = removedChallenge.verification_code
+    }); }, std::runtime_error);
+    EXPECT_FALSE(removedChallenge.session->isVerified());
+    EXPECT_FALSE(removedChallenge.challenge->consumed_at.has_value());
+    EXPECT_THROW({ (void)manager->resolvePrincipal(removedChallenge.session_token); }, std::runtime_error);
+}
+
+TEST_F(ShareManagerTest, UnmatchedEmailRecipientFailsClosedBeforeVerification) {
     const auto created = create(AccessMode::EmailValidated);
     auto challenge = manager->startEmailChallenge(StartEmailChallengeRequest{
         .public_token = created.public_token,
@@ -758,13 +856,81 @@ TEST_F(ShareManagerTest, UnmatchedEmailRecipientFailsClosedAfterVerification) {
         .user_agent = std::nullopt
     });
 
+    EXPECT_THROW({ (void)manager->confirmEmailChallenge(ConfirmEmailChallengeRequest{
+        .challenge_id = challenge.challenge->id,
+        .session_id = challenge.session->id,
+        .session_token = challenge.session_token,
+        .code = challenge.verification_code
+    }); }, std::runtime_error);
+    EXPECT_FALSE(challenge.session->isVerified());
+    EXPECT_FALSE(challenge.challenge->consumed_at.has_value());
+    EXPECT_THROW({ (void)manager->resolvePrincipal(challenge.session_token); }, std::runtime_error);
+}
+
+TEST_F(ShareManagerTest, ConfirmEmailChallengeRequiresMatchingSessionTokenBeforeMutation) {
+    const auto created = create(AccessMode::EmailValidated);
+    auto challenge = manager->startEmailChallenge(StartEmailChallengeRequest{
+        .public_token = created.public_token,
+        .session_token = std::nullopt,
+        .email = "recipient@example.com",
+        .ip_address = std::nullopt,
+        .user_agent = std::nullopt
+    });
+
+    EXPECT_THROW({ (void)manager->confirmEmailChallenge(ConfirmEmailChallengeRequest{
+        .challenge_id = challenge.challenge->id,
+        .session_id = challenge.session->id,
+        .session_token = "",
+        .code = challenge.verification_code
+    }); }, std::invalid_argument);
+    EXPECT_FALSE(challenge.session->isVerified());
+    EXPECT_FALSE(challenge.challenge->consumed_at.has_value());
+    EXPECT_EQ(challenge.challenge->attempts, 0u);
+
+    try {
+        (void)manager->confirmEmailChallenge(ConfirmEmailChallengeRequest{
+            .challenge_id = challenge.challenge->id,
+            .session_id = challenge.session->id,
+            .session_token = wrongSecret(challenge.session_token),
+            .code = challenge.verification_code
+        });
+        FAIL() << "Expected wrong share session token to be rejected";
+    } catch (const std::exception& ex) {
+        const std::string message = ex.what();
+        EXPECT_EQ(message.find(challenge.session_token), std::string::npos);
+        EXPECT_EQ(message.find(challenge.verification_code), std::string::npos);
+        EXPECT_EQ(message.find("recipient@example.com"), std::string::npos);
+    }
+    EXPECT_FALSE(challenge.session->isVerified());
+    EXPECT_FALSE(challenge.challenge->consumed_at.has_value());
+    EXPECT_EQ(challenge.challenge->attempts, 0u);
+
+    const auto other = create(AccessMode::EmailValidated);
+    auto otherChallenge = manager->startEmailChallenge(StartEmailChallengeRequest{
+        .public_token = other.public_token,
+        .session_token = std::nullopt,
+        .email = "recipient@example.com",
+        .ip_address = std::nullopt,
+        .user_agent = std::nullopt
+    });
+    EXPECT_THROW({ (void)manager->confirmEmailChallenge(ConfirmEmailChallengeRequest{
+        .challenge_id = challenge.challenge->id,
+        .session_id = challenge.session->id,
+        .session_token = otherChallenge.session_token,
+        .code = challenge.verification_code
+    }); }, std::runtime_error);
+    EXPECT_FALSE(challenge.session->isVerified());
+    EXPECT_FALSE(challenge.challenge->consumed_at.has_value());
+    EXPECT_EQ(challenge.challenge->attempts, 0u);
+
     auto confirmed = manager->confirmEmailChallenge({
         .challenge_id = challenge.challenge->id,
         .session_id = challenge.session->id,
+        .session_token = challenge.session_token,
         .code = challenge.verification_code
     });
-    ASSERT_TRUE(confirmed.verified);
-    EXPECT_THROW({ (void)manager->resolvePrincipal(challenge.session_token); }, std::runtime_error);
+    EXPECT_TRUE(confirmed.verified);
+    EXPECT_TRUE(confirmed.session->isVerified());
 }
 
 TEST_F(ShareManagerTest, SessionTokenResolvesPrincipalAndRejectsInactiveSessions) {
