@@ -33,8 +33,12 @@ export default function RequireAuth({ children }: { children: React.ReactNode })
         let authed = await store.isUserAuthenticated()
 
         if (!authed) {
-          await store.refreshToken()
-          authed = await useAuthStore.getState().isUserAuthenticated()
+          try {
+            await store.refreshToken()
+            authed = await useAuthStore.getState().isUserAuthenticated()
+          } catch {
+            authed = false
+          }
         }
 
         if (disposed || id !== requestId.current) return
@@ -70,9 +74,7 @@ export default function RequireAuth({ children }: { children: React.ReactNode })
       }
     }
 
-    // only show loader until first successful resolution
-    if (!checked) run()
-    else void run()
+    void run()
 
     return () => {
       disposed = true

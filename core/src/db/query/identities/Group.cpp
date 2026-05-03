@@ -4,10 +4,10 @@
 #include "identities/Group.hpp"
 #include "db/query/identities/helpers.hpp"
 
-using namespace vh::db::model;
-using namespace vh::db::encoding;
-
 namespace vh::db::query::identities {
+
+using vh::db::encoding::parsePostgresTimestamp;
+using vh::db::model::ListQueryParams;
 
 uint32_t Group::createGroup(const GroupPtr& group) {
     return Transactions::exec("Group::createGroup", [&](pqxx::work& txn) {

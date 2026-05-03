@@ -18,11 +18,8 @@ install_dir() {
 
 echo "🧪 Installing Vaulthalla integration test directories..."
 
-# First install the normal product dirs/data setup.
-"$ROOT_DIR/bin/setup/install_dirs.sh"
-
-# Then install test-only mount/backing dirs.
 install_dir "/tmp/vh_mount" 755
 install_dir "/tmp/vh_backing" 755
+install_dir "/tmp/vh_runtime" 755
 
 echo "✅ Integration test directories installed."

@@ -13,10 +13,12 @@
 #include <boost/dynamic_bitset.hpp>
 #include <thread>
 
-using namespace vh::storage;
-using namespace vh::concurrency;
-using namespace vh::vault::model;
-using namespace vh::sync;
+namespace vh::sync {
+
+using vh::concurrency::AsyncService;
+using vh::concurrency::ThreadPoolManager;
+using vh::storage::Engine;
+using vh::storage::StorageType;
 
 bool FSTaskCompare::operator()(const std::shared_ptr<Local>& a, const std::shared_ptr<Local>& b) const {
     return a->next_run > b->next_run; // Min-heap based on next_run time
@@ -154,4 +156,6 @@ std::shared_ptr<Local> Controller::createTask(const std::shared_ptr<Engine>& eng
     if (engine->type() == StorageType::Local) return createTask<Local>(engine);
     if (engine->type() == StorageType::Cloud) return createTask<Cloud>(engine);
     throw std::runtime_error("Unsupported StorageType: " + std::to_string(static_cast<int>(engine->type())));
+}
+
 }

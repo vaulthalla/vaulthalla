@@ -6,8 +6,9 @@
 
 #include <optional>
 
-using namespace vh::db::query::fs;
-using namespace vh::db::encoding;
+namespace vh::db::query::fs {
+
+using vh::db::encoding::to_utf8_string;
 
 unsigned int Directory::upsertDirectory(const DirPtr& directory) {
     if (!directory->path.string().starts_with("/")) directory->setPath("/" + to_utf8_string(directory->path.u8string()));
@@ -164,4 +165,6 @@ pqxx::result Directory::collectParentStats(unsigned int parentId) {
     return Transactions::exec("Directory::collectParentStats", [&](pqxx::work& txn) {
         return txn.exec(pqxx::prepped{"collect_parent_dir_stats"}, parentId);
     });
+}
+
 }

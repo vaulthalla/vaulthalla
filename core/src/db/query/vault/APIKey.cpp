@@ -5,10 +5,11 @@
 #include "identities/User.hpp"
 #include "db/query/identities/helpers.hpp"
 
-using namespace vh::db::model;
-using namespace vh::db::encoding;
-
 namespace vh::db::query::vault {
+
+    using vh::db::encoding::to_hex_bytea;
+    using vh::db::model::ListQueryParams;
+
     unsigned int APIKey::upsertAPIKey(const std::shared_ptr<vh::vault::model::APIKey>& key) {
         return Transactions::exec("APIKey::addAPIKey", [&](pqxx::work& txn) {
             pqxx::params p{

@@ -11,8 +11,9 @@
 
 #include <optional>
 
-using namespace vh::db::query::fs;
-using namespace vh::db::encoding;
+namespace vh::db::query::fs {
+
+using vh::db::encoding::to_utf8_string;
 
 unsigned int File::upsertFile(const FilePtr& file) {
     if (!file) throw std::invalid_argument("File cannot be null");
@@ -357,4 +358,6 @@ std::vector<vh::fs::model::stats::Extension> File::getTopExtensionsBySize(const 
 
         return out;
     });
+}
+
 }

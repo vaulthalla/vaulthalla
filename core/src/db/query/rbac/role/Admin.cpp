@@ -6,7 +6,7 @@
 #include <pqxx/pqxx>
 #include <stdexcept>
 
-using namespace vh::db::query::rbac::role;
+namespace vh::db::query::rbac::role {
 
 using AdminRole = vh::rbac::role::Admin;
 using AdminRolePtr = std::shared_ptr<AdminRole>;
@@ -109,4 +109,6 @@ std::vector<AdminRolePtr> Admin::list(model::ListQueryParams&& params) {
 
         return template_::paginate(std::move(roles), params);
     });
+}
+
 }

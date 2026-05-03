@@ -2,7 +2,7 @@
 #include "db/Transactions.hpp"
 #include "sync/model/Operation.hpp"
 
-using namespace vh::db::query::sync;
+namespace vh::db::query::sync {
 
 void Operation::addOperation(const OperationPtr& op) {
     Transactions::exec("Operation::addOperation", [&](pqxx::work& txn) {
@@ -42,4 +42,6 @@ void Operation::markOperationCompleted(const OperationPtr& op) {
 
         txn.exec(pqxx::prepped{"mark_operation_completed_and_update"}, p);
     });
+}
+
 }

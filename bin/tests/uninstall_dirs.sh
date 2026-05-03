@@ -1,3 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
 safe_rm_dir() {
   local path="$1"
 
@@ -14,14 +17,6 @@ safe_rm_dir() {
 
 echo "🗑️  Cleaning directories..."
 
-PROGRAM_NAME=vaulthalla
-
-sudo rm -f /etc/nginx/sites-enabled/vaulthalla
-sudo rm -f /etc/nginx/sites-available/vaulthalla
-
-for dir in /mnt /var/lib /var/log /run /etc /usr/share /usr/lib; do
-  safe_rm_dir "$dir/$PROGRAM_NAME"
-done
-
 safe_rm_dir /tmp/vh_mount
 safe_rm_dir /tmp/vh_backing
+safe_rm_dir /tmp/vh_runtime

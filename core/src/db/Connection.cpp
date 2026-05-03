@@ -139,6 +139,14 @@ void Connection::initPrepared() const {
     initPreparedOperations();
     initPreparedCache();
 
+    // Share links
+    initPreparedShareLinks();
+    initPreparedShareSessions();
+    initPreparedShareEmailChallenges();
+    initPreparedShareUploads();
+    initPreparedShareAuditEvents();
+    initPreparedShareVaultRoles();
+
     // Admin
     initPreparedSecrets();
     initPreparedWaivers();

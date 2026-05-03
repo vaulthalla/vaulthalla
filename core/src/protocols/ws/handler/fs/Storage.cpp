@@ -1,22 +1,34 @@
 #include "protocols/ws/handler/fs/Storage.hpp"
+#include "db/encoding/timestamp.hpp"
 #include "protocols/ws/Session.hpp"
 #include "storage/Manager.hpp"
+#include "fs/model/Directory.hpp"
+#include "fs/model/Entry.hpp"
 #include "fs/model/File.hpp"
 #include "fs/model/Path.hpp"
+#include "rbac/Actor.hpp"
 #include "rbac/role/Vault.hpp"
 #include "vault/model/Vault.hpp"
 #include "identities/User.hpp"
 #include "protocols/ws/handler/fs/Upload.hpp"
+#include "protocols/ws/handler/share/Upload.hpp"
 #include "storage/Engine.hpp"
 #include "runtime/Deps.hpp"
 #include "fs/Filesystem.hpp"
 #include "sync/Controller.hpp"
 #include "fs/cache/Registry.hpp"
+#include "share/Manager.hpp"
+#include "share/Principal.hpp"
+#include "share/TargetResolver.hpp"
 
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 using namespace vh::protocols::ws::handler::fs;
 using namespace vh::vault::model;
@@ -25,7 +37,212 @@ using namespace vh::storage;
 using namespace vh::fs;
 using namespace vh::fs::model;
 
+namespace {
+enum class ShareReadPathStyle { Native, Compatibility };
+
+struct SharePathRequest {
+    std::string path{"/"};
+    vh::share::TargetPathMode mode{vh::share::TargetPathMode::VaultRelative};
+};
+
+struct ShareReadResult {
+    std::shared_ptr<vh::share::Principal> principal;
+    vh::share::ResolvedTarget target;
+    std::vector<std::shared_ptr<vh::fs::model::Entry>> entries;
+};
+
+[[nodiscard]] std::shared_ptr<vh::share::Manager> defaultShareManager() {
+    return std::make_shared<vh::share::Manager>();
+}
+
+[[nodiscard]] std::shared_ptr<vh::share::TargetResolver> defaultShareResolver() {
+    return std::make_shared<vh::share::TargetResolver>();
+}
+
+[[nodiscard]] Storage::ShareManagerFactory& shareManagerFactory() {
+    static Storage::ShareManagerFactory factory = defaultShareManager;
+    return factory;
+}
+
+[[nodiscard]] Storage::ShareResolverFactory& shareResolverFactory() {
+    static Storage::ShareResolverFactory factory = defaultShareResolver;
+    return factory;
+}
+
+[[nodiscard]] std::shared_ptr<vh::share::Manager> shareManager() {
+    auto instance = shareManagerFactory()();
+    if (!instance) throw std::runtime_error("Share manager is unavailable");
+    return instance;
+}
+
+[[nodiscard]] std::shared_ptr<vh::share::TargetResolver> shareResolver() {
+    auto instance = shareResolverFactory()();
+    if (!instance) throw std::runtime_error("Share target resolver is unavailable");
+    return instance;
+}
+
+[[nodiscard]] const json& objectPayload(const json& payload) {
+    if (!payload.is_object()) throw std::invalid_argument("Filesystem payload must be an object");
+    return payload;
+}
+
+[[nodiscard]] std::optional<std::string> optionalClientText(const std::string& value) {
+    if (value.empty()) return std::nullopt;
+    return value;
+}
+
+void requireShareMode(const std::shared_ptr<vh::protocols::ws::Session>& session) {
+    if (!session) throw std::runtime_error("Share filesystem commands require websocket session");
+    if (session->user) throw std::runtime_error("Share filesystem commands require share mode");
+    if (!session->isShareMode()) throw std::runtime_error("Share filesystem commands require verified share mode");
+    if (session->shareSessionToken().empty()) throw std::runtime_error("Share session token is missing");
+}
+
+[[nodiscard]] std::shared_ptr<vh::share::Principal> refreshSharePrincipal(
+    const std::shared_ptr<vh::protocols::ws::Session>& session,
+    vh::share::Manager& manager
+) {
+    auto principal = manager.resolvePrincipal(
+        session->shareSessionToken(),
+        optionalClientText(session->ipAddress),
+        optionalClientText(session->userAgent)
+    );
+    session->setSharePrincipal(principal, session->shareSessionToken());
+    return principal;
+}
+
+[[nodiscard]] bool hasDuplicateSlash(const std::string_view path) {
+    return path.find("//") != std::string_view::npos;
+}
+
+[[nodiscard]] std::string requestedPathString(const json& payload) {
+    if (!payload.contains("path") || payload.at("path").is_null()) return "/";
+    auto path = payload.at("path").get<std::string>();
+    if (path.empty()) return "/";
+    if (hasDuplicateSlash(path)) throw std::runtime_error("Share filesystem path contains duplicate slash");
+    return path;
+}
+
+[[nodiscard]] SharePathRequest requestedSharePath(
+    const json& payload,
+    const vh::share::Principal& principal,
+    const ShareReadPathStyle style
+) {
+    auto path = requestedPathString(payload);
+    if (style == ShareReadPathStyle::Native) {
+        const bool explicitVaultPath = payload.contains("vault_id") && !payload.at("vault_id").is_null();
+        return {
+            .path = std::move(path),
+            .mode = explicitVaultPath
+                        ? vh::share::TargetPathMode::VaultRelative
+                        : vh::share::TargetPathMode::ShareRelative
+        };
+    }
+
+    if (path == "/") path = principal.root_path;
+    return {.path = std::move(path), .mode = vh::share::TargetPathMode::VaultRelative};
+}
+
+[[nodiscard]] json safeShareEntryJson(
+    const vh::fs::model::Entry& entry,
+    const vh::share::Principal& principal
+) {
+    json out = {
+        {"id", entry.id},
+        {"name", entry.name},
+        {"path", vh::share::TargetResolver::shareRelativePath(principal, entry.path.string())},
+        {"type", entry.isDirectory() ? "directory" : "file"},
+        {"size_bytes", entry.size_bytes},
+        {"created_at", vh::db::encoding::timestampToString(entry.created_at)},
+        {"updated_at", vh::db::encoding::timestampToString(entry.updated_at)}
+    };
+
+    if (entry.isDirectory()) {
+        const auto& dir = static_cast<const vh::fs::model::Directory&>(entry);
+        out["file_count"] = dir.file_count;
+        out["subdirectory_count"] = dir.subdirectory_count;
+    } else {
+        const auto& file = static_cast<const vh::fs::model::File&>(entry);
+        out["mime_type"] = file.mime_type ? json(*file.mime_type) : json(nullptr);
+    }
+    return out;
+}
+
+[[nodiscard]] ShareReadResult shareRead(
+    const json& payload,
+    const std::shared_ptr<vh::protocols::ws::Session>& session,
+    const vh::share::Operation operation,
+    const ShareReadPathStyle pathStyle,
+    const bool includeChildren
+) {
+    requireShareMode(session);
+    const auto& body = objectPayload(payload);
+    auto manager = shareManager();
+    auto principal = refreshSharePrincipal(session, *manager);
+    const auto actor = session->rbacActor();
+    auto resolver = shareResolver();
+    auto requested = requestedSharePath(body, *principal, pathStyle);
+    std::optional<vh::share::TargetType> expectedTargetType;
+    if (operation == vh::share::Operation::List)
+        expectedTargetType = vh::share::TargetType::Directory;
+    std::optional<uint32_t> requestedVaultId;
+    if (body.contains("vault_id") && !body.at("vault_id").is_null())
+        requestedVaultId = body.at("vault_id").get<uint32_t>();
+
+    auto target = resolver->resolve(actor, {
+        .path = std::move(requested.path),
+        .operation = operation,
+        .path_mode = requested.mode,
+        .expected_target_type = expectedTargetType,
+        .vault_id = requestedVaultId
+    });
+
+    ShareReadResult result{
+        .principal = std::move(principal),
+        .target = std::move(target),
+        .entries = {}
+    };
+
+    if (includeChildren)
+        result.entries = resolver->listChildren(actor, result.target);
+
+    return result;
+}
+
+[[nodiscard]] json shareMetadataResponse(
+    const json& payload,
+    const std::shared_ptr<vh::protocols::ws::Session>& session,
+    const ShareReadPathStyle pathStyle
+) {
+    auto result = shareRead(payload, session, vh::share::Operation::Metadata, pathStyle, false);
+    return {
+        {"path", result.target.share_path},
+        {"entry", safeShareEntryJson(*result.target.entry, *result.principal)}
+    };
+}
+
+[[nodiscard]] json shareListResponse(
+    const json& payload,
+    const std::shared_ptr<vh::protocols::ws::Session>& session,
+    const ShareReadPathStyle pathStyle
+) {
+    auto result = shareRead(payload, session, vh::share::Operation::List, pathStyle, true);
+    json files = json::array();
+    for (const auto& entry : result.entries)
+        files.push_back(safeShareEntryJson(*entry, *result.principal));
+
+    return {
+        {"path", result.target.share_path},
+        {"entry", safeShareEntryJson(*result.target.entry, *result.principal)},
+        {"files", std::move(files)}
+    };
+}
+}
+
 json Storage::startUpload(const json& payload, const std::shared_ptr<Session>& session) {
+    if (session && session->isShareMode())
+        return vh::protocols::ws::handler::share::Upload::nativeStart(payload, session);
+
     const auto vaultId = payload.at("vault_id").get<uint32_t>();
     const auto path = std::filesystem::path(payload.at("path").get<std::string>());
 
@@ -58,6 +275,9 @@ json Storage::startUpload(const json& payload, const std::shared_ptr<Session>& s
 }
 
 json Storage::finishUpload(const json& payload, const std::shared_ptr<Session>& session) {
+    if (session && session->isShareMode())
+        return vh::protocols::ws::handler::share::Upload::nativeFinish(payload, session);
+
     const auto vaultId = payload.at("vault_id").get<uint32_t>();
     const auto path = std::filesystem::path(payload.at("path").get<std::string>());
 
@@ -74,6 +294,15 @@ json Storage::finishUpload(const json& payload, const std::shared_ptr<Session>& 
 
     session->getUploadHandler()->finishUpload();
     return {{"path", path.string()}};
+}
+
+json Storage::cancelUpload(const json& payload, const std::shared_ptr<Session>& session) {
+    if (session && session->isShareMode())
+        return vh::protocols::ws::handler::share::Upload::nativeCancel(payload, session);
+
+    if (!session || !session->user) throw std::runtime_error("Unauthorized");
+    session->getUploadHandler()->abortActiveUpload("upload_cancelled");
+    return {{"cancelled", true}};
 }
 
 json Storage::mkdir(const json& payload, const std::shared_ptr<Session>& session) {
@@ -172,6 +401,45 @@ json Storage::copy(const json& payload, const std::shared_ptr<Session>& session)
     };
 }
 
+json Storage::metadata(const json& payload, const std::shared_ptr<Session>& session) {
+    if (session && session->isShareMode())
+        return shareMetadataResponse(payload, session, ShareReadPathStyle::Native);
+
+    const auto vaultId = payload.at("vault_id").get<uint32_t>();
+    auto path = std::filesystem::path(payload.value("path", "/"));
+    if (path.empty()) path = std::filesystem::path("/");
+
+    const auto engine = runtime::Deps::get().storageManager->getEngine(vaultId);
+    if (!engine) throw std::runtime_error("No storage engine found for vault with ID: " + std::to_string(vaultId));
+
+    enforcePermission(
+        session,
+        engine,
+        path,
+        permission::vault::FilesystemAction::Lookup,
+        "Permission denied: User does not have metadata permission for this path in the vault"
+    );
+
+    const auto fusePath = engine->paths->absRelToAbsRel(path, PathType::VAULT_ROOT, PathType::FUSE_ROOT);
+    if (!Filesystem::exists(fusePath)) throw std::runtime_error("Path does not exist: " + fusePath.string());
+
+    const auto entry = runtime::Deps::get().fsCache->getEntry(fusePath);
+    if (!entry) throw std::runtime_error("No entry found for path: " + fusePath.string());
+
+    return {
+        {"vault", engine->vault->name},
+        {"path", path.string()},
+        {"entry", *entry}
+    };
+}
+
+json Storage::list(const json& payload, const std::shared_ptr<Session>& session) {
+    if (session && session->isShareMode())
+        return shareListResponse(payload, session, ShareReadPathStyle::Native);
+
+    return listDir(payload, session);
+}
+
 json Storage::listDir(const json& payload, const std::shared_ptr<Session>& session) {
     const auto vaultId = payload.at("vault_id").get<uint32_t>();
     auto path = std::filesystem::path(payload.value("path", "/"));
@@ -199,6 +467,7 @@ json Storage::listDir(const json& payload, const std::shared_ptr<Session>& sessi
     return {
         {"vault", engine->vault->name},
         {"path", path.string()},
+        {"entry", *entry},
         {"files", entries}
     };
 }
@@ -228,4 +497,35 @@ json Storage::remove(const json& payload, const std::shared_ptr<Session>& sessio
     runtime::Deps::get().syncController->runNow(vaultId);
 
     return {{"path", path.string()}};
+}
+
+json Storage::shareCompatibilityMetadata(const json& payload, const std::shared_ptr<Session>& session) {
+    auto response = shareMetadataResponse(payload, session, ShareReadPathStyle::Compatibility);
+    return {{"entry", std::move(response.at("entry"))}};
+}
+
+json Storage::shareCompatibilityList(const json& payload, const std::shared_ptr<Session>& session) {
+    auto response = shareListResponse(payload, session, ShareReadPathStyle::Compatibility);
+    return {
+        {"path", std::move(response.at("path"))},
+        {"entries", std::move(response.at("files"))}
+    };
+}
+
+void Storage::setShareManagerFactoryForTesting(ShareManagerFactory factory) {
+    if (!factory) throw std::invalid_argument("Share manager factory is required");
+    shareManagerFactory() = std::move(factory);
+}
+
+void Storage::resetShareManagerFactoryForTesting() {
+    shareManagerFactory() = defaultShareManager;
+}
+
+void Storage::setShareResolverFactoryForTesting(ShareResolverFactory factory) {
+    if (!factory) throw std::invalid_argument("Share target resolver factory is required");
+    shareResolverFactory() = std::move(factory);
+}
+
+void Storage::resetShareResolverFactoryForTesting() {
+    shareResolverFactory() = defaultShareResolver;
 }

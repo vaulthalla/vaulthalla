@@ -1,127 +1,221 @@
 #!/usr/bin/env bash
-# Nuke vaulthalla immediately. No grace, no waits. All privileged ops use sudo.
+# Safely detach the Vaulthalla FUSE mount.
+#
+# Do not kill by command-line substring, project path, generic FUSE name, or mount users.
+# Remote IDEs and shells often mention the repository path and may legitimately touch
+# the mount while inspecting files.
 
 set -euo pipefail
 
 UNIT="vaulthalla.service"
-MOUNT="/mnt/vaulthalla"
+MOUNT="${VH_MOUNTPOINT:-/mnt/vaulthalla}"
+FORCE_VAULTHALLA_PIDS=false
 
-log(){ printf '[nuke-vaulthalla] %s\n' "$*"; }
+log(){ printf '[vh-unmount] %s\n' "$*"; }
 
-ancestor_pids() {
-  local pid="$$"
-  while [[ -n "${pid:-}" && "$pid" -gt 1 ]]; do
-    printf '%s\n' "$pid"
-    pid="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d '[:space:]' || true)"
-  done
+usage() {
+  cat <<EOF
+Usage: $0 [--force-vaulthalla-pids]
+
+Options:
+  --force-vaulthalla-pids  After graceful systemd stop fails, SIGTERM/SIGKILL only
+                           the verified Vaulthalla service MainPID.
+  -h, --help               Show this help.
+EOF
 }
 
-PROTECTED_PIDS="$(ancestor_pids)"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --force-vaulthalla-pids)
+      FORCE_VAULTHALLA_PIDS=true
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      usage
+      exit 1
+      ;;
+  esac
+done
 
-is_protected_pid() {
-  local candidate="$1"
-  grep -Fxq "$candidate" <<<"$PROTECTED_PIDS"
-}
-
-kill_matching_processes() {
-  local pat="$1"
-  local pids=()
-  local pid=""
-
-  while read -r pid; do
-    [[ -n "$pid" ]] || continue
-    if is_protected_pid "$pid"; then
-      log "SKIP (pgrep:$pat): protected PID $pid"
-      continue
-    fi
-    pids+=("$pid")
-  done < <(sudo pgrep -f "$pat" 2>/dev/null || true)
-
-  if [[ "${#pids[@]}" -gt 0 ]]; then
-    log "KILL (pgrep:$pat): ${pids[*]}"
-    sudo kill -9 "${pids[@]}" 2>/dev/null || true
-  fi
+canon_mount() {
+  readlink -f "$MOUNT" 2>/dev/null || echo "$MOUNT"
 }
 
 is_mounted() {
-  # Reliable mount detection: findmnt -T, then /proc/self/mountinfo
+  local mp
+  mp="$(canon_mount)"
+
   if command -v findmnt >/dev/null 2>&1; then
-    if findmnt -rn -T "$MOUNT" >/dev/null 2>&1; then return 0; fi
+    findmnt -rn -M "$mp" >/dev/null 2>&1 && return 0
   fi
-  local mp; mp="$(readlink -f "$MOUNT" 2>/dev/null || echo "$MOUNT")"
-  grep -q " $mp " /proc/self/mountinfo 2>/dev/null
+
+  grep -Fq " $mp " /proc/self/mountinfo 2>/dev/null
 }
 
-STATE="$(sudo systemctl show -p ActiveState --value "$UNIT" 2>/dev/null || echo unknown)"
-PID="$(sudo systemctl show -p MainPID    --value "$UNIT" 2>/dev/null | awk '$1>0{print $1}')"
-CG="$(sudo systemctl show -p ControlGroup --value "$UNIT" 2>/dev/null || true)"
-log "State: $STATE  PID: ${PID:--}  CGroup: ${CG:-unknown}"
+unit_exists() {
+  local unit="$1"
+  systemctl list-unit-files "$unit" >/dev/null 2>&1 || systemctl status "$unit" >/dev/null 2>&1
+}
 
-# 1) Instantly SIGKILL the entire unit cgroup
-log "KILL (cgroup): sudo systemctl kill --kill-who=all --signal=KILL $UNIT"
-sudo systemctl kill --kill-who=all --signal=KILL "$UNIT" || true
+unit_main_pid() {
+  local unit="$1"
+  systemctl show -p MainPID --value "$unit" 2>/dev/null | awk '$1>0{print $1}'
+}
 
-# 2) cgroup v2 guillotine (hard kill the whole cgroup)
-if [[ -n "${CG:-}" && -e "/sys/fs/cgroup${CG}/cgroup.kill" ]]; then
-  log "Guillotine: echo 1 > /sys/fs/cgroup${CG}/cgroup.kill"
-  printf '1\n' | sudo tee "/sys/fs/cgroup${CG}/cgroup.kill" >/dev/null 2>&1 || true
-fi
+pid_exe() {
+  local pid="$1"
+  readlink -f "/proc/$pid/exe" 2>/dev/null || true
+}
 
-# 3) Belt & suspenders: kill obvious stragglers by pattern
-for pat in 'vaulthalla-serv' 'vaulthalla' 'vaulthalla-fuse' 'fuse.vaulthalla'; do
-  kill_matching_processes "$pat"
-done
+is_vaulthalla_pid() {
+  local pid="$1" exe
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  [[ -d "/proc/$pid" ]] || return 1
 
-# If we can read the cgroup’s procs, double-tap them
-if [[ -n "${CG:-}" && -r "/sys/fs/cgroup${CG}/cgroup.procs" ]]; then
-  PROCS="$(sudo cat "/sys/fs/cgroup${CG}/cgroup.procs" 2>/dev/null || true)"
-  if [[ -n "${PROCS//[[:space:]]/}" ]]; then
-    log "KILL (cgroup.procs): $(echo "$PROCS" | tr '\n' ' ')"
-    sed '/^\s*$/d' <<<"$PROCS" | xargs -r -n1 sudo kill -9 >/dev/null 2>&1 || true
+  exe="$(pid_exe "$pid")"
+  case "$exe" in
+    /usr/bin/vaulthalla-server|/usr/local/bin/vaulthalla-server)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+safe_stop_unit() {
+  local unit="$1"
+  if ! unit_exists "$unit"; then
+    log "$unit is not installed/loaded"
+    return 0
   fi
-fi
 
-# 4) Smash the FUSE mount
-if is_mounted; then
+  log "Stopping $unit"
+  if ! sudo systemctl stop "$unit"; then
+    log "⚠️  systemctl stop $unit failed"
+    return 1
+  fi
+}
+
+force_verified_main_pid() {
+  local unit="$1" pid
+  pid="$(unit_main_pid "$unit")"
+  if [[ -z "$pid" ]]; then
+    log "No active MainPID for $unit"
+    return 0
+  fi
+
+  if ! is_vaulthalla_pid "$pid"; then
+    log "Refusing to kill unverified $unit MainPID $pid ($(pid_exe "$pid"))"
+    return 1
+  fi
+
+  log "Terminating verified Vaulthalla MainPID $pid"
+  sudo kill -TERM "$pid"
+  sleep 2
+
+  if kill -0 "$pid" 2>/dev/null; then
+    log "Killing verified Vaulthalla MainPID $pid"
+    sudo kill -KILL "$pid"
+  fi
+}
+
+try_unmount() {
+  local mp
+  mp="$(canon_mount)"
+
+  if ! is_mounted; then
+    log "$mp is not mounted"
+    return 0
+  fi
+
   if command -v fusermount3 >/dev/null 2>&1; then
-    log "Unmount: sudo fusermount3 -uz $MOUNT"
-    sudo fusermount3 -uz "$MOUNT" 2>/dev/null || true
+    log "Unmount: sudo fusermount3 -u $mp"
+    if ! sudo fusermount3 -u "$mp" 2>/dev/null; then
+      log "fusermount3 could not unmount $mp"
+    fi
   elif command -v fusermount >/dev/null 2>&1; then
-    log "Unmount: sudo fusermount -uz $MOUNT"
-    sudo fusermount -uz "$MOUNT" 2>/dev/null || true
+    log "Unmount: sudo fusermount -u $mp"
+    if ! sudo fusermount -u "$mp" 2>/dev/null; then
+      log "fusermount could not unmount $mp"
+    fi
   fi
 
   if is_mounted; then
-#    if command -v fuser >/dev/null 2>&1; then
-#      log "Killing users of $MOUNT: sudo fuser -km $MOUNT"
-#      sudo fuser -km "$MOUNT" 2>/dev/null || true
-#    fi
-    log "Unmount: sudo umount -f -l $MOUNT"
-    sudo umount -f -l "$MOUNT" 2>/dev/null || true
+    log "Unmount: sudo umount $mp"
+    if ! sudo umount "$mp" 2>/dev/null; then
+      log "umount could not unmount $mp"
+    fi
   fi
-else
-  log "$MOUNT not mounted (skip unmount)."
-fi
+}
 
-# 5) Remove mount dir only if no longer mounted
-if ! is_mounted && [[ -d "$MOUNT" ]]; then
-  log "Removing mount dir: sudo rm -rf --one-file-system $MOUNT"
-  sudo rm -rf --one-file-system "$MOUNT" 2>/dev/null || true
-fi
+report_busy_mount() {
+  local mp
+  mp="$(canon_mount)"
 
-# 6) Reset failed state so systemd shuts up
-sudo systemctl reset-failed "$UNIT" >/dev/null 2>&1 || true
+  log "Mount is still busy: $mp"
+  log "Not killing unrelated processes. Close shells, editors, terminals, or indexers using this mount and retry."
 
-# 7) Final blunt checks
-if sudo pgrep -fa 'vaulthalla|fuse' >/dev/null 2>&1; then
-  log "❌ Stragglers still alive:"
-  sudo pgrep -fa 'vaulthalla|fuse' || true
-  # exit 1
-fi
+  if command -v lsof >/dev/null 2>&1; then
+    log "Processes reported by lsof:"
+    if ! sudo lsof +f -- "$mp" 2>/dev/null; then
+      log "lsof reported no holders or could not inspect $mp"
+    fi
+  fi
 
-if is_mounted; then
-  log "❌ Mount still present at $MOUNT (kernel-wedged FUSE). Only a reboot clears that."
-  # exit 1
-fi
+  if command -v fuser >/dev/null 2>&1; then
+    log "Processes reported by fuser -vm:"
+    if ! sudo fuser -vm "$mp" 2>/dev/null; then
+      log "fuser reported no holders or could not inspect $mp"
+    fi
+  fi
+}
 
-log "✅ Annihilated."
+remove_mount_dir_if_empty() {
+  local mp
+  mp="$(canon_mount)"
+
+  if is_mounted; then
+    log "Refusing to remove live mountpoint: $mp"
+    return 1
+  fi
+
+  if [[ -d "$mp" ]]; then
+    log "Removing empty mount dir: $mp"
+    sudo rmdir "$mp" 2>/dev/null || log "Mount dir not empty or not removable; leaving it in place: $mp"
+  fi
+}
+
+main() {
+  local mp stop_failed=false
+  mp="$(canon_mount)"
+
+  log "Target mount: $mp"
+  safe_stop_unit "$UNIT" || stop_failed=true
+
+  if [[ "$stop_failed" == true && "$FORCE_VAULTHALLA_PIDS" == true ]]; then
+    force_verified_main_pid "$UNIT"
+  elif [[ "$stop_failed" == true ]]; then
+    log "Use --force-vaulthalla-pids to terminate only the verified $UNIT MainPID."
+  fi
+
+  try_unmount
+
+  if is_mounted; then
+    report_busy_mount
+    exit 1
+  fi
+
+  remove_mount_dir_if_empty
+  if ! sudo systemctl reset-failed "$UNIT" >/dev/null 2>&1; then
+    log "Could not reset failed state for $UNIT"
+  fi
+  log "✅ Vaulthalla FUSE mount detached safely."
+}
+
+main "$@"

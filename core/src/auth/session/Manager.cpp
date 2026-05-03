@@ -4,6 +4,7 @@
 #include "auth/model/TokenPair.hpp"
 #include "auth/session/Issuer.hpp"
 #include "auth/session/Validator.hpp"
+#include "crypto/util/hash.hpp"
 #include "db/query/auth/RefreshToken.hpp"
 #include "log/Registry.hpp"
 #include "protocols/ws/Session.hpp"
@@ -15,6 +16,66 @@ using namespace vh::protocols::ws;
 using namespace vh::identities;
 
 namespace vh::auth::session {
+
+namespace {
+[[nodiscard]] std::optional<std::string> humanRefreshJti(const std::shared_ptr<Session>& session) {
+    if (!session || !session->tokens || !session->tokens->refreshToken) return std::nullopt;
+    if (session->tokens->refreshToken->jti.empty()) return std::nullopt;
+    return session->tokens->refreshToken->jti;
+}
+
+[[nodiscard]] std::optional<std::string> shareRefreshJti(const std::shared_ptr<Session>& session) {
+    if (!session || !session->tokens || !session->tokens->shareRefreshToken) return std::nullopt;
+    if (session->tokens->shareRefreshToken->jti.empty()) return std::nullopt;
+    return session->tokens->shareRefreshToken->jti;
+}
+
+[[nodiscard]] bool isShareRefreshKind(const TokenClaims& claims) {
+    return claims.tokenKind == std::string(Issuer::shareRefreshTokenKind());
+}
+
+[[nodiscard]] bool isHumanRefreshKind(const TokenClaims& claims) {
+    return claims.tokenKind.empty() || claims.tokenKind == std::string(Issuer::refreshTokenKind());
+}
+
+void hydrateShareRefreshToken(
+    const std::shared_ptr<Session>& session,
+    const std::string& rawToken,
+    const TokenClaims& claims
+) {
+    if (!session || !session->tokens) throw std::invalid_argument("Invalid session for share refresh hydration");
+    if (!isShareRefreshKind(claims)) throw std::invalid_argument("Invalid share refresh token kind");
+    if (claims.subject != Issuer::buildRefreshTokenSubject(session))
+        throw std::runtime_error("Share refresh token subject mismatch");
+
+    auto token = session->tokens->shareRefreshToken;
+    if (!token) token = std::make_shared<auth::model::RefreshToken>();
+
+    token->rawToken = rawToken;
+    token->jti = claims.jti;
+    token->subject = claims.subject;
+    token->issuedAt = claims.issuedAt;
+    token->expiresAt = claims.expiresAt;
+    token->userAgent = session->userAgent;
+    token->ipAddress = session->ipAddress;
+    token->hashedToken = crypto::hash::password(rawToken);
+    if (token->hashedToken.empty()) throw std::runtime_error("Failed to hash share refresh token");
+
+    session->tokens->shareRefreshToken = std::move(token);
+}
+
+void copyShareState(const std::shared_ptr<Session>& target, const std::shared_ptr<Session>& source) {
+    if (!target || !source || target.get() == source.get() || source->user) return;
+
+    if (source->isShareMode() && source->sharePrincipal()) {
+        target->setSharePrincipal(source->sharePrincipal(), source->shareSessionToken());
+        return;
+    }
+
+    if (source->isSharePending() && !source->shareSessionId().empty() && !source->shareSessionToken().empty())
+        target->setPendingShareSession(source->shareSessionId(), source->shareSessionToken());
+}
+}
 
 void Manager::accept(boost::asio::ip::tcp::socket&& socket, const std::shared_ptr<Router>& router) {
     const auto session = std::make_shared<Session>(router);
@@ -29,11 +90,6 @@ void Manager::tryRehydrate(const std::shared_ptr<Session>& session) {
         Validator::validateRefreshToken(session); // May throw if invalid
         Issuer::accessToken(session); // Assign new access token
         cache(session);
-
-        if (!session->user) {
-            Issuer::refreshToken(session);
-            cache(session);
-        }
     } catch (const std::exception& ex) {
         log::Registry::ws()->debug(
             "[session::Manager] Rehydration failed for session UUID: {}. Reason: {}",
@@ -41,15 +97,27 @@ void Manager::tryRehydrate(const std::shared_ptr<Session>& session) {
             ex.what()
         );
 
-        Issuer::refreshToken(session);
-        cache(session);
+        rotateRefreshToken(session);
     }
 }
 
 void Manager::promote(const std::shared_ptr<Session>& session) {
+    if (!session || !session->user || !session->tokens) {
+        log::Registry::ws()->debug("[session::Manager] Promotion failed due to missing session, user, or token state");
+        throw std::invalid_argument("Invalid session data for promotion");
+    }
+
+    if (!session->tokens->refreshToken || !session->tokens->refreshToken->isValid()) {
+        log::Registry::ws()->debug(
+            "[session::Manager] Rotating refresh token before promotion for session UUID: {}",
+            session->uuid
+        );
+        rotateRefreshToken(session);
+    }
+
     Issuer::accessToken(session);
 
-    if (!session || !Validator::softValidateActiveSession(session)) {
+    if (!Validator::softValidateActiveSession(session)) {
         log::Registry::ws()->debug("[session::Manager] Promotion failed due to invalid session data");
         throw std::invalid_argument("Invalid session data for promotion");
     }
@@ -118,12 +186,139 @@ void Manager::cache(const std::shared_ptr<Session>& session) {
     std::lock_guard lock(sessionMutex_);
 
     sessionsByUUID_[session->uuid] = session;
-
-    if (session->tokens && session->tokens->refreshToken && !session->tokens->refreshToken->jti.empty())
-        sessionsByRefreshJti_[session->tokens->refreshToken->jti] = session;
+    reindexHumanRefreshTokenLocked(session, std::nullopt);
+    reindexShareRefreshTokenLocked(session, std::nullopt);
 
     if (session->user)
         sessionsByUserId_.emplace(session->user->id, session);
+}
+
+void Manager::rotateRefreshToken(const std::shared_ptr<Session>& session) {
+    if (!session) throw std::invalid_argument("Invalid session for refresh token rotation");
+
+    const auto oldJti = humanRefreshJti(session);
+
+    Issuer::refreshToken(session);
+
+    std::lock_guard lock(sessionMutex_);
+    sessionsByUUID_[session->uuid] = session;
+    reindexHumanRefreshTokenLocked(session, oldJti);
+}
+
+void Manager::rotateShareRefreshToken(const std::shared_ptr<Session>& session) {
+    if (!session) throw std::invalid_argument("Invalid session for share refresh token rotation");
+
+    const auto oldJti = shareRefreshJti(session);
+
+    Issuer::shareRefreshToken(session);
+
+    std::lock_guard lock(sessionMutex_);
+    sessionsByUUID_[session->uuid] = session;
+    reindexShareRefreshTokenLocked(session, oldJti);
+}
+
+void Manager::tryRehydrateShareRefresh(const std::shared_ptr<Session>& session) {
+    if (!session) throw std::invalid_argument("Invalid session for share refresh token hydration");
+
+    const auto rawToken =
+        (session->tokens && session->tokens->shareRefreshToken)
+            ? session->tokens->shareRefreshToken->rawToken
+            : std::string{};
+
+    if (rawToken.empty()) {
+        rotateShareRefreshToken(session);
+        return;
+    }
+
+    try {
+        const auto claims = Issuer::decode(rawToken);
+        if (!claims || claims->jti.empty()) throw std::runtime_error("Invalid share refresh token claims");
+        hydrateShareRefreshToken(session, rawToken, *claims);
+
+        if (const auto priorSession = getShareByRefreshJti(claims->jti))
+            copyShareState(session, priorSession);
+
+        cache(session);
+    } catch (const std::exception& ex) {
+        log::Registry::ws()->debug(
+            "[session::Manager] Share refresh hydration failed for session UUID: {}. Reason: {}",
+            session->uuid,
+            ex.what()
+        );
+        rotateShareRefreshToken(session);
+    }
+}
+
+void Manager::indexHumanRefreshTokenLocked(const std::shared_ptr<Session>& session) {
+    if (!session || !session->tokens || !session->tokens->refreshToken) return;
+
+    const auto& jti = session->tokens->refreshToken->jti;
+    if (jti.empty()) return;
+
+    if (session->isShareSession()) {
+        log::Registry::ws()->debug(
+            "[session::Manager] Refusing to index human refresh for share session UUID: {}",
+            session->uuid
+        );
+        return;
+    }
+
+    sessionsByRefreshJti_[jti] = session;
+}
+
+void Manager::indexShareRefreshTokenLocked(const std::shared_ptr<Session>& session) {
+    if (!session || !session->tokens || !session->tokens->shareRefreshToken) return;
+
+    const auto& jti = session->tokens->shareRefreshToken->jti;
+    if (jti.empty()) return;
+
+    if (session->user) {
+        log::Registry::ws()->debug(
+            "[session::Manager] Refusing to index share refresh for human session UUID: {}",
+            session->uuid
+        );
+        return;
+    }
+
+    shareSessionsByRefreshJti_[jti] = session;
+}
+
+void Manager::reindexHumanRefreshTokenLocked(
+    const std::shared_ptr<Session>& session,
+    std::optional<std::string> oldJti
+) {
+    if (!session) return;
+
+    const auto currentJti = humanRefreshJti(session).value_or("");
+
+    for (auto it = sessionsByRefreshJti_.begin(); it != sessionsByRefreshJti_.end();) {
+        const bool isOldJti = oldJti && it->first == *oldJti;
+        const bool isStaleSessionEntry = it->second == session && it->first != currentJti;
+        const bool isShareSessionEntry = it->second == session && session->isShareSession();
+        if (isOldJti || isStaleSessionEntry || isShareSessionEntry) it = sessionsByRefreshJti_.erase(it);
+        else ++it;
+    }
+
+    indexHumanRefreshTokenLocked(session);
+}
+
+void Manager::reindexShareRefreshTokenLocked(
+    const std::shared_ptr<Session>& session,
+    std::optional<std::string> oldJti
+) {
+    if (!session) return;
+
+    const auto currentJti = shareRefreshJti(session).value_or("");
+
+    for (auto it = shareSessionsByRefreshJti_.begin(); it != shareSessionsByRefreshJti_.end();) {
+        const bool isOldJti = oldJti && it->first == *oldJti;
+        const bool isStaleSessionEntry = it->second == session && it->first != currentJti;
+        const bool isHumanSessionEntry = it->second == session && session->user;
+        if (isOldJti || isStaleSessionEntry || isHumanSessionEntry) it = shareSessionsByRefreshJti_.erase(it);
+        else ++it;
+    }
+
+    indexShareRefreshTokenLocked(session);
 }
 
 bool Manager::validate(const std::shared_ptr<Session>& session, const std::string& accessToken) {
@@ -154,8 +349,10 @@ bool Manager::validate(const std::shared_ptr<Session>& session, const std::strin
 std::shared_ptr<Session> Manager::validateRawRefreshToken(const std::string& refreshToken) {
     const auto claims = Issuer::decode(refreshToken);
     if (!claims || claims->jti.empty()) throw std::invalid_argument("Invalid refresh token for validation");
+    if (!isHumanRefreshKind(*claims)) throw std::invalid_argument("Refresh token kind is not human refresh");
 
     const auto session = get(claims->jti);
+
     if (!session) throw std::invalid_argument("No session found for refresh token validation");
     if (!session->tokens->refreshToken) throw std::invalid_argument("Session does not contain a refresh token for validation");
 
@@ -164,6 +361,33 @@ std::shared_ptr<Session> Manager::validateRawRefreshToken(const std::string& ref
         throw std::invalid_argument("Refresh token mismatch for validation");
 
     Validator::validateRefreshToken(session);
+    if (!session->user || session->isShareSession())
+        throw std::invalid_argument("Refresh token did not resolve to a human session");
+
+    return session;
+}
+
+std::shared_ptr<Session> Manager::validateRawShareRefreshToken(const std::string& refreshToken) {
+    const auto claims = Issuer::decode(refreshToken);
+    if (!claims || claims->jti.empty()) throw std::invalid_argument("Invalid share refresh token for validation");
+    if (!isShareRefreshKind(*claims)) throw std::invalid_argument("Refresh token kind is not share refresh");
+
+    const auto session = getShareByRefreshJti(claims->jti);
+    if (!session) throw std::invalid_argument("No share session found for refresh token validation");
+    if (session->user) throw std::invalid_argument("Share refresh token resolved to a human session");
+    if (!session->isShareMode()) throw std::invalid_argument("Share session is not ready for preview");
+    if (!session->tokens || !session->tokens->shareRefreshToken)
+        throw std::invalid_argument("Share session does not contain a refresh token");
+
+    const auto token = session->tokens->shareRefreshToken;
+    if (token->rawToken.empty()) token->rawToken = refreshToken;
+    else if (token->rawToken != refreshToken)
+        throw std::invalid_argument("Share refresh token mismatch for validation");
+
+    if (!token->isValid()) throw std::invalid_argument("Share refresh token is not valid");
+    Validator::validateClaims(token, claims);
+    if (claims->subject != Issuer::buildRefreshTokenSubject(session))
+        throw std::runtime_error("Share refresh token subject mismatch");
 
     return session;
 }
@@ -185,7 +409,16 @@ void Manager::invalidate(const std::shared_ptr<Session>& session) {
     {
         std::lock_guard lock(sessionMutex_);
         sessionsByUUID_.erase(uuid);
-        if (!jti.empty()) sessionsByRefreshJti_.erase(jti);
+
+        auto eraseSession = [&](auto& index) {
+            for (auto it = index.begin(); it != index.end();) {
+                if ((!jti.empty() && it->first == jti) || it->second == session) it = index.erase(it);
+                else ++it;
+            }
+        };
+
+        eraseSession(sessionsByRefreshJti_);
+        eraseSession(shareSessionsByRefreshJti_);
 
         if (userId) {
             auto [begin, end] = sessionsByUserId_.equal_range(*userId);
@@ -211,6 +444,14 @@ std::shared_ptr<Session> Manager::get(const std::string& token) {
 
     if (sessionsByUUID_.contains(token)) return sessionsByUUID_[token];
     if (sessionsByRefreshJti_.contains(token)) return sessionsByRefreshJti_[token];
+
+    return nullptr;
+}
+
+std::shared_ptr<Session> Manager::getShareByRefreshJti(const std::string& token) {
+    std::lock_guard lock(sessionMutex_);
+
+    if (shareSessionsByRefreshJti_.contains(token)) return shareSessionsByRefreshJti_[token];
 
     return nullptr;
 }

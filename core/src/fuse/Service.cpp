@@ -18,21 +18,24 @@
 #include <thread>
 #include <cstdlib>
 
-namespace fs = std::filesystem;
-using namespace vh::concurrency;
-using namespace vh::fuse;
+namespace stdfs = std::filesystem;
+
+namespace vh::fuse {
+
+using vh::concurrency::AsyncService;
+using vh::concurrency::ThreadPoolManager;
 
 // Best-effort guard: only allow nuking test mountpoints under /tmp
-static bool isSafeTestMountpoint(const fs::path& p) {
+static bool isSafeTestMountpoint(const stdfs::path& p) {
     const auto s = p.string();
     return s.rfind("/tmp/", 0) == 0; // starts_with("/tmp/")
 }
 
-static bool isMountedOrStale(const fs::path& p) {
+static bool isMountedOrStale(const stdfs::path& p) {
     // If lstat returns ENOTCONN, it’s a stale FUSE endpoint => treat as mounted.
     struct stat st{}, pst{};
     if (::lstat(p.c_str(), &st) != 0) return (errno == ENOTCONN);
-    const auto parent = p.parent_path().empty() ? fs::path("/") : p.parent_path();
+    const auto parent = p.parent_path().empty() ? stdfs::path("/") : p.parent_path();
 
     // If parent can't be stat'ed, be conservative.
     if (::lstat(parent.c_str(), &pst) != 0) return true;
@@ -41,7 +44,7 @@ static bool isMountedOrStale(const fs::path& p) {
     return st.st_dev != pst.st_dev;
 }
 
-static void lazyUmount(const fs::path& p) {
+static void lazyUmount(const stdfs::path& p) {
     // 1) Try kernel lazy detach
     if (::umount2(p.c_str(), MNT_DETACH) == 0) return;
 
@@ -51,7 +54,7 @@ static void lazyUmount(const fs::path& p) {
     (void)std::system(std::string("umount     -l  " + p.string() + " >/dev/null 2>&1").c_str());
 }
 
-static void waitUnmounted(const fs::path& p, std::chrono::milliseconds timeout = std::chrono::milliseconds(1500)) {
+static void waitUnmounted(const stdfs::path& p, std::chrono::milliseconds timeout = std::chrono::milliseconds(1500)) {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     while (std::chrono::steady_clock::now() < deadline) {
         if (!isMountedOrStale(p)) return;
@@ -82,7 +85,7 @@ static void ensureFreshMountpoint() {
             throw std::runtime_error("Refusing to clear non-/tmp mount in test mode: " + mountPath.string());
         }
 
-        if (fs::exists(mountPath, ec)) {
+        if (stdfs::exists(mountPath, ec)) {
             // If it’s a mountpoint (or stale), detach it first.
             if (isMountedOrStale(mountPath)) {
                 lazyUmount(mountPath);
@@ -91,7 +94,7 @@ static void ensureFreshMountpoint() {
 
             // Now it should be a normal dir entry; remove it entirely.
             ec.clear();
-            fs::remove_all(mountPath, ec);
+            stdfs::remove_all(mountPath, ec);
             if (ec && ec.value() != ENOENT) {
                 vh::log::Registry::fuse()->warn(
                     "[FUSE] Failed to remove old mount dir {}: {}", mountPath.string(), ec.message());
@@ -101,16 +104,16 @@ static void ensureFreshMountpoint() {
     }
 
     // Create fresh directory (handle ENOTCONN paranoia: retry once after forced detach)
-    fs::create_directories(mountPath, ec);
+    stdfs::create_directories(mountPath, ec);
     if (ec) {
         if (ec.value() == ENOTCONN || ec == std::errc::not_connected) {
             // One more forceful pass if a stale endpoint just got noticed late
             lazyUmount(mountPath);
             waitUnmounted(mountPath);
             ec.clear();
-            fs::remove_all(mountPath, ec); // ignore errors
+            stdfs::remove_all(mountPath, ec); // ignore errors
             ec.clear();
-            fs::create_directories(mountPath, ec);
+            stdfs::create_directories(mountPath, ec);
         }
     }
     if (ec) {
@@ -118,9 +121,9 @@ static void ensureFreshMountpoint() {
     }
 
     if (vh::paths::testMode) {
-        fs::permissions(mountPath,
-                        fs::perms::owner_all | fs::perms::group_all | fs::perms::others_all,
-                        fs::perm_options::replace,
+        stdfs::permissions(mountPath,
+                        stdfs::perms::owner_all | stdfs::perms::group_all | stdfs::perms::others_all,
+                        stdfs::perm_options::replace,
                         ec);
         if (ec) {
             throw std::runtime_error("Failed to chmod mountpoint " + mountPath.string() + ": " + ec.message());
@@ -273,4 +276,6 @@ void Service::runLoop() {
     fuse_opt_free_args(&args);
 
     log::Registry::fuse()->info("[FUSE] FUSE service stopped successfully");
+}
+
 }

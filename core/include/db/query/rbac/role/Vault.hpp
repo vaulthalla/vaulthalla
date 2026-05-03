@@ -5,6 +5,7 @@
 #include <memory>
 #include <vector>
 #include <string>
+#include <pqxx/pqxx>
 
 namespace vh::rbac::role { struct Vault; }
 
@@ -16,6 +17,7 @@ class Vault {
 
 public:
     static unsigned int upsert(const VaultRolePtr& role);
+    static unsigned int upsert(pqxx::work& txn, const VaultRolePtr& role);
 
     static void remove(unsigned int id);
     static void remove(const VaultRolePtr& role);

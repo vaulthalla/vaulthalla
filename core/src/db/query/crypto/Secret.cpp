@@ -3,8 +3,9 @@
 #include "crypto/model/Secret.hpp"
 #include "db/encoding/bytea.hpp"
 
-using namespace vh::db::query::crypto;
-using namespace vh::db::encoding;
+namespace vh::db::query::crypto {
+
+using vh::db::encoding::to_hex_bytea;
 
 using S = vh::crypto::model::Secret;
 
@@ -29,4 +30,6 @@ bool Secret::secretExists(const std::string& key) {
         if (res.empty()) return false;
         return res.one_field().as<bool>();
     });
+}
+
 }

@@ -9,9 +9,7 @@
 #include <boost/asio/io_context.hpp>
 #include <sodium.h>
 
-using namespace vh::protocols;
-using namespace vh::config;
-using namespace vh::crypto;
+namespace vh::protocols {
 
 ProtocolService::ProtocolService() : AsyncService("ProtocolService") {}
 
@@ -57,7 +55,7 @@ void ProtocolService::runLoop() {
 }
 
 void ProtocolService::initProtocols() {
-    const auto& cfg = Registry::get();
+    const auto& cfg = vh::config::Registry::get();
     ioContextInitialized_.store(false, std::memory_order_release);
     websocketConfigured_.store(cfg.websocket.enabled, std::memory_order_release);
     httpPreviewConfigured_.store(cfg.http_preview.enabled, std::memory_order_release);
@@ -81,7 +79,7 @@ void ProtocolService::initProtocols() {
 
 
 void ProtocolService::initWebsocketServer() {
-    const auto& cfg = Registry::get().websocket;
+    const auto& cfg = vh::config::Registry::get().websocket;
     if (!cfg.enabled) {
         log::Registry::runtime()->info("[ProtocolService] WebSocket server is disabled in configuration.");
         return;
@@ -94,7 +92,7 @@ void ProtocolService::initWebsocketServer() {
 }
 
 void ProtocolService::initHttpServer() {
-    const auto& cfg = Registry::get().http_preview;
+    const auto& cfg = vh::config::Registry::get().http_preview;
     if (!cfg.enabled) {
         log::Registry::runtime()->info("[ProtocolService] HTTP preview server is disabled in configuration.");
         return;
@@ -107,12 +105,14 @@ void ProtocolService::initHttpServer() {
 }
 
 void ProtocolService::initThreatIntelligence() {
-    password::Strength::loadCommonWeakPasswordsFromURLs(
+    vh::crypto::password::Strength::loadCommonWeakPasswordsFromURLs(
             {"https://raw.githubusercontent.com/danielmiessler/SecLists/refs/heads/master/Passwords/Common-Credentials/"
              "100k-most-used-passwords-NCSC.txt",
              "https://raw.githubusercontent.com/danielmiessler/SecLists/refs/heads/master/Passwords/Common-Credentials/"
              "probable-v2_top-12000.txt"});
 
-    password::Strength::loadDictionaryFromURL(
+    vh::crypto::password::Strength::loadDictionaryFromURL(
         "https://raw.githubusercontent.com/dolph/dictionary/refs/heads/master/popular.txt");
+}
+
 }

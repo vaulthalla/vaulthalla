@@ -10,8 +10,10 @@
 #include "db/encoding/u8.hpp"
 #include "config/Registry.hpp"
 
-using namespace vh::db::query::sync;
-using namespace vh::db::encoding;
+namespace vh::db::query::sync {
+
+using vh::db::encoding::timestampToString;
+using vh::db::encoding::to_utf8_string;
 
 static void build_event(pqxx::work& txn, const Event::EventPtr& event) {
     if (!event) return;
@@ -182,4 +184,6 @@ void Event::purgeOld() {
 
         txn.exec(pqxx::prepped{"sync_event.cleanup"}, p);
     });
+}
+
 }

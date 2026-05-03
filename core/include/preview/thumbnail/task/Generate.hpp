@@ -8,6 +8,7 @@
 #include "db/query/fs/Cache.hpp"
 #include "fs/model/File.hpp"
 #include "fs/model/Path.hpp"
+#include "fs/ops/file.hpp"
 #include "vault/model/Vault.hpp"
 #include "log/Registry.hpp"
 #include "runtime/Deps.hpp"
@@ -39,6 +40,16 @@ public:
         try {
             const auto& sizes = config::Registry::get().caching.thumbnails.sizes;
             const auto basePath = engine_->paths->thumbnailRoot / file_->base32_alias;
+            auto source = buffer_;
+            if (source.empty()) {
+                try {
+                    source = engine_->decrypt(file_);
+                } catch (...) {
+                    if (!file_->encryption_iv.empty()) throw;
+                    source = vh::fs::ops::readFileToVector(file_->backing_path);
+                }
+            }
+
             for (const auto& size : sizes) {
                 const auto filename = std::to_string(size) + ".jpg";
                 fs::path cachePath = basePath / filename;
@@ -51,7 +62,7 @@ public:
                 }
 
                 const auto now = steady_clock::now();
-                generateAndStore(buffer_, cachePath, *file_->mime_type, size);
+                generateAndStore(source, cachePath, *file_->mime_type, size);
                 const auto end = steady_clock::now();
                 runtime::Deps::get().httpCacheStats->record_op_us(duration_cast<microseconds>(end - now).count());
 

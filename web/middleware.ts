@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 
 export const config = {
-  matcher: ['/((?!login|api|_next|favicon.ico|robots.txt|sitemap.xml).*)'],
+  matcher: ['/((?!login|share|api|_next|favicon.ico|robots.txt|sitemap.xml).*)'],
 }
 
 const getInternalAuthOrigin = (req: NextRequest) => {

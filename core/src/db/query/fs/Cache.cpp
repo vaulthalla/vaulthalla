@@ -3,8 +3,10 @@
 #include "fs/cache/Record.hpp"
 #include "db/encoding/u8.hpp"
 
-using namespace vh::db::query::fs;
-using namespace vh::fs::cache;
+namespace vh::db::query::fs {
+
+using vh::fs::cache::cache_indices_from_pq_res;
+using vh::fs::cache::Record;
 
 void Cache::upsertCacheIndex(const std::shared_ptr<Record>& index) {
     if (!index) throw std::invalid_argument("CacheIndex cannot be null");
@@ -110,3 +112,4 @@ unsigned int Cache::countCacheIndices(unsigned int vaultId, const std::optional<
     });
 }
 
+}

@@ -1,0 +1,27 @@
+{
+	# Do not fight nginx for :80 / :443.
+	http_port 8088
+	https_port 8443
+
+	# Prevent Caddy from opening :80 just to redirect HTTP -> HTTPS.
+	auto_https disable_redirects
+}
+
+https://vh.home.arpa:8443 {
+	tls internal
+
+	@ws path /ws*
+	reverse_proxy @ws 127.0.0.1:36969
+
+	@preview path /preview*
+	reverse_proxy @preview 127.0.0.1:36970
+
+	@download path /download*
+	reverse_proxy @download 127.0.0.1:36970
+
+	# Next dev server, including /_next/webpack-hmr websocket.
+	reverse_proxy 127.0.0.1:36968 {
+		# Prefer preserving the browser-facing host unless Next dev complains.
+		header_up X-Forwarded-Proto https
+	}
+}

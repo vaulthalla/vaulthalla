@@ -1,5 +1,5 @@
 export type RoleType = 'admin' | 'vault'
-export type SubjectType = 'user' | 'group'
+export type SubjectType = 'user' | 'group' | 'public' | 'actor'
 
 export interface PermissionDTO {
   id?: number

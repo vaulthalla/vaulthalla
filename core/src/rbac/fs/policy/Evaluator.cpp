@@ -27,87 +27,6 @@ using namespace vh::rbac::fs::policy;
 namespace {
     using Action = vh::rbac::permission::vault::FilesystemAction;
     using OverrideOpt = vh::rbac::permission::OverrideOpt;
-
-    std::optional<vh::rbac::permission::vault::fs::DirectoryPermissions> tryParseDirectoryPerm(
-        const vh::rbac::permission::vault::FilesystemAction &action
-    ) {
-        using A = vh::rbac::permission::vault::FilesystemAction;
-        using D = vh::rbac::permission::vault::fs::DirectoryPermissions;
-
-        switch (action) {
-            case A::List: return D::List;
-            case A::Write: return D::Upload;
-            case A::Read: return D::Download;
-            case A::Rename: return D::Rename;
-            case A::Delete: return D::Delete;
-            case A::Move: return D::Move;
-            case A::Copy: return D::Copy;
-            case A::Touch: return D::Touch;
-            case A::Lookup: return D::List;
-            case A::Preview:
-            case A::Overwrite:
-            case A::ShareInternal:
-            case A::SharePublic:
-            case A::SharePublicValidated:
-                return std::nullopt;
-        }
-
-        return std::nullopt;
-    }
-
-    std::optional<vh::rbac::permission::vault::fs::FilePermissions> tryParseFilePerm(
-        const vh::rbac::permission::vault::FilesystemAction &action
-    ) {
-        using A = vh::rbac::permission::vault::FilesystemAction;
-        using F = vh::rbac::permission::vault::fs::FilePermissions;
-
-        switch (action) {
-            case A::Preview: return F::Preview;
-            case A::Write: return F::Upload;
-            case A::Read: return F::Download;
-            case A::Overwrite: return F::Overwrite;
-            case A::Rename: return F::Rename;
-            case A::Delete: return F::Delete;
-            case A::Move: return F::Move;
-            case A::Copy: return F::Copy;
-            case A::Lookup: return F::Preview;
-            case A::ShareInternal:
-            case A::SharePublic:
-            case A::SharePublicValidated:
-            case A::List:
-            case A::Touch:
-                return std::nullopt;
-        }
-
-        return std::nullopt;
-    }
-
-    std::optional<vh::rbac::permission::vault::fs::SharePermissions> tryParseSharePerm(
-        const vh::rbac::permission::vault::FilesystemAction &action
-    ) {
-        using A = vh::rbac::permission::vault::FilesystemAction;
-        using S = vh::rbac::permission::vault::fs::SharePermissions;
-
-        switch (action) {
-            case A::ShareInternal: return S::Internal;
-            case A::SharePublic: return S::Public;
-            case A::SharePublicValidated: return S::PublicWithValidation;
-            case A::Preview:
-            case A::Write:
-            case A::Read:
-            case A::Overwrite:
-            case A::Rename:
-            case A::Delete:
-            case A::Move:
-            case A::Copy:
-            case A::List:
-            case A::Touch:
-            case A::Lookup:
-                return std::nullopt;
-        }
-
-        return std::nullopt;
-    }
 }
 
 Decision Evaluator::evaluate(const Request &req) {
@@ -195,6 +114,124 @@ Decision Evaluator::evaluate(const Request &req) {
     }
 
     // 4) Default deny
+    return {
+        .allowed = false,
+        .reason = Decision::Reason::DeniedByBasePermissions,
+        .evaluated_path = target.vaultPath
+    };
+}
+
+std::optional<vh::rbac::permission::vault::fs::DirectoryPermissions> Evaluator::directoryPermissionForAction(
+    const permission::vault::FilesystemAction action
+) {
+    using A = permission::vault::FilesystemAction;
+    using D = permission::vault::fs::DirectoryPermissions;
+
+    switch (action) {
+        case A::List: return D::List;
+        case A::Write: return D::Upload;
+        case A::Read: return D::Download;
+        case A::Rename: return D::Rename;
+        case A::Delete: return D::Delete;
+        case A::Move: return D::Move;
+        case A::Copy: return D::Copy;
+        case A::Touch: return D::Touch;
+        case A::Lookup: return D::List;
+        case A::Preview:
+        case A::Overwrite:
+        case A::ShareInternal:
+        case A::SharePublic:
+        case A::SharePublicValidated:
+            return std::nullopt;
+    }
+
+    return std::nullopt;
+}
+
+std::optional<vh::rbac::permission::vault::fs::FilePermissions> Evaluator::filePermissionForAction(
+    const permission::vault::FilesystemAction action
+) {
+    using A = permission::vault::FilesystemAction;
+    using F = permission::vault::fs::FilePermissions;
+
+    switch (action) {
+        case A::Preview: return F::Preview;
+        case A::Write: return F::Upload;
+        case A::Read: return F::Download;
+        case A::Overwrite: return F::Overwrite;
+        case A::Rename: return F::Rename;
+        case A::Delete: return F::Delete;
+        case A::Move: return F::Move;
+        case A::Copy: return F::Copy;
+        case A::Lookup: return F::Preview;
+        case A::ShareInternal:
+        case A::SharePublic:
+        case A::SharePublicValidated:
+        case A::List:
+        case A::Touch:
+            return std::nullopt;
+    }
+
+    return std::nullopt;
+}
+
+Decision Evaluator::evaluate(
+    const permission::vault::Filesystem &perms,
+    const ResolvedRequest &req
+) {
+    if (req.vaultPath.empty())
+        return {
+            .allowed = false,
+            .reason = Decision::Reason::MissingPath
+        };
+
+    if (!req.exists && requiresExistingEntry(req.action))
+        return {
+            .allowed = false,
+            .reason = Decision::Reason::MissingEntry,
+            .evaluated_path = req.vaultPath
+        };
+
+    if (req.isDirectory) {
+        if (!isValidForDirectory(req.action))
+            return {
+                .allowed = false,
+                .reason = Decision::Reason::InvalidActionForEntryType,
+                .evaluated_path = req.vaultPath
+            };
+    } else {
+        if (!isValidForFile(req.action))
+            return {
+                .allowed = false,
+                .reason = Decision::Reason::InvalidActionForEntryType,
+                .evaluated_path = req.vaultPath
+            };
+    }
+
+    TargetContext target;
+    target.vaultPath = req.vaultPath;
+    target.exists = req.exists;
+    target.isDir = req.isDirectory;
+
+    const auto stage = resolveStage(perms, target, req.action);
+    if (stage.matched && stage.allowed.has_value()) {
+        if (!*stage.allowed && req.action == permission::vault::FilesystemAction::Lookup
+            && requiresTraversalThrough(perms.overrides, target.vaultPath.string()))
+            return {
+                .allowed = true,
+                .reason = Decision::Reason::LowRiskOpRequiredForOverrideTraversal,
+                .evaluated_path = target.vaultPath
+            };
+
+        return {
+            .allowed = *stage.allowed,
+            .reason = stage.reason,
+            .evaluated_path = target.vaultPath,
+            .matched_override = stage.matchedOverride,
+            .override_effect = stage.overrideEffect
+        };
+    }
+
     return {
         .allowed = false,
         .reason = Decision::Reason::DeniedByBasePermissions,
@@ -507,12 +544,12 @@ const vh::rbac::permission::Override *Evaluator::findBestOverride(
         if (!o.enabled) continue;
 
         if (const auto fPerm = permission::vault::fs::Files::resolveFromQualifiedName(o.permission.qualified_name); fPerm.has_value()) {
-            const auto reqPerm = tryParseFilePerm(action);
+            const auto reqPerm = filePermissionForAction(action);
             if (!reqPerm.has_value() || *fPerm != *reqPerm) continue;
         }
 
         if (const auto dPerm = permission::vault::fs::Directories::resolveFromQualifiedName(o.permission.qualified_name); dPerm.has_value()) {
-            const auto reqPerm = tryParseDirectoryPerm(action);
+            const auto reqPerm = directoryPermissionForAction(action);
             if (!reqPerm.has_value() || *dPerm != *reqPerm) continue;
         }
 

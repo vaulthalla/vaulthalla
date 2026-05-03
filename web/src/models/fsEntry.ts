@@ -4,8 +4,8 @@ export interface FSEntry {
   parent_id?: number
   name: string
   created_by: number
-  created_at: number // Unix timestamp
-  updated_at: number // Unix timestamp
+  created_at: number | string // Unix timestamp seconds, milliseconds, or ISO timestamp
+  updated_at: number | string // Unix timestamp seconds, milliseconds, or ISO timestamp
   last_modified_by?: number
   path?: string
 }

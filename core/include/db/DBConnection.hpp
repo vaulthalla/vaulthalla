@@ -56,6 +56,14 @@ class Connection {
     void initPreparedOperations() const;
     void initPreparedCache() const;
 
+    // Share links
+    void initPreparedShareLinks() const;
+    void initPreparedShareSessions() const;
+    void initPreparedShareEmailChallenges() const;
+    void initPreparedShareUploads() const;
+    void initPreparedShareAuditEvents() const;
+    void initPreparedShareVaultRoles() const;
+
     // Admin
     void initPreparedSecrets() const;
     void initPreparedWaivers() const;

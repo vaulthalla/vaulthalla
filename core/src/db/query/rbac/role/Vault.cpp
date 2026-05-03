@@ -15,26 +15,18 @@ namespace vh::db::query::rbac::role {
         if (!role) throw std::invalid_argument("role::Vault::upsert received null role");
 
         return Transactions::exec("role::Vault::upsert", [&](pqxx::work& txn) {
-            if (role->id != 0) {
-                txn.exec(
-                    pqxx::prepped{"vault_role_upsert"},
-                    pqxx::params{
-                        role->id,
-                        role->name,
-                        role->description,
-                        role->fs.files.toBitString(),
-                        role->fs.directories.toBitString(),
-                        role->sync.toBitString(),
-                        role->roles.toBitString(),
-                    }
-                );
+            return upsert(txn, role);
+        });
+    }
 
-                return role->id;
-            }
+    unsigned int Vault::upsert(pqxx::work& txn, const VaultRolePtr& role) {
+        if (!role) throw std::invalid_argument("role::Vault::upsert received null role");
 
-            const auto res = txn.exec(
-                pqxx::prepped{"vault_role_upsert_by_name"},
+        if (role->id != 0) {
+            txn.exec(
+                pqxx::prepped{"vault_role_upsert"},
                 pqxx::params{
+                    role->id,
                     role->name,
                     role->description,
                     role->fs.files.toBitString(),
@@ -44,10 +36,24 @@ namespace vh::db::query::rbac::role {
                 }
             );
 
-            if (res.empty()) throw std::runtime_error("role::Vault::upsert failed to return row");
-            role->id = res.one_row()["id"].as<unsigned int>();
             return role->id;
-        });
+        }
+
+        const auto res = txn.exec(
+            pqxx::prepped{"vault_role_upsert_by_name"},
+            pqxx::params{
+                role->name,
+                role->description,
+                role->fs.files.toBitString(),
+                role->fs.directories.toBitString(),
+                role->sync.toBitString(),
+                role->roles.toBitString(),
+            }
+        );
+
+        if (res.empty()) throw std::runtime_error("role::Vault::upsert failed to return row");
+        role->id = res.one_row()["id"].as<unsigned int>();
+        return role->id;
     }
 
     void Vault::remove(unsigned int id) {

@@ -1,16 +1,29 @@
-import { create } from 'zustand'
+import { create, type StoreApi, type UseBoundStore } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { getErrorMessage } from '@/util/handleErrors'
 import { useWebSocketStore } from '@/stores/useWebSocket'
 import { User } from '@/models/user'
 import { WSCommandPayload } from '@/util/webSocketCommands'
 
-let refreshAttempts = 0
-const MAX_REFRESH_RETRIES = 3
+type AuthStatus = 'unknown' | 'authenticated' | 'refreshing' | 'unauthenticated'
+
+let refreshPromise: Promise<void> | null = null
+
+const clearPersistedAuthState = () => {
+  if (typeof window === 'undefined') return
+
+  localStorage.removeItem('vaulthalla-auth')
+  localStorage.removeItem('vaulthalla-groups')
+  localStorage.removeItem('vaulthalla-vaults')
+  localStorage.removeItem('vaulthalla-fs')
+  localStorage.removeItem('vaulthalla-api-keys')
+  localStorage.removeItem('vaulthalla-permissions')
+}
 
 interface AuthState {
   token: string | null
   user: User | null
+  status: AuthStatus
   loading: boolean
   error: string | null
   adminPasswordIsDefault: boolean | undefined
@@ -28,13 +41,15 @@ interface AuthState {
   fetchAdminPasswordIsDefault: (force: boolean) => Promise<boolean>
   getUserByName: (payload: WSCommandPayload<'auth.user.get.byName'>) => Promise<User>
   setToken: (token: string | null) => void
+  markUnauthenticated: (reason?: string) => void
 }
 
-export const useAuthStore = create<AuthState>()(
-  persist(
+export const useAuthStore: UseBoundStore<StoreApi<AuthState>> = create<AuthState>()(
+  persist<AuthState, [], [], Pick<AuthState, 'token' | 'user' | 'adminPasswordIsDefault'>>(
     (set, get) => ({
       token: null,
       user: null,
+      status: 'unknown',
       loading: false,
       error: null,
       adminPasswordIsDefault: undefined,
@@ -45,9 +60,10 @@ export const useAuthStore = create<AuthState>()(
           await useWebSocketStore.getState().waitForConnection()
           const sendCommand = useWebSocketStore.getState().sendCommand
           const response = await sendCommand('auth.login', { name, password })
+          const token = response.token ?? get().token
+          if (!token) throw new Error('Login response did not include an access token')
 
-          set({ user: response.user })
-          refreshAttempts = 0
+          set({ token, user: response.user, status: 'authenticated', error: null })
         } catch (err) {
           set({ error: getErrorMessage(err) || 'Login failed' })
           throw err
@@ -62,7 +78,6 @@ export const useAuthStore = create<AuthState>()(
           await useWebSocketStore.getState().waitForConnection()
           const sendCommand = useWebSocketStore.getState().sendCommand
           await sendCommand('auth.register', { name, email, password, is_active, role })
-          refreshAttempts = 0
         } catch (err) {
           const errorMessage = getErrorMessage(err) || 'Registration failed'
           set({ error: errorMessage })
@@ -73,18 +88,11 @@ export const useAuthStore = create<AuthState>()(
       },
 
       logout: async () => {
-        set({ token: null, user: null, adminPasswordIsDefault: undefined })
+        get().markUnauthenticated()
         try {
           const sendCommand = useWebSocketStore.getState().sendCommand
           const socket = useWebSocketStore.getState().socket
           await sendCommand('auth.logout', null)
-
-          localStorage.removeItem('vaulthalla-auth')
-          localStorage.removeItem('vaulthalla-groups')
-          localStorage.removeItem('vaulthalla-vaults')
-          localStorage.removeItem('vaulthalla-fs')
-          localStorage.removeItem('vaulthalla-api-keys')
-          localStorage.removeItem('vaulthalla-permissions')
 
           setTimeout(() => socket?.close(), 100)
         } catch (err) {
@@ -93,24 +101,30 @@ export const useAuthStore = create<AuthState>()(
       },
 
       refreshToken: async () => {
-        try {
-          await useWebSocketStore.getState().waitForConnection()
-          const sendCommand = useWebSocketStore.getState().sendCommand
-          const response = await sendCommand('auth.refresh', null)
+        if (refreshPromise) return refreshPromise
 
-          set({ token: response.token, user: response.user, error: null })
-          refreshAttempts = 0
-          console.log('[Auth] Token refreshed')
-        } catch (err) {
-          refreshAttempts++
-          console.error(`[Auth] Token refresh failed (Attempt ${refreshAttempts})`, err)
-          set({ token: null, user: null, error: getErrorMessage(err) })
+        refreshPromise = (async () => {
+          set({ loading: true, error: null, status: 'refreshing' })
+          try {
+            const sendCommand = useWebSocketStore.getState().sendCommand
+            const response = await sendCommand('auth.refresh', null)
+            const token = response.token ?? get().token
+            if (!token) throw new Error('Refresh response did not include an access token')
 
-          if (refreshAttempts >= MAX_REFRESH_RETRIES) {
-            console.warn('[Auth] Max refresh attempts reached. Logging out...')
-            get().logout()
+            set({ token, user: response.user ?? get().user, error: null, status: 'authenticated' })
+            console.log('[Auth] Token refreshed')
+          } catch (err) {
+            const message = getErrorMessage(err) || 'Token refresh failed'
+            console.error('[Auth] Token refresh failed', err)
+            get().markUnauthenticated(message)
+            throw err
+          } finally {
+            refreshPromise = null
+            set({ loading: false })
           }
-        }
+        })()
+
+        return refreshPromise
       },
 
       fetchUser: async () => {
@@ -127,9 +141,9 @@ export const useAuthStore = create<AuthState>()(
           const sendCommand = useWebSocketStore.getState().sendCommand
           const response = await sendCommand('auth.me', null)
 
-          set({ user: response.user })
+          set({ user: response.user, status: 'authenticated' })
         } catch (err) {
-          set({ token: null, user: null, error: getErrorMessage(err) })
+          set({ error: getErrorMessage(err) || 'Failed to fetch user' })
         } finally {
           set({ loading: false })
         }
@@ -138,13 +152,13 @@ export const useAuthStore = create<AuthState>()(
       isUserAuthenticated: async () => {
         set({ loading: true, error: null })
         try {
-          await useWebSocketStore.getState().waitForConnection()
           const sendCommand = useWebSocketStore.getState().sendCommand
           const token = get().token
           if (!token) return false
           const response = await sendCommand('auth.isAuthenticated', { token })
 
-          set({ user: response.user })
+          if (!response.isAuthenticated || !response.user) return false
+          set({ user: response.user, status: 'authenticated' })
           return true
         } catch (err) {
           set({ error: getErrorMessage(err), user: null })
@@ -238,7 +252,7 @@ export const useAuthStore = create<AuthState>()(
         }
       },
 
-      getUserByName: async ({ name }) => {
+      getUserByName: async ({ name }: WSCommandPayload<'auth.user.get.byName'>) => {
         try {
           await useWebSocketStore.getState().waitForConnection()
           const sendCommand = useWebSocketStore.getState().sendCommand
@@ -250,8 +264,19 @@ export const useAuthStore = create<AuthState>()(
         }
       },
 
-      setToken: async token => {
-        set({ token })
+      setToken: (token: string | null) => {
+        set({ token, status: token ? 'authenticated' : 'unauthenticated' })
+      },
+
+      markUnauthenticated: (reason?: string) => {
+        clearPersistedAuthState()
+        set({
+          token: null,
+          user: null,
+          status: 'unauthenticated',
+          error: reason,
+          adminPasswordIsDefault: undefined,
+        })
       },
     }),
     {
@@ -262,16 +287,18 @@ export const useAuthStore = create<AuthState>()(
         adminPasswordIsDefault: state.adminPasswordIsDefault,
       }),
       onRehydrateStorage: () => () => {
-        if (!useAuthStore.getState().token) return
+        if (!useAuthStore.getState().token) {
+          useAuthStore.setState({ status: 'unauthenticated' })
+          return
+        }
 
         console.log('[AuthStore] Rehydrated with token. Starting silent refresh...')
         ;(async () => {
           try {
-            await (await import('@/stores/useWebSocket')).useWebSocketStore.getState().waitForConnection()
             await useAuthStore.getState().refreshToken()
           } catch (err) {
             console.error('[AuthStore] Silent refresh failed:', err)
-            useAuthStore.getState().logout()
+            useAuthStore.getState().markUnauthenticated(getErrorMessage(err) || 'Silent refresh failed')
           }
         })()
       },

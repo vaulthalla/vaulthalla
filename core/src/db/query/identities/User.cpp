@@ -15,8 +15,6 @@
 #include <array>
 #include <pqxx/pqxx>
 
-using namespace vh::auth::model;
-
 using U = vh::identities::User;
 using UserPtr = std::shared_ptr<U>;
 

@@ -5,10 +5,16 @@
 #include "fs/model/Path.hpp"
 
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
 #include <string_view>
+
+namespace vh::share {
+class Manager;
+class TargetResolver;
+}
 
 namespace vh::protocols::ws::handler::fs {
 
@@ -16,9 +22,14 @@ using json = nlohmann::json;
 
 class Storage {
 public:
+    using ShareManagerFactory = std::function<std::shared_ptr<vh::share::Manager>()>;
+    using ShareResolverFactory = std::function<std::shared_ptr<vh::share::TargetResolver>()>;
+
     static json startUpload(const json& payload, const std::shared_ptr<Session>& session);
 
     static json finishUpload(const json& payload, const std::shared_ptr<Session>& session);
+
+    static json cancelUpload(const json& payload, const std::shared_ptr<Session>& session);
 
     static json mkdir(const json& payload, const std::shared_ptr<Session>& session);
 
@@ -28,9 +39,22 @@ public:
 
     static json copy(const json& payload, const std::shared_ptr<Session>& session);
 
+    static json metadata(const json& payload, const std::shared_ptr<Session>& session);
+
+    static json list(const json& payload, const std::shared_ptr<Session>& session);
+
     static json listDir(const json& payload, const std::shared_ptr<Session>& session);
 
     static json remove(const json& payload, const std::shared_ptr<Session>& session);
+
+    static json shareCompatibilityMetadata(const json& payload, const std::shared_ptr<Session>& session);
+
+    static json shareCompatibilityList(const json& payload, const std::shared_ptr<Session>& session);
+
+    static void setShareManagerFactoryForTesting(ShareManagerFactory factory);
+    static void resetShareManagerFactoryForTesting();
+    static void setShareResolverFactoryForTesting(ShareResolverFactory factory);
+    static void resetShareResolverFactoryForTesting();
 
 private:
     template<typename EnumT>

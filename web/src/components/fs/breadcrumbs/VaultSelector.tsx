@@ -3,17 +3,38 @@
 import React from 'react'
 import { useVaultStore } from '@/stores/vaultStore'
 import { useFSStore } from '@/stores/fsStore'
+import { useVaultShareStore } from '@/stores/vaultShareStore'
 
 export const VaultSelector = () => {
-  const { currVault, setCurrVault, setPath } = useFSStore()
+  const mode = useFSStore(state => state.mode)
+
+  if (mode === 'share') return <ShareRootSelector />
+
+  return <AuthenticatedVaultSelector />
+}
+
+const ShareRootSelector = () => {
+  const share = useVaultShareStore(state => state.share)
+  const setPath = useFSStore(state => state.setPath)
+  const rootName = share?.root_path?.split('/').filter(Boolean).at(-1)
+  const label = share?.public_label || share?.metadata?.label?.toString() || rootName || 'Shared Files'
+
+  return (
+    <span className="cursor-pointer font-medium text-cyan-400 hover:underline" onClick={() => setPath('/')}>
+      {label}
+    </span>
+  )
+}
+
+const AuthenticatedVaultSelector = () => {
+  const currVault = useFSStore(state => state.currVault)
+  const setCurrVault = useFSStore(state => state.setCurrVault)
+  const setPath = useFSStore(state => state.setPath)
   const { vaults } = useVaultStore()
 
   const onVaultChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const selected = vaults.find(v => String(v.id) === e.target.value)
-    if (selected) {
-      setCurrVault(selected)
-      setPath('') // Reset path when switching vault
-    }
+    if (selected) setCurrVault(selected)
   }
 
   return (

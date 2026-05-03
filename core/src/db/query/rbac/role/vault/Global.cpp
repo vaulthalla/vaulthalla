@@ -6,7 +6,7 @@
 #include <pqxx/pqxx>
 #include <stdexcept>
 
-using namespace vh::db::query::rbac::role::vault;
+namespace vh::db::query::rbac::role::vault {
 
 using GlobalVaultRole = vh::rbac::role::vault::Global;
 using GlobalVaultRolePtr = std::shared_ptr<GlobalVaultRole>;
@@ -142,4 +142,6 @@ std::vector<GlobalVaultRolePtr> Global::list(model::ListQueryParams&& params) {
 
         return template_::paginate(std::move(roles), params);
     });
+}
+
 }

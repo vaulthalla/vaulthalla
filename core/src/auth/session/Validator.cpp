@@ -26,7 +26,6 @@ bool Validator::validateAccessToken(const std::shared_ptr<Session>& session, con
 
         if (session->tokens->accessToken->rawToken != accessToken) {
             log::Registry::ws()->debug("[session::Validator] Access token mismatch for session");
-            log::Registry::ws()->error("[session::Validator] Access token mismatch: expected {}, got {}", session->tokens->accessToken->rawToken, accessToken);
             return false;
         }
 
@@ -56,6 +55,8 @@ void Validator::validateRefreshToken(const std::shared_ptr<Session>& session) {
     const auto claims = Issuer::decode(rawToken);
 
     if (!claims) throw std::runtime_error("Invalid refresh token: unable to decode claims");
+    if (!claims->tokenKind.empty() && claims->tokenKind != std::string(Issuer::refreshTokenKind()))
+        throw std::runtime_error("Refresh token kind mismatch");
 
     validateRefreshClaims(session, claims);
 
@@ -69,11 +70,13 @@ bool Validator::tryRehydrateFromPriorSession(const std::shared_ptr<Session>& ses
 
     const auto priorSession = runtime::Deps::get().sessionManager->get(claims->jti);
     if (!priorSession || priorSession.get() == session.get()) return false;
-    if (!priorSession->tokens || !priorSession->tokens->refreshToken || !priorSession->user) return false;
+    if (!priorSession->tokens || !priorSession->tokens->refreshToken) return false;
+    if (priorSession->isShareSession()) return false;
 
     const auto& priorToken = priorSession->tokens->refreshToken;
 
     if (priorToken->rawToken != rawToken) return false;
+    if (!claims->tokenKind.empty() && claims->tokenKind != std::string(Issuer::refreshTokenKind())) return false;
 
     try {
         validateClaims(priorToken, claims);
@@ -87,9 +90,9 @@ bool Validator::tryRehydrateFromPriorSession(const std::shared_ptr<Session>& ses
             return false;
         }
 
-        session->user = priorSession->user;
         session->tokens->refreshToken = std::make_shared<auth::model::RefreshToken>(*priorToken);
         session->tokens->refreshToken->rawToken = rawToken;
+        if (priorSession->user) session->user = priorSession->user;
 
         log::Registry::auth()->debug(
             "[session::Validator] Rehydrated refresh token from prior session for JTI: {}",
@@ -241,10 +244,10 @@ bool Validator::hasUsableRefreshContext(const std::shared_ptr<Session>& session)
 
 void Validator::checkForDangerousDiversion(const std::shared_ptr<RefreshToken>& incomingToken, const std::shared_ptr<RefreshToken>& storedToken) {
     if (incomingToken->dangerousDivergence(storedToken)) {
-        const auto msg = fmt::format("[session::Validator] Dangerous divergence detected, raw tokens match but token details differ for JTI: {}, stored token: {}, incoming token: {}",
-            incomingToken->jti,
-            storedToken->rawToken,
-            incomingToken->rawToken);
+        const auto msg = fmt::format(
+            "[session::Validator] Dangerous divergence detected for JTI: {}",
+            incomingToken->jti
+        );
         log::Registry::ws()->warn(msg);
         log::Registry::audit()->warn(msg);
         throw std::runtime_error("Potential token tampering detected");

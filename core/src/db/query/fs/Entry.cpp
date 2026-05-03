@@ -6,8 +6,9 @@
 #include "db/encoding/u8.hpp"
 #include "log/Registry.hpp"
 
-using namespace vh::db::query::fs;
-using namespace vh::db::encoding;
+namespace vh::db::query::fs {
+
+using vh::db::encoding::to_utf8_string;
 
 bool Entry::rootExists() {
     return Transactions::exec("Entry::rootExists", [&](pqxx::work& txn) {
@@ -155,3 +156,4 @@ pqxx::result Entry::collectParentChain(unsigned int parentId) {
     });
 }
 
+}

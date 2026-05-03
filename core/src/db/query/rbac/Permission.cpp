@@ -2,8 +2,6 @@
 #include "db/Transactions.hpp"
 #include "rbac/permission/Permission.hpp"
 
-using namespace vh::db::model;
-
 namespace vh::db::query::rbac {
 
 std::shared_ptr<vh::rbac::permission::Permission> Permission::getPermission(const unsigned int id) {

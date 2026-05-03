@@ -3,7 +3,8 @@
 import { useFSStore } from '@/stores/fsStore'
 
 export const Path = () => {
-  const { path, setPath } = useFSStore()
+  const path = useFSStore(state => state.path)
+  const setPath = useFSStore(state => state.setPath)
   const parts = path.split('/').filter(Boolean)
 
   return (

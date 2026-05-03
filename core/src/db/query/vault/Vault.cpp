@@ -6,10 +6,12 @@
 #include "sync/model/RemotePolicy.hpp"
 #include "db/encoding/u8.hpp"
 
-using namespace vh::db::query::vault;
-using namespace vh::db::encoding;
-using namespace vh::db::model;
-using namespace vh::sync::model;
+namespace vh::db::query::vault {
+
+using vh::db::encoding::to_utf8_string;
+using vh::db::model::ListQueryParams;
+using vh::sync::model::LocalPolicy;
+using vh::sync::model::RemotePolicy;
 
 unsigned int Vault::upsertVault(const VaultPtr& vault,
                                        const PolicyPtr& sync) {
@@ -266,4 +268,6 @@ unsigned int Vault::getVaultOwnerId(unsigned int vaultId) {
         if (res.empty()) throw std::runtime_error("Vault not found for ID: " + std::to_string(vaultId));
         return res.one_field().as<unsigned int>();
     });
+}
+
 }

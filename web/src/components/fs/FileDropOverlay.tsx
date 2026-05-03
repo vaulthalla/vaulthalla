@@ -9,37 +9,42 @@ import { useFSStore } from '@/stores/fsStore'
 
 interface FileDropOverlayProps {
   children: React.ReactNode
+  disabled?: boolean
+  disabledMessage?: string
 }
 
-export const FileDropOverlay: React.FC<FileDropOverlayProps> = ({ children }) => {
+export const FileDropOverlay: React.FC<FileDropOverlayProps> = ({ children, disabled = false, disabledMessage = 'Upload is not available' }) => {
   const [isDragging, setIsDragging] = useState(false)
   const dragCounter = useRef(0)
 
-  const { upload, fetchFiles } = useFSStore()
+  const upload = useFSStore(state => state.upload)
 
-  const processFiles = (files: FileWithRelativePath[]) => {
+  const processFiles = React.useCallback((files: FileWithRelativePath[]) => {
+    if (disabled) return
     ;(async () => {
-      upload(files).catch(console.error)
-      await fetchFiles()
+      await upload(files)
     })()
-  }
+      .catch(console.error)
+  }, [disabled, upload])
 
   const dropRef = useFileDrop({
-    onFiles: files => {
+    onFiles: React.useCallback(files => {
       setIsDragging(false)
       dragCounter.current = 0
       processFiles(files)
-    },
+    }, [processFiles]),
   })
 
   const handleDragEnter = (e: React.DragEvent) => {
     e.preventDefault()
+    if (disabled) return
     dragCounter.current++
     setIsDragging(true)
   }
 
   const handleDragLeave = (e: React.DragEvent) => {
     e.preventDefault()
+    if (disabled) return
     dragCounter.current--
     if (dragCounter.current === 0) {
       setIsDragging(false)
@@ -48,6 +53,7 @@ export const FileDropOverlay: React.FC<FileDropOverlayProps> = ({ children }) =>
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault()
+    if (disabled) e.dataTransfer.dropEffect = 'none'
   }
 
   return (
@@ -65,7 +71,7 @@ export const FileDropOverlay: React.FC<FileDropOverlayProps> = ({ children }) =>
             animate={{ opacity: 0.5 }}
             exit={{ opacity: 0 }}
             className="absolute inset-0 z-10 border-4 border-dashed border-blue-400 bg-gray-700">
-            <div className="flex w-full items-center justify-center text-lg text-white">Drop files to upload</div>
+            <div className="flex w-full items-center justify-center text-lg text-white">{disabledMessage}</div>
           </motion.div>
         )}
       </AnimatePresence>

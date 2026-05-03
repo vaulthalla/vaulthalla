@@ -164,7 +164,6 @@ namespace vh::test::integration::cmd {
         if (coin()) oss << " --local";
         // if (coin()) oss << " --s3";
         if (coin()) oss << " --limit " << (5 + (generateRandomIndex(1000) % 10));
-        if (coin(10000, 2000)) oss << " --json";
         return oss.str();
     }
 

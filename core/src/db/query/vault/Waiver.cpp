@@ -5,9 +5,9 @@
 #include "identities/User.hpp"
 #include "vault/model/APIKey.hpp"
 
-using namespace vh;
+namespace vh::db::query::vault {
 
-void db::query::vault::Waiver::addWaiver(const std::shared_ptr<vh::sync::model::Waiver>& waiver) {
+void Waiver::addWaiver(const std::shared_ptr<vh::sync::model::Waiver>& waiver) {
     if (!waiver) throw std::invalid_argument("Invalid waiver");
     if (!waiver->vault) throw std::invalid_argument("Invalid vault in waiver");
     if (!waiver->user) throw std::invalid_argument("Invalid user in waiver");
@@ -48,4 +48,6 @@ void db::query::vault::Waiver::addWaiver(const std::shared_ptr<vh::sync::model::
             txn.exec(pqxx::prepped{"insert_permission_snapshots_for_waiver"}, p3);
         }
     });
+}
+
 }

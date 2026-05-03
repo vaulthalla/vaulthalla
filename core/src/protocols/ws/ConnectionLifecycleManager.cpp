@@ -39,7 +39,8 @@ void ConnectionLifecycleManager::sweepActiveSessions() const {
         try {
             if (!session) continue;
 
-            if (!session->user && session->connectionOpenedAt + unauthenticated_session_timeout_ < system_clock::now()) {
+            if (!session->user && !session->isShareSession() &&
+                session->connectionOpenedAt + unauthenticated_session_timeout_ < system_clock::now()) {
                 log::Registry::ws()->debug("[LifecycleManager] Closing unauthenticated session (no token) opened at {}",
                                         system_clock::to_time_t(session->connectionOpenedAt));
 
@@ -50,7 +51,12 @@ void ConnectionLifecycleManager::sweepActiveSessions() const {
                 continue;
             }
 
-            if (!session->tokens || !session->tokens->refreshToken || !session->tokens->refreshToken->isValid()) {
+            const auto refreshToken = session->tokens
+                                          ? (session->tokens->refreshToken
+                                                 ? session->tokens->refreshToken
+                                                 : session->tokens->shareRefreshToken)
+                                          : nullptr;
+            if (!refreshToken || !refreshToken->isValid()) {
                 log::Registry::ws()->debug("[LifecycleManager] Closing session with expired refresh token (opened at {})",
                                         system_clock::to_time_t(session->connectionOpenedAt));
 

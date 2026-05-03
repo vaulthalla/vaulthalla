@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -19,14 +20,19 @@ public:
 
     void promote(const std::shared_ptr<protocols::ws::Session>& session);
     void cache(const std::shared_ptr<protocols::ws::Session>& session);
+    void rotateRefreshToken(const std::shared_ptr<protocols::ws::Session>& session);
+    void rotateShareRefreshToken(const std::shared_ptr<protocols::ws::Session>& session);
+    void tryRehydrateShareRefresh(const std::shared_ptr<protocols::ws::Session>& session);
     void renewAccessToken(const std::shared_ptr<protocols::ws::Session>& session, const std::string& existingToken);
 
     bool validate(const std::shared_ptr<protocols::ws::Session>& session, const std::string& accessToken);
     std::shared_ptr<protocols::ws::Session> validateRawRefreshToken(const std::string& refreshToken);
+    std::shared_ptr<protocols::ws::Session> validateRawShareRefreshToken(const std::string& refreshToken);
     void invalidate(const std::string& token);
     void invalidate(const std::shared_ptr<protocols::ws::Session>& session);
 
     std::shared_ptr<protocols::ws::Session> get(const std::string& token);
+    std::shared_ptr<protocols::ws::Session> getShareByRefreshJti(const std::string& token);
     std::vector<std::shared_ptr<protocols::ws::Session>> getSessions(const std::shared_ptr<identities::User>& user);
     std::vector<std::shared_ptr<protocols::ws::Session>> getSessionsByUserId(uint32_t userId);
 
@@ -35,8 +41,20 @@ public:
 private:
     std::unordered_map<std::string, std::shared_ptr<protocols::ws::Session>> sessionsByUUID_;
     std::unordered_map<std::string, std::shared_ptr<protocols::ws::Session>> sessionsByRefreshJti_;
+    std::unordered_map<std::string, std::shared_ptr<protocols::ws::Session>> shareSessionsByRefreshJti_;
     std::unordered_multimap<uint32_t, std::shared_ptr<protocols::ws::Session>> sessionsByUserId_;
     std::mutex sessionMutex_;
+
+    void indexHumanRefreshTokenLocked(const std::shared_ptr<protocols::ws::Session>& session);
+    void reindexHumanRefreshTokenLocked(
+        const std::shared_ptr<protocols::ws::Session>& session,
+        std::optional<std::string> oldJti
+    );
+    void indexShareRefreshTokenLocked(const std::shared_ptr<protocols::ws::Session>& session);
+    void reindexShareRefreshTokenLocked(
+        const std::shared_ptr<protocols::ws::Session>& session,
+        std::optional<std::string> oldJti
+    );
 };
 
 inline std::string to_string(

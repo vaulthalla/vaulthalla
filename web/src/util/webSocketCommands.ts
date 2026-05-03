@@ -9,6 +9,25 @@ import { File, IFileUpload } from '@/models/file'
 import { Directory } from '@/models/directory'
 import { CacheStats } from '@/models/stats/cacheStats'
 import { AdminRoleDTO, VaultRoleDTO } from '@/models/permission'
+import {
+  ShareDownloadCancelResponse,
+  ShareDownloadChunkResponse,
+  ShareDownloadStartResponse,
+  ShareEmailChallengeConfirmResponse,
+  ShareEmailChallengeStartResponse,
+  ShareLinkCreatePayload,
+  ShareLinkListResponse,
+  ShareLinkResponse,
+  ShareLinkTokenResponse,
+  ShareLinkUpdatePayload,
+  ShareListResponse,
+  ShareMetadataResponse,
+  SharePreviewResponse,
+  ShareSessionOpenResponse,
+  ShareUploadCancelResponse,
+  ShareUploadFinishResponse,
+  ShareUploadStartResponse,
+} from '@/models/linkShare'
 
 export interface WebSocketCommandMap {
   // Auth
@@ -149,12 +168,38 @@ export interface WebSocketCommandMap {
 
   'fs.dir.list': {
     payload: { vault_id: number; path?: string | undefined }
-    response: { vault: string; path: string; files: (File | Directory)[] }
+    response: { vault: string; path: string; entry?: Directory; files: (File | Directory)[] }
   }
 
-  'fs.upload.start': { payload: IFileUpload; response: { upload_id: string } }
+  'fs.metadata': {
+    payload: { vault_id?: number | null; path?: string }
+    response: { vault?: string; path: string; entry: File | Directory | ShareMetadataResponse['entry'] }
+  }
 
-  'fs.upload.finish': { payload: Partial<IFileUpload>; response: { path: string } }
+  'fs.list': {
+    payload: { vault_id?: number | null; path?: string }
+    response: { vault?: string; path: string; entry?: File | Directory | ShareMetadataResponse['entry']; files: (File | Directory | ShareMetadataResponse['entry'])[] }
+  }
+
+  'fs.download.start': { payload: { path?: string; vault_id?: number | null }; response: ShareDownloadStartResponse }
+
+  'fs.download.chunk': {
+    payload: { transfer_id: string; offset: number; length?: number }
+    response: ShareDownloadChunkResponse
+  }
+
+  'fs.download.cancel': { payload: { transfer_id: string }; response: ShareDownloadCancelResponse }
+
+  'fs.upload.start': {
+    payload:
+      | IFileUpload
+      | { path?: string; filename?: string; size_bytes?: number; size?: number; mime_type?: string | null; duplicate_policy?: 'reject' }
+    response: { upload_id: string; transfer_id?: string; path?: string; filename?: string; size_bytes?: number; chunk_size?: number; duplicate_policy?: string }
+  }
+
+  'fs.upload.finish': { payload: Partial<IFileUpload> | { upload_id: string }; response: { path?: string } | ShareUploadFinishResponse }
+
+  'fs.upload.cancel': { payload: { upload_id?: string }; response: { cancelled: boolean; upload_id?: string } }
 
   'fs.entry.delete': { payload: { vault_id: number; path: string }; response: null }
 
@@ -163,6 +208,63 @@ export interface WebSocketCommandMap {
   'fs.entry.copy': { payload: { vault_id: number; from: string; to: string }; response: { from: string; to: string } }
 
   'fs.entry.rename': { payload: { vault_id: number; from: string; to: string }; response: { from: string; to: string } }
+
+  // Share management commands
+
+  'share.link.create': { payload: ShareLinkCreatePayload; response: ShareLinkTokenResponse }
+
+  'share.link.get': { payload: { id: string }; response: ShareLinkResponse }
+
+  'share.link.list': {
+    payload: { vault_id?: number | null; limit?: number; offset?: number; page?: number; sort?: string; direction?: 'asc' | 'desc' }
+    response: ShareLinkListResponse
+  }
+
+  'share.link.update': { payload: ShareLinkUpdatePayload; response: ShareLinkResponse }
+
+  'share.link.revoke': { payload: { id: string }; response: { revoked: boolean } }
+
+  'share.link.rotate_token': { payload: { id: string }; response: ShareLinkTokenResponse }
+
+  // Public/share session commands
+
+  'share.session.open': { payload: { public_token: string }; response: ShareSessionOpenResponse }
+
+  'share.email.challenge.start': {
+    payload: { email: string; public_token?: string; session_token?: string }
+    response: ShareEmailChallengeStartResponse
+  }
+
+  'share.email.challenge.confirm': {
+    payload: { challenge_id: string; code: string; session_id?: string; session_token?: string }
+    response: ShareEmailChallengeConfirmResponse
+  }
+
+  // Ready share-mode filesystem and transfer commands
+
+  'share.fs.metadata': { payload: { path?: string }; response: ShareMetadataResponse }
+
+  'share.fs.list': { payload: { path?: string }; response: ShareListResponse }
+
+  'share.download.start': { payload: { path?: string }; response: ShareDownloadStartResponse }
+
+  'share.download.chunk': {
+    payload: { transfer_id: string; offset: number; length?: number }
+    response: ShareDownloadChunkResponse
+  }
+
+  'share.download.cancel': { payload: { transfer_id: string }; response: ShareDownloadCancelResponse }
+
+  'share.preview.get': { payload: { path?: string; size?: number }; response: SharePreviewResponse }
+
+  'share.upload.start': {
+    payload: { path?: string; filename: string; size_bytes: number; mime_type?: string | null; duplicate_policy?: 'reject' }
+    response: ShareUploadStartResponse
+  }
+
+  'share.upload.finish': { payload: { upload_id: string }; response: ShareUploadFinishResponse }
+
+  'share.upload.cancel': { payload: { upload_id: string }; response: ShareUploadCancelResponse }
 
   // stats
   'stats.vault': { payload: { vault_id: number }; response: { stats: VaultStats } }

@@ -15,7 +15,7 @@ export const AuthRefresher = () => {
     console.log('[AuthRefresher] Starting token refresh loop')
     const interval = setInterval(
       () => {
-        refreshToken()
+        refreshToken().catch(() => undefined)
       },
       4 * 60 * 1000,
     ) // every 4 minutes

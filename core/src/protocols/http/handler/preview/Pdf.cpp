@@ -18,7 +18,7 @@ namespace vh::protocols::http::handler::preview {
         try {
             std::string mime_type = "image/jpeg";
 
-            const auto tmpPath = decrypt_file_to_temp(pr->vault_id, pr->rel_path, pr->engine);
+            const auto tmpPath = decrypt_file_to_temp(pr->file, pr->engine);
 
             FPDF_DOCUMENT doc = FPDF_LoadDocument(tmpPath.c_str(), nullptr);
             if (!doc) throw std::runtime_error("Failed to load PDF");
@@ -70,7 +70,7 @@ namespace vh::protocols::http::handler::preview {
             FPDF_ClosePage(page);
             FPDF_CloseDocument(doc);
 
-            return Router::makeResponse(req, std::move(jpeg_buf), *pr->file->mime_type);
+            return Router::makeResponse(req, std::move(jpeg_buf), mime_type);
         } catch (const std::exception &e) {
             log::Registry::http()->error("[PdfPreviewHandler] Error handling PDF preview for {}: {}",
                                          pr->rel_path.string(), e.what());

@@ -10,6 +10,12 @@
 #include "protocols/ws/handler/rbac/roles/Vault.hpp"
 #include "protocols/ws/handler/vault/Vaults.hpp"
 #include "protocols/ws/handler/vault/APIKeys.hpp"
+#include "protocols/ws/handler/share/Download.hpp"
+#include "protocols/ws/handler/share/Filesystem.hpp"
+#include "protocols/ws/handler/share/Links.hpp"
+#include "protocols/ws/handler/share/Preview.hpp"
+#include "protocols/ws/handler/share/Sessions.hpp"
+#include "protocols/ws/handler/share/Upload.hpp"
 #include "log/Registry.hpp"
 
 using namespace vh::protocols::ws;
@@ -24,6 +30,12 @@ void Handler::registerAllHandlers(const std::shared_ptr<Router>& r) {
     registerSettingsHandlers(r);
     registerGroupHandlers(r);
     registerStatHandlers(r);
+    registerShareManagementHandlers(r);
+    registerShareSessionHandlers(r);
+    registerShareFilesystemHandlers(r);
+    registerShareDownloadHandlers(r);
+    registerSharePreviewHandlers(r);
+    registerShareUploadHandlers(r);
 
     log::Registry::ws()->debug("[WebSocketHandler] All handlers registered successfully.");
 }
@@ -46,8 +58,14 @@ void Handler::registerAuthHandlers(const std::shared_ptr<Router>& r) {
 void Handler::registerFileSystemHandlers(const std::shared_ptr<Router>& r) {
     r->registerPayload("fs.upload.start", &handler::fs::Storage::startUpload);
     r->registerPayload("fs.upload.finish", &handler::fs::Storage::finishUpload);
+    r->registerPayload("fs.upload.cancel", &handler::fs::Storage::cancelUpload);
+    r->registerPayload("fs.download.start", &handler::share::Download::nativeStart);
+    r->registerPayload("fs.download.chunk", &handler::share::Download::nativeChunk);
+    r->registerPayload("fs.download.cancel", &handler::share::Download::nativeCancel);
     r->registerPayload("fs.dir.create", &handler::fs::Storage::mkdir);
     r->registerPayload("fs.dir.list", &handler::fs::Storage::listDir);
+    r->registerPayload("fs.metadata", &handler::fs::Storage::metadata);
+    r->registerPayload("fs.list", &handler::fs::Storage::list);
     r->registerPayload("fs.entry.delete", &handler::fs::Storage::remove);
     r->registerPayload("fs.entry.move", &handler::fs::Storage::move);
     r->registerPayload("fs.entry.rename", &handler::fs::Storage::rename);
@@ -117,4 +135,40 @@ void Handler::registerStatHandlers(const std::shared_ptr<Router>& r) {
     r->registerPayload("stats.vault", &handler::Stats::vault);
     r->registerSessionOnlyHandler("stats.fs.cache", &handler::Stats::fsCache);
     r->registerSessionOnlyHandler("stats.http.cache", &handler::Stats::httpCache);
+}
+
+void Handler::registerShareManagementHandlers(const std::shared_ptr<Router>& r) {
+    r->registerPayload("share.link.create", &handler::share::Links::create);
+    r->registerPayload("share.link.get", &handler::share::Links::get);
+    r->registerPayload("share.link.list", &handler::share::Links::list);
+    r->registerPayload("share.link.update", &handler::share::Links::update);
+    r->registerPayload("share.link.revoke", &handler::share::Links::revoke);
+    r->registerPayload("share.link.rotate_token", &handler::share::Links::rotateToken);
+}
+
+void Handler::registerShareSessionHandlers(const std::shared_ptr<Router>& r) {
+    r->registerPayload("share.session.open", &handler::share::Sessions::open);
+    r->registerPayload("share.email.challenge.start", &handler::share::Sessions::startEmailChallenge);
+    r->registerPayload("share.email.challenge.confirm", &handler::share::Sessions::confirmEmailChallenge);
+}
+
+void Handler::registerShareFilesystemHandlers(const std::shared_ptr<Router>& r) {
+    r->registerPayload("share.fs.metadata", &handler::share::Filesystem::metadata);
+    r->registerPayload("share.fs.list", &handler::share::Filesystem::list);
+}
+
+void Handler::registerShareDownloadHandlers(const std::shared_ptr<Router>& r) {
+    r->registerPayload("share.download.start", &handler::share::Download::start);
+    r->registerPayload("share.download.chunk", &handler::share::Download::chunk);
+    r->registerPayload("share.download.cancel", &handler::share::Download::cancel);
+}
+
+void Handler::registerSharePreviewHandlers(const std::shared_ptr<Router>& r) {
+    r->registerPayload("share.preview.get", &handler::share::Preview::get);
+}
+
+void Handler::registerShareUploadHandlers(const std::shared_ptr<Router>& r) {
+    r->registerPayload("share.upload.start", &handler::share::Upload::start);
+    r->registerPayload("share.upload.finish", &handler::share::Upload::finish);
+    r->registerPayload("share.upload.cancel", &handler::share::Upload::cancel);
 }

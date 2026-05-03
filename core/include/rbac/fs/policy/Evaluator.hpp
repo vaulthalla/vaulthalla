@@ -5,6 +5,7 @@
 #include "rbac/fs/policy/Request.hpp"
 #include "rbac/permission/vault/Filesystem.hpp"
 
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <vector>
@@ -18,8 +19,28 @@ namespace vh::storage { struct Engine; }
 
 namespace vh::rbac::fs::policy {
     struct Evaluator {
+        struct ResolvedRequest {
+            permission::vault::FilesystemAction action{};
+            std::filesystem::path vaultPath{};
+            bool exists{true};
+            bool isDirectory{false};
+        };
+
         [[nodiscard]]
         static Decision evaluate(const Request &req);
+
+        [[nodiscard]]
+        static Decision evaluate(const permission::vault::Filesystem &perms, const ResolvedRequest &req);
+
+        [[nodiscard]]
+        static std::optional<permission::vault::fs::FilePermissions> filePermissionForAction(
+            permission::vault::FilesystemAction action
+        );
+
+        [[nodiscard]]
+        static std::optional<permission::vault::fs::DirectoryPermissions> directoryPermissionForAction(
+            permission::vault::FilesystemAction action
+        );
 
     private:
         struct TargetContext {

@@ -90,7 +90,7 @@ tests_src   = join_paths(core_root, 'tests/unit')
 main        = files(join_paths(core_root, 'main/main.cpp'))
 
 sources = []
-foreach f : run_command('find', src, '-type', 'f', '-name', '*.cpp', check: true).stdout().strip().split('\n')
+foreach f : run_command('sh', '-c', 'find "$1" -type f -name "*.cpp" | LC_ALL=C sort', 'find-cpp', src, check: true).stdout().strip().split('\n')
     sources += files(f)
 endforeach
 
@@ -99,7 +99,7 @@ usage_src = join_paths(core_root, 'usage/src')
 main_usage = files(join_paths(core_root, 'main/usage.cpp'))
 
 usage_sources = []
-foreach f : run_command('find', usage_src, '-type', 'f', '-name', '*.cpp', check: true).stdout().strip().split('\n')
+foreach f : run_command('sh', '-c', 'find "$1" -type f -name "*.cpp" | LC_ALL=C sort', 'find-cpp', usage_src, check: true).stdout().strip().split('\n')
     usage_sources += files(f)
 endforeach
 
@@ -205,7 +205,7 @@ if get_option('build_unit_tests')
     unit_test_env.set('VH_PATH_TO_CONFIG', join_paths(repo_root, 'deploy/config/config.yaml'))
 
     all_test_sources = sources
-    foreach f : run_command('find', tests_src, '-type', 'f', '-name', '*.cpp', check: true).stdout().strip().split('\n')
+    foreach f : run_command('sh', '-c', 'find "$1" -type f -name "*.cpp" | LC_ALL=C sort', 'find-cpp', tests_src, check: true).stdout().strip().split('\n')
         all_test_sources += files(f)
     endforeach
 
@@ -232,7 +232,7 @@ if get_option('integration_tests')
     cli_test_src = join_paths(core_root, 'tests/integrations/src')
     cli_test_sources = []
 
-    foreach f : run_command('find', cli_test_src, '-type', 'f', '-name', '*.cpp', check: true).stdout().strip().split('\n')
+    foreach f : run_command('sh', '-c', 'find "$1" -type f -name "*.cpp" | LC_ALL=C sort', 'find-cpp', cli_test_src, check: true).stdout().strip().split('\n')
         cli_test_sources += files(f)
     endforeach
 

@@ -3,9 +3,9 @@
 #include "vault/model/Key.hpp"
 #include "db/encoding/bytea.hpp"
 
-using namespace vh::db::encoding;
-
 namespace vh::db::query::vault {
+
+using vh::db::encoding::to_hex_bytea;
 
 unsigned int Key::addVaultKey(const KeyPtr& key) {
     return Transactions::exec("Key::addVaultKey", [&](pqxx::work& txn) {

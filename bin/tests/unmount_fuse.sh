@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Nuke only the FUSE mount at /tmp/vh_mount.
-# No systemd. No broad process killing. No fuser -km massacre.
+# No systemd. No broad process killing. No killing every process using the mount.
 
 set -euo pipefail
 

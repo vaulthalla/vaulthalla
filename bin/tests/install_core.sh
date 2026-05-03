@@ -51,6 +51,8 @@ done
 MESON_ARGS=(
   "-Dbuildtype=debug"
   "-Dintegration_tests=true"
+  "-Dinstall_data=false"
+  "-Dmanpage=false"
   "-Db_sanitize=address,undefined"
 )
 
@@ -73,5 +75,16 @@ if [[ "$RUN_TEST" == true ]]; then
   if [[ ! -x "$TEST_BIN" ]]; then
     TEST_BIN="$BUILD_DIR/vh_integration_tests"
   fi
-  sudo bash --rcfile "$REPO_ROOT/deploy/vaulthalla.env" -i -c "$TEST_BIN"
+  TEST_RUNTIME_DIR="/tmp/vh_runtime"
+  TEST_ADMIN_UID="${SUDO_UID:-$(id -u)}"
+  sudo install -d -m 0755 "$TEST_RUNTIME_DIR"
+  printf '%s\n' "$TEST_ADMIN_UID" | sudo tee "$TEST_RUNTIME_DIR/superadmin_uid" >/dev/null
+  sudo chmod 0644 "$TEST_RUNTIME_DIR/superadmin_uid"
+
+  sudo bash -c 'source "$1"; export VH_PATH_TO_CONFIG="$2"; export VH_PATH_TO_SUPERADMIN_UID="$3"; exec "$4"' \
+    bash \
+    "$REPO_ROOT/deploy/bashrc" \
+    "$REPO_ROOT/deploy/config/config.yaml" \
+    "$TEST_RUNTIME_DIR" \
+    "$TEST_BIN"
 fi

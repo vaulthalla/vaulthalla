@@ -15,7 +15,7 @@ namespace vh::protocols::http::handler::preview {
     model::preview::Response handler::preview::Image::handle(request &&req,
                                                              const std::unique_ptr<model::preview::Request> &&pr) {
         try {
-            const auto tmpPath = decrypt_file_to_temp(pr->vault_id, pr->rel_path, pr->engine);
+            const auto tmpPath = decrypt_file_to_temp(pr->file, pr->engine);
 
             if (pr->size || pr->scale) {
                 std::vector<uint8_t> resized = image::resize_and_compress(tmpPath, pr->scaleStr(), pr->sizeStr());

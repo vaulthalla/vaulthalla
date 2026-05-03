@@ -1,4 +1,4 @@
-import { create } from 'zustand'
+import { create, type StoreApi, type UseBoundStore } from 'zustand'
 import { v4 as uuidv4 } from 'uuid'
 import { useAuthStore } from './authStore'
 import { WebSocketCommandMap } from '@/util/webSocketCommands'
@@ -15,12 +15,7 @@ interface WebSocketMessage<C extends keyof WebSocketCommandMap> {
 interface WebSocketStore {
   socket: WebSocket | null
   connected: boolean
-  pending: Record<
-    string,
-    <C extends keyof WebSocketCommandMap>(
-      data: WebSocketCommandMap[C]['response'] | PromiseLike<WebSocketCommandMap[C]['response']>,
-    ) => void
-  >
+  pending: Record<string, PendingRequest>
 
   waitForConnection: () => Promise<void>
   connect: () => void
@@ -31,8 +26,30 @@ interface WebSocketStore {
   ) => Promise<WebSocketCommandMap[C]['response']>
 }
 
-export const useWebSocketStore = create<WebSocketStore>()(
-  subscribeWithSelector((set, get) => {
+interface PendingRequest {
+  resolve: (data: unknown) => void
+  reject: (error: Error) => void
+  timeout: ReturnType<typeof setTimeout>
+}
+
+const isAuthCommand = (command: keyof WebSocketCommandMap) => command.startsWith('auth.')
+const isUnauthorizedMessage = (message: unknown) => {
+  if (!message || typeof message !== 'object') return false
+  const record = message as Record<string, unknown>
+  return record.status === 'unauthorized' || record.status === 'UNAUTHORIZED' || record.error === 'unauthorized'
+}
+const isErrorMessage = (message: unknown) => {
+  if (!message || typeof message !== 'object') return false
+  const record = message as Record<string, unknown>
+  return record.status === 'error' || record.status === 'ERROR' || record.status === 'INTERNAL_ERROR' || isUnauthorizedMessage(message)
+}
+const isUnauthorizedError = (error: unknown) => {
+  if (!(error instanceof Error)) return false
+  return error.message.toLowerCase().includes('unauthorized')
+}
+
+export const useWebSocketStore: UseBoundStore<StoreApi<WebSocketStore>> = create<WebSocketStore>()(
+  subscribeWithSelector<WebSocketStore>((set, get) => {
     let reconnectTimeout: ReturnType<typeof setTimeout> | null = null
     let shouldReconnect = true
     let isConnecting = false
@@ -46,20 +63,18 @@ export const useWebSocketStore = create<WebSocketStore>()(
         return new Promise(resolve => {
           if (get().connected) return resolve()
 
-          const unsubscribe = useWebSocketStore.subscribe(
-            state => state.connected,
-            connected => {
-              if (connected) {
-                unsubscribe()
-                resolve()
-              }
-            },
-          )
+          const unsubscribe = useWebSocketStore.subscribe(state => {
+            if (state.connected) {
+              unsubscribe()
+              resolve()
+            }
+          })
         })
       },
 
       connect: () => {
         const { socket, connected } = get()
+        shouldReconnect = true
 
         if (reconnectTimeout) {
           clearTimeout(reconnectTimeout)
@@ -80,7 +95,12 @@ export const useWebSocketStore = create<WebSocketStore>()(
 
         ws.onclose = () => {
           isConnecting = false
-          set({ connected: false, socket: null })
+          const pending = get().pending
+          Object.values(pending).forEach(request => {
+            clearTimeout(request.timeout)
+            request.reject(new Error('WebSocket disconnected'))
+          })
+          set({ connected: false, socket: null, pending: {} })
           console.warn('[WS] Disconnected')
 
           if (shouldReconnect) {
@@ -98,16 +118,13 @@ export const useWebSocketStore = create<WebSocketStore>()(
 
             if (message.token) useAuthStore.getState().setToken(message.token)
 
-            if (message.command === 'error' && message.status === 'unauthorized') {
+            if (message.command === 'error' && isUnauthorizedMessage(message)) {
               console.warn('[WS] Received unauthorized response — attempting token refresh')
 
-              try {
-                await useAuthStore.getState().refreshToken()
-                console.log('[WS] Token refreshed — retrying original request not implemented yet')
-              } catch (err) {
-                console.error('[WS] Failed to refresh token:', err)
-                useAuthStore.getState().logout()
-              }
+              await useAuthStore
+                .getState()
+                .refreshToken()
+                .catch(() => undefined)
 
               return
             }
@@ -117,17 +134,22 @@ export const useWebSocketStore = create<WebSocketStore>()(
               const newPending = { ...get().pending }
               delete newPending[message.requestId]
               set({ pending: newPending })
+              clearTimeout(handler.timeout)
 
-              if (message.status === 'error') {
-                handler(Promise.reject(new Error(message.error || 'WebSocket command failed')))
+              if (isErrorMessage(message)) {
+                const error = isUnauthorizedMessage(message) ? 'unauthorized' : message.error || 'WebSocket command failed'
+                handler.reject(new Error(error))
               } else {
-                handler(Promise.resolve(message.data ?? {}))
+                handler.resolve(message.data ?? {})
               }
             } else {
-              if (message.status === 'error') {
-                if (message.error === 'unauthorized') {
+              if (isErrorMessage(message)) {
+                if (isUnauthorizedMessage(message)) {
                   console.warn('[WS] Unauthorized request received, refreshing token...')
-                  await useAuthStore.getState().refreshToken()
+                  await useAuthStore
+                    .getState()
+                    .refreshToken()
+                    .catch(() => undefined)
                 } else console.warn('[WS] Error received without handler:', message.error)
               }
             }
@@ -143,49 +165,85 @@ export const useWebSocketStore = create<WebSocketStore>()(
         const socket = get().socket
         shouldReconnect = false
         if (reconnectTimeout) clearTimeout(reconnectTimeout)
+        Object.values(get().pending).forEach(request => {
+          clearTimeout(request.timeout)
+          request.reject(new Error('WebSocket disconnected'))
+        })
         if (socket) socket.close()
         set({ socket: null, connected: false, pending: {} })
       },
 
       sendCommand: async (command, payload) => {
-        let { socket, connected } = get()
-        const { connect } = get()
-        const token = useAuthStore.getState().token
+        const ensureConnection = async () => {
+          let { socket, connected } = get()
+          const { connect } = get()
 
-        if (!connected || !socket) {
-          console.warn('[WS] Not connected, attempting to reconnect...')
-          connect()
-          await get().waitForConnection()
-          ;({ socket, connected } = get())
+          if (!connected || !socket) {
+            console.warn('[WS] Not connected, attempting to reconnect...')
+            connect()
+            await get().waitForConnection()
+            ;({ socket, connected } = get())
+          }
+
+          if (!socket || !connected) throw new Error('WebSocket is not connected')
+
+          return socket
         }
 
-        if (!token && !command.startsWith('auth')) throw new Error('No auth token')
+        const sendOnce = async (token: string | null) => {
+          const socket = await ensureConnection()
 
-        if (!socket || !connected) throw new Error('WebSocket is not connected')
+          if (!token && !isAuthCommand(command)) throw new Error('No auth token')
 
-        const requestId = uuidv4()
-        const message: WebSocketMessage<typeof command> = { command, payload, requestId, token: token || '' }
+          const requestId = uuidv4()
+          const message: WebSocketMessage<typeof command> = { command, payload, requestId, token: token || '' }
 
-        return new Promise((resolve, reject) => {
-          const timeout = setTimeout(() => {
-            reject(new Error('Request timed out'))
-            const updated = { ...get().pending }
-            delete updated[requestId]
-            set({ pending: updated })
-          }, 10000)
+          return new Promise<WebSocketCommandMap[typeof command]['response']>((resolve, reject) => {
+            const timeout = setTimeout(() => {
+              reject(new Error('Request timed out'))
+              const updated = { ...get().pending }
+              delete updated[requestId]
+              set({ pending: updated })
+            }, 10000)
 
-          set(state => ({
-            pending: {
-              ...state.pending,
-              [requestId]: dataPromise => {
-                clearTimeout(timeout)
-                Promise.resolve(dataPromise).then(resolve).catch(reject)
+            set(state => ({
+              pending: {
+                ...state.pending,
+                [requestId]: {
+                  timeout,
+                  resolve: data => resolve(data as WebSocketCommandMap[typeof command]['response']),
+                  reject,
+                },
               },
-            },
-          }))
+            }))
 
-          socket.send(JSON.stringify(message))
-        })
+            try {
+              socket.send(JSON.stringify(message))
+            } catch (error) {
+              clearTimeout(timeout)
+              const updated = { ...get().pending }
+              delete updated[requestId]
+              set({ pending: updated })
+              reject(error instanceof Error ? error : new Error('Unable to send websocket command'))
+            }
+          })
+        }
+
+        if (isAuthCommand(command)) return sendOnce(useAuthStore.getState().token)
+
+        let token = useAuthStore.getState().token
+        if (!token) {
+          await useAuthStore.getState().refreshToken()
+          token = useAuthStore.getState().token
+        }
+
+        try {
+          return await sendOnce(token)
+        } catch (error) {
+          if (!isUnauthorizedError(error)) throw error
+          await useAuthStore.getState().refreshToken()
+          return sendOnce(useAuthStore.getState().token)
+        }
       },
     }
   }),

@@ -9,20 +9,32 @@
 #include "runtime/Deps.hpp"
 #include "identities/User.hpp"
 #include "protocols/cookie.hpp"
+#include "rbac/Actor.hpp"
+#include "share/Principal.hpp"
 
 #include <boost/beast/http.hpp>
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
 #include <boost/asio.hpp>
+#include <cstddef>
+#include <string_view>
 
 #include "config/Registry.hpp"
 
 namespace {
-namespace beast     = boost::beast;
-namespace http      = beast::http;
-namespace websocket = beast::websocket;
-namespace asio      = boost::asio;
+namespace beast      = boost::beast;
+namespace beast_http = boost::beast::http;
+namespace websocket  = beast::websocket;
+namespace asio       = boost::asio;
+
+constexpr std::size_t kWebSocketReadBufferMaxBytes = 1024u * 1024u;
+
+bool isShareHandshakeTarget(const std::string_view target) {
+    constexpr std::string_view sharePath{"/ws/share"};
+    return target == sharePath ||
+           (target.starts_with(sharePath) && target.size() > sharePath.size() && target[sharePath.size()] == '?');
+}
 } // namespace
 
 using namespace vh::identities;
@@ -32,7 +44,7 @@ namespace vh::protocols::ws {
 
 Session::Session(const std::shared_ptr<Router>& router)
     : tokens(std::make_shared<auth::model::TokenPair>()), router_(router) {
-    buffer_.max_size(65536);
+    buffer_.max_size(kWebSocketReadBufferMaxBytes);
 }
 
 Session::~Session() {
@@ -50,18 +62,60 @@ std::string Session::getIPAddress() const {
 }
 
 std::string Session::getUserAgent() const {
-    if (const auto it = handshakeRequest_.find(http::field::user_agent);
+    if (const auto it = handshakeRequest_.find(beast_http::field::user_agent);
         it != handshakeRequest_.end()) return std::string(it->value());
     return  "unknown";
 }
 
 void Session::setAuthenticatedUser(const std::shared_ptr<User>& u) {
+    clearShareSession();
     user = u;
+    mode_ = SessionMode::Human;
     if (!tokens->refreshToken) throw std::runtime_error("Cannot set authenticated user without a refresh token in session");
     tokens->refreshToken->userId = user->id;
 }
 
+void Session::setPendingShareSession(std::string sessionId, std::string sessionToken) {
+    if (user) throw std::runtime_error("Cannot attach share session to authenticated user session");
+    if (sessionId.empty()) throw std::invalid_argument("Share session id is required");
+    if (sessionToken.empty()) throw std::invalid_argument("Share session token is required");
+
+    sharePrincipal_.reset();
+    shareSessionId_ = std::move(sessionId);
+    shareSessionToken_ = std::move(sessionToken);
+    mode_ = SessionMode::SharePending;
+}
+
+void Session::setSharePrincipal(std::shared_ptr<vh::share::Principal> principal, std::string sessionToken) {
+    if (user) throw std::runtime_error("Cannot attach share principal to authenticated user session");
+    if (!principal) throw std::invalid_argument("Share principal is required");
+    if (sessionToken.empty()) throw std::invalid_argument("Share session token is required");
+
+    shareSessionId_ = principal->share_session_id;
+    shareSessionToken_ = std::move(sessionToken);
+    sharePrincipal_ = std::move(principal);
+    mode_ = SessionMode::Share;
+}
+
+void Session::clearShareSession() {
+    sharePrincipal_.reset();
+    shareSessionId_.clear();
+    shareSessionToken_.clear();
+    mode_ = user ? SessionMode::Human : SessionMode::Unauthenticated;
+}
+
 void Session::setHandshakeRequest(const RequestType& req) { handshakeRequest_ = req; }
+
+std::shared_ptr<handler::fs::Upload> Session::getUploadHandler() {
+    if (!uploadHandler_) uploadHandler_ = std::make_shared<handler::fs::Upload>(shared_from_this());
+    return uploadHandler_;
+}
+
+vh::rbac::Actor Session::rbacActor() const {
+    if (user) return vh::rbac::Actor::human(user);
+    if (mode_ == SessionMode::Share && sharePrincipal_) return vh::rbac::Actor::share(sharePrincipal_);
+    throw std::runtime_error("Unauthorized");
+}
 
 void Session::logFail(std::string_view where, const beast::error_code& ec) {
     if (!ec) return;
@@ -77,7 +131,7 @@ void Session::accept(tcp::socket&& socket) {
     auto req = std::make_shared<RequestType>();
     auto self = shared_from_this();
 
-    http::async_read(
+    beast_http::async_read(
         ws_->next_layer(),
         tmpBuffer_,
         *req,
@@ -109,11 +163,25 @@ void Session::hydrateFromRequest(const RequestType& req) {
     handshakeRequest_ = req;
     ipAddress = getIPAddress();
     userAgent = getUserAgent();
+    shareHandshake_ = isShareHandshakeTarget(std::string_view{req.target().data(), req.target().size()});
 
-    log::Registry::ws()->debug("[ws::Session] Attempting to hydrate session from request. IP: {}, User-Agent: {}", ipAddress, userAgent);
+    log::Registry::ws()->debug(
+        "[ws::Session] Attempting to hydrate {} session from request. IP: {}, User-Agent: {}",
+        shareHandshake_ ? "share" : "human",
+        ipAddress,
+        userAgent
+    );
+
+    if (shareHandshake_) {
+        auth::model::RefreshToken::addShareToSession(shared_from_this(), extractCookie(req, "share_refresh"));
+        runtime::Deps::get().sessionManager->tryRehydrateShareRefresh(shared_from_this());
+        log::Registry::ws()->debug("[ws::Session] Share refresh cookie {} present", tokens->shareRefreshToken && !tokens->shareRefreshToken->rawToken.empty() ? "is" : "is not");
+        installHandshakeDecorator();
+        return;
+    }
+
     auth::model::RefreshToken::addToSession(shared_from_this(), extractCookie(req, "refresh"));
-
-    log::Registry::ws()->debug("[ws::Session] Extracted refresh token from cookies: {}", tokens->refreshToken ? tokens->refreshToken->rawToken : "none");
+    log::Registry::ws()->debug("[ws::Session] Human refresh cookie {} present", tokens->refreshToken && !tokens->refreshToken->rawToken.empty() ? "is" : "is not");
     runtime::Deps::get().sessionManager->tryRehydrate(shared_from_this());
 
     if (user) log::Registry::ws()->debug("[ws::Session] Session hydrated with user: {} (ID: {})", user->name, user->id);
@@ -125,21 +193,26 @@ void Session::hydrateFromRequest(const RequestType& req) {
 }
 
 void Session::installHandshakeDecorator() const {
-    if (!tokens || !tokens->refreshToken) {
+    const auto token = shareHandshake_
+                           ? (tokens ? tokens->shareRefreshToken : nullptr)
+                           : (tokens ? tokens->refreshToken : nullptr);
+
+    if (!token) {
         log::Registry::ws()->debug("[ws::Session] No refresh token available, skipping handshake decorator installation");
         return;
     }
 
-    const auto t = tokens->refreshToken->rawToken;
+    const auto t = token->rawToken;
+    const auto cookieName = shareHandshake_ ? std::string{"share_refresh"} : std::string{"refresh"};
     ws_->set_option(websocket::stream_base::timeout::suggested(beast::role_type::server));
     ws_->set_option(websocket::stream_base::decorator(
-        [t](websocket::response_type& res) {
-            res.set(http::field::server, "Vaulthalla");
+        [t, cookieName](websocket::response_type& res) {
+            res.set(beast_http::field::server, "Vaulthalla");
 
             const bool isDev = config::Registry::get().dev.enabled;
             const std::string sameSite = isDev ? "Lax" : "Lax"; // keep Lax unless *need* Strict
 
-            std::string cookie = "refresh=" + t +
+            std::string cookie = cookieName + "=" + t +
                 "; Path=/" +
                 "; HttpOnly" +
                 "; SameSite=" + sameSite +
@@ -148,7 +221,7 @@ void Session::installHandshakeDecorator() const {
             cookie += "; Secure";
 
             // IMPORTANT: use insert to avoid clobbering other Set-Cookie headers
-            res.insert(http::field::set_cookie, cookie);
+            res.insert(beast_http::field::set_cookie, cookie);
         }
     ));
 }
@@ -166,6 +239,9 @@ void Session::startReadLoop() {
 
 void Session::close() {
     if (closing_.exchange(true)) return;
+
+    if (uploadHandler_)
+        uploadHandler_->abortActiveUpload("websocket_session_closed");
 
     auto ws = ws_;
     if (!ws) {
@@ -289,8 +365,17 @@ void Session::onRead(const beast::error_code& ec, std::size_t) {
         return close();
     }
 
-    if (ws_->got_binary()) uploadHandler_->handleBinaryFrame(buffer_);
-    else {
+    if (ws_->got_binary()) {
+        try {
+            uploadHandler_->handleBinaryFrame(buffer_);
+        } catch (const std::exception& ex) {
+            log::Registry::ws()->debug("[ws::Session] Error processing binary upload frame: {}", ex.what());
+            sendInternalError();
+        } catch (...) {
+            log::Registry::ws()->debug("[ws::Session] Unknown error while processing binary upload frame");
+            sendInternalError();
+        }
+    } else {
         try {
             const auto text = beast::buffers_to_string(buffer_.data());
             router_->routeMessage(json::parse(text), shared_from_this());

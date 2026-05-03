@@ -6,6 +6,7 @@ export type FilesystemEntry = FileModel | Directory
 
 export interface FileSystemProps {
   files: FilesystemEntry[]
+  previewMode?: 'authenticated' | 'share'
 }
 
 interface FormattedRowFields {

@@ -12,7 +12,7 @@ int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
 
     try {
-        vh::paths::setLogPathForTesting();
+        vh::paths::enableTestMode();
         if (const auto* configPath = std::getenv("VH_PATH_TO_CONFIG")) {
             vh::paths::configPath = configPath;
         }

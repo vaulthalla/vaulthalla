@@ -7,7 +7,7 @@
 #include <stdexcept>
 #include <vector>
 
-using namespace vh::db::query::rbac::permission;
+namespace vh::db::query::rbac::permission {
 
 using OverrideT = vh::rbac::permission::Override;
 using OverridePtr = std::shared_ptr<OverrideT>;
@@ -165,4 +165,6 @@ std::vector<OverridePtr> Override::listForSubject(const std::string &subjectType
 
         return template_::paginate(std::move(overrides), params);
     });
+}
+
 }

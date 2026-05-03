@@ -1,6 +1,7 @@
 #include "fs/ops/file.hpp"
 #include "storage/Engine.hpp"
 #include "fs/model/Entry.hpp"
+#include "fs/model/File.hpp"
 #include "fs/model/Path.hpp"
 #include "runtime/Deps.hpp"
 #include "log/Registry.hpp"
@@ -56,6 +57,22 @@ void writeFile(const std::filesystem::path& absPath, const std::vector<uint8_t>&
     out.close();
 }
 
+std::filesystem::path writePlaintextToTemp(const std::vector<uint8_t>& plaintext) {
+    namespace fs = std::filesystem;
+
+    if (plaintext.empty()) throw std::runtime_error("Decryption failed or returned empty data");
+
+    fs::path tmp_file = fs::temp_directory_path() / ("vaulthalla_dec_" + generate_random_suffix() + ".tmp");
+
+    std::ofstream out(tmp_file, std::ios::binary | std::ios::trunc);
+    if (!out) throw std::runtime_error("Failed to create temp decrypted file: " + tmp_file.string());
+
+    out.write(reinterpret_cast<const char*>(plaintext.data()), static_cast<long>(plaintext.size()));
+    out.close();
+
+    return tmp_file;
+}
+
 std::string generate_random_suffix(const size_t length) {
     static constexpr char charset[] =
         "0123456789"
@@ -70,11 +87,9 @@ std::string generate_random_suffix(const size_t length) {
     return result;
 }
 
-std::filesystem::path decrypt_file_to_temp(const unsigned int vault_id,
+std::filesystem::path decrypt_file_to_temp(const unsigned int /*vault_id*/,
                                                   const std::filesystem::path& rel_path,
                                                   const std::shared_ptr<storage::Engine>& engine) {
-    namespace fs = std::filesystem;
-
     const auto abs_path = engine->paths->absRelToAbsRel(rel_path, PathType::VAULT_ROOT, PathType::FUSE_ROOT);
     const auto entry = runtime::Deps::get().fsCache->getEntry(abs_path);
     if (!entry) {
@@ -82,35 +97,24 @@ std::filesystem::path decrypt_file_to_temp(const unsigned int vault_id,
         throw std::runtime_error("Entry not found for path: " + abs_path.string());
     }
 
-    // Read encrypted file into memory
-    std::ifstream in(entry->backing_path, std::ios::binary | std::ios::ate);
-    if (!in) throw std::runtime_error("Failed to open encrypted file: " + entry->backing_path.string());
+    const auto file = std::dynamic_pointer_cast<File>(entry);
+    if (!file) throw std::runtime_error("Entry is not a file: " + abs_path.string());
+    return decrypt_file_to_temp(file, engine);
+}
 
-    std::streamsize size = in.tellg();
-    in.seekg(0, std::ios::beg);
+std::filesystem::path decrypt_file_to_temp(const std::shared_ptr<File>& file,
+                                           const std::shared_ptr<storage::Engine>& engine) {
+    if (!file) throw std::invalid_argument("Cannot decrypt a null file");
+    if (!engine) throw std::invalid_argument("Cannot decrypt file without storage engine");
 
-    std::vector<uint8_t> ciphertext(size);
-    if (!in.read(reinterpret_cast<char*>(ciphertext.data()), size))
-        throw std::runtime_error("Failed to read encrypted file: " + entry->backing_path.string());
-
-    // Decrypt
-    const auto plaintext = engine->decrypt(vault_id, rel_path, ciphertext);
-
-    if (plaintext.empty())
-        throw std::runtime_error("Decryption failed or returned empty data for file: " + entry->backing_path.string());
-
-    // Write to temp file
-    fs::path tmp_dir = fs::temp_directory_path();
-    fs::path tmp_file = tmp_dir / ("vaulthalla_dec_" + generate_random_suffix() + ".tmp");
-
-    std::ofstream out(tmp_file, std::ios::binary | std::ios::trunc);
-    if (!out) throw std::runtime_error("Failed to create temp decrypted file: " + tmp_file.string());
-
-    out.write(reinterpret_cast<const char*>(plaintext.data()), static_cast<long>(plaintext.size()));
-    out.close();
-
-    // Optional: tie temp file lifetime to vault or PID
-    return tmp_file;
+    std::vector<uint8_t> plaintext;
+    try {
+        plaintext = engine->decrypt(file);
+    } catch (...) {
+        if (!file->encryption_iv.empty()) throw;
+        plaintext = readFileToVector(file->backing_path);
+    }
+    return writePlaintextToTemp(plaintext);
 }
 
 bool isProbablyEncrypted(const std::filesystem::path& path) {
