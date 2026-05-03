@@ -102,9 +102,22 @@ void Manager::tryRehydrate(const std::shared_ptr<Session>& session) {
 }
 
 void Manager::promote(const std::shared_ptr<Session>& session) {
+    if (!session || !session->user || !session->tokens) {
+        log::Registry::ws()->debug("[session::Manager] Promotion failed due to missing session, user, or token state");
+        throw std::invalid_argument("Invalid session data for promotion");
+    }
+
+    if (!session->tokens->refreshToken || !session->tokens->refreshToken->isValid()) {
+        log::Registry::ws()->debug(
+            "[session::Manager] Rotating refresh token before promotion for session UUID: {}",
+            session->uuid
+        );
+        rotateRefreshToken(session);
+    }
+
     Issuer::accessToken(session);
 
-    if (!session || !Validator::softValidateActiveSession(session)) {
+    if (!Validator::softValidateActiveSession(session)) {
         log::Registry::ws()->debug("[session::Manager] Promotion failed due to invalid session data");
         throw std::invalid_argument("Invalid session data for promotion");
     }
