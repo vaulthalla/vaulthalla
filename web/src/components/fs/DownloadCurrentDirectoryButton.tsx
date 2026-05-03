@@ -3,7 +3,7 @@
 import DownloadIcon from '@/fa-duotone/download.svg'
 import { useFSStore } from '@/stores/fsStore'
 import { useVaultShareStore } from '@/stores/vaultShareStore'
-import { hasShareOperation } from '@/util/shareOperations'
+import { hasEffectiveShareOperation } from '@/util/shareOperations'
 
 export const DownloadCurrentDirectoryButton = () => {
   const mode = useFSStore(state => state.mode)
@@ -14,7 +14,7 @@ export const DownloadCurrentDirectoryButton = () => {
 
   const isShareMode = mode === 'share'
   const canDownloadShareDirectory =
-    isShareMode && share?.target_type === 'directory' && hasShareOperation(share.allowed_ops, 'download')
+    isShareMode && share?.target_type === 'directory' && hasEffectiveShareOperation(share, 'download')
   const canDownloadAuthenticatedDirectory = mode === 'authenticated' && Boolean(currVault)
   const enabled = canDownloadShareDirectory || canDownloadAuthenticatedDirectory
 

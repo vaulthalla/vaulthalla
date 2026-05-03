@@ -1,6 +1,7 @@
 #include "protocols/ws/handler/share/Sessions.hpp"
 
 #include "protocols/ws/Session.hpp"
+#include "rbac/fs/policy/Share.hpp"
 #include "share/EmailChallenge.hpp"
 #include "share/Link.hpp"
 #include "share/Manager.hpp"
@@ -8,6 +9,7 @@
 #include "runtime/Deps.hpp"
 #include "auth/session/Manager.hpp"
 
+#include <array>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -65,11 +67,65 @@ void requireNonHumanShareBootstrap(const std::shared_ptr<Session>& session) {
     if (session->user) throw std::runtime_error("Share session commands require a public websocket session");
 }
 
-[[nodiscard]] json publicLinkJson(const std::shared_ptr<vh::share::Link>& link) {
+[[nodiscard]] vh::share::TargetType capabilityTargetType(
+    const vh::share::Principal& principal,
+    const vh::share::Operation operation
+) {
+    switch (operation) {
+        case vh::share::Operation::List:
+        case vh::share::Operation::Mkdir:
+            return vh::share::TargetType::Directory;
+        case vh::share::Operation::Preview:
+        case vh::share::Operation::Download:
+        case vh::share::Operation::Upload:
+        case vh::share::Operation::Overwrite:
+            return vh::share::TargetType::File;
+        case vh::share::Operation::Metadata:
+            return principal.grant.target_type;
+    }
+    return principal.grant.target_type;
+}
+
+[[nodiscard]] bool capabilityTargetExists(const vh::share::Operation operation) {
+    return operation != vh::share::Operation::Upload && operation != vh::share::Operation::Mkdir;
+}
+
+[[nodiscard]] uint32_t effectiveAllowedOps(const vh::share::Principal& principal) {
+    constexpr std::array operations{
+        vh::share::Operation::Metadata,
+        vh::share::Operation::List,
+        vh::share::Operation::Preview,
+        vh::share::Operation::Download,
+        vh::share::Operation::Upload,
+        vh::share::Operation::Mkdir,
+        vh::share::Operation::Overwrite
+    };
+
+    uint32_t out = 0;
+    for (const auto operation : operations) {
+        if (!principal.allows(operation)) continue;
+
+        const auto decision = vh::rbac::fs::policy::Share::evaluate(principal, {
+            .vault_id = principal.vault_id,
+            .vault_path = principal.root_path,
+            .operation = operation,
+            .target_type = capabilityTargetType(principal, operation),
+            .target_exists = capabilityTargetExists(operation)
+        });
+        if (decision.allowed) out |= vh::share::bit(operation);
+    }
+    return out;
+}
+
+[[nodiscard]] json publicLinkJson(
+    const std::shared_ptr<vh::share::Link>& link,
+    const vh::share::Principal* principal = nullptr
+) {
     if (!link) return nullptr;
     auto out = link->toPublicJson();
     out.erase("token_lookup_id");
     out.erase("token_hash");
+    if (principal) out["effective_allowed_ops"] = effectiveAllowedOps(*principal);
     return out;
 }
 
@@ -99,7 +155,7 @@ json Sessions::open(const json& payload, const std::shared_ptr<Session>& session
         session->sharePrincipal()->share_id == requestedLink->id) {
         return {
             {"status", "ready"},
-            {"share", detail::publicLinkJson(requestedLink)},
+            {"share", detail::publicLinkJson(requestedLink, session->sharePrincipal().get())},
             {"session_id", session->shareSessionId()},
             {"session_token", session->shareSessionToken()}
         };
@@ -117,10 +173,11 @@ json Sessions::open(const json& payload, const std::shared_ptr<Session>& session
     if (ready) detail::attachReadyPrincipal(session, *mgr, result.session_token);
     else session->setPendingShareSession(result.session->id, result.session_token);
     vh::runtime::Deps::get().sessionManager->cache(session);
+    const auto principal = ready ? session->sharePrincipal().get() : nullptr;
 
     return {
         {"status", ready ? "ready" : "email_required"},
-        {"share", detail::publicLinkJson(result.link)},
+        {"share", detail::publicLinkJson(result.link, principal)},
         {"session_id", result.session ? result.session->id : ""},
         {"session_token", result.session_token}
     };

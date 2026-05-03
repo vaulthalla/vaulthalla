@@ -314,6 +314,42 @@ vh::share::Link makeLink(const vh::share::AccessMode mode = vh::share::AccessMod
     return link;
 }
 
+vh::rbac::role::Vault uploadDropboxRoleForTest() {
+    namespace permission = vh::rbac::permission;
+    namespace fs = vh::rbac::permission::vault::fs;
+    namespace role = vh::rbac::role;
+
+    auto files = fs::Files::Custom(
+        static_cast<fs::Files::SetMask>(fs::FilePermissions::Upload),
+        fs::Share::None(std::string{fs::Files::FLAG_PREFIX})
+    );
+    auto dirs = fs::Directories::Custom(
+        static_cast<fs::Directories::SetMask>(
+            static_cast<fs::Directories::SetMask>(fs::DirectoryPermissions::List) |
+            static_cast<fs::Directories::SetMask>(fs::DirectoryPermissions::Upload) |
+            static_cast<fs::Directories::SetMask>(fs::DirectoryPermissions::Touch)
+        ),
+        fs::Share::None(std::string{fs::Directories::FLAG_PREFIX})
+    );
+
+    auto vaultRole = role::Vault::Custom(
+        "share_upload_dropbox",
+        "Share-focused role template for directory dropbox uploads without download access.",
+        role::vault::Base::Custom(
+            permission::vault::Roles::None(),
+            permission::vault::Sync::None(),
+            permission::vault::Filesystem::Custom(std::move(files), std::move(dirs))
+        )
+    );
+    vaultRole.id = 99;
+    vaultRole.assign(99, "public", 42);
+    return vaultRole;
+}
+
+bool opSet(const uint32_t ops, const vh::share::Operation op) {
+    return (ops & vh::share::bit(op)) != 0;
+}
+
 std::shared_ptr<Session> publicSession() {
     auto session = std::make_shared<Session>(std::make_shared<Router>());
     session->ipAddress = "127.0.0.1";
@@ -459,6 +495,44 @@ TEST_F(WsShareSessionsTest, ValidPublicTokenOpensReadyShareSession) {
     ASSERT_NE(session->sharePrincipal(), nullptr);
     EXPECT_EQ(created.link->id, session->sharePrincipal()->share_id);
     EXPECT_EQ(nullptr, session->user);
+    expectNoSecretFields(response);
+}
+
+TEST_F(WsShareSessionsTest, OpenResponseIncludesEffectivePreviewWhenScopedRoleAllowsIt) {
+    auto created = create();
+    created.link->allowed_ops |= vh::share::bit(vh::share::Operation::Preview);
+    store->links[created.link->id] = created.link;
+    auto session = publicSession();
+
+    const auto response = Sessions::open({{"public_token", created.public_token}}, session);
+    const auto share = response.at("share");
+    const auto effective = share.at("effective_allowed_ops").get<uint32_t>();
+
+    EXPECT_TRUE(opSet(share.at("allowed_ops").get<uint32_t>(), vh::share::Operation::Preview));
+    EXPECT_TRUE(opSet(effective, vh::share::Operation::Preview));
+    EXPECT_TRUE(opSet(effective, vh::share::Operation::Download));
+    expectNoSecretFields(response);
+}
+
+TEST_F(WsShareSessionsTest, OpenResponseRemovesPreviewFromEffectiveOpsWhenScopedRoleDeniesIt) {
+    auto created = create();
+    created.link->link_type = vh::share::LinkType::Upload;
+    created.link->allowed_ops = vh::share::bit(vh::share::Operation::Metadata) |
+                                vh::share::bit(vh::share::Operation::List) |
+                                vh::share::bit(vh::share::Operation::Preview) |
+                                vh::share::bit(vh::share::Operation::Upload);
+    store->links[created.link->id] = created.link;
+    store->vault_roles[created.link->id] = std::make_shared<vh::rbac::role::Vault>(uploadDropboxRoleForTest());
+    auto session = publicSession();
+
+    const auto response = Sessions::open({{"public_token", created.public_token}}, session);
+    const auto share = response.at("share");
+    const auto effective = share.at("effective_allowed_ops").get<uint32_t>();
+
+    EXPECT_TRUE(opSet(share.at("allowed_ops").get<uint32_t>(), vh::share::Operation::Preview));
+    EXPECT_FALSE(opSet(effective, vh::share::Operation::Preview));
+    EXPECT_TRUE(opSet(effective, vh::share::Operation::List));
+    EXPECT_TRUE(opSet(effective, vh::share::Operation::Upload));
     expectNoSecretFields(response);
 }
 

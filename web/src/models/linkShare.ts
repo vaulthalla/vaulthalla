@@ -82,6 +82,7 @@ export interface PublicShare {
   link_type: ShareLinkType
   access_mode: ShareAccessMode
   allowed_ops: number | ShareOperation[]
+  effective_allowed_ops?: number | ShareOperation[]
   public_label?: string | null
   expires_at?: string | null
   metadata?: Record<string, unknown>

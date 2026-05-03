@@ -10,7 +10,7 @@ import UploadProgress from '@/components/loading/UploadProgress'
 import CircleNotch from '@/fa-duotone/circle-notch.svg'
 import { useFSStore } from '@/stores/fsStore'
 import { useVaultShareStore } from '@/stores/vaultShareStore'
-import { hasShareOperation } from '@/util/shareOperations'
+import { hasEffectiveShareOperation } from '@/util/shareOperations'
 import type { FileWithRelativePath } from '@/models/systemFile'
 
 const Alert = ({ tone = 'info', children }: { tone?: 'info' | 'error' | 'success'; children: React.ReactNode }) => {
@@ -67,8 +67,8 @@ const SharePageClient = ({ token }: { token: string }) => {
   const mode = useFSStore(state => state.mode)
   const uploadSuccess = useFSStore(state => state.uploadSuccess)
 
-  const canList = hasShareOperation(share?.allowed_ops, 'list')
-  const canUpload = hasShareOperation(share?.allowed_ops, 'upload')
+  const canList = hasEffectiveShareOperation(share, 'list')
+  const canUpload = hasEffectiveShareOperation(share, 'upload')
   const isFileShare = share?.target_type === 'file'
   const isDirectoryShare = share?.target_type === 'directory'
   const canBrowseShare = canList || isFileShare
@@ -91,7 +91,7 @@ const SharePageClient = ({ token }: { token: string }) => {
     if (refreshedShareState.publicToken !== token || refreshedShareState.status !== 'ready' || fsState.mode !== 'share') return
 
     const canBrowseRestoredShare =
-      hasShareOperation(refreshedShareState.share?.allowed_ops, 'list') ||
+      hasEffectiveShareOperation(refreshedShareState.share, 'list') ||
       refreshedShareState.share?.target_type === 'file'
 
     if (canBrowseRestoredShare) await fsState.fetchFiles()

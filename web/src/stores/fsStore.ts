@@ -10,7 +10,7 @@ import { Directory } from '@/models/directory'
 import { useShareWebSocketStore } from '@/stores/useShareWebSocket'
 import { useVaultShareStore } from '@/stores/vaultShareStore'
 import { ShareEntry, SharePreviewResponse } from '@/models/linkShare'
-import { canRequestSharePreview, hasShareOperation } from '@/util/shareOperations'
+import { canRequestSharePreview, hasEffectiveShareOperation } from '@/util/shareOperations'
 import { buildPreviewUrl } from '@/util/previewUrl'
 import { parseTimestamp } from '@/util/formatTimestamp'
 import { buildDownloadUrl } from '@/util/downloadUrl'
@@ -474,7 +474,7 @@ export const useFSStore = create<FsStore>()(
             await fetchFiles()
           } else {
             const shareState = useVaultShareStore.getState()
-            const canRelist = hasShareOperation(shareState.share?.allowed_ops, 'list') || shareState.share?.target_type === 'file'
+            const canRelist = hasEffectiveShareOperation(shareState.share, 'list') || shareState.share?.target_type === 'file'
             listUnavailable = !canRelist
             if (canRelist)
               await fetchFiles()

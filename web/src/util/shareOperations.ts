@@ -1,5 +1,10 @@
 import { ShareLink, ShareOperation, ShareStatus } from '@/models/linkShare'
 
+type ShareOperationSource = {
+  allowed_ops?: ShareLink['allowed_ops']
+  effective_allowed_ops?: ShareLink['allowed_ops']
+}
+
 export const shareOpBits: Record<ShareOperation, number> = {
   metadata: 1 << 0,
   list: 1 << 1,
@@ -22,10 +27,17 @@ export const hasShareOperation = (allowedOps: ShareLink['allowed_ops'] | undefin
   return shareOperations(allowedOps).includes(operation)
 }
 
-export const canRequestSharePreview = (share: Pick<ShareLink, 'allowed_ops' | 'link_type'> | null | undefined) => {
-  if (!share) return false
-  if (share.link_type === 'upload') return false
-  return hasShareOperation(share.allowed_ops, 'preview')
+export const shareDecisionOps = (share: ShareOperationSource | null | undefined) => (
+  share?.effective_allowed_ops ?? share?.allowed_ops
+)
+
+export const hasEffectiveShareOperation = (
+  share: ShareOperationSource | null | undefined,
+  operation: ShareOperation,
+) => hasShareOperation(shareDecisionOps(share), operation)
+
+export const canRequestSharePreview = (share: ShareOperationSource | null | undefined) => {
+  return hasEffectiveShareOperation(share, 'preview')
 }
 
 export const shareOperationLabel = (allowedOps: ShareLink['allowed_ops'] | undefined) => {

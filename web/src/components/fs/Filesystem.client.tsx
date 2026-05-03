@@ -13,7 +13,7 @@ import Row from '@/components/fs/Row'
 import type { FilesystemRow } from '@/components/fs/types'
 import { ShareManagementModal } from '@/components/share/ShareManagementModal'
 import { useVaultShareStore } from '@/stores/vaultShareStore'
-import { canRequestSharePreview, hasShareOperation } from '@/util/shareOperations'
+import { canRequestSharePreview, hasEffectiveShareOperation } from '@/util/shareOperations'
 
 type FilesystemClientProps = { rows: FilesystemRow[] }
 
@@ -39,7 +39,7 @@ export const FilesystemClient: React.FC<FilesystemClientProps> = memo(({ rows })
   const clearSharePreview = useFSStore(state => state.clearSharePreview)
   const share = useVaultShareStore(state => state.share)
   const canSharePreview = canRequestSharePreview(share)
-  const canShareDownload = hasShareOperation(share?.allowed_ops, 'download')
+  const canShareDownload = hasEffectiveShareOperation(share, 'download')
   const canManageShares = mode === 'authenticated'
 
   const sharePath = React.useCallback((row: { path?: string; name: string }) => row.path || row.name, [])
