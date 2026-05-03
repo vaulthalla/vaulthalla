@@ -1,4 +1,4 @@
-![vaulthalla-v1-release-banner](https://docs-media.valkyrianlabs.com/Vaulthalla-v1.0.0-release-banner-a-1200x630.png)
+![vaulthalla-v1-release-banner](https://docs-media.valkyrianlabs.com/Vaulthalla-v1_1-release-banner-1200x630.png)
 
 [![build](https://img.shields.io/github/actions/workflow/status/vaulthalla/vaulthalla/build_and_test.yml?label=build)](https://github.com/vaulthalla/vaulthalla/actions)
 [![release](https://img.shields.io/github/v/release/vaulthalla/vaulthalla?display_name=tag\&sort=semver)](https://github.com/vaulthalla/vaulthalla/releases)
