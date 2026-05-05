@@ -2,8 +2,8 @@
 
 ## Current Phase
 
-- Phase 12 - Customizable Dashboard Home Layout
-- Status: committed and pushed.
+- Phase 13 - Persisted Dashboard Preferences and Drag/Drop
+- Status: validation complete; commit pending.
 
 ## Completed Phases
 
@@ -23,24 +23,69 @@
 - Phase 9: Historical snapshots, `stats.system.trends` and `stats.vault.trends`, admin and vault dashboard cards.
 - Phase 10: Dashboard overview command, compact overview, drilldown routes, and dashboard nav child routes.
 - Phase 11: Live dashboard severity badges and overview polish.
+- Phase 12: Local customizable `/dashboard` home layout.
 
 ## Latest Phase Summary
 
-Phase 12 makes only the `/dashboard` home board configurable:
+Phase 13 persists the `/dashboard` home board server-side and adds drag/drop sequence reordering:
 
-- Added a browser-local card layout model and frontend catalog for overview card IDs, finite sizes, and variants.
-- `/dashboard` renders selected summary cards in a responsive 12-column grid.
-- Customize mode supports add, remove, Up/Down reorder, finite size/variant selection, reset, and immediate preview refresh.
-- Dashboard overview polling now uses the current visible card specs when requesting `stats.dashboard.overview`.
+- Added `dashboard_preferences` with one `dashboard.home` row per user/key.
+- Added authenticated current-user-only websocket commands for get/update/reset.
+- `/dashboard` now loads server preferences, falls back to localStorage/defaults, and mirrors successful saves back to localStorage.
+- Customize mode now supports built-in presets and drag/drop reordering while retaining Up/Down controls.
 - Fixed drilldown pages remain unchanged and full-size.
 
-No backend contract changes were needed. Server persistence and drag/drop are deferred to Phase 13.
+No arbitrary metric field selection or drilldown customization was added.
 
 ## Checkpoint
 
-- Commit SHA: `9fd1fbbe`.
+- Commit SHA: pending.
 - Push target: `origin/stats-dashboards`.
-- Push result: succeeded, with GitHub remote moved warning.
+- Push result: pending.
+
+## Phase 13 - Persisted Dashboard Preferences and Drag/Drop
+
+Backend files added:
+
+- `deploy/psql/081_dashboard_preferences.sql`
+- `core/include/stats/model/DashboardPreferences.hpp`
+- `core/src/stats/model/DashboardPreferences.cpp`
+- `core/include/db/query/dashboard/Preferences.hpp`
+- `core/src/db/query/dashboard/Preferences.cpp`
+- `core/src/db/preparedStatements/dashboard/preferences.cpp`
+- `core/include/protocols/ws/handler/dashboard/Preferences.hpp`
+- `core/src/protocols/ws/handler/dashboard/Preferences.cpp`
+
+Backend files changed:
+
+- `core/include/db/DBConnection.hpp`
+- `core/src/db/Connection.cpp`
+- `core/include/protocols/ws/Handler.hpp`
+- `core/src/protocols/ws/Handler.cpp`
+
+Frontend files added:
+
+- `web/src/models/dashboard/dashboardPreferences.ts`
+- `web/src/stores/dashboardPreferencesStore.ts`
+
+Frontend files changed:
+
+- `web/src/models/dashboard/dashboardLayout.ts`
+- `web/src/components/dashboard/dashboardCardCatalog.ts`
+- `web/src/components/dashboard/DashboardOverview.tsx`
+- `web/src/util/webSocketCommands.ts`
+
+Validation:
+
+- `git diff --check`: passed
+- `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+- `meson setup --reconfigure build`: passed
+- `meson compile -C build`: passed
+- `make test`: passed
+- `pnpm --dir web typecheck`: passed
+- `pnpm --dir web lint`: passed
+- `pnpm --dir web test`: passed
+- `meson test -C build`: passed, 2/2
 
 ## Phase 12 - Customizable Dashboard Home Layout
 

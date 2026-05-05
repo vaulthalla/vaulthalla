@@ -5,12 +5,14 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react'
 
 import {
   DASHBOARD_LAYOUT_STORAGE_KEY,
+  dashboardLayoutPreference,
   type DashboardCardSize,
   type DashboardCardVariant,
   type DashboardLayoutCard,
   normalizeDashboardLayout,
   visibleDashboardLayoutCards,
 } from '@/models/dashboard/dashboardLayout'
+import { DASHBOARD_HOME_PREFERENCE_KEY } from '@/models/dashboard/dashboardPreferences'
 import {
   DashboardCardSummary,
   type DashboardMetricSummary,
@@ -20,12 +22,16 @@ import {
 import {
   dashboardCardCatalog,
   dashboardCardCatalogById,
+  dashboardLayoutFromCards,
+  dashboardLayoutPresets,
   defaultDashboardLayout,
   type DashboardCardCatalogItem,
+  type DashboardLayoutPreset,
 } from '@/components/dashboard/dashboardCardCatalog'
 import { DashboardIssueList, DashboardIssueSummaryLine } from '@/components/dashboard/DashboardIssueList'
 import { DashboardSeverityBadge, DashboardSeverityIcon } from '@/components/dashboard/DashboardSeverityBadge'
 import { dashboardSeverityTone, sortDashboardIssues } from '@/components/dashboard/dashboardSeverity'
+import { useDashboardPreferencesStore } from '@/stores/dashboardPreferencesStore'
 import { useStatsStore } from '@/stores/statsStore'
 
 function formatCheckedAt(value: number | string | null, fallback: number | null): string {
@@ -62,7 +68,11 @@ function loadStoredLayout(): DashboardLayoutCard[] {
 
 function storeLayout(layout: DashboardLayoutCard[]) {
   if (typeof window === 'undefined') return
-  window.localStorage.setItem(DASHBOARD_LAYOUT_STORAGE_KEY, JSON.stringify(layout))
+  window.localStorage.setItem(DASHBOARD_LAYOUT_STORAGE_KEY, JSON.stringify(dashboardLayoutPreference(layout)))
+}
+
+function layoutKey(layout: DashboardLayoutCard[]): string {
+  return JSON.stringify(dashboardLayoutPreference(layout).cards)
 }
 
 const LiveBadge = ({
@@ -233,6 +243,7 @@ function CardCustomizationControls({
   index,
   total,
   onMove,
+  onDragStart,
   onRemove,
   onSizeChange,
   onVariantChange,
@@ -242,6 +253,7 @@ function CardCustomizationControls({
   index: number
   total: number
   onMove: (id: string, direction: -1 | 1) => void
+  onDragStart: (id: string, event: React.DragEvent<HTMLElement>) => void
   onRemove: (id: string) => void
   onSizeChange: (id: string, size: DashboardCardSize) => void
   onVariantChange: (id: string, variant: DashboardCardVariant) => void
@@ -253,6 +265,14 @@ function CardCustomizationControls({
 
   return (
     <div className="mb-4 flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-black/20 p-2">
+      <button
+        type="button"
+        draggable
+        className="cursor-grab rounded-full border border-cyan-200/20 bg-cyan-400/10 px-2.5 py-1 text-xs text-cyan-100 transition hover:border-cyan-100/45 active:cursor-grabbing"
+        title="Drag to reorder"
+        onDragStart={event => onDragStart(layoutCard.id, event)}>
+        Drag
+      </button>
       <button type="button" className={buttonClass} onClick={() => onMove(layoutCard.id, -1)} disabled={index === 0}>
         Up
       </button>
@@ -304,6 +324,12 @@ function SummaryCard({
   index,
   total,
   onMove,
+  onDragStart,
+  onDragOverCard,
+  onDropCard,
+  onDragEnd,
+  dragging,
+  dragOver,
   onRemove,
   onSizeChange,
   onVariantChange,
@@ -315,6 +341,12 @@ function SummaryCard({
   index: number
   total: number
   onMove: (id: string, direction: -1 | 1) => void
+  onDragStart: (id: string, event: React.DragEvent<HTMLElement>) => void
+  onDragOverCard: (id: string, event: React.DragEvent<HTMLDivElement>) => void
+  onDropCard: (id: string, event: React.DragEvent<HTMLDivElement>) => void
+  onDragEnd: () => void
+  dragging: boolean
+  dragOver: boolean
   onRemove: (id: string) => void
   onSizeChange: (id: string, size: DashboardCardSize) => void
   onVariantChange: (id: string, variant: DashboardCardVariant) => void
@@ -328,13 +360,19 @@ function SummaryCard({
   const issueCount = issueCountForCard(layoutCard)
 
   return (
-    <div className={['col-span-1', gridClassForSize(layoutCard.size)].join(' ')}>
+    <div
+      className={['col-span-1', gridClassForSize(layoutCard.size)].join(' ')}
+      onDragOver={event => onDragOverCard(layoutCard.id, event)}
+      onDrop={event => onDropCard(layoutCard.id, event)}
+      onDragEnd={onDragEnd}>
       <article
         className={[
           'h-full rounded-3xl border bg-zinc-950/45 p-4 backdrop-blur transition hover:-translate-y-0.5 hover:brightness-110',
           minHeightForSize(layoutCard.size),
           tone.border,
           tone.ring,
+          dragging ? 'opacity-55' : '',
+          dragOver ? 'outline outline-2 outline-cyan-200/60' : '',
           errors > 0 || warnings > 0 ? 'ring-1 ring-inset' : '',
           errors > 0 ? 'ring-rose-300/15'
           : warnings > 0 ? 'ring-amber-300/15'
@@ -347,6 +385,7 @@ function SummaryCard({
             index={index}
             total={total}
             onMove={onMove}
+            onDragStart={onDragStart}
             onRemove={onRemove}
             onSizeChange={onSizeChange}
             onVariantChange={onVariantChange}
@@ -414,19 +453,61 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
   const wrapper = useStatsStore(s => s.dashboardOverview)
   const startPolling = useStatsStore(s => s.startDashboardOverviewPolling)
   const refreshOverview = useStatsStore(s => s.refreshDashboardOverview)
+  const preferenceLoading = useDashboardPreferencesStore(s => s.loading)
+  const preferenceSaving = useDashboardPreferencesStore(s => s.saving)
+  const preferenceError = useDashboardPreferencesStore(s => s.error)
+  const loadPreference = useDashboardPreferencesStore(s => s.getPreference)
+  const savePreference = useDashboardPreferencesStore(s => s.savePreference)
+  const resetPreference = useDashboardPreferencesStore(s => s.resetPreference)
   const [customizing, setCustomizing] = useState(false)
   const [layoutLoaded, setLayoutLoaded] = useState(false)
   const [layout, setLayout] = useState<DashboardLayoutCard[]>(() => makeDefaultLayout())
+  const [savedLayout, setSavedLayout] = useState<DashboardLayoutCard[]>(() => makeDefaultLayout())
+  const [savedLayoutKey, setSavedLayoutKey] = useState(() => layoutKey(makeDefaultLayout()))
+  const [needsMigrationSave, setNeedsMigrationSave] = useState(false)
+  const [saveNotice, setSaveNotice] = useState<string | null>(null)
   const [selectedAddId, setSelectedAddId] = useState('')
+  const [selectedPresetId, setSelectedPresetId] = useState('default')
+  const [draggedCardId, setDraggedCardId] = useState<string | null>(null)
+  const [dragOverCardId, setDragOverCardId] = useState<string | null>(null)
 
   useEffect(() => {
-    setLayout(loadStoredLayout())
+    let cancelled = false
+    const localLayout = loadStoredLayout()
+    const localKey = layoutKey(localLayout)
+
+    setLayout(localLayout)
+    setSavedLayout(localLayout)
+    setSavedLayoutKey(localKey)
     setLayoutLoaded(true)
-  }, [])
 
-  useEffect(() => {
-    if (layoutLoaded) storeLayout(layout)
-  }, [layout, layoutLoaded])
+    void loadPreference({ preference_key: DASHBOARD_HOME_PREFERENCE_KEY })
+      .then(preference => {
+        if (cancelled) return
+
+        if (preference.exists && preference.layout) {
+          const serverLayout = normalizeDashboardLayout(preference.layout, dashboardCardCatalog, makeDefaultLayout())
+          const serverKey = layoutKey(serverLayout)
+          setLayout(serverLayout)
+          setSavedLayout(serverLayout)
+          setSavedLayoutKey(serverKey)
+          setNeedsMigrationSave(false)
+          storeLayout(serverLayout)
+          void refreshOverview(buildOverviewPayload(serverLayout))
+          return
+        }
+
+        const hasLocalLayout = typeof window !== 'undefined' && Boolean(window.localStorage.getItem(DASHBOARD_LAYOUT_STORAGE_KEY))
+        setNeedsMigrationSave(hasLocalLayout)
+      })
+      .catch(() => {
+        if (!cancelled) setNeedsMigrationSave(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [loadPreference, refreshOverview])
 
   const catalogById = useMemo(() => dashboardCardCatalogById(), [])
   const visibleLayout = useMemo(() => visibleDashboardLayoutCards(layout), [layout])
@@ -445,6 +526,8 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
   )
   const overviewPayload = useMemo(() => buildOverviewPayload(layout), [layout])
   const payloadKey = useMemo(() => JSON.stringify(overviewPayload.cards), [overviewPayload.cards])
+  const currentLayoutKey = useMemo(() => layoutKey(layout), [layout])
+  const layoutDirty = layoutLoaded && currentLayoutKey !== savedLayoutKey
 
   useEffect(() => {
     startPolling(intervalMs, overviewPayload)
@@ -464,6 +547,7 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
   }, [])
 
   const updateLayout = useCallback((updater: (current: DashboardLayoutCard[]) => DashboardLayoutCard[]) => {
+    setSaveNotice(null)
     setLayout(current => normalizeNextLayout(updater(current)))
   }, [normalizeNextLayout])
 
@@ -509,6 +593,50 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
     })
   }, [updateLayout])
 
+  const reorderCardBefore = useCallback((dragId: string, targetId: string) => {
+    if (dragId === targetId) return
+
+    updateLayout(current => {
+      const visible = visibleDashboardLayoutCards(current)
+      const from = visible.findIndex(card => card.id === dragId)
+      const to = visible.findIndex(card => card.id === targetId)
+      if (from < 0 || to < 0) return current
+
+      const reordered = [...visible]
+      const [moved] = reordered.splice(from, 1)
+      reordered.splice(to, 0, moved)
+      const orderById = new Map(reordered.map((card, order) => [card.id, order]))
+      return current.map(card => orderById.has(card.id) ? { ...card, order: orderById.get(card.id) ?? card.order } : card)
+    })
+  }, [updateLayout])
+
+  const startCardDrag = useCallback((id: string, event: React.DragEvent<HTMLElement>) => {
+    setDraggedCardId(id)
+    setDragOverCardId(null)
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', id)
+  }, [])
+
+  const dragOverCard = useCallback((id: string, event: React.DragEvent<HTMLDivElement>) => {
+    if (!draggedCardId || draggedCardId === id) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+    setDragOverCardId(id)
+  }, [draggedCardId])
+
+  const dropCard = useCallback((id: string, event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    const dragId = event.dataTransfer.getData('text/plain') || draggedCardId
+    if (dragId) reorderCardBefore(dragId, id)
+    setDraggedCardId(null)
+    setDragOverCardId(null)
+  }, [draggedCardId, reorderCardBefore])
+
+  const endCardDrag = useCallback(() => {
+    setDraggedCardId(null)
+    setDragOverCardId(null)
+  }, [])
+
   const changeCardSize = useCallback((id: string, size: DashboardCardSize) => {
     updateLayout(current => current.map(card => card.id === id ? { ...card, size } : card))
   }, [updateLayout])
@@ -517,11 +645,57 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
     updateLayout(current => current.map(card => card.id === id ? { ...card, variant } : card))
   }, [updateLayout])
 
-  const resetLayout = useCallback(() => {
+  const saveLayout = useCallback(async () => {
+    const nextLayout = normalizeNextLayout(layout)
+    const preferenceLayout = dashboardLayoutPreference(nextLayout)
+    const preference = await savePreference({
+      preference_key: DASHBOARD_HOME_PREFERENCE_KEY,
+      layout: preferenceLayout,
+    })
+    const saved = preference.layout ?
+      normalizeDashboardLayout(preference.layout, dashboardCardCatalog, makeDefaultLayout())
+    : nextLayout
+
+    const nextKey = layoutKey(saved)
+    setLayout(saved)
+    setSavedLayout(saved)
+    setSavedLayoutKey(nextKey)
+    setNeedsMigrationSave(false)
+    setSaveNotice('Layout saved.')
+    storeLayout(saved)
+    void refreshOverview(buildOverviewPayload(saved))
+  }, [layout, normalizeNextLayout, refreshOverview, savePreference])
+
+  const doneCustomizing = useCallback(async () => {
+    if (layoutDirty || needsMigrationSave) await saveLayout()
+    setCustomizing(false)
+  }, [layoutDirty, needsMigrationSave, saveLayout])
+
+  const cancelCustomizing = useCallback(() => {
+    setLayout(savedLayout)
+    setCustomizing(false)
+    setSaveNotice(null)
+    void refreshOverview(buildOverviewPayload(savedLayout))
+  }, [refreshOverview, savedLayout])
+
+  const resetLayout = useCallback(async () => {
     const defaults = makeDefaultLayout()
+    await resetPreference({ preference_key: DASHBOARD_HOME_PREFERENCE_KEY })
     if (typeof window !== 'undefined') window.localStorage.removeItem(DASHBOARD_LAYOUT_STORAGE_KEY)
     setLayout(defaults)
+    setSavedLayout(defaults)
+    setSavedLayoutKey(layoutKey(defaults))
+    setNeedsMigrationSave(false)
+    setSaveNotice('Layout reset.')
     void refreshOverview(buildOverviewPayload(defaults))
+  }, [refreshOverview, resetPreference])
+
+  const applyPreset = useCallback((preset: DashboardLayoutPreset) => {
+    const next = normalizeDashboardLayout(dashboardLayoutFromCards(preset.cards), dashboardCardCatalog, makeDefaultLayout())
+    setSelectedPresetId(preset.id)
+    setSaveNotice(null)
+    setLayout(next)
+    void refreshOverview(buildOverviewPayload(next))
   }, [refreshOverview])
 
   const addSelectedCard = useCallback(() => {
@@ -603,12 +777,25 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
           <div>
             <div className="text-sm font-semibold text-white/90">Home Layout</div>
             <div className="mt-1 text-xs text-white/50">
-              Choose summary cards for this browser-local dashboard home. Detail pages stay fixed.
+              Choose server-saved summary cards for this dashboard home. Detail pages stay fixed.
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {customizing ?
               <>
+                <select
+                  className="rounded-full border border-white/10 bg-zinc-950/80 px-3 py-1.5 text-xs text-white/75 outline-none transition hover:border-cyan-200/30 focus:border-cyan-200/50"
+                  value={selectedPresetId}
+                  onChange={event => {
+                    const preset = dashboardLayoutPresets.find(item => item.id === event.target.value)
+                    if (preset) applyPreset(preset)
+                  }}>
+                  {dashboardLayoutPresets.map(preset => (
+                    <option key={preset.id} value={preset.id}>
+                      {preset.title}
+                    </option>
+                  ))}
+                </select>
                 <select
                   className="rounded-full border border-white/10 bg-zinc-950/80 px-3 py-1.5 text-xs text-white/75 outline-none transition hover:border-cyan-200/30 focus:border-cyan-200/50"
                   value={selectedAddId}
@@ -632,14 +819,30 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
                 <button
                   type="button"
                   className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/70 transition hover:border-amber-200/35 hover:text-amber-100"
-                  onClick={resetLayout}>
+                  onClick={() => { void resetLayout().catch(() => undefined) }}
+                  disabled={preferenceSaving}>
                   Reset Layout
                 </button>
                 <button
                   type="button"
+                  className="rounded-full border border-cyan-200/25 bg-cyan-400/10 px-3 py-1.5 text-xs font-medium text-cyan-100 transition hover:border-cyan-100/45 disabled:cursor-not-allowed disabled:opacity-40"
+                  onClick={() => { void saveLayout().catch(() => undefined) }}
+                  disabled={preferenceSaving || (!layoutDirty && !needsMigrationSave)}>
+                  {preferenceSaving ? 'Saving...' : 'Save Layout'}
+                </button>
+                <button
+                  type="button"
+                  className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/70 transition hover:border-white/25 hover:text-white"
+                  onClick={cancelCustomizing}
+                  disabled={preferenceSaving}>
+                  Cancel
+                </button>
+                <button
+                  type="button"
                   className="rounded-full border border-emerald-200/25 bg-emerald-400/10 px-3 py-1.5 text-xs font-medium text-emerald-100 transition hover:border-emerald-100/45"
-                  onClick={() => setCustomizing(false)}>
-                  Done
+                  onClick={() => { void doneCustomizing().catch(() => undefined) }}
+                  disabled={preferenceSaving}>
+                  {layoutDirty || needsMigrationSave ? 'Save & Done' : 'Done'}
                 </button>
               </>
             : <button
@@ -652,8 +855,35 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
           </div>
         </div>
         {customizing ?
-          <div className="mt-4 rounded-2xl border border-amber-300/25 bg-amber-400/10 px-3 py-2 text-xs text-amber-100/85">
-            Layout changes are saved in this browser only. Server persistence and drag/drop land in the next pass.
+          <div className="mt-4 space-y-2">
+            <div className="rounded-2xl border border-cyan-300/25 bg-cyan-400/10 px-3 py-2 text-xs text-cyan-100/85">
+              Drag cards by their handle or use Up/Down. Changes preview immediately and save to your account when you choose Save Layout or Save & Done.
+            </div>
+            {needsMigrationSave ?
+              <div className="rounded-2xl border border-amber-300/25 bg-amber-400/10 px-3 py-2 text-xs text-amber-100/85">
+                A browser-local layout was loaded. Save once to move it to server-backed preferences.
+              </div>
+            : null}
+            {layoutDirty ?
+              <div className="rounded-2xl border border-amber-300/25 bg-amber-400/10 px-3 py-2 text-xs text-amber-100/85">
+                Unsaved layout changes.
+              </div>
+            : null}
+            {preferenceLoading ?
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/60">
+                Loading saved preferences...
+              </div>
+            : null}
+            {saveNotice ?
+              <div className="rounded-2xl border border-emerald-300/25 bg-emerald-400/10 px-3 py-2 text-xs text-emerald-100">
+                {saveNotice}
+              </div>
+            : null}
+            {preferenceError ?
+              <div className="rounded-2xl border border-rose-300/30 bg-rose-400/10 px-3 py-2 text-xs text-rose-100">
+                {preferenceError}
+              </div>
+            : null}
           </div>
         : null}
       </OverviewShell>
@@ -697,6 +927,12 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
             index={index}
             total={visibleCards.length}
             onMove={moveCard}
+            onDragStart={startCardDrag}
+            onDragOverCard={dragOverCard}
+            onDropCard={dropCard}
+            onDragEnd={endCardDrag}
+            dragging={draggedCardId === layoutCard.id}
+            dragOver={dragOverCardId === layoutCard.id}
             onRemove={removeCard}
             onSizeChange={changeCardSize}
             onVariantChange={changeCardVariant}

@@ -325,3 +325,32 @@ Checkpoint:
 - Commit SHA: `9fd1fbbe`.
 - Push target: `origin/stats-dashboards`.
 - Push result: succeeded, with GitHub remote moved warning.
+
+## Phase 13 - Persisted Dashboard Preferences and Drag/Drop
+
+Validation:
+
+- `git diff --check`: passed
+- `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+- `meson setup --reconfigure build`: passed
+- `meson compile -C build`: passed
+- `make test`: passed
+- `pnpm --dir web typecheck`: passed
+- `pnpm --dir web lint`: passed
+- `pnpm --dir web test`: passed
+- `meson test -C build`: passed, 2/2
+
+Known failures:
+
+- None currently.
+
+Notes:
+
+- `make test` completed the expected integration teardown/reinstall path and exercised the new SQL migration.
+- The first compile attempt failed because the new websocket preference handler only had a forward declaration of `DashboardPreference`; including the concrete model fixed JSON serialization.
+
+Checkpoint:
+
+- Commit SHA: pending.
+- Push target: `origin/stats-dashboards`.
+- Push result: pending.

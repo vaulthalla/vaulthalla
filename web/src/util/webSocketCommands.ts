@@ -12,6 +12,11 @@ import { Settings } from '@/models/settings'
 import { Group } from '@/models/group'
 import { File, IFileUpload } from '@/models/file'
 import { Directory } from '@/models/directory'
+import {
+  DashboardPreference,
+  DashboardPreferencePayload,
+  DashboardPreferenceUpdatePayload,
+} from '@/models/dashboard/dashboardPreferences'
 import { CacheStats } from '@/models/stats/cacheStats'
 import { ConnectionStats } from '@/models/stats/connectionStats'
 import { DashboardOverview, DashboardOverviewRequest } from '@/models/stats/dashboardOverview'
@@ -148,6 +153,14 @@ export interface WebSocketCommandMap {
   'settings.get': { payload: null; response: { settings: Settings } }
 
   'settings.update': { payload: Partial<Settings>; response: { settings: Settings } }
+
+  // Dashboard preferences
+
+  'dashboard.preferences.get': { payload: DashboardPreferencePayload | null; response: { preferences: DashboardPreference } }
+
+  'dashboard.preferences.update': { payload: DashboardPreferenceUpdatePayload; response: { preferences: DashboardPreference } }
+
+  'dashboard.preferences.reset': { payload: DashboardPreferencePayload | null; response: { reset: boolean; deleted?: boolean } }
 
   // Group commands
 

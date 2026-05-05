@@ -14,6 +14,13 @@ export interface DashboardCardCatalogItem extends DashboardLayoutCatalogItem {
   unavailableReason: string | null
 }
 
+export interface DashboardLayoutPreset {
+  id: string
+  title: string
+  description: string
+  cards: Array<Pick<DashboardLayoutCard, 'id' | 'size' | 'variant'>>
+}
+
 const allSizes: DashboardCardSize[] = ['1x1', '2x1', '2x2', '3x2', '4x2']
 const allVariants: DashboardCardVariant[] = ['compact', 'summary', 'hero']
 const compactSizes: DashboardCardSize[] = ['1x1', '2x1', '2x2']
@@ -166,7 +173,7 @@ export const dashboardCardCatalog: DashboardCardCatalogItem[] = [
   },
 ]
 
-const defaultVisibleCards: Array<Pick<DashboardLayoutCard, 'id' | 'size' | 'variant'>> = [
+const defaultVisibleCards: DashboardLayoutPreset['cards'] = [
   { id: 'system.health', size: '4x2', variant: 'hero' },
   { id: 'system.operations', size: '2x2', variant: 'summary' },
   { id: 'system.storage', size: '2x2', variant: 'summary' },
@@ -177,8 +184,81 @@ const defaultVisibleCards: Array<Pick<DashboardLayoutCard, 'id' | 'size' | 'vari
   { id: 'system.trends', size: '2x1', variant: 'compact' },
 ]
 
-export function defaultDashboardLayout(): DashboardLayoutCard[] {
-  const visibleById = new Map(defaultVisibleCards.map((card, order) => [card.id, { ...card, order }]))
+export const dashboardLayoutPresets: DashboardLayoutPreset[] = [
+  {
+    id: 'default',
+    title: 'Default',
+    description: 'Balanced command-center view across runtime, operations, storage, filesystem, and trends.',
+    cards: defaultVisibleCards,
+  },
+  {
+    id: 'minimal',
+    title: 'Minimal',
+    description: 'Small health-first board for operators who mostly use drilldowns.',
+    cards: [
+      { id: 'system.health', size: '4x2', variant: 'hero' },
+      { id: 'system.operations', size: '2x1', variant: 'compact' },
+      { id: 'system.storage', size: '2x1', variant: 'compact' },
+      { id: 'system.trends', size: '2x1', variant: 'compact' },
+    ],
+  },
+  {
+    id: 'runtime',
+    title: 'Runtime',
+    description: 'Runtime, workers, sessions, and filesystem pressure.',
+    cards: [
+      { id: 'system.health', size: '4x2', variant: 'hero' },
+      { id: 'system.threadpools', size: '2x2', variant: 'summary' },
+      { id: 'system.connections', size: '2x1', variant: 'compact' },
+      { id: 'system.fuse', size: '2x1', variant: 'compact' },
+      { id: 'system.operations', size: '2x1', variant: 'compact' },
+    ],
+  },
+  {
+    id: 'storage',
+    title: 'Storage',
+    description: 'Backing providers, database, retention, and cache posture.',
+    cards: [
+      { id: 'system.health', size: '4x2', variant: 'hero' },
+      { id: 'system.storage', size: '2x2', variant: 'summary' },
+      { id: 'system.db', size: '2x2', variant: 'summary' },
+      { id: 'system.retention', size: '2x1', variant: 'compact' },
+      { id: 'system.fs_cache', size: '2x1', variant: 'compact' },
+      { id: 'system.http_cache', size: '2x1', variant: 'compact' },
+    ],
+  },
+  {
+    id: 'operations',
+    title: 'Operations',
+    description: 'Queued work, transfers, FUSE activity, and worker pressure.',
+    cards: [
+      { id: 'system.health', size: '4x2', variant: 'hero' },
+      { id: 'system.operations', size: '3x2', variant: 'hero' },
+      { id: 'system.threadpools', size: '2x2', variant: 'summary' },
+      { id: 'system.fuse', size: '2x1', variant: 'compact' },
+      { id: 'system.connections', size: '2x1', variant: 'compact' },
+    ],
+  },
+  {
+    id: 'cockpit',
+    title: 'Cockpit',
+    description: 'Wide high-signal overview for wallboard-style monitoring.',
+    cards: [
+      { id: 'system.health', size: '4x2', variant: 'hero' },
+      { id: 'system.operations', size: '2x2', variant: 'summary' },
+      { id: 'system.storage', size: '2x2', variant: 'summary' },
+      { id: 'system.threadpools', size: '2x1', variant: 'compact' },
+      { id: 'system.fuse', size: '2x1', variant: 'compact' },
+      { id: 'system.db', size: '2x1', variant: 'compact' },
+      { id: 'system.retention', size: '2x1', variant: 'compact' },
+      { id: 'system.connections', size: '2x1', variant: 'compact' },
+      { id: 'system.trends', size: '2x1', variant: 'compact' },
+    ],
+  },
+]
+
+export function dashboardLayoutFromCards(cards: DashboardLayoutPreset['cards']): DashboardLayoutCard[] {
+  const visibleById = new Map(cards.map((card, order) => [card.id, { ...card, order }]))
 
   return dashboardCardCatalog.map((catalogItem, index) => {
     const visible = visibleById.get(catalogItem.id)
@@ -187,9 +267,13 @@ export function defaultDashboardLayout(): DashboardLayoutCard[] {
       size: visible?.size ?? catalogItem.defaultSize,
       variant: visible?.variant ?? catalogItem.defaultVariant,
       visible: Boolean(visible),
-      order: visible?.order ?? defaultVisibleCards.length + index,
+      order: visible?.order ?? cards.length + index,
     }
   })
+}
+
+export function defaultDashboardLayout(): DashboardLayoutCard[] {
+  return dashboardLayoutFromCards(defaultVisibleCards)
 }
 
 export function dashboardCardCatalogById(): Map<string, DashboardCardCatalogItem> {

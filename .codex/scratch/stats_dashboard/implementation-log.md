@@ -711,3 +711,64 @@ Checkpoint:
 - Commit SHA: `9fd1fbbe`.
 - Push target: `origin/stats-dashboards`.
 - Push result: succeeded, with GitHub remote moved warning.
+
+## Phase 13 - Persisted Dashboard Preferences and Drag/Drop
+
+Summary:
+
+- Added server-backed per-user dashboard home layout preferences.
+- Added websocket get/update/reset preference commands.
+- Added server-side layout JSON shape validation and preference-key normalization.
+- Updated `/dashboard` to load server preference first, fall back to existing localStorage/defaults, and save/reset through the new commands.
+- Added native HTML5 drag/drop card sequence reordering in customization mode while preserving Up/Down controls.
+- Added built-in presets: Default, Minimal, Runtime, Storage, Operations, and Cockpit.
+
+Backend files added:
+
+- `deploy/psql/081_dashboard_preferences.sql`
+- `core/include/stats/model/DashboardPreferences.hpp`
+- `core/src/stats/model/DashboardPreferences.cpp`
+- `core/include/db/query/dashboard/Preferences.hpp`
+- `core/src/db/query/dashboard/Preferences.cpp`
+- `core/src/db/preparedStatements/dashboard/preferences.cpp`
+- `core/include/protocols/ws/handler/dashboard/Preferences.hpp`
+- `core/src/protocols/ws/handler/dashboard/Preferences.cpp`
+
+Backend files changed:
+
+- `core/include/db/DBConnection.hpp`
+- `core/src/db/Connection.cpp`
+- `core/include/protocols/ws/Handler.hpp`
+- `core/src/protocols/ws/Handler.cpp`
+
+Frontend files added:
+
+- `web/src/models/dashboard/dashboardPreferences.ts`
+- `web/src/stores/dashboardPreferencesStore.ts`
+
+Frontend files changed:
+
+- `web/src/models/dashboard/dashboardLayout.ts`
+- `web/src/components/dashboard/dashboardCardCatalog.ts`
+- `web/src/components/dashboard/DashboardOverview.tsx`
+- `web/src/util/webSocketCommands.ts`
+
+Websocket commands added:
+
+- `dashboard.preferences.get`
+- `dashboard.preferences.update`
+- `dashboard.preferences.reset`
+
+Architectural decisions:
+
+- The new table stores one JSONB layout object per `(user_id, preference_key)`.
+- Preference commands require a human-authenticated websocket session and operate only on `session->user->id`.
+- Backend validates shape/size/card-count but does not become the authoritative card catalog in this phase.
+- Existing `localStorage` layout is used as a migration fallback only when no server preference exists.
+- Drag/drop reorders the card sequence, not absolute grid positions.
+
+Checkpoint:
+
+- Commit SHA: pending.
+- Push target: `origin/stats-dashboards`.
+- Push result: pending.

@@ -207,6 +207,9 @@ void Connection::initPrepared() const {
     initPreparedRetentionStats();
     initPreparedStatsSnapshots();
 
+    // Dashboard
+    initPreparedDashboardPreferences();
+
     // Admin
     initPreparedSecrets();
     initPreparedWaivers();

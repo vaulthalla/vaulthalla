@@ -68,3 +68,9 @@
 - Should Phase 13 move the dashboard card catalog to the backend so persisted layout preferences can validate supported sizes/variants authoritatively?
 - Should browser-local dashboard layouts remain as a fallback after server-side persistence lands, or should server preferences fully replace them?
 - Should drag/drop in Phase 13 keep the same finite size set or introduce section-aware constraints for cards that are too dense in `1x1` mode?
+
+## Phase 13
+
+- Should the backend become the authoritative dashboard card catalog so preference validation can reject unsupported card IDs/sizes before persistence?
+- Should future custom named dashboard pages reuse `dashboard_preferences.preference_key`, or should they get a separate table with sharing/copy semantics?
+- Should drag/drop gain full keyboard drag semantics, or are the retained Up/Down controls sufficient for the next accessibility pass?

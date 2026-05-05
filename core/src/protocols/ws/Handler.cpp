@@ -6,6 +6,7 @@
 #include "protocols/ws/handler/Settings.hpp"
 #include "protocols/ws/handler/Groups.hpp"
 #include "protocols/ws/handler/Stats.hpp"
+#include "protocols/ws/handler/dashboard/Preferences.hpp"
 #include "protocols/ws/handler/rbac/roles/Admin.hpp"
 #include "protocols/ws/handler/rbac/roles/Vault.hpp"
 #include "protocols/ws/handler/vault/Vaults.hpp"
@@ -30,6 +31,7 @@ void Handler::registerAllHandlers(const std::shared_ptr<Router>& r) {
     registerSettingsHandlers(r);
     registerGroupHandlers(r);
     registerStatHandlers(r);
+    registerDashboardPreferenceHandlers(r);
     registerShareManagementHandlers(r);
     registerShareSessionHandlers(r);
     registerShareFilesystemHandlers(r);
@@ -154,6 +156,12 @@ void Handler::registerStatHandlers(const std::shared_ptr<Router>& r) {
     r->registerPayload("stats.system.trends", &handler::Stats::systemTrends);
     r->registerSessionOnlyHandler("stats.fs.cache", &handler::Stats::fsCache);
     r->registerSessionOnlyHandler("stats.http.cache", &handler::Stats::httpCache);
+}
+
+void Handler::registerDashboardPreferenceHandlers(const std::shared_ptr<Router>& r) {
+    r->registerPayload("dashboard.preferences.get", &handler::dashboard::Preferences::get);
+    r->registerPayload("dashboard.preferences.update", &handler::dashboard::Preferences::update);
+    r->registerPayload("dashboard.preferences.reset", &handler::dashboard::Preferences::reset);
 }
 
 void Handler::registerShareManagementHandlers(const std::shared_ptr<Router>& r) {

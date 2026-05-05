@@ -22,6 +22,10 @@ export interface DashboardLayoutCatalogItem {
 
 export const DASHBOARD_LAYOUT_STORAGE_KEY = 'vaulthalla.dashboard.layout.v1'
 
+export interface DashboardPreferenceLayout {
+  cards: DashboardLayoutCard[]
+}
+
 export function isDashboardCardSize(value: unknown): value is DashboardCardSize {
   return typeof value === 'string' && dashboardCardSizes.includes(value as DashboardCardSize)
 }
@@ -30,7 +34,7 @@ export function isDashboardCardVariant(value: unknown): value is DashboardCardVa
   return typeof value === 'string' && dashboardCardVariants.includes(value as DashboardCardVariant)
 }
 
-function asObject(value: unknown): Record<string, unknown> {
+export function asDashboardLayoutObject(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
 
@@ -47,13 +51,14 @@ export function normalizeDashboardLayout(
   catalog: DashboardLayoutCatalogItem[],
   defaults: DashboardLayoutCard[],
 ): DashboardLayoutCard[] {
-  const rawCards = Array.isArray(raw) ? raw : []
+  const rawObject = asDashboardLayoutObject(raw)
+  const rawCards = Array.isArray(raw) ? raw : Array.isArray(rawObject.cards) ? rawObject.cards : []
   const catalogById = new Map(catalog.map(item => [item.id, item]))
   const defaultsById = new Map(defaults.map(item => [item.id, item]))
   const rawById = new Map<string, Record<string, unknown>>()
 
   for (const rawCard of rawCards) {
-    const card = asObject(rawCard)
+    const card = asDashboardLayoutObject(rawCard)
     const id = typeof card.id === 'string' ? card.id : ''
     if (catalogById.has(id)) rawById.set(id, card)
   }
@@ -104,4 +109,21 @@ export function visibleDashboardLayoutCards(layout: DashboardLayoutCard[]): Dash
   return layout
     .filter(card => card.visible)
     .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id))
+}
+
+export function dashboardLayoutPreference(layout: DashboardLayoutCard[]): DashboardPreferenceLayout {
+  const visible = visibleDashboardLayoutCards(layout)
+  const hidden = layout
+    .filter(card => !card.visible)
+    .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id))
+
+  return {
+    cards: [...visible, ...hidden].map((card, order) => ({
+      id: card.id,
+      size: card.size,
+      variant: card.variant,
+      visible: card.visible,
+      order,
+    })),
+  }
 }

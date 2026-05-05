@@ -75,6 +75,9 @@ class Connection {
     void initPreparedRetentionStats() const;
     void initPreparedStatsSnapshots() const;
 
+    // Dashboard
+    void initPreparedDashboardPreferences() const;
+
     // Admin
     void initPreparedSecrets() const;
     void initPreparedWaivers() const;

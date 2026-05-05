@@ -558,3 +558,59 @@ This file mirrors the ignored scratch roadmap/status notes for durable checkpoin
   - Persist dashboard home layout preferences server-side in Phase 13.
   - Add drag/drop reordering in Phase 13.
   - Move the card catalog backend-side if Phase 13 persistence needs authoritative supported-size metadata.
+
+## Phase 13 - Persisted Dashboard Preferences and Drag/Drop
+
+- Status: validation complete; commit pending.
+- Commit: pending.
+- Push target: `origin/stats-dashboards`
+- Websocket commands:
+  - `dashboard.preferences.get`
+  - `dashboard.preferences.update`
+  - `dashboard.preferences.reset`
+- Backend surfaces:
+  - `deploy/psql/081_dashboard_preferences.sql` creates `dashboard_preferences`.
+  - `stats/model/DashboardPreferences` serializes per-user preference responses.
+  - `db/query/dashboard/Preferences` fetches, upserts, resets, and validates layout JSON.
+  - `protocols/ws/handler/dashboard/Preferences` exposes authenticated current-user-only preference commands.
+  - `DBConnection` registers dashboard preference prepared statements.
+- Frontend surfaces:
+  - `web/src/models/dashboard/dashboardPreferences.ts`
+  - `web/src/stores/dashboardPreferencesStore.ts`
+  - `dashboardLayout.ts` now handles `{ cards: [...] }` preference payloads and emits server-safe layout objects.
+  - `dashboardCardCatalog.ts` now includes built-in presets.
+  - `DashboardOverview` now loads server preferences, saves/reset preferences, keeps localStorage as fallback/cache, and supports drag/drop card sequence reordering.
+  - `WebSocketCommandMap` includes the new preference commands.
+- Dashboard integration:
+  - Only `/dashboard` home is server-customizable.
+  - Drilldown routes remain fixed full-card App Router pages.
+  - Existing add/remove, Up/Down reorder, finite size selectors, finite variant selectors, and reset controls remain.
+  - Drag/drop reorders the card sequence within the existing responsive grid rather than storing absolute x/y layout.
+- Presets:
+  - Default
+  - Minimal
+  - Runtime
+  - Storage
+  - Operations
+  - Cockpit
+- Architectural decisions:
+  - Preferences are keyed by `dashboard.home` and scoped to `session->user->id`; payloads never accept `user_id`.
+  - Backend validates preference JSON shape and caps card count/payload size, but frontend catalog remains the supported-size/card source for Phase 13.
+  - Server preference wins when present.
+  - Existing localStorage layout is loaded as migration fallback when no server preference exists.
+  - Successful server loads/saves mirror normalized layout into `localStorage`; reset clears localStorage and deletes the server row.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `meson setup --reconfigure build`: passed
+  - `meson compile -C build`: passed
+  - `make test`: passed
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+  - `meson test -C build`: passed, 2/2
+- Known failures: none currently.
+- Deferred TODOs:
+  - Move dashboard card catalog metadata backend-side if future server validation needs authoritative supported sizes/variants.
+  - Add custom named dashboard pages in a later phase if product direction requires them.
+  - Add richer keyboard reorder affordances beyond the retained Up/Down controls if accessibility review asks for them.
