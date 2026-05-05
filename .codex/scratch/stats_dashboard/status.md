@@ -3,7 +3,7 @@
 ## Current Phase
 
 - Phase 13 - Persisted Dashboard Preferences and Drag/Drop
-- Status: validation complete; commit pending.
+- Status: committed and pushed.
 
 ## Completed Phases
 
@@ -39,9 +39,9 @@ No arbitrary metric field selection or drilldown customization was added.
 
 ## Checkpoint
 
-- Commit SHA: pending.
+- Commit SHA: `a2f8f51f`.
 - Push target: `origin/stats-dashboards`.
-- Push result: pending.
+- Push result: succeeded, with GitHub remote moved warning.
 
 ## Phase 13 - Persisted Dashboard Preferences and Drag/Drop
 

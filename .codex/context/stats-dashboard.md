@@ -561,9 +561,10 @@ This file mirrors the ignored scratch roadmap/status notes for durable checkpoin
 
 ## Phase 13 - Persisted Dashboard Preferences and Drag/Drop
 
-- Status: validation complete; commit pending.
-- Commit: pending.
+- Status: committed and pushed.
+- Commit: `a2f8f51f`.
 - Push target: `origin/stats-dashboards`
+- Push result: succeeded, with GitHub remote moved warning.
 - Websocket commands:
   - `dashboard.preferences.get`
   - `dashboard.preferences.update`
