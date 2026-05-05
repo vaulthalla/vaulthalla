@@ -354,3 +354,32 @@ Checkpoint:
 - Commit SHA: `a2f8f51f`.
 - Push target: `origin/stats-dashboards`.
 - Push result: succeeded, with GitHub remote moved warning.
+
+## Phase 14 - Auth / Middleware Hardening for GitHub Issue #50
+
+Validation:
+
+- `git diff --check`: passed
+- `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+- `meson setup --reconfigure build`: passed
+- `meson compile -C build`: passed
+- `make test`: passed
+- `pnpm --dir web typecheck`: passed
+- `pnpm --dir web lint`: passed
+- `pnpm --dir web test`: passed
+- `meson test -C build`: passed, 2/2
+
+Notes:
+
+- `make test` completed the expected integration teardown/reinstall flow.
+- No route/middleware unit tests were added because the web package does not currently configure a unit test runner; the `test` script is `typecheck && lint`.
+
+Known failures:
+
+- None currently.
+
+Checkpoint:
+
+- Commit SHA: pending.
+- Push target: `origin/stats-dashboards`.
+- Push result: pending.

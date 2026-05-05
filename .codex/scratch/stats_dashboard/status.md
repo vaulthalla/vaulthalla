@@ -301,3 +301,48 @@ Validation:
 - `pnpm --dir web lint`: passed
 - `pnpm --dir web test`: passed
 - `meson test -C build`: passed, 2/2 after rerun
+
+## Phase 14 - Auth / Middleware Hardening for GitHub Issue #50
+
+### Summary
+
+- Hardened the Next `/api/auth/session` proxy route around private internal auth origins, bounded upstream fetches, clean unauthenticated response mapping, and safe failure logging.
+- Hardened middleware route protection so it calls the private internal web origin, redirects quickly to `/login?next=...`, and bypasses login/share/API/static routes.
+- Confirmed the production internal web fallback port remains `36968` from the packaged systemd service and nginx proxy config.
+
+### Files Changed
+
+- `web/src/app/api/auth/session/route.ts`
+- `web/middleware.ts`
+- `.codex/context/stats-dashboard.md`
+- `.codex/scratch/stats_dashboard/status.md`
+- `.codex/scratch/stats_dashboard/implementation-log.md`
+- `.codex/scratch/stats_dashboard/validation-log.md`
+- `.codex/scratch/stats_dashboard/open-questions.md`
+
+### Issue #50 Requirements Covered
+
+- Server-side auth proxy uses private `VAULTHALLA_AUTH_ORIGIN` / `VAULTHALLA_PREVIEW_ORIGIN`, not public `NEXT_PUBLIC_*` origins.
+- Auth/session fetches and middleware checks are bounded at 2500 ms.
+- Missing refresh cookie, upstream 401/403, and known unauthenticated upstream bodies return clean web 401 responses.
+- Timeout/network upstream failures return clean 401 responses with `auth_upstream_unavailable`.
+- Middleware redirects unauthenticated users to `/login` with the intended destination preserved in `next`.
+- Failed upstream auth checks log status/reason/upstream path only, without cookies, auth headers, tokens, or raw bodies.
+
+### Validation
+
+- `git diff --check`: passed
+- `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+- `meson setup --reconfigure build`: passed
+- `meson compile -C build`: passed
+- `make test`: passed
+- `pnpm --dir web typecheck`: passed
+- `pnpm --dir web lint`: passed
+- `pnpm --dir web test`: passed
+- `meson test -C build`: passed, 2/2
+
+### Checkpoint
+
+- Commit SHA: pending.
+- Push target: `origin/stats-dashboards`.
+- Push result: pending.

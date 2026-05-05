@@ -772,3 +772,27 @@ Checkpoint:
 - Commit SHA: `a2f8f51f`.
 - Push target: `origin/stats-dashboards`.
 - Push result: succeeded, with GitHub remote moved warning.
+
+## Phase 14 - Auth / Middleware Hardening for GitHub Issue #50
+
+Summary:
+
+- Audited Issue #50 and current web auth/middleware flow.
+- Confirmed `web/middleware.ts` already used private web internal origins and the production fallback web port `36968`, which matches `deploy/systemd/vaulthalla-web.service.in` and nginx proxying.
+- Reworked `/api/auth/session` so it uses private auth origins only, requires the `refresh` cookie before proxying, keeps a 2500 ms timeout, and never echoes raw upstream errors to the browser.
+- Added explicit classification for upstream 401/403 and expected unauthenticated bodies including `Refresh token not set`, `unauthorized`, and `unauthenticated`.
+- Added safe route-level logs for upstream auth failure/unavailability with status/reason/upstream path only.
+- Reworked middleware bypass handling for login, share, API, Next internals, and static assets.
+- Reworked middleware login redirects to build a clean `/login?next=...` URL without carrying protected-route query params as top-level login params.
+
+Files changed:
+
+- `web/src/app/api/auth/session/route.ts`
+- `web/middleware.ts`
+
+Architectural decisions:
+
+- `/api/auth/session` returns 401 for both unauthenticated user state and upstream auth unavailability so middleware can fail closed and redirect to login quickly.
+- The auth proxy does not forward or log the `Authorization` header for `/auth/session`; the core endpoint validates the refresh cookie.
+- Missing refresh cookies are handled locally as unauthenticated rather than generating noisy upstream requests.
+- No frontend unit tests were added because the current web test setup has no route/middleware runner; `pnpm --dir web test` is typecheck plus lint.

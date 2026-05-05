@@ -74,3 +74,8 @@
 - Should the backend become the authoritative dashboard card catalog so preference validation can reject unsupported card IDs/sizes before persistence?
 - Should future custom named dashboard pages reuse `dashboard_preferences.preference_key`, or should they get a separate table with sharing/copy semantics?
 - Should drag/drop gain full keyboard drag semantics, or are the retained Up/Down controls sufficient for the next accessibility pass?
+
+## Phase 14
+
+- Should the web package add a small route/middleware unit test runner so auth proxy classification and middleware redirects can be tested directly instead of only through typecheck/lint?
+- Should `/api/auth/session` eventually expose a diagnostic 503 mode for admin-only health checks, or should it continue returning 401 for upstream auth unavailability to keep middleware behavior fail-closed and simple?

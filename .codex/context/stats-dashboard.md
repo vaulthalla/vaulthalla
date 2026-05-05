@@ -615,3 +615,35 @@ This file mirrors the ignored scratch roadmap/status notes for durable checkpoin
   - Move dashboard card catalog metadata backend-side if future server validation needs authoritative supported sizes/variants.
   - Add custom named dashboard pages in a later phase if product direction requires them.
   - Add richer keyboard reorder affordances beyond the retained Up/Down controls if accessibility review asks for them.
+
+## Phase 14 - Auth / Middleware Hardening for GitHub Issue #50
+
+- Status: validation passed; phase checkpoint commit pending.
+- Issue: `https://github.com/vaulthalla/vaulthalla/issues/50`
+- Backend surfaces: none.
+- Frontend/web surfaces:
+  - `web/src/app/api/auth/session/route.ts`
+  - `web/middleware.ts`
+- Behavior changes:
+  - `/api/auth/session` uses private `VAULTHALLA_AUTH_ORIGIN`, then `VAULTHALLA_PREVIEW_ORIGIN`, then `http://127.0.0.1:36970`.
+  - `/api/auth/session` requires a refresh cookie before proxying to core and returns a clean 401 response for missing cookies.
+  - Upstream 401/403 responses and expected unauthenticated bodies such as `Refresh token not set`, `unauthorized`, and `unauthenticated` map to `{ ok: false, authenticated: false, error: "unauthenticated" }` with status 401.
+  - Upstream timeout/network/infrastructure failures map to `{ ok: false, authenticated: false, error: "auth_upstream_unavailable" }` with status 401 so middleware redirects quickly.
+  - Auth proxy fetches and middleware session checks both keep the 2500 ms AbortController timeout.
+  - Failed upstream auth checks are logged with status/reason/upstream path only; cookies, authorization headers, token values, and raw upstream bodies are not logged.
+  - Middleware uses private `VAULTHALLA_WEB_INTERNAL_ORIGIN`, then `NEXT_PRIVATE_WEB_INTERNAL_ORIGIN`, then production fallback `http://127.0.0.1:36968`, then the dev request origin.
+  - Confirmed `36968` is the packaged Next web service port from `deploy/systemd/vaulthalla-web.service.in` and `deploy/nginx/vaulthalla.conf`.
+  - Middleware preserves the intended destination in `/login?next=...`, treats non-OK session responses as unauthenticated, catches abort/network failures, and bypasses login, share, API, Next internals, and static assets.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `meson setup --reconfigure build`: passed
+  - `meson compile -C build`: passed
+  - `make test`: passed
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+  - `meson test -C build`: passed, 2/2
+- Known failures: none currently.
+- Deferred TODOs:
+  - Add focused auth proxy/middleware helper tests if a frontend route/middleware unit test runner is introduced; current web `test` remains typecheck plus lint.
