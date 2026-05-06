@@ -824,7 +824,10 @@ This file mirrors the ignored scratch roadmap/status notes for durable checkpoin
 
 ## Dashboard Home Card System Corrective Pass
 
-- Status: implemented and validated; commit created after this context update.
+- Status: committed and pushed.
+- Commit: `bdc4a50b`.
+- Push target: `origin/stats-dashboards`.
+- Push result: succeeded, with GitHub remote moved warning.
 - Branch: `stats-dashboards`.
 - Frontend surfaces:
   - `web/src/components/nav/admin/AdminSidebar.tsx`
