@@ -1022,3 +1022,40 @@ Layout/sidebar decision:
   - Dashboard nav item uses the gauge icon
   - Filesystem toolbar icon remains centered
   - duplicate same-card-family instances still use `instanceId`
+
+## Dashboard Overview Component Refactor
+
+- Commit: pending.
+- Reduced `web/src/components/dashboard/DashboardOverview.tsx` from 1498 lines to 441 lines.
+- Extracted components:
+  - `DashboardCommandBar.tsx`: Health Command Center title/status, health metric chips, shell UID advisory, customize/save/reset/preset/add-card controls.
+  - `DashboardAttentionStrip.tsx`: compact backend-provided attention issue rendering.
+  - `DashboardGrid.tsx`: home-card grid container and card mapping.
+  - `DashboardHomeCard.tsx`: one bounded dashboard home card, title/severity/drag/click, selected metrics, optional visual.
+  - `DashboardMetricTile.tsx`: compact telemetry tile only.
+  - `DashboardCardVisual.tsx`: visual selection and visual meter/stack/trends status rendering.
+  - `DashboardSparkline.tsx`: SVG sparkline rendering.
+  - `DashboardCardPicker.tsx`: visual add-card picker panel.
+  - `DashboardCustomizationControls.tsx`: per-card customize controls.
+  - `OverviewShell.tsx`: shared command-panel shell styling.
+- Extracted pure helpers:
+  - `formatters.ts`: checked-at formatting.
+  - `layoutStorage.ts`: default layout, localStorage load/store, layout key.
+  - `layoutCapacity.ts`: grid classes, card height classes, metric count/capacity, visual height classes.
+  - `overviewPayload.ts`: `SYSTEM_HEALTH_CARD_ID` and selected-layout overview request payload.
+  - `dragReorder.ts`: pure visible-card reorder helper.
+  - `pendingCard.ts`: pending backend-summary fallback card.
+- Behavior intentionally preserved:
+  - server preference load/save/reset
+  - localStorage fallback/cache
+  - selected-layout overview polling
+  - presets
+  - drag/drop
+  - add/remove
+  - size/variant selectors
+  - command bar and attention strip
+  - home-card rendering
+  - fixed dashboard drilldown pages
+- Deferred:
+  - No visual/layout redesign was attempted in this pass.
+  - Next dashboard pass should use the new seams to fix remaining card layout contract issues without touching preference/polling orchestration.

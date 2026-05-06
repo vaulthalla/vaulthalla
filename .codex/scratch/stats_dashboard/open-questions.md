@@ -118,3 +118,8 @@
 - No blocking open questions.
 - Deferred: add more backend overview metrics for cards that still exhaust their meaningful tile set before filling larger `2x2`+ layouts.
 - Deferred: operation queue graph cards still need real historical queue snapshots before they can show line/stacked time-series visuals.
+
+## Dashboard Overview Component Refactor
+
+- No blocking open questions.
+- Deferred: use the extracted `overview/lib/layoutCapacity.ts`, `DashboardHomeCard.tsx`, and `DashboardCardVisual.tsx` seams for the next focused card layout contract correction pass.

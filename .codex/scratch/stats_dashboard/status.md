@@ -582,3 +582,50 @@ Validation:
   - `pnpm --dir web test`
   - `pnpm --dir web build`
   - `meson test -C build` 2/2
+
+## Dashboard Overview Component Refactor
+
+- Status: implemented; commit/push pending.
+- `DashboardOverview.tsx` reduced from 1498 lines to 441 lines.
+- Added focused dashboard overview components under `web/src/components/dashboard/overview/`:
+  - command bar
+  - attention strip
+  - grid
+  - home card
+  - metric tile
+  - card visual
+  - sparkline
+  - card picker
+  - customization controls
+  - overview shell
+- Added pure helper modules under `web/src/components/dashboard/overview/lib/`:
+  - formatters
+  - layout storage/defaults
+  - layout capacity
+  - overview payload construction
+  - drag reorder
+  - pending card fallback
+- Preserved:
+  - preference load/save/reset
+  - localStorage fallback/cache
+  - selected-layout overview polling
+  - presets
+  - drag/drop
+  - add/remove
+  - size/variant controls
+  - command bar
+  - attention strip
+  - home cards
+  - fixed drilldown pages
+- No backend behavior, metrics, preference schema, graph features, auth/middleware, or drilldown page behavior changed.
+- Validation passed:
+  - `git diff --check`
+  - `git -c core.filemode=true diff --summary`
+  - `meson setup --reconfigure build`
+  - `meson compile -C build`
+  - `make test`
+  - `pnpm --dir web typecheck`
+  - `pnpm --dir web lint`
+  - `pnpm --dir web test`
+  - `meson test -C build` 2/2
+  - extra `pnpm --dir web build`

@@ -1011,3 +1011,49 @@ This file mirrors the ignored scratch roadmap/status notes for durable checkpoin
   - `pnpm --dir web test`: passed
   - `pnpm --dir web build`: passed
   - `meson test -C build`: passed, 2/2
+
+## Dashboard Overview Component Refactor
+
+- Status: implemented; commit created after this context update.
+- Goal:
+  - Split `web/src/components/dashboard/DashboardOverview.tsx` into focused dashboard-home components and pure helpers without changing backend behavior, preferences, metrics, or drilldown pages.
+- LOC:
+  - `DashboardOverview.tsx` reduced from 1498 lines to 441 lines.
+- New frontend surfaces:
+  - `web/src/components/dashboard/overview/DashboardCommandBar.tsx`
+  - `web/src/components/dashboard/overview/DashboardAttentionStrip.tsx`
+  - `web/src/components/dashboard/overview/DashboardGrid.tsx`
+  - `web/src/components/dashboard/overview/DashboardHomeCard.tsx`
+  - `web/src/components/dashboard/overview/DashboardMetricTile.tsx`
+  - `web/src/components/dashboard/overview/DashboardCardVisual.tsx`
+  - `web/src/components/dashboard/overview/DashboardSparkline.tsx`
+  - `web/src/components/dashboard/overview/DashboardCardPicker.tsx`
+  - `web/src/components/dashboard/overview/DashboardCustomizationControls.tsx`
+  - `web/src/components/dashboard/overview/OverviewShell.tsx`
+  - `web/src/components/dashboard/overview/lib/formatters.ts`
+  - `web/src/components/dashboard/overview/lib/layoutStorage.ts`
+  - `web/src/components/dashboard/overview/lib/layoutCapacity.ts`
+  - `web/src/components/dashboard/overview/lib/overviewPayload.ts`
+  - `web/src/components/dashboard/overview/lib/dragReorder.ts`
+  - `web/src/components/dashboard/overview/lib/pendingCard.ts`
+- Responsibility split:
+  - `DashboardOverview.tsx` now owns page-level state, preference loading/saving/reset, polling payload wiring, drag state, and callback orchestration.
+  - Command bar, attention strip, grid, card, picker, customization controls, metric tiles, visuals, and sparklines are separate components.
+  - Local storage/default layout, capacity classes, overview payload construction, pending-card creation, formatting, and drag reorder are pure helper modules.
+- Behavior preservation:
+  - Existing server-backed preferences, localStorage fallback/cache, presets, drag/drop, add/remove, size/variant changes, reset/save, selected-layout polling, command bar, attention strip, and detail routes are preserved.
+  - No backend files were changed.
+  - No preference schema, metrics, graph behavior, auth/middleware, or drilldown route behavior changed.
+- Deferred:
+  - The next pass should fix remaining dashboard card layout contract issues now that card rendering, capacity, visuals, and picker have stable seams.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `meson setup --reconfigure build`: passed
+  - `meson compile -C build`: passed
+  - `make test`: passed
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+  - `meson test -C build`: passed, 2/2
+  - Extra `pnpm --dir web build`: passed.
