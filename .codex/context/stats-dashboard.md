@@ -653,7 +653,10 @@ This file mirrors the ignored scratch roadmap/status notes for durable checkpoin
 
 ## Phase 15 - Dashboard Home UX Cleanup and Premium Polish
 
-- Status: validation passed; phase checkpoint commit pending.
+- Status: committed and pushed.
+- Commit: `95865618`.
+- Push target: `origin/stats-dashboards`
+- Push result: succeeded, with GitHub remote moved warning.
 - Backend surfaces: none.
 - Frontend surfaces:
   - `web/src/components/dashboard/DashboardOverview.tsx`
