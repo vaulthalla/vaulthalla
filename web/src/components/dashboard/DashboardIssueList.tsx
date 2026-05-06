@@ -14,6 +14,21 @@ function hasTitle(issue: DashboardIssue): issue is DashboardAttentionItem {
   return 'title' in issue
 }
 
+function issueDisplayKey(issue: DashboardIssue): string {
+  const cardId = 'card_id' in issue ? issue.card_id : ''
+  return `${issue.severity}:${cardId}:${issue.code}:${issue.message}`
+}
+
+export function dedupeDashboardIssues<T extends DashboardIssue>(issues: T[]): T[] {
+  const seen = new Set<string>()
+  return issues.filter(issue => {
+    const key = issueDisplayKey(issue)
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
 export function DashboardIssueRow({
   issue,
   link = true,
@@ -72,13 +87,18 @@ export function DashboardIssueList({
   compact?: boolean
   className?: string
 }) {
-  const visible = sortDashboardIssues(issues).slice(0, max)
+  const visible = dedupeDashboardIssues(sortDashboardIssues(issues)).slice(0, max)
   if (!visible.length) return null
 
   return (
     <div className={className}>
-      {visible.map(issue => (
-        <DashboardIssueRow key={`${issue.severity}-${issue.code}-${issue.message}`} issue={issue} link={link} compact={compact} />
+      {visible.map((issue, index) => (
+        <DashboardIssueRow
+          key={`${issueDisplayKey(issue)}:${index}`}
+          issue={issue}
+          link={link}
+          compact={compact}
+        />
       ))}
     </div>
   )

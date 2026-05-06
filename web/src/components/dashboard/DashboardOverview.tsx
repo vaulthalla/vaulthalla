@@ -17,7 +17,6 @@ import {
   DashboardCardSummary,
   type DashboardMetricSummary,
   type DashboardOverviewRequest,
-  type DashboardSectionSummary,
 } from '@/models/stats/dashboardOverview'
 import {
   dashboardCardCatalog,
@@ -28,7 +27,7 @@ import {
   type DashboardCardCatalogItem,
   type DashboardLayoutPreset,
 } from '@/components/dashboard/dashboardCardCatalog'
-import { DashboardIssueList, DashboardIssueSummaryLine } from '@/components/dashboard/DashboardIssueList'
+import { DashboardIssueList, DashboardIssueSummaryLine, dedupeDashboardIssues } from '@/components/dashboard/DashboardIssueList'
 import { DashboardSeverityBadge, DashboardSeverityIcon } from '@/components/dashboard/DashboardSeverityBadge'
 import { dashboardSeverityTone, sortDashboardIssues } from '@/components/dashboard/dashboardSeverity'
 import { useDashboardPreferencesStore } from '@/stores/dashboardPreferencesStore'
@@ -107,16 +106,96 @@ const LiveBadge = ({
   </div>
 )
 
-function MetricPill({ metric, link = true }: { metric: DashboardMetricSummary; link?: boolean }) {
+const preferredMetricKeys: Record<string, string[]> = {
+  'system.health': ['services', 'protocols', 'deps', 'sessions'],
+  'system.threadpools': ['workers', 'queue', 'pressure'],
+  'system.connections': ['sessions', 'human', 'share', 'unauthenticated'],
+  'system.fuse': ['ops', 'error_rate', 'open_handles'],
+  'system.fs_cache': ['hit_rate', 'used', 'evictions'],
+  'system.http_cache': ['hit_rate', 'used', 'evictions'],
+  'system.storage': ['vaults', 'active', 's3'],
+  'system.db': ['size', 'connections', 'cache_hit'],
+  'system.retention': ['overdue', 'trash', 'cache_expired'],
+  'system.operations': ['stalled', 'pending', 'in_progress', 'failed_24h'],
+  'system.trends': ['window', 'latest_sample_age', 'status'],
+}
+
+function metricNumber(metric: DashboardMetricSummary): number | null {
+  if (metric.numeric_value !== null && Number.isFinite(metric.numeric_value)) return metric.numeric_value
+
+  const parsed = Number(metric.value.replace(/,/g, '').replace(/%$/, ''))
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function isLowValueMetric(cardId: string, metric: DashboardMetricSummary): boolean {
+  if (cardId === 'system.trends' && (metric.key === 'series' || metric.key === 'points')) return true
+
+  const value = metricNumber(metric)
+  if ((cardId === 'system.fs_cache' || cardId === 'system.http_cache') && metric.key === 'evictions' && value === 0) return true
+  if (cardId === 'system.connections' && metric.key === 'unauthenticated' && value === 0) return true
+
+  return false
+}
+
+function selectCardMetrics(
+  card: DashboardCardSummary,
+  layoutCard: DashboardLayoutCard,
+  count: number,
+): DashboardMetricSummary[] {
+  const preferred = preferredMetricKeys[card.id] ?? []
+  const byKey = new Map(card.metrics.map(metric => [metric.key, metric]))
+  const selected: DashboardMetricSummary[] = []
+  const selectedKeys = new Set<string>()
+
+  for (const key of preferred) {
+    const metric = byKey.get(key)
+    if (!metric || isLowValueMetric(card.id, metric)) continue
+    selected.push(metric)
+    selectedKeys.add(metric.key)
+  }
+
+  const isCompact = layoutCard.variant === 'compact' || layoutCard.size === '1x1' || layoutCard.size === '2x1'
+  for (const metric of card.metrics) {
+    if (selectedKeys.has(metric.key)) continue
+    if ((isCompact || card.id === 'system.trends') && isLowValueMetric(card.id, metric)) continue
+    selected.push(metric)
+    selectedKeys.add(metric.key)
+  }
+
+  return selected.slice(0, count)
+}
+
+function metricMeterValue(metric: DashboardMetricSummary): number | null {
+  const value = metric.numeric_value
+  if (value === null || !Number.isFinite(value)) return null
+
+  if (metric.key === 'hit_rate' || metric.key === 'cache_hit' || metric.key === 'error_rate') {
+    return Math.max(0, Math.min(1, value))
+  }
+
+  if (metric.key === 'pressure') return Math.max(0, Math.min(1, value / 8))
+
+  return null
+}
+
+function MetricTile({ metric, dense = false }: { metric: DashboardMetricSummary; dense?: boolean }) {
   const tone = dashboardSeverityTone(metric.tone)
+  const meter = metricMeterValue(metric)
   const body = (
-    <div className={['rounded-2xl border px-3 py-2', tone.border, tone.bg].join(' ')}>
-      <div className="text-[11px] text-white/45 uppercase">{metric.label}</div>
-      <div className={['mt-1 truncate text-sm font-semibold', tone.text].join(' ')}>{metric.value || 'unknown'}</div>
+    <div className={['rounded-2xl border px-3', dense ? 'py-2' : 'py-2.5', tone.border, tone.bg].join(' ')}>
+      <div className="truncate text-[10px] tracking-[0.08em] text-white/45 uppercase">{metric.label}</div>
+      <div className={['mt-1 truncate font-semibold leading-tight', dense ? 'text-base' : 'text-lg', tone.text].join(' ')}>
+        {metric.value || 'unknown'}
+      </div>
+      {meter !== null ?
+        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
+          <div className={['h-full rounded-full', tone.dot].join(' ')} style={{ width: `${Math.max(4, meter * 100)}%` }} />
+        </div>
+      : null}
     </div>
   )
 
-  return link && metric.href ?
+  return metric.href ?
       <Link href={metric.href} className="transition hover:brightness-125">
         {body}
       </Link>
@@ -133,7 +212,7 @@ function OverviewShell({
   return (
     <section
       className={[
-        'relative overflow-hidden rounded-3xl border border-white/10 bg-zinc-950/55 p-5 shadow-[0_20px_60px_-25px_rgba(0,0,0,0.9)] backdrop-blur-xl',
+        'relative overflow-hidden rounded-3xl border border-white/10 bg-zinc-950/55 p-4 shadow-[0_20px_60px_-25px_rgba(0,0,0,0.9)] backdrop-blur-xl',
         'before:pointer-events-none before:absolute before:inset-0 before:bg-[radial-gradient(900px_circle_at_15%_10%,rgba(255,255,255,0.08),transparent_45%),radial-gradient(700px_circle_at_85%_25%,rgba(56,189,248,0.09),transparent_55%)]',
         className ?? '',
       ].join(' ')}>
@@ -142,68 +221,20 @@ function OverviewShell({
   )
 }
 
-function SectionCard({ section }: { section: DashboardSectionSummary }) {
-  const tone = dashboardSeverityTone(section.severity)
-  const firstIssue = sortDashboardIssues([...section.errors, ...section.warnings])[0]
-
-  return (
-    <Link href={section.href} className="block h-full transition hover:-translate-y-0.5 hover:brightness-110">
-      <div
-        className={[
-          'h-full rounded-3xl border bg-zinc-950/45 p-4 backdrop-blur',
-          tone.border,
-          tone.ring,
-          section.error_count > 0 || section.warning_count > 0 ? 'ring-1 ring-inset' : '',
-          section.error_count > 0 ? 'ring-rose-300/15'
-          : section.warning_count > 0 ? 'ring-amber-300/15'
-          : 'ring-white/0',
-        ].join(' ')}>
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 text-sm font-semibold text-white/90">
-              <DashboardSeverityIcon severity={section.severity} className={['h-4 w-4', tone.text].join(' ')} />
-              {section.title}
-            </div>
-            <div className="mt-1 text-xs text-white/50">{section.description}</div>
-            <DashboardIssueSummaryLine
-              severity={section.error_count > 0 ? 'error' : section.warning_count > 0 ? 'warning' : section.severity}
-              errorCount={section.error_count}
-              warningCount={section.warning_count}
-              firstIssue={firstIssue}
-            />
-          </div>
-          <DashboardSeverityBadge
-            severity={section.severity}
-            errorCount={section.error_count}
-            warningCount={section.warning_count}
-            showCount
-          />
-        </div>
-        <p className="mt-4 min-h-10 text-sm text-white/70">{section.summary}</p>
-        <div className="mt-4 grid grid-cols-2 gap-2">
-          {section.metrics.slice(0, 4).map(metric => (
-            <MetricPill key={`${section.id}-${metric.key}-${metric.label}`} metric={metric} link={false} />
-          ))}
-        </div>
-      </div>
-    </Link>
-  )
-}
-
 function gridClassForSize(size: DashboardCardSize): string {
-  if (size === '1x1') return 'xl:col-span-3'
-  if (size === '2x1') return 'xl:col-span-6'
-  if (size === '2x2') return 'xl:col-span-6'
-  if (size === '3x2') return 'xl:col-span-9'
-  return 'xl:col-span-12'
+  if (size === '1x1') return 'md:col-span-3 lg:col-span-3'
+  if (size === '2x1') return 'md:col-span-6 lg:col-span-6'
+  if (size === '2x2') return 'md:col-span-6 lg:col-span-6'
+  if (size === '3x2') return 'md:col-span-6 lg:col-span-9'
+  return 'md:col-span-6 lg:col-span-12'
 }
 
 function minHeightForSize(size: DashboardCardSize): string {
-  if (size === '1x1') return 'min-h-[13rem]'
-  if (size === '2x1') return 'min-h-[14rem]'
-  if (size === '2x2') return 'min-h-[19rem]'
-  if (size === '3x2') return 'min-h-[20rem]'
-  return 'min-h-[21rem]'
+  if (size === '1x1') return 'min-h-[10.5rem]'
+  if (size === '2x1') return 'min-h-[11rem]'
+  if (size === '2x2') return 'min-h-[15rem]'
+  if (size === '3x2') return 'min-h-[15.5rem]'
+  return 'min-h-[16rem]'
 }
 
 function metricCountForCard(layoutCard: DashboardLayoutCard): number {
@@ -259,16 +290,16 @@ function CardCustomizationControls({
   onVariantChange: (id: string, variant: DashboardCardVariant) => void
 }) {
   const buttonClass =
-    'rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-white/65 transition hover:border-cyan-200/30 hover:text-cyan-100 disabled:cursor-not-allowed disabled:opacity-35'
+    'rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] text-white/65 transition hover:border-cyan-200/30 hover:text-cyan-100 disabled:cursor-not-allowed disabled:opacity-35'
   const selectClass =
-    'rounded-full border border-white/10 bg-zinc-950/80 px-2.5 py-1 text-xs text-white/75 outline-none transition hover:border-cyan-200/30 focus:border-cyan-200/50'
+    'rounded-full border border-white/10 bg-zinc-950/80 px-2 py-0.5 text-[11px] text-white/75 outline-none transition hover:border-cyan-200/30 focus:border-cyan-200/50'
 
   return (
-    <div className="mb-4 flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-black/20 p-2">
+    <div className="mb-3 flex flex-wrap items-center gap-1.5 rounded-2xl border border-white/10 bg-black/20 p-1.5">
       <button
         type="button"
         draggable
-        className="cursor-grab rounded-full border border-cyan-200/20 bg-cyan-400/10 px-2.5 py-1 text-xs text-cyan-100 transition hover:border-cyan-100/45 active:cursor-grabbing"
+        className="cursor-grab rounded-full border border-cyan-200/20 bg-cyan-400/10 px-2 py-0.5 text-[11px] text-cyan-100 transition hover:border-cyan-100/45 active:cursor-grabbing"
         title="Drag to reorder"
         onDragStart={event => onDragStart(layoutCard.id, event)}>
         Drag
@@ -358,6 +389,7 @@ function SummaryCard({
   const isCompact = layoutCard.variant === 'compact' || layoutCard.size === '1x1' || layoutCard.size === '2x1'
   const metricCount = metricCountForCard(layoutCard)
   const issueCount = issueCountForCard(layoutCard)
+  const selectedMetrics = selectCardMetrics(card, layoutCard, metricCount)
 
   return (
     <div
@@ -367,7 +399,7 @@ function SummaryCard({
       onDragEnd={onDragEnd}>
       <article
         className={[
-          'h-full rounded-3xl border bg-zinc-950/45 p-4 backdrop-blur transition hover:-translate-y-0.5 hover:brightness-110',
+          'h-full rounded-3xl border bg-zinc-950/48 p-3.5 backdrop-blur transition hover:-translate-y-0.5 hover:brightness-110',
           minHeightForSize(layoutCard.size),
           tone.border,
           tone.ring,
@@ -396,9 +428,9 @@ function SummaryCard({
           <div className="min-w-0">
             <div className={['flex items-center gap-2 font-semibold text-white/90', isCompact ? 'text-sm' : 'text-base'].join(' ')}>
               <DashboardSeverityIcon severity={card.severity} className={['h-4 w-4', tone.text].join(' ')} />
-              {card.title}
+              <span className="truncate">{card.title}</span>
             </div>
-            {!isCompact ?
+            {!isCompact && layoutCard.variant !== 'summary' ?
               <div className="mt-1 line-clamp-2 text-xs text-white/50">{card.description || catalogItem.description}</div>
             : null}
             <DashboardIssueSummaryLine
@@ -411,23 +443,23 @@ function SummaryCard({
           <DashboardSeverityBadge severity={card.severity} errorCount={errors} warningCount={warnings} showCount />
         </div>
 
-        <p className={['mt-4 text-sm text-white/70', isCompact ? 'line-clamp-2 min-h-10' : 'min-h-12'].join(' ')}>
+        <p className={['mt-3 text-sm text-white/70', isCompact ? 'line-clamp-2' : 'line-clamp-2'].join(' ')}>
           {card.available ? card.summary : card.unavailable_reason}
         </p>
 
-        <div className={['mt-4 grid gap-2', isCompact ? 'grid-cols-2' : 'grid-cols-2 lg:grid-cols-3'].join(' ')}>
-          {card.metrics.slice(0, metricCount).map(metric => (
-            <MetricPill key={`${card.id}-${metric.key}`} metric={metric} link={false} />
+        <div className={['mt-3 grid gap-2', isCompact ? 'grid-cols-2' : 'grid-cols-2 lg:grid-cols-3'].join(' ')}>
+          {selectedMetrics.map(metric => (
+            <MetricTile key={`${card.id}-${metric.key}`} metric={metric} dense={isCompact} />
           ))}
         </div>
 
-        {card.errors.length || card.warnings.length ?
-          <div className="mt-4">
-            <DashboardIssueList issues={[...card.errors, ...card.warnings]} max={issueCount} link={false} compact={isCompact} />
+        {!isCompact && (card.errors.length || card.warnings.length) ?
+          <div className="mt-3">
+            <DashboardIssueList issues={[...card.errors, ...card.warnings]} max={issueCount} link={false} compact />
           </div>
         : null}
 
-        <div className="mt-4">
+        <div className="mt-3">
           <Link href={card.href || catalogItem.href} className="text-xs font-medium text-cyan-100/80 transition hover:text-cyan-50">
             View details {'>'}
           </Link>
@@ -512,14 +544,6 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
   const catalogById = useMemo(() => dashboardCardCatalogById(), [])
   const visibleLayout = useMemo(() => visibleDashboardLayoutCards(layout), [layout])
   const visibleIds = useMemo(() => new Set(visibleLayout.map(card => card.id)), [visibleLayout])
-  const visibleSectionIds = useMemo(() => {
-    const sectionIds = new Set<string>()
-    for (const card of visibleLayout) {
-      const sectionId = catalogById.get(card.id)?.sectionId
-      if (sectionId) sectionIds.add(sectionId)
-    }
-    return sectionIds
-  }, [catalogById, visibleLayout])
   const hiddenCatalog = useMemo(
     () => dashboardCardCatalog.filter(card => !visibleIds.has(card.id) && card.available),
     [visibleIds],
@@ -721,21 +745,18 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
       .filter((item): item is { layoutCard: DashboardLayoutCard; catalogItem: DashboardCardCatalogItem; card: DashboardCardSummary } => Boolean(item))
   }, [cardsById, catalogById, visibleLayout])
   const visibleAttention = useMemo(
-    () => overview.attention.filter(issue => visibleIds.has(issue.card_id)),
+    () => dedupeDashboardIssues(overview.attention.filter(issue => visibleIds.has(issue.card_id))),
     [overview.attention, visibleIds],
   )
-  const visibleSections = useMemo(
-    () => overview.sections.filter(section => visibleSectionIds.has(section.id)),
-    [overview.sections, visibleSectionIds],
-  )
+  const visibleAttentionPreview = useMemo(() => sortDashboardIssues(visibleAttention).slice(0, 3), [visibleAttention])
+  const hiddenAttentionCount = Math.max(0, visibleAttention.length - visibleAttentionPreview.length)
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <OverviewShell className={tone.ring}>
-        <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
           <div className="min-w-0">
-            <div className="text-xs font-semibold tracking-[0.18em] text-cyan-200/65 uppercase">Admin Dashboard</div>
-            <div className="mt-3 flex flex-wrap items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-2xl font-semibold text-white">Health Command Center</h1>
               <DashboardSeverityBadge
                 severity={overview.overall_status}
@@ -743,48 +764,27 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
                 warningCount={overview.warning_count}
                 showCount
               />
+              <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-white/55">
+                {overview.error_count} errors
+              </span>
+              <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-white/55">
+                {overview.warning_count} warnings
+              </span>
+              <LiveBadge loading={wrapper.loading || preferenceLoading} error={wrapper.error || preferenceError} lastUpdated={wrapper.lastUpdated} />
             </div>
             <p className="mt-2 max-w-3xl text-sm text-white/60">
-              Runtime, filesystem, storage, operations, and trend posture at a glance.
+              Visible cards only. Full runtime, filesystem, storage, operations, and trend telemetry lives in the drilldown pages.
             </p>
           </div>
 
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <div className={['rounded-2xl border px-3 py-2', tone.border, tone.bg].join(' ')}>
-              <div className="text-[11px] text-white/45 uppercase">Warnings</div>
-              <div className={['text-lg font-semibold', tone.text].join(' ')}>{overview.warning_count}</div>
-            </div>
-            <div className={['rounded-2xl border px-3 py-2', tone.border, tone.bg].join(' ')}>
-              <div className="text-[11px] text-white/45 uppercase">Errors</div>
-              <div className={['text-lg font-semibold', tone.text].join(' ')}>{overview.error_count}</div>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/55">
+          <div className="flex shrink-0 flex-wrap items-center gap-2 xl:justify-end">
+            <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-white/55">
               checked {checkedAt}
-            </div>
-            <LiveBadge loading={wrapper.loading} error={wrapper.error} lastUpdated={wrapper.lastUpdated} />
-          </div>
-        </div>
-
-        {wrapper.error ?
-          <div className="mt-4 rounded-2xl border border-rose-300/30 bg-rose-400/10 px-3 py-2 text-sm text-rose-100">
-            {wrapper.error}
-          </div>
-        : null}
-      </OverviewShell>
-
-      <OverviewShell>
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <div className="text-sm font-semibold text-white/90">Home Layout</div>
-            <div className="mt-1 text-xs text-white/50">
-              Choose server-saved summary cards for this dashboard home. Detail pages stay fixed.
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
+            </span>
             {customizing ?
               <>
                 <select
-                  className="rounded-full border border-white/10 bg-zinc-950/80 px-3 py-1.5 text-xs text-white/75 outline-none transition hover:border-cyan-200/30 focus:border-cyan-200/50"
+                  className="rounded-full border border-white/10 bg-zinc-950/80 px-2.5 py-1 text-xs text-white/75 outline-none transition hover:border-cyan-200/30 focus:border-cyan-200/50"
                   value={selectedPresetId}
                   onChange={event => {
                     const preset = dashboardLayoutPresets.find(item => item.id === event.target.value)
@@ -797,7 +797,7 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
                   ))}
                 </select>
                 <select
-                  className="rounded-full border border-white/10 bg-zinc-950/80 px-3 py-1.5 text-xs text-white/75 outline-none transition hover:border-cyan-200/30 focus:border-cyan-200/50"
+                  className="rounded-full border border-white/10 bg-zinc-950/80 px-2.5 py-1 text-xs text-white/75 outline-none transition hover:border-cyan-200/30 focus:border-cyan-200/50"
                   value={selectedAddId}
                   onChange={event => setSelectedAddId(event.target.value)}
                   disabled={!hiddenCatalog.length}>
@@ -811,35 +811,35 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
                 </select>
                 <button
                   type="button"
-                  className="rounded-full border border-cyan-200/25 bg-cyan-400/10 px-3 py-1.5 text-xs font-medium text-cyan-100 transition hover:border-cyan-100/45 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="rounded-full border border-cyan-200/25 bg-cyan-400/10 px-2.5 py-1 text-xs font-medium text-cyan-100 transition hover:border-cyan-100/45 disabled:cursor-not-allowed disabled:opacity-40"
                   onClick={addSelectedCard}
                   disabled={!selectedAddId}>
                   Add Card
                 </button>
                 <button
                   type="button"
-                  className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/70 transition hover:border-amber-200/35 hover:text-amber-100"
+                  className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-white/70 transition hover:border-amber-200/35 hover:text-amber-100"
                   onClick={() => { void resetLayout().catch(() => undefined) }}
                   disabled={preferenceSaving}>
-                  Reset Layout
+                  Reset
                 </button>
                 <button
                   type="button"
-                  className="rounded-full border border-cyan-200/25 bg-cyan-400/10 px-3 py-1.5 text-xs font-medium text-cyan-100 transition hover:border-cyan-100/45 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="rounded-full border border-cyan-200/25 bg-cyan-400/10 px-2.5 py-1 text-xs font-medium text-cyan-100 transition hover:border-cyan-100/45 disabled:cursor-not-allowed disabled:opacity-40"
                   onClick={() => { void saveLayout().catch(() => undefined) }}
                   disabled={preferenceSaving || (!layoutDirty && !needsMigrationSave)}>
-                  {preferenceSaving ? 'Saving...' : 'Save Layout'}
+                  {preferenceSaving ? 'Saving...' : 'Save'}
                 </button>
                 <button
                   type="button"
-                  className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/70 transition hover:border-white/25 hover:text-white"
+                  className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-white/70 transition hover:border-white/25 hover:text-white"
                   onClick={cancelCustomizing}
                   disabled={preferenceSaving}>
                   Cancel
                 </button>
                 <button
                   type="button"
-                  className="rounded-full border border-emerald-200/25 bg-emerald-400/10 px-3 py-1.5 text-xs font-medium text-emerald-100 transition hover:border-emerald-100/45"
+                  className="rounded-full border border-emerald-200/25 bg-emerald-400/10 px-2.5 py-1 text-xs font-medium text-emerald-100 transition hover:border-emerald-100/45"
                   onClick={() => { void doneCustomizing().catch(() => undefined) }}
                   disabled={preferenceSaving}>
                   {layoutDirty || needsMigrationSave ? 'Save & Done' : 'Done'}
@@ -854,33 +854,56 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
             }
           </div>
         </div>
+
+        {visibleAttentionPreview.length ?
+          <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-2.5">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+              <span className="font-semibold text-white/80">Attention</span>
+              {hiddenAttentionCount > 0 ?
+                <span className="text-white/45">+{hiddenAttentionCount} more</span>
+              : null}
+            </div>
+            <DashboardIssueList issues={visibleAttentionPreview} max={3} compact className="grid grid-cols-1 gap-2 lg:grid-cols-3" />
+          </div>
+        : <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-emerald-300/25 bg-emerald-400/10 px-3 py-1.5 text-xs text-emerald-100">
+            <DashboardSeverityIcon severity="healthy" className="h-3.5 w-3.5 text-emerald-100" />
+            All visible systems nominal
+          </div>
+        }
+
+        {wrapper.error ?
+          <div className="mt-3 rounded-2xl border border-rose-300/30 bg-rose-400/10 px-3 py-2 text-sm text-rose-100">
+            {wrapper.error}
+          </div>
+        : null}
+
         {customizing ?
-          <div className="mt-4 space-y-2">
-            <div className="rounded-2xl border border-cyan-300/25 bg-cyan-400/10 px-3 py-2 text-xs text-cyan-100/85">
-              Drag cards by their handle or use Up/Down. Changes preview immediately and save to your account when you choose Save Layout or Save & Done.
+          <div className="mt-3 flex flex-wrap gap-2">
+            <div className="rounded-full border border-cyan-300/25 bg-cyan-400/10 px-3 py-1.5 text-xs text-cyan-100/85">
+              Drag handles or use Up/Down. Save stores this layout to your account.
             </div>
             {needsMigrationSave ?
-              <div className="rounded-2xl border border-amber-300/25 bg-amber-400/10 px-3 py-2 text-xs text-amber-100/85">
-                A browser-local layout was loaded. Save once to move it to server-backed preferences.
+              <div className="rounded-full border border-amber-300/25 bg-amber-400/10 px-3 py-1.5 text-xs text-amber-100/85">
+                Browser-local layout loaded; save once to sync it.
               </div>
             : null}
             {layoutDirty ?
-              <div className="rounded-2xl border border-amber-300/25 bg-amber-400/10 px-3 py-2 text-xs text-amber-100/85">
+              <div className="rounded-full border border-amber-300/25 bg-amber-400/10 px-3 py-1.5 text-xs text-amber-100/85">
                 Unsaved layout changes.
               </div>
             : null}
             {preferenceLoading ?
-              <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/60">
+              <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/60">
                 Loading saved preferences...
               </div>
             : null}
             {saveNotice ?
-              <div className="rounded-2xl border border-emerald-300/25 bg-emerald-400/10 px-3 py-2 text-xs text-emerald-100">
+              <div className="rounded-full border border-emerald-300/25 bg-emerald-400/10 px-3 py-1.5 text-xs text-emerald-100">
                 {saveNotice}
               </div>
             : null}
             {preferenceError ?
-              <div className="rounded-2xl border border-rose-300/30 bg-rose-400/10 px-3 py-2 text-xs text-rose-100">
+              <div className="rounded-full border border-rose-300/30 bg-rose-400/10 px-3 py-1.5 text-xs text-rose-100">
                 {preferenceError}
               </div>
             : null}
@@ -888,35 +911,7 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
         : null}
       </OverviewShell>
 
-      <OverviewShell>
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <div className="text-sm font-semibold text-white/90">Attention Queue</div>
-            <div className="mt-1 text-xs text-white/50">Current warnings and errors across visible home cards.</div>
-          </div>
-          <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-white/55">
-            {visibleAttention.length} items
-          </span>
-        </div>
-        <div className="mt-4">
-          {visibleAttention.length ?
-            <DashboardIssueList issues={visibleAttention} max={6} className="grid grid-cols-1 gap-2 lg:grid-cols-2" />
-          : <div className="rounded-2xl border border-emerald-300/25 bg-emerald-400/10 px-3 py-3 text-sm text-emerald-100">
-              All monitored systems nominal.
-            </div>
-          }
-        </div>
-      </OverviewShell>
-
-      {visibleSections.length ?
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
-          {visibleSections.map(section => (
-            <SectionCard key={section.id} section={section} />
-          ))}
-        </div>
-      : null}
-
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-6 lg:grid-cols-12">
         {visibleCards.map(({ card, layoutCard, catalogItem }, index) => (
           <SummaryCard
             key={layoutCard.id}

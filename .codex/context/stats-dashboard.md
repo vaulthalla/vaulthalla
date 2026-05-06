@@ -650,3 +650,45 @@ This file mirrors the ignored scratch roadmap/status notes for durable checkpoin
 - Known failures: none currently.
 - Deferred TODOs:
   - Add focused auth proxy/middleware helper tests if a frontend route/middleware unit test runner is introduced; current web `test` remains typecheck plus lint.
+
+## Phase 15 - Dashboard Home UX Cleanup and Premium Polish
+
+- Status: validation passed; phase checkpoint commit pending.
+- Backend surfaces: none.
+- Frontend surfaces:
+  - `web/src/components/dashboard/DashboardOverview.tsx`
+  - `web/src/components/dashboard/DashboardIssueList.tsx`
+  - `web/src/components/dashboard/dashboardCardCatalog.ts`
+  - `web/src/app/(app)/(admin)/dashboard/page.tsx`
+  - `web/src/app/(app)/(admin)/dashboard/layout.tsx`
+- UX changes:
+  - Collapsed the dashboard home chrome into one compact Health Command Center strip.
+  - Removed the large Home Layout panel and moved customization, preset, add-card, save, reset, cancel, and done controls into the command strip.
+  - Removed the non-customizable Runtime/Filesystem/Storage/Operations/Trends section summary row from `/dashboard`.
+  - Made the attention queue compact and conditional: no large empty panel on healthy states, top 3 visible issues when present, and duplicate issue display suppression.
+  - Tightened summary card spacing, reduced minimum heights, made compact cards genuinely compact, and kept full rich cards off `/dashboard`.
+  - Added frontend metric display preferences so cards choose high-signal backend-provided metrics by card ID and size/variant.
+  - Demoted low-value primary metrics, especially `system.trends` `series` and `points`; cache evictions and unauthenticated sessions are hidden from compact tiles when zero.
+  - Added lightweight CSS meters for ratio-style metrics such as cache hit rate, DB cache hit ratio, FUSE error rate, and thread-pool pressure.
+  - Updated grid breakpoints to become multi-column at `md`/`lg` with a 12-column layout at `lg`, not only `xl`.
+  - Gave the dashboard home more horizontal room by removing the dashboard layout centering wrapper and increasing the home max width to `92rem`.
+- Preservation:
+  - Server-backed preferences, localStorage fallback/cache, presets, drag/drop, Up/Down fallback, add/remove cards, finite size/variant controls, reset, and save behavior remain intact.
+  - Fixed drilldown routes remain unchanged and still render full rich stats cards.
+  - Backend remains the source of severity, warning, and error truth.
+- Sidebar/layout decision:
+  - Route-specific compact admin sidebar was investigated but deferred because the current admin sidebar is owned by the parent admin layout and is server-rendered outside the dashboard route segment. This phase used the clean dashboard-local width/layout seam instead of converting the shared admin shell.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `meson setup --reconfigure build`: passed
+  - `meson compile -C build`: passed
+  - `make test`: passed
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+  - `meson test -C build`: passed, 2/2
+- Known failures: none currently.
+- Deferred TODOs:
+  - Introduce a clean route-aware sidebar compactness seam in the admin shell if dashboard pages need icon-only navigation later.
+  - Move more overview metric display metadata backend-side if operators want card-specific presentation contracts governed centrally.

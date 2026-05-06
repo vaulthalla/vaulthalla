@@ -2,8 +2,8 @@ import DashboardOverviewComponent from '@/components/dashboard/DashboardOverview
 
 const DashboardPage = () => {
   return (
-    <div className="h-full min-h-screen w-full px-6 py-8">
-      <div className="mx-auto w-full max-w-6xl">
+    <div className="h-full min-h-screen w-full">
+      <div className="mx-auto w-full max-w-[92rem]">
         <DashboardOverviewComponent />
       </div>
     </div>

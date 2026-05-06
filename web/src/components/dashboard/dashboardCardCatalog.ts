@@ -21,7 +21,7 @@ export interface DashboardLayoutPreset {
   cards: Array<Pick<DashboardLayoutCard, 'id' | 'size' | 'variant'>>
 }
 
-const allSizes: DashboardCardSize[] = ['1x1', '2x1', '2x2', '3x2', '4x2']
+const allSizes: DashboardCardSize[] = ['2x1', '2x2', '3x2', '4x2']
 const allVariants: DashboardCardVariant[] = ['compact', 'summary', 'hero']
 const compactSizes: DashboardCardSize[] = ['1x1', '2x1', '2x2']
 const summarySizes: DashboardCardSize[] = ['2x1', '2x2', '3x2']
