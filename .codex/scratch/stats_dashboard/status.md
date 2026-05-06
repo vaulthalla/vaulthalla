@@ -497,7 +497,9 @@ Validation:
 
 ## Dashboard Sidebar Build Fix
 
-- Status: implemented and validated; commit/push pending.
+- Status: committed and pushed.
+- Commit SHA: `9d1a1b58`.
+- Push target: `origin/stats-dashboards`.
 - Fixed `next build` failure caused by passing `adminNav` icon component functions into a Client Component.
 - Restored `AdminSidebar` to server-rendered nav rendering.
 - Added `AdminSidebarMode.client.tsx` as a tiny route-aware client shell that chooses between server-rendered compact and full sidebar variants.
@@ -531,9 +533,10 @@ Validation:
 
 ## Dashboard UX Stabilization - Deliverable B
 
-- Status: committed; push pending with context updates.
+- Status: committed and pushed.
 - Commit SHA: `927254e5`.
 - Push target: `origin/stats-dashboards`.
+- Push result: succeeded, with GitHub remote moved warning. Context follow-up recorded in `5d049a65`.
 - Dashboard overview card summaries now carry compact real graph series from stats snapshots.
 - Added `graph` card variant.
 - Added SVG sparkline rendering for graph cards.

@@ -924,9 +924,10 @@ This file mirrors the ignored scratch roadmap/status notes for durable checkpoin
 
 ## Dashboard UX Stabilization - Deliverable B Graph/Telemetry Cards
 
-- Status: committed; docs/context update pending push.
+- Status: committed and pushed.
 - Commit: `927254e5`.
 - Push target: `origin/stats-dashboards`.
+- Push result: succeeded, with GitHub remote moved warning. Context follow-up recorded in `5d049a65`.
 - Backend surfaces:
   - `core/include/stats/model/DashboardOverview.hpp`
   - `core/src/stats/model/DashboardOverview.cpp`
