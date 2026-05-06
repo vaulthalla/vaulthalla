@@ -738,7 +738,10 @@ This file mirrors the ignored scratch roadmap/status notes for durable checkpoin
 
 ## Phase 17 - Promote System Health to Command Bar and Fix Setup Advisory Severity
 
-- Status: validation passed; commit/push checkpoint pending.
+- Status: committed and pushed.
+- Commit: `7af8666b`.
+- Push target: `origin/stats-dashboards`.
+- Push result: succeeded, with GitHub remote moved warning.
 - Backend surfaces:
   - `core/src/stats/model/SystemHealth.cpp`
   - `core/src/stats/model/DashboardOverview.cpp`
