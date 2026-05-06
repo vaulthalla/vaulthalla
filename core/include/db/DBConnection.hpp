@@ -74,6 +74,7 @@ class Connection {
     void initPreparedOperationStats() const;
     void initPreparedRetentionStats() const;
     void initPreparedStatsSnapshots() const;
+    void initPreparedStatsMetricSamples() const;
 
     // Dashboard
     void initPreparedDashboardPreferences() const;

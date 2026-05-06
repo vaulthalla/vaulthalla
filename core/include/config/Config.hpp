@@ -71,7 +71,8 @@ struct ConnectionLifecycleManagerConfig {
 
 struct StatsSnapshotsConfig {
     bool enabled = true;
-    uint32_t runtime_interval_seconds = 300;
+    uint32_t runtime_interval_seconds = 60;
+    uint32_t gauge_observation_interval_seconds = 3;
     uint32_t vault_interval_seconds = 3600;
     uint32_t retention_days = 30;
 };

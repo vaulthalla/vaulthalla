@@ -103,7 +103,7 @@ void Snapshot::purgeOlderThan(const std::uint32_t retentionDays) {
 std::shared_ptr<::vh::stats::model::StatsTrends> Snapshot::systemTrends(std::uint32_t windowHours) {
     windowHours = clampWindowHours(windowHours);
     return Transactions::exec("StatsSnapshot::systemTrends", [&](pqxx::work& txn) {
-        const auto rows = txn.exec(pqxx::prepped{"stats_snapshot.system_trends"}, pqxx::params{windowHours});
+        const auto rows = txn.exec(pqxx::prepped{"stats_snapshot.system_trends_typed"}, pqxx::params{windowHours});
         return trendsFromResult("system", std::nullopt, windowHours, rows);
     });
 }
@@ -114,7 +114,7 @@ std::shared_ptr<::vh::stats::model::StatsTrends> Snapshot::vaultTrends(
 ) {
     windowHours = clampWindowHours(windowHours);
     return Transactions::exec("StatsSnapshot::vaultTrends", [&](pqxx::work& txn) {
-        const auto rows = txn.exec(pqxx::prepped{"stats_snapshot.vault_trends"}, pqxx::params{vaultId, windowHours});
+        const auto rows = txn.exec(pqxx::prepped{"stats_snapshot.vault_trends_typed"}, pqxx::params{vaultId, windowHours});
         return trendsFromResult("vault", vaultId, windowHours, rows);
     });
 }

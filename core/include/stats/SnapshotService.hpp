@@ -7,6 +7,8 @@
 
 namespace vh::stats {
 
+namespace detail { struct RuntimeWindowAccumulator; }
+
 class SnapshotService final : public concurrency::AsyncService {
 public:
     SnapshotService();
@@ -15,7 +17,7 @@ protected:
     void runLoop() override;
 
 private:
-    void collectRuntimeSnapshots();
+    void collectRuntimeSnapshots(detail::RuntimeWindowAccumulator& accumulator);
     void collectVaultSnapshots();
     void purgeOldSnapshots();
 

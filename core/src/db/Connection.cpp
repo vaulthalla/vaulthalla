@@ -206,6 +206,7 @@ void Connection::initPrepared() const {
     initPreparedOperationStats();
     initPreparedRetentionStats();
     initPreparedStatsSnapshots();
+    initPreparedStatsMetricSamples();
 
     // Dashboard
     initPreparedDashboardPreferences();

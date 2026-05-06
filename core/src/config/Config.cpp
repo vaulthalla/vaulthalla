@@ -3,6 +3,7 @@
 #include "config/util.hpp"
 
 #include <cstdlib>
+#include <algorithm>
 #include <yaml-cpp/yaml.h>
 #include <fstream>
 #include <sstream>
@@ -312,6 +313,7 @@ namespace vh::config {
         j = {
             {"enabled", c.enabled},
             {"runtime_interval_seconds", c.runtime_interval_seconds},
+            {"gauge_observation_interval_seconds", c.gauge_observation_interval_seconds},
             {"vault_interval_seconds", c.vault_interval_seconds},
             {"retention_days", c.retention_days}
         };
@@ -319,7 +321,8 @@ namespace vh::config {
 
     void from_json(const nlohmann::json &j, StatsSnapshotsConfig &c) {
         c.enabled = j.value("enabled", true);
-        c.runtime_interval_seconds = std::max(60u, j.value("runtime_interval_seconds", 300u));
+        c.runtime_interval_seconds = 60u;
+        c.gauge_observation_interval_seconds = std::clamp(j.value("gauge_observation_interval_seconds", 3u), 1u, 60u);
         c.vault_interval_seconds = std::max(300u, j.value("vault_interval_seconds", 3600u));
         c.retention_days = std::max(1u, j.value("retention_days", 30u));
     }

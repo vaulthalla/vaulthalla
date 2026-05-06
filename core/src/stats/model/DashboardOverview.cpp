@@ -194,12 +194,18 @@ DashboardGraphSeries dashboardOverviewGraphSeriesFromTrend(const StatsTrendSerie
 bool dashboardOverviewTrendBelongsToCard(const std::string& cardId, const std::string& key) {
     if (cardId == "system.threadpools")
         return key == "threadpool_pressure" || key.rfind("threadpool_pool_pressure:", 0) == 0;
-    if (cardId == "system.fuse") return key == "fuse_error_rate";
-    if (cardId == "system.fs_cache") return key == "fs_cache_hit_rate";
-    if (cardId == "system.http_cache") return key == "http_cache_hit_rate";
-    if (cardId == "system.db") return key == "db_cache_hit_ratio";
+    if (cardId == "system.fuse")
+        return key == "fuse_error_rate" || key == "fuse_ops_per_second" || key == "fuse_latency_avg_ms";
+    if (cardId == "system.fs_cache") return key == "fs_cache_hit_rate" || key == "fs_cache_occupancy";
+    if (cardId == "system.http_cache") return key == "http_cache_hit_rate" || key == "http_cache_occupancy";
+    if (cardId == "system.db")
+        return key == "db_cache_hit_ratio" || key == "db_connection_pressure" || key == "db_size_bytes";
+    if (cardId == "system.operations")
+        return key == "operations_pending" || key == "operations_in_progress" || key == "operations_stalled";
     if (cardId == "system.trends")
-        return key == "threadpool_pressure" || key == "fuse_error_rate" || key == "fs_cache_hit_rate" || key == "http_cache_hit_rate" || key == "db_cache_hit_ratio";
+        return key == "threadpool_pressure" || key == "fuse_error_rate" || key == "fuse_ops_per_second"
+            || key == "fs_cache_hit_rate" || key == "http_cache_hit_rate" || key == "db_cache_hit_ratio"
+            || key == "operations_pending" || key == "operations_in_progress" || key == "operations_stalled";
     return false;
 }
 
@@ -209,13 +215,19 @@ int dashboardOverviewTrendPriority(const std::string& cardId, const std::string&
         if (key.rfind("threadpool_pool_pressure:", 0) == 0) return 1;
     }
     if (cardId == "system.fuse") {
-        if (key == "fuse_total_ops") return 0;
-        if (key == "fuse_error_rate") return 1;
+        if (key == "fuse_error_rate") return 0;
+        if (key == "fuse_ops_per_second") return 1;
+        if (key == "fuse_latency_avg_ms") return 2;
     }
     if (cardId == "system.db") {
         if (key == "db_cache_hit_ratio") return 0;
-        if (key == "db_connections_total") return 1;
+        if (key == "db_connection_pressure") return 1;
         if (key == "db_size_bytes") return 2;
+    }
+    if (cardId == "system.operations") {
+        if (key == "operations_pending") return 0;
+        if (key == "operations_in_progress") return 1;
+        if (key == "operations_stalled") return 2;
     }
     return 10;
 }

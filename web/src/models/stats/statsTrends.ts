@@ -1,5 +1,5 @@
 export type StatsTrendScope = 'system' | 'vault'
-export type StatsTrendUnit = 'bytes' | 'ratio' | 'count' | 'unknown'
+export type StatsTrendUnit = 'bytes' | 'bytes/s' | 'ratio' | 'count' | 'ops/s' | 'ms' | 'seconds' | 'unknown'
 
 export interface IStatsTrendPoint {
   created_at: number | string | null
@@ -58,7 +58,7 @@ function asScope(value: unknown): StatsTrendScope {
 }
 
 function asUnit(value: unknown): StatsTrendUnit {
-  return value === 'bytes' || value === 'ratio' || value === 'count' ? value : 'unknown'
+  return value === 'bytes' || value === 'bytes/s' || value === 'ratio' || value === 'count' || value === 'ops/s' || value === 'ms' || value === 'seconds' ? value : 'unknown'
 }
 
 function asArray(value: unknown): unknown[] {
