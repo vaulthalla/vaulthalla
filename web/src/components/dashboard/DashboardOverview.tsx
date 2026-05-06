@@ -145,7 +145,8 @@ function DashboardMetricTile({ metric, dense = false }: { metric: DashboardMetri
   const body = (
     <div
       className={[
-        'flex h-full min-w-0 flex-col justify-center rounded-lg border',
+        'flex min-w-0 flex-col justify-center rounded-lg border',
+        dense ? 'h-11' : 'h-12',
         dense ? 'px-2 py-1' : 'px-2.5 py-1.5',
         tone.border,
         tone.bg,
@@ -163,7 +164,7 @@ function DashboardMetricTile({ metric, dense = false }: { metric: DashboardMetri
   )
 
   return metric.href ?
-      <Link href={metric.href} className="h-full transition hover:brightness-125">
+      <Link href={metric.href} className="transition hover:brightness-125">
         {body}
       </Link>
     : body
@@ -223,7 +224,7 @@ function VisualMeter({ metric }: { metric: DashboardMetricSummary }) {
   if (meter === null) return null
 
   return (
-    <div className={['rounded-xl border px-2.5 py-2', tone.border, tone.bg].join(' ')}>
+    <div className={['flex h-full flex-col justify-center rounded-xl border px-2.5 py-2', tone.border, tone.bg].join(' ')}>
       <div className="flex items-center justify-between gap-3 text-[11px]">
         <span className="text-white/55">{metric.label}</span>
         <span className={['font-semibold', tone.text].join(' ')}>{metric.value}</span>
@@ -245,7 +246,7 @@ function VisualStack({
   const total = segments.reduce((sum, segment) => sum + Math.max(0, segment.value), 0)
 
   return (
-    <div className="rounded-xl border border-white/10 bg-black/20 px-2.5 py-2">
+    <div className="flex h-full flex-col justify-center rounded-xl border border-white/10 bg-black/20 px-2.5 py-2">
       <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
         {total > 0 ?
           <div className="flex h-full w-full">
@@ -438,7 +439,7 @@ function DashboardCardVisual({ card }: { card: DashboardCardSummary }) {
       .filter((item): item is DashboardMetricSummary => Boolean(item))
 
     return (
-      <div className="rounded-xl border border-white/10 bg-black/20 px-2.5 py-2">
+      <div className="flex h-full flex-col justify-center rounded-xl border border-white/10 bg-black/20 px-2.5 py-2">
         <div className="flex items-center gap-1">
           {[0, 1, 2, 3, 4, 5].map(index => (
             <span
@@ -556,6 +557,14 @@ function metricGridClassForCard(layoutCard: DashboardLayoutCard): string {
   if (layoutCard.size === '2x1') return 'grid-cols-2 md:grid-cols-4'
   if (layoutCard.size === '1x2') return 'grid-cols-2'
   return 'grid-cols-2'
+}
+
+function visualHeightClassForCard(layoutCard: DashboardLayoutCard): string {
+  if (layoutCard.variant === 'graph' && (layoutCard.size === '1x1' || layoutCard.size === '2x1')) return 'h-14'
+  if (layoutCard.variant === 'graph') return 'h-20 flex-1'
+  if (layoutCard.size === '3x2' || layoutCard.size === '4x2') return 'h-36'
+  if (layoutCard.size === '1x2' || layoutCard.size === '2x2') return 'h-32'
+  return ''
 }
 
 function pendingCardForLayout(layoutCard: DashboardLayoutCard, catalogItem: DashboardCardCatalogItem): DashboardCardSummary {
@@ -817,9 +826,13 @@ function DashboardHomeCard({
   const isGraph = layoutCard.variant === 'graph'
   const isVisual = layoutCard.variant === 'visual'
   const metricCount = metricCountForCard(layoutCard)
+  const largeCard = layoutCard.size === '1x2' || layoutCard.size === '2x2' || layoutCard.size === '3x2' || layoutCard.size === '4x2'
+  const meaningfulMetricCount = card.metrics.filter(metric => !isLowValueDashboardMetric(card.id, metric)).length
+  const hasVisualFallback = dashboardVisualMetricKeys(card.id).size > 0
+  const shouldRenderVisual = isGraph || isVisual || isHero || (largeCard && hasVisualFallback && meaningfulMetricCount < metricCount)
   const visualKeys =
     isGraph ? dashboardGraphMetricKeys(card.id)
-    : isVisual || isHero ? dashboardVisualMetricKeys(card.id)
+    : shouldRenderVisual ? dashboardVisualMetricKeys(card.id)
     : new Set<string>()
   const selectedMetrics = selectDashboardCardMetrics(card, layoutCard, metricCount, visualKeys)
   const selectedMetricKeys = new Set(selectedMetrics.map(metric => metric.key))
@@ -830,9 +843,10 @@ function DashboardHomeCard({
   ).length
   const visual =
     isGraph ? <DashboardGraphVisual card={card} compact={isCompact} />
-    : isVisual || isHero ? <DashboardCardVisual card={card} />
+    : shouldRenderVisual ? <DashboardCardVisual card={card} />
     : null
   const metricGridClass = metricGridClassForCard(layoutCard)
+  const visualHeightClass = visualHeightClassForCard(layoutCard)
 
   return (
     <div
@@ -907,6 +921,13 @@ function DashboardHomeCard({
                 firstIssue={firstIssue}
                 compact={isCompact}
               />
+              {hiddenMetricCount > 0 ?
+                <span
+                  className="inline-flex shrink-0 items-center rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] leading-none text-white/45"
+                  title={`${hiddenMetricCount} lower-priority metrics hidden`}>
+                  +{hiddenMetricCount}
+                </span>
+              : null}
               <DashboardSeverityBadge severity={card.severity} errorCount={errors} warningCount={warnings} compact={isCompact} />
             </div>
           </div>
@@ -920,24 +941,17 @@ function DashboardHomeCard({
             <div
               className={[
                 'min-h-0 shrink-0',
-                isGraph && isCompact ? 'h-14'
-                : isGraph ? 'h-20 flex-1'
-                : '',
+                visualHeightClass,
               ].join(' ')}>
               {visual}
             </div>
           : null}
 
           {selectedMetrics.length ?
-            <div className={['grid min-h-0 flex-1 auto-rows-fr gap-1.5 overflow-hidden', metricGridClass].join(' ')}>
+            <div className={['grid min-h-0 shrink-0 gap-1.5 overflow-hidden', metricGridClass].join(' ')}>
               {selectedMetrics.map(metric => (
                 <DashboardMetricTile key={`${card.id}-${metric.key}`} metric={metric} dense={!isHero} />
               ))}
-              {hiddenMetricCount > 0 ?
-                <div className="flex h-full items-center rounded-lg border border-white/10 bg-white/[0.03] px-2 py-1 text-[10px] text-white/45">
-                  +{hiddenMetricCount} more
-                </div>
-              : null}
             </div>
           : null}
         </div>

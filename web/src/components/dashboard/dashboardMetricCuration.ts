@@ -124,11 +124,10 @@ export function selectDashboardCardMetrics(
     selectedKeys.add(metric.key)
   }
 
-  const compact = layoutCard.variant === 'compact' || layoutCard.size === '1x1' || layoutCard.size === '2x1'
   for (const metric of card.metrics) {
     if (omitKeys.has(metric.key)) continue
     if (selectedKeys.has(metric.key)) continue
-    if ((compact || card.id === 'system.trends') && isLowValueDashboardMetric(card.id, metric)) continue
+    if (isLowValueDashboardMetric(card.id, metric)) continue
     selected.push(metric)
     selectedKeys.add(metric.key)
   }

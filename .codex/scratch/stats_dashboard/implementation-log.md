@@ -992,22 +992,33 @@ Layout/sidebar decision:
 ## Dashboard Home Card Density Follow-up
 
 - Commit: pending.
+- Corrected bad commit `78cd1d0a`, which treated the card body as space for stretching existing metric tiles.
 - Updated `web/src/components/dashboard/DashboardOverview.tsx`.
+- Updated `web/src/components/dashboard/dashboardMetricCuration.ts`.
 - Added `DashboardInlineIssuePill` for title-row warning/error display.
 - Removed `DashboardIssueSummaryLine` usage from home cards.
 - Removed body-level `DashboardIssueList` rendering inside home cards; attention queue still uses issue lists.
 - Separated card structure into:
   - shrink-only header band for title, status pill, severity badge, and summary
   - flexing content body for visual and metric grid
-- Updated metric grid behavior:
-  - grid is `flex-1`
-  - grid uses `auto-rows-fr`
-  - metric tiles are `h-full`
-  - hidden metric count tile is `h-full`
+- Corrected metric grid behavior:
+  - metric tiles have fixed compact heights (`h-11`/`h-12`)
+  - metric links no longer use `h-full`
+  - metric grid rows no longer use `auto-rows-fr`
+  - metric tiles no longer use `flex-1` or vertical stretch behavior
+  - hidden metric counts render as an inline title/header chip rather than a metric tile
 - Increased metric capacities:
   - `1x2`: 8
   - `2x2`: 15
   - `3x1`: 5
   - `3x2`: 20
   - `4x2`: 25
-- Graph variants still use lower complementary metric caps, but no longer hide low-value metrics as `+N more`.
+- Graph variants still use lower complementary metric caps.
+- Large cards with too few curated metrics use existing visual abstractions instead of inflating metric tiles.
+- Fallback metric selection now skips low-value home metrics instead of using them as filler.
+- Verified existing sidebar/toolbar/icon behavior:
+  - dashboard routes default to compact sidebar through `AdminSidebarMode`
+  - user toggle persists via `vaulthalla.admin.sidebar.compact.v1`
+  - Dashboard nav item uses the gauge icon
+  - Filesystem toolbar icon remains centered
+  - duplicate same-card-family instances still use `instanceId`

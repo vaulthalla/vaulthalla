@@ -972,22 +972,42 @@ This file mirrors the ignored scratch roadmap/status notes for durable checkpoin
 
 ## Dashboard Home Card Density Follow-up
 
-- Status: implemented; commit created after this context update.
+- Status: corrected after bad commit `78cd1d0a`; commit created after this context update.
 - Frontend surface:
   - `web/src/components/dashboard/DashboardOverview.tsx`
+  - `web/src/components/dashboard/dashboardMetricCuration.ts`
+- What was wrong in `78cd1d0a`:
+  - Metric grid rows used `auto-rows-fr`, and metric tiles/links used height-filling styles.
+  - That stretched one or two metric tiles vertically until they occupied the card body, producing oversized tiles and worse hierarchy.
+  - The hidden metric count also rendered as its own metric-grid tile/row, which wasted space and did not fix capacity.
 - Card contract changes:
   - Header/title/summary now live in a fixed shrink-only header band.
   - Warning/error state now renders as an inline header pill instead of a body row.
   - Removed body-level issue lists from home cards so warnings cannot push metrics off the card.
-  - Metric grids own the remaining card body with `flex-1` and `auto-rows-fr`, so tiles stretch to fill bounded card space instead of leaving the lower half blank.
-  - Metric tiles are height-aware (`h-full`) and vertically centered inside their allocated grid cells.
+  - Metric tiles are compact fixed-height telemetry tiles (`h-11`/`h-12`) and no longer stretch to fill the card body.
+  - Metric grids use fixed-content rows; `auto-rows-fr`, metric tile `h-full`, metric tile `flex-1`, and height-filling metric links were removed.
+  - Hidden metric counts now render as a tiny inline header chip, not as a grid tile or a dedicated row.
+  - Large/sparse cards render existing visual abstractions in the body instead of inflating the available metric tiles.
 - Capacity changes:
   - `2x1` cards keep the tight one-row tile pattern.
-  - `2x2` cards now allow up to 15 curated metrics instead of hiding after two rows.
-  - `3x2` and `4x2` capacities were increased for the same size-to-fill contract.
-  - Hidden metric counts now ignore intentionally demoted/low-value metrics and metrics represented by visuals.
+  - `2x2` cards allow up to 15 curated metrics, which is roughly five compact tile rows at three columns.
+  - `3x2` and `4x2` allow up to 20 and 25 curated metrics respectively, matching the same compact row-capacity model.
+  - Hidden metric counts ignore intentionally demoted/low-value metrics and metrics represented by visuals.
+  - Fallback metric selection no longer surfaces low-value filler metrics like Trends `series`/`points` as home-card tiles.
+- Verified existing layout work:
+  - Dashboard routes still default to compact/icon-first sidebar mode through `AdminSidebarMode`.
+  - Users can still toggle sidebar state through the sidebar collapse button and local storage preference.
+  - Dashboard nav icon remains gauge/speedometer-style.
+  - Filesystem route toolbar icon remains centered in the top dashboard toolbar.
+  - Duplicate same-card-family instances remain supported when variants differ through `instanceId`.
 - Validation:
   - `git diff --check`: passed
   - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `meson setup --reconfigure build`: passed
+  - `meson compile -C build`: passed
+  - `make test`: passed
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
   - `pnpm --dir web test`: passed
   - `pnpm --dir web build`: passed
+  - `meson test -C build`: passed, 2/2

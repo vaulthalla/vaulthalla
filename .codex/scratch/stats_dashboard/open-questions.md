@@ -112,3 +112,9 @@
 - Operation Queue graph cards remain deferred until the snapshot service captures operation queue history. Current cards only use live queue/share-upload rollups and stacked composition visuals.
 - If runtime snapshot cadence becomes dense, dashboard graph series may need downsampling beyond the current latest-64-point cap.
 - A future backend catalog could advertise graph-capable variants directly; Phase B keeps the catalog frontend-side while the backend remains authoritative for metrics, severity, warnings, errors, and series values.
+
+## Dashboard Card Sizing Correction
+
+- No blocking open questions.
+- Deferred: add more backend overview metrics for cards that still exhaust their meaningful tile set before filling larger `2x2`+ layouts.
+- Deferred: operation queue graph cards still need real historical queue snapshots before they can show line/stacked time-series visuals.

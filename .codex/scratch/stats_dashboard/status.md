@@ -558,17 +558,27 @@ Validation:
 
 ## Dashboard Home Card Density Follow-up
 
-- Status: implemented; commit/push pending.
+- Status: corrected after bad commit `78cd1d0a`; commit/push pending.
 - Header/title/summary area is now separated from the metric/visual body area.
 - Warnings/errors now render as compact inline title-row pills and no longer create body rows.
 - Removed home-card body issue lists so warnings cannot push tiles off-card.
-- Metric grids now fill the remaining body using `flex-1` and `auto-rows-fr`.
-- Metric tiles are height-aware and centered inside their grid cells.
+- Corrected the `78cd1d0a` regression where metric tiles stretched vertically to fill the card body.
+- Metric tiles are compact fixed-height telemetry tiles (`h-11`/`h-12`), not height-aware blocks.
+- Metric grids no longer use `auto-rows-fr`, metric links no longer use `h-full`, and hidden-count display no longer consumes a metric row.
+- Large/sparse cards use existing visual abstractions to occupy body space instead of making one or two tiles huge.
 - `2x2` metric capacity increased to 15 so larger cards do not hide a third row behind `+1 more`.
 - Larger two-row card capacities were increased; `2x1` remains the compact one-row layout.
 - Hidden metric counts now ignore low-value/demoted metrics and visual-represented metrics.
+- Hidden metric counts render as an inline title-row chip rather than an awkward `+N more` grid tile.
+- Fallback metric selection now skips low-value home metrics instead of using them as filler.
 - Validation passed:
   - `git diff --check`
   - `git -c core.filemode=true diff --summary`
+  - `meson setup --reconfigure build`
+  - `meson compile -C build`
+  - `make test`
+  - `pnpm --dir web typecheck`
+  - `pnpm --dir web lint`
   - `pnpm --dir web test`
   - `pnpm --dir web build`
+  - `meson test -C build` 2/2
