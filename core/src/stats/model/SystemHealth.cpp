@@ -61,10 +61,6 @@ std::pair<std::size_t, std::size_t> protocolReadySummary(const ProtocolHealth& p
     return {ready, total};
 }
 
-bool shellHealthy(const ShellHealth& shell) {
-    return !shell.adminUidBound.has_value() || *shell.adminUidBound;
-}
-
 SystemHealthStatus computeOverallStatus(const SystemHealth& health) {
     if (health.runtime.services.empty())
         return SystemHealthStatus::Critical;
@@ -74,8 +70,7 @@ SystemHealthStatus computeOverallStatus(const SystemHealth& health) {
 
     const bool ok = health.runtime.allRunning
         && protocolsHealthy(health.protocols)
-        && depsHealthy(health.deps, health.summary)
-        && shellHealthy(health.shell);
+        && depsHealthy(health.deps, health.summary);
 
     return ok ? SystemHealthStatus::Healthy : SystemHealthStatus::Degraded;
 }

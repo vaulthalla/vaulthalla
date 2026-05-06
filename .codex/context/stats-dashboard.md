@@ -735,3 +735,39 @@ This file mirrors the ignored scratch roadmap/status notes for durable checkpoin
 - Deferred TODOs:
   - Consider moving home-card metric presentation preferences backend-side only if the product wants central presentation contracts.
   - Add real sparkline-style home visuals only when overview payloads expose compact trend arrays without hydrating full drilldown data.
+
+## Phase 17 - Promote System Health to Command Bar and Fix Setup Advisory Severity
+
+- Status: validation passed; commit/push checkpoint pending.
+- Backend surfaces:
+  - `core/src/stats/model/SystemHealth.cpp`
+  - `core/src/stats/model/DashboardOverview.cpp`
+  - `core/src/protocols/shell/commands/system.cpp`
+- Frontend surfaces:
+  - `web/src/components/dashboard/DashboardOverview.tsx`
+  - `web/src/components/dashboard/dashboardCardCatalog.ts`
+  - `web/src/components/stats/SystemHealth.tsx`
+- Semantics:
+  - Shell admin UID not bound no longer contributes to `SystemHealth::overallStatus`; it is treated as setup/advisory state.
+  - `stats.dashboard.overview` exposes shell admin UID as a `shell_admin_uid` info metric on `system.health` instead of a warning issue.
+  - If shell admin UID setup is the only incomplete item, dashboard warning/error counts remain zero and attention does not show a degraded System Health issue.
+  - Real runtime, protocol, dependency, and FUSE-session failures still produce warning/error overview issues.
+- Dashboard layout:
+  - `system.health` is removed from the customizable home card catalog, default layout, presets, and add-card menu.
+  - `/dashboard` still requests `system.health` as a pinned overview card for the command bar.
+  - Existing saved preferences containing `system.health` normalize safely because unknown/non-catalog cards are ignored and defaults repair empty visible layouts.
+  - The command bar now displays concise System Health metrics for services, protocols, and dependencies, plus a setup advisory pill when CLI shell admin UID is not configured.
+  - `/dashboard/runtime` still renders the full SystemHealth card, with shell UID shown as setup/info instead of degraded runtime health.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `meson setup --reconfigure build`: passed
+  - `meson compile -C build`: passed
+  - `make test`: passed
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+  - `meson test -C build`: passed, 2/2
+- Known failures: none currently.
+- Deferred TODOs:
+  - Add explicit overview `notices[]`/`advisories[]` if future dashboard surfaces need more than the current info metric and command-bar advisory text.

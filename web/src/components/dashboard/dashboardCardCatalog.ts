@@ -25,23 +25,9 @@ const allSizes: DashboardCardSize[] = ['2x1', '2x2', '3x2', '4x2']
 const allVariants: DashboardCardVariant[] = ['compact', 'summary', 'hero', 'visual']
 const compactSizes: DashboardCardSize[] = ['2x1', '2x2']
 const summarySizes: DashboardCardSize[] = ['2x1', '2x2', '3x2']
-const wideSizes: DashboardCardSize[] = ['2x2', '3x2', '4x2']
 const visualVariants: DashboardCardVariant[] = ['compact', 'summary', 'visual']
 
 export const dashboardCardCatalog: DashboardCardCatalogItem[] = [
-  {
-    id: 'system.health',
-    sectionId: 'runtime',
-    title: 'System Health',
-    description: 'Core runtime, protocol, dependency, FUSE, and shell readiness.',
-    href: '/dashboard/runtime#system-health',
-    defaultVariant: 'hero',
-    defaultSize: '3x2',
-    supportedSizes: wideSizes,
-    supportedVariants: allVariants,
-    available: true,
-    unavailableReason: null,
-  },
   {
     id: 'system.threadpools',
     sectionId: 'runtime',
@@ -175,7 +161,6 @@ export const dashboardCardCatalog: DashboardCardCatalogItem[] = [
 ]
 
 const defaultVisibleCards: DashboardLayoutPreset['cards'] = [
-  { id: 'system.health', size: '3x2', variant: 'hero' },
   { id: 'system.operations', size: '2x2', variant: 'visual' },
   { id: 'system.storage', size: '2x2', variant: 'visual' },
   { id: 'system.fuse', size: '2x1', variant: 'visual' },
@@ -197,7 +182,6 @@ export const dashboardLayoutPresets: DashboardLayoutPreset[] = [
     title: 'Minimal',
     description: 'Small health-first board for operators who mostly use drilldowns.',
     cards: [
-      { id: 'system.health', size: '3x2', variant: 'hero' },
       { id: 'system.operations', size: '2x1', variant: 'visual' },
       { id: 'system.storage', size: '2x1', variant: 'visual' },
       { id: 'system.trends', size: '2x1', variant: 'summary' },
@@ -208,7 +192,6 @@ export const dashboardLayoutPresets: DashboardLayoutPreset[] = [
     title: 'Runtime',
     description: 'Runtime, workers, sessions, and filesystem pressure.',
     cards: [
-      { id: 'system.health', size: '3x2', variant: 'hero' },
       { id: 'system.threadpools', size: '2x2', variant: 'summary' },
       { id: 'system.connections', size: '2x1', variant: 'visual' },
       { id: 'system.fuse', size: '2x1', variant: 'visual' },
@@ -220,7 +203,6 @@ export const dashboardLayoutPresets: DashboardLayoutPreset[] = [
     title: 'Storage',
     description: 'Backing providers, database, retention, and cache posture.',
     cards: [
-      { id: 'system.health', size: '3x2', variant: 'hero' },
       { id: 'system.storage', size: '2x2', variant: 'visual' },
       { id: 'system.db', size: '2x2', variant: 'visual' },
       { id: 'system.retention', size: '2x1', variant: 'visual' },
@@ -233,7 +215,6 @@ export const dashboardLayoutPresets: DashboardLayoutPreset[] = [
     title: 'Operations',
     description: 'Queued work, transfers, FUSE activity, and worker pressure.',
     cards: [
-      { id: 'system.health', size: '3x2', variant: 'hero' },
       { id: 'system.operations', size: '3x2', variant: 'hero' },
       { id: 'system.threadpools', size: '2x2', variant: 'summary' },
       { id: 'system.fuse', size: '2x1', variant: 'visual' },
@@ -245,7 +226,6 @@ export const dashboardLayoutPresets: DashboardLayoutPreset[] = [
     title: 'Cockpit',
     description: 'Wide high-signal overview for wallboard-style monitoring.',
     cards: [
-      { id: 'system.health', size: '3x2', variant: 'hero' },
       { id: 'system.operations', size: '2x2', variant: 'visual' },
       { id: 'system.storage', size: '2x2', variant: 'visual' },
       { id: 'system.threadpools', size: '2x1', variant: 'summary' },

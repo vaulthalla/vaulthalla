@@ -80,6 +80,8 @@ function layoutKey(layout: DashboardLayoutCard[]): string {
   return JSON.stringify(dashboardLayoutPreference(layout).cards)
 }
 
+const SYSTEM_HEALTH_CARD_ID = 'system.health'
+
 const LiveBadge = ({
   loading,
   error,
@@ -111,6 +113,23 @@ const LiveBadge = ({
     : null}
   </div>
 )
+
+function CommandHealthMetric({ metric }: { metric: DashboardMetricSummary }) {
+  const tone = dashboardSeverityTone(metric.tone)
+
+  return (
+    <Link
+      href={metric.href || '/dashboard/runtime#system-health'}
+      className={[
+        'inline-flex items-center gap-2 rounded-full border bg-black/20 px-2.5 py-1 text-xs transition hover:brightness-125',
+        tone.border,
+        tone.bg,
+      ].join(' ')}>
+      <span className="text-white/45">{metric.label}</span>
+      <span className={['font-semibold', tone.text].join(' ')}>{metric.value || 'unknown'}</span>
+    </Link>
+  )
+}
 
 function MetricTile({ metric, dense = false }: { metric: DashboardMetricSummary; dense?: boolean }) {
   const tone = dashboardSeverityTone(metric.tone)
@@ -562,11 +581,16 @@ function buildOverviewPayload(layout: DashboardLayoutCard[]): DashboardOverviewR
   return {
     scope: 'system',
     mode: 'dashboard_home',
-    cards: visibleDashboardLayoutCards(layout).map(card => ({
-      id: card.id,
-      size: card.size,
-      variant: card.variant,
-    })),
+    cards: [
+      { id: SYSTEM_HEALTH_CARD_ID, size: '3x2', variant: 'hero' },
+      ...visibleDashboardLayoutCards(layout)
+        .filter(card => card.id !== SYSTEM_HEALTH_CARD_ID)
+        .map(card => ({
+          id: card.id,
+          size: card.size,
+          variant: card.variant,
+        })),
+    ],
   }
 }
 
@@ -820,6 +844,16 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
   const tone = dashboardSeverityTone(overview.overall_status)
   const checkedAt = formatCheckedAt(overview.checked_at, wrapper.lastUpdated)
   const cardsById = useMemo(() => new Map(overview.cards.map(card => [card.id, card])), [overview.cards])
+  const healthCard = cardsById.get(SYSTEM_HEALTH_CARD_ID)
+  const healthMetricMap = useMemo(() => dashboardMetricByKey(healthCard?.metrics ?? []), [healthCard])
+  const commandHealthMetrics = useMemo(
+    () => ['services', 'protocols', 'deps']
+      .map(key => healthMetricMap.get(key))
+      .filter((metric): metric is DashboardMetricSummary => Boolean(metric)),
+    [healthMetricMap],
+  )
+  const shellAdminMetric = healthMetricMap.get('shell_admin_uid')
+  const shellSetupAdvisory = shellAdminMetric?.value === 'setup' ? shellAdminMetric : null
   const visibleCards = useMemo(() => {
     return visibleLayout
       .map(layoutCard => {
@@ -834,7 +868,9 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
       .filter((item): item is { layoutCard: DashboardLayoutCard; catalogItem: DashboardCardCatalogItem; card: DashboardCardSummary } => Boolean(item))
   }, [cardsById, catalogById, visibleLayout])
   const visibleAttention = useMemo(
-    () => dedupeDashboardIssues(overview.attention.filter(issue => visibleIds.has(issue.card_id))),
+    () => dedupeDashboardIssues(
+      overview.attention.filter(issue => visibleIds.has(issue.card_id) || issue.card_id === SYSTEM_HEALTH_CARD_ID),
+    ),
     [overview.attention, visibleIds],
   )
   const visibleAttentionPreview = useMemo(() => sortDashboardIssues(visibleAttention).slice(0, 3), [visibleAttention])
@@ -862,8 +898,21 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
               <LiveBadge loading={wrapper.loading || preferenceLoading} error={wrapper.error || preferenceError} lastUpdated={wrapper.lastUpdated} />
             </div>
             <p className="mt-2 max-w-3xl text-sm text-white/60">
-              Visible cards only. Full runtime, filesystem, storage, operations, and trend telemetry lives in the drilldown pages.
+              System Health is pinned here. Configure the operational cards below and use drilldowns for full detail.
             </p>
+            {commandHealthMetrics.length ?
+              <div className="mt-2 flex flex-wrap gap-2">
+                {commandHealthMetrics.map(metric => (
+                  <CommandHealthMetric key={metric.key} metric={metric} />
+                ))}
+              </div>
+            : null}
+            {shellSetupAdvisory ?
+              <div className="mt-2 inline-flex items-center gap-2 rounded-full border border-cyan-300/25 bg-cyan-400/10 px-3 py-1.5 text-xs text-cyan-100">
+                <DashboardSeverityIcon severity="info" className="h-3.5 w-3.5 text-cyan-100" />
+                CLI shell admin UID is not configured.
+              </div>
+            : null}
           </div>
 
           <div className="flex shrink-0 flex-wrap items-center gap-2 xl:justify-end">
@@ -956,7 +1005,7 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
           </div>
         : <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-emerald-300/25 bg-emerald-400/10 px-3 py-1.5 text-xs text-emerald-100">
             <DashboardSeverityIcon severity="healthy" className="h-3.5 w-3.5 text-emerald-100" />
-            All visible systems nominal
+            No warning or error attention items
           </div>
         }
 

@@ -222,17 +222,29 @@ DashboardCardSummary dashboardOverviewBuildSystemHealth(const DashboardOverviewC
 
     card.checkedAt = health.summary.checkedAt;
     card.severity = dashboardOverviewSeverityFromStatus(status);
-    card.summary = card.severity == "healthy" ? "Runtime services and dependencies are healthy." : "Runtime health needs attention.";
+    if (status == "healthy" && health.shell.adminUidBound && !*health.shell.adminUidBound) {
+        card.severity = "info";
+        card.summary = "Core runtime is healthy. CLI shell admin binding is not configured.";
+    } else {
+        card.summary = card.severity == "healthy" ? "Runtime services and dependencies are healthy." : "Runtime health needs attention.";
+    }
 
     dashboardOverviewAddMetric(card, "services", "Services", std::to_string(health.summary.servicesReady) + "/" + std::to_string(health.summary.servicesTotal), card.severity);
     dashboardOverviewAddMetric(card, "protocols", "Protocols", std::to_string(health.summary.protocolsReady) + "/" + std::to_string(health.summary.protocolsTotal), health.summary.protocolsReady == health.summary.protocolsTotal ? "healthy" : "warning");
     dashboardOverviewAddMetric(card, "deps", "Deps", std::to_string(health.summary.depsReady) + "/" + std::to_string(health.summary.depsTotal), health.summary.depsReady == health.summary.depsTotal ? "healthy" : "warning");
+    dashboardOverviewAddMetric(
+        card,
+        "shell_admin_uid",
+        "CLI Shell",
+        !health.shell.adminUidBound ? "unknown" : *health.shell.adminUidBound ? "bound" : "setup",
+        !health.shell.adminUidBound ? "unknown" : *health.shell.adminUidBound ? "healthy" : "info"
+    );
 
-    if (card.severity != "healthy") {
-        dashboardOverviewAddIssue(card, "system.health.unhealthy", card.severity == "error" ? "error" : "warning", "System health is " + status + ".");
+    if (status != "healthy") {
+        const auto severity = card.severity == "error" ? "error" : "warning";
+        dashboardOverviewAddIssue(card, "system.health.unhealthy", severity, "System health is " + status + ".");
     }
     if (!health.deps.fuseSession) dashboardOverviewAddIssue(card, "system.health.fuse_missing", "warning", "FUSE session is not present.", "fuse");
-    if (health.shell.adminUidBound && !*health.shell.adminUidBound) dashboardOverviewAddIssue(card, "system.health.shell_admin_uid", "warning", "Shell admin UID is not bound.", "shell");
 
     return card;
 }

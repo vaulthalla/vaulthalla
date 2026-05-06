@@ -60,8 +60,11 @@ CommandResult handleStatus(const CommandCall& call) {
     out << "deps sanity:\n";
     out << "  core deps: " << renderDepsCoreReady(health.summary) << "\n";
     out << "  fuse session: " << (health.deps.fuseSession ? "present" : "missing") << "\n";
-    if (health.shell.adminUidBound)
-        out << "  shell admin uid bound: " << yesNo(*health.shell.adminUidBound) << "\n";
+    if (health.shell.adminUidBound) {
+        out << "  shell admin uid bound: " << yesNo(*health.shell.adminUidBound);
+        if (!*health.shell.adminUidBound) out << " (setup advisory)";
+        out << "\n";
+    }
 
     return ok(out.str());
 }

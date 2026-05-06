@@ -44,6 +44,15 @@ const unknownTone: Tone = {
   soft: 'text-white/55',
 }
 
+const setupTone: Tone = {
+  label: 'setup',
+  border: 'border-cyan-300/30',
+  bg: 'bg-cyan-400/10',
+  text: 'text-cyan-100',
+  dot: 'bg-cyan-300',
+  soft: 'text-cyan-200/80',
+}
+
 const boolTone = (value: boolean): Tone => (value ? tones.healthy : tones.degraded)
 
 function formatCount(ready: number, total: number): string {
@@ -135,6 +144,25 @@ const StatusBadge = ({ label, value }: { label: string; value: boolean | null })
       <span className={['h-1.5 w-1.5 rounded-full', tone?.dot ?? 'bg-white/30'].join(' ')} />
       <span className="text-white/60">{label}</span>
       <span className={tone?.text ?? 'text-white/60'}>{text}</span>
+    </div>
+  )
+}
+
+const ShellAdminStatusBadge = ({ value }: { value: boolean | null }) => {
+  const tone =
+    value === null ? unknownTone
+    : value ? tones.healthy
+    : setupTone
+  const text =
+    value === null ? 'unknown'
+    : value ? 'bound'
+    : 'setup'
+
+  return (
+    <div className={['inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs', tone.border, tone.bg, tone.soft].join(' ')}>
+      <span className={['h-1.5 w-1.5 rounded-full', tone.dot].join(' ')} />
+      <span className="text-white/60">shell admin UID</span>
+      <span className={tone.text}>{text}</span>
     </div>
   )
 }
@@ -259,17 +287,23 @@ export default function SystemHealthComponent({ intervalMs = 7500 }: { intervalM
               health.shell.admin_uid_bound === null ? 'unknown'
               : health.shell.admin_uid_bound ?
                 'bound'
-              : 'unbound'
+              : 'setup'
             }
-            detail="admin"
+            detail={health.shell.admin_uid_bound === false ? 'setup advisory' : 'admin'}
             tone={
               health.shell.admin_uid_bound === null ? unknownTone
               : health.shell.admin_uid_bound ?
                 tones.healthy
-              : tones.degraded
+              : setupTone
             }
           />
         </div>
+
+        {health.shell.admin_uid_bound === false ?
+          <div className="rounded-2xl border border-cyan-300/25 bg-cyan-400/10 px-3 py-2 text-xs text-cyan-100">
+            CLI shell admin UID is not configured. Runtime health is not degraded by this setup advisory.
+          </div>
+        : null}
 
         {wrapper.error ?
           <div className="rounded-2xl border border-rose-400/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-200/90">
@@ -333,7 +367,7 @@ export default function SystemHealthComponent({ intervalMs = 7500 }: { intervalM
               <SectionHeader title="Session" />
               <div className="flex flex-wrap gap-2">
                 <StatusBadge label="FUSE" value={health.deps.fuse_session} />
-                <StatusBadge label="shell admin UID" value={health.shell.admin_uid_bound} />
+                <ShellAdminStatusBadge value={health.shell.admin_uid_bound} />
               </div>
             </div>
           </div>
