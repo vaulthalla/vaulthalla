@@ -774,3 +774,50 @@ This file mirrors the ignored scratch roadmap/status notes for durable checkpoin
 - Known failures: none currently.
 - Deferred TODOs:
   - Add explicit overview `notices[]`/`advisories[]` if future dashboard surfaces need more than the current info metric and command-bar advisory text.
+
+## Dashboard UX Corrective Pass - Command Center Layout, Picker, Density, and Visual Insight
+
+- Status: implemented and validated; commit created after this context update.
+- Branch: `stats-dashboards`.
+- Backend surfaces:
+  - `core/src/stats/model/DashboardOverview.cpp`
+  - `stats.dashboard.overview` remains the backend-owned severity/warning/error source.
+  - Overview builders now expose more high-signal home-card metric keys for thread pools, connections, FUSE, cache, storage, DB, retention, and operations.
+- Frontend surfaces:
+  - `web/src/app/(app)/(admin)/dashboard/layout.tsx`
+  - `web/src/app/(app)/(admin)/dashboard/page.tsx`
+  - `web/src/components/dashboard/DashboardRouteToolbar.tsx`
+  - `web/src/components/dashboard/DashboardOverview.tsx`
+  - `web/src/components/dashboard/DashboardDetailPage.tsx`
+  - `web/src/components/dashboard/dashboardCardCatalog.ts`
+  - `web/src/components/dashboard/dashboardMetricCuration.ts`
+  - `web/src/config/nav/admin.ts`
+  - `web/src/models/dashboard/dashboardLayout.ts`
+- UX changes:
+  - Added a dashboard-specific top route toolbar for Overview, Runtime, Filesystem, Storage, Operations, and Trends, with live severity badges.
+  - Removed dashboard child routes from the main left admin nav so dashboard route navigation is distinct from normal admin sections.
+  - Deferred route-specific collapsed admin sidebar because the sidebar is owned by the parent admin shell; the dashboard route now widens its own content and uses a local toolbar without shell hacks.
+  - Replaced the dual dropdown/Add Card flow with a visual card picker panel that filters by size/variant and previews cards before adding.
+  - Added a title-row drag handle that works outside customize mode and persists reordered cards through existing dashboard preference save flow.
+  - Retained customize-mode Up/Down, drag handles, remove, size selector, variant selector, presets, reset, save, localStorage fallback/cache, and server-backed preferences.
+  - Added bounded grid row spans for finite sizes (`1x1`, `1x2`, `2x1`, `2x2`, `3x1`, `3x2`, `4x2`) so cards stay inside their configured visual footprint.
+  - Tightened metric tiles, card padding, summaries, issue lines, and card chrome for higher density.
+  - Updated visual cards so meters/bars replace the duplicated numeric metric instead of rendering the same percentage twice.
+  - Added/expanded meaningful visual treatments for operations, thread pools, connections, storage, retention, trends, FUSE, cache, and DB where overview data supports it.
+  - Updated defaults and presets so Thread Pools are visible by default, Trends is not a default filler card, and preset grids are more intentional.
+  - Expanded frontend metric curation to prefer stronger available metrics and continue hiding weak home-card metrics such as Trends `series`/`points`.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `meson setup --reconfigure build`: passed
+  - `meson compile -C build`: passed
+  - `make test`: passed
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+  - `meson test -C build`: passed, 2/2
+- Known failures: none currently.
+- Deferred TODOs:
+  - Introduce a route-aware compact admin sidebar seam only if the shared admin shell is intentionally updated.
+  - Add true sparkline arrays to `stats.dashboard.overview` only when compact trend series can be supplied cheaply without hydrating full drilldown card payloads.
+  - Consider moving metric presentation metadata backend-side if home-card curation needs to become centrally auditable.

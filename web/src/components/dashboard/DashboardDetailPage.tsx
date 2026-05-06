@@ -15,8 +15,8 @@ type DashboardDetailPageProps = {
 
 export function DashboardDetailPage({ title, subtitle, items, children }: DashboardDetailPageProps) {
   return (
-    <div className="h-full min-h-screen w-full px-6 py-8">
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
+    <div className="h-full min-h-screen w-full">
+      <div className="mx-auto flex w-full max-w-[92rem] flex-col gap-5">
         <header className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-zinc-950/55 p-5 shadow-[0_20px_60px_-25px_rgba(0,0,0,0.9)] backdrop-blur-xl">
           <div>
             <div className="text-xs font-semibold tracking-[0.18em] text-cyan-200/65 uppercase">Dashboard Drilldown</div>

@@ -259,6 +259,8 @@ DashboardCardSummary dashboardOverviewBuildThreadPools(const DashboardOverviewCa
     dashboardOverviewAddMetric(card, "workers", "Workers", dashboardOverviewFormatCount(stats.totalWorkerCount), card.severity);
     dashboardOverviewAddMetric(card, "queue", "Queue", dashboardOverviewFormatCount(stats.totalQueueDepth), stats.totalQueueDepth == 0 ? "healthy" : "warning");
     dashboardOverviewAddMetric(card, "pressure", "Max Pressure", dashboardOverviewFormatRatio(stats.maxPressureRatio), card.severity, stats.maxPressureRatio);
+    dashboardOverviewAddMetric(card, "idle", "Idle", dashboardOverviewFormatCount(stats.totalIdleWorkerCount), "info");
+    dashboardOverviewAddMetric(card, "borrowed", "Borrowed", dashboardOverviewFormatCount(stats.totalBorrowedWorkerCount), stats.totalBorrowedWorkerCount == 0 ? "healthy" : "info");
     dashboardOverviewAddMetric(card, "pressured", "Pressured", dashboardOverviewFormatCount(stats.pressuredPoolCount), stats.pressuredPoolCount == 0 ? "healthy" : "warning");
     dashboardOverviewAddMetric(card, "saturated", "Saturated", dashboardOverviewFormatCount(stats.saturatedPoolCount), stats.saturatedPoolCount == 0 ? "healthy" : "error");
 
@@ -284,6 +286,10 @@ DashboardCardSummary dashboardOverviewBuildConnections(const DashboardOverviewCa
     dashboardOverviewAddMetric(card, "human", "Human", dashboardOverviewFormatCount(stats.activeHumanSessions), "info");
     dashboardOverviewAddMetric(card, "share", "Share", dashboardOverviewFormatCount(stats.activeShareSessions + stats.activeSharePendingSessions), "info");
     dashboardOverviewAddMetric(card, "unauthenticated", "Unauth", dashboardOverviewFormatCount(stats.activeUnauthenticatedSessions), stats.activeUnauthenticatedSessions == 0 ? "healthy" : "warning");
+    if (stats.oldestSessionAgeSeconds)
+        dashboardOverviewAddMetric(card, "oldest_session", "Oldest", dashboardOverviewFormatDuration(*stats.oldestSessionAgeSeconds), "info", static_cast<double>(*stats.oldestSessionAgeSeconds), "seconds");
+    if (stats.oldestUnauthenticatedSessionAgeSeconds)
+        dashboardOverviewAddMetric(card, "oldest_unauth", "Oldest Unauth", dashboardOverviewFormatDuration(*stats.oldestUnauthenticatedSessionAgeSeconds), "warning", static_cast<double>(*stats.oldestUnauthenticatedSessionAgeSeconds), "seconds");
 
     if (stats.status == "warning") {
         dashboardOverviewAddIssue(card, "system.connections.unauthenticated", "warning", "Unauthenticated websocket sessions are active.", "unauthenticated");
@@ -313,7 +319,10 @@ DashboardCardSummary dashboardOverviewBuildFuse(const DashboardOverviewCardDescr
     card.summary = stats.totalOps == 0 ? "No FUSE traffic has been observed yet." : "FUSE operation telemetry is live.";
     dashboardOverviewAddMetric(card, "ops", "Ops", dashboardOverviewFormatCount(stats.totalOps), card.severity);
     dashboardOverviewAddMetric(card, "error_rate", "Errors", dashboardOverviewFormatPercent(stats.errorRate), card.severity, stats.errorRate);
+    dashboardOverviewAddMetric(card, "total_errors", "Error Ops", dashboardOverviewFormatCount(stats.totalErrors), stats.totalErrors == 0 ? "healthy" : "warning");
     dashboardOverviewAddMetric(card, "open_handles", "Open Handles", dashboardOverviewFormatCount(stats.openHandlesCurrent), "info");
+    dashboardOverviewAddMetric(card, "read_bytes", "Read", dashboardOverviewFormatBytes(stats.readBytes), "info", static_cast<double>(stats.readBytes), "bytes");
+    dashboardOverviewAddMetric(card, "write_bytes", "Write", dashboardOverviewFormatBytes(stats.writeBytes), "info", static_cast<double>(stats.writeBytes), "bytes");
 
     if (stats.errorRate > 0.10) {
         dashboardOverviewAddIssue(card, "system.fuse.error_rate_high", "error", "FUSE error rate is above 10%.", "error_rate");
@@ -334,6 +343,8 @@ DashboardCardSummary dashboardOverviewBuildCache(const DashboardOverviewCardDesc
 
     dashboardOverviewAddMetric(card, "hit_rate", "Hit Rate", dashboardOverviewFormatPercent(hitRate), card.severity, hitRate);
     dashboardOverviewAddMetric(card, "used", "Used", dashboardOverviewFormatBytes(stats.used_bytes), "info", static_cast<double>(stats.used_bytes), "bytes");
+    dashboardOverviewAddMetric(card, "requests", "Requests", dashboardOverviewFormatCount(requests), card.severity);
+    dashboardOverviewAddMetric(card, "misses", "Misses", dashboardOverviewFormatCount(stats.misses), stats.misses == 0 ? "healthy" : "info");
     dashboardOverviewAddMetric(card, "evictions", "Evictions", dashboardOverviewFormatCount(stats.evictions), stats.evictions == 0 ? "healthy" : "info");
 
     return card;
@@ -364,8 +375,11 @@ DashboardCardSummary dashboardOverviewBuildStorage(const DashboardOverviewCardDe
 
     dashboardOverviewAddMetric(card, "vaults", "Vaults", dashboardOverviewFormatCount(stats.vaultCountTotal), card.severity);
     dashboardOverviewAddMetric(card, "active", "Active", dashboardOverviewFormatCount(stats.activeVaultCount), "healthy");
+    dashboardOverviewAddMetric(card, "inactive", "Inactive", dashboardOverviewFormatCount(stats.inactiveVaultCount), stats.inactiveVaultCount == 0 ? "healthy" : "warning");
     dashboardOverviewAddMetric(card, "local", "Local", dashboardOverviewFormatCount(stats.localVaultCount), "info");
     dashboardOverviewAddMetric(card, "s3", "S3", dashboardOverviewFormatCount(stats.s3VaultCount), "info");
+    dashboardOverviewAddMetric(card, "degraded", "Degraded", dashboardOverviewFormatCount(stats.degradedVaultCount), stats.degradedVaultCount == 0 ? "healthy" : "warning");
+    dashboardOverviewAddMetric(card, "backend_errors", "Errors", dashboardOverviewFormatCount(stats.errorVaultCount), stats.errorVaultCount == 0 ? "healthy" : "error");
 
     if (stats.errorVaultCount > 0) {
         dashboardOverviewAddIssue(card, "system.storage.error_vaults", "error", std::to_string(stats.errorVaultCount) + " vault backend(s) are in error.", "vaults");
@@ -391,7 +405,12 @@ DashboardCardSummary dashboardOverviewBuildDb(const DashboardOverviewCardDescrip
 
     dashboardOverviewAddMetric(card, "size", "DB Size", dashboardOverviewFormatBytes(stats->dbSizeBytes), "info", static_cast<double>(stats->dbSizeBytes), "bytes");
     dashboardOverviewAddMetric(card, "connections", "Connections", dashboardOverviewFormatCount(stats->connectionsTotal), card.severity);
+    dashboardOverviewAddMetric(card, "active_connections", "Active", dashboardOverviewFormatCount(stats->connectionsActive), "info");
     dashboardOverviewAddMetric(card, "cache_hit", "Cache Hit", stats->cacheHitRatio ? dashboardOverviewFormatPercent(*stats->cacheHitRatio) : "unknown", stats->cacheHitRatio ? "healthy" : "unknown", stats->cacheHitRatio);
+    if (stats->slowQueryCount)
+        dashboardOverviewAddMetric(card, "slow_queries", "Slow Queries", dashboardOverviewFormatCount(*stats->slowQueryCount), *stats->slowQueryCount == 0 ? "healthy" : "warning");
+    if (stats->oldestTransactionAgeSeconds)
+        dashboardOverviewAddMetric(card, "oldest_tx", "Oldest Tx", dashboardOverviewFormatDuration(*stats->oldestTransactionAgeSeconds), "info", static_cast<double>(*stats->oldestTransactionAgeSeconds), "seconds");
 
     if (!stats->connected) {
         dashboardOverviewAddIssue(card, "system.db.disconnected", "error", stats->error.value_or("Database connection is unavailable."));
@@ -415,7 +434,11 @@ DashboardCardSummary dashboardOverviewBuildRetention(const DashboardOverviewCard
 
     dashboardOverviewAddMetric(card, "trash", "Trash", dashboardOverviewFormatCount(stats->trashedFilesCount), "info");
     dashboardOverviewAddMetric(card, "overdue", "Overdue", dashboardOverviewFormatCount(stats->trashedFilesPastRetentionCount), stats->trashedFilesPastRetentionCount == 0 ? "healthy" : "warning");
+    dashboardOverviewAddMetric(card, "trash_bytes", "Trash Bytes", dashboardOverviewFormatBytes(stats->trashedBytesTotal), "info", static_cast<double>(stats->trashedBytesTotal), "bytes");
+    dashboardOverviewAddMetric(card, "sync_backlog", "Sync Backlog", dashboardOverviewFormatCount(stats->syncEventsPastRetentionCount), stats->syncEventsPastRetentionCount == 0 ? "healthy" : "warning");
+    dashboardOverviewAddMetric(card, "audit_backlog", "Audit Backlog", dashboardOverviewFormatCount(stats->auditLogEntriesPastRetentionCount), stats->auditLogEntriesPastRetentionCount == 0 ? "healthy" : "warning");
     dashboardOverviewAddMetric(card, "cache_expired", "Expired Cache", dashboardOverviewFormatCount(stats->cacheEntriesExpired), stats->cacheEntriesExpired == 0 ? "healthy" : "warning");
+    dashboardOverviewAddMetric(card, "cache_bytes", "Cache", dashboardOverviewFormatBytes(stats->cacheBytesTotal), "info", static_cast<double>(stats->cacheBytesTotal), "bytes");
 
     if (stats->cleanupStatus == "overdue") {
         dashboardOverviewAddIssue(card, "system.retention.overdue", "error", "Retention cleanup is overdue.");
@@ -441,6 +464,11 @@ DashboardCardSummary dashboardOverviewBuildOperations(const DashboardOverviewCar
     dashboardOverviewAddMetric(card, "in_progress", "In Progress", dashboardOverviewFormatCount(stats->inProgressOperations), "info");
     dashboardOverviewAddMetric(card, "stalled", "Stalled", dashboardOverviewFormatCount(stats->stalledOperations + stats->stalledShareUploads), stats->stalledOperations + stats->stalledShareUploads == 0 ? "healthy" : "error");
     dashboardOverviewAddMetric(card, "failed_24h", "Failed 24h", dashboardOverviewFormatCount(stats->failedOperations24h + stats->failedShareUploads24h), stats->failedOperations24h + stats->failedShareUploads24h == 0 ? "healthy" : "warning");
+    dashboardOverviewAddMetric(card, "active_uploads", "Uploads", dashboardOverviewFormatCount(stats->activeShareUploads), stats->activeShareUploads == 0 ? "healthy" : "info");
+    if (stats->oldestPendingOperationAgeSeconds)
+        dashboardOverviewAddMetric(card, "oldest_pending", "Oldest Pending", dashboardOverviewFormatDuration(*stats->oldestPendingOperationAgeSeconds), "warning", static_cast<double>(*stats->oldestPendingOperationAgeSeconds), "seconds");
+    if (stats->oldestInProgressOperationAgeSeconds)
+        dashboardOverviewAddMetric(card, "oldest_active", "Oldest Active", dashboardOverviewFormatDuration(*stats->oldestInProgressOperationAgeSeconds), "info", static_cast<double>(*stats->oldestInProgressOperationAgeSeconds), "seconds");
 
     if (stats->stalledOperations + stats->stalledShareUploads > 0) {
         dashboardOverviewAddIssue(card, "system.operations.stalled", "error", "One or more operations or uploads appear stalled.", "stalled");

@@ -5,6 +5,8 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react'
 
 import {
   DASHBOARD_LAYOUT_STORAGE_KEY,
+  dashboardCardSizes,
+  dashboardCardVariants,
   dashboardLayoutPreference,
   type DashboardCardSize,
   type DashboardCardVariant,
@@ -34,8 +36,11 @@ import {
   dashboardMetricByKey,
   dashboardMetricMeterValue,
   dashboardMetricNumber,
+  dashboardVisualMetricKeys,
   selectDashboardCardMetrics,
 } from '@/components/dashboard/dashboardMetricCuration'
+import GridPlusIcon from '@/fa-duotone/grid-2-plus.svg'
+import GripIcon from '@/fa-duotone/grip-dots-vertical.svg'
 import { useDashboardPreferencesStore } from '@/stores/dashboardPreferencesStore'
 import { useStatsStore } from '@/stores/statsStore'
 
@@ -133,18 +138,23 @@ function CommandHealthMetric({ metric }: { metric: DashboardMetricSummary }) {
 
 function MetricTile({ metric, dense = false }: { metric: DashboardMetricSummary; dense?: boolean }) {
   const tone = dashboardSeverityTone(metric.tone)
-  const meter = dashboardMetricMeterValue(metric)
   const body = (
-    <div className={['rounded-xl border px-2.5', dense ? 'py-1.5' : 'py-2', tone.border, tone.bg].join(' ')}>
-      <div className="truncate text-[9px] tracking-[0.08em] text-white/45 uppercase">{metric.label}</div>
-      <div className={['mt-0.5 truncate font-semibold leading-tight', dense ? 'text-[15px]' : 'text-lg', tone.text].join(' ')}>
+    <div
+      className={[
+        'min-w-0 rounded-lg border',
+        dense ? 'px-2 py-1' : 'px-2.5 py-1.5',
+        tone.border,
+        tone.bg,
+      ].join(' ')}>
+      <div className="truncate text-[8.5px] leading-none tracking-[0.06em] text-white/45 uppercase">{metric.label}</div>
+      <div
+        className={[
+          'mt-1 truncate font-semibold leading-none',
+          dense ? 'text-[14px]' : 'text-[16px]',
+          tone.text,
+        ].join(' ')}>
         {metric.value || 'unknown'}
       </div>
-      {meter !== null ?
-        <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/10">
-          <div className={['h-full rounded-full', tone.dot].join(' ')} style={{ width: `${Math.max(4, meter * 100)}%` }} />
-        </div>
-      : null}
     </div>
   )
 
@@ -167,12 +177,12 @@ function VisualMeter({ metric }: { metric: DashboardMetricSummary }) {
   if (meter === null) return null
 
   return (
-    <div className={['rounded-2xl border p-2.5', tone.border, tone.bg].join(' ')}>
-      <div className="flex items-center justify-between gap-3 text-xs">
+    <div className={['rounded-xl border px-2.5 py-2', tone.border, tone.bg].join(' ')}>
+      <div className="flex items-center justify-between gap-3 text-[11px]">
         <span className="text-white/55">{metric.label}</span>
         <span className={['font-semibold', tone.text].join(' ')}>{metric.value}</span>
       </div>
-      <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/10">
+      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/10">
         <div className={['h-full rounded-full', tone.dot].join(' ')} style={{ width: `${Math.max(4, meter * 100)}%` }} />
       </div>
     </div>
@@ -189,8 +199,8 @@ function VisualStack({
   const total = segments.reduce((sum, segment) => sum + Math.max(0, segment.value), 0)
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-black/20 p-2.5">
-      <div className="h-2 overflow-hidden rounded-full bg-white/10">
+    <div className="rounded-xl border border-white/10 bg-black/20 px-2.5 py-2">
+      <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
         {total > 0 ?
           <div className="flex h-full w-full">
             {segments.filter(segment => segment.value > 0).map(segment => (
@@ -204,7 +214,7 @@ function VisualStack({
           </div>
         : <div className="h-full w-full rounded-full bg-emerald-300/60" />}
       </div>
-      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px]">
+      <div className="mt-1.5 flex flex-wrap gap-x-2.5 gap-y-1 text-[10.5px]">
         {total > 0 ?
           segments.map(segment => (
             <span key={segment.key} className="inline-flex items-center gap-1 text-white/55">
@@ -234,6 +244,21 @@ function CardVisual({ card }: { card: DashboardCardSummary }) {
           { key: 'pending', label: 'Pending', value: value('pending'), tone: dashboardSeverityTone('warning') },
           { key: 'in_progress', label: 'Active', value: value('in_progress'), tone: dashboardSeverityTone('info') },
           { key: 'stalled', label: 'Stalled', value: value('stalled'), tone: dashboardSeverityTone('error') },
+          { key: 'failed_24h', label: 'Failed', value: value('failed_24h'), tone: dashboardSeverityTone('error') },
+        ]}
+      />
+    )
+  }
+
+  if (card.id === 'system.threadpools') {
+    const pressure = metric('pressure')
+    return pressure ? <VisualMeter metric={pressure} /> : (
+      <VisualStack
+        emptyLabel="No queued worker pressure"
+        segments={[
+          { key: 'queue', label: 'Queue', value: value('queue'), tone: dashboardSeverityTone('warning') },
+          { key: 'pressured', label: 'Pressured', value: value('pressured'), tone: dashboardSeverityTone('warning') },
+          { key: 'saturated', label: 'Saturated', value: value('saturated'), tone: dashboardSeverityTone('error') },
         ]}
       />
     )
@@ -257,11 +282,58 @@ function CardVisual({ card }: { card: DashboardCardSummary }) {
       <VisualStack
         emptyLabel="No vault backends configured"
         segments={[
-          { key: 'active', label: 'Active', value: value('active'), tone: dashboardSeverityTone('healthy') },
           { key: 'local', label: 'Local', value: value('local'), tone: dashboardSeverityTone('info') },
           { key: 's3', label: 'S3', value: value('s3'), tone: dashboardSeverityTone('info') },
+          { key: 'inactive', label: 'Inactive', value: value('inactive'), tone: dashboardSeverityTone('warning') },
         ]}
       />
+    )
+  }
+
+  if (card.id === 'system.retention') {
+    return (
+      <VisualStack
+        emptyLabel="Retention queues are clear"
+        segments={[
+          { key: 'overdue', label: 'Overdue', value: value('overdue'), tone: dashboardSeverityTone('error') },
+          { key: 'cache_expired', label: 'Expired', value: value('cache_expired'), tone: dashboardSeverityTone('warning') },
+          { key: 'sync_backlog', label: 'Sync', value: value('sync_backlog'), tone: dashboardSeverityTone('warning') },
+          { key: 'audit_backlog', label: 'Audit', value: value('audit_backlog'), tone: dashboardSeverityTone('info') },
+        ]}
+      />
+    )
+  }
+
+  if (card.id === 'system.trends') {
+    const trendMetrics = ['latest_sample_age', 'window', 'coverage']
+      .map(key => metric(key))
+      .filter((item): item is DashboardMetricSummary => Boolean(item))
+
+    return (
+      <div className="rounded-xl border border-white/10 bg-black/20 px-2.5 py-2">
+        <div className="flex items-center gap-1">
+          {[0, 1, 2, 3, 4, 5].map(index => (
+            <span
+              key={index}
+              className={[
+                'h-1.5 flex-1 rounded-full',
+                card.severity === 'error' ? 'bg-rose-300/65'
+                : card.severity === 'warning' ? 'bg-amber-300/65'
+                : index < trendMetrics.length + 2 ? 'bg-cyan-300/65'
+                : 'bg-white/10',
+              ].join(' ')}
+            />
+          ))}
+        </div>
+        <div className="mt-2 grid grid-cols-3 gap-1.5">
+          {trendMetrics.map(item => (
+            <div key={item.key} className="min-w-0 rounded-lg border border-white/10 bg-white/[0.03] px-2 py-1">
+              <div className="truncate text-[8.5px] uppercase tracking-[0.06em] text-white/40">{item.label}</div>
+              <div className="mt-1 truncate text-[12px] font-semibold leading-none text-white/75">{item.value}</div>
+            </div>
+          ))}
+        </div>
+      </div>
     )
   }
 
@@ -299,37 +371,33 @@ function OverviewShell({
 }
 
 function gridClassForSize(size: DashboardCardSize): string {
-  if (size === '1x1') return 'md:col-span-3 lg:col-span-3'
-  if (size === '2x1') return 'md:col-span-6 lg:col-span-6'
-  if (size === '2x2') return 'md:col-span-6 lg:col-span-6'
-  if (size === '3x2') return 'md:col-span-6 lg:col-span-9'
-  return 'md:col-span-6 lg:col-span-12'
+  if (size === '1x1') return 'md:col-span-3 lg:col-span-3 md:row-span-2'
+  if (size === '1x2') return 'md:col-span-3 lg:col-span-3 md:row-span-4'
+  if (size === '2x1') return 'md:col-span-6 lg:col-span-6 md:row-span-2'
+  if (size === '2x2') return 'md:col-span-6 lg:col-span-6 md:row-span-4'
+  if (size === '3x1') return 'md:col-span-6 lg:col-span-9 md:row-span-2'
+  if (size === '3x2') return 'md:col-span-6 lg:col-span-9 md:row-span-4'
+  return 'md:col-span-6 lg:col-span-12 md:row-span-4'
 }
 
-function minHeightForCard(layoutCard: DashboardLayoutCard): string {
-  if (layoutCard.variant === 'hero') {
-    if (layoutCard.size === '4x2') return 'min-h-[16rem]'
-    return 'min-h-[15rem]'
-  }
-
-  if (layoutCard.variant === 'visual') {
-    if (layoutCard.size === '2x1') return 'min-h-[12rem]'
-    if (layoutCard.size === '2x2') return 'min-h-[14rem]'
-    return 'min-h-[15rem]'
-  }
-
+function baseHeightForCard(layoutCard: DashboardLayoutCard): string {
   if (layoutCard.size === '1x1') return 'min-h-[9.5rem]'
+  if (layoutCard.size === '1x2') return 'min-h-[15rem]'
   if (layoutCard.size === '2x1') return 'min-h-[10rem]'
-  if (layoutCard.size === '2x2') return 'min-h-[13.5rem]'
-  if (layoutCard.size === '3x2') return 'min-h-[14rem]'
+  if (layoutCard.size === '2x2') return 'min-h-[15rem]'
+  if (layoutCard.size === '3x1') return 'min-h-[10rem]'
+  if (layoutCard.size === '3x2') return 'min-h-[15rem]'
   return 'min-h-[15rem]'
 }
 
 function metricCountForCard(layoutCard: DashboardLayoutCard): number {
-  if (layoutCard.variant === 'hero' || layoutCard.size === '4x2') return 8
-  if (layoutCard.variant === 'visual') return layoutCard.size === '2x1' ? 3 : 5
-  if (layoutCard.variant === 'summary' || layoutCard.size === '2x2' || layoutCard.size === '3x2') return 5
-  return layoutCard.size === '1x1' ? 2 : 3
+  if (layoutCard.size === '1x1') return layoutCard.variant === 'compact' ? 3 : 4
+  if (layoutCard.size === '1x2') return 6
+  if (layoutCard.size === '2x1') return layoutCard.variant === 'visual' ? 4 : 5
+  if (layoutCard.size === '2x2') return layoutCard.variant === 'hero' ? 8 : 7
+  if (layoutCard.size === '3x1') return 6
+  if (layoutCard.size === '3x2') return layoutCard.variant === 'hero' ? 10 : 8
+  return layoutCard.variant === 'hero' ? 12 : 10
 }
 
 function issueCountForCard(layoutCard: DashboardLayoutCard): number {
@@ -436,6 +504,112 @@ function CardCustomizationControls({
   )
 }
 
+function CardPickerPanel({
+  catalog,
+  visibleIds,
+  selectedSize,
+  selectedVariant,
+  onSizeChange,
+  onVariantChange,
+  onAdd,
+}: {
+  catalog: DashboardCardCatalogItem[]
+  visibleIds: Set<string>
+  selectedSize: DashboardCardSize
+  selectedVariant: DashboardCardVariant
+  onSizeChange: (size: DashboardCardSize) => void
+  onVariantChange: (variant: DashboardCardVariant) => void
+  onAdd: (id: string, size: DashboardCardSize, variant: DashboardCardVariant) => void
+}) {
+  const candidates = catalog.filter(card => card.available)
+  const visibleCandidates = candidates.filter(card => !visibleIds.has(card.id))
+  const sizeFiltered = visibleCandidates.filter(card => card.supportedSizes.includes(selectedSize))
+  const cardsToShow = sizeFiltered.length ? sizeFiltered : visibleCandidates
+
+  return (
+    <div className="absolute right-0 top-[calc(100%+0.6rem)] z-40 w-[min(42rem,calc(100vw-2rem))] rounded-3xl border border-white/10 bg-zinc-950/95 p-3 shadow-[0_30px_90px_-30px_rgba(0,0,0,0.95)] backdrop-blur-xl">
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-white/10 pb-3">
+        <div>
+          <div className="text-sm font-semibold text-white">Add dashboard card</div>
+          <div className="mt-0.5 text-xs text-white/50">Pick a card with the size and presentation you want.</div>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {dashboardCardSizes.map(size => (
+            <button
+              key={size}
+              type="button"
+              className={[
+                'rounded-full border px-2 py-0.5 text-[11px] transition',
+                selectedSize === size ?
+                  'border-cyan-200/40 bg-cyan-400/15 text-cyan-50'
+                : 'border-white/10 bg-white/5 text-white/55 hover:border-cyan-200/25 hover:text-cyan-100',
+              ].join(' ')}
+              onClick={() => onSizeChange(size)}>
+              {size}
+            </button>
+          ))}
+          <span className="mx-1 h-5 w-px bg-white/10" />
+          {dashboardCardVariants.map(variant => (
+            <button
+              key={variant}
+              type="button"
+              className={[
+                'rounded-full border px-2 py-0.5 text-[11px] capitalize transition',
+                selectedVariant === variant ?
+                  'border-cyan-200/40 bg-cyan-400/15 text-cyan-50'
+                : 'border-white/10 bg-white/5 text-white/55 hover:border-cyan-200/25 hover:text-cyan-100',
+              ].join(' ')}
+              onClick={() => onVariantChange(variant)}>
+              {variant}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-3 grid max-h-[28rem] grid-cols-1 gap-2 overflow-y-auto pr-1 md:grid-cols-2">
+        {cardsToShow.length ?
+          cardsToShow.map(card => {
+            const size = card.supportedSizes.includes(selectedSize) ? selectedSize : card.defaultSize
+            const variant = card.supportedVariants.includes(selectedVariant) ? selectedVariant : card.defaultVariant
+            const tone = dashboardSeverityTone('unknown')
+
+            return (
+              <button
+                key={card.id}
+                type="button"
+                className="group rounded-2xl border border-white/10 bg-white/[0.035] p-2.5 text-left transition hover:border-cyan-200/35 hover:bg-cyan-400/10"
+                onClick={() => onAdd(card.id, size, variant)}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 text-sm font-semibold text-white/90">
+                      <DashboardSeverityIcon severity="unknown" className={['h-3.5 w-3.5', tone.text].join(' ')} />
+                      <span className="truncate">{card.title}</span>
+                    </div>
+                    <p className="mt-1 line-clamp-2 text-xs leading-snug text-white/50">{card.description}</p>
+                  </div>
+                  <span className="shrink-0 rounded-full border border-white/10 bg-black/20 px-2 py-0.5 text-[10px] text-white/55">
+                    {size} · {variant}
+                  </span>
+                </div>
+                <div className="mt-2 grid grid-cols-3 gap-1.5">
+                  {['status', 'metric', 'detail'].map(item => (
+                    <div key={item} className="rounded-lg border border-white/10 bg-black/20 px-2 py-1">
+                      <div className="h-1 w-8 rounded-full bg-white/15" />
+                      <div className="mt-1 h-2 w-12 rounded-full bg-white/10 group-hover:bg-cyan-200/20" />
+                    </div>
+                  ))}
+                </div>
+              </button>
+            )
+          })
+        : <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-white/55">
+            Every available dashboard card is already visible.
+          </div>}
+      </div>
+    </div>
+  )
+}
+
 function SummaryCard({
   card,
   layoutCard,
@@ -480,13 +654,14 @@ function SummaryCard({
   const isVisual = layoutCard.variant === 'visual'
   const metricCount = metricCountForCard(layoutCard)
   const issueCount = issueCountForCard(layoutCard)
-  const selectedMetrics = selectDashboardCardMetrics(card, layoutCard, metricCount)
-  const visual = isVisual || isHero || (!isCompact && selectedMetrics.some(metric => dashboardMetricMeterValue(metric) !== null)) ?
-    <CardVisual card={card} />
-  : null
+  const visualKeys = isVisual || isHero ? dashboardVisualMetricKeys(card.id) : new Set<string>()
+  const selectedMetrics = selectDashboardCardMetrics(card, layoutCard, metricCount, visualKeys)
+  const hiddenMetricCount = Math.max(0, card.metrics.length - selectedMetrics.length - visualKeys.size)
+  const visual = isVisual || isHero ? <CardVisual card={card} /> : null
   const metricGridClass =
     isHero ? 'grid-cols-2 md:grid-cols-4'
-    : isVisual || layoutCard.variant === 'summary' || layoutCard.size === '2x2' || layoutCard.size === '3x2' ? 'grid-cols-2 md:grid-cols-3'
+    : layoutCard.size === '3x1' || layoutCard.size === '3x2' ? 'grid-cols-3 md:grid-cols-3'
+    : isVisual || layoutCard.variant === 'summary' || layoutCard.size === '2x2' || layoutCard.size === '1x2' ? 'grid-cols-2 md:grid-cols-3'
     : selectedMetrics.length >= 3 ? 'grid-cols-3'
     : 'grid-cols-2'
 
@@ -498,11 +673,11 @@ function SummaryCard({
       onDragEnd={onDragEnd}>
       <article
         className={[
-          'h-full overflow-hidden rounded-3xl border bg-zinc-950/48 backdrop-blur transition hover:-translate-y-0.5 hover:brightness-110',
-          isHero ? 'p-4'
-          : isVisual ? 'p-3.5'
-          : 'p-3',
-          minHeightForCard(layoutCard),
+          'group flex h-full max-h-full flex-col overflow-hidden rounded-2xl border bg-zinc-950/48 backdrop-blur transition hover:-translate-y-0.5 hover:brightness-110',
+          isHero ? 'p-3.5'
+          : isVisual ? 'p-3'
+          : 'p-2.5',
+          baseHeightForCard(layoutCard),
           tone.border,
           tone.ring,
           dragging ? 'opacity-55' : '',
@@ -526,9 +701,18 @@ function SummaryCard({
           />
         : null}
 
-        <div className="flex items-start justify-between gap-3">
+        <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <div className={['flex items-center gap-2 font-semibold text-white/90', isHero ? 'text-lg' : isCompact ? 'text-sm' : 'text-base'].join(' ')}>
+            <div className={['flex items-center gap-1.5 font-semibold text-white/90', isHero ? 'text-lg' : isCompact ? 'text-sm' : 'text-base'].join(' ')}>
+              <button
+                type="button"
+                draggable
+                className="hidden cursor-grab rounded-md border border-white/10 bg-white/5 p-1 text-white/35 opacity-70 transition hover:border-cyan-200/35 hover:text-cyan-100 group-hover:inline-flex active:cursor-grabbing md:inline-flex md:opacity-0 md:group-hover:opacity-100"
+                title="Drag to reorder"
+                aria-label={`Drag ${card.title} to reorder`}
+                onDragStart={event => onDragStart(layoutCard.id, event)}>
+                <GripIcon className="h-3 w-3 fill-current" aria-hidden="true" />
+              </button>
               <DashboardSeverityIcon severity={card.severity} className={[isHero ? 'h-5 w-5' : 'h-4 w-4', tone.text].join(' ')} />
               <span className="truncate">{card.title}</span>
             </div>
@@ -545,29 +729,34 @@ function SummaryCard({
           <DashboardSeverityBadge severity={card.severity} errorCount={errors} warningCount={warnings} showCount />
         </div>
 
-        <p className={['mt-2 text-sm leading-snug text-white/70', isCompact ? 'line-clamp-2' : 'line-clamp-2'].join(' ')}>
+        <p className={['mt-1.5 text-xs leading-snug text-white/70', isCompact ? 'line-clamp-1' : 'line-clamp-2'].join(' ')}>
           {card.available ? card.summary : card.unavailable_reason}
         </p>
 
         {visual ?
-          <div className={isHero ? 'mt-3' : 'mt-2.5'}>{visual}</div>
+          <div className={isHero ? 'mt-2.5' : 'mt-2'}>{visual}</div>
         : null}
 
         {selectedMetrics.length ?
-          <div className={['mt-2.5 grid gap-1.5', metricGridClass].join(' ')}>
+          <div className={['mt-2 grid min-h-0 gap-1.5 overflow-hidden', metricGridClass].join(' ')}>
             {selectedMetrics.map(metric => (
               <MetricTile key={`${card.id}-${metric.key}`} metric={metric} dense={!isHero} />
             ))}
+            {hiddenMetricCount > 0 && !isCompact ?
+              <div className="rounded-lg border border-white/10 bg-white/[0.03] px-2 py-1 text-[10px] text-white/45">
+                +{hiddenMetricCount} more
+              </div>
+            : null}
           </div>
         : null}
 
         {!isCompact && (card.errors.length || card.warnings.length) ?
-          <div className="mt-2.5">
+          <div className="mt-2 overflow-hidden">
             <DashboardIssueList issues={[...card.errors, ...card.warnings]} max={issueCount} link={false} compact />
           </div>
         : null}
 
-        <div className="mt-2.5">
+        <div className="mt-auto pt-2">
           <Link href={card.href || catalogItem.href} className="text-xs font-medium text-cyan-100/80 transition hover:text-cyan-50">
             View details {'>'}
           </Link>
@@ -594,6 +783,21 @@ function buildOverviewPayload(layout: DashboardLayoutCard[]): DashboardOverviewR
   }
 }
 
+function reorderLayoutBefore(layout: DashboardLayoutCard[], dragId: string, targetId: string): DashboardLayoutCard[] {
+  if (dragId === targetId) return layout
+
+  const visible = visibleDashboardLayoutCards(layout)
+  const from = visible.findIndex(card => card.id === dragId)
+  const to = visible.findIndex(card => card.id === targetId)
+  if (from < 0 || to < 0) return layout
+
+  const reordered = [...visible]
+  const [moved] = reordered.splice(from, 1)
+  reordered.splice(to, 0, moved)
+  const orderById = new Map(reordered.map((card, order) => [card.id, order]))
+  return layout.map(card => orderById.has(card.id) ? { ...card, order: orderById.get(card.id) ?? card.order } : card)
+}
+
 export default function DashboardOverviewComponent({ intervalMs = 7500 }: { intervalMs?: number }) {
   const wrapper = useStatsStore(s => s.dashboardOverview)
   const startPolling = useStatsStore(s => s.startDashboardOverviewPolling)
@@ -611,7 +815,9 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
   const [savedLayoutKey, setSavedLayoutKey] = useState(() => layoutKey(makeDefaultLayout()))
   const [needsMigrationSave, setNeedsMigrationSave] = useState(false)
   const [saveNotice, setSaveNotice] = useState<string | null>(null)
-  const [selectedAddId, setSelectedAddId] = useState('')
+  const [cardPickerOpen, setCardPickerOpen] = useState(false)
+  const [pickerSize, setPickerSize] = useState<DashboardCardSize>('2x1')
+  const [pickerVariant, setPickerVariant] = useState<DashboardCardVariant>('visual')
   const [selectedPresetId, setSelectedPresetId] = useState('default')
   const [draggedCardId, setDraggedCardId] = useState<string | null>(null)
   const [dragOverCardId, setDragOverCardId] = useState<string | null>(null)
@@ -670,15 +876,6 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
     startPolling(intervalMs, overviewPayload)
   }, [startPolling, intervalMs, overviewPayload, payloadKey])
 
-  useEffect(() => {
-    if (!hiddenCatalog.length) {
-      setSelectedAddId('')
-      return
-    }
-
-    if (!hiddenCatalog.some(card => card.id === selectedAddId)) setSelectedAddId(hiddenCatalog[0]?.id ?? '')
-  }, [hiddenCatalog, selectedAddId])
-
   const normalizeNextLayout = useCallback((next: DashboardLayoutCard[]) => {
     return normalizeDashboardLayout(next, dashboardCardCatalog, makeDefaultLayout())
   }, [])
@@ -688,9 +885,11 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
     setLayout(current => normalizeNextLayout(updater(current)))
   }, [normalizeNextLayout])
 
-  const addCard = useCallback((id: string) => {
+  const addCard = useCallback((id: string, size?: DashboardCardSize, variant?: DashboardCardVariant) => {
     const catalogItem = catalogById.get(id)
     if (!catalogItem) return
+    const nextSize = size && catalogItem.supportedSizes.includes(size) ? size : catalogItem.defaultSize
+    const nextVariant = variant && catalogItem.supportedVariants.includes(variant) ? variant : catalogItem.defaultVariant
 
     updateLayout(current => {
       const nextOrder = visibleDashboardLayoutCards(current).length
@@ -700,12 +899,13 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
             ...card,
             visible: true,
             order: nextOrder,
-            size: catalogItem.defaultSize,
-            variant: catalogItem.defaultVariant,
+            size: nextSize,
+            variant: nextVariant,
           }
         : card,
       )
     })
+    setCardPickerOpen(false)
   }, [catalogById, updateLayout])
 
   const removeCard = useCallback((id: string) => {
@@ -731,21 +931,29 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
   }, [updateLayout])
 
   const reorderCardBefore = useCallback((dragId: string, targetId: string) => {
-    if (dragId === targetId) return
-
-    updateLayout(current => {
-      const visible = visibleDashboardLayoutCards(current)
-      const from = visible.findIndex(card => card.id === dragId)
-      const to = visible.findIndex(card => card.id === targetId)
-      if (from < 0 || to < 0) return current
-
-      const reordered = [...visible]
-      const [moved] = reordered.splice(from, 1)
-      reordered.splice(to, 0, moved)
-      const orderById = new Map(reordered.map((card, order) => [card.id, order]))
-      return current.map(card => orderById.has(card.id) ? { ...card, order: orderById.get(card.id) ?? card.order } : card)
-    })
+    updateLayout(current => reorderLayoutBefore(current, dragId, targetId))
   }, [updateLayout])
+
+  const persistLayout = useCallback(async (nextLayout: DashboardLayoutCard[], notice = 'Layout saved.') => {
+    const normalized = normalizeNextLayout(nextLayout)
+    const preferenceLayout = dashboardLayoutPreference(normalized)
+    const preference = await savePreference({
+      preference_key: DASHBOARD_HOME_PREFERENCE_KEY,
+      layout: preferenceLayout,
+    })
+    const saved = preference.layout ?
+      normalizeDashboardLayout(preference.layout, dashboardCardCatalog, makeDefaultLayout())
+    : normalized
+
+    const nextKey = layoutKey(saved)
+    setLayout(saved)
+    setSavedLayout(saved)
+    setSavedLayoutKey(nextKey)
+    setNeedsMigrationSave(false)
+    setSaveNotice(notice)
+    storeLayout(saved)
+    void refreshOverview(buildOverviewPayload(saved))
+  }, [normalizeNextLayout, refreshOverview, savePreference])
 
   const startCardDrag = useCallback((id: string, event: React.DragEvent<HTMLElement>) => {
     setDraggedCardId(id)
@@ -764,10 +972,19 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
   const dropCard = useCallback((id: string, event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault()
     const dragId = event.dataTransfer.getData('text/plain') || draggedCardId
-    if (dragId) reorderCardBefore(dragId, id)
+    if (dragId) {
+      if (customizing) {
+        reorderCardBefore(dragId, id)
+      } else {
+        const nextLayout = normalizeNextLayout(reorderLayoutBefore(layout, dragId, id))
+        setSaveNotice(null)
+        setLayout(nextLayout)
+        void persistLayout(nextLayout, 'Order saved.').catch(() => undefined)
+      }
+    }
     setDraggedCardId(null)
     setDragOverCardId(null)
-  }, [draggedCardId, reorderCardBefore])
+  }, [customizing, draggedCardId, layout, normalizeNextLayout, persistLayout, reorderCardBefore])
 
   const endCardDrag = useCallback(() => {
     setDraggedCardId(null)
@@ -783,25 +1000,8 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
   }, [updateLayout])
 
   const saveLayout = useCallback(async () => {
-    const nextLayout = normalizeNextLayout(layout)
-    const preferenceLayout = dashboardLayoutPreference(nextLayout)
-    const preference = await savePreference({
-      preference_key: DASHBOARD_HOME_PREFERENCE_KEY,
-      layout: preferenceLayout,
-    })
-    const saved = preference.layout ?
-      normalizeDashboardLayout(preference.layout, dashboardCardCatalog, makeDefaultLayout())
-    : nextLayout
-
-    const nextKey = layoutKey(saved)
-    setLayout(saved)
-    setSavedLayout(saved)
-    setSavedLayoutKey(nextKey)
-    setNeedsMigrationSave(false)
-    setSaveNotice('Layout saved.')
-    storeLayout(saved)
-    void refreshOverview(buildOverviewPayload(saved))
-  }, [layout, normalizeNextLayout, refreshOverview, savePreference])
+    await persistLayout(layout)
+  }, [layout, persistLayout])
 
   const doneCustomizing = useCallback(async () => {
     if (layoutDirty || needsMigrationSave) await saveLayout()
@@ -834,11 +1034,6 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
     setLayout(next)
     void refreshOverview(buildOverviewPayload(next))
   }, [refreshOverview])
-
-  const addSelectedCard = useCallback(() => {
-    if (!selectedAddId) return
-    addCard(selectedAddId)
-  }, [addCard, selectedAddId])
 
   const overview = wrapper.data
   const tone = dashboardSeverityTone(overview.overall_status)
@@ -934,26 +1129,27 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
                     </option>
                   ))}
                 </select>
-                <select
-                  className="rounded-full border border-white/10 bg-zinc-950/80 px-2.5 py-1 text-xs text-white/75 outline-none transition hover:border-cyan-200/30 focus:border-cyan-200/50"
-                  value={selectedAddId}
-                  onChange={event => setSelectedAddId(event.target.value)}
-                  disabled={!hiddenCatalog.length}>
-                  {hiddenCatalog.length ?
-                    hiddenCatalog.map(card => (
-                      <option key={card.id} value={card.id}>
-                        {card.title}
-                      </option>
-                    ))
-                  : <option value="">All cards shown</option>}
-                </select>
-                <button
-                  type="button"
-                  className="rounded-full border border-cyan-200/25 bg-cyan-400/10 px-2.5 py-1 text-xs font-medium text-cyan-100 transition hover:border-cyan-100/45 disabled:cursor-not-allowed disabled:opacity-40"
-                  onClick={addSelectedCard}
-                  disabled={!selectedAddId}>
-                  Add Card
-                </button>
+                <div className="relative">
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1.5 rounded-full border border-cyan-200/25 bg-cyan-400/10 px-2.5 py-1 text-xs font-medium text-cyan-100 transition hover:border-cyan-100/45 disabled:cursor-not-allowed disabled:opacity-40"
+                    onClick={() => setCardPickerOpen(open => !open)}
+                    disabled={!hiddenCatalog.length}>
+                    <GridPlusIcon className="h-3.5 w-3.5 fill-current" aria-hidden="true" />
+                    Add Card
+                  </button>
+                  {cardPickerOpen ?
+                    <CardPickerPanel
+                      catalog={dashboardCardCatalog}
+                      visibleIds={visibleIds}
+                      selectedSize={pickerSize}
+                      selectedVariant={pickerVariant}
+                      onSizeChange={setPickerSize}
+                      onVariantChange={setPickerVariant}
+                      onAdd={addCard}
+                    />
+                  : null}
+                </div>
                 <button
                   type="button"
                   className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-white/70 transition hover:border-amber-200/35 hover:text-amber-100"
@@ -1049,7 +1245,7 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
         : null}
       </OverviewShell>
 
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-6 lg:grid-cols-12">
+      <div className="grid grid-cols-1 gap-3 md:auto-rows-[5rem] md:grid-flow-dense md:grid-cols-6 lg:grid-cols-12">
         {visibleCards.map(({ card, layoutCard, catalogItem }, index) => (
           <SummaryCard
             key={layoutCard.id}
