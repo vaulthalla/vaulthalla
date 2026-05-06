@@ -885,3 +885,86 @@ This file mirrors the ignored scratch roadmap/status notes for durable checkpoin
   - `git diff --check`: passed
   - `pnpm --dir web lint`: passed
   - `pnpm --dir web test`: passed
+
+## Dashboard UX Stabilization - Deliverable A Layout/Card Normalization
+
+- Status: committed and pushed.
+- Commit: `4becf794`.
+- Push target: `origin/stats-dashboards`.
+- Push result: succeeded, with GitHub remote moved warning.
+- Frontend surfaces:
+  - `web/src/models/dashboard/dashboardLayout.ts`
+  - `web/src/components/dashboard/dashboardCardCatalog.ts`
+  - `web/src/components/dashboard/DashboardOverview.tsx`
+  - `web/src/components/dashboard/DashboardRouteToolbar.tsx`
+  - `web/src/components/nav/admin/AdminSidebar.tsx`
+  - `web/src/components/nav/admin/AdminSidebarMode.client.tsx`
+  - `web/src/components/nav/util.tsx`
+  - `web/src/config/nav/admin.ts`
+- Layout/sidebar decisions:
+  - Dashboard routes now auto-collapse the left admin sidebar by default through `AdminSidebarMode`.
+  - Users can toggle sidebar mode; the local preference is stored under `vaulthalla.admin.sidebar.compact.v1`.
+  - Non-dashboard admin routes retain the full sidebar unless the user explicitly selected compact mode.
+  - Dashboard drilldown navigation remains in the dashboard-local top toolbar.
+  - Dashboard icon is back to a gauge/speedometer-style icon, and compact nav toggle icons are centered.
+- Card normalization:
+  - Dashboard layout cards now carry stable `instanceId` / `instance_id` preference identity.
+  - Duplicate cards are allowed across variants, while exact same `card_id + variant` duplicates are normalized away.
+  - Existing saved layouts without instance IDs normalize safely.
+  - Metric capacity is now driven by card size, with denser grid columns for `2x1`, `2x2`, `3x1`, `3x2`, and `4x2`.
+  - Add Card picker marks same card/variant combinations as already added while allowing other variants of the same card family.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+  - `pnpm --dir web build`: passed
+  - Full backend validation was run with Deliverable B after graph plumbing.
+
+## Dashboard UX Stabilization - Deliverable B Graph/Telemetry Cards
+
+- Status: committed; docs/context update pending push.
+- Commit: `927254e5`.
+- Push target: `origin/stats-dashboards`.
+- Backend surfaces:
+  - `core/include/stats/model/DashboardOverview.hpp`
+  - `core/src/stats/model/DashboardOverview.cpp`
+  - `core/src/db/preparedStatements/stats/snapshot.cpp`
+- Frontend surfaces:
+  - `web/src/models/stats/dashboardOverview.ts`
+  - `web/src/models/dashboard/dashboardLayout.ts`
+  - `web/src/components/dashboard/DashboardOverview.tsx`
+  - `web/src/components/dashboard/dashboardCardCatalog.ts`
+  - `web/src/components/dashboard/dashboardMetricCuration.ts`
+- Backend graph plumbing:
+  - `DashboardCardSummary` now includes compact `series[]` graph data.
+  - Graph series are attached only when requested cards use `variant: "graph"` or when the Trends card is visible.
+  - Series points are capped to the latest 64 points per series.
+  - Existing `stats_snapshot` runtime data powers dashboard graph cards; no fake samples are generated.
+  - Thread pool snapshots now expose per-pool pressure trend keys with `threadpool_pool_pressure:<name>`.
+- Frontend graph behavior:
+  - Added `graph` as a finite dashboard card variant.
+  - Added SVG sparkline rendering for graph cards.
+  - Thread Pools supports numeric summary plus separate graph variant, including aggregate pressure and per-pool pressure lines.
+  - FUSE, FS Cache, HTTP Cache, DB, and Trends can render graph variants from existing snapshot trend data.
+  - Graph variants omit metrics represented by the graph so visual cards do not duplicate the same value as a primary tile.
+- Defaults/presets:
+  - Default layout now uses Thread Pools graph card instead of the older visual-only card.
+  - Runtime and Cockpit presets intentionally include Thread Pools numeric and graph variants together.
+  - Graph is only offered where snapshot-backed series exist; Operations remains a live stacked visual because operation queue snapshots do not exist yet.
+- Deferred TODOs:
+  - Add operation queue snapshots before implementing true queued/in-progress/stalled operation history.
+  - Consider decimation if snapshot density grows beyond the current compact 64-point card payload cap.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `meson setup --reconfigure build`: passed
+  - `meson compile -C build`: passed
+  - `make test`: passed
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+  - `pnpm --dir web build`: passed
+  - `meson test -C build`: passed, 2/2
+  - Known failures: none.
