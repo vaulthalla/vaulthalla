@@ -63,7 +63,7 @@ export function buildDashboardCardRenderPlan({
   const isSingleRow = normalizedSize.endsWith('x1')
   const isCompact = isSingleRow || normalizedSize === '1x1'
   const shouldUseVisual = Boolean(visualKind && normalizedVariant === 'visual')
-  const metricSlotCount = shouldUseVisual && isSingleRow ? 0 : template.maxTiles
+  const metricSlotCount = shouldUseVisual && isSingleRow ? 0 : template.tileSlotCount
   const visualMetricKeys = shouldUseVisual ? dashboardVisualMetricKeys(card.id, normalizedVariant) : new Set<string>()
   const normalizedLayoutCard = {
     ...layoutCard,

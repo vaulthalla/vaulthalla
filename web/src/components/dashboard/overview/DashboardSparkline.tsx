@@ -15,7 +15,7 @@ function graphSeriesColor(index: number, series: DashboardGraphSeries): string {
 
 export function DashboardGraphPlaceholder() {
   return (
-    <div className="flex h-full min-h-14 items-center justify-center rounded-xl border border-white/10 bg-black/20 px-3 text-center text-[11px] leading-snug text-white/45">
+    <div className="flex h-full min-h-14 items-center justify-center rounded-xl border border-cyan-200/25 bg-cyan-400/10 px-3 text-center text-[11px] leading-snug text-cyan-50/75 shadow-[inset_0_0_22px_rgba(34,211,238,0.08)]">
       {DASHBOARD_GRAPH_PENDING_TEXT}
     </div>
   )

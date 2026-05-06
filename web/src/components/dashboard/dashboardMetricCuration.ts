@@ -38,7 +38,9 @@ export function isLowValueDashboardMetric(cardId: string, metric: DashboardMetri
   if (definition.lowValueMetricKeys?.includes(metric.key)) return true
 
   const value = dashboardMetricNumber(metric)
-  return Boolean(definition.zeroLowValueMetricKeys?.includes(metric.key) && value === 0)
+  if (!definition.zeroLowValueMetricKeys?.includes(metric.key)) return false
+  if (value === 0) return true
+  return value === null && ['none', 'unknown', 'no data'].includes(metric.value.trim().toLowerCase())
 }
 
 export function selectDashboardCardMetrics(
