@@ -7,6 +7,7 @@ export interface DashboardCardSizeTemplate {
   colSpanMd: number
   colSpanLg: number
   rowSpan: number
+  cardHeightRem: number
   cardHeightClass: string
   headerPx: number
   summaryLines: 1 | 2
@@ -22,13 +23,32 @@ export interface DashboardCardSizeTemplate {
   metricGridClass: string
 }
 
+export const DASHBOARD_GRID_ROW_HEIGHT_REM = 5
+export const DASHBOARD_GRID_ROW_GAP_REM = 0.75
+export const DASHBOARD_GRID_ROW_HEIGHT_CLASS = 'md:auto-rows-[5rem]'
+export const DASHBOARD_GRID_ROW_GAP_CLASS = 'gap-3'
+export const DASHBOARD_CARD_ROW_SPAN_HEIGHT_PROPERTY = '--dashboard-card-row-span-height'
+
+export function dashboardGridRowSpanHeightRem(rowSpan: number): number {
+  return rowSpan * DASHBOARD_GRID_ROW_HEIGHT_REM + Math.max(0, rowSpan - 1) * DASHBOARD_GRID_ROW_GAP_REM
+}
+
+function cardHeightClassForRowSpan(rowSpan: 2 | 4): string {
+  if (rowSpan === 2) {
+    return 'min-h-[10rem] md:h-[var(--dashboard-card-row-span-height)]'
+  }
+
+  return 'min-h-[15rem] md:h-[var(--dashboard-card-row-span-height)]'
+}
+
 export const dashboardCardSizeTemplates: Record<DashboardCardSize, DashboardCardSizeTemplate> = {
   '1x1': {
     size: '1x1',
     colSpanMd: 3,
     colSpanLg: 3,
     rowSpan: 2,
-    cardHeightClass: 'min-h-[10rem]',
+    cardHeightRem: dashboardGridRowSpanHeightRem(2),
+    cardHeightClass: cardHeightClassForRowSpan(2),
     headerPx: 58,
     summaryLines: 1,
     tileColsMd: 2,
@@ -47,7 +67,8 @@ export const dashboardCardSizeTemplates: Record<DashboardCardSize, DashboardCard
     colSpanMd: 3,
     colSpanLg: 3,
     rowSpan: 4,
-    cardHeightClass: 'min-h-[15rem]',
+    cardHeightRem: dashboardGridRowSpanHeightRem(4),
+    cardHeightClass: cardHeightClassForRowSpan(4),
     headerPx: 64,
     summaryLines: 1,
     tileColsMd: 2,
@@ -66,7 +87,8 @@ export const dashboardCardSizeTemplates: Record<DashboardCardSize, DashboardCard
     colSpanMd: 6,
     colSpanLg: 6,
     rowSpan: 2,
-    cardHeightClass: 'min-h-[10rem]',
+    cardHeightRem: dashboardGridRowSpanHeightRem(2),
+    cardHeightClass: cardHeightClassForRowSpan(2),
     headerPx: 58,
     summaryLines: 1,
     tileColsMd: 4,
@@ -85,7 +107,8 @@ export const dashboardCardSizeTemplates: Record<DashboardCardSize, DashboardCard
     colSpanMd: 6,
     colSpanLg: 6,
     rowSpan: 4,
-    cardHeightClass: 'min-h-[15rem]',
+    cardHeightRem: dashboardGridRowSpanHeightRem(4),
+    cardHeightClass: cardHeightClassForRowSpan(4),
     headerPx: 64,
     summaryLines: 2,
     tileColsMd: 3,
@@ -104,7 +127,8 @@ export const dashboardCardSizeTemplates: Record<DashboardCardSize, DashboardCard
     colSpanMd: 6,
     colSpanLg: 9,
     rowSpan: 2,
-    cardHeightClass: 'min-h-[10rem]',
+    cardHeightRem: dashboardGridRowSpanHeightRem(2),
+    cardHeightClass: cardHeightClassForRowSpan(2),
     headerPx: 58,
     summaryLines: 1,
     tileColsMd: 4,
@@ -123,7 +147,8 @@ export const dashboardCardSizeTemplates: Record<DashboardCardSize, DashboardCard
     colSpanMd: 6,
     colSpanLg: 9,
     rowSpan: 4,
-    cardHeightClass: 'min-h-[15rem]',
+    cardHeightRem: dashboardGridRowSpanHeightRem(4),
+    cardHeightClass: cardHeightClassForRowSpan(4),
     headerPx: 64,
     summaryLines: 2,
     tileColsMd: 4,
@@ -142,7 +167,8 @@ export const dashboardCardSizeTemplates: Record<DashboardCardSize, DashboardCard
     colSpanMd: 6,
     colSpanLg: 12,
     rowSpan: 4,
-    cardHeightClass: 'min-h-[15rem]',
+    cardHeightRem: dashboardGridRowSpanHeightRem(4),
+    cardHeightClass: cardHeightClassForRowSpan(4),
     headerPx: 64,
     summaryLines: 2,
     tileColsMd: 5,

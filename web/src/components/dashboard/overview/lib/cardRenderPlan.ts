@@ -33,6 +33,7 @@ export interface DashboardCardRenderPlan {
   visualMetricKeys: Set<string>
   metricSlotCount: number
   cardGridClass: string
+  cardHeightRem: number
   cardHeightClass: string
   metricGridClass: string
   visualHeightClass: string
@@ -106,6 +107,7 @@ export function buildDashboardCardRenderPlan({
     visualMetricKeys,
     metricSlotCount,
     cardGridClass: template.cardGridClass,
+    cardHeightRem: template.cardHeightRem,
     cardHeightClass: template.cardHeightClass,
     metricGridClass: template.metricGridClass,
     visualHeightClass: template.visualHeightClass,

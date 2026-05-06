@@ -16,6 +16,7 @@ import { DashboardCustomizationControls } from '@/components/dashboard/overview/
 import { DashboardCardVisual } from '@/components/dashboard/overview/DashboardCardVisual'
 import { DashboardMetricTile } from '@/components/dashboard/overview/DashboardMetricTile'
 import { buildDashboardCardRenderPlan } from '@/components/dashboard/overview/lib/cardRenderPlan'
+import { DASHBOARD_CARD_ROW_SPAN_HEIGHT_PROPERTY } from '@/components/dashboard/overview/lib/layoutCapacity'
 
 function DashboardInlineIssuePill({
   severity,
@@ -104,6 +105,9 @@ export function DashboardHomeCard({
   if (!definition) return null
   const plan = buildDashboardCardRenderPlan({ definition, layoutCard, card })
   const visual = plan.visualKind ? <DashboardCardVisual card={card} visualKind={plan.visualKind} compact={plan.isCompact} /> : null
+  const cardHeightStyle = {
+    [DASHBOARD_CARD_ROW_SPAN_HEIGHT_PROPERTY]: `${plan.cardHeightRem}rem`,
+  } as React.CSSProperties & Record<typeof DASHBOARD_CARD_ROW_SPAN_HEIGHT_PROPERTY, string>
 
   return (
     <div
@@ -124,6 +128,7 @@ export function DashboardHomeCard({
             onOpen(card.href || catalogItem.href)
           }
         }}
+        style={cardHeightStyle}
         className={[
           'group flex h-full max-h-full min-h-0 flex-col overflow-hidden rounded-2xl border bg-zinc-950/48 backdrop-blur transition hover:-translate-y-0.5 hover:brightness-110',
           !customizing ? 'cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200/45' : '',

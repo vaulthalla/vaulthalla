@@ -10,6 +10,10 @@ import type {
 import type { DashboardCardSummary } from '@/models/stats/dashboardOverview'
 import type { DashboardCardCatalogItem } from '@/components/dashboard/dashboardCardCatalog'
 import { DashboardHomeCard } from '@/components/dashboard/overview/DashboardHomeCard'
+import {
+  DASHBOARD_GRID_ROW_GAP_CLASS,
+  DASHBOARD_GRID_ROW_HEIGHT_CLASS,
+} from '@/components/dashboard/overview/lib/layoutCapacity'
 
 export interface DashboardVisibleCard {
   layoutCard: DashboardLayoutCard
@@ -47,7 +51,12 @@ export function DashboardGrid({
   onVariantChange: (id: string, variant: DashboardCardVariant) => void
 }) {
   return (
-    <div className="grid grid-cols-1 gap-3 md:auto-rows-[5rem] md:grid-flow-dense md:grid-cols-6 lg:grid-cols-12">
+    <div
+      className={[
+        'grid grid-cols-1 md:grid-flow-dense md:grid-cols-6 lg:grid-cols-12',
+        DASHBOARD_GRID_ROW_GAP_CLASS,
+        DASHBOARD_GRID_ROW_HEIGHT_CLASS,
+      ].join(' ')}>
       {visibleCards.map(({ card, layoutCard, catalogItem }, index) => (
         <DashboardHomeCard
           key={layoutCard.instanceId}
