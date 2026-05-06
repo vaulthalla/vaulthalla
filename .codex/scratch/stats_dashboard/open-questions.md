@@ -123,3 +123,9 @@
 
 - No blocking open questions.
 - Deferred: use the extracted `overview/lib/layoutCapacity.ts`, `DashboardHomeCard.tsx`, and `DashboardCardVisual.tsx` seams for the next focused card layout contract correction pass.
+
+## Dashboard Card Render Plan Refactor
+
+- No blocking open questions.
+- Deferred: tune exact card heights/gaps/visual aesthetics in a separate visual polish pass now that definitions, templates, and render plans are deterministic.
+- Deferred: move backend-advertised card definition/catalog metadata only if frontend registry drift becomes a real operational problem.

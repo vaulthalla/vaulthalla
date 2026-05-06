@@ -1,72 +1,163 @@
 import type {
   DashboardCardSize,
-  DashboardLayoutCard,
 } from '@/models/dashboard/dashboardLayout'
 
-export function gridClassForSize(size: DashboardCardSize): string {
-  if (size === '1x1') return 'md:col-span-3 lg:col-span-3 md:row-span-2'
-  if (size === '1x2') return 'md:col-span-3 lg:col-span-3 md:row-span-4'
-  if (size === '2x1') return 'md:col-span-6 lg:col-span-6 md:row-span-2'
-  if (size === '2x2') return 'md:col-span-6 lg:col-span-6 md:row-span-4'
-  if (size === '3x1') return 'md:col-span-6 lg:col-span-9 md:row-span-2'
-  if (size === '3x2') return 'md:col-span-6 lg:col-span-9 md:row-span-4'
-  return 'md:col-span-6 lg:col-span-12 md:row-span-4'
+export interface DashboardCardSizeTemplate {
+  size: DashboardCardSize
+  colSpanMd: number
+  colSpanLg: number
+  rowSpan: number
+  cardHeightClass: string
+  headerPx: number
+  summaryLines: 1 | 2
+  tileColsMd: number
+  tileColsLg: number
+  tileRows: number
+  tileHeightPx: number
+  tileGapPx: number
+  visualHeightClass: string
+  maxTiles: number
+  requiresVisual: boolean
+  cardGridClass: string
+  metricGridClass: string
 }
 
-export function baseHeightForCard(layoutCard: DashboardLayoutCard): string {
-  if (layoutCard.size === '1x1') return 'min-h-[9.5rem]'
-  if (layoutCard.size === '1x2') return 'min-h-[15rem]'
-  if (layoutCard.size === '2x1') return 'min-h-[10rem]'
-  if (layoutCard.size === '2x2') return 'min-h-[15rem]'
-  if (layoutCard.size === '3x1') return 'min-h-[10rem]'
-  if (layoutCard.size === '3x2') return 'min-h-[15rem]'
-  return 'min-h-[15rem]'
+export const dashboardCardSizeTemplates: Record<DashboardCardSize, DashboardCardSizeTemplate> = {
+  '1x1': {
+    size: '1x1',
+    colSpanMd: 3,
+    colSpanLg: 3,
+    rowSpan: 2,
+    cardHeightClass: 'min-h-[9.5rem]',
+    headerPx: 58,
+    summaryLines: 1,
+    tileColsMd: 2,
+    tileColsLg: 2,
+    tileRows: 1,
+    tileHeightPx: 44,
+    tileGapPx: 6,
+    visualHeightClass: '',
+    maxTiles: 2,
+    requiresVisual: false,
+    cardGridClass: 'md:col-span-3 lg:col-span-3 md:row-span-2',
+    metricGridClass: 'grid-cols-2',
+  },
+  '1x2': {
+    size: '1x2',
+    colSpanMd: 3,
+    colSpanLg: 3,
+    rowSpan: 4,
+    cardHeightClass: 'min-h-[15rem]',
+    headerPx: 64,
+    summaryLines: 1,
+    tileColsMd: 2,
+    tileColsLg: 2,
+    tileRows: 2,
+    tileHeightPx: 44,
+    tileGapPx: 6,
+    visualHeightClass: 'h-32',
+    maxTiles: 4,
+    requiresVisual: true,
+    cardGridClass: 'md:col-span-3 lg:col-span-3 md:row-span-4',
+    metricGridClass: 'grid-cols-2',
+  },
+  '2x1': {
+    size: '2x1',
+    colSpanMd: 6,
+    colSpanLg: 6,
+    rowSpan: 2,
+    cardHeightClass: 'min-h-[10rem]',
+    headerPx: 58,
+    summaryLines: 1,
+    tileColsMd: 4,
+    tileColsLg: 4,
+    tileRows: 1,
+    tileHeightPx: 44,
+    tileGapPx: 6,
+    visualHeightClass: 'h-14',
+    maxTiles: 4,
+    requiresVisual: false,
+    cardGridClass: 'md:col-span-6 lg:col-span-6 md:row-span-2',
+    metricGridClass: 'grid-cols-2 md:grid-cols-4',
+  },
+  '2x2': {
+    size: '2x2',
+    colSpanMd: 6,
+    colSpanLg: 6,
+    rowSpan: 4,
+    cardHeightClass: 'min-h-[15rem]',
+    headerPx: 64,
+    summaryLines: 2,
+    tileColsMd: 3,
+    tileColsLg: 3,
+    tileRows: 2,
+    tileHeightPx: 44,
+    tileGapPx: 6,
+    visualHeightClass: 'h-32',
+    maxTiles: 6,
+    requiresVisual: true,
+    cardGridClass: 'md:col-span-6 lg:col-span-6 md:row-span-4',
+    metricGridClass: 'grid-cols-2 md:grid-cols-3',
+  },
+  '3x1': {
+    size: '3x1',
+    colSpanMd: 6,
+    colSpanLg: 9,
+    rowSpan: 2,
+    cardHeightClass: 'min-h-[10rem]',
+    headerPx: 58,
+    summaryLines: 1,
+    tileColsMd: 4,
+    tileColsLg: 5,
+    tileRows: 1,
+    tileHeightPx: 44,
+    tileGapPx: 6,
+    visualHeightClass: 'h-14',
+    maxTiles: 5,
+    requiresVisual: false,
+    cardGridClass: 'md:col-span-6 lg:col-span-9 md:row-span-2',
+    metricGridClass: 'grid-cols-2 md:grid-cols-5',
+  },
+  '3x2': {
+    size: '3x2',
+    colSpanMd: 6,
+    colSpanLg: 9,
+    rowSpan: 4,
+    cardHeightClass: 'min-h-[15rem]',
+    headerPx: 64,
+    summaryLines: 2,
+    tileColsMd: 4,
+    tileColsLg: 4,
+    tileRows: 2,
+    tileHeightPx: 44,
+    tileGapPx: 6,
+    visualHeightClass: 'h-36',
+    maxTiles: 8,
+    requiresVisual: true,
+    cardGridClass: 'md:col-span-6 lg:col-span-9 md:row-span-4',
+    metricGridClass: 'grid-cols-2 md:grid-cols-4',
+  },
+  '4x2': {
+    size: '4x2',
+    colSpanMd: 6,
+    colSpanLg: 12,
+    rowSpan: 4,
+    cardHeightClass: 'min-h-[15rem]',
+    headerPx: 64,
+    summaryLines: 2,
+    tileColsMd: 5,
+    tileColsLg: 5,
+    tileRows: 2,
+    tileHeightPx: 44,
+    tileGapPx: 6,
+    visualHeightClass: 'h-36',
+    maxTiles: 10,
+    requiresVisual: true,
+    cardGridClass: 'md:col-span-6 lg:col-span-12 md:row-span-4',
+    metricGridClass: 'grid-cols-2 md:grid-cols-5',
+  },
 }
 
-const metricCapacityBySize: Record<DashboardCardSize, number> = {
-  '1x1': 2,
-  '1x2': 8,
-  '2x1': 4,
-  '2x2': 15,
-  '3x1': 5,
-  '3x2': 20,
-  '4x2': 25,
-}
-
-export function metricCountForCard(layoutCard: DashboardLayoutCard): number {
-  if (layoutCard.variant === 'graph') {
-    if (layoutCard.size === '1x1') return 1
-    if (layoutCard.size === '1x2' || layoutCard.size === '2x1') return 2
-    if (layoutCard.size === '2x2' || layoutCard.size === '3x1') return 5
-    return 8
-  }
-  const hasVisual = layoutCard.variant === 'visual' || layoutCard.variant === 'hero'
-  const capacity = metricCapacityBySize[layoutCard.size]
-  if (!hasVisual) return capacity
-  if (layoutCard.size === '1x1') return 2
-  if (layoutCard.size === '2x1') return 3
-  if (layoutCard.size === '1x2') return 6
-  return capacity
-}
-
-export function metricGridClassForCard(layoutCard: DashboardLayoutCard): string {
-  if (layoutCard.variant === 'graph' && (layoutCard.size === '2x1' || layoutCard.size === '1x2')) return 'grid-cols-2'
-  if (layoutCard.variant === 'graph' && (layoutCard.size === '2x2' || layoutCard.size === '3x1')) return 'grid-cols-3'
-  if (layoutCard.variant === 'graph') return 'grid-cols-2 md:grid-cols-4'
-  if (layoutCard.size === '4x2') return 'grid-cols-2 md:grid-cols-5'
-  if (layoutCard.size === '3x2') return 'grid-cols-2 md:grid-cols-4'
-  if (layoutCard.size === '3x1') return 'grid-cols-2 md:grid-cols-5'
-  if (layoutCard.size === '2x2') return 'grid-cols-2 md:grid-cols-3'
-  if (layoutCard.size === '2x1' && (layoutCard.variant === 'visual' || layoutCard.variant === 'hero')) return 'grid-cols-3'
-  if (layoutCard.size === '2x1') return 'grid-cols-2 md:grid-cols-4'
-  if (layoutCard.size === '1x2') return 'grid-cols-2'
-  return 'grid-cols-2'
-}
-
-export function visualHeightClassForCard(layoutCard: DashboardLayoutCard): string {
-  if (layoutCard.variant === 'graph' && (layoutCard.size === '1x1' || layoutCard.size === '2x1')) return 'h-14'
-  if (layoutCard.variant === 'graph') return 'h-20 flex-1'
-  if (layoutCard.size === '3x2' || layoutCard.size === '4x2') return 'h-36'
-  if (layoutCard.size === '1x2' || layoutCard.size === '2x2') return 'h-32'
-  return ''
+export function templateForCardSize(size: DashboardCardSize): DashboardCardSizeTemplate {
+  return dashboardCardSizeTemplates[size]
 }

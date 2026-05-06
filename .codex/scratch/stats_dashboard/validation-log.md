@@ -554,3 +554,19 @@ Checkpoint:
   - `meson test -C build`: passed, 2/2
   - Extra `pnpm --dir web build`: passed
 - Known failures: none.
+
+## Dashboard Card Render Plan Refactor
+
+- Commit: pending.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `meson setup --reconfigure build`: passed
+  - `meson compile -C build`: passed
+  - `make test`: passed
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+  - `meson test -C build`: passed, 2/2
+  - Extra `pnpm --dir web build`: passed
+- Known failures: none.

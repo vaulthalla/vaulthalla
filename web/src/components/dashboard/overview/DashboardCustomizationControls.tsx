@@ -30,6 +30,7 @@ export function DashboardCustomizationControls({
   onSizeChange: (id: string, size: DashboardCardSize) => void
   onVariantChange: (id: string, variant: DashboardCardVariant) => void
 }) {
+  const supportedSizes = catalogItem.variantSupportedSizes?.[layoutCard.variant] ?? catalogItem.supportedSizes
   const buttonClass =
     'rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] text-white/65 transition hover:border-cyan-200/30 hover:text-cyan-100 disabled:cursor-not-allowed disabled:opacity-35'
   const selectClass =
@@ -61,7 +62,7 @@ export function DashboardCustomizationControls({
           className={selectClass}
           value={layoutCard.size}
           onChange={event => onSizeChange(layoutCard.instanceId, event.target.value as DashboardCardSize)}>
-          {catalogItem.supportedSizes.map(size => (
+          {supportedSizes.map(size => (
             <option key={size} value={size}>
               {size}
             </option>

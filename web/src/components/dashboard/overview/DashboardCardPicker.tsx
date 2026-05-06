@@ -30,7 +30,10 @@ export function DashboardCardPicker({
   onAdd: (id: string, size: DashboardCardSize, variant: DashboardCardVariant) => void
 }) {
   const candidates = catalog.filter(card => card.available)
-  const sizeFiltered = candidates.filter(card => card.supportedSizes.includes(selectedSize))
+  const sizeFiltered = candidates.filter(card => {
+    const variantSizes = card.variantSupportedSizes?.[selectedVariant] ?? card.supportedSizes
+    return variantSizes.includes(selectedSize)
+  })
   const cardsToShow = sizeFiltered.length ? sizeFiltered : candidates
 
   return (
@@ -78,6 +81,8 @@ export function DashboardCardPicker({
           cardsToShow.map(card => {
             const size = card.supportedSizes.includes(selectedSize) ? selectedSize : card.defaultSize
             const variantAvailable = card.supportedVariants.includes(selectedVariant)
+            const variantSizes = card.variantSupportedSizes?.[variantAvailable ? selectedVariant : card.defaultVariant] ?? card.supportedSizes
+            const normalizedSize = variantSizes.includes(size) ? size : variantSizes[0] ?? card.defaultSize
             const variant = variantAvailable ? selectedVariant : card.defaultVariant
             const tone = dashboardSeverityTone('unknown')
             const alreadyAdded = visibleCombos.has(`${card.id}:${variant}`)
@@ -93,7 +98,7 @@ export function DashboardCardPicker({
                   : 'border-white/10 bg-white/[0.035] hover:border-cyan-200/35 hover:bg-cyan-400/10',
                 ].join(' ')}
                 disabled={alreadyAdded || !variantAvailable}
-                onClick={() => onAdd(card.id, size, variant)}>
+                onClick={() => onAdd(card.id, normalizedSize, variant)}>
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className="flex items-center gap-1.5 text-sm font-semibold text-white/90">
@@ -105,7 +110,7 @@ export function DashboardCardPicker({
                   <span className="shrink-0 rounded-full border border-white/10 bg-black/20 px-2 py-0.5 text-[10px] text-white/55">
                     {!variantAvailable ? `No ${selectedVariant}`
                     : alreadyAdded ? 'Already added'
-                    : `${size} · ${variant}`}
+                    : `${normalizedSize} · ${variant}`}
                   </span>
                 </div>
                 <div className="mt-2 grid grid-cols-3 gap-1.5">

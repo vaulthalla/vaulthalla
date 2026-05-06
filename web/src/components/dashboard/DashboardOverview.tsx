@@ -134,8 +134,12 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
   const addCard = useCallback((id: string, size?: DashboardCardSize, variant?: DashboardCardVariant) => {
     const catalogItem = catalogById.get(id)
     if (!catalogItem) return
-    const nextSize = size && catalogItem.supportedSizes.includes(size) ? size : catalogItem.defaultSize
     const nextVariant = variant && catalogItem.supportedVariants.includes(variant) ? variant : catalogItem.defaultVariant
+    const supportedSizes = catalogItem.variantSupportedSizes?.[nextVariant] ?? catalogItem.supportedSizes
+    const nextSize =
+      size && supportedSizes.includes(size) ? size
+      : supportedSizes.includes(catalogItem.defaultSize) ? catalogItem.defaultSize
+      : supportedSizes[0] ?? catalogItem.defaultSize
     const nextInstanceId = dashboardLayoutInstanceId(id, nextVariant)
 
     updateLayout(current => {

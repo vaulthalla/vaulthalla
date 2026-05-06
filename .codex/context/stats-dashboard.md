@@ -1057,3 +1057,52 @@ This file mirrors the ignored scratch roadmap/status notes for durable checkpoin
   - `pnpm --dir web test`: passed
   - `meson test -C build`: passed, 2/2
   - Extra `pnpm --dir web build`: passed.
+
+## Dashboard Card Render Plan Refactor
+
+- Status: implemented; commit created after this context update.
+- Goal:
+  - Convert the dashboard home-card system from scattered runtime decisions into definition-driven catalog, curation, visual-kind, template, and render-plan layers.
+- New frontend surfaces:
+  - `web/src/components/dashboard/dashboardCardDefinitions.ts`
+  - `web/src/components/dashboard/overview/lib/cardRenderPlan.ts`
+- Changed frontend surfaces:
+  - `web/src/components/dashboard/dashboardCardCatalog.ts`
+  - `web/src/components/dashboard/dashboardMetricCuration.ts`
+  - `web/src/components/dashboard/overview/lib/layoutCapacity.ts`
+  - `web/src/components/dashboard/overview/DashboardHomeCard.tsx`
+  - `web/src/components/dashboard/overview/DashboardCardVisual.tsx`
+  - `web/src/components/dashboard/overview/DashboardCardPicker.tsx`
+  - `web/src/components/dashboard/overview/DashboardCustomizationControls.tsx`
+  - `web/src/components/dashboard/DashboardOverview.tsx`
+  - `web/src/models/dashboard/dashboardLayout.ts`
+- Architecture:
+  - `dashboardCardDefinitions.ts` now centralizes card identity, section, metadata, supported sizes/variants, metric priority, low-value metric rules, variant overrides, visual kind, graph requirements, visual metric omissions, defaults, and presets.
+  - `dashboardCardCatalog.ts` is now a thin definition-derived catalog/preset export.
+  - `dashboardMetricCuration.ts` now reads priority and low-value behavior from card definitions instead of maintaining separate card-id maps.
+  - `layoutCapacity.ts` now exposes deterministic size templates with md/lg spans, row spans, header/summary hints, fixed tile heights, tile columns/rows, max tile counts, visual heights, and whether the size requires a visual.
+  - `cardRenderPlan.ts` builds the deterministic per-card render plan: normalized size/variant metadata, template, selected metrics, hidden metric count, visual kind, and grid/height classes.
+  - `DashboardHomeCard.tsx` now renders a plan; it no longer owns metric selection, visual fallback, hidden metric counting, size capacity, or grid class logic.
+  - `DashboardCardVisual.tsx` now renders from typed visual kinds such as `stack:operations`, `meter:db_cache`, and `sparkline:thread_pressure` instead of switching directly on card ids.
+- Compatibility:
+  - Existing persisted preferences still normalize through `instanceId` and card id + variant identity.
+  - `DashboardLayoutCatalogItem.variantSupportedSizes` allows older invalid size/variant combinations to normalize to definition-supported sizes.
+  - Duplicate same-family cards with different variants remain supported.
+  - No backend behavior, metrics, preference schema, auth/middleware, graph plumbing, or drilldown page behavior changed.
+- Contract:
+  - Metric tiles remain fixed compact tiles; no stretching behavior was added.
+  - `Y=2` sizes are only supported by visual/hero/graph variants through variant-specific supported sizes.
+  - `Y=2` templates reserve a visual/composition/graph slot and cap numeric support tiles to two compact rows.
+- Deferred:
+  - Final visual polish, exact spacing, and any additional backend metrics are intentionally deferred until after this deterministic contract settles.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `meson setup --reconfigure build`: passed
+  - `meson compile -C build`: passed
+  - `make test`: passed
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+  - `meson test -C build`: passed, 2/2
+  - Extra `pnpm --dir web build`: passed.

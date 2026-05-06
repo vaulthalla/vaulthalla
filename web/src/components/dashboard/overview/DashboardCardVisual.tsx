@@ -1,6 +1,7 @@
 'use client'
 
 import type { DashboardCardSummary, DashboardMetricSummary } from '@/models/stats/dashboardOverview'
+import type { DashboardCardVisualKind } from '@/components/dashboard/dashboardCardDefinitions'
 import {
   dashboardMetricByKey,
   dashboardMetricMeterValue,
@@ -72,7 +73,7 @@ function VisualStack({
   )
 }
 
-export function DashboardGraphVisual({ card, compact = false }: { card: DashboardCardSummary; compact?: boolean }) {
+function DashboardGraphVisual({ card, compact = false }: { card: DashboardCardSummary; compact?: boolean }) {
   if (card.series.length) return <DashboardSparkline series={card.series} compact={compact} />
 
   return (
@@ -82,7 +83,15 @@ export function DashboardGraphVisual({ card, compact = false }: { card: Dashboar
   )
 }
 
-export function DashboardCardVisual({ card }: { card: DashboardCardSummary }) {
+export function DashboardCardVisual({
+  card,
+  visualKind,
+  compact = false,
+}: {
+  card: DashboardCardSummary
+  visualKind: DashboardCardVisualKind
+  compact?: boolean
+}) {
   const metrics = dashboardMetricByKey(card.metrics)
   const metric = (key: string) => metrics.get(key)
   const value = (key: string) => {
@@ -90,7 +99,9 @@ export function DashboardCardVisual({ card }: { card: DashboardCardSummary }) {
     return selected ? dashboardMetricNumber(selected) ?? 0 : 0
   }
 
-  if (card.id === 'system.operations') {
+  if (visualKind.startsWith('sparkline:')) return <DashboardGraphVisual card={card} compact={compact} />
+
+  if (visualKind === 'stack:operations') {
     return (
       <VisualStack
         emptyLabel="No queued or stalled work"
@@ -104,7 +115,7 @@ export function DashboardCardVisual({ card }: { card: DashboardCardSummary }) {
     )
   }
 
-  if (card.id === 'system.threadpools') {
+  if (visualKind === 'meter:thread_pressure') {
     const pressure = metric('pressure')
     return pressure ? <VisualMeter metric={pressure} /> : (
       <VisualStack
@@ -118,7 +129,7 @@ export function DashboardCardVisual({ card }: { card: DashboardCardSummary }) {
     )
   }
 
-  if (card.id === 'system.connections') {
+  if (visualKind === 'stack:connections') {
     return (
       <VisualStack
         emptyLabel="No active websocket sessions"
@@ -131,7 +142,7 @@ export function DashboardCardVisual({ card }: { card: DashboardCardSummary }) {
     )
   }
 
-  if (card.id === 'system.storage') {
+  if (visualKind === 'stack:storage') {
     return (
       <VisualStack
         emptyLabel="No vault backends configured"
@@ -144,7 +155,7 @@ export function DashboardCardVisual({ card }: { card: DashboardCardSummary }) {
     )
   }
 
-  if (card.id === 'system.retention') {
+  if (visualKind === 'stack:retention') {
     return (
       <VisualStack
         emptyLabel="Retention queues are clear"
@@ -158,7 +169,7 @@ export function DashboardCardVisual({ card }: { card: DashboardCardSummary }) {
     )
   }
 
-  if (card.id === 'system.trends') {
+  if (visualKind === 'trend:coverage') {
     const trendMetrics = ['latest_sample_age', 'window', 'coverage']
       .map(key => metric(key))
       .filter((item): item is DashboardMetricSummary => Boolean(item))
@@ -192,15 +203,18 @@ export function DashboardCardVisual({ card }: { card: DashboardCardSummary }) {
   }
 
   const visualMetric =
-    metric('error_rate') ??
-    metric('hit_rate') ??
-    metric('cache_hit') ??
-    metric('pressure') ??
-    metric('services') ??
-    metric('protocols') ??
-    metric('overdue') ??
-    metric('latest_sample_age') ??
-    metric('window')
+    visualKind === 'meter:fuse_error' ? metric('error_rate')
+    : visualKind === 'meter:cache_hit' ? metric('hit_rate')
+    : visualKind === 'meter:db_cache' ? metric('cache_hit')
+    : metric('error_rate') ??
+      metric('hit_rate') ??
+      metric('cache_hit') ??
+      metric('pressure') ??
+      metric('services') ??
+      metric('protocols') ??
+      metric('overdue') ??
+      metric('latest_sample_age') ??
+      metric('window')
 
   return visualMetric ? <VisualMeter metric={visualMetric} /> : null
 }

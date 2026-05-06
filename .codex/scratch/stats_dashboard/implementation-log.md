@@ -1059,3 +1059,45 @@ Layout/sidebar decision:
 - Deferred:
   - No visual/layout redesign was attempted in this pass.
   - Next dashboard pass should use the new seams to fix remaining card layout contract issues without touching preference/polling orchestration.
+
+## Dashboard Card Render Plan Refactor
+
+- Commit: pending.
+- Added `web/src/components/dashboard/dashboardCardDefinitions.ts`.
+  - Centralizes card metadata, supported sizes/variants, variant-specific supported sizes, metric priority, low-value metric rules, visual kind, graph requirements, and default/preset layout cards.
+  - Defines typed visual kinds including `stack:operations`, `stack:connections`, `stack:storage`, `stack:retention`, `meter:fuse_error`, `meter:db_cache`, `meter:thread_pressure`, and `sparkline:*`.
+- Reworked `web/src/components/dashboard/dashboardCardCatalog.ts`.
+  - Catalog and presets are generated from the definition registry.
+  - `variantSupportedSizes` is passed through to layout normalization and picker/control UI.
+- Reworked `web/src/components/dashboard/dashboardMetricCuration.ts`.
+  - Removed duplicated base/variant preference maps.
+  - Removed duplicated low-value and visual/graph metric maps.
+  - Metric priority, low-value filtering, zero-value filtering, and visual omissions now come from card definitions.
+- Reworked `web/src/components/dashboard/overview/lib/layoutCapacity.ts`.
+  - Added deterministic `DashboardCardSizeTemplate` records for every finite size.
+  - Templates include col spans, row span, header/summary hints, tile row/column counts, fixed tile height, visual height, max support tiles, and requires-visual.
+  - `Y=2` templates require visuals and cap numeric support tiles to two rows.
+- Added `web/src/components/dashboard/overview/lib/cardRenderPlan.ts`.
+  - Normalizes current size/variant metadata.
+  - Selects template, metrics, hidden count, visual kind, and class names.
+  - This is now the only helper that decides card metric count and visual metric omission.
+- Updated `DashboardHomeCard.tsx`.
+  - Renders a render plan.
+  - No longer owns metric selection, hidden metric counting, visual fallback, or capacity class selection.
+- Updated `DashboardCardVisual.tsx`.
+  - Visual rendering uses typed visual kinds rather than card-id switch logic.
+- Updated layout normalization:
+  - `DashboardLayoutCatalogItem` supports `variantSupportedSizes`.
+  - Existing persisted layouts with stale size/variant combinations normalize to definition-supported sizes.
+- Behavior preserved:
+  - server-backed preferences
+  - localStorage fallback/cache
+  - presets
+  - duplicate card family variants
+  - drag/drop
+  - add/remove
+  - size/variant controls
+  - selected-layout polling
+  - fixed drilldown pages
+- Deferred:
+  - Exact visual polish and spacing are intentionally left for a focused follow-up now that render plans exist.

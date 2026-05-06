@@ -8,25 +8,14 @@ import type {
   DashboardLayoutCard,
 } from '@/models/dashboard/dashboardLayout'
 import type { DashboardCardSummary } from '@/models/stats/dashboardOverview'
+import { dashboardCardDefinitionsById } from '@/components/dashboard/dashboardCardDefinitions'
 import type { DashboardCardCatalogItem } from '@/components/dashboard/dashboardCardCatalog'
 import { DashboardSeverityBadge, DashboardSeverityIcon } from '@/components/dashboard/DashboardSeverityBadge'
 import { dashboardSeverityTone, sortDashboardIssues } from '@/components/dashboard/dashboardSeverity'
-import {
-  dashboardGraphMetricKeys,
-  dashboardVisualMetricKeys,
-  isLowValueDashboardMetric,
-  selectDashboardCardMetrics,
-} from '@/components/dashboard/dashboardMetricCuration'
 import { DashboardCustomizationControls } from '@/components/dashboard/overview/DashboardCustomizationControls'
-import { DashboardCardVisual, DashboardGraphVisual } from '@/components/dashboard/overview/DashboardCardVisual'
+import { DashboardCardVisual } from '@/components/dashboard/overview/DashboardCardVisual'
 import { DashboardMetricTile } from '@/components/dashboard/overview/DashboardMetricTile'
-import {
-  baseHeightForCard,
-  gridClassForSize,
-  metricCountForCard,
-  metricGridClassForCard,
-  visualHeightClassForCard,
-} from '@/components/dashboard/overview/lib/layoutCapacity'
+import { buildDashboardCardRenderPlan } from '@/components/dashboard/overview/lib/cardRenderPlan'
 
 function DashboardInlineIssuePill({
   severity,
@@ -111,36 +100,14 @@ export function DashboardHomeCard({
   const errors = card.errors.length
   const warnings = card.warnings.length
   const firstIssue = sortDashboardIssues([...card.errors, ...card.warnings])[0]
-  const isCompact = layoutCard.variant === 'compact' || layoutCard.size === '1x1' || layoutCard.size === '2x1'
-  const isHero = layoutCard.variant === 'hero' || layoutCard.size === '4x2'
-  const isGraph = layoutCard.variant === 'graph'
-  const isVisual = layoutCard.variant === 'visual'
-  const metricCount = metricCountForCard(layoutCard)
-  const largeCard = layoutCard.size === '1x2' || layoutCard.size === '2x2' || layoutCard.size === '3x2' || layoutCard.size === '4x2'
-  const meaningfulMetricCount = card.metrics.filter(metric => !isLowValueDashboardMetric(card.id, metric)).length
-  const hasVisualFallback = dashboardVisualMetricKeys(card.id).size > 0
-  const shouldRenderVisual = isGraph || isVisual || isHero || (largeCard && hasVisualFallback && meaningfulMetricCount < metricCount)
-  const visualKeys =
-    isGraph ? dashboardGraphMetricKeys(card.id)
-    : shouldRenderVisual ? dashboardVisualMetricKeys(card.id)
-    : new Set<string>()
-  const selectedMetrics = selectDashboardCardMetrics(card, layoutCard, metricCount, visualKeys)
-  const selectedMetricKeys = new Set(selectedMetrics.map(metric => metric.key))
-  const hiddenMetricCount = card.metrics.filter(metric =>
-    !selectedMetricKeys.has(metric.key) &&
-    !visualKeys.has(metric.key) &&
-    !isLowValueDashboardMetric(card.id, metric),
-  ).length
-  const visual =
-    isGraph ? <DashboardGraphVisual card={card} compact={isCompact} />
-    : shouldRenderVisual ? <DashboardCardVisual card={card} />
-    : null
-  const metricGridClass = metricGridClassForCard(layoutCard)
-  const visualHeightClass = visualHeightClassForCard(layoutCard)
+  const definition = dashboardCardDefinitionsById.get(layoutCard.id)
+  if (!definition) return null
+  const plan = buildDashboardCardRenderPlan({ definition, layoutCard, card })
+  const visual = plan.visualKind ? <DashboardCardVisual card={card} visualKind={plan.visualKind} compact={plan.isCompact} /> : null
 
   return (
     <div
-      className={['col-span-1', gridClassForSize(layoutCard.size)].join(' ')}
+      className={['col-span-1', plan.cardGridClass].join(' ')}
       onDragOver={event => onDragOverCard(layoutCard.instanceId, event)}
       onDrop={event => onDropCard(layoutCard.instanceId, event)}
       onDragEnd={onDragEnd}>
@@ -160,11 +127,10 @@ export function DashboardHomeCard({
         className={[
           'group flex h-full max-h-full min-h-0 flex-col overflow-hidden rounded-2xl border bg-zinc-950/48 backdrop-blur transition hover:-translate-y-0.5 hover:brightness-110',
           !customizing ? 'cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200/45' : '',
-          isHero ? 'p-3.5'
-          : isGraph ? 'p-3'
-          : isVisual ? 'p-3'
+          plan.isHero ? 'p-3.5'
+          : plan.visualKind ? 'p-3'
           : 'p-2.5',
-          baseHeightForCard(layoutCard),
+          plan.cardHeightClass,
           tone.border,
           tone.ring,
           dragging ? 'opacity-55' : '',
@@ -193,13 +159,13 @@ export function DashboardHomeCard({
             <div className="min-w-0">
               <div
                 draggable
-                className={['flex cursor-grab items-center gap-1.5 font-semibold text-white/90 active:cursor-grabbing', isHero ? 'text-lg' : isCompact ? 'text-sm' : 'text-base'].join(' ')}
+                className={['flex cursor-grab items-center gap-1.5 font-semibold text-white/90 active:cursor-grabbing', plan.isHero ? 'text-lg' : plan.isCompact ? 'text-sm' : 'text-base'].join(' ')}
                 title="Drag card header to reorder"
                 onDragStart={event => onDragStart(layoutCard.instanceId, event)}>
-                <DashboardSeverityIcon severity={card.severity} className={[isHero ? 'h-5 w-5' : 'h-4 w-4', tone.text].join(' ')} />
+                <DashboardSeverityIcon severity={card.severity} className={[plan.isHero ? 'h-5 w-5' : 'h-4 w-4', tone.text].join(' ')} />
                 <span className="truncate">{card.title}</span>
               </div>
-              {isHero ?
+              {plan.isHero ?
                 <div className="mt-1 line-clamp-1 text-xs text-white/50">{card.description || catalogItem.description}</div>
               : null}
             </div>
@@ -209,19 +175,19 @@ export function DashboardHomeCard({
                 errorCount={errors}
                 warningCount={warnings}
                 firstIssue={firstIssue}
-                compact={isCompact}
+                compact={plan.isCompact}
               />
-              {hiddenMetricCount > 0 ?
+              {plan.hiddenMetricCount > 0 ?
                 <span
                   className="inline-flex shrink-0 items-center rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] leading-none text-white/45"
-                  title={`${hiddenMetricCount} lower-priority metrics hidden`}>
-                  +{hiddenMetricCount}
+                  title={`${plan.hiddenMetricCount} lower-priority metrics hidden`}>
+                  +{plan.hiddenMetricCount}
                 </span>
               : null}
-              <DashboardSeverityBadge severity={card.severity} errorCount={errors} warningCount={warnings} compact={isCompact} />
+              <DashboardSeverityBadge severity={card.severity} errorCount={errors} warningCount={warnings} compact={plan.isCompact} />
             </div>
           </div>
-          <p className={['mt-1.5 text-xs leading-snug text-white/70', isCompact ? 'line-clamp-1' : 'line-clamp-2'].join(' ')}>
+          <p className={['mt-1.5 text-xs leading-snug text-white/70', plan.template.summaryLines === 1 ? 'line-clamp-1' : 'line-clamp-2'].join(' ')}>
             {card.available ? card.summary : card.unavailable_reason}
           </p>
         </div>
@@ -231,16 +197,16 @@ export function DashboardHomeCard({
             <div
               className={[
                 'min-h-0 shrink-0',
-                visualHeightClass,
+                plan.visualHeightClass,
               ].join(' ')}>
               {visual}
             </div>
           : null}
 
-          {selectedMetrics.length ?
-            <div className={['grid min-h-0 shrink-0 gap-1.5 overflow-hidden', metricGridClass].join(' ')}>
-              {selectedMetrics.map(metric => (
-                <DashboardMetricTile key={`${card.id}-${metric.key}`} metric={metric} dense={!isHero} />
+          {plan.selectedMetrics.length ?
+            <div className={['grid min-h-0 shrink-0 gap-1.5 overflow-hidden', plan.metricGridClass].join(' ')}>
+              {plan.selectedMetrics.map(metric => (
+                <DashboardMetricTile key={`${card.id}-${metric.key}`} metric={metric} dense={!plan.isHero} />
               ))}
             </div>
           : null}

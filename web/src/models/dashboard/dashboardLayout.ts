@@ -19,6 +19,7 @@ export interface DashboardLayoutCatalogItem {
   defaultVariant: DashboardCardVariant
   supportedSizes: DashboardCardSize[]
   supportedVariants: DashboardCardVariant[]
+  variantSupportedSizes?: Partial<Record<DashboardCardVariant, DashboardCardSize[]>>
 }
 
 export const DASHBOARD_LAYOUT_STORAGE_KEY = 'vaulthalla.dashboard.layout.v1'
@@ -73,16 +74,19 @@ export function normalizeDashboardLayout(
     const catalogItem = catalogById.get(id)
     if (!catalogItem) return
 
-    const rawSize = card.size
     const rawVariant = card.variant
-    const size =
-      isDashboardCardSize(rawSize) && catalogItem.supportedSizes.includes(rawSize) ?
-        rawSize
-      : catalogItem.defaultSize
     const variant =
       isDashboardCardVariant(rawVariant) && catalogItem.supportedVariants.includes(rawVariant) ?
         rawVariant
       : catalogItem.defaultVariant
+    const supportedSizes = catalogItem.variantSupportedSizes?.[variant] ?? catalogItem.supportedSizes
+    const rawSize = card.size
+    const size =
+      isDashboardCardSize(rawSize) && supportedSizes.includes(rawSize) ?
+        rawSize
+      : supportedSizes.includes(catalogItem.defaultSize) ?
+        catalogItem.defaultSize
+      : supportedSizes[0] ?? catalogItem.defaultSize
     const comboKey = `${id}:${variant}`
     const visible = asBoolean(card.visible, true)
 
