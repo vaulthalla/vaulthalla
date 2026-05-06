@@ -698,7 +698,10 @@ This file mirrors the ignored scratch roadmap/status notes for durable checkpoin
 
 ## Phase 16 - Dashboard Insight Cards and Visual Variants
 
-- Status: validation passed; commit/push checkpoint pending.
+- Status: committed and pushed.
+- Commit: `82795125`.
+- Push target: `origin/stats-dashboards`.
+- Push result: succeeded, with GitHub remote moved warning.
 - Backend surfaces:
   - `stats.dashboard.overview` remains the overview command and backend-owned severity/warning/error source.
   - `core/src/stats/model/DashboardOverview.cpp` now emits a few higher-signal home-card metric keys: thread pool pressured/saturated counts, connection share session counts, storage local vault counts, operation failed-24h counts, and trend latest-sample/coverage metrics.
