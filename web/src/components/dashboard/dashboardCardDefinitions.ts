@@ -300,7 +300,7 @@ export const dashboardCardDefinitions: DashboardCardDefinition[] = [
 export const dashboardCardDefinitionsById = new Map(dashboardCardDefinitions.map(card => [card.id, card]))
 
 const defaultVisibleCards: DashboardLayoutPresetDefinition['cards'] = [
-  { id: 'system.operations', size: '2x2', variant: 'visual' },
+  { id: 'system.operations', size: '4x2', variant: 'visual' },
   { id: 'system.storage', size: '2x1', variant: 'visual' },
   { id: 'system.threadpools', size: '2x1', variant: 'visual' },
   { id: 'system.fuse', size: '2x1', variant: 'visual' },
