@@ -86,7 +86,7 @@ export function buildDashboardCardRenderPlan({
   const visualContainerClass =
     shouldUseVisual ?
       isSingleRow ? 'min-h-0 flex-1'
-      : ['min-h-0 shrink-0', template.visualHeightClass].filter(Boolean).join(' ')
+      : 'min-h-0 flex-1'
     : ''
 
   return {
