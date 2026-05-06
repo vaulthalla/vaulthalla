@@ -2,6 +2,8 @@
 
 import type { DashboardGraphSeries } from '@/models/stats/dashboardOverview'
 
+const DASHBOARD_GRAPH_PENDING_TEXT = 'Not enough data to render this graph yet. Perform some operations and check back in a few minutes.'
+
 function graphSeriesColor(index: number, series: DashboardGraphSeries): string {
   if (index === 0) return '#22d3ee'
   if (series.tone === 'error') return '#fb7185'
@@ -11,16 +13,19 @@ function graphSeriesColor(index: number, series: DashboardGraphSeries): string {
   return palette[(index - 1) % palette.length]
 }
 
+export function DashboardGraphPlaceholder() {
+  return (
+    <div className="flex h-full min-h-14 items-center justify-center rounded-xl border border-white/10 bg-black/20 px-3 text-center text-[11px] leading-snug text-white/45">
+      {DASHBOARD_GRAPH_PENDING_TEXT}
+    </div>
+  )
+}
+
 export function DashboardSparkline({ series, compact = false }: { series: DashboardGraphSeries[]; compact?: boolean }) {
   const activeSeries = series.filter(item => item.points.length >= 2)
+  const hasMeaningfulData = activeSeries.some(item => item.points.some(point => Math.abs(point.value) > 1e-9))
 
-  if (!activeSeries.length) {
-    return (
-      <div className="flex h-full min-h-14 items-center justify-center rounded-xl border border-white/10 bg-black/20 text-xs text-white/45">
-        Trend samples pending
-      </div>
-    )
-  }
+  if (!activeSeries.length || !hasMeaningfulData) return <DashboardGraphPlaceholder />
 
   const allPoints = activeSeries.flatMap(item => item.points)
   const minTime = Math.min(...allPoints.map(point => point.created_at))

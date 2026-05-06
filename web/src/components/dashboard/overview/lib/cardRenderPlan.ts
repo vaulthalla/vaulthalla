@@ -31,10 +31,12 @@ export interface DashboardCardRenderPlan {
   selectedMetrics: DashboardMetricSummary[]
   hiddenMetricCount: number
   visualMetricKeys: Set<string>
+  metricSlotCount: number
   cardGridClass: string
   cardHeightClass: string
   metricGridClass: string
   visualHeightClass: string
+  visualContainerClass: string
 }
 
 export function buildDashboardCardRenderPlan({
@@ -57,22 +59,34 @@ export function buildDashboardCardRenderPlan({
     : supportedSizes[0] ?? definition.defaultSize
   const template = templateForCardSize(normalizedSize)
   const visualKind = variantDefinition.visualKind ?? definition.visualKind ?? null
-  const isHero = normalizedVariant === 'hero' || normalizedSize === '4x2'
-  const isCompact = normalizedVariant === 'compact' || normalizedSize === '1x1' || normalizedSize === '2x1'
-  const shouldUseVisual = Boolean(visualKind && (template.requiresVisual || normalizedVariant === 'visual' || normalizedVariant === 'graph' || isHero))
+  const isHero = false
+  const isSingleRow = normalizedSize.endsWith('x1')
+  const isCompact = isSingleRow || normalizedSize === '1x1'
+  const shouldUseVisual = Boolean(visualKind && normalizedVariant === 'visual')
+  const metricSlotCount = shouldUseVisual && isSingleRow ? 0 : template.maxTiles
   const visualMetricKeys = shouldUseVisual ? dashboardVisualMetricKeys(card.id, normalizedVariant) : new Set<string>()
   const normalizedLayoutCard = {
     ...layoutCard,
     size: normalizedSize,
     variant: normalizedVariant,
   }
-  const selectedMetrics = selectDashboardCardMetrics(card, normalizedLayoutCard, template.maxTiles, visualMetricKeys)
+  const selectedMetrics = selectDashboardCardMetrics(card, normalizedLayoutCard, metricSlotCount, visualMetricKeys, {
+    backfillLowValue: true,
+    backfillOmitted: true,
+  })
   const selectedMetricKeys = new Set(selectedMetrics.map(metric => metric.key))
-  const hiddenMetricCount = card.metrics.filter(metric =>
-    !selectedMetricKeys.has(metric.key) &&
-    !visualMetricKeys.has(metric.key) &&
-    !isLowValueDashboardMetric(card.id, metric),
-  ).length
+  const hiddenMetricCount = metricSlotCount > 0 ?
+    card.metrics.filter(metric =>
+      !selectedMetricKeys.has(metric.key) &&
+      !visualMetricKeys.has(metric.key) &&
+      !isLowValueDashboardMetric(card.id, metric),
+    ).length
+  : 0
+  const visualContainerClass =
+    shouldUseVisual ?
+      isSingleRow ? 'min-h-0 flex-1'
+      : ['min-h-0 shrink-0', template.visualHeightClass].filter(Boolean).join(' ')
+    : ''
 
   return {
     definition,
@@ -90,9 +104,11 @@ export function buildDashboardCardRenderPlan({
     selectedMetrics,
     hiddenMetricCount,
     visualMetricKeys,
+    metricSlotCount,
     cardGridClass: template.cardGridClass,
     cardHeightClass: template.cardHeightClass,
     metricGridClass: template.metricGridClass,
     visualHeightClass: template.visualHeightClass,
+    visualContainerClass,
   }
 }

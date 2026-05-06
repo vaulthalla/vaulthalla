@@ -196,8 +196,7 @@ export function DashboardHomeCard({
           {visual ?
             <div
               className={[
-                'min-h-0 shrink-0',
-                plan.visualHeightClass,
+                plan.visualContainerClass,
               ].join(' ')}>
               {visual}
             </div>

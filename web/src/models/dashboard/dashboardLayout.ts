@@ -1,8 +1,10 @@
 export const dashboardCardSizes = ['1x1', '1x2', '2x1', '2x2', '3x1', '3x2', '4x2'] as const
-export const dashboardCardVariants = ['compact', 'summary', 'hero', 'visual', 'graph'] as const
+export const dashboardCardVariants = ['tiles', 'visual'] as const
+export const legacyDashboardCardVariants = ['compact', 'summary', 'hero', 'graph'] as const
 
 export type DashboardCardSize = (typeof dashboardCardSizes)[number]
 export type DashboardCardVariant = (typeof dashboardCardVariants)[number]
+export type LegacyDashboardCardVariant = (typeof legacyDashboardCardVariants)[number]
 
 export interface DashboardLayoutCard {
   instanceId: string
@@ -44,6 +46,13 @@ export function isDashboardCardVariant(value: unknown): value is DashboardCardVa
   return typeof value === 'string' && dashboardCardVariants.includes(value as DashboardCardVariant)
 }
 
+export function normalizeDashboardCardVariant(value: unknown): DashboardCardVariant | null {
+  if (isDashboardCardVariant(value)) return value
+  if (value === 'compact' || value === 'summary') return 'tiles'
+  if (value === 'hero' || value === 'graph') return 'visual'
+  return null
+}
+
 export function asDashboardLayoutObject(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
@@ -75,9 +84,10 @@ export function normalizeDashboardLayout(
     if (!catalogItem) return
 
     const rawVariant = card.variant
+    const normalizedRawVariant = normalizeDashboardCardVariant(rawVariant)
     const variant =
-      isDashboardCardVariant(rawVariant) && catalogItem.supportedVariants.includes(rawVariant) ?
-        rawVariant
+      normalizedRawVariant && catalogItem.supportedVariants.includes(normalizedRawVariant) ?
+        normalizedRawVariant
       : catalogItem.defaultVariant
     const supportedSizes = catalogItem.variantSupportedSizes?.[variant] ?? catalogItem.supportedSizes
     const rawSize = card.size
@@ -95,7 +105,8 @@ export function normalizeDashboardLayout(
     const rawInstanceId = typeof card.instance_id === 'string' ? card.instance_id
       : typeof card.instanceId === 'string' ? card.instanceId
       : ''
-    let instanceId = rawInstanceId || dashboardLayoutInstanceId(id, variant)
+    const rawInstanceIsCanonical = rawInstanceId === dashboardLayoutInstanceId(id, variant)
+    let instanceId = rawInstanceIsCanonical ? rawInstanceId : dashboardLayoutInstanceId(id, variant)
     let suffix = 1
     while (seenInstanceIds.has(instanceId)) {
       instanceId = dashboardLayoutInstanceId(id, variant, suffix++)

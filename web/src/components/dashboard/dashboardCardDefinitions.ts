@@ -18,6 +18,7 @@ export type DashboardCardVisualKind =
   | 'sparkline:fuse_error'
   | 'sparkline:cache_hit'
   | 'sparkline:db_cache'
+  | 'sparkline:operations'
   | 'sparkline:coverage'
 
 export interface DashboardCardVariantDefinition {
@@ -53,30 +54,19 @@ export interface DashboardLayoutPresetDefinition {
   cards: Array<Pick<DashboardLayoutCard, 'id' | 'size' | 'variant'>>
 }
 
-const y2Sizes: DashboardCardSize[] = ['1x2', '2x2', '3x2', '4x2']
 const y1AndY2Sizes: DashboardCardSize[] = ['1x1', '1x2', '2x1', '2x2', '3x1', '3x2', '4x2']
-const summarySizes: DashboardCardSize[] = ['2x1', '3x1']
-const visualSizes: DashboardCardSize[] = ['2x1', '2x2', '3x1', '3x2', '4x2']
-const graphSizes: DashboardCardSize[] = ['2x1', '2x2', '3x1', '3x2', '4x2']
+const tilesSizes: DashboardCardSize[] = ['2x1', '3x1', '1x1']
+const wideTilesSizes: DashboardCardSize[] = ['2x1', '3x1']
+const visualSizes: DashboardCardSize[] = ['1x2', '2x1', '2x2', '3x1', '3x2', '4x2']
 
 function commonVariants(
   visualKind: DashboardCardVisualKind,
-  graphKind?: DashboardCardVisualKind,
+  tileSupportedSizes: DashboardCardSize[] = tilesSizes,
+  visualSupportedSizes: DashboardCardSize[] = visualSizes,
 ): Partial<Record<DashboardCardVariant, DashboardCardVariantDefinition>> {
   return {
-    compact: { supportedSizes: ['1x1', '2x1', '3x1'] },
-    summary: { supportedSizes: summarySizes },
-    hero: { supportedSizes: y2Sizes, visualKind },
-    visual: { supportedSizes: visualSizes, visualKind },
-    ...(graphKind ?
-      {
-        graph: {
-          supportedSizes: graphSizes,
-          visualKind: graphKind,
-          requiresSeries: true,
-        },
-      }
-    : {}),
+    tiles: { supportedSizes: tileSupportedSizes },
+    visual: { supportedSizes: visualSupportedSizes, visualKind },
   }
 }
 
@@ -87,20 +77,20 @@ export const dashboardCardDefinitions: DashboardCardDefinition[] = [
     title: 'Thread Pools',
     description: 'Runtime worker pressure across FUSE, sync, thumbnails, HTTP, and stats.',
     href: '/dashboard/runtime#thread-pools',
-    defaultVariant: 'graph',
+    defaultVariant: 'visual',
     defaultSize: '2x1',
     supportedSizes: y1AndY2Sizes,
-    supportedVariants: ['compact', 'summary', 'hero', 'visual', 'graph'],
+    supportedVariants: ['tiles', 'visual'],
     metricPriority: ['queue', 'pressure', 'workers', 'idle', 'pressured', 'saturated', 'borrowed'],
-    visualKind: 'meter:thread_pressure',
-    omitMetricsWhenVisual: ['pressure'],
+    visualKind: 'sparkline:thread_pressure',
+    omitMetricsWhenVisual: [],
     variants: {
-      ...commonVariants('meter:thread_pressure', 'sparkline:thread_pressure'),
-      graph: {
-        supportedSizes: graphSizes,
+      tiles: { supportedSizes: tilesSizes },
+      visual: {
+        supportedSizes: visualSizes,
         visualKind: 'sparkline:thread_pressure',
-        metricPriority: ['workers', 'idle', 'pressured', 'saturated', 'borrowed'],
-        omitMetricsWhenVisual: ['pressure', 'queue'],
+        metricPriority: ['pressure', 'queue', 'workers', 'idle', 'pressured', 'saturated', 'borrowed'],
+        omitMetricsWhenVisual: [],
         requiresSeries: true,
       },
     },
@@ -114,7 +104,7 @@ export const dashboardCardDefinitions: DashboardCardDefinition[] = [
     defaultVariant: 'visual',
     defaultSize: '2x1',
     supportedSizes: y1AndY2Sizes,
-    supportedVariants: ['compact', 'summary', 'hero', 'visual'],
+    supportedVariants: ['tiles', 'visual'],
     metricPriority: ['sessions', 'human', 'share', 'unauthenticated', 'oldest_session', 'oldest_unauth'],
     zeroLowValueMetricKeys: ['unauthenticated'],
     visualKind: 'stack:connections',
@@ -129,20 +119,18 @@ export const dashboardCardDefinitions: DashboardCardDefinition[] = [
     href: '/dashboard/filesystem#fuse',
     defaultVariant: 'visual',
     defaultSize: '2x1',
-    supportedSizes: y1AndY2Sizes,
-    supportedVariants: ['compact', 'summary', 'visual', 'graph'],
+    supportedSizes: ['1x2', '2x1', '2x2', '3x1', '3x2', '4x2'],
+    supportedVariants: ['tiles', 'visual'],
     metricPriority: ['ops', 'total_errors', 'error_rate', 'open_handles', 'read_bytes', 'write_bytes'],
-    visualKind: 'meter:fuse_error',
-    omitMetricsWhenVisual: ['error_rate'],
+    visualKind: 'sparkline:fuse_error',
+    omitMetricsWhenVisual: [],
     variants: {
-      compact: { supportedSizes: ['2x1', '3x1'] },
-      summary: { supportedSizes: summarySizes },
-      visual: { supportedSizes: visualSizes, visualKind: 'meter:fuse_error' },
-      graph: {
-        supportedSizes: graphSizes,
+      tiles: { supportedSizes: wideTilesSizes },
+      visual: {
+        supportedSizes: ['1x2', '2x1', '2x2', '3x1', '3x2', '4x2'],
         visualKind: 'sparkline:fuse_error',
-        metricPriority: ['open_handles', 'total_errors', 'read_bytes', 'write_bytes'],
-        omitMetricsWhenVisual: ['error_rate'],
+        metricPriority: ['error_rate', 'ops', 'open_handles', 'total_errors', 'read_bytes', 'write_bytes'],
+        omitMetricsWhenVisual: [],
         requiresSeries: true,
       },
     },
@@ -155,21 +143,19 @@ export const dashboardCardDefinitions: DashboardCardDefinition[] = [
     href: '/dashboard/filesystem#fs-cache',
     defaultVariant: 'visual',
     defaultSize: '2x1',
-    supportedSizes: ['1x1', '2x1', '3x1', '2x2', '3x2'],
-    supportedVariants: ['compact', 'summary', 'visual', 'graph'],
+    supportedSizes: ['1x1', '1x2', '2x1', '2x2', '3x1', '3x2'],
+    supportedVariants: ['tiles', 'visual'],
     metricPriority: ['hit_rate', 'used', 'requests', 'misses', 'evictions'],
     zeroLowValueMetricKeys: ['evictions'],
-    visualKind: 'meter:cache_hit',
-    omitMetricsWhenVisual: ['hit_rate'],
+    visualKind: 'sparkline:cache_hit',
+    omitMetricsWhenVisual: [],
     variants: {
-      compact: { supportedSizes: ['1x1', '2x1', '3x1'] },
-      summary: { supportedSizes: ['2x1', '3x1'] },
-      visual: { supportedSizes: ['2x1', '2x2', '3x1', '3x2'], visualKind: 'meter:cache_hit' },
-      graph: {
-        supportedSizes: ['2x1', '2x2', '3x1', '3x2'],
+      tiles: { supportedSizes: tilesSizes },
+      visual: {
+        supportedSizes: ['1x2', '2x1', '2x2', '3x1', '3x2'],
         visualKind: 'sparkline:cache_hit',
-        metricPriority: ['used', 'requests', 'misses', 'evictions'],
-        omitMetricsWhenVisual: ['hit_rate'],
+        metricPriority: ['hit_rate', 'used', 'requests', 'misses', 'evictions'],
+        omitMetricsWhenVisual: [],
         requiresSeries: true,
       },
     },
@@ -182,21 +168,19 @@ export const dashboardCardDefinitions: DashboardCardDefinition[] = [
     href: '/dashboard/filesystem#http-cache',
     defaultVariant: 'visual',
     defaultSize: '2x1',
-    supportedSizes: ['1x1', '2x1', '3x1', '2x2', '3x2'],
-    supportedVariants: ['compact', 'summary', 'visual', 'graph'],
+    supportedSizes: ['1x1', '1x2', '2x1', '2x2', '3x1', '3x2'],
+    supportedVariants: ['tiles', 'visual'],
     metricPriority: ['hit_rate', 'used', 'requests', 'misses', 'evictions'],
     zeroLowValueMetricKeys: ['evictions'],
-    visualKind: 'meter:cache_hit',
-    omitMetricsWhenVisual: ['hit_rate'],
+    visualKind: 'sparkline:cache_hit',
+    omitMetricsWhenVisual: [],
     variants: {
-      compact: { supportedSizes: ['1x1', '2x1', '3x1'] },
-      summary: { supportedSizes: ['2x1', '3x1'] },
-      visual: { supportedSizes: ['2x1', '2x2', '3x1', '3x2'], visualKind: 'meter:cache_hit' },
-      graph: {
-        supportedSizes: ['2x1', '2x2', '3x1', '3x2'],
+      tiles: { supportedSizes: tilesSizes },
+      visual: {
+        supportedSizes: ['1x2', '2x1', '2x2', '3x1', '3x2'],
         visualKind: 'sparkline:cache_hit',
-        metricPriority: ['used', 'requests', 'misses', 'evictions'],
-        omitMetricsWhenVisual: ['hit_rate'],
+        metricPriority: ['hit_rate', 'used', 'requests', 'misses', 'evictions'],
+        omitMetricsWhenVisual: [],
         requiresSeries: true,
       },
     },
@@ -210,7 +194,7 @@ export const dashboardCardDefinitions: DashboardCardDefinition[] = [
     defaultVariant: 'visual',
     defaultSize: '2x1',
     supportedSizes: y1AndY2Sizes,
-    supportedVariants: ['compact', 'summary', 'hero', 'visual'],
+    supportedVariants: ['tiles', 'visual'],
     metricPriority: ['vaults', 'active', 'local', 's3', 'inactive', 'degraded', 'backend_errors'],
     zeroLowValueMetricKeys: ['inactive', 'backend_errors', 'degraded'],
     visualKind: 'stack:storage',
@@ -225,21 +209,19 @@ export const dashboardCardDefinitions: DashboardCardDefinition[] = [
     href: '/dashboard/storage#database',
     defaultVariant: 'visual',
     defaultSize: '2x1',
-    supportedSizes: y1AndY2Sizes,
-    supportedVariants: ['compact', 'summary', 'visual', 'graph'],
+    supportedSizes: ['1x2', '2x1', '2x2', '3x1', '3x2', '4x2'],
+    supportedVariants: ['tiles', 'visual'],
     metricPriority: ['cache_hit', 'connections', 'active_connections', 'size', 'slow_queries', 'oldest_tx'],
     zeroLowValueMetricKeys: ['slow_queries', 'oldest_tx'],
-    visualKind: 'meter:db_cache',
-    omitMetricsWhenVisual: ['cache_hit'],
+    visualKind: 'sparkline:db_cache',
+    omitMetricsWhenVisual: [],
     variants: {
-      compact: { supportedSizes: ['2x1', '3x1'] },
-      summary: { supportedSizes: summarySizes },
-      visual: { supportedSizes: visualSizes, visualKind: 'meter:db_cache' },
-      graph: {
-        supportedSizes: graphSizes,
+      tiles: { supportedSizes: wideTilesSizes },
+      visual: {
+        supportedSizes: ['1x2', '2x1', '2x2', '3x1', '3x2', '4x2'],
         visualKind: 'sparkline:db_cache',
-        metricPriority: ['connections', 'active_connections', 'size', 'slow_queries', 'oldest_tx'],
-        omitMetricsWhenVisual: ['cache_hit'],
+        metricPriority: ['cache_hit', 'connections', 'active_connections', 'size', 'slow_queries', 'oldest_tx'],
+        omitMetricsWhenVisual: [],
         requiresSeries: true,
       },
     },
@@ -253,7 +235,7 @@ export const dashboardCardDefinitions: DashboardCardDefinition[] = [
     defaultVariant: 'visual',
     defaultSize: '2x1',
     supportedSizes: y1AndY2Sizes,
-    supportedVariants: ['compact', 'summary', 'hero', 'visual'],
+    supportedVariants: ['tiles', 'visual'],
     metricPriority: ['overdue', 'trash', 'trash_bytes', 'cache_expired', 'sync_backlog', 'audit_backlog'],
     zeroLowValueMetricKeys: ['cache_expired', 'sync_backlog', 'audit_backlog'],
     visualKind: 'stack:retention',
@@ -267,14 +249,23 @@ export const dashboardCardDefinitions: DashboardCardDefinition[] = [
     description: 'Pending, active, failed, and stalled filesystem/share work.',
     href: '/dashboard/operations#operation-queue',
     defaultVariant: 'visual',
-    defaultSize: '2x1',
+    defaultSize: '2x2',
     supportedSizes: y1AndY2Sizes,
-    supportedVariants: ['compact', 'summary', 'hero', 'visual'],
+    supportedVariants: ['tiles', 'visual'],
     metricPriority: ['stalled', 'pending', 'in_progress', 'failed_24h', 'active_uploads', 'oldest_pending', 'oldest_active'],
     zeroLowValueMetricKeys: ['stalled', 'failed_24h', 'active_uploads'],
-    visualKind: 'stack:operations',
-    omitMetricsWhenVisual: ['pending', 'in_progress', 'stalled', 'failed_24h'],
-    variants: commonVariants('stack:operations'),
+    visualKind: 'sparkline:operations',
+    omitMetricsWhenVisual: [],
+    variants: {
+      tiles: { supportedSizes: tilesSizes },
+      visual: {
+        supportedSizes: visualSizes,
+        visualKind: 'sparkline:operations',
+        metricPriority: ['pending', 'in_progress', 'stalled', 'failed_24h', 'active_uploads', 'oldest_pending', 'oldest_active'],
+        omitMetricsWhenVisual: [],
+        requiresSeries: true,
+      },
+    },
   },
   {
     id: 'system.trends',
@@ -284,21 +275,19 @@ export const dashboardCardDefinitions: DashboardCardDefinition[] = [
     href: '/dashboard/trends#trends',
     defaultVariant: 'visual',
     defaultSize: '2x1',
-    supportedSizes: ['2x1', '2x2', '3x1', '3x2'],
-    supportedVariants: ['compact', 'summary', 'visual', 'graph'],
+    supportedSizes: ['1x2', '2x1', '2x2', '3x1', '3x2'],
+    supportedVariants: ['tiles', 'visual'],
     metricPriority: ['latest_sample_age', 'window', 'coverage'],
     lowValueMetricKeys: ['series', 'points'],
-    visualKind: 'trend:coverage',
-    omitMetricsWhenVisual: ['latest_sample_age', 'window', 'coverage'],
+    visualKind: 'sparkline:coverage',
+    omitMetricsWhenVisual: [],
     variants: {
-      compact: { supportedSizes: ['2x1', '3x1'], metricPriority: ['latest_sample_age', 'window'] },
-      summary: { supportedSizes: ['2x1', '3x1'], metricPriority: ['latest_sample_age', 'window', 'coverage'] },
-      visual: { supportedSizes: ['2x1', '2x2', '3x1', '3x2'], visualKind: 'trend:coverage' },
-      graph: {
-        supportedSizes: ['2x1', '2x2', '3x1', '3x2'],
+      tiles: { supportedSizes: wideTilesSizes, metricPriority: ['latest_sample_age', 'window', 'coverage'] },
+      visual: {
+        supportedSizes: ['1x2', '2x1', '2x2', '3x1', '3x2'],
         visualKind: 'sparkline:coverage',
         metricPriority: ['latest_sample_age', 'window', 'coverage'],
-        omitMetricsWhenVisual: ['latest_sample_age', 'window', 'coverage', 'series', 'points'],
+        omitMetricsWhenVisual: [],
         requiresSeries: true,
       },
     },
@@ -308,9 +297,9 @@ export const dashboardCardDefinitions: DashboardCardDefinition[] = [
 export const dashboardCardDefinitionsById = new Map(dashboardCardDefinitions.map(card => [card.id, card]))
 
 const defaultVisibleCards: DashboardLayoutPresetDefinition['cards'] = [
-  { id: 'system.operations', size: '2x1', variant: 'visual' },
+  { id: 'system.operations', size: '2x2', variant: 'visual' },
   { id: 'system.storage', size: '2x1', variant: 'visual' },
-  { id: 'system.threadpools', size: '2x1', variant: 'graph' },
+  { id: 'system.threadpools', size: '2x1', variant: 'visual' },
   { id: 'system.fuse', size: '2x1', variant: 'visual' },
   { id: 'system.db', size: '2x1', variant: 'visual' },
   { id: 'system.retention', size: '2x1', variant: 'visual' },
@@ -330,10 +319,10 @@ export const dashboardLayoutPresetDefinitions: DashboardLayoutPresetDefinition[]
     title: 'Minimal',
     description: 'Small health-first board for operators who mostly use drilldowns.',
     cards: [
-      { id: 'system.operations', size: '2x1', variant: 'visual' },
+      { id: 'system.operations', size: '2x1', variant: 'tiles' },
       { id: 'system.storage', size: '2x1', variant: 'visual' },
       { id: 'system.db', size: '2x1', variant: 'visual' },
-      { id: 'system.threadpools', size: '2x1', variant: 'graph' },
+      { id: 'system.threadpools', size: '2x1', variant: 'visual' },
     ],
   },
   {
@@ -341,11 +330,11 @@ export const dashboardLayoutPresetDefinitions: DashboardLayoutPresetDefinition[]
     title: 'Runtime',
     description: 'Runtime, workers, sessions, and filesystem pressure.',
     cards: [
-      { id: 'system.threadpools', size: '2x1', variant: 'summary' },
-      { id: 'system.threadpools', size: '3x1', variant: 'graph' },
+      { id: 'system.threadpools', size: '2x1', variant: 'tiles' },
+      { id: 'system.threadpools', size: '3x1', variant: 'visual' },
       { id: 'system.connections', size: '2x1', variant: 'visual' },
       { id: 'system.fuse', size: '2x1', variant: 'visual' },
-      { id: 'system.operations', size: '2x1', variant: 'visual' },
+      { id: 'system.operations', size: '2x2', variant: 'visual' },
       { id: 'system.db', size: '2x1', variant: 'visual' },
     ],
   },
@@ -367,8 +356,8 @@ export const dashboardLayoutPresetDefinitions: DashboardLayoutPresetDefinition[]
     title: 'Operations',
     description: 'Queued work, transfers, FUSE activity, and worker pressure.',
     cards: [
-      { id: 'system.operations', size: '4x2', variant: 'hero' },
-      { id: 'system.threadpools', size: '2x1', variant: 'graph' },
+      { id: 'system.operations', size: '4x2', variant: 'visual' },
+      { id: 'system.threadpools', size: '2x1', variant: 'visual' },
       { id: 'system.fuse', size: '2x1', variant: 'visual' },
       { id: 'system.connections', size: '2x1', variant: 'visual' },
       { id: 'system.db', size: '2x1', variant: 'visual' },
@@ -379,17 +368,17 @@ export const dashboardLayoutPresetDefinitions: DashboardLayoutPresetDefinition[]
     title: 'Cockpit',
     description: 'Wide high-signal overview for wallboard-style monitoring.',
     cards: [
-      { id: 'system.operations', size: '2x1', variant: 'visual' },
+      { id: 'system.operations', size: '2x2', variant: 'visual' },
       { id: 'system.storage', size: '2x1', variant: 'visual' },
-      { id: 'system.threadpools', size: '2x1', variant: 'summary' },
-      { id: 'system.threadpools', size: '2x1', variant: 'graph' },
+      { id: 'system.threadpools', size: '2x1', variant: 'tiles' },
+      { id: 'system.threadpools', size: '2x1', variant: 'visual' },
       { id: 'system.fuse', size: '2x1', variant: 'visual' },
       { id: 'system.db', size: '2x1', variant: 'visual' },
       { id: 'system.retention', size: '2x1', variant: 'visual' },
       { id: 'system.connections', size: '2x1', variant: 'visual' },
       { id: 'system.fs_cache', size: '2x1', variant: 'visual' },
       { id: 'system.http_cache', size: '2x1', variant: 'visual' },
-      { id: 'system.trends', size: '2x1', variant: 'summary' },
+      { id: 'system.trends', size: '2x1', variant: 'visual' },
     ],
   },
 ]

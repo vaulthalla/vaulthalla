@@ -68,7 +68,7 @@ struct DashboardCardSummary {
     std::string title;
     std::string description;
     std::string href;
-    std::string variant = "summary";
+    std::string variant = "tiles";
     std::string size = "2x1";
     std::string severity = "unknown";
     bool available = true;

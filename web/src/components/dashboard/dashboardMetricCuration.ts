@@ -46,27 +46,33 @@ export function selectDashboardCardMetrics(
   layoutCard: DashboardLayoutCard,
   count: number,
   omitKeys: Set<string> = new Set(),
+  options: {
+    backfillLowValue?: boolean
+    backfillOmitted?: boolean
+  } = {},
 ): DashboardMetricSummary[] {
   const preferred = dashboardMetricPriority(card.id, layoutCard.variant)
   const byKey = dashboardMetricByKey(card.metrics)
   const selected: DashboardMetricSummary[] = []
   const selectedKeys = new Set<string>()
 
-  for (const key of preferred) {
-    const metric = byKey.get(key)
-    if (omitKeys.has(key)) continue
-    if (!metric || isLowValueDashboardMetric(card.id, metric)) continue
+  const addMetric = (metric: DashboardMetricSummary | undefined, allowLowValue: boolean, allowOmitted: boolean) => {
+    if (!metric || selected.length >= count) return
+    if (selectedKeys.has(metric.key)) return
+    if (!allowOmitted && omitKeys.has(metric.key)) return
+    if (!allowLowValue && isLowValueDashboardMetric(card.id, metric)) return
     selected.push(metric)
     selectedKeys.add(metric.key)
   }
 
-  for (const metric of card.metrics) {
-    if (omitKeys.has(metric.key)) continue
-    if (selectedKeys.has(metric.key)) continue
-    if (isLowValueDashboardMetric(card.id, metric)) continue
-    selected.push(metric)
-    selectedKeys.add(metric.key)
+  const addPass = (allowLowValue: boolean, allowOmitted: boolean) => {
+    for (const key of preferred) addMetric(byKey.get(key), allowLowValue, allowOmitted)
+    for (const metric of card.metrics) addMetric(metric, allowLowValue, allowOmitted)
   }
+
+  addPass(false, false)
+  if (options.backfillLowValue) addPass(true, false)
+  if (options.backfillOmitted) addPass(Boolean(options.backfillLowValue), true)
 
   return selected.slice(0, count)
 }

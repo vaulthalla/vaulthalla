@@ -8,7 +8,7 @@ import {
   dashboardMetricNumber,
 } from '@/components/dashboard/dashboardMetricCuration'
 import { dashboardSeverityTone } from '@/components/dashboard/dashboardSeverity'
-import { DashboardSparkline } from '@/components/dashboard/overview/DashboardSparkline'
+import { DashboardGraphPlaceholder, DashboardSparkline } from '@/components/dashboard/overview/DashboardSparkline'
 
 function ratioValue(value: string): number | null {
   const [ready, total] = value.split('/').map(part => Number(part.trim()))
@@ -76,11 +76,7 @@ function VisualStack({
 function DashboardGraphVisual({ card, compact = false }: { card: DashboardCardSummary; compact?: boolean }) {
   if (card.series.length) return <DashboardSparkline series={card.series} compact={compact} />
 
-  return (
-    <div className="flex h-full min-h-14 items-center justify-center rounded-xl border border-white/10 bg-black/20 text-xs text-white/45">
-      No historical series yet
-    </div>
-  )
+  return <DashboardGraphPlaceholder />
 }
 
 export function DashboardCardVisual({

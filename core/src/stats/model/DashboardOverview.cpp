@@ -239,7 +239,7 @@ void dashboardOverviewAttachTrendSeries(
     if (!trends) return;
 
     for (auto& card : cards) {
-        if (card.variant != "graph" && card.id != "system.trends") continue;
+        if (card.variant != "visual" && card.variant != "graph" && card.id != "system.trends") continue;
 
         std::vector<const StatsTrendSeries*> selected;
         for (const auto& series : trends->series) {
@@ -309,8 +309,8 @@ std::vector<DashboardOverviewCardDescriptor> dashboardOverviewCardDescriptors() 
         {"system.storage", "storage", "Storage Backend", "Local and S3 vault backend configuration and free-space posture.", "/dashboard/storage#storage-backend", "visual", "2x1"},
         {"system.db", "storage", "Database Health", "Database connectivity, connection pressure, cache hit ratio, and table size.", "/dashboard/storage#database", "visual", "2x1"},
         {"system.retention", "storage", "Retention / Cleanup", "Trash, audit, sync, share, and cache cleanup backlog.", "/dashboard/storage#retention", "visual", "2x1"},
-        {"system.operations", "operations", "Operation Queue", "Pending, active, failed, and stalled filesystem/share work.", "/dashboard/operations#operation-queue", "visual", "2x1"},
-        {"system.trends", "trends", "Trends", "Recently collected stats snapshot series.", "/dashboard/trends#trends", "summary", "2x1"},
+        {"system.operations", "operations", "Operation Queue", "Pending, active, failed, and stalled filesystem/share work.", "/dashboard/operations#operation-queue", "visual", "2x2"},
+        {"system.trends", "trends", "Trends", "Recently collected stats snapshot series.", "/dashboard/trends#trends", "visual", "2x1"},
     };
 }
 
@@ -637,7 +637,7 @@ DashboardOverviewCardDescriptor dashboardOverviewDescriptorForUnknown(const std:
         .title = id.empty() ? "Unknown Card" : id,
         .description = "Requested dashboard card is not registered.",
         .href = "/dashboard",
-        .variant = "summary",
+        .variant = "tiles",
         .size = "2x1",
     };
 }
@@ -739,7 +739,7 @@ DashboardOverview DashboardOverview::snapshot(const DashboardOverviewRequest& re
     }
 
     const auto wantsSeries = std::any_of(overview.cards.begin(), overview.cards.end(), [](const auto& card) {
-        return card.variant == "graph" || card.id == "system.trends";
+        return card.variant == "visual" || card.variant == "graph" || card.id == "system.trends";
     });
     if (wantsSeries) {
         try {

@@ -268,7 +268,7 @@ export class DashboardCardSummary implements IDashboardCardSummary {
   title = ''
   description = ''
   href = ''
-  variant = 'summary'
+  variant = 'tiles'
   size = '2x1'
   severity: DashboardSeverity = 'unknown'
   available = true
@@ -308,7 +308,7 @@ export class DashboardCardSummary implements IDashboardCardSummary {
       title: asString(data.title),
       description: asString(data.description),
       href: asString(data.href),
-      variant: asString(data.variant, 'summary'),
+      variant: asString(data.variant, 'tiles'),
       size: asString(data.size, '2x1'),
       severity: asSeverity(data.severity),
       available: asBoolean(data.available, true),
