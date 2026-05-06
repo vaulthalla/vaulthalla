@@ -1,3 +1,4 @@
+import { dashboardLayoutInstanceId } from '@/models/dashboard/dashboardLayout'
 import type {
   DashboardCardSize,
   DashboardCardVariant,
@@ -36,7 +37,7 @@ export const dashboardCardCatalog: DashboardCardCatalogItem[] = [
     description: 'Runtime worker pressure across FUSE, sync, thumbnails, HTTP, and stats.',
     href: '/dashboard/runtime#thread-pools',
     defaultVariant: 'visual',
-    defaultSize: '2x2',
+    defaultSize: '2x1',
     supportedSizes: allSizes,
     supportedVariants: allVariants,
     available: true,
@@ -101,7 +102,7 @@ export const dashboardCardCatalog: DashboardCardCatalogItem[] = [
     description: 'Local and S3 vault backend configuration and free-space posture.',
     href: '/dashboard/storage#storage-backend',
     defaultVariant: 'visual',
-    defaultSize: '2x2',
+    defaultSize: '2x1',
     supportedSizes: allSizes,
     supportedVariants: allVariants,
     available: true,
@@ -140,7 +141,7 @@ export const dashboardCardCatalog: DashboardCardCatalogItem[] = [
     description: 'Pending, active, failed, and stalled filesystem/share work.',
     href: '/dashboard/operations#operation-queue',
     defaultVariant: 'visual',
-    defaultSize: '2x2',
+    defaultSize: '2x1',
     supportedSizes: allSizes,
     supportedVariants: allVariants,
     available: true,
@@ -247,18 +248,16 @@ export const dashboardLayoutPresets: DashboardLayoutPreset[] = [
 ]
 
 export function dashboardLayoutFromCards(cards: DashboardLayoutPreset['cards']): DashboardLayoutCard[] {
-  const visibleById = new Map(cards.map((card, order) => [card.id, { ...card, order }]))
+  const visible = cards.map((card, order) => ({
+    instanceId: dashboardLayoutInstanceId(card.id, card.variant),
+    id: card.id,
+    size: card.size,
+    variant: card.variant,
+    visible: true,
+    order,
+  }))
 
-  return dashboardCardCatalog.map((catalogItem, index) => {
-    const visible = visibleById.get(catalogItem.id)
-    return {
-      id: catalogItem.id,
-      size: visible?.size ?? catalogItem.defaultSize,
-      variant: visible?.variant ?? catalogItem.defaultVariant,
-      visible: Boolean(visible),
-      order: visible?.order ?? cards.length + index,
-    }
-  })
+  return visible
 }
 
 export function defaultDashboardLayout(): DashboardLayoutCard[] {

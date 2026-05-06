@@ -5,6 +5,7 @@ export type DashboardCardSize = (typeof dashboardCardSizes)[number]
 export type DashboardCardVariant = (typeof dashboardCardVariants)[number]
 
 export interface DashboardLayoutCard {
+  instanceId: string
   id: string
   size: DashboardCardSize
   variant: DashboardCardVariant
@@ -22,8 +23,16 @@ export interface DashboardLayoutCatalogItem {
 
 export const DASHBOARD_LAYOUT_STORAGE_KEY = 'vaulthalla.dashboard.layout.v1'
 
+export interface DashboardPreferenceLayoutCard extends DashboardLayoutCard {
+  instance_id: string
+}
+
 export interface DashboardPreferenceLayout {
-  cards: DashboardLayoutCard[]
+  cards: DashboardPreferenceLayoutCard[]
+}
+
+export function dashboardLayoutInstanceId(id: string, variant: DashboardCardVariant, suffix?: number): string {
+  return suffix && suffix > 0 ? `${id}:${variant}:${suffix}` : `${id}:${variant}`
 }
 
 export function isDashboardCardSize(value: unknown): value is DashboardCardSize {
@@ -54,42 +63,66 @@ export function normalizeDashboardLayout(
   const rawObject = asDashboardLayoutObject(raw)
   const rawCards = Array.isArray(raw) ? raw : Array.isArray(rawObject.cards) ? rawObject.cards : []
   const catalogById = new Map(catalog.map(item => [item.id, item]))
-  const defaultsById = new Map(defaults.map(item => [item.id, item]))
-  const rawById = new Map<string, Record<string, unknown>>()
+  const normalized: DashboardLayoutCard[] = []
+  const seenInstanceIds = new Set<string>()
+  const seenVisibleCombos = new Set<string>()
 
-  for (const rawCard of rawCards) {
+  rawCards.forEach((rawCard, index) => {
     const card = asDashboardLayoutObject(rawCard)
     const id = typeof card.id === 'string' ? card.id : ''
-    if (catalogById.has(id)) rawById.set(id, card)
-  }
+    const catalogItem = catalogById.get(id)
+    if (!catalogItem) return
 
-  const normalized = catalog.map((catalogItem, index) => {
-    const rawCard = rawById.get(catalogItem.id)
-    const defaultCard = defaultsById.get(catalogItem.id)
-    const rawSize = rawCard?.size
-    const rawVariant = rawCard?.variant
+    const rawSize = card.size
+    const rawVariant = card.variant
     const size =
       isDashboardCardSize(rawSize) && catalogItem.supportedSizes.includes(rawSize) ?
         rawSize
-      : defaultCard?.size ?? catalogItem.defaultSize
+      : catalogItem.defaultSize
     const variant =
       isDashboardCardVariant(rawVariant) && catalogItem.supportedVariants.includes(rawVariant) ?
         rawVariant
-      : defaultCard?.variant ?? catalogItem.defaultVariant
+      : catalogItem.defaultVariant
+    const comboKey = `${id}:${variant}`
+    const visible = asBoolean(card.visible, true)
 
-    return {
-      id: catalogItem.id,
+    if (visible && seenVisibleCombos.has(comboKey)) return
+
+    const rawInstanceId = typeof card.instance_id === 'string' ? card.instance_id
+      : typeof card.instanceId === 'string' ? card.instanceId
+      : ''
+    let instanceId = rawInstanceId || dashboardLayoutInstanceId(id, variant)
+    let suffix = 1
+    while (seenInstanceIds.has(instanceId)) {
+      instanceId = dashboardLayoutInstanceId(id, variant, suffix++)
+    }
+
+    seenInstanceIds.add(instanceId)
+    if (visible) seenVisibleCombos.add(comboKey)
+
+    normalized.push({
+      instanceId,
+      id,
       size,
       variant,
-      visible: rawCard ? asBoolean(rawCard.visible, defaultCard?.visible ?? false) : defaultCard?.visible ?? false,
-      order: rawCard ? asNumber(rawCard.order, defaultCard?.order ?? index) : defaultCard?.order ?? index,
-    }
+      visible,
+      order: asNumber(card.order, index),
+    })
   })
+
+  const defaultsByInstance = new Map(defaults.map(item => [item.instanceId, item]))
+  for (const defaultCard of defaults) {
+    if (seenInstanceIds.has(defaultCard.instanceId)) continue
+    normalized.push({
+      ...defaultCard,
+      order: normalized.length + defaultCard.order,
+    })
+  }
 
   const repaired = normalized.some(card => card.visible) ?
     normalized
   : normalized.map(card => {
-      const defaultCard = defaultsById.get(card.id)
+      const defaultCard = defaultsByInstance.get(card.instanceId)
       return defaultCard?.visible ? { ...card, visible: true, order: defaultCard.order } : card
     })
 
@@ -119,6 +152,8 @@ export function dashboardLayoutPreference(layout: DashboardLayoutCard[]): Dashbo
 
   return {
     cards: [...visible, ...hidden].map((card, order) => ({
+      instanceId: card.instanceId,
+      instance_id: card.instanceId,
       id: card.id,
       size: card.size,
       variant: card.variant,

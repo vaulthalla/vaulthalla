@@ -8,6 +8,7 @@ import {
   DASHBOARD_LAYOUT_STORAGE_KEY,
   dashboardCardSizes,
   dashboardCardVariants,
+  dashboardLayoutInstanceId,
   dashboardLayoutPreference,
   type DashboardCardSize,
   type DashboardCardVariant,
@@ -390,15 +391,34 @@ function baseHeightForCard(layoutCard: DashboardLayoutCard): string {
   return 'min-h-[15rem]'
 }
 
+const metricCapacityBySize: Record<DashboardCardSize, number> = {
+  '1x1': 2,
+  '1x2': 4,
+  '2x1': 4,
+  '2x2': 6,
+  '3x1': 4,
+  '3x2': 8,
+  '4x2': 10,
+}
+
 function metricCountForCard(layoutCard: DashboardLayoutCard): number {
   const hasVisual = layoutCard.variant === 'visual' || layoutCard.variant === 'hero'
+  const capacity = metricCapacityBySize[layoutCard.size]
+  if (!hasVisual) return capacity
   if (layoutCard.size === '1x1') return 2
-  if (layoutCard.size === '1x2') return hasVisual ? 3 : 4
-  if (layoutCard.size === '2x1') return hasVisual ? 3 : 4
-  if (layoutCard.size === '2x2') return hasVisual ? 5 : 6
-  if (layoutCard.size === '3x1') return hasVisual ? 4 : 6
-  if (layoutCard.size === '3x2') return hasVisual ? 6 : 8
-  return hasVisual ? 8 : 10
+  if (layoutCard.size === '2x1') return 3
+  return capacity
+}
+
+function metricGridClassForCard(layoutCard: DashboardLayoutCard): string {
+  if (layoutCard.size === '4x2') return 'grid-cols-2 md:grid-cols-5'
+  if (layoutCard.size === '3x2') return 'grid-cols-2 md:grid-cols-4'
+  if (layoutCard.size === '3x1') return 'grid-cols-2 md:grid-cols-4'
+  if (layoutCard.size === '2x2') return 'grid-cols-2 md:grid-cols-3'
+  if (layoutCard.size === '2x1' && (layoutCard.variant === 'visual' || layoutCard.variant === 'hero')) return 'grid-cols-3'
+  if (layoutCard.size === '2x1') return 'grid-cols-2 md:grid-cols-4'
+  if (layoutCard.size === '1x2') return 'grid-cols-2'
+  return 'grid-cols-2'
 }
 
 function issueCountForCard(layoutCard: DashboardLayoutCard): number {
@@ -459,16 +479,16 @@ function CardCustomizationControls({
         draggable
         className="cursor-grab rounded-full border border-cyan-200/20 bg-cyan-400/10 px-2 py-0.5 text-[11px] text-cyan-100 transition hover:border-cyan-100/45 active:cursor-grabbing"
         title="Drag to reorder"
-        onDragStart={event => onDragStart(layoutCard.id, event)}>
+        onDragStart={event => onDragStart(layoutCard.instanceId, event)}>
         Drag
       </button>
-      <button type="button" className={buttonClass} onClick={() => onMove(layoutCard.id, -1)} disabled={index === 0}>
+      <button type="button" className={buttonClass} onClick={() => onMove(layoutCard.instanceId, -1)} disabled={index === 0}>
         Up
       </button>
       <button
         type="button"
         className={buttonClass}
-        onClick={() => onMove(layoutCard.id, 1)}
+        onClick={() => onMove(layoutCard.instanceId, 1)}
         disabled={index >= total - 1}>
         Down
       </button>
@@ -477,7 +497,7 @@ function CardCustomizationControls({
         <select
           className={selectClass}
           value={layoutCard.size}
-          onChange={event => onSizeChange(layoutCard.id, event.target.value as DashboardCardSize)}>
+          onChange={event => onSizeChange(layoutCard.instanceId, event.target.value as DashboardCardSize)}>
           {catalogItem.supportedSizes.map(size => (
             <option key={size} value={size}>
               {size}
@@ -490,7 +510,7 @@ function CardCustomizationControls({
         <select
           className={selectClass}
           value={layoutCard.variant}
-          onChange={event => onVariantChange(layoutCard.id, event.target.value as DashboardCardVariant)}>
+          onChange={event => onVariantChange(layoutCard.instanceId, event.target.value as DashboardCardVariant)}>
           {catalogItem.supportedVariants.map(variant => (
             <option key={variant} value={variant}>
               {variant}
@@ -498,7 +518,7 @@ function CardCustomizationControls({
           ))}
         </select>
       </label>
-      <button type="button" className={buttonClass} onClick={() => onRemove(layoutCard.id)} disabled={total <= 1}>
+      <button type="button" className={buttonClass} onClick={() => onRemove(layoutCard.instanceId)} disabled={total <= 1}>
         Remove
       </button>
     </div>
@@ -507,7 +527,7 @@ function CardCustomizationControls({
 
 function CardPickerPanel({
   catalog,
-  visibleIds,
+  visibleCombos,
   selectedSize,
   selectedVariant,
   onSizeChange,
@@ -515,7 +535,7 @@ function CardPickerPanel({
   onAdd,
 }: {
   catalog: DashboardCardCatalogItem[]
-  visibleIds: Set<string>
+  visibleCombos: Set<string>
   selectedSize: DashboardCardSize
   selectedVariant: DashboardCardVariant
   onSizeChange: (size: DashboardCardSize) => void
@@ -523,9 +543,8 @@ function CardPickerPanel({
   onAdd: (id: string, size: DashboardCardSize, variant: DashboardCardVariant) => void
 }) {
   const candidates = catalog.filter(card => card.available)
-  const visibleCandidates = candidates.filter(card => !visibleIds.has(card.id))
-  const sizeFiltered = visibleCandidates.filter(card => card.supportedSizes.includes(selectedSize))
-  const cardsToShow = sizeFiltered.length ? sizeFiltered : visibleCandidates
+  const sizeFiltered = candidates.filter(card => card.supportedSizes.includes(selectedSize))
+  const cardsToShow = sizeFiltered.length ? sizeFiltered : candidates
 
   return (
     <div className="absolute right-0 top-[calc(100%+0.6rem)] z-40 w-[min(42rem,calc(100vw-2rem))] rounded-3xl border border-white/10 bg-zinc-950/95 p-3 shadow-[0_30px_90px_-30px_rgba(0,0,0,0.95)] backdrop-blur-xl">
@@ -571,14 +590,22 @@ function CardPickerPanel({
         {cardsToShow.length ?
           cardsToShow.map(card => {
             const size = card.supportedSizes.includes(selectedSize) ? selectedSize : card.defaultSize
-            const variant = card.supportedVariants.includes(selectedVariant) ? selectedVariant : card.defaultVariant
+            const variantAvailable = card.supportedVariants.includes(selectedVariant)
+            const variant = variantAvailable ? selectedVariant : card.defaultVariant
             const tone = dashboardSeverityTone('unknown')
+            const alreadyAdded = visibleCombos.has(`${card.id}:${variant}`)
 
             return (
               <button
                 key={card.id}
                 type="button"
-                className="group rounded-2xl border border-white/10 bg-white/[0.035] p-2.5 text-left transition hover:border-cyan-200/35 hover:bg-cyan-400/10"
+                className={[
+                  'group rounded-2xl border p-2.5 text-left transition',
+                  alreadyAdded || !variantAvailable ?
+                    'cursor-not-allowed border-white/10 bg-white/[0.025] opacity-55'
+                  : 'border-white/10 bg-white/[0.035] hover:border-cyan-200/35 hover:bg-cyan-400/10',
+                ].join(' ')}
+                disabled={alreadyAdded || !variantAvailable}
                 onClick={() => onAdd(card.id, size, variant)}>
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
@@ -589,7 +616,9 @@ function CardPickerPanel({
                     <p className="mt-1 line-clamp-2 text-xs leading-snug text-white/50">{card.description}</p>
                   </div>
                   <span className="shrink-0 rounded-full border border-white/10 bg-black/20 px-2 py-0.5 text-[10px] text-white/55">
-                    {size} · {variant}
+                    {!variantAvailable ? `No ${selectedVariant}`
+                    : alreadyAdded ? 'Already added'
+                    : `${size} · ${variant}`}
                   </span>
                 </div>
                 <div className="mt-2 grid grid-cols-3 gap-1.5">
@@ -662,18 +691,13 @@ function DashboardHomeCard({
   const visualMetricCount = card.metrics.filter(metric => visualKeys.has(metric.key)).length
   const hiddenMetricCount = Math.max(0, card.metrics.length - selectedMetrics.length - visualMetricCount)
   const visual = isVisual || isHero ? <DashboardCardVisual card={card} /> : null
-  const metricGridClass =
-    isHero ? 'grid-cols-2 md:grid-cols-4'
-    : layoutCard.size === '3x1' || layoutCard.size === '3x2' ? 'grid-cols-3 md:grid-cols-3'
-    : isVisual || layoutCard.variant === 'summary' || layoutCard.size === '2x2' || layoutCard.size === '1x2' ? 'grid-cols-2 md:grid-cols-3'
-    : selectedMetrics.length >= 3 ? 'grid-cols-3'
-    : 'grid-cols-2'
+  const metricGridClass = metricGridClassForCard(layoutCard)
 
   return (
     <div
       className={['col-span-1', gridClassForSize(layoutCard.size)].join(' ')}
-      onDragOver={event => onDragOverCard(layoutCard.id, event)}
-      onDrop={event => onDropCard(layoutCard.id, event)}
+      onDragOver={event => onDragOverCard(layoutCard.instanceId, event)}
+      onDrop={event => onDropCard(layoutCard.instanceId, event)}
       onDragEnd={onDragEnd}>
       <article
         role={!customizing ? 'link' : undefined}
@@ -724,7 +748,7 @@ function DashboardHomeCard({
               draggable
               className={['flex cursor-grab items-center gap-1.5 font-semibold text-white/90 active:cursor-grabbing', isHero ? 'text-lg' : isCompact ? 'text-sm' : 'text-base'].join(' ')}
               title="Drag card header to reorder"
-              onDragStart={event => onDragStart(layoutCard.id, event)}>
+              onDragStart={event => onDragStart(layoutCard.instanceId, event)}>
               <DashboardSeverityIcon severity={card.severity} className={[isHero ? 'h-5 w-5' : 'h-4 w-4', tone.text].join(' ')} />
               <span className="truncate">{card.title}</span>
             </div>
@@ -795,15 +819,15 @@ function reorderLayoutBefore(layout: DashboardLayoutCard[], dragId: string, targ
   if (dragId === targetId) return layout
 
   const visible = visibleDashboardLayoutCards(layout)
-  const from = visible.findIndex(card => card.id === dragId)
-  const to = visible.findIndex(card => card.id === targetId)
+  const from = visible.findIndex(card => card.instanceId === dragId)
+  const to = visible.findIndex(card => card.instanceId === targetId)
   if (from < 0 || to < 0) return layout
 
   const reordered = [...visible]
   const [moved] = reordered.splice(from, 1)
   reordered.splice(to, 0, moved)
-  const orderById = new Map(reordered.map((card, order) => [card.id, order]))
-  return layout.map(card => orderById.has(card.id) ? { ...card, order: orderById.get(card.id) ?? card.order } : card)
+  const orderByInstanceId = new Map(reordered.map((card, order) => [card.instanceId, order]))
+  return layout.map(card => orderByInstanceId.has(card.instanceId) ? { ...card, order: orderByInstanceId.get(card.instanceId) ?? card.order } : card)
 }
 
 export default function DashboardOverviewComponent({ intervalMs = 7500 }: { intervalMs?: number }) {
@@ -873,9 +897,10 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
   const catalogById = useMemo(() => dashboardCardCatalogById(), [])
   const visibleLayout = useMemo(() => visibleDashboardLayoutCards(layout), [layout])
   const visibleIds = useMemo(() => new Set(visibleLayout.map(card => card.id)), [visibleLayout])
-  const hiddenCatalog = useMemo(
-    () => dashboardCardCatalog.filter(card => !visibleIds.has(card.id) && card.available),
-    [visibleIds],
+  const visibleCombos = useMemo(() => new Set(visibleLayout.map(card => `${card.id}:${card.variant}`)), [visibleLayout])
+  const addableCatalog = useMemo(
+    () => dashboardCardCatalog.filter(card => card.available && card.supportedVariants.some(variant => !visibleCombos.has(`${card.id}:${variant}`))),
+    [visibleCombos],
   )
   const overviewPayload = useMemo(() => buildOverviewPayload(layout), [layout])
   const payloadKey = useMemo(() => JSON.stringify(overviewPayload.cards), [overviewPayload.cards])
@@ -900,43 +925,45 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
     if (!catalogItem) return
     const nextSize = size && catalogItem.supportedSizes.includes(size) ? size : catalogItem.defaultSize
     const nextVariant = variant && catalogItem.supportedVariants.includes(variant) ? variant : catalogItem.defaultVariant
+    const nextInstanceId = dashboardLayoutInstanceId(id, nextVariant)
 
     updateLayout(current => {
+      if (visibleDashboardLayoutCards(current).some(card => card.id === id && card.variant === nextVariant)) return current
       const nextOrder = visibleDashboardLayoutCards(current).length
-      return current.map(card =>
-        card.id === id ?
-          {
-            ...card,
-            visible: true,
-            order: nextOrder,
-            size: nextSize,
-            variant: nextVariant,
-          }
-        : card,
-      )
+      return [
+        ...current,
+        {
+          instanceId: nextInstanceId,
+          id,
+          visible: true,
+          order: nextOrder,
+          size: nextSize,
+          variant: nextVariant,
+        },
+      ]
     })
     setCardPickerOpen(false)
   }, [catalogById, updateLayout])
 
-  const removeCard = useCallback((id: string) => {
+  const removeCard = useCallback((instanceId: string) => {
     updateLayout(current => {
       if (visibleDashboardLayoutCards(current).length <= 1) return current
-      return current.map(card => card.id === id ? { ...card, visible: false } : card)
+      return current.filter(card => card.instanceId !== instanceId)
     })
   }, [updateLayout])
 
-  const moveCard = useCallback((id: string, direction: -1 | 1) => {
+  const moveCard = useCallback((instanceId: string, direction: -1 | 1) => {
     updateLayout(current => {
       const visible = visibleDashboardLayoutCards(current)
-      const index = visible.findIndex(card => card.id === id)
+      const index = visible.findIndex(card => card.instanceId === instanceId)
       const nextIndex = index + direction
       if (index < 0 || nextIndex < 0 || nextIndex >= visible.length) return current
 
       const reordered = [...visible]
       const [moved] = reordered.splice(index, 1)
       reordered.splice(nextIndex, 0, moved)
-      const orderById = new Map(reordered.map((card, order) => [card.id, order]))
-      return current.map(card => orderById.has(card.id) ? { ...card, order: orderById.get(card.id) ?? card.order } : card)
+      const orderByInstanceId = new Map(reordered.map((card, order) => [card.instanceId, order]))
+      return current.map(card => orderByInstanceId.has(card.instanceId) ? { ...card, order: orderByInstanceId.get(card.instanceId) ?? card.order } : card)
     })
   }, [updateLayout])
 
@@ -1008,12 +1035,20 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
     }, 250)
   }, [])
 
-  const changeCardSize = useCallback((id: string, size: DashboardCardSize) => {
-    updateLayout(current => current.map(card => card.id === id ? { ...card, size } : card))
+  const changeCardSize = useCallback((instanceId: string, size: DashboardCardSize) => {
+    updateLayout(current => current.map(card => card.instanceId === instanceId ? { ...card, size } : card))
   }, [updateLayout])
 
-  const changeCardVariant = useCallback((id: string, variant: DashboardCardVariant) => {
-    updateLayout(current => current.map(card => card.id === id ? { ...card, variant } : card))
+  const changeCardVariant = useCallback((instanceId: string, variant: DashboardCardVariant) => {
+    updateLayout(current => current.map(card => {
+      if (card.instanceId !== instanceId) return card
+      if (current.some(other => other.instanceId !== instanceId && other.visible && other.id === card.id && other.variant === variant)) return card
+      return {
+        ...card,
+        instanceId: dashboardLayoutInstanceId(card.id, variant),
+        variant,
+      }
+    }))
   }, [updateLayout])
 
   const saveLayout = useCallback(async () => {
@@ -1061,6 +1096,7 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
   const tone = dashboardSeverityTone(overview.overall_status)
   const checkedAt = formatCheckedAt(overview.checked_at, wrapper.lastUpdated)
   const cardsById = useMemo(() => new Map(overview.cards.map(card => [card.id, card])), [overview.cards])
+  const requestedCardSummaries = useMemo(() => overview.cards.filter(card => card.id !== SYSTEM_HEALTH_CARD_ID), [overview.cards])
   const healthCard = cardsById.get(SYSTEM_HEALTH_CARD_ID)
   const healthMetricMap = useMemo(() => dashboardMetricByKey(healthCard?.metrics ?? []), [healthCard])
   const commandHealthMetrics = useMemo(
@@ -1073,17 +1109,21 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
   const shellSetupAdvisory = shellAdminMetric?.value === 'setup' ? shellAdminMetric : null
   const visibleCards = useMemo(() => {
     return visibleLayout
-      .map(layoutCard => {
+      .map((layoutCard, index) => {
         const catalogItem = catalogById.get(layoutCard.id)
         if (!catalogItem) return null
+        const sequencedCard = requestedCardSummaries[index]
+        const matchedCard = sequencedCard?.id === layoutCard.id && sequencedCard.variant === layoutCard.variant ?
+          sequencedCard
+        : requestedCardSummaries.find(card => card.id === layoutCard.id && card.variant === layoutCard.variant)
         return {
           layoutCard,
           catalogItem,
-          card: cardsById.get(layoutCard.id) ?? pendingCardForLayout(layoutCard, catalogItem),
+          card: matchedCard ?? pendingCardForLayout(layoutCard, catalogItem),
         }
       })
       .filter((item): item is { layoutCard: DashboardLayoutCard; catalogItem: DashboardCardCatalogItem; card: DashboardCardSummary } => Boolean(item))
-  }, [cardsById, catalogById, visibleLayout])
+  }, [catalogById, requestedCardSummaries, visibleLayout])
   const visibleAttention = useMemo(
     () => dedupeDashboardIssues(
       overview.attention.filter(issue => visibleIds.has(issue.card_id) || issue.card_id === SYSTEM_HEALTH_CARD_ID),
@@ -1156,14 +1196,14 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
                     type="button"
                     className="inline-flex items-center gap-1.5 rounded-full border border-cyan-200/25 bg-cyan-400/10 px-2.5 py-1 text-xs font-medium text-cyan-100 transition hover:border-cyan-100/45 disabled:cursor-not-allowed disabled:opacity-40"
                     onClick={() => setCardPickerOpen(open => !open)}
-                    disabled={!hiddenCatalog.length}>
+                    disabled={!addableCatalog.length}>
                     <GridPlusIcon className="h-3.5 w-3.5 fill-current" aria-hidden="true" />
                     Add Card
                   </button>
                   {cardPickerOpen ?
                     <CardPickerPanel
                       catalog={dashboardCardCatalog}
-                      visibleIds={visibleIds}
+                      visibleCombos={visibleCombos}
                       selectedSize={pickerSize}
                       selectedVariant={pickerVariant}
                       onSizeChange={setPickerSize}
@@ -1270,7 +1310,7 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
       <div className="grid grid-cols-1 gap-3 md:auto-rows-[5rem] md:grid-flow-dense md:grid-cols-6 lg:grid-cols-12">
         {visibleCards.map(({ card, layoutCard, catalogItem }, index) => (
           <DashboardHomeCard
-            key={layoutCard.id}
+            key={layoutCard.instanceId}
             card={card}
             layoutCard={layoutCard}
             catalogItem={catalogItem}
@@ -1283,8 +1323,8 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
             onDropCard={dropCard}
             onDragEnd={endCardDrag}
             onOpen={openCard}
-            dragging={draggedCardId === layoutCard.id}
-            dragOver={dragOverCardId === layoutCard.id}
+            dragging={draggedCardId === layoutCard.instanceId}
+            dragOver={dragOverCardId === layoutCard.instanceId}
             onRemove={removeCard}
             onSizeChange={changeCardSize}
             onVariantChange={changeCardVariant}

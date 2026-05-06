@@ -27,7 +27,16 @@ export const ToggleNavButton = ({ isCompact }: { isCompact: boolean }) => {
   const buttonText = isFilesPage ? 'Dashboard' : 'Filesystem'
 
   if (isCompact)
-    return <Icon className="text-primary cursor-pointer fill-current text-4xl" onClick={() => router.push(route)} />
+    return (
+      <button
+        type="button"
+        aria-label={buttonText}
+        title={buttonText}
+        className="flex h-10 w-full items-center justify-center rounded-xl border border-cyan-300/15 bg-cyan-400/8 text-primary transition hover:border-cyan-200/35 hover:bg-cyan-400/15"
+        onClick={() => router.push(route)}>
+        <Icon className="h-6 w-6 fill-current" aria-hidden="true" />
+      </button>
+    )
 
   return (
     <Button

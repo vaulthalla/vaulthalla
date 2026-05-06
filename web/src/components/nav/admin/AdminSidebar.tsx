@@ -3,7 +3,7 @@ import type { NavConfig } from '@/components/nav/types'
 import { LogoutButton } from '@/components/nav/LogoutButton'
 import { Banner, NavFooter, NavSpacer, ToggleNavButton } from '@/components/nav/util'
 import Logo from '@/components/Logo'
-import { AdminSidebarMode } from '@/components/nav/admin/AdminSidebarMode.client'
+import { AdminSidebarMode, SidebarCollapseButton } from '@/components/nav/admin/AdminSidebarMode.client'
 
 const SidebarFrame = ({ compact, config }: { compact: boolean; config: NavConfig }) => {
   const btnProps = { isCompact: compact }
@@ -19,6 +19,7 @@ const SidebarFrame = ({ compact, config }: { compact: boolean; config: NavConfig
             <Logo />
           </div>
         : <Banner />}
+        <SidebarCollapseButton compact={compact} />
         <ToggleNavButton {...btnProps} />
 
         <nav className={['bg-secondary text-primary rounded-xl shadow-lg', compact ? 'p-2' : 'p-4'].join(' ')}>
