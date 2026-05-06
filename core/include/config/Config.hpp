@@ -69,6 +69,14 @@ struct ConnectionLifecycleManagerConfig {
     uint32_t sweep_interval_seconds = 60;
 };
 
+struct StatsSnapshotsConfig {
+    bool enabled = true;
+    uint32_t runtime_interval_seconds = 60;
+    uint32_t gauge_observation_interval_seconds = 3;
+    uint32_t vault_interval_seconds = 3600;
+    uint32_t retention_days = 30;
+};
+
 struct ServicesConfig {
     DBSweeperConfig db_sweeper;
     ConnectionLifecycleManagerConfig connection_lifecycle_manager;
@@ -143,6 +151,7 @@ struct Config {
     AuthConfig auth;
     SyncConfig sync;
     ServicesConfig services;
+    StatsSnapshotsConfig stats_snapshots;
     SharingConfig sharing;
     AuditConfig auditing;
     DevConfig dev;
@@ -179,6 +188,8 @@ void to_json(nlohmann::json& j, const DBSweeperConfig& c);
 void from_json(const nlohmann::json& j, DBSweeperConfig& c);
 void to_json(nlohmann::json& j, const ConnectionLifecycleManagerConfig& c);
 void from_json(const nlohmann::json& j, ConnectionLifecycleManagerConfig& c);
+void to_json(nlohmann::json& j, const StatsSnapshotsConfig& c);
+void from_json(const nlohmann::json& j, StatsSnapshotsConfig& c);
 void to_json(nlohmann::json& j, const ServicesConfig& c);
 void from_json(const nlohmann::json& j, ServicesConfig& c);
 void to_json(nlohmann::json& j, const SharingConfig& c);

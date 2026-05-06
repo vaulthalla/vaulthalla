@@ -67,6 +67,7 @@ Vault::Vault(const pqxx::row& row)
       quota(row["quota"].as<unsigned long long>()),
       type(from_string(row["type"].as<std::string>())),
       mount_point(std::filesystem::path(row["mount_point"].as<std::string>())),
+      allow_fs_write(row["allow_fs_write"].as<bool>()),
       is_active(row["is_active"].as<bool>()),
       created_at(parsePostgresTimestamp(row["created_at"].c_str())) {}
 
@@ -79,6 +80,7 @@ void vh::vault::model::to_json(nlohmann::json& j, const Vault& v) {
         {"quota", v.quota},
         {"owner_id", v.owner_id},
         {"mount_point", v.mount_point.string()},
+        {"allow_fs_write", v.allow_fs_write},
         {"is_active", v.is_active},
         {"created_at", timestampToString(v.created_at)}
     };
@@ -92,6 +94,7 @@ void vh::vault::model::from_json(const nlohmann::json& j, Vault& v) {
     v.type = from_string(j.at("type").get<std::string>());
     v.owner_id = j.at("owner_id").get<unsigned int>();
     v.mount_point = std::filesystem::path(j.at("mount_point").get<std::string>());
+    if (j.contains("allow_fs_write")) v.allow_fs_write = j.at("allow_fs_write").get<bool>();
     v.is_active = j.at("is_active").get<bool>();
     v.created_at = parseTimestampFromString(j.at("created_at").get<std::string>());
 }
@@ -115,6 +118,7 @@ std::string vh::vault::model::to_string(const Vault& v) {
     if (v.quota == 0) out += "\u221E\n";  // ∞ symbol
     else out += fmt::format("{} ({} bytes)\n", human_bytes(v.quota), static_cast<unsigned long long>(v.quota));
     out += "Created At: " + timestampToString(v.created_at) + "\n";
+    out += "Allow FS Write: " + std::string(v.allow_fs_write ? "true" : "false") + "\n";
     out += "Is Active: " + std::string(v.is_active ? "true" : "false") + "\n";
     return out;
 }

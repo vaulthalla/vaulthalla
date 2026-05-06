@@ -17,6 +17,19 @@ class ThreadPoolManager; // forward decl
 
 class ThreadPool {
 public:
+    struct Snapshot {
+        size_t queueDepth = 0;
+        unsigned int workerCount = 0;
+        unsigned int borrowedWorkerCount = 0;
+        unsigned int idleWorkerCount = 0;
+        unsigned int busyWorkerCount = 0;
+        bool hasIdleWorker = false;
+        bool hasBorrowedWorker = false;
+        bool stopped = false;
+    };
+
+    using WorkerHandle = std::pair<std::thread, std::shared_ptr<std::atomic<bool>>>;
+
     explicit ThreadPool(const std::shared_ptr<std::atomic<bool>>& interruptFlag,
                unsigned int nThreads = 0);
 
@@ -32,15 +45,20 @@ public:
     bool isUnderloaded() const;
     bool hasBorrowedWorker() const;
 
-    std::pair<std::thread, std::shared_ptr<std::atomic<bool>>>
-    giveWorker();
+    WorkerHandle giveWorker();
+    WorkerHandle returnBorrowedWorker();
 
     void acceptWorker(std::thread t, std::shared_ptr<std::atomic<bool>> flag);
+    void acceptReturnedWorker(std::thread t, std::shared_ptr<std::atomic<bool>> flag);
 
     [[nodiscard]] unsigned int workerCount() const;
+    [[nodiscard]] Snapshot snapshot() const;
 
 private:
     void spawnWorker();
+    WorkerHandle takeWorker();
+    void addWorker(std::thread t, std::shared_ptr<std::atomic<bool>> flag);
+    void decrementBorrowedWorkerCount();
 
     std::vector<std::thread> threads_;
     std::vector<std::shared_ptr<std::atomic<bool>>> idleFlags_;

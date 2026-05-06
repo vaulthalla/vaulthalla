@@ -6,6 +6,7 @@
 #include "protocols/ws/handler/Settings.hpp"
 #include "protocols/ws/handler/Groups.hpp"
 #include "protocols/ws/handler/Stats.hpp"
+#include "protocols/ws/handler/dashboard/Preferences.hpp"
 #include "protocols/ws/handler/rbac/roles/Admin.hpp"
 #include "protocols/ws/handler/rbac/roles/Vault.hpp"
 #include "protocols/ws/handler/vault/Vaults.hpp"
@@ -30,6 +31,7 @@ void Handler::registerAllHandlers(const std::shared_ptr<Router>& r) {
     registerSettingsHandlers(r);
     registerGroupHandlers(r);
     registerStatHandlers(r);
+    registerDashboardPreferenceHandlers(r);
     registerShareManagementHandlers(r);
     registerShareSessionHandlers(r);
     registerShareFilesystemHandlers(r);
@@ -133,8 +135,33 @@ void Handler::registerGroupHandlers(const std::shared_ptr<Router>& r) {
 
 void Handler::registerStatHandlers(const std::shared_ptr<Router>& r) {
     r->registerPayload("stats.vault", &handler::Stats::vault);
+    r->registerPayload("stats.vault.sync", &handler::Stats::vaultSync);
+    r->registerPayload("stats.vault.activity", &handler::Stats::vaultActivity);
+    r->registerPayload("stats.vault.shares", &handler::Stats::vaultShares);
+    r->registerPayload("stats.vault.recovery", &handler::Stats::vaultRecovery);
+    r->registerPayload("stats.vault.operations", &handler::Stats::vaultOperations);
+    r->registerPayload("stats.vault.storage", &handler::Stats::vaultStorage);
+    r->registerPayload("stats.vault.retention", &handler::Stats::vaultRetention);
+    r->registerPayload("stats.vault.trends", &handler::Stats::vaultTrends);
+    r->registerPayload("stats.vault.security", &handler::Stats::vaultSecurity);
+    r->registerPayload("stats.dashboard.overview", &handler::Stats::dashboardOverview);
+    r->registerSessionOnlyHandler("stats.system.health", &handler::Stats::systemHealth);
+    r->registerSessionOnlyHandler("stats.system.threadpools", &handler::Stats::systemThreadPools);
+    r->registerSessionOnlyHandler("stats.system.fuse", &handler::Stats::systemFuse);
+    r->registerSessionOnlyHandler("stats.system.db", &handler::Stats::systemDb);
+    r->registerSessionOnlyHandler("stats.system.operations", &handler::Stats::systemOperations);
+    r->registerSessionOnlyHandler("stats.system.connections", &handler::Stats::systemConnections);
+    r->registerSessionOnlyHandler("stats.system.storage", &handler::Stats::systemStorage);
+    r->registerSessionOnlyHandler("stats.system.retention", &handler::Stats::systemRetention);
+    r->registerPayload("stats.system.trends", &handler::Stats::systemTrends);
     r->registerSessionOnlyHandler("stats.fs.cache", &handler::Stats::fsCache);
     r->registerSessionOnlyHandler("stats.http.cache", &handler::Stats::httpCache);
+}
+
+void Handler::registerDashboardPreferenceHandlers(const std::shared_ptr<Router>& r) {
+    r->registerPayload("dashboard.preferences.get", &handler::dashboard::Preferences::get);
+    r->registerPayload("dashboard.preferences.update", &handler::dashboard::Preferences::update);
+    r->registerPayload("dashboard.preferences.reset", &handler::dashboard::Preferences::reset);
 }
 
 void Handler::registerShareManagementHandlers(const std::shared_ptr<Router>& r) {

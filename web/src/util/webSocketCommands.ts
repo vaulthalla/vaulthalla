@@ -1,5 +1,10 @@
 import { LocalDiskVault, S3Vault, Vault } from '@/models/vaults'
 import { VaultStats } from '@/models/stats/vaultStats'
+import { VaultActivity } from '@/models/stats/vaultActivity'
+import { VaultRecovery } from '@/models/stats/vaultRecovery'
+import { VaultSecurity } from '@/models/stats/vaultSecurity'
+import { VaultShareStats } from '@/models/stats/vaultShareStats'
+import { VaultSyncHealth } from '@/models/stats/vaultSyncHealth'
 import { APIKey, S3APIKey } from '@/models/apiKey'
 import { User } from '@/models/user'
 import { AdminRolePayload, VaultRolePayload, Permission } from '@/models/role'
@@ -7,7 +12,22 @@ import { Settings } from '@/models/settings'
 import { Group } from '@/models/group'
 import { File, IFileUpload } from '@/models/file'
 import { Directory } from '@/models/directory'
+import {
+  DashboardPreference,
+  DashboardPreferencePayload,
+  DashboardPreferenceUpdatePayload,
+} from '@/models/dashboard/dashboardPreferences'
 import { CacheStats } from '@/models/stats/cacheStats'
+import { ConnectionStats } from '@/models/stats/connectionStats'
+import { DashboardOverview, DashboardOverviewRequest } from '@/models/stats/dashboardOverview'
+import { DbStats } from '@/models/stats/dbStats'
+import { FuseStats } from '@/models/stats/fuseStats'
+import { OperationStats } from '@/models/stats/operationStats'
+import { RetentionStats } from '@/models/stats/retentionStats'
+import { StatsTrends } from '@/models/stats/statsTrends'
+import { StorageBackendStats } from '@/models/stats/storageBackendStats'
+import { SystemHealth } from '@/models/stats/systemHealth'
+import { ThreadPoolManagerStats } from '@/models/stats/threadPoolStats'
 import { AdminRoleDTO, VaultRoleDTO } from '@/models/permission'
 import {
   ShareDownloadCancelResponse,
@@ -133,6 +153,14 @@ export interface WebSocketCommandMap {
   'settings.get': { payload: null; response: { settings: Settings } }
 
   'settings.update': { payload: Partial<Settings>; response: { settings: Settings } }
+
+  // Dashboard preferences
+
+  'dashboard.preferences.get': { payload: DashboardPreferencePayload | null; response: { preferences: DashboardPreference } }
+
+  'dashboard.preferences.update': { payload: DashboardPreferenceUpdatePayload; response: { preferences: DashboardPreference } }
+
+  'dashboard.preferences.reset': { payload: DashboardPreferencePayload | null; response: { reset: boolean; deleted?: boolean } }
 
   // Group commands
 
@@ -268,6 +296,44 @@ export interface WebSocketCommandMap {
 
   // stats
   'stats.vault': { payload: { vault_id: number }; response: { stats: VaultStats } }
+
+  'stats.vault.sync': { payload: { vault_id: number }; response: { stats: VaultSyncHealth } }
+
+  'stats.vault.activity': { payload: { vault_id: number }; response: { stats: VaultActivity } }
+
+  'stats.vault.shares': { payload: { vault_id: number }; response: { stats: VaultShareStats } }
+
+  'stats.vault.recovery': { payload: { vault_id: number }; response: { stats: VaultRecovery } }
+
+  'stats.vault.operations': { payload: { vault_id: number }; response: { stats: OperationStats } }
+
+  'stats.vault.security': { payload: { vault_id: number }; response: { stats: VaultSecurity } }
+
+  'stats.vault.storage': { payload: { vault_id: number }; response: { stats: StorageBackendStats } }
+
+  'stats.vault.retention': { payload: { vault_id: number }; response: { stats: RetentionStats } }
+
+  'stats.vault.trends': { payload: { vault_id: number; window_hours?: number }; response: { stats: StatsTrends } }
+
+  'stats.dashboard.overview': { payload: DashboardOverviewRequest | null; response: { stats: DashboardOverview } }
+
+  'stats.system.health': { payload: null; response: { stats: SystemHealth } }
+
+  'stats.system.threadpools': { payload: null; response: { stats: ThreadPoolManagerStats } }
+
+  'stats.system.fuse': { payload: null; response: { stats: FuseStats } }
+
+  'stats.system.db': { payload: null; response: { stats: DbStats } }
+
+  'stats.system.operations': { payload: null; response: { stats: OperationStats } }
+
+  'stats.system.connections': { payload: null; response: { stats: ConnectionStats } }
+
+  'stats.system.storage': { payload: null; response: { stats: StorageBackendStats } }
+
+  'stats.system.retention': { payload: null; response: { stats: RetentionStats } }
+
+  'stats.system.trends': { payload: { window_hours?: number }; response: { stats: StatsTrends } }
 
   'stats.fs.cache': { payload: null; response: { stats: CacheStats } }
 

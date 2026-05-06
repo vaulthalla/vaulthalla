@@ -45,6 +45,14 @@ unsigned int File::upsertFile(const FilePtr& file) {
         p.append(file->encryption_iv);
 
         const auto fileId = txn.exec(pqxx::prepped{"upsert_file_full"}, p).one_row()["fs_entry_id"].as<unsigned int>();
+        txn.exec(
+            pqxx::prepped{"insert_file_activity"},
+            pqxx::params{
+                fileId,
+                exists ? file->last_modified_by : file->created_by,
+                exists ? "modified" : "created"
+            }
+        );
 
         std::optional<unsigned int> parentId = file->parent_id;
         while (parentId) {
@@ -78,6 +86,10 @@ void File::updateFile(const FilePtr& file) {
         p.append(file->encryption_iv);
 
         txn.exec(pqxx::prepped{"update_file_only"}, p);
+        txn.exec(
+            pqxx::prepped{"insert_file_activity"},
+            pqxx::params{file->id, file->last_modified_by, "modified"}
+        );
 
         std::optional<unsigned int> parentId = file->parent_id;
         while (parentId) {

@@ -138,5 +138,11 @@ sudo systemctl enable --now vaulthalla-web.service
 
 echo
 echo "🏁 Vaulthalla installed successfully!"
-echo "📜 Tailing vaulthalla.service logs..."
-sudo journalctl -f -u vaulthalla.service
+
+if [[ "${VH_FOLLOW_LOGS:-0}" == "1" ]]; then
+  echo "📜 Tailing vaulthalla.service logs..."
+  sudo journalctl -f -u vaulthalla.service
+else
+  echo "📜 Recent vaulthalla.service logs:"
+  sudo journalctl -n 25 --no-pager -u vaulthalla.service
+fi

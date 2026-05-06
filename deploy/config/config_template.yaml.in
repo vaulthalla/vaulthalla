@@ -22,6 +22,10 @@ auth: {}
 sharing: {}
 
 
+# === 📈 STATS SNAPSHOTS ===
+stats_snapshots: {}
+
+
 # === Caching & Previews ===
 caching: {}
 

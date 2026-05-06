@@ -1,5 +1,6 @@
 #include "protocols/ws/handler/fs/Storage.hpp"
 #include "db/encoding/timestamp.hpp"
+#include "db/query/sync/Operation.hpp"
 #include "protocols/ws/Session.hpp"
 #include "storage/Manager.hpp"
 #include "fs/model/Directory.hpp"
@@ -20,6 +21,8 @@
 #include "share/Manager.hpp"
 #include "share/Principal.hpp"
 #include "share/TargetResolver.hpp"
+#include "sync/model/Operation.hpp"
+#include "log/Registry.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -237,6 +240,55 @@ void requireShareMode(const std::shared_ptr<vh::protocols::ws::Session>& session
         {"files", std::move(files)}
     };
 }
+
+using SyncOperation = vh::sync::model::Operation;
+
+[[nodiscard]] std::shared_ptr<SyncOperation> startMutationOperation(
+    const std::shared_ptr<vh::storage::Engine>& engine,
+    const std::filesystem::path& from,
+    const std::filesystem::path& to,
+    const unsigned int userId,
+    const SyncOperation::Op op
+) noexcept {
+    try {
+        if (!engine || !engine->paths) return nullptr;
+
+        const auto fuseFrom = engine->paths->absRelToAbsRel(
+            from,
+            vh::fs::model::PathType::VAULT_ROOT,
+            vh::fs::model::PathType::FUSE_ROOT
+        );
+        const auto entry = vh::runtime::Deps::get().fsCache->getEntry(fuseFrom);
+        if (!entry) return nullptr;
+
+        auto operation = std::make_shared<SyncOperation>(entry, to, userId, op);
+        operation->status = SyncOperation::Status::InProgress;
+        vh::db::query::sync::Operation::createOperation(operation);
+        return operation;
+    } catch (const std::exception& e) {
+        vh::log::Registry::ws()->warn("[Storage] Failed to record pending filesystem operation: {}", e.what());
+        return nullptr;
+    } catch (...) {
+        vh::log::Registry::ws()->warn("[Storage] Failed to record pending filesystem operation");
+        return nullptr;
+    }
+}
+
+void finishMutationOperation(
+    const std::shared_ptr<SyncOperation>& operation,
+    const SyncOperation::Status status,
+    const std::optional<std::string>& error = std::nullopt
+) noexcept {
+    if (!operation || operation->id == 0) return;
+
+    try {
+        vh::db::query::sync::Operation::markOperationStatus(operation->id, status, error);
+    } catch (const std::exception& e) {
+        vh::log::Registry::ws()->warn("[Storage] Failed to finish filesystem operation stat {}: {}", operation->id, e.what());
+    } catch (...) {
+        vh::log::Registry::ws()->warn("[Storage] Failed to finish filesystem operation stat {}", operation->id);
+    }
+}
 }
 
 json Storage::startUpload(const json& payload, const std::shared_ptr<Session>& session) {
@@ -342,7 +394,14 @@ json Storage::move(const json& payload, const std::shared_ptr<Session>& session)
         "Permission denied: User does not have move permission for the source path in the vault"
     );
 
-    engine->move(from, to, session->user->id);
+    auto operation = startMutationOperation(engine, from, to, session->user->id, SyncOperation::Op::Move);
+    try {
+        engine->move(from, to, session->user->id);
+        finishMutationOperation(operation, SyncOperation::Status::Success);
+    } catch (const std::exception& e) {
+        finishMutationOperation(operation, SyncOperation::Status::Failed, e.what());
+        throw;
+    }
     runtime::Deps::get().syncController->runNow(vaultId);
 
     return {
@@ -367,7 +426,14 @@ json Storage::rename(const json& payload, const std::shared_ptr<Session>& sessio
         "Permission denied: User does not have rename permission for the source path in the vault"
     );
 
-    engine->rename(from, to, session->user->id);
+    auto operation = startMutationOperation(engine, from, to, session->user->id, SyncOperation::Op::Rename);
+    try {
+        engine->rename(from, to, session->user->id);
+        finishMutationOperation(operation, SyncOperation::Status::Success);
+    } catch (const std::exception& e) {
+        finishMutationOperation(operation, SyncOperation::Status::Failed, e.what());
+        throw;
+    }
     runtime::Deps::get().syncController->runNow(vaultId);
 
     return {
@@ -392,7 +458,14 @@ json Storage::copy(const json& payload, const std::shared_ptr<Session>& session)
         "Permission denied: User does not have read permission for the source path in the vault"
     );
 
-    engine->copy(from, to, session->user->id);
+    auto operation = startMutationOperation(engine, from, to, session->user->id, SyncOperation::Op::Copy);
+    try {
+        engine->copy(from, to, session->user->id);
+        finishMutationOperation(operation, SyncOperation::Status::Success);
+    } catch (const std::exception& e) {
+        finishMutationOperation(operation, SyncOperation::Status::Failed, e.what());
+        throw;
+    }
     runtime::Deps::get().syncController->runNow(vaultId);
 
     return {

@@ -3,6 +3,7 @@
 #include "concurrency/AsyncService.hpp"
 
 #include <chrono>
+#include <cstdint>
 
 namespace vh::protocols::ws {
 
@@ -10,6 +11,10 @@ class ConnectionLifecycleManager final : public concurrency::AsyncService {
   public:
     ConnectionLifecycleManager();
     ~ConnectionLifecycleManager() override;
+
+    [[nodiscard]] std::uint64_t sweepIntervalSeconds() const noexcept;
+    [[nodiscard]] std::uint64_t unauthenticatedSessionTimeoutSeconds() const noexcept;
+    [[nodiscard]] std::uint64_t idleTimeoutMinutes() const noexcept;
 
   private:
     void runLoop() override;

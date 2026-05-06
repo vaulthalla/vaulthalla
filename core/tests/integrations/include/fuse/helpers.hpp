@@ -96,14 +96,18 @@ namespace vh::test::integration::fuse {
 
             detail::close_if_valid(pipefd[1]);
 
-            if (::setgroups(0, nullptr) != 0)
-                _exit((errno & 0xFF) ? (errno & 0xFF) : 1);
+            if (::geteuid() == 0) {
+                if (::setgroups(0, nullptr) != 0)
+                    _exit((errno & 0xFF) ? (errno & 0xFF) : 1);
 
-            if (::setresgid(gid, gid, gid) != 0)
-                _exit((errno & 0xFF) ? (errno & 0xFF) : 1);
+                if (::setresgid(gid, gid, gid) != 0)
+                    _exit((errno & 0xFF) ? (errno & 0xFF) : 1);
 
-            if (::setresuid(uid, uid, uid) != 0)
-                _exit((errno & 0xFF) ? (errno & 0xFF) : 1);
+                if (::setresuid(uid, uid, uid) != 0)
+                    _exit((errno & 0xFF) ? (errno & 0xFF) : 1);
+            } else if (::geteuid() != uid || ::getegid() != gid) {
+                _exit(EPERM);
+            }
 
             int rc = 0;
             try {

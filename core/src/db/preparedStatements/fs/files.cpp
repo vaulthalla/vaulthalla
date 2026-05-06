@@ -290,4 +290,8 @@ void vh::db::Connection::initPreparedFiles() const {
     ORDER BY total_bytes DESC
     LIMIT $2
 )SQL");
+
+    conn_->prepare("insert_file_activity",
+                   "INSERT INTO file_activity (file_id, user_id, action) "
+                   "VALUES ($1, $2, $3)");
 }

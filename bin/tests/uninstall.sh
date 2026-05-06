@@ -20,17 +20,11 @@ echo "🔍 Dev mode active: $DEV_MODE"
 # === 0) Unmount FUSE test mount(s) ===
 "$BIN_DIR/tests/unmount_fuse.sh"
 
-# === 1) Remove installed binaries/artifacts ===
-"$BIN_DIR/teardown/uninstall_binaries.sh"
-
-# === 2) Remove integration test runtime/config dirs ===
+# === 1) Remove integration test runtime/config dirs ===
 "$BIN_DIR/tests/uninstall_dirs.sh"
 
-# === 3) Remove integration test DB and user ===
+# === 2) Remove integration test DB and user ===
 "$BIN_DIR/tests/uninstall_db.sh"
-
-# === 4) Remove system user/group ===
-"$BIN_DIR/teardown/uninstall_users.sh"
 
 echo
 echo "✅ Vaulthalla integration test environment has been removed."

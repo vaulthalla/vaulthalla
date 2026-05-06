@@ -165,8 +165,8 @@ namespace vh::protocols::shell::commands::vault {
 
             if (!apiKey) return invalid("vault create: API key not found: " + apiKeyStr);
 
-            using Perm = rbac::permission::admin::keys::APIPermissions;
-            if (!rbac::resolver::Admin::has<Perm>({
+            using Perm = ::vh::rbac::permission::admin::keys::APIPermissions;
+            if (!::vh::rbac::resolver::Admin::has<Perm>({
                 .user = call.user,
                 .permission = Perm::Consume,
                 .api_key_id = apiKey->id
@@ -219,8 +219,8 @@ namespace vh::protocols::shell::commands::vault {
         validatePositionals(call, usage);
         const auto owner = resolveOwner(call, usage);
 
-        using VPerm = rbac::permission::admin::VaultPermissions;
-        if (!rbac::resolver::Admin::has<VPerm>({
+        using VPerm = ::vh::rbac::permission::admin::VaultPermissions;
+        if (!::vh::rbac::resolver::Admin::has<VPerm>({
             .user = call.user,
             .permission = VPerm::Create,
             .target_user_id = owner->id

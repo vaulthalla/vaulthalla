@@ -67,6 +67,17 @@ services:
     sweep_interval_seconds: 60           # Interval for sweeping idle connections, minimum 15 seconds
 
 
+# === 📈 STATS SNAPSHOTS ===
+# Historical dashboard snapshots are collected in the background for trend cards.
+# They do not mutate runtime state and are safe to disable in tiny deployments.
+stats_snapshots:
+  enabled: true
+  runtime_interval_seconds: 60        # Persisted runtime/cache/FUSE/DB sample window, fixed at 60 seconds
+  gauge_observation_interval_seconds: 3 # Runtime-only gauge observation tick, minimum 1 second
+  vault_interval_seconds: 3600        # Vault capacity/sync/activity snapshots, minimum 300 seconds
+  retention_days: 30                  # Delete historical snapshots older than this, minimum 1 day
+
+
 # === 🤝 SHARING SETTINGS ===
 # Sharing features allow users to share files and folders internally
 # and via public links.

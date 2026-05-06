@@ -13,7 +13,10 @@ namespace vh::auth {
     namespace session { class Manager; }
 }
 namespace vh::protocols::shell { class UsageManager; }
-namespace vh::stats::model { struct CacheStats; }
+namespace vh::stats::model {
+    struct CacheStats;
+    class FuseStats;
+}
 namespace vh::sync { class Controller; }
 namespace vh::crypto::secrets { class Manager; }
 
@@ -42,6 +45,7 @@ namespace vh::runtime {
         std::shared_ptr<fs::cache::Registry> fsCache;
         std::shared_ptr<protocols::shell::UsageManager> shellUsageManager;
         std::shared_ptr<stats::model::CacheStats> httpCacheStats;
+        std::shared_ptr<stats::model::FuseStats> fuseStats;
         fuse_session* fuseSession = nullptr;
 
         Deps(const Deps&) = delete;

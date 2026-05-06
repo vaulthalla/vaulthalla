@@ -27,6 +27,22 @@ if ! pg_server_ready; then
     exit 0
 fi
 
+role_exists() {
+    sudo -u postgres psql -v ON_ERROR_STOP=1 -d postgres -Atqc \
+        "SELECT 1 FROM pg_roles WHERE rolname = '$DB_ROLE';" | grep -q 1
+}
+
+drop_role_owned_objects() {
+    local db
+    while IFS= read -r db; do
+        [[ -z "$db" ]] && continue
+        sudo -u postgres psql -v ON_ERROR_STOP=1 -d "$db" -c "DROP OWNED BY $DB_ROLE;"
+    done < <(
+        sudo -u postgres psql -v ON_ERROR_STOP=1 -d postgres -Atqc \
+            "SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY datname;"
+    )
+}
+
 if vh_confirm "⚠️  Drop PostgreSQL database and user '$DB_ROLE'?" "N" "Y"; then
     if vh_is_dev_mode; then
         echo "⚠️  [DEV_MODE] Dropping PostgreSQL DB and user '$DB_ROLE'..."
@@ -34,12 +50,17 @@ if vh_confirm "⚠️  Drop PostgreSQL database and user '$DB_ROLE'?" "N" "Y"; t
         echo "🧨 Dropping PostgreSQL DB and user..."
     fi
 
-    sudo -u postgres psql -d postgres <<EOF
-REVOKE CONNECT ON DATABASE $DB_NAME FROM public;
-SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$DB_NAME';
-DROP DATABASE IF EXISTS $DB_NAME;
-DROP ROLE IF EXISTS $DB_ROLE;
+    sudo -u postgres psql -v ON_ERROR_STOP=1 -d postgres <<EOF
+SELECT pg_terminate_backend(pid)
+FROM pg_stat_activity
+WHERE pid <> pg_backend_pid()
+  AND (datname = '$DB_NAME' OR usename = '$DB_ROLE');
+DROP DATABASE IF EXISTS $DB_NAME WITH (FORCE);
 EOF
+    if role_exists; then
+        drop_role_owned_objects
+    fi
+    sudo -u postgres psql -v ON_ERROR_STOP=1 -d postgres -c "DROP ROLE IF EXISTS $DB_ROLE;"
 else
     echo "🛡️  Skipping database deletion. You can do it manually with psql if needed."
 fi

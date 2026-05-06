@@ -122,7 +122,7 @@ namespace vh::protocols::shell::commands::vault {
         const auto usage = resolveUsage({"vault", "role", "list"});
         validatePositionals(call, usage);
 
-        std::shared_ptr<Vault> vault;
+        std::shared_ptr<::vh::vault::model::Vault> vault;
         if (!call.positionals.empty()) {
             const auto vaultArg = call.positionals.at(0);
 

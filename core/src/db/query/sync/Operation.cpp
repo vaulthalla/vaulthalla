@@ -5,7 +5,11 @@
 namespace vh::db::query::sync {
 
 void Operation::addOperation(const OperationPtr& op) {
-    Transactions::exec("Operation::addOperation", [&](pqxx::work& txn) {
+    (void)createOperation(op);
+}
+
+unsigned int Operation::createOperation(const OperationPtr& op) {
+    return Transactions::exec("Operation::addOperation", [&](pqxx::work& txn) {
         pqxx::params p;
         p.append(op->fs_entry_id);
         p.append(op->executed_by);
@@ -15,7 +19,8 @@ void Operation::addOperation(const OperationPtr& op) {
         p.append(op->source_path);
         p.append(op->destination_path);
 
-        txn.exec(pqxx::prepped{"insert_operation"}, p);
+        op->id = txn.exec(pqxx::prepped{"insert_operation"}, p).one_row()["id"].as<unsigned int>();
+        return op->id;
     });
 }
 
@@ -34,11 +39,19 @@ std::vector<Operation::OperationPtr> Operation::listOperationsByVault(unsigned i
 }
 
 void Operation::markOperationCompleted(const OperationPtr& op) {
+    markOperationStatus(op->id, op->status, op->error);
+}
+
+void Operation::markOperationStatus(
+    const unsigned int id,
+    const vh::sync::model::Operation::Status status,
+    const std::optional<std::string>& error
+) {
     Transactions::exec("Operation::markOperationCompleted", [&](pqxx::work& txn) {
         pqxx::params p;
-        p.append(op->id);
-        p.append(to_string(op->status));
-        p.append(op->error.value_or(""));
+        p.append(id);
+        p.append(to_string(status));
+        p.append(error);
 
         txn.exec(pqxx::prepped{"mark_operation_completed_and_update"}, p);
     });

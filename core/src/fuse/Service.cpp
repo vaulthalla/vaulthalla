@@ -1,6 +1,7 @@
 #include "fuse/Service.hpp"
 #include "fuse/Bridge.hpp"
 #include "runtime/Manager.hpp"
+#include "runtime/Deps.hpp"
 #include "concurrency/ThreadPool.hpp"
 #include "concurrency/ThreadPoolManager.hpp"
 #include "fuse/task/Request.hpp"
@@ -239,6 +240,7 @@ void Service::runLoop() {
     }
 
     log::Registry::fuse()->info("[FUSE] Mounted FUSE filesystem at {}", opts.mountpoint);
+    runtime::Deps::get().setFuseSession(session_);
 
     while (!fuse_session_exited(session_) && !shouldStop()) {
         fuse_buf buf{};
@@ -269,6 +271,7 @@ void Service::runLoop() {
 
     fuse_remove_signal_handlers(session_);
     fuse_session_unmount(session_);
+    runtime::Deps::get().setFuseSession(nullptr);
     fuse_session_destroy(session_);
     session_ = nullptr;
 

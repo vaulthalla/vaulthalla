@@ -1,5 +1,6 @@
 import { NavItem, NavConfig } from '@/components/nav/types'
 import Vault from '@/fa-duotone/vault.svg'
+import GaugeHigh from '@/fa-duotone/gauge-high.svg'
 import KeySkeleton from '@/fa-duotone/key-skeleton.svg'
 import UserGroup from '@/fa-duotone/user-group.svg'
 import PeopleGroup from '@/fa-duotone/people-group.svg'
@@ -10,7 +11,12 @@ import VaultShield from '@/fa-duotone/file-shield.svg'
 import ShareNodes from '@/fa-duotone/share-nodes.svg'
 
 export const adminNavItems: NavItem[] = [
-  { label: 'Dashboard', href: '/dashboard', icon: Vault },
+  {
+    label: 'Dashboard',
+    href: '/dashboard',
+    icon: GaugeHigh,
+    dashboardSeverity: { kind: 'overall' },
+  },
   { label: 'Vaults', href: '/vaults', icon: Vault },
   { label: 'Shares', href: '/shares', icon: ShareNodes },
   { label: 'API Keys', href: '/api-keys', icon: KeySkeleton },

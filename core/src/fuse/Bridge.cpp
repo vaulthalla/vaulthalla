@@ -5,6 +5,7 @@
 #include "config/Registry.hpp"
 #include "fs/Filesystem.hpp"
 #include "runtime/Deps.hpp"
+#include "stats/model/FuseStats.hpp"
 #include "db/query/identities/User.hpp"
 #include "db/query/fs/File.hpp"
 #include "db/query/fs/Directory.hpp"
@@ -26,7 +27,37 @@ using namespace vh::rbac;
 
 namespace vh::fuse {
 
+namespace {
+
+using stats::model::FuseOperation;
+using stats::model::ScopedFuseOpTimer;
+
+stats::model::FuseStats* fuseStats() noexcept {
+    return runtime::Deps::get().fuseStats.get();
+}
+
+void replyError(const fuse_req_t req, ScopedFuseOpTimer& timer, const int errnum) {
+    timer.error(errnum);
+    fuse_reply_err(req, errnum);
+}
+
+void replyOk(const fuse_req_t req, ScopedFuseOpTimer& timer) {
+    timer.success();
+    fuse_reply_err(req, 0);
+}
+
+void recordOpenHandle() noexcept {
+    if (const auto& stats = runtime::Deps::get().fuseStats) stats->record_open_handle();
+}
+
+void recordCloseHandle() noexcept {
+    if (const auto& stats = runtime::Deps::get().fuseStats) stats->record_close_handle();
+}
+
+}
+
 void getattr(const fuse_req_t req, const fuse_ino_t ino, fuse_file_info* fi) {
+    ScopedFuseOpTimer timer(fuseStats(), FuseOperation::GetAttr);
     log::Registry::fuse()->debug("[getattr] Called for inode: {}", ino);
     (void)fi;
 
@@ -39,28 +70,30 @@ void getattr(const fuse_req_t req, const fuse_ino_t ino, fuse_file_info* fi) {
     });
 
     if (!resolved.ok()) {
-        fuse_reply_err(req, resolved.errnum);
+        replyError(req, timer, resolved.errnum);
         return;
     }
 
     const auto st = statFromEntry(resolved.entry, ino);
+    timer.success();
     fuse_reply_attr(req, &st, 0.1); // match attr_timeout from lookup()
 }
 
 void setattr(const fuse_req_t req, const fuse_ino_t ino,
                          struct stat* attr, int to_set, fuse_file_info* fi) {
+    ScopedFuseOpTimer timer(fuseStats(), FuseOperation::SetAttr);
     (void)fi;
     log::Registry::fuse()->debug("[setattr] Called for inode: {}, to_set: {}", ino, to_set);
 
     if (to_set & FUSE_SET_ATTR_MODE) {
         log::Registry::fuse()->warn("⚔️ [Vaulthalla] Illegal access: chmod is forbidden beyond the gates!");
-        fuse_reply_err(req, EPERM);
+        replyError(req, timer, EPERM);
         return;
     }
 
     if (to_set & (FUSE_SET_ATTR_UID | FUSE_SET_ATTR_GID)) {
         log::Registry::fuse()->warn("⚔️ [Vaulthalla] Illegal access: changing ownership is forbidden beyond the gates!");
-        fuse_reply_err(req, EPERM);
+        replyError(req, timer, EPERM);
         return;
     }
 
@@ -73,7 +106,7 @@ void setattr(const fuse_req_t req, const fuse_ino_t ino,
     });
 
     if (!resolved.ok()) {
-        fuse_reply_err(req, resolved.errnum);
+        replyError(req, timer, resolved.errnum);
         return;
     }
 
@@ -84,21 +117,23 @@ void setattr(const fuse_req_t req, const fuse_ino_t ino,
     else times[1].tv_nsec = UTIME_OMIT;
 
     if (::utimensat(AT_FDCWD, resolved.entry->backing_path.c_str(), times, 0) < 0) {
-        fuse_reply_err(req, errno);
+        replyError(req, timer, errno);
         return;
     }
 
     // Re-stat file so kernel gets fresh info
     struct stat st = {};
     if (::stat(resolved.entry->backing_path.c_str(), &st) < 0) {
-        fuse_reply_err(req, errno);
+        replyError(req, timer, errno);
         return;
     }
 
+    timer.success();
     fuse_reply_attr(req, &st, 1.0);
 }
 
 void readdir(const fuse_req_t req, const fuse_ino_t ino, const size_t size, const off_t off, fuse_file_info* fi) {
+    ScopedFuseOpTimer timer(fuseStats(), FuseOperation::ReadDir);
     log::Registry::fuse()->debug("[readdir] Called for inode: {}, size: {}, offset: {}", ino, size, off);
     (void)fi;
 
@@ -114,7 +149,7 @@ void readdir(const fuse_req_t req, const fuse_ino_t ino, const size_t size, cons
     });
 
     if (!resolved.ok()) {
-        fuse_reply_err(req, resolved.errnum);
+        replyError(req, timer, resolved.errnum);
         return;
     }
 
@@ -152,10 +187,12 @@ void readdir(const fuse_req_t req, const fuse_ino_t ino, const size_t size, cons
     }
 
     reply:
+        timer.success(buf_used, 0);
         fuse_reply_buf(req, buf.data(), buf_used);
 }
 
 void lookup(const fuse_req_t req, const fuse_ino_t parent, const char* name) {
+    ScopedFuseOpTimer timer(fuseStats(), FuseOperation::Lookup);
     log::Registry::fuse()->debug("[lookup] Called for parent: {}, name: {}", parent, name);
 
     const auto resolved = Resolver::resolve({
@@ -168,7 +205,7 @@ void lookup(const fuse_req_t req, const fuse_ino_t parent, const char* name) {
     });
 
     if (!resolved.ok()) {
-        fuse_reply_err(req, resolved.errnum);
+        replyError(req, timer, resolved.errnum);
         return;
     }
 
@@ -178,10 +215,12 @@ void lookup(const fuse_req_t req, const fuse_ino_t parent, const char* name) {
     e.entry_timeout = 0.1;
     e.attr = statFromEntry(resolved.entry, *resolved.ino);
 
+    timer.success();
     fuse_reply_entry(req, &e);
 }
 
 void create(const fuse_req_t req, const fuse_ino_t parent, const char* name, const mode_t mode, fuse_file_info* fi) {
+    ScopedFuseOpTimer timer(fuseStats(), FuseOperation::Create);
     log::Registry::fuse()->debug("[create] Called for parent: {}, name: {}, mode: {}",
         parent, name, mode);
 
@@ -195,18 +234,18 @@ void create(const fuse_req_t req, const fuse_ino_t parent, const char* name, con
     });
 
     if (!resolved.ok()) {
-        fuse_reply_err(req, resolved.errnum);
+        replyError(req, timer, resolved.errnum);
         return;
     }
 
     if (runtime::Deps::get().fsCache->entryExists(*resolved.path)) {
-        fuse_reply_err(req, EEXIST);
+        replyError(req, timer, EEXIST);
         return;
     }
 
     const auto [err, newEntry] = Filesystem::createFile(*resolved.path, getuid(), getgid(), mode);
     if (err) {
-        fuse_reply_err(req, err);
+        replyError(req, timer, err);
         return;
     }
 
@@ -215,7 +254,7 @@ void create(const fuse_req_t req, const fuse_ino_t parent, const char* name, con
     // open backing file immediately
     const int fd = ::open(newEntry->backing_path.c_str(), O_CREAT | O_RDWR, mode);
     if (fd < 0) {
-        fuse_reply_err(req, errno);
+        replyError(req, timer, errno);
         return;
     }
 
@@ -231,13 +270,15 @@ void create(const fuse_req_t req, const fuse_ino_t parent, const char* name, con
     e.attr_timeout  = 60.0;
     e.entry_timeout = 60.0;
 
+    runtime::Deps::get().storageManager->registerOpenHandle(*newEntry->inode);
+    recordOpenHandle();
+    timer.success();
     fuse_reply_create(req, &e, fi);
 }
 
 void open(const fuse_req_t req, const fuse_ino_t ino, fuse_file_info* fi) {
+    ScopedFuseOpTimer timer(fuseStats(), FuseOperation::Open);
     log::Registry::fuse()->debug("[open] Called for inode: {}, flags: {}", ino, fi->flags);
-
-    runtime::Deps::get().storageManager->registerOpenHandle(ino);
 
     const auto resolved = Resolver::resolve({
         .caller = "open",
@@ -248,13 +289,13 @@ void open(const fuse_req_t req, const fuse_ino_t ino, fuse_file_info* fi) {
     });
 
     if (!resolved.ok()) {
-        fuse_reply_err(req, resolved.errnum);
+        replyError(req, timer, resolved.errnum);
         return;
     }
 
     const int fd = ::open(resolved.entry->backing_path.c_str(), fi->flags, 0644);
     if (fd < 0) {
-        fuse_reply_err(req, errno);
+        replyError(req, timer, errno);
         return;
     }
 
@@ -264,21 +305,32 @@ void open(const fuse_req_t req, const fuse_ino_t ino, fuse_file_info* fi) {
     fi->direct_io = 1;
     fi->keep_cache = 0;
 
+    runtime::Deps::get().storageManager->registerOpenHandle(ino);
+    recordOpenHandle();
+    timer.success();
     fuse_reply_open(req, fi);
 }
 
 void write(const fuse_req_t req, const fuse_ino_t ino, const char* buf,
                        const size_t size, const off_t off, fuse_file_info* fi) {
+    ScopedFuseOpTimer timer(fuseStats(), FuseOperation::Write);
     log::Registry::fuse()->debug("[write] Called for inode: {}, size: {}, offset: {}, file handle: {}",
         ino, size, off, fi->fh);
 
     const auto* fh = reinterpret_cast<FileHandle*>(fi->fh);
-    (void)ino; // unused
+    if (!fh) {
+        log::Registry::fuse()->debug("[write] Invalid file handle for inode: {}", ino);
+        replyError(req, timer, EBADF);
+        return;
+    }
 
     log::Registry::fuse()->debug("[write] Writing to fd={} offset={} size={}", fh->fd, off, size);
 
     const ssize_t res = ::pwrite(fh->fd, buf, size, off);
-    if (res < 0) fuse_reply_err(req, errno);
+    if (res < 0) {
+        replyError(req, timer, errno);
+        return;
+    }
 
     const auto resolved = Resolver::resolve({
         .caller = "write",
@@ -289,7 +341,7 @@ void write(const fuse_req_t req, const fuse_ino_t ino, const char* buf,
     });
 
     if (!resolved.ok()) {
-        fuse_reply_err(req, resolved.errnum);
+        replyError(req, timer, resolved.errnum);
         return;
     }
 
@@ -297,14 +349,21 @@ void write(const fuse_req_t req, const fuse_ino_t ino, const char* buf,
     runtime::Deps::get().fsCache->updateEntry(resolved.entry);
 
     fuse_lowlevel_notify_inval_inode(runtime::Deps::get().fuseSession, ino, 0, 0);
+    timer.success(0, static_cast<std::uint64_t>(res));
     fuse_reply_write(req, res);
 }
 
 void read(const fuse_req_t req, const fuse_ino_t ino, const size_t size, const off_t off, fuse_file_info* fi) {
+    ScopedFuseOpTimer timer(fuseStats(), FuseOperation::Read);
     log::Registry::fuse()->debug("[read] Called for inode: {}, size: {}, offset: {}, file handle: {}",
         ino, size, off, fi->fh);
 
     const auto* fh = reinterpret_cast<FileHandle*>(fi->fh);
+    if (!fh) {
+        log::Registry::fuse()->debug("[read] Invalid file handle for inode: {}", ino);
+        replyError(req, timer, EBADF);
+        return;
+    }
 
     const auto resolved = Resolver::resolve({
         .caller = "read",
@@ -315,18 +374,24 @@ void read(const fuse_req_t req, const fuse_ino_t ino, const size_t size, const o
     });
 
     if (!resolved.ok()) {
-        fuse_reply_err(req, resolved.errnum);
+        replyError(req, timer, resolved.errnum);
         return;
     }
 
     std::vector<char> buffer(size);
     const ssize_t res = ::pread(fh->fd, buffer.data(), size, off);
 
-    if (res < 0) fuse_reply_err(req, errno);
-    else fuse_reply_buf(req, buffer.data(), res);
+    if (res < 0) {
+        replyError(req, timer, errno);
+        return;
+    }
+
+    timer.success(static_cast<std::uint64_t>(res), 0);
+    fuse_reply_buf(req, buffer.data(), res);
 }
 
 void mkdir(const fuse_req_t req, const fuse_ino_t parent, const char* name, const mode_t mode) {
+    ScopedFuseOpTimer timer(fuseStats(), FuseOperation::MkDir);
     log::Registry::fuse()->debug("[mkdir] Called for parent: {}, name: {}, mode: {}", parent, name, mode);
 
     const auto resolved = Resolver::resolve({
@@ -339,17 +404,17 @@ void mkdir(const fuse_req_t req, const fuse_ino_t parent, const char* name, cons
     });
 
     if (!resolved.ok()) {
-        fuse_reply_err(req, resolved.errnum);
+        replyError(req, timer, resolved.errnum);
         return;
     }
 
     if (std::string_view(name).find('/') != std::string::npos) {
-        fuse_reply_err(req, EINVAL);
+        replyError(req, timer, EINVAL);
         return;
     }
 
     if (const auto err = Filesystem::mkdir(*resolved.path, mode); err) {
-        fuse_reply_err(req, err);
+        replyError(req, timer, err);
         return;
     }
 
@@ -362,10 +427,12 @@ void mkdir(const fuse_req_t req, const fuse_ino_t parent, const char* name, cons
     e.entry_timeout = 1.0;
     e.attr = statFromEntry(finalEntry, finalInode);
 
+    timer.success();
     fuse_reply_entry(req, &e);
 }
 
 void rename(const fuse_req_t req, const fuse_ino_t parent, const char* name, const fuse_ino_t newparent, const char* newname, const unsigned int flags) {
+    ScopedFuseOpTimer timer(fuseStats(), FuseOperation::Rename);
     log::Registry::fuse()->debug("[rename] Called for parent: {}, name: {}, newparent: {}, newname: {}, flags: {}",
                                parent, name, newparent, newname, flags);
 
@@ -383,25 +450,26 @@ void rename(const fuse_req_t req, const fuse_ino_t parent, const char* name, con
     });
 
     if (!resolved.ok()) {
-        fuse_reply_err(req, resolved.errnum);
+        replyError(req, timer, resolved.errnum);
         return;
     }
 
     // Flags handling (RENAME_NOREPLACE = 1, RENAME_EXCHANGE = 2)
     if ((flags & RENAME_NOREPLACE) && cache->entryExists(toPath)) {
-        fuse_reply_err(req, EEXIST);
+        replyError(req, timer, EEXIST);
         return;
     }
 
     if (const auto err = Filesystem::rename(*resolved.path, toPath); err) {
-        fuse_reply_err(req, err);
+        replyError(req, timer, err);
         return;
     }
 
-    fuse_reply_err(req, 0);  // Success
+    replyOk(req, timer);
 }
 
 void forget(const fuse_req_t req, const fuse_ino_t ino, const uint64_t nlookup) {
+    ScopedFuseOpTimer timer(fuseStats(), FuseOperation::Forget);
     log::Registry::fuse()->debug("[forget] Called for inode: {}, nlookup: {}", ino, nlookup);
 
     const auto resolved = Resolver::resolve({
@@ -413,6 +481,7 @@ void forget(const fuse_req_t req, const fuse_ino_t ino, const uint64_t nlookup) 
 
     if (!resolved.ok()) {
         log::Registry::fuse()->debug("[forget] No entry found for inode {}: {}", ino, resolved.errnum);
+        timer.success();
         fuse_reply_none(req); // still need to reply to avoid hanging the kernel, even if we have nothing to evict
         return;
     }
@@ -420,10 +489,12 @@ void forget(const fuse_req_t req, const fuse_ino_t ino, const uint64_t nlookup) 
     runtime::Deps::get().fsCache->evictIno(ino);
 
     log::Registry::fuse()->debug("[forget] Evicted inode {}", ino);
+    timer.success();
     fuse_reply_none(req); // no return value
 }
 
 void access(const fuse_req_t req, const fuse_ino_t ino, const int mask) {
+    ScopedFuseOpTimer timer(fuseStats(), FuseOperation::Access);
     log::Registry::fuse()->debug("[access] Called for inode: {}, mask: {}", ino, mask);
 
     std::vector<rbac::permission::vault::FilesystemAction> requiredPermissions;
@@ -440,14 +511,15 @@ void access(const fuse_req_t req, const fuse_ino_t ino, const int mask) {
     });
 
     if (!resolved.ok()) {
-        fuse_reply_err(req, resolved.errnum);
+        replyError(req, timer, resolved.errnum);
         return;
     }
 
-    fuse_reply_err(req, 0);
+    replyOk(req, timer);
 }
 
 void unlink(const fuse_req_t req, const fuse_ino_t parent, const char* name) {
+    ScopedFuseOpTimer timer(fuseStats(), FuseOperation::Unlink);
     log::Registry::fuse()->debug("[unlink] Called for parent: {}, name: {}", parent, name);
 
     const auto resolved = Resolver::resolve({
@@ -460,12 +532,12 @@ void unlink(const fuse_req_t req, const fuse_ino_t parent, const char* name) {
     });
 
     if (!resolved.ok()) {
-        fuse_reply_err(req, resolved.errnum);
+        replyError(req, timer, resolved.errnum);
         return;
     }
 
     if (resolved.entry->isDirectory()) {
-        fuse_reply_err(req, EISDIR);
+        replyError(req, timer, EISDIR);
         return;
     }
 
@@ -474,10 +546,11 @@ void unlink(const fuse_req_t req, const fuse_ino_t parent, const char* name) {
     if (::unlink(resolved.entry->backing_path.c_str()) < 0)
         log::Registry::fuse()->debug("[unlink] Failed to remove backing file: {}: {}", resolved.entry->backing_path.string(), strerror(errno));
 
-    fuse_reply_err(req, 0);
+    replyOk(req, timer);
 }
 
 void rmdir(const fuse_req_t req, const fuse_ino_t parent, const char* name) {
+    ScopedFuseOpTimer timer(fuseStats(), FuseOperation::RmDir);
     log::Registry::fuse()->debug("[rmdir] Called for parent: {}, name: {}", parent, name);
 
     const auto resolved = Resolver::resolve({
@@ -490,7 +563,7 @@ void rmdir(const fuse_req_t req, const fuse_ino_t parent, const char* name) {
     });
 
     if (!resolved.ok()) {
-        fuse_reply_err(req, resolved.errnum);
+        replyError(req, timer, resolved.errnum);
         return;
     }
 
@@ -499,25 +572,27 @@ void rmdir(const fuse_req_t req, const fuse_ino_t parent, const char* name) {
     if (::rmdir(resolved.entry->backing_path.c_str()) < 0)
         log::Registry::fuse()->warn("[rmdir] Failed to remove backing directory: {}: {}", resolved.entry->backing_path.string(), strerror(errno));
 
-    fuse_reply_err(req, 0);
+    replyOk(req, timer);
 }
 
 void flush(const fuse_req_t req, const fuse_ino_t ino, fuse_file_info* fi) {
+    ScopedFuseOpTimer timer(fuseStats(), FuseOperation::Flush);
     log::Registry::fuse()->debug("[flush] Called for inode: {}, file handle: {}", ino, fi->fh);
 
     // This can be a no-op unless something like sync(2) or call fsync(fd) is desired
     // Likely no need finalize here since flush may be called multiple times per FD
 
-    fuse_reply_err(req, 0);
+    replyOk(req, timer);
 }
 
 void release(const fuse_req_t req, const fuse_ino_t ino, fuse_file_info* fi) {
+    ScopedFuseOpTimer timer(fuseStats(), FuseOperation::Release);
     log::Registry::fuse()->debug("[release] Called for inode: {}, file handle: {}", ino, fi->fh);
 
     const auto* fh = reinterpret_cast<FileHandle*>(fi->fh);
     if (!fh) {
         log::Registry::fuse()->debug("[release] Invalid file handle for inode: {}", ino);
-        fuse_reply_err(req, EBADF);
+        replyError(req, timer, EBADF);
         return;
     }
 
@@ -528,11 +603,13 @@ void release(const fuse_req_t req, const fuse_ino_t ino, fuse_file_info* fi) {
     fi->fh = 0; // clear the kernel-side handle
 
     runtime::Deps::get().storageManager->closeOpenHandle(ino);
+    recordCloseHandle();
 
-    fuse_reply_err(req, 0);
+    replyOk(req, timer);
 }
 
 void fsync(const fuse_req_t req, const fuse_ino_t ino, const int datasync, fuse_file_info* fi) {
+    ScopedFuseOpTimer timer(fuseStats(), FuseOperation::Fsync);
     log::Registry::fuse()->debug("[fsync] Called for inode: {}, file handle: {}, isdatasync: {}", ino, fi->fh, datasync);
     (void) datasync;
 
@@ -545,20 +622,28 @@ void fsync(const fuse_req_t req, const fuse_ino_t ino, const int datasync, fuse_
     });
 
     if (!resolved.ok()) {
-        fuse_reply_err(req, resolved.errnum);
+        replyError(req, timer, resolved.errnum);
         return;
     }
 
-    if (const int fd = fi->fh; ::fsync(fd) < 0) {
-        log::Registry::fuse()->debug("[fsync] Failed to sync file handle: {}: {}", fd, strerror(errno));
-        fuse_reply_err(req, errno);
+    const auto* fh = reinterpret_cast<FileHandle*>(fi->fh);
+    if (!fh) {
+        log::Registry::fuse()->debug("[fsync] Invalid file handle for inode: {}", ino);
+        replyError(req, timer, EBADF);
         return;
     }
 
-    fuse_reply_err(req, 0);
+    if (::fsync(fh->fd) < 0) {
+        log::Registry::fuse()->debug("[fsync] Failed to sync file handle: {}: {}", fh->fd, strerror(errno));
+        replyError(req, timer, errno);
+        return;
+    }
+
+    replyOk(req, timer);
 }
 
 void statfs(const fuse_req_t req, const fuse_ino_t ino) {
+    ScopedFuseOpTimer timer(fuseStats(), FuseOperation::StatFs);
     log::Registry::fuse()->debug("[statfs] Called for inode: {}", ino);
 
     const auto resolved = Resolver::resolve({
@@ -570,7 +655,7 @@ void statfs(const fuse_req_t req, const fuse_ino_t ino) {
     });
 
     if (!resolved.ok()) {
-        fuse_reply_err(req, resolved.errnum);
+        replyError(req, timer, resolved.errnum);
         return;
     }
 
@@ -578,10 +663,11 @@ void statfs(const fuse_req_t req, const fuse_ino_t ino) {
 
     if (::statvfs(resolved.entry->backing_path.c_str(), &st) < 0) {
         log::Registry::fuse()->debug("[statfs] Failed to get filesystem stats for: {}: {}", resolved.entry->backing_path.string(), strerror(errno));
-        fuse_reply_err(req, errno);
+        replyError(req, timer, errno);
         return;
     }
 
+    timer.success();
     fuse_reply_statfs(req, &st);
 }
 

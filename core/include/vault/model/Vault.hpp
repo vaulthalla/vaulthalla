@@ -24,6 +24,7 @@ struct Vault {
     uintmax_t quota{};
     VaultType type{VaultType::Local};
     std::filesystem::path mount_point;
+    bool allow_fs_write{false};
     bool is_active{true};
     std::time_t created_at{};
 

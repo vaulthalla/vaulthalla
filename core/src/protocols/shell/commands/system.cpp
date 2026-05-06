@@ -1,16 +1,12 @@
 #include "protocols/shell/commands/all.hpp"
 #include "protocols/shell/Router.hpp"
-#include "protocols/shell/Server.hpp"
 #include "protocols/shell/util/argsHelpers.hpp"
-#include "protocols/ProtocolService.hpp"
-#include "runtime/Manager.hpp"
 #include "runtime/Deps.hpp"
+#include "stats/model/SystemHealth.hpp"
 #include "usage/include/UsageManager.hpp"
 
 #include <version.h>
 
-#include <algorithm>
-#include <array>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -29,22 +25,9 @@ std::string yesNo(const bool value) {
     return value ? "yes" : "no";
 }
 
-std::string renderDepsCoreReady(const runtime::Deps::SanityStatus& deps, size_t& ready, size_t& total) {
-    const std::array<bool, 9> checks{
-        deps.storageManager,
-        deps.apiKeyManager,
-        deps.authManager,
-        deps.sessionManager,
-        deps.secretsManager,
-        deps.syncController,
-        deps.fsCache,
-        deps.shellUsageManager,
-        deps.httpCacheStats
-    };
-    total = checks.size();
-    ready = static_cast<size_t>(std::ranges::count(checks, true));
+std::string renderDepsCoreReady(const stats::model::HealthSummary& summary) {
     std::ostringstream out;
-    out << ready << "/" << total << " ready";
+    out << summary.depsReady << "/" << summary.depsTotal << " ready";
     return out.str();
 }
 
@@ -52,31 +35,14 @@ CommandResult handleStatus(const CommandCall& call) {
     if (hasKey(call, "help") || hasKey(call, "h"))
         return usage(call.constructFullArgs());
 
-    const auto& manager = runtime::Manager::instance();
-    const auto runtimeStatus = manager.status();
-    const auto protocolService = manager.getProtocolService();
-    const auto shellServer = manager.getShellServer();
-    const auto protocolStatus = protocolService ? protocolService->protocolStatus() : protocols::ProtocolService::RuntimeStatus{};
-    const auto depsStatus = runtime::Deps::get().sanityStatus();
-
-    size_t depsReady = 0;
-    size_t depsTotal = 0;
-    const auto depsReadySummary = renderDepsCoreReady(depsStatus, depsReady, depsTotal);
-
-    const bool protocolHealthy = !protocolService
-        ? false
-        : (!protocolStatus.websocketConfigured || protocolStatus.websocketReady) &&
-          (!protocolStatus.httpPreviewConfigured || protocolStatus.httpPreviewReady);
-
-    const bool depsHealthy = depsReady == depsTotal;
-    const bool overallHealthy = runtimeStatus.allRunning && protocolHealthy && depsHealthy;
+    const auto health = stats::model::SystemHealth::snapshot();
 
     std::ostringstream out;
-    out << "vh status: " << (overallHealthy ? "healthy" : "degraded") << "\n";
+    out << "vh status: " << health.overallStatusString() << "\n";
     out << "runtime manager:\n";
-    out << "  all services running: " << yesNo(runtimeStatus.allRunning) << "\n";
-    out << "  service count: " << runtimeStatus.services.size() << "\n";
-    for (const auto& s : runtimeStatus.services) {
+    out << "  all services running: " << yesNo(health.runtime.allRunning) << "\n";
+    out << "  service count: " << health.runtime.serviceCount << "\n";
+    for (const auto& s : health.runtime.services) {
         out << "  - " << s.entryName << " (" << s.serviceName << "): "
             << (s.running ? "running" : "stopped");
         if (s.interrupted) out << " [interrupt requested]";
@@ -84,18 +50,21 @@ CommandResult handleStatus(const CommandCall& call) {
     }
 
     out << "protocol service:\n";
-    out << "  running: " << yesNo(protocolStatus.running) << "\n";
-    out << "  io context initialized: " << yesNo(protocolStatus.ioContextInitialized) << "\n";
-    out << "  websocket: configured=" << yesNo(protocolStatus.websocketConfigured)
-        << ", ready=" << yesNo(protocolStatus.websocketReady) << "\n";
-    out << "  http preview: configured=" << yesNo(protocolStatus.httpPreviewConfigured)
-        << ", ready=" << yesNo(protocolStatus.httpPreviewReady) << "\n";
+    out << "  running: " << yesNo(health.protocols.running) << "\n";
+    out << "  io context initialized: " << yesNo(health.protocols.ioContextInitialized) << "\n";
+    out << "  websocket: configured=" << yesNo(health.protocols.websocketConfigured)
+        << ", ready=" << yesNo(health.protocols.websocketReady) << "\n";
+    out << "  http preview: configured=" << yesNo(health.protocols.httpPreviewConfigured)
+        << ", ready=" << yesNo(health.protocols.httpPreviewReady) << "\n";
 
     out << "deps sanity:\n";
-    out << "  core deps: " << depsReadySummary << "\n";
-    out << "  fuse session: " << (depsStatus.fuseSession ? "present" : "missing") << "\n";
-    if (shellServer)
-        out << "  shell admin uid bound: " << yesNo(shellServer->adminUIDSet()) << "\n";
+    out << "  core deps: " << renderDepsCoreReady(health.summary) << "\n";
+    out << "  fuse session: " << (health.deps.fuseSession ? "present" : "missing") << "\n";
+    if (health.shell.adminUidBound) {
+        out << "  shell admin uid bound: " << yesNo(*health.shell.adminUidBound);
+        if (!*health.shell.adminUidBound) out << " (setup advisory)";
+        out << "\n";
+    }
 
     return ok(out.str());
 }

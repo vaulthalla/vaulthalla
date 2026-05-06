@@ -6,13 +6,22 @@
 #include <atomic>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <condition_variable>
+#include <utility>
+#include <vector>
 
 namespace vh::concurrency {
 
 class ThreadPoolManager {
 public:
+    struct NamedThreadPoolSnapshot {
+        std::string name;
+        bool present = false;
+        ThreadPool::Snapshot snapshot;
+    };
+
     static ThreadPoolManager& instance() {
         static ThreadPoolManager instance;
         return instance;
@@ -31,9 +40,9 @@ public:
 
         unsigned int fuseN  = base + (rem > 0 ? 1 : 0);
         unsigned int syncN  = base + (rem > 1 ? 1 : 0);
-        unsigned int thumbN = base; // thumb/http get no extra by default
-        unsigned int httpN  = base;
-        unsigned int statsN = base;
+        unsigned int thumbN = base + (rem > 2 ? 1 : 0);
+        unsigned int httpN  = base + (rem > 3 ? 1 : 0);
+        unsigned int statsN = base + (rem > 4 ? 1 : 0);
 
         fuse_  = std::make_shared<ThreadPool>(nullptr, fuseN);
         sync_  = std::make_shared<ThreadPool>(nullptr, syncN);
@@ -73,6 +82,16 @@ public:
     std::shared_ptr<ThreadPool>& httpPool() { return http_; }
     std::shared_ptr<ThreadPool>& statsPool() { return stats_; }
 
+    [[nodiscard]] std::vector<NamedThreadPoolSnapshot> snapshotPools() const {
+        return {
+            namedSnapshot("fuse", fuse_),
+            namedSnapshot("sync", sync_),
+            namedSnapshot("thumb", thumb_),
+            namedSnapshot("http", http_),
+            namedSnapshot("stats", stats_)
+        };
+    }
+
     void signalPressureChange() {
         {
             std::scoped_lock lock(pressureMutex_);
@@ -84,6 +103,22 @@ public:
 private:
     ThreadPoolManager() = default;
     ~ThreadPoolManager() { shutdown(); }
+
+    static NamedThreadPoolSnapshot namedSnapshot(
+        std::string name,
+        const std::shared_ptr<ThreadPool>& pool
+    ) {
+        if (!pool) return {
+            .name = std::move(name),
+            .present = false,
+            .snapshot = {}
+        };
+        return {
+            .name = std::move(name),
+            .present = true,
+            .snapshot = pool->snapshot()
+        };
+    }
 
     void rebalanceLoop() {
         using namespace std::chrono_literals;
@@ -125,12 +160,12 @@ private:
         }
         // Return borrowed if hungry is calm
         else if (hungryRatio < 2 && hungry->hasBorrowedWorker()) {
-            auto [t, flag] = hungry->giveWorker();
-            donor->acceptWorker(std::move(t), flag);
+            auto [t, flag] = hungry->returnBorrowedWorker();
+            donor->acceptReturnedWorker(std::move(t), flag);
         }
     }
 
-    static constexpr unsigned int RESERVE_FACTOR = 3, NUM_POOLS = 4;
+    static constexpr unsigned int RESERVE_FACTOR = 3, NUM_POOLS = 5;
     std::shared_ptr<ThreadPool> fuse_, sync_, thumb_, http_, stats_;
     std::atomic<bool> stopFlag_{false};
     std::atomic<bool> running_{false};

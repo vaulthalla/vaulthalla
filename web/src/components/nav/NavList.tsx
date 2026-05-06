@@ -1,6 +1,7 @@
 import clsx from 'clsx'
 import type { NavItem } from './types'
 import { ActiveLink } from './ActiveLink.client'
+import { DashboardNavSeverityBadge } from '@/components/nav/DashboardNavSeverityBadge'
 
 export const NavList = ({ items, compact = false }: { items: NavItem[]; compact?: boolean }) => {
   const renderItem = (item: NavItem, depth: number) => {
@@ -11,9 +12,9 @@ export const NavList = ({ items, compact = false }: { items: NavItem[]; compact?
       <div key={item.href} className={clsx(depth === 0 && 'border-b border-cyan-900/30 pb-1')}>
         <ActiveLink
           href={item.href}
-          partial
+          partial={!item.exact}
           className={clsx(
-            'flex items-center justify-between rounded-md px-2 py-2 transition-colors',
+            'relative flex items-center justify-between rounded-md px-2 py-2 transition-colors',
             compact && 'justify-center',
             depth === 0 ? 'text-base font-medium' : 'pl-4 text-sm font-normal',
             'text-cyan-300 hover:bg-cyan-700/30 hover:text-white',
@@ -24,7 +25,18 @@ export const NavList = ({ items, compact = false }: { items: NavItem[]; compact?
             {!compact && item.label}
           </span>
 
-          {!compact && hasSub && <span className="text-cyan-600">▾</span>}
+          {compact && item.dashboardSeverity ?
+            <DashboardNavSeverityBadge source={item.dashboardSeverity} compact />
+          : null}
+
+          {!compact && (item.dashboardSeverity || hasSub) && (
+            <span className="inline-flex items-center gap-2">
+              {item.dashboardSeverity ?
+                <DashboardNavSeverityBadge source={item.dashboardSeverity} />
+              : null}
+              {hasSub && <span className="text-cyan-600">▾</span>}
+            </span>
+          )}
         </ActiveLink>
 
         {!compact && hasSub && (

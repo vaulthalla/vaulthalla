@@ -14,7 +14,10 @@
 #include <iostream>
 #include <string>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <paths.h>
+#include <unistd.h>
 
 using namespace vh::test::integration;
 using namespace vh::protocols::shell;
@@ -24,6 +27,11 @@ using namespace vh::fs;
 
 static void initBase() {
     vh::paths::enableTestMode();
+    std::filesystem::remove_all(vh::paths::getBackingPath());
+    std::filesystem::create_directories(vh::paths::getBackingPath());
+    std::filesystem::create_directories(vh::paths::getMountPath());
+    std::filesystem::create_directories(vh::paths::getRuntimePath());
+    std::ofstream(vh::paths::getRuntimePath() / "superadmin_uid") << getuid() << '\n';
     vh::config::Registry::init();
     vh::log::Registry::init();
     ThreadPoolManager::instance().init();

@@ -26,6 +26,18 @@ ConnectionLifecycleManager::~ConnectionLifecycleManager() {
     stop();
 }
 
+std::uint64_t ConnectionLifecycleManager::sweepIntervalSeconds() const noexcept {
+    return static_cast<std::uint64_t>(sweep_interval_.count());
+}
+
+std::uint64_t ConnectionLifecycleManager::unauthenticatedSessionTimeoutSeconds() const noexcept {
+    return static_cast<std::uint64_t>(unauthenticated_session_timeout_.count());
+}
+
+std::uint64_t ConnectionLifecycleManager::idleTimeoutMinutes() const noexcept {
+    return static_cast<std::uint64_t>(idle_timeout_.count());
+}
+
 void ConnectionLifecycleManager::runLoop() {
     log::Registry::ws()->info("[LifecycleManager] Started connection lifecycle manager.");
     while (!shouldStop()) {

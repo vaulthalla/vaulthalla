@@ -3,6 +3,7 @@
 #include "config/Config.hpp"
 #include "config/util.hpp"
 
+#include <algorithm>
 #include <yaml-cpp/yaml.h>
 
 namespace YAML {
@@ -261,6 +262,33 @@ struct convert<ConnectionLifecycleManagerConfig> {
         rhs.idle_timeout_minutes = std::max(5, node["idle_timeout_minutes"].as<int>(30));
         rhs.unauthenticated_timeout_seconds = std::max(30, node["unauthenticated_timeout_seconds"].as<int>(300));
         rhs.sweep_interval_seconds = std::max(15, node["sweep_interval_seconds"].as<int>(60));
+        return true;
+    }
+};
+
+template<>
+struct convert<StatsSnapshotsConfig> {
+    static Node encode(const StatsSnapshotsConfig& rhs) {
+        Node node;
+        node["enabled"] = rhs.enabled;
+        node["runtime_interval_seconds"] = rhs.runtime_interval_seconds;
+        node["gauge_observation_interval_seconds"] = rhs.gauge_observation_interval_seconds;
+        node["vault_interval_seconds"] = rhs.vault_interval_seconds;
+        node["retention_days"] = rhs.retention_days;
+        return node;
+    }
+
+    static bool decode(const Node& node, StatsSnapshotsConfig& rhs) {
+        if (!node.IsMap()) return false;
+        rhs.enabled = node["enabled"].as<bool>(true);
+        rhs.runtime_interval_seconds = 60;
+        rhs.gauge_observation_interval_seconds = std::clamp(
+            node["gauge_observation_interval_seconds"].as<uint32_t>(3),
+            static_cast<uint32_t>(1),
+            static_cast<uint32_t>(60)
+        );
+        rhs.vault_interval_seconds = std::max(static_cast<uint32_t>(300), node["vault_interval_seconds"].as<uint32_t>(3600));
+        rhs.retention_days = std::max(static_cast<uint32_t>(1), node["retention_days"].as<uint32_t>(30));
         return true;
     }
 };

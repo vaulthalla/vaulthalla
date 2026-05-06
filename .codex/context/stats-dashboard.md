@@ -1,0 +1,1108 @@
+# Stats Dashboard Buildout Context
+
+This file mirrors the ignored scratch roadmap/status notes for durable checkpoint context.
+
+## Current Branch
+
+- Branch: `stats-dashboards`
+- Upstream: `origin/stats-dashboards`
+
+## Completed Checkpoints
+
+### Phase 1 - System Health Center MVP
+
+- Commit: `587d5b16`
+- Backend: shared `SystemHealth` model, `vh status` reuse, `stats.system.health`.
+- Frontend: `SystemHealth` model/store/component on admin dashboard.
+
+### Phase 2 - Thread Pool Pressure
+
+- Commit: `0e5400fe`
+- Backend: `ThreadPool`/`ThreadPoolManager` snapshots, `stats.system.threadpools`.
+- Frontend: `ThreadPoolStats` model/store/component on admin dashboard.
+
+### Phase 3 / Phase 4 - FUSE Telemetry and Vault Sync Health
+
+- Commit: `3d3432dd`
+- Backend: `FuseStats`, FUSE operation instrumentation, `stats.system.fuse`, `VaultSyncHealth`, sync rollup queries, `stats.vault.sync`.
+- Frontend: `FuseStats` admin card, `VaultSyncHealth` vault dashboard card.
+- Environment hardening in same checkpoint: dev/test PostgreSQL lifecycle fixes and direct integration test isolation.
+
+## Phase 5 - Vault Activity and Mutation Stats
+
+- Status: committed and pushed.
+- Commit: `e236717c`
+- Push target: `origin/stats-dashboards`
+- Websocket command: `stats.vault.activity`.
+- Backend surfaces:
+  - `stats/model/VaultActivity`
+  - `db/query/vault/Activity`
+  - prepared vault activity rollup queries
+  - file activity insert seam for file create/modify
+  - operation status recording seam for web move/rename/copy
+- Frontend surfaces:
+  - `web/src/models/stats/vaultActivity.ts`
+  - `web/src/components/vault/VaultStatsDashboard/VaultActivity/Component.tsx`
+  - `statsStore.getVaultActivity`
+  - `WebSocketCommandMap['stats.vault.activity']`
+- Dashboard integration: vault dashboard renders Activity after Sync Health.
+- Architectural decisions:
+  - Activity metrics come from `file_activity`, `files_trashed`, and `operations`.
+  - Delete counts/bytes come from `files_trashed` because `file_activity` rows cascade when the file row is deleted.
+  - Move/rename/copy operation rows are written as short-lived `in_progress` records and marked `success`/`error` after the filesystem call.
+  - FUSE create/update flows contribute through `File::upsertFile`/`File::updateFile`; FUSE move/rename is not double-recorded in `operations` in this phase.
+  - `sync::model::Operation::Status::Failed` now serializes to `error` to match the schema check constraint; parser still accepts legacy `failed`.
+- Validation:
+  - `git diff --check`: passed
+  - `meson setup --reconfigure build`: passed
+  - `meson compile -C build`: passed after fixing websocket Router unity namespace ambiguity
+  - `make test`: passed
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+  - `meson test -C build`: passed, 2/2
+  - Extra environment validation: `make dev` passed after dropping/recreating the existing dev PostgreSQL role/database and reseeding `/run/vaulthalla/db_password`.
+- Known failures: none currently.
+- Deferred TODOs:
+  - Add richer FUSE rename/move operation attribution only if it can avoid duplicate web operation rows.
+  - Add explicit activity tests around mutation recording.
+  - Operation status history for sync-processed pending operations remains existing behavior.
+
+## Phase 6 - Share Observatory Lite
+
+- Status: committed and pushed.
+- Commit: `36f35f23`
+- Push target: `origin/stats-dashboards`
+- Websocket command: `stats.vault.shares`.
+- Backend surfaces:
+  - `stats/model/VaultShareStats`
+  - `db/query/share/Stats`
+  - prepared share rollup queries
+  - vault View/ViewStats permission check through the existing stats handler pattern
+- Frontend surfaces:
+  - `web/src/models/stats/vaultShareStats.ts`
+  - `web/src/components/vault/VaultStatsDashboard/ShareStats/Component.tsx`
+  - `statsStore.getVaultShareStats`
+  - `WebSocketCommandMap['stats.vault.shares']`
+- Dashboard integration: vault dashboard renders Share Observatory after Activity.
+- Architectural decisions:
+  - Link posture metrics come from `share_link`.
+  - Completed upload count comes from `share_upload` joined to `share_link`.
+  - Download/denied/rate-limited/failed attempts and recent events come from `share_access_event`.
+  - Stats payload omits IP addresses and user agents to avoid exposing unnecessary sensitive detail in this rollup.
+  - Reconfigure exposed a pre-existing unity-build ambiguity in shell vault commands; unqualified `Vault` references were made explicit.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `meson setup --reconfigure build`: passed
+  - `meson compile -C build`: passed
+  - `make test`: passed
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+  - `meson test -C build`: passed, 2/2
+- Known failures: none currently.
+- Deferred TODOs:
+  - Add dedicated share stats tests with seeded links/uploads/audit events.
+  - Add optional global admin share activity card in a later dashboard layout pass if desired.
+
+## Phase 7 - DB Health
+
+- Status: committed and pushed.
+- Commit: `b681356c`
+- Push target: `origin/stats-dashboards`
+- Websocket command: `stats.system.db`.
+- Backend surfaces:
+  - `stats/model/DbStats`
+  - `db/query/stats/DbStats`
+  - prepared DB health queries for size, connection state, cache hit ratio, deadlocks, temp bytes, oldest transaction age, largest tables, and extension detection
+- Frontend surfaces:
+  - `web/src/models/stats/dbStats.ts`
+  - `web/src/components/stats/DbHealth.tsx`
+  - `statsStore` DB stats wrapper, refresh, and polling helpers
+  - `WebSocketCommandMap['stats.system.db']`
+- Dashboard integration: admin dashboard renders Database Health after FUSE Operations and before cache cards.
+- Architectural decisions:
+  - DB health works on stock PostgreSQL and does not require `pg_stat_statements`.
+  - `pg_stat_statements` is detected through `pg_extension`; slow-query count is `null`/not enabled when the extension is unavailable.
+  - If DB stat collection throws, the stats payload returns `connected=false`, `status=critical`, and an error string instead of inventing healthy data.
+  - Creating `vh::db::query::stats` exposed older relative `stats::model` lookup in DB query headers, so those references were made fully qualified.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `meson setup --reconfigure build`: passed
+  - `meson compile -C build`: passed after qualifying shadowed stats model namespaces
+  - `make test`: passed
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+  - `meson test -C build`: passed, 2/2
+- Known failures: none currently.
+- Deferred TODOs:
+  - Add focused DB stats query tests.
+  - Add richer bloat/index-health estimates only if backed by safe PostgreSQL metadata.
+
+## Phase 8 - Vault Security / Integrity
+
+- Status: committed and pushed.
+- Commit: `f5ff4219`
+- Push target: `origin/stats-dashboards`
+- Websocket command: `stats.vault.security`.
+- Backend surfaces:
+  - `stats/model/VaultSecurity`
+  - `db/query/vault/Security`
+  - prepared vault security rollup query for key version posture, file key coverage, denied share access, and policy-change timestamps
+  - vault View/ViewStats permission check through the existing per-vault stats handler pattern
+- Frontend surfaces:
+  - `web/src/models/stats/vaultSecurity.ts`
+  - `web/src/components/vault/VaultStatsDashboard/VaultSecurity/Component.tsx`
+  - `statsStore.getVaultSecurity`
+  - `WebSocketCommandMap['stats.vault.security']`
+- Dashboard integration: vault dashboard renders Security / Integrity after Share Observatory.
+- Architectural decisions:
+  - Encryption posture is based on `vault_keys`, `vault_keys_trashed`, and `files.encrypted_with_key_version`.
+  - Denied/rate-limited access signals come from `share_access_event` without exposing full IP or user-agent values.
+  - Last permission and share policy change timestamps come from vault role assignment/override and share role/link metadata.
+  - Integrity verification is reported honestly as `not_available`; no checksum pass/fail claim is made without a verifier.
+  - Unity-build helper names are security-specific to avoid collisions with other vault query helper functions.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `meson setup --reconfigure build`: passed
+  - `meson compile -C build`: passed after fixing security query unity helper-name collisions
+  - `make test`: passed
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+  - `meson test -C build`: passed, 2/2 after rerunning sequentially behind `make test`; an earlier concurrent run raced the test DB setup and hit the known password-auth initialization failure
+- Known failures: none currently.
+- Push result: succeeded, with GitHub remote moved warning.
+- Deferred TODOs:
+  - Add seeded DB tests for vault security rollups.
+  - Add a real integrity verifier before reporting checksum health as passed/failed.
+
+## Phase 8A - Recovery Readiness
+
+- Status: committed and pushed.
+- Commit: `e0d97240`
+- Push target: `origin/stats-dashboards`
+- Websocket command: `stats.vault.recovery`.
+- Backend surfaces:
+  - `stats/model/VaultRecovery`
+  - `db/query/vault/Recovery`
+  - prepared backup policy query reading `backup_policy`
+  - vault View/ViewStats permission check through the existing per-vault stats handler pattern
+- Frontend surfaces:
+  - `web/src/models/stats/vaultRecovery.ts`
+  - `web/src/components/vault/VaultStatsDashboard/RecoveryReadiness/Component.tsx`
+  - `statsStore.getVaultRecovery`
+  - `WebSocketCommandMap['stats.vault.recovery']`
+- Dashboard integration: vault dashboard renders Recovery Readiness immediately after Sync Health and before Activity.
+- Architectural decisions:
+  - Readiness is based only on `backup_policy` state; the command does not trigger backup work.
+  - Missing policy returns `unknown`, disabled policy returns `disabled`, stale success windows return `stale`, and error state/unresolved latest error returns `failing`.
+  - `backup_stale` and missed backup estimates are nullable/unknown when there is no policy row rather than pretending the vault is recoverable.
+  - If multiple `backup_policy` rows exist for a vault, the query uses the latest row by id because the schema does not enforce uniqueness.
+  - Reconfigure exposed another existing shell unity-build ambiguity; `vault/create.cpp` RBAC references were fully qualified.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `meson setup --reconfigure build`: passed
+  - `meson compile -C build`: passed after qualifying shell vault create RBAC references
+  - `make test`: passed
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+  - `meson test -C build`: passed, 2/2
+- Known failures: none currently.
+- Push result: succeeded, with GitHub remote moved warning.
+- Deferred TODOs:
+  - Add seeded DB tests for recovery readiness status rules.
+  - Add backup verification signals only when a real backup verification process exists.
+
+## Phase 8B - Operation Queue Health
+
+- Status: committed and pushed.
+- Commit: `f6ea80df`
+- Push target: `origin/stats-dashboards`
+- Websocket commands: `stats.system.operations`, `stats.vault.operations`.
+- Backend surfaces:
+  - `stats/model/OperationStats`
+  - `db/query/stats/OperationStats`
+  - prepared operation/share-upload rollup queries for system and vault scopes
+  - admin-only system command and View/ViewStats vault-scoped command
+- Frontend surfaces:
+  - `web/src/models/stats/operationStats.ts`
+  - `web/src/components/stats/OperationQueueStats.tsx`
+  - `web/src/components/vault/VaultStatsDashboard/OperationQueue/Component.tsx`
+  - `statsStore` system operation wrapper, polling helpers, and vault fetch helper
+  - `WebSocketCommandMap['stats.system.operations']` and `['stats.vault.operations']`
+- Dashboard integration:
+  - Admin dashboard renders Operation Queue after FUSE Operations and before Database Health.
+  - Vault dashboard renders Operation Queue after Activity and before Share Observatory.
+- Architectural decisions:
+  - Filesystem work comes from the existing `operations` table.
+  - Share upload work comes from `share_upload`; vault filtering joins through `share_link`.
+  - Stalled work uses an honest age-only threshold of 15 minutes because progress-change instrumentation is not present.
+  - Recent errors combine failed/cancelled filesystem operations and failed/cancelled share uploads without mutating queue state.
+  - Overall status is `critical` for stalled work, `warning` for active/recent failed work, and `healthy` when queues are clear.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `meson setup --reconfigure build`: passed
+  - `meson compile -C build`: passed
+  - `make test`: passed
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+  - `meson test -C build`: passed, 2/2
+- Known failures: none currently.
+- Push result: succeeded, with GitHub remote moved warning.
+- Deferred TODOs:
+  - Add seeded operation/share-upload stats tests.
+  - Add progress-staleness detection only if upload progress timestamps or instrumentation are added.
+
+## Phase 8C - Connection Health
+
+- Status: committed and pushed.
+- Commit: `60b02079`
+- Push target: `origin/stats-dashboards`
+- Websocket command: `stats.system.connections`.
+- Backend surfaces:
+  - `stats/model/ConnectionStats`
+  - timeout accessors on `ConnectionLifecycleManager`
+  - `runtime::Manager::getConnectionLifecycleManager()`
+  - admin-only websocket handler for live connection stats
+- Frontend surfaces:
+  - `web/src/models/stats/connectionStats.ts`
+  - `web/src/components/stats/ConnectionStats.tsx`
+  - `statsStore` connection stats wrapper, fetch, refresh, and polling helpers
+  - `WebSocketCommandMap['stats.system.connections']`
+- Dashboard integration: admin dashboard renders Connection Health after FUSE Operations and before Operation Queue.
+- Architectural decisions:
+  - Active session counts come from the existing `auth::session::Manager::getActive()` registry.
+  - Session modes are split into unauthenticated, human, share pending, and ready share sessions.
+  - Timeout settings come from the runtime `ConnectionLifecycleManager`.
+  - Raw IP and user-agent top lists are intentionally returned as unavailable/empty to avoid leaking unnecessary sensitive detail.
+  - 24h open/close/error counters are returned as null because no lifecycle event counter exists yet.
+  - Reconfigure exposed a unit-test include dependency; `test_share_queries.cpp` now includes `share/Principal.hpp` explicitly.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `meson setup --reconfigure build`: passed
+  - `meson compile -C build`: passed after adding explicit test include
+  - `make test`: passed
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+  - `meson test -C build`: passed, 2/2
+- Known failures: none currently.
+- Push result: succeeded, with GitHub remote moved warning.
+- Deferred TODOs:
+  - Add lightweight lifecycle counters if 24h opened/closed/swept/error metrics become necessary.
+  - Add redacted/top-limited user-agent/IP summaries only with an explicit privacy decision.
+
+## Phase 8D - Storage Backend Health
+
+- Status: committed and pushed.
+- Commit: `b2d1dcb0`
+- Push target: `origin/stats-dashboards`
+- Websocket commands: `stats.system.storage`, `stats.vault.storage`.
+- Backend surfaces:
+  - `stats/model/StorageBackendStats`
+  - admin-only system storage stats command
+  - View/ViewStats vault-scoped storage stats command
+  - `vault::model::Vault` now carries the schema-backed `allow_fs_write` field
+- Frontend surfaces:
+  - `web/src/models/stats/storageBackendStats.ts`
+  - `web/src/components/stats/StorageBackendStats.tsx`
+  - `web/src/components/vault/VaultStatsDashboard/StorageBackend/Component.tsx`
+  - `statsStore` system storage wrapper, polling helpers, and vault fetch helper
+  - `WebSocketCommandMap['stats.system.storage']` and `['stats.vault.storage']`
+- Dashboard integration:
+  - Admin dashboard renders Storage Backend after Operation Queue and before Database Health.
+  - Vault dashboard renders Storage Backend after Capacity and before Sync Health.
+- Architectural decisions:
+  - Storage backend health is a read-only live snapshot from `storage::Manager` engines.
+  - Per-vault status includes type, active state, `allow_fs_write`, quota, vault/cache/free-space signals, backend status, and S3 bucket/encryption config.
+  - Provider operation/error/latency fields are intentionally null until provider operation boundaries are instrumented.
+  - Backend status is `error` for missing/exceptional engines, `degraded` for inactive vaults, low free-space signals, or incomplete S3 config, and `healthy` otherwise.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `meson setup --reconfigure build`: passed
+  - `meson compile -C build`: passed after adding `allow_fs_write` to `vault::model::Vault`
+  - `make test`: passed
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+  - `meson test -C build`: passed, 2/2
+- Known failures: none currently.
+- Push result: succeeded, with GitHub remote moved warning.
+- Deferred TODOs:
+  - Add provider operation counters and latency/error instrumentation when storage engine boundaries are instrumented.
+  - Add focused backend tests for storage backend status classification.
+
+## Phase 8E - Retention and Cleanup Pressure
+
+- Status: committed and pushed.
+- Commit: `c4338666`
+- Push target: `origin/stats-dashboards`
+- Websocket commands: `stats.system.retention`, `stats.vault.retention`.
+- Backend surfaces:
+  - `stats/model/RetentionStats`
+  - `db/query/stats/RetentionStats`
+  - prepared retention rollup queries for system and vault scopes
+  - admin-only system command and View/ViewStats vault-scoped command
+- Frontend surfaces:
+  - `web/src/models/stats/retentionStats.ts`
+  - `web/src/components/stats/RetentionPressure.tsx`
+  - `web/src/components/vault/VaultStatsDashboard/RetentionPressure/Component.tsx`
+  - `statsStore` system retention wrapper, polling helpers, and vault fetch helper
+  - `WebSocketCommandMap['stats.system.retention']` and `['stats.vault.retention']`
+- Dashboard integration:
+  - Admin dashboard renders Retention / Cleanup after Database Health.
+  - Vault dashboard renders Retention / Cleanup after Security / Integrity.
+- Architectural decisions:
+  - Retention stats are read-only and use existing metadata tables only.
+  - System rollups query `files_trashed`, `sync_event`, `audit_log`, `share_access_event`, and `cache_index`.
+  - Vault rollups scope audit logs by `audit_log.target_file_id -> fs_entry.vault_id`.
+  - Config supplies trash retention, sync event retention/max entries, audit log retention, cache expiry days, and cache max size.
+  - Cache eviction candidates are expired entries unless indexed cache bytes exceed the configured max, in which case all indexed entries are candidates.
+  - Cleanup status is `healthy`, `warning`, `overdue`, or `unknown`.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `meson setup --reconfigure build`: passed
+  - `meson compile -C build`: passed after making helpers unity-build safe and including `stats/model/RetentionStats.hpp` in the websocket handler
+  - `make test`: passed
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+  - `meson test -C build`: passed, 2/2
+- Known failures: none currently.
+- Push result: succeeded, with GitHub remote moved warning.
+- Deferred TODOs:
+  - Add seeded DB tests for system/vault retention rollups.
+  - Add share-access-event retention configuration if share event cleanup needs an independent policy.
+
+## Phase 9 - Historical Snapshots and Trends
+
+- Status: committed and pushed.
+- Commit: `aa4cf329`.
+- Push target: `origin/stats-dashboards`
+- Websocket commands: `stats.system.trends`, `stats.vault.trends`.
+- Backend surfaces:
+  - `deploy/psql/080_stats.sql` creates `stats_snapshot` with system/vault scope checks and indexes.
+  - `stats/model/StatsTrends` serializes trend payloads.
+  - `db/query/stats/Snapshot` inserts system/vault snapshots, purges old snapshots, and returns trend series from snapshot JSONB.
+  - `StatsSnapshotService` runs as a runtime `AsyncService`.
+  - `stats_snapshots` config controls enablement, runtime cadence, vault cadence, and retention days.
+- Frontend surfaces:
+  - `web/src/models/stats/statsTrends.ts`
+  - `web/src/components/stats/StatsTrends.tsx`
+  - `web/src/components/vault/VaultStatsDashboard/Trends/Component.tsx`
+  - `statsStore` system trends wrapper/fetch/refresh/polling and vault trend fetch helper.
+  - `WebSocketCommandMap['stats.system.trends']` and `['stats.vault.trends']`.
+- Dashboard integration:
+  - Admin dashboard renders Trends after Retention / Cleanup.
+  - Vault dashboard renders Trends after Retention / Cleanup.
+- Architectural decisions:
+  - Snapshot writes are background-only and never part of FUSE/request hot paths.
+  - Runtime snapshots default to 300 seconds and include thread pools, FUSE, cache, and DB live stats.
+  - Vault snapshots default to 3600 seconds and include capacity, sync health, and activity rollups.
+  - Snapshot retention defaults to 30 days and is configurable.
+  - Trend commands read only `stats_snapshot`, not raw operational tables.
+  - UI renders no-data honestly until snapshots exist and shows 24h/7d deltas when data is present.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `meson setup --reconfigure build`: passed
+  - `meson compile -C build`: passed
+  - `make test`: passed
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+  - `meson test -C build`: passed, 2/2
+- Known failures: none currently.
+- Push result: succeeded, with GitHub remote moved warning.
+- Deferred TODOs:
+  - Add daily compaction/downsampling if longer raw snapshot retention becomes expensive.
+  - Add seeded DB tests for trend extraction once snapshot fixtures exist.
+
+## Phase 10 - Dashboard Registry, Overview Command, and Drilldown Routes
+
+- Status: committed and pushed.
+- Commit: `1b78ce7b`.
+- Push target: `origin/stats-dashboards`
+- Push result: succeeded, with GitHub remote moved warning.
+- Websocket commands: `stats.dashboard.overview`.
+- Backend surfaces:
+  - `stats/model/DashboardOverview` serializes overview, section, card, metric, issue, and attention summaries.
+  - `stats.dashboard.overview` is admin-only and accepts card ID/variant/size requests without arbitrary field selection.
+  - Summary builders map existing live stats surfaces into compact backend-owned severities, warnings, errors, and primary metrics.
+- Frontend surfaces:
+  - `web/src/models/stats/dashboardOverview.ts`
+  - `web/src/components/dashboard/DashboardOverview.tsx`
+  - `web/src/components/dashboard/DashboardDetailPage.tsx`
+  - `statsStore` dashboard overview wrapper, fetch, refresh, and polling helpers
+  - `WebSocketCommandMap['stats.dashboard.overview']`
+- Dashboard integration:
+  - `/dashboard` now renders the compact dashboard overview and attention queue.
+  - `/dashboard/runtime` renders System Health, Thread Pools, and Connection Health.
+  - `/dashboard/filesystem` renders FUSE, FS Cache, and HTTP Preview Cache.
+  - `/dashboard/storage` renders Storage Backend, Database Health, and Retention / Cleanup.
+  - `/dashboard/operations` renders Operation Queue.
+  - `/dashboard/trends` renders Trends.
+  - Admin nav now exposes fixed Dashboard child routes.
+- Architectural decisions:
+  - Backend owns overview business rules for warnings/errors/severity.
+  - Unavailable cards are returned honestly and do not contribute to operational warning/error counts by default.
+  - Summary builders reuse existing live collectors in Phase 10 to keep the vertical slice complete.
+  - Global share stats are omitted because only per-vault share observability exists today.
+  - Sidebar live severity badges are deferred until nav can consume live overview state cleanly.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `meson setup --reconfigure build`: passed
+  - `meson compile -C build`: passed
+  - `make test`: passed
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+  - `meson test -C build`: passed, 2/2
+- Known failures: none currently.
+- Deferred TODOs:
+  - Add live nav severity badges driven by `stats.dashboard.overview`.
+  - Add focused tests for overview severity mapping and issue generation.
+
+## Phase 11 - Live Dashboard Severity Badges and Overview Polish
+
+- Status: committed and pushed.
+- Commit: `284729c8`.
+- Push target: `origin/stats-dashboards`
+- Push result: succeeded, with GitHub remote moved warning.
+- Websocket commands: none added; Phase 11 reuses `stats.dashboard.overview`.
+- Backend surfaces:
+  - No backend contract changes.
+  - Frontend continues to consume backend-owned `severity`, `warning_count`, `error_count`, `warnings`, `errors`, `attention`, and section/card summaries only.
+- Frontend surfaces:
+  - `web/src/components/dashboard/dashboardSeverity.ts` centralizes dashboard severity tone/rank/count helpers.
+  - `web/src/components/dashboard/DashboardSeverityBadge.tsx` renders fa-duotone severity icons and count badges.
+  - `web/src/components/dashboard/DashboardIssueList.tsx` renders warning/error issue rows from backend-provided issue arrays.
+  - `web/src/components/nav/DashboardNavSeverityBadge.tsx` subscribes to dashboard overview state and starts lightweight nav polling.
+  - `DashboardOverview` mini-cards and attention queue now use severity icons, count badges, and sharper warning/error presentation.
+  - `NavList` and admin nav config support dashboard overview/section severity sources.
+- Dashboard integration:
+  - Dashboard parent nav item shows live worst overview severity and issue count when overview data is available.
+  - Dashboard child routes show live section severity/count badges for Runtime, Filesystem, Storage, Operations, and Trends.
+  - Compact nav mode shows a small severity/count indicator for dashboard items.
+  - `/dashboard` remains overview-only and does not mount full detail cards.
+- Architectural decisions:
+  - No raw metric business rules were added to the frontend.
+  - The nav badge component uses the existing stats store and polling dogpile protection rather than opening independent websocket command paths.
+  - Focused tests for helper ranking/count logic are deferred because the current web `test` script is typecheck+lint only and there is no frontend unit test runner configured.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `meson setup --reconfigure build`: passed
+  - `meson compile -C build`: passed
+  - `make test`: passed
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+  - `meson test -C build`: passed, 2/2 after rerun
+- Known failures: none currently.
+- Deferred TODOs:
+  - Add focused dashboard severity helper tests if/when a frontend test runner is configured.
+  - Consider route-level nav badge preloading on first admin layout paint if operators want badges before the first websocket refresh completes.
+
+## Phase 12 - Customizable Dashboard Home Layout
+
+- Status: committed and pushed.
+- Commit: `9fd1fbbe`.
+- Push target: `origin/stats-dashboards`
+- Push result: succeeded, with GitHub remote moved warning.
+- Websocket commands: none added; Phase 12 reuses `stats.dashboard.overview`.
+- Backend surfaces:
+  - No backend code changes.
+  - Confirmed `stats.dashboard.overview` already accepts card ID/variant/size requests, preserves request order, echoes requested size/variant, and returns honest unavailable summaries for unknown card IDs.
+- Frontend surfaces:
+  - `web/src/models/dashboard/dashboardLayout.ts` defines local layout card types, finite size/variant values, storage key, and layout normalization.
+  - `web/src/components/dashboard/dashboardCardCatalog.ts` defines the frontend Phase 12 card catalog and default browser-local home layout.
+  - `web/src/components/dashboard/DashboardOverview.tsx` now renders a 12-column responsive summary-card grid from the selected layout.
+  - `statsStore.refreshDashboardOverview` and `startDashboardOverviewPolling` accept the current overview request payload so polling follows the visible layout.
+- Dashboard integration:
+  - Only `/dashboard` is customizable.
+  - Fixed drilldown routes remain unchanged and continue rendering full-size rich cards.
+  - Users can enter customization mode, add hidden cards, remove visible cards, reorder with Up/Down controls, change finite size/variant selections, and reset the layout.
+  - Summary cards adapt density by selected size/variant without mounting full rich cards.
+  - Attention queue is filtered to currently visible home cards.
+- Architectural decisions:
+  - Card layout is stored in browser-local `localStorage` under `vaulthalla.dashboard.layout.v1`.
+  - Server persistence, drag/drop, and custom named dashboard pages are deferred to Phase 13.
+  - The frontend catalog controls card IDs/variants/sizes only; backend still owns summaries, metrics, severity, warnings, and errors.
+  - If local storage is stale, invalid, or hides every card, layout normalization falls back to the default visible home board.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `meson setup --reconfigure build`: passed
+  - `meson compile -C build`: passed
+  - `make test`: passed
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+  - `meson test -C build`: passed, 2/2
+- Known failures: none currently.
+- Deferred TODOs:
+  - Persist dashboard home layout preferences server-side in Phase 13.
+  - Add drag/drop reordering in Phase 13.
+  - Move the card catalog backend-side if Phase 13 persistence needs authoritative supported-size metadata.
+
+## Phase 13 - Persisted Dashboard Preferences and Drag/Drop
+
+- Status: committed and pushed.
+- Commit: `a2f8f51f`.
+- Push target: `origin/stats-dashboards`
+- Push result: succeeded, with GitHub remote moved warning.
+- Websocket commands:
+  - `dashboard.preferences.get`
+  - `dashboard.preferences.update`
+  - `dashboard.preferences.reset`
+- Backend surfaces:
+  - `deploy/psql/081_dashboard_preferences.sql` creates `dashboard_preferences`.
+  - `stats/model/DashboardPreferences` serializes per-user preference responses.
+  - `db/query/dashboard/Preferences` fetches, upserts, resets, and validates layout JSON.
+  - `protocols/ws/handler/dashboard/Preferences` exposes authenticated current-user-only preference commands.
+  - `DBConnection` registers dashboard preference prepared statements.
+- Frontend surfaces:
+  - `web/src/models/dashboard/dashboardPreferences.ts`
+  - `web/src/stores/dashboardPreferencesStore.ts`
+  - `dashboardLayout.ts` now handles `{ cards: [...] }` preference payloads and emits server-safe layout objects.
+  - `dashboardCardCatalog.ts` now includes built-in presets.
+  - `DashboardOverview` now loads server preferences, saves/reset preferences, keeps localStorage as fallback/cache, and supports drag/drop card sequence reordering.
+  - `WebSocketCommandMap` includes the new preference commands.
+- Dashboard integration:
+  - Only `/dashboard` home is server-customizable.
+  - Drilldown routes remain fixed full-card App Router pages.
+  - Existing add/remove, Up/Down reorder, finite size selectors, finite variant selectors, and reset controls remain.
+  - Drag/drop reorders the card sequence within the existing responsive grid rather than storing absolute x/y layout.
+- Presets:
+  - Default
+  - Minimal
+  - Runtime
+  - Storage
+  - Operations
+  - Cockpit
+- Architectural decisions:
+  - Preferences are keyed by `dashboard.home` and scoped to `session->user->id`; payloads never accept `user_id`.
+  - Backend validates preference JSON shape and caps card count/payload size, but frontend catalog remains the supported-size/card source for Phase 13.
+  - Server preference wins when present.
+  - Existing localStorage layout is loaded as migration fallback when no server preference exists.
+  - Successful server loads/saves mirror normalized layout into `localStorage`; reset clears localStorage and deletes the server row.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `meson setup --reconfigure build`: passed
+  - `meson compile -C build`: passed
+  - `make test`: passed
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+  - `meson test -C build`: passed, 2/2
+- Known failures: none currently.
+- Deferred TODOs:
+  - Move dashboard card catalog metadata backend-side if future server validation needs authoritative supported sizes/variants.
+  - Add custom named dashboard pages in a later phase if product direction requires them.
+  - Add richer keyboard reorder affordances beyond the retained Up/Down controls if accessibility review asks for them.
+
+## Phase 14 - Auth / Middleware Hardening for GitHub Issue #50
+
+- Status: committed and pushed.
+- Commit: `e0845d96`.
+- Push target: `origin/stats-dashboards`
+- Push result: succeeded, with GitHub remote moved warning.
+- Issue: `https://github.com/vaulthalla/vaulthalla/issues/50`
+- Backend surfaces: none.
+- Frontend/web surfaces:
+  - `web/src/app/api/auth/session/route.ts`
+  - `web/middleware.ts`
+- Behavior changes:
+  - `/api/auth/session` uses private `VAULTHALLA_AUTH_ORIGIN`, then `VAULTHALLA_PREVIEW_ORIGIN`, then `http://127.0.0.1:36970`.
+  - `/api/auth/session` requires a refresh cookie before proxying to core and returns a clean 401 response for missing cookies.
+  - Upstream 401/403 responses and expected unauthenticated bodies such as `Refresh token not set`, `unauthorized`, and `unauthenticated` map to `{ ok: false, authenticated: false, error: "unauthenticated" }` with status 401.
+  - Upstream timeout/network/infrastructure failures map to `{ ok: false, authenticated: false, error: "auth_upstream_unavailable" }` with status 401 so middleware redirects quickly.
+  - Auth proxy fetches and middleware session checks both keep the 2500 ms AbortController timeout.
+  - Failed upstream auth checks are logged with status/reason/upstream path only; cookies, authorization headers, token values, and raw upstream bodies are not logged.
+  - Middleware uses private `VAULTHALLA_WEB_INTERNAL_ORIGIN`, then `NEXT_PRIVATE_WEB_INTERNAL_ORIGIN`, then production fallback `http://127.0.0.1:36968`, then the dev request origin.
+  - Confirmed `36968` is the packaged Next web service port from `deploy/systemd/vaulthalla-web.service.in` and `deploy/nginx/vaulthalla.conf`.
+  - Middleware preserves the intended destination in `/login?next=...`, treats non-OK session responses as unauthenticated, catches abort/network failures, and bypasses login, share, API, Next internals, and static assets.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `meson setup --reconfigure build`: passed
+  - `meson compile -C build`: passed
+  - `make test`: passed
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+  - `meson test -C build`: passed, 2/2
+- Known failures: none currently.
+- Deferred TODOs:
+  - Add focused auth proxy/middleware helper tests if a frontend route/middleware unit test runner is introduced; current web `test` remains typecheck plus lint.
+
+## Phase 15 - Dashboard Home UX Cleanup and Premium Polish
+
+- Status: committed and pushed.
+- Commit: `95865618`.
+- Push target: `origin/stats-dashboards`
+- Push result: succeeded, with GitHub remote moved warning.
+- Backend surfaces: none.
+- Frontend surfaces:
+  - `web/src/components/dashboard/DashboardOverview.tsx`
+  - `web/src/components/dashboard/DashboardIssueList.tsx`
+  - `web/src/components/dashboard/dashboardCardCatalog.ts`
+  - `web/src/app/(app)/(admin)/dashboard/page.tsx`
+  - `web/src/app/(app)/(admin)/dashboard/layout.tsx`
+- UX changes:
+  - Collapsed the dashboard home chrome into one compact Health Command Center strip.
+  - Removed the large Home Layout panel and moved customization, preset, add-card, save, reset, cancel, and done controls into the command strip.
+  - Removed the non-customizable Runtime/Filesystem/Storage/Operations/Trends section summary row from `/dashboard`.
+  - Made the attention queue compact and conditional: no large empty panel on healthy states, top 3 visible issues when present, and duplicate issue display suppression.
+  - Tightened summary card spacing, reduced minimum heights, made compact cards genuinely compact, and kept full rich cards off `/dashboard`.
+  - Added frontend metric display preferences so cards choose high-signal backend-provided metrics by card ID and size/variant.
+  - Demoted low-value primary metrics, especially `system.trends` `series` and `points`; cache evictions and unauthenticated sessions are hidden from compact tiles when zero.
+  - Added lightweight CSS meters for ratio-style metrics such as cache hit rate, DB cache hit ratio, FUSE error rate, and thread-pool pressure.
+  - Updated grid breakpoints to become multi-column at `md`/`lg` with a 12-column layout at `lg`, not only `xl`.
+  - Gave the dashboard home more horizontal room by removing the dashboard layout centering wrapper and increasing the home max width to `92rem`.
+- Preservation:
+  - Server-backed preferences, localStorage fallback/cache, presets, drag/drop, Up/Down fallback, add/remove cards, finite size/variant controls, reset, and save behavior remain intact.
+  - Fixed drilldown routes remain unchanged and still render full rich stats cards.
+  - Backend remains the source of severity, warning, and error truth.
+- Sidebar/layout decision:
+  - Route-specific compact admin sidebar was investigated but deferred because the current admin sidebar is owned by the parent admin layout and is server-rendered outside the dashboard route segment. This phase used the clean dashboard-local width/layout seam instead of converting the shared admin shell.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `meson setup --reconfigure build`: passed
+  - `meson compile -C build`: passed
+  - `make test`: passed
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+  - `meson test -C build`: passed, 2/2
+- Known failures: none currently.
+- Deferred TODOs:
+  - Introduce a clean route-aware sidebar compactness seam in the admin shell if dashboard pages need icon-only navigation later.
+  - Move more overview metric display metadata backend-side if operators want card-specific presentation contracts governed centrally.
+
+## Phase 16 - Dashboard Insight Cards and Visual Variants
+
+- Status: committed and pushed.
+- Commit: `82795125`.
+- Push target: `origin/stats-dashboards`.
+- Push result: succeeded, with GitHub remote moved warning.
+- Backend surfaces:
+  - `stats.dashboard.overview` remains the overview command and backend-owned severity/warning/error source.
+  - `core/src/stats/model/DashboardOverview.cpp` now emits a few higher-signal home-card metric keys: thread pool pressured/saturated counts, connection share session counts, storage local vault counts, operation failed-24h counts, and trend latest-sample/coverage metrics.
+- Frontend surfaces:
+  - `web/src/components/dashboard/dashboardMetricCuration.ts`
+  - `web/src/components/dashboard/DashboardOverview.tsx`
+  - `web/src/components/dashboard/dashboardCardCatalog.ts`
+  - `web/src/models/dashboard/dashboardLayout.ts`
+- UX changes:
+  - Added the `visual` home-card variant while preserving existing `compact`, `summary`, and `hero` variants.
+  - Tightened metric tiles with smaller padding, smaller labels, stronger numbers, and compact inline meters.
+  - Made `compact`, `summary`, `visual`, and `hero` cards render with distinct density, metric counts, issue counts, and visual hierarchy.
+  - Added lightweight dependency-free visual treatments: ratio meters for ratio-like metrics and stacked CSS bars for operations, connections, and storage.
+  - Moved home-card metric curation into a dedicated helper so `/dashboard` can prefer high-signal backend metrics without duplicating backend severity thresholds.
+  - Demoted low-value home metrics such as Trends `series`/`points`; zero cache evictions and zero unauthenticated sessions remain hidden from compact home tiles.
+  - Updated default catalog layout and presets toward denser insight cards: System Health is large but no longer full-width by default, and operations/storage/runtime pressure cards use the visual treatment.
+- Preservation:
+  - Server-backed preferences, localStorage fallback/cache, presets, drag/drop, Up/Down controls, add/remove cards, finite size/variant controls, reset, save, and fixed drilldown routes remain intact.
+  - Backend remains the source of severity, warning, error, summary, and metric truth.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `meson setup --reconfigure build`: passed
+  - `meson compile -C build`: passed
+  - `make test`: passed
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+  - `meson test -C build`: passed, 2/2
+- Known failures: none currently.
+- Deferred TODOs:
+  - Consider moving home-card metric presentation preferences backend-side only if the product wants central presentation contracts.
+  - Add real sparkline-style home visuals only when overview payloads expose compact trend arrays without hydrating full drilldown data.
+
+## Phase 17 - Promote System Health to Command Bar and Fix Setup Advisory Severity
+
+- Status: committed and pushed.
+- Commit: `7af8666b`.
+- Push target: `origin/stats-dashboards`.
+- Push result: succeeded, with GitHub remote moved warning.
+- Backend surfaces:
+  - `core/src/stats/model/SystemHealth.cpp`
+  - `core/src/stats/model/DashboardOverview.cpp`
+  - `core/src/protocols/shell/commands/system.cpp`
+- Frontend surfaces:
+  - `web/src/components/dashboard/DashboardOverview.tsx`
+  - `web/src/components/dashboard/dashboardCardCatalog.ts`
+  - `web/src/components/stats/SystemHealth.tsx`
+- Semantics:
+  - Shell admin UID not bound no longer contributes to `SystemHealth::overallStatus`; it is treated as setup/advisory state.
+  - `stats.dashboard.overview` exposes shell admin UID as a `shell_admin_uid` info metric on `system.health` instead of a warning issue.
+  - If shell admin UID setup is the only incomplete item, dashboard warning/error counts remain zero and attention does not show a degraded System Health issue.
+  - Real runtime, protocol, dependency, and FUSE-session failures still produce warning/error overview issues.
+- Dashboard layout:
+  - `system.health` is removed from the customizable home card catalog, default layout, presets, and add-card menu.
+  - `/dashboard` still requests `system.health` as a pinned overview card for the command bar.
+  - Existing saved preferences containing `system.health` normalize safely because unknown/non-catalog cards are ignored and defaults repair empty visible layouts.
+  - The command bar now displays concise System Health metrics for services, protocols, and dependencies, plus a setup advisory pill when CLI shell admin UID is not configured.
+  - `/dashboard/runtime` still renders the full SystemHealth card, with shell UID shown as setup/info instead of degraded runtime health.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `meson setup --reconfigure build`: passed
+  - `meson compile -C build`: passed
+  - `make test`: passed
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+  - `meson test -C build`: passed, 2/2
+- Known failures: none currently.
+- Deferred TODOs:
+  - Add explicit overview `notices[]`/`advisories[]` if future dashboard surfaces need more than the current info metric and command-bar advisory text.
+
+## Dashboard UX Corrective Pass - Command Center Layout, Picker, Density, and Visual Insight
+
+- Status: implemented and validated; commit created after this context update.
+- Branch: `stats-dashboards`.
+- Backend surfaces:
+  - `core/src/stats/model/DashboardOverview.cpp`
+  - `stats.dashboard.overview` remains the backend-owned severity/warning/error source.
+  - Overview builders now expose more high-signal home-card metric keys for thread pools, connections, FUSE, cache, storage, DB, retention, and operations.
+- Frontend surfaces:
+  - `web/src/app/(app)/(admin)/dashboard/layout.tsx`
+  - `web/src/app/(app)/(admin)/dashboard/page.tsx`
+  - `web/src/components/dashboard/DashboardRouteToolbar.tsx`
+  - `web/src/components/dashboard/DashboardOverview.tsx`
+  - `web/src/components/dashboard/DashboardDetailPage.tsx`
+  - `web/src/components/dashboard/dashboardCardCatalog.ts`
+  - `web/src/components/dashboard/dashboardMetricCuration.ts`
+  - `web/src/config/nav/admin.ts`
+  - `web/src/models/dashboard/dashboardLayout.ts`
+- UX changes:
+  - Added a dashboard-specific top route toolbar for Overview, Runtime, Filesystem, Storage, Operations, and Trends, with live severity badges.
+  - Removed dashboard child routes from the main left admin nav so dashboard route navigation is distinct from normal admin sections.
+  - Deferred route-specific collapsed admin sidebar because the sidebar is owned by the parent admin shell; the dashboard route now widens its own content and uses a local toolbar without shell hacks.
+  - Replaced the dual dropdown/Add Card flow with a visual card picker panel that filters by size/variant and previews cards before adding.
+  - Added a title-row drag handle that works outside customize mode and persists reordered cards through existing dashboard preference save flow.
+  - Retained customize-mode Up/Down, drag handles, remove, size selector, variant selector, presets, reset, save, localStorage fallback/cache, and server-backed preferences.
+  - Added bounded grid row spans for finite sizes (`1x1`, `1x2`, `2x1`, `2x2`, `3x1`, `3x2`, `4x2`) so cards stay inside their configured visual footprint.
+  - Tightened metric tiles, card padding, summaries, issue lines, and card chrome for higher density.
+  - Updated visual cards so meters/bars replace the duplicated numeric metric instead of rendering the same percentage twice.
+  - Added/expanded meaningful visual treatments for operations, thread pools, connections, storage, retention, trends, FUSE, cache, and DB where overview data supports it.
+  - Updated defaults and presets so Thread Pools are visible by default, Trends is not a default filler card, and preset grids are more intentional.
+  - Expanded frontend metric curation to prefer stronger available metrics and continue hiding weak home-card metrics such as Trends `series`/`points`.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `meson setup --reconfigure build`: passed
+  - `meson compile -C build`: passed
+  - `make test`: passed
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+  - `meson test -C build`: passed, 2/2
+- Known failures: none currently.
+- Deferred TODOs:
+  - Introduce a route-aware compact admin sidebar seam only if the shared admin shell is intentionally updated.
+  - Add true sparkline arrays to `stats.dashboard.overview` only when compact trend series can be supplied cheaply without hydrating full drilldown card payloads.
+  - Consider moving metric presentation metadata backend-side if home-card curation needs to become centrally auditable.
+
+## Dashboard Home Card System Corrective Pass
+
+- Status: committed and pushed.
+- Commit: `bdc4a50b`.
+- Push target: `origin/stats-dashboards`.
+- Push result: succeeded, with GitHub remote moved warning.
+- Branch: `stats-dashboards`.
+- Frontend surfaces:
+  - `web/src/components/nav/admin/AdminSidebar.tsx`
+  - `web/src/components/dashboard/DashboardRouteToolbar.tsx`
+  - `web/src/components/dashboard/DashboardOverview.tsx`
+  - `web/src/components/dashboard/dashboardCardCatalog.ts`
+- Sidebar/navigation:
+  - Dashboard routes now render the admin sidebar in compact/icon-only mode by default.
+  - Non-dashboard admin routes keep the full-width sidebar.
+  - Dashboard drilldown navigation remains in the dashboard-local top toolbar.
+  - The dashboard toolbar was restyled into a compact strip with uniform tab spacing, clear active state, horizontal overflow, and live severity badges.
+- Home card contract:
+  - The home card implementation is now explicitly scoped as `DashboardHomeCard`, with dedicated `DashboardMetricTile` and `DashboardCardVisual` helpers.
+  - Cards are `h-full`, `min-h-0`, `overflow-hidden`, and flex-column bounded within configured grid row spans.
+  - Normal card clicks now navigate to the card detail route/anchor; the old `View details >` footer was removed.
+  - The title row is the normal-mode drag handle, so no hidden drag button reserves layout space and titles align from the left edge.
+  - Drag reorder still persists through the existing dashboard preference flow; customize-mode Up/Down, remove, size, variant, reset, save, presets, and localStorage fallback remain intact.
+- Metric density and visuals:
+  - Metric capacity is now size/variant-aware, with smaller caps for visual cards so visual content does not force clipping.
+  - Metric tiles remain dense and bounded; excess curated metrics are hidden or summarized with `+N more`.
+  - Visual variants omit the metric represented by the visual from primary tiles, avoiding duplicated numeric percentage bars.
+  - No fake line/sparkline was added. `stats.dashboard.overview` does not currently provide compact trend point arrays, so true sparkline cards remain deferred.
+- Defaults/presets:
+  - Default Operation Queue and Storage Backend cards were reduced from `2x2` to `2x1` to remove empty first-row height.
+  - Cockpit preset also uses `2x1` operation/storage cards for cleaner row composition.
+  - Trends remains out of the default layout unless the user selects it through presets/customization.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `meson setup --reconfigure build`: passed
+  - `meson compile -C build`: passed
+  - `make test`: passed
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+  - `meson test -C build`: passed, 2/2
+- Known failures: none currently.
+- Deferred TODOs:
+  - Add compact trend point arrays to `stats.dashboard.overview` before adding real line/sparkline home cards.
+  - Consider a user-controlled sidebar collapse preference later; this pass only defaults dashboard routes to compact mode.
+
+## Dashboard Sidebar Build Fix
+
+- Status: implemented and validated; commit created after this context update.
+- Issue:
+  - `next build` failed while prerendering routes because `AdminSidebar` had been converted to a Client Component and received `adminNav` icon component functions from the server layout.
+  - Next.js rejected the function-valued `icon` props crossing the server-to-client boundary.
+- Fix:
+  - Restored `web/src/components/nav/admin/AdminSidebar.tsx` as a server-rendered sidebar.
+  - Added `web/src/components/nav/admin/AdminSidebarMode.client.tsx` as the only client boundary; it reads `usePathname()` and selects between server-rendered full and compact sidebar nodes.
+  - The nav config and icon component functions now stay inside server-rendered JSX and are no longer passed directly as Client Component props.
+- Validation:
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web build`: passed, including `/roles/vault` and `/api-keys/add` prerendering
+  - `git diff --check`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+
+## Dashboard UX Stabilization - Deliverable A Layout/Card Normalization
+
+- Status: committed and pushed.
+- Commit: `4becf794`.
+- Push target: `origin/stats-dashboards`.
+- Push result: succeeded, with GitHub remote moved warning.
+- Frontend surfaces:
+  - `web/src/models/dashboard/dashboardLayout.ts`
+  - `web/src/components/dashboard/dashboardCardCatalog.ts`
+  - `web/src/components/dashboard/DashboardOverview.tsx`
+  - `web/src/components/dashboard/DashboardRouteToolbar.tsx`
+  - `web/src/components/nav/admin/AdminSidebar.tsx`
+  - `web/src/components/nav/admin/AdminSidebarMode.client.tsx`
+  - `web/src/components/nav/util.tsx`
+  - `web/src/config/nav/admin.ts`
+- Layout/sidebar decisions:
+  - Dashboard routes now auto-collapse the left admin sidebar by default through `AdminSidebarMode`.
+  - Users can toggle sidebar mode; the local preference is stored under `vaulthalla.admin.sidebar.compact.v1`.
+  - Non-dashboard admin routes retain the full sidebar unless the user explicitly selected compact mode.
+  - Dashboard drilldown navigation remains in the dashboard-local top toolbar.
+  - Dashboard icon is back to a gauge/speedometer-style icon, and compact nav toggle icons are centered.
+- Card normalization:
+  - Dashboard layout cards now carry stable `instanceId` / `instance_id` preference identity.
+  - Duplicate cards are allowed across variants, while exact same `card_id + variant` duplicates are normalized away.
+  - Existing saved layouts without instance IDs normalize safely.
+  - Metric capacity is now driven by card size, with denser grid columns for `2x1`, `2x2`, `3x1`, `3x2`, and `4x2`.
+  - Add Card picker marks same card/variant combinations as already added while allowing other variants of the same card family.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+  - `pnpm --dir web build`: passed
+  - Full backend validation was run with Deliverable B after graph plumbing.
+
+## Dashboard UX Stabilization - Deliverable B Graph/Telemetry Cards
+
+- Status: committed and pushed.
+- Commit: `927254e5`.
+- Push target: `origin/stats-dashboards`.
+- Push result: succeeded, with GitHub remote moved warning. Context follow-up recorded in `5d049a65`.
+- Backend surfaces:
+  - `core/include/stats/model/DashboardOverview.hpp`
+  - `core/src/stats/model/DashboardOverview.cpp`
+  - `core/src/db/preparedStatements/stats/snapshot.cpp`
+- Frontend surfaces:
+  - `web/src/models/stats/dashboardOverview.ts`
+  - `web/src/models/dashboard/dashboardLayout.ts`
+  - `web/src/components/dashboard/DashboardOverview.tsx`
+  - `web/src/components/dashboard/dashboardCardCatalog.ts`
+  - `web/src/components/dashboard/dashboardMetricCuration.ts`
+- Backend graph plumbing:
+  - `DashboardCardSummary` now includes compact `series[]` graph data.
+  - Graph series are attached only when requested cards use `variant: "graph"` or when the Trends card is visible.
+  - Series points are capped to the latest 64 points per series.
+  - Existing `stats_snapshot` runtime data powers dashboard graph cards; no fake samples are generated.
+  - Thread pool snapshots now expose per-pool pressure trend keys with `threadpool_pool_pressure:<name>`.
+- Frontend graph behavior:
+  - Added `graph` as a finite dashboard card variant.
+  - Added SVG sparkline rendering for graph cards.
+  - Thread Pools supports numeric summary plus separate graph variant, including aggregate pressure and per-pool pressure lines.
+  - FUSE, FS Cache, HTTP Cache, DB, and Trends can render graph variants from existing snapshot trend data.
+  - Graph variants omit metrics represented by the graph so visual cards do not duplicate the same value as a primary tile.
+- Defaults/presets:
+  - Default layout now uses Thread Pools graph card instead of the older visual-only card.
+  - Runtime and Cockpit presets intentionally include Thread Pools numeric and graph variants together.
+  - Graph is only offered where snapshot-backed series exist; Operations remains a live stacked visual because operation queue snapshots do not exist yet.
+- Deferred TODOs:
+  - Add operation queue snapshots before implementing true queued/in-progress/stalled operation history.
+  - Consider decimation if snapshot density grows beyond the current compact 64-point card payload cap.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `meson setup --reconfigure build`: passed
+  - `meson compile -C build`: passed
+  - `make test`: passed
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+  - `pnpm --dir web build`: passed
+  - `meson test -C build`: passed, 2/2
+  - Known failures: none.
+
+## Dashboard Home Card Density Follow-up
+
+- Status: corrected after bad commit `78cd1d0a`; commit created after this context update.
+- Frontend surface:
+  - `web/src/components/dashboard/DashboardOverview.tsx`
+  - `web/src/components/dashboard/dashboardMetricCuration.ts`
+- What was wrong in `78cd1d0a`:
+  - Metric grid rows used `auto-rows-fr`, and metric tiles/links used height-filling styles.
+  - That stretched one or two metric tiles vertically until they occupied the card body, producing oversized tiles and worse hierarchy.
+  - The hidden metric count also rendered as its own metric-grid tile/row, which wasted space and did not fix capacity.
+- Card contract changes:
+  - Header/title/summary now live in a fixed shrink-only header band.
+  - Warning/error state now renders as an inline header pill instead of a body row.
+  - Removed body-level issue lists from home cards so warnings cannot push metrics off the card.
+  - Metric tiles are compact fixed-height telemetry tiles (`h-11`/`h-12`) and no longer stretch to fill the card body.
+  - Metric grids use fixed-content rows; `auto-rows-fr`, metric tile `h-full`, metric tile `flex-1`, and height-filling metric links were removed.
+  - Hidden metric counts now render as a tiny inline header chip, not as a grid tile or a dedicated row.
+  - Large/sparse cards render existing visual abstractions in the body instead of inflating the available metric tiles.
+- Capacity changes:
+  - `2x1` cards keep the tight one-row tile pattern.
+  - `2x2` cards allow up to 15 curated metrics, which is roughly five compact tile rows at three columns.
+  - `3x2` and `4x2` allow up to 20 and 25 curated metrics respectively, matching the same compact row-capacity model.
+  - Hidden metric counts ignore intentionally demoted/low-value metrics and metrics represented by visuals.
+  - Fallback metric selection no longer surfaces low-value filler metrics like Trends `series`/`points` as home-card tiles.
+- Verified existing layout work:
+  - Dashboard routes still default to compact/icon-first sidebar mode through `AdminSidebarMode`.
+  - Users can still toggle sidebar state through the sidebar collapse button and local storage preference.
+  - Dashboard nav icon remains gauge/speedometer-style.
+  - Filesystem route toolbar icon remains centered in the top dashboard toolbar.
+  - Duplicate same-card-family instances remain supported when variants differ through `instanceId`.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `meson setup --reconfigure build`: passed
+  - `meson compile -C build`: passed
+  - `make test`: passed
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+  - `pnpm --dir web build`: passed
+  - `meson test -C build`: passed, 2/2
+
+## Dashboard Overview Component Refactor
+
+- Status: implemented; commit created after this context update.
+- Goal:
+  - Split `web/src/components/dashboard/DashboardOverview.tsx` into focused dashboard-home components and pure helpers without changing backend behavior, preferences, metrics, or drilldown pages.
+- LOC:
+  - `DashboardOverview.tsx` reduced from 1498 lines to 441 lines.
+- New frontend surfaces:
+  - `web/src/components/dashboard/overview/DashboardCommandBar.tsx`
+  - `web/src/components/dashboard/overview/DashboardAttentionStrip.tsx`
+  - `web/src/components/dashboard/overview/DashboardGrid.tsx`
+  - `web/src/components/dashboard/overview/DashboardHomeCard.tsx`
+  - `web/src/components/dashboard/overview/DashboardMetricTile.tsx`
+  - `web/src/components/dashboard/overview/DashboardCardVisual.tsx`
+  - `web/src/components/dashboard/overview/DashboardSparkline.tsx`
+  - `web/src/components/dashboard/overview/DashboardCardPicker.tsx`
+  - `web/src/components/dashboard/overview/DashboardCustomizationControls.tsx`
+  - `web/src/components/dashboard/overview/OverviewShell.tsx`
+  - `web/src/components/dashboard/overview/lib/formatters.ts`
+  - `web/src/components/dashboard/overview/lib/layoutStorage.ts`
+  - `web/src/components/dashboard/overview/lib/layoutCapacity.ts`
+  - `web/src/components/dashboard/overview/lib/overviewPayload.ts`
+  - `web/src/components/dashboard/overview/lib/dragReorder.ts`
+  - `web/src/components/dashboard/overview/lib/pendingCard.ts`
+- Responsibility split:
+  - `DashboardOverview.tsx` now owns page-level state, preference loading/saving/reset, polling payload wiring, drag state, and callback orchestration.
+  - Command bar, attention strip, grid, card, picker, customization controls, metric tiles, visuals, and sparklines are separate components.
+  - Local storage/default layout, capacity classes, overview payload construction, pending-card creation, formatting, and drag reorder are pure helper modules.
+- Behavior preservation:
+  - Existing server-backed preferences, localStorage fallback/cache, presets, drag/drop, add/remove, size/variant changes, reset/save, selected-layout polling, command bar, attention strip, and detail routes are preserved.
+  - No backend files were changed.
+  - No preference schema, metrics, graph behavior, auth/middleware, or drilldown route behavior changed.
+- Deferred:
+  - The next pass should fix remaining dashboard card layout contract issues now that card rendering, capacity, visuals, and picker have stable seams.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `meson setup --reconfigure build`: passed
+  - `meson compile -C build`: passed
+  - `make test`: passed
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+  - `meson test -C build`: passed, 2/2
+  - Extra `pnpm --dir web build`: passed.
+
+## Dashboard Card Render Plan Refactor
+
+- Status: implemented; commit created after this context update.
+- Goal:
+  - Convert the dashboard home-card system from scattered runtime decisions into definition-driven catalog, curation, visual-kind, template, and render-plan layers.
+- New frontend surfaces:
+  - `web/src/components/dashboard/dashboardCardDefinitions.ts`
+  - `web/src/components/dashboard/overview/lib/cardRenderPlan.ts`
+- Changed frontend surfaces:
+  - `web/src/components/dashboard/dashboardCardCatalog.ts`
+  - `web/src/components/dashboard/dashboardMetricCuration.ts`
+  - `web/src/components/dashboard/overview/lib/layoutCapacity.ts`
+  - `web/src/components/dashboard/overview/DashboardHomeCard.tsx`
+  - `web/src/components/dashboard/overview/DashboardCardVisual.tsx`
+  - `web/src/components/dashboard/overview/DashboardCardPicker.tsx`
+  - `web/src/components/dashboard/overview/DashboardCustomizationControls.tsx`
+  - `web/src/components/dashboard/DashboardOverview.tsx`
+  - `web/src/models/dashboard/dashboardLayout.ts`
+- Architecture:
+  - `dashboardCardDefinitions.ts` now centralizes card identity, section, metadata, supported sizes/variants, metric priority, low-value metric rules, variant overrides, visual kind, graph requirements, visual metric omissions, defaults, and presets.
+  - `dashboardCardCatalog.ts` is now a thin definition-derived catalog/preset export.
+  - `dashboardMetricCuration.ts` now reads priority and low-value behavior from card definitions instead of maintaining separate card-id maps.
+  - `layoutCapacity.ts` now exposes deterministic size templates with md/lg spans, row spans, header/summary hints, fixed tile heights, tile columns/rows, max tile counts, visual heights, and whether the size requires a visual.
+  - `cardRenderPlan.ts` builds the deterministic per-card render plan: normalized size/variant metadata, template, selected metrics, hidden metric count, visual kind, and grid/height classes.
+  - `DashboardHomeCard.tsx` now renders a plan; it no longer owns metric selection, visual fallback, hidden metric counting, size capacity, or grid class logic.
+  - `DashboardCardVisual.tsx` now renders from typed visual kinds such as `stack:operations`, `meter:db_cache`, and `sparkline:thread_pressure` instead of switching directly on card ids.
+- Compatibility:
+  - Existing persisted preferences still normalize through `instanceId` and card id + variant identity.
+  - `DashboardLayoutCatalogItem.variantSupportedSizes` allows older invalid size/variant combinations to normalize to definition-supported sizes.
+  - Duplicate same-family cards with different variants remain supported.
+  - No backend behavior, metrics, preference schema, auth/middleware, graph plumbing, or drilldown page behavior changed.
+- Contract:
+  - Metric tiles remain fixed compact tiles; no stretching behavior was added.
+  - `Y=2` sizes are only supported by visual/hero/graph variants through variant-specific supported sizes.
+  - `Y=2` templates reserve a visual/composition/graph slot and cap numeric support tiles to two compact rows.
+- Deferred:
+  - Final visual polish, exact spacing, and any additional backend metrics are intentionally deferred until after this deterministic contract settles.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `meson setup --reconfigure build`: passed
+  - `meson compile -C build`: passed
+  - `make test`: passed
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+  - `meson test -C build`: passed, 2/2
+  - Extra `pnpm --dir web build`: passed.

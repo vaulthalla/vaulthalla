@@ -7,7 +7,7 @@
 ~/*
 /.env
 /.venv
-/.codex/scratch
+/.codex/scratch/
 /config.yaml
 enable_dev_mode
 

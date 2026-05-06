@@ -10,10 +10,6 @@
 #include <algorithm>
 #include <array>
 
-using namespace vh::protocols::ws;
-using namespace vh::protocols::ws::core;
-using namespace vh::protocols::ws::model;
-
 namespace {
 template<size_t N>
 bool containsCommand(const std::array<std::string_view, N>& commands, const std::string_view command) {
@@ -24,11 +20,16 @@ bool isAuthCommand(const std::string_view command) {
     return command.starts_with("auth");
 }
 
-ShareRateLimit& shareRateLimit() {
-    static ShareRateLimit limiter;
+vh::protocols::ws::ShareRateLimit& shareRateLimit() {
+    static vh::protocols::ws::ShareRateLimit limiter;
     return limiter;
 }
 }
+
+namespace vh::protocols::ws {
+
+using namespace core;
+using namespace model;
 
 void Router::registerWs(const std::string& cmd, RawWsHandler fn) {
     handlers_[cmd] = makeWsHandler(cmd, std::move(fn));
@@ -222,4 +223,6 @@ void Router::routeMessage(json&& msg, const SessionPtr& session) {
         log::Registry::ws()->error("[Router] Error routing message: {}", e.what());
         if (session) Response::INTERNAL_ERROR(std::move(msg), e.what())(session);
     }
+}
+
 }

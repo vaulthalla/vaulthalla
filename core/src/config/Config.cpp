@@ -3,6 +3,7 @@
 #include "config/util.hpp"
 
 #include <cstdlib>
+#include <algorithm>
 #include <yaml-cpp/yaml.h>
 #include <fstream>
 #include <sstream>
@@ -26,6 +27,7 @@ namespace vh::config {
         if (auto node = root["auth"]) YAML::convert<AuthConfig>::decode(node, cfg.auth);
         if (auto node = root["sync"]) YAML::convert<SyncConfig>::decode(node, cfg.sync);
         if (auto node = root["services"]) YAML::convert<ServicesConfig>::decode(node, cfg.services);
+        if (auto node = root["stats_snapshots"]) YAML::convert<StatsSnapshotsConfig>::decode(node, cfg.stats_snapshots);
         if (auto node = root["sharing"]) YAML::convert<SharingConfig>::decode(node, cfg.sharing);
         if (auto node = root["auditing"]) YAML::convert<AuditConfig>::decode(node, cfg.auditing);
         if (auto node = root["dev"]) YAML::convert<DevConfig>::decode(node, cfg.dev);
@@ -65,6 +67,7 @@ namespace vh::config {
             {"auth", encode(auth)},
             {"sync", encode(sync)},
             {"services", encode(services)},
+            {"stats_snapshots", encode(stats_snapshots)},
             {"sharing", encode(sharing)},
             {"auditing", encode(auditing)},
             {"dev", encode(dev)}
@@ -98,6 +101,7 @@ namespace vh::config {
             {"auth", c.auth},
             {"sync", c.sync},
             {"services", c.services},
+            {"stats_snapshots", c.stats_snapshots},
             {"sharing", c.sharing},
             {"auditing", c.auditing},
             {"dev", c.dev}
@@ -112,6 +116,7 @@ namespace vh::config {
         j.at("auth").get_to(c.auth);
         j.at("sync").get_to(c.sync);
         j.at("services").get_to(c.services);
+        if (j.contains("stats_snapshots")) j.at("stats_snapshots").get_to(c.stats_snapshots);
         j.at("sharing").get_to(c.sharing);
         j.at("auditing").get_to(c.auditing);
         j.at("dev").get_to(c.dev);
@@ -302,6 +307,24 @@ namespace vh::config {
         c.idle_timeout_minutes = std::max(5, j.value("idle_timeout_minutes", 30));
         c.unauthenticated_timeout_seconds = std::max(30, j.value("unauthenticated_timeout_seconds", 300));
         c.sweep_interval_seconds = std::max(15, j.value("sweep_interval_seconds", 60));
+    }
+
+    void to_json(nlohmann::json &j, const StatsSnapshotsConfig &c) {
+        j = {
+            {"enabled", c.enabled},
+            {"runtime_interval_seconds", c.runtime_interval_seconds},
+            {"gauge_observation_interval_seconds", c.gauge_observation_interval_seconds},
+            {"vault_interval_seconds", c.vault_interval_seconds},
+            {"retention_days", c.retention_days}
+        };
+    }
+
+    void from_json(const nlohmann::json &j, StatsSnapshotsConfig &c) {
+        c.enabled = j.value("enabled", true);
+        c.runtime_interval_seconds = 60u;
+        c.gauge_observation_interval_seconds = std::clamp(j.value("gauge_observation_interval_seconds", 3u), 1u, 60u);
+        c.vault_interval_seconds = std::max(300u, j.value("vault_interval_seconds", 3600u));
+        c.retention_days = std::max(1u, j.value("retention_days", 30u));
     }
 
     void to_json(nlohmann::json &j, const ServicesConfig &c) {

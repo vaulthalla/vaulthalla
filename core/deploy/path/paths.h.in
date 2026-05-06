@@ -10,6 +10,7 @@
 #define VH_PSQL_TEST_SCHEMAS_PATH @VH_PSQL_TEST_SCHEMAS_PATH@
 #define VH_TEST_ENV_PATH @VH_TEST_ENV_PATH@
 
+#include <cstdlib>
 #include <filesystem>
 
 namespace vh::paths {
@@ -38,8 +39,15 @@ inline void setLogPathForTesting() {
 
 inline void enableTestMode() {
     testMode = true;
-    backingPath = std::filesystem::temp_directory_path() / "vh_backing";
-    mountPath = std::filesystem::temp_directory_path() / "vh_mount";
+    constexpr const char* backingEnv = "VH_TEST_BACKING_PATH";
+    constexpr const char* mountEnv = "VH_TEST_MOUNT_PATH";
+
+    backingPath = std::getenv(backingEnv)
+        ? std::filesystem::path(std::getenv(backingEnv))
+        : std::filesystem::temp_directory_path() / "vh_backing";
+    mountPath = std::getenv(mountEnv)
+        ? std::filesystem::path(std::getenv(mountEnv))
+        : std::filesystem::temp_directory_path() / "vh_mount";
 
     setLogPathForTesting();
 

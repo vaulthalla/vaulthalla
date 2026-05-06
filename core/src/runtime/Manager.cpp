@@ -9,6 +9,7 @@
 #include "protocols/shell/Server.hpp"
 #include "protocols/ws/ConnectionLifecycleManager.hpp"
 #include "runtime/Deps.hpp"
+#include "stats/SnapshotService.hpp"
 #include "sync/Controller.hpp"
 
 #include <chrono>
@@ -34,7 +35,8 @@ Manager::Manager()
       protocolService(std::make_shared<protocols::ProtocolService>()),
       connectionLifecycleManager(std::make_shared<protocols::ws::ConnectionLifecycleManager>()),
       logRotationService(std::make_shared<log::RotationService>()),
-      dbSweeperService(std::make_shared<db::Janitor>()) {
+      dbSweeperService(std::make_shared<db::Janitor>()),
+      statsSnapshotService(std::make_shared<stats::SnapshotService>()) {
 
     services_["SyncController"] = syncController;
     services_["FUSE"] = fuseService;
@@ -42,6 +44,7 @@ Manager::Manager()
     services_["ConnectionLifecycleManager"] = connectionLifecycleManager;
     services_["LogRotationService"] = logRotationService;
     services_["DBJanitor"] = dbSweeperService;
+    services_["StatsSnapshotService"] = statsSnapshotService;
 
     if (!paths::testMode) {
         shellServer = std::make_shared<protocols::shell::Server>();

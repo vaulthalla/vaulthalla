@@ -67,7 +67,7 @@ CommandResult commands::vault::handle_vaults_list(const CommandCall& call) {
     if (f_local) typeFilter = VaultType::Local;
     else if (f_s3) typeFilter = VaultType::S3;
 
-    std::vector<std::shared_ptr<Vault>> vaults;
+    std::vector<std::shared_ptr<::vh::vault::model::Vault>> vaults;
     if (call.user->vaultsPerms().self.canView() && !(call.user->vaultsPerms().admin.canView() || call.user->vaultsPerms().user.canView()))
         vaults = db::query::vault::Vault::listUserVaults(call.user->id, typeFilter, parseListQuery(call));
     else {
@@ -83,5 +83,5 @@ CommandResult commands::vault::handle_vaults_list(const CommandCall& call) {
     }
 
     if (hasFlag(call, "json")) return ok(nlohmann::json(vaults).dump(4));
-    return ok(to_string(vaults));
+    return ok(::vh::vault::model::to_string(vaults));
 }

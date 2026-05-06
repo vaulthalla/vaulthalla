@@ -59,7 +59,7 @@ std::string vh::sync::model::to_string(const Operation::Status& status) {
         case Operation::Status::Pending: return "pending";
         case Operation::Status::InProgress: return "in_progress";
         case Operation::Status::Success: return "success";
-        case Operation::Status::Failed: return "failed";
+        case Operation::Status::Failed: return "error";
         case Operation::Status::Cancelled: return "cancelled";
         default: return "unknown";
     }
@@ -82,7 +82,7 @@ Operation::Status vh::sync::model::to_status(const std::string& str) {
     if (str == "pending") return Operation::Status::Pending;
     if (str == "in_progress") return Operation::Status::InProgress;
     if (str == "success") return Operation::Status::Success;
-    if (str == "failed") return Operation::Status::Failed;
+    if (str == "error" || str == "failed") return Operation::Status::Failed;
     if (str == "cancelled") return Operation::Status::Cancelled;
     throw std::invalid_argument("Invalid status string: " + str);
 }

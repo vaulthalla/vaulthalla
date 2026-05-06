@@ -16,7 +16,7 @@ export type ConflictResolution =
 
 export type ThroughputMetricType = 'upload' | 'download' | 'rename' | 'delete' | 'copy'
 
-export type EventStatus = 'pending' | 'running' | 'success' | 'stalled' | 'error' | 'canceled'
+export type EventStatus = 'pending' | 'running' | 'success' | 'stalled' | 'error' | 'canceled' | 'cancelled'
 export type EventTrigger = 'schedule' | 'manual' | 'startup' | 'webhook' | 'retry'
 
 /** -------------------------
@@ -108,6 +108,7 @@ function asArray<T>(v: unknown, map: (x: unknown) => T): T[] {
 }
 
 function asStringOrNull(v: unknown): string | null {
+  if (typeof v === 'number' && Number.isFinite(v) && v > 0) return new Date(v * 1000).toISOString()
   return typeof v === 'string' ? v : null
 }
 
@@ -120,6 +121,7 @@ function asNumber(v: unknown, fallback = 0): number {
 }
 
 function asString(v: unknown, fallback = ''): string {
+  if (typeof v === 'number' && Number.isFinite(v) && v > 0) return new Date(v * 1000).toISOString()
   return typeof v === 'string' ? v : fallback
 }
 
@@ -365,6 +367,7 @@ export class SyncEvent implements IEvent {
         || data.status === 'stalled'
         || data.status === 'error'
         || data.status === 'canceled'
+        || data.status === 'cancelled'
       ) ?
         data.status
       : 'pending'

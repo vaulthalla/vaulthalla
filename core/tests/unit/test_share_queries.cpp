@@ -15,6 +15,7 @@
 #include "share/AuditEvent.hpp"
 #include "share/EmailChallenge.hpp"
 #include "share/Link.hpp"
+#include "share/Principal.hpp"
 #include "share/Session.hpp"
 #include "share/Token.hpp"
 #include "share/Upload.hpp"

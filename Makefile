@@ -20,6 +20,8 @@
 	clean-package \
 	purge-builds
 
+dev test run_test run-test clean-test: export VH_BUILD_MODE=dev
+
 # Default target: build
 all: build
 

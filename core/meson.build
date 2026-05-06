@@ -222,6 +222,13 @@ if get_option('build_unit_tests')
 endif
 
 if get_option('integration_tests')
+    test_uid = run_command('id', '-u', check: true).stdout().strip()
+    integration_test_env = environment()
+    integration_test_env.set('VH_PATH_TO_CONFIG', join_paths(repo_root, 'deploy/config/config.yaml'))
+    integration_test_env.set('VH_PATH_TO_SUPERADMIN_UID', join_paths('/tmp', 'vh_integration_' + test_uid + '_runtime'))
+    integration_test_env.set('VH_TEST_BACKING_PATH', join_paths('/tmp', 'vh_integration_' + test_uid + '_backing'))
+    integration_test_env.set('VH_TEST_MOUNT_PATH', join_paths('/tmp', 'vh_integration_' + test_uid + '_mount'))
+
     cli_test_inc = include_directories(
         'tests/integrations/include',
         'usage/include',
@@ -245,5 +252,5 @@ if get_option('integration_tests')
         install: false,
     )
 
-    test('vh_integration_tests', vh_integration_tests, workdir: meson.current_build_dir())
+    test('vh_integration_tests', vh_integration_tests, env: integration_test_env, workdir: meson.current_build_dir())
 endif

@@ -5,6 +5,7 @@
 #include "crypto/secrets/Manager.hpp"
 #include "fs/cache/Registry.hpp"
 #include "stats/model/CacheStats.hpp"
+#include "stats/model/FuseStats.hpp"
 #include "storage/Manager.hpp"
 #include "sync/Controller.hpp"
 #include "vault/APIKeyManager.hpp"
@@ -25,7 +26,8 @@ namespace vh::runtime {
             || syncController
             || fsCache
             || shellUsageManager
-            || httpCacheStats;
+            || httpCacheStats
+            || fuseStats;
     }
 
     void Deps::init() {
@@ -40,6 +42,7 @@ namespace vh::runtime {
         deps.fsCache = std::make_shared<fs::cache::Registry>();
         deps.shellUsageManager = std::make_shared<protocols::shell::UsageManager>();
         deps.httpCacheStats = std::make_shared<stats::model::CacheStats>();
+        deps.fuseStats = std::make_shared<stats::model::FuseStats>();
     }
 
     void Deps::setSyncController(std::shared_ptr<sync::Controller> controller) {

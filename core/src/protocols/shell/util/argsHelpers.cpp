@@ -140,8 +140,8 @@ Lookup<Subject> parseSubject(const CommandCall& call, const std::string& errPref
     return out;
 }
 
-Lookup<role::Vault> resolveVaultRole(const std::string& roleArg, const std::string& errPrefix) {
-    Lookup<role::Vault> out;
+Lookup<rbac::role::Vault> resolveVaultRole(const std::string& roleArg, const std::string& errPrefix) {
+    Lookup<rbac::role::Vault> out;
 
     if (const auto roleIdOpt = parseUInt(roleArg)) {
         if (*roleIdOpt <= 0) {

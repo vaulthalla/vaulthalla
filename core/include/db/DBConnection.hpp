@@ -40,10 +40,14 @@ class Connection {
     void initPreparedVaults() const;
     void initPreparedVaultKeys() const;
     void initPreparedAPIKeys() const;
+    void initPreparedVaultActivity() const;
+    void initPreparedVaultRecovery() const;
+    void initPreparedVaultSecurity() const;
 
     // Sync
     void initPreparedSync() const;
     void initPreparedSyncEvents() const;
+    void initPreparedSyncStats() const;
     void initPreparedSyncThroughput() const;
     void initPreparedSyncConflicts() const;
     void initPreparedSyncConflictArtifacts() const;
@@ -63,6 +67,17 @@ class Connection {
     void initPreparedShareUploads() const;
     void initPreparedShareAuditEvents() const;
     void initPreparedShareVaultRoles() const;
+    void initPreparedShareStats() const;
+
+    // Stats
+    void initPreparedDbStats() const;
+    void initPreparedOperationStats() const;
+    void initPreparedRetentionStats() const;
+    void initPreparedStatsSnapshots() const;
+    void initPreparedStatsMetricSamples() const;
+
+    // Dashboard
+    void initPreparedDashboardPreferences() const;
 
     // Admin
     void initPreparedSecrets() const;
