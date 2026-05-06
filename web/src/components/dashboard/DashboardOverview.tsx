@@ -32,7 +32,7 @@ import {
   type DashboardCardCatalogItem,
   type DashboardLayoutPreset,
 } from '@/components/dashboard/dashboardCardCatalog'
-import { DashboardIssueList, DashboardIssueSummaryLine, dedupeDashboardIssues } from '@/components/dashboard/DashboardIssueList'
+import { DashboardIssueList, dedupeDashboardIssues } from '@/components/dashboard/DashboardIssueList'
 import { DashboardSeverityBadge, DashboardSeverityIcon } from '@/components/dashboard/DashboardSeverityBadge'
 import { dashboardSeverityTone, sortDashboardIssues } from '@/components/dashboard/dashboardSeverity'
 import {
@@ -41,6 +41,7 @@ import {
   dashboardMetricNumber,
   dashboardGraphMetricKeys,
   dashboardVisualMetricKeys,
+  isLowValueDashboardMetric,
   selectDashboardCardMetrics,
 } from '@/components/dashboard/dashboardMetricCuration'
 import GridPlusIcon from '@/fa-duotone/grid-2-plus.svg'
@@ -144,7 +145,7 @@ function DashboardMetricTile({ metric, dense = false }: { metric: DashboardMetri
   const body = (
     <div
       className={[
-        'min-w-0 rounded-lg border',
+        'flex h-full min-w-0 flex-col justify-center rounded-lg border',
         dense ? 'px-2 py-1' : 'px-2.5 py-1.5',
         tone.border,
         tone.bg,
@@ -162,10 +163,52 @@ function DashboardMetricTile({ metric, dense = false }: { metric: DashboardMetri
   )
 
   return metric.href ?
-      <Link href={metric.href} className="transition hover:brightness-125">
+      <Link href={metric.href} className="h-full transition hover:brightness-125">
         {body}
       </Link>
     : body
+}
+
+function DashboardInlineIssuePill({
+  severity,
+  errorCount,
+  warningCount,
+  firstIssue,
+  compact = false,
+}: {
+  severity: DashboardCardSummary['severity']
+  errorCount: number
+  warningCount: number
+  firstIssue?: { message: string } | null
+  compact?: boolean
+}) {
+  if (!errorCount && !warningCount && !firstIssue) return null
+
+  const tone = dashboardSeverityTone(severity)
+  const countText =
+    errorCount > 0 ? `${errorCount} error${errorCount === 1 ? '' : 's'}`
+    : warningCount > 0 ? `${warningCount} warning${warningCount === 1 ? '' : 's'}`
+    : 'notice'
+
+  return (
+    <span
+      className={[
+        'inline-flex min-w-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] leading-none',
+        tone.border,
+        tone.bg,
+        tone.text,
+      ].join(' ')}
+      title={firstIssue?.message || countText}>
+      <DashboardSeverityIcon severity={severity} className="h-3 w-3 shrink-0" />
+      <span className="shrink-0 font-semibold">{countText}</span>
+      {!compact && firstIssue ?
+        <>
+          <span className="text-white/30">·</span>
+          <span className="max-w-48 truncate text-white/70">{firstIssue.message}</span>
+        </>
+      : null}
+    </span>
+  )
 }
 
 function ratioValue(value: string): number | null {
@@ -245,7 +288,7 @@ function DashboardSparkline({ series, compact = false }: { series: DashboardGrap
 
   if (!activeSeries.length) {
     return (
-      <div className="flex min-h-14 items-center justify-center rounded-xl border border-white/10 bg-black/20 text-xs text-white/45">
+      <div className="flex h-full min-h-14 items-center justify-center rounded-xl border border-white/10 bg-black/20 text-xs text-white/45">
         Trend samples pending
       </div>
     )
@@ -272,8 +315,8 @@ function DashboardSparkline({ series, compact = false }: { series: DashboardGrap
     .join(' ')
 
   return (
-    <div className="min-h-0 rounded-xl border border-white/10 bg-black/20 px-2.5 py-2">
-      <svg viewBox={`0 0 ${width} ${height}`} className="h-14 w-full overflow-visible md:h-16" role="img" aria-label="Trend lines">
+    <div className="flex h-full min-h-0 flex-col rounded-xl border border-white/10 bg-black/20 px-2.5 py-2">
+      <svg viewBox={`0 0 ${width} ${height}`} className="min-h-14 w-full flex-1 overflow-visible" role="img" aria-label="Trend lines">
         <line x1={pad} y1={height - pad} x2={width - pad} y2={height - pad} stroke="rgba(255,255,255,0.12)" strokeWidth="1" />
         {activeSeries.map((item, index) => (
           <polyline
@@ -307,7 +350,7 @@ function DashboardGraphVisual({ card, compact = false }: { card: DashboardCardSu
   if (card.series.length) return <DashboardSparkline series={card.series} compact={compact} />
 
   return (
-    <div className="flex min-h-14 items-center justify-center rounded-xl border border-white/10 bg-black/20 text-xs text-white/45">
+    <div className="flex h-full min-h-14 items-center justify-center rounded-xl border border-white/10 bg-black/20 text-xs text-white/45">
       No historical series yet
     </div>
   )
@@ -477,26 +520,27 @@ function baseHeightForCard(layoutCard: DashboardLayoutCard): string {
 
 const metricCapacityBySize: Record<DashboardCardSize, number> = {
   '1x1': 2,
-  '1x2': 4,
+  '1x2': 8,
   '2x1': 4,
-  '2x2': 6,
-  '3x1': 4,
-  '3x2': 8,
-  '4x2': 10,
+  '2x2': 15,
+  '3x1': 5,
+  '3x2': 20,
+  '4x2': 25,
 }
 
 function metricCountForCard(layoutCard: DashboardLayoutCard): number {
   if (layoutCard.variant === 'graph') {
     if (layoutCard.size === '1x1') return 1
     if (layoutCard.size === '1x2' || layoutCard.size === '2x1') return 2
-    if (layoutCard.size === '2x2' || layoutCard.size === '3x1') return 3
-    return 4
+    if (layoutCard.size === '2x2' || layoutCard.size === '3x1') return 5
+    return 8
   }
   const hasVisual = layoutCard.variant === 'visual' || layoutCard.variant === 'hero'
   const capacity = metricCapacityBySize[layoutCard.size]
   if (!hasVisual) return capacity
   if (layoutCard.size === '1x1') return 2
   if (layoutCard.size === '2x1') return 3
+  if (layoutCard.size === '1x2') return 6
   return capacity
 }
 
@@ -506,18 +550,12 @@ function metricGridClassForCard(layoutCard: DashboardLayoutCard): string {
   if (layoutCard.variant === 'graph') return 'grid-cols-2 md:grid-cols-4'
   if (layoutCard.size === '4x2') return 'grid-cols-2 md:grid-cols-5'
   if (layoutCard.size === '3x2') return 'grid-cols-2 md:grid-cols-4'
-  if (layoutCard.size === '3x1') return 'grid-cols-2 md:grid-cols-4'
+  if (layoutCard.size === '3x1') return 'grid-cols-2 md:grid-cols-5'
   if (layoutCard.size === '2x2') return 'grid-cols-2 md:grid-cols-3'
   if (layoutCard.size === '2x1' && (layoutCard.variant === 'visual' || layoutCard.variant === 'hero')) return 'grid-cols-3'
   if (layoutCard.size === '2x1') return 'grid-cols-2 md:grid-cols-4'
   if (layoutCard.size === '1x2') return 'grid-cols-2'
   return 'grid-cols-2'
-}
-
-function issueCountForCard(layoutCard: DashboardLayoutCard): number {
-  if (layoutCard.variant === 'hero' || layoutCard.size === '4x2') return 3
-  if (layoutCard.variant === 'graph' || layoutCard.variant === 'visual' || layoutCard.variant === 'summary' || layoutCard.size === '2x2' || layoutCard.size === '3x2') return 2
-  return 1
 }
 
 function pendingCardForLayout(layoutCard: DashboardLayoutCard, catalogItem: DashboardCardCatalogItem): DashboardCardSummary {
@@ -779,14 +817,17 @@ function DashboardHomeCard({
   const isGraph = layoutCard.variant === 'graph'
   const isVisual = layoutCard.variant === 'visual'
   const metricCount = metricCountForCard(layoutCard)
-  const issueCount = issueCountForCard(layoutCard)
   const visualKeys =
     isGraph ? dashboardGraphMetricKeys(card.id)
     : isVisual || isHero ? dashboardVisualMetricKeys(card.id)
     : new Set<string>()
   const selectedMetrics = selectDashboardCardMetrics(card, layoutCard, metricCount, visualKeys)
-  const visualMetricCount = card.metrics.filter(metric => visualKeys.has(metric.key)).length
-  const hiddenMetricCount = Math.max(0, card.metrics.length - selectedMetrics.length - visualMetricCount)
+  const selectedMetricKeys = new Set(selectedMetrics.map(metric => metric.key))
+  const hiddenMetricCount = card.metrics.filter(metric =>
+    !selectedMetricKeys.has(metric.key) &&
+    !visualKeys.has(metric.key) &&
+    !isLowValueDashboardMetric(card.id, metric),
+  ).length
   const visual =
     isGraph ? <DashboardGraphVisual card={card} compact={isCompact} />
     : isVisual || isHero ? <DashboardCardVisual card={card} />
@@ -843,57 +884,63 @@ function DashboardHomeCard({
           />
         : null}
 
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <div
-              draggable
-              className={['flex cursor-grab items-center gap-1.5 font-semibold text-white/90 active:cursor-grabbing', isHero ? 'text-lg' : isCompact ? 'text-sm' : 'text-base'].join(' ')}
-              title="Drag card header to reorder"
-              onDragStart={event => onDragStart(layoutCard.instanceId, event)}>
-              <DashboardSeverityIcon severity={card.severity} className={[isHero ? 'h-5 w-5' : 'h-4 w-4', tone.text].join(' ')} />
-              <span className="truncate">{card.title}</span>
+        <div className="shrink-0">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div
+                draggable
+                className={['flex cursor-grab items-center gap-1.5 font-semibold text-white/90 active:cursor-grabbing', isHero ? 'text-lg' : isCompact ? 'text-sm' : 'text-base'].join(' ')}
+                title="Drag card header to reorder"
+                onDragStart={event => onDragStart(layoutCard.instanceId, event)}>
+                <DashboardSeverityIcon severity={card.severity} className={[isHero ? 'h-5 w-5' : 'h-4 w-4', tone.text].join(' ')} />
+                <span className="truncate">{card.title}</span>
+              </div>
+              {isHero ?
+                <div className="mt-1 line-clamp-1 text-xs text-white/50">{card.description || catalogItem.description}</div>
+              : null}
             </div>
-            {isHero ?
-              <div className="mt-1 line-clamp-2 text-xs text-white/50">{card.description || catalogItem.description}</div>
-            : null}
-            <DashboardIssueSummaryLine
-              severity={errors > 0 ? 'error' : warnings > 0 ? 'warning' : card.severity}
-              errorCount={errors}
-              warningCount={warnings}
-              firstIssue={firstIssue}
-            />
+            <div className="flex shrink-0 items-center gap-1.5">
+              <DashboardInlineIssuePill
+                severity={errors > 0 ? 'error' : warnings > 0 ? 'warning' : card.severity}
+                errorCount={errors}
+                warningCount={warnings}
+                firstIssue={firstIssue}
+                compact={isCompact}
+              />
+              <DashboardSeverityBadge severity={card.severity} errorCount={errors} warningCount={warnings} compact={isCompact} />
+            </div>
           </div>
-          <DashboardSeverityBadge severity={card.severity} errorCount={errors} warningCount={warnings} showCount />
+          <p className={['mt-1.5 text-xs leading-snug text-white/70', isCompact ? 'line-clamp-1' : 'line-clamp-2'].join(' ')}>
+            {card.available ? card.summary : card.unavailable_reason}
+          </p>
         </div>
 
-        <p className={['mt-1.5 text-xs leading-snug text-white/70', isCompact ? 'line-clamp-1' : 'line-clamp-2'].join(' ')}>
-          {card.available ? card.summary : card.unavailable_reason}
-        </p>
+        <div className="mt-2 flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
+          {visual ?
+            <div
+              className={[
+                'min-h-0 shrink-0',
+                isGraph && isCompact ? 'h-14'
+                : isGraph ? 'h-20 flex-1'
+                : '',
+              ].join(' ')}>
+              {visual}
+            </div>
+          : null}
 
-        {visual ?
-          <div className={isHero ? 'mt-2.5' : 'mt-2'}>{visual}</div>
-        : null}
-
-        {selectedMetrics.length ?
-          <div className={['mt-2 grid min-h-0 gap-1.5 overflow-hidden', metricGridClass].join(' ')}>
-            {selectedMetrics.map(metric => (
-              <DashboardMetricTile key={`${card.id}-${metric.key}`} metric={metric} dense={!isHero} />
-            ))}
-            {hiddenMetricCount > 0 && !isCompact ?
-              <div className="rounded-lg border border-white/10 bg-white/[0.03] px-2 py-1 text-[10px] text-white/45">
-                +{hiddenMetricCount} more
-              </div>
-            : null}
-          </div>
-        : null}
-
-        {!isCompact && (card.errors.length || card.warnings.length) ?
-          <div className="mt-2 overflow-hidden">
-            <DashboardIssueList issues={[...card.errors, ...card.warnings]} max={issueCount} link={false} compact />
-          </div>
-        : null}
-
-        <div className="mt-auto min-h-0" />
+          {selectedMetrics.length ?
+            <div className={['grid min-h-0 flex-1 auto-rows-fr gap-1.5 overflow-hidden', metricGridClass].join(' ')}>
+              {selectedMetrics.map(metric => (
+                <DashboardMetricTile key={`${card.id}-${metric.key}`} metric={metric} dense={!isHero} />
+              ))}
+              {hiddenMetricCount > 0 ?
+                <div className="flex h-full items-center rounded-lg border border-white/10 bg-white/[0.03] px-2 py-1 text-[10px] text-white/45">
+                  +{hiddenMetricCount} more
+                </div>
+              : null}
+            </div>
+          : null}
+        </div>
       </article>
     </div>
   )

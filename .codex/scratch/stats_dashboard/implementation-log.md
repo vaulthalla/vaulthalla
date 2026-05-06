@@ -988,3 +988,26 @@ Layout/sidebar decision:
   - Runtime and Cockpit presets include Thread Pools summary and graph variants together.
 - Architecture decision:
   - Operation Queue graph history is deferred because the snapshot service currently does not persist operation queue snapshots. The live stacked visual remains honest and non-fake.
+
+## Dashboard Home Card Density Follow-up
+
+- Commit: pending.
+- Updated `web/src/components/dashboard/DashboardOverview.tsx`.
+- Added `DashboardInlineIssuePill` for title-row warning/error display.
+- Removed `DashboardIssueSummaryLine` usage from home cards.
+- Removed body-level `DashboardIssueList` rendering inside home cards; attention queue still uses issue lists.
+- Separated card structure into:
+  - shrink-only header band for title, status pill, severity badge, and summary
+  - flexing content body for visual and metric grid
+- Updated metric grid behavior:
+  - grid is `flex-1`
+  - grid uses `auto-rows-fr`
+  - metric tiles are `h-full`
+  - hidden metric count tile is `h-full`
+- Increased metric capacities:
+  - `1x2`: 8
+  - `2x2`: 15
+  - `3x1`: 5
+  - `3x2`: 20
+  - `4x2`: 25
+- Graph variants still use lower complementary metric caps, but no longer hide low-value metrics as `+N more`.

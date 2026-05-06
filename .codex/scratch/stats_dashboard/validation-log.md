@@ -522,3 +522,13 @@ Checkpoint:
   - `pnpm --dir web build`: passed
   - `meson test -C build`: passed, 2/2
 - Known failures: none.
+
+## Dashboard Home Card Density Follow-up
+
+- Commit: pending.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `pnpm --dir web test`: passed
+  - `pnpm --dir web build`: passed
+- Known failures: none.

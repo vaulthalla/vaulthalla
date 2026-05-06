@@ -555,3 +555,20 @@ Validation:
   - `pnpm --dir web test`
   - `pnpm --dir web build`
   - `meson test -C build` 2/2
+
+## Dashboard Home Card Density Follow-up
+
+- Status: implemented; commit/push pending.
+- Header/title/summary area is now separated from the metric/visual body area.
+- Warnings/errors now render as compact inline title-row pills and no longer create body rows.
+- Removed home-card body issue lists so warnings cannot push tiles off-card.
+- Metric grids now fill the remaining body using `flex-1` and `auto-rows-fr`.
+- Metric tiles are height-aware and centered inside their grid cells.
+- `2x2` metric capacity increased to 15 so larger cards do not hide a third row behind `+1 more`.
+- Larger two-row card capacities were increased; `2x1` remains the compact one-row layout.
+- Hidden metric counts now ignore low-value/demoted metrics and visual-represented metrics.
+- Validation passed:
+  - `git diff --check`
+  - `git -c core.filemode=true diff --summary`
+  - `pnpm --dir web test`
+  - `pnpm --dir web build`

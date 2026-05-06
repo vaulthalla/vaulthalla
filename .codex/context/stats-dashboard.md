@@ -969,3 +969,25 @@ This file mirrors the ignored scratch roadmap/status notes for durable checkpoin
   - `pnpm --dir web build`: passed
   - `meson test -C build`: passed, 2/2
   - Known failures: none.
+
+## Dashboard Home Card Density Follow-up
+
+- Status: implemented; commit created after this context update.
+- Frontend surface:
+  - `web/src/components/dashboard/DashboardOverview.tsx`
+- Card contract changes:
+  - Header/title/summary now live in a fixed shrink-only header band.
+  - Warning/error state now renders as an inline header pill instead of a body row.
+  - Removed body-level issue lists from home cards so warnings cannot push metrics off the card.
+  - Metric grids own the remaining card body with `flex-1` and `auto-rows-fr`, so tiles stretch to fill bounded card space instead of leaving the lower half blank.
+  - Metric tiles are height-aware (`h-full`) and vertically centered inside their allocated grid cells.
+- Capacity changes:
+  - `2x1` cards keep the tight one-row tile pattern.
+  - `2x2` cards now allow up to 15 curated metrics instead of hiding after two rows.
+  - `3x2` and `4x2` capacities were increased for the same size-to-fill contract.
+  - Hidden metric counts now ignore intentionally demoted/low-value metrics and metrics represented by visuals.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `pnpm --dir web test`: passed
+  - `pnpm --dir web build`: passed
