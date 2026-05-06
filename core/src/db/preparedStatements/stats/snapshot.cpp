@@ -124,6 +124,21 @@ void vh::db::Connection::initPreparedStatsSnapshots() const {
                 UNION ALL
 
                 SELECT
+                    'threadpool_pool_pressure:' || COALESCE(pool->>'name', 'unknown') AS metric_key,
+                    COALESCE(pool->>'name', 'Pool') || ' pressure' AS label,
+                    'ratio' AS unit,
+                    snapshot_type,
+                    created_at,
+                    NULLIF(pool->>'pressure_ratio', '')::double precision AS value
+                FROM stats_snapshot
+                CROSS JOIN LATERAL jsonb_array_elements(COALESCE(payload->'pools', '[]'::jsonb)) AS pool
+                WHERE scope = 'system'
+                  AND snapshot_type = 'system.threadpools'
+                  AND created_at >= CURRENT_TIMESTAMP - ($1::int * INTERVAL '1 hour')
+
+                UNION ALL
+
+                SELECT
                     'fs_cache_hit_rate' AS metric_key,
                     'FS cache hit rate' AS label,
                     'ratio' AS unit,

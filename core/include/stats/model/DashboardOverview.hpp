@@ -19,6 +19,19 @@ struct DashboardMetricSummary {
     std::optional<std::string> href;
 };
 
+struct DashboardGraphPoint {
+    std::uint64_t createdAt = 0;
+    double value = 0.0;
+};
+
+struct DashboardGraphSeries {
+    std::string key;
+    std::string label;
+    std::string unit;
+    std::string tone = "info";
+    std::vector<DashboardGraphPoint> points;
+};
+
 struct DashboardIssueSummary {
     std::string code;
     std::string severity;
@@ -62,6 +75,7 @@ struct DashboardCardSummary {
     std::optional<std::string> unavailableReason;
     std::string summary;
     std::vector<DashboardMetricSummary> metrics;
+    std::vector<DashboardGraphSeries> series;
     std::vector<DashboardIssueSummary> warnings;
     std::vector<DashboardIssueSummary> errors;
     std::uint64_t checkedAt = 0;
@@ -97,6 +111,8 @@ struct DashboardOverview {
 DashboardOverviewRequest dashboardOverviewRequestFromJson(const nlohmann::json& payload);
 
 void to_json(nlohmann::json& j, const DashboardMetricSummary& metric);
+void to_json(nlohmann::json& j, const DashboardGraphPoint& point);
+void to_json(nlohmann::json& j, const DashboardGraphSeries& series);
 void to_json(nlohmann::json& j, const DashboardIssueSummary& issue);
 void to_json(nlohmann::json& j, const DashboardAttentionItem& item);
 void to_json(nlohmann::json& j, const DashboardCardSummary& card);

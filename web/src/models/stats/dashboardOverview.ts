@@ -22,6 +22,19 @@ export interface IDashboardMetricSummary {
   href: string | null
 }
 
+export interface IDashboardGraphPoint {
+  created_at: number
+  value: number
+}
+
+export interface IDashboardGraphSeries {
+  key: string
+  label: string
+  unit: string
+  tone: DashboardSeverity
+  points: DashboardGraphPoint[]
+}
+
 export interface IDashboardIssueSummary {
   code: string
   severity: DashboardSeverity
@@ -48,6 +61,7 @@ export interface IDashboardCardSummary {
   unavailable_reason: string | null
   summary: string
   metrics: DashboardMetricSummary[]
+  series: DashboardGraphSeries[]
   warnings: DashboardIssueSummary[]
   errors: DashboardIssueSummary[]
   checked_at: number | string | null
@@ -148,6 +162,53 @@ export class DashboardMetricSummary implements IDashboardMetricSummary {
   }
 }
 
+export class DashboardGraphPoint implements IDashboardGraphPoint {
+  created_at = 0
+  value = 0
+
+  constructor(data?: Partial<IDashboardGraphPoint>) {
+    if (!data) return
+    this.created_at = data.created_at ?? this.created_at
+    this.value = data.value ?? this.value
+  }
+
+  static from(raw: unknown): DashboardGraphPoint {
+    const data = asObject(raw)
+    return new DashboardGraphPoint({
+      created_at: asNumber(data.created_at),
+      value: asNumber(data.value),
+    })
+  }
+}
+
+export class DashboardGraphSeries implements IDashboardGraphSeries {
+  key = ''
+  label = ''
+  unit = ''
+  tone: DashboardSeverity = 'info'
+  points: DashboardGraphPoint[] = []
+
+  constructor(data?: Partial<IDashboardGraphSeries>) {
+    if (!data) return
+    this.key = data.key ?? this.key
+    this.label = data.label ?? this.label
+    this.unit = data.unit ?? this.unit
+    this.tone = data.tone ?? this.tone
+    this.points = data.points ?? this.points
+  }
+
+  static from(raw: unknown): DashboardGraphSeries {
+    const data = asObject(raw)
+    return new DashboardGraphSeries({
+      key: asString(data.key),
+      label: asString(data.label),
+      unit: asString(data.unit),
+      tone: asSeverity(data.tone),
+      points: Array.isArray(data.points) ? data.points.map(DashboardGraphPoint.from) : [],
+    })
+  }
+}
+
 export class DashboardIssueSummary implements IDashboardIssueSummary {
   code = ''
   severity: DashboardSeverity = 'unknown'
@@ -214,6 +275,7 @@ export class DashboardCardSummary implements IDashboardCardSummary {
   unavailable_reason: string | null = null
   summary = ''
   metrics: DashboardMetricSummary[] = []
+  series: DashboardGraphSeries[] = []
   warnings: DashboardIssueSummary[] = []
   errors: DashboardIssueSummary[] = []
   checked_at: number | string | null = null
@@ -232,6 +294,7 @@ export class DashboardCardSummary implements IDashboardCardSummary {
     this.unavailable_reason = data.unavailable_reason ?? this.unavailable_reason
     this.summary = data.summary ?? this.summary
     this.metrics = data.metrics ?? this.metrics
+    this.series = data.series ?? this.series
     this.warnings = data.warnings ?? this.warnings
     this.errors = data.errors ?? this.errors
     this.checked_at = data.checked_at ?? this.checked_at
@@ -252,6 +315,7 @@ export class DashboardCardSummary implements IDashboardCardSummary {
       unavailable_reason: asNullableString(data.unavailable_reason),
       summary: asString(data.summary),
       metrics: Array.isArray(data.metrics) ? data.metrics.map(DashboardMetricSummary.from) : [],
+      series: Array.isArray(data.series) ? data.series.map(DashboardGraphSeries.from) : [],
       warnings: Array.isArray(data.warnings) ? data.warnings.map(DashboardIssueSummary.from) : [],
       errors: Array.isArray(data.errors) ? data.errors.map(DashboardIssueSummary.from) : [],
       checked_at: asCheckedAt(data.checked_at),

@@ -22,6 +22,7 @@
 #include <cmath>
 #include <cstdio>
 #include <exception>
+#include <memory>
 #include <nlohmann/json.hpp>
 #include <unordered_map>
 #include <utility>
@@ -162,6 +163,92 @@ void dashboardOverviewAddIssue(
 
     if (issue.severity == "error") card.errors.push_back(std::move(issue));
     else card.warnings.push_back(std::move(issue));
+}
+
+std::string dashboardOverviewTrendTone(const std::string& key) {
+    if (key.find("error") != std::string::npos || key.find("queue") != std::string::npos) return "warning";
+    if (key.find("cache_hit") != std::string::npos || key.find("hit_rate") != std::string::npos) return "healthy";
+    if (key.find("pressure") != std::string::npos) return "info";
+    return "info";
+}
+
+DashboardGraphSeries dashboardOverviewGraphSeriesFromTrend(const StatsTrendSeries& source, const std::size_t maxPoints = 64) {
+    DashboardGraphSeries series;
+    series.key = source.key;
+    series.label = source.label;
+    series.unit = source.unit;
+    series.tone = dashboardOverviewTrendTone(source.key);
+
+    const auto start = source.points.size() > maxPoints ? source.points.size() - maxPoints : 0;
+    series.points.reserve(source.points.size() - start);
+    for (std::size_t i = start; i < source.points.size(); ++i) {
+        series.points.push_back({
+            .createdAt = source.points[i].createdAt,
+            .value = source.points[i].value,
+        });
+    }
+
+    return series;
+}
+
+bool dashboardOverviewTrendBelongsToCard(const std::string& cardId, const std::string& key) {
+    if (cardId == "system.threadpools")
+        return key == "threadpool_pressure" || key.rfind("threadpool_pool_pressure:", 0) == 0;
+    if (cardId == "system.fuse") return key == "fuse_error_rate";
+    if (cardId == "system.fs_cache") return key == "fs_cache_hit_rate";
+    if (cardId == "system.http_cache") return key == "http_cache_hit_rate";
+    if (cardId == "system.db") return key == "db_cache_hit_ratio";
+    if (cardId == "system.trends")
+        return key == "threadpool_pressure" || key == "fuse_error_rate" || key == "fs_cache_hit_rate" || key == "http_cache_hit_rate" || key == "db_cache_hit_ratio";
+    return false;
+}
+
+int dashboardOverviewTrendPriority(const std::string& cardId, const std::string& key) {
+    if (cardId == "system.threadpools") {
+        if (key == "threadpool_pressure") return 0;
+        if (key.rfind("threadpool_pool_pressure:", 0) == 0) return 1;
+    }
+    if (cardId == "system.fuse") {
+        if (key == "fuse_total_ops") return 0;
+        if (key == "fuse_error_rate") return 1;
+    }
+    if (cardId == "system.db") {
+        if (key == "db_cache_hit_ratio") return 0;
+        if (key == "db_connections_total") return 1;
+        if (key == "db_size_bytes") return 2;
+    }
+    return 10;
+}
+
+void dashboardOverviewAttachTrendSeries(
+    std::vector<DashboardCardSummary>& cards,
+    const std::shared_ptr<StatsTrends>& trends
+) {
+    if (!trends) return;
+
+    for (auto& card : cards) {
+        if (card.variant != "graph" && card.id != "system.trends") continue;
+
+        std::vector<const StatsTrendSeries*> selected;
+        for (const auto& series : trends->series) {
+            if (!dashboardOverviewTrendBelongsToCard(card.id, series.key)) continue;
+            if (series.points.size() < 2) continue;
+            selected.push_back(&series);
+        }
+
+        std::sort(selected.begin(), selected.end(), [&card](const auto* a, const auto* b) {
+            const auto priorityA = dashboardOverviewTrendPriority(card.id, a->key);
+            const auto priorityB = dashboardOverviewTrendPriority(card.id, b->key);
+            if (priorityA != priorityB) return priorityA < priorityB;
+            return a->key < b->key;
+        });
+
+        const auto maxSeries = card.id == "system.threadpools" ? selected.size() : std::min<std::size_t>(selected.size(), 4);
+        card.series.reserve(maxSeries);
+        for (std::size_t i = 0; i < maxSeries; ++i) {
+            card.series.push_back(dashboardOverviewGraphSeriesFromTrend(*selected[i]));
+        }
+    }
 }
 
 DashboardCardSummary dashboardOverviewBaseCard(const DashboardOverviewCardDescriptor& descriptor) {
@@ -639,6 +726,17 @@ DashboardOverview DashboardOverview::snapshot(const DashboardOverviewRequest& re
         overview.cards.push_back(std::move(card));
     }
 
+    const auto wantsSeries = std::any_of(overview.cards.begin(), overview.cards.end(), [](const auto& card) {
+        return card.variant == "graph" || card.id == "system.trends";
+    });
+    if (wantsSeries) {
+        try {
+            dashboardOverviewAttachTrendSeries(overview.cards, vh::db::query::stats::Snapshot::systemTrends(24));
+        } catch (...) {
+            // Trend series are an optional dashboard-home enhancement. Card summaries remain valid without them.
+        }
+    }
+
     for (const auto& descriptor : dashboardOverviewSectionDescriptors()) {
         overview.sections.push_back(dashboardOverviewBuildSection(descriptor, overview.cards));
     }
@@ -707,6 +805,23 @@ void to_json(nlohmann::json& j, const DashboardMetricSummary& metric) {
     };
 }
 
+void to_json(nlohmann::json& j, const DashboardGraphPoint& point) {
+    j = nlohmann::json{
+        {"created_at", point.createdAt},
+        {"value", point.value},
+    };
+}
+
+void to_json(nlohmann::json& j, const DashboardGraphSeries& series) {
+    j = nlohmann::json{
+        {"key", series.key},
+        {"label", series.label},
+        {"unit", series.unit},
+        {"tone", series.tone},
+        {"points", series.points},
+    };
+}
+
 void to_json(nlohmann::json& j, const DashboardIssueSummary& issue) {
     j = nlohmann::json{
         {"code", issue.code},
@@ -743,6 +858,7 @@ void to_json(nlohmann::json& j, const DashboardCardSummary& card) {
         {"unavailable_reason", dashboardOverviewNullable(card.unavailableReason)},
         {"summary", card.summary},
         {"metrics", card.metrics},
+        {"series", card.series},
         {"warnings", card.warnings},
         {"errors", card.errors},
         {"checked_at", card.checkedAt},

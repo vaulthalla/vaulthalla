@@ -22,9 +22,25 @@ const variantPreferences: Record<string, VariantPreference> = {
     compact: ['services', 'protocols', 'deps'],
     hero: ['services', 'protocols', 'deps', 'sessions'],
   },
+  'system.threadpools': {
+    graph: ['workers', 'idle', 'pressured', 'saturated', 'borrowed'],
+  },
+  'system.fuse': {
+    graph: ['open_handles', 'total_errors', 'read_bytes', 'write_bytes'],
+  },
+  'system.fs_cache': {
+    graph: ['used', 'requests', 'misses', 'evictions'],
+  },
+  'system.http_cache': {
+    graph: ['used', 'requests', 'misses', 'evictions'],
+  },
+  'system.db': {
+    graph: ['connections', 'active_connections', 'size', 'slow_queries', 'oldest_tx'],
+  },
   'system.trends': {
     compact: ['latest_sample_age', 'window'],
     visual: ['latest_sample_age', 'window', 'coverage'],
+    graph: ['latest_sample_age', 'window', 'coverage'],
   },
 }
 
@@ -43,6 +59,15 @@ const visualMetricKeys: Record<string, Set<string>> = {
   'system.retention': new Set(['overdue', 'cache_expired', 'sync_backlog', 'audit_backlog']),
   'system.operations': new Set(['pending', 'in_progress', 'stalled', 'failed_24h']),
   'system.trends': new Set(['latest_sample_age', 'window', 'coverage']),
+}
+
+const graphMetricKeys: Record<string, Set<string>> = {
+  'system.threadpools': new Set(['pressure', 'queue']),
+  'system.fuse': new Set(['error_rate']),
+  'system.fs_cache': new Set(['hit_rate']),
+  'system.http_cache': new Set(['hit_rate']),
+  'system.db': new Set(['cache_hit']),
+  'system.trends': new Set(['latest_sample_age', 'window', 'coverage', 'series', 'points']),
 }
 
 export function dashboardMetricNumber(metric: DashboardMetricSummary): number | null {
@@ -74,6 +99,10 @@ export function isLowValueDashboardMetric(cardId: string, metric: DashboardMetri
 
 export function dashboardVisualMetricKeys(cardId: string): Set<string> {
   return visualMetricKeys[cardId] ?? new Set<string>()
+}
+
+export function dashboardGraphMetricKeys(cardId: string): Set<string> {
+  return graphMetricKeys[cardId] ?? new Set<string>()
 }
 
 export function selectDashboardCardMetrics(

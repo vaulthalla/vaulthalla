@@ -19,6 +19,7 @@ import {
 import { DASHBOARD_HOME_PREFERENCE_KEY } from '@/models/dashboard/dashboardPreferences'
 import {
   DashboardCardSummary,
+  type DashboardGraphSeries,
   type DashboardMetricSummary,
   type DashboardOverviewRequest,
 } from '@/models/stats/dashboardOverview'
@@ -38,6 +39,7 @@ import {
   dashboardMetricByKey,
   dashboardMetricMeterValue,
   dashboardMetricNumber,
+  dashboardGraphMetricKeys,
   dashboardVisualMetricKeys,
   selectDashboardCardMetrics,
 } from '@/components/dashboard/dashboardMetricCuration'
@@ -229,6 +231,88 @@ function VisualStack({
   )
 }
 
+function graphSeriesColor(index: number, series: DashboardGraphSeries): string {
+  if (index === 0) return '#22d3ee'
+  if (series.tone === 'error') return '#fb7185'
+  if (series.tone === 'warning') return '#fbbf24'
+  if (series.tone === 'healthy') return '#34d399'
+  const palette = ['#60a5fa', '#a78bfa', '#f472b6', '#2dd4bf', '#c084fc', '#f59e0b', '#93c5fd']
+  return palette[(index - 1) % palette.length]
+}
+
+function DashboardSparkline({ series, compact = false }: { series: DashboardGraphSeries[]; compact?: boolean }) {
+  const activeSeries = series.filter(item => item.points.length >= 2)
+
+  if (!activeSeries.length) {
+    return (
+      <div className="flex min-h-14 items-center justify-center rounded-xl border border-white/10 bg-black/20 text-xs text-white/45">
+        Trend samples pending
+      </div>
+    )
+  }
+
+  const allPoints = activeSeries.flatMap(item => item.points)
+  const minTime = Math.min(...allPoints.map(point => point.created_at))
+  const maxTime = Math.max(...allPoints.map(point => point.created_at))
+  const minValue = Math.min(...allPoints.map(point => point.value))
+  const maxValue = Math.max(...allPoints.map(point => point.value))
+  const valueSpan = maxValue - minValue || 1
+  const timeSpan = maxTime - minTime || 1
+  const width = 240
+  const height = compact ? 54 : 72
+  const pad = 6
+  const lineHeight = height - pad * 2
+
+  const pointsFor = (item: DashboardGraphSeries) => item.points
+    .map(point => {
+      const x = pad + ((point.created_at - minTime) / timeSpan) * (width - pad * 2)
+      const y = pad + (1 - ((point.value - minValue) / valueSpan)) * lineHeight
+      return `${x.toFixed(1)},${y.toFixed(1)}`
+    })
+    .join(' ')
+
+  return (
+    <div className="min-h-0 rounded-xl border border-white/10 bg-black/20 px-2.5 py-2">
+      <svg viewBox={`0 0 ${width} ${height}`} className="h-14 w-full overflow-visible md:h-16" role="img" aria-label="Trend lines">
+        <line x1={pad} y1={height - pad} x2={width - pad} y2={height - pad} stroke="rgba(255,255,255,0.12)" strokeWidth="1" />
+        {activeSeries.map((item, index) => (
+          <polyline
+            key={item.key}
+            points={pointsFor(item)}
+            fill="none"
+            stroke={graphSeriesColor(index, item)}
+            strokeWidth={index === 0 ? 2.4 : 1.45}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            opacity={index === 0 ? 0.98 : 0.72}
+          />
+        ))}
+      </svg>
+      <div className="mt-1 flex flex-wrap gap-x-2.5 gap-y-1 overflow-hidden text-[10px] leading-none">
+        {activeSeries.slice(0, compact ? 3 : 5).map((item, index) => (
+          <span key={item.key} className="inline-flex min-w-0 items-center gap-1 text-white/50">
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: graphSeriesColor(index, item) }} />
+            <span className="truncate">{item.label}</span>
+          </span>
+        ))}
+        {activeSeries.length > (compact ? 3 : 5) ?
+          <span className="text-white/35">+{activeSeries.length - (compact ? 3 : 5)} lines</span>
+        : null}
+      </div>
+    </div>
+  )
+}
+
+function DashboardGraphVisual({ card, compact = false }: { card: DashboardCardSummary; compact?: boolean }) {
+  if (card.series.length) return <DashboardSparkline series={card.series} compact={compact} />
+
+  return (
+    <div className="flex min-h-14 items-center justify-center rounded-xl border border-white/10 bg-black/20 text-xs text-white/45">
+      No historical series yet
+    </div>
+  )
+}
+
 function DashboardCardVisual({ card }: { card: DashboardCardSummary }) {
   const metrics = dashboardMetricByKey(card.metrics)
   const metric = (key: string) => metrics.get(key)
@@ -402,6 +486,12 @@ const metricCapacityBySize: Record<DashboardCardSize, number> = {
 }
 
 function metricCountForCard(layoutCard: DashboardLayoutCard): number {
+  if (layoutCard.variant === 'graph') {
+    if (layoutCard.size === '1x1') return 1
+    if (layoutCard.size === '1x2' || layoutCard.size === '2x1') return 2
+    if (layoutCard.size === '2x2' || layoutCard.size === '3x1') return 3
+    return 4
+  }
   const hasVisual = layoutCard.variant === 'visual' || layoutCard.variant === 'hero'
   const capacity = metricCapacityBySize[layoutCard.size]
   if (!hasVisual) return capacity
@@ -411,6 +501,9 @@ function metricCountForCard(layoutCard: DashboardLayoutCard): number {
 }
 
 function metricGridClassForCard(layoutCard: DashboardLayoutCard): string {
+  if (layoutCard.variant === 'graph' && (layoutCard.size === '2x1' || layoutCard.size === '1x2')) return 'grid-cols-2'
+  if (layoutCard.variant === 'graph' && (layoutCard.size === '2x2' || layoutCard.size === '3x1')) return 'grid-cols-3'
+  if (layoutCard.variant === 'graph') return 'grid-cols-2 md:grid-cols-4'
   if (layoutCard.size === '4x2') return 'grid-cols-2 md:grid-cols-5'
   if (layoutCard.size === '3x2') return 'grid-cols-2 md:grid-cols-4'
   if (layoutCard.size === '3x1') return 'grid-cols-2 md:grid-cols-4'
@@ -423,7 +516,7 @@ function metricGridClassForCard(layoutCard: DashboardLayoutCard): string {
 
 function issueCountForCard(layoutCard: DashboardLayoutCard): number {
   if (layoutCard.variant === 'hero' || layoutCard.size === '4x2') return 3
-  if (layoutCard.variant === 'visual' || layoutCard.variant === 'summary' || layoutCard.size === '2x2' || layoutCard.size === '3x2') return 2
+  if (layoutCard.variant === 'graph' || layoutCard.variant === 'visual' || layoutCard.variant === 'summary' || layoutCard.size === '2x2' || layoutCard.size === '3x2') return 2
   return 1
 }
 
@@ -683,14 +776,21 @@ function DashboardHomeCard({
   const firstIssue = sortDashboardIssues([...card.errors, ...card.warnings])[0]
   const isCompact = layoutCard.variant === 'compact' || layoutCard.size === '1x1' || layoutCard.size === '2x1'
   const isHero = layoutCard.variant === 'hero' || layoutCard.size === '4x2'
+  const isGraph = layoutCard.variant === 'graph'
   const isVisual = layoutCard.variant === 'visual'
   const metricCount = metricCountForCard(layoutCard)
   const issueCount = issueCountForCard(layoutCard)
-  const visualKeys = isVisual || isHero ? dashboardVisualMetricKeys(card.id) : new Set<string>()
+  const visualKeys =
+    isGraph ? dashboardGraphMetricKeys(card.id)
+    : isVisual || isHero ? dashboardVisualMetricKeys(card.id)
+    : new Set<string>()
   const selectedMetrics = selectDashboardCardMetrics(card, layoutCard, metricCount, visualKeys)
   const visualMetricCount = card.metrics.filter(metric => visualKeys.has(metric.key)).length
   const hiddenMetricCount = Math.max(0, card.metrics.length - selectedMetrics.length - visualMetricCount)
-  const visual = isVisual || isHero ? <DashboardCardVisual card={card} /> : null
+  const visual =
+    isGraph ? <DashboardGraphVisual card={card} compact={isCompact} />
+    : isVisual || isHero ? <DashboardCardVisual card={card} />
+    : null
   const metricGridClass = metricGridClassForCard(layoutCard)
 
   return (
@@ -716,6 +816,7 @@ function DashboardHomeCard({
           'group flex h-full max-h-full min-h-0 flex-col overflow-hidden rounded-2xl border bg-zinc-950/48 backdrop-blur transition hover:-translate-y-0.5 hover:brightness-110',
           !customizing ? 'cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200/45' : '',
           isHero ? 'p-3.5'
+          : isGraph ? 'p-3'
           : isVisual ? 'p-3'
           : 'p-2.5',
           baseHeightForCard(layoutCard),

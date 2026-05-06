@@ -23,11 +23,12 @@ export interface DashboardLayoutPreset {
 }
 
 const allSizes: DashboardCardSize[] = ['2x1', '2x2', '3x1', '3x2', '4x2']
-const allVariants: DashboardCardVariant[] = ['compact', 'summary', 'hero', 'visual']
+const allVariants: DashboardCardVariant[] = ['compact', 'summary', 'hero', 'visual', 'graph']
+const nonGraphVariants: DashboardCardVariant[] = ['compact', 'summary', 'hero', 'visual']
 const compactSizes: DashboardCardSize[] = ['1x1', '2x1', '3x1']
 const summarySizes: DashboardCardSize[] = ['2x1', '2x2', '3x1', '3x2']
 const tallSizes: DashboardCardSize[] = ['1x2', '2x1', '2x2', '3x1', '3x2']
-const visualVariants: DashboardCardVariant[] = ['compact', 'summary', 'visual']
+const graphVariants: DashboardCardVariant[] = ['compact', 'summary', 'visual', 'graph']
 
 export const dashboardCardCatalog: DashboardCardCatalogItem[] = [
   {
@@ -36,7 +37,7 @@ export const dashboardCardCatalog: DashboardCardCatalogItem[] = [
     title: 'Thread Pools',
     description: 'Runtime worker pressure across FUSE, sync, thumbnails, HTTP, and stats.',
     href: '/dashboard/runtime#thread-pools',
-    defaultVariant: 'visual',
+    defaultVariant: 'graph',
     defaultSize: '2x1',
     supportedSizes: allSizes,
     supportedVariants: allVariants,
@@ -52,7 +53,7 @@ export const dashboardCardCatalog: DashboardCardCatalogItem[] = [
     defaultVariant: 'visual',
     defaultSize: '2x1',
     supportedSizes: summarySizes,
-    supportedVariants: allVariants,
+    supportedVariants: nonGraphVariants,
     available: true,
     unavailableReason: null,
   },
@@ -65,7 +66,7 @@ export const dashboardCardCatalog: DashboardCardCatalogItem[] = [
     defaultVariant: 'visual',
     defaultSize: '2x1',
     supportedSizes: summarySizes,
-    supportedVariants: visualVariants,
+    supportedVariants: graphVariants,
     available: true,
     unavailableReason: null,
   },
@@ -78,7 +79,7 @@ export const dashboardCardCatalog: DashboardCardCatalogItem[] = [
     defaultVariant: 'visual',
     defaultSize: '2x1',
     supportedSizes: compactSizes,
-    supportedVariants: visualVariants,
+    supportedVariants: graphVariants,
     available: true,
     unavailableReason: null,
   },
@@ -91,7 +92,7 @@ export const dashboardCardCatalog: DashboardCardCatalogItem[] = [
     defaultVariant: 'visual',
     defaultSize: '2x1',
     supportedSizes: compactSizes,
-    supportedVariants: visualVariants,
+    supportedVariants: graphVariants,
     available: true,
     unavailableReason: null,
   },
@@ -104,7 +105,7 @@ export const dashboardCardCatalog: DashboardCardCatalogItem[] = [
     defaultVariant: 'visual',
     defaultSize: '2x1',
     supportedSizes: allSizes,
-    supportedVariants: allVariants,
+    supportedVariants: nonGraphVariants,
     available: true,
     unavailableReason: null,
   },
@@ -117,7 +118,7 @@ export const dashboardCardCatalog: DashboardCardCatalogItem[] = [
     defaultVariant: 'visual',
     defaultSize: '2x1',
     supportedSizes: summarySizes,
-    supportedVariants: visualVariants,
+    supportedVariants: graphVariants,
     available: true,
     unavailableReason: null,
   },
@@ -130,7 +131,7 @@ export const dashboardCardCatalog: DashboardCardCatalogItem[] = [
     defaultVariant: 'visual',
     defaultSize: '2x1',
     supportedSizes: tallSizes,
-    supportedVariants: allVariants,
+    supportedVariants: nonGraphVariants,
     available: true,
     unavailableReason: null,
   },
@@ -143,7 +144,7 @@ export const dashboardCardCatalog: DashboardCardCatalogItem[] = [
     defaultVariant: 'visual',
     defaultSize: '2x1',
     supportedSizes: allSizes,
-    supportedVariants: allVariants,
+    supportedVariants: nonGraphVariants,
     available: true,
     unavailableReason: null,
   },
@@ -165,7 +166,7 @@ export const dashboardCardCatalog: DashboardCardCatalogItem[] = [
 const defaultVisibleCards: DashboardLayoutPreset['cards'] = [
   { id: 'system.operations', size: '2x1', variant: 'visual' },
   { id: 'system.storage', size: '2x1', variant: 'visual' },
-  { id: 'system.threadpools', size: '2x1', variant: 'visual' },
+  { id: 'system.threadpools', size: '2x1', variant: 'graph' },
   { id: 'system.fuse', size: '2x1', variant: 'visual' },
   { id: 'system.db', size: '2x1', variant: 'visual' },
   { id: 'system.retention', size: '2x1', variant: 'visual' },
@@ -188,7 +189,7 @@ export const dashboardLayoutPresets: DashboardLayoutPreset[] = [
       { id: 'system.operations', size: '2x1', variant: 'visual' },
       { id: 'system.storage', size: '2x1', variant: 'visual' },
       { id: 'system.db', size: '2x1', variant: 'visual' },
-      { id: 'system.threadpools', size: '2x1', variant: 'visual' },
+      { id: 'system.threadpools', size: '2x1', variant: 'graph' },
     ],
   },
   {
@@ -196,7 +197,8 @@ export const dashboardLayoutPresets: DashboardLayoutPreset[] = [
     title: 'Runtime',
     description: 'Runtime, workers, sessions, and filesystem pressure.',
     cards: [
-      { id: 'system.threadpools', size: '2x2', variant: 'summary' },
+      { id: 'system.threadpools', size: '2x1', variant: 'summary' },
+      { id: 'system.threadpools', size: '3x1', variant: 'graph' },
       { id: 'system.connections', size: '2x1', variant: 'visual' },
       { id: 'system.fuse', size: '2x1', variant: 'visual' },
       { id: 'system.operations', size: '2x1', variant: 'visual' },
@@ -222,7 +224,7 @@ export const dashboardLayoutPresets: DashboardLayoutPreset[] = [
     description: 'Queued work, transfers, FUSE activity, and worker pressure.',
     cards: [
       { id: 'system.operations', size: '4x2', variant: 'hero' },
-      { id: 'system.threadpools', size: '2x1', variant: 'visual' },
+      { id: 'system.threadpools', size: '2x1', variant: 'graph' },
       { id: 'system.fuse', size: '2x1', variant: 'visual' },
       { id: 'system.connections', size: '2x1', variant: 'visual' },
       { id: 'system.db', size: '2x1', variant: 'visual' },
@@ -236,6 +238,7 @@ export const dashboardLayoutPresets: DashboardLayoutPreset[] = [
       { id: 'system.operations', size: '2x1', variant: 'visual' },
       { id: 'system.storage', size: '2x1', variant: 'visual' },
       { id: 'system.threadpools', size: '2x1', variant: 'summary' },
+      { id: 'system.threadpools', size: '2x1', variant: 'graph' },
       { id: 'system.fuse', size: '2x1', variant: 'visual' },
       { id: 'system.db', size: '2x1', variant: 'visual' },
       { id: 'system.retention', size: '2x1', variant: 'visual' },
