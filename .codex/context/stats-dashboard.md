@@ -868,3 +868,20 @@ This file mirrors the ignored scratch roadmap/status notes for durable checkpoin
 - Deferred TODOs:
   - Add compact trend point arrays to `stats.dashboard.overview` before adding real line/sparkline home cards.
   - Consider a user-controlled sidebar collapse preference later; this pass only defaults dashboard routes to compact mode.
+
+## Dashboard Sidebar Build Fix
+
+- Status: implemented and validated; commit created after this context update.
+- Issue:
+  - `next build` failed while prerendering routes because `AdminSidebar` had been converted to a Client Component and received `adminNav` icon component functions from the server layout.
+  - Next.js rejected the function-valued `icon` props crossing the server-to-client boundary.
+- Fix:
+  - Restored `web/src/components/nav/admin/AdminSidebar.tsx` as a server-rendered sidebar.
+  - Added `web/src/components/nav/admin/AdminSidebarMode.client.tsx` as the only client boundary; it reads `usePathname()` and selects between server-rendered full and compact sidebar nodes.
+  - The nav config and icon component functions now stay inside server-rendered JSX and are no longer passed directly as Client Component props.
+- Validation:
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web build`: passed, including `/roles/vault` and `/api-keys/add` prerendering
+  - `git diff --check`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
