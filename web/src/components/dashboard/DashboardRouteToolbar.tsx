@@ -41,8 +41,9 @@ export default function DashboardRouteToolbar() {
   return (
     <nav
       aria-label="Dashboard sections"
-      className="sticky top-0 z-20 border-b border-white/10 bg-zinc-950/70 px-3 py-2 shadow-[0_16px_45px_-35px_rgba(34,211,238,0.75)] backdrop-blur-xl lg:px-5">
-      <div className="mx-auto flex w-full max-w-[104rem] items-center gap-2 overflow-x-auto">
+      className="sticky top-0 z-20 border-b border-white/10 bg-zinc-950/72 px-3 py-2.5 shadow-[0_16px_45px_-35px_rgba(34,211,238,0.75)] backdrop-blur-xl lg:px-5">
+      <div className="mx-auto w-full max-w-[104rem]">
+        <div className="flex items-center gap-1.5 overflow-x-auto rounded-2xl border border-white/10 bg-black/20 p-1">
         {dashboardRouteItems.map(item => {
           const active = isActive(pathname, item)
           const Icon = item.icon
@@ -52,7 +53,7 @@ export default function DashboardRouteToolbar() {
               key={item.href}
               href={item.href}
               className={[
-                'group relative inline-flex shrink-0 items-center gap-2 rounded-full border px-3 py-1.5 text-xs transition',
+                'group relative inline-flex min-h-8 shrink-0 items-center justify-center gap-2 rounded-xl border px-3 text-xs transition',
                 active ?
                   'border-cyan-200/35 bg-cyan-400/12 text-cyan-50 shadow-[0_0_22px_-14px_rgba(34,211,238,0.9)]'
                 : 'border-white/10 bg-white/5 text-white/60 hover:border-cyan-200/25 hover:text-cyan-100',
@@ -63,6 +64,7 @@ export default function DashboardRouteToolbar() {
             </Link>
           )
         })}
+        </div>
       </div>
     </nav>
   )

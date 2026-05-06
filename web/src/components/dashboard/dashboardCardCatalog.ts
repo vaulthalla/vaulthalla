@@ -162,8 +162,8 @@ export const dashboardCardCatalog: DashboardCardCatalogItem[] = [
 ]
 
 const defaultVisibleCards: DashboardLayoutPreset['cards'] = [
-  { id: 'system.operations', size: '2x2', variant: 'visual' },
-  { id: 'system.storage', size: '2x2', variant: 'visual' },
+  { id: 'system.operations', size: '2x1', variant: 'visual' },
+  { id: 'system.storage', size: '2x1', variant: 'visual' },
   { id: 'system.threadpools', size: '2x1', variant: 'visual' },
   { id: 'system.fuse', size: '2x1', variant: 'visual' },
   { id: 'system.db', size: '2x1', variant: 'visual' },
@@ -232,8 +232,8 @@ export const dashboardLayoutPresets: DashboardLayoutPreset[] = [
     title: 'Cockpit',
     description: 'Wide high-signal overview for wallboard-style monitoring.',
     cards: [
-      { id: 'system.operations', size: '2x2', variant: 'visual' },
-      { id: 'system.storage', size: '2x2', variant: 'visual' },
+      { id: 'system.operations', size: '2x1', variant: 'visual' },
+      { id: 'system.storage', size: '2x1', variant: 'visual' },
       { id: 'system.threadpools', size: '2x1', variant: 'summary' },
       { id: 'system.fuse', size: '2x1', variant: 'visual' },
       { id: 'system.db', size: '2x1', variant: 'visual' },

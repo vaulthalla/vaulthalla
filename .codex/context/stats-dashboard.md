@@ -821,3 +821,47 @@ This file mirrors the ignored scratch roadmap/status notes for durable checkpoin
   - Introduce a route-aware compact admin sidebar seam only if the shared admin shell is intentionally updated.
   - Add true sparkline arrays to `stats.dashboard.overview` only when compact trend series can be supplied cheaply without hydrating full drilldown card payloads.
   - Consider moving metric presentation metadata backend-side if home-card curation needs to become centrally auditable.
+
+## Dashboard Home Card System Corrective Pass
+
+- Status: implemented and validated; commit created after this context update.
+- Branch: `stats-dashboards`.
+- Frontend surfaces:
+  - `web/src/components/nav/admin/AdminSidebar.tsx`
+  - `web/src/components/dashboard/DashboardRouteToolbar.tsx`
+  - `web/src/components/dashboard/DashboardOverview.tsx`
+  - `web/src/components/dashboard/dashboardCardCatalog.ts`
+- Sidebar/navigation:
+  - Dashboard routes now render the admin sidebar in compact/icon-only mode by default.
+  - Non-dashboard admin routes keep the full-width sidebar.
+  - Dashboard drilldown navigation remains in the dashboard-local top toolbar.
+  - The dashboard toolbar was restyled into a compact strip with uniform tab spacing, clear active state, horizontal overflow, and live severity badges.
+- Home card contract:
+  - The home card implementation is now explicitly scoped as `DashboardHomeCard`, with dedicated `DashboardMetricTile` and `DashboardCardVisual` helpers.
+  - Cards are `h-full`, `min-h-0`, `overflow-hidden`, and flex-column bounded within configured grid row spans.
+  - Normal card clicks now navigate to the card detail route/anchor; the old `View details >` footer was removed.
+  - The title row is the normal-mode drag handle, so no hidden drag button reserves layout space and titles align from the left edge.
+  - Drag reorder still persists through the existing dashboard preference flow; customize-mode Up/Down, remove, size, variant, reset, save, presets, and localStorage fallback remain intact.
+- Metric density and visuals:
+  - Metric capacity is now size/variant-aware, with smaller caps for visual cards so visual content does not force clipping.
+  - Metric tiles remain dense and bounded; excess curated metrics are hidden or summarized with `+N more`.
+  - Visual variants omit the metric represented by the visual from primary tiles, avoiding duplicated numeric percentage bars.
+  - No fake line/sparkline was added. `stats.dashboard.overview` does not currently provide compact trend point arrays, so true sparkline cards remain deferred.
+- Defaults/presets:
+  - Default Operation Queue and Storage Backend cards were reduced from `2x2` to `2x1` to remove empty first-row height.
+  - Cockpit preset also uses `2x1` operation/storage cards for cleaner row composition.
+  - Trends remains out of the default layout unless the user selects it through presets/customization.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `meson setup --reconfigure build`: passed
+  - `meson compile -C build`: passed
+  - `make test`: passed
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+  - `meson test -C build`: passed, 2/2
+- Known failures: none currently.
+- Deferred TODOs:
+  - Add compact trend point arrays to `stats.dashboard.overview` before adding real line/sparkline home cards.
+  - Consider a user-controlled sidebar collapse preference later; this pass only defaults dashboard routes to compact mode.

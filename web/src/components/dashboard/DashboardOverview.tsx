@@ -1,7 +1,8 @@
 'use client'
 
 import Link from 'next/link'
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   DASHBOARD_LAYOUT_STORAGE_KEY,
@@ -40,7 +41,6 @@ import {
   selectDashboardCardMetrics,
 } from '@/components/dashboard/dashboardMetricCuration'
 import GridPlusIcon from '@/fa-duotone/grid-2-plus.svg'
-import GripIcon from '@/fa-duotone/grip-dots-vertical.svg'
 import { useDashboardPreferencesStore } from '@/stores/dashboardPreferencesStore'
 import { useStatsStore } from '@/stores/statsStore'
 
@@ -136,7 +136,7 @@ function CommandHealthMetric({ metric }: { metric: DashboardMetricSummary }) {
   )
 }
 
-function MetricTile({ metric, dense = false }: { metric: DashboardMetricSummary; dense?: boolean }) {
+function DashboardMetricTile({ metric, dense = false }: { metric: DashboardMetricSummary; dense?: boolean }) {
   const tone = dashboardSeverityTone(metric.tone)
   const body = (
     <div
@@ -228,7 +228,7 @@ function VisualStack({
   )
 }
 
-function CardVisual({ card }: { card: DashboardCardSummary }) {
+function DashboardCardVisual({ card }: { card: DashboardCardSummary }) {
   const metrics = dashboardMetricByKey(card.metrics)
   const metric = (key: string) => metrics.get(key)
   const value = (key: string) => {
@@ -391,13 +391,14 @@ function baseHeightForCard(layoutCard: DashboardLayoutCard): string {
 }
 
 function metricCountForCard(layoutCard: DashboardLayoutCard): number {
-  if (layoutCard.size === '1x1') return layoutCard.variant === 'compact' ? 3 : 4
-  if (layoutCard.size === '1x2') return 6
-  if (layoutCard.size === '2x1') return layoutCard.variant === 'visual' ? 4 : 5
-  if (layoutCard.size === '2x2') return layoutCard.variant === 'hero' ? 8 : 7
-  if (layoutCard.size === '3x1') return 6
-  if (layoutCard.size === '3x2') return layoutCard.variant === 'hero' ? 10 : 8
-  return layoutCard.variant === 'hero' ? 12 : 10
+  const hasVisual = layoutCard.variant === 'visual' || layoutCard.variant === 'hero'
+  if (layoutCard.size === '1x1') return 2
+  if (layoutCard.size === '1x2') return hasVisual ? 3 : 4
+  if (layoutCard.size === '2x1') return hasVisual ? 3 : 4
+  if (layoutCard.size === '2x2') return hasVisual ? 5 : 6
+  if (layoutCard.size === '3x1') return hasVisual ? 4 : 6
+  if (layoutCard.size === '3x2') return hasVisual ? 6 : 8
+  return hasVisual ? 8 : 10
 }
 
 function issueCountForCard(layoutCard: DashboardLayoutCard): number {
@@ -610,7 +611,7 @@ function CardPickerPanel({
   )
 }
 
-function SummaryCard({
+function DashboardHomeCard({
   card,
   layoutCard,
   catalogItem,
@@ -622,6 +623,7 @@ function SummaryCard({
   onDragOverCard,
   onDropCard,
   onDragEnd,
+  onOpen,
   dragging,
   dragOver,
   onRemove,
@@ -639,6 +641,7 @@ function SummaryCard({
   onDragOverCard: (id: string, event: React.DragEvent<HTMLDivElement>) => void
   onDropCard: (id: string, event: React.DragEvent<HTMLDivElement>) => void
   onDragEnd: () => void
+  onOpen: (href: string) => void
   dragging: boolean
   dragOver: boolean
   onRemove: (id: string) => void
@@ -656,8 +659,9 @@ function SummaryCard({
   const issueCount = issueCountForCard(layoutCard)
   const visualKeys = isVisual || isHero ? dashboardVisualMetricKeys(card.id) : new Set<string>()
   const selectedMetrics = selectDashboardCardMetrics(card, layoutCard, metricCount, visualKeys)
-  const hiddenMetricCount = Math.max(0, card.metrics.length - selectedMetrics.length - visualKeys.size)
-  const visual = isVisual || isHero ? <CardVisual card={card} /> : null
+  const visualMetricCount = card.metrics.filter(metric => visualKeys.has(metric.key)).length
+  const hiddenMetricCount = Math.max(0, card.metrics.length - selectedMetrics.length - visualMetricCount)
+  const visual = isVisual || isHero ? <DashboardCardVisual card={card} /> : null
   const metricGridClass =
     isHero ? 'grid-cols-2 md:grid-cols-4'
     : layoutCard.size === '3x1' || layoutCard.size === '3x2' ? 'grid-cols-3 md:grid-cols-3'
@@ -672,8 +676,21 @@ function SummaryCard({
       onDrop={event => onDropCard(layoutCard.id, event)}
       onDragEnd={onDragEnd}>
       <article
+        role={!customizing ? 'link' : undefined}
+        tabIndex={!customizing ? 0 : undefined}
+        onClick={() => {
+          if (!customizing && !dragging) onOpen(card.href || catalogItem.href)
+        }}
+        onKeyDown={event => {
+          if (customizing) return
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            onOpen(card.href || catalogItem.href)
+          }
+        }}
         className={[
-          'group flex h-full max-h-full flex-col overflow-hidden rounded-2xl border bg-zinc-950/48 backdrop-blur transition hover:-translate-y-0.5 hover:brightness-110',
+          'group flex h-full max-h-full min-h-0 flex-col overflow-hidden rounded-2xl border bg-zinc-950/48 backdrop-blur transition hover:-translate-y-0.5 hover:brightness-110',
+          !customizing ? 'cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200/45' : '',
           isHero ? 'p-3.5'
           : isVisual ? 'p-3'
           : 'p-2.5',
@@ -703,16 +720,11 @@ function SummaryCard({
 
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <div className={['flex items-center gap-1.5 font-semibold text-white/90', isHero ? 'text-lg' : isCompact ? 'text-sm' : 'text-base'].join(' ')}>
-              <button
-                type="button"
-                draggable
-                className="hidden cursor-grab rounded-md border border-white/10 bg-white/5 p-1 text-white/35 opacity-70 transition hover:border-cyan-200/35 hover:text-cyan-100 group-hover:inline-flex active:cursor-grabbing md:inline-flex md:opacity-0 md:group-hover:opacity-100"
-                title="Drag to reorder"
-                aria-label={`Drag ${card.title} to reorder`}
-                onDragStart={event => onDragStart(layoutCard.id, event)}>
-                <GripIcon className="h-3 w-3 fill-current" aria-hidden="true" />
-              </button>
+            <div
+              draggable
+              className={['flex cursor-grab items-center gap-1.5 font-semibold text-white/90 active:cursor-grabbing', isHero ? 'text-lg' : isCompact ? 'text-sm' : 'text-base'].join(' ')}
+              title="Drag card header to reorder"
+              onDragStart={event => onDragStart(layoutCard.id, event)}>
               <DashboardSeverityIcon severity={card.severity} className={[isHero ? 'h-5 w-5' : 'h-4 w-4', tone.text].join(' ')} />
               <span className="truncate">{card.title}</span>
             </div>
@@ -740,7 +752,7 @@ function SummaryCard({
         {selectedMetrics.length ?
           <div className={['mt-2 grid min-h-0 gap-1.5 overflow-hidden', metricGridClass].join(' ')}>
             {selectedMetrics.map(metric => (
-              <MetricTile key={`${card.id}-${metric.key}`} metric={metric} dense={!isHero} />
+              <DashboardMetricTile key={`${card.id}-${metric.key}`} metric={metric} dense={!isHero} />
             ))}
             {hiddenMetricCount > 0 && !isCompact ?
               <div className="rounded-lg border border-white/10 bg-white/[0.03] px-2 py-1 text-[10px] text-white/45">
@@ -756,11 +768,7 @@ function SummaryCard({
           </div>
         : null}
 
-        <div className="mt-auto pt-2">
-          <Link href={card.href || catalogItem.href} className="text-xs font-medium text-cyan-100/80 transition hover:text-cyan-50">
-            View details {'>'}
-          </Link>
-        </div>
+        <div className="mt-auto min-h-0" />
       </article>
     </div>
   )
@@ -799,6 +807,7 @@ function reorderLayoutBefore(layout: DashboardLayoutCard[], dragId: string, targ
 }
 
 export default function DashboardOverviewComponent({ intervalMs = 7500 }: { intervalMs?: number }) {
+  const router = useRouter()
   const wrapper = useStatsStore(s => s.dashboardOverview)
   const startPolling = useStatsStore(s => s.startDashboardOverviewPolling)
   const refreshOverview = useStatsStore(s => s.refreshDashboardOverview)
@@ -821,6 +830,7 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
   const [selectedPresetId, setSelectedPresetId] = useState('default')
   const [draggedCardId, setDraggedCardId] = useState<string | null>(null)
   const [dragOverCardId, setDragOverCardId] = useState<string | null>(null)
+  const dragJustEndedRef = useRef(false)
 
   useEffect(() => {
     let cancelled = false
@@ -956,6 +966,7 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
   }, [normalizeNextLayout, refreshOverview, savePreference])
 
   const startCardDrag = useCallback((id: string, event: React.DragEvent<HTMLElement>) => {
+    dragJustEndedRef.current = true
     setDraggedCardId(id)
     setDragOverCardId(null)
     event.dataTransfer.effectAllowed = 'move'
@@ -984,11 +995,17 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
     }
     setDraggedCardId(null)
     setDragOverCardId(null)
+    window.setTimeout(() => {
+      dragJustEndedRef.current = false
+    }, 250)
   }, [customizing, draggedCardId, layout, normalizeNextLayout, persistLayout, reorderCardBefore])
 
   const endCardDrag = useCallback(() => {
     setDraggedCardId(null)
     setDragOverCardId(null)
+    window.setTimeout(() => {
+      dragJustEndedRef.current = false
+    }, 250)
   }, [])
 
   const changeCardSize = useCallback((id: string, size: DashboardCardSize) => {
@@ -1034,6 +1051,11 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
     setLayout(next)
     void refreshOverview(buildOverviewPayload(next))
   }, [refreshOverview])
+
+  const openCard = useCallback((href: string) => {
+    if (dragJustEndedRef.current) return
+    router.push(href || '/dashboard')
+  }, [router])
 
   const overview = wrapper.data
   const tone = dashboardSeverityTone(overview.overall_status)
@@ -1247,7 +1269,7 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
 
       <div className="grid grid-cols-1 gap-3 md:auto-rows-[5rem] md:grid-flow-dense md:grid-cols-6 lg:grid-cols-12">
         {visibleCards.map(({ card, layoutCard, catalogItem }, index) => (
-          <SummaryCard
+          <DashboardHomeCard
             key={layoutCard.id}
             card={card}
             layoutCard={layoutCard}
@@ -1260,6 +1282,7 @@ export default function DashboardOverviewComponent({ intervalMs = 7500 }: { inte
             onDragOverCard={dragOverCard}
             onDropCard={dropCard}
             onDragEnd={endCardDrag}
+            onOpen={openCard}
             dragging={draggedCardId === layoutCard.id}
             dragOver={dragOverCardId === layoutCard.id}
             onRemove={removeCard}
