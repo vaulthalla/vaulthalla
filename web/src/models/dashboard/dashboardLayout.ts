@@ -1,5 +1,5 @@
 export const dashboardCardSizes = ['1x1', '2x1', '2x2', '3x2', '4x2'] as const
-export const dashboardCardVariants = ['compact', 'summary', 'hero'] as const
+export const dashboardCardVariants = ['compact', 'summary', 'hero', 'visual'] as const
 
 export type DashboardCardSize = (typeof dashboardCardSizes)[number]
 export type DashboardCardVariant = (typeof dashboardCardVariants)[number]

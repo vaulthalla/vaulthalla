@@ -30,6 +30,12 @@ import {
 import { DashboardIssueList, DashboardIssueSummaryLine, dedupeDashboardIssues } from '@/components/dashboard/DashboardIssueList'
 import { DashboardSeverityBadge, DashboardSeverityIcon } from '@/components/dashboard/DashboardSeverityBadge'
 import { dashboardSeverityTone, sortDashboardIssues } from '@/components/dashboard/dashboardSeverity'
+import {
+  dashboardMetricByKey,
+  dashboardMetricMeterValue,
+  dashboardMetricNumber,
+  selectDashboardCardMetrics,
+} from '@/components/dashboard/dashboardMetricCuration'
 import { useDashboardPreferencesStore } from '@/stores/dashboardPreferencesStore'
 import { useStatsStore } from '@/stores/statsStore'
 
@@ -106,89 +112,17 @@ const LiveBadge = ({
   </div>
 )
 
-const preferredMetricKeys: Record<string, string[]> = {
-  'system.health': ['services', 'protocols', 'deps', 'sessions'],
-  'system.threadpools': ['workers', 'queue', 'pressure'],
-  'system.connections': ['sessions', 'human', 'share', 'unauthenticated'],
-  'system.fuse': ['ops', 'error_rate', 'open_handles'],
-  'system.fs_cache': ['hit_rate', 'used', 'evictions'],
-  'system.http_cache': ['hit_rate', 'used', 'evictions'],
-  'system.storage': ['vaults', 'active', 's3'],
-  'system.db': ['size', 'connections', 'cache_hit'],
-  'system.retention': ['overdue', 'trash', 'cache_expired'],
-  'system.operations': ['stalled', 'pending', 'in_progress', 'failed_24h'],
-  'system.trends': ['window', 'latest_sample_age', 'status'],
-}
-
-function metricNumber(metric: DashboardMetricSummary): number | null {
-  if (metric.numeric_value !== null && Number.isFinite(metric.numeric_value)) return metric.numeric_value
-
-  const parsed = Number(metric.value.replace(/,/g, '').replace(/%$/, ''))
-  return Number.isFinite(parsed) ? parsed : null
-}
-
-function isLowValueMetric(cardId: string, metric: DashboardMetricSummary): boolean {
-  if (cardId === 'system.trends' && (metric.key === 'series' || metric.key === 'points')) return true
-
-  const value = metricNumber(metric)
-  if ((cardId === 'system.fs_cache' || cardId === 'system.http_cache') && metric.key === 'evictions' && value === 0) return true
-  if (cardId === 'system.connections' && metric.key === 'unauthenticated' && value === 0) return true
-
-  return false
-}
-
-function selectCardMetrics(
-  card: DashboardCardSummary,
-  layoutCard: DashboardLayoutCard,
-  count: number,
-): DashboardMetricSummary[] {
-  const preferred = preferredMetricKeys[card.id] ?? []
-  const byKey = new Map(card.metrics.map(metric => [metric.key, metric]))
-  const selected: DashboardMetricSummary[] = []
-  const selectedKeys = new Set<string>()
-
-  for (const key of preferred) {
-    const metric = byKey.get(key)
-    if (!metric || isLowValueMetric(card.id, metric)) continue
-    selected.push(metric)
-    selectedKeys.add(metric.key)
-  }
-
-  const isCompact = layoutCard.variant === 'compact' || layoutCard.size === '1x1' || layoutCard.size === '2x1'
-  for (const metric of card.metrics) {
-    if (selectedKeys.has(metric.key)) continue
-    if ((isCompact || card.id === 'system.trends') && isLowValueMetric(card.id, metric)) continue
-    selected.push(metric)
-    selectedKeys.add(metric.key)
-  }
-
-  return selected.slice(0, count)
-}
-
-function metricMeterValue(metric: DashboardMetricSummary): number | null {
-  const value = metric.numeric_value
-  if (value === null || !Number.isFinite(value)) return null
-
-  if (metric.key === 'hit_rate' || metric.key === 'cache_hit' || metric.key === 'error_rate') {
-    return Math.max(0, Math.min(1, value))
-  }
-
-  if (metric.key === 'pressure') return Math.max(0, Math.min(1, value / 8))
-
-  return null
-}
-
 function MetricTile({ metric, dense = false }: { metric: DashboardMetricSummary; dense?: boolean }) {
   const tone = dashboardSeverityTone(metric.tone)
-  const meter = metricMeterValue(metric)
+  const meter = dashboardMetricMeterValue(metric)
   const body = (
-    <div className={['rounded-2xl border px-3', dense ? 'py-2' : 'py-2.5', tone.border, tone.bg].join(' ')}>
-      <div className="truncate text-[10px] tracking-[0.08em] text-white/45 uppercase">{metric.label}</div>
-      <div className={['mt-1 truncate font-semibold leading-tight', dense ? 'text-base' : 'text-lg', tone.text].join(' ')}>
+    <div className={['rounded-xl border px-2.5', dense ? 'py-1.5' : 'py-2', tone.border, tone.bg].join(' ')}>
+      <div className="truncate text-[9px] tracking-[0.08em] text-white/45 uppercase">{metric.label}</div>
+      <div className={['mt-0.5 truncate font-semibold leading-tight', dense ? 'text-[15px]' : 'text-lg', tone.text].join(' ')}>
         {metric.value || 'unknown'}
       </div>
       {meter !== null ?
-        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
+        <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/10">
           <div className={['h-full rounded-full', tone.dot].join(' ')} style={{ width: `${Math.max(4, meter * 100)}%` }} />
         </div>
       : null}
@@ -200,6 +134,130 @@ function MetricTile({ metric, dense = false }: { metric: DashboardMetricSummary;
         {body}
       </Link>
     : body
+}
+
+function ratioValue(value: string): number | null {
+  const [ready, total] = value.split('/').map(part => Number(part.trim()))
+  if (!Number.isFinite(ready) || !Number.isFinite(total) || total <= 0) return null
+  return Math.max(0, Math.min(1, ready / total))
+}
+
+function VisualMeter({ metric }: { metric: DashboardMetricSummary }) {
+  const tone = dashboardSeverityTone(metric.tone)
+  const meter = dashboardMetricMeterValue(metric) ?? ratioValue(metric.value)
+  if (meter === null) return null
+
+  return (
+    <div className={['rounded-2xl border p-2.5', tone.border, tone.bg].join(' ')}>
+      <div className="flex items-center justify-between gap-3 text-xs">
+        <span className="text-white/55">{metric.label}</span>
+        <span className={['font-semibold', tone.text].join(' ')}>{metric.value}</span>
+      </div>
+      <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/10">
+        <div className={['h-full rounded-full', tone.dot].join(' ')} style={{ width: `${Math.max(4, meter * 100)}%` }} />
+      </div>
+    </div>
+  )
+}
+
+function VisualStack({
+  segments,
+  emptyLabel,
+}: {
+  segments: Array<{ key: string; label: string; value: number; tone: ReturnType<typeof dashboardSeverityTone> }>
+  emptyLabel: string
+}) {
+  const total = segments.reduce((sum, segment) => sum + Math.max(0, segment.value), 0)
+
+  return (
+    <div className="rounded-2xl border border-white/10 bg-black/20 p-2.5">
+      <div className="h-2 overflow-hidden rounded-full bg-white/10">
+        {total > 0 ?
+          <div className="flex h-full w-full">
+            {segments.filter(segment => segment.value > 0).map(segment => (
+              <div
+                key={segment.key}
+                className={segment.tone.dot}
+                style={{ width: `${Math.max(5, (segment.value / total) * 100)}%` }}
+                title={`${segment.label}: ${segment.value}`}
+              />
+            ))}
+          </div>
+        : <div className="h-full w-full rounded-full bg-emerald-300/60" />}
+      </div>
+      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px]">
+        {total > 0 ?
+          segments.map(segment => (
+            <span key={segment.key} className="inline-flex items-center gap-1 text-white/55">
+              <span className={['h-1.5 w-1.5 rounded-full', segment.tone.dot].join(' ')} />
+              {segment.label} <span className="text-white/80">{segment.value}</span>
+            </span>
+          ))
+        : <span className="text-emerald-100/80">{emptyLabel}</span>}
+      </div>
+    </div>
+  )
+}
+
+function CardVisual({ card }: { card: DashboardCardSummary }) {
+  const metrics = dashboardMetricByKey(card.metrics)
+  const metric = (key: string) => metrics.get(key)
+  const value = (key: string) => {
+    const selected = metric(key)
+    return selected ? dashboardMetricNumber(selected) ?? 0 : 0
+  }
+
+  if (card.id === 'system.operations') {
+    return (
+      <VisualStack
+        emptyLabel="No queued or stalled work"
+        segments={[
+          { key: 'pending', label: 'Pending', value: value('pending'), tone: dashboardSeverityTone('warning') },
+          { key: 'in_progress', label: 'Active', value: value('in_progress'), tone: dashboardSeverityTone('info') },
+          { key: 'stalled', label: 'Stalled', value: value('stalled'), tone: dashboardSeverityTone('error') },
+        ]}
+      />
+    )
+  }
+
+  if (card.id === 'system.connections') {
+    return (
+      <VisualStack
+        emptyLabel="No active websocket sessions"
+        segments={[
+          { key: 'human', label: 'Human', value: value('human'), tone: dashboardSeverityTone('info') },
+          { key: 'share', label: 'Share', value: value('share'), tone: dashboardSeverityTone('healthy') },
+          { key: 'unauthenticated', label: 'Unauth', value: value('unauthenticated'), tone: dashboardSeverityTone('warning') },
+        ]}
+      />
+    )
+  }
+
+  if (card.id === 'system.storage') {
+    return (
+      <VisualStack
+        emptyLabel="No vault backends configured"
+        segments={[
+          { key: 'active', label: 'Active', value: value('active'), tone: dashboardSeverityTone('healthy') },
+          { key: 'local', label: 'Local', value: value('local'), tone: dashboardSeverityTone('info') },
+          { key: 's3', label: 'S3', value: value('s3'), tone: dashboardSeverityTone('info') },
+        ]}
+      />
+    )
+  }
+
+  const visualMetric =
+    metric('error_rate') ??
+    metric('hit_rate') ??
+    metric('cache_hit') ??
+    metric('pressure') ??
+    metric('services') ??
+    metric('protocols') ??
+    metric('overdue') ??
+    metric('latest_sample_age') ??
+    metric('window')
+
+  return visualMetric ? <VisualMeter metric={visualMetric} /> : null
 }
 
 function OverviewShell({
@@ -229,23 +287,35 @@ function gridClassForSize(size: DashboardCardSize): string {
   return 'md:col-span-6 lg:col-span-12'
 }
 
-function minHeightForSize(size: DashboardCardSize): string {
-  if (size === '1x1') return 'min-h-[10.5rem]'
-  if (size === '2x1') return 'min-h-[11rem]'
-  if (size === '2x2') return 'min-h-[15rem]'
-  if (size === '3x2') return 'min-h-[15.5rem]'
-  return 'min-h-[16rem]'
+function minHeightForCard(layoutCard: DashboardLayoutCard): string {
+  if (layoutCard.variant === 'hero') {
+    if (layoutCard.size === '4x2') return 'min-h-[16rem]'
+    return 'min-h-[15rem]'
+  }
+
+  if (layoutCard.variant === 'visual') {
+    if (layoutCard.size === '2x1') return 'min-h-[12rem]'
+    if (layoutCard.size === '2x2') return 'min-h-[14rem]'
+    return 'min-h-[15rem]'
+  }
+
+  if (layoutCard.size === '1x1') return 'min-h-[9.5rem]'
+  if (layoutCard.size === '2x1') return 'min-h-[10rem]'
+  if (layoutCard.size === '2x2') return 'min-h-[13.5rem]'
+  if (layoutCard.size === '3x2') return 'min-h-[14rem]'
+  return 'min-h-[15rem]'
 }
 
 function metricCountForCard(layoutCard: DashboardLayoutCard): number {
-  if (layoutCard.variant === 'hero' || layoutCard.size === '4x2') return 6
-  if (layoutCard.size === '2x2' || layoutCard.size === '3x2') return 4
-  return 2
+  if (layoutCard.variant === 'hero' || layoutCard.size === '4x2') return 8
+  if (layoutCard.variant === 'visual') return layoutCard.size === '2x1' ? 3 : 5
+  if (layoutCard.variant === 'summary' || layoutCard.size === '2x2' || layoutCard.size === '3x2') return 5
+  return layoutCard.size === '1x1' ? 2 : 3
 }
 
 function issueCountForCard(layoutCard: DashboardLayoutCard): number {
   if (layoutCard.variant === 'hero' || layoutCard.size === '4x2') return 3
-  if (layoutCard.variant === 'summary' || layoutCard.size === '2x2' || layoutCard.size === '3x2') return 2
+  if (layoutCard.variant === 'visual' || layoutCard.variant === 'summary' || layoutCard.size === '2x2' || layoutCard.size === '3x2') return 2
   return 1
 }
 
@@ -387,9 +457,19 @@ function SummaryCard({
   const warnings = card.warnings.length
   const firstIssue = sortDashboardIssues([...card.errors, ...card.warnings])[0]
   const isCompact = layoutCard.variant === 'compact' || layoutCard.size === '1x1' || layoutCard.size === '2x1'
+  const isHero = layoutCard.variant === 'hero' || layoutCard.size === '4x2'
+  const isVisual = layoutCard.variant === 'visual'
   const metricCount = metricCountForCard(layoutCard)
   const issueCount = issueCountForCard(layoutCard)
-  const selectedMetrics = selectCardMetrics(card, layoutCard, metricCount)
+  const selectedMetrics = selectDashboardCardMetrics(card, layoutCard, metricCount)
+  const visual = isVisual || isHero || (!isCompact && selectedMetrics.some(metric => dashboardMetricMeterValue(metric) !== null)) ?
+    <CardVisual card={card} />
+  : null
+  const metricGridClass =
+    isHero ? 'grid-cols-2 md:grid-cols-4'
+    : isVisual || layoutCard.variant === 'summary' || layoutCard.size === '2x2' || layoutCard.size === '3x2' ? 'grid-cols-2 md:grid-cols-3'
+    : selectedMetrics.length >= 3 ? 'grid-cols-3'
+    : 'grid-cols-2'
 
   return (
     <div
@@ -399,8 +479,11 @@ function SummaryCard({
       onDragEnd={onDragEnd}>
       <article
         className={[
-          'h-full rounded-3xl border bg-zinc-950/48 p-3.5 backdrop-blur transition hover:-translate-y-0.5 hover:brightness-110',
-          minHeightForSize(layoutCard.size),
+          'h-full overflow-hidden rounded-3xl border bg-zinc-950/48 backdrop-blur transition hover:-translate-y-0.5 hover:brightness-110',
+          isHero ? 'p-4'
+          : isVisual ? 'p-3.5'
+          : 'p-3',
+          minHeightForCard(layoutCard),
           tone.border,
           tone.ring,
           dragging ? 'opacity-55' : '',
@@ -426,11 +509,11 @@ function SummaryCard({
 
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className={['flex items-center gap-2 font-semibold text-white/90', isCompact ? 'text-sm' : 'text-base'].join(' ')}>
-              <DashboardSeverityIcon severity={card.severity} className={['h-4 w-4', tone.text].join(' ')} />
+            <div className={['flex items-center gap-2 font-semibold text-white/90', isHero ? 'text-lg' : isCompact ? 'text-sm' : 'text-base'].join(' ')}>
+              <DashboardSeverityIcon severity={card.severity} className={[isHero ? 'h-5 w-5' : 'h-4 w-4', tone.text].join(' ')} />
               <span className="truncate">{card.title}</span>
             </div>
-            {!isCompact && layoutCard.variant !== 'summary' ?
+            {isHero ?
               <div className="mt-1 line-clamp-2 text-xs text-white/50">{card.description || catalogItem.description}</div>
             : null}
             <DashboardIssueSummaryLine
@@ -443,23 +526,29 @@ function SummaryCard({
           <DashboardSeverityBadge severity={card.severity} errorCount={errors} warningCount={warnings} showCount />
         </div>
 
-        <p className={['mt-3 text-sm text-white/70', isCompact ? 'line-clamp-2' : 'line-clamp-2'].join(' ')}>
+        <p className={['mt-2 text-sm leading-snug text-white/70', isCompact ? 'line-clamp-2' : 'line-clamp-2'].join(' ')}>
           {card.available ? card.summary : card.unavailable_reason}
         </p>
 
-        <div className={['mt-3 grid gap-2', isCompact ? 'grid-cols-2' : 'grid-cols-2 lg:grid-cols-3'].join(' ')}>
-          {selectedMetrics.map(metric => (
-            <MetricTile key={`${card.id}-${metric.key}`} metric={metric} dense={isCompact} />
-          ))}
-        </div>
+        {visual ?
+          <div className={isHero ? 'mt-3' : 'mt-2.5'}>{visual}</div>
+        : null}
+
+        {selectedMetrics.length ?
+          <div className={['mt-2.5 grid gap-1.5', metricGridClass].join(' ')}>
+            {selectedMetrics.map(metric => (
+              <MetricTile key={`${card.id}-${metric.key}`} metric={metric} dense={!isHero} />
+            ))}
+          </div>
+        : null}
 
         {!isCompact && (card.errors.length || card.warnings.length) ?
-          <div className="mt-3">
+          <div className="mt-2.5">
             <DashboardIssueList issues={[...card.errors, ...card.warnings]} max={issueCount} link={false} compact />
           </div>
         : null}
 
-        <div className="mt-3">
+        <div className="mt-2.5">
           <Link href={card.href || catalogItem.href} className="text-xs font-medium text-cyan-100/80 transition hover:text-cyan-50">
             View details {'>'}
           </Link>

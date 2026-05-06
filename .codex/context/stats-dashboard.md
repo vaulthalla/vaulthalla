@@ -695,3 +695,40 @@ This file mirrors the ignored scratch roadmap/status notes for durable checkpoin
 - Deferred TODOs:
   - Introduce a clean route-aware sidebar compactness seam in the admin shell if dashboard pages need icon-only navigation later.
   - Move more overview metric display metadata backend-side if operators want card-specific presentation contracts governed centrally.
+
+## Phase 16 - Dashboard Insight Cards and Visual Variants
+
+- Status: validation passed; commit/push checkpoint pending.
+- Backend surfaces:
+  - `stats.dashboard.overview` remains the overview command and backend-owned severity/warning/error source.
+  - `core/src/stats/model/DashboardOverview.cpp` now emits a few higher-signal home-card metric keys: thread pool pressured/saturated counts, connection share session counts, storage local vault counts, operation failed-24h counts, and trend latest-sample/coverage metrics.
+- Frontend surfaces:
+  - `web/src/components/dashboard/dashboardMetricCuration.ts`
+  - `web/src/components/dashboard/DashboardOverview.tsx`
+  - `web/src/components/dashboard/dashboardCardCatalog.ts`
+  - `web/src/models/dashboard/dashboardLayout.ts`
+- UX changes:
+  - Added the `visual` home-card variant while preserving existing `compact`, `summary`, and `hero` variants.
+  - Tightened metric tiles with smaller padding, smaller labels, stronger numbers, and compact inline meters.
+  - Made `compact`, `summary`, `visual`, and `hero` cards render with distinct density, metric counts, issue counts, and visual hierarchy.
+  - Added lightweight dependency-free visual treatments: ratio meters for ratio-like metrics and stacked CSS bars for operations, connections, and storage.
+  - Moved home-card metric curation into a dedicated helper so `/dashboard` can prefer high-signal backend metrics without duplicating backend severity thresholds.
+  - Demoted low-value home metrics such as Trends `series`/`points`; zero cache evictions and zero unauthenticated sessions remain hidden from compact home tiles.
+  - Updated default catalog layout and presets toward denser insight cards: System Health is large but no longer full-width by default, and operations/storage/runtime pressure cards use the visual treatment.
+- Preservation:
+  - Server-backed preferences, localStorage fallback/cache, presets, drag/drop, Up/Down controls, add/remove cards, finite size/variant controls, reset, save, and fixed drilldown routes remain intact.
+  - Backend remains the source of severity, warning, error, summary, and metric truth.
+- Validation:
+  - `git diff --check`: passed
+  - `git -c core.filemode=true diff --summary`: passed, no filemode-only noise
+  - `meson setup --reconfigure build`: passed
+  - `meson compile -C build`: passed
+  - `make test`: passed
+  - `pnpm --dir web typecheck`: passed
+  - `pnpm --dir web lint`: passed
+  - `pnpm --dir web test`: passed
+  - `meson test -C build`: passed, 2/2
+- Known failures: none currently.
+- Deferred TODOs:
+  - Consider moving home-card metric presentation preferences backend-side only if the product wants central presentation contracts.
+  - Add real sparkline-style home visuals only when overview payloads expose compact trend arrays without hydrating full drilldown data.

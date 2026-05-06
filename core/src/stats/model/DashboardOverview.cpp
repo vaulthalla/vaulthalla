@@ -112,6 +112,20 @@ std::string dashboardOverviewFormatBytes(const std::uint64_t value) {
     return buffer;
 }
 
+std::string dashboardOverviewFormatDuration(const std::uint64_t seconds) {
+    char buffer[48];
+    if (seconds >= 86400) {
+        std::snprintf(buffer, sizeof(buffer), "%llud", static_cast<unsigned long long>(seconds / 86400));
+    } else if (seconds >= 3600) {
+        std::snprintf(buffer, sizeof(buffer), "%lluh", static_cast<unsigned long long>(seconds / 3600));
+    } else if (seconds >= 60) {
+        std::snprintf(buffer, sizeof(buffer), "%llum", static_cast<unsigned long long>(seconds / 60));
+    } else {
+        std::snprintf(buffer, sizeof(buffer), "%llus", static_cast<unsigned long long>(seconds));
+    }
+    return buffer;
+}
+
 void dashboardOverviewAddMetric(
     DashboardCardSummary& card,
     std::string key,
@@ -187,16 +201,16 @@ std::vector<DashboardOverviewSectionDescriptor> dashboardOverviewSectionDescript
 
 std::vector<DashboardOverviewCardDescriptor> dashboardOverviewCardDescriptors() {
     return {
-        {"system.health", "runtime", "System Health", "Core runtime, protocol, dependency, FUSE, and shell readiness.", "/dashboard/runtime#system-health", "hero", "4x2"},
-        {"system.threadpools", "runtime", "Thread Pools", "Runtime worker pressure across FUSE, sync, thumbnails, HTTP, and stats.", "/dashboard/runtime#thread-pools", "summary", "2x1"},
-        {"system.connections", "runtime", "Connection Health", "Websocket session mix and unauthenticated buildup.", "/dashboard/runtime#connections", "summary", "2x1"},
-        {"system.fuse", "filesystem", "FUSE Filesystem", "Live filesystem operation volume, errors, latency, and open handles.", "/dashboard/filesystem#fuse", "summary", "2x1"},
-        {"system.fs_cache", "filesystem", "FS Cache", "Filesystem cache hit rate, usage, and churn.", "/dashboard/filesystem#fs-cache", "summary", "2x1"},
-        {"system.http_cache", "filesystem", "HTTP Preview Cache", "Preview cache hit rate, usage, and churn.", "/dashboard/filesystem#http-cache", "summary", "2x1"},
-        {"system.storage", "storage", "Storage Backend", "Local and S3 vault backend configuration and free-space posture.", "/dashboard/storage#storage-backend", "summary", "2x1"},
-        {"system.db", "storage", "Database Health", "Database connectivity, connection pressure, cache hit ratio, and table size.", "/dashboard/storage#database", "summary", "2x1"},
-        {"system.retention", "storage", "Retention / Cleanup", "Trash, audit, sync, share, and cache cleanup backlog.", "/dashboard/storage#retention", "summary", "2x1"},
-        {"system.operations", "operations", "Operation Queue", "Pending, active, failed, and stalled filesystem/share work.", "/dashboard/operations#operation-queue", "summary", "2x1"},
+        {"system.health", "runtime", "System Health", "Core runtime, protocol, dependency, FUSE, and shell readiness.", "/dashboard/runtime#system-health", "hero", "3x2"},
+        {"system.threadpools", "runtime", "Thread Pools", "Runtime worker pressure across FUSE, sync, thumbnails, HTTP, and stats.", "/dashboard/runtime#thread-pools", "visual", "2x1"},
+        {"system.connections", "runtime", "Connection Health", "Websocket session mix and unauthenticated buildup.", "/dashboard/runtime#connections", "visual", "2x1"},
+        {"system.fuse", "filesystem", "FUSE Filesystem", "Live filesystem operation volume, errors, latency, and open handles.", "/dashboard/filesystem#fuse", "visual", "2x1"},
+        {"system.fs_cache", "filesystem", "FS Cache", "Filesystem cache hit rate, usage, and churn.", "/dashboard/filesystem#fs-cache", "visual", "2x1"},
+        {"system.http_cache", "filesystem", "HTTP Preview Cache", "Preview cache hit rate, usage, and churn.", "/dashboard/filesystem#http-cache", "visual", "2x1"},
+        {"system.storage", "storage", "Storage Backend", "Local and S3 vault backend configuration and free-space posture.", "/dashboard/storage#storage-backend", "visual", "2x1"},
+        {"system.db", "storage", "Database Health", "Database connectivity, connection pressure, cache hit ratio, and table size.", "/dashboard/storage#database", "visual", "2x1"},
+        {"system.retention", "storage", "Retention / Cleanup", "Trash, audit, sync, share, and cache cleanup backlog.", "/dashboard/storage#retention", "visual", "2x1"},
+        {"system.operations", "operations", "Operation Queue", "Pending, active, failed, and stalled filesystem/share work.", "/dashboard/operations#operation-queue", "visual", "2x1"},
         {"system.trends", "trends", "Trends", "Recently collected stats snapshot series.", "/dashboard/trends#trends", "summary", "2x1"},
     };
 }
@@ -233,6 +247,8 @@ DashboardCardSummary dashboardOverviewBuildThreadPools(const DashboardOverviewCa
     dashboardOverviewAddMetric(card, "workers", "Workers", dashboardOverviewFormatCount(stats.totalWorkerCount), card.severity);
     dashboardOverviewAddMetric(card, "queue", "Queue", dashboardOverviewFormatCount(stats.totalQueueDepth), stats.totalQueueDepth == 0 ? "healthy" : "warning");
     dashboardOverviewAddMetric(card, "pressure", "Max Pressure", dashboardOverviewFormatRatio(stats.maxPressureRatio), card.severity, stats.maxPressureRatio);
+    dashboardOverviewAddMetric(card, "pressured", "Pressured", dashboardOverviewFormatCount(stats.pressuredPoolCount), stats.pressuredPoolCount == 0 ? "healthy" : "warning");
+    dashboardOverviewAddMetric(card, "saturated", "Saturated", dashboardOverviewFormatCount(stats.saturatedPoolCount), stats.saturatedPoolCount == 0 ? "healthy" : "error");
 
     if (stats.overallStatus == "pressured") {
         dashboardOverviewAddIssue(card, "system.threadpools.pressured", "warning", std::to_string(stats.pressuredPoolCount) + " thread pool(s) are pressured.", "pressure");
@@ -254,6 +270,7 @@ DashboardCardSummary dashboardOverviewBuildConnections(const DashboardOverviewCa
 
     dashboardOverviewAddMetric(card, "sessions", "Sessions", dashboardOverviewFormatCount(stats.activeWsSessionsTotal), card.severity);
     dashboardOverviewAddMetric(card, "human", "Human", dashboardOverviewFormatCount(stats.activeHumanSessions), "info");
+    dashboardOverviewAddMetric(card, "share", "Share", dashboardOverviewFormatCount(stats.activeShareSessions + stats.activeSharePendingSessions), "info");
     dashboardOverviewAddMetric(card, "unauthenticated", "Unauth", dashboardOverviewFormatCount(stats.activeUnauthenticatedSessions), stats.activeUnauthenticatedSessions == 0 ? "healthy" : "warning");
 
     if (stats.status == "warning") {
@@ -335,6 +352,7 @@ DashboardCardSummary dashboardOverviewBuildStorage(const DashboardOverviewCardDe
 
     dashboardOverviewAddMetric(card, "vaults", "Vaults", dashboardOverviewFormatCount(stats.vaultCountTotal), card.severity);
     dashboardOverviewAddMetric(card, "active", "Active", dashboardOverviewFormatCount(stats.activeVaultCount), "healthy");
+    dashboardOverviewAddMetric(card, "local", "Local", dashboardOverviewFormatCount(stats.localVaultCount), "info");
     dashboardOverviewAddMetric(card, "s3", "S3", dashboardOverviewFormatCount(stats.s3VaultCount), "info");
 
     if (stats.errorVaultCount > 0) {
@@ -410,6 +428,7 @@ DashboardCardSummary dashboardOverviewBuildOperations(const DashboardOverviewCar
     dashboardOverviewAddMetric(card, "pending", "Pending", dashboardOverviewFormatCount(stats->pendingOperations), stats->pendingOperations == 0 ? "healthy" : "warning");
     dashboardOverviewAddMetric(card, "in_progress", "In Progress", dashboardOverviewFormatCount(stats->inProgressOperations), "info");
     dashboardOverviewAddMetric(card, "stalled", "Stalled", dashboardOverviewFormatCount(stats->stalledOperations + stats->stalledShareUploads), stats->stalledOperations + stats->stalledShareUploads == 0 ? "healthy" : "error");
+    dashboardOverviewAddMetric(card, "failed_24h", "Failed 24h", dashboardOverviewFormatCount(stats->failedOperations24h + stats->failedShareUploads24h), stats->failedOperations24h + stats->failedShareUploads24h == 0 ? "healthy" : "warning");
 
     if (stats->stalledOperations + stats->stalledShareUploads > 0) {
         dashboardOverviewAddIssue(card, "system.operations.stalled", "error", "One or more operations or uploads appear stalled.", "stalled");
@@ -430,13 +449,25 @@ DashboardCardSummary dashboardOverviewBuildTrends(const DashboardOverviewCardDes
     card.checkedAt = stats->checkedAt;
     const auto seriesCount = stats->series.size();
     std::uint64_t pointCount = 0;
-    for (const auto& series : stats->series) pointCount += series.points.size();
+    std::uint64_t latestSampleAt = 0;
+    for (const auto& series : stats->series) {
+        pointCount += series.points.size();
+        for (const auto& point : series.points) latestSampleAt = std::max(latestSampleAt, point.createdAt);
+    }
 
     card.severity = pointCount == 0 ? "info" : "healthy";
     card.summary = pointCount == 0 ? "No historical trend samples are available yet." : "Historical trend samples are available.";
+    dashboardOverviewAddMetric(card, "window", "Window", std::to_string(stats->windowHours) + "h", "info");
+    if (latestSampleAt > 0) {
+        const auto now = dashboardOverviewUnixTimestamp();
+        const auto latestAge = now > latestSampleAt ? now - latestSampleAt : 0;
+        dashboardOverviewAddMetric(card, "latest_sample_age", "Latest", dashboardOverviewFormatDuration(latestAge), latestAge <= 3600 ? "healthy" : "info", static_cast<double>(latestAge), "seconds");
+        dashboardOverviewAddMetric(card, "coverage", "Coverage", dashboardOverviewFormatCount(seriesCount) + " series", card.severity, static_cast<double>(seriesCount));
+    } else {
+        dashboardOverviewAddMetric(card, "coverage", "Coverage", "no data", "info", 0.0);
+    }
     dashboardOverviewAddMetric(card, "series", "Series", dashboardOverviewFormatCount(seriesCount), card.severity);
     dashboardOverviewAddMetric(card, "points", "Points", dashboardOverviewFormatCount(pointCount), card.severity);
-    dashboardOverviewAddMetric(card, "window", "Window", std::to_string(stats->windowHours) + "h", "info");
 
     return card;
 }
