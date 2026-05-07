@@ -118,17 +118,6 @@ export const useWebSocketStore: UseBoundStore<StoreApi<WebSocketStore>> = create
 
             if (message.token) useAuthStore.getState().setToken(message.token)
 
-            if (message.command === 'error' && isUnauthorizedMessage(message)) {
-              console.warn('[WS] Received unauthorized response — attempting token refresh')
-
-              await useAuthStore
-                .getState()
-                .refreshToken()
-                .catch(() => undefined)
-
-              return
-            }
-
             const handler = get().pending[message.requestId]
             if (handler) {
               const newPending = { ...get().pending }
@@ -142,10 +131,12 @@ export const useWebSocketStore: UseBoundStore<StoreApi<WebSocketStore>> = create
               } else {
                 handler.resolve(message.data ?? {})
               }
+
+              return
             } else {
               if (isErrorMessage(message)) {
                 if (isUnauthorizedMessage(message)) {
-                  console.warn('[WS] Unauthorized request received, refreshing token...')
+                  console.warn('[WS] Unauthorized message received without a pending request, refreshing token...')
                   await useAuthStore
                     .getState()
                     .refreshToken()
@@ -235,6 +226,7 @@ export const useWebSocketStore: UseBoundStore<StoreApi<WebSocketStore>> = create
         if (!token) {
           await useAuthStore.getState().refreshToken()
           token = useAuthStore.getState().token
+          if (!token) throw new Error('No auth token')
         }
 
         try {
@@ -242,7 +234,9 @@ export const useWebSocketStore: UseBoundStore<StoreApi<WebSocketStore>> = create
         } catch (error) {
           if (!isUnauthorizedError(error)) throw error
           await useAuthStore.getState().refreshToken()
-          return sendOnce(useAuthStore.getState().token)
+          const refreshedToken = useAuthStore.getState().token
+          if (!refreshedToken) throw new Error('No auth token')
+          return sendOnce(refreshedToken)
         }
       },
     }

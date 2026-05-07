@@ -38,6 +38,44 @@ namespace {
     return claims.tokenKind.empty() || claims.tokenKind == std::string(Issuer::refreshTokenKind());
 }
 
+[[nodiscard]] std::string refreshTokenSubjectFromStoredToken(
+    const std::shared_ptr<auth::model::RefreshToken>& token
+) {
+    if (!token) return {};
+    return token->ipAddress + ":" + token->userAgent;
+}
+
+[[nodiscard]] std::shared_ptr<Session> rehydrateHumanSessionFromStoredRefreshToken(
+    const std::string& rawToken,
+    const TokenClaims& claims
+) {
+    const auto storedToken = db::query::auth::RefreshToken::get(claims.jti);
+    if (!storedToken) throw std::invalid_argument("No stored refresh token found for validation");
+    if (!storedToken->isValid()) throw std::invalid_argument("Stored refresh token is not valid");
+
+    Validator::validateClaims(storedToken, claims);
+
+    if (claims.subject != refreshTokenSubjectFromStoredToken(storedToken))
+        throw std::runtime_error("Refresh token subject mismatch");
+
+    if (!crypto::hash::verifyPassword(rawToken, storedToken->hashedToken))
+        throw std::runtime_error("Refresh token hash mismatch");
+
+    const auto user = db::query::auth::RefreshToken::getUserByJti(claims.jti);
+    if (!user) throw std::runtime_error("No user found for refresh token");
+    if (storedToken->userId != user->id)
+        throw std::runtime_error("User ID mismatch for refresh token");
+
+    storedToken->rawToken = rawToken;
+
+    auto session = std::make_shared<Session>(std::make_shared<Router>());
+    session->ipAddress = storedToken->ipAddress;
+    session->userAgent = storedToken->userAgent;
+    session->tokens->refreshToken = storedToken;
+    session->setAuthenticatedUser(user);
+    return session;
+}
+
 void hydrateShareRefreshToken(
     const std::shared_ptr<Session>& session,
     const std::string& rawToken,
@@ -152,7 +190,17 @@ void Manager::promote(const std::shared_ptr<Session>& session) {
 
 void Manager::renewAccessToken(const std::shared_ptr<Session>& session, const std::string& existingToken) {
     if (!session) throw std::invalid_argument("Invalid session for access token renewal");
-    if (!session->user) throw std::invalid_argument("Session does not contain user data for access token renewal");
+    if (!session->user) {
+        try { Validator::validateRefreshToken(session); }
+        catch (const std::exception& ex) {
+            log::Registry::ws()->debug(
+                "[session::Manager] Access token renewal failed for session UUID: {}. Reason: Refresh-backed user resolution failed. Exception: {}",
+                session->uuid,
+                ex.what()
+            );
+            throw std::invalid_argument("Invalid refresh token during access token renewal");
+        }
+    }
 
     if (!Validator::validateAccessToken(session, existingToken)) {
         log::Registry::ws()->debug(
@@ -324,7 +372,13 @@ void Manager::reindexShareRefreshTokenLocked(
 bool Manager::validate(const std::shared_ptr<Session>& session, const std::string& accessToken) {
     try {
         if (!session) throw std::invalid_argument("Invalid session for validation");
-        if (!session->user) throw std::invalid_argument("Session does not contain user data for validation");
+
+        if (!session->user) {
+            Validator::validateRefreshToken(session);
+            Issuer::accessToken(session);
+            cache(session);
+            return true;
+        }
 
         if (Validator::validateAccessToken(session, accessToken)) {
             if (session->tokens->accessToken->timeRemaining() < std::chrono::minutes(5)) Issuer::accessToken(session);
@@ -353,7 +407,7 @@ std::shared_ptr<Session> Manager::validateRawRefreshToken(const std::string& ref
 
     const auto session = get(claims->jti);
 
-    if (!session) throw std::invalid_argument("No session found for refresh token validation");
+    if (!session) return rehydrateHumanSessionFromStoredRefreshToken(refreshToken, *claims);
     if (!session->tokens->refreshToken) throw std::invalid_argument("Session does not contain a refresh token for validation");
 
     if (session->tokens->refreshToken->rawToken.empty()) session->tokens->refreshToken->rawToken = refreshToken;

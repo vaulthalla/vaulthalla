@@ -20,6 +20,27 @@ const clearPersistedAuthState = () => {
   localStorage.removeItem('vaulthalla-permissions')
 }
 
+const DEFINITIVE_REFRESH_FAILURE_MARKERS = [
+  'unauthorized',
+  'you must be authenticated',
+  'invalid refresh token',
+  'refresh token not set',
+  'no valid refresh token',
+  'no refresh token',
+  'refresh token has expired',
+  'expired refresh token',
+  'refresh token mismatch',
+  'refresh token kind mismatch',
+  'refresh token hash mismatch',
+  'refresh token subject mismatch',
+  'refresh token is not valid',
+]
+
+const isDefinitiveRefreshFailure = (error: unknown) => {
+  const message = getErrorMessage(error).toLowerCase()
+  return DEFINITIVE_REFRESH_FAILURE_MARKERS.some(marker => message.includes(marker))
+}
+
 interface AuthState {
   token: string | null
   user: User | null
@@ -116,7 +137,11 @@ export const useAuthStore: UseBoundStore<StoreApi<AuthState>> = create<AuthState
           } catch (err) {
             const message = getErrorMessage(err) || 'Token refresh failed'
             console.error('[Auth] Token refresh failed', err)
-            get().markUnauthenticated(message)
+            if (isDefinitiveRefreshFailure(err)) {
+              get().markUnauthenticated(message)
+            } else {
+              set({ error: message, status: get().token ? 'authenticated' : 'unknown' })
+            }
             throw err
           } finally {
             refreshPromise = null
@@ -298,7 +323,15 @@ export const useAuthStore: UseBoundStore<StoreApi<AuthState>> = create<AuthState
             await useAuthStore.getState().refreshToken()
           } catch (err) {
             console.error('[AuthStore] Silent refresh failed:', err)
-            useAuthStore.getState().markUnauthenticated(getErrorMessage(err) || 'Silent refresh failed')
+            const message = getErrorMessage(err) || 'Silent refresh failed'
+            if (isDefinitiveRefreshFailure(err)) {
+              useAuthStore.getState().markUnauthenticated(message)
+            } else {
+              useAuthStore.setState({
+                error: message,
+                status: useAuthStore.getState().token ? 'authenticated' : 'unknown',
+              })
+            }
           }
         })()
       },
