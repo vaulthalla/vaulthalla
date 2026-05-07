@@ -369,6 +369,12 @@ configure_tpm_backend_if_safe() {
     create_dir "$SWTPM_STATE_DIR" 700 "$DB_USER" "$DB_USER"
     write_swtpm_tcti_override
 
+    if is_upgrade; then
+        TPM_BACKEND_STATUS="swtpm configured (upgrade; active unit restart handled separately)"
+        echo "[${PKG}] TPM backend: swtpm fallback prepared; active unit restart is handled by configure_systemd_units."
+        return 0
+    fi
+
     if ! has_command systemctl; then
         TPM_BACKEND_STATUS="swtpm configured (systemctl unavailable; runtime activation not verified)"
         echo "[${PKG}] WARNING: systemctl unavailable; cannot verify ${SWTPM_SYSTEMD_UNIT} runtime state."
@@ -863,6 +869,30 @@ configure_nginx_if_safe() {
     return 0
 }
 
+configure_systemd_units() {
+    safe_systemctl daemon-reload
+
+    if is_upgrade; then
+        echo "[${PKG}] Systemd: upgrade detected; restarting active Vaulthalla units only."
+        safe_systemctl try-restart "$SWTPM_SYSTEMD_UNIT"
+        safe_systemctl try-restart "$CORE_SYSTEMD_UNIT"
+        safe_systemctl try-restart "$CLI_SOCKET_SYSTEMD_UNIT"
+        safe_systemctl try-restart "$CLI_SYSTEMD_UNIT"
+        safe_systemctl try-restart "$WEB_SYSTEMD_UNIT"
+        return 0
+    fi
+
+    safe_systemctl preset "$CORE_SYSTEMD_UNIT"
+    safe_systemctl preset "$CLI_SOCKET_SYSTEMD_UNIT"
+    safe_systemctl preset "$CLI_SYSTEMD_UNIT"
+    safe_systemctl preset "$WEB_SYSTEMD_UNIT"
+    safe_systemctl preset "$SWTPM_SYSTEMD_UNIT"
+    safe_systemctl enable --now "$CORE_SYSTEMD_UNIT"
+    safe_systemctl enable --now "$CLI_SOCKET_SYSTEMD_UNIT"
+    safe_systemctl enable --now "$CLI_SYSTEMD_UNIT"
+    safe_systemctl enable --now "$WEB_SYSTEMD_UNIT"
+}
+
 case "$1" in
   configure)
     if ! id "$DB_USER" >/dev/null 2>&1; then
@@ -898,17 +928,7 @@ case "$1" in
 
     bootstrap_db_if_safe
 
-    safe_systemctl daemon-reexec
-    safe_systemctl daemon-reload
-    safe_systemctl preset "$CORE_SYSTEMD_UNIT"
-    safe_systemctl preset "$CLI_SOCKET_SYSTEMD_UNIT"
-    safe_systemctl preset "$CLI_SYSTEMD_UNIT"
-    safe_systemctl preset "$WEB_SYSTEMD_UNIT"
-    safe_systemctl preset "$SWTPM_SYSTEMD_UNIT"
-    safe_systemctl enable --now "$CORE_SYSTEMD_UNIT"
-    safe_systemctl enable --now "$CLI_SOCKET_SYSTEMD_UNIT"
-    safe_systemctl enable --now "$CLI_SYSTEMD_UNIT"
-    safe_systemctl enable --now "$WEB_SYSTEMD_UNIT"
+    configure_systemd_units
 
     configure_nginx_if_safe
 

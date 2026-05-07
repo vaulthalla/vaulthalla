@@ -93,6 +93,72 @@ class DebianInstallFlowContractTests(unittest.TestCase):
         for fragment in required_fragments:
             self.assertIn(fragment, postinst)
 
+    def test_postinst_restarts_only_active_vaulthalla_units_on_upgrade(self) -> None:
+        postinst = (self._repo_root() / "debian" / "postinst").read_text(encoding="utf-8")
+        body_start = postinst.index("configure_systemd_units() {")
+        body_end = postinst.index('\n}\n\ncase "$1" in', body_start)
+        body = postinst[body_start:body_end]
+        upgrade_body = body[body.index("if is_upgrade; then"):body.index("safe_systemctl preset")]
+
+        required_upgrade_fragments = (
+            "Systemd: upgrade detected; restarting active Vaulthalla units only.",
+            'safe_systemctl try-restart "$SWTPM_SYSTEMD_UNIT"',
+            'safe_systemctl try-restart "$CORE_SYSTEMD_UNIT"',
+            'safe_systemctl try-restart "$CLI_SOCKET_SYSTEMD_UNIT"',
+            'safe_systemctl try-restart "$CLI_SYSTEMD_UNIT"',
+            'safe_systemctl try-restart "$WEB_SYSTEMD_UNIT"',
+        )
+        for fragment in required_upgrade_fragments:
+            self.assertIn(fragment, upgrade_body)
+
+        self.assertNotIn("enable --now", upgrade_body)
+        self.assertNotIn("daemon-reexec", body)
+        self.assertLess(
+            body.index('safe_systemctl try-restart "$SWTPM_SYSTEMD_UNIT"'),
+            body.index('safe_systemctl try-restart "$CORE_SYSTEMD_UNIT"'),
+        )
+        self.assertLess(
+            body.index('safe_systemctl try-restart "$CORE_SYSTEMD_UNIT"'),
+            body.index('safe_systemctl try-restart "$WEB_SYSTEMD_UNIT"'),
+        )
+
+    def test_postinst_swtpm_backend_does_not_start_disabled_unit_on_upgrade(self) -> None:
+        postinst = (self._repo_root() / "debian" / "postinst").read_text(encoding="utf-8")
+        body_start = postinst.index("configure_tpm_backend_if_safe() {")
+        body_end = postinst.index("\n}\n\nis_noninteractive_context", body_start)
+        body = postinst[body_start:body_end]
+
+        self.assertIn("active unit restart is handled by configure_systemd_units", body)
+        self.assertLess(
+            body.index("if is_upgrade; then"),
+            body.index("if ! has_command systemctl; then"),
+        )
+        self.assertLess(
+            body.index("if is_upgrade; then"),
+            body.index("if start_and_validate_swtpm_service; then"),
+        )
+
+    def test_postinst_fresh_install_still_enables_services(self) -> None:
+        postinst = (self._repo_root() / "debian" / "postinst").read_text(encoding="utf-8")
+        body_start = postinst.index("configure_systemd_units() {")
+        body_end = postinst.index('\n}\n\ncase "$1" in', body_start)
+        body = postinst[body_start:body_end]
+        fresh_body = body[body.index("safe_systemctl preset") :]
+
+        required_fresh_fragments = (
+            'safe_systemctl preset "$CORE_SYSTEMD_UNIT"',
+            'safe_systemctl preset "$CLI_SOCKET_SYSTEMD_UNIT"',
+            'safe_systemctl preset "$CLI_SYSTEMD_UNIT"',
+            'safe_systemctl preset "$WEB_SYSTEMD_UNIT"',
+            'safe_systemctl preset "$SWTPM_SYSTEMD_UNIT"',
+            'safe_systemctl enable --now "$CORE_SYSTEMD_UNIT"',
+            'safe_systemctl enable --now "$CLI_SOCKET_SYSTEMD_UNIT"',
+            'safe_systemctl enable --now "$CLI_SYSTEMD_UNIT"',
+            'safe_systemctl enable --now "$WEB_SYSTEMD_UNIT"',
+        )
+        for fragment in required_fresh_fragments:
+            self.assertIn(fragment, fresh_body)
+
     def test_prerm_and_postrm_cleanup_legacy_superadmin_seed_only_as_legacy(self) -> None:
         repo = self._repo_root()
         prerm = (repo / "debian" / "prerm").read_text(encoding="utf-8")
@@ -151,6 +217,23 @@ class DebianInstallFlowContractTests(unittest.TestCase):
             "/var/lib/vaulthalla/nginx_site_managed",
             "TPM backend behavior",
             "systemctl status vaulthalla-swtpm.service",
+        )
+        for fragment in required:
+            self.assertIn(fragment, readme)
+
+    def test_readme_documents_needrestart_service_restart_boundary(self) -> None:
+        readme = (self._repo_root() / "debian" / "README.Debian").read_text(encoding="utf-8")
+        required = (
+            "APT upgrade service restart boundary",
+            "Vaulthalla restarts only active Vaulthalla units",
+            "Unrelated service restarts during `apt upgrade` are controlled by host-level apt",
+            "hooks such as `needrestart`, not by the Vaulthalla package.",
+            "needrestart",
+            "nexus.service",
+            "/etc/needrestart/conf.d/local.conf",
+            "$nrconf{override_rc}->{qr(^nexus\\.service$)} = 0;",
+            "Vaulthalla does not ship third-party restart policy",
+            "Sonatype Nexus",
         )
         for fragment in required:
             self.assertIn(fragment, readme)
