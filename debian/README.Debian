@@ -29,6 +29,28 @@ installs via `--no-install-recommends`.
 On hosts without hardware TPM, `--no-install-recommends` installs should add
 `swtpm`/`swtpm-tools` manually before re-running configure.
 
+APT upgrade service restart boundary
+====================================
+
+On package upgrades, Vaulthalla restarts only active Vaulthalla units so new
+package binaries and service definitions take effect. Admin-disabled or inactive
+Vaulthalla units are left untouched.
+
+Unrelated service restarts during `apt upgrade` are controlled by host-level apt
+hooks such as `needrestart`, not by the Vaulthalla package. Ubuntu's
+`needrestart` apt hook may automatically restart any service it detects using
+obsolete libraries after an apt transaction. If `nexus.service` should never be
+auto-restarted by apt, set local `needrestart` policy in
+`/etc/needrestart/conf.d/local.conf`, for example:
+
+```
+$nrconf{override_rc} = {} unless exists $nrconf{override_rc};
+$nrconf{override_rc}->{qr(^nexus\.service$)} = 0;
+```
+
+Vaulthalla does not ship third-party restart policy for services such as
+Sonatype Nexus.
+
 TPM backend behavior
 ====================
 
