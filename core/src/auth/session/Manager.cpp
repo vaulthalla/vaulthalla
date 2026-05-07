@@ -241,6 +241,32 @@ void Manager::cache(const std::shared_ptr<Session>& session) {
         sessionsByUserId_.emplace(session->user->id, session);
 }
 
+void Manager::eraseSessionIndexesLocked(
+    const std::shared_ptr<Session>& session,
+    std::optional<std::string> jti
+) {
+    if (!session) return;
+
+    sessionsByUUID_.erase(session->uuid);
+
+    auto eraseSession = [&](auto& index) {
+        for (auto it = index.begin(); it != index.end();) {
+            const bool sameJti = jti && it->first == *jti;
+            const bool sameSession = it->second == session;
+            if (sameJti || sameSession) it = index.erase(it);
+            else ++it;
+        }
+    };
+
+    eraseSession(sessionsByRefreshJti_);
+    eraseSession(shareSessionsByRefreshJti_);
+
+    for (auto it = sessionsByUserId_.begin(); it != sessionsByUserId_.end();) {
+        if (it->second == session) it = sessionsByUserId_.erase(it);
+        else ++it;
+    }
+}
+
 void Manager::rotateRefreshToken(const std::shared_ptr<Session>& session) {
     if (!session) throw std::invalid_argument("Invalid session for refresh token rotation");
 
@@ -446,41 +472,36 @@ std::shared_ptr<Session> Manager::validateRawShareRefreshToken(const std::string
     return session;
 }
 
+void Manager::remove(const std::shared_ptr<Session>& session) {
+    if (!session) return;
+
+    auto jti = humanRefreshJti(session);
+    if (!jti) jti = shareRefreshJti(session);
+
+    {
+        std::lock_guard lock(sessionMutex_);
+        eraseSessionIndexesLocked(session, std::move(jti));
+    }
+
+    log::Registry::ws()->debug(
+        "[session::Manager] Removed runtime session with UUID: {}",
+        session->uuid
+    );
+}
+
 void Manager::invalidate(const std::shared_ptr<Session>& session) {
     if (!session) return;
 
     const auto uuid = session->uuid;
-    const auto jti =
-        (session->tokens && session->tokens->refreshToken)
-            ? session->tokens->refreshToken->jti
-            : std::string{};
-    const auto userId =
-        session->user ? std::optional<uint32_t>{session->user->id} : std::nullopt;
+    auto jti = humanRefreshJti(session);
+    if (!jti) jti = shareRefreshJti(session);
 
     if (session->tokens)
         session->tokens->invalidate();
 
     {
         std::lock_guard lock(sessionMutex_);
-        sessionsByUUID_.erase(uuid);
-
-        auto eraseSession = [&](auto& index) {
-            for (auto it = index.begin(); it != index.end();) {
-                if ((!jti.empty() && it->first == jti) || it->second == session) it = index.erase(it);
-                else ++it;
-            }
-        };
-
-        eraseSession(sessionsByRefreshJti_);
-        eraseSession(shareSessionsByRefreshJti_);
-
-        if (userId) {
-            auto [begin, end] = sessionsByUserId_.equal_range(*userId);
-            for (auto it = begin; it != end;) {
-                if (it->second == session) it = sessionsByUserId_.erase(it);
-                else ++it;
-            }
-        }
+        eraseSessionIndexesLocked(session, std::move(jti));
     }
 
     log::Registry::ws()->debug(
