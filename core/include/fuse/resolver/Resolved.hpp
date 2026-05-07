@@ -1,5 +1,7 @@
 #pragma once
 
+#define FUSE_USE_VERSION 35
+
 #include <filesystem>
 #include <fuse_lowlevel.h>
 #include <memory>
@@ -36,6 +38,7 @@ namespace vh {
             std::shared_ptr<identities::User> user{};
             std::shared_ptr<identities::Group> group{};
             std::shared_ptr<fs::model::Entry> entry{};
+            std::shared_ptr<fs::model::Entry> parentEntry{};
             std::optional<std::filesystem::path> path{};
             std::optional<fuse_ino_t> ino{};
             std::shared_ptr<storage::Engine> engine{};

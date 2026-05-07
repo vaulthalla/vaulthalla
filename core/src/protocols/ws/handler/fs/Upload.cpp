@@ -30,7 +30,11 @@ namespace vh::protocols::ws::handler::fs {
         if (std::filesystem::is_directory(args.finalPath))
             throw std::runtime_error("Upload final path is a directory — filename must be provided");
 
-        if (const auto err = Filesystem::mkdir(args.fuseFrom.parent_path(), 0755, session->user->id, args.engine); err)
+        if (const auto err = Filesystem::mkdir({
+                .path = args.fuseFrom.parent_path(),
+                .engine = args.engine,
+                .user = session->user
+            }); err)
             throw std::runtime_error(std::string("Failed to create directory ") + args.fuseFrom.parent_path().string());
 
         currentUpload_.emplace(args);
@@ -175,7 +179,7 @@ namespace vh::protocols::ws::handler::fs {
         log::Registry::ws()->debug("[UploadHandler] Finishing upload (uploadId: {}, fuseFrom: {}, fuseTo: {}, userId: {})",
                                  upload.uploadId, upload.fuseFrom.string(), upload.fuseTo.string(), session->user->id);
 
-        if (const auto err = Filesystem::rename(upload.fuseFrom, upload.fuseTo, session->user->id, upload.engine); err) {
+        if (const auto err = Filesystem::rename(upload.fuseFrom, upload.fuseTo, session->user, upload.engine); err) {
             abortHumanUpload("upload_finish_failed");
             throw std::runtime_error(std::string("Failed to move uploaded file to final location: ") + std::strerror(err));
         }

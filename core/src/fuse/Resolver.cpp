@@ -43,6 +43,7 @@ namespace vh::fuse {
         }
 
         if (!resolveIdentity(req, res)) return res;
+        if (!resolveParentEntry(req, res)) return res;
         if (!resolveEntry(req, res)) return res;
         if (!resolvePath(req, res)) return res;
         if (!resolveEntryForPath(req, res)) return res;
@@ -91,6 +92,20 @@ namespace vh::fuse {
         return true;
     }
 
+    bool Resolver::resolveParentEntry(const Request& req, Resolved& out) {
+        if (!req.parentIno) return true;
+        if (out.parentEntry) return true;
+
+        out.parentEntry = runtime::Deps::get().fsCache->getEntry(*req.parentIno);
+        if (!out.parentEntry) {
+            log::Registry::fuse()->debug("[{}] Failed to resolve parent entry from inode {}", req.caller, *req.parentIno);
+            out.setStatus(Status::MissingParentEntry, ENOENT);
+            return false;
+        }
+
+        return true;
+    }
+
     bool Resolver::resolveEntry(const Request& req, Resolved& out) {
         if (!needsEntry(req)) return true;
         if (out.entry) return true;
@@ -117,7 +132,12 @@ namespace vh::fuse {
 
         if (req.parentIno && req.childName) {
             try {
-                const auto parentPath = runtime::Deps::get().fsCache->resolvePath(*req.parentIno);
+                if (!out.parentEntry) {
+                    out.setStatus(Status::MissingParentEntry, ENOENT);
+                    return false;
+                }
+
+                const auto parentPath = out.parentEntry->fuse_path;
                 const auto child = std::filesystem::path(*req.childName).filename();
                 out.path = parentPath / child;
 

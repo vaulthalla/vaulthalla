@@ -294,7 +294,10 @@ void create(const fuse_req_t req, const fuse_ino_t parent, const char* name, con
         return;
     }
 
-    const auto [err, newEntry] = Filesystem::createFile(*resolved.path, getuid(), getgid(), mode);
+    const auto [err, newEntry] = Filesystem::createFile({
+        .resolved = resolved,
+        .mode = mode
+    });
     if (err) {
         replyError(req, timer, err);
         return;
@@ -351,13 +354,10 @@ void symlink(const fuse_req_t req, const char* link, const fuse_ino_t parent, co
         return;
     }
 
-    const fuse_ctx* fctx = fuse_req_ctx(req);
-    if (!fctx) {
-        replyError(req, timer, EINVAL);
-        return;
-    }
-
-    const auto [err, newEntry] = Filesystem::createSymlink(*resolved.path, link, fctx->uid, fctx->gid);
+    const auto [err, newEntry] = Filesystem::createSymlink({
+        .resolved = resolved,
+        .target = link
+    });
     if (err || !newEntry || !newEntry->inode) {
         replyError(req, timer, err ? err : EIO);
         return;
@@ -515,19 +515,26 @@ void mkdir(const fuse_req_t req, const fuse_ino_t parent, const char* name, cons
         return;
     }
 
-    if (const auto err = Filesystem::mkdir(*resolved.path, mode); err) {
+    const auto [err, newEntry] = Filesystem::mkdir({
+        .resolved = resolved,
+        .mode = mode
+    });
+    if (err) {
         replyError(req, timer, err);
         return;
     }
+    if (!newEntry || !newEntry->inode) {
+        replyError(req, timer, EIO);
+        return;
+    }
 
-    const auto finalInode = runtime::Deps::get().fsCache->resolveInode(*resolved.path);
-    const auto finalEntry = runtime::Deps::get().fsCache->getEntry(*resolved.path);
+    const auto finalInode = static_cast<fuse_ino_t>(*newEntry->inode);
 
     fuse_entry_param e{};
     e.ino = finalInode;
     e.attr_timeout = 1.0;
     e.entry_timeout = 1.0;
-    e.attr = statFromEntry(finalEntry, finalInode);
+    e.attr = statFromEntry(newEntry, finalInode);
 
     timer.success();
     fuse_reply_entry(req, &e);
@@ -562,7 +569,7 @@ void rename(const fuse_req_t req, const fuse_ino_t parent, const char* name, con
         return;
     }
 
-    if (const auto err = Filesystem::rename(*resolved.path, toPath); err) {
+    if (const auto err = Filesystem::rename(*resolved.path, toPath, resolved.user); err) {
         replyError(req, timer, err);
         return;
     }

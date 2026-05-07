@@ -7,6 +7,7 @@
 #include <vector>
 
 namespace vh::fs::model { struct File; }
+namespace vh::identities { struct User; }
 namespace vh::protocols::ws { class Session; }
 
 namespace vh::share {
@@ -25,6 +26,7 @@ public:
 
     [[nodiscard]] virtual std::shared_ptr<vh::fs::model::File> createFile(
         const vh::share::ResolvedTarget& parent,
+        const std::shared_ptr<vh::identities::User>& user,
         const std::string& finalVaultPath,
         const std::vector<uint8_t>& bytes
     ) const = 0;

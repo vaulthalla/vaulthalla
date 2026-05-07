@@ -372,7 +372,7 @@ json Storage::mkdir(const json& payload, const std::shared_ptr<Session>& session
         "Permission denied: User does not have create-directory permission for this path in the vault"
     );
 
-    engine->mkdir(path, session->user->id);
+    engine->mkdir(path, session->user);
     runtime::Deps::get().syncController->runNow(vaultId);
 
     return {{"path", path.string()}};
@@ -396,7 +396,7 @@ json Storage::move(const json& payload, const std::shared_ptr<Session>& session)
 
     auto operation = startMutationOperation(engine, from, to, session->user->id, SyncOperation::Op::Move);
     try {
-        engine->move(from, to, session->user->id);
+        engine->move(from, to, session->user);
         finishMutationOperation(operation, SyncOperation::Status::Success);
     } catch (const std::exception& e) {
         finishMutationOperation(operation, SyncOperation::Status::Failed, e.what());
@@ -428,7 +428,7 @@ json Storage::rename(const json& payload, const std::shared_ptr<Session>& sessio
 
     auto operation = startMutationOperation(engine, from, to, session->user->id, SyncOperation::Op::Rename);
     try {
-        engine->rename(from, to, session->user->id);
+        engine->rename(from, to, session->user);
         finishMutationOperation(operation, SyncOperation::Status::Success);
     } catch (const std::exception& e) {
         finishMutationOperation(operation, SyncOperation::Status::Failed, e.what());

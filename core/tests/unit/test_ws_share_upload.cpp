@@ -336,6 +336,7 @@ public:
 
     std::shared_ptr<vh::fs::model::File> createFile(
         const vh::share::ResolvedTarget& parent,
+        const std::shared_ptr<vh::identities::User>&,
         const std::string& finalVaultPath,
         const std::vector<uint8_t>& bytes
     ) const override {

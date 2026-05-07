@@ -23,6 +23,8 @@
 #include "crypto/id/Generator.hpp"
 #include "fs/cache/Registry.hpp"
 #include "db/encoding/u8.hpp"
+#include "identities/User.hpp"
+#include "identities/Group.hpp"
 
 #include <ranges>
 #include <fstream>
@@ -73,6 +75,21 @@ bool targetEscapesVaultRoot(const std::filesystem::path& linkVaultPath, const st
     }
 
     return false;
+}
+
+std::optional<int32_t> linuxUidFor(const std::shared_ptr<vh::identities::User>& user) {
+    if (!user || !user->meta.linux_uid) return std::nullopt;
+    return static_cast<int32_t>(*user->meta.linux_uid);
+}
+
+std::optional<int32_t> linuxGidFor(const std::shared_ptr<vh::identities::Group>& group) {
+    if (!group || !group->linux_gid) return std::nullopt;
+    return static_cast<int32_t>(*group->linux_gid);
+}
+
+std::optional<int32_t> userIdFor(const std::shared_ptr<vh::identities::User>& user) {
+    if (!user) return std::nullopt;
+    return static_cast<int32_t>(user->id);
 }
 
 } // namespace
@@ -129,10 +146,10 @@ bool Filesystem::isReady() {
     return static_cast<bool>(storageManager_);
 }
 
-int Filesystem::mkdir(const std::filesystem::path& absPath,
-                      const mode_t mode,
-                      const std::optional<unsigned int>& userId,
-                      std::shared_ptr<Engine> engine) {
+int Filesystem::mkdir(const MkdirContext& ctx) {
+    const auto& absPath = ctx.path;
+    auto engine = ctx.engine;
+
     log::Registry::fs()->debug("Creating directory at: {}", absPath.string());
 
     std::scoped_lock lock(mutex_);
@@ -149,6 +166,8 @@ int Filesystem::mkdir(const std::filesystem::path& absPath,
             log::Registry::fs()->error("[Filesystem::mkdir] Cannot create directory at empty path");
             return -EINVAL;
         }
+
+        if (ctx.failIfExists && cache->entryExists(absPath)) return -EEXIST;
 
         std::vector<std::filesystem::path> toCreate;
         std::filesystem::path cur = absPath;
@@ -177,7 +196,10 @@ int Filesystem::mkdir(const std::filesystem::path& absPath,
             dir->vault_id = engine->vault->id;
             dir->path = engine->paths->absRelToAbsRel(path, PathType::FUSE_ROOT, PathType::VAULT_ROOT);
 
-            const auto parent = cache->getEntry(resolveParent(path));
+            const auto parentPath = resolveParent(path);
+            const auto parent = (ctx.parent && ctx.parent->fuse_path == parentPath)
+                ? ctx.parent
+                : cache->getEntry(parentPath);
             if (!parent) {
                 log::Registry::fs()->error(
                     "[Filesystem::mkdir] Parent directory does not exist: {}",
@@ -190,13 +212,13 @@ int Filesystem::mkdir(const std::filesystem::path& absPath,
             dir->name = path.filename();
             dir->base32_alias = id::Generator({ .namespace_token = dir->name }).generate();
             dir->backing_path = parent->backing_path / dir->base32_alias;
-            dir->mode = mode;
-            dir->owner_uid = getuid();
-            dir->group_gid = getgid();
+            dir->mode = ctx.mode;
+            dir->owner_uid = linuxUidFor(ctx.user);
+            dir->group_gid = linuxGidFor(ctx.group);
             dir->inode = cache->assignInode(path);
             dir->is_hidden = !dir->name.empty() && dir->name.front() == '.' && !dir->name.starts_with("..");
             dir->is_system = false;
-            dir->created_by = dir->last_modified_by = userId;
+            dir->created_by = dir->last_modified_by = userIdFor(ctx.user);
 
             dir->id = db::query::fs::Directory::upsertDirectory(dir);
             cache->cacheEntry(dir);
@@ -233,6 +255,28 @@ int Filesystem::mkdir(const std::filesystem::path& absPath,
     }
 }
 
+std::pair<int, std::shared_ptr<model::Entry>> Filesystem::mkdir(const FuseMkdirContext& ctx) {
+    const auto& resolved = ctx.resolved;
+    if (!resolved.ok()) return {-resolved.errnum, nullptr};
+    if (!resolved.user) return {-EACCES, nullptr};
+    if (!resolved.path || !resolved.engine || !resolved.parentEntry) return {-EINVAL, nullptr};
+
+    const auto err = mkdir({
+        .path = *resolved.path,
+        .mode = ctx.mode == 0 ? static_cast<mode_t>(0755) : ctx.mode,
+        .engine = resolved.engine,
+        .user = resolved.user,
+        .group = resolved.group,
+        .parent = resolved.parentEntry,
+        .failIfExists = true
+    });
+    if (err) return {err, nullptr};
+
+    const auto entry = runtime::Deps::get().fsCache->getEntry(*resolved.path);
+    if (!entry) return {-EIO, nullptr};
+    return {0, entry};
+}
+
 void Filesystem::mkVault(const std::filesystem::path& absPath, unsigned int vaultId, mode_t mode) {
     if (absPath.empty()) throw std::runtime_error("Cannot create directory at empty path");
     log::Registry::fs()->debug("Creating vault directory at: {}", absPath.string());
@@ -254,8 +298,6 @@ void Filesystem::mkVault(const std::filesystem::path& absPath, unsigned int vaul
         dir->fuse_path = absPath;
         dir->created_at = dir->updated_at = std::time(nullptr);
         dir->mode = mode;
-        dir->owner_uid = getuid();
-        dir->group_gid = getgid();
         dir->inode = runtime::Deps::get().fsCache->assignInode(absPath);
         dir->is_hidden = false;
         dir->is_system = false;
@@ -285,13 +327,18 @@ bool Filesystem::exists(const std::filesystem::path& absPath) {
 }
 
 std::pair<int, std::shared_ptr<model::Symlink>>
-Filesystem::createSymlink(const std::filesystem::path& linkPath,
-                          const std::string& target,
-                          const uid_t uid,
-                          const gid_t gid) {
+Filesystem::createSymlink(const FuseCreateSymlinkContext& ctx) {
+    const auto& resolved = ctx.resolved;
+    const auto linkPath = resolved.path.value_or(std::filesystem::path{});
+    const auto& target = ctx.target;
+
     std::scoped_lock lock(mutex_);
 
     try {
+        if (!resolved.ok()) return {-resolved.errnum, nullptr};
+        if (!resolved.user) return {-EACCES, nullptr};
+        if (!resolved.path || !resolved.engine || !resolved.parentEntry) return {-EINVAL, nullptr};
+
         if (!storageManager_) {
             log::Registry::fs()->error("[Filesystem::createSymlink] StorageManager is not initialized");
             return {-EIO, nullptr};
@@ -302,18 +349,12 @@ Filesystem::createSymlink(const std::filesystem::path& linkPath,
         const auto targetPath = std::filesystem::path(target);
         if (targetPath.is_absolute()) return {-EINVAL, nullptr};
 
-        const auto engine = storageManager_->resolveStorageEngine(linkPath);
-        if (!engine) {
-            log::Registry::fs()->error(
-                "[Filesystem::createSymlink] No storage engine found for path: {}",
-                linkPath.string());
-            return {-EIO, nullptr};
-        }
+        const auto& engine = resolved.engine;
 
         const auto& cache = runtime::Deps::get().fsCache;
         if (cache->entryExists(linkPath)) return {-EEXIST, nullptr};
 
-        const auto parent = cache->getEntry(resolveParent(linkPath));
+        const auto parent = resolved.parentEntry;
         if (!parent) {
             log::Registry::fs()->error(
                 "[Filesystem::createSymlink] Parent directory does not exist: {}",
@@ -334,10 +375,11 @@ Filesystem::createSymlink(const std::filesystem::path& linkPath,
         symlink->base32_alias = id::Generator({ .namespace_token = symlink->name }).generate();
         symlink->backing_path = parent->backing_path / symlink->base32_alias;
         symlink->mode = 0777;
-        symlink->owner_uid = uid;
-        symlink->group_gid = gid;
+        symlink->owner_uid = linuxUidFor(resolved.user);
+        symlink->group_gid = linuxGidFor(resolved.group);
         symlink->is_hidden = !symlink->name.empty() && symlink->name.starts_with('.');
         symlink->is_system = false;
+        symlink->created_by = symlink->last_modified_by = userIdFor(resolved.user);
         symlink->created_at = std::time(nullptr);
         symlink->updated_at = symlink->created_at;
         symlink->inode = std::make_optional(cache->getOrAssignInode(linkPath));
@@ -578,6 +620,8 @@ void Filesystem::remove(const std::filesystem::path& path, const unsigned int us
 }
 
 std::shared_ptr<File> Filesystem::createFile(const NewFileContext& ctx) {
+    if (!ctx.user) throw std::runtime_error("[Filesystem] File creation requires a user");
+
     const auto engine = ctx.engine ? ctx.engine : storageManager_->resolveStorageEngine(ctx.path);
     if (!engine) throw std::runtime_error("[Filesystem] No storage engine found for file creation");
 
@@ -621,6 +665,7 @@ std::shared_ptr<File> Filesystem::createFile(const NewFileContext& ctx) {
             f->mime_type = inferMimeTypeFromPath(ctx.path);
         }
 
+        f->last_modified_by = userIdFor(ctx.user);
         db::query::fs::File::updateFile(f);
 
         return f;
@@ -644,10 +689,10 @@ std::shared_ptr<File> Filesystem::createFile(const NewFileContext& ctx) {
     f->base32_alias = id::Generator({ .namespace_token = f->name }).generate();
     f->backing_path = parent->backing_path / f->base32_alias;
     f->mode = ctx.mode;
-    f->owner_uid = ctx.linux_uid;
-    f->group_gid = ctx.linux_gid;
+    f->owner_uid = linuxUidFor(ctx.user);
+    f->group_gid = linuxGidFor(ctx.group);
     f->is_hidden = ctx.path.filename().string().starts_with('.');
-    f->created_by = f->last_modified_by = ctx.userId;
+    f->created_by = f->last_modified_by = userIdFor(ctx.user);
     f->inode = std::make_optional(cache->getOrAssignInode(ctx.fuse_path));
     f->mime_type = ctx.buffer.empty() ? inferMimeTypeFromPath(ctx.path) : Magic::get_mime_type_from_buffer(ctx.buffer);
     f->size_bytes = ctx.buffer.size();
@@ -675,31 +720,29 @@ std::shared_ptr<File> Filesystem::createFile(const NewFileContext& ctx) {
 }
 
 std::pair<int, std::shared_ptr<model::Entry>>
-Filesystem::createFile(const std::filesystem::path& path,
-                       const uid_t uid,
-                       const gid_t gid,
-                       const mode_t mode) {
+Filesystem::createFile(const FuseCreateFileContext& ctx) {
+    const auto& resolved = ctx.resolved;
+    const auto path = resolved.path.value_or(std::filesystem::path{});
+
     std::scoped_lock lock(mutex_);
 
     try {
+        if (!resolved.ok()) return {-resolved.errnum, nullptr};
+        if (!resolved.user) return {-EACCES, nullptr};
+        if (!resolved.path || !resolved.engine || !resolved.parentEntry) return {-EINVAL, nullptr};
+
         if (!storageManager_) {
             log::Registry::fs()->error("[Filesystem::createFile] StorageManager is not initialized");
             return {-EIO, nullptr};
         }
 
-        const auto engine = storageManager_->resolveStorageEngine(path);
-        if (!engine) {
-            log::Registry::fs()->error(
-                "[Filesystem::createFile] No storage engine found for path: {}",
-                path.string());
-            return {-EIO, nullptr};
-        }
+        const auto& engine = resolved.engine;
 
         const auto& cache = runtime::Deps::get().fsCache;
 
         log::Registry::fs()->debug("[Filesystem::createFile] Creating file at path: {}", path.string());
 
-        const auto parent = cache->getEntry(resolveParent(path));
+        const auto parent = resolved.parentEntry;
         if (!parent) {
             log::Registry::fs()->error(
                 "[Filesystem::createFile] Parent directory does not exist: {}",
@@ -722,10 +765,11 @@ Filesystem::createFile(const std::filesystem::path& path,
         f->fuse_path = path;
         f->base32_alias = id::Generator({ .namespace_token = f->name }).generate();
         f->backing_path = parent->backing_path / f->base32_alias;
-        f->mode = mode;
-        f->owner_uid = uid;
-        f->group_gid = gid;
+        f->mode = ctx.mode;
+        f->owner_uid = linuxUidFor(resolved.user);
+        f->group_gid = linuxGidFor(resolved.group);
         f->is_hidden = !f->name.empty() && f->name.starts_with('.');
+        f->created_by = f->last_modified_by = userIdFor(resolved.user);
         f->created_at = std::time(nullptr);
         f->updated_at = f->created_at;
         f->inode = std::make_optional(cache->getOrAssignInode(path));
@@ -790,7 +834,7 @@ Filesystem::createFile(const std::filesystem::path& path,
 
 int Filesystem::rename(const std::filesystem::path& oldPath,
                        const std::filesystem::path& newPath,
-                       const std::optional<unsigned int>& userId,
+                       const std::shared_ptr<identities::User>& user,
                        std::shared_ptr<Engine> engine) {
     std::scoped_lock lock(mutex_);
 
@@ -860,7 +904,7 @@ int Filesystem::rename(const std::filesystem::path& oldPath,
                         .from = item->fuse_path,
                         .to = updateSubdirPath(oldPath, newPath, item->fuse_path),
                         .buffer = buffer,
-                        .userId = userId,
+                        .user = user,
                         .engine = engine,
                         .entry = item,
                         .txn = txn
@@ -877,7 +921,7 @@ int Filesystem::rename(const std::filesystem::path& oldPath,
                 .from = oldPath,
                 .to = newPath,
                 .buffer = buffer,
-                .userId = userId,
+                .user = user,
                 .engine = engine,
                 .entry = entry,
                 .txn = txn
@@ -979,7 +1023,7 @@ int Filesystem::handleRename(const RenameContext& ctx) {
         entry->path = ctx.engine->paths->absRelToAbsRel(ctx.to, PathType::FUSE_ROOT, PathType::VAULT_ROOT);
         entry->fuse_path = ctx.to;
         entry->parent_id = parent->id;
-        entry->created_by = entry->last_modified_by = ctx.userId;
+        entry->created_by = entry->last_modified_by = userIdFor(ctx.user);
         entry->backing_path = parent->backing_path / entry->base32_alias;
 
         if (entry->isDirectory()) {

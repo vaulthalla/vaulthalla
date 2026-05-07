@@ -29,6 +29,7 @@ std::shared_ptr<Principal> PrincipalResolver::resolve(
     principal->share_session_id = session.id;
     principal->vault_id = link.vault_id;
     principal->root_entry_id = link.root_entry_id;
+    principal->link_created_by = link.created_by;
     principal->root_path = grant.root_path;
     principal->grant = grant;
     principal->email_verified = session.isVerified();
