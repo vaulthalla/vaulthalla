@@ -56,8 +56,8 @@ json Auth::registerUser(const json &payload, const std::shared_ptr<Session> &ses
 
 json Auth::refreshToken(const std::string &token, const std::shared_ptr<Session> &session) {
     runtime::Deps::get().sessionManager->renewAccessToken(session, token);
-    session->sendAccessTokenOnNextResponse();
-    return {};
+    if (!session->user) throw std::runtime_error("Failed to resolve user during token refresh");
+    return {{"user", *session->user}};
 }
 
 json Auth::deleteUser(const json &payload, const std::shared_ptr<Session> &session) {

@@ -92,7 +92,7 @@ bool Validator::tryRehydrateFromPriorSession(const std::shared_ptr<Session>& ses
 
         session->tokens->refreshToken = std::make_shared<auth::model::RefreshToken>(*priorToken);
         session->tokens->refreshToken->rawToken = rawToken;
-        if (priorSession->user) session->user = priorSession->user;
+        if (priorSession->user) session->setAuthenticatedUser(priorSession->user);
 
         log::Registry::auth()->debug(
             "[session::Validator] Rehydrated refresh token from prior session for JTI: {}",
@@ -157,8 +157,8 @@ void Validator::rehydrateFromStoredRefreshToken(const std::shared_ptr<Session>& 
     }
 
     storedToken->rawToken = rawToken;
-    session->user = user;
     session->tokens->refreshToken = storedToken;
+    session->setAuthenticatedUser(user);
 }
 
 bool Validator::softValidateActiveSession(const std::shared_ptr<Session>& session) {

@@ -240,6 +240,12 @@ void Session::startReadLoop() {
 void Session::close() {
     if (closing_.exchange(true)) return;
 
+    auto self = weak_from_this().lock();
+    if (self) {
+        if (const auto manager = runtime::Deps::get().sessionManager)
+            manager->remove(self);
+    }
+
     if (uploadHandler_)
         uploadHandler_->abortActiveUpload("websocket_session_closed");
 
@@ -249,7 +255,19 @@ void Session::close() {
         return;
     }
 
-    auto self = shared_from_this();
+    if (!self) {
+        boost::system::error_code ec;
+        if (ws->is_open())
+            ws->close(websocket::close_code::normal, ec);
+
+        if (ec)
+            log::Registry::ws()->debug("[ws::Session] ws close error: {}", ec.message());
+
+        ws_.reset();
+        buffer_.consume(buffer_.size());
+        return;
+    }
+
     asio::post(strand_, [self, ws]() mutable {
         boost::system::error_code ec;
         if (ws->is_open())
