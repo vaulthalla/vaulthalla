@@ -56,6 +56,7 @@ class Connection {
     // Filesystem
     void initPreparedFsEntries() const;
     void initPreparedFiles() const;
+    void initPreparedSymlinks() const;
     void initPreparedDirectories() const;
     void initPreparedOperations() const;
     void initPreparedCache() const;

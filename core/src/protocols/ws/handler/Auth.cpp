@@ -66,6 +66,7 @@ json Auth::deleteUser(const json &payload, const std::shared_ptr<Session> &sessi
     const auto targetUser = db::query::identities::User::getUserById(id);
     if (!targetUser) throw std::runtime_error("User not found");
 
+    if (targetUser->isProtected) throw std::runtime_error("Cannot delete protected user");
     if (targetUser->isSuperAdmin()) throw std::runtime_error("Cannot delete super admin user");
 
     if (targetUser->isAdmin() && !session->user->identities().canDelete(Identities::Type::Admins))
@@ -87,6 +88,8 @@ json Auth::deleteUser(const json &payload, const std::shared_ptr<Session> &sessi
 
 json Auth::updateUser(const json &payload, const std::shared_ptr<Session> &session) {
     if (!session->user) throw std::runtime_error("User not authenticated");
+    if (session->user->isProtected)
+        throw std::runtime_error("Protected users cannot be updated through this route");
 
     session->user->updateUser(payload);
     runtime::Deps::get().authManager->updateUser(session->user);

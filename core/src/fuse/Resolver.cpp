@@ -188,7 +188,8 @@ namespace vh::fuse {
 
             // Important: for create/lookup of not-yet-existing children, missing entry may be acceptable.
             if (req.action == rbac::permission::vault::FilesystemAction::Write ||
-                req.action == rbac::permission::vault::FilesystemAction::Touch) {
+                req.action == rbac::permission::vault::FilesystemAction::Touch ||
+                req.action == rbac::permission::vault::FilesystemAction::Link) {
                 return true;
             }
 

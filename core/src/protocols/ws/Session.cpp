@@ -68,6 +68,9 @@ std::string Session::getUserAgent() const {
 }
 
 void Session::setAuthenticatedUser(const std::shared_ptr<User>& u) {
+    if (!u) throw std::invalid_argument("Cannot set null authenticated user");
+    if (u->systemOnly) throw std::runtime_error("System-only users cannot authenticate WebSocket sessions");
+
     clearShareSession();
     user = u;
     mode_ = SessionMode::Human;

@@ -92,7 +92,11 @@ bool Validator::tryRehydrateFromPriorSession(const std::shared_ptr<Session>& ses
 
         session->tokens->refreshToken = std::make_shared<auth::model::RefreshToken>(*priorToken);
         session->tokens->refreshToken->rawToken = rawToken;
-        if (priorSession->user) session->setAuthenticatedUser(priorSession->user);
+        if (priorSession->user) {
+            if (priorSession->user->systemOnly)
+                throw std::runtime_error("System-only users cannot rehydrate human sessions");
+            session->setAuthenticatedUser(priorSession->user);
+        }
 
         log::Registry::auth()->debug(
             "[session::Validator] Rehydrated refresh token from prior session for JTI: {}",
@@ -145,6 +149,11 @@ void Validator::rehydrateFromStoredRefreshToken(const std::shared_ptr<Session>& 
         throw std::runtime_error("No user found for refresh token");
     }
 
+    if (user->systemOnly) {
+        runtime::Deps::get().sessionManager->invalidate(session);
+        throw std::runtime_error("System-only users cannot use human refresh tokens");
+    }
+
     if (storedToken->userId != user->id) {
         runtime::Deps::get().sessionManager->invalidate(session);
         log::Registry::auth()->debug(
@@ -169,6 +178,11 @@ bool Validator::softValidateActiveSession(const std::shared_ptr<Session>& sessio
 
     if (!session->user) {
         log::Registry::ws()->debug("[session::Validator] No user associated with session");
+        return false;
+    }
+
+    if (session->user->systemOnly) {
+        log::Registry::ws()->debug("[session::Validator] System-only user cannot hold active human session");
         return false;
     }
 

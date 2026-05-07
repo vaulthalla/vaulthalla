@@ -30,6 +30,11 @@ std::string jwtSecret() {
     if (const auto& secret = jwtSecretForTesting()) return *secret;
     return vh::runtime::Deps::get().secretsManager->jwtSecret();
 }
+
+void rejectSystemOnlyHumanToken(const std::shared_ptr<Session>& session) {
+    if (session && session->user && session->user->systemOnly)
+        throw std::runtime_error("System-only users cannot receive normal user tokens");
+}
 }
 
 static std::string generateUUID() {
@@ -71,6 +76,8 @@ static void finalizeAndSignToken(
 }
 
 void Issuer::accessToken(const std::shared_ptr<Session>& session) {
+    rejectSystemOnlyHumanToken(session);
+
     const auto t = std::make_shared<model::Token>();
     t->subject = buildAccessTokenSubject(session);
     finalizeAndSignToken(
@@ -84,6 +91,8 @@ void Issuer::accessToken(const std::shared_ptr<Session>& session) {
 }
 
 void Issuer::refreshToken(const std::shared_ptr<Session>& session) {
+    rejectSystemOnlyHumanToken(session);
+
     const auto t = std::make_shared<model::RefreshToken>();
     t->subject = buildRefreshTokenSubject(session);
     t->userAgent = session->userAgent;

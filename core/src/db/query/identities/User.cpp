@@ -13,12 +13,74 @@
 
 #include <stdexcept>
 #include <array>
+#include <optional>
 #include <pqxx/pqxx>
 
 using U = vh::identities::User;
 using UserPtr = std::shared_ptr<U>;
 
 namespace vh::db::query::identities {
+    namespace {
+        bool rowBool(const pqxx::row& row, const char* column, const bool fallback = false) {
+            try {
+                const auto field = row[column];
+                if (field.is_null()) return fallback;
+                return field.as<bool>();
+            } catch (...) {
+                return fallback;
+            }
+        }
+
+        void guardNormalUserCreate(const UserPtr& user) {
+            if (user->isProtected || user->systemOnly)
+                throw std::runtime_error("protected/system-only user flags are bootstrap-only");
+
+            if (user->meta.linux_uid && *user->meta.linux_uid == 0)
+                throw std::runtime_error("linux_uid 0 is reserved for the root principal");
+        }
+
+        void guardNormalUserUpdate(pqxx::work& txn, const UserPtr& user) {
+            const auto res = txn.exec(
+                R"SQL(
+                    SELECT u.id, u.protected
+                    FROM users u
+                    WHERE u.id = $1
+                )SQL",
+                pqxx::params{user->id}
+            );
+
+            if (res.empty())
+                throw std::runtime_error("User not found: " + std::to_string(user->id));
+
+            if (rowBool(res.one_row(), "protected"))
+                throw std::runtime_error("protected users cannot be updated through normal user paths");
+
+            if (user->isProtected || user->systemOnly)
+                throw std::runtime_error("protected/system-only user flags are bootstrap-only");
+
+            if (user->meta.linux_uid && *user->meta.linux_uid == 0)
+                throw std::runtime_error("linux_uid 0 is reserved for the root principal");
+        }
+
+        void guardNormalUserDelete(pqxx::work& txn, const unsigned int userId) {
+            const auto res = txn.exec(
+                "SELECT protected FROM users WHERE id = $1",
+                pqxx::params{userId}
+            );
+
+            if (res.empty()) return;
+            if (rowBool(res.one_row(), "protected"))
+                throw std::runtime_error("protected users cannot be deleted");
+        }
+
+        bool systemOnlyUser(pqxx::work& txn, const unsigned int userId) {
+            const auto res = txn.exec(
+                "SELECT system_only FROM users WHERE id = $1",
+                pqxx::params{userId}
+            );
+            return !res.empty() && rowBool(res.one_row(), "system_only");
+        }
+    }
 
     UserPtr User::getUserByName(const std::string &name) {
         return Transactions::exec("User::getUserByName", [&](pqxx::work &txn) -> UserPtr {
@@ -84,6 +146,7 @@ namespace vh::db::query::identities {
 
     unsigned int User::createUser(const UserPtr &user) {
         if (!user) throw std::invalid_argument("User::createUser received null user");
+        guardNormalUserCreate(user);
 
         log::Registry::db()->debug("[User] Creating user: {}", user->name);
 
@@ -114,6 +177,8 @@ namespace vh::db::query::identities {
         if (!user) throw std::invalid_argument("User::updateUser received null user");
 
         Transactions::exec("User::updateUser", [&](pqxx::work &txn) {
+            guardNormalUserUpdate(txn, user);
+
             const pqxx::params userParams{
                 user->id,
                 user->name,
@@ -144,6 +209,7 @@ namespace vh::db::query::identities {
             );
 
             if (res.empty()) return false;
+            if (rowBool(res.one_row(), "system_only")) return false;
 
             const auto storedHash = res.one_row()["password_hash"].as<std::string>();
             return vh::crypto::hash::verifyPassword(password, storedHash);
@@ -152,6 +218,9 @@ namespace vh::db::query::identities {
 
     void User::updateUserPassword(const unsigned int userId, const std::string &newPassword) {
         Transactions::exec("User::updateUserPassword", [&](pqxx::work &txn) {
+            if (systemOnlyUser(txn, userId))
+                throw std::runtime_error("system-only users cannot receive normal user passwords");
+
             txn.exec(
                 pqxx::prepped{"update_user_password"},
                 pqxx::params{userId, newPassword}
@@ -161,6 +230,8 @@ namespace vh::db::query::identities {
 
     void User::deleteUser(const unsigned int userId) {
         Transactions::exec("User::deleteUser", [&](pqxx::work &txn) {
+            guardNormalUserDelete(txn, userId);
+
             txn.exec(
                 pqxx::prepped{"delete_user"},
                 pqxx::params{userId}
@@ -194,6 +265,30 @@ namespace vh::db::query::identities {
                 pqxx::prepped{"update_user_last_login"},
                 pqxx::params{userId}
             );
+        });
+    }
+
+    void User::bootstrapSetAdminLinuxUID(const unsigned int linuxUid, const std::optional<unsigned int> updatedBy) {
+        if (linuxUid == 0)
+            throw std::runtime_error("admin cannot be assigned linux_uid 0");
+
+        Transactions::exec("User::bootstrapSetAdminLinuxUID", [&](pqxx::work &txn) {
+            txn.exec("SELECT set_config('vaulthalla.bootstrap', 'on', true)");
+
+            const auto res = txn.exec(
+                R"SQL(
+                    UPDATE users
+                    SET linux_uid = $1,
+                        last_modified_by = $2,
+                        updated_at = NOW()
+                    WHERE name = 'admin'
+                    RETURNING id
+                )SQL",
+                pqxx::params{linuxUid, updatedBy}
+            );
+
+            if (res.empty())
+                throw std::runtime_error("admin user record not found");
         });
     }
 

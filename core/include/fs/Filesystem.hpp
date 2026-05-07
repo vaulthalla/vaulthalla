@@ -18,6 +18,7 @@ namespace vh::fs {
 namespace model {
 struct Entry;
 struct File;
+struct Symlink;
 }
 
 struct RenameContext {
@@ -53,6 +54,7 @@ public:
 
     static std::pair<int, std::shared_ptr<model::Entry>> createFile(const std::filesystem::path& path, uid_t uid, gid_t gid, mode_t mode = 0644);
     static std::shared_ptr<model::File> createFile(const NewFileContext& ctx);
+    static std::pair<int, std::shared_ptr<model::Symlink>> createSymlink(const std::filesystem::path& linkPath, const std::string& target, uid_t uid, gid_t gid);
 
     static bool isPreviewable(const std::string& mimeType);
 

@@ -19,6 +19,7 @@ namespace pqxx {
 namespace vh::fs::model {
     struct File;
     struct Directory;
+    struct Symlink;
 
     struct Entry {
         uint32_t id{};
@@ -43,6 +44,8 @@ namespace vh::fs::model {
 
         [[nodiscard]] virtual bool isDirectory() const = 0;
 
+        [[nodiscard]] virtual bool isSymlink() const { return false; }
+
         void setPath(const std::filesystem::path &path) { this->path = path; }
 
         void print() const;
@@ -55,6 +58,10 @@ namespace vh::fs::model {
     void to_json(nlohmann::json &j, const std::vector<std::shared_ptr<Entry> > &entries);
 
     std::vector<std::shared_ptr<Entry> > merge_entries(const std::vector<std::shared_ptr<File> > &files,
+                                                       const std::vector<std::shared_ptr<Directory> > &directories);
+
+    std::vector<std::shared_ptr<Entry> > merge_entries(const std::vector<std::shared_ptr<File> > &files,
+                                                       const std::vector<std::shared_ptr<Symlink> > &symlinks,
                                                        const std::vector<std::shared_ptr<Directory> > &directories);
 
     std::vector<std::shared_ptr<Entry> > fromS3XML(const std::u8string &xml);

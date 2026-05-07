@@ -98,6 +98,110 @@ vh::rbac::role::Vault shareUploadDropboxRole() {
     );
 }
 
+std::optional<unsigned int> configuredSystemUid() {
+    constexpr const char* systemUsername = "vaulthalla";
+    const auto uid = vh::auth::uid_for_user(systemUsername);
+    if (!uid) {
+        vh::log::Registry::vaulthalla()->warn(
+            "[initdb] OS user '{}' not found; system principal will not receive a Linux UID mapping",
+            systemUsername);
+        return std::nullopt;
+    }
+
+    if (*uid == 0) {
+        vh::log::Registry::vaulthalla()->warn(
+            "[initdb] OS user '{}' resolves to UID 0; UID 0 remains reserved for root",
+            systemUsername);
+        return std::nullopt;
+    }
+
+    return static_cast<unsigned int>(*uid);
+}
+
+unsigned int upsertBootstrapPrincipal(
+    pqxx::work& txn,
+    const std::string& name,
+    const std::optional<std::string>& email,
+    const std::string& passwordHash,
+    const std::optional<unsigned int>& linuxUid,
+    const bool isProtected,
+    const bool systemOnly
+) {
+    const auto res = txn.exec(
+        R"SQL(
+            INSERT INTO users (
+                name,
+                email,
+                password_hash,
+                is_active,
+                linux_uid,
+                protected,
+                system_only
+            )
+            VALUES ($1, $2, $3, TRUE, $4, $5, $6)
+            ON CONFLICT (name) DO UPDATE SET
+                email       = COALESCE(users.email, EXCLUDED.email),
+                is_active   = TRUE,
+                linux_uid   = EXCLUDED.linux_uid,
+                protected   = EXCLUDED.protected,
+                system_only = EXCLUDED.system_only,
+                updated_at  = NOW()
+            RETURNING id
+        )SQL",
+        pqxx::params{name, email, passwordHash, linuxUid, isProtected, systemOnly}
+    );
+
+    if (res.empty())
+        throw std::runtime_error("Failed to upsert bootstrap principal: " + name);
+
+    return res.one_row()["id"].as<unsigned int>();
+}
+
+unsigned int upsertBootstrapAdmin(
+    pqxx::work& txn,
+    const std::string& passwordHash
+) {
+    const auto res = txn.exec(
+        R"SQL(
+            INSERT INTO users (
+                name,
+                email,
+                password_hash,
+                is_active,
+                protected,
+                system_only
+            )
+            VALUES ('admin', NULL, $1, TRUE, TRUE, FALSE)
+            ON CONFLICT (name) DO UPDATE SET
+                is_active   = TRUE,
+                linux_uid   = CASE WHEN users.linux_uid = 0 THEN NULL ELSE users.linux_uid END,
+                protected   = TRUE,
+                system_only = FALSE,
+                updated_at  = NOW()
+            RETURNING id
+        )SQL",
+        pqxx::params{passwordHash}
+    );
+
+    if (res.empty())
+        throw std::runtime_error("Failed to upsert bootstrap admin principal");
+
+    return res.one_row()["id"].as<unsigned int>();
+}
+
+void assignSuperAdminRole(pqxx::work& txn, const unsigned int userId, const unsigned int roleId) {
+    txn.exec(
+        R"SQL(
+            INSERT INTO admin_role_assignments (user_id, role_id)
+            VALUES ($1, $2)
+            ON CONFLICT (user_id) DO UPDATE SET
+                role_id = EXCLUDED.role_id,
+                assigned_at = CURRENT_TIMESTAMP
+        )SQL",
+        pqxx::params{userId, roleId}
+    );
+}
+
 }
 
 void vh::seed::seed_database() {
@@ -207,33 +311,35 @@ void vh::seed::initRoles() {
 void vh::seed::initSystemUser() {
     log::Registry::vaulthalla()->debug("[initdb] Initializing system user...");
 
-    // 1) Resolve OS UID of the service account (default: "vaulthalla")
-    // If you want it configurable, pull from ConfigRegistry here.
-    const std::string systemUsername = "vaulthalla";
-
-    // Use your cached helper (or call uid_for_user directly)
-    auth::SystemUid::instance().init(systemUsername);
-    const auto sysUid = static_cast<unsigned int>(vh::auth::SystemUid::instance().uid());
+    const auto sysUid = configuredSystemUid();
 
     // 2) If a user already exists for this Linux UID, ensure it's marked as system + has super_admin
     try {
-        if (const auto existingByUid = db::query::identities::User::getUserByLinuxUID(sysUid); existingByUid) {
-            log::Registry::vaulthalla()->info(
-                "[initdb] System user already exists for linux_uid={} (name='{}')",
-                sysUid, existingByUid->name
-            );
+        if (sysUid) {
+            if (const auto existingByUid = db::query::identities::User::getUserByLinuxUID(*sysUid); existingByUid) {
+                if (existingByUid->name != "system") {
+                    log::Registry::vaulthalla()->warn(
+                        "[initdb] linux_uid={} belongs to '{}'; clearing it so the system principal can claim it",
+                        *sysUid,
+                        existingByUid->name);
+                    existingByUid->meta.linux_uid = std::nullopt;
+                    db::query::identities::User::updateUser(existingByUid);
+                } else {
+                    log::Registry::vaulthalla()->info(
+                        "[initdb] System user already exists for linux_uid={} (name='{}')",
+                        *sysUid, existingByUid->name
+                    );
 
-            // If your schema supports updating users, do it.
-            // If you don't have update queries yet, you can just return here.
-            existingByUid->name = "system";
-            existingByUid->email = "no-reply@system";
-            existingByUid->meta.linux_uid = sysUid;
+                    existingByUid->email = "no-reply@system";
+                    existingByUid->meta.linux_uid = sysUid;
 
-            existingByUid->roles.admin = db::query::rbac::role::Admin::get("super_admin");
-            existingByUid->roles.admin->user_id = existingByUid->id;
+                    existingByUid->roles.admin = db::query::rbac::role::Admin::get("super_admin");
+                    existingByUid->roles.admin->user_id = existingByUid->id;
 
-            db::query::identities::User::updateUser(existingByUid);
-            return;
+                    db::query::identities::User::updateUser(existingByUid);
+                    return;
+                }
+            }
         }
     } catch (...) {
         // getUserByLinuxUid might throw if not found; ignore and proceed to create
@@ -244,7 +350,7 @@ void vh::seed::initSystemUser() {
         if (const auto existingByName = db::query::identities::User::getUserByName("system"); existingByName) {
             log::Registry::vaulthalla()->info(
                 "[initdb] Found existing 'system' user (id={}), updating linux_uid to {}",
-                existingByName->id, sysUid
+                existingByName->id, sysUid ? std::to_string(*sysUid) : "none"
             );
 
             existingByName->meta.linux_uid = sysUid;
@@ -279,8 +385,8 @@ void vh::seed::initSystemUser() {
     db::query::identities::User::createUser(user);
 
     log::Registry::vaulthalla()->info(
-        "[initdb] Created system user mapped to OS account '{}' (linux_uid={})",
-        systemUsername, sysUid
+        "[initdb] Created system user with linux_uid={}",
+        sysUid ? std::to_string(*sysUid) : "none"
     );
 }
 
@@ -303,6 +409,11 @@ static std::optional<unsigned int> loadPendingSuperAdminUid() {
     unsigned int uid{};
     if (!(in >> uid)) {
         log::Registry::vaulthalla()->warn("[seed] Invalid contents in {}", uidFile.string());
+        return std::nullopt;
+    }
+
+    if (uid == 0) {
+        log::Registry::vaulthalla()->warn("[seed] Refusing to assign UID 0 to admin from {}", uidFile.string());
         return std::nullopt;
     }
 
@@ -443,4 +554,62 @@ void vh::seed::initDevCloudVault() {
     } catch (const std::exception& e) {
         log::Registry::storage()->error("[StorageManager] Error initializing dev Cloudflare R2 vault: {}", e.what());
     }
+}
+
+void vh::seed::reconcileSystemPrincipals() {
+    log::Registry::vaulthalla()->debug("[initdb] Reconciling protected system principals...");
+
+    const auto systemUid = configuredSystemUid();
+    const auto rootHash = hash::password(id::Generator({ .namespace_token = "vaulthalla-root-user" }).generate());
+    const auto systemHash = hash::password(id::Generator({ .namespace_token = "vaulthalla-system-user" }).generate());
+    const auto adminHash = hash::password("vh!adm1n");
+
+    db::Transactions::exec("initdb::reconcileSystemPrincipals", [&](pqxx::work& txn) {
+        txn.exec("SELECT set_config('vaulthalla.bootstrap', 'on', true)");
+
+        const auto roleRes = txn.exec("SELECT id FROM admin_role WHERE name = 'super_admin'");
+        if (roleRes.empty())
+            throw std::runtime_error("super_admin role is missing; cannot reconcile protected principals");
+
+        const auto superAdminRoleId = roleRes.one_row()["id"].as<unsigned int>();
+
+        txn.exec("UPDATE users SET linux_uid = NULL WHERE linux_uid = 0 AND name <> 'root'");
+
+        if (systemUid) {
+            txn.exec(
+                "UPDATE users SET linux_uid = NULL WHERE linux_uid = $1 AND name <> 'system'",
+                pqxx::params{*systemUid}
+            );
+        }
+
+        txn.exec("UPDATE users SET linux_uid = NULL WHERE name = 'admin' AND linux_uid = 0");
+
+        const auto rootId = upsertBootstrapPrincipal(
+            txn,
+            "root",
+            std::nullopt,
+            rootHash,
+            0u,
+            true,
+            true
+        );
+
+        const auto systemId = upsertBootstrapPrincipal(
+            txn,
+            "system",
+            std::make_optional<std::string>("no-reply@system"),
+            systemHash,
+            systemUid,
+            true,
+            true
+        );
+
+        const auto adminId = upsertBootstrapAdmin(txn, adminHash);
+
+        assignSuperAdminRole(txn, rootId, superAdminRoleId);
+        assignSuperAdminRole(txn, systemId, superAdminRoleId);
+        assignSuperAdminRole(txn, adminId, superAdminRoleId);
+    });
+
+    log::Registry::vaulthalla()->info("[initdb] Protected system principals reconciled");
 }

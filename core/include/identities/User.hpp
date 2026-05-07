@@ -78,6 +78,8 @@ namespace vh::identities {
         std::string name{};
         std::string password_hash{};
         std::optional<std::string> email{std::nullopt};
+        bool isProtected = false;
+        bool systemOnly = false;
 
         RoleAssignments roles{};
         std::vector<std::shared_ptr<Group> > groups{};

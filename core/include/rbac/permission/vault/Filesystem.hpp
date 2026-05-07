@@ -30,7 +30,8 @@ namespace vh::rbac::permission {
             ShareInternal,
             SharePublic,
             SharePublicValidated,
-            Lookup
+            Lookup,
+            Link
         };
     }
 

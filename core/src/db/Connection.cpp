@@ -188,6 +188,7 @@ void Connection::initPrepared() const {
     // Filesystem
     initPreparedFsEntries();
     initPreparedFiles();
+    initPreparedSymlinks();
     initPreparedDirectories();
     initPreparedOperations();
     initPreparedCache();

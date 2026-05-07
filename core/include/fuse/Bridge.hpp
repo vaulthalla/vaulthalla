@@ -25,6 +25,10 @@ namespace vh::fuse {
 
     void lookup(fuse_req_t req, fuse_ino_t parent, const char *name);
 
+    void readlink(fuse_req_t req, fuse_ino_t ino);
+
+    void symlink(fuse_req_t req, const char *link, fuse_ino_t parent, const char *name);
+
     void open(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi);
 
     void read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, fuse_file_info *fi);

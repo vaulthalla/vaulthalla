@@ -8,15 +8,18 @@
 #include "stats/model/FuseStats.hpp"
 #include "db/query/identities/User.hpp"
 #include "db/query/fs/File.hpp"
+#include "db/query/fs/Symlink.hpp"
 #include "db/query/fs/Directory.hpp"
 #include "log/Registry.hpp"
 #include "fs/cache/Registry.hpp"
 #include "fuse/Resolver.hpp"
+#include "fs/model/Symlink.hpp"
 
 #include <cerrno>
 #include <chrono>
 #include <cstring>
 #include <mutex>
+#include <string_view>
 #include <sys/statvfs.h>
 #include <unistd.h>
 
@@ -39,8 +42,9 @@ stats::model::FuseStats* fuseStats() noexcept {
 }
 
 void replyError(const fuse_req_t req, ScopedFuseOpTimer& timer, const int errnum) {
-    timer.error(errnum);
-    fuse_reply_err(req, errnum);
+    const int normalized = errnum < 0 ? -errnum : errnum;
+    timer.error(normalized);
+    fuse_reply_err(req, normalized);
 }
 
 void replyOk(const fuse_req_t req, ScopedFuseOpTimer& timer) {
@@ -113,6 +117,11 @@ void setattr(const fuse_req_t req, const fuse_ino_t ino,
 
     if (!resolved.ok()) {
         replyError(req, timer, resolved.errnum);
+        return;
+    }
+
+    if (resolved.entry->isSymlink()) {
+        replyError(req, timer, EOPNOTSUPP);
         return;
     }
 
@@ -234,6 +243,33 @@ void lookup(const fuse_req_t req, const fuse_ino_t parent, const char* name) {
     fuse_reply_entry(req, &e);
 }
 
+void readlink(const fuse_req_t req, const fuse_ino_t ino) {
+    ScopedFuseOpTimer timer(fuseStats(), FuseOperation::ReadLink);
+    log::Registry::fuse()->debug("[readlink] Called for inode: {}", ino);
+
+    const auto resolved = Resolver::resolve({
+        .caller = "readlink",
+        .fuseReq = req,
+        .ino = ino,
+        .action = permission::vault::FilesystemAction::Read,
+        .target = resolver::Target::Entry
+    });
+
+    if (!resolved.ok()) {
+        replyError(req, timer, resolved.errnum);
+        return;
+    }
+
+    if (!resolved.entry->isSymlink()) {
+        replyError(req, timer, EINVAL);
+        return;
+    }
+
+    const auto link = std::static_pointer_cast<Symlink>(resolved.entry);
+    timer.success(static_cast<std::uint64_t>(link->target.size()), 0);
+    fuse_reply_readlink(req, link->target.c_str());
+}
+
 void create(const fuse_req_t req, const fuse_ino_t parent, const char* name, const mode_t mode, fuse_file_info* fi) {
     ScopedFuseOpTimer timer(fuseStats(), FuseOperation::Create);
     log::Registry::fuse()->debug("[create] Called for parent: {}, name: {}, mode: {}",
@@ -291,6 +327,52 @@ void create(const fuse_req_t req, const fuse_ino_t parent, const char* name, con
     fuse_reply_create(req, &e, fi);
 }
 
+void symlink(const fuse_req_t req, const char* link, const fuse_ino_t parent, const char* name) {
+    ScopedFuseOpTimer timer(fuseStats(), FuseOperation::Symlink);
+    log::Registry::fuse()->debug("[symlink] Called for parent: {}, name: {}, target: {}",
+        parent, name ? name : "null", link ? link : "null");
+
+    if (!link || !name || std::string_view(name).find('/') != std::string::npos) {
+        replyError(req, timer, EINVAL);
+        return;
+    }
+
+    const auto resolved = Resolver::resolve({
+        .caller = "symlink",
+        .fuseReq = req,
+        .parentIno = parent,
+        .childName = name,
+        .action = permission::vault::FilesystemAction::Link,
+        .target = resolver::Target::Path
+    });
+
+    if (!resolved.ok()) {
+        replyError(req, timer, resolved.errnum);
+        return;
+    }
+
+    const fuse_ctx* fctx = fuse_req_ctx(req);
+    if (!fctx) {
+        replyError(req, timer, EINVAL);
+        return;
+    }
+
+    const auto [err, newEntry] = Filesystem::createSymlink(*resolved.path, link, fctx->uid, fctx->gid);
+    if (err || !newEntry || !newEntry->inode) {
+        replyError(req, timer, err ? err : EIO);
+        return;
+    }
+
+    fuse_entry_param e{};
+    e.ino = static_cast<fuse_ino_t>(*newEntry->inode);
+    e.attr = statFromEntry(newEntry, e.ino);
+    e.attr_timeout = 1.0;
+    e.entry_timeout = 1.0;
+
+    timer.success();
+    fuse_reply_entry(req, &e);
+}
+
 void open(const fuse_req_t req, const fuse_ino_t ino, fuse_file_info* fi) {
     ScopedFuseOpTimer timer(fuseStats(), FuseOperation::Open);
     log::Registry::fuse()->debug("[open] Called for inode: {}, flags: {}", ino, fi->flags);
@@ -305,6 +387,11 @@ void open(const fuse_req_t req, const fuse_ino_t ino, fuse_file_info* fi) {
 
     if (!resolved.ok()) {
         replyError(req, timer, resolved.errnum);
+        return;
+    }
+
+    if (resolved.entry->isSymlink()) {
+        replyError(req, timer, ELOOP);
         return;
     }
 
@@ -556,11 +643,24 @@ void unlink(const fuse_req_t req, const fuse_ino_t parent, const char* name) {
         return;
     }
 
+    if (resolved.entry->isSymlink()) {
+        const auto link = std::static_pointer_cast<Symlink>(resolved.entry);
+        db::query::fs::Symlink::deleteSymlink(link);
+
+        if (::unlink(resolved.entry->backing_path.c_str()) < 0)
+            log::Registry::fuse()->debug("[unlink] Failed to remove backing symlink: {}: {}", resolved.entry->backing_path.string(), strerror(errno));
+
+        runtime::Deps::get().fsCache->evictPath(resolved.entry->fuse_path);
+        replyOk(req, timer);
+        return;
+    }
+
     db::query::fs::File::markFileAsTrashed(resolved.user->id, *resolved.entry->vault_id, resolved.entry->path, true);
 
     if (::unlink(resolved.entry->backing_path.c_str()) < 0)
         log::Registry::fuse()->debug("[unlink] Failed to remove backing file: {}: {}", resolved.entry->backing_path.string(), strerror(errno));
 
+    runtime::Deps::get().fsCache->evictPath(resolved.entry->fuse_path);
     replyOk(req, timer);
 }
 
@@ -692,6 +792,8 @@ fuse_lowlevel_ops getOperations() {
     ops.setattr = setattr;
     ops.readdir = readdir;
     ops.lookup = lookup;
+    ops.readlink = readlink;
+    ops.symlink = symlink;
     ops.open = open;
     ops.read = read;
     ops.forget = forget;
@@ -712,7 +814,9 @@ fuse_lowlevel_ops getOperations() {
 struct stat statFromEntry(const std::shared_ptr<Entry>& entry, const fuse_ino_t& ino) {
     struct stat st{};
     st.st_ino = ino;
-    st.st_mode = entry->isDirectory() ? S_IFDIR | 0755 : S_IFREG | 0644;
+    if (entry->isDirectory()) st.st_mode = S_IFDIR | 0755;
+    else if (entry->isSymlink()) st.st_mode = S_IFLNK | 0777;
+    else st.st_mode = S_IFREG | 0644;
     st.st_size = static_cast<off_t>(entry->size_bytes);
     st.st_mtim.tv_sec = entry->updated_at;
     st.st_atim = st.st_ctim = st.st_mtim;

@@ -247,8 +247,12 @@ std::string to_string(const FuseOperation op) {
             return "readdir";
         case FuseOperation::Lookup:
             return "lookup";
+        case FuseOperation::ReadLink:
+            return "readlink";
         case FuseOperation::Create:
             return "create";
+        case FuseOperation::Symlink:
+            return "symlink";
         case FuseOperation::Open:
             return "open";
         case FuseOperation::Read:

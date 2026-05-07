@@ -74,6 +74,8 @@ void initDB() {
 
     if (!vh::db::query::identities::User::adminUserExists())
         vh::seed::seed_database();
+
+    vh::seed::reconcileSystemPrincipals();
 }
 
 void initDeps() {

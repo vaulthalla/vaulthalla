@@ -4,9 +4,11 @@
 #include "vault/model/Vault.hpp"
 #include "fs/model/File.hpp"
 #include "fs/model/Directory.hpp"
+#include "fs/model/Symlink.hpp"
 #include "fs/model/Path.hpp"
 #include "db/query/fs/Directory.hpp"
 #include "db/query/fs/File.hpp"
+#include "db/query/fs/Symlink.hpp"
 #include "config/Registry.hpp"
 #include "db/query/fs/Entry.hpp"
 #include "vault/EncryptionManager.hpp"
@@ -41,6 +43,39 @@ using namespace vh::fs;
 using namespace vh::fs::ops;
 using namespace vh::fs::model;
 using namespace vh::fs::metadata;
+
+namespace {
+
+bool symlinkStatusExists(const std::filesystem::path& path) {
+    std::error_code ec;
+    const auto status = std::filesystem::symlink_status(path, ec);
+    return !ec && status.type() != std::filesystem::file_type::not_found;
+}
+
+bool targetEscapesVaultRoot(const std::filesystem::path& linkVaultPath, const std::filesystem::path& target) {
+    std::size_t depth = 0;
+    for (const auto& part : linkVaultPath.parent_path()) {
+        const auto s = part.string();
+        if (s.empty() || s == "/" || s == ".") continue;
+        if (s == "..") {
+            if (depth == 0) return true;
+            --depth;
+        } else ++depth;
+    }
+
+    for (const auto& part : target) {
+        const auto s = part.string();
+        if (s.empty() || s == ".") continue;
+        if (s == "..") {
+            if (depth == 0) return true;
+            --depth;
+        } else ++depth;
+    }
+
+    return false;
+}
+
+} // namespace
 
 static void updateFile(pqxx::work& txn, const std::shared_ptr<File>& file) {
     const auto exists = txn.exec(pqxx::prepped{"fs_entry_exists_by_inode"}, file->inode).one_field().as<bool>();
@@ -249,6 +284,120 @@ bool Filesystem::exists(const std::filesystem::path& absPath) {
     }
 }
 
+std::pair<int, std::shared_ptr<model::Symlink>>
+Filesystem::createSymlink(const std::filesystem::path& linkPath,
+                          const std::string& target,
+                          const uid_t uid,
+                          const gid_t gid) {
+    std::scoped_lock lock(mutex_);
+
+    try {
+        if (!storageManager_) {
+            log::Registry::fs()->error("[Filesystem::createSymlink] StorageManager is not initialized");
+            return {-EIO, nullptr};
+        }
+
+        if (target.empty()) return {-EINVAL, nullptr};
+
+        const auto targetPath = std::filesystem::path(target);
+        if (targetPath.is_absolute()) return {-EINVAL, nullptr};
+
+        const auto engine = storageManager_->resolveStorageEngine(linkPath);
+        if (!engine) {
+            log::Registry::fs()->error(
+                "[Filesystem::createSymlink] No storage engine found for path: {}",
+                linkPath.string());
+            return {-EIO, nullptr};
+        }
+
+        const auto& cache = runtime::Deps::get().fsCache;
+        if (cache->entryExists(linkPath)) return {-EEXIST, nullptr};
+
+        const auto parent = cache->getEntry(resolveParent(linkPath));
+        if (!parent) {
+            log::Registry::fs()->error(
+                "[Filesystem::createSymlink] Parent directory does not exist: {}",
+                linkPath.parent_path().string());
+            return {-ENOENT, nullptr};
+        }
+
+        const auto vaultPath = engine->paths->absRelToAbsRel(linkPath, PathType::FUSE_ROOT, PathType::VAULT_ROOT);
+        if (targetEscapesVaultRoot(vaultPath, targetPath)) return {-EINVAL, nullptr};
+
+        auto symlink = std::make_shared<Symlink>();
+        symlink->parent_id = parent->id;
+        symlink->vault_id = engine->vault->id;
+        symlink->name = linkPath.filename();
+        symlink->target = target;
+        symlink->path = vaultPath;
+        symlink->fuse_path = linkPath;
+        symlink->base32_alias = id::Generator({ .namespace_token = symlink->name }).generate();
+        symlink->backing_path = parent->backing_path / symlink->base32_alias;
+        symlink->mode = 0777;
+        symlink->owner_uid = uid;
+        symlink->group_gid = gid;
+        symlink->is_hidden = !symlink->name.empty() && symlink->name.starts_with('.');
+        symlink->is_system = false;
+        symlink->created_at = std::time(nullptr);
+        symlink->updated_at = symlink->created_at;
+        symlink->inode = std::make_optional(cache->getOrAssignInode(linkPath));
+        symlink->size_bytes = symlink->target.size();
+
+        try {
+            std::filesystem::create_directories(symlink->backing_path.parent_path());
+            std::filesystem::create_symlink(symlink->target, symlink->backing_path);
+        } catch (const std::filesystem::filesystem_error& ex) {
+            log::Registry::fs()->error(
+                "[Filesystem::createSymlink] Failed to create backing symlink for {}: {}",
+                linkPath.string(),
+                ex.what());
+            return {ex.code() ? -ex.code().value() : -EIO, nullptr};
+        } catch (const std::exception& ex) {
+            log::Registry::fs()->error(
+                "[Filesystem::createSymlink] Failed to create backing symlink for {}: {}",
+                linkPath.string(),
+                ex.what());
+            return {-EIO, nullptr};
+        }
+
+        if (!symlinkStatusExists(symlink->backing_path)) {
+            log::Registry::fs()->error(
+                "[Filesystem::createSymlink] Failed to create backing symlink at: {}",
+                symlink->backing_path.string());
+            return {-EIO, nullptr};
+        }
+
+        symlink->id = db::query::fs::Symlink::upsertSymlink(symlink);
+        cache->cacheEntry(symlink);
+
+        log::Registry::fs()->debug("[Filesystem::createSymlink] Successfully created symlink at path: {}", linkPath.string());
+        return {0, symlink};
+    } catch (const std::bad_alloc& ex) {
+        log::Registry::fs()->error(
+            "[Filesystem::createSymlink] Out of memory creating {}: {}",
+            linkPath.string(),
+            ex.what());
+        return {-ENOMEM, nullptr};
+    } catch (const std::filesystem::filesystem_error& ex) {
+        log::Registry::fs()->error(
+            "[Filesystem::createSymlink] Filesystem error creating {}: {}",
+            linkPath.string(),
+            ex.what());
+        return {ex.code() ? -ex.code().value() : -EIO, nullptr};
+    } catch (const std::exception& ex) {
+        log::Registry::fs()->error(
+            "[Filesystem::createSymlink] Failed to create symlink at path {}: {}",
+            linkPath.string(),
+            ex.what());
+        return {-EIO, nullptr};
+    } catch (...) {
+        log::Registry::fs()->error(
+            "[Filesystem::createSymlink] Unknown failure creating symlink at path: {}",
+            linkPath.string());
+        return {-EIO, nullptr};
+    }
+}
+
 int Filesystem::copy(const std::filesystem::path& from,
                      const std::filesystem::path& to,
                      const unsigned int userId,
@@ -293,17 +442,19 @@ int Filesystem::copy(const std::filesystem::path& from,
         const auto fromVaultPath = engine->paths->absRelToAbsRel(from, PathType::FUSE_ROOT, PathType::VAULT_ROOT);
         const auto toVaultPath = engine->paths->absRelToAbsRel(to, PathType::FUSE_ROOT, PathType::VAULT_ROOT);
 
-        const bool isFile = engine->isFile(fromVaultPath);
-        if (!isFile && !engine->isDirectory(fromVaultPath)) {
+        const auto& cache = runtime::Deps::get().fsCache;
+
+        const auto entry = cache->getEntry(from);
+        const bool isSymlink = entry && entry->isSymlink();
+        const bool isFile = !isSymlink && engine->isFile(fromVaultPath);
+        const bool isDirectory = !isSymlink && engine->isDirectory(fromVaultPath);
+        if (!isSymlink && !isFile && !isDirectory) {
             log::Registry::fs()->error(
                 "[Filesystem::copy] Source path does not exist: {}",
                 from.string());
             return -ENOENT;
         }
 
-        const auto& cache = runtime::Deps::get().fsCache;
-
-        const auto entry = cache->getEntry(from);
         if (!entry) {
             log::Registry::fs()->error(
                 "[Filesystem::copy] Source entry not found in cache: {}",
@@ -326,7 +477,27 @@ int Filesystem::copy(const std::filesystem::path& from,
             return -EEXIST;
         }
 
-        if (isFile) {
+        if (entry->isSymlink()) {
+            auto copied = std::make_shared<Symlink>(*std::static_pointer_cast<Symlink>(entry));
+            copied->id = 0;
+            copied->path = toVaultPath;
+            copied->fuse_path = to;
+            copied->name = to.filename().string();
+            copied->base32_alias = id::Generator({ .namespace_token = copied->name }).generate();
+            copied->backing_path = parent->backing_path / copied->base32_alias;
+            copied->created_by = copied->last_modified_by = userId;
+            copied->parent_id = parent->id;
+            copied->inode = cache->getOrAssignInode(to);
+            copied->is_hidden = !copied->name.empty() && copied->name.front() == '.' && !copied->name.starts_with("..");
+            copied->is_system = false;
+            copied->size_bytes = copied->target.size();
+
+            std::filesystem::create_directories(copied->backing_path.parent_path());
+            std::filesystem::create_symlink(copied->target, copied->backing_path);
+
+            copied->id = db::query::fs::Symlink::upsertSymlink(copied);
+            cache->cacheEntry(copied);
+        } else if (isFile) {
             auto copied = std::make_shared<File>(*std::static_pointer_cast<File>(entry));
             copied->id = 0;
             copied->path = toVaultPath;
@@ -392,12 +563,18 @@ void Filesystem::remove(const std::filesystem::path& path, const unsigned int us
             db::query::fs::File::markFileAsTrashed(userId, file->id);
             cache->evictPath(file->fuse_path);
         }
+    else if (entry->isSymlink()) {
+        db::query::fs::Symlink::deleteSymlink(std::static_pointer_cast<Symlink>(entry));
+        cache->evictPath(path);
+    }
     else {
         db::query::fs::File::markFileAsTrashed(userId, *entry->vault_id, entry->path);
         cache->evictPath(path);
     }
 
-    if (std::filesystem::exists(entry->backing_path)) std::filesystem::remove_all(entry->backing_path);
+    if (entry->isSymlink()) {
+        if (symlinkStatusExists(entry->backing_path)) std::filesystem::remove(entry->backing_path);
+    } else if (std::filesystem::exists(entry->backing_path)) std::filesystem::remove_all(entry->backing_path);
 }
 
 std::shared_ptr<File> Filesystem::createFile(const NewFileContext& ctx) {
@@ -772,7 +949,7 @@ int Filesystem::handleRename(const RenameContext& ctx) {
         }
 
         const auto oldBackingPath = entry->backing_path;
-        if (!std::filesystem::exists(oldBackingPath)) {
+        if (!symlinkStatusExists(oldBackingPath)) {
             log::Registry::fs()->error(
                 "[Filesystem::handleRename] Source backing path does not exist: {}",
                 oldBackingPath.string());
@@ -807,6 +984,15 @@ int Filesystem::handleRename(const RenameContext& ctx) {
 
         if (entry->isDirectory()) {
             std::filesystem::create_directories(entry->backing_path);
+        } else if (entry->isSymlink()) {
+            std::filesystem::create_directories(entry->backing_path.parent_path());
+            std::filesystem::rename(oldBackingPath, entry->backing_path);
+            updateFSEntry(ctx.txn, entry);
+
+            cache->evictPath(ctx.from);
+            cache->evictPath(ctx.to);
+            cache->cacheEntry(entry);
+            return 0;
         } else {
             std::filesystem::create_directories(entry->backing_path.parent_path());
 

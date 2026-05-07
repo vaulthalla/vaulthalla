@@ -53,9 +53,7 @@ CommandResult handleAssignAdmin(const CommandCall& call) {
         return invalid(err.str());
     }
 
-    admin->meta.linux_uid = callerUid;
-    admin->meta.updated_by = call.user->id;
-    db::query::identities::User::updateUser(admin);
+    db::query::identities::User::bootstrapSetAdminLinuxUID(callerUid, call.user->id);
 
     std::ostringstream out;
     out << "setup assign-admin: assigned\n";

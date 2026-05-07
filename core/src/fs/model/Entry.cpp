@@ -2,6 +2,7 @@
 #include "db/encoding/timestamp.hpp"
 #include "fs/model/File.hpp"
 #include "fs/model/Directory.hpp"
+#include "fs/model/Symlink.hpp"
 #include "fs/model/Path.hpp"
 #include "log/Registry.hpp"
 #include "config/Registry.hpp"
@@ -121,6 +122,7 @@ void vh::fs::model::to_json(nlohmann::json& j, const std::vector<std::shared_ptr
     j = nlohmann::json::array();
     for (const auto& entry : entries) {
         if (entry->isDirectory()) j.push_back(*std::static_pointer_cast<Directory>(entry));
+        else if (entry->isSymlink()) j.push_back(*std::static_pointer_cast<Symlink>(entry));
         else j.push_back(*std::static_pointer_cast<File>(entry));
     }
 }
@@ -132,6 +134,20 @@ std::vector<std::shared_ptr<Entry>> vh::fs::model::merge_entries(
     entries.reserve(files.size() + directories.size());
 
     entries.insert(entries.end(), files.begin(), files.end());
+    entries.insert(entries.end(), directories.begin(), directories.end());
+
+    return entries;
+}
+
+std::vector<std::shared_ptr<Entry>> vh::fs::model::merge_entries(
+    const std::vector<std::shared_ptr<File>>& files,
+    const std::vector<std::shared_ptr<Symlink>>& symlinks,
+    const std::vector<std::shared_ptr<Directory>>& directories) {
+    std::vector<std::shared_ptr<Entry>> entries;
+    entries.reserve(files.size() + symlinks.size() + directories.size());
+
+    entries.insert(entries.end(), files.begin(), files.end());
+    entries.insert(entries.end(), symlinks.begin(), symlinks.end());
     entries.insert(entries.end(), directories.begin(), directories.end());
 
     return entries;
@@ -262,4 +278,3 @@ void Entry::print() const {
                                 inode ? std::to_string(*inode) : "N/A",
                                 mode ? std::to_string(*mode) : "N/A");
 }
-
