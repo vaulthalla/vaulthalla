@@ -204,14 +204,14 @@ if get_option('build_unit_tests')
     unit_test_env = environment()
     unit_test_env.set('VH_PATH_TO_CONFIG', join_paths(repo_root, 'deploy/config/config.yaml'))
 
-    all_test_sources = sources
+    unit_test_sources = []
     foreach f : run_command('sh', '-c', 'find "$1" -type f -name "*.cpp" | LC_ALL=C sort', 'find-cpp', tests_src, check: true).stdout().strip().split('\n')
-        all_test_sources += files(f)
+        unit_test_sources += files(f)
     endforeach
 
     vh_unit_tests = executable(
         'vh_unit_tests',
-        all_test_sources,
+        unit_test_sources,
         link_with: [lib_core, lib_seed, lib_usage],
         include_directories: inc,
         dependencies: test_deps,
