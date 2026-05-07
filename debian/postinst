@@ -45,6 +45,10 @@ create_dir() {
     install -d -m "$2" -o "$3" -g "$4" "$1"
 }
 
+warn_nonfatal() {
+    echo "[${PKG}] WARNING: $*" >&2
+}
+
 is_upgrade() {
     [ "$POSTINST_ACTION" = "configure" ] && [ -n "$LAST_CONFIGURED_VERSION" ]
 }
@@ -58,6 +62,45 @@ safe_systemctl() {
         return 0
     fi
     systemctl --system "$@" >/dev/null 2>&1 || true
+}
+
+is_mountpoint() {
+    path="$1"
+    if has_command mountpoint && mountpoint -q "$path" >/dev/null 2>&1; then
+        return 0
+    fi
+    if [ -r /proc/mounts ]; then
+        awk -v target="$path" '$2 == target { found = 1 } END { exit(found ? 0 : 1) }' /proc/mounts
+        return $?
+    fi
+    return 1
+}
+
+ensure_mount_root() {
+    # FUSE mount roots can reject chown/chmod while live or stale; never let that
+    # abort package configuration.
+    path="$1"
+    mode="$2"
+    owner="$3"
+    group="$4"
+
+    if is_mountpoint "$path"; then
+        echo "[${PKG}] Mount root ${path}: mounted; leaving owner/mode unchanged."
+        return 0
+    fi
+
+    if [ -d "$path" ]; then
+        echo "[${PKG}] Mount root ${path}: exists; leaving owner/mode unchanged."
+        return 0
+    fi
+
+    if create_dir "$path" "$mode" "$owner" "$group"; then
+        echo "[${PKG}] Mount root ${path}: created."
+        return 0
+    fi
+
+    warn_nonfatal "Could not prepare mount root ${path}; continuing."
+    return 0
 }
 
 run_as_postgres() {
@@ -101,12 +144,18 @@ ensure_tss_group_and_user_added() {
         echo "[${PKG}] Ensuring '${DB_USER}' is a member of the existing 'tss' group."
     else
         echo "[${PKG}] No 'tss' group found; creating one."
-        addgroup --system tss
+        if ! addgroup --system tss; then
+            warn_nonfatal "Failed to create 'tss' group; continuing without package-time TPM group membership."
+            return 0
+        fi
     fi
     if id -nG "$DB_USER" 2>/dev/null | tr ' ' '\n' | grep -qx tss; then
         return 0
     fi
-    adduser "$DB_USER" tss
+    if ! adduser "$DB_USER" tss; then
+        warn_nonfatal "Failed to add '${DB_USER}' to 'tss'; continuing because systemd supplies SupplementaryGroups=tss."
+        return 0
+    fi
 }
 
 align_config_file_permissions() {
@@ -114,14 +163,21 @@ align_config_file_permissions() {
     if [ ! -f "$target" ]; then
         return 0
     fi
-    chown "$DB_USER:$DB_USER" "$target"
-    chmod 0640 "$target"
+    if ! chown "$DB_USER:$DB_USER" "$target"; then
+        warn_nonfatal "Could not align owner for ${target}; leaving unchanged."
+    fi
+    if ! chmod 0640 "$target"; then
+        warn_nonfatal "Could not align mode for ${target}; leaving unchanged."
+    fi
 }
 
 ensure_fuse_allow_other() {
     fuse_conf="/etc/fuse.conf"
     if [ ! -f "$fuse_conf" ]; then
-        install -m 0644 /dev/null "$fuse_conf"
+        if ! install -m 0644 /dev/null "$fuse_conf"; then
+            warn_nonfatal "Could not create ${fuse_conf}; skipping FUSE allow_other configuration."
+            return 0
+        fi
     fi
 
     if grep -Eq '^[[:space:]]*user_allow_other([[:space:]]*(#.*)?)?$' "$fuse_conf"; then
@@ -130,12 +186,18 @@ ensure_fuse_allow_other() {
     fi
 
     if grep -Eq '^[[:space:]]*#[[:space:]]*user_allow_other([[:space:]]*(#.*)?)?$' "$fuse_conf"; then
-        sed -i -E 's/^[[:space:]]*#[[:space:]]*(user_allow_other([[:space:]]*(#.*)?)?)$/\1/' "$fuse_conf"
+        if ! sed -i -E 's/^[[:space:]]*#[[:space:]]*(user_allow_other([[:space:]]*(#.*)?)?)$/\1/' "$fuse_conf"; then
+            warn_nonfatal "Could not update ${fuse_conf}; skipping FUSE allow_other configuration."
+            return 0
+        fi
         echo "[${PKG}] FUSE config: enabled user_allow_other in /etc/fuse.conf"
         return 0
     fi
 
-    printf '\nuser_allow_other\n' >> "$fuse_conf"
+    if ! printf '\nuser_allow_other\n' >> "$fuse_conf"; then
+        warn_nonfatal "Could not append to ${fuse_conf}; skipping FUSE allow_other configuration."
+        return 0
+    fi
     echo "[${PKG}] FUSE config: enabled user_allow_other in /etc/fuse.conf"
 }
 
@@ -656,7 +718,10 @@ setup_web_runtime_cache() {
         return 0
     fi
 
-    install -d -m 0750 -o "$DB_USER" -g "$DB_USER" "$CACHE_DIR"
+    if ! install -d -m 0750 -o "$DB_USER" -g "$DB_USER" "$CACHE_DIR"; then
+        warn_nonfatal "Web cache: could not prepare ${CACHE_DIR}; leaving cache setup unchanged."
+        return 0
+    fi
 
     if [ -L "$CACHE_LINK" ]; then
         CACHE_LINK_TARGET="$(readlink "$CACHE_LINK" 2>/dev/null || true)"
@@ -668,7 +733,10 @@ setup_web_runtime_cache() {
         echo "[${PKG}] WARNING: Web cache path exists and is not a symlink; leaving unchanged: ${CACHE_LINK}"
         return 0
     else
-        ln -s "$CACHE_DIR" "$CACHE_LINK"
+        if ! ln -s "$CACHE_DIR" "$CACHE_LINK"; then
+            warn_nonfatal "Web cache: could not create ${CACHE_LINK}; leaving cache setup unchanged."
+            return 0
+        fi
     fi
 
     if [ -L "$CACHE_LINK" ]; then
@@ -742,11 +810,19 @@ configure_nginx_if_safe() {
         return 0
     fi
 
-    install -d -m 0755 /etc/nginx/sites-available /etc/nginx/sites-enabled
+    if ! install -d -m 0755 /etc/nginx/sites-available /etc/nginx/sites-enabled; then
+        NGINX_CONFIG_STATUS="skipped (failed preparing nginx site directories)"
+        warn_nonfatal "nginx config: could not prepare site directories; skipping automatic nginx integration."
+        return 0
+    fi
 
     if [ ! -f "$NGINX_SITE_AVAIL" ]; then
-        install -m 0644 "$NGINX_TEMPLATE" "$NGINX_SITE_AVAIL"
-        printf '%s\n' "managed-by=${PKG}" > "$NGINX_MANAGED_MARKER"
+        if ! install -m 0644 "$NGINX_TEMPLATE" "$NGINX_SITE_AVAIL"; then
+            NGINX_CONFIG_STATUS="skipped (failed installing nginx site template)"
+            warn_nonfatal "nginx config: could not install ${NGINX_SITE_AVAIL}; skipping automatic nginx integration."
+            return 0
+        fi
+        printf '%s\n' "managed-by=${PKG}" > "$NGINX_MANAGED_MARKER" 2>/dev/null || true
         chmod 0644 "$NGINX_MANAGED_MARKER" >/dev/null 2>&1 || true
     fi
 
@@ -766,7 +842,11 @@ configure_nginx_if_safe() {
         NGINX_CONFIG_STATUS="skipped (${NGINX_SITE_ENABLED} exists and is not a symlink)"
         return 0
     else
-        ln -s "$NGINX_SITE_AVAIL" "$NGINX_SITE_ENABLED"
+        if ! ln -s "$NGINX_SITE_AVAIL" "$NGINX_SITE_ENABLED"; then
+            NGINX_CONFIG_STATUS="skipped (failed enabling nginx site)"
+            warn_nonfatal "nginx config: could not create ${NGINX_SITE_ENABLED}; skipping automatic nginx integration."
+            return 0
+        fi
         CREATED_SITE_LINK="true"
     fi
 
@@ -777,7 +857,7 @@ configure_nginx_if_safe() {
     fi
 
     if [ "$CREATED_SITE_LINK" = "true" ]; then
-        rm -f "$NGINX_SITE_ENABLED"
+        rm -f "$NGINX_SITE_ENABLED" || true
     fi
     NGINX_CONFIG_STATUS="skipped (nginx config test failed; reverted site enablement)"
     return 0
@@ -798,7 +878,7 @@ case "$1" in
     create_dir /var/log/vaulthalla 0750 "$DB_USER" "$DB_USER"
     create_dir /run/vaulthalla     0750 "$DB_USER" "$DB_USER"
     install -d -m 0755 /etc/vaulthalla
-    [ -d /mnt/vaulthalla ] || create_dir /mnt/vaulthalla 0755 "$DB_USER" "$DB_USER"
+    ensure_mount_root /mnt/vaulthalla 0755 "$DB_USER" "$DB_USER"
     setup_web_runtime_cache
     ensure_fuse_allow_other
     align_config_file_permissions /etc/vaulthalla/config.yaml

@@ -42,6 +42,57 @@ class DebianInstallFlowContractTests(unittest.TestCase):
         for fragment in forbidden_fragments:
             self.assertNotIn(fragment, postinst)
 
+    def test_postinst_mount_root_is_best_effort_and_upgrade_safe(self) -> None:
+        postinst = (self._repo_root() / "debian" / "postinst").read_text(encoding="utf-8")
+        required_fragments = (
+            "is_mountpoint()",
+            "ensure_mount_root()",
+            "FUSE mount roots can reject chown/chmod while live or stale",
+            "Mount root ${path}: mounted; leaving owner/mode unchanged.",
+            "Mount root ${path}: exists; leaving owner/mode unchanged.",
+            "Could not prepare mount root ${path}; continuing.",
+            'ensure_mount_root /mnt/vaulthalla 0755 "$DB_USER" "$DB_USER"',
+        )
+        for fragment in required_fragments:
+            self.assertIn(fragment, postinst)
+
+        forbidden_fragments = (
+            "[ -d /mnt/vaulthalla ] || create_dir /mnt/vaulthalla",
+            'create_dir /mnt/vaulthalla 0755 "$DB_USER" "$DB_USER"',
+        )
+        for fragment in forbidden_fragments:
+            self.assertNotIn(fragment, postinst)
+
+    def test_postinst_tss_membership_failure_is_nonfatal(self) -> None:
+        postinst = (self._repo_root() / "debian" / "postinst").read_text(encoding="utf-8")
+        required_fragments = (
+            "warn_nonfatal()",
+            "if ! addgroup --system tss; then",
+            "Failed to create 'tss' group; continuing without package-time TPM group membership.",
+            'if ! adduser "$DB_USER" tss; then',
+            "Failed to add '${DB_USER}' to 'tss'; continuing because systemd supplies SupplementaryGroups=tss.",
+        )
+        for fragment in required_fragments:
+            self.assertIn(fragment, postinst)
+
+    def test_postinst_optional_runtime_setup_warns_instead_of_aborting(self) -> None:
+        postinst = (self._repo_root() / "debian" / "postinst").read_text(encoding="utf-8")
+        required_fragments = (
+            "Could not create ${fuse_conf}; skipping FUSE allow_other configuration.",
+            "Could not update ${fuse_conf}; skipping FUSE allow_other configuration.",
+            "Could not append to ${fuse_conf}; skipping FUSE allow_other configuration.",
+            "Could not align owner for ${target}; leaving unchanged.",
+            "Could not align mode for ${target}; leaving unchanged.",
+            "Web cache: could not prepare ${CACHE_DIR}; leaving cache setup unchanged.",
+            "Web cache: could not create ${CACHE_LINK}; leaving cache setup unchanged.",
+            "skipped (failed preparing nginx site directories)",
+            "skipped (failed installing nginx site template)",
+            "skipped (failed enabling nginx site)",
+            'rm -f "$NGINX_SITE_ENABLED" || true',
+        )
+        for fragment in required_fragments:
+            self.assertIn(fragment, postinst)
+
     def test_prerm_and_postrm_cleanup_legacy_superadmin_seed_only_as_legacy(self) -> None:
         repo = self._repo_root()
         prerm = (repo / "debian" / "prerm").read_text(encoding="utf-8")
