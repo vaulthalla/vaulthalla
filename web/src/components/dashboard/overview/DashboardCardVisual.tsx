@@ -199,10 +199,11 @@ export function DashboardCardVisual({
   }
 
   const visualMetric =
-    visualKind === 'meter:fuse_error' ? metric('error_rate')
+    visualKind === 'meter:fuse_error' ? metric('alertable_error_rate') ?? metric('error_rate')
     : visualKind === 'meter:cache_hit' ? metric('hit_rate')
     : visualKind === 'meter:db_cache' ? metric('cache_hit')
-    : metric('error_rate') ??
+    : metric('alertable_error_rate') ??
+      metric('error_rate') ??
       metric('hit_rate') ??
       metric('cache_hit') ??
       metric('pressure') ??

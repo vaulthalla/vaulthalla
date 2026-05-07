@@ -144,11 +144,11 @@ const SummaryPill = ({
 )
 
 const OpRow = ({ op }: { op: FuseOpStatsModel }) => {
-  const tone = toneForErrorRate(op.error_rate)
-  const barWidth = `${Math.min(100, Math.max(3, op.count > 0 ? op.error_rate * 100 : 3))}%`
+  const tone = toneForErrorRate(op.alertable_error_rate)
+  const barWidth = `${Math.min(100, Math.max(3, op.count > 0 ? op.alertable_error_rate * 100 : 3))}%`
 
   return (
-    <div className="grid grid-cols-2 gap-2 rounded-2xl border border-white/10 bg-white/5 p-3 text-sm backdrop-blur md:grid-cols-9">
+    <div className="grid grid-cols-2 gap-2 rounded-2xl border border-white/10 bg-white/5 p-3 text-sm backdrop-blur md:grid-cols-11">
       <div className="col-span-2 min-w-0 md:col-span-1">
         <div className="truncate font-semibold text-white/90">{op.op}</div>
         <div className={['mt-1 h-1.5 overflow-hidden rounded-full bg-white/10'].join(' ')}>
@@ -157,8 +157,10 @@ const OpRow = ({ op }: { op: FuseOpStatsModel }) => {
       </div>
       <Metric label="count" value={formatInt(op.count)} />
       <Metric label="success" value={formatInt(op.successes)} />
-      <Metric label="errors" value={formatInt(op.errors)} tone={op.errors > 0 ? tone : undefined} />
-      <Metric label="err rate" value={formatPercent(op.error_rate)} tone={tone} />
+      <Metric label="raw err" value={formatInt(op.errors)} tone={op.errors > 0 ? tones.warn : undefined} />
+      <Metric label="expected" value={formatInt(op.expected_errors)} />
+      <Metric label="alertable" value={formatInt(op.alertable_errors)} tone={op.alertable_errors > 0 ? tone : undefined} />
+      <Metric label="alert %" value={formatPercent(op.alertable_error_rate)} tone={tone} />
       <Metric label="avg" value={formatMs(op.avg_ms)} />
       <Metric label="max" value={formatMs(op.max_ms)} tone={op.max_ms > 100 ? tones.warn : undefined} />
       <Metric label="read" value={formatBytes(op.bytes_read)} />
@@ -187,7 +189,7 @@ export default function FuseStatsComponent({ intervalMs = 7500 }: { intervalMs?:
   }, [startPolling, stopPolling, intervalMs])
 
   const stats = wrapper.data
-  const tone = toneForErrorRate(stats.error_rate)
+  const tone = toneForErrorRate(stats.alertable_error_rate)
   const slowest = stats.total_ops > 0 ? stats.topOpsByLatency(1)[0] : null
   const checkedAt = formatCheckedAt(stats.checked_at, wrapper.lastUpdated)
   const visibleOps = [...stats.ops].sort((a, b) => {
@@ -204,13 +206,19 @@ export default function FuseStatsComponent({ intervalMs = 7500 }: { intervalMs?:
       right={right}
       className="w-full">
       <div className="space-y-4">
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-6">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-7">
           <SummaryPill label="Ops" value={formatInt(stats.total_ops)} detail={`checked ${checkedAt}`} tone={tone} />
           <SummaryPill
-            label="Error rate"
-            value={formatPercent(stats.error_rate)}
-            detail={`${formatInt(stats.total_errors)} errors`}
+            label="Alertable rate"
+            value={formatPercent(stats.alertable_error_rate)}
+            detail={`${formatInt(stats.alertable_errors)} alertable`}
             tone={tone}
+          />
+          <SummaryPill
+            label="Raw errors"
+            value={formatPercent(stats.error_rate)}
+            detail={`${formatInt(stats.total_errors)} raw / ${formatInt(stats.expected_errors)} expected`}
+            tone={stats.total_errors > 0 ? tones.warn : tones.healthy}
           />
           <SummaryPill label="Read" value={formatBytes(stats.read_bytes)} detail="returned bytes" tone={tones.normal} />
           <SummaryPill

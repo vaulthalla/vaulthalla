@@ -122,8 +122,8 @@ export const dashboardCardDefinitions: DashboardCardDefinition[] = [
     defaultSize: '2x1',
     supportedSizes: ['1x2', '2x1', '2x2', '3x1', '3x2', '4x2'],
     supportedVariants: ['tiles', 'visual'],
-    metricPriority: ['error_rate', 'total_errors', 'ops', 'successes', 'open_handles', 'open_peak', 'avg_latency', 'max_latency', 'read_bytes', 'write_bytes', 'op_types', 'errno_types'],
-    zeroLowValueMetricKeys: ['total_errors', 'open_handles', 'open_peak', 'avg_latency', 'max_latency', 'read_bytes', 'write_bytes', 'op_types', 'errno_types'],
+    metricPriority: ['alertable_error_rate', 'alertable_errors', 'error_rate', 'total_errors', 'expected_errors', 'ops', 'successes', 'open_handles', 'open_peak', 'avg_latency', 'max_latency', 'read_bytes', 'write_bytes', 'op_types', 'errno_types'],
+    zeroLowValueMetricKeys: ['alertable_errors', 'total_errors', 'expected_errors', 'open_handles', 'open_peak', 'avg_latency', 'max_latency', 'read_bytes', 'write_bytes', 'op_types', 'errno_types'],
     visualKind: 'sparkline:fuse_error',
     omitMetricsWhenVisual: [],
     variants: {
@@ -131,7 +131,7 @@ export const dashboardCardDefinitions: DashboardCardDefinition[] = [
       visual: {
         supportedSizes: ['1x2', '2x1', '2x2', '3x1', '3x2', '4x2'],
         visualKind: 'sparkline:fuse_error',
-        metricPriority: ['error_rate', 'total_errors', 'ops', 'successes', 'open_handles', 'open_peak', 'avg_latency', 'max_latency', 'read_bytes', 'write_bytes', 'op_types', 'errno_types'],
+        metricPriority: ['alertable_error_rate', 'alertable_errors', 'error_rate', 'total_errors', 'expected_errors', 'ops', 'successes', 'open_handles', 'open_peak', 'avg_latency', 'max_latency', 'read_bytes', 'write_bytes', 'op_types', 'errno_types'],
         omitMetricsWhenVisual: [],
         requiresSeries: true,
       },

@@ -6,11 +6,13 @@
 #include "protocols/ws/handler/fs/Upload.hpp"
 #include "protocols/ws/handler/share/Upload.hpp"
 #include "rbac/role/Vault.hpp"
+#include "runtime/Deps.hpp"
 #include "share/AuditEvent.hpp"
 #include "share/EmailChallenge.hpp"
 #include "share/Manager.hpp"
 #include "share/TargetResolver.hpp"
 #include "share/Token.hpp"
+#include "stats/model/FuseStats.hpp"
 
 #include <boost/asio/buffer.hpp>
 #include <boost/beast/core/flat_buffer.hpp>
@@ -24,6 +26,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 using WsShareUploadHandler = vh::protocols::ws::handler::share::Upload;
@@ -436,6 +439,21 @@ void expectNoSecretOrInternalFields(const nlohmann::json& value) {
     EXPECT_FALSE(dump.contains("vault_id"));
 }
 
+class FuseStatsRuntimeGuard {
+public:
+    explicit FuseStatsRuntimeGuard(std::shared_ptr<vh::stats::model::FuseStats> stats)
+        : previous(vh::runtime::Deps::get().fuseStats) {
+        vh::runtime::Deps::get().fuseStats = std::move(stats);
+    }
+
+    ~FuseStatsRuntimeGuard() {
+        vh::runtime::Deps::get().fuseStats = std::move(previous);
+    }
+
+private:
+    std::shared_ptr<vh::stats::model::FuseStats> previous;
+};
+
 class WsShareUploadTest : public ::testing::Test {
 protected:
     std::shared_ptr<FakeStore> store;
@@ -636,6 +654,26 @@ TEST_F(WsShareUploadTest, NativeBinaryUploadFinishesThroughSharedUploadHandler) 
     EXPECT_EQ(finish.at("entry").at("path"), "/native-finish.txt");
     EXPECT_EQ(writer->bytes_by_path.at("/reports/native-finish.txt"), std::vector<uint8_t>({'o', 'k'}));
     EXPECT_EQ(store->getUpload(start.at("upload_id").get<std::string>())->status, vh::share::UploadStatus::Complete);
+}
+
+TEST_F(WsShareUploadTest, ShareUploadDoesNotRecordFuseOperationCounters) {
+    auto fuseStats = std::make_shared<vh::stats::model::FuseStats>();
+    FuseStatsRuntimeGuard fuseStatsGuard(fuseStats);
+
+    auto session = readySession();
+    const auto start = WsShareUploadHandler::start({
+        {"path", "/reports"},
+        {"filename", "direct-writer.txt"},
+        {"size_bytes", 2},
+        {"mime_type", "text/plain"}
+    }, session);
+
+    auto buffer = binaryBuffer({'o', 'k'});
+    session->getUploadHandler()->handleBinaryFrame(buffer);
+    const auto finish = WsShareUploadHandler::finish({{"upload_id", start.at("upload_id").get<std::string>()}}, session);
+
+    EXPECT_TRUE(finish.at("complete").get<bool>());
+    EXPECT_EQ(fuseStats->snapshot().totalOps, 0u);
 }
 
 TEST_F(WsShareUploadTest, MissingGrantPathEscapePrefixAndDuplicateAreDenied) {

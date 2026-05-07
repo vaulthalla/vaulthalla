@@ -73,14 +73,18 @@ void vh::db::Connection::initPreparedStatsMetricSamples() const {
         R"SQL(
             INSERT INTO stats_fuse_op_sample (
                 op, window_start, window_end, window_seconds,
-                count_delta, success_delta, error_delta, error_rate,
+                count_delta, success_delta, error_delta,
+                expected_error_delta, alertable_error_delta,
+                error_rate, expected_error_rate, alertable_error_rate,
                 read_bytes_delta, write_bytes_delta,
                 avg_latency_ms, max_latency_ms, counter_reset
             )
             VALUES (
                 $1, to_timestamp($2::double precision), to_timestamp($3::double precision), $4,
-                $5, $6, $7, $8,
-                $9, $10, $11, $12, $13
+                $5, $6, $7,
+                $8, $9,
+                $10, $11, $12,
+                $13, $14, $15, $16, $17
             )
             ON CONFLICT (op, window_start) DO UPDATE SET
                 window_end = EXCLUDED.window_end,
@@ -88,7 +92,11 @@ void vh::db::Connection::initPreparedStatsMetricSamples() const {
                 count_delta = EXCLUDED.count_delta,
                 success_delta = EXCLUDED.success_delta,
                 error_delta = EXCLUDED.error_delta,
+                expected_error_delta = EXCLUDED.expected_error_delta,
+                alertable_error_delta = EXCLUDED.alertable_error_delta,
                 error_rate = EXCLUDED.error_rate,
+                expected_error_rate = EXCLUDED.expected_error_rate,
+                alertable_error_rate = EXCLUDED.alertable_error_rate,
                 read_bytes_delta = EXCLUDED.read_bytes_delta,
                 write_bytes_delta = EXCLUDED.write_bytes_delta,
                 avg_latency_ms = EXCLUDED.avg_latency_ms,

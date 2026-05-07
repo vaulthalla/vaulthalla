@@ -83,11 +83,14 @@ void vh::db::Connection::initPreparedStatsSnapshots() const {
 
                 SELECT
                     'fuse_error_rate' AS metric_key,
-                    'FUSE error rate' AS label,
+                    'FUSE alertable error rate' AS label,
                     'ratio' AS unit,
                     snapshot_type,
                     created_at,
-                    NULLIF(payload->>'error_rate', '')::double precision AS value
+                    COALESCE(
+                        NULLIF(payload->>'alertable_error_rate', '')::double precision,
+                        NULLIF(payload->>'error_rate', '')::double precision
+                    ) AS value
                 FROM stats_snapshot
                 WHERE scope = 'system'
                   AND snapshot_type = 'system.fuse'
@@ -441,11 +444,43 @@ void vh::db::Connection::initPreparedStatsSnapshots() const {
 
                 SELECT
                     'fuse_error_rate' AS metric_key,
-                    'FUSE error rate' AS label,
+                    'FUSE alertable error rate' AS label,
+                    'ratio' AS unit,
+                    'system.fuse' AS snapshot_type,
+                    s.window_end AS created_at,
+                    SUM(s.alertable_error_delta)::double precision / NULLIF(SUM(s.count_delta), 0) AS value
+                FROM stats_fuse_op_sample s
+                CROSS JOIN params p
+                WHERE p.window_hours <= 24
+                  AND s.window_end >= p.cutoff
+                  AND NOT s.counter_reset
+                GROUP BY s.window_end
+
+                UNION ALL
+
+                SELECT
+                    'fuse_raw_error_rate' AS metric_key,
+                    'FUSE raw error rate' AS label,
                     'ratio' AS unit,
                     'system.fuse' AS snapshot_type,
                     s.window_end AS created_at,
                     SUM(s.error_delta)::double precision / NULLIF(SUM(s.count_delta), 0) AS value
+                FROM stats_fuse_op_sample s
+                CROSS JOIN params p
+                WHERE p.window_hours <= 24
+                  AND s.window_end >= p.cutoff
+                  AND NOT s.counter_reset
+                GROUP BY s.window_end
+
+                UNION ALL
+
+                SELECT
+                    'fuse_expected_error_rate' AS metric_key,
+                    'FUSE expected error rate' AS label,
+                    'ratio' AS unit,
+                    'system.fuse' AS snapshot_type,
+                    s.window_end AS created_at,
+                    SUM(s.expected_error_delta)::double precision / NULLIF(SUM(s.count_delta), 0) AS value
                 FROM stats_fuse_op_sample s
                 CROSS JOIN params p
                 WHERE p.window_hours <= 24
@@ -582,11 +617,14 @@ void vh::db::Connection::initPreparedStatsSnapshots() const {
 
                 SELECT
                     'fuse_error_rate' AS metric_key,
-                    'FUSE error rate' AS label,
+                    'FUSE alertable error rate' AS label,
                     'ratio' AS unit,
                     snapshot_type,
                     created_at,
-                    NULLIF(payload->>'error_rate', '')::double precision AS value
+                    COALESCE(
+                        NULLIF(payload->>'alertable_error_rate', '')::double precision,
+                        NULLIF(payload->>'error_rate', '')::double precision
+                    ) AS value
                 FROM stats_snapshot, params
                 WHERE scope = 'system'
                   AND snapshot_type = 'system.fuse'

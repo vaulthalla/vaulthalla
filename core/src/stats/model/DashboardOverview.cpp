@@ -451,9 +451,9 @@ DashboardCardSummary dashboardOverviewBuildFuse(const DashboardOverviewCardDescr
     card.checkedAt = stats.checkedAt;
 
     if (stats.totalOps == 0) card.severity = "info";
-    else if (stats.errorRate > 0.10) card.severity = "error";
-    else if (stats.errorRate > 0.02) card.severity = "warning";
-    else if (stats.errorRate > 0.0) card.severity = "info";
+    else if (stats.alertableErrorRate > 0.10) card.severity = "error";
+    else if (stats.alertableErrorRate > 0.02) card.severity = "warning";
+    else if (stats.totalErrors > 0) card.severity = "info";
     else card.severity = "healthy";
 
     card.summary = stats.totalOps == 0 ? "No FUSE traffic has been observed yet." : "FUSE operation telemetry is live.";
@@ -470,8 +470,11 @@ DashboardCardSummary dashboardOverviewBuildFuse(const DashboardOverviewCardDescr
 
     dashboardOverviewAddMetric(card, "ops", "Ops", dashboardOverviewFormatCount(stats.totalOps), card.severity);
     dashboardOverviewAddMetric(card, "successes", "Success Ops", dashboardOverviewFormatCount(stats.totalSuccesses), "healthy", static_cast<double>(stats.totalSuccesses));
-    dashboardOverviewAddMetric(card, "error_rate", "Errors", dashboardOverviewFormatPercent(stats.errorRate), card.severity, stats.errorRate);
-    dashboardOverviewAddMetric(card, "total_errors", "Error Ops", dashboardOverviewFormatCount(stats.totalErrors), stats.totalErrors == 0 ? "healthy" : "warning");
+    dashboardOverviewAddMetric(card, "alertable_error_rate", "Alertable Errors", dashboardOverviewFormatPercent(stats.alertableErrorRate), card.severity, stats.alertableErrorRate);
+    dashboardOverviewAddMetric(card, "alertable_errors", "Alertable Ops", dashboardOverviewFormatCount(stats.alertableErrors), stats.alertableErrors == 0 ? "healthy" : card.severity, static_cast<double>(stats.alertableErrors));
+    dashboardOverviewAddMetric(card, "error_rate", "Raw Errors", dashboardOverviewFormatPercent(stats.errorRate), stats.totalErrors == 0 ? "healthy" : "info", stats.errorRate);
+    dashboardOverviewAddMetric(card, "total_errors", "Raw Error Ops", dashboardOverviewFormatCount(stats.totalErrors), stats.totalErrors == 0 ? "healthy" : "info", static_cast<double>(stats.totalErrors));
+    dashboardOverviewAddMetric(card, "expected_errors", "Expected Ops", dashboardOverviewFormatCount(stats.expectedErrors), stats.expectedErrors == 0 ? "healthy" : "info", static_cast<double>(stats.expectedErrors));
     dashboardOverviewAddMetric(card, "open_handles", "Open Handles", dashboardOverviewFormatCount(stats.openHandlesCurrent), "info");
     dashboardOverviewAddMetric(card, "open_peak", "Peak Handles", dashboardOverviewFormatCount(stats.openHandlesPeak), "info", static_cast<double>(stats.openHandlesPeak));
     dashboardOverviewAddMetric(card, "read_bytes", "Read", dashboardOverviewFormatBytes(stats.readBytes), "info", static_cast<double>(stats.readBytes), "bytes");
@@ -481,10 +484,10 @@ DashboardCardSummary dashboardOverviewBuildFuse(const DashboardOverviewCardDescr
     dashboardOverviewAddMetric(card, "op_types", "Op Types", dashboardOverviewFormatCount(activeOpTypes), "info", static_cast<double>(activeOpTypes));
     dashboardOverviewAddMetric(card, "errno_types", "Errno Types", dashboardOverviewFormatCount(stats.topErrors.size()), stats.topErrors.empty() ? "healthy" : "warning", static_cast<double>(stats.topErrors.size()));
 
-    if (stats.errorRate > 0.10) {
-        dashboardOverviewAddIssue(card, "system.fuse.error_rate_high", "error", "FUSE error rate is above 10%.", "error_rate");
-    } else if (stats.errorRate > 0.02) {
-        dashboardOverviewAddIssue(card, "system.fuse.error_rate_elevated", "warning", "FUSE error rate is above 2%.", "error_rate");
+    if (stats.alertableErrorRate > 0.10) {
+        dashboardOverviewAddIssue(card, "system.fuse.error_rate_high", "error", "FUSE alertable error rate is above 10%.", "alertable_error_rate");
+    } else if (stats.alertableErrorRate > 0.02) {
+        dashboardOverviewAddIssue(card, "system.fuse.error_rate_elevated", "warning", "FUSE alertable error rate is above 2%.", "alertable_error_rate");
     }
 
     return card;
