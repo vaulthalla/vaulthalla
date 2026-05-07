@@ -54,11 +54,7 @@ CREATE TABLE IF NOT EXISTS stats_fuse_op_sample (
     count_delta BIGINT NOT NULL DEFAULT 0 CHECK (count_delta >= 0),
     success_delta BIGINT NOT NULL DEFAULT 0 CHECK (success_delta >= 0),
     error_delta BIGINT NOT NULL DEFAULT 0 CHECK (error_delta >= 0),
-    expected_error_delta BIGINT NOT NULL DEFAULT 0 CHECK (expected_error_delta >= 0),
-    alertable_error_delta BIGINT NOT NULL DEFAULT 0 CHECK (alertable_error_delta >= 0),
     error_rate DOUBLE PRECISION,
-    expected_error_rate DOUBLE PRECISION,
-    alertable_error_rate DOUBLE PRECISION,
     read_bytes_delta BIGINT NOT NULL DEFAULT 0 CHECK (read_bytes_delta >= 0),
     write_bytes_delta BIGINT NOT NULL DEFAULT 0 CHECK (write_bytes_delta >= 0),
     avg_latency_ms DOUBLE PRECISION,
@@ -68,32 +64,6 @@ CREATE TABLE IF NOT EXISTS stats_fuse_op_sample (
     CONSTRAINT stats_fuse_op_sample_window_order CHECK (window_end > window_start),
     CONSTRAINT stats_fuse_op_sample_op_not_empty CHECK (length(trim(op)) > 0)
 );
-
-DO $$
-DECLARE
-    had_alertable_fuse_errors BOOLEAN;
-BEGIN
-    SELECT EXISTS (
-        SELECT 1
-        FROM information_schema.columns
-        WHERE table_schema = current_schema()
-          AND table_name = 'stats_fuse_op_sample'
-          AND column_name = 'alertable_error_delta'
-    ) INTO had_alertable_fuse_errors;
-
-    ALTER TABLE stats_fuse_op_sample
-        ADD COLUMN IF NOT EXISTS expected_error_delta BIGINT NOT NULL DEFAULT 0 CHECK (expected_error_delta >= 0),
-        ADD COLUMN IF NOT EXISTS alertable_error_delta BIGINT NOT NULL DEFAULT 0 CHECK (alertable_error_delta >= 0),
-        ADD COLUMN IF NOT EXISTS expected_error_rate DOUBLE PRECISION,
-        ADD COLUMN IF NOT EXISTS alertable_error_rate DOUBLE PRECISION;
-
-    IF NOT had_alertable_fuse_errors THEN
-        UPDATE stats_fuse_op_sample
-        SET alertable_error_delta = error_delta,
-            alertable_error_rate = error_rate
-        WHERE error_delta > 0 OR error_rate IS NOT NULL;
-    END IF;
-END $$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS stats_fuse_op_sample_op_window_unique
     ON stats_fuse_op_sample (op, window_start);
