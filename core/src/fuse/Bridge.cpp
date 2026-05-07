@@ -14,7 +14,9 @@
 #include "fuse/Resolver.hpp"
 
 #include <cerrno>
+#include <chrono>
 #include <cstring>
+#include <mutex>
 #include <sys/statvfs.h>
 #include <unistd.h>
 
@@ -54,6 +56,22 @@ void recordCloseHandle() noexcept {
     if (const auto& stats = runtime::Deps::get().fuseStats) stats->record_close_handle();
 }
 
+void warnSetattrMetadataNoOpOncePerMinute() {
+    static std::mutex mutex;
+    static std::chrono::steady_clock::time_point lastWarning{};
+
+    const auto now = std::chrono::steady_clock::now();
+    std::scoped_lock lock(mutex);
+
+    if (lastWarning != std::chrono::steady_clock::time_point{} &&
+        now - lastWarning < std::chrono::minutes(1))
+        return;
+
+    lastWarning = now;
+    log::Registry::fuse()->warn(
+        "chmod/chown is forbidden beyond the gates. If this is a cp operation you may disregard this warning.");
+}
+
 }
 
 void getattr(const fuse_req_t req, const fuse_ino_t ino, fuse_file_info* fi) {
@@ -85,18 +103,6 @@ void setattr(const fuse_req_t req, const fuse_ino_t ino,
     (void)fi;
     log::Registry::fuse()->debug("[setattr] Called for inode: {}, to_set: {}", ino, to_set);
 
-    if (to_set & FUSE_SET_ATTR_MODE) {
-        log::Registry::fuse()->warn("⚔️ [Vaulthalla] Illegal access: chmod is forbidden beyond the gates!");
-        replyError(req, timer, EPERM);
-        return;
-    }
-
-    if (to_set & (FUSE_SET_ATTR_UID | FUSE_SET_ATTR_GID)) {
-        log::Registry::fuse()->warn("⚔️ [Vaulthalla] Illegal access: changing ownership is forbidden beyond the gates!");
-        replyError(req, timer, EPERM);
-        return;
-    }
-
     const auto resolved = Resolver::resolve({
         .caller = "setattr",
         .fuseReq = req,
@@ -110,7 +116,10 @@ void setattr(const fuse_req_t req, const fuse_ino_t ino,
         return;
     }
 
-    timespec times[2];
+    if (to_set & (FUSE_SET_ATTR_MODE | FUSE_SET_ATTR_UID | FUSE_SET_ATTR_GID))
+        warnSetattrMetadataNoOpOncePerMinute();
+
+    timespec times[2]{};
     if (to_set & FUSE_SET_ATTR_ATIME) times[0] = attr->st_atim;
     else times[0].tv_nsec = UTIME_OMIT;
     if (to_set & FUSE_SET_ATTR_MTIME) times[1] = attr->st_mtim;
@@ -128,8 +137,14 @@ void setattr(const fuse_req_t req, const fuse_ino_t ino,
         return;
     }
 
+    auto sanitized = statFromEntry(resolved.entry, ino);
+    sanitized.st_size = st.st_size;
+    sanitized.st_atim = st.st_atim;
+    sanitized.st_mtim = st.st_mtim;
+    sanitized.st_ctim = st.st_ctim;
+
     timer.success();
-    fuse_reply_attr(req, &st, 1.0);
+    fuse_reply_attr(req, &sanitized, 1.0);
 }
 
 void readdir(const fuse_req_t req, const fuse_ino_t ino, const size_t size, const off_t off, fuse_file_info* fi) {

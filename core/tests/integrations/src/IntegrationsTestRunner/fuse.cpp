@@ -30,6 +30,34 @@ namespace vh::test::integration {
         });
 
         builder.makeTestCase({
+            .name = "FUSE chmod no-op compatibility (admin)",
+            .path = "fuse/chmod",
+            .must_contain = {"OK chmod"},
+            .fn = [=]{ return chmod_as(*ctx.admin->meta.linux_uid, ctx.hello(), 0600); }
+        });
+
+        builder.makeTestCase({
+            .name = "FUSE chmod preserves Vaulthalla attrs (admin)",
+            .path = "fuse/stat",
+            .must_contain = {"mode=644"},
+            .fn = [=]{ return stat_mode_as(*ctx.admin->meta.linux_uid, ctx.hello(), 0644); }
+        });
+
+        builder.makeTestCase({
+            .name = "FUSE cp -a tree with git metadata (admin)",
+            .path = "fuse/cp",
+            .must_contain = {"OK cp -a"},
+            .fn = [=]{ return cp_preserve_tree_as(*ctx.admin->meta.linux_uid, ctx.root / "copied_tree"); }
+        });
+
+        builder.makeTestCase({
+            .name = "FUSE read copied git config (admin)",
+            .path = "fuse/read",
+            .must_contain = {"repositoryformatversion"},
+            .fn = [=] { return read_as(*ctx.admin->meta.linux_uid, ctx.root / "copied_tree" / ".git" / "config"); }
+        });
+
+        builder.makeTestCase({
             .name = "FUSE read (admin)",
             .path = "fuse/read",
             .fn = [=] { return read_as(*ctx.admin->meta.linux_uid, ctx.hello()); }
@@ -120,6 +148,13 @@ namespace vh::test::integration {
             .path = "fuse/write",
             .expect_exit = EACCES,
             .fn = [=]{ return write_as(subj.uid, ctx.docs() / "hax.txt", "nope\n"); }
+        });
+
+        builder.makeTestCase({
+            .name = "FUSE deny: chmod note",
+            .path = "fuse/chmod",
+            .expect_exit = EACCES,
+            .fn = [=]{ return chmod_as(subj.uid, ctx.note(), 0600); }
         });
 
         builder.makeTestCase({
