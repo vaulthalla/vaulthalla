@@ -104,6 +104,9 @@ static CommandResult handleUpdateUser(const CommandCall& call) {
     if (!uLkp || !uLkp.ptr) return invalid(uLkp.error);
     const auto user = uLkp.ptr;
 
+    if (user->isProtected)
+        return invalid("Cannot update protected user: " + user->name);
+
     if (call.user->id != user->id) {
         if (user->isSuperAdmin())
             return invalid("Cannot update super admin user: " + user->name);
@@ -148,6 +151,14 @@ static CommandResult deleteUser(const CommandCall& call) {
     const auto uLkp = resolveUser(call.positionals[0], "user delete");
     if (!uLkp || !uLkp.ptr) return invalid(uLkp.error);
     const auto user = uLkp.ptr;
+
+    if (user->isProtected) {
+        log::Registry::audit()->warn("[UserCommands] Attempt to delete protected user: {}, by user: {}",
+            user->name, call.user->name);
+        log::Registry::shell()->warn("[UserCommands] Attempt to delete protected user: {}, by user: {}",
+            user->name, call.user->name);
+        return invalid("Cannot delete protected user: " + user->name);
+    }
 
     if (user->isSuperAdmin()) {
         log::Registry::audit()->warn("[UserCommands] Attempt to delete super_admin user: {}, by user: {}",

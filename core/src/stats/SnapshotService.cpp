@@ -421,12 +421,20 @@ struct RuntimeWindowAccumulator {
             const auto countDelta = counterDelta(op.count, previous.count, reset);
             const auto successDelta = counterDelta(op.successes, previous.successes, reset);
             const auto errorDelta = counterDelta(op.errors, previous.errors, reset);
+            const auto expectedErrorDelta = counterDelta(op.expectedErrors, previous.expectedErrors, reset);
+            const auto alertableErrorDelta = counterDelta(op.alertableErrors, previous.alertableErrors, reset);
             const auto readBytesDelta = counterDelta(op.bytesRead, previous.bytesRead, reset);
             const auto writeBytesDelta = counterDelta(op.bytesWritten, previous.bytesWritten, reset);
             const auto totalUsDelta = counterDelta(op.totalUs, previous.totalUs, reset);
 
             const auto errorRate = !reset && countDelta > 0
                 ? std::optional<double>(static_cast<double>(errorDelta) / static_cast<double>(countDelta))
+                : std::nullopt;
+            const auto expectedErrorRate = !reset && countDelta > 0
+                ? std::optional<double>(static_cast<double>(expectedErrorDelta) / static_cast<double>(countDelta))
+                : std::nullopt;
+            const auto alertableErrorRate = !reset && countDelta > 0
+                ? std::optional<double>(static_cast<double>(alertableErrorDelta) / static_cast<double>(countDelta))
                 : std::nullopt;
             const auto avgLatencyMs = !reset && countDelta > 0
                 ? std::optional<double>((static_cast<double>(totalUsDelta) / 1000.0) / static_cast<double>(countDelta))
@@ -443,7 +451,11 @@ struct RuntimeWindowAccumulator {
                 .countDelta = reset ? 0 : countDelta,
                 .successDelta = reset ? 0 : successDelta,
                 .errorDelta = reset ? 0 : errorDelta,
+                .expectedErrorDelta = reset ? 0 : expectedErrorDelta,
+                .alertableErrorDelta = reset ? 0 : alertableErrorDelta,
                 .errorRate = errorRate,
+                .expectedErrorRate = expectedErrorRate,
+                .alertableErrorRate = alertableErrorRate,
                 .readBytesDelta = reset ? 0 : readBytesDelta,
                 .writeBytesDelta = reset ? 0 : writeBytesDelta,
                 .avgLatencyMs = avgLatencyMs,

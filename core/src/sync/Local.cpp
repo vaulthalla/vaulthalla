@@ -185,7 +185,7 @@ void Local::processOperations() const {
         const auto absSrc = engine->paths->absPath(op->source_path, PathType::BACKING_VAULT_ROOT);
         const auto absDest = engine->paths->absPath(op->destination_path, PathType::BACKING_VAULT_ROOT);
         if (absDest.has_parent_path())
-            if (const auto err = Filesystem::mkdir(absDest.parent_path()); err)
+            if (const auto err = Filesystem::mkdir({.path = absDest.parent_path()}); err)
                 handleError(std::format("[FSTask] Failed to create parent directory for '{}': {}", absDest.parent_path().string(), std::strerror(err)));
 
         const auto f = db::query::fs::File::getFileByPath(engine->vault->id, op->destination_path);

@@ -14,6 +14,7 @@ void initAdmin();
 void initAdminGroup();
 void initAdminDefaultVault();
 void initRoot();
+void reconcileSystemPrincipals();
 
 // dev
 void initDevCloudVault();

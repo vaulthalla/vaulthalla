@@ -197,6 +197,8 @@ struct FuseAggregate {
     std::uint32_t windowSeconds = 60;
     std::uint64_t count = 0;
     std::uint64_t errors = 0;
+    std::uint64_t expectedErrors = 0;
+    std::uint64_t alertableErrors = 0;
     std::uint64_t readBytes = 0;
     std::uint64_t writeBytes = 0;
     double latencyWeightedMs = 0.0;
@@ -213,6 +215,8 @@ void addFuseRollups(std::vector<RollupPoint>& out, const std::vector<FuseOpSampl
         aggregate.windowSeconds = sample.windowSeconds;
         aggregate.count += sample.countDelta;
         aggregate.errors += sample.errorDelta;
+        aggregate.expectedErrors += sample.expectedErrorDelta;
+        aggregate.alertableErrors += sample.alertableErrorDelta;
         aggregate.readBytes += sample.readBytesDelta;
         aggregate.writeBytes += sample.writeBytesDelta;
         if (sample.avgLatencyMs && sample.countDelta > 0) {
@@ -227,6 +231,12 @@ void addFuseRollups(std::vector<RollupPoint>& out, const std::vector<FuseOpSampl
         const auto opsPerSecond = static_cast<double>(aggregate.count) / static_cast<double>(windowSeconds);
         const auto errorRate = aggregate.count > 0
             ? std::optional<double>(static_cast<double>(aggregate.errors) / static_cast<double>(aggregate.count))
+            : std::nullopt;
+        const auto expectedErrorRate = aggregate.count > 0
+            ? std::optional<double>(static_cast<double>(aggregate.expectedErrors) / static_cast<double>(aggregate.count))
+            : std::nullopt;
+        const auto alertableErrorRate = aggregate.count > 0
+            ? std::optional<double>(static_cast<double>(aggregate.alertableErrors) / static_cast<double>(aggregate.count))
             : std::nullopt;
         const auto avgLatencyMs = aggregate.hasLatency && aggregate.count > 0
             ? std::optional<double>(aggregate.latencyWeightedMs / static_cast<double>(aggregate.count))
@@ -267,7 +277,23 @@ void addFuseRollups(std::vector<RollupPoint>& out, const std::vector<FuseOpSampl
         out.push_back(systemRollup(
             "fuse_error_rate",
             "",
-            "FUSE error rate",
+            "FUSE alertable error rate",
+            "ratio",
+            "system.fuse",
+            aggregate.windowEnd,
+            alertableErrorRate,
+            alertableErrorRate,
+            alertableErrorRate,
+            alertableErrorRate,
+            std::nullopt,
+            std::nullopt,
+            1
+        ));
+
+        out.push_back(systemRollup(
+            "fuse_raw_error_rate",
+            "",
+            "FUSE raw error rate",
             "ratio",
             "system.fuse",
             aggregate.windowEnd,
@@ -275,6 +301,22 @@ void addFuseRollups(std::vector<RollupPoint>& out, const std::vector<FuseOpSampl
             errorRate,
             errorRate,
             errorRate,
+            std::nullopt,
+            std::nullopt,
+            1
+        ));
+
+        out.push_back(systemRollup(
+            "fuse_expected_error_rate",
+            "",
+            "FUSE expected error rate",
+            "ratio",
+            "system.fuse",
+            aggregate.windowEnd,
+            expectedErrorRate,
+            expectedErrorRate,
+            expectedErrorRate,
+            expectedErrorRate,
             std::nullopt,
             std::nullopt,
             1
@@ -398,7 +440,11 @@ void insertFuseOpSample(pqxx::work& txn, const FuseOpSample& sample) {
         sample.countDelta,
         sample.successDelta,
         sample.errorDelta,
+        sample.expectedErrorDelta,
+        sample.alertableErrorDelta,
         sample.errorRate,
+        sample.expectedErrorRate,
+        sample.alertableErrorRate,
         sample.readBytesDelta,
         sample.writeBytesDelta,
         sample.avgLatencyMs,
@@ -486,7 +532,7 @@ void MetricSamples::insertBatch(const SampleBatch& batch) {
 
     Transactions::exec("MetricSamples::insertBatch", [&](pqxx::work& txn) {
         std::vector<RollupPoint> rollups;
-        rollups.reserve(batch.metrics.size() + batch.threadPools.size() * 2 + batch.caches.size() * 3 + 8);
+        rollups.reserve(batch.metrics.size() + batch.threadPools.size() * 2 + batch.caches.size() * 3 + 10);
 
         for (const auto& sample : batch.metrics) {
             insertMetricSample(txn, sample);

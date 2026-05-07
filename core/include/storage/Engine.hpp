@@ -31,6 +31,10 @@ namespace vh::sync::model {
 namespace vh::crypto {
 }
 
+namespace vh::identities {
+    struct User;
+}
+
 namespace vh::storage {
     namespace fs = std::filesystem;
 
@@ -67,11 +71,11 @@ namespace vh::storage {
         [[nodiscard]] std::vector<uint8_t> decrypt(unsigned int vaultId, const std::filesystem::path &relPath,
                                                    const std::vector<uint8_t> &payload) const;
 
-        void mkdir(const fs::path &relPath, unsigned int userId);
+        void mkdir(const fs::path &relPath, const std::shared_ptr<identities::User>& user);
 
-        void move(const fs::path &from, const fs::path &to, unsigned int userId);
+        void move(const fs::path &from, const fs::path &to, const std::shared_ptr<identities::User>& user);
 
-        void rename(const fs::path &from, const fs::path &to, unsigned int userId);
+        void rename(const fs::path &from, const fs::path &to, const std::shared_ptr<identities::User>& user);
 
         void copy(const fs::path &from, const fs::path &to, unsigned int userId);
 

@@ -77,7 +77,11 @@ struct FuseOpSample {
     std::uint64_t countDelta = 0;
     std::uint64_t successDelta = 0;
     std::uint64_t errorDelta = 0;
+    std::uint64_t expectedErrorDelta = 0;
+    std::uint64_t alertableErrorDelta = 0;
     std::optional<double> errorRate;
+    std::optional<double> expectedErrorRate;
+    std::optional<double> alertableErrorRate;
     std::uint64_t readBytesDelta = 0;
     std::uint64_t writeBytesDelta = 0;
     std::optional<double> avgLatencyMs;

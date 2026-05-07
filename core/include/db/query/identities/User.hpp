@@ -3,6 +3,7 @@
 #include "db/model/ListQueryParams.hpp"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -29,6 +30,7 @@ public:
     static std::vector<UserPtr> listUsers(model::ListQueryParams&& params = {});
 
     static void updateLastLoggedInUser(unsigned int userId);
+    static void bootstrapSetAdminLinuxUID(unsigned int linuxUid, std::optional<unsigned int> updatedBy = std::nullopt);
 
     [[nodiscard]] static unsigned int getUserIdByLinuxUID(unsigned int linuxUid);
 

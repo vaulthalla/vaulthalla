@@ -3,6 +3,7 @@
 #include "fs/Filesystem.hpp"
 #include "fs/model/File.hpp"
 #include "fs/model/Path.hpp"
+#include "identities/User.hpp"
 #include "protocols/ws/Session.hpp"
 #include "protocols/ws/handler/fs/Upload.hpp"
 #include "rbac/Actor.hpp"
@@ -34,9 +35,12 @@ class DefaultUploadWriter final : public UploadWriter {
 public:
     std::shared_ptr<vh::fs::model::File> createFile(
         const vh::share::ResolvedTarget& parent,
+        const std::shared_ptr<vh::identities::User>& user,
         const std::string& finalVaultPath,
         const std::vector<uint8_t>& bytes
     ) const override {
+        if (!user) throw std::runtime_error("Share upload file creation requires a link creator user");
+
         auto engine = runtime::Deps::get().storageManager->getEngine(parent.vault_id);
         if (!engine) throw std::runtime_error("Share upload storage engine is unavailable");
         if (!engine->paths) throw std::runtime_error("Share upload storage paths are unavailable");
@@ -55,7 +59,7 @@ public:
             .fuse_path = fusePath,
             .buffer = bytes,
             .engine = engine,
-            .userId = std::nullopt,
+            .user = user,
             .overwrite = false
         });
     }
@@ -363,7 +367,12 @@ void requireAcceptedDuplicatePolicy(const json& payload) {
             if (!scope.allowed) throw std::runtime_error("Share upload scope denied: " + scope.reason);
             ensureNoExistingTarget(*resolver, actor, currentParent.vault_id, finalVaultPath);
 
-            auto file = writer->createFile(currentParent, finalVaultPath, bytes);
+            if (refreshed->link_created_by == 0)
+                throw std::runtime_error("Share upload link creator user is missing");
+            auto creator = std::make_shared<vh::identities::User>();
+            creator->id = refreshed->link_created_by;
+
+            auto file = writer->createFile(currentParent, creator, finalVaultPath, bytes);
             if (!file) throw std::runtime_error("Share upload file creation failed");
 
             mgr->finishUpload({

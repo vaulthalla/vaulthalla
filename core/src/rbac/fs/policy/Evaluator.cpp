@@ -136,6 +136,7 @@ std::optional<vh::rbac::permission::vault::fs::DirectoryPermissions> Evaluator::
         case A::Move: return D::Move;
         case A::Copy: return D::Copy;
         case A::Touch: return D::Touch;
+        case A::Link: return D::Touch;
         case A::Lookup: return D::List;
         case A::Preview:
         case A::Overwrite:
@@ -169,6 +170,7 @@ std::optional<vh::rbac::permission::vault::fs::FilePermissions> Evaluator::fileP
         case A::SharePublicValidated:
         case A::List:
         case A::Touch:
+        case A::Link:
             return std::nullopt;
     }
 
@@ -391,6 +393,7 @@ bool Evaluator::requiresExistingEntry(const permission::vault::FilesystemAction 
 
         case A::Touch:
         case A::Write:
+        case A::Link:
             return false;
     }
 
@@ -402,6 +405,7 @@ bool Evaluator::inferIsDirectoryForMissingEntry(const permission::vault::Filesys
 
     switch (action) {
         case A::Touch:
+        case A::Link:
             return true;
 
         case A::Write:
@@ -430,6 +434,7 @@ bool Evaluator::isValidForFile(const permission::vault::FilesystemAction action)
 
         case A::List:
         case A::Touch:
+        case A::Link:
             return false;
     }
 
@@ -444,6 +449,7 @@ bool Evaluator::isValidForDirectory(const permission::vault::FilesystemAction ac
         case A::Write:
         case A::Read:
         case A::Touch:
+        case A::Link:
         case A::Rename:
         case A::Delete:
         case A::Move:
@@ -477,6 +483,7 @@ bool Evaluator::allowedByBase(
             case A::Write: return d.canUpload();
             case A::Read: return d.canDownload();
             case A::Touch: return d.canTouch();
+            case A::Link: return d.canTouch();
             case A::Rename: return d.canRename();
             case A::Delete: return d.canDelete();
             case A::Move: return d.canMove();
@@ -508,6 +515,7 @@ bool Evaluator::allowedByBase(
         case A::Lookup: return f.canPreview();
         case A::List:
         case A::Touch:
+        case A::Link:
             return false;
     }
 

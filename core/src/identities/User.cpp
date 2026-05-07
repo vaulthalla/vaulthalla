@@ -62,6 +62,10 @@ namespace {
             return std::time(nullptr);
         }
     }
+
+    bool hasNonNullField(const nlohmann::json &j, const char *field) {
+        return j.contains(field) && !j.at(field).is_null();
+    }
 } // namespace
 
 namespace vh::identities {
@@ -81,6 +85,8 @@ namespace vh::identities {
           name(try_as_optional_string(row, "name").value_or("")),
           password_hash(try_as_optional_string(row, "password_hash").value_or("")) {
         email = try_as_optional_string(row, "email");
+        isProtected = try_as_optional<bool>(row, "protected").value_or(false);
+        systemOnly = try_as_optional<bool>(row, "system_only").value_or(false);
 
         meta.linux_uid = try_as_optional<uint32_t>(row, "linux_uid");
         meta.created_by = try_as_optional<uint32_t>(row, "created_by");
@@ -174,6 +180,15 @@ namespace vh::identities {
     void User::updateUser(const nlohmann::json &j) {
         std::scoped_lock lock(mutex_);
 
+        if (isProtected && (
+            hasNonNullField(j, "name") ||
+            j.contains("linux_uid") ||
+            hasNonNullField(j, "is_active") ||
+            j.contains("protected") ||
+            j.contains("is_protected") ||
+            j.contains("system_only")))
+            throw std::runtime_error("Protected users cannot be mutated through normal user update paths");
+
         if (j.contains("name") && !j.at("name").is_null())
             name = j.at("name").get<std::string>();
 
@@ -209,6 +224,8 @@ namespace vh::identities {
             {"id", u.id},
             {"name", u.name},
             {"email", u.email},
+            {"is_protected", u.isProtected},
+            {"system_only", u.systemOnly},
             {"created_at", timestampToString(u.meta.created_at)},
             {"updated_at", timestampToString(u.meta.updated_at)},
             {"is_active", u.meta.is_active}

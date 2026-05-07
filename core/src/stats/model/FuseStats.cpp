@@ -77,6 +77,10 @@ double FuseStats::ratio(const std::uint64_t numerator, const std::uint64_t denom
     return denominator ? static_cast<double>(numerator) / static_cast<double>(denominator) : 0.0;
 }
 
+bool FuseStats::isExpectedError(const FuseOperation op, const int errnum) noexcept {
+    return op == FuseOperation::Lookup && errnum == ENOENT;
+}
+
 void FuseStats::record_success(
     const FuseOperation op,
     const std::uint64_t elapsedUs,
@@ -96,6 +100,11 @@ void FuseStats::record_error(const FuseOperation op, const int errnum, const std
     auto& counters = ops_[opIndex(op)];
     counters.count.v.fetch_add(1, std::memory_order_relaxed);
     counters.errors.v.fetch_add(1, std::memory_order_relaxed);
+    if (isExpectedError(op, errnum)) {
+        counters.expectedErrors.v.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        counters.alertableErrors.v.fetch_add(1, std::memory_order_relaxed);
+    }
     counters.totalUs.v.fetch_add(elapsedUs, std::memory_order_relaxed);
     observeMax(counters.maxUs, elapsedUs);
 
@@ -129,6 +138,8 @@ FuseStatsSnapshot FuseStats::snapshot() const {
         const auto count = counters.count.v.load(std::memory_order_relaxed);
         const auto successes = counters.successes.v.load(std::memory_order_relaxed);
         const auto errors = counters.errors.v.load(std::memory_order_relaxed);
+        const auto expectedErrors = counters.expectedErrors.v.load(std::memory_order_relaxed);
+        const auto alertableErrors = counters.alertableErrors.v.load(std::memory_order_relaxed);
         const auto bytesRead = counters.bytesRead.v.load(std::memory_order_relaxed);
         const auto bytesWritten = counters.bytesWritten.v.load(std::memory_order_relaxed);
         const auto totalUs = counters.totalUs.v.load(std::memory_order_relaxed);
@@ -137,6 +148,8 @@ FuseStatsSnapshot FuseStats::snapshot() const {
         out.totalOps += count;
         out.totalSuccesses += successes;
         out.totalErrors += errors;
+        out.expectedErrors += expectedErrors;
+        out.alertableErrors += alertableErrors;
         out.readBytes += bytesRead;
         out.writeBytes += bytesWritten;
 
@@ -145,13 +158,17 @@ FuseStatsSnapshot FuseStats::snapshot() const {
             .count = count,
             .successes = successes,
             .errors = errors,
+            .expectedErrors = expectedErrors,
+            .alertableErrors = alertableErrors,
             .bytesRead = bytesRead,
             .bytesWritten = bytesWritten,
             .totalUs = totalUs,
             .maxUs = maxUs,
             .avgMs = count ? (static_cast<double>(totalUs) / 1000.0) / static_cast<double>(count) : 0.0,
             .maxMs = static_cast<double>(maxUs) / 1000.0,
-            .errorRate = ratio(errors, count)
+            .errorRate = ratio(errors, count),
+            .expectedErrorRate = ratio(expectedErrors, count),
+            .alertableErrorRate = ratio(alertableErrors, count)
         });
     }
 
@@ -181,6 +198,8 @@ FuseStatsSnapshot FuseStats::snapshot() const {
     if (out.topErrors.size() > 10) out.topErrors.resize(10);
 
     out.errorRate = ratio(out.totalErrors, out.totalOps);
+    out.expectedErrorRate = ratio(out.expectedErrors, out.totalOps);
+    out.alertableErrorRate = ratio(out.alertableErrors, out.totalOps);
     out.openHandlesCurrent = openHandlesCurrent_.v.load(std::memory_order_relaxed);
     out.openHandlesPeak = openHandlesPeak_.v.load(std::memory_order_relaxed);
     out.checkedAt = fuseStatsUnixTimestamp();
@@ -228,8 +247,12 @@ std::string to_string(const FuseOperation op) {
             return "readdir";
         case FuseOperation::Lookup:
             return "lookup";
+        case FuseOperation::ReadLink:
+            return "readlink";
         case FuseOperation::Create:
             return "create";
+        case FuseOperation::Symlink:
+            return "symlink";
         case FuseOperation::Open:
             return "open";
         case FuseOperation::Read:
@@ -269,6 +292,8 @@ void to_json(nlohmann::json& j, const FuseOpStatsSnapshot& stats) {
         {"count", stats.count},
         {"successes", stats.successes},
         {"errors", stats.errors},
+        {"expected_errors", stats.expectedErrors},
+        {"alertable_errors", stats.alertableErrors},
         {"bytes_read", stats.bytesRead},
         {"bytes_written", stats.bytesWritten},
         {"total_us", stats.totalUs},
@@ -276,6 +301,8 @@ void to_json(nlohmann::json& j, const FuseOpStatsSnapshot& stats) {
         {"avg_ms", stats.avgMs},
         {"max_ms", stats.maxMs},
         {"error_rate", stats.errorRate},
+        {"expected_error_rate", stats.expectedErrorRate},
+        {"alertable_error_rate", stats.alertableErrorRate},
     };
 }
 
@@ -292,7 +319,11 @@ void to_json(nlohmann::json& j, const FuseStatsSnapshot& stats) {
         {"total_ops", stats.totalOps},
         {"total_successes", stats.totalSuccesses},
         {"total_errors", stats.totalErrors},
+        {"expected_errors", stats.expectedErrors},
+        {"alertable_errors", stats.alertableErrors},
         {"error_rate", stats.errorRate},
+        {"expected_error_rate", stats.expectedErrorRate},
+        {"alertable_error_rate", stats.alertableErrorRate},
         {"read_bytes", stats.readBytes},
         {"write_bytes", stats.writeBytes},
         {"open_handles_current", stats.openHandlesCurrent},

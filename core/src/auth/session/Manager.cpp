@@ -63,6 +63,7 @@ namespace {
 
     const auto user = db::query::auth::RefreshToken::getUserByJti(claims.jti);
     if (!user) throw std::runtime_error("No user found for refresh token");
+    if (user->systemOnly) throw std::runtime_error("System-only users cannot rehydrate human sessions");
     if (storedToken->userId != user->id)
         throw std::runtime_error("User ID mismatch for refresh token");
 
@@ -144,6 +145,9 @@ void Manager::promote(const std::shared_ptr<Session>& session) {
         log::Registry::ws()->debug("[session::Manager] Promotion failed due to missing session, user, or token state");
         throw std::invalid_argument("Invalid session data for promotion");
     }
+
+    if (session->user->systemOnly)
+        throw std::runtime_error("System-only users cannot be promoted to human sessions");
 
     if (!session->tokens->refreshToken || !session->tokens->refreshToken->isValid()) {
         log::Registry::ws()->debug(
@@ -443,6 +447,8 @@ std::shared_ptr<Session> Manager::validateRawRefreshToken(const std::string& ref
     Validator::validateRefreshToken(session);
     if (!session->user || session->isShareSession())
         throw std::invalid_argument("Refresh token did not resolve to a human session");
+    if (session->user->systemOnly)
+        throw std::invalid_argument("System-only users cannot use human refresh tokens");
 
     return session;
 }

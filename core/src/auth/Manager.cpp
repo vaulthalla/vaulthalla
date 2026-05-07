@@ -41,6 +41,7 @@ void Manager::registerUser(std::shared_ptr<User> user, const std::string& passwo
 void Manager::loginUser(const std::string& name, const std::string& password, const std::shared_ptr<Session>& session) {
     auto user = getUser(name);
     if (!user) throw std::runtime_error("User not found: " + name);
+    if (user->systemOnly) throw std::runtime_error("System-only users cannot log in");
 
     if (!hash::verifyPassword(password, user->password_hash)) throw std::runtime_error(
         "Invalid password for user: " + name);
@@ -67,6 +68,7 @@ void Manager::changePassword(const std::string& name, const std::string& oldPass
                              const std::string& newPassword) {
     const auto user = getUser(name);
     if (!user) throw std::runtime_error("User not found: " + name);
+    if (user->systemOnly) throw std::runtime_error("System-only users cannot change passwords");
 
     if (!hash::verifyPassword(oldPassword, user->password_hash)) throw std::runtime_error(
         "Invalid old password for user: " + name);

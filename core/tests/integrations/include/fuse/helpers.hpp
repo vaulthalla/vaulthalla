@@ -224,6 +224,79 @@ namespace vh::test::integration::fuse {
         return 0;
     }
 
+    inline int write_file_quiet(const std::filesystem::path& p, const std::string_view data, const mode_t mode = 0644) {
+        const int fd = ::open(p.c_str(), O_CREAT | O_TRUNC | O_WRONLY, mode);
+        if (fd < 0) return errno;
+
+        const ssize_t w = ::write(fd, data.data(), data.size());
+        const int saved = (w < 0) ? errno : 0;
+        detail::close_if_valid(fd);
+        if (saved != 0) return saved;
+
+        if (::chmod(p.c_str(), mode) != 0) return errno;
+        return 0;
+    }
+
+    inline int seed_cp_source_tree(const std::filesystem::path& source) {
+        std::error_code ec;
+        std::filesystem::remove_all(source, ec);
+        ec.clear();
+        std::filesystem::create_directories(source / ".git" / "objects" / "aa", ec);
+        if (ec) return ec.value();
+        std::filesystem::create_directories(source / "src", ec);
+        if (ec) return ec.value();
+
+        if (const int rc = write_file_quiet(source / ".git" / "config", "[core]\nrepositoryformatversion = 0\n", 0600); rc != 0)
+            return rc;
+
+        if (const int rc = write_file_quiet(source / ".git" / "objects" / "aa" / "seed", "object\n", 0440); rc != 0)
+            return rc;
+
+        if (const int rc = write_file_quiet(source / "src" / "main.cpp", "int main() { return 0; }\n", 0640); rc != 0)
+            return rc;
+
+        if (::chmod((source / ".git").c_str(), 0700) != 0) return errno;
+        if (::chmod((source / "src").c_str(), 0750) != 0) return errno;
+        return 0;
+    }
+
+    inline int cp_preserve_tree(const std::filesystem::path& destination) {
+        const auto source = std::filesystem::temp_directory_path() /
+            ("vh_fuse_cp_source_" + std::to_string(::getuid()) + "_" + std::to_string(::getpid()));
+
+        if (const int rc = seed_cp_source_tree(source); rc != 0) return rc;
+
+        std::error_code ec;
+        std::filesystem::remove_all(destination, ec);
+
+        const pid_t pid = ::fork();
+        if (pid < 0) return errno;
+
+        if (pid == 0) {
+            ::execlp("cp", "cp", "-a", source.c_str(), destination.c_str(), static_cast<char*>(nullptr));
+            _exit((errno & 0xFF) ? (errno & 0xFF) : 127);
+        }
+
+        int status = 0;
+        while (::waitpid(pid, &status, 0) < 0) {
+            if (errno == EINTR) continue;
+            return errno;
+        }
+
+        std::filesystem::remove_all(source, ec);
+
+        if (!WIFEXITED(status)) return EIO;
+        if (const int exitCode = WEXITSTATUS(status); exitCode != 0) return exitCode;
+
+        std::string out = "OK cp -a ";
+        detail::append_path(out, source);
+        detail::append_text(out, " -> ");
+        detail::append_path(out, destination);
+        out.push_back('\n');
+        detail::emit_ok(out);
+        return 0;
+    }
+
     inline int read_file(const std::filesystem::path& p) {
         std::string header = "OK read ";
         detail::append_path(header, p);
@@ -295,6 +368,21 @@ namespace vh::test::integration::fuse {
         return 0;
     }
 
+    inline int stat_mode_path(const std::filesystem::path& p, const mode_t expected) {
+        struct stat st {};
+        if (::stat(p.c_str(), &st) != 0) return errno;
+
+        const mode_t actual = st.st_mode & 07777;
+        std::string out = "OK stat ";
+        detail::append_path(out, p);
+        detail::append_text(out, " mode=");
+        detail::append_u32_oct(out, actual);
+        out.push_back('\n');
+        detail::emit_ok(out);
+
+        return actual == expected ? 0 : EINVAL;
+    }
+
     inline int chmod_path(const std::filesystem::path& p, const mode_t mode) {
         if (::chmod(p.c_str(), mode) != 0)
             return errno;
@@ -338,6 +426,14 @@ namespace vh::test::integration::fuse {
         return run_as_user(uid, gid, [=] { return chmod_path(p, mode); });
     }
 
+    inline ExecResult cp_preserve_tree_as(const uid_t uid, const gid_t gid, const std::filesystem::path& destination) {
+        return run_as_user(uid, gid, [=] { return cp_preserve_tree(destination); });
+    }
+
+    inline ExecResult stat_mode_as(const uid_t uid, const gid_t gid, const std::filesystem::path& p, const mode_t expected) {
+        return run_as_user(uid, gid, [=] { return stat_mode_path(p, expected); });
+    }
+
     // Back-compat overloads while you migrate callers.
     inline ExecResult mkdir_as(const uid_t uid, const std::filesystem::path& p, const mode_t mode = 0755) {
         return mkdir_as(uid, uid, p, mode);
@@ -366,5 +462,13 @@ namespace vh::test::integration::fuse {
 
     inline ExecResult chmod_as(const uid_t uid, const std::filesystem::path& p, const mode_t mode) {
         return chmod_as(uid, uid, p, mode);
+    }
+
+    inline ExecResult cp_preserve_tree_as(const uid_t uid, const std::filesystem::path& destination) {
+        return cp_preserve_tree_as(uid, uid, destination);
+    }
+
+    inline ExecResult stat_mode_as(const uid_t uid, const std::filesystem::path& p, const mode_t expected) {
+        return stat_mode_as(uid, uid, p, expected);
     }
 }

@@ -3,6 +3,8 @@ export interface IFuseOpStats {
   count: number
   successes: number
   errors: number
+  expected_errors: number
+  alertable_errors: number
   bytes_read: number
   bytes_written: number
   total_us: number
@@ -10,6 +12,8 @@ export interface IFuseOpStats {
   avg_ms: number
   max_ms: number
   error_rate: number
+  expected_error_rate: number
+  alertable_error_rate: number
 }
 
 export interface IFuseErrnoStats {
@@ -22,7 +26,11 @@ export interface IFuseStats {
   total_ops: number
   total_successes: number
   total_errors: number
+  expected_errors: number
+  alertable_errors: number
   error_rate: number
+  expected_error_rate: number
+  alertable_error_rate: number
   read_bytes: number
   write_bytes: number
   open_handles_current: number
@@ -60,6 +68,8 @@ export class FuseOpStats implements IFuseOpStats {
   count = 0
   successes = 0
   errors = 0
+  expected_errors = 0
+  alertable_errors = 0
   bytes_read = 0
   bytes_written = 0
   total_us = 0
@@ -67,6 +77,8 @@ export class FuseOpStats implements IFuseOpStats {
   avg_ms = 0
   max_ms = 0
   error_rate = 0
+  expected_error_rate = 0
+  alertable_error_rate = 0
 
   constructor(data?: Partial<IFuseOpStats>) {
     if (!data) return
@@ -74,6 +86,8 @@ export class FuseOpStats implements IFuseOpStats {
     this.count = data.count ?? this.count
     this.successes = data.successes ?? this.successes
     this.errors = data.errors ?? this.errors
+    this.expected_errors = data.expected_errors ?? this.expected_errors
+    this.alertable_errors = data.alertable_errors ?? this.alertable_errors
     this.bytes_read = data.bytes_read ?? this.bytes_read
     this.bytes_written = data.bytes_written ?? this.bytes_written
     this.total_us = data.total_us ?? this.total_us
@@ -81,18 +95,24 @@ export class FuseOpStats implements IFuseOpStats {
     this.avg_ms = data.avg_ms ?? this.avg_ms
     this.max_ms = data.max_ms ?? this.max_ms
     this.error_rate = data.error_rate ?? this.error_rate
+    this.expected_error_rate = data.expected_error_rate ?? this.expected_error_rate
+    this.alertable_error_rate = data.alertable_error_rate ?? this.alertable_error_rate
   }
 
   static from(raw: unknown): FuseOpStats {
     const data = asObject(raw)
     const count = asNumber(data.count)
     const errors = asNumber(data.errors)
+    const expectedErrors = asNumber(data.expected_errors)
+    const alertableErrors = asNumber(data.alertable_errors, Math.max(0, errors - expectedErrors))
 
     return new FuseOpStats({
       op: asString(data.op, 'unknown'),
       count,
       successes: asNumber(data.successes),
       errors,
+      expected_errors: expectedErrors,
+      alertable_errors: alertableErrors,
       bytes_read: asNumber(data.bytes_read),
       bytes_written: asNumber(data.bytes_written),
       total_us: asNumber(data.total_us),
@@ -100,6 +120,8 @@ export class FuseOpStats implements IFuseOpStats {
       avg_ms: asNumber(data.avg_ms),
       max_ms: asNumber(data.max_ms),
       error_rate: computedRate(errors, count, asNumber(data.error_rate, Number.NaN)),
+      expected_error_rate: computedRate(expectedErrors, count, asNumber(data.expected_error_rate, Number.NaN)),
+      alertable_error_rate: computedRate(alertableErrors, count, asNumber(data.alertable_error_rate, Number.NaN)),
     })
   }
 }
@@ -130,7 +152,11 @@ export class FuseStats implements IFuseStats {
   total_ops = 0
   total_successes = 0
   total_errors = 0
+  expected_errors = 0
+  alertable_errors = 0
   error_rate = 0
+  expected_error_rate = 0
+  alertable_error_rate = 0
   read_bytes = 0
   write_bytes = 0
   open_handles_current = 0
@@ -144,7 +170,11 @@ export class FuseStats implements IFuseStats {
     this.total_ops = data.total_ops ?? this.total_ops
     this.total_successes = data.total_successes ?? this.total_successes
     this.total_errors = data.total_errors ?? this.total_errors
+    this.expected_errors = data.expected_errors ?? this.expected_errors
+    this.alertable_errors = data.alertable_errors ?? this.alertable_errors
     this.error_rate = data.error_rate ?? this.error_rate
+    this.expected_error_rate = data.expected_error_rate ?? this.expected_error_rate
+    this.alertable_error_rate = data.alertable_error_rate ?? this.alertable_error_rate
     this.read_bytes = data.read_bytes ?? this.read_bytes
     this.write_bytes = data.write_bytes ?? this.write_bytes
     this.open_handles_current = data.open_handles_current ?? this.open_handles_current
@@ -158,6 +188,8 @@ export class FuseStats implements IFuseStats {
     const data = asObject(raw)
     const totalOps = asNumber(data.total_ops)
     const totalErrors = asNumber(data.total_errors)
+    const expectedErrors = asNumber(data.expected_errors)
+    const alertableErrors = asNumber(data.alertable_errors, Math.max(0, totalErrors - expectedErrors))
     const ops = Array.isArray(data.ops) ? data.ops.map(FuseOpStats.from) : []
     const topErrors = Array.isArray(data.top_errors) ? data.top_errors.map(FuseErrnoStats.from) : []
 
@@ -165,7 +197,11 @@ export class FuseStats implements IFuseStats {
       total_ops: totalOps,
       total_successes: asNumber(data.total_successes),
       total_errors: totalErrors,
+      expected_errors: expectedErrors,
+      alertable_errors: alertableErrors,
       error_rate: computedRate(totalErrors, totalOps, asNumber(data.error_rate, Number.NaN)),
+      expected_error_rate: computedRate(expectedErrors, totalOps, asNumber(data.expected_error_rate, Number.NaN)),
+      alertable_error_rate: computedRate(alertableErrors, totalOps, asNumber(data.alertable_error_rate, Number.NaN)),
       read_bytes: asNumber(data.read_bytes),
       write_bytes: asNumber(data.write_bytes),
       open_handles_current: asNumber(data.open_handles_current),
@@ -182,6 +218,10 @@ export class FuseStats implements IFuseStats {
 
   errorRatePercent(): number {
     return this.error_rate * 100
+  }
+
+  alertableErrorRatePercent(): number {
+    return this.alertable_error_rate * 100
   }
 
   topOpsByCount(limit = 5): FuseOpStats[] {

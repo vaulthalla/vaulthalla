@@ -9,6 +9,7 @@
 #include "fs/model/Path.hpp"
 #include "db/query/fs/File.hpp"
 #include "db/query/fs/Directory.hpp"
+#include "db/query/identities/User.hpp"
 #include "fs/ops/file.hpp"
 #include "preview/thumbnail/Worker.hpp"
 #include "fs/Filesystem.hpp"
@@ -111,12 +112,15 @@ std::shared_ptr<File> CloudEngine::downloadFile(const fs::path& rel_path) {
         buffer = encryptionManager->decrypt(buffer, iv_b64, key_version);
     }
 
+    const auto owner = db::query::identities::User::getUserById(vault->owner_id);
+    if (!owner) throw std::runtime_error("[CloudStorageEngine] Vault owner not found for file creation");
+
     const auto f = Filesystem::createFile({
             .path = makeAbsolute(rel_path),
             .fuse_path = paths->absRelToAbsRel(makeAbsolute(rel_path), PathType::VAULT_ROOT, PathType::FUSE_ROOT),
             .buffer = buffer,
             .engine = shared_from_this(),
-            .userId = vault->owner_id,
+            .user = owner,
             .overwrite = true
         });
 

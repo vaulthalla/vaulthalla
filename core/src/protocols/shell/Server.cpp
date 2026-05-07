@@ -97,7 +97,7 @@ Server::Server()
 
     const auto admin = db::query::identities::User::getUserByName("admin");
     if (!admin) log::Registry::shell()->warn("[CtlServerService] No 'admin' user found in database");
-    if (admin->meta.linux_uid.has_value()) adminUIDSet_.store(true);
+    if (admin && admin->meta.linux_uid.has_value()) adminUIDSet_.store(true);
 }
 
 Server::~Server() { closeListener(); }
@@ -163,10 +163,7 @@ void Server::initAdminUid(const int cfd, const uid_t uid) {
     log::Registry::shell()->info("[CtlServerService] Adding UID {} to vaulthalla group", uid);
 
     // Assign UID to admin
-    const auto admin = db::query::identities::User::getUserByName("admin");
-    if (!admin) throw std::runtime_error("admin user disappeared");
-    admin->meta.linux_uid = uid;
-    db::query::identities::User::updateUser(admin);
+    db::query::identities::User::bootstrapSetAdminLinuxUID(uid);
     adminUIDSet_.store(true);
 
     log::Registry::shell()->info("[CtlServerService] Assigned UID {} to 'admin' user", uid);
@@ -267,7 +264,7 @@ void Server::runLoop() {
             }
 
             const auto user = p.uid == 0 ?
-            db::query::identities::User::getUserByName("system") :
+            db::query::identities::User::getUserByName("root") :
             db::query::identities::User::getUserByLinuxUID(p.uid);
 
             if (!user) {

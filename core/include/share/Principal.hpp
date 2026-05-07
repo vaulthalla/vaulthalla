@@ -16,6 +16,7 @@ struct Principal {
     std::string share_session_id;
     uint32_t vault_id{};
     uint32_t root_entry_id{};
+    uint32_t link_created_by{};
     std::string root_path{"/"};
     Grant grant;
     bool email_verified{};

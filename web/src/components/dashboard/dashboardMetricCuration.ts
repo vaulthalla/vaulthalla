@@ -83,7 +83,12 @@ export function dashboardMetricMeterValue(metric: DashboardMetricSummary): numbe
   const value = metric.numeric_value
   if (value === null || !Number.isFinite(value)) return null
 
-  if (metric.key === 'hit_rate' || metric.key === 'cache_hit' || metric.key === 'error_rate') {
+  if (
+    metric.key === 'hit_rate' ||
+    metric.key === 'cache_hit' ||
+    metric.key === 'error_rate' ||
+    metric.key.endsWith('_error_rate')
+  ) {
     return Math.max(0, Math.min(1, value))
   }
 

@@ -19,7 +19,9 @@ enum class FuseOperation : std::size_t {
     SetAttr,
     ReadDir,
     Lookup,
+    ReadLink,
     Create,
+    Symlink,
     Open,
     Read,
     Write,
@@ -42,6 +44,8 @@ struct FuseOpStatsSnapshot {
     std::uint64_t count = 0;
     std::uint64_t successes = 0;
     std::uint64_t errors = 0;
+    std::uint64_t expectedErrors = 0;
+    std::uint64_t alertableErrors = 0;
     std::uint64_t bytesRead = 0;
     std::uint64_t bytesWritten = 0;
     std::uint64_t totalUs = 0;
@@ -49,6 +53,8 @@ struct FuseOpStatsSnapshot {
     double avgMs = 0.0;
     double maxMs = 0.0;
     double errorRate = 0.0;
+    double expectedErrorRate = 0.0;
+    double alertableErrorRate = 0.0;
 };
 
 struct FuseErrnoStatsSnapshot {
@@ -61,7 +67,11 @@ struct FuseStatsSnapshot {
     std::uint64_t totalOps = 0;
     std::uint64_t totalSuccesses = 0;
     std::uint64_t totalErrors = 0;
+    std::uint64_t expectedErrors = 0;
+    std::uint64_t alertableErrors = 0;
     double errorRate = 0.0;
+    double expectedErrorRate = 0.0;
+    double alertableErrorRate = 0.0;
     std::uint64_t readBytes = 0;
     std::uint64_t writeBytes = 0;
     std::uint64_t openHandlesCurrent = 0;
@@ -94,6 +104,8 @@ private:
         PaddedAtomic<std::uint64_t> count;
         PaddedAtomic<std::uint64_t> successes;
         PaddedAtomic<std::uint64_t> errors;
+        PaddedAtomic<std::uint64_t> expectedErrors;
+        PaddedAtomic<std::uint64_t> alertableErrors;
         PaddedAtomic<std::uint64_t> bytesRead;
         PaddedAtomic<std::uint64_t> bytesWritten;
         PaddedAtomic<std::uint64_t> totalUs;
@@ -104,6 +116,7 @@ private:
 
     [[nodiscard]] static std::size_t opIndex(FuseOperation op) noexcept;
     [[nodiscard]] static double ratio(std::uint64_t numerator, std::uint64_t denominator) noexcept;
+    [[nodiscard]] static bool isExpectedError(FuseOperation op, int errnum) noexcept;
 
     std::array<OpCounters, static_cast<std::size_t>(FuseOperation::Count)> ops_{};
     std::array<std::atomic<std::uint64_t>, kErrnoBucketCount> errnoCounts_{};

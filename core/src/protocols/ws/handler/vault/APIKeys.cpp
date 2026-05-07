@@ -32,7 +32,7 @@ json APIKeys::add(const json& payload, const std::shared_ptr<Session>& session) 
         .target_user_id = ownerId
     })) throw std::runtime_error("Insufficient permissions to create API key");
 
-    auto key = std::make_shared<APIKey>(session->user->id, name, provider, accessKey, secretKey, region, endpoint);
+    auto key = std::make_shared<APIKey>(ownerId, name, provider, accessKey, secretKey, region, endpoint);
     runtime::Deps::get().apiKeyManager->addAPIKey(key);
 
     return {};

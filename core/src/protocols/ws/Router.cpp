@@ -6,6 +6,7 @@
 #include "protocols/ws/ShareRateLimit.hpp"
 #include "protocols/ws/core/handler_templates.hpp"
 #include "runtime/Deps.hpp"
+#include "identities/User.hpp"
 
 #include <algorithm>
 #include <array>
@@ -162,6 +163,8 @@ Router::CommandAuthDecision Router::classifyCommand(const std::string_view comma
     }
 
     if (session.user) {
+        if (session.user->systemOnly) return CommandAuthDecision::Deny;
+
         if (isPublicShareCommand(command) ||
             isShareFilesystemCommand(command) ||
             isShareDownloadCommand(command) ||
