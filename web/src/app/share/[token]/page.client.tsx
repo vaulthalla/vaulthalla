@@ -6,7 +6,7 @@ import { Filesystem } from '@/components/fs/Filesystem'
 import { FileDropOverlay } from '@/components/fs/FileDropOverlay'
 import { Breadcrumbs } from '@/components/fs/breadcrumbs/Breadcrumbs'
 import { DownloadCurrentDirectoryButton } from '@/components/fs/DownloadCurrentDirectoryButton'
-import UploadProgress from '@/components/loading/UploadProgress'
+import { TransferQueueButton } from '@/components/loading/TransferQueueButton'
 import CircleNotch from '@/fa-duotone/circle-notch.svg'
 import { useFSStore } from '@/stores/fsStore'
 import { useVaultShareStore } from '@/stores/vaultShareStore'
@@ -56,13 +56,7 @@ const SharePageClient = ({ token }: { token: string }) => {
   const uploadFiles = useFSStore(state => state.upload)
   const enterShareMode = useFSStore(state => state.enterShareMode)
   const exitShareMode = useFSStore(state => state.exitShareMode)
-  const uploadError = useFSStore(state => state.uploadError)
-  const uploadLabel = useFSStore(state => state.uploadLabel)
   const uploading = useFSStore(state => state.uploading)
-  const uploadProgress = useFSStore(state => state.uploadProgress)
-  const downloading = useFSStore(state => state.downloading)
-  const downloadLabel = useFSStore(state => state.downloadLabel)
-  const downloadProgress = useFSStore(state => state.downloadProgress)
   const downloadError = useFSStore(state => state.downloadError)
   const mode = useFSStore(state => state.mode)
   const uploadSuccess = useFSStore(state => state.uploadSuccess)
@@ -224,32 +218,29 @@ const SharePageClient = ({ token }: { token: string }) => {
             {!isUploadOnlyDirectoryShare && (
               <div className="flex items-center justify-between gap-3">
                 <Breadcrumbs className="min-w-0 flex-1" />
-                <DownloadCurrentDirectoryButton />
+                <div className="flex shrink-0 items-center gap-2">
+                  <DownloadCurrentDirectoryButton />
+                  <TransferQueueButton />
+                </div>
               </div>
             )}
 
-            {(downloading || downloadError) && (
-              <Alert tone={downloadError ? 'error' : 'info'}>
-                {downloadError || `Downloading ${downloadLabel || 'file'}... ${Math.round(downloadProgress)}%`}
-              </Alert>
-            )}
+            {downloadError && <Alert tone="error">{downloadError}</Alert>}
 
-            {(uploading || uploadError) && (
-              <Alert tone={uploadError ? 'error' : 'info'}>
-                {uploadError || `Uploading ${uploadLabel || 'file'}... ${Math.round(uploadProgress)}%`}
-              </Alert>
-            )}
-
-            {uploadSuccess && !uploading && !uploadError && !isUploadOnlyDirectoryShare && (
+            {uploadSuccess && !uploading && !isUploadOnlyDirectoryShare && (
               <Alert tone="success">{uploadSuccess.message}</Alert>
             )}
 
             {isUploadOnlyDirectoryShare ? (
               <FileDropOverlay disabled={!canUpload || !isDirectoryShare} disabledMessage="Upload is not available for this share">
-                <UploadProgress />
                 <section className="rounded border border-dashed border-cyan-500/35 bg-gray-900 p-8 text-center text-gray-200">
-                  <h2 className="text-xl font-semibold text-white">Upload files to this share</h2>
-                  <p className="mt-2 text-sm text-gray-400">Uploaded files may not be visible after upload.</p>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1 text-left">
+                      <h2 className="text-xl font-semibold text-white">Upload files to this share</h2>
+                      <p className="mt-2 text-sm text-gray-400">Uploaded files may not be visible after upload.</p>
+                    </div>
+                    <TransferQueueButton />
+                  </div>
                   {uploadSuccess && (
                     <div className="mx-auto mt-5 max-w-lg rounded border border-emerald-500/40 bg-emerald-950/30 p-3 text-sm text-emerald-100">
                       <p className="font-medium">{uploadSuccess.message}</p>
@@ -277,12 +268,12 @@ const SharePageClient = ({ token }: { token: string }) => {
                       type="file"
                       multiple
                       onChange={handleUploadInputChange}
-                      disabled={uploading}
+                      disabled={!canUpload || !isDirectoryShare}
                     />
                     <button
                       type="button"
                       className="rounded bg-cyan-400 px-4 py-2 font-medium text-gray-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
-                      disabled={uploading}
+                      disabled={!canUpload || !isDirectoryShare}
                       onClick={() => uploadInputRef.current?.click()}>
                       Select files
                     </button>
@@ -292,7 +283,6 @@ const SharePageClient = ({ token }: { token: string }) => {
               </FileDropOverlay>
             ) : canShowFileSurface ? (
               <FileDropOverlay disabled={!canUpload || !isDirectoryShare} disabledMessage="Upload is not available for this share">
-                <UploadProgress />
                 {files.length === 0 ? (
                   <section className="rounded border border-dashed border-gray-700 bg-gray-900 p-8 text-center text-gray-300">
                     This directory is empty.

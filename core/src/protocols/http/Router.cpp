@@ -790,6 +790,40 @@ constexpr std::chrono::minutes kPreviewQueueDedupeTtl{2};
     return std::ranges::find(sizes.begin(), sizes.end(), size) != sizes.end();
 }
 
+[[nodiscard]] unsigned int normalizeThumbnailSize(unsigned int requested) {
+    if (requested == 0) requested = 128;
+
+    auto sizes = vh::config::Registry::get().caching.thumbnails.sizes;
+    if (sizes.empty()) return requested;
+
+    std::ranges::sort(sizes);
+    auto best = sizes.front();
+    auto bestDistance = best > requested ? best - requested : requested - best;
+
+    for (const auto candidate : sizes) {
+        const auto distance = candidate > requested ? candidate - requested : requested - candidate;
+        if (distance < bestDistance || (distance == bestDistance && candidate > best)) {
+            best = candidate;
+            bestDistance = distance;
+        }
+    }
+
+    return best;
+}
+
+[[nodiscard]] unsigned int previewBatchSizeFromBody(const nlohmann::json& body) {
+    unsigned int requested = 128;
+    if (body.contains("size") && !body.at("size").is_null()) {
+        try {
+            const auto parsed = body.at("size").get<unsigned int>();
+            if (parsed > 0) requested = parsed;
+        } catch (const std::exception&) {
+            requested = 128;
+        }
+    }
+    return normalizeThumbnailSize(requested);
+}
+
 [[nodiscard]] std::filesystem::path thumbnailCachePath(
     const std::shared_ptr<vh::storage::Engine>& engine,
     const std::shared_ptr<File>& file,
@@ -1001,7 +1035,7 @@ Response Router::handlePreviewBatch(request&& req) {
 
     try {
         const auto body = parseJsonBody(req);
-        const auto size = body.value("size", 64u);
+        const auto size = previewBatchSizeFromBody(body);
         if (!body.contains("items") || !body.at("items").is_array())
             throw std::invalid_argument("Preview batch requires items array");
 
@@ -1025,10 +1059,11 @@ Response Router::handlePreviewBatch(request&& req) {
             const auto actor = session->rbacActor();
 
             for (const auto& item : body.at("items")) {
-                const auto path = item.at("path").get<std::string>();
-                nlohmann::json out{{"path", path}};
+                nlohmann::json out{{"size", size}};
                 if (item.contains("key")) out["key"] = item.at("key");
                 try {
+                    const auto path = item.at("path").get<std::string>();
+                    out["path"] = path;
                     auto target = resolver->resolve(actor, {
                         .path = path,
                         .operation = vh::share::Operation::Preview,
@@ -1049,7 +1084,7 @@ Response Router::handlePreviewBatch(request&& req) {
                     }
                 } catch (const std::exception& e) {
                     const std::string message = e.what();
-                    out["status"] = containsText(message, "not found") ? "missing" : "error";
+                    out["status"] = out.contains("path") && containsText(message, "not found") ? "missing" : "error";
                     if (out["status"] == "error") out["error"] = message;
                 }
                 items.push_back(std::move(out));
@@ -1062,13 +1097,15 @@ Response Router::handlePreviewBatch(request&& req) {
                                             ? std::make_optional(body.at("vault_id").get<uint32_t>())
                                             : std::nullopt;
             for (const auto& item : body.at("items")) {
-                const auto vaultId = item.contains("vault_id") && !item.at("vault_id").is_null()
-                                         ? item.at("vault_id").get<uint32_t>()
-                                         : defaultVaultId.value();
-                const auto path = item.at("path").get<std::string>();
-                nlohmann::json out{{"path", path}, {"vault_id", vaultId}};
+                nlohmann::json out{{"size", size}};
                 if (item.contains("key")) out["key"] = item.at("key");
                 try {
+                    const auto vaultId = item.contains("vault_id") && !item.at("vault_id").is_null()
+                                             ? item.at("vault_id").get<uint32_t>()
+                                             : defaultVaultId.value();
+                    const auto path = item.at("path").get<std::string>();
+                    out["path"] = path;
+                    out["vault_id"] = vaultId;
                     auto engine = previewEngineResolver()(vaultId);
                     if (!engine) throw std::runtime_error("No storage engine found");
                     const auto vaultPath = std::filesystem::path(path);
@@ -1100,7 +1137,7 @@ Response Router::handlePreviewBatch(request&& req) {
                     }
                 } catch (const std::exception& e) {
                     const std::string message = e.what();
-                    out["status"] = containsText(message, "not found") ? "missing" : "error";
+                    out["status"] = out.contains("path") && containsText(message, "not found") ? "missing" : "error";
                     if (out["status"] == "error") out["error"] = message;
                 }
                 items.push_back(std::move(out));

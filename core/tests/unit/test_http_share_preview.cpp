@@ -558,6 +558,70 @@ TEST_F(HttpSharePreviewTest, SharePreviewBatchReportsReadyUnsupportedAndMissingI
     EXPECT_EQ("missing", body.at("items").at(2).at("status"));
 }
 
+TEST_F(HttpSharePreviewTest, SharePreviewBatchNormalizesSmallRequestedSizeToConfiguredCacheSize) {
+    if (vh::config::Registry::get().caching.thumbnails.sizes.empty())
+        GTEST_SKIP() << "No configured thumbnail sizes";
+
+    auto session = readySession(vh::share::bit(vh::share::Operation::Preview));
+    installSharePreviewHooks(session);
+
+    auto response = Router::handlePreviewBatch(previewBatchRequest({
+        {"size", 64},
+        {"items", nlohmann::json::array({{{"key", "ready"}, {"path", "/report.jpg"}}})}
+    }));
+
+    ASSERT_EQ(status::ok, responseStatus(response));
+    const auto body = nlohmann::json::parse(stringBody(response));
+    ASSERT_EQ(1u, body.at("items").size());
+    EXPECT_EQ(previewSize, body.at("size"));
+    EXPECT_EQ(previewSize, body.at("items").at(0).at("size"));
+    EXPECT_EQ("ready", body.at("items").at(0).at("status"));
+    EXPECT_NE(std::string::npos, body.at("items").at(0).at("url").get<std::string>().find(
+        "size=" + std::to_string(previewSize)));
+}
+
+TEST_F(HttpSharePreviewTest, SharePreviewBatchClampsLargeRequestedSizeToConfiguredCacheSize) {
+    const auto& configuredSizes = vh::config::Registry::get().caching.thumbnails.sizes;
+    if (configuredSizes.empty()) GTEST_SKIP() << "No configured thumbnail sizes";
+
+    auto session = readySession(vh::share::bit(vh::share::Operation::Preview));
+    installSharePreviewHooks(session);
+
+    const auto expectedSize = *std::ranges::max_element(configuredSizes);
+    auto response = Router::handlePreviewBatch(previewBatchRequest({
+        {"size", expectedSize + 512},
+        {"items", nlohmann::json::array({{{"key", "large"}, {"path", "/report.jpg"}}})}
+    }));
+
+    ASSERT_EQ(status::ok, responseStatus(response));
+    const auto body = nlohmann::json::parse(stringBody(response));
+    ASSERT_EQ(1u, body.at("items").size());
+    EXPECT_EQ(expectedSize, body.at("size"));
+    EXPECT_EQ(expectedSize, body.at("items").at(0).at("size"));
+    EXPECT_NE(std::string::npos, body.at("items").at(0).at("url").get<std::string>().find(
+        "size=" + std::to_string(expectedSize)));
+}
+
+TEST_F(HttpSharePreviewTest, SharePreviewBatchReportsMalformedItemsWithoutFailingRoute) {
+    auto session = readySession(vh::share::bit(vh::share::Operation::Preview));
+    installSharePreviewHooks(session);
+
+    auto response = Router::handlePreviewBatch(previewBatchRequest({
+        {"size", previewSize},
+        {"items", nlohmann::json::array({
+            {{"key", "bad"}},
+            {{"key", "ready"}, {"path", "/report.jpg"}}
+        })}
+    }));
+
+    ASSERT_EQ(status::ok, responseStatus(response));
+    const auto body = nlohmann::json::parse(stringBody(response));
+    ASSERT_EQ(2u, body.at("items").size());
+    EXPECT_EQ("error", body.at("items").at(0).at("status"));
+    EXPECT_TRUE(body.at("items").at(0).contains("error"));
+    EXPECT_EQ("ready", body.at("items").at(1).at("status"));
+}
+
 TEST_F(HttpSharePreviewTest, SharePreviewBatchQueuesConfiguredCacheMisses) {
     if (vh::config::Registry::get().caching.thumbnails.sizes.empty())
         GTEST_SKIP() << "No configured thumbnail sizes";

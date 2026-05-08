@@ -18,10 +18,12 @@ import { canRequestSharePreview, hasEffectiveShareOperation } from '@/util/share
 type FilesystemClientProps = { rows: FilesystemRow[]; previewMode: 'authenticated' | 'share' }
 
 interface PreviewBatchResponse {
+  size?: number
   items: Array<{
     key?: string
     status: 'ready' | 'queued' | 'missing' | 'unsupported' | 'error'
     url?: string
+    size?: number
   }>
 }
 
@@ -76,7 +78,7 @@ export const FilesystemClient: React.FC<FilesystemClientProps> = memo(({ rows, p
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            size: 64,
+            size: 128,
             ...(previewMode === 'authenticated' ? { vault_id: previewCandidates[0]?.vault_id } : {}),
             items: previewCandidates.map(row => ({
               key: row.key,
@@ -89,15 +91,14 @@ export const FilesystemClient: React.FC<FilesystemClientProps> = memo(({ rows, p
         const data = await response.json() as PreviewBatchResponse
         if (cancelled) return
 
-        const next: Record<string, string | null> = {}
+        const next: Record<string, string | null> = Object.fromEntries(
+          previewCandidates.map(row => [row.key, row.previewUrl]),
+        )
         let queued = false
         for (const item of data.items) {
           if (!item.key) continue
-          if (item.status === 'ready' && item.url) next[item.key] = item.url
-          else {
-            next[item.key] = null
-            if (item.status === 'queued') queued = true
-          }
+          if (item.url) next[item.key] = item.url
+          if (item.status === 'queued') queued = true
         }
         setBatchedPreviewUrls(next)
 

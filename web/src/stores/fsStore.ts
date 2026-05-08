@@ -17,6 +17,14 @@ import { buildDownloadUrl } from '@/util/downloadUrl'
 
 type FsMode = 'authenticated' | 'share'
 type FsEntry = DBFile | Directory
+
+let transferTaskCounter = 0
+
+const nextTransferTaskId = () => {
+  transferTaskCounter += 1
+  return `transfer-${Date.now()}-${transferTaskCounter}`
+}
+
 export interface UploadSuccessState {
   message: string
   filename: string | null
@@ -25,10 +33,25 @@ export interface UploadSuccessState {
   listUnavailable: boolean
 }
 
+export type TransferTaskType = 'upload' | 'download'
+export type TransferTaskStatus = 'queued' | 'uploading' | 'finalizing' | 'syncing' | 'complete' | 'failed' | 'started'
+
+export interface TransferTask {
+  id: string
+  type: TransferTaskType
+  label: string
+  status: TransferTaskStatus
+  progress: number
+  error: string | null
+  createdAt: number
+  updatedAt: number
+}
+
 interface FsStore {
   mode: FsMode
   currVault: Vault | LocalDiskVault | S3Vault | null
   path: string
+  tasks: TransferTask[]
   uploading: boolean
   uploadProgress: number
   uploadError: string | null
@@ -46,6 +69,7 @@ interface FsStore {
   copiedItem: FsEntry | null
   enterShareMode: () => void
   exitShareMode: () => void
+  clearTransferTasks: () => void
   setCopiedItem: (item: FsEntry | null) => void
   pasteCopiedItem: (targetPath?: string) => Promise<void>
   fetchFiles: () => Promise<void>
@@ -94,7 +118,12 @@ const baseName = (path: string, fallback: string) => {
   return parts.at(-1) || fallback
 }
 
-const shareHttpPreviewUrl = (path?: string, size = 64) => {
+const transferLabelFromPath = (path: string, fallback: string) => {
+  const parts = path.split('/').filter(Boolean)
+  return parts.at(-1) || fallback
+}
+
+const shareHttpPreviewUrl = (path?: string, size = 128) => {
   if (!path) return null
   return buildPreviewUrl({ mode: 'share', path: normalizeSharePath(path), size })
 }
@@ -133,7 +162,7 @@ const shareEntryToFsEntry = (entry: ShareEntry): FsEntry => {
   if (shareState.status === 'ready' && shareState.sessionToken &&
     canRequestSharePreview(shareState.share) && entry.path && entry.mime_type &&
     (entry.mime_type.startsWith('image/') || entry.mime_type === 'application/pdf')) {
-    ;(file as DBFile & { previewUrl?: string | null }).previewUrl = shareHttpPreviewUrl(entry.path, 64)
+    ;(file as DBFile & { previewUrl?: string | null }).previewUrl = shareHttpPreviewUrl(entry.path, 128)
   }
 
   return file
@@ -265,6 +294,24 @@ const clearTransferState = (uploadSuccess?: UploadSuccessState | null) => {
   }
 }
 
+const activeTransferStatuses: TransferTaskStatus[] = ['queued', 'uploading', 'finalizing', 'syncing']
+
+const isActiveTransferTask = (task: TransferTask) => activeTransferStatuses.includes(task.status)
+
+const trimTransferTasks = (tasks: TransferTask[]) => {
+  const active = tasks.filter(isActiveTransferTask)
+  const recent = tasks
+    .filter(task => !isActiveTransferTask(task))
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(0, 8)
+
+  return [...active, ...recent].sort((a, b) => {
+    if (isActiveTransferTask(a) && !isActiveTransferTask(b)) return -1
+    if (!isActiveTransferTask(a) && isActiveTransferTask(b)) return 1
+    return b.updatedAt - a.updatedAt
+  })
+}
+
 const startBrowserDownload = (url: string) => {
   const anchor = document.createElement('a')
   anchor.href = url
@@ -331,6 +378,19 @@ type PreparedUploadFile = {
   shareTarget: { path: string; filename: string }
 }
 
+interface UploadTaskPayload {
+  files: FileWithRelativePath[]
+  mode: FsMode
+  vault: Vault | LocalDiskVault | S3Vault | null
+  currentPath: string
+  targetPaths?: string[]
+  onProgress?: (bytes: number) => void
+  resolve?: () => void
+  reject?: (error: unknown) => void
+}
+
+const nowMs = () => (typeof performance === 'undefined' ? Date.now() : performance.now())
+
 const uploadBody = async ({
   url,
   file,
@@ -381,6 +441,7 @@ const uploadHttpBatch = async ({
   targetPaths,
   onProgress,
   onFileStart,
+  onFinalizing,
 }: {
   files: FileWithRelativePath[]
   mode: FsMode
@@ -389,6 +450,7 @@ const uploadHttpBatch = async ({
   targetPaths?: string[]
   onProgress: (bytes: number) => void
   onFileStart: (filename: string) => void
+  onFinalizing?: () => void
 }) => {
   if (mode === 'share') {
     requireReadyShareSession()
@@ -454,10 +516,13 @@ const uploadHttpBatch = async ({
       })
     })
 
+    onFinalizing?.()
+    const finishStartedAt = nowMs()
     const finish = await fetch(`/upload/${encodeURIComponent(uploadId)}/finish${shareQuery}`, {
       method: 'POST',
       credentials: 'same-origin',
     })
+    console.debug(`[FsStore] upload finish completed in ${Math.round(nowMs() - finishStartedAt)}ms`)
     if (!finish.ok) throw await httpResponseError(finish, 'Unable to finish upload')
   } catch (error) {
     await fetch(`/upload/${encodeURIComponent(uploadId)}${shareQuery}`, {
@@ -470,10 +535,172 @@ const uploadHttpBatch = async ({
 
 export const useFSStore = create<FsStore>()(
   persist(
-    (set, get) => ({
+    (set, get) => {
+      const uploadTaskPayloads = new Map<string, UploadTaskPayload>()
+      let uploadRunnerActive = false
+
+      const updateTransferTask = (id: string, patch: Partial<Omit<TransferTask, 'id' | 'type' | 'createdAt'>>) => {
+        set(state => ({
+          tasks: trimTransferTasks(state.tasks.map(task => (
+            task.id === id ? { ...task, ...patch, updatedAt: Date.now() } : task
+          ))),
+        }))
+      }
+
+      const runUploadQueue = async () => {
+        if (uploadRunnerActive) return
+        uploadRunnerActive = true
+
+        try {
+          while (true) {
+            const task = get().tasks.find(candidate => candidate.type === 'upload' && candidate.status === 'queued')
+            if (!task) break
+
+            const payload = uploadTaskPayloads.get(task.id)
+            if (!payload) {
+              updateTransferTask(task.id, { status: 'failed', error: 'Upload payload is no longer available' })
+              continue
+            }
+
+            const totalBytes = payload.files.reduce((sum, file) => sum + file.size, 0)
+            let uploadedBytes = 0
+            const label = payload.files.length === 1 ? payload.files[0].name : `${payload.files.length} files`
+
+            updateTransferTask(task.id, { status: 'uploading', progress: 0, error: null })
+            set({
+              uploading: true,
+              uploadProgress: 0,
+              uploadError: null,
+              uploadLabel: label,
+            })
+
+            try {
+              await uploadHttpBatch({
+                files: payload.files,
+                mode: payload.mode,
+                vault: payload.vault,
+                currentPath: payload.currentPath,
+                targetPaths: payload.targetPaths,
+                onFileStart: filename => set({ uploadLabel: filename }),
+                onProgress: bytes => {
+                  uploadedBytes += bytes
+                  payload.onProgress?.(bytes)
+                  const progress = totalBytes > 0 ? Math.min(100, (uploadedBytes / totalBytes) * 100) : 100
+                  updateTransferTask(task.id, { progress })
+                  set({ uploadProgress: progress })
+                },
+                onFinalizing: () => {
+                  updateTransferTask(task.id, { status: 'finalizing', progress: 100 })
+                  set({ uploadProgress: 100, uploadLabel: label })
+                },
+              })
+
+              let listUnavailable = false
+              const refreshStartedAt = nowMs()
+
+              if (payload.mode === 'authenticated') {
+                updateTransferTask(task.id, { status: 'syncing', progress: 100 })
+                set({ uploadLabel: 'Syncing' })
+                await useVaultStore.getState().syncVault({ id: payload.vault?.id || 0 })
+                if (get().mode === 'authenticated' && get().currVault?.id === payload.vault?.id) await get().fetchFiles()
+              } else {
+                const shareState = useVaultShareStore.getState()
+                const canRelist = hasEffectiveShareOperation(shareState.share, 'list') || shareState.share?.target_type === 'file'
+                listUnavailable = !canRelist
+                if (canRelist && get().mode === 'share') {
+                  updateTransferTask(task.id, { status: 'syncing', progress: 100 })
+                  set({ uploadLabel: 'Refreshing' })
+                  await get().fetchFiles()
+                }
+              }
+
+              console.debug(`[FsStore] post-upload refresh completed in ${Math.round(nowMs() - refreshStartedAt)}ms`)
+
+              const uploadSuccess = createUploadSuccess(payload.files, listUnavailable)
+              revokeUploadPreview(get().uploadSuccess)
+              updateTransferTask(task.id, { status: 'complete', progress: 100, error: null })
+              set({ uploadProgress: 100, uploadError: null, uploadSuccess })
+              payload.resolve?.()
+            } catch (err) {
+              console.error('[FsStore] upload task failed:', err)
+              const message = uploadErrorMessage(err, 'Upload failed', payload.mode)
+              updateTransferTask(task.id, { status: 'failed', error: message })
+              set({ uploadError: message })
+              payload.reject?.(err)
+            } finally {
+              uploadTaskPayloads.delete(task.id)
+              const hasQueuedUpload = get().tasks.some(candidate => candidate.type === 'upload' && candidate.status === 'queued')
+              if (!hasQueuedUpload) set({ uploading: false, uploadLabel: null })
+            }
+          }
+        } finally {
+          uploadRunnerActive = false
+          const hasPendingUpload = get().tasks.some(candidate => candidate.type === 'upload' && candidate.status === 'queued')
+          if (hasPendingUpload) void runUploadQueue()
+          else set({ uploading: false, uploadLabel: null })
+        }
+      }
+
+      const enqueueUploadTask = (
+        files: FileWithRelativePath[],
+        options: {
+          targetPaths?: string[]
+          onProgress?: (bytes: number) => void
+          waitForCompletion?: boolean
+        } = {},
+      ) => {
+        if (!files.length) return Promise.resolve()
+
+        const { mode, currVault, path } = get()
+        if (mode === 'authenticated' && !currVault) return Promise.reject(new Error('No current vault selected'))
+
+        const id = nextTransferTaskId()
+        const timestamp = Date.now()
+        const task: TransferTask = {
+          id,
+          type: 'upload',
+          label: files.length === 1 ? files[0].name : `${files.length} files`,
+          status: 'queued',
+          progress: 0,
+          error: null,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        }
+
+        let completion: Promise<void> | undefined
+        const payload: UploadTaskPayload = {
+          files,
+          mode,
+          vault: currVault,
+          currentPath: path,
+          targetPaths: options.targetPaths,
+          onProgress: options.onProgress,
+        }
+
+        if (options.waitForCompletion) {
+          completion = new Promise<void>((resolve, reject) => {
+            payload.resolve = resolve
+            payload.reject = reject
+          })
+        }
+
+        revokeUploadPreview(get().uploadSuccess)
+        uploadTaskPayloads.set(id, payload)
+        set(state => ({
+          tasks: trimTransferTasks([task, ...state.tasks]),
+          uploadError: null,
+          uploadSuccess: null,
+        }))
+        void runUploadQueue()
+
+        return completion ?? Promise.resolve()
+      }
+
+      return ({
       mode: 'authenticated',
       currVault: null,
       path: '',
+      tasks: [],
       uploading: false,
       uploadProgress: 0,
       uploadError: null,
@@ -509,6 +736,10 @@ export const useFSStore = create<FsStore>()(
           currentDirectory: null,
           ...clearTransferState(get().uploadSuccess),
         })
+      },
+
+      clearTransferTasks() {
+        set(state => ({ tasks: state.tasks.filter(isActiveTransferTask) }))
       },
 
       setCopiedItem(item) {
@@ -619,49 +850,7 @@ export const useFSStore = create<FsStore>()(
       },
 
       async upload(files: FileWithRelativePath[]) {
-        const { fetchFiles, path, mode, currVault } = get()
-
-        set({ uploading: true, uploadProgress: 0, uploadError: null, uploadLabel: files.length === 1 ? files[0].name : `${files.length} files` })
-
-        const totalBytes = files.reduce((sum, f) => sum + f.size, 0)
-        let uploadedBytes = 0
-
-        try {
-          await uploadHttpBatch({
-            files,
-            mode,
-            vault: currVault,
-            currentPath: path,
-            onFileStart: filename => set({ uploadLabel: filename }),
-            onProgress: bytes => {
-              uploadedBytes += bytes
-              set({ uploadProgress: totalBytes > 0 ? Math.min(100, (uploadedBytes / totalBytes) * 100) : 100 })
-            },
-          })
-
-          let listUnavailable = false
-
-          if (get().mode === 'authenticated') {
-            await useVaultStore.getState().syncVault({ id: get().currVault?.id || 0 })
-            await fetchFiles()
-          } else {
-            const shareState = useVaultShareStore.getState()
-            const canRelist = hasEffectiveShareOperation(shareState.share, 'list') || shareState.share?.target_type === 'file'
-            listUnavailable = !canRelist
-            if (canRelist)
-              await fetchFiles()
-          }
-
-          const uploadSuccess = createUploadSuccess(files, listUnavailable)
-          revokeUploadPreview(get().uploadSuccess)
-          set({ uploadProgress: 100, uploadError: null, uploadSuccess })
-        } catch (err) {
-          console.error('[FsStore] upload() batch failed:', err)
-          set({ uploadError: uploadErrorMessage(err, 'Upload failed', get().mode) })
-          throw err
-        } finally {
-          set({ uploading: false, uploadLabel: null })
-        }
+        await enqueueUploadTask(files)
       },
 
       async downloadFile(path) {
@@ -674,11 +863,31 @@ export const useFSStore = create<FsStore>()(
         })
         if (!url) throw new Error('Download target is not ready')
 
+        const id = nextTransferTaskId()
+        const timestamp = Date.now()
+        const label = transferLabelFromPath(downloadPath, 'Download')
+
         try {
-          set({ downloadError: null, downloadProgress: 0, downloading: false, downloadLabel: null })
+          set(state => ({
+            tasks: trimTransferTasks([{
+              id,
+              type: 'download',
+              label,
+              status: 'started',
+              progress: 0,
+              error: null,
+              createdAt: timestamp,
+              updatedAt: timestamp,
+            }, ...state.tasks]),
+            downloadError: null,
+            downloadProgress: 0,
+            downloading: false,
+            downloadLabel: label,
+          }))
           startBrowserDownload(url)
         } catch (error) {
           const message = errorMessage(error, 'Download failed')
+          updateTransferTask(id, { status: 'failed', error: message })
           set({ downloading: false, downloadProgress: 0, downloadError: message })
           throw error
         }
@@ -709,15 +918,10 @@ export const useFSStore = create<FsStore>()(
 
       async uploadFile({ file, targetPath, onProgress }) {
         try {
-          const { mode, currVault, path } = get()
-          await uploadHttpBatch({
-            files: [file as FileWithRelativePath],
-            mode,
-            vault: currVault,
-            currentPath: path,
+          await enqueueUploadTask([file as FileWithRelativePath], {
             targetPaths: targetPath ? [targetPath] : undefined,
-            onFileStart: () => undefined,
-            onProgress: bytes => onProgress?.(bytes),
+            onProgress,
+            waitForCompletion: true,
           })
         } catch (err) {
           console.error('[FsStore] uploadFile error:', err)
@@ -834,7 +1038,8 @@ export const useFSStore = create<FsStore>()(
           throw error
         }
       },
-    }),
+      })
+    },
     {
       name: 'vaulthalla-fs',
       partialize: state => ({

@@ -33,7 +33,7 @@ function buildRows(files: FilesystemEntry[], mode: 'authenticated' | 'share'): F
       size: formatSize(f),
       modified: formatTimestamp(f.updated_at),
       previewUrl: explicitPreviewUrl || (mode === 'authenticated' ?
-        buildPreviewUrl({ mode: 'authenticated', vaultId: f.vault_id, path: f.path || f.name, size: 64 })
+        buildPreviewUrl({ mode: 'authenticated', vaultId: f.vault_id, path: f.path || f.name, size: 128 })
       : null),
     }
   })
