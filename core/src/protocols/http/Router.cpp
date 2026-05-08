@@ -166,7 +166,7 @@ static std::unique_ptr<vh::protocols::http::model::preview::Request> preparePrev
 
     const auto fusePath = pr->engine->paths->absRelToAbsRel(pr->rel_path, PathType::VAULT_ROOT, PathType::FUSE_ROOT);
     const auto entry = vh::runtime::Deps::get().fsCache->getEntry(fusePath);
-    if (!entry) throw std::runtime_error("File not found in cache");
+    if (!entry) throw std::runtime_error("File not found in cache for rel_path: " + pr->rel_path.string() + ", fuse_path: " + fusePath.string() + ", vault_id: " + std::to_string(pr->vault_id) + ", cache_contents:\n" + vh::runtime::Deps::get().fsCache->dump());
     if (entry->isDirectory()) throw std::runtime_error("Requested preview file is a directory");
     pr->file = std::static_pointer_cast<File>(entry);
     return pr;

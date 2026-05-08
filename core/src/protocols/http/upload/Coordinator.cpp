@@ -803,7 +803,24 @@ nlohmann::json Coordinator::finishSession(const request& req, const std::string_
             if (!session || !session->user) throw std::runtime_error("Upload requires a user session");
             for (const auto& file : files) {
                 if (const auto err = vh::fs::Filesystem::rename(file.fuse_from, file.fuse_to, session->user, file.engine); err)
-                    throw std::runtime_error(std::string("Failed to move uploaded file to final location: ") + std::strerror(-err));
+                    throw std::runtime_error(
+                        "Failed to move uploaded file to final location"
+                        " (upload_id: " + uploadId +
+                        ", file_id: " + file.file_id +
+                        ", from: " + file.fuse_from.string() +
+                        ", to: " + file.fuse_to.string() +
+                        "): " + std::strerror(-err));
+                try {
+                    (void)fileEntryAfterRename(file);
+                } catch (const std::exception& e) {
+                    throw std::runtime_error(
+                        "Uploaded file missing after rename"
+                        " (upload_id: " + uploadId +
+                        ", file_id: " + file.file_id +
+                        ", from: " + file.fuse_from.string() +
+                        ", to: " + file.fuse_to.string() +
+                        "): " + e.what());
+                }
                 vaults.insert(file.vault_id);
                 entries.push_back(fileResponseJson(file));
             }
@@ -859,6 +876,8 @@ nlohmann::json Coordinator::finishSession(const request& req, const std::string_
     } catch (const std::exception& e) {
         if (upload->mode == UploadMode::Share) {
             for (const auto& file : files) failShareUploadIfNeeded(file, e.what());
+        } else {
+            cleanupSession(upload, "http_upload_finish_failed");
         }
         throw;
     }

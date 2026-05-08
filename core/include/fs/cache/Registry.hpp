@@ -41,6 +41,8 @@ public:
 
     std::shared_ptr<stats::model::CacheStatsSnapshot> stats() const;
 
+    std::string dump() const;
+
 private:
     mutable std::shared_mutex mutex_;
     std::shared_ptr<stats::model::CacheStats> stats_;

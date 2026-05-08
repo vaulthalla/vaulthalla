@@ -6,7 +6,9 @@
 #include "db/query/share/Session.hpp"
 #include "db/query/share/Upload.hpp"
 #include "db/query/share/VaultRole.hpp"
+#include "db/query/fs/Entry.hpp"
 #include "db/model/ListQueryParams.hpp"
+#include "fs/model/Entry.hpp"
 #include "rbac/fs/policy/Share.hpp"
 #include "rbac/role/Vault.hpp"
 #include "db/query/rbac/role/Vault.hpp"
@@ -120,6 +122,54 @@ protected:
         return session;
     }
 };
+
+TEST_F(ShareQueryTest, EntryPathLookupPreservesLegacyVaultMountSegment) {
+    struct SeededPath {
+        uint32_t vaultId{};
+        uint32_t fileEntryId{};
+    };
+
+    const auto seeded = db::Transactions::exec("ShareQueryTest::legacyPathSeed", [&](pqxx::work& txn) {
+        SeededPath out;
+        out.vaultId = txn.exec(
+            "INSERT INTO vault (type, name, owner_id, mount_point) VALUES ($1, $2, $3, $4) RETURNING id",
+            pqxx::params{"local", "Legacy Mount Vault", userId, "legacy_mount_alias"}
+        ).one_field().as<uint32_t>();
+
+        const auto vaultRootId = txn.exec(
+            "INSERT INTO fs_entry (vault_id, parent_id, name, base32_alias, created_by, last_modified_by, path, inode) "
+            "VALUES ($1, NULL, $2, $3, $4, $4, $5, $6) RETURNING id",
+            pqxx::params{out.vaultId, "legacy_mount", "legacy-mount-root", userId, "/", 9100}
+        ).one_field().as<uint32_t>();
+        txn.exec("INSERT INTO directories (fs_entry_id) VALUES ($1)", pqxx::params{vaultRootId});
+
+        const auto miscId = txn.exec(
+            "INSERT INTO fs_entry (vault_id, parent_id, name, base32_alias, created_by, last_modified_by, path, inode) "
+            "VALUES ($1, $2, $3, $4, $5, $5, $6, $7) RETURNING id",
+            pqxx::params{out.vaultId, vaultRootId, "misc", "legacy-mount-misc", userId, "/misc", 9101}
+        ).one_field().as<uint32_t>();
+        txn.exec("INSERT INTO directories (fs_entry_id) VALUES ($1)", pqxx::params{miscId});
+
+        out.fileEntryId = txn.exec(
+            "INSERT INTO fs_entry (vault_id, parent_id, name, base32_alias, created_by, last_modified_by, path, inode) "
+            "VALUES ($1, $2, $3, $4, $5, $5, $6, $7) RETURNING id",
+            pqxx::params{out.vaultId, miscId, "test.jpg", "legacy-mount-file", userId, "/misc/test.jpg", 9102}
+        ).one_field().as<uint32_t>();
+        txn.exec(
+            "INSERT INTO files (fs_entry_id, size_bytes, mime_type, content_hash, encryption_iv) "
+            "VALUES ($1, $2, $3, $4, $5)",
+            pqxx::params{out.fileEntryId, 5, "image/jpeg", "hash", ""}
+        );
+
+        return out;
+    });
+
+    const auto entry = db::query::fs::Entry::getFSEntryByPath(seeded.vaultId, "/misc/test.jpg");
+    ASSERT_NE(entry, nullptr);
+    EXPECT_EQ(entry->id, seeded.fileEntryId);
+    EXPECT_EQ(entry->path.string(), "/misc/test.jpg");
+    EXPECT_EQ(entry->fuse_path.string(), "/legacy_mount/misc/test.jpg");
+}
 
 TEST_F(ShareQueryTest, ShareLinkRoundTripAndCounters) {
     auto created = db::query::share::Link::create(makeLink());

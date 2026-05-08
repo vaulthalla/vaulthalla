@@ -17,7 +17,6 @@ void vh::db::Connection::initPreparedFsEntries() const {
                    "    UNION ALL "
                    "    SELECT f.id, f.parent_id, f.name, f.base32_alias FROM fs_entry f "
                    "    JOIN parent_chain pc ON f.id = pc.parent_id "
-                   "    WHERE f.parent_id IS NOT NULL "
                    ") "
                    "SELECT * FROM parent_chain ORDER BY parent_id NULLS FIRST");
 
