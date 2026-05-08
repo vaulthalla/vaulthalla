@@ -10,6 +10,7 @@ set -euo pipefail
 UNIT="vaulthalla.service"
 MOUNT="${VH_MOUNTPOINT:-/mnt/vaulthalla}"
 FORCE_VAULTHALLA_PIDS=false
+SYSTEMCTL_STOP_TIMEOUT="${VH_SYSTEMCTL_STOP_TIMEOUT:-35s}"
 
 log(){ printf '[vh-unmount] %s\n' "$*"; }
 
@@ -96,8 +97,18 @@ safe_stop_unit() {
   fi
 
   log "Stopping $unit"
-  if ! sudo systemctl stop "$unit"; then
+  if command -v timeout >/dev/null 2>&1; then
+    if ! sudo timeout "$SYSTEMCTL_STOP_TIMEOUT" systemctl stop --job-mode=replace "$unit"; then
+      log "⚠️  systemctl stop $unit failed or exceeded $SYSTEMCTL_STOP_TIMEOUT"
+      return 1
+    fi
+  elif ! sudo systemctl stop --job-mode=replace "$unit"; then
     log "⚠️  systemctl stop $unit failed"
+    return 1
+  fi
+
+  if [[ "$(systemctl show -p ActiveState --value "$unit" 2>/dev/null || true)" == "deactivating" ]]; then
+    log "⚠️  $unit is still deactivating after stop"
     return 1
   fi
 }
@@ -135,20 +146,20 @@ try_unmount() {
   fi
 
   if command -v fusermount3 >/dev/null 2>&1; then
-    log "Unmount: sudo fusermount3 -u $mp"
-    if ! sudo fusermount3 -u "$mp" 2>/dev/null; then
+    log "Unmount: sudo fusermount3 -uz $mp"
+    if ! sudo fusermount3 -uz "$mp" 2>/dev/null; then
       log "fusermount3 could not unmount $mp"
     fi
   elif command -v fusermount >/dev/null 2>&1; then
-    log "Unmount: sudo fusermount -u $mp"
-    if ! sudo fusermount -u "$mp" 2>/dev/null; then
+    log "Unmount: sudo fusermount -uz $mp"
+    if ! sudo fusermount -uz "$mp" 2>/dev/null; then
       log "fusermount could not unmount $mp"
     fi
   fi
 
   if is_mounted; then
-    log "Unmount: sudo umount $mp"
-    if ! sudo umount "$mp" 2>/dev/null; then
+    log "Unmount: sudo umount -l $mp"
+    if ! sudo umount -l "$mp" 2>/dev/null; then
       log "umount could not unmount $mp"
     fi
   fi

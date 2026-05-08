@@ -65,7 +65,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 # 1) Make sure FUSE is fully unmounted
-"$BIN_DIR/teardown/unmount_fuse.sh"
+if [[ "$DEV_MODE" == true ]]; then
+  "$BIN_DIR/teardown/unmount_fuse.sh" --force-vaulthalla-pids
+else
+  "$BIN_DIR/teardown/unmount_fuse.sh"
+fi
 
 # 2) Stop and remove systemd services
 "$BIN_DIR/teardown/uninstall_systemd.sh"

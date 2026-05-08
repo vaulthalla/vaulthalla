@@ -596,31 +596,30 @@ export const useFSStore = create<FsStore>()(
               })
 
               let listUnavailable = false
-              const refreshStartedAt = nowMs()
-
-              if (payload.mode === 'authenticated') {
-                updateTransferTask(task.id, { status: 'syncing', progress: 100 })
-                set({ uploadLabel: 'Syncing' })
-                await useVaultStore.getState().syncVault({ id: payload.vault?.id || 0 })
-                if (get().mode === 'authenticated' && get().currVault?.id === payload.vault?.id) await get().fetchFiles()
-              } else {
+              if (payload.mode === 'share') {
                 const shareState = useVaultShareStore.getState()
                 const canRelist = hasEffectiveShareOperation(shareState.share, 'list') || shareState.share?.target_type === 'file'
                 listUnavailable = !canRelist
-                if (canRelist && get().mode === 'share') {
-                  updateTransferTask(task.id, { status: 'syncing', progress: 100 })
-                  set({ uploadLabel: 'Refreshing' })
-                  await get().fetchFiles()
-                }
               }
-
-              console.debug(`[FsStore] post-upload refresh completed in ${Math.round(nowMs() - refreshStartedAt)}ms`)
 
               const uploadSuccess = createUploadSuccess(payload.files, listUnavailable)
               revokeUploadPreview(get().uploadSuccess)
               updateTransferTask(task.id, { status: 'complete', progress: 100, error: null })
-              set({ uploadProgress: 100, uploadError: null, uploadSuccess })
+              set({ uploadProgress: 100, uploading: false, uploadLabel: null, uploadError: null, uploadSuccess })
               payload.resolve?.()
+
+              const refreshStartedAt = nowMs()
+              try {
+                if (payload.mode === 'authenticated') {
+                  await useVaultStore.getState().syncVault({ id: payload.vault?.id || 0 })
+                  if (get().mode === 'authenticated' && get().currVault?.id === payload.vault?.id) await get().fetchFiles()
+                } else if (!listUnavailable && get().mode === 'share') {
+                  await get().fetchFiles()
+                }
+                console.debug(`[FsStore] post-upload refresh completed in ${Math.round(nowMs() - refreshStartedAt)}ms`)
+              } catch (refreshError) {
+                console.error('[FsStore] post-upload refresh failed:', refreshError)
+              }
             } catch (err) {
               console.error('[FsStore] upload task failed:', err)
               const message = uploadErrorMessage(err, 'Upload failed', payload.mode)

@@ -69,6 +69,7 @@ public:
     [[nodiscard]] FileStream beginFile(const request& req, std::optional<uint64_t> contentLength);
     [[nodiscard]] nlohmann::json finishSession(const request& req, std::string_view uploadId);
     [[nodiscard]] nlohmann::json cancelSession(const request& req, std::string_view uploadId);
+    void abortAll(std::string reason) noexcept;
 
     static void setSessionResolverForTesting(SessionResolver resolver);
     static void resetSessionResolverForTesting();

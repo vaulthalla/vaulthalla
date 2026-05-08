@@ -756,6 +756,77 @@ TEST_F(WsShareUploadTest, HttpShareUploadStreamsBodyToTempFileAndRecordsBytes) {
     EXPECT_FALSE(std::filesystem::exists(recreatedTempPath));
 }
 
+TEST_F(WsShareUploadTest, HttpShareUploadAbortAllFailsActiveStreamsAndClearsTempState) {
+    namespace http_upload = vh::protocols::http::upload;
+
+    auto session = readySession();
+    http_upload::Coordinator::setSessionResolverForTesting([session](const vh::protocols::http::request&) {
+        return session;
+    });
+
+    const auto created = http_upload::Coordinator::instance().createSession(
+        httpRequest(vh::protocols::http::verb::post, "/upload/session?share=1"),
+        {
+            {"files", nlohmann::json::array({
+                {
+                    {"file_id", "f0"},
+                    {"path", "/shutdown.txt"},
+                    {"size_bytes", 5},
+                    {"mime_type", "text/plain"}
+                }
+            })}
+        }
+    );
+
+    const auto batchId = created.at("upload_id").get<std::string>();
+    const auto transferId = created.at("files").at(0).at("transfer_id").get<std::string>();
+    const auto tempPath = httpEngine->paths->vaultRoot / "reports" / (".upload-http-" + batchId + "-f0.part");
+
+    auto stream = http_upload::Coordinator::instance().beginFile(
+        httpRequest(vh::protocols::http::verb::put, "/upload/" + batchId + "/files/f0?share=1"),
+        5
+    );
+    stream.write("he", 2);
+
+    ASSERT_TRUE(std::filesystem::exists(tempPath));
+    ASSERT_NE(store->getUpload(transferId), nullptr);
+    EXPECT_EQ(store->getUpload(transferId)->status, vh::share::UploadStatus::Receiving);
+
+    http_upload::Coordinator::instance().abortAll("http_service_stopping");
+
+    EXPECT_FALSE(std::filesystem::exists(tempPath));
+    EXPECT_EQ(store->getUpload(transferId)->status, vh::share::UploadStatus::Failed);
+    EXPECT_EQ(store->getUpload(transferId)->error, "http_service_stopping");
+    EXPECT_THROW({ stream.write("llo", 3); }, std::runtime_error);
+    EXPECT_THROW({
+        (void)http_upload::Coordinator::instance().beginFile(
+            httpRequest(vh::protocols::http::verb::put, "/upload/" + batchId + "/files/f0?share=1"),
+            5
+        );
+    }, std::runtime_error);
+
+    const auto recreated = http_upload::Coordinator::instance().createSession(
+        httpRequest(vh::protocols::http::verb::post, "/upload/session?share=1"),
+        {
+            {"files", nlohmann::json::array({
+                {
+                    {"file_id", "f0"},
+                    {"path", "/shutdown.txt"},
+                    {"size_bytes", 5},
+                    {"mime_type", "text/plain"}
+                }
+            })}
+        }
+    );
+    const auto recreatedBatchId = recreated.at("upload_id").get<std::string>();
+    auto recreatedStream = http_upload::Coordinator::instance().beginFile(
+        httpRequest(vh::protocols::http::verb::put, "/upload/" + recreatedBatchId + "/files/f0?share=1"),
+        5
+    );
+    recreatedStream.write("again", 5);
+    EXPECT_TRUE(recreatedStream.finish().at("complete").get<bool>());
+}
+
 TEST_F(WsShareUploadTest, HttpShareUploadRejectsDuplicatesScopeDenialAndSizeMismatch) {
     namespace http_upload = vh::protocols::http::upload;
 

@@ -4,6 +4,7 @@
 
 #include <boost/asio.hpp>
 #include <boost/beast/core.hpp>
+#include <atomic>
 #include <memory>
 #include <string_view>
 
@@ -29,6 +30,7 @@ public:
     virtual ~TCPServer() = default;
 
     void run();
+    void close() noexcept;
 
 protected:
     virtual std::string_view serverName() const noexcept = 0;
@@ -39,6 +41,7 @@ protected:
 
     asio::io_context& ioc() const noexcept { return ioc_; }
     tcp::acceptor& acceptor() noexcept { return acceptor_; }
+    [[nodiscard]] bool stopping() const noexcept { return stopping_.load(std::memory_order_acquire); }
 
     std::shared_ptr<spdlog::logger> logger() const;
 
@@ -49,6 +52,7 @@ private:
     asio::io_context& ioc_;
     tcp::acceptor acceptor_;
     TcpServerOptions opts_;
+    std::atomic<bool> stopping_{false};
 };
 
 }

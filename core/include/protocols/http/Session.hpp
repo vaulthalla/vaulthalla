@@ -5,7 +5,9 @@
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/asio.hpp>
+#include <atomic>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 
@@ -20,6 +22,9 @@ public:
     explicit Session(tcp::socket socket);
 
     void run();
+    void cancel() noexcept;
+
+    static void cancelAllActive() noexcept;
 
 private:
     bool read_one();
@@ -35,6 +40,9 @@ private:
 
     tcp::socket socket_;
     beast::flat_buffer buffer_;
+    std::atomic<bool> stopRequested_{false};
+    std::atomic<int> nativeHandle_{-1};
+    std::mutex socketMutex_;
 };
 
 }

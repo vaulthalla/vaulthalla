@@ -4,9 +4,12 @@
 #include "config/Config.hpp"
 #include "protocols/ws/Server.hpp"
 #include "protocols/http/Server.hpp"
+#include "protocols/http/Session.hpp"
+#include "protocols/http/upload/Coordinator.hpp"
 #include "log/Registry.hpp"
 
 #include <boost/asio/io_context.hpp>
+#include <chrono>
 #include <sodium.h>
 
 namespace vh::protocols {
@@ -30,31 +33,24 @@ void ProtocolService::runLoop() {
         initThreatIntelligence();
         initProtocols();
 
-        while (!shouldStop()) std::this_thread::sleep_for(std::chrono::seconds(1));
+        while (!shouldStop()) lazySleep(std::chrono::seconds(1), std::chrono::milliseconds(100));
 
-        if (ioContext_) ioContext_->stop();
-        if (ioThread_.joinable()) ioThread_.join();
-        websocketReady_.store(false, std::memory_order_release);
-        httpPreviewReady_.store(false, std::memory_order_release);
-        ioContextInitialized_.store(false, std::memory_order_release);
+        shutdownProtocols();
     } catch (const std::exception& e) {
         log::Registry::runtime()->error("[ProtocolService] Exception in run loop: {}", e.what());
-        if (ioContext_) ioContext_->stop();
-        if (ioThread_.joinable()) ioThread_.join();
-        websocketReady_.store(false, std::memory_order_release);
-        httpPreviewReady_.store(false, std::memory_order_release);
-        ioContextInitialized_.store(false, std::memory_order_release);
+        shutdownProtocols();
     } catch (...) {
         log::Registry::runtime()->error("[ProtocolService] Unknown exception in run loop");
-        if (ioContext_) ioContext_->stop();
-        if (ioThread_.joinable()) ioThread_.join();
-        websocketReady_.store(false, std::memory_order_release);
-        httpPreviewReady_.store(false, std::memory_order_release);
-        ioContextInitialized_.store(false, std::memory_order_release);
+        shutdownProtocols();
     }
 }
 
+void ProtocolService::onStop() {
+    shutdownProtocols();
+}
+
 void ProtocolService::initProtocols() {
+    std::scoped_lock lock(lifecycleMutex_);
     const auto& cfg = vh::config::Registry::get();
     ioContextInitialized_.store(false, std::memory_order_release);
     websocketConfigured_.store(cfg.websocket.enabled, std::memory_order_release);
@@ -102,6 +98,29 @@ void ProtocolService::initHttpServer() {
     httpServer_ = std::make_shared<http::Server>(*ioContext_, endpoint);
     httpServer_->run();
     httpPreviewReady_.store(true, std::memory_order_release);
+}
+
+void ProtocolService::shutdownProtocols() noexcept {
+    std::scoped_lock lock(lifecycleMutex_);
+    try {
+        if (httpServer_) httpServer_->close();
+        if (wsServer_) wsServer_->close();
+        http::Session::cancelAllActive();
+        http::upload::Coordinator::instance().abortAll("http_service_stopping");
+        if (ioContext_) ioContext_->stop();
+        if (ioThread_.joinable() && std::this_thread::get_id() != ioThread_.get_id()) ioThread_.join();
+    } catch (const std::exception& e) {
+        log::Registry::runtime()->error("[ProtocolService] Shutdown failed: {}", e.what());
+    } catch (...) {
+        log::Registry::runtime()->error("[ProtocolService] Shutdown failed: unknown exception");
+    }
+
+    wsServer_.reset();
+    httpServer_.reset();
+    ioContext_.reset();
+    websocketReady_.store(false, std::memory_order_release);
+    httpPreviewReady_.store(false, std::memory_order_release);
+    ioContextInitialized_.store(false, std::memory_order_release);
 }
 
 void ProtocolService::initThreatIntelligence() {

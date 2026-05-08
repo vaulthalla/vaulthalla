@@ -334,11 +334,13 @@ void cleanupSession(
     const std::shared_ptr<UploadSessionState>& session,
     const std::string& shareReason,
     const bool failCompletedShareUploads = false,
-    const bool removeTempFiles = true
+    const bool removeTempFiles = true,
+    const bool markFilesFailed = false
 ) noexcept {
     if (!session) return;
     std::scoped_lock lock(session->mutex);
-    for (const auto& [_, file] : session->files) {
+    for (auto& [_, file] : session->files) {
+        if (markFilesFailed && file.status != FileStatus::Complete) file.status = FileStatus::Failed;
         if (removeTempFiles) cleanupFile(file);
         if (session->mode == UploadMode::Share && (failCompletedShareUploads || file.status != FileStatus::Complete))
             failShareUploadIfNeeded(file, shareReason);
@@ -533,6 +535,7 @@ void Coordinator::FileStream::fail(std::string reason) noexcept {
     try {
         std::scoped_lock lock(impl_->session->mutex);
         auto& file = impl_->file();
+        if (file.status == FileStatus::Failed) return;
         file.status = FileStatus::Failed;
         cleanupFile(file);
         if (impl_->manager && impl_->principal)
@@ -935,6 +938,21 @@ nlohmann::json Coordinator::cancelSession(const request& req, const std::string_
         sessions().erase(uploadId);
     }
     return {{"cancelled", true}, {"upload_id", uploadId}};
+}
+
+void Coordinator::abortAll(std::string reason) noexcept {
+    if (reason.empty()) reason = "http_upload_aborted";
+
+    std::vector<std::shared_ptr<UploadSessionState>> pending;
+    {
+        std::scoped_lock lock(sessionsMutex());
+        pending.reserve(sessions().size());
+        for (auto& [_, session] : sessions()) pending.push_back(std::move(session));
+        sessions().clear();
+    }
+
+    for (const auto& session : pending)
+        cleanupSession(session, reason, true, true, true);
 }
 
 void Coordinator::setSessionResolverForTesting(SessionResolver resolver) {

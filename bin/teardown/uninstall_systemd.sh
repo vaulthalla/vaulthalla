@@ -2,6 +2,7 @@
 set -euo pipefail
 
 echo "🗑️  Removing Vaulthalla systemd services..."
+SYSTEMCTL_TIMEOUT="${VH_SYSTEMCTL_STOP_TIMEOUT:-35s}"
 
 UNITS=(
   vaulthalla-web.service
@@ -16,6 +17,19 @@ unit_exists() {
   systemctl list-unit-files "$unit" >/dev/null 2>&1 || systemctl status "$unit" >/dev/null 2>&1
 }
 
+run_systemctl() {
+  if command -v timeout >/dev/null 2>&1; then
+    sudo timeout "$SYSTEMCTL_TIMEOUT" systemctl "$@"
+  else
+    sudo systemctl "$@"
+  fi
+}
+
+unit_deactivating() {
+  local unit="$1"
+  [[ "$(systemctl show -p ActiveState --value "$unit" 2>/dev/null || true)" == "deactivating" ]]
+}
+
 safe_systemctl() {
   local action="$1" unit="$2"
   if ! unit_exists "$unit"; then
@@ -24,13 +38,15 @@ safe_systemctl() {
   fi
 
   echo "• systemctl $action $unit"
-  if ! sudo systemctl "$action" "$unit"; then
+  if ! run_systemctl "$action" "$unit"; then
     echo "⚠️  systemctl $action $unit failed; continuing with exact-unit cleanup only."
+    return 1
   fi
+  return 0
 }
 
 for unit in "${UNITS[@]}"; do
-  safe_systemctl stop "$unit"
+  safe_systemctl stop "$unit" || true
 done
 
 for unit in "${UNITS[@]}"; do
@@ -38,9 +54,17 @@ for unit in "${UNITS[@]}"; do
 done
 
 echo "🧹 Removing exact Vaulthalla unit files and overrides..."
-sudo rm -rf /etc/systemd/system/vaulthalla.service.d
+if unit_deactivating vaulthalla.service; then
+  echo "⚠️  vaulthalla.service is still deactivating; preserving drop-ins until the stop job clears."
+else
+  sudo rm -rf /etc/systemd/system/vaulthalla.service.d
+fi
 
 for unit in "${UNITS[@]}"; do
+  if unit_deactivating "$unit"; then
+    echo "⚠️  Preserving $unit files because systemd still reports it deactivating."
+    continue
+  fi
   sudo rm -f "/etc/systemd/system/$unit"
   sudo rm -f "/lib/systemd/system/$unit"
   sudo rm -f "/usr/lib/systemd/system/$unit"
