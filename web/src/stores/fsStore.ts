@@ -42,6 +42,9 @@ export interface TransferTask {
   label: string
   status: TransferTaskStatus
   progress: number
+  totalBytes?: number
+  transferredBytes?: number
+  startedAt?: number
   error: string | null
   createdAt: number
   updatedAt: number
@@ -566,7 +569,14 @@ export const useFSStore = create<FsStore>()(
             let uploadedBytes = 0
             const label = payload.files.length === 1 ? payload.files[0].name : `${payload.files.length} files`
 
-            updateTransferTask(task.id, { status: 'uploading', progress: 0, error: null })
+            updateTransferTask(task.id, {
+              status: 'uploading',
+              progress: 0,
+              transferredBytes: 0,
+              totalBytes,
+              startedAt: Date.now(),
+              error: null,
+            })
             set({
               uploading: true,
               uploadProgress: 0,
@@ -586,11 +596,11 @@ export const useFSStore = create<FsStore>()(
                   uploadedBytes += bytes
                   payload.onProgress?.(bytes)
                   const progress = totalBytes > 0 ? Math.min(100, (uploadedBytes / totalBytes) * 100) : 100
-                  updateTransferTask(task.id, { progress })
+                  updateTransferTask(task.id, { progress, transferredBytes: uploadedBytes, totalBytes })
                   set({ uploadProgress: progress })
                 },
                 onFinalizing: () => {
-                  updateTransferTask(task.id, { status: 'finalizing', progress: 100 })
+                  updateTransferTask(task.id, { status: 'finalizing', progress: 100, transferredBytes: totalBytes, totalBytes })
                   set({ uploadProgress: 100, uploadLabel: label })
                 },
               })
@@ -604,7 +614,7 @@ export const useFSStore = create<FsStore>()(
 
               const uploadSuccess = createUploadSuccess(payload.files, listUnavailable)
               revokeUploadPreview(get().uploadSuccess)
-              updateTransferTask(task.id, { status: 'complete', progress: 100, error: null })
+              updateTransferTask(task.id, { status: 'complete', progress: 100, transferredBytes: totalBytes, totalBytes, error: null })
               set({ uploadProgress: 100, uploading: false, uploadLabel: null, uploadError: null, uploadSuccess })
               payload.resolve?.()
 
@@ -655,12 +665,15 @@ export const useFSStore = create<FsStore>()(
 
         const id = nextTransferTaskId()
         const timestamp = Date.now()
+        const totalBytes = files.reduce((sum, file) => sum + file.size, 0)
         const task: TransferTask = {
           id,
           type: 'upload',
           label: files.length === 1 ? files[0].name : `${files.length} files`,
           status: 'queued',
           progress: 0,
+          totalBytes,
+          transferredBytes: 0,
           error: null,
           createdAt: timestamp,
           updatedAt: timestamp,

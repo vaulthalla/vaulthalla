@@ -4,11 +4,11 @@ import React, { useState } from 'react'
 import FolderPlus from '@/fa-duotone-regular/folder-plus.svg'
 import ShareIcon from '@/fa-duotone-regular/share-nodes.svg'
 import { ShareManagementModal } from '@/components/share/ShareManagementModal'
-import { TransferQueueButton } from '@/components/loading/TransferQueueButton'
 import type { FilesystemRow } from '@/components/fs/types'
 import { useFSStore } from '@/stores/fsStore'
 import { Directory } from '@/models/directory'
 import { formatTimestamp } from '@/util/formatTimestamp'
+import { DownloadCurrentDirectoryButton } from '@/components/fs/DownloadCurrentDirectoryButton'
 
 const joinPath = (base: string, name: string) => {
   const cleanName = name.trim().replace(/^\/+|\/+$/g, '')
@@ -100,7 +100,7 @@ export const FSRailActions = () => {
         onClick={openShareCurrentDirectory}>
         <ShareIcon className="h-5 w-5 fill-current" />
       </button>
-      <TransferQueueButton compact placement="right" />
+      <DownloadCurrentDirectoryButton className="h-10 w-full" />
 
       {shareOpen && currVault && shareTarget && (
         <ShareManagementModal target={shareTarget} vault={currVault} onClose={() => setShareOpen(false)} />
