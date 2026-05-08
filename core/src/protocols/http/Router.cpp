@@ -1075,8 +1075,10 @@ Response Router::handlePreviewBatch(request&& req) {
                     if (!engine || !file || !supportedPreviewMime(file->mime_type)) {
                         out["status"] = "unsupported";
                     } else {
-                        out["url"] = previewUrlFor(true, target.vault_id, path, size);
-                        if (thumbnailCacheExists(engine, file, size)) out["status"] = "ready";
+                        if (thumbnailCacheExists(engine, file, size)) {
+                            out["status"] = "ready";
+                            out["url"] = previewUrlFor(true, target.vault_id, path, size);
+                        }
                         else {
                             maybeQueuePreview(engine, file, size);
                             out["status"] = configuredThumbnailSize(size) ? "queued" : "missing";
@@ -1127,8 +1129,10 @@ Response Router::handlePreviewBatch(request&& req) {
                         if (!file || !supportedPreviewMime(file->mime_type)) {
                             out["status"] = "unsupported";
                         } else {
-                            out["url"] = previewUrlFor(false, vaultId, path, size);
-                            if (thumbnailCacheExists(engine, file, size)) out["status"] = "ready";
+                            if (thumbnailCacheExists(engine, file, size)) {
+                                out["status"] = "ready";
+                                out["url"] = previewUrlFor(false, vaultId, path, size);
+                            }
                             else {
                                 maybeQueuePreview(engine, file, size);
                                 out["status"] = configuredThumbnailSize(size) ? "queued" : "missing";

@@ -27,11 +27,15 @@ interface PreviewBatchResponse {
   }>
 }
 
+const PREVIEW_BATCH_MAX_QUEUE_POLLS = 24
+const previewBatchPollDelay = (attempt: number) => Math.min(5000, 500 + attempt * 500)
+
 export const FilesystemClient: React.FC<FilesystemClientProps> = memo(({ rows, previewMode }) => {
   const [selectedFile, setSelectedFile] = useState<FileModel | null>(null)
   const [shareTarget, setShareTarget] = useState<FilesystemRow | null>(null)
   const [contextMenu, setContextMenu] = useState<{ mouseX: number; mouseY: number; row: FilesystemRow } | null>(null)
-  const [batchedPreviewUrls, setBatchedPreviewUrls] = useState<Record<string, string | null | undefined>>({})
+  const [batchedPreviewUrls, setBatchedPreviewUrls] = useState<Record<string, string | null>>({})
+  const [useDirectPreviewFallback, setUseDirectPreviewFallback] = useState(false)
   const tableRef = useRef<HTMLDivElement>(null)
 
   const setCopiedItem = useFSStore(state => state.setCopiedItem)
@@ -61,15 +65,23 @@ export const FilesystemClient: React.FC<FilesystemClientProps> = memo(({ rows, p
     () => previewCandidates.map(row => `${row.key}:${row.vault_id}:${row.path}`).join('\n'),
     [previewCandidates],
   )
+  const previewCandidateKeys = React.useMemo(() => new Set(previewCandidates.map(row => row.key)), [previewCandidates])
 
   React.useEffect(() => {
     if (!previewCandidates.length) {
       setBatchedPreviewUrls({})
+      setUseDirectPreviewFallback(false)
       return
     }
 
     let cancelled = false
     let timer: ReturnType<typeof setTimeout> | null = null
+    const candidateKeys = new Set(previewCandidates.map(row => row.key))
+
+    setUseDirectPreviewFallback(false)
+    setBatchedPreviewUrls(prev => Object.fromEntries(
+      previewCandidates.map(row => [row.key, prev[row.key] ?? null]),
+    ))
 
     const requestBatch = async (attempt: number) => {
       try {
@@ -91,22 +103,32 @@ export const FilesystemClient: React.FC<FilesystemClientProps> = memo(({ rows, p
         const data = await response.json() as PreviewBatchResponse
         if (cancelled) return
 
-        const next: Record<string, string | null> = Object.fromEntries(
-          previewCandidates.map(row => [row.key, row.previewUrl]),
-        )
+        const updates: Record<string, string | null> = {}
         let queued = false
         for (const item of data.items) {
           if (!item.key) continue
-          if (item.url) next[item.key] = item.url
-          if (item.status === 'queued') queued = true
+          if (item.status === 'queued') {
+            queued = true
+            continue
+          }
+          updates[item.key] = item.status === 'ready' && item.url ? item.url : null
         }
-        setBatchedPreviewUrls(next)
+        setBatchedPreviewUrls(prev => {
+          const next: Record<string, string | null> = Object.fromEntries(
+            previewCandidates.map(row => [row.key, prev[row.key] ?? null]),
+          )
+          for (const [key, url] of Object.entries(updates)) {
+            if (candidateKeys.has(key)) next[key] = url
+          }
+          return next
+        })
 
-        if (queued && attempt < 6)
-          timer = setTimeout(() => requestBatch(attempt + 1), Math.min(3000, 500 + attempt * 400))
+        if (queued && attempt < PREVIEW_BATCH_MAX_QUEUE_POLLS)
+          timer = setTimeout(() => requestBatch(attempt + 1), previewBatchPollDelay(attempt))
       } catch (error) {
         if (cancelled) return
         console.warn('[FilesystemClient] Preview batch unavailable, falling back to direct preview URLs:', error)
+        setUseDirectPreviewFallback(true)
         setBatchedPreviewUrls(Object.fromEntries(previewCandidates.map(row => [row.key, row.previewUrl])))
       }
     }
@@ -120,13 +142,14 @@ export const FilesystemClient: React.FC<FilesystemClientProps> = memo(({ rows, p
   }, [previewMode, previewCandidateSignature, previewCandidates])
 
   const displayRows = React.useMemo(() => rows.map(row => {
-    if (row.entryType !== 'file' || !row.previewUrl) return row
+    if (row.entryType !== 'file' || !row.previewUrl || !previewCandidateKeys.has(row.key)) return row
+    if (useDirectPreviewFallback) return row
     const batchedUrl = batchedPreviewUrls[row.key]
     return {
       ...row,
-      previewUrl: batchedUrl === undefined ? row.previewUrl : batchedUrl,
+      previewUrl: batchedUrl ?? null,
     }
-  }), [batchedPreviewUrls, rows])
+  }), [batchedPreviewUrls, previewCandidateKeys, rows, useDirectPreviewFallback])
 
   const sharePath = React.useCallback((row: { path?: string; name: string }) => row.path || row.name, [])
   const isPreviewable = React.useCallback((file: FileModel) => Boolean(file.mime_type?.startsWith('image/') || file.mime_type === 'application/pdf'), [])

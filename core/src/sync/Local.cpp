@@ -173,14 +173,14 @@ void Local::push(const std::shared_ptr<Task>& task) {
     concurrency::ThreadPoolManager::instance().syncPool()->submit(task);
 }
 
-ScopedOp& Local::op(const Throughput::Metric& metric) const {
+std::shared_ptr<ScopedOp> Local::op(const Throughput::Metric& metric) const {
     return event->getOrCreateThroughput(metric).newOp();
 }
 
 void Local::processOperations() const {
     for (const auto& op : db::query::sync::Operation::listOperationsByVault(engine->vault->id)) {
-        auto& scopedOp = event->getOrCreateThroughput(op->opToThroughputMetric()).newOp();
-        scopedOp.start();
+        const auto scopedOp = event->getOrCreateThroughput(op->opToThroughputMetric()).newOp();
+        scopedOp->start();
 
         const auto absSrc = engine->paths->absPath(op->source_path, PathType::BACKING_VAULT_ROOT);
         const auto absDest = engine->paths->absPath(op->destination_path, PathType::BACKING_VAULT_ROOT);
@@ -191,15 +191,15 @@ void Local::processOperations() const {
         const auto f = db::query::fs::File::getFileByPath(engine->vault->id, op->destination_path);
         if (!f) {
             log::Registry::sync()->error("[FSTask] File not found for operation: {}", op->destination_path);
-            scopedOp.stop();
+            scopedOp->stop();
             continue;
         }
 
-        scopedOp.size_bytes = f->size_bytes;
+        scopedOp->size_bytes = f->size_bytes;
 
         if (f->size_bytes == 0 && op->operation != Operation::Op::Copy) {
             log::Registry::sync()->error("[FSTask] File size is zero for operation: {}", op->destination_path);
-            scopedOp.stop();
+            scopedOp->stop();
             continue;
         }
 
@@ -208,7 +208,7 @@ void Local::processOperations() const {
 
         if (buffer.empty()) {
             log::Registry::sync()->error("[FSTask] Empty file buffer for operation: {}", op->source_path);
-            scopedOp.stop();
+            scopedOp->stop();
             continue;
         }
 
@@ -225,7 +225,7 @@ void Local::processOperations() const {
         else if (op->operation == Operation::Op::Move || op->operation == Operation::Op::Rename) move();
         else throw std::runtime_error("Unknown operation type: " + std::to_string(static_cast<int>(op->operation)));
 
-        scopedOp.stop();
+        scopedOp->stop();
     }
 }
 

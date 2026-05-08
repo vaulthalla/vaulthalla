@@ -4,7 +4,9 @@
 
 #include <ctime>
 #include <cstdint>
+#include <memory>
 #include <string>
+#include <vector>
 #include <nlohmann/json_fwd.hpp>
 
 namespace pqxx { class row; }
@@ -30,14 +32,14 @@ struct Throughput {
     uint64_t size_bytes{};
     uint64_t duration_ms{};
 
-    std::vector<ScopedOp> scoped_ops;
+    std::vector<std::shared_ptr<ScopedOp>> scoped_ops;
 
     Throughput() = default;
     explicit Throughput(const pqxx::row& row);
 
     void computeDashboardStats();
 
-    ScopedOp& newOp();
+    std::shared_ptr<ScopedOp> newOp();
 
     void parseMetric(const std::string& str);
     [[nodiscard]] std::string metricToString() const;

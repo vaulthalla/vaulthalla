@@ -21,12 +21,12 @@ namespace vh::sync::tasks {
 struct Download final : concurrency::PromisedTask {
     std::shared_ptr<storage::CloudEngine> engine;
     std::shared_ptr<fs::model::File> file;
-    model::ScopedOp& op;
+    std::shared_ptr<model::ScopedOp> op;
     bool freeAfterDownload;
 
     Download(std::shared_ptr<storage::CloudEngine> eng,
                  std::shared_ptr<fs::model::File> f,
-                 model::ScopedOp& op,
+                 std::shared_ptr<model::ScopedOp> op,
                  bool freeAfter = false);
 
     void operator()() override;

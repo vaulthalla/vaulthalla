@@ -31,12 +31,12 @@ struct Delete final : concurrency::PromisedTask {
 
     std::shared_ptr<storage::Engine> engine;
     Target target;
-    model::ScopedOp& op;
+    std::shared_ptr<model::ScopedOp> op;
     Type type{Type::PURGE};
 
     Delete(std::shared_ptr<storage::Engine> eng,
                Target tgt,
-               model::ScopedOp& op,
+               std::shared_ptr<model::ScopedOp> op,
                Type type = Type::PURGE);
 
     void operator()() override;

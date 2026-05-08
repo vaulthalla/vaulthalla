@@ -588,6 +588,10 @@ TEST_F(HttpSharePreviewTest, SharePreviewBatchClampsLargeRequestedSizeToConfigur
     installSharePreviewHooks(session);
 
     const auto expectedSize = *std::ranges::max_element(configuredSizes);
+    const auto thumbDir = engine->paths->thumbnailRoot / file->base32_alias;
+    std::filesystem::create_directories(thumbDir);
+    std::ofstream(thumbDir / (std::to_string(expectedSize) + ".jpg"), std::ios::binary) << "cached-thumbnail";
+
     auto response = Router::handlePreviewBatch(previewBatchRequest({
         {"size", expectedSize + 512},
         {"items", nlohmann::json::array({{{"key", "large"}, {"path", "/report.jpg"}}})}
@@ -639,7 +643,7 @@ TEST_F(HttpSharePreviewTest, SharePreviewBatchQueuesConfiguredCacheMisses) {
     const auto body = nlohmann::json::parse(stringBody(response));
     ASSERT_EQ(1u, body.at("items").size());
     EXPECT_EQ("queued", body.at("items").at(0).at("status"));
-    EXPECT_NE(std::string::npos, body.at("items").at(0).at("url").get<std::string>().find("/preview?share=1"));
+    EXPECT_FALSE(body.at("items").at(0).contains("url"));
 }
 
 TEST_F(HttpSharePreviewTest, SharePreviewRendersFallbackWhenThumbnailCacheIsMissing) {

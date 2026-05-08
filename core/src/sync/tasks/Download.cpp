@@ -10,20 +10,21 @@ using namespace vh::fs::model;
 
 Download::Download(std::shared_ptr<CloudEngine> eng,
                            std::shared_ptr<File> f,
-                           model::ScopedOp& op,
+                           std::shared_ptr<model::ScopedOp> op,
                            const bool freeAfter)
-    : engine(std::move(eng)), file(std::move(f)), op(op), freeAfterDownload(freeAfter) {}
+    : engine(std::move(eng)), file(std::move(f)), op(std::move(op)), freeAfterDownload(freeAfter) {}
 
 void Download::operator()() {
     try {
-        op.start(file->size_bytes);
+        if (!op) throw std::runtime_error("DownloadTask: null scoped operation");
+        op->start(file->size_bytes);
         if (freeAfterDownload) engine->indexAndDeleteFile(file->path);
         else engine->downloadFile(file->path);
-        op.success = true;
+        op->success = true;
     } catch (const std::exception& e) {
         log::Registry::sync()->error("[DownloadTask] Failed to download file: {} - {}", file->path.string(), e.what());
     }
 
-    op.stop();
-    promise.set_value(op.success);
+    if (op) op->stop();
+    promise.set_value(op && op->success);
 }

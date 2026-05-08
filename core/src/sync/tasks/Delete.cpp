@@ -15,11 +15,11 @@ using namespace vh::fs::model;
 
 Delete::Delete(std::shared_ptr<Engine> eng,
                        Target tgt,
-                       model::ScopedOp& op,
+                       std::shared_ptr<model::ScopedOp> op,
                        Type type)
     : engine(std::move(eng)),
       target(std::move(tgt)),
-      op(op),
+      op(std::move(op)),
       type(type) {}
 
 namespace {
@@ -55,7 +55,9 @@ void Delete::operator()() {
     };
 
     try {
-        op.start(getSizeBytes(target));
+        if (!op)
+            throw std::runtime_error("DeleteTask: null scoped operation");
+        op->start(getSizeBytes(target));
 
         if (!engine)
             throw std::runtime_error("DeleteTask: null storage engine");
@@ -101,7 +103,7 @@ void Delete::operator()() {
         }
         else throw std::runtime_error("DeleteTask: unsupported storage engine type");
 
-        op.success = true;
+        op->success = true;
     } catch (const std::exception& e) {
         log::Registry::sync()->error(
             "[DeleteTask] Failed to delete file: {} - {}",
@@ -110,6 +112,6 @@ void Delete::operator()() {
         );
     }
 
-    op.stop();
-    promise.set_value(op.success);
+    if (op) op->stop();
+    promise.set_value(op && op->success);
 }
