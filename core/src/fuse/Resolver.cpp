@@ -115,7 +115,7 @@ namespace vh::fuse {
             if (out.entry) {
                 log::Registry::fuse()->debug(
                     "[{}] Resolved entry from inode {}: {}",
-                    req.caller, *req.ino, out.entry->path.string()
+                    req.caller, *req.ino, out.entry->fuse_path.string()
                 );
                 return true;
             }
@@ -155,7 +155,7 @@ namespace vh::fuse {
         }
 
         if (out.entry) {
-            out.path = out.entry->path;
+            out.path = out.entry->fuse_path;
             log::Registry::fuse()->debug(
                 "[{}] Resolved path from entry: {}",
                 req.caller, out.path->string()
@@ -166,7 +166,7 @@ namespace vh::fuse {
         if (req.ino) {
             if (const auto entry = runtime::Deps::get().fsCache->getEntry(*req.ino)) {
                 out.entry = entry;
-                out.path = entry->path;
+                out.path = entry->fuse_path;
 
                 log::Registry::fuse()->debug(
                     "[{}] Resolved path from inode {} via entry: {}",

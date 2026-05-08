@@ -328,12 +328,13 @@ void cancelShareUploadIfNeeded(const UploadFileState& file) noexcept {
 void cleanupSession(
     const std::shared_ptr<UploadSessionState>& session,
     const std::string& shareReason,
-    const bool failCompletedShareUploads = false
+    const bool failCompletedShareUploads = false,
+    const bool removeTempFiles = true
 ) noexcept {
     if (!session) return;
     std::scoped_lock lock(session->mutex);
     for (const auto& [_, file] : session->files) {
-        cleanupFile(file);
+        if (removeTempFiles) cleanupFile(file);
         if (session->mode == UploadMode::Share && (failCompletedShareUploads || file.status != FileStatus::Complete))
             failShareUploadIfNeeded(file, shareReason);
     }
@@ -886,7 +887,7 @@ nlohmann::json Coordinator::finishSession(const request& req, const std::string_
         std::scoped_lock lock(upload->mutex);
         upload->finished = true;
     }
-    cleanupSession(upload, "http_upload_finished");
+    cleanupSession(upload, "http_upload_finished", false, false);
     {
         std::scoped_lock lock(sessionsMutex());
         sessions().erase(uploadId);

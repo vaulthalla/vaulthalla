@@ -697,6 +697,7 @@ TEST_F(WsShareUploadTest, HttpShareUploadStreamsBodyToTempFileAndRecordsBytes) {
 
     const auto batchId = created.at("upload_id").get<std::string>();
     const auto transferId = created.at("files").at(0).at("transfer_id").get<std::string>();
+    const auto tempPath = httpEngine->paths->vaultRoot / "reports" / (".upload-http-" + batchId + "-f0.part");
 
     auto stream = http_upload::Coordinator::instance().beginFile(
         httpRequest(vh::protocols::http::verb::put, "/upload/" + batchId + "/files/f0?share=1"),
@@ -708,6 +709,7 @@ TEST_F(WsShareUploadTest, HttpShareUploadStreamsBodyToTempFileAndRecordsBytes) {
 
     EXPECT_TRUE(fileDone.at("complete").get<bool>());
     EXPECT_EQ(fileDone.at("received_size"), 5u);
+    EXPECT_TRUE(std::filesystem::exists(tempPath));
     ASSERT_NE(store->getUpload(transferId), nullptr);
     EXPECT_EQ(store->getUpload(transferId)->received_size_bytes, 5u);
     EXPECT_TRUE(writer->bytes_by_path.empty());
@@ -718,6 +720,7 @@ TEST_F(WsShareUploadTest, HttpShareUploadStreamsBodyToTempFileAndRecordsBytes) {
         batchId
     );
     EXPECT_TRUE(cancelled.at("cancelled").get<bool>());
+    EXPECT_FALSE(std::filesystem::exists(tempPath));
     EXPECT_EQ(store->getUpload(transferId)->status, vh::share::UploadStatus::Cancelled);
 }
 
