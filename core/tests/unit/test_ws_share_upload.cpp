@@ -722,6 +722,38 @@ TEST_F(WsShareUploadTest, HttpShareUploadStreamsBodyToTempFileAndRecordsBytes) {
     EXPECT_TRUE(cancelled.at("cancelled").get<bool>());
     EXPECT_FALSE(std::filesystem::exists(tempPath));
     EXPECT_EQ(store->getUpload(transferId)->status, vh::share::UploadStatus::Cancelled);
+
+    const auto recreated = http_upload::Coordinator::instance().createSession(
+        httpRequest(vh::protocols::http::verb::post, "/upload/session?share=1"),
+        {
+            {"files", nlohmann::json::array({
+                {
+                    {"file_id", "f0"},
+                    {"path", "/http.txt"},
+                    {"size_bytes", 5},
+                    {"mime_type", "text/plain"}
+                }
+            })}
+        }
+    );
+    const auto recreatedBatchId = recreated.at("upload_id").get<std::string>();
+    EXPECT_NE(recreatedBatchId, batchId);
+    const auto recreatedTempPath = httpEngine->paths->vaultRoot / "reports" / (".upload-http-" + recreatedBatchId + "-f0.part");
+
+    auto recreatedStream = http_upload::Coordinator::instance().beginFile(
+        httpRequest(vh::protocols::http::verb::put, "/upload/" + recreatedBatchId + "/files/f0?share=1"),
+        5
+    );
+    recreatedStream.write("again", 5);
+    EXPECT_TRUE(recreatedStream.finish().at("complete").get<bool>());
+    EXPECT_TRUE(std::filesystem::exists(recreatedTempPath));
+
+    const auto recreatedCancelled = http_upload::Coordinator::instance().cancelSession(
+        httpRequest(vh::protocols::http::verb::delete_, "/upload/" + recreatedBatchId + "?share=1"),
+        recreatedBatchId
+    );
+    EXPECT_TRUE(recreatedCancelled.at("cancelled").get<bool>());
+    EXPECT_FALSE(std::filesystem::exists(recreatedTempPath));
 }
 
 TEST_F(WsShareUploadTest, HttpShareUploadRejectsDuplicatesScopeDenialAndSizeMismatch) {

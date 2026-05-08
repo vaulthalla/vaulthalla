@@ -738,6 +738,7 @@ void rmdir(const fuse_req_t req, const fuse_ino_t parent, const char* name) {
     if (::rmdir(resolved.entry->backing_path.c_str()) < 0)
         log::Registry::fuse()->warn("[rmdir] Failed to remove backing directory: {}: {}", resolved.entry->backing_path.string(), strerror(errno));
 
+    runtime::Deps::get().fsCache->evictPath(resolved.entry->fuse_path);
     replyOk(req, timer);
 }
 

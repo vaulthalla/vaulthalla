@@ -307,6 +307,11 @@ void createEmptyTempFile(const std::filesystem::path& path) {
 void cleanupFile(const UploadFileState& file) noexcept {
     std::error_code ec;
     std::filesystem::remove(file.tmp_path, ec);
+    try {
+        const auto& cache = vh::runtime::Deps::get().fsCache;
+        if (cache && cache->entryExists(file.fuse_from)) cache->evictPath(file.fuse_from);
+    } catch (...) {
+    }
 }
 
 void failShareUploadIfNeeded(const UploadFileState& file, const std::string& reason) noexcept {
