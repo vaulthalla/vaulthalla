@@ -30,7 +30,13 @@ const parentPath = (value: string) => {
 }
 
 export const FSRailActions = () => {
-  const { currVault, currentDirectory, fetchFiles, listDirectory, mkdir, mode, path } = useFSStore()
+  const currVault = useFSStore(state => state.currVault)
+  const currentDirectory = useFSStore(state => state.currentDirectory)
+  const fetchFiles = useFSStore(state => state.fetchFiles)
+  const listDirectory = useFSStore(state => state.listDirectory)
+  const mkdir = useFSStore(state => state.mkdir)
+  const mode = useFSStore(state => state.mode)
+  const path = useFSStore(state => state.path)
   const [shareOpen, setShareOpen] = useState(false)
   const [shareTarget, setShareTarget] = useState<FilesystemRow | null>(null)
   const isAuthenticatedFs = mode === 'authenticated'
