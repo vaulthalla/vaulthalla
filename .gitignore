@@ -10,6 +10,7 @@
 /.codex/scratch/
 /config.yaml
 enable_dev_mode
+*__pycache__*
 
 # Deployment Artifacts
 /deploy/vaulthalla.env
