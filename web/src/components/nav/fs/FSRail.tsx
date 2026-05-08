@@ -7,6 +7,11 @@ import { SlimRailSidebar } from '@/components/nav/SlimRailSidebar'
 
 export const FSRail = ({ config }: { config: NavConfig }) => {
   const btnProps = { isCompact: true }
+  const nav = config.items.length ? (
+    <nav className="bg-secondary text-primary w-[85%] rounded-xl p-2 shadow-lg">
+      <NavList items={config.items} compact />
+    </nav>
+  ) : null
 
   return (
     <SlimRailSidebar
@@ -20,11 +25,7 @@ export const FSRail = ({ config }: { config: NavConfig }) => {
           <ToggleNavButton {...btnProps} />
         </div>
       }
-      nav={
-        <nav className="bg-secondary text-primary w-[85%] rounded-xl p-2 shadow-lg">
-          <NavList items={config.items} compact />
-        </nav>
-      }
+      nav={nav}
       actions={<FSRailActions />}
     />
   )
