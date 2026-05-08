@@ -202,7 +202,7 @@ void enforceHumanWritePermission(
     if (!session || !session->user) throw std::runtime_error("Upload requires a user session");
     if (!engine || !engine->vault) throw std::runtime_error("Upload storage engine is unavailable");
 
-    const auto fusePath = engine->paths->absRelToAbsRel(vaultPath, PathType::VAULT_ROOT, PathType::FUSE_ROOT);
+    const auto fusePath = engine->vaultPathToFusePath(vaultPath);
     if (!vh::rbac::resolver::Vault::has<vh::rbac::permission::vault::FilesystemAction>({
         .user = session->user,
         .permission = vh::rbac::permission::vault::FilesystemAction::Write,

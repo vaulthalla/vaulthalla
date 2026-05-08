@@ -253,11 +253,7 @@ using SyncOperation = vh::sync::model::Operation;
     try {
         if (!engine || !engine->paths) return nullptr;
 
-        const auto fuseFrom = engine->paths->absRelToAbsRel(
-            from,
-            vh::fs::model::PathType::VAULT_ROOT,
-            vh::fs::model::PathType::FUSE_ROOT
-        );
+        const auto fuseFrom = engine->vaultPathToFusePath(from);
         const auto entry = vh::runtime::Deps::get().fsCache->getEntry(fuseFrom);
         if (!entry) return nullptr;
 
@@ -493,7 +489,7 @@ json Storage::metadata(const json& payload, const std::shared_ptr<Session>& sess
         "Permission denied: User does not have metadata permission for this path in the vault"
     );
 
-    const auto fusePath = engine->paths->absRelToAbsRel(path, PathType::VAULT_ROOT, PathType::FUSE_ROOT);
+    const auto fusePath = engine->vaultPathToFusePath(path);
     if (!Filesystem::exists(fusePath)) throw std::runtime_error("Path does not exist: " + fusePath.string());
 
     const auto entry = runtime::Deps::get().fsCache->getEntry(fusePath);
@@ -529,7 +525,7 @@ json Storage::listDir(const json& payload, const std::shared_ptr<Session>& sessi
         "Permission denied: User does not have list permission for this path in the vault"
     );
 
-    const auto fusePath = engine->paths->absRelToAbsRel(path, PathType::VAULT_ROOT, PathType::FUSE_ROOT);
+    const auto fusePath = engine->vaultPathToFusePath(path);
     if (!Filesystem::exists(fusePath)) throw std::runtime_error("Path does not exist: " + fusePath.string());
 
     const auto entry = runtime::Deps::get().fsCache->getEntry(fusePath);

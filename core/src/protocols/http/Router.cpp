@@ -164,7 +164,7 @@ static std::unique_ptr<vh::protocols::http::model::preview::Request> preparePrev
     if (!pr->engine)
         throw std::runtime_error("No storage engine found for vault with id " + std::to_string(pr->vault_id));
 
-    const auto fusePath = pr->engine->paths->absRelToAbsRel(pr->rel_path, PathType::VAULT_ROOT, PathType::FUSE_ROOT);
+    const auto fusePath = pr->engine->vaultPathToFusePath(pr->rel_path);
     const auto entry = vh::runtime::Deps::get().fsCache->getEntry(fusePath);
     if (!entry) throw std::runtime_error("File not found in cache for rel_path: " + pr->rel_path.string() + ", fuse_path: " + fusePath.string() + ", vault_id: " + std::to_string(pr->vault_id) + ", cache_contents:\n" + vh::runtime::Deps::get().fsCache->dump());
     if (entry->isDirectory()) throw std::runtime_error("Requested preview file is a directory");
@@ -506,8 +506,8 @@ void enforceHumanPermission(
     if (!engine || !engine->vault)
         throw std::runtime_error("Download storage engine is unavailable");
 
-    const auto fusePath = engine->paths->absRelToAbsRel(vaultPath, PathType::VAULT_ROOT, PathType::FUSE_ROOT);
-    if (!vh::rbac::resolver::Vault::has<vh::rbac::permission::vault::FilesystemAction>({
+    if (const auto fusePath = engine->vaultPathToFusePath(vaultPath);
+        !vh::rbac::resolver::Vault::has<vh::rbac::permission::vault::FilesystemAction>({
         .user = session->user,
         .permission = action,
         .vault_id = engine->vault->id,
@@ -544,7 +544,7 @@ struct HumanDownloadTarget {
     const auto engine = previewEngineResolver()(vaultId);
     if (!engine) throw std::runtime_error("No storage engine found for vault with id " + std::to_string(vaultId));
 
-    const auto fusePath = engine->paths->absRelToAbsRel(vaultPath, PathType::VAULT_ROOT, PathType::FUSE_ROOT);
+    const auto fusePath = engine->vaultPathToFusePath(vaultPath);
     const auto entry = vh::runtime::Deps::get().fsCache->getEntry(fusePath);
     if (!entry) throw std::runtime_error("Download target not found");
 
