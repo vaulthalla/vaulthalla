@@ -360,6 +360,14 @@ request previewRequest(const std::string& target) {
     return req;
 }
 
+request previewBatchRequest(const nlohmann::json& body) {
+    request req{verb::post, "/preview/batch?share=1", 11};
+    req.set(field::content_type, "application/json");
+    req.body() = body.dump();
+    req.prepare_payload();
+    return req;
+}
+
 status responseStatus(const vh::protocols::http::model::preview::Response& response) {
     return std::visit([](const auto& res) { return res.result(); }, response);
 }
@@ -515,6 +523,59 @@ TEST_F(HttpSharePreviewTest, AllowsReadyShareSessionWithPreviewGrant) {
     EXPECT_TRUE(std::ranges::any_of(store->audits, [](const auto& audit) {
         return audit && audit->event_type == "share.preview.http";
     }));
+}
+
+TEST_F(HttpSharePreviewTest, SharePreviewBatchReportsReadyUnsupportedAndMissingItems) {
+    auto session = readySession(vh::share::bit(vh::share::Operation::Preview));
+    installSharePreviewHooks(session);
+
+    auto unsupported = std::make_shared<vh::fs::model::File>();
+    unsupported->id = 12;
+    unsupported->parent_id = static_cast<int32_t>(kRootEntryId);
+    unsupported->name = "readme.txt";
+    unsupported->base32_alias = "readme-alias";
+    unsupported->vault_id = static_cast<int32_t>(kVaultId);
+    unsupported->path = "/shared/readme.txt";
+    unsupported->mime_type = "text/plain";
+    provider->byId[unsupported->id] = unsupported;
+    provider->byPath[unsupported->path.string()] = unsupported;
+
+    auto response = Router::handlePreviewBatch(previewBatchRequest({
+        {"size", previewSize},
+        {"items", nlohmann::json::array({
+            {{"key", "ready"}, {"path", "/report.jpg"}},
+            {{"key", "unsupported"}, {"path", "/readme.txt"}},
+            {{"key", "missing"}, {"path", "/missing.jpg"}}
+        })}
+    }));
+
+    ASSERT_EQ(status::ok, responseStatus(response));
+    const auto body = nlohmann::json::parse(stringBody(response));
+    ASSERT_EQ(3u, body.at("items").size());
+    EXPECT_EQ("ready", body.at("items").at(0).at("status"));
+    EXPECT_NE(std::string::npos, body.at("items").at(0).at("url").get<std::string>().find("/preview?share=1"));
+    EXPECT_EQ("unsupported", body.at("items").at(1).at("status"));
+    EXPECT_EQ("missing", body.at("items").at(2).at("status"));
+}
+
+TEST_F(HttpSharePreviewTest, SharePreviewBatchQueuesConfiguredCacheMisses) {
+    if (vh::config::Registry::get().caching.thumbnails.sizes.empty())
+        GTEST_SKIP() << "No configured thumbnail sizes";
+
+    auto session = readySession(vh::share::bit(vh::share::Operation::Preview));
+    installSharePreviewHooks(session);
+    std::filesystem::remove_all(engine->paths->thumbnailRoot / file->base32_alias);
+
+    auto response = Router::handlePreviewBatch(previewBatchRequest({
+        {"size", previewSize},
+        {"items", nlohmann::json::array({{{"key", "miss"}, {"path", "/report.jpg"}}})}
+    }));
+
+    ASSERT_EQ(status::ok, responseStatus(response));
+    const auto body = nlohmann::json::parse(stringBody(response));
+    ASSERT_EQ(1u, body.at("items").size());
+    EXPECT_EQ("queued", body.at("items").at(0).at("status"));
+    EXPECT_NE(std::string::npos, body.at("items").at(0).at("url").get<std::string>().find("/preview?share=1"));
 }
 
 TEST_F(HttpSharePreviewTest, SharePreviewRendersFallbackWhenThumbnailCacheIsMissing) {

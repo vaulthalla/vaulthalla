@@ -1,6 +1,8 @@
 #include "fs/model/Directory.hpp"
 #include "fs/model/File.hpp"
+#include "fs/model/Path.hpp"
 #include "identities/User.hpp"
+#include "protocols/http/upload/Coordinator.hpp"
 #include "protocols/ws/Router.hpp"
 #include "protocols/ws/Session.hpp"
 #include "protocols/ws/handler/fs/Upload.hpp"
@@ -13,14 +15,19 @@
 #include "share/TargetResolver.hpp"
 #include "share/Token.hpp"
 #include "stats/model/FuseStats.hpp"
+#include "storage/Engine.hpp"
+#include "vault/model/Vault.hpp"
 
 #include <boost/asio/buffer.hpp>
 #include <boost/beast/core/flat_buffer.hpp>
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
+#include <paths.h>
 
 #include <filesystem>
+#include <fstream>
 #include <format>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -464,9 +471,22 @@ protected:
     std::shared_ptr<vh::share::TargetResolver> resolver;
     std::shared_ptr<FakeUploadWriter> writer;
     std::shared_ptr<identities::User> user;
+    std::shared_ptr<vh::storage::Engine> httpEngine;
+    std::filesystem::path oldBackingPath;
+    std::filesystem::path oldMountPath;
+    std::filesystem::path testRoot;
 
     void SetUp() override {
         vh::share::Token::setPepperForTesting(std::vector<uint8_t>(32, 0x61));
+        oldBackingPath = vh::paths::backingPath;
+        oldMountPath = vh::paths::mountPath;
+        testRoot = std::filesystem::temp_directory_path() / "vh_http_share_upload_unit";
+        std::filesystem::remove_all(testRoot);
+        vh::paths::backingPath = testRoot / "backing";
+        vh::paths::mountPath = testRoot / "mount";
+        std::filesystem::create_directories(vh::paths::backingPath);
+        std::filesystem::create_directories(vh::paths::mountPath);
+
         store = std::make_shared<FakeStore>();
         authorizer = std::make_shared<FakeAuthorizer>();
         vh::share::ManagerOptions options;
@@ -488,6 +508,23 @@ protected:
         WsShareUploadHandler::setResolverFactoryForTesting([this] { return resolver; });
         WsShareUploadHandler::setWriterFactoryForTesting([this] { return writer; });
 
+        auto vault = std::make_shared<vh::vault::model::Vault>();
+        vault->id = 42;
+        vault->mount_point = "http-share-upload-test";
+        vault->quota = 1024ull * 1024ull * 1024ull;
+        httpEngine = std::make_shared<vh::storage::Engine>();
+        httpEngine->vault = vault;
+        httpEngine->paths = std::make_shared<vh::fs::model::Path>("http-share-upload-test", "http-share-upload-test");
+        std::filesystem::create_directories(httpEngine->paths->vaultRoot);
+        std::filesystem::create_directories(httpEngine->paths->backingVaultRoot);
+        std::filesystem::create_directories(httpEngine->paths->cacheRoot);
+
+        vh::protocols::http::upload::Coordinator::setShareManagerFactoryForTesting([this] { return manager; });
+        vh::protocols::http::upload::Coordinator::setShareResolverFactoryForTesting([this] { return resolver; });
+        vh::protocols::http::upload::Coordinator::setEngineResolverForTesting([this](const uint32_t vaultId) {
+            return vaultId == 42 ? httpEngine : nullptr;
+        });
+
         user = std::make_shared<identities::User>();
         user->id = 7;
         user->name = "share-owner";
@@ -497,6 +534,14 @@ protected:
         WsShareUploadHandler::resetManagerFactoryForTesting();
         WsShareUploadHandler::resetResolverFactoryForTesting();
         WsShareUploadHandler::resetWriterFactoryForTesting();
+        vh::protocols::http::upload::Coordinator::clearForTesting();
+        vh::protocols::http::upload::Coordinator::resetSessionResolverForTesting();
+        vh::protocols::http::upload::Coordinator::resetShareManagerFactoryForTesting();
+        vh::protocols::http::upload::Coordinator::resetShareResolverFactoryForTesting();
+        vh::protocols::http::upload::Coordinator::resetEngineResolverForTesting();
+        std::filesystem::remove_all(testRoot);
+        vh::paths::backingPath = oldBackingPath;
+        vh::paths::mountPath = oldMountPath;
         vh::share::Token::clearPepperForTesting();
     }
 
@@ -520,6 +565,25 @@ protected:
 
 using namespace vh::protocols::ws::handler::share::test_upload;
 using vh::protocols::ws::Router;
+
+namespace {
+vh::protocols::http::request httpRequest(
+    const vh::protocols::http::verb method,
+    const std::string& target
+) {
+    return vh::protocols::http::request{method, target, 11};
+}
+
+std::string readOnlyRegularFileUnder(const std::filesystem::path& root) {
+    std::string content;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
+        if (!entry.is_regular_file()) continue;
+        std::ifstream in(entry.path(), std::ios::binary);
+        content.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    return content;
+}
+}
 
 TEST_F(WsShareUploadTest, RouterAllowsUploadOnlyForReadyShareMode) {
     auto unauth = publicSession();
@@ -607,6 +671,113 @@ TEST_F(WsShareUploadTest, NativeAndCompatibilityStartUseSameShareUploadContext) 
     EXPECT_TRUE(session->getUploadHandler()->shareUploadInProgress());
     EXPECT_EQ(session->getUploadHandler()->activeShareUploadId(), compatibility.at("upload_id").get<std::string>());
     (void)WsShareUploadHandler::cancel({{"upload_id", compatibility.at("upload_id").get<std::string>()}}, session);
+}
+
+TEST_F(WsShareUploadTest, HttpShareUploadStreamsBodyToTempFileAndRecordsBytes) {
+    namespace http_upload = vh::protocols::http::upload;
+
+    auto session = readySession();
+    http_upload::Coordinator::setSessionResolverForTesting([session](const vh::protocols::http::request&) {
+        return session;
+    });
+
+    const auto created = http_upload::Coordinator::instance().createSession(
+        httpRequest(vh::protocols::http::verb::post, "/upload/session?share=1"),
+        {
+            {"files", nlohmann::json::array({
+                {
+                    {"file_id", "f0"},
+                    {"path", "/http.txt"},
+                    {"size_bytes", 5},
+                    {"mime_type", "text/plain"}
+                }
+            })}
+        }
+    );
+
+    const auto batchId = created.at("upload_id").get<std::string>();
+    const auto transferId = created.at("files").at(0).at("transfer_id").get<std::string>();
+
+    auto stream = http_upload::Coordinator::instance().beginFile(
+        httpRequest(vh::protocols::http::verb::put, "/upload/" + batchId + "/files/f0?share=1"),
+        5
+    );
+    stream.write("he", 2);
+    stream.write("llo", 3);
+    const auto fileDone = stream.finish();
+
+    EXPECT_TRUE(fileDone.at("complete").get<bool>());
+    EXPECT_EQ(fileDone.at("received_size"), 5u);
+    ASSERT_NE(store->getUpload(transferId), nullptr);
+    EXPECT_EQ(store->getUpload(transferId)->received_size_bytes, 5u);
+    EXPECT_TRUE(writer->bytes_by_path.empty());
+    EXPECT_EQ(readOnlyRegularFileUnder(vh::paths::mountPath), "hello");
+
+    const auto cancelled = http_upload::Coordinator::instance().cancelSession(
+        httpRequest(vh::protocols::http::verb::delete_, "/upload/" + batchId + "?share=1"),
+        batchId
+    );
+    EXPECT_TRUE(cancelled.at("cancelled").get<bool>());
+    EXPECT_EQ(store->getUpload(transferId)->status, vh::share::UploadStatus::Cancelled);
+}
+
+TEST_F(WsShareUploadTest, HttpShareUploadRejectsDuplicatesScopeDenialAndSizeMismatch) {
+    namespace http_upload = vh::protocols::http::upload;
+
+    auto session = readySession();
+    http_upload::Coordinator::setSessionResolverForTesting([session](const vh::protocols::http::request&) {
+        return session;
+    });
+
+    EXPECT_THROW({
+        (void)http_upload::Coordinator::instance().createSession(
+            httpRequest(vh::protocols::http::verb::post, "/upload/session?share=1"),
+            {
+                {"files", nlohmann::json::array({
+                    {{"file_id", "f0"}, {"path", "/dupe.txt"}, {"size_bytes", 1}},
+                    {{"file_id", "f1"}, {"path", "/dupe.txt"}, {"size_bytes", 1}}
+                })}
+            }
+        );
+    }, std::runtime_error);
+
+    auto denied = readySession(vh::share::bit(vh::share::Operation::Metadata));
+    http_upload::Coordinator::setSessionResolverForTesting([denied](const vh::protocols::http::request&) {
+        return denied;
+    });
+    EXPECT_THROW({
+        (void)http_upload::Coordinator::instance().createSession(
+            httpRequest(vh::protocols::http::verb::post, "/upload/session?share=1"),
+            {
+                {"files", nlohmann::json::array({
+                    {{"file_id", "f0"}, {"path", "/denied.txt"}, {"size_bytes", 1}}
+                })}
+            }
+        );
+    }, std::runtime_error);
+
+    http_upload::Coordinator::setSessionResolverForTesting([session](const vh::protocols::http::request&) {
+        return session;
+    });
+    const auto created = http_upload::Coordinator::instance().createSession(
+        httpRequest(vh::protocols::http::verb::post, "/upload/session?share=1"),
+        {
+            {"files", nlohmann::json::array({
+                {{"file_id", "f0"}, {"path", "/mismatch.txt"}, {"size_bytes", 2}}
+            })}
+        }
+    );
+    const auto batchId = created.at("upload_id").get<std::string>();
+    EXPECT_THROW({
+        (void)http_upload::Coordinator::instance().beginFile(
+            httpRequest(vh::protocols::http::verb::put, "/upload/" + batchId + "/files/f0?share=1"),
+            3
+        );
+    }, std::runtime_error);
+    (void)http_upload::Coordinator::instance().cancelSession(
+        httpRequest(vh::protocols::http::verb::delete_, "/upload/" + batchId + "?share=1"),
+        batchId
+    );
 }
 
 TEST_F(WsShareUploadTest, BinaryUploadFinishesThroughWriterAndManager) {

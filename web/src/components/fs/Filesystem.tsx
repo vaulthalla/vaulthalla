@@ -41,7 +41,7 @@ function buildRows(files: FilesystemEntry[], mode: 'authenticated' | 'share'): F
 
 export const Filesystem = ({ files, previewMode = 'authenticated' }: FileSystemProps) => {
   const rows = React.useMemo(() => buildRows(files, previewMode), [files, previewMode])
-  return <FilesystemClient rows={rows} />
+  return <FilesystemClient rows={rows} previewMode={previewMode} />
 }
 
 export default Filesystem

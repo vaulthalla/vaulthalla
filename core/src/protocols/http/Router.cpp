@@ -14,6 +14,7 @@
 #include "fs/cache/Registry.hpp"
 #include "stats/model/CacheStats.hpp"
 #include "protocols/http/model/preview/Request.hpp"
+#include "protocols/http/upload/Coordinator.hpp"
 #include "log/Registry.hpp"
 #include "protocols/cookie.hpp"
 #include "protocols/ws/Session.hpp"
@@ -25,16 +26,19 @@
 #include "storage/CloudEngine.hpp"
 #include "rbac/resolver/Vault.hpp"
 #include "rbac/permission/vault/Filesystem.hpp"
+#include "preview/thumbnail/Worker.hpp"
 
 #include <nlohmann/json.hpp>
 #include <zlib.h>
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cctype>
 #include <cstring>
 #include <limits>
 #include <memory>
 #include <optional>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
@@ -747,11 +751,122 @@ void recordShareDownloadSuccess(
         return boost::beast::http::status::payload_too_large;
     return boost::beast::http::status::bad_request;
 }
+
+[[nodiscard]] nlohmann::json parseJsonBody(const vh::protocols::http::request& req) {
+    if (req.body().empty()) return nlohmann::json::object();
+    return nlohmann::json::parse(req.body());
+}
+
+[[nodiscard]] std::vector<std::string> splitRoutePath(std::string target) {
+    const auto query = target.find('?');
+    if (query != std::string::npos) target = target.substr(0, query);
+    std::vector<std::string> parts;
+    std::stringstream stream(target);
+    std::string part;
+    while (std::getline(stream, part, '/')) {
+        if (!part.empty()) parts.push_back(part);
+    }
+    return parts;
+}
+
+constexpr std::chrono::minutes kPreviewQueueDedupeTtl{2};
+
+[[nodiscard]] std::unordered_map<std::string, std::chrono::steady_clock::time_point>& queuedPreviewKeys() {
+    static std::unordered_map<std::string, std::chrono::steady_clock::time_point> keys;
+    return keys;
+}
+
+[[nodiscard]] std::mutex& queuedPreviewMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
+[[nodiscard]] bool supportedPreviewMime(const std::optional<std::string>& mime) {
+    return mime && (mime->starts_with("image/") || *mime == "application/pdf");
+}
+
+[[nodiscard]] bool configuredThumbnailSize(const unsigned int size) {
+    const auto& sizes = vh::config::Registry::get().caching.thumbnails.sizes;
+    return std::ranges::find(sizes.begin(), sizes.end(), size) != sizes.end();
+}
+
+[[nodiscard]] std::filesystem::path thumbnailCachePath(
+    const std::shared_ptr<vh::storage::Engine>& engine,
+    const std::shared_ptr<File>& file,
+    const unsigned int size
+) {
+    return engine->paths->thumbnailRoot / file->base32_alias / (std::to_string(size) + ".jpg");
+}
+
+[[nodiscard]] bool thumbnailCacheExists(
+    const std::shared_ptr<vh::storage::Engine>& engine,
+    const std::shared_ptr<File>& file,
+    const unsigned int size
+) {
+    return engine && file && configuredThumbnailSize(size) &&
+           std::filesystem::exists(thumbnailCachePath(engine, file, size));
+}
+
+void maybeQueuePreview(
+    const std::shared_ptr<vh::storage::Engine>& engine,
+    const std::shared_ptr<File>& file,
+    const unsigned int size
+) {
+    if (!engine || !file || !supportedPreviewMime(file->mime_type)) return;
+    if (!configuredThumbnailSize(size)) return;
+
+    const auto key = std::to_string(file->id) + ":" + std::to_string(size);
+    {
+        const auto now = std::chrono::steady_clock::now();
+        std::scoped_lock lock(queuedPreviewMutex());
+        auto& keys = queuedPreviewKeys();
+        if (const auto it = keys.find(key); it != keys.end() && now - it->second < kPreviewQueueDedupeTtl)
+            return;
+        keys[key] = now;
+    }
+    vh::preview::thumbnail::Worker::enqueue(engine, {}, file);
+}
+
+[[nodiscard]] std::string percentEncode(const std::string& value) {
+    static constexpr char hex[] = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(value.size());
+    for (const unsigned char c : value) {
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+            c == '-' || c == '_' || c == '.' || c == '~') {
+            out.push_back(static_cast<char>(c));
+        } else {
+            out.push_back('%');
+            out.push_back(hex[c >> 4u]);
+            out.push_back(hex[c & 0x0fu]);
+        }
+    }
+    return out;
+}
+
+[[nodiscard]] std::string previewUrlFor(
+    const bool share,
+    const uint32_t vaultId,
+    const std::string& path,
+    const unsigned int size
+) {
+    std::string url = "/preview?";
+    if (share) url += "share=1&path=" + percentEncode(path);
+    else url += "vault_id=" + std::to_string(vaultId) + "&path=" + percentEncode(path);
+    url += "&size=" + std::to_string(size);
+    return url;
+}
 namespace vh::protocols::http {
 
 using namespace vh::protocols::http::model::preview;
 
 Response Router::route(request&& req) {
+    if (req.target().starts_with("/upload"))
+        return handleUpload(std::move(req));
+
+    if (req.target().starts_with("/preview/batch"))
+        return handlePreviewBatch(std::move(req));
+
     if (req.method() != verb::get)
         return makeErrorResponse(req, "Invalid request", status::bad_request);
 
@@ -838,6 +953,164 @@ void Router::setPreviewEngineResolverForTesting(PreviewEngineResolver resolver) 
 
 void Router::resetPreviewEngineResolverForTesting() {
     previewEngineResolver() = defaultPreviewEngine;
+}
+
+Response Router::handleUpload(request&& req) {
+    const auto parts = splitRoutePath(std::string(req.target()));
+
+    try {
+        if (req.method() == verb::post && parts.size() == 2 && parts[0] == "upload" && parts[1] == "session") {
+            auto response = upload::Coordinator::instance().createSession(req, parseJsonBody(req));
+            return makeJsonResponse(req, response);
+        }
+
+        if (parts.size() >= 2 && parts[0] == "upload") {
+            const auto uploadId = parts[1];
+            if (req.method() == verb::post && parts.size() == 3 && parts[2] == "finish") {
+                auto response = upload::Coordinator::instance().finishSession(req, uploadId);
+                return makeJsonResponse(req, response);
+            }
+
+            if (req.method() == verb::delete_ && parts.size() == 2) {
+                auto response = upload::Coordinator::instance().cancelSession(req, uploadId);
+                return makeJsonResponse(req, response);
+            }
+
+            if (upload::Coordinator::isUploadFileRequest(req.method(), req.target()))
+                return makeErrorResponse(req, "Upload file bodies must be streamed by the HTTP session", status::bad_request);
+        }
+
+        return makeErrorResponse(req, "Not found", status::not_found);
+    } catch (const std::exception& e) {
+        return makeErrorResponse(req, e.what(), downloadErrorStatus(e));
+    }
+}
+
+Response Router::handlePreviewBatch(request&& req) {
+    if (req.method() != verb::post || !req.target().starts_with("/preview/batch"))
+        return makeErrorResponse(req, "Invalid request", status::bad_request);
+
+    const auto sharePreview = isShareModeRequestTarget(std::string(req.target()));
+
+    std::shared_ptr<vh::protocols::ws::Session> session;
+    try {
+        session = previewSessionResolver()(req);
+    } catch (const std::exception& e) {
+        return makeErrorResponse(req, "Unauthorized: " + std::string(e.what()), status::unauthorized);
+    }
+
+    try {
+        const auto body = parseJsonBody(req);
+        const auto size = body.value("size", 64u);
+        if (!body.contains("items") || !body.at("items").is_array())
+            throw std::invalid_argument("Preview batch requires items array");
+
+        nlohmann::json items = nlohmann::json::array();
+
+        if (sharePreview) {
+            if (!session || !session->isShareMode() || session->user)
+                return makeErrorResponse(req, "Unauthorized: preview batch requires a ready share session", status::unauthorized);
+            if (session->shareSessionToken().empty())
+                return makeErrorResponse(req, "Unauthorized: share session token is missing", status::unauthorized);
+
+            auto manager = sharePreviewManagerFactory()();
+            auto resolver = sharePreviewResolverFactory()();
+            if (!manager || !resolver) throw std::runtime_error("Share preview dependencies are unavailable");
+            auto principal = manager->resolvePrincipal(
+                session->shareSessionToken(),
+                session->ipAddress.empty() ? std::nullopt : std::make_optional(session->ipAddress),
+                session->userAgent.empty() ? std::nullopt : std::make_optional(session->userAgent)
+            );
+            session->setSharePrincipal(principal, session->shareSessionToken());
+            const auto actor = session->rbacActor();
+
+            for (const auto& item : body.at("items")) {
+                const auto path = item.at("path").get<std::string>();
+                nlohmann::json out{{"path", path}};
+                if (item.contains("key")) out["key"] = item.at("key");
+                try {
+                    auto target = resolver->resolve(actor, {
+                        .path = path,
+                        .operation = vh::share::Operation::Preview,
+                        .path_mode = vh::share::TargetPathMode::ShareRelative,
+                        .expected_target_type = vh::share::TargetType::File
+                    });
+                    auto engine = previewEngineResolver()(target.vault_id);
+                    auto file = std::dynamic_pointer_cast<File>(target.entry);
+                    if (!engine || !file || !supportedPreviewMime(file->mime_type)) {
+                        out["status"] = "unsupported";
+                    } else {
+                        out["url"] = previewUrlFor(true, target.vault_id, path, size);
+                        if (thumbnailCacheExists(engine, file, size)) out["status"] = "ready";
+                        else {
+                            maybeQueuePreview(engine, file, size);
+                            out["status"] = configuredThumbnailSize(size) ? "queued" : "missing";
+                        }
+                    }
+                } catch (const std::exception& e) {
+                    const std::string message = e.what();
+                    out["status"] = containsText(message, "not found") ? "missing" : "error";
+                    if (out["status"] == "error") out["error"] = message;
+                }
+                items.push_back(std::move(out));
+            }
+        } else {
+            if (!session || !session->user)
+                return makeErrorResponse(req, "Unauthorized: preview batch requires a user", status::unauthorized);
+
+            const auto defaultVaultId = body.contains("vault_id") && !body.at("vault_id").is_null()
+                                            ? std::make_optional(body.at("vault_id").get<uint32_t>())
+                                            : std::nullopt;
+            for (const auto& item : body.at("items")) {
+                const auto vaultId = item.contains("vault_id") && !item.at("vault_id").is_null()
+                                         ? item.at("vault_id").get<uint32_t>()
+                                         : defaultVaultId.value();
+                const auto path = item.at("path").get<std::string>();
+                nlohmann::json out{{"path", path}, {"vault_id", vaultId}};
+                if (item.contains("key")) out["key"] = item.at("key");
+                try {
+                    auto engine = previewEngineResolver()(vaultId);
+                    if (!engine) throw std::runtime_error("No storage engine found");
+                    const auto vaultPath = std::filesystem::path(path);
+                    enforceHumanPermission(
+                        session,
+                        engine,
+                        vaultPath,
+                        vh::rbac::permission::vault::FilesystemAction::Read
+                    );
+
+                    const auto fusePath = engine->paths->absRelToAbsRel(vaultPath, PathType::VAULT_ROOT, PathType::FUSE_ROOT);
+                    const auto entry = runtime::Deps::get().fsCache->getEntry(fusePath);
+                    if (!entry) {
+                        out["status"] = "missing";
+                    } else if (entry->isDirectory()) {
+                        out["status"] = "unsupported";
+                    } else {
+                        auto file = std::dynamic_pointer_cast<File>(entry);
+                        if (!file || !supportedPreviewMime(file->mime_type)) {
+                            out["status"] = "unsupported";
+                        } else {
+                            out["url"] = previewUrlFor(false, vaultId, path, size);
+                            if (thumbnailCacheExists(engine, file, size)) out["status"] = "ready";
+                            else {
+                                maybeQueuePreview(engine, file, size);
+                                out["status"] = configuredThumbnailSize(size) ? "queued" : "missing";
+                            }
+                        }
+                    }
+                } catch (const std::exception& e) {
+                    const std::string message = e.what();
+                    out["status"] = containsText(message, "not found") ? "missing" : "error";
+                    if (out["status"] == "error") out["error"] = message;
+                }
+                items.push_back(std::move(out));
+            }
+        }
+
+        return makeJsonResponse(req, {{"items", std::move(items)}, {"size", size}});
+    } catch (const std::exception& e) {
+        return makeErrorResponse(req, e.what(), status::bad_request);
+    }
 }
 
 Response Router::handlePreview(request&& req) {
@@ -961,6 +1234,16 @@ Response Router::handleDownload(request&& req) {
 Response Router::makeResponse(const request& req, std::vector<uint8_t>&& data,
                                          const std::string& mime_type, const bool cacheHit) {
     const auto size = data.size();
+    const auto crc = static_cast<uint32_t>(crc32(0L, data.data(), static_cast<uInt>(data.size())));
+    const auto etag = "\"" + std::to_string(size) + "-" + std::to_string(crc) + "\"";
+
+    if (const auto it = req.find(field::if_none_match); it != req.end() && it->value() == etag) {
+        string_response res{status::not_modified, req.version()};
+        res.set(field::etag, etag);
+        res.set(field::cache_control, cacheHit ? "public, max-age=86400" : "private, max-age=0, must-revalidate");
+        res.keep_alive(req.keep_alive());
+        return res;
+    }
 
     vector_response res{
         std::piecewise_construct,
@@ -969,6 +1252,8 @@ Response Router::makeResponse(const request& req, std::vector<uint8_t>&& data,
     };
 
     res.set(field::content_type, mime_type);
+    res.set(field::etag, etag);
+    res.set(field::cache_control, cacheHit ? "public, max-age=86400" : "private, max-age=0, must-revalidate");
     res.content_length(size);
     res.keep_alive(req.keep_alive());
 
@@ -988,6 +1273,7 @@ Response Router::makeResponse(const request& req, file_body::value_type data,
     };
 
     res.set(field::content_type, mime_type);
+    if (cacheHit) res.set(field::cache_control, "public, max-age=86400");
     res.content_length(size);
     res.keep_alive(req.keep_alive());
 

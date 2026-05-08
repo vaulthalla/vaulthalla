@@ -15,12 +15,21 @@ import { ShareManagementModal } from '@/components/share/ShareManagementModal'
 import { useVaultShareStore } from '@/stores/vaultShareStore'
 import { canRequestSharePreview, hasEffectiveShareOperation } from '@/util/shareOperations'
 
-type FilesystemClientProps = { rows: FilesystemRow[] }
+type FilesystemClientProps = { rows: FilesystemRow[]; previewMode: 'authenticated' | 'share' }
 
-export const FilesystemClient: React.FC<FilesystemClientProps> = memo(({ rows }) => {
+interface PreviewBatchResponse {
+  items: Array<{
+    key?: string
+    status: 'ready' | 'queued' | 'missing' | 'unsupported' | 'error'
+    url?: string
+  }>
+}
+
+export const FilesystemClient: React.FC<FilesystemClientProps> = memo(({ rows, previewMode }) => {
   const [selectedFile, setSelectedFile] = useState<FileModel | null>(null)
   const [shareTarget, setShareTarget] = useState<FilesystemRow | null>(null)
   const [contextMenu, setContextMenu] = useState<{ mouseX: number; mouseY: number; row: FilesystemRow } | null>(null)
+  const [batchedPreviewUrls, setBatchedPreviewUrls] = useState<Record<string, string | null | undefined>>({})
   const tableRef = useRef<HTMLDivElement>(null)
 
   const setCopiedItem = useFSStore(state => state.setCopiedItem)
@@ -41,6 +50,82 @@ export const FilesystemClient: React.FC<FilesystemClientProps> = memo(({ rows })
   const canSharePreview = canRequestSharePreview(share)
   const canShareDownload = hasEffectiveShareOperation(share, 'download')
   const canManageShares = mode === 'authenticated'
+
+  const previewCandidates = React.useMemo(() => (
+    rows.filter(row => row.entryType === 'file' && row.previewUrl && row.path && (previewMode === 'share' || row.vault_id))
+  ), [previewMode, rows])
+
+  const previewCandidateSignature = React.useMemo(
+    () => previewCandidates.map(row => `${row.key}:${row.vault_id}:${row.path}`).join('\n'),
+    [previewCandidates],
+  )
+
+  React.useEffect(() => {
+    if (!previewCandidates.length) {
+      setBatchedPreviewUrls({})
+      return
+    }
+
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+
+    const requestBatch = async (attempt: number) => {
+      try {
+        const response = await fetch(`/preview/batch${previewMode === 'share' ? '?share=1' : ''}`, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            size: 64,
+            ...(previewMode === 'authenticated' ? { vault_id: previewCandidates[0]?.vault_id } : {}),
+            items: previewCandidates.map(row => ({
+              key: row.key,
+              ...(previewMode === 'authenticated' ? { vault_id: row.vault_id } : {}),
+              path: row.path || row.name,
+            })),
+          }),
+        })
+        if (!response.ok) throw new Error(await response.text())
+        const data = await response.json() as PreviewBatchResponse
+        if (cancelled) return
+
+        const next: Record<string, string | null> = {}
+        let queued = false
+        for (const item of data.items) {
+          if (!item.key) continue
+          if (item.status === 'ready' && item.url) next[item.key] = item.url
+          else {
+            next[item.key] = null
+            if (item.status === 'queued') queued = true
+          }
+        }
+        setBatchedPreviewUrls(next)
+
+        if (queued && attempt < 6)
+          timer = setTimeout(() => requestBatch(attempt + 1), Math.min(3000, 500 + attempt * 400))
+      } catch (error) {
+        if (cancelled) return
+        console.warn('[FilesystemClient] Preview batch unavailable, falling back to direct preview URLs:', error)
+        setBatchedPreviewUrls(Object.fromEntries(previewCandidates.map(row => [row.key, row.previewUrl])))
+      }
+    }
+
+    requestBatch(0)
+
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+    }
+  }, [previewMode, previewCandidateSignature, previewCandidates])
+
+  const displayRows = React.useMemo(() => rows.map(row => {
+    if (row.entryType !== 'file' || !row.previewUrl) return row
+    const batchedUrl = batchedPreviewUrls[row.key]
+    return {
+      ...row,
+      previewUrl: batchedUrl === undefined ? row.previewUrl : batchedUrl,
+    }
+  }), [batchedPreviewUrls, rows])
 
   const sharePath = React.useCallback((row: { path?: string; name: string }) => row.path || row.name, [])
   const isPreviewable = React.useCallback((file: FileModel) => Boolean(file.mime_type?.startsWith('image/') || file.mime_type === 'application/pdf'), [])
@@ -125,7 +210,7 @@ export const FilesystemClient: React.FC<FilesystemClientProps> = memo(({ rows })
 
   const Body = () => (
     <TableBody>
-      {rows.map(r => (
+      {displayRows.map(r => (
         <Row
           key={r.key}
           r={r}

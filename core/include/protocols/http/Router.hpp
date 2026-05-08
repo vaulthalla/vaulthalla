@@ -46,6 +46,10 @@ namespace vh::protocols::http {
 
         static model::preview::Response handleDownload(request &&req);
 
+        static model::preview::Response handleUpload(request &&req);
+
+        static model::preview::Response handlePreviewBatch(request &&req);
+
         static model::preview::Response handleAuthSession(request &&req);
 
         static model::preview::Response makeResponse(const request &req,

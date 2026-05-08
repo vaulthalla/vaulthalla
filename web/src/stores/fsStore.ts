@@ -282,17 +282,189 @@ const requireReadyShareSession = () => {
     throw new Error('Share session disconnected. Reopen the share link and try again.')
 }
 
-const currentShareSocket = () => {
-  requireReadyShareSession()
-  const socket = useShareWebSocketStore.getState().socket
-  if (!socket || socket.readyState !== WebSocket.OPEN) throw new Error('Share upload connection is not open')
-  return socket
+const httpUploadConcurrency = () => {
+  if (typeof navigator === 'undefined') return 4
+  const cores = navigator.hardwareConcurrency || 4
+  return Math.max(1, Math.min(4, Math.floor(cores / 2) || 1))
 }
 
-const waitForBufferedAmount = async (socket: WebSocket, maxBufferedBytes = 128 * 1024) => {
-  while (socket.bufferedAmount > maxBufferedBytes) {
-    await new Promise(resolve => window.setTimeout(resolve, 25))
-    if (socket.readyState !== WebSocket.OPEN) throw new Error('Share upload connection closed')
+const httpResponseError = async (response: Response, fallback: string) => {
+  const text = await response.text().catch(() => '')
+  return new Error(text || fallback)
+}
+
+const runBounded = async <T,>(items: T[], limit: number, worker: (item: T) => Promise<void>) => {
+  let next = 0
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next
+      next += 1
+      await worker(items[index])
+    }
+  })
+  await Promise.all(workers)
+}
+
+const joinUploadPath = (currentPath: string, relativePath: string) => {
+  const base = currentPath || '/'
+  return `${base}${base.endsWith('/') ? '' : '/'}${relativePath || ''}`
+}
+
+const authenticatedUploadTarget = (currentPath: string, relativePath: string) =>
+  normalizeAuthPath(joinUploadPath(currentPath, relativePath))
+
+interface HttpUploadSessionResponse {
+  upload_id: string
+  files: Array<{ file_id: string; path: string; size: number; transfer_id?: string }>
+}
+
+type PreparedUploadFile = {
+  mode: 'authenticated'
+  file: FileWithRelativePath
+  fileId: string
+  targetPath: string
+} | {
+  mode: 'share'
+  file: FileWithRelativePath
+  fileId: string
+  targetPath: string
+  shareTarget: { path: string; filename: string }
+}
+
+const uploadBody = async ({
+  url,
+  file,
+  onProgress,
+}: {
+  url: string
+  file: File
+  onProgress: (bytes: number) => void
+}) => new Promise<void>((resolve, reject) => {
+  const xhr = new XMLHttpRequest()
+  let observed = 0
+
+  const finishProgress = () => {
+    if (file.size > observed) {
+      onProgress(file.size - observed)
+      observed = file.size
+    }
+  }
+
+  xhr.open('PUT', url)
+  xhr.withCredentials = true
+  xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream')
+  xhr.upload.onprogress = event => {
+    const loaded = Math.min(file.size, event.loaded)
+    if (loaded > observed) {
+      onProgress(loaded - observed)
+      observed = loaded
+    }
+  }
+  xhr.onload = () => {
+    if (xhr.status >= 200 && xhr.status < 300) {
+      finishProgress()
+      resolve()
+      return
+    }
+    reject(new Error(xhr.responseText || `Upload failed with HTTP ${xhr.status}`))
+  }
+  xhr.onerror = () => reject(new Error('Upload connection failed'))
+  xhr.onabort = () => reject(new Error('Upload cancelled'))
+  xhr.send(file)
+})
+
+const uploadHttpBatch = async ({
+  files,
+  mode,
+  vault,
+  currentPath,
+  targetPaths,
+  onProgress,
+  onFileStart,
+}: {
+  files: FileWithRelativePath[]
+  mode: FsMode
+  vault: Vault | LocalDiskVault | S3Vault | null
+  currentPath: string
+  targetPaths?: string[]
+  onProgress: (bytes: number) => void
+  onFileStart: (filename: string) => void
+}) => {
+  if (mode === 'share') {
+    requireReadyShareSession()
+    await useShareWebSocketStore.getState().waitForConnection()
+  } else if (!vault) throw new Error('No current vault selected')
+
+  const uploadFiles: PreparedUploadFile[] = files.map((file, index) => {
+    const relativePath = file.relativePath || file.name
+    const requestedTargetPath = targetPaths?.[index]
+    if (mode === 'share') {
+      const target = shareUploadTarget(
+        requestedTargetPath ? normalizeSharePath(requestedTargetPath) : normalizeSharePath(joinUploadPath(currentPath, relativePath)),
+        currentPath,
+        file.name,
+      )
+      return {
+        mode: 'share',
+        file,
+        fileId: `f${index}`,
+        shareTarget: target,
+        targetPath: normalizeSharePath(joinUploadPath(target.path, target.filename)),
+      }
+    }
+    return {
+      mode: 'authenticated',
+      file,
+      fileId: `f${index}`,
+      targetPath: requestedTargetPath ? normalizeAuthPath(requestedTargetPath) : authenticatedUploadTarget(currentPath, relativePath),
+    }
+  })
+
+  const shareQuery = mode === 'share' ? '?share=1' : ''
+  const start = await fetch(`/upload/session${shareQuery}`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ...(mode === 'authenticated' ? { vault_id: vault?.id } : {}),
+      files: uploadFiles.map(item => {
+        const common = {
+          file_id: item.fileId,
+          mime_type: item.file.type || null,
+          duplicate_policy: 'reject',
+        }
+        return item.mode === 'share'
+          ? { ...common, path: item.shareTarget.path, filename: item.shareTarget.filename, size_bytes: item.file.size }
+          : { ...common, path: item.targetPath, size: item.file.size }
+      }),
+    }),
+  })
+  if (!start.ok) throw await httpResponseError(start, 'Unable to start upload')
+  const session = await start.json() as HttpUploadSessionResponse
+  const uploadId = session.upload_id
+  if (!uploadId) throw new Error('Upload session did not return an upload_id')
+
+  try {
+    await runBounded(uploadFiles, httpUploadConcurrency(), async ({ file, fileId }) => {
+      onFileStart(file.name)
+      await uploadBody({
+        url: `/upload/${encodeURIComponent(uploadId)}/files/${encodeURIComponent(fileId)}${shareQuery}`,
+        file,
+        onProgress,
+      })
+    })
+
+    const finish = await fetch(`/upload/${encodeURIComponent(uploadId)}/finish${shareQuery}`, {
+      method: 'POST',
+      credentials: 'same-origin',
+    })
+    if (!finish.ok) throw await httpResponseError(finish, 'Unable to finish upload')
+  } catch (error) {
+    await fetch(`/upload/${encodeURIComponent(uploadId)}${shareQuery}`, {
+      method: 'DELETE',
+      credentials: 'same-origin',
+    }).catch(() => undefined)
+    throw error
   }
 }
 
@@ -447,7 +619,7 @@ export const useFSStore = create<FsStore>()(
       },
 
       async upload(files: FileWithRelativePath[]) {
-        const { uploadFile, fetchFiles, path } = get()
+        const { fetchFiles, path, mode, currVault } = get()
 
         set({ uploading: true, uploadProgress: 0, uploadError: null, uploadLabel: files.length === 1 ? files[0].name : `${files.length} files` })
 
@@ -455,17 +627,17 @@ export const useFSStore = create<FsStore>()(
         let uploadedBytes = 0
 
         try {
-          for (const file of files) {
-            set({ uploadLabel: file.name })
-            await uploadFile({
-              file,
-              targetPath: `${path}/${file.relativePath}`,
-              onProgress: bytes => {
-                uploadedBytes += bytes
-                set({ uploadProgress: totalBytes > 0 ? Math.min(100, (uploadedBytes / totalBytes) * 100) : 100 })
-              },
-            })
-          }
+          await uploadHttpBatch({
+            files,
+            mode,
+            vault: currVault,
+            currentPath: path,
+            onFileStart: filename => set({ uploadLabel: filename }),
+            onProgress: bytes => {
+              uploadedBytes += bytes
+              set({ uploadProgress: totalBytes > 0 ? Math.min(100, (uploadedBytes / totalBytes) * 100) : 100 })
+            },
+          })
 
           let listUnavailable = false
 
@@ -535,80 +707,18 @@ export const useFSStore = create<FsStore>()(
         set({ sharePreview: null, previewError: null })
       },
 
-      async uploadFile({ file, targetPath = get().path, onProgress }) {
-        if (get().mode === 'share') {
-          const ws = useShareWebSocketStore.getState()
-          requireReadyShareSession()
-          await ws.waitForConnection()
-
-          const target = shareUploadTarget(targetPath, get().path, file.name)
-          const startResp = await ws.sendCommand('fs.upload.start', {
-            path: target.path,
-            filename: target.filename,
-            size_bytes: file.size,
-            mime_type: file.type || null,
-            duplicate_policy: 'reject',
-          })
-
-          const wsInstance = currentShareSocket()
-          const chunkSize = startResp.chunk_size || 256 * 1024
-          let offset = 0
-
-          try {
-            while (offset < file.size) {
-              if (currentShareSocket() !== wsInstance)
-                throw new Error('Share upload connection changed during upload. Reopen the share link and try again.')
-              const slice = file.slice(offset, Math.min(offset + chunkSize, file.size))
-              const arrayBuffer = await slice.arrayBuffer()
-              if (wsInstance.readyState !== WebSocket.OPEN) throw new Error('Share upload connection closed')
-              wsInstance.send(arrayBuffer)
-              await waitForBufferedAmount(wsInstance)
-
-              offset += slice.size
-              onProgress?.(slice.size)
-            }
-
-            if (currentShareSocket() !== wsInstance)
-              throw new Error('Share upload connection changed before finish. Reopen the share link and try again.')
-            await ws.sendCommand('fs.upload.finish', { upload_id: startResp.upload_id })
-          } catch (error) {
-            await ws.sendCommand('fs.upload.cancel', { upload_id: startResp.upload_id }).catch(() => undefined)
-            throw error
-          }
-          return
-        }
-
-        const ws = useWebSocketStore.getState()
-        await ws.waitForConnection()
-
-        const { currVault } = get()
-        if (!currVault) throw new Error('No current vault selected')
-
+      async uploadFile({ file, targetPath, onProgress }) {
         try {
-          const startResp = await ws.sendCommand('fs.upload.start', {
-            vault_id: currVault.id,
-            path: targetPath,
-            size: file.size,
+          const { mode, currVault, path } = get()
+          await uploadHttpBatch({
+            files: [file as FileWithRelativePath],
+            mode,
+            vault: currVault,
+            currentPath: path,
+            targetPaths: targetPath ? [targetPath] : undefined,
+            onFileStart: () => undefined,
+            onProgress: bytes => onProgress?.(bytes),
           })
-
-          const uploadId = startResp.upload_id
-          if (!uploadId) throw new Error('No upload_id returned')
-
-          const wsInstance = ws.socket
-          if (!wsInstance || wsInstance.readyState !== WebSocket.OPEN) throw new Error('WebSocket is not connected')
-          const chunkSize = 64 * 1024
-          let offset = 0
-
-          while (offset < file.size) {
-            const slice = file.slice(offset, Math.min(offset + chunkSize, file.size))
-            const arrayBuffer = await slice.arrayBuffer()
-            wsInstance.send(arrayBuffer)
-
-            offset += slice.size
-            onProgress?.(slice.size)
-          }
-
-          await ws.sendCommand('fs.upload.finish', { vault_id: currVault.id, path: targetPath })
         } catch (err) {
           console.error('[FsStore] uploadFile error:', err)
           throw err
