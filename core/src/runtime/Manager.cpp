@@ -12,9 +12,11 @@
 #include "stats/SnapshotService.hpp"
 #include "sync/Controller.hpp"
 
+#include <array>
 #include <chrono>
 #include <cstdlib>
 #include <paths.h>
+#include <string_view>
 #include <utility>
 
 namespace vh::runtime {
@@ -22,6 +24,27 @@ namespace vh::runtime {
 namespace {
 constexpr auto kRestartDelay = std::chrono::milliseconds(500);
 constexpr auto kWatchdogInterval = std::chrono::seconds(2);
+
+constexpr std::array kBaseStartOrder{
+    "FUSE",
+    "SyncController",
+    "DBJanitor",
+    "LogRotationService",
+    "StatsSnapshotService",
+    "ConnectionLifecycleManager",
+    "ProtocolService"
+};
+
+constexpr std::array kBaseStopOrder{
+    "ProtocolService",
+    "ShellServer",
+    "ConnectionLifecycleManager",
+    "StatsSnapshotService",
+    "DBJanitor",
+    "LogRotationService",
+    "SyncController",
+    "FUSE"
+};
 }
 
 Manager& Manager::instance() {
@@ -52,14 +75,46 @@ Manager::Manager()
     }
 }
 
-std::vector<Manager::ServiceEntry> Manager::serviceEntries() const {
-    std::vector<ServiceEntry> entries;
-    entries.reserve(services_.size());
+std::vector<std::string> Manager::serviceStartOrder(const bool includeShellServer) {
+    std::vector<std::string> names;
+    names.reserve(kBaseStartOrder.size() + 1);
+    for (const auto* name : kBaseStartOrder)
+        names.emplace_back(name);
+    if (includeShellServer)
+        names.emplace_back("ShellServer");
+    return names;
+}
 
-    for (const auto& [name, service] : services_)
-        entries.push_back({name, service});
+std::vector<std::string> Manager::serviceStopOrder(const bool includeShellServer) {
+    std::vector<std::string> names;
+    names.reserve(kBaseStopOrder.size());
+    for (const auto* name : kBaseStopOrder) {
+        if (!includeShellServer && std::string_view{name} == "ShellServer")
+            continue;
+        names.emplace_back(name);
+    }
+    return names;
+}
+
+std::vector<Manager::ServiceEntry> Manager::serviceEntriesInOrder(const std::vector<std::string>& names) const {
+    std::vector<ServiceEntry> entries;
+    entries.reserve(names.size());
+
+    for (const auto& name : names) {
+        const auto it = services_.find(name);
+        if (it != services_.end())
+            entries.push_back({it->first, it->second});
+    }
 
     return entries;
+}
+
+std::vector<Manager::ServiceEntry> Manager::serviceStartEntries() const {
+    return serviceEntriesInOrder(serviceStartOrder(static_cast<bool>(shellServer)));
+}
+
+std::vector<Manager::ServiceEntry> Manager::serviceStopEntries() const {
+    return serviceEntriesInOrder(serviceStopOrder(static_cast<bool>(shellServer)));
 }
 
 void Manager::startAll() {
@@ -67,7 +122,7 @@ void Manager::startAll() {
 
     const auto entries = [&] {
         std::scoped_lock lock(mutex_);
-        return serviceEntries();
+        return serviceStartEntries();
     }();
 
     for (const auto& entry : entries) {
@@ -102,7 +157,7 @@ void Manager::stopAll(const int signal) {
 
     const auto entries = [&] {
         std::scoped_lock lock(mutex_);
-        return serviceEntries();
+        return serviceStopEntries();
     }();
 
     for (const auto& entry : entries)
@@ -134,7 +189,7 @@ void Manager::restartService(const std::string& name) {
 bool Manager::allRunning() const {
     const auto entries = [&] {
         std::scoped_lock lock(mutex_);
-        return serviceEntries();
+        return serviceStartEntries();
     }();
 
     for (const auto& entry : entries)
@@ -147,7 +202,7 @@ bool Manager::allRunning() const {
 Manager::Status Manager::status() const {
     const auto entries = [&] {
         std::scoped_lock lock(mutex_);
-        return serviceEntries();
+        return serviceStartEntries();
     }();
 
     Status out;

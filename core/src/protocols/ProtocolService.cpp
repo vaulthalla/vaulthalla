@@ -103,6 +103,14 @@ void ProtocolService::initHttpServer() {
 void ProtocolService::shutdownProtocols() noexcept {
     std::scoped_lock lock(lifecycleMutex_);
     try {
+        websocketReady_.store(false, std::memory_order_release);
+        httpPreviewReady_.store(false, std::memory_order_release);
+
+        if (!httpServer_ && !wsServer_ && !ioContext_ && !ioThread_.joinable()) {
+            ioContextInitialized_.store(false, std::memory_order_release);
+            return;
+        }
+
         if (httpServer_) httpServer_->close();
         if (wsServer_) wsServer_->close();
         http::Session::cancelAllActive();
@@ -118,8 +126,6 @@ void ProtocolService::shutdownProtocols() noexcept {
     wsServer_.reset();
     httpServer_.reset();
     ioContext_.reset();
-    websocketReady_.store(false, std::memory_order_release);
-    httpPreviewReady_.store(false, std::memory_order_release);
     ioContextInitialized_.store(false, std::memory_order_release);
 }
 

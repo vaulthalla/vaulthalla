@@ -41,6 +41,8 @@ public:
     };
 
     static Manager& instance();
+    [[nodiscard]] static std::vector<std::string> serviceStartOrder(bool includeShellServer);
+    [[nodiscard]] static std::vector<std::string> serviceStopOrder(bool includeShellServer);
 
     void startAll();
     void stopAll(int signal = SIGTERM);
@@ -65,7 +67,9 @@ private:
 
     Manager();
 
-    [[nodiscard]] std::vector<ServiceEntry> serviceEntries() const;
+    [[nodiscard]] std::vector<ServiceEntry> serviceEntriesInOrder(const std::vector<std::string>& names) const;
+    [[nodiscard]] std::vector<ServiceEntry> serviceStartEntries() const;
+    [[nodiscard]] std::vector<ServiceEntry> serviceStopEntries() const;
     void tryStart(const ServiceEntry& entry);
     static void stopService(const ServiceEntry& entry, int signal);
 
