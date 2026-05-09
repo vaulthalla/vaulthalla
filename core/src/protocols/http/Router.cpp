@@ -41,6 +41,7 @@
 #include <mutex>
 #include <sstream>
 #include <stdexcept>
+#include <system_error>
 #include <unordered_map>
 #include <utility>
 
@@ -785,6 +786,22 @@ constexpr std::chrono::minutes kPreviewQueueDedupeTtl{2};
     return mime && (mime->starts_with("image/") || *mime == "application/pdf");
 }
 
+[[nodiscard]] bool svgPreviewMime(const std::optional<std::string>& mime) {
+    return mime && *mime == "image/svg+xml";
+}
+
+[[nodiscard]] bool webpPreviewMime(const std::optional<std::string>& mime) {
+    return mime && *mime == "image/webp";
+}
+
+[[nodiscard]] bool browserRenderedPreviewMime(const std::optional<std::string>& mime) {
+    return svgPreviewMime(mime) || webpPreviewMime(mime);
+}
+
+[[nodiscard]] bool thumbnailPreviewMime(const std::optional<std::string>& mime) {
+    return supportedPreviewMime(mime) && !browserRenderedPreviewMime(mime);
+}
+
 [[nodiscard]] bool configuredThumbnailSize(const unsigned int size) {
     const auto& sizes = vh::config::Registry::get().caching.thumbnails.sizes;
     return std::ranges::find(sizes.begin(), sizes.end(), size) != sizes.end();
@@ -846,7 +863,7 @@ void maybeQueuePreview(
     const std::shared_ptr<File>& file,
     const unsigned int size
 ) {
-    if (!engine || !file || !supportedPreviewMime(file->mime_type)) return;
+    if (!engine || !file || !thumbnailPreviewMime(file->mime_type)) return;
     if (!configuredThumbnailSize(size)) return;
 
     const auto key = std::to_string(file->id) + ":" + std::to_string(size);
@@ -889,6 +906,32 @@ void maybeQueuePreview(
     else url += "vault_id=" + std::to_string(vaultId) + "&path=" + percentEncode(path);
     url += "&size=" + std::to_string(size);
     return url;
+}
+
+[[nodiscard]] vh::protocols::http::model::preview::Response makeBrowserRenderedPreviewResponse(
+    const vh::protocols::http::request& req,
+    const std::shared_ptr<File>& file,
+    const std::shared_ptr<vh::storage::Engine>& engine
+) {
+    const auto mime = *file->mime_type;
+    const auto tmpPath = decrypt_file_to_temp(file, engine);
+    std::vector<uint8_t> preview;
+    std::error_code ec;
+    try {
+        preview = readFileToVector(tmpPath);
+        std::filesystem::remove(tmpPath, ec);
+    } catch (...) {
+        std::filesystem::remove(tmpPath, ec);
+        throw;
+    }
+
+    auto response = vh::protocols::http::Router::makeResponse(req, std::move(preview), mime);
+    if (mime == "image/svg+xml" && std::holds_alternative<vh::protocols::http::vector_response>(response)) {
+        auto* res = std::get_if<vh::protocols::http::vector_response>(&response);
+        res->set("X-Content-Type-Options", "nosniff");
+        res->set("Content-Security-Policy", "default-src 'none'; img-src 'self' data: blob:; style-src 'unsafe-inline'; script-src 'none'; sandbox");
+    }
+    return response;
 }
 namespace vh::protocols::http {
 
@@ -1074,6 +1117,9 @@ Response Router::handlePreviewBatch(request&& req) {
                     auto file = std::dynamic_pointer_cast<File>(target.entry);
                     if (!engine || !file || !supportedPreviewMime(file->mime_type)) {
                         out["status"] = "unsupported";
+                    } else if (browserRenderedPreviewMime(file->mime_type)) {
+                        out["status"] = "ready";
+                        out["url"] = previewUrlFor(true, target.vault_id, path, size);
                     } else {
                         if (thumbnailCacheExists(engine, file, size)) {
                             out["status"] = "ready";
@@ -1128,6 +1174,9 @@ Response Router::handlePreviewBatch(request&& req) {
                         auto file = std::dynamic_pointer_cast<File>(entry);
                         if (!file || !supportedPreviewMime(file->mime_type)) {
                             out["status"] = "unsupported";
+                        } else if (browserRenderedPreviewMime(file->mime_type)) {
+                            out["status"] = "ready";
+                            out["url"] = previewUrlFor(false, vaultId, path, size);
                         } else {
                             if (thumbnailCacheExists(engine, file, size)) {
                                 out["status"] = "ready";
@@ -1187,6 +1236,17 @@ Response Router::handlePreview(request&& req) {
 
     if (!pr->file->mime_type)
         return makeErrorResponse(req, "File has no mime type.", status::unsupported_media_type);
+
+    if (browserRenderedPreviewMime(pr->file->mime_type)) {
+        try {
+            return makeBrowserRenderedPreviewResponse(req, pr->file, pr->engine);
+        } catch (const std::exception& e) {
+            log::Registry::http()->error("[BrowserPreviewHandler] Error handling browser-rendered preview for {}: {}",
+                                         pr->rel_path.string(), e.what());
+            return makeErrorResponse(req, "Failed to load preview: " + std::string(e.what()),
+                                     status::unsupported_media_type);
+        }
+    }
 
     if (pr->size)
         if (auto data = tryCacheRead(pr->file, pr->engine->paths->thumbnailRoot, *pr->size); !data.empty())

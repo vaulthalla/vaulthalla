@@ -14,6 +14,7 @@ import { canRequestSharePreview, hasEffectiveShareOperation } from '@/util/share
 import { buildPreviewUrl } from '@/util/previewUrl'
 import { parseTimestamp } from '@/util/formatTimestamp'
 import { buildDownloadUrl } from '@/util/downloadUrl'
+import { isPreviewableMime } from '@/util/previewMime'
 
 type FsMode = 'authenticated' | 'share'
 type FsEntry = DBFile | Directory
@@ -166,7 +167,7 @@ const shareEntryToFsEntry = (entry: ShareEntry): FsEntry => {
   const shareState = useVaultShareStore.getState()
   if (shareState.status === 'ready' && shareState.sessionToken &&
     canRequestSharePreview(shareState.share) && entry.path && entry.mime_type &&
-    (entry.mime_type.startsWith('image/') || entry.mime_type === 'application/pdf')) {
+    isPreviewableMime(entry.mime_type)) {
     ;(file as DBFile & { previewUrl?: string | null }).previewUrl = shareHttpPreviewUrl(entry.path, 128)
   }
 

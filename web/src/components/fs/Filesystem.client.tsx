@@ -16,6 +16,7 @@ import { useVaultShareStore } from '@/stores/vaultShareStore'
 import { canRequestSharePreview, hasEffectiveShareOperation } from '@/util/shareOperations'
 import { PreviewBatchController } from '@/components/fs/PreviewBatchController'
 import { toPreviewBatchCandidate } from '@/components/fs/previewBatch'
+import { isPreviewableMime } from '@/util/previewMime'
 
 type FilesystemClientProps = { rows: FilesystemRow[]; previewMode: 'authenticated' | 'share' }
 
@@ -98,7 +99,7 @@ export const FilesystemClient: React.FC<FilesystemClientProps> = memo(({ rows, p
   )
 
   const sharePath = React.useCallback((row: { path?: string; name: string }) => row.path || row.name, [])
-  const isPreviewable = React.useCallback((file: FileModel) => Boolean(file.mime_type?.startsWith('image/') || file.mime_type === 'application/pdf'), [])
+  const isPreviewable = React.useCallback((file: FileModel) => isPreviewableMime(file.mime_type), [])
 
   const handleOpenFile = React.useCallback(
     (f: FileModel) => {
