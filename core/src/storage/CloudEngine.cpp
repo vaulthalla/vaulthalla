@@ -117,7 +117,7 @@ std::shared_ptr<File> CloudEngine::downloadFile(const fs::path& rel_path) {
 
     const auto f = Filesystem::createFile({
             .path = makeAbsolute(rel_path),
-            .fuse_path = paths->absRelToAbsRel(makeAbsolute(rel_path), PathType::VAULT_ROOT, PathType::FUSE_ROOT),
+            .fuse_path = vaultPathToFusePath(makeAbsolute(rel_path)),
             .buffer = buffer,
             .engine = shared_from_this(),
             .user = owner,
@@ -232,7 +232,7 @@ void CloudEngine::removeRemotely(const fs::path& rel_path, const bool rmThumbnai
 }
 
 void CloudEngine::removeRemotely(const std::shared_ptr<file::Trashed>& f, bool rmThumbnails) const {
-    const auto vaultPath = paths->absRelToAbsRel(f->path, PathType::FUSE_ROOT, PathType::VAULT_ROOT);
+    const auto vaultPath = fusePathToVaultPath(f->path);
     s3Provider_->deleteObject(stripLeadingSlash(vaultPath));
     if (rmThumbnails) purgeThumbnails(vaultPath);
 }

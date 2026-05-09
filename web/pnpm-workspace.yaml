@@ -1,4 +1,1 @@
-onlyBuiltDependencies:
-  - '@tailwindcss/oxide'
-  - sharp
-  - unrs-resolver
+dangerouslyAllowAllBuilds: true

@@ -163,7 +163,7 @@ namespace vh::storage {
 
     void Engine::mkdir(const fs::path &relPath, const std::shared_ptr<identities::User>& user) {
         if (const auto err = Filesystem::mkdir({
-                .path = paths->absRelToAbsRel(relPath, PathType::VAULT_ROOT, PathType::FUSE_ROOT),
+                .path = vaultPathToFusePath(relPath),
                 .engine = shared_from_this(),
                 .user = user
             }); err)
@@ -171,34 +171,34 @@ namespace vh::storage {
     }
 
     void Engine::move(const fs::path &from, const fs::path &to, const std::shared_ptr<identities::User>& user) {
-        if (const auto err = Filesystem::rename(paths->absRelToAbsRel(from, PathType::VAULT_ROOT, PathType::FUSE_ROOT),
-                           paths->absRelToAbsRel(to, PathType::VAULT_ROOT, PathType::FUSE_ROOT), user,
+        if (const auto err = Filesystem::rename(vaultPathToFusePath(from),
+                           vaultPathToFusePath(to), user,
                            shared_from_this()); err)
             throw std::runtime_error("Failed to move directory: " + from.string() + " to " + to.string());
     }
 
     void Engine::rename(const fs::path &from, const fs::path &to, const std::shared_ptr<identities::User>& user) {
-        if (const auto err = Filesystem::rename(paths->absRelToAbsRel(from, PathType::VAULT_ROOT, PathType::FUSE_ROOT),
-                           paths->absRelToAbsRel(to, PathType::VAULT_ROOT, PathType::FUSE_ROOT), user,
+        if (const auto err = Filesystem::rename(vaultPathToFusePath(from),
+                           vaultPathToFusePath(to), user,
                            shared_from_this()); err)
             throw std::runtime_error("Failed to rename: " + from.string() + " to " + to.string());
     }
 
     void Engine::copy(const fs::path &from, const fs::path &to, const unsigned int userId) {
-        if (const auto err = Filesystem::copy(paths->absRelToAbsRel(from, PathType::VAULT_ROOT, PathType::FUSE_ROOT),
-                         paths->absRelToAbsRel(to, PathType::VAULT_ROOT, PathType::FUSE_ROOT), userId,
+        if (const auto err = Filesystem::copy(vaultPathToFusePath(from),
+                         vaultPathToFusePath(to), userId,
                          shared_from_this()); err)
             throw std::runtime_error("Failed to copy: " + from.string() + " to " + to.string());
     }
 
     void Engine::remove(const fs::path &rel_path, const unsigned int userId) const {
-        Filesystem::remove(paths->absRelToAbsRel(rel_path, PathType::VAULT_ROOT, PathType::FUSE_ROOT), userId);
+        Filesystem::remove(vaultPathToFusePath(rel_path), userId);
     }
 
     void Engine::removeLocally(const fs::path &rel_path) const {
         const auto path = rel_path.string().front() != '/' ? fs::path("/" / rel_path) : rel_path;
         purgeThumbnails(path);
-        auto file = db::query::fs::File::getFileByPath(vault->id, path);
+        const auto file = db::query::fs::File::getFileByPath(vault->id, path);
         db::query::fs::File::deleteFile(vault->owner_id, file);
 
         if (const auto absPath = paths->absPath(path, PathType::BACKING_VAULT_ROOT); fs::exists(absPath))
@@ -239,7 +239,7 @@ namespace vh::storage {
             absPath = parent;
         }
 
-        const auto vaultPath = paths->absRelToAbsRel(f->path, PathType::FUSE_ROOT, PathType::VAULT_ROOT);
+        const auto vaultPath = fusePathToVaultPath(f->path);
 
         for (const auto &size: Registry::get().caching.thumbnails.sizes) {
             const auto thumbPath = paths->absPath(vaultPath, PathType::THUMBNAIL_ROOT) / std::to_string(size);
@@ -247,5 +247,13 @@ namespace vh::storage {
         }
 
         fs::remove(paths->absPath(vaultPath, PathType::CACHE_ROOT), ec);
+    }
+
+    std::filesystem::path Engine::vaultPathToFusePath(const std::filesystem::path &vPath) const {
+        return paths->absRelToAbsRel(vPath, PathType::VAULT_ROOT, PathType::FUSE_ROOT);
+    }
+
+    std::filesystem::path Engine::fusePathToVaultPath(const std::filesystem::path &fPath) const {
+        return paths->absRelToAbsRel(fPath, PathType::FUSE_ROOT, PathType::VAULT_ROOT);
     }
 }

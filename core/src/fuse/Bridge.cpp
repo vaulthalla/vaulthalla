@@ -14,6 +14,7 @@
 #include "fs/cache/Registry.hpp"
 #include "fuse/Resolver.hpp"
 #include "fs/model/Symlink.hpp"
+#include "fs/model/File.hpp"
 
 #include <cerrno>
 #include <chrono>
@@ -58,6 +59,11 @@ void recordOpenHandle() noexcept {
 
 void recordCloseHandle() noexcept {
     if (const auto& stats = runtime::Deps::get().fuseStats) stats->record_close_handle();
+}
+
+bool isHttpUploadTempPartName(const std::string_view name) noexcept {
+    return name.starts_with(".upload-http-") && name.ends_with(".part") &&
+           name.find('/') == std::string_view::npos;
 }
 
 void warnSetattrMetadataNoOpOncePerMinute() {
@@ -631,6 +637,8 @@ void unlink(const fuse_req_t req, const fuse_ino_t parent, const char* name) {
     ScopedFuseOpTimer timer(fuseStats(), FuseOperation::Unlink);
     log::Registry::fuse()->debug("[unlink] Called for parent: {}, name: {}", parent, name);
 
+    const auto childName = name ? std::string_view{name} : std::string_view{};
+    const auto isHttpUploadTemp = isHttpUploadTempPartName(childName);
     const auto resolved = Resolver::resolve({
         .caller = "unlink",
         .fuseReq = req,
@@ -641,33 +649,69 @@ void unlink(const fuse_req_t req, const fuse_ino_t parent, const char* name) {
     });
 
     if (!resolved.ok()) {
+        if (isHttpUploadTemp && resolved.status == resolver::Status::MissingEntry) {
+            const auto tempResolved = Resolver::resolve({
+                .caller = "unlink",
+                .fuseReq = req,
+                .parentIno = parent,
+                .childName = name,
+                .action = permission::vault::FilesystemAction::Delete,
+                .target = resolver::Target::Path
+            });
+
+            if (!tempResolved.ok()) {
+                replyError(req, timer, tempResolved.errnum);
+                return;
+            }
+
+            log::Registry::fuse()->debug(
+                "[unlink] Treating missing HTTP upload temp part as already removed: {}",
+                tempResolved.path->string()
+            );
+            replyOk(req, timer);
+            return;
+        }
+
         replyError(req, timer, resolved.errnum);
         return;
     }
 
-    if (resolved.entry->isDirectory()) {
+    const auto entry = resolved.entry;
+
+    if (entry->isDirectory()) {
         replyError(req, timer, EISDIR);
         return;
     }
 
-    if (resolved.entry->isSymlink()) {
-        const auto link = std::static_pointer_cast<Symlink>(resolved.entry);
+    if (entry->isSymlink()) {
+        const auto link = std::static_pointer_cast<Symlink>(entry);
         db::query::fs::Symlink::deleteSymlink(link);
 
-        if (::unlink(resolved.entry->backing_path.c_str()) < 0)
-            log::Registry::fuse()->debug("[unlink] Failed to remove backing symlink: {}: {}", resolved.entry->backing_path.string(), strerror(errno));
+        if (::unlink(entry->backing_path.c_str()) < 0)
+            log::Registry::fuse()->debug("[unlink] Failed to remove backing symlink: {}: {}", entry->backing_path.string(), strerror(errno));
 
-        runtime::Deps::get().fsCache->evictPath(resolved.entry->fuse_path);
+        runtime::Deps::get().fsCache->evictPath(entry->fuse_path);
         replyOk(req, timer);
         return;
     }
 
-    db::query::fs::File::markFileAsTrashed(resolved.user->id, *resolved.entry->vault_id, resolved.entry->path, true);
+    if (isHttpUploadTemp) {
+        db::query::fs::File::deleteFile(resolved.user->id, std::static_pointer_cast<File>(entry));
 
-    if (::unlink(resolved.entry->backing_path.c_str()) < 0)
-        log::Registry::fuse()->debug("[unlink] Failed to remove backing file: {}: {}", resolved.entry->backing_path.string(), strerror(errno));
+        if (::unlink(entry->backing_path.c_str()) < 0)
+            log::Registry::fuse()->debug("[unlink] Failed to remove backing upload temp file: {}: {}", entry->backing_path.string(), strerror(errno));
 
-    runtime::Deps::get().fsCache->evictPath(resolved.entry->fuse_path);
+        runtime::Deps::get().fsCache->evictPath(entry->fuse_path);
+        replyOk(req, timer);
+        return;
+    }
+
+    db::query::fs::File::markFileAsTrashed(resolved.user->id, *entry->vault_id, entry->path, true);
+
+    if (::unlink(entry->backing_path.c_str()) < 0)
+        log::Registry::fuse()->debug("[unlink] Failed to remove backing file: {}: {}", entry->backing_path.string(), strerror(errno));
+
+    runtime::Deps::get().fsCache->evictPath(entry->fuse_path);
     replyOk(req, timer);
 }
 
@@ -694,6 +738,7 @@ void rmdir(const fuse_req_t req, const fuse_ino_t parent, const char* name) {
     if (::rmdir(resolved.entry->backing_path.c_str()) < 0)
         log::Registry::fuse()->warn("[rmdir] Failed to remove backing directory: {}: {}", resolved.entry->backing_path.string(), strerror(errno));
 
+    runtime::Deps::get().fsCache->evictPath(resolved.entry->fuse_path);
     replyOk(req, timer);
 }
 

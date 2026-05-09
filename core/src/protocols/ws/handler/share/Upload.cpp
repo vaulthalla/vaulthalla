@@ -48,11 +48,7 @@ public:
             throw std::runtime_error("Share upload exceeds available vault storage");
 
         const auto vaultPath = std::filesystem::path(finalVaultPath);
-        const auto fusePath = engine->paths->absRelToAbsRel(
-            vaultPath,
-            vh::fs::model::PathType::VAULT_ROOT,
-            vh::fs::model::PathType::FUSE_ROOT
-        );
+        const auto fusePath = engine->vaultPathToFusePath(vaultPath);
 
         return vh::fs::Filesystem::createFile({
             .path = vaultPath,

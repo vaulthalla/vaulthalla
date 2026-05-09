@@ -4,7 +4,7 @@ import React from 'react'
 import { useFSStore } from '@/stores/fsStore'
 
 const CopiedItemIndicator = () => {
-  const { copiedItem } = useFSStore()
+  const copiedItem = useFSStore(state => state.copiedItem)
 
   return (
     copiedItem && (

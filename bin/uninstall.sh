@@ -64,8 +64,12 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# 1) Make sure FUSE is fully unmounted
-"$BIN_DIR/teardown/unmount_fuse.sh"
+# 1) Make sure dev-owned stale services/processes are gone before unit files move.
+if [[ "$DEV_MODE" == true ]]; then
+  "$BIN_DIR/teardown/kill_dev_artifacts.sh"
+else
+  "$BIN_DIR/teardown/unmount_fuse.sh"
+fi
 
 # 2) Stop and remove systemd services
 "$BIN_DIR/teardown/uninstall_systemd.sh"

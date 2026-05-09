@@ -1,6 +1,6 @@
 'use client'
 
-import React, { memo, useRef, useState } from 'react'
+import React, { memo, useState } from 'react'
 import { Table, TableHeader, TableBody, TableRow, TableHead } from '@/components/table'
 import { ScrollArea } from '@/components/ScrollArea'
 import { CardContent } from '@/components/card/CardContent'
@@ -14,14 +14,65 @@ import type { FilesystemRow } from '@/components/fs/types'
 import { ShareManagementModal } from '@/components/share/ShareManagementModal'
 import { useVaultShareStore } from '@/stores/vaultShareStore'
 import { canRequestSharePreview, hasEffectiveShareOperation } from '@/util/shareOperations'
+import { PreviewBatchController } from '@/components/fs/PreviewBatchController'
+import { toPreviewBatchCandidate } from '@/components/fs/previewBatch'
+import { isPreviewableMime } from '@/util/previewMime'
 
-type FilesystemClientProps = { rows: FilesystemRow[] }
+type FilesystemClientProps = { rows: FilesystemRow[]; previewMode: 'authenticated' | 'share' }
 
-export const FilesystemClient: React.FC<FilesystemClientProps> = memo(({ rows }) => {
+const SharePreviewWarning = () => {
+  const mode = useFSStore(state => state.mode)
+  const previewError = useFSStore(state => state.previewError)
+  const downloading = useFSStore(state => state.downloading)
+
+  if (mode !== 'share' || !previewError || downloading) return null
+
+  return (
+    <div className="mt-3 rounded border border-amber-500/40 bg-amber-950/30 p-3 text-sm text-amber-100">
+      Preview unavailable. Falling back to download when permitted.
+    </div>
+  )
+}
+
+const SelectedFilePreviewModal = ({
+  file,
+  onClose,
+}: {
+  file: FileModel | null
+  onClose: () => void
+}) => {
+  const sharePreview = useFSStore(state => state.sharePreview)
+  const clearSharePreview = useFSStore(state => state.clearSharePreview)
+
+  return (
+    <FilePreviewModal
+      file={file}
+      sharePreview={sharePreview}
+      onClose={() => {
+        onClose()
+        clearSharePreview()
+      }}
+    />
+  )
+}
+
+const ShareManagementHost = ({
+  target,
+  onClose,
+}: {
+  target: FilesystemRow | null
+  onClose: () => void
+}) => {
+  const currVault = useFSStore(state => state.currVault)
+  if (!target || !currVault) return null
+
+  return <ShareManagementModal target={target} vault={currVault} onClose={onClose} />
+}
+
+export const FilesystemClient: React.FC<FilesystemClientProps> = memo(({ rows, previewMode }) => {
   const [selectedFile, setSelectedFile] = useState<FileModel | null>(null)
   const [shareTarget, setShareTarget] = useState<FilesystemRow | null>(null)
   const [contextMenu, setContextMenu] = useState<{ mouseX: number; mouseY: number; row: FilesystemRow } | null>(null)
-  const tableRef = useRef<HTMLDivElement>(null)
 
   const setCopiedItem = useFSStore(state => state.setCopiedItem)
   const copiedItem = useFSStore(state => state.copiedItem)
@@ -29,25 +80,31 @@ export const FilesystemClient: React.FC<FilesystemClientProps> = memo(({ rows })
   const setPath = useFSStore(state => state.setPath)
   const fetchFiles = useFSStore(state => state.fetchFiles)
   const deleteItem = useFSStore(state => state.delete)
-  const currVault = useFSStore(state => state.currVault)
   const mode = useFSStore(state => state.mode)
   const downloadFile = useFSStore(state => state.downloadFile)
-  const downloading = useFSStore(state => state.downloading)
-  const previewing = useFSStore(state => state.previewing)
-  const previewError = useFSStore(state => state.previewError)
-  const sharePreview = useFSStore(state => state.sharePreview)
   const clearSharePreview = useFSStore(state => state.clearSharePreview)
   const share = useVaultShareStore(state => state.share)
   const canSharePreview = canRequestSharePreview(share)
   const canShareDownload = hasEffectiveShareOperation(share, 'download')
   const canManageShares = mode === 'authenticated'
 
+  const previewCandidates = React.useMemo(() => rows.flatMap(row => {
+    const candidate = toPreviewBatchCandidate(row, previewMode)
+    return candidate ? [candidate] : []
+  }), [previewMode, rows])
+
+  const previewCandidateSignature = React.useMemo(
+    () => previewCandidates.map(candidate => candidate.signature).join('\n'),
+    [previewCandidates],
+  )
+
   const sharePath = React.useCallback((row: { path?: string; name: string }) => row.path || row.name, [])
-  const isPreviewable = React.useCallback((file: FileModel) => Boolean(file.mime_type?.startsWith('image/') || file.mime_type === 'application/pdf'), [])
+  const isPreviewable = React.useCallback((file: FileModel) => isPreviewableMime(file.mime_type), [])
 
   const handleOpenFile = React.useCallback(
     (f: FileModel) => {
       if (mode === 'share') {
+        const { downloading, previewing } = useFSStore.getState()
         if (downloading || previewing) return
         const path = sharePath(f)
         clearSharePreview()
@@ -65,7 +122,7 @@ export const FilesystemClient: React.FC<FilesystemClientProps> = memo(({ rows })
 
       setSelectedFile(f)
     },
-    [canShareDownload, canSharePreview, clearSharePreview, downloadFile, downloading, isPreviewable, mode, previewing, sharePath],
+    [canShareDownload, canSharePreview, clearSharePreview, downloadFile, isPreviewable, mode, sharePath],
   )
 
   const handleRowContextMenu = React.useCallback((e: React.MouseEvent, row: FilesystemRow) => {
@@ -112,62 +169,47 @@ export const FilesystemClient: React.FC<FilesystemClientProps> = memo(({ rows })
     },
     [copiedItem, pasteCopiedItem],
   )
-
-  const Header = () => (
-    <TableHeader>
-      <TableRow className="bg-gray-800/50">
-        <TableHead className="w-1/2 pl-6 text-gray-300">Name</TableHead>
-        <TableHead className="w-1/10 text-gray-300">Size</TableHead>
-        <TableHead className="w-1/4 text-gray-300">Last Modified</TableHead>
-      </TableRow>
-    </TableHeader>
-  )
-
-  const Body = () => (
-    <TableBody>
-      {rows.map(r => (
-        <Row
-          key={r.key}
-          r={r}
-          onNavigate={onNavigate}
-          onOpenFile={handleOpenFile}
-          onContextMenu={handleRowContextMenu}
-        />
-      ))}
-    </TableBody>
-  )
+  const closeSelectedFile = React.useCallback(() => setSelectedFile(null), [])
+  const closeShareTarget = React.useCallback(() => setShareTarget(null), [])
 
   return (
     <>
+      <PreviewBatchController candidates={previewCandidates} previewMode={previewMode} signature={previewCandidateSignature} />
+
       <Card
         className="min-h-[90vh] rounded-xl border border-gray-700 bg-gray-900/90 shadow-lg"
         onClick={() => setContextMenu(null)}>
         <CardContent className="p-0">
           <ScrollArea className="h-full">
-            <div ref={tableRef} onClick={handleTableClick}>
+            <div onClick={handleTableClick}>
               <Table>
-                <Header />
-                <Body />
+                <TableHeader>
+                  <TableRow className="bg-gray-800/50">
+                    <TableHead className="w-1/2 pl-6 text-gray-300">Name</TableHead>
+                    <TableHead className="w-1/10 text-gray-300">Size</TableHead>
+                    <TableHead className="w-1/4 text-gray-300">Last Modified</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {rows.map(r => (
+                    <Row
+                      key={r.key}
+                      r={r}
+                      previewMode={previewMode}
+                      onNavigate={onNavigate}
+                      onOpenFile={handleOpenFile}
+                      onContextMenu={handleRowContextMenu}
+                    />
+                  ))}
+                </TableBody>
               </Table>
             </div>
           </ScrollArea>
         </CardContent>
       </Card>
 
-      {mode === 'share' && previewError && !downloading && (
-        <div className="mt-3 rounded border border-amber-500/40 bg-amber-950/30 p-3 text-sm text-amber-100">
-          Preview unavailable. Falling back to download when permitted.
-        </div>
-      )}
-
-      <FilePreviewModal
-        file={selectedFile}
-        sharePreview={sharePreview}
-        onClose={() => {
-          setSelectedFile(null)
-          clearSharePreview()
-        }}
-      />
+      <SharePreviewWarning />
+      <SelectedFilePreviewModal file={selectedFile} onClose={closeSelectedFile} />
 
       {contextMenu && (
         <ContextMenu
@@ -183,9 +225,7 @@ export const FilesystemClient: React.FC<FilesystemClientProps> = memo(({ rows })
         />
       )}
 
-      {shareTarget && currVault && canManageShares && (
-        <ShareManagementModal target={shareTarget} vault={currVault} onClose={() => setShareTarget(null)} />
-      )}
+      {canManageShares && <ShareManagementHost target={shareTarget} onClose={closeShareTarget} />}
     </>
   )
 })

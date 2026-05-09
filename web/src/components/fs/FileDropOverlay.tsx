@@ -1,8 +1,6 @@
 'use client'
 
 import React, { useState, useRef } from 'react'
-import * as motion from 'motion/react-client'
-import { AnimatePresence } from 'motion/react'
 import { useFileDrop } from '@/hooks/useFileDrop'
 import { FileWithRelativePath } from '@/models/systemFile'
 import { useFSStore } from '@/stores/fsStore'
@@ -18,6 +16,18 @@ export const FileDropOverlay: React.FC<FileDropOverlayProps> = ({ children, disa
   const dragCounter = useRef(0)
 
   const upload = useFSStore(state => state.upload)
+  const overlayMessage = disabled ? disabledMessage : 'Drop files to upload'
+
+  const isFileDrag = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes('Files')
+
+  const setDragging = React.useCallback((next: boolean) => {
+    setIsDragging(current => current === next ? current : next)
+  }, [])
+
+  const resetDrag = React.useCallback(() => {
+    dragCounter.current = 0
+    setDragging(false)
+  }, [setDragging])
 
   const processFiles = React.useCallback((files: FileWithRelativePath[]) => {
     if (disabled) return
@@ -29,31 +39,36 @@ export const FileDropOverlay: React.FC<FileDropOverlayProps> = ({ children, disa
 
   const dropRef = useFileDrop({
     onFiles: React.useCallback(files => {
-      setIsDragging(false)
-      dragCounter.current = 0
+      resetDrag()
       processFiles(files)
-    }, [processFiles]),
+    }, [processFiles, resetDrag]),
   })
 
   const handleDragEnter = (e: React.DragEvent) => {
+    if (!isFileDrag(e)) return
     e.preventDefault()
-    if (disabled) return
     dragCounter.current++
-    setIsDragging(true)
+    setDragging(true)
   }
 
   const handleDragLeave = (e: React.DragEvent) => {
+    if (!isFileDrag(e)) return
     e.preventDefault()
-    if (disabled) return
-    dragCounter.current--
+    dragCounter.current = Math.max(0, dragCounter.current - 1)
     if (dragCounter.current === 0) {
-      setIsDragging(false)
+      setDragging(false)
     }
   }
 
   const handleDragOver = (e: React.DragEvent) => {
+    if (!isFileDrag(e)) return
     e.preventDefault()
-    if (disabled) e.dataTransfer.dropEffect = 'none'
+    e.dataTransfer.dropEffect = disabled ? 'none' : 'copy'
+  }
+
+  const handleDrop = (e: React.DragEvent) => {
+    if (isFileDrag(e)) e.preventDefault()
+    resetDrag()
   }
 
   return (
@@ -62,19 +77,17 @@ export const FileDropOverlay: React.FC<FileDropOverlayProps> = ({ children, disa
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
       onDragOver={handleDragOver}
+      onDragEnd={resetDrag}
+      onDrop={handleDrop}
       className="relative">
       {children}
-      <AnimatePresence>
-        {isDragging && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 0.5 }}
-            exit={{ opacity: 0 }}
-            className="absolute inset-0 z-10 border-4 border-dashed border-blue-400 bg-gray-700">
-            <div className="flex w-full items-center justify-center text-lg text-white">{disabledMessage}</div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <div
+        aria-hidden={!isDragging}
+        className={`pointer-events-none absolute inset-0 z-10 flex items-center justify-center border-4 border-dashed border-blue-400 bg-gray-700/50 text-lg text-white transition-opacity duration-100 ${
+          isDragging ? 'opacity-100' : 'opacity-0'
+        }`}>
+        <div className="px-4 text-center">{overlayMessage}</div>
+      </div>
     </div>
   )
 }

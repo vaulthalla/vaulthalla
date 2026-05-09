@@ -11,6 +11,7 @@ import DownloadIcon from '@/fa-duotone/download.svg'
 import { useFSStore } from '@/stores/fsStore'
 import { useVaultShareStore } from '@/stores/vaultShareStore'
 import { canRequestSharePreview, hasEffectiveShareOperation } from '@/util/shareOperations'
+import { isPreviewableMime } from '@/util/previewMime'
 
 interface ContextMenuProps<T extends { name: string }> {
   data: T
@@ -40,7 +41,7 @@ export function ContextMenu<
   const canPaste = !isShareMode && copiedItem && isDirectory
   const canPreview = canRequestSharePreview(share)
   const canDownload = hasEffectiveShareOperation(share, 'download')
-  const isPreviewable = Boolean(data.mime_type?.startsWith('image/') || data.mime_type === 'application/pdf')
+  const isPreviewable = isPreviewableMime(data.mime_type)
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {

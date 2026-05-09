@@ -52,6 +52,21 @@ std::vector<uint8_t> tinyPng() {
     };
 }
 
+std::vector<uint8_t> tinyWebp() {
+    return {
+        0x52, 0x49, 0x46, 0x46, 0x22, 0x00, 0x00, 0x00,
+        0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20,
+        0x16, 0x00, 0x00, 0x00, 0x30, 0x01, 0x00, 0x9d,
+        0x01, 0x2a, 0x01, 0x00, 0x01, 0x00, 0x0e, 0xc0,
+        0xfe, 0x25, 0xa4, 0x00, 0x03, 0x70, 0x00, 0x00,
+        0x00, 0x00
+    };
+}
+
+std::string svgBody() {
+    return R"(<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect width="16" height="16" fill="#0891b2"/></svg>)";
+}
+
 class FakeAuthorizer final : public vh::share::ShareAuthorizer {
 public:
     vh::share::AuthorizationDecision canCreateLink(const rbac::Actor& actor, const vh::share::Link&) const override {
@@ -353,10 +368,60 @@ protected:
         vh::runtime::Deps::get().sessionManager->rotateRefreshToken(session);
         return session->tokens->refreshToken->rawToken;
     }
+
+    std::shared_ptr<vh::fs::model::File> addSvgFile() {
+        auto svg = std::make_shared<vh::fs::model::File>();
+        svg->id = 13;
+        svg->parent_id = static_cast<int32_t>(kRootEntryId);
+        svg->name = "vector.svg";
+        svg->base32_alias = "vector-alias";
+        svg->vault_id = static_cast<int32_t>(kVaultId);
+        svg->path = "/shared/vector.svg";
+        svg->mime_type = "image/svg+xml";
+        svg->size_bytes = svgBody().size();
+        svg->backing_path = testRoot / "backing" / "vector.svg";
+        std::filesystem::create_directories(svg->backing_path.parent_path());
+        std::ofstream(svg->backing_path, std::ios::binary) << svgBody();
+
+        provider->byId[svg->id] = svg;
+        provider->byPath[svg->path.string()] = svg;
+        provider->children[kRootEntryId].push_back(svg);
+        return svg;
+    }
+
+    std::shared_ptr<vh::fs::model::File> addWebpFile() {
+        auto webp = std::make_shared<vh::fs::model::File>();
+        webp->id = 14;
+        webp->parent_id = static_cast<int32_t>(kRootEntryId);
+        webp->name = "picture.webp";
+        webp->base32_alias = "webp-alias";
+        webp->vault_id = static_cast<int32_t>(kVaultId);
+        webp->path = "/shared/picture.webp";
+        webp->mime_type = "image/webp";
+        webp->size_bytes = tinyWebp().size();
+        webp->backing_path = testRoot / "backing" / "picture.webp";
+        std::filesystem::create_directories(webp->backing_path.parent_path());
+        const auto payload = tinyWebp();
+        std::ofstream out(webp->backing_path, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(payload.data()), static_cast<std::streamsize>(payload.size()));
+
+        provider->byId[webp->id] = webp;
+        provider->byPath[webp->path.string()] = webp;
+        provider->children[kRootEntryId].push_back(webp);
+        return webp;
+    }
 };
 
 request previewRequest(const std::string& target) {
     request req{verb::get, target, 11};
+    return req;
+}
+
+request previewBatchRequest(const nlohmann::json& body) {
+    request req{verb::post, "/preview/batch?share=1", 11};
+    req.set(field::content_type, "application/json");
+    req.body() = body.dump();
+    req.prepare_payload();
     return req;
 }
 
@@ -375,11 +440,27 @@ std::string vectorBody(const vh::protocols::http::model::preview::Response& resp
     return {res->body().begin(), res->body().end()};
 }
 
+std::vector<uint8_t> vectorBodyBytes(const vh::protocols::http::model::preview::Response& response) {
+    const auto* res = std::get_if<vector_response>(&response);
+    if (!res) return {};
+    return res->body();
+}
+
 std::string responseHeader(
     const vh::protocols::http::model::preview::Response& response,
     const field header
 ) {
     return std::visit([header](const auto& res) -> std::string {
+        const auto it = res.find(header);
+        return it == res.end() ? std::string{} : std::string(it->value());
+    }, response);
+}
+
+std::string responseHeader(
+    const vh::protocols::http::model::preview::Response& response,
+    const std::string& header
+) {
+    return std::visit([&header](const auto& res) -> std::string {
         const auto it = res.find(header);
         return it == res.end() ? std::string{} : std::string(it->value());
     }, response);
@@ -515,6 +596,195 @@ TEST_F(HttpSharePreviewTest, AllowsReadyShareSessionWithPreviewGrant) {
     EXPECT_TRUE(std::ranges::any_of(store->audits, [](const auto& audit) {
         return audit && audit->event_type == "share.preview.http";
     }));
+}
+
+TEST_F(HttpSharePreviewTest, SharePreviewServesSvgDirectly) {
+    auto session = readySession(vh::share::bit(vh::share::Operation::Preview));
+    installSharePreviewHooks(session);
+    addSvgFile();
+
+    auto response = Router::handlePreview(previewRequest(
+        "/preview?share=1&path=%2Fvector.svg&size=" + std::to_string(previewSize)));
+
+    EXPECT_EQ(status::ok, responseStatus(response));
+    EXPECT_EQ(svgBody(), vectorBody(response));
+    EXPECT_EQ("image/svg+xml", responseHeader(response, field::content_type));
+    EXPECT_EQ("nosniff", responseHeader(response, "X-Content-Type-Options"));
+    EXPECT_NE(std::string::npos, responseHeader(response, "Content-Security-Policy").find("script-src 'none'"));
+}
+
+TEST_F(HttpSharePreviewTest, SharePreviewServesWebpDirectly) {
+    auto session = readySession(vh::share::bit(vh::share::Operation::Preview));
+    installSharePreviewHooks(session);
+    addWebpFile();
+
+    auto response = Router::handlePreview(previewRequest(
+        "/preview?share=1&path=%2Fpicture.webp&size=" + std::to_string(previewSize)));
+
+    EXPECT_EQ(status::ok, responseStatus(response));
+    EXPECT_EQ(tinyWebp(), vectorBodyBytes(response));
+    EXPECT_EQ("image/webp", responseHeader(response, field::content_type));
+    EXPECT_TRUE(responseHeader(response, "Content-Security-Policy").empty());
+}
+
+TEST_F(HttpSharePreviewTest, SharePreviewBatchReportsReadyUnsupportedAndMissingItems) {
+    auto session = readySession(vh::share::bit(vh::share::Operation::Preview));
+    installSharePreviewHooks(session);
+
+    auto unsupported = std::make_shared<vh::fs::model::File>();
+    unsupported->id = 12;
+    unsupported->parent_id = static_cast<int32_t>(kRootEntryId);
+    unsupported->name = "readme.txt";
+    unsupported->base32_alias = "readme-alias";
+    unsupported->vault_id = static_cast<int32_t>(kVaultId);
+    unsupported->path = "/shared/readme.txt";
+    unsupported->mime_type = "text/plain";
+    provider->byId[unsupported->id] = unsupported;
+    provider->byPath[unsupported->path.string()] = unsupported;
+
+    auto response = Router::handlePreviewBatch(previewBatchRequest({
+        {"size", previewSize},
+        {"items", nlohmann::json::array({
+            {{"key", "ready"}, {"path", "/report.jpg"}},
+            {{"key", "unsupported"}, {"path", "/readme.txt"}},
+            {{"key", "missing"}, {"path", "/missing.jpg"}}
+        })}
+    }));
+
+    ASSERT_EQ(status::ok, responseStatus(response));
+    const auto body = nlohmann::json::parse(stringBody(response));
+    ASSERT_EQ(3u, body.at("items").size());
+    EXPECT_EQ("ready", body.at("items").at(0).at("status"));
+    EXPECT_NE(std::string::npos, body.at("items").at(0).at("url").get<std::string>().find("/preview?share=1"));
+    EXPECT_EQ("unsupported", body.at("items").at(1).at("status"));
+    EXPECT_EQ("missing", body.at("items").at(2).at("status"));
+}
+
+TEST_F(HttpSharePreviewTest, SharePreviewBatchReportsSvgReadyWithoutThumbnailCache) {
+    auto session = readySession(vh::share::bit(vh::share::Operation::Preview));
+    installSharePreviewHooks(session);
+    addSvgFile();
+    std::filesystem::remove_all(engine->paths->thumbnailRoot / "vector-alias");
+
+    auto response = Router::handlePreviewBatch(previewBatchRequest({
+        {"size", previewSize},
+        {"items", nlohmann::json::array({{{"key", "svg"}, {"path", "/vector.svg"}}})}
+    }));
+
+    ASSERT_EQ(status::ok, responseStatus(response));
+    const auto body = nlohmann::json::parse(stringBody(response));
+    ASSERT_EQ(1u, body.at("items").size());
+    EXPECT_EQ("ready", body.at("items").at(0).at("status"));
+    EXPECT_NE(std::string::npos, body.at("items").at(0).at("url").get<std::string>().find("/preview?share=1"));
+    EXPECT_NE(std::string::npos, body.at("items").at(0).at("url").get<std::string>().find("vector.svg"));
+}
+
+TEST_F(HttpSharePreviewTest, SharePreviewBatchReportsWebpReadyWithoutThumbnailCache) {
+    auto session = readySession(vh::share::bit(vh::share::Operation::Preview));
+    installSharePreviewHooks(session);
+    addWebpFile();
+    std::filesystem::remove_all(engine->paths->thumbnailRoot / "webp-alias");
+
+    auto response = Router::handlePreviewBatch(previewBatchRequest({
+        {"size", previewSize},
+        {"items", nlohmann::json::array({{{"key", "webp"}, {"path", "/picture.webp"}}})}
+    }));
+
+    ASSERT_EQ(status::ok, responseStatus(response));
+    const auto body = nlohmann::json::parse(stringBody(response));
+    ASSERT_EQ(1u, body.at("items").size());
+    EXPECT_EQ("ready", body.at("items").at(0).at("status"));
+    EXPECT_NE(std::string::npos, body.at("items").at(0).at("url").get<std::string>().find("/preview?share=1"));
+    EXPECT_NE(std::string::npos, body.at("items").at(0).at("url").get<std::string>().find("picture.webp"));
+    EXPECT_FALSE(std::filesystem::exists(engine->paths->thumbnailRoot / "webp-alias" / (std::to_string(previewSize) + ".jpg")));
+}
+
+TEST_F(HttpSharePreviewTest, SharePreviewBatchNormalizesSmallRequestedSizeToConfiguredCacheSize) {
+    if (vh::config::Registry::get().caching.thumbnails.sizes.empty())
+        GTEST_SKIP() << "No configured thumbnail sizes";
+
+    auto session = readySession(vh::share::bit(vh::share::Operation::Preview));
+    installSharePreviewHooks(session);
+
+    auto response = Router::handlePreviewBatch(previewBatchRequest({
+        {"size", 64},
+        {"items", nlohmann::json::array({{{"key", "ready"}, {"path", "/report.jpg"}}})}
+    }));
+
+    ASSERT_EQ(status::ok, responseStatus(response));
+    const auto body = nlohmann::json::parse(stringBody(response));
+    ASSERT_EQ(1u, body.at("items").size());
+    EXPECT_EQ(previewSize, body.at("size"));
+    EXPECT_EQ(previewSize, body.at("items").at(0).at("size"));
+    EXPECT_EQ("ready", body.at("items").at(0).at("status"));
+    EXPECT_NE(std::string::npos, body.at("items").at(0).at("url").get<std::string>().find(
+        "size=" + std::to_string(previewSize)));
+}
+
+TEST_F(HttpSharePreviewTest, SharePreviewBatchClampsLargeRequestedSizeToConfiguredCacheSize) {
+    const auto& configuredSizes = vh::config::Registry::get().caching.thumbnails.sizes;
+    if (configuredSizes.empty()) GTEST_SKIP() << "No configured thumbnail sizes";
+
+    auto session = readySession(vh::share::bit(vh::share::Operation::Preview));
+    installSharePreviewHooks(session);
+
+    const auto expectedSize = *std::ranges::max_element(configuredSizes);
+    const auto thumbDir = engine->paths->thumbnailRoot / file->base32_alias;
+    std::filesystem::create_directories(thumbDir);
+    std::ofstream(thumbDir / (std::to_string(expectedSize) + ".jpg"), std::ios::binary) << "cached-thumbnail";
+
+    auto response = Router::handlePreviewBatch(previewBatchRequest({
+        {"size", expectedSize + 512},
+        {"items", nlohmann::json::array({{{"key", "large"}, {"path", "/report.jpg"}}})}
+    }));
+
+    ASSERT_EQ(status::ok, responseStatus(response));
+    const auto body = nlohmann::json::parse(stringBody(response));
+    ASSERT_EQ(1u, body.at("items").size());
+    EXPECT_EQ(expectedSize, body.at("size"));
+    EXPECT_EQ(expectedSize, body.at("items").at(0).at("size"));
+    EXPECT_NE(std::string::npos, body.at("items").at(0).at("url").get<std::string>().find(
+        "size=" + std::to_string(expectedSize)));
+}
+
+TEST_F(HttpSharePreviewTest, SharePreviewBatchReportsMalformedItemsWithoutFailingRoute) {
+    auto session = readySession(vh::share::bit(vh::share::Operation::Preview));
+    installSharePreviewHooks(session);
+
+    auto response = Router::handlePreviewBatch(previewBatchRequest({
+        {"size", previewSize},
+        {"items", nlohmann::json::array({
+            {{"key", "bad"}},
+            {{"key", "ready"}, {"path", "/report.jpg"}}
+        })}
+    }));
+
+    ASSERT_EQ(status::ok, responseStatus(response));
+    const auto body = nlohmann::json::parse(stringBody(response));
+    ASSERT_EQ(2u, body.at("items").size());
+    EXPECT_EQ("error", body.at("items").at(0).at("status"));
+    EXPECT_TRUE(body.at("items").at(0).contains("error"));
+    EXPECT_EQ("ready", body.at("items").at(1).at("status"));
+}
+
+TEST_F(HttpSharePreviewTest, SharePreviewBatchQueuesConfiguredCacheMisses) {
+    if (vh::config::Registry::get().caching.thumbnails.sizes.empty())
+        GTEST_SKIP() << "No configured thumbnail sizes";
+
+    auto session = readySession(vh::share::bit(vh::share::Operation::Preview));
+    installSharePreviewHooks(session);
+    std::filesystem::remove_all(engine->paths->thumbnailRoot / file->base32_alias);
+
+    auto response = Router::handlePreviewBatch(previewBatchRequest({
+        {"size", previewSize},
+        {"items", nlohmann::json::array({{{"key", "miss"}, {"path", "/report.jpg"}}})}
+    }));
+
+    ASSERT_EQ(status::ok, responseStatus(response));
+    const auto body = nlohmann::json::parse(stringBody(response));
+    ASSERT_EQ(1u, body.at("items").size());
+    EXPECT_EQ("queued", body.at("items").at(0).at("status"));
+    EXPECT_FALSE(body.at("items").at(0).contains("url"));
 }
 
 TEST_F(HttpSharePreviewTest, SharePreviewRendersFallbackWhenThumbnailCacheIsMissing) {

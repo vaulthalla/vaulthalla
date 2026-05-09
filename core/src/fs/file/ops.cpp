@@ -90,7 +90,7 @@ std::string generate_random_suffix(const size_t length) {
 std::filesystem::path decrypt_file_to_temp(const unsigned int /*vault_id*/,
                                                   const std::filesystem::path& rel_path,
                                                   const std::shared_ptr<storage::Engine>& engine) {
-    const auto abs_path = engine->paths->absRelToAbsRel(rel_path, PathType::VAULT_ROOT, PathType::FUSE_ROOT);
+    const auto abs_path = engine->vaultPathToFusePath(rel_path);
     const auto entry = runtime::Deps::get().fsCache->getEntry(abs_path);
     if (!entry) {
         log::Registry::storage()->error("[decrypt_file_to_temp] Entry not found for path: {}", abs_path.string());

@@ -4,8 +4,9 @@ import DownloadIcon from '@/fa-duotone/download.svg'
 import { useFSStore } from '@/stores/fsStore'
 import { useVaultShareStore } from '@/stores/vaultShareStore'
 import { hasEffectiveShareOperation } from '@/util/shareOperations'
+import { cn } from '@/util/cn'
 
-export const DownloadCurrentDirectoryButton = () => {
+export const DownloadCurrentDirectoryButton = ({ className }: { className?: string }) => {
   const mode = useFSStore(state => state.mode)
   const path = useFSStore(state => state.path)
   const currVault = useFSStore(state => state.currVault)
@@ -24,7 +25,10 @@ export const DownloadCurrentDirectoryButton = () => {
 
   return (
     <button
-      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-white/10 text-cyan-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-45"
+      className={cn(
+        'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-white/10 text-cyan-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-45',
+        className,
+      )}
       type="button"
       title={title}
       aria-label={title}

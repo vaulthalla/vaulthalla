@@ -1,6 +1,3 @@
-import { NavItem, NavConfig } from '@/components/nav/types'
-import FolderPlus from '@/fa-duotone/folder-plus.svg'
+import { NavConfig } from '@/components/nav/types'
 
-export const fsNavItems: NavItem[] = [{ label: 'Add Directory', href: '/files/add-directory', icon: FolderPlus }]
-
-export const fsNav: NavConfig = { items: fsNavItems }
+export const fsNav: NavConfig = { items: [] }

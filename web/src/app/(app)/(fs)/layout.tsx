@@ -13,14 +13,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     <>
       <AuthRefresher />
       <RequireAuth>
-        <div className="flex min-h-screen">
+        <div className="flex h-screen min-h-screen overflow-hidden">
           <FSRail config={fsNav} />
-          <div className="flex min-w-0 grow flex-col">
+          <div className="flex min-h-0 min-w-0 grow flex-col">
             <div className="border-b border-white/10 bg-black/20 p-3 backdrop-blur md:hidden">
               <MobileDrawer mode="fs" title="Files" />
             </div>
 
-            <main className="min-w-0 grow overflow-y-auto px-6 py-4 lg:px-8">{children}</main>
+            <main className="min-h-0 min-w-0 grow overflow-y-auto px-6 py-4 lg:px-8">{children}</main>
           </div>
         </div>
       </RequireAuth>

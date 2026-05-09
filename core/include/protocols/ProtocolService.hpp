@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <memory>
+#include <mutex>
 #include <boost/asio/ip/tcp.hpp>
 
 namespace boost::asio { class io_context; }
@@ -31,9 +32,11 @@ public:
 
 protected:
     void runLoop() override;
+    void onStop() override;
 
 private:
     std::thread ioThread_;
+    std::mutex lifecycleMutex_;
     std::shared_ptr<boost::asio::io_context> ioContext_;
     std::shared_ptr<ws::Server> wsServer_;
     std::shared_ptr<http::Server> httpServer_;
@@ -46,6 +49,7 @@ private:
     void initProtocols();
     void initWebsocketServer();
     void initHttpServer();
+    void shutdownProtocols() noexcept;
     static void initThreatIntelligence();
 };
 

@@ -8,6 +8,8 @@ import type { FilesystemRow } from '@/components/fs/types'
 import { useFSStore } from '@/stores/fsStore'
 import { Directory } from '@/models/directory'
 import { formatTimestamp } from '@/util/formatTimestamp'
+import { DownloadCurrentDirectoryButton } from '@/components/fs/DownloadCurrentDirectoryButton'
+import { CreateDirectoryModal } from '@/components/nav/fs/CreateDirectoryModal'
 
 const joinPath = (base: string, name: string) => {
   const cleanName = name.trim().replace(/^\/+|\/+$/g, '')
@@ -29,7 +31,14 @@ const parentPath = (value: string) => {
 }
 
 export const FSRailActions = () => {
-  const { currVault, currentDirectory, fetchFiles, listDirectory, mkdir, mode, path } = useFSStore()
+  const currVault = useFSStore(state => state.currVault)
+  const currentDirectory = useFSStore(state => state.currentDirectory)
+  const fetchFiles = useFSStore(state => state.fetchFiles)
+  const listDirectory = useFSStore(state => state.listDirectory)
+  const mkdir = useFSStore(state => state.mkdir)
+  const mode = useFSStore(state => state.mode)
+  const path = useFSStore(state => state.path)
+  const [createOpen, setCreateOpen] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
   const [shareTarget, setShareTarget] = useState<FilesystemRow | null>(null)
   const isAuthenticatedFs = mode === 'authenticated'
@@ -68,11 +77,12 @@ export const FSRailActions = () => {
 
   const createDirectory = async () => {
     if (!currVault || !isAuthenticatedFs) return
-    const name = window.prompt('Directory name')
-    if (!name?.trim()) return
-    await mkdir({ vault_id: currVault.id, path: joinPath(path, name) }).catch(err => {
-      window.alert(err instanceof Error ? err.message : 'Unable to create directory')
-    })
+    setCreateOpen(true)
+  }
+
+  const submitDirectory = async (name: string) => {
+    if (!currVault || !isAuthenticatedFs) return
+    await mkdir({ vault_id: currVault.id, path: joinPath(path, name) })
   }
 
   return (
@@ -93,6 +103,15 @@ export const FSRailActions = () => {
         onClick={openShareCurrentDirectory}>
         <ShareIcon className="h-5 w-5 fill-current" />
       </button>
+      <DownloadCurrentDirectoryButton className="h-10 w-full" />
+
+      {createOpen && currVault && isAuthenticatedFs && (
+        <CreateDirectoryModal
+          currentPath={path}
+          onClose={() => setCreateOpen(false)}
+          onCreate={submitDirectory}
+        />
+      )}
 
       {shareOpen && currVault && shareTarget && (
         <ShareManagementModal target={shareTarget} vault={currVault} onClose={() => setShareOpen(false)} />

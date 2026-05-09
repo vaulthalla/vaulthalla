@@ -194,7 +194,7 @@ int Filesystem::mkdir(const MkdirContext& ctx) {
             auto dir = std::make_shared<Directory>();
 
             dir->vault_id = engine->vault->id;
-            dir->path = engine->paths->absRelToAbsRel(path, PathType::FUSE_ROOT, PathType::VAULT_ROOT);
+            dir->path = engine->fusePathToVaultPath(path);
 
             const auto parentPath = resolveParent(path);
             const auto parent = (ctx.parent && ctx.parent->fuse_path == parentPath)
@@ -362,7 +362,7 @@ Filesystem::createSymlink(const FuseCreateSymlinkContext& ctx) {
             return {-ENOENT, nullptr};
         }
 
-        const auto vaultPath = engine->paths->absRelToAbsRel(linkPath, PathType::FUSE_ROOT, PathType::VAULT_ROOT);
+        const auto vaultPath = engine->fusePathToVaultPath(linkPath);
         if (targetEscapesVaultRoot(vaultPath, targetPath)) return {-EINVAL, nullptr};
 
         auto symlink = std::make_shared<Symlink>();
@@ -481,8 +481,8 @@ int Filesystem::copy(const std::filesystem::path& from,
             return -EXDEV;
         }
 
-        const auto fromVaultPath = engine->paths->absRelToAbsRel(from, PathType::FUSE_ROOT, PathType::VAULT_ROOT);
-        const auto toVaultPath = engine->paths->absRelToAbsRel(to, PathType::FUSE_ROOT, PathType::VAULT_ROOT);
+        const auto fromVaultPath = engine->fusePathToVaultPath(from);
+        const auto toVaultPath = engine->fusePathToVaultPath(to);
 
         const auto& cache = runtime::Deps::get().fsCache;
 
@@ -761,7 +761,7 @@ Filesystem::createFile(const FuseCreateFileContext& ctx) {
         f->parent_id = parent->id;
         f->vault_id = engine->vault->id;
         f->name = path.filename();
-        f->path = engine->paths->absRelToAbsRel(path, PathType::FUSE_ROOT, PathType::VAULT_ROOT);
+        f->path = engine->fusePathToVaultPath(path);
         f->fuse_path = path;
         f->base32_alias = id::Generator({ .namespace_token = f->name }).generate();
         f->backing_path = parent->backing_path / f->base32_alias;
@@ -1020,7 +1020,7 @@ int Filesystem::handleRename(const RenameContext& ctx) {
 
         entry->id = id;
         entry->name = ctx.to.filename();
-        entry->path = ctx.engine->paths->absRelToAbsRel(ctx.to, PathType::FUSE_ROOT, PathType::VAULT_ROOT);
+        entry->path = ctx.engine->fusePathToVaultPath(ctx.to);
         entry->fuse_path = ctx.to;
         entry->parent_id = parent->id;
         entry->created_by = entry->last_modified_by = userIdFor(ctx.user);
@@ -1140,5 +1140,6 @@ bool Filesystem::canFastPath(const std::shared_ptr<Entry>& entry, const std::sha
 }
 
 bool Filesystem::isPreviewable(const std::string& mimeType) {
+    if (mimeType == "image/svg+xml" || mimeType == "image/webp") return false;
     return mimeType.starts_with("image") || mimeType.starts_with("application") || mimeType.contains("pdf");
 }

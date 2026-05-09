@@ -272,12 +272,10 @@ std::optional<Decision> Evaluator::resolveTarget(const Request &req, TargetConte
         };
 
     if (out.fusePath.empty())
-        out.fusePath = out.engine->paths->absRelToAbsRel(out.vaultPath, vh::fs::model::PathType::VAULT_ROOT,
-                                                         vh::fs::model::PathType::FUSE_ROOT);
+        out.fusePath = out.engine->vaultPathToFusePath(out.vaultPath);
 
     if (out.vaultPath.empty())
-        out.vaultPath = out.engine->paths->absRelToAbsRel(out.fusePath, vh::fs::model::PathType::FUSE_ROOT,
-                                                          vh::fs::model::PathType::VAULT_ROOT);
+        out.vaultPath = out.engine->fusePathToVaultPath(out.fusePath);
 
     // sanity check - paths should resolve by now one way or another for valid requests
     if (out.fusePath.empty() || out.vaultPath.empty())

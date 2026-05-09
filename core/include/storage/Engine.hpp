@@ -102,5 +102,9 @@ namespace vh::storage {
         void moveThumbnails(const fs::path &from, const fs::path &to) const;
 
         void copyThumbnails(const fs::path &from, const fs::path &to) const;
+
+        [[nodiscard]] std::filesystem::path vaultPathToFusePath(const std::filesystem::path &vPath) const;
+
+        [[nodiscard]] std::filesystem::path fusePathToVaultPath(const std::filesystem::path &fPath) const;
     };
 } // namespace vh::storage

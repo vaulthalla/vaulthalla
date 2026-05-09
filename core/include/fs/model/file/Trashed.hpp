@@ -20,6 +20,7 @@ struct Trashed {
     std::optional<std::time_t> deleted_at{};
     uint64_t size_bytes{};
 
+    Trashed() = default;
     explicit Trashed(const pqxx::row& row);
 };
 

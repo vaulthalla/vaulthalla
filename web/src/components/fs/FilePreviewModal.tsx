@@ -9,6 +9,7 @@ import type { SharePreviewResponse } from '@/models/linkShare'
 import { buildPreviewUrl } from '@/util/previewUrl'
 import { formatTimestamp } from '@/util/formatTimestamp'
 import { useFSStore } from '@/stores/fsStore'
+import { isPreviewableMime, normalizedPreviewMime } from '@/util/previewMime'
 import X from '@/fa-duotone/x.svg'
 
 interface FilePreviewModalProps {
@@ -33,9 +34,9 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({ file, shareP
   const sourceUrl = sharePreview ? sharePreviewUrl : previewUrl
   const sourceMime = sharePreview?.source_mime_type || file?.mime_type || ''
   const previewMime = sharePreview?.mime_type || sourceMime
-  const httpPreviewRendersImage = !sharePreview && (sourceMime.startsWith('image/') || sourceMime === 'application/pdf')
-  const isPdf = !httpPreviewRendersImage && previewMime === 'application/pdf'
-  const isImage = previewMime.startsWith('image/') || httpPreviewRendersImage
+  const httpPreviewRendersImage = !sharePreview && isPreviewableMime(sourceMime)
+  const isPdf = !httpPreviewRendersImage && normalizedPreviewMime(previewMime) === 'application/pdf'
+  const isImage = normalizedPreviewMime(previewMime).startsWith('image/') || httpPreviewRendersImage
   const canPreview = Boolean(sourceUrl && (isPdf || isImage))
 
   const meta = [

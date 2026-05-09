@@ -5,6 +5,10 @@ import FileIcon from '@/fa-duotone/file.svg'
 const Thumb = React.memo(function Thumb({ src, alt }: { src: string; alt: string }) {
   const [failed, setFailed] = React.useState(false)
 
+  React.useEffect(() => {
+    setFailed(false)
+  }, [src])
+
   if (failed) return <FileIcon className="text-primary fill-current" />
 
   return (

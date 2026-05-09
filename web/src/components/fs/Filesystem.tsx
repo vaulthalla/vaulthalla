@@ -33,7 +33,7 @@ function buildRows(files: FilesystemEntry[], mode: 'authenticated' | 'share'): F
       size: formatSize(f),
       modified: formatTimestamp(f.updated_at),
       previewUrl: explicitPreviewUrl || (mode === 'authenticated' ?
-        buildPreviewUrl({ mode: 'authenticated', vaultId: f.vault_id, path: f.path || f.name, size: 64 })
+        buildPreviewUrl({ mode: 'authenticated', vaultId: f.vault_id, path: f.path || f.name, size: 128 })
       : null),
     }
   })
@@ -41,7 +41,7 @@ function buildRows(files: FilesystemEntry[], mode: 'authenticated' | 'share'): F
 
 export const Filesystem = ({ files, previewMode = 'authenticated' }: FileSystemProps) => {
   const rows = React.useMemo(() => buildRows(files, previewMode), [files, previewMode])
-  return <FilesystemClient rows={rows} />
+  return <FilesystemClient rows={rows} previewMode={previewMode} />
 }
 
 export default Filesystem

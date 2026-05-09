@@ -57,7 +57,7 @@ struct Local : concurrency::Task, std::enable_shared_from_this<Local> {
 
     void runNow(uint8_t trigger = 3);  // sync::Event::Trigger::WEBHOOK
 
-    model::ScopedOp& op(const model::Throughput::Metric& metric) const;
+    std::shared_ptr<model::ScopedOp> op(const model::Throughput::Metric& metric) const;
 
     virtual void processFutures();
 

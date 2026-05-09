@@ -24,6 +24,7 @@ export type FilesystemRow = FileRow | DirectoryRow
 
 export interface RowProps {
   r: FilesystemRow
+  previewMode: 'authenticated' | 'share'
   onNavigate: (path: string) => void
   onOpenFile: (f: FileModel) => void
   onContextMenu: (e: React.MouseEvent, r: FilesystemRow) => void

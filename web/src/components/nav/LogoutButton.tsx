@@ -10,6 +10,10 @@ export const LogoutButton = ({ isCompact }: { isCompact: boolean }) => {
   return (
     <Button
       variant="destructive"
+      size={isCompact ? 'icon' : 'default'}
+      aria-label={isCompact ? 'Logout' : undefined}
+      title={isCompact ? 'Logout' : undefined}
+      className={isCompact ? 'my-0 h-10 w-10 p-0 text-lg' : undefined}
       onClick={() => {
         useAuthStore.getState().logout()
         router.push('/login')

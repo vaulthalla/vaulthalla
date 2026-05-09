@@ -73,7 +73,7 @@ private:
             .user = session->user,
             .permission = permission,
             .vault_id = engine->vault->id,
-            .path = engine->paths->absRelToAbsRel(path, vh::fs::model::PathType::VAULT_ROOT, vh::fs::model::PathType::FUSE_ROOT)
+            .path = engine->vaultPathToFusePath(path)
         })) throw std::runtime_error(std::string(error));
     }
 

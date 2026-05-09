@@ -19,11 +19,11 @@ namespace vh::sync::tasks {
 struct Upload final : concurrency::PromisedTask {
     std::shared_ptr<storage::CloudEngine> engine;
     std::shared_ptr<fs::model::File> file;
-    model::ScopedOp& op;
+    std::shared_ptr<model::ScopedOp> op;
 
     Upload(std::shared_ptr<storage::CloudEngine> eng,
                  std::shared_ptr<fs::model::File> f,
-                 model::ScopedOp& op);
+                 std::shared_ptr<model::ScopedOp> op);
 
     void operator()() override;
 };

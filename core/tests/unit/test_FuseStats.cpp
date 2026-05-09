@@ -114,6 +114,22 @@ TEST(FuseStatsTest, NonLookupAndPermissionErrorsAreAlertable) {
     EXPECT_DOUBLE_EQ(open->alertableErrorRate, 1.0);
 }
 
+TEST(FuseStatsTest, UnlinkEnoentRemainsAlertable) {
+    FuseStats stats;
+    stats.record_error(FuseOperation::Unlink, ENOENT, 10);
+
+    const auto snapshot = stats.snapshot();
+    EXPECT_EQ(snapshot.totalOps, 1u);
+    EXPECT_EQ(snapshot.expectedErrors, 0u);
+    EXPECT_EQ(snapshot.alertableErrors, 1u);
+
+    const auto* unlink = findOp(snapshot, "unlink");
+    ASSERT_NE(unlink, nullptr);
+    EXPECT_EQ(unlink->errors, 1u);
+    EXPECT_EQ(unlink->expectedErrors, 0u);
+    EXPECT_EQ(unlink->alertableErrors, 1u);
+}
+
 TEST(FuseStatsTest, DashboardIgnoresExpectedLookupMissesForFuseSeverity) {
     auto stats = std::make_shared<FuseStats>();
     for (int i = 0; i < 100; ++i) stats->record_error(FuseOperation::Lookup, ENOENT, 10);

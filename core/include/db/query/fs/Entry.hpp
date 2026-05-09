@@ -23,6 +23,8 @@ public:
 
     static EntryPtr getFSEntryByInode(ino_t ino);
 
+    static EntryPtr getFSEntryByPath(unsigned int vaultId, const std::filesystem::path& relPath);
+
     static EntryPtr getFSEntryById(unsigned int entryId);
 
     static std::vector<EntryPtr> listDir(const std::optional<unsigned int>& entryId, bool recursive = false);

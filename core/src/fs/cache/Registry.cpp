@@ -8,11 +8,15 @@
 #include "crypto/id/Generator.hpp"
 #include "stats/model/CacheStats.hpp"
 #include "fs/model/Path.hpp"
+#include "config/Registry.hpp"
 
+#include <paths.h>
 #include <unordered_set>
 #include <mutex>
 #include <limits>
 #include <chrono>
+#include <sstream>
+#include <optional>
 
 using namespace vh::fs::model;
 using namespace vh::stats::model;
@@ -37,6 +41,17 @@ uint64_t addClamp(uint64_t a, uint64_t b) noexcept {
 
 uint64_t subClamp(uint64_t a, uint64_t b) noexcept {
     return (a >= b) ? (a - b) : 0;
+}
+
+bool pathContains(const std::filesystem::path& root, const std::filesystem::path& candidate) {
+    const auto rootStr = makeAbsolute(root).lexically_normal().string();
+    const auto candidateStr = makeAbsolute(candidate).lexically_normal().string();
+
+    if (rootStr == "/") return candidateStr == "/";
+    if (candidateStr == rootStr) return true;
+    return candidateStr.size() > rootStr.size() &&
+           candidateStr.compare(0, rootStr.size(), rootStr) == 0 &&
+           candidateStr[rootStr.size()] == '/';
 }
 
 } // namespace
@@ -112,16 +127,46 @@ std::shared_ptr<Entry> Registry::getEntry(const std::filesystem::path& absPath) 
     ScopedOpTimer timer(stats_.get());
 
     try {
-        const auto ino = getOrAssignInode(path);
-        const auto entry = db::query::fs::Entry::getFSEntryByInode(ino);
+        std::optional<std::pair<unsigned int, std::filesystem::path>> vaultPath;
+        {
+            std::shared_lock lock(mutex_);
+            std::shared_ptr<Entry> bestVaultRoot;
+            for (const auto& [_, candidate] : idToEntry_) {
+                if (!candidate || !candidate->vault_id || candidate->path != "/") continue;
+                if (candidate->fuse_path.empty() || !pathContains(candidate->fuse_path, path)) continue;
+                if (!bestVaultRoot || candidate->fuse_path.string().size() > bestVaultRoot->fuse_path.string().size())
+                    bestVaultRoot = candidate;
+            }
+
+            if (bestVaultRoot) {
+                const auto rel = path == bestVaultRoot->fuse_path
+                    ? std::filesystem::path{"/"}
+                    : makeAbsolute(path.lexically_relative(bestVaultRoot->fuse_path));
+                vaultPath.emplace(static_cast<unsigned int>(*bestVaultRoot->vault_id), rel);
+            }
+        }
+
+        if (!vaultPath) {
+            log::Registry::storage()->debug("[FSCache] No vault root found for path: {}", path.string());
+            return nullptr;
+        }
+
+        auto entry = db::query::fs::Entry::getFSEntryByPath(vaultPath->first, vaultPath->second);
 
         if (entry) {
             if (entry->inode) cacheEntry(entry);
             else {
-                entry->inode = ino;
+                entry->inode = assignInode(entry->fuse_path.empty() ? path : entry->fuse_path);
+                db::query::fs::Entry::updateFSEntry(entry);
                 cacheEntry(entry);
             }
-        } else log::Registry::storage()->debug("[FSCache] No entry found for path: {}", path.string());
+        } else {
+            log::Registry::storage()->debug(
+                "[FSCache] No entry found for path: {} (vault_id: {}, rel_path: {})",
+                path.string(),
+                vaultPath->first,
+                vaultPath->second.string());
+        }
 
         return entry;
     } catch (const std::exception& e) {
@@ -233,8 +278,9 @@ void Registry::decrementInodeRef(const fuse_ino_t ino, const uint64_t nlookup) {
 }
 
 bool Registry::entryExists(const std::filesystem::path& absPath) const {
+    const auto path = makeAbsolute(absPath);
     std::shared_lock lock(mutex_);
-    return pathToEntry_.contains(absPath);
+    return pathToEntry_.contains(path);
 }
 
 std::shared_ptr<Entry> Registry::getEntryFromInode(const fuse_ino_t ino) const {
@@ -298,6 +344,48 @@ void Registry::cacheEntry(const std::shared_ptr<Entry>& entry, const bool isFirs
     }
 
     const uint64_t newSize = safeSizeBytes(entry);
+
+    auto eraseInode = [&](const fuse_ino_t staleIno) {
+        for (auto it = pathToInode_.begin(); it != pathToInode_.end();) {
+            if (it->second == staleIno) {
+                pathToEntry_.erase(it->first);
+                it = pathToInode_.erase(it);
+            } else ++it;
+        }
+
+        inodeToPath_.erase(staleIno);
+        inodeToEntry_.erase(staleIno);
+        inodeToId_.erase(staleIno);
+    };
+
+    auto erasePath = [&](const std::filesystem::path& stalePath) {
+        pathToInode_.erase(stalePath);
+        pathToEntry_.erase(stalePath);
+    };
+
+    if (const auto it = idToEntry_.find(entry->id); it != idToEntry_.end() && it->second) {
+        const auto& old = it->second;
+        if (old->fuse_path != entry->fuse_path) erasePath(old->fuse_path);
+        if (old->inode && *old->inode != ino) eraseInode(*old->inode);
+    }
+
+    for (auto it = pathToInode_.begin(); it != pathToInode_.end();) {
+        if (it->second == ino && it->first != entry->fuse_path) {
+            pathToEntry_.erase(it->first);
+            it = pathToInode_.erase(it);
+        } else ++it;
+    }
+
+    for (auto it = pathToEntry_.begin(); it != pathToEntry_.end();) {
+        const auto& cached = it->second;
+        if (cached && cached->id == entry->id && it->first != entry->fuse_path) {
+            pathToInode_.erase(it->first);
+            it = pathToEntry_.erase(it);
+        } else ++it;
+    }
+
+    if (const auto it = pathToInode_.find(entry->fuse_path); it != pathToInode_.end() && it->second != ino)
+        eraseInode(it->second);
 
     auto insert = [&](const std::shared_ptr<Entry>& e) {
         if (!e) {
@@ -367,28 +455,35 @@ void Registry::updateEntry(const std::shared_ptr<Entry>& entry) {
 void Registry::evictIno(fuse_ino_t ino) {
     std::unique_lock lock(mutex_);
 
-    if (!inodeToPath_.contains(ino) || !inodeToId_.contains(ino)) {
+    if (!inodeToPath_.contains(ino) && !inodeToId_.contains(ino)) {
         log::Registry::fs()->debug("[FSCache] Attempted to destroy references for non-existent inode: {}", ino);
         return;
     }
 
-    const auto path = inodeToPath_.at(ino);
-    const auto id = inodeToId_.at(ino);
-
     // Capture removed size before erasing
     uint64_t removedSize = 0;
     if (const auto it = inodeToEntry_.find(ino); it != inodeToEntry_.end()) removedSize = safeSizeBytes(it->second);
-    else if (const auto it2 = pathToEntry_.find(path); it2 != pathToEntry_.end()) removedSize = safeSizeBytes(it2->second);
-    else if (const auto it3 = idToEntry_.find(id); it3 != idToEntry_.end()) removedSize = safeSizeBytes(it3->second);
+    else if (const auto pathIt = inodeToPath_.find(ino); pathIt != inodeToPath_.end()) {
+        if (const auto it2 = pathToEntry_.find(pathIt->second); it2 != pathToEntry_.end()) removedSize = safeSizeBytes(it2->second);
+    } else if (const auto idIt = inodeToId_.find(ino); idIt != inodeToId_.end()) {
+        if (const auto it3 = idToEntry_.find(idIt->second); it3 != idToEntry_.end()) removedSize = safeSizeBytes(it3->second);
+    }
+
+    for (auto it = pathToInode_.begin(); it != pathToInode_.end();) {
+        if (it->second == ino) {
+            pathToEntry_.erase(it->first);
+            it = pathToInode_.erase(it);
+        } else ++it;
+    }
 
     inodeToPath_.erase(ino);
-    pathToInode_.erase(path);
     inodeToEntry_.erase(ino);
-    pathToEntry_.erase(path);
-    inodeToId_.erase(ino);
-    idToEntry_.erase(id);
-
-    childToParent_.erase(id);
+    if (const auto idIt = inodeToId_.find(ino); idIt != inodeToId_.end()) {
+        const auto id = idIt->second;
+        inodeToId_.erase(idIt);
+        idToEntry_.erase(id);
+        childToParent_.erase(id);
+    }
 
     // Update used bytes (bounded)
     const uint64_t curUsed = stats_->snapshot().used_bytes;
@@ -472,6 +567,24 @@ std::vector<std::shared_ptr<Entry>> Registry::listDir(const unsigned int parentI
 std::shared_ptr<CacheStatsSnapshot> Registry::stats() const {
     // Snapshot should be atomics-only; safe without locking FSCache maps.
     return std::make_shared<CacheStatsSnapshot>(stats_->snapshot());
+}
+
+std::string Registry::dump() const {
+    if (!paths::isTestMode() || !config::Registry::get().dev.enabled)
+        return "[FSCache] Dump is only available in test mode with dev features enabled";
+
+    std::shared_lock lock(mutex_);
+    std::stringstream ss;
+    ss << "FSCache dump:\n";
+    ss << "  Inode map:\n";
+    for (const auto& [ino, path] : inodeToPath_) ss << "    " << ino << ": " << path.string() << "\n";
+    ss << "  Path map:\n";
+    for (const auto& [path, ino] : pathToInode_) ss << "    " << path.string() << ": " << ino << "\n";
+    ss << "  Entry map:\n";
+    for (const auto& [id, entry] : idToEntry_) ss << "    " << id << ": " << entry->fuse_path.string() << "\n";
+    ss << "  Child-parent map:\n";
+    for (const auto& [childId, parentId] : childToParent_) ss << "    " << childId << ": " << parentId << "\n";
+    return ss.str();
 }
 
 }

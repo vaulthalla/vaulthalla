@@ -20,16 +20,17 @@ void Throughput::computeDashboardStats() {
     size_bytes = 0;
     duration_ms = 0;
     for (const auto& op : scoped_ops) {
-        if (!op.success) ++failed_ops;
+        if (!op) continue;
+        if (!op->success) ++failed_ops;
         else {
-            size_bytes += op.size_bytes;
-            duration_ms += op.duration_ms();
+            size_bytes += op->size_bytes;
+            duration_ms += op->duration_ms();
         }
     }
 }
 
-ScopedOp& Throughput::newOp() {
-    scoped_ops.emplace_back();
+std::shared_ptr<ScopedOp> Throughput::newOp() {
+    scoped_ops.push_back(std::make_shared<ScopedOp>());
     return scoped_ops.back();
 }
 

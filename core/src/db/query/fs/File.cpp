@@ -10,6 +10,7 @@
 #include "fs/model/stats/Extension.hpp"
 
 #include <optional>
+#include <stdexcept>
 
 namespace vh::db::query::fs {
 
@@ -110,6 +111,8 @@ void File::markTrashedFileDeleted(const unsigned int id) {
 }
 
 void File::deleteFile(const unsigned int userId, const FilePtr& file) {
+    if (!file) throw std::invalid_argument("File cannot be null");
+
     Transactions::exec("File::deleteFileByPath", [&](pqxx::work& txn) {
         const auto path = to_utf8_string(file->path.u8string());
 
@@ -118,11 +121,14 @@ void File::deleteFile(const unsigned int userId, const FilePtr& file) {
         const auto parentId = row["parent_id"].as<std::optional<unsigned int> >();
         const auto sizeBytes = row["size_bytes"].as<unsigned int>();
 
-        txn.exec(pqxx::prepped{"mark_file_trashed"}, pqxx::params{file->vault_id, path, userId});
+        txn.exec(
+            pqxx::prepped{"mark_file_trashed"},
+            pqxx::params{file->vault_id, path, userId, to_utf8_string(file->backing_path.u8string())}
+        );
 
         updateParentStatsAndCleanEmptyDirs(txn, parentId, sizeBytes);
 
-        txn.exec(pqxx::prepped{"mark_trashed_file_deleted_fuse_path"}, to_utf8_string(file->fuse_path.u8string()));
+        txn.exec(pqxx::prepped{"mark_trashed_file_deleted_by_base32_alias"}, pqxx::params{file->base32_alias});
     });
 }
 
