@@ -4,6 +4,7 @@
 #include "email/Transport.hpp"
 #include "email/providers/ResendProvider.hpp"
 #include "email/templates/OperatorTemplates.hpp"
+#include "CommandUsage.hpp"
 #include "usage/include/UsageManager.hpp"
 
 #include <gtest/gtest.h>
@@ -81,10 +82,10 @@ resend:
 TEST(OperatorEmailUsageTest, ResolvesPhaseOneCommandTree) {
     vh::protocols::shell::UsageManager manager;
 
-    EXPECT_EQ(manager.resolve({"email"})->primary(), "email");
-    EXPECT_EQ(manager.resolve({"email", "provider", "resend", "set"})->primary(), "set");
-    EXPECT_EQ(manager.resolve({"email", "doctor"})->primary(), "doctor");
-    EXPECT_EQ(manager.resolve({"email", "test", "--dry-run"})->primary(), "test");
+    EXPECT_EQ(manager.resolve(std::vector<std::string>{"email"})->primary(), "email");
+    EXPECT_EQ(manager.resolve(std::vector<std::string>{"email", "provider", "resend", "set"})->primary(), "set");
+    EXPECT_EQ(manager.resolve(std::vector<std::string>{"email", "doctor"})->primary(), "doctor");
+    EXPECT_EQ(manager.resolve(std::vector<std::string>{"email", "test", "--dry-run"})->primary(), "test");
 }
 
 TEST(OperatorEmailMessageTest, ParsesAndValidatesDisplayAddresses) {
@@ -95,7 +96,7 @@ TEST(OperatorEmailMessageTest, ParsesAndValidatesDisplayAddresses) {
     EXPECT_EQ(address.email, "ops@example.com");
     EXPECT_EQ(vh::email::formatAddress(address), "Vaulthalla <ops@example.com>");
     EXPECT_NO_THROW(vh::email::validateMessage(testMessage()));
-    EXPECT_THROW(vh::email::parseAddress("not-an-email"), std::invalid_argument);
+    EXPECT_THROW((void)vh::email::parseAddress("not-an-email"), std::invalid_argument);
 }
 
 TEST(OperatorEmailTemplateTest, RendersHtmlAndTextWithoutRawHtmlInjection) {

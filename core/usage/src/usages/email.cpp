@@ -38,12 +38,41 @@ std::shared_ptr<CommandUsage> providerResend(const std::weak_ptr<CommandUsage>& 
     return cmd;
 }
 
+std::shared_ptr<CommandUsage> providerSesSet(const std::weak_ptr<CommandUsage>& parent) {
+    const auto cmd = baseUsage(parent);
+    cmd->aliases = {"set"};
+    cmd->description = "Set encrypted SES credentials using hidden prompts.";
+    cmd->optional_flags = {
+        Flag::Alias("access", "Prompt only for the SES access key ID", "access"),
+        Flag::Alias("secret", "Prompt only for the SES secret access key", "secret")
+    };
+    cmd->examples = {
+        {"vh email provider ses set", "Prompt for and store both SES credential values."},
+        {"vh email provider ses set --access", "Prompt for and store only the SES access key ID."},
+        {"vh email provider ses set --secret", "Prompt for and store only the SES secret access key."}
+    };
+    return cmd;
+}
+
+std::shared_ptr<CommandUsage> providerSes(const std::weak_ptr<CommandUsage>& parent) {
+    const auto cmd = baseUsage(parent);
+    cmd->aliases = {"ses"};
+    cmd->description = "Manage SES email provider credentials.";
+    const auto setCmd = providerSesSet(cmd->weak_from_this());
+    cmd->subcommands = {setCmd};
+    cmd->examples = {
+        {"vh email provider ses set", "Prompt for and store SES credentials."}
+    };
+    return cmd;
+}
+
 std::shared_ptr<CommandUsage> provider(const std::weak_ptr<CommandUsage>& parent) {
     const auto cmd = baseUsage(parent);
     cmd->aliases = {"provider"};
     cmd->description = "Manage operator email provider credentials.";
     const auto resendCmd = providerResend(cmd->weak_from_this());
-    cmd->subcommands = {resendCmd};
+    const auto sesCmd = providerSes(cmd->weak_from_this());
+    cmd->subcommands = {resendCmd, sesCmd};
     return cmd;
 }
 
@@ -60,16 +89,18 @@ std::shared_ptr<CommandUsage> doctor(const std::weak_ptr<CommandUsage>& parent) 
 std::shared_ptr<CommandUsage> test(const std::weak_ptr<CommandUsage>& parent) {
     const auto cmd = baseUsage(parent);
     cmd->aliases = {"test"};
-    cmd->description = "Render a test operator email.";
+    cmd->description = "Render or send a test operator email.";
     cmd->optional_flags = {
-        Flag::Alias("dry_run", "Render and validate without sending", "dry-run")
+        Flag::Alias("dry_run", "Render and validate without sending", "dry-run"),
+        Flag::Alias("send", "Send the rendered test email through the configured provider", "send")
     };
     cmd->optional = {
         Optional::ManyToOne("to", "Override the test recipient for rendering", {"to"}, "email")
     };
     cmd->examples = {
         {"vh email test --dry-run", "Render the configured test email without sending."},
-        {"vh email test --dry-run --to ops@example.com", "Render a test email for a specific recipient."}
+        {"vh email test --dry-run --to ops@example.com", "Render a test email for a specific recipient."},
+        {"vh email test --send --to ops@example.com", "Send a test email through the configured provider."}
     };
     return cmd;
 }
@@ -94,8 +125,10 @@ std::shared_ptr<CommandBook> get(const std::weak_ptr<CommandUsage>& parent) {
     };
     root->examples = {
         {"vh email provider resend set", "Prompt for and store the Resend API key."},
+        {"vh email provider ses set", "Prompt for and store SES credentials."},
         {"vh email doctor", "Inspect operator email configuration without leaking secrets."},
-        {"vh email test --dry-run", "Render the test operator email without sending."}
+        {"vh email test --dry-run", "Render the test operator email without sending."},
+        {"vh email test --send --to ops@example.com", "Send the test operator email through the configured provider."}
     };
 
     book->root = root;

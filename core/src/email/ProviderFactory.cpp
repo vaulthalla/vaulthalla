@@ -1,7 +1,6 @@
 #include "email/ProviderFactory.hpp"
 #include "email/providers/ResendProvider.hpp"
-
-#include <stdexcept>
+#include "email/providers/SesProvider.hpp"
 
 namespace vh::email {
 
@@ -22,7 +21,11 @@ std::unique_ptr<Provider> makeProvider(
         case config::EmailProviderKind::None:
             return nullptr;
         case config::EmailProviderKind::Ses:
-            throw std::runtime_error("SES email provider is planned for phase 2");
+            return std::make_unique<providers::SesProvider>(
+                config.ses,
+                std::move(secretsManager),
+                std::move(transport)
+            );
     }
 
     return nullptr;
