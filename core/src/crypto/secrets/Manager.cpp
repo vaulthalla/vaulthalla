@@ -24,6 +24,20 @@ void Manager::setJWTSecret(const std::string& secret) const {
     return setEncryptedValue("jwt_secret", secret);
 }
 
+std::optional<std::string> Manager::getSecret(const std::string& key) const {
+    const auto secret = db::query::crypto::Secret::getSecret(key);
+    if (!secret) return std::nullopt;
+    return decryptStoredSecret(secret->value, secret->iv);
+}
+
+void Manager::setSecret(const std::string& key, const std::string& value) const {
+    setEncryptedValue(key, value);
+}
+
+bool Manager::hasSecret(const std::string& key) const {
+    return db::query::crypto::Secret::secretExists(key);
+}
+
 std::string Manager::getOrInitSecret(const std::string& key) const {
     const auto secret = db::query::crypto::Secret::getSecret(key);
     if (!secret) {
@@ -32,12 +46,14 @@ std::string Manager::getOrInitSecret(const std::string& key) const {
         return newSecret;
     }
 
-    {
-        std::scoped_lock lock(mutex_);
-        const auto masterKey = tpmKeyProvider_->getMasterKey();
-        const auto decrypted = decrypt_aes256_gcm(secret->value, masterKey, secret->iv);
-        return {decrypted.begin(), decrypted.end()};
-    }
+    return decryptStoredSecret(secret->value, secret->iv);
+}
+
+std::string Manager::decryptStoredSecret(const std::vector<uint8_t>& value, const std::vector<uint8_t>& iv) const {
+    std::scoped_lock lock(mutex_);
+    const auto masterKey = tpmKeyProvider_->getMasterKey();
+    const auto decrypted = decrypt_aes256_gcm(value, masterKey, iv);
+    return {decrypted.begin(), decrypted.end()};
 }
 
 void Manager::setEncryptedValue(const std::string& key, const std::string& value) const {

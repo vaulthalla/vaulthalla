@@ -22,6 +22,12 @@ auth: {}
 sharing: {}
 
 
+# === OPERATOR EMAIL DELIVERY ===
+email: {}
+
+operator_emails: {}
+
+
 # === 📈 STATS SNAPSHOTS ===
 stats_snapshots: {}
 

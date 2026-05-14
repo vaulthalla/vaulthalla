@@ -3,7 +3,9 @@
 #include "log/Rotator.hpp"
 
 #include <filesystem>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <spdlog/spdlog.h>
 #include <nlohmann/json_fwd.hpp>
@@ -87,6 +89,66 @@ struct SharingConfig {
     bool enable_public_links = true;
 };
 
+enum class EmailProviderKind {
+    None,
+    Resend,
+    Ses
+};
+
+struct ResendEmailConfig {
+    std::string endpoint = "https://api.resend.com/emails";
+};
+
+struct SesEmailConfig {
+    std::string region = "us-east-1";
+    std::optional<std::string> endpoint;
+};
+
+struct EmailConfig {
+    bool enabled = false;
+    EmailProviderKind provider = EmailProviderKind::None;
+    std::string from = "Vaulthalla <ops@example.com>";
+    std::optional<std::string> reply_to;
+    std::optional<std::string> base_url;
+    ResendEmailConfig resend;
+    SesEmailConfig ses;
+};
+
+struct OperatorEmailRecipientsConfig {
+    std::vector<std::string> alerts;
+    std::vector<std::string> weekly;
+    std::vector<std::string> security;
+};
+
+struct OperatorEmailAlertingConfig {
+    bool enabled = true;
+    std::string min_severity = "warning";
+    uint32_t dedupe_window_minutes = 60;
+    uint32_t repeat_after_hours = 24;
+    bool send_recovery = true;
+    uint32_t health_poll_seconds = 60;
+};
+
+struct OperatorEmailDigestConfig {
+    bool enabled = true;
+    std::string weekday = "monday";
+    uint32_t hour_local = 8;
+    std::string timezone = "UTC";
+};
+
+struct OperatorEmailSecurityAlertsConfig {
+    bool enabled = true;
+    bool admin_role_changes = true;
+};
+
+struct OperatorEmailsConfig {
+    bool enabled = true;
+    OperatorEmailRecipientsConfig recipients;
+    OperatorEmailAlertingConfig alerting;
+    OperatorEmailDigestConfig weekly_digest;
+    OperatorEmailSecurityAlertsConfig security_alerts;
+};
+
 struct AuditLogConfig {
     std::chrono::days retention_days = std::chrono::days(30);
     uintmax_t rotate_max_size = 50 * 1024 * 1024; // 50MB
@@ -153,6 +215,8 @@ struct Config {
     ServicesConfig services;
     StatsSnapshotsConfig stats_snapshots;
     SharingConfig sharing;
+    EmailConfig email;
+    OperatorEmailsConfig operator_emails;
     AuditConfig auditing;
     DevConfig dev;
 
@@ -162,6 +226,8 @@ struct Config {
 };
 
 Config loadConfig(const std::string& path);
+std::string emailProviderKindToString(EmailProviderKind kind);
+EmailProviderKind emailProviderKindFromString(std::string_view value);
 void to_json(nlohmann::json& j, const Config& c);
 void from_json(const nlohmann::json& j, Config& c);
 void to_json(nlohmann::json& j, const WebsocketConfig& c);
@@ -194,6 +260,22 @@ void to_json(nlohmann::json& j, const ServicesConfig& c);
 void from_json(const nlohmann::json& j, ServicesConfig& c);
 void to_json(nlohmann::json& j, const SharingConfig& c);
 void from_json(const nlohmann::json& j, SharingConfig& c);
+void to_json(nlohmann::json& j, const ResendEmailConfig& c);
+void from_json(const nlohmann::json& j, ResendEmailConfig& c);
+void to_json(nlohmann::json& j, const SesEmailConfig& c);
+void from_json(const nlohmann::json& j, SesEmailConfig& c);
+void to_json(nlohmann::json& j, const EmailConfig& c);
+void from_json(const nlohmann::json& j, EmailConfig& c);
+void to_json(nlohmann::json& j, const OperatorEmailRecipientsConfig& c);
+void from_json(const nlohmann::json& j, OperatorEmailRecipientsConfig& c);
+void to_json(nlohmann::json& j, const OperatorEmailAlertingConfig& c);
+void from_json(const nlohmann::json& j, OperatorEmailAlertingConfig& c);
+void to_json(nlohmann::json& j, const OperatorEmailDigestConfig& c);
+void from_json(const nlohmann::json& j, OperatorEmailDigestConfig& c);
+void to_json(nlohmann::json& j, const OperatorEmailSecurityAlertsConfig& c);
+void from_json(const nlohmann::json& j, OperatorEmailSecurityAlertsConfig& c);
+void to_json(nlohmann::json& j, const OperatorEmailsConfig& c);
+void from_json(const nlohmann::json& j, OperatorEmailsConfig& c);
 void to_json(nlohmann::json& j, const AuditLogConfig& c);
 void from_json(const nlohmann::json& j, AuditLogConfig& c);
 void to_json(nlohmann::json& j, const EncryptionWaiverConfig& c);

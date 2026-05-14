@@ -328,6 +328,182 @@ struct convert<SharingConfig> {
 };
 
 template<>
+struct convert<ResendEmailConfig> {
+    static Node encode(const ResendEmailConfig& rhs) {
+        Node node;
+        node["endpoint"] = rhs.endpoint;
+        return node;
+    }
+
+    static bool decode(const Node& node, ResendEmailConfig& rhs) {
+        if (!node.IsMap()) return false;
+        rhs.endpoint = node["endpoint"].as<std::string>("https://api.resend.com/emails");
+        return true;
+    }
+};
+
+template<>
+struct convert<SesEmailConfig> {
+    static Node encode(const SesEmailConfig& rhs) {
+        Node node;
+        node["region"] = rhs.region;
+        node["endpoint"] = rhs.endpoint ? Node(*rhs.endpoint) : Node(NodeType::Null);
+        return node;
+    }
+
+    static bool decode(const Node& node, SesEmailConfig& rhs) {
+        if (!node.IsMap()) return false;
+        rhs.region = node["region"].as<std::string>("us-east-1");
+        if (node["endpoint"] && !node["endpoint"].IsNull())
+            rhs.endpoint = node["endpoint"].as<std::string>();
+        else
+            rhs.endpoint.reset();
+        return true;
+    }
+};
+
+template<>
+struct convert<EmailConfig> {
+    static Node encode(const EmailConfig& rhs) {
+        Node node;
+        node["enabled"] = rhs.enabled;
+        node["provider"] = emailProviderKindToString(rhs.provider);
+        node["from"] = rhs.from;
+        node["reply_to"] = rhs.reply_to ? Node(*rhs.reply_to) : Node(NodeType::Null);
+        node["base_url"] = rhs.base_url ? Node(*rhs.base_url) : Node(NodeType::Null);
+        node["resend"] = rhs.resend;
+        node["ses"] = rhs.ses;
+        return node;
+    }
+
+    static bool decode(const Node& node, EmailConfig& rhs) {
+        if (!node.IsMap()) return false;
+        rhs.enabled = node["enabled"].as<bool>(false);
+        rhs.provider = emailProviderKindFromString(node["provider"].as<std::string>("none"));
+        rhs.from = node["from"].as<std::string>("Vaulthalla <ops@example.com>");
+
+        if (node["reply_to"] && !node["reply_to"].IsNull())
+            rhs.reply_to = node["reply_to"].as<std::string>();
+        else
+            rhs.reply_to.reset();
+
+        if (node["base_url"] && !node["base_url"].IsNull())
+            rhs.base_url = node["base_url"].as<std::string>();
+        else
+            rhs.base_url.reset();
+
+        if (node["resend"]) rhs.resend = node["resend"].as<ResendEmailConfig>();
+        if (node["ses"]) rhs.ses = node["ses"].as<SesEmailConfig>();
+        return true;
+    }
+};
+
+template<>
+struct convert<OperatorEmailRecipientsConfig> {
+    static Node encode(const OperatorEmailRecipientsConfig& rhs) {
+        Node node;
+        node["alerts"] = rhs.alerts;
+        node["weekly"] = rhs.weekly;
+        node["security"] = rhs.security;
+        return node;
+    }
+
+    static bool decode(const Node& node, OperatorEmailRecipientsConfig& rhs) {
+        if (!node.IsMap()) return false;
+        rhs.alerts = node["alerts"].as<std::vector<std::string>>(std::vector<std::string>{});
+        rhs.weekly = node["weekly"].as<std::vector<std::string>>(std::vector<std::string>{});
+        rhs.security = node["security"].as<std::vector<std::string>>(std::vector<std::string>{});
+        return true;
+    }
+};
+
+template<>
+struct convert<OperatorEmailAlertingConfig> {
+    static Node encode(const OperatorEmailAlertingConfig& rhs) {
+        Node node;
+        node["enabled"] = rhs.enabled;
+        node["min_severity"] = rhs.min_severity;
+        node["dedupe_window_minutes"] = rhs.dedupe_window_minutes;
+        node["repeat_after_hours"] = rhs.repeat_after_hours;
+        node["send_recovery"] = rhs.send_recovery;
+        node["health_poll_seconds"] = rhs.health_poll_seconds;
+        return node;
+    }
+
+    static bool decode(const Node& node, OperatorEmailAlertingConfig& rhs) {
+        if (!node.IsMap()) return false;
+        rhs.enabled = node["enabled"].as<bool>(true);
+        rhs.min_severity = node["min_severity"].as<std::string>("warning");
+        rhs.dedupe_window_minutes = std::max(static_cast<uint32_t>(1), node["dedupe_window_minutes"].as<uint32_t>(60));
+        rhs.repeat_after_hours = std::max(static_cast<uint32_t>(1), node["repeat_after_hours"].as<uint32_t>(24));
+        rhs.send_recovery = node["send_recovery"].as<bool>(true);
+        rhs.health_poll_seconds = std::max(static_cast<uint32_t>(15), node["health_poll_seconds"].as<uint32_t>(60));
+        return true;
+    }
+};
+
+template<>
+struct convert<OperatorEmailDigestConfig> {
+    static Node encode(const OperatorEmailDigestConfig& rhs) {
+        Node node;
+        node["enabled"] = rhs.enabled;
+        node["weekday"] = rhs.weekday;
+        node["hour_local"] = rhs.hour_local;
+        node["timezone"] = rhs.timezone;
+        return node;
+    }
+
+    static bool decode(const Node& node, OperatorEmailDigestConfig& rhs) {
+        if (!node.IsMap()) return false;
+        rhs.enabled = node["enabled"].as<bool>(true);
+        rhs.weekday = node["weekday"].as<std::string>("monday");
+        rhs.hour_local = std::min(static_cast<uint32_t>(23), node["hour_local"].as<uint32_t>(8));
+        rhs.timezone = node["timezone"].as<std::string>("UTC");
+        return true;
+    }
+};
+
+template<>
+struct convert<OperatorEmailSecurityAlertsConfig> {
+    static Node encode(const OperatorEmailSecurityAlertsConfig& rhs) {
+        Node node;
+        node["enabled"] = rhs.enabled;
+        node["admin_role_changes"] = rhs.admin_role_changes;
+        return node;
+    }
+
+    static bool decode(const Node& node, OperatorEmailSecurityAlertsConfig& rhs) {
+        if (!node.IsMap()) return false;
+        rhs.enabled = node["enabled"].as<bool>(true);
+        rhs.admin_role_changes = node["admin_role_changes"].as<bool>(true);
+        return true;
+    }
+};
+
+template<>
+struct convert<OperatorEmailsConfig> {
+    static Node encode(const OperatorEmailsConfig& rhs) {
+        Node node;
+        node["enabled"] = rhs.enabled;
+        node["recipients"] = rhs.recipients;
+        node["alerting"] = rhs.alerting;
+        node["weekly_digest"] = rhs.weekly_digest;
+        node["security_alerts"] = rhs.security_alerts;
+        return node;
+    }
+
+    static bool decode(const Node& node, OperatorEmailsConfig& rhs) {
+        if (!node.IsMap()) return false;
+        rhs.enabled = node["enabled"].as<bool>(true);
+        if (node["recipients"]) rhs.recipients = node["recipients"].as<OperatorEmailRecipientsConfig>();
+        if (node["alerting"]) rhs.alerting = node["alerting"].as<OperatorEmailAlertingConfig>();
+        if (node["weekly_digest"]) rhs.weekly_digest = node["weekly_digest"].as<OperatorEmailDigestConfig>();
+        if (node["security_alerts"]) rhs.security_alerts = node["security_alerts"].as<OperatorEmailSecurityAlertsConfig>();
+        return true;
+    }
+};
+
+template<>
 struct convert<AuditLogConfig> {
     static Node encode(const AuditLogConfig& rhs) {
         Node node;
