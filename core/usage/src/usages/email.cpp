@@ -105,6 +105,20 @@ std::shared_ptr<CommandUsage> test(const std::weak_ptr<CommandUsage>& parent) {
     return cmd;
 }
 
+std::shared_ptr<CommandUsage> history(const std::weak_ptr<CommandUsage>& parent) {
+    const auto cmd = baseUsage(parent);
+    cmd->aliases = {"history"};
+    cmd->description = "Show recent operator email delivery records.";
+    cmd->optional = {
+        Optional::ManyToOne("limit", "Maximum records to display", {"limit"}, "count")
+    };
+    cmd->examples = {
+        {"vh email history", "Show recent operator email delivery records."},
+        {"vh email history --limit 100", "Show up to 100 delivery records."}
+    };
+    return cmd;
+}
+
 }
 
 std::shared_ptr<CommandBook> get(const std::weak_ptr<CommandUsage>& parent) {
@@ -117,18 +131,21 @@ std::shared_ptr<CommandBook> get(const std::weak_ptr<CommandUsage>& parent) {
     const auto providerCmd = provider(root->weak_from_this());
     const auto doctorCmd = doctor(root->weak_from_this());
     const auto testCmd = test(root->weak_from_this());
+    const auto historyCmd = history(root->weak_from_this());
 
     root->subcommands = {
         providerCmd,
         doctorCmd,
-        testCmd
+        testCmd,
+        historyCmd
     };
     root->examples = {
         {"vh email provider resend set", "Prompt for and store the Resend API key."},
         {"vh email provider ses set", "Prompt for and store SES credentials."},
         {"vh email doctor", "Inspect operator email configuration without leaking secrets."},
         {"vh email test --dry-run", "Render the test operator email without sending."},
-        {"vh email test --send --to ops@example.com", "Send the test operator email through the configured provider."}
+        {"vh email test --send --to ops@example.com", "Send the test operator email through the configured provider."},
+        {"vh email history --limit 100", "Show recent operator email delivery records."}
     };
 
     book->root = root;

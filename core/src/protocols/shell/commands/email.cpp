@@ -2,21 +2,26 @@
 
 #include "config/Registry.hpp"
 #include "crypto/secrets/Manager.hpp"
+#include "db/encoding/timestamp.hpp"
 #include "email/Message.hpp"
 #include "email/ProviderFactory.hpp"
 #include "email/providers/ResendProvider.hpp"
 #include "email/providers/SesProvider.hpp"
 #include "email/templates/OperatorTemplates.hpp"
 #include "identities/User.hpp"
+#include "notifications/OperatorNotification.hpp"
+#include "notifications/OperatorNotificationState.hpp"
 #include "protocols/shell/Router.hpp"
 #include "protocols/shell/commands/helpers.hpp"
 #include "protocols/shell/util/argsHelpers.hpp"
 #include "runtime/Deps.hpp"
 #include "usage/include/UsageManager.hpp"
 
+#include <cstdint>
+#include <exception>
+#include <optional>
 #include <sstream>
 #include <unistd.h>
-#include <optional>
 
 namespace vh::protocols::shell::commands {
 
@@ -31,6 +36,69 @@ std::string instanceName() {
     if (::gethostname(host, sizeof(host) - 1) == 0 && host[0] != '\0')
         return host;
     return "vaulthalla";
+}
+
+std::string valueOrNone(const std::optional<std::string>& value) {
+    return value && !value->empty() ? *value : "none";
+}
+
+std::string historyWarning(const std::exception& e) {
+    return "history warning: " + std::string(e.what());
+}
+
+std::optional<std::string> recordDryRun(
+    const ::vh::notifications::OperatorNotification& notification,
+    const std::string& provider,
+    const std::uint32_t recipientCount
+) {
+    try {
+        ::vh::notifications::OperatorNotificationState::recordDryRun(notification, provider, recipientCount);
+    } catch (const std::exception& e) {
+        return historyWarning(e);
+    }
+    return std::nullopt;
+}
+
+std::optional<std::string> recordSent(
+    const ::vh::notifications::OperatorNotification& notification,
+    const std::string& provider,
+    const std::uint32_t recipientCount,
+    const ::vh::email::SendResult& result
+) {
+    try {
+        ::vh::notifications::OperatorNotificationState::recordSent(notification, provider, recipientCount, result);
+    } catch (const std::exception& e) {
+        return historyWarning(e);
+    }
+    return std::nullopt;
+}
+
+std::optional<std::string> recordFailed(
+    const ::vh::notifications::OperatorNotification& notification,
+    const std::string& provider,
+    const std::uint32_t recipientCount,
+    const std::string& error
+) {
+    try {
+        ::vh::notifications::OperatorNotificationState::recordFailed(notification, provider, recipientCount, error);
+    } catch (const std::exception& e) {
+        return historyWarning(e);
+    }
+    return std::nullopt;
+}
+
+std::optional<std::string> recordSuppressed(
+    const ::vh::notifications::OperatorNotification& notification,
+    const std::string& provider,
+    const std::uint32_t recipientCount,
+    const std::string& reason
+) {
+    try {
+        ::vh::notifications::OperatorNotificationState::recordSuppressed(notification, provider, recipientCount, reason);
+    } catch (const std::exception& e) {
+        return historyWarning(e);
+    }
+    return std::nullopt;
 }
 
 CommandResult requireSuperAdmin(const CommandCall& call) {
@@ -238,6 +306,16 @@ CommandResult handleTest(const CommandCall& call) {
             .dryRun = dryRun,
             .baseUrl = cfg.email.base_url
         });
+        ::vh::notifications::OperatorNotification notification{
+            .eventKey = "operator-test",
+            .eventType = "test",
+            .severity = "info",
+            .recipientGroup = "test",
+            .explicitRecipients = {recipient},
+            .fingerprint = "manual:" + recipient,
+            .rendered = rendered,
+            .tags = {{"event_type", "test"}, {"severity", "info"}}
+        };
 
         ::vh::email::Message message{
             .from = from,
@@ -252,14 +330,24 @@ CommandResult handleTest(const CommandCall& call) {
         ::vh::email::validateMessage(message);
 
         if (send) {
-            if (!cfg.email.enabled) return invalid("email test --send: email.enabled is false");
-            if (cfg.email.provider == config::EmailProviderKind::None)
+            if (!cfg.email.enabled) {
+                recordSuppressed(notification, config::emailProviderKindToString(cfg.email.provider), 1, "email.enabled is false");
+                return invalid("email test --send: email.enabled is false");
+            }
+            if (cfg.email.provider == config::EmailProviderKind::None) {
+                recordSuppressed(notification, "none", 1, "email.provider is none");
                 return invalid("email test --send: email.provider is none");
-            if (!runtime::Deps::get().secretsManager)
+            }
+            if (!runtime::Deps::get().secretsManager) {
+                recordFailed(notification, config::emailProviderKindToString(cfg.email.provider), 1, "secrets manager is unavailable");
                 return invalid("email test --send: secrets manager is unavailable");
+            }
 
             auto provider = ::vh::email::makeProvider(cfg.email, runtime::Deps::get().secretsManager);
-            if (!provider) return invalid("email test --send: no provider is configured");
+            if (!provider) {
+                recordFailed(notification, config::emailProviderKindToString(cfg.email.provider), 1, "no provider is configured");
+                return invalid("email test --send: no provider is configured");
+            }
 
             const auto result = provider->send(message);
             if (!result.ok) {
@@ -267,28 +355,76 @@ CommandResult handleTest(const CommandCall& call) {
                 err << "email test --send: provider " << provider->name() << " failed";
                 if (result.httpStatus) err << " (HTTP " << result.httpStatus << ")";
                 if (result.errorSummary) err << ": " << *result.errorSummary;
+                recordFailed(notification, provider->name(), 1, err.str());
                 return invalid(err.str());
             }
 
+            const auto history = recordSent(notification, provider->name(), 1, result);
             std::ostringstream out;
             out << "sent test operator email\n";
             out << "provider: " << provider->name() << "\n";
             out << "to: " << ::vh::email::formatAddress(to) << "\n";
             if (result.providerMessageId)
                 out << "provider message id: " << *result.providerMessageId << "\n";
+            if (history) out << *history << "\n";
             return ok(out.str());
         }
 
+        const auto history = recordDryRun(notification, config::emailProviderKindToString(cfg.email.provider), 1);
         std::ostringstream out;
         out << "dry-run: rendered test operator email\n";
         out << "subject: " << rendered.subject << "\n";
         out << "to: " << ::vh::email::formatAddress(to) << "\n";
         out << "html bytes: " << rendered.html.size() << "\n";
+        if (history) out << *history << "\n";
         out << "\n";
         out << rendered.text;
         return ok(out.str());
     } catch (const std::exception& e) {
-        return invalid("email test --dry-run: " + std::string(e.what()));
+        return invalid("email test: " + std::string(e.what()));
+    }
+}
+
+CommandResult handleHistory(const CommandCall& call) {
+    if (auto denied = requireSuperAdmin(call); denied.exit_code != 0) return denied;
+    const auto usageModel = resolveUsage({"email", "history"});
+    validatePositionals(call, usageModel);
+
+    std::uint32_t limit = 100;
+    if (const auto limitOpt = optVal(call, usageModel->resolveOptional("limit")->option_tokens)) {
+        const auto parsed = parseUInt(*limitOpt);
+        if (!parsed) return invalid("email history: --limit must be a positive integer");
+        limit = *parsed;
+    }
+
+    try {
+        const auto rows = ::vh::notifications::OperatorNotificationState::history(limit);
+        std::ostringstream out;
+        out << "operator email delivery history\n";
+        if (rows.empty()) {
+            out << "no delivery records found\n";
+            return ok(out.str());
+        }
+
+        for (const auto& row : rows) {
+            out << db::encoding::timestampToString(row.createdAt)
+                << " id=" << row.id
+                << " status=" << row.status
+                << " event=" << row.eventType
+                << " severity=" << row.severity
+                << " group=" << valueOrNone(row.recipientGroup)
+                << " recipients=" << row.recipientCount
+                << " provider=" << row.provider;
+            if (row.providerMessageId)
+                out << " provider_message_id=" << *row.providerMessageId;
+            if (row.errorSummary)
+                out << " error=\"" << *row.errorSummary << "\"";
+            out << "\n";
+        }
+
+        return ok(out.str());
+    } catch (const std::exception& e) {
+        return invalid("email history: " + std::string(e.what()));
     }
 }
 
@@ -300,6 +436,7 @@ CommandResult handleEmail(const CommandCall& call) {
     if (isCommandMatch({"email", "provider"}, sub)) return handleProvider(subcall);
     if (isCommandMatch({"email", "doctor"}, sub)) return handleDoctor(subcall);
     if (isCommandMatch({"email", "test"}, sub)) return handleTest(subcall);
+    if (isCommandMatch({"email", "history"}, sub)) return handleHistory(subcall);
 
     return invalid(call.constructFullArgs(), "Unknown email subcommand: '" + std::string(sub) + "'");
 }

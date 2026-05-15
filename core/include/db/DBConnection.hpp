@@ -77,6 +77,9 @@ class Connection {
     void initPreparedStatsSnapshots() const;
     void initPreparedStatsMetricSamples() const;
 
+    // Email / notifications
+    void initPreparedOperatorNotificationDelivery() const;
+
     // Dashboard
     void initPreparedDashboardPreferences() const;
 
