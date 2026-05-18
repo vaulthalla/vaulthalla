@@ -37,9 +37,49 @@ struct WatchdogEmailContext {
     std::optional<std::string> baseUrl;
 };
 
+struct WeeklyDigestSection {
+    std::string title;
+    std::string severity;
+    std::string summary;
+    std::uint32_t warningCount = 0;
+    std::uint32_t errorCount = 0;
+};
+
+struct WeeklyDigestAttentionItem {
+    std::string title;
+    std::string severity;
+    std::string message;
+};
+
+struct WeeklyDigestEmailContext {
+    std::string instance;
+    std::string weekStart;
+    std::string weekEnd;
+    std::string scheduledWeekday;
+    std::uint32_t scheduledHourUtc = 0;
+    std::string timezone;
+    std::uint64_t checkedAt = 0;
+    std::string systemStatus;
+    std::string dashboardStatus;
+    std::uint32_t warningCount = 0;
+    std::uint32_t errorCount = 0;
+    std::size_t servicesReady = 0;
+    std::size_t servicesTotal = 0;
+    std::size_t depsReady = 0;
+    std::size_t depsTotal = 0;
+    std::size_t protocolsReady = 0;
+    std::size_t protocolsTotal = 0;
+    bool dashboardAvailable = true;
+    std::optional<std::string> dashboardUnavailableReason;
+    std::vector<WeeklyDigestSection> sections;
+    std::vector<WeeklyDigestAttentionItem> attention;
+    std::optional<std::string> baseUrl;
+};
+
 [[nodiscard]] std::string escapeHtml(std::string_view value);
 [[nodiscard]] RenderedEmail renderTestEmail(const TestEmailContext& ctx);
 [[nodiscard]] RenderedEmail renderWatchdogAlertEmail(const WatchdogEmailContext& ctx);
 [[nodiscard]] RenderedEmail renderWatchdogRecoveryEmail(const WatchdogEmailContext& ctx);
+[[nodiscard]] RenderedEmail renderWeeklyDigestEmail(const WeeklyDigestEmailContext& ctx);
 
 }

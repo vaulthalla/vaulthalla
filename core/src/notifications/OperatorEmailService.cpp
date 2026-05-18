@@ -8,14 +8,20 @@
 #include "notifications/OperatorNotificationBus.hpp"
 #include "notifications/OperatorNotificationState.hpp"
 #include "runtime/Deps.hpp"
+#include "stats/model/DashboardOverview.hpp"
 #include "stats/model/SystemHealth.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
+#include <cctype>
 #include <cstdint>
+#include <ctime>
 #include <exception>
+#include <iomanip>
 #include <optional>
 #include <sstream>
+#include <string_view>
 #include <unistd.h>
 
 namespace vh::notifications {
@@ -23,9 +29,21 @@ namespace vh::notifications {
 namespace {
 
 constexpr auto kIdleSleep = std::chrono::seconds(5);
+constexpr auto kWeeklyDigestCheckInterval = std::chrono::minutes(5);
 constexpr std::size_t kBatchSize = 25;
 constexpr const char* kWatchdogEventKey = "watchdog.system_health";
 constexpr const char* kWatchdogRecoveryEventKey = "watchdog.system_health.recovery";
+constexpr const char* kWeeklyDigestEventKey = "weekly.digest";
+
+struct WeeklyDigestWindow {
+    bool due = false;
+    std::time_t weekStart = 0;
+    std::time_t weekEnd = 0;
+    std::time_t scheduledAt = 0;
+    std::string weekStartDate;
+    std::string weekEndDate;
+    std::string fingerprint;
+};
 
 std::string instanceName() {
     char host[256]{};
@@ -162,6 +180,151 @@ OperatorNotificationPolicy alertPolicyFromConfig(const config::OperatorEmailAler
     };
 }
 
+std::string lowercase(std::string value) {
+    std::ranges::transform(value, value.begin(), [](const unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return value;
+}
+
+int weekdayIndex(const std::string& weekday) {
+    const auto value = lowercase(weekday);
+    if (value == "sunday" || value == "sun") return 0;
+    if (value == "monday" || value == "mon") return 1;
+    if (value == "tuesday" || value == "tue" || value == "tues") return 2;
+    if (value == "wednesday" || value == "wed") return 3;
+    if (value == "thursday" || value == "thu" || value == "thur" || value == "thurs") return 4;
+    if (value == "friday" || value == "fri") return 5;
+    if (value == "saturday" || value == "sat") return 6;
+    return 1;
+}
+
+std::string normalizedWeekday(const std::string& weekday) {
+    static constexpr std::array<const char*, 7> kNames{
+        "sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"
+    };
+    return kNames[weekdayIndex(weekday)];
+}
+
+std::string formatDate(const std::time_t ts) {
+    std::tm utc{};
+    gmtime_r(&ts, &utc);
+
+    std::ostringstream out;
+    out << std::put_time(&utc, "%Y-%m-%d");
+    return out.str();
+}
+
+std::time_t currentUtcMidnight(const std::time_t now) {
+    std::tm utc{};
+    gmtime_r(&now, &utc);
+    utc.tm_hour = 0;
+    utc.tm_min = 0;
+    utc.tm_sec = 0;
+    return timegm(&utc);
+}
+
+WeeklyDigestWindow weeklyDigestWindow(const config::OperatorEmailDigestConfig& config, const std::time_t now) {
+    std::tm utc{};
+    gmtime_r(&now, &utc);
+
+    const auto targetWeekday = weekdayIndex(config.weekday);
+    const auto daysSinceStart = (utc.tm_wday - targetWeekday + 7) % 7;
+    const auto weekStart = currentUtcMidnight(now) - (static_cast<std::time_t>(daysSinceStart) * 24 * 60 * 60);
+    const auto weekEnd = weekStart + (6 * 24 * 60 * 60);
+    const auto scheduledAt = weekStart + (static_cast<std::time_t>(config.hour_local) * 60 * 60);
+    const auto weekStartDate = formatDate(weekStart);
+
+    return {
+        .due = now >= scheduledAt && now < weekStart + (7 * 24 * 60 * 60),
+        .weekStart = weekStart,
+        .weekEnd = weekEnd,
+        .scheduledAt = scheduledAt,
+        .weekStartDate = weekStartDate,
+        .weekEndDate = formatDate(weekEnd),
+        .fingerprint = "week_start:" + weekStartDate
+    };
+}
+
+std::string digestSeverity(const stats::model::DashboardOverview& overview) {
+    if (overview.errorCount > 0 || overview.overallStatus == "error") return "critical";
+    if (overview.warningCount > 0 || overview.overallStatus == "warning" || overview.overallStatus == "unknown")
+        return "warning";
+    return "info";
+}
+
+std::string digestSeverityForUnavailableDashboard(const stats::model::SystemHealth& health) {
+    return health.healthy() ? "warning" : severityFor(health);
+}
+
+OperatorNotificationPolicy weeklyDigestPolicy() {
+    return {
+        .dedupeWindowMinutes = 60,
+        .repeatAfterHours = 24 * 8,
+        .sendRecovery = false
+    };
+}
+
+email::templates::WeeklyDigestEmailContext weeklyDigestContext(
+    const config::OperatorEmailDigestConfig& config,
+    const WeeklyDigestWindow& window,
+    const stats::model::SystemHealth& health,
+    const std::optional<stats::model::DashboardOverview>& overview,
+    const std::optional<std::string>& unavailableReason
+) {
+    email::templates::WeeklyDigestEmailContext ctx{
+        .instance = instanceName(),
+        .weekStart = window.weekStartDate,
+        .weekEnd = window.weekEndDate,
+        .scheduledWeekday = normalizedWeekday(config.weekday),
+        .scheduledHourUtc = config.hour_local,
+        .timezone = config.timezone,
+        .checkedAt = health.summary.checkedAt,
+        .systemStatus = health.overallStatusString(),
+        .dashboardStatus = overview ? overview->overallStatus : "unavailable",
+        .warningCount = overview ? overview->warningCount : 0,
+        .errorCount = overview ? overview->errorCount : 0,
+        .servicesReady = health.summary.servicesReady,
+        .servicesTotal = health.summary.servicesTotal,
+        .depsReady = health.summary.depsReady,
+        .depsTotal = health.summary.depsTotal,
+        .protocolsReady = health.summary.protocolsReady,
+        .protocolsTotal = health.summary.protocolsTotal,
+        .dashboardAvailable = overview.has_value(),
+        .dashboardUnavailableReason = unavailableReason,
+        .sections = {},
+        .attention = {},
+        .baseUrl = config::Registry::get().email.base_url
+    };
+
+    if (!overview) return ctx;
+
+    ctx.checkedAt = std::max(ctx.checkedAt, overview->checkedAt);
+    ctx.sections.reserve(overview->sections.size());
+    for (const auto& section : overview->sections) {
+        ctx.sections.push_back({
+            .title = section.title,
+            .severity = section.severity,
+            .summary = section.summary,
+            .warningCount = section.warningCount,
+            .errorCount = section.errorCount
+        });
+    }
+
+    constexpr std::size_t kMaxAttention = 8;
+    ctx.attention.reserve(std::min(kMaxAttention, overview->attention.size()));
+    for (const auto& item : overview->attention) {
+        if (ctx.attention.size() >= kMaxAttention) break;
+        ctx.attention.push_back({
+            .title = item.title,
+            .severity = item.severity,
+            .message = item.message
+        });
+    }
+
+    return ctx;
+}
+
 }
 
 OperatorEmailService::OperatorEmailService()
@@ -171,6 +334,7 @@ void OperatorEmailService::runLoop() {
     while (!shouldStop()) {
         processBatch();
         evaluateWatchdogIfDue();
+        evaluateWeeklyDigestIfDue();
         processBatch();
         lazySleep(kIdleSleep);
     }
@@ -355,9 +519,70 @@ void OperatorEmailService::evaluateWatchdog() {
     }
 }
 
+void OperatorEmailService::evaluateWeeklyDigestIfDue() {
+    const auto now = std::chrono::steady_clock::now();
+
+    if (!weeklyDigestCheckScheduled_) {
+        nextWeeklyDigestCheck_ = now;
+        weeklyDigestCheckScheduled_ = true;
+    }
+    if (now < nextWeeklyDigestCheck_) return;
+
+    nextWeeklyDigestCheck_ = now + weeklyDigestCheckInterval();
+    try {
+        evaluateWeeklyDigest();
+    } catch (const std::exception& e) {
+        log::Registry::runtime()->warn("[OperatorEmailService] Weekly digest evaluation failed: {}", e.what());
+    }
+}
+
+void OperatorEmailService::evaluateWeeklyDigest() {
+    if (!weeklyDigestDeliveryConfigured()) return;
+
+    const auto& cfg = config::Registry::get();
+    const auto& digestCfg = cfg.operator_emails.weekly_digest;
+    const auto window = weeklyDigestWindow(digestCfg, std::time(nullptr));
+    if (!window.due) return;
+
+    const auto health = stats::model::SystemHealth::snapshot();
+    std::optional<stats::model::DashboardOverview> overview;
+    std::optional<std::string> unavailableReason;
+    try {
+        overview = stats::model::DashboardOverview::snapshot();
+    } catch (const std::exception& e) {
+        unavailableReason = e.what();
+    }
+
+    const auto severity = overview ? digestSeverity(*overview) : digestSeverityForUnavailableDashboard(health);
+    auto ctx = weeklyDigestContext(digestCfg, window, health, overview, unavailableReason);
+    auto notification = OperatorNotification{
+        .eventKey = kWeeklyDigestEventKey,
+        .eventType = "weekly_digest",
+        .severity = severity,
+        .recipientGroup = "weekly",
+        .explicitRecipients = {},
+        .fingerprint = window.fingerprint,
+        .rendered = email::templates::renderWeeklyDigestEmail(ctx),
+        .tags = {{"event_type", "weekly_digest"}, {"severity", severity}}
+    };
+
+    const auto recipients = static_cast<std::uint32_t>(cfg.operator_emails.recipients.weekly.size());
+    const auto decision = OperatorNotificationState::shouldSend(notification, weeklyDigestPolicy());
+    if (decision.send) {
+        if (!OperatorNotificationBus::instance().enqueue(notification))
+            OperatorNotificationState::recordSuppressed(notification, providerName(), recipients, "notification queue full");
+    } else if (decision.recordSuppression) {
+        OperatorNotificationState::recordSuppressed(notification, providerName(), recipients, decision.reason);
+    }
+}
+
 std::chrono::seconds OperatorEmailService::healthPollInterval() const {
     const auto seconds = config::Registry::get().operator_emails.alerting.health_poll_seconds;
     return std::chrono::seconds(std::max<std::uint32_t>(15, seconds));
+}
+
+std::chrono::seconds OperatorEmailService::weeklyDigestCheckInterval() const {
+    return kWeeklyDigestCheckInterval;
 }
 
 bool OperatorEmailService::watchdogDeliveryConfigured() const {
@@ -367,6 +592,15 @@ bool OperatorEmailService::watchdogDeliveryConfigured() const {
         && cfg.email.enabled
         && cfg.email.provider != config::EmailProviderKind::None
         && !cfg.operator_emails.recipients.alerts.empty();
+}
+
+bool OperatorEmailService::weeklyDigestDeliveryConfigured() const {
+    const auto& cfg = config::Registry::get();
+    return cfg.operator_emails.enabled
+        && cfg.operator_emails.weekly_digest.enabled
+        && cfg.email.enabled
+        && cfg.email.provider != config::EmailProviderKind::None
+        && !cfg.operator_emails.recipients.weekly.empty();
 }
 
 std::vector<std::string> OperatorEmailService::recipientsFor(const OperatorNotification& notification) const {
