@@ -3,6 +3,7 @@
 #include "db/query/rbac/role/Admin.hpp"
 #include "db/query/rbac/role/Vault.hpp"
 #include "identities/User.hpp"
+#include "notifications/SecurityAlertProducer.hpp"
 #include "rbac/role/Admin.hpp"
 
 using namespace vh::rbac;
@@ -15,6 +16,7 @@ namespace vh::protocols::ws::handler::rbac::roles {
 
         auto role = std::make_shared<role::Admin>(payload);
         role->id = db::query::rbac::role::Admin::upsert(role);
+        notifications::enqueueAdminRoleCreated(role, notifications::actorFromUser("websocket", session->user));
         return {{"role", *role}};
     }
 
@@ -23,7 +25,9 @@ namespace vh::protocols::ws::handler::rbac::roles {
             throw std::runtime_error("Permission denied: Only admins can remove role");
 
         const auto roleId = payload.at("id").get<uint32_t>();
+        auto role = db::query::rbac::role::Admin::get(roleId);
         db::query::rbac::role::Admin::remove(roleId);
+        notifications::enqueueAdminRoleDeleted(role, notifications::actorFromUser("websocket", session->user));
 
         return {{"role", roleId}};
     }
@@ -35,6 +39,7 @@ namespace vh::protocols::ws::handler::rbac::roles {
         auto role = db::query::rbac::role::Admin::get(payload.at("id").get<uint32_t>());
         role->updateFromJson(payload);
         db::query::rbac::role::Admin::upsert(role);
+        notifications::enqueueAdminRoleUpdated(role, notifications::actorFromUser("websocket", session->user));
         return {{"role", *role}};
     }
 

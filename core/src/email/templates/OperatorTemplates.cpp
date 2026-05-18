@@ -113,6 +113,13 @@ void appendDigestAttentionText(std::ostringstream& text, const std::vector<Weekl
         text << "- [" << item.severity << "] " << item.title << ": " << item.message << "\n";
 }
 
+std::string securityActionTitle(const std::string& action) {
+    if (action == "created") return "Admin role created";
+    if (action == "updated") return "Admin role updated";
+    if (action == "deleted") return "Admin role deleted";
+    return "Admin role changed";
+}
+
 RenderedEmail renderWatchdogEmail(const WatchdogEmailContext& ctx, const bool recovery) {
     const auto checkedAt = formatUnixTime(ctx.checkedAt);
     const auto accent = recovery ? std::string("#027a48") : severityAccent(ctx.severity);
@@ -356,6 +363,77 @@ RenderedEmail renderWeeklyDigestEmail(const WeeklyDigestEmailContext& ctx) {
 
     return {
         .subject = "[Vaulthalla] Weekly digest: " + ctx.dashboardStatus,
+        .html = html.str(),
+        .text = text.str()
+    };
+}
+
+RenderedEmail renderSecurityAlertEmail(const SecurityAlertEmailContext& ctx) {
+    const auto occurredAt = formatUnixTime(ctx.occurredAt);
+    const auto accent = severityAccent(ctx.severity);
+    const auto title = securityActionTitle(ctx.action);
+    const auto roleLabel = ctx.roleName.empty()
+        ? std::string("role #") + std::to_string(ctx.roleId)
+        : ctx.roleName;
+
+    std::ostringstream html;
+    html
+        << "<!doctype html><html><body style=\"margin:0;background:#f5f7fb;color:#172033;"
+        << "font-family:Inter,Segoe UI,Arial,sans-serif;\">"
+        << "<div style=\"max-width:680px;margin:0 auto;padding:32px 20px;\">"
+        << "<div style=\"background:#ffffff;border:1px solid #d9e1ec;border-radius:8px;overflow:hidden;\">"
+        << "<div style=\"background:#172033;color:#ffffff;padding:20px 24px;border-top:5px solid "
+        << accent << ";\">"
+        << "<div style=\"font-size:13px;letter-spacing:0;text-transform:uppercase;color:#a7b5c8;\">"
+        << "Vaulthalla security alert</div>"
+        << "<h1 style=\"margin:8px 0 0;font-size:24px;line-height:1.25;\">"
+        << escapeHtml(title) << "</h1>"
+        << "</div>"
+        << "<div style=\"padding:24px;\">"
+        << "<p style=\"margin:0 0 18px;font-size:15px;line-height:1.6;\">"
+        << "An administrative role was " << escapeHtml(ctx.action)
+        << " on " << escapeHtml(ctx.instance) << ".</p>"
+        << "<table role=\"presentation\" style=\"width:100%;border-collapse:collapse;font-size:14px;\">";
+
+    appendMetricRow(html, "Instance", ctx.instance);
+    appendMetricRow(html, "Severity", ctx.severity);
+    appendMetricRow(html, "Occurred at", occurredAt);
+    appendMetricRow(html, "Action", ctx.action);
+    appendMetricRow(html, "Role", roleLabel);
+    appendMetricRow(html, "Role ID", std::to_string(ctx.roleId));
+    appendMetricRow(html, "Actor", ctx.actor);
+    appendMetricRow(html, "Source", ctx.source);
+    if (!ctx.roleDescription.empty())
+        appendMetricRow(html, "Description", ctx.roleDescription);
+    html << "</table>";
+
+    appendListHtml(html, "Permission flags", ctx.permissionFlags);
+
+    if (ctx.baseUrl)
+        html << "<p style=\"margin:22px 0 0;font-size:14px;line-height:1.6;\">"
+             << "<a href=\"" << escapeHtml(*ctx.baseUrl) << "\" style=\"color:#0b62b4;\">Open Vaulthalla</a>"
+             << "</p>";
+
+    html << "</div></div></div></body></html>";
+
+    std::ostringstream text;
+    text << "[Vaulthalla] Security alert: " << title << "\n\n"
+         << "An administrative role was " << ctx.action << " on " << ctx.instance << ".\n\n"
+         << "Instance: " << ctx.instance << "\n"
+         << "Severity: " << ctx.severity << "\n"
+         << "Occurred at: " << occurredAt << "\n"
+         << "Action: " << ctx.action << "\n"
+         << "Role: " << roleLabel << "\n"
+         << "Role ID: " << ctx.roleId << "\n"
+         << "Actor: " << ctx.actor << "\n"
+         << "Source: " << ctx.source << "\n";
+    if (!ctx.roleDescription.empty())
+        text << "Description: " << ctx.roleDescription << "\n";
+    appendListText(text, "Permission flags", ctx.permissionFlags);
+    if (ctx.baseUrl) text << "\nURL: " << *ctx.baseUrl << "\n";
+
+    return {
+        .subject = "[Vaulthalla] Security alert: admin role " + ctx.action,
         .html = html.str(),
         .text = text.str()
     };

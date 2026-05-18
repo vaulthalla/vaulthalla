@@ -1,8 +1,10 @@
 #include "config/Config.hpp"
 #include "config/config_yaml.hpp"
+#include "crypto/secrets/Manager.hpp"
 #include "email/Message.hpp"
 #include "email/Transport.hpp"
 #include "email/providers/ResendProvider.hpp"
+#include "email/providers/SesProvider.hpp"
 #include "email/templates/OperatorTemplates.hpp"
 #include "CommandUsage.hpp"
 #include "usage/include/UsageManager.hpp"
@@ -12,7 +14,11 @@
 #include <yaml-cpp/yaml.h>
 
 #include <algorithm>
+#include <ctime>
 #include <memory>
+#include <optional>
+#include <string_view>
+#include <vector>
 
 namespace {
 
@@ -31,6 +37,20 @@ vh::email::Message testMessage() {
 
 bool hasHeader(const vh::email::HttpRequest& request, const std::string& header) {
     return std::ranges::find(request.headers, header) != request.headers.end();
+}
+
+void expectRenderedEmail(
+    const vh::email::RenderedEmail& rendered,
+    const std::string_view subjectFragment,
+    const std::string_view htmlFragment,
+    const std::string_view textFragment
+) {
+    EXPECT_FALSE(rendered.subject.empty());
+    EXPECT_FALSE(rendered.html.empty());
+    EXPECT_FALSE(rendered.text.empty());
+    EXPECT_NE(rendered.subject.find(subjectFragment), std::string::npos);
+    EXPECT_NE(rendered.html.find(htmlFragment), std::string::npos);
+    EXPECT_NE(rendered.text.find(textFragment), std::string::npos);
 }
 
 }
@@ -117,6 +137,97 @@ TEST(OperatorEmailTemplateTest, RendersHtmlAndTextWithoutRawHtmlInjection) {
     EXPECT_FALSE(rendered.text.empty());
 }
 
+TEST(OperatorEmailTemplateTest, RendersRepresentativeWatchdogAlertAndRecovery) {
+    const vh::email::templates::WatchdogEmailContext alertCtx{
+        .instance = "prod<primary>",
+        .status = "critical",
+        .severity = "critical",
+        .fingerprint = "critical|services:fuse<mount>",
+        .checkedAt = 1'735'689'600,
+        .servicesReady = 5,
+        .servicesTotal = 7,
+        .depsReady = 8,
+        .depsTotal = 10,
+        .protocolsReady = 1,
+        .protocolsTotal = 2,
+        .failedServices = {"fuse<mount>", "sync controller"},
+        .missingDependencies = {"secrets manager"},
+        .protocolIssues = {"websocket endpoint is not ready"},
+        .baseUrl = "https://vault.example.com"
+    };
+
+    const auto alert = vh::email::templates::renderWatchdogAlertEmail(alertCtx);
+    expectRenderedEmail(alert, "Runtime critical", "prod&lt;primary&gt;", "fuse<mount>");
+    EXPECT_EQ(alert.html.find("prod<primary>"), std::string::npos);
+    EXPECT_NE(alert.html.find("fuse&lt;mount&gt;"), std::string::npos);
+
+    auto recoveryCtx = alertCtx;
+    recoveryCtx.status = "healthy";
+    recoveryCtx.severity = "info";
+    recoveryCtx.failedServices.clear();
+    recoveryCtx.missingDependencies.clear();
+    recoveryCtx.protocolIssues.clear();
+
+    const auto recovery = vh::email::templates::renderWatchdogRecoveryEmail(recoveryCtx);
+    expectRenderedEmail(recovery, "Runtime recovered", "Runtime recovered", "Runtime recovered");
+}
+
+TEST(OperatorEmailTemplateTest, RendersRepresentativeWeeklyDigestAndSecurityAlert) {
+    const vh::email::templates::WeeklyDigestEmailContext digestCtx{
+        .instance = "prod<primary>",
+        .weekStart = "2026-05-11",
+        .weekEnd = "2026-05-17",
+        .scheduledWeekday = "monday",
+        .scheduledHourUtc = 8,
+        .timezone = "UTC",
+        .checkedAt = 1'768'608'000,
+        .systemStatus = "warning",
+        .dashboardStatus = "warning",
+        .warningCount = 4,
+        .errorCount = 1,
+        .servicesReady = 12,
+        .servicesTotal = 13,
+        .depsReady = 9,
+        .depsTotal = 10,
+        .protocolsReady = 3,
+        .protocolsTotal = 3,
+        .dashboardAvailable = true,
+        .dashboardUnavailableReason = std::nullopt,
+        .sections = {
+            {.title = "Runtime", .severity = "warning", .summary = "One service restarted during the window.", .warningCount = 1, .errorCount = 0},
+            {.title = "Vaults", .severity = "healthy", .summary = "All vault sync loops are current.", .warningCount = 0, .errorCount = 0},
+            {.title = "Shares", .severity = "critical", .summary = "Expired challenge cleanup needs review.", .warningCount = 1, .errorCount = 1}
+        },
+        .attention = {
+            {.title = "Filesystem latency", .severity = "warning", .message = "p95 metadata latency crossed 250ms."},
+            {.title = "Share challenge backlog", .severity = "critical", .message = "Email challenge retries are elevated."}
+        },
+        .baseUrl = "https://vault.example.com"
+    };
+
+    const auto digest = vh::email::templates::renderWeeklyDigestEmail(digestCtx);
+    expectRenderedEmail(digest, "Weekly digest", "Share challenge backlog", "Share challenge backlog");
+
+    const vh::email::templates::SecurityAlertEmailContext securityCtx{
+        .instance = "prod<primary>",
+        .action = "updated",
+        .severity = "warning",
+        .occurredAt = 1'768'608'000,
+        .roleId = 42,
+        .roleName = "security<admin>",
+        .roleDescription = "Privileged role for incident response <review>",
+        .actor = "alice (user id 7)",
+        .source = "websocket",
+        .permissionFlags = {"admin.roles.edit", "admin.keys.view", "admin.audit.full"},
+        .baseUrl = "https://vault.example.com"
+    };
+
+    const auto security = vh::email::templates::renderSecurityAlertEmail(securityCtx);
+    expectRenderedEmail(security, "Security alert", "security&lt;admin&gt;", "security<admin>");
+    EXPECT_EQ(security.html.find("security<admin>"), std::string::npos);
+    EXPECT_NE(security.html.find("incident response &lt;review&gt;"), std::string::npos);
+}
+
 TEST(ResendProviderTest, SendsExpectedRequestThroughFakeTransport) {
     auto fake = std::make_unique<vh::email::FakeTransport>();
     fake->response = {.status = 202, .body = R"json({"id":"email_123"})json", .headers = ""};
@@ -166,4 +277,53 @@ TEST(ResendProviderTest, MissingSecretDoesNotCallTransport) {
     ASSERT_TRUE(result.errorSummary);
     EXPECT_EQ(*result.errorSummary, "missing Resend API key secret");
     EXPECT_TRUE(fakePtr->requests.empty());
+}
+
+TEST(SesProviderTest, SendsExpectedRequestThroughFakeTransport) {
+    auto fake = std::make_unique<vh::email::FakeTransport>();
+    fake->response = {.status = 200, .body = R"json({"MessageId":"ses-message-123"})json", .headers = ""};
+    auto* fakePtr = fake.get();
+
+    vh::email::providers::SesProvider provider(
+        {
+            .region = "us-east-1",
+            .endpoint = "https://email.us-east-1.amazonaws.test"
+        },
+        vh::crypto::secrets::Manager::createForTesting({
+            {vh::email::providers::SesProvider::kAccessKeySecret, "AKIA_UNIT_TEST"},
+            {vh::email::providers::SesProvider::kSecretKeySecret, "ses_unit_test_secret"}
+        }),
+        std::move(fake)
+    );
+
+    const auto result = provider.send(testMessage());
+
+    ASSERT_TRUE(result.ok);
+    ASSERT_TRUE(result.providerMessageId);
+    EXPECT_EQ(*result.providerMessageId, "ses-message-123");
+    ASSERT_EQ(fakePtr->requests.size(), 1u);
+
+    const auto& request = fakePtr->requests.front();
+    EXPECT_EQ(request.method, "POST");
+    EXPECT_EQ(request.url, "https://email.us-east-1.amazonaws.test/v2/email/outbound-emails");
+    EXPECT_TRUE(hasHeader(request, "Content-Type: application/json"));
+    EXPECT_TRUE(hasHeader(request, "Host: email.us-east-1.amazonaws.test"));
+    EXPECT_TRUE(std::ranges::any_of(request.headers, [](const std::string& header) {
+        return header.starts_with("X-Amz-Date: ");
+    }));
+    EXPECT_TRUE(std::ranges::any_of(request.headers, [](const std::string& header) {
+        return header.starts_with("X-Amz-Content-Sha256: ");
+    }));
+    EXPECT_TRUE(std::ranges::any_of(request.headers, [](const std::string& header) {
+        return header.starts_with("Authorization: AWS4-HMAC-SHA256 Credential=AKIA_UNIT_TEST/");
+    }));
+
+    const auto body = nlohmann::json::parse(request.body);
+    EXPECT_EQ(body["FromEmailAddress"], "Vaulthalla <ops@example.com>");
+    EXPECT_EQ(body["Destination"]["ToAddresses"][0], "admin@example.com");
+    EXPECT_EQ(body["ReplyToAddresses"][0], "reply@example.com");
+    EXPECT_EQ(body["Content"]["Simple"]["Subject"]["Data"], "[Vaulthalla] Test operator email");
+    EXPECT_EQ(body["Content"]["Simple"]["Body"]["Html"]["Data"], "<strong>Hello</strong>");
+    EXPECT_FALSE(request.body.contains("AKIA_UNIT_TEST"));
+    EXPECT_FALSE(request.body.contains("ses_unit_test_secret"));
 }

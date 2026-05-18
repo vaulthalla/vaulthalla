@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace vh::email::templates {
@@ -76,10 +77,25 @@ struct WeeklyDigestEmailContext {
     std::optional<std::string> baseUrl;
 };
 
+struct SecurityAlertEmailContext {
+    std::string instance;
+    std::string action;
+    std::string severity;
+    std::uint64_t occurredAt = 0;
+    std::uint32_t roleId = 0;
+    std::string roleName;
+    std::string roleDescription;
+    std::string actor;
+    std::string source;
+    std::vector<std::string> permissionFlags;
+    std::optional<std::string> baseUrl;
+};
+
 [[nodiscard]] std::string escapeHtml(std::string_view value);
 [[nodiscard]] RenderedEmail renderTestEmail(const TestEmailContext& ctx);
 [[nodiscard]] RenderedEmail renderWatchdogAlertEmail(const WatchdogEmailContext& ctx);
 [[nodiscard]] RenderedEmail renderWatchdogRecoveryEmail(const WatchdogEmailContext& ctx);
 [[nodiscard]] RenderedEmail renderWeeklyDigestEmail(const WeeklyDigestEmailContext& ctx);
+[[nodiscard]] RenderedEmail renderSecurityAlertEmail(const SecurityAlertEmailContext& ctx);
 
 }
