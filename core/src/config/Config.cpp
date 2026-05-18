@@ -68,45 +68,31 @@ namespace vh::config {
         const fs::path configFile = paths::getConfigPath();
         const fs::path templateFile = paths::getConfigPath().parent_path() / "config_template.yaml.in";
 
-        // Read in the static template with comments
-        ifstream templateIn(templateFile);
-        if (!templateIn.is_open()) throw runtime_error("Failed to open config template file");
+        YAML::Node root;
+        if (fs::exists(configFile)) root = YAML::LoadFile(configFile.string());
+        else if (fs::exists(templateFile)) root = YAML::LoadFile(templateFile.string());
+        else root = YAML::Node(YAML::NodeType::Map);
 
-        stringstream buffer;
-        buffer << templateIn.rdbuf();
-        string templateContent = buffer.str();
+        if (!root || !root.IsMap()) root = YAML::Node(YAML::NodeType::Map);
 
-        // Convert each section to YAML
-        const auto encode = []<typename T>(const T &section) -> std::string {
-            YAML::Emitter out;
-            out << YAML::convert<T>::encode(section);
-            return {out.c_str()};
+        const auto put = [&root]<typename T>(const std::string& key, const T& section) {
+            root[key] = YAML::convert<T>::encode(section);
         };
 
-        unordered_map<string, string> sectionMap = {
-            {"websocket_server", encode(websocket)},
-            {"http_preview_server", encode(http_preview)},
-            {"caching", encode(caching)},
-            {"database", encode(database)},
-            {"auth", encode(auth)},
-            {"sync", encode(sync)},
-            {"services", encode(services)},
-            {"stats_snapshots", encode(stats_snapshots)},
-            {"sharing", encode(sharing)},
-            {"email", encode(email)},
-            {"operator_emails", encode(operator_emails)},
-            {"auditing", encode(auditing)},
-            {"dev", encode(dev)}
-        };
-
-        // Replace section stubs
-        for (const auto &[key, yaml]: sectionMap) {
-            string searchKey = key + ": {}";
-            string replacement = key + ":\n" + string(yaml);
-            if (const auto &pos = templateContent.find(searchKey) != string::npos)
-                templateContent.replace(
-                    pos, searchKey.length(), replacement);
-        }
+        put("websocket_server", websocket);
+        put("http_preview_server", http_preview);
+        put("database", database);
+        put("auth", auth);
+        put("sync", sync);
+        put("services", services);
+        put("stats_snapshots", stats_snapshots);
+        put("sharing", sharing);
+        put("email", email);
+        put("operator_emails", operator_emails);
+        put("caching", caching);
+        put("auditing", auditing);
+        put("logging", logging);
+        put("dev", dev);
 
         // Write the final result
         ofstream out(configFile);
@@ -114,7 +100,9 @@ namespace vh::config {
             throw runtime_error("Failed to write config file");
         }
 
-        out << templateContent;
+        YAML::Emitter emitted;
+        emitted << root;
+        out << emitted.c_str() << '\n';
         out.close();
     }
 
@@ -132,6 +120,7 @@ namespace vh::config {
             {"email", c.email},
             {"operator_emails", c.operator_emails},
             {"auditing", c.auditing},
+            {"logging", c.logging},
             {"dev", c.dev}
         };
     }
@@ -149,6 +138,7 @@ namespace vh::config {
         if (j.contains("email")) j.at("email").get_to(c.email);
         if (j.contains("operator_emails")) j.at("operator_emails").get_to(c.operator_emails);
         j.at("auditing").get_to(c.auditing);
+        if (j.contains("logging")) j.at("logging").get_to(c.logging);
         j.at("dev").get_to(c.dev);
     }
 
