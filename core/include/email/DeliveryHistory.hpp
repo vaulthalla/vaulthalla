@@ -50,6 +50,12 @@ struct DeliveryHistory {
     static std::uint64_t record(const DeliveryRecordInput& input);
     static std::vector<DeliveryRecord> recent(std::uint32_t limit = 100);
     static std::optional<DeliveryRecord> latestFor(const std::string& eventKey, const std::string& fingerprint);
+    static std::optional<DeliveryRecord> latestForStatus(
+        const std::string& eventKey,
+        const std::string& fingerprint,
+        const std::string& status
+    );
+    static std::optional<DeliveryRecord> latestForEventStatus(const std::string& eventKey, const std::string& status);
 };
 
 }

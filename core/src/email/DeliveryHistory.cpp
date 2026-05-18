@@ -101,4 +101,35 @@ std::optional<DeliveryRecord> DeliveryHistory::latestFor(const std::string& even
     });
 }
 
+std::optional<DeliveryRecord> DeliveryHistory::latestForStatus(
+    const std::string& eventKey,
+    const std::string& fingerprint,
+    const std::string& status
+) {
+    if (eventKey.empty() || fingerprint.empty() || status.empty()) return std::nullopt;
+    return db::Transactions::exec("email::DeliveryHistory::latestForStatus", [&](pqxx::work& txn) -> std::optional<DeliveryRecord> {
+        const auto rows = txn.exec(
+            pqxx::prepped{"operator_notification_delivery.latest_for_status"},
+            pqxx::params{eventKey, fingerprint, status}
+        );
+        if (rows.empty()) return std::nullopt;
+        return DeliveryRecord(rows.one_row());
+    });
+}
+
+std::optional<DeliveryRecord> DeliveryHistory::latestForEventStatus(
+    const std::string& eventKey,
+    const std::string& status
+) {
+    if (eventKey.empty() || status.empty()) return std::nullopt;
+    return db::Transactions::exec("email::DeliveryHistory::latestForEventStatus", [&](pqxx::work& txn) -> std::optional<DeliveryRecord> {
+        const auto rows = txn.exec(
+            pqxx::prepped{"operator_notification_delivery.latest_for_event_status"},
+            pqxx::params{eventKey, status}
+        );
+        if (rows.empty()) return std::nullopt;
+        return DeliveryRecord(rows.one_row());
+    });
+}
+
 }

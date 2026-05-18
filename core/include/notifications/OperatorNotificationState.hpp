@@ -5,12 +5,34 @@
 #include "notifications/OperatorNotification.hpp"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
 namespace vh::notifications {
 
+struct OperatorNotificationPolicy {
+    std::uint32_t dedupeWindowMinutes = 60;
+    std::uint32_t repeatAfterHours = 24;
+    bool sendRecovery = true;
+};
+
+struct OperatorNotificationDecision {
+    bool send = false;
+    std::string reason;
+    bool recordSuppression = true;
+};
+
 struct OperatorNotificationState {
+    [[nodiscard]] static OperatorNotificationDecision shouldSend(
+        const OperatorNotification& notification,
+        const OperatorNotificationPolicy& policy
+    );
+    [[nodiscard]] static std::optional<email::DeliveryRecord> recoveryCandidate(
+        const std::string& alertEventKey,
+        const std::string& recoveryEventKey
+    );
+
     static void recordDryRun(
         const OperatorNotification& notification,
         const std::string& provider,

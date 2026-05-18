@@ -52,4 +52,23 @@ void vh::db::Connection::initPreparedOperatorNotificationDelivery() const {
         ORDER BY created_at DESC
         LIMIT 1
     )SQL");
+
+    conn_->prepare("operator_notification_delivery.latest_for_status", R"SQL(
+        SELECT *
+        FROM operator_notification_delivery
+        WHERE event_key = $1
+          AND fingerprint = $2
+          AND status = $3
+        ORDER BY created_at DESC
+        LIMIT 1
+    )SQL");
+
+    conn_->prepare("operator_notification_delivery.latest_for_event_status", R"SQL(
+        SELECT *
+        FROM operator_notification_delivery
+        WHERE event_key = $1
+          AND status = $2
+        ORDER BY created_at DESC
+        LIMIT 1
+    )SQL");
 }
