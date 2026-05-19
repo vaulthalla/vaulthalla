@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from tools.release.changelog.context_builder import build_release_context
@@ -10,7 +11,7 @@ from tools.release.version.models import Version
 
 
 class ContextBuilderTests(unittest.TestCase):
-    def test_same_version_tag_with_ahead_head_adds_warning(self) -> None:
+    def test_current_non_patch_release_tag_defaults_to_previous_lower_release(self) -> None:
         commits = [
             CommitInfo(
                 sha="6cf9a156eae61fd9ba2c2204ee9c73c2832bd14b",
@@ -25,11 +26,11 @@ class ContextBuilderTests(unittest.TestCase):
 
         with (
             patch("tools.release.changelog.context_builder.get_latest_tag", return_value="v0.30.0"),
+            patch("tools.release.changelog.context_builder.get_previous_release_tag_before", return_value="v0.29.4") as lower_before,
             patch(
                 "tools.release.changelog.context_builder.get_head_sha",
                 return_value="6cf9a156eae61fd9ba2c2204ee9c73c2832bd14b",
             ),
-            patch("tools.release.changelog.context_builder.get_previous_release_tag_before") as lower_before_base,
             patch("tools.release.changelog.context_builder.get_commits_since_tag", return_value=commits),
             patch(
                 "tools.release.changelog.context_builder.get_release_file_stats",
@@ -40,10 +41,25 @@ class ContextBuilderTests(unittest.TestCase):
             context = build_release_context(version="0.30.0", repo_root=".")
 
         self.assertEqual(context.commit_count, 1)
-        self.assertEqual(context.previous_tag, "v0.30.0")
-        lower_before_base.assert_not_called()
+        self.assertEqual(context.previous_tag, "v0.29.4")
+        lower_before.assert_called_once_with(Path(".").resolve(), Version(0, 30, 0))
         self.assertTrue(context.cross_cutting_notes)
-        self.assertIn("Release tag already exists for this version", context.cross_cutting_notes[0])
+        self.assertIn("Current release tag was skipped", context.cross_cutting_notes[0])
+
+    def test_current_non_patch_release_tag_with_no_lower_release_defaults_to_none(self) -> None:
+        with (
+            patch("tools.release.changelog.context_builder.get_latest_tag", return_value="v1.0.0"),
+            patch("tools.release.changelog.context_builder.get_previous_release_tag_before", return_value=None),
+            patch("tools.release.changelog.context_builder.get_head_sha", return_value="abc123"),
+            patch("tools.release.changelog.context_builder.get_commits_since_tag", return_value=[]),
+            patch("tools.release.changelog.context_builder.get_release_file_stats", return_value={}),
+            patch("tools.release.changelog.context_builder.extract_relevant_snippets", return_value={}),
+        ):
+            context = build_release_context(version="1.0.0", repo_root=".")
+
+        self.assertIsNone(context.previous_tag)
+        self.assertTrue(context.cross_cutting_notes)
+        self.assertIn("using previous tag `none`", context.cross_cutting_notes[0])
 
     def test_patch_release_defaults_to_previous_release_before_line_base(self) -> None:
         with (
@@ -57,10 +73,10 @@ class ContextBuilderTests(unittest.TestCase):
             context = build_release_context(version="0.34.4", repo_root=".")
         self.assertEqual(context.previous_tag, "v0.33.0")
 
-    def test_non_patch_release_defaults_to_latest_tag(self) -> None:
+    def test_non_patch_release_defaults_to_previous_lower_release_tag(self) -> None:
         with (
             patch("tools.release.changelog.context_builder.get_latest_tag", return_value="v0.33.9"),
-            patch("tools.release.changelog.context_builder.get_previous_release_tag_before") as lower_before_base,
+            patch("tools.release.changelog.context_builder.get_previous_release_tag_before", return_value="v0.33.9") as lower_before_base,
             patch("tools.release.changelog.context_builder.get_head_sha", return_value="abc123"),
             patch("tools.release.changelog.context_builder.get_commits_since_tag", return_value=[]),
             patch("tools.release.changelog.context_builder.get_release_file_stats", return_value={}),
@@ -68,7 +84,8 @@ class ContextBuilderTests(unittest.TestCase):
         ):
             context = build_release_context(version="0.34.0", repo_root=".")
         self.assertEqual(context.previous_tag, "v0.33.9")
-        lower_before_base.assert_not_called()
+        lower_before_base.assert_called_once_with(Path(".").resolve(), Version(0, 34, 0))
+        self.assertFalse(context.cross_cutting_notes)
 
     def test_explicit_since_tag_override_bypasses_default_resolution(self) -> None:
         with (

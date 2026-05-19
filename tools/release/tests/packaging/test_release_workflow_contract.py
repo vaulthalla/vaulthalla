@@ -23,6 +23,11 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         self.assertIn("RELEASE_DEBIAN_DISTRIBUTION", workflow)
         self.assertIn("RELEASE_DEBIAN_URGENCY", workflow)
 
+    def test_release_workflow_checkout_fetches_full_history_for_changelog_tags(self) -> None:
+        workflow = self._workflow()
+        self.assertIn("uses: actions/checkout@v4", workflow)
+        self.assertIn("fetch-depth: 0", workflow)
+
     def test_github_release_assets_are_prepared_via_deduped_manifest_step(self) -> None:
         workflow = self._workflow()
         self.assertIn("Prepare GitHub release asset list (deduped)", workflow)

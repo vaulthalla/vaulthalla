@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 
 from tools.release.changelog.categorize import (
@@ -23,16 +24,23 @@ from tools.release.changelog.snippets import extract_relevant_snippets
 from tools.release.version.models import Version
 
 
+@dataclass(frozen=True)
+class _ResolvedPreviousTag:
+    previous_tag: str | None
+    skipped_current_release_tag: bool = False
+
+
 def build_release_context(
     version: str,
     repo_root: Path | str = ".",
     previous_tag: str | None = None,
 ) -> ReleaseContext:
     repo_root = Path(repo_root).resolve()
-    previous_tag = previous_tag if previous_tag is not None else _resolve_default_previous_tag(
-        repo_root,
-        version,
-    )
+    skipped_current_release_tag = False
+    if previous_tag is None:
+        resolved_previous_tag = _resolve_default_previous_tag_result(repo_root, version)
+        previous_tag = resolved_previous_tag.previous_tag
+        skipped_current_release_tag = resolved_previous_tag.skipped_current_release_tag
     head_sha = get_head_sha(repo_root)
 
     commits = get_commits_since_tag(repo_root, previous_tag)
@@ -70,6 +78,12 @@ def build_release_context(
         cross_cutting_notes.append(
             "Release tag already exists for this version while HEAD is ahead; bump VERSION or pass --since-tag explicitly."
         )
+    if skipped_current_release_tag:
+        resolved_label = previous_tag or "none"
+        cross_cutting_notes.append(
+            "Current release tag was skipped as the changelog checkpoint; "
+            f"using previous tag `{resolved_label}` for release evidence."
+        )
 
     return ReleaseContext(
         version=version,
@@ -84,16 +98,39 @@ def build_release_context(
 
 
 def _resolve_default_previous_tag(repo_root: Path, version: str) -> str | None:
+    return _resolve_default_previous_tag_result(repo_root, version).previous_tag
+
+
+def _resolve_default_previous_tag_result(repo_root: Path, version: str) -> _ResolvedPreviousTag:
     latest_tag = get_latest_tag(repo_root)
     try:
         parsed_version = Version.parse(version)
     except ValueError:
-        return latest_tag
+        return _ResolvedPreviousTag(previous_tag=latest_tag)
+    skipped_current_release_tag = _is_current_release_tag(latest_tag, parsed_version)
     if parsed_version.patch <= 0:
-        return latest_tag
+        return _ResolvedPreviousTag(
+            previous_tag=get_previous_release_tag_before(repo_root, parsed_version),
+            skipped_current_release_tag=skipped_current_release_tag,
+        )
     line_base = Version(parsed_version.major, parsed_version.minor, 0)
     lower_release_tag = get_previous_release_tag_before(repo_root, line_base)
-    return lower_release_tag or latest_tag
+    candidate = lower_release_tag or latest_tag
+    if _is_current_release_tag(candidate, parsed_version):
+        candidate = get_previous_release_tag_before(repo_root, parsed_version)
+    return _ResolvedPreviousTag(
+        previous_tag=candidate,
+        skipped_current_release_tag=skipped_current_release_tag,
+    )
+
+
+def _is_current_release_tag(tag: str | None, version: Version) -> bool:
+    if tag is None:
+        return False
+    normalized = tag.strip()
+    if normalized.startswith("v"):
+        normalized = normalized[1:]
+    return normalized == str(version)
 
 
 def get_file_commit_counts(commits: list[CommitInfo]) -> dict[str, int]:
