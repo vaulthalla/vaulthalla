@@ -10,6 +10,7 @@ class Registry {
 public:
     static void init();
     static const Config& get();
+    static void set(const Config& config);
 
 private:
     static void ensureInitialized();

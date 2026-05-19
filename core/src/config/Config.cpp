@@ -4,6 +4,7 @@
 
 #include <cstdlib>
 #include <algorithm>
+#include <cctype>
 #include <yaml-cpp/yaml.h>
 #include <fstream>
 #include <sstream>
@@ -14,6 +15,27 @@ namespace vh::config {
     template<typename T>
     T getOrDefault(const YAML::Node &node, const std::string &key, const T &def) {
         return node[key] ? node[key].as<T>() : def;
+    }
+
+    std::string emailProviderKindToString(const EmailProviderKind kind) {
+        switch (kind) {
+            case EmailProviderKind::None: return "none";
+            case EmailProviderKind::Resend: return "resend";
+            case EmailProviderKind::Ses: return "ses";
+        }
+        return "none";
+    }
+
+    EmailProviderKind emailProviderKindFromString(std::string_view value) {
+        std::string normalized(value);
+        std::ranges::transform(normalized, normalized.begin(), [](const unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+
+        if (normalized.empty() || normalized == "none") return EmailProviderKind::None;
+        if (normalized == "resend") return EmailProviderKind::Resend;
+        if (normalized == "ses") return EmailProviderKind::Ses;
+        throw std::invalid_argument("unknown email provider: " + normalized);
     }
 
     Config loadConfig(const std::string &path) {
@@ -29,6 +51,8 @@ namespace vh::config {
         if (auto node = root["services"]) YAML::convert<ServicesConfig>::decode(node, cfg.services);
         if (auto node = root["stats_snapshots"]) YAML::convert<StatsSnapshotsConfig>::decode(node, cfg.stats_snapshots);
         if (auto node = root["sharing"]) YAML::convert<SharingConfig>::decode(node, cfg.sharing);
+        if (auto node = root["email"]) YAML::convert<EmailConfig>::decode(node, cfg.email);
+        if (auto node = root["operator_emails"]) YAML::convert<OperatorEmailsConfig>::decode(node, cfg.operator_emails);
         if (auto node = root["auditing"]) YAML::convert<AuditConfig>::decode(node, cfg.auditing);
         if (auto node = root["dev"]) YAML::convert<DevConfig>::decode(node, cfg.dev);
 
@@ -44,43 +68,31 @@ namespace vh::config {
         const fs::path configFile = paths::getConfigPath();
         const fs::path templateFile = paths::getConfigPath().parent_path() / "config_template.yaml.in";
 
-        // Read in the static template with comments
-        ifstream templateIn(templateFile);
-        if (!templateIn.is_open()) throw runtime_error("Failed to open config template file");
+        YAML::Node root;
+        if (fs::exists(configFile)) root = YAML::LoadFile(configFile.string());
+        else if (fs::exists(templateFile)) root = YAML::LoadFile(templateFile.string());
+        else root = YAML::Node(YAML::NodeType::Map);
 
-        stringstream buffer;
-        buffer << templateIn.rdbuf();
-        string templateContent = buffer.str();
+        if (!root || !root.IsMap()) root = YAML::Node(YAML::NodeType::Map);
 
-        // Convert each section to YAML
-        const auto encode = []<typename T>(const T &section) -> std::string {
-            YAML::Emitter out;
-            out << YAML::convert<T>::encode(section);
-            return {out.c_str()};
+        const auto put = [&root]<typename T>(const std::string& key, const T& section) {
+            root[key] = YAML::convert<T>::encode(section);
         };
 
-        unordered_map<string, string> sectionMap = {
-            {"websocket_server", encode(websocket)},
-            {"http_preview_server", encode(http_preview)},
-            {"caching", encode(caching)},
-            {"database", encode(database)},
-            {"auth", encode(auth)},
-            {"sync", encode(sync)},
-            {"services", encode(services)},
-            {"stats_snapshots", encode(stats_snapshots)},
-            {"sharing", encode(sharing)},
-            {"auditing", encode(auditing)},
-            {"dev", encode(dev)}
-        };
-
-        // Replace section stubs
-        for (const auto &[key, yaml]: sectionMap) {
-            string searchKey = key + ": {}";
-            string replacement = key + ":\n" + string(yaml);
-            if (const auto &pos = templateContent.find(searchKey) != string::npos)
-                templateContent.replace(
-                    pos, searchKey.length(), replacement);
-        }
+        put("websocket_server", websocket);
+        put("http_preview_server", http_preview);
+        put("database", database);
+        put("auth", auth);
+        put("sync", sync);
+        put("services", services);
+        put("stats_snapshots", stats_snapshots);
+        put("sharing", sharing);
+        put("email", email);
+        put("operator_emails", operator_emails);
+        put("caching", caching);
+        put("auditing", auditing);
+        put("logging", logging);
+        put("dev", dev);
 
         // Write the final result
         ofstream out(configFile);
@@ -88,7 +100,9 @@ namespace vh::config {
             throw runtime_error("Failed to write config file");
         }
 
-        out << templateContent;
+        YAML::Emitter emitted;
+        emitted << root;
+        out << emitted.c_str() << '\n';
         out.close();
     }
 
@@ -103,7 +117,10 @@ namespace vh::config {
             {"services", c.services},
             {"stats_snapshots", c.stats_snapshots},
             {"sharing", c.sharing},
+            {"email", c.email},
+            {"operator_emails", c.operator_emails},
             {"auditing", c.auditing},
+            {"logging", c.logging},
             {"dev", c.dev}
         };
     }
@@ -118,7 +135,10 @@ namespace vh::config {
         j.at("services").get_to(c.services);
         if (j.contains("stats_snapshots")) j.at("stats_snapshots").get_to(c.stats_snapshots);
         j.at("sharing").get_to(c.sharing);
+        if (j.contains("email")) j.at("email").get_to(c.email);
+        if (j.contains("operator_emails")) j.at("operator_emails").get_to(c.operator_emails);
         j.at("auditing").get_to(c.auditing);
+        if (j.contains("logging")) j.at("logging").get_to(c.logging);
         j.at("dev").get_to(c.dev);
     }
 
@@ -349,6 +369,142 @@ namespace vh::config {
     void from_json(const nlohmann::json &j, SharingConfig &c) {
         c.enabled = j.value("enabled", true);
         c.enable_public_links = j.value("enable_public_links", true);
+    }
+
+    void to_json(nlohmann::json &j, const ResendEmailConfig &c) {
+        j = {
+            {"endpoint", c.endpoint}
+        };
+    }
+
+    void from_json(const nlohmann::json &j, ResendEmailConfig &c) {
+        c.endpoint = j.value("endpoint", "https://api.resend.com/emails");
+    }
+
+    void to_json(nlohmann::json &j, const SesEmailConfig &c) {
+        j = {
+            {"region", c.region},
+            {"endpoint", c.endpoint ? nlohmann::json(*c.endpoint) : nlohmann::json(nullptr)}
+        };
+    }
+
+    void from_json(const nlohmann::json &j, SesEmailConfig &c) {
+        c.region = j.value("region", "us-east-1");
+        if (j.contains("endpoint") && !j.at("endpoint").is_null())
+            c.endpoint = j.at("endpoint").get<std::string>();
+        else
+            c.endpoint.reset();
+    }
+
+    void to_json(nlohmann::json &j, const EmailConfig &c) {
+        j = {
+            {"enabled", c.enabled},
+            {"provider", emailProviderKindToString(c.provider)},
+            {"from", c.from},
+            {"reply_to", c.reply_to ? nlohmann::json(*c.reply_to) : nlohmann::json(nullptr)},
+            {"base_url", c.base_url ? nlohmann::json(*c.base_url) : nlohmann::json(nullptr)},
+            {"resend", c.resend},
+            {"ses", c.ses}
+        };
+    }
+
+    void from_json(const nlohmann::json &j, EmailConfig &c) {
+        c.enabled = j.value("enabled", false);
+        c.provider = emailProviderKindFromString(j.value("provider", "none"));
+        c.from = j.value("from", "Vaulthalla <ops@example.com>");
+
+        if (j.contains("reply_to") && !j.at("reply_to").is_null())
+            c.reply_to = j.at("reply_to").get<std::string>();
+        else
+            c.reply_to.reset();
+
+        if (j.contains("base_url") && !j.at("base_url").is_null())
+            c.base_url = j.at("base_url").get<std::string>();
+        else
+            c.base_url.reset();
+
+        if (j.contains("resend")) j.at("resend").get_to(c.resend);
+        if (j.contains("ses")) j.at("ses").get_to(c.ses);
+    }
+
+    void to_json(nlohmann::json &j, const OperatorEmailRecipientsConfig &c) {
+        j = {
+            {"alerts", c.alerts},
+            {"weekly", c.weekly},
+            {"security", c.security}
+        };
+    }
+
+    void from_json(const nlohmann::json &j, OperatorEmailRecipientsConfig &c) {
+        c.alerts = j.value("alerts", std::vector<std::string>{});
+        c.weekly = j.value("weekly", std::vector<std::string>{});
+        c.security = j.value("security", std::vector<std::string>{});
+    }
+
+    void to_json(nlohmann::json &j, const OperatorEmailAlertingConfig &c) {
+        j = {
+            {"enabled", c.enabled},
+            {"min_severity", c.min_severity},
+            {"dedupe_window_minutes", c.dedupe_window_minutes},
+            {"repeat_after_hours", c.repeat_after_hours},
+            {"send_recovery", c.send_recovery},
+            {"health_poll_seconds", c.health_poll_seconds}
+        };
+    }
+
+    void from_json(const nlohmann::json &j, OperatorEmailAlertingConfig &c) {
+        c.enabled = j.value("enabled", true);
+        c.min_severity = j.value("min_severity", "warning");
+        c.dedupe_window_minutes = std::max(1u, j.value("dedupe_window_minutes", 60u));
+        c.repeat_after_hours = std::max(1u, j.value("repeat_after_hours", 24u));
+        c.send_recovery = j.value("send_recovery", true);
+        c.health_poll_seconds = std::max(15u, j.value("health_poll_seconds", 60u));
+    }
+
+    void to_json(nlohmann::json &j, const OperatorEmailDigestConfig &c) {
+        j = {
+            {"enabled", c.enabled},
+            {"weekday", c.weekday},
+            {"hour_local", c.hour_local},
+            {"timezone", c.timezone}
+        };
+    }
+
+    void from_json(const nlohmann::json &j, OperatorEmailDigestConfig &c) {
+        c.enabled = j.value("enabled", true);
+        c.weekday = j.value("weekday", "monday");
+        c.hour_local = std::min(23u, j.value("hour_local", 8u));
+        c.timezone = j.value("timezone", "UTC");
+    }
+
+    void to_json(nlohmann::json &j, const OperatorEmailSecurityAlertsConfig &c) {
+        j = {
+            {"enabled", c.enabled},
+            {"admin_role_changes", c.admin_role_changes}
+        };
+    }
+
+    void from_json(const nlohmann::json &j, OperatorEmailSecurityAlertsConfig &c) {
+        c.enabled = j.value("enabled", true);
+        c.admin_role_changes = j.value("admin_role_changes", true);
+    }
+
+    void to_json(nlohmann::json &j, const OperatorEmailsConfig &c) {
+        j = {
+            {"enabled", c.enabled},
+            {"recipients", c.recipients},
+            {"alerting", c.alerting},
+            {"weekly_digest", c.weekly_digest},
+            {"security_alerts", c.security_alerts}
+        };
+    }
+
+    void from_json(const nlohmann::json &j, OperatorEmailsConfig &c) {
+        c.enabled = j.value("enabled", true);
+        if (j.contains("recipients")) j.at("recipients").get_to(c.recipients);
+        if (j.contains("alerting")) j.at("alerting").get_to(c.alerting);
+        if (j.contains("weekly_digest")) j.at("weekly_digest").get_to(c.weekly_digest);
+        if (j.contains("security_alerts")) j.at("security_alerts").get_to(c.security_alerts);
     }
 
     void to_json(nlohmann::json &j, const AuditLogConfig &c) {

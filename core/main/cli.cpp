@@ -1,6 +1,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/wait.h>
+#include <termios.h>
 #include <unistd.h>
 #include <cstdint>
 #include <string>
@@ -170,6 +171,27 @@ static bool is_interactive_allowed(const std::vector<std::string>& argv_norm) {
 static std::string read_line_from_stdin() {
     std::string line;
     std::getline(std::cin, line);
+    return line;
+}
+
+static std::string read_secret_line_from_stdin() {
+    termios oldTerm{};
+    const bool haveTerm = ::tcgetattr(STDIN_FILENO, &oldTerm) == 0;
+    termios newTerm = oldTerm;
+
+    if (haveTerm) {
+        newTerm.c_lflag &= static_cast<tcflag_t>(~ECHO);
+        (void)::tcsetattr(STDIN_FILENO, TCSAFLUSH, &newTerm);
+    }
+
+    std::string line;
+    std::getline(std::cin, line);
+
+    if (haveTerm) {
+        (void)::tcsetattr(STDIN_FILENO, TCSAFLUSH, &oldTerm);
+        fmt::print("\n");
+    }
+
     return line;
 }
 
@@ -405,7 +427,7 @@ int main(const int argc, char** argv) {
         }
 
         if (type == "prompt") {
-            // {type:"prompt", style:"confirm"|"input", id:"...", text:"...", default:"yes"|"no"|""}
+            // {type:"prompt", style:"confirm"|"input"|"secret", id:"...", text:"...", default:"yes"|"no"|""}
             const auto id     = frame.value("id", std::string{});
             const auto style  = frame.value("style", std::string{"input"});
             const auto text   = frame.value("text", std::string{});
@@ -428,7 +450,9 @@ int main(const int argc, char** argv) {
             }
 
             // Read one line from user
-            std::string value = read_line_from_stdin();
+            std::string value = style == "secret"
+                ? read_secret_line_from_stdin()
+                : read_line_from_stdin();
             if (value.empty()) value = defval; // honor default on empty submit
 
             // Send response frame

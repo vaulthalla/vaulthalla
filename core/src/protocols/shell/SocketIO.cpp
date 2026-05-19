@@ -78,3 +78,20 @@ std::string SocketIO::prompt(const std::string_view promptIn, const std::string_
 
 bool SocketIO::confirm(const std::string_view promptIn) { return confirm(promptIn, true); }
 std::string SocketIO::prompt(const std::string_view promptIn) { return prompt(promptIn, ""); }
+
+std::string SocketIO::promptSecret(const std::string_view promptIn) {
+    auto id = next_id();
+    send_json(fd_, {
+        {"type", "prompt"},
+        {"style", "secret"},
+        {"id", id},
+        {"text", std::string{promptIn}},
+        {"default", ""}
+    });
+
+    while (true) {
+        auto j = recv_json(fd_);
+        if (j["type"] == "input" && j["id"] == id)
+            return j.value("value", std::string{});
+    }
+}

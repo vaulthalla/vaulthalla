@@ -27,6 +27,7 @@ UsageManager::UsageManager() {
     registerBook(user::get(root_->weak_from_this()));
     registerBook(group::get(root_->weak_from_this()));
     registerBook(secrets::get(root_->weak_from_this()));
+    registerBook(email::get(root_->weak_from_this()));
     registerBook(aku::get(root_->weak_from_this()));
     registerBook(role::get(root_->weak_from_this()));
     registerBook(permissions::get(root_->weak_from_this()));

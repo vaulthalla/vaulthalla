@@ -4,6 +4,7 @@
 #include "protocols/ws/handler/fs/Storage.hpp"
 #include "protocols/ws/handler/rbac/Permissions.hpp"
 #include "protocols/ws/handler/Settings.hpp"
+#include "protocols/ws/handler/Email.hpp"
 #include "protocols/ws/handler/Groups.hpp"
 #include "protocols/ws/handler/Stats.hpp"
 #include "protocols/ws/handler/dashboard/Preferences.hpp"
@@ -29,6 +30,7 @@ void Handler::registerAllHandlers(const std::shared_ptr<Router>& r) {
     registerRoleHandlers(r);
     registerPermissionsHandlers(r);
     registerSettingsHandlers(r);
+    registerEmailHandlers(r);
     registerGroupHandlers(r);
     registerStatHandlers(r);
     registerDashboardPreferenceHandlers(r);
@@ -119,6 +121,14 @@ void Handler::registerPermissionsHandlers(const std::shared_ptr<Router>& r) {
 void Handler::registerSettingsHandlers(const std::shared_ptr<Router>& r) {
     r->registerSessionOnlyHandler("settings.get", &handler::Settings::get);
     r->registerPayload("settings.update", &handler::Settings::update);
+}
+
+void Handler::registerEmailHandlers(const std::shared_ptr<Router>& r) {
+    r->registerSessionOnlyHandler("email.config.get", &handler::Email::config);
+    r->registerPayload("email.config.update", &handler::Email::updateConfig);
+    r->registerPayload("email.provider.secret.set", &handler::Email::setProviderSecret);
+    r->registerPayload("email.test.send", &handler::Email::testSend);
+    r->registerPayload("email.history", &handler::Email::history);
 }
 
 void Handler::registerGroupHandlers(const std::shared_ptr<Router>& r) {

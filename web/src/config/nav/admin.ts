@@ -9,6 +9,7 @@ import ShieldKeyhole from '@/fa-duotone/shield-keyhole.svg'
 import UserShield from '@/fa-duotone/user-shield.svg'
 import VaultShield from '@/fa-duotone/file-shield.svg'
 import ShareNodes from '@/fa-duotone/share-nodes.svg'
+import Envelope from '@/fa-duotone/envelope.svg'
 
 export const adminNavItems: NavItem[] = [
   {
@@ -19,6 +20,7 @@ export const adminNavItems: NavItem[] = [
   },
   { label: 'Vaults', href: '/vaults', icon: Vault },
   { label: 'Shares', href: '/shares', icon: ShareNodes },
+  { label: 'Operator Email', href: '/operator-email', icon: Envelope },
   { label: 'API Keys', href: '/api-keys', icon: KeySkeleton },
   { label: 'Users', href: '/users', icon: UserGroup },
   {

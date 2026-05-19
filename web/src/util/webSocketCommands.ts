@@ -48,6 +48,14 @@ import {
   ShareUploadFinishResponse,
   ShareUploadStartResponse,
 } from '@/models/linkShare'
+import {
+  OperatorEmailConfigPatch,
+  OperatorEmailConfigResponse,
+  OperatorEmailHistoryRecord,
+  OperatorEmailSecretPayload,
+  OperatorEmailTestPayload,
+  OperatorEmailTestResponse,
+} from '@/models/operatorEmail'
 
 export interface WebSocketCommandMap {
   // Auth
@@ -153,6 +161,17 @@ export interface WebSocketCommandMap {
   'settings.get': { payload: null; response: { settings: Settings } }
 
   'settings.update': { payload: Partial<Settings>; response: { settings: Settings } }
+
+  // Operator email administration
+  'email.config.get': { payload: null; response: OperatorEmailConfigResponse }
+
+  'email.config.update': { payload: OperatorEmailConfigPatch; response: OperatorEmailConfigResponse }
+
+  'email.provider.secret.set': { payload: OperatorEmailSecretPayload; response: { secrets: OperatorEmailConfigResponse['secrets'] } }
+
+  'email.test.send': { payload: OperatorEmailTestPayload; response: OperatorEmailTestResponse }
+
+  'email.history': { payload: { limit?: number } | null; response: { history: OperatorEmailHistoryRecord[] } }
 
   // Dashboard preferences
 

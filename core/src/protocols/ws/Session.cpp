@@ -189,8 +189,19 @@ void Session::hydrateFromRequest(const RequestType& req) {
 
     if (user) log::Registry::ws()->debug("[ws::Session] Session hydrated with user: {} (ID: {})", user->name, user->id);
     else {
-        log::Registry::ws()->debug("[ws::Session] No user associated with session after hydration");
-        if (!tokens->refreshToken->isValid()) exit(1); // this should never happen, but if it does, it's safest to just kill the session immediately
+        log::Registry::ws()->critical("[ws::Session] No user associated with session after hydration");
+
+        // this should never happen, but if it does, we nuke the session
+        if (!tokens || !tokens->refreshToken) {
+            log::Registry::ws()->critical("[ws::Session] Fatal invariant violation: refresh token missing after hydration/bootstrap; exiting with 69");
+            std::exit(69);
+        }
+
+        if (!tokens->refreshToken->isValid()) {
+            log::Registry::ws()->critical("[ws::Session] Fatal invariant violation: refresh token invalid after hydration/bootstrap; spiritually exiting with 420, operationally exiting with 70");
+            std::exit(70);
+        }
+
         installHandshakeDecorator();
     }
 }

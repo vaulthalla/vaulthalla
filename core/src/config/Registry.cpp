@@ -17,6 +17,11 @@ const Config& Registry::get() {
     return config_;
 }
 
+void Registry::set(const Config& config) {
+    config_ = config;
+    initialized_ = true;
+}
+
 void Registry::ensureInitialized() {
     if (!initialized_)
         throw std::runtime_error("ConfigRegistry accessed before initialization. Call ConfigRegistry::init() first.");

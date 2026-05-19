@@ -209,6 +209,9 @@ void Connection::initPrepared() const {
     initPreparedStatsSnapshots();
     initPreparedStatsMetricSamples();
 
+    // Email / notifications
+    initPreparedOperatorNotificationDelivery();
+
     // Dashboard
     initPreparedDashboardPreferences();
 

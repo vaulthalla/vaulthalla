@@ -8,6 +8,7 @@
 #include "db/query/rbac/role/Admin.hpp"
 #include "db/query/rbac/role/admin/Assignments.hpp"
 
+#include "notifications/SecurityAlertProducer.hpp"
 #include "runtime/Deps.hpp"
 #include "UsageManager.hpp"
 #include "CommandUsage.hpp"
@@ -79,6 +80,7 @@ namespace vh::protocols::shell::commands::rbac::roles::admin {
 
         db::query::rbac::role::Admin::upsert(staged);
         const auto newRole = db::query::rbac::role::Admin::get(staged->name);
+        notifications::enqueueAdminRoleCreated(newRole, notifications::actorFromUser("shell", call.user));
         return ok("Role '" + newRole->name + "' created successfully\n" + newRole->toString());
     }
 
@@ -136,6 +138,7 @@ namespace vh::protocols::shell::commands::rbac::roles::admin {
         }
 
         db::query::rbac::role::Admin::upsert(staged);
+        notifications::enqueueAdminRoleUpdated(staged, notifications::actorFromUser("shell", call.user));
 
         return ok("Role '" + staged->name + "' updated successfully\n" + staged->toString());
     }
@@ -151,6 +154,7 @@ namespace vh::protocols::shell::commands::rbac::roles::admin {
             return invalid("Cannot delete role '" + roleLkp.ptr->name + "' because it has active assignments. Remove those assignments before deleting the role.");
 
         db::query::rbac::role::Admin::remove(roleLkp.ptr->id);
+        notifications::enqueueAdminRoleDeleted(roleLkp.ptr, notifications::actorFromUser("shell", call.user));
 
         return ok("Role '" + roleLkp.ptr->name + "' deleted successfully");
     }

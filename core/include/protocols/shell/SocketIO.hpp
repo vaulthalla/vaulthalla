@@ -12,6 +12,7 @@ struct IO {
     virtual bool confirm(std::string_view prompt, bool def_no) = 0;
     virtual std::string prompt(std::string_view prompt,
                                std::string_view def) = 0;
+    virtual std::string promptSecret(std::string_view prompt) = 0;
 };
 
 class SocketIO final : public IO {
@@ -22,6 +23,7 @@ public:
     bool confirm(std::string_view promptIn);
     std::string prompt(std::string_view promptIn, std::string_view def) override;
     std::string prompt(std::string_view promptIn);
+    std::string promptSecret(std::string_view promptIn) override;
 
     static nlohmann::json recv_json(int fd);
     static void send_json(int fd, const nlohmann::json& j);

@@ -5,6 +5,7 @@
 #include "fuse/Service.hpp"
 #include "log/Registry.hpp"
 #include "log/RotationService.hpp"
+#include "notifications/OperatorEmailService.hpp"
 #include "protocols/ProtocolService.hpp"
 #include "protocols/shell/Server.hpp"
 #include "protocols/ws/ConnectionLifecycleManager.hpp"
@@ -31,6 +32,7 @@ constexpr std::array kBaseStartOrder{
     "DBJanitor",
     "LogRotationService",
     "StatsSnapshotService",
+    "OperatorEmailService",
     "ConnectionLifecycleManager",
     "ProtocolService"
 };
@@ -39,6 +41,7 @@ constexpr std::array kBaseStopOrder{
     "ProtocolService",
     "ShellServer",
     "ConnectionLifecycleManager",
+    "OperatorEmailService",
     "StatsSnapshotService",
     "DBJanitor",
     "LogRotationService",
@@ -59,7 +62,8 @@ Manager::Manager()
       connectionLifecycleManager(std::make_shared<protocols::ws::ConnectionLifecycleManager>()),
       logRotationService(std::make_shared<log::RotationService>()),
       dbSweeperService(std::make_shared<db::Janitor>()),
-      statsSnapshotService(std::make_shared<stats::SnapshotService>()) {
+      statsSnapshotService(std::make_shared<stats::SnapshotService>()),
+      operatorEmailService(std::make_shared<notifications::OperatorEmailService>()) {
 
     services_["SyncController"] = syncController;
     services_["FUSE"] = fuseService;
@@ -68,6 +72,7 @@ Manager::Manager()
     services_["LogRotationService"] = logRotationService;
     services_["DBJanitor"] = dbSweeperService;
     services_["StatsSnapshotService"] = statsSnapshotService;
+    services_["OperatorEmailService"] = operatorEmailService;
 
     if (!paths::testMode) {
         shellServer = std::make_shared<protocols::shell::Server>();

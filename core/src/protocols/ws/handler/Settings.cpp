@@ -19,6 +19,7 @@ json Settings::update(const json& payload, const std::shared_ptr<Session>& sessi
 
     const vh::config::Config config(payload);
     config.save();
+    vh::config::Registry::set(config);
     return {{"settings", config}};
 }
 
