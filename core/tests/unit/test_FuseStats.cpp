@@ -89,6 +89,31 @@ TEST(FuseStatsTest, LookupEnoentIsExpectedButNotAlertable) {
     EXPECT_DOUBLE_EQ(lookup->alertableErrorRate, 0.0);
 }
 
+TEST(FuseStatsTest, StatFsEaccesIsExpectedButOtherStatFsErrorsAreAlertable) {
+    FuseStats stats;
+    stats.record_error(FuseOperation::StatFs, EACCES, 10);
+    stats.record_error(FuseOperation::StatFs, EIO, 20);
+
+    const auto snapshot = stats.snapshot();
+    EXPECT_EQ(snapshot.totalOps, 2u);
+    EXPECT_EQ(snapshot.totalErrors, 2u);
+    EXPECT_EQ(snapshot.expectedErrors, 1u);
+    EXPECT_EQ(snapshot.alertableErrors, 1u);
+    EXPECT_DOUBLE_EQ(snapshot.errorRate, 1.0);
+    EXPECT_DOUBLE_EQ(snapshot.expectedErrorRate, 0.5);
+    EXPECT_DOUBLE_EQ(snapshot.alertableErrorRate, 0.5);
+
+    const auto* statfs = findOp(snapshot, "statfs");
+    ASSERT_NE(statfs, nullptr);
+    EXPECT_EQ(statfs->count, 2u);
+    EXPECT_EQ(statfs->errors, 2u);
+    EXPECT_EQ(statfs->expectedErrors, 1u);
+    EXPECT_EQ(statfs->alertableErrors, 1u);
+    EXPECT_DOUBLE_EQ(statfs->errorRate, 1.0);
+    EXPECT_DOUBLE_EQ(statfs->expectedErrorRate, 0.5);
+    EXPECT_DOUBLE_EQ(statfs->alertableErrorRate, 0.5);
+}
+
 TEST(FuseStatsTest, NonLookupAndPermissionErrorsAreAlertable) {
     FuseStats stats;
     stats.record_error(FuseOperation::Lookup, ENOENT, 10);
@@ -133,6 +158,23 @@ TEST(FuseStatsTest, UnlinkEnoentRemainsAlertable) {
 TEST(FuseStatsTest, DashboardIgnoresExpectedLookupMissesForFuseSeverity) {
     auto stats = std::make_shared<FuseStats>();
     for (int i = 0; i < 100; ++i) stats->record_error(FuseOperation::Lookup, ENOENT, 10);
+    FuseStatsDepsGuard guard(stats);
+
+    const auto overview = DashboardOverview::snapshot(fuseCardRequest());
+    const auto* card = findCard(overview, "system.fuse");
+    ASSERT_NE(card, nullptr);
+    EXPECT_EQ(card->severity, "info");
+    EXPECT_TRUE(card->warnings.empty());
+    EXPECT_TRUE(card->errors.empty());
+    ASSERT_TRUE(metricValue(*card, "error_rate"));
+    ASSERT_TRUE(metricValue(*card, "alertable_error_rate"));
+    EXPECT_DOUBLE_EQ(*metricValue(*card, "error_rate"), 1.0);
+    EXPECT_DOUBLE_EQ(*metricValue(*card, "alertable_error_rate"), 0.0);
+}
+
+TEST(FuseStatsTest, DashboardIgnoresExpectedStatFsPermissionProbesForFuseSeverity) {
+    auto stats = std::make_shared<FuseStats>();
+    for (int i = 0; i < 100; ++i) stats->record_error(FuseOperation::StatFs, EACCES, 10);
     FuseStatsDepsGuard guard(stats);
 
     const auto overview = DashboardOverview::snapshot(fuseCardRequest());

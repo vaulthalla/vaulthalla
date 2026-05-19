@@ -78,7 +78,8 @@ double FuseStats::ratio(const std::uint64_t numerator, const std::uint64_t denom
 }
 
 bool FuseStats::isExpectedError(const FuseOperation op, const int errnum) noexcept {
-    return op == FuseOperation::Lookup && errnum == ENOENT;
+    return (op == FuseOperation::Lookup && errnum == ENOENT) ||
+           (op == FuseOperation::StatFs && errnum == EACCES);
 }
 
 void FuseStats::record_success(
