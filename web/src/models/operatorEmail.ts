@@ -68,17 +68,23 @@ export interface OperatorEmailConfigResponse {
   secrets: EmailSecretStatus
 }
 
+export type EmailConfigPatch = Partial<Omit<EmailConfig, 'resend' | 'ses'>> & {
+  resend?: Partial<ResendEmailConfig>
+  ses?: Partial<SesEmailConfig>
+}
+
+export type OperatorEmailsConfigPatch = Partial<
+  Omit<OperatorEmailsConfig, 'recipients' | 'alerting' | 'weekly_digest' | 'security_alerts'>
+> & {
+  recipients?: Partial<OperatorEmailRecipientsConfig>
+  alerting?: Partial<OperatorEmailAlertingConfig>
+  weekly_digest?: Partial<OperatorEmailDigestConfig>
+  security_alerts?: Partial<OperatorEmailSecurityAlertsConfig>
+}
+
 export interface OperatorEmailConfigPatch {
-  email?: Partial<EmailConfig> & {
-    resend?: Partial<ResendEmailConfig>
-    ses?: Partial<SesEmailConfig>
-  }
-  operator_emails?: Partial<OperatorEmailsConfig> & {
-    recipients?: Partial<OperatorEmailRecipientsConfig>
-    alerting?: Partial<OperatorEmailAlertingConfig>
-    weekly_digest?: Partial<OperatorEmailDigestConfig>
-    security_alerts?: Partial<OperatorEmailSecurityAlertsConfig>
-  }
+  email?: EmailConfigPatch
+  operator_emails?: OperatorEmailsConfigPatch
 }
 
 export interface OperatorEmailSecretPayload {
