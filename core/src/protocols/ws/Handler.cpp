@@ -127,7 +127,6 @@ void Handler::registerEmailHandlers(const std::shared_ptr<Router>& r) {
     r->registerSessionOnlyHandler("email.config.get", &handler::Email::config);
     r->registerPayload("email.config.update", &handler::Email::updateConfig);
     r->registerPayload("email.provider.secret.set", &handler::Email::setProviderSecret);
-    r->registerPayload("email.provider.secret.get", &handler::Email::getProviderSecret);
     r->registerPayload("email.test.send", &handler::Email::testSend);
     r->registerPayload("email.history", &handler::Email::history);
 }

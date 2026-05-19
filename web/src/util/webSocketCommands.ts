@@ -52,8 +52,6 @@ import {
   OperatorEmailConfigPatch,
   OperatorEmailConfigResponse,
   OperatorEmailHistoryRecord,
-  OperatorEmailSecretGetPayload,
-  OperatorEmailSecretGetResponse,
   OperatorEmailSecretPayload,
   OperatorEmailTestPayload,
   OperatorEmailTestResponse,
@@ -170,8 +168,6 @@ export interface WebSocketCommandMap {
   'email.config.update': { payload: OperatorEmailConfigPatch; response: OperatorEmailConfigResponse }
 
   'email.provider.secret.set': { payload: OperatorEmailSecretPayload; response: { secrets: OperatorEmailConfigResponse['secrets'] } }
-
-  'email.provider.secret.get': { payload: OperatorEmailSecretGetPayload; response: OperatorEmailSecretGetResponse }
 
   'email.test.send': { payload: OperatorEmailTestPayload; response: OperatorEmailTestResponse }
 

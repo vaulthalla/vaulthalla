@@ -3,7 +3,6 @@ import {
   OperatorEmailConfigPatch,
   OperatorEmailConfigResponse,
   OperatorEmailHistoryRecord,
-  OperatorEmailSecretGetResponse,
   OperatorEmailSecretPayload,
   OperatorEmailTestPayload,
   OperatorEmailTestResponse,
@@ -19,8 +18,6 @@ interface OperatorEmailStore {
   fetchConfig: () => Promise<OperatorEmailConfigResponse>
   updateConfig: (payload: OperatorEmailConfigPatch) => Promise<OperatorEmailConfigResponse>
   setProviderSecret: (payload: OperatorEmailSecretPayload) => Promise<void>
-  fetchSesAccessKey: () => Promise<OperatorEmailSecretGetResponse>
-  revealSesSecretAccessKey: () => Promise<OperatorEmailSecretGetResponse>
   sendTest: (payload: OperatorEmailTestPayload) => Promise<OperatorEmailTestResponse>
   fetchHistory: (limit?: number) => Promise<void>
 }
@@ -69,40 +66,6 @@ export const useOperatorEmailStore = create<OperatorEmailStore>()((set, get) => 
       set({ config: current ? { ...current, secrets: response.secrets } : current, saving: false })
     } catch (error) {
       set({ saving: false, error: errorMessage(error, 'Unable to store provider secret') })
-      throw error
-    }
-  },
-
-  async fetchSesAccessKey() {
-    const ws = useWebSocketStore.getState()
-    set({ saving: true, error: null })
-    try {
-      const response = await ws.sendCommand('email.provider.secret.get', {
-        provider: 'ses',
-        include_secret_access_key: false,
-      })
-      const current = get().config
-      set({ config: current ? { ...current, secrets: response.secrets } : current, saving: false })
-      return response
-    } catch (error) {
-      set({ saving: false, error: errorMessage(error, 'Unable to fetch SES access key') })
-      throw error
-    }
-  },
-
-  async revealSesSecretAccessKey() {
-    const ws = useWebSocketStore.getState()
-    set({ saving: true, error: null })
-    try {
-      const response = await ws.sendCommand('email.provider.secret.get', {
-        provider: 'ses',
-        include_secret_access_key: true,
-      })
-      const current = get().config
-      set({ config: current ? { ...current, secrets: response.secrets } : current, saving: false })
-      return response
-    } catch (error) {
-      set({ saving: false, error: errorMessage(error, 'Unable to reveal SES secret access key') })
       throw error
     }
   },

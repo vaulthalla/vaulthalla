@@ -4,8 +4,6 @@ import React, { useEffect, useState } from 'react'
 import EnvelopeIcon from '@/fa-duotone/envelope.svg'
 import CheckIcon from '@/fa-duotone/circle-check.svg'
 import EditIcon from '@/fa-duotone/file-pen.svg'
-import EyeIcon from '@/fa-duotone/eye.svg'
-import EyeSlashIcon from '@/fa-duotone/eye-slash.svg'
 import SaveIcon from '@/fa-duotone/floppy-disk.svg'
 import SendIcon from '@/fa-duotone/paper-plane.svg'
 import PlusIcon from '@/fa-duotone/circle-plus.svg'
@@ -269,8 +267,6 @@ export default function OperatorEmailPage() {
     fetchConfig,
     updateConfig,
     setProviderSecret,
-    fetchSesAccessKey,
-    revealSesSecretAccessKey,
     sendTest,
     fetchHistory,
   } = useOperatorEmailStore()
@@ -283,8 +279,6 @@ export default function OperatorEmailPage() {
   const [sesEditing, setSesEditing] = useState(false)
   const [sesAccessKey, setSesAccessKey] = useState('')
   const [sesSecretKey, setSesSecretKey] = useState('')
-  const [sesSecretRevealed, setSesSecretRevealed] = useState(false)
-  const [sesSecretVisible, setSesSecretVisible] = useState(false)
   const [testTo, setTestTo] = useState('')
   const [dryRun, setDryRun] = useState(false)
   const [testResult, setTestResult] = useState<string | null>(null)
@@ -307,8 +301,6 @@ export default function OperatorEmailPage() {
       setSesEditing(false)
       setSesAccessKey('')
       setSesSecretKey('')
-      setSesSecretRevealed(false)
-      setSesSecretVisible(false)
     }
   }, [config])
 
@@ -317,6 +309,7 @@ export default function OperatorEmailPage() {
 
   const activeProvider = emailForm.provider !== 'none'
   const secrets = config.secrets
+  const hasSesCredentials = secrets.ses_access_key_id || secrets.ses_secret_access_key
   const canSaveProvider = !activeProvider || Boolean(buildSenderAddress(sender))
   const canAddRecipient = newRecipient.email.trim() && recipientGroups.some(group => newRecipient[group])
 
@@ -327,28 +320,13 @@ export default function OperatorEmailPage() {
       setSesEditing(false)
       setSesAccessKey('')
       setSesSecretKey('')
-      setSesSecretRevealed(false)
-      setSesSecretVisible(false)
     }
   }
 
-  const editSesSecrets = async () => {
+  const updateSesSecrets = () => {
     setLocalError(null)
-    const response = await fetchSesAccessKey()
-    setSesAccessKey(response.access_key_id || '')
     setSesSecretKey('')
-    setSesSecretRevealed(false)
-    setSesSecretVisible(false)
-    setSesEditing(true)
-  }
-
-  const revealSesSecret = async () => {
-    setLocalError(null)
-    const response = await revealSesSecretAccessKey()
-    setSesAccessKey(response.access_key_id || '')
-    setSesSecretKey(response.secret_access_key || '')
-    setSesSecretRevealed(true)
-    setSesSecretVisible(true)
+    setSesAccessKey('')
     setSesEditing(true)
   }
 
@@ -393,13 +371,13 @@ export default function OperatorEmailPage() {
       await setProviderSecret({
         provider: 'ses',
         access_key_id: sesAccessKey.trim() || undefined,
-        secret_access_key: sesSecretKey.trim() && (sesSecretRevealed || !secrets.ses_secret_access_key) ? sesSecretKey.trim() : undefined,
+        secret_access_key: sesSecretKey.trim() || undefined,
       })
       setSesAccessKey('')
       setSesSecretKey('')
       setSesEditing(false)
-      setSesSecretRevealed(false)
-      setSesSecretVisible(false)
+    } else if (emailForm.provider === 'ses' && hasSesCredentials) {
+      setSesEditing(false)
     }
   }
 
@@ -501,67 +479,26 @@ export default function OperatorEmailPage() {
                       onChange={region => setEmailForm({ ...emailForm, ses: { ...emailForm.ses, region } })}
                     />
 
-                    <div className="grid gap-2 md:grid-cols-3">
+                    <div className="grid gap-2">
                       <CredentialStatus label="Secrets manager" ready={secrets.available} readyText="available" missingText="unavailable" />
-                      <CredentialStatus label="SES access key ID" ready={secrets.ses_access_key_id} />
-                      <CredentialStatus label="SES secret access key" ready={secrets.ses_secret_access_key} />
                     </div>
 
-                    {!sesEditing && (secrets.ses_access_key_id || secrets.ses_secret_access_key) && (
-                      <ActionButton icon={EditIcon} disabled={saving || !secrets.available} onClick={editSesSecrets}>
-                        Edit SES credentials
-                      </ActionButton>
+                    {!sesEditing && hasSesCredentials && (
+                      <div className="flex flex-wrap items-center justify-between gap-3 rounded border border-emerald-500/30 bg-emerald-950/20 px-3 py-2">
+                        <span className="inline-flex items-center gap-2 text-sm font-medium text-emerald-200">
+                          <CheckIcon className="h-5 w-5 fill-current text-emerald-300" />
+                          Added
+                        </span>
+                        <ActionButton icon={EditIcon} disabled={saving || !secrets.available} onClick={updateSesSecrets}>
+                          Update
+                        </ActionButton>
+                      </div>
                     )}
 
-                    {(!secrets.ses_access_key_id && !secrets.ses_secret_access_key) && !sesEditing && (
-                      <ActionButton icon={EditIcon} disabled={saving || !secrets.available} onClick={() => setSesEditing(true)}>
-                        Add SES credentials
-                      </ActionButton>
-                    )}
-
-                    {sesEditing && (
+                    {(sesEditing || !hasSesCredentials) && (
                       <div className="grid gap-3 rounded border border-gray-800 bg-gray-950 p-3">
                         <TextField label="SES access key ID" value={sesAccessKey} onChange={setSesAccessKey} />
-
-                        {secrets.ses_secret_access_key && !sesSecretRevealed ? (
-                          <div className="flex flex-col gap-2 text-sm text-gray-300">
-                            SES secret access key
-                            <div className="flex flex-col gap-2 sm:flex-row">
-                              <input
-                                className="min-h-10 flex-1 rounded border border-gray-700 bg-gray-900 px-3 py-2 text-gray-500 outline-none"
-                                disabled
-                                type="password"
-                                value="stored-secret-placeholder"
-                              />
-                              <ActionButton icon={EyeIcon} disabled={saving || !secrets.available} onClick={revealSesSecret}>
-                                View
-                              </ActionButton>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="flex flex-col gap-2 text-sm text-gray-300">
-                            SES secret access key
-                            <div className="flex flex-col gap-2 sm:flex-row">
-                              <input
-                                className="min-h-10 flex-1 rounded border border-gray-700 bg-gray-950 px-3 py-2 text-white outline-none focus:border-cyan-400"
-                                type={sesSecretVisible ? 'text' : 'password'}
-                                value={sesSecretKey}
-                                onChange={event => {
-                                  setSesSecretKey(event.target.value)
-                                  setSesSecretRevealed(true)
-                                }}
-                              />
-                              <button
-                                className="inline-flex min-h-10 items-center justify-center gap-2 rounded border border-gray-700 px-3 py-2 text-sm text-gray-200 hover:bg-white/10"
-                                title={sesSecretVisible ? 'Hide secret access key' : 'Show secret access key'}
-                                type="button"
-                                onClick={() => setSesSecretVisible(value => !value)}>
-                                {sesSecretVisible ? <EyeSlashIcon className="h-4 w-4 fill-current" /> : <EyeIcon className="h-4 w-4 fill-current" />}
-                                {sesSecretVisible ? 'Hide' : 'Show'}
-                              </button>
-                            </div>
-                          </div>
-                        )}
+                        <TextField label="SES secret access key" type="password" value={sesSecretKey} onChange={setSesSecretKey} />
                       </div>
                     )}
                   </div>

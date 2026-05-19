@@ -94,18 +94,6 @@ export interface OperatorEmailSecretPayload {
   secret_access_key?: string
 }
 
-export interface OperatorEmailSecretGetPayload {
-  provider: Extract<EmailProvider, 'ses'>
-  include_secret_access_key?: boolean
-}
-
-export interface OperatorEmailSecretGetResponse {
-  provider: Extract<EmailProvider, 'ses'>
-  access_key_id: string | null
-  secret_access_key: string | null
-  secrets: EmailSecretStatus
-}
-
 export interface OperatorEmailTestPayload {
   to: string
   dry_run?: boolean
