@@ -10,10 +10,13 @@ from unittest.mock import patch
 from tools.release.changelog.release_workflow import (
     parse_release_ai_settings,
     refresh_debian_changelog_entry,
+    release_notes_context_matches,
     render_cached_draft_markdown,
     resolve_local_release_pipeline_config,
     resolve_release_changelog,
+    validate_cached_draft_current,
     validate_manual_changelog_current,
+    write_release_notes_context_metadata,
 )
 
 
@@ -34,6 +37,31 @@ def _make_debian_changelog(path: Path, full_version: str) -> None:
 
 
 class ReleaseWorkflowSelectionTests(unittest.TestCase):
+    @staticmethod
+    def _context(
+        *,
+        version: str = "2.0.0",
+        previous_tag: str | None = "v1.9.0",
+        head_sha: str = "abc123def456",
+        commit_count: int = 4,
+    ):
+        return type(
+            "_Context",
+            (),
+            {
+                "version": version,
+                "previous_tag": previous_tag,
+                "head_sha": head_sha,
+                "commit_count": commit_count,
+                "categories": {},
+                "commits": [],
+                "cross_cutting_notes": [],
+                "latest_tag": f"v{version}",
+                "skipped_current_release_tag": True,
+                "explicit_previous_tag": False,
+            },
+        )()
+
     def test_auto_mode_prefers_openai_before_local(self) -> None:
         with TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
@@ -170,6 +198,76 @@ class ReleaseWorkflowSelectionTests(unittest.TestCase):
 
             self.assertEqual(result.path, "manual")
             self.assertIn("2.0.0-3", result.content)
+
+    def test_cached_draft_validation_accepts_matching_release_context(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            context = self._context()
+            _write(repo_root / "VERSION", "2.0.0\n")
+            draft_path = repo_root / ".changelog_scratch" / "changelog.draft.md"
+            _write(
+                draft_path,
+                render_cached_draft_markdown(version="2.0.0", content="# AI Draft\n- current\n", context=context),
+            )
+
+            result = validate_cached_draft_current(
+                repo_root=repo_root,
+                draft_path=draft_path,
+                context=context,
+                require_context=True,
+            )
+
+            self.assertEqual(result.content, "# AI Draft\n- current\n")
+
+    def test_cached_draft_validation_rejects_same_version_stale_context(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            current = self._context(previous_tag="v1.9.0")
+            stale = self._context(previous_tag="v1.8.0")
+            _write(repo_root / "VERSION", "2.0.0\n")
+            draft_path = repo_root / ".changelog_scratch" / "changelog.draft.md"
+            _write(
+                draft_path,
+                render_cached_draft_markdown(version="2.0.0", content="# AI Draft\n- stale\n", context=stale),
+            )
+
+            with self.assertRaisesRegex(ValueError, "stale for the current release context"):
+                _ = validate_cached_draft_current(
+                    repo_root=repo_root,
+                    draft_path=draft_path,
+                    context=current,
+                    require_context=True,
+                )
+
+    def test_cached_draft_validation_rejects_missing_context_when_required(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            context = self._context()
+            _write(repo_root / "VERSION", "2.0.0\n")
+            draft_path = repo_root / ".changelog_scratch" / "changelog.draft.md"
+            _write(draft_path, render_cached_draft_markdown(version="2.0.0", content="# AI Draft\n"))
+
+            with self.assertRaisesRegex(ValueError, "missing required release context marker"):
+                _ = validate_cached_draft_current(
+                    repo_root=repo_root,
+                    draft_path=draft_path,
+                    context=context,
+                    require_context=True,
+                )
+
+    def test_release_notes_context_must_match_current_context(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            notes_path = repo_root / "release_notes.md"
+            current = self._context(head_sha="abc123def456")
+            stale = self._context(head_sha="fff999000111")
+            _write(notes_path, "# Public Notes\n")
+            write_release_notes_context_metadata(release_notes_path=notes_path, context=stale)
+
+            self.assertFalse(release_notes_context_matches(release_notes_path=notes_path, context=current))
+
+            write_release_notes_context_metadata(release_notes_path=notes_path, context=current)
+            self.assertTrue(release_notes_context_matches(release_notes_path=notes_path, context=current))
 
 
 class ReleaseWorkflowConfigTests(unittest.TestCase):

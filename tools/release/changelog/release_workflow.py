@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 from datetime import datetime, timezone
 from email.utils import format_datetime
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Literal, Mapping
+from typing import Any, Callable, Literal, Mapping
 
 from tools.release.changelog.ai.config import (
     AIPipelineCLIOverrides,
@@ -34,6 +35,7 @@ from tools.release.changelog.ai.stages.emergency_triage import (
 from tools.release.changelog.ai.stages.polish import run_polish_stage
 from tools.release.changelog.ai.stages.release_notes import run_release_notes_stage
 from tools.release.changelog.ai.stages.triage import run_triage_stage
+from tools.release.changelog.models import ReleaseContext
 from tools.release.version.adapters.debian import CHANGELOG_HEADER_PATTERN, parse_debian_version
 from tools.release.version.adapters.version_file import read_version_file
 
@@ -44,6 +46,10 @@ DEFAULT_RELEASE_AI_MODE: ReleaseAIMode = "auto"
 DEFAULT_RELEASE_OPENAI_PROFILE = "openai-balanced"
 DEFAULT_CHANGELOG_SCRATCH_DIR = Path(".changelog_scratch")
 DEFAULT_CACHED_DRAFT_PATH = DEFAULT_CHANGELOG_SCRATCH_DIR / "changelog.draft.md"
+RELEASE_CONTEXT_METADATA_SCHEMA_VERSION = "vaulthalla.release.changelog_context.v1"
+RELEASE_CONTEXT_FINGERPRINT_SCHEMA_VERSION = "vaulthalla.release.context_fingerprint.v1"
+RELEASE_NOTES_CONTEXT_SCHEMA_VERSION = "vaulthalla.release.release_notes_context.v1"
+CHANGELOG_SELECTION_SCHEMA_VERSION = "vaulthalla.release.changelog_selection.v2"
 DEBIAN_CHANGELOG_SIGNATURE_PATTERN = re.compile(r"^ -- (?P<maintainer>.+?)  (?P<timestamp>.+)$")
 DEBIAN_CHANGELOG_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9+.-]*$")
 _DEBIAN_REPO_PATH_RE = re.compile(r"\b(?:core|tools|web|debian|deploy|bin)/[a-z0-9_./-]+\b", re.IGNORECASE)
@@ -108,6 +114,117 @@ class _DebianTopEntry:
     lines: list[str]
 
 
+def build_release_context_fingerprint(context: ReleaseContext) -> dict[str, Any]:
+    return {
+        "schema_version": RELEASE_CONTEXT_FINGERPRINT_SCHEMA_VERSION,
+        "version": getattr(context, "version", None),
+        "previous_tag": getattr(context, "previous_tag", None),
+        "head_sha": getattr(context, "head_sha", None),
+        "commit_count": getattr(context, "commit_count", None),
+    }
+
+
+def build_release_context_metadata(
+    context: ReleaseContext,
+    *,
+    semantic_payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    semantic_by_name: dict[str, dict[str, Any]] = {}
+    if isinstance(semantic_payload, dict):
+        for item in _as_dict_list(semantic_payload.get("categories")):
+            name = _read_string_value(item.get("name"))
+            if name:
+                semantic_by_name[name] = item
+
+    categories: list[dict[str, Any]] = []
+    context_categories = getattr(context, "categories", {}) or {}
+    for name, category in context_categories.items():
+        semantic_category = semantic_by_name.get(name, {})
+        categories.append(
+            {
+                "name": name,
+                "commit_count": category.commit_count,
+                "file_count": len(category.files),
+                "snippet_count": len(category.snippets),
+                "insertions": category.insertions,
+                "deletions": category.deletions,
+                "semantic_candidate_commit_count": len(_as_sequence(semantic_category.get("candidate_commits"))),
+                "semantic_hunk_count": len(_as_sequence(semantic_category.get("semantic_hunks"))),
+            }
+        )
+
+    semantic_categories = _as_sequence(semantic_payload.get("categories")) if isinstance(semantic_payload, dict) else []
+    semantic_hunk_count = 0
+    for item in semantic_categories:
+        if isinstance(item, dict):
+            semantic_hunk_count += len(_as_sequence(item.get("semantic_hunks")))
+
+    return {
+        "schema_version": RELEASE_CONTEXT_METADATA_SCHEMA_VERSION,
+        "fingerprint": build_release_context_fingerprint(context),
+        "version": getattr(context, "version", None),
+        "previous_tag": getattr(context, "previous_tag", None),
+        "head_sha": getattr(context, "head_sha", None),
+        "commit_count": getattr(context, "commit_count", None),
+        "latest_tag": getattr(context, "latest_tag", None),
+        "skipped_current_release_tag": bool(getattr(context, "skipped_current_release_tag", False)),
+        "explicit_previous_tag": bool(getattr(context, "explicit_previous_tag", False)),
+        "semantic_category_count": len([item for item in semantic_categories if isinstance(item, dict)]),
+        "semantic_hunk_count": semantic_hunk_count,
+        "categories": categories,
+        "commit_samples": {
+            "newest": [_commit_summary(commit) for commit in list(getattr(context, "commits", []) or [])[:5]],
+            "oldest": [_commit_summary(commit) for commit in list(getattr(context, "commits", []) or [])[-5:]],
+        },
+        "notes": list(getattr(context, "cross_cutting_notes", []) or []),
+    }
+
+
+def render_release_context_metadata_json(metadata: dict[str, Any]) -> str:
+    return json.dumps(metadata, indent=2, sort_keys=False) + "\n"
+
+
+def release_notes_context_path(release_notes_path: Path | str) -> Path:
+    path = Path(release_notes_path)
+    return path.with_name(f"{path.name}.context.json")
+
+
+def write_release_notes_context_metadata(
+    *,
+    release_notes_path: Path | str,
+    context: ReleaseContext,
+) -> Path:
+    target = release_notes_context_path(release_notes_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema_version": RELEASE_NOTES_CONTEXT_SCHEMA_VERSION,
+        "context": build_release_context_fingerprint(context),
+    }
+    target.write_text(json.dumps(payload, indent=2, sort_keys=False) + "\n", encoding="utf-8")
+    return target
+
+
+def release_notes_context_matches(
+    *,
+    release_notes_path: Path | str,
+    context: ReleaseContext,
+) -> bool:
+    notes_path = Path(release_notes_path)
+    if not notes_path.is_file() or not notes_path.read_text(encoding="utf-8").strip():
+        return False
+    metadata_path = release_notes_context_path(notes_path)
+    if not metadata_path.is_file():
+        return False
+    try:
+        payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(payload, dict) or payload.get("schema_version") != RELEASE_NOTES_CONTEXT_SCHEMA_VERSION:
+        return False
+    actual = payload.get("context")
+    return isinstance(actual, dict) and _context_fingerprint_matches(actual, build_release_context_fingerprint(context))
+
+
 def parse_release_ai_settings(environ: Mapping[str, str] | None = None) -> ReleaseAISettings:
     env = dict(os.environ if environ is None else environ)
 
@@ -136,6 +253,7 @@ def resolve_release_changelog(
     repo_root: Path,
     payload: dict,
     semantic_payload: dict | None = None,
+    context: ReleaseContext | None = None,
     settings: ReleaseAISettings,
     manual_changelog_path: Path | str = Path("debian/changelog"),
     cached_draft_path: Path | str = DEFAULT_CACHED_DRAFT_PATH,
@@ -204,6 +322,8 @@ def resolve_release_changelog(
                 cached = validate_cached_draft_current(
                     repo_root=repo_root,
                     draft_path=cached_draft_path,
+                    context=context,
+                    require_context=context is not None,
                 )
             except Exception as exc:
                 emit(f"Skipping cached draft path: {exc}")
@@ -318,6 +438,8 @@ def validate_cached_draft_current(
     *,
     repo_root: Path,
     draft_path: Path | str = DEFAULT_CACHED_DRAFT_PATH,
+    context: ReleaseContext | None = None,
+    require_context: bool = False,
 ) -> ManualChangelogValidation:
     version_path = repo_root / "VERSION"
     version = read_version_file(version_path)
@@ -341,6 +463,20 @@ def validate_cached_draft_current(
         raise ValueError(
             "cached draft metadata is missing required version marker. "
             f"Regenerate with `python3 -m tools.release changelog ai-draft`."
+        )
+
+    expected_context = build_release_context_fingerprint(context) if context is not None else None
+    detected_context = _detect_cached_draft_context(content)
+    if require_context and detected_context is None:
+        raise ValueError(
+            "cached draft metadata is missing required release context marker. "
+            f"Regenerate with `python3 -m tools.release changelog ai-draft`."
+        )
+    if expected_context is not None and detected_context is not None:
+        _validate_cached_context_matches(
+            actual=detected_context,
+            expected=expected_context,
+            target_path=target_path,
         )
 
     return ManualChangelogValidation(
@@ -825,6 +961,65 @@ def _resolve_stage_provider_timeout_seconds(stage: AIStageName) -> float | None:
     return value
 
 
+def _validate_cached_context_matches(
+    *,
+    actual: dict[str, Any],
+    expected: dict[str, Any],
+    target_path: Path,
+) -> None:
+    if _context_fingerprint_matches(actual, expected):
+        return
+    expected_range = _format_context_fingerprint(expected)
+    actual_range = _format_context_fingerprint(actual)
+    raise ValueError(
+        "cached draft is stale for the current release context. "
+        f"{target_path} has {actual_range} but current context is {expected_range}."
+    )
+
+
+def _context_fingerprint_matches(actual: Mapping[str, Any], expected: Mapping[str, Any]) -> bool:
+    for key in ("version", "previous_tag", "head_sha", "commit_count"):
+        if actual.get(key) != expected.get(key):
+            return False
+    return True
+
+
+def _format_context_fingerprint(fingerprint: Mapping[str, Any]) -> str:
+    version = fingerprint.get("version") or "<unknown-version>"
+    previous_tag = fingerprint.get("previous_tag") or "none"
+    head_sha = fingerprint.get("head_sha") or "<unknown-head>"
+    commit_count = fingerprint.get("commit_count")
+    head_label = str(head_sha)[:12]
+    return f"version={version}, previous_tag={previous_tag}, head={head_label}, commits={commit_count}"
+
+
+def _as_sequence(raw: Any) -> list[Any]:
+    if isinstance(raw, list):
+        return raw
+    if isinstance(raw, tuple):
+        return list(raw)
+    return []
+
+
+def _as_dict_list(raw: Any) -> list[dict[str, Any]]:
+    return [item for item in _as_sequence(raw) if isinstance(item, dict)]
+
+
+def _read_string_value(raw: Any) -> str | None:
+    if not isinstance(raw, str):
+        return None
+    normalized = raw.strip()
+    return normalized or None
+
+
+def _commit_summary(commit: Any) -> dict[str, Any]:
+    return {
+        "sha": str(getattr(commit, "sha", ""))[:12],
+        "subject": str(getattr(commit, "subject", "")),
+        "categories": list(getattr(commit, "categories", []) or []),
+    }
+
+
 def _parse_release_ai_mode(raw: str | None) -> ReleaseAIMode:
     normalized = _normalize_or_default(raw, DEFAULT_RELEASE_AI_MODE)
     if normalized not in {"auto", "openai-only", "local-only", "disabled"}:
@@ -860,14 +1055,26 @@ def _normalize_or_default(raw: str | None, default: str) -> str:
     return normalized if normalized is not None else default
 
 
-def render_cached_draft_markdown(*, version: str, content: str) -> str:
+def render_cached_draft_markdown(
+    *,
+    version: str,
+    content: str,
+    context: ReleaseContext | None = None,
+    context_fingerprint: Mapping[str, Any] | None = None,
+) -> str:
     cleaned = content.strip()
     if not cleaned:
         raise ValueError("Cannot render cached draft markdown: content is empty.")
-    return (
-        f"<!-- vaulthalla-release-version: {version} -->\n"
-        f"{cleaned}\n"
-    )
+    fingerprint = dict(context_fingerprint) if context_fingerprint is not None else None
+    if fingerprint is None and context is not None:
+        fingerprint = build_release_context_fingerprint(context)
+    metadata = f"<!-- vaulthalla-release-version: {version} -->\n"
+    if fingerprint is not None:
+        metadata += (
+            "<!-- vaulthalla-release-context: "
+            f"{json.dumps(fingerprint, sort_keys=True, separators=(',', ':'))} -->\n"
+        )
+    return f"{metadata}{cleaned}\n"
 
 
 def _detect_cached_draft_version(content: str) -> str | None:
@@ -882,12 +1089,39 @@ def _detect_cached_draft_version(content: str) -> str | None:
     return None
 
 
+def _detect_cached_draft_context(content: str) -> dict[str, Any] | None:
+    for line in content.splitlines()[:8]:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        match = re.fullmatch(r"<!--\s*vaulthalla-release-context:\s*(\{.*\})\s*-->", stripped)
+        if not match:
+            continue
+        try:
+            parsed = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+    return None
+
+
 def _strip_cached_draft_metadata(content: str) -> str:
     lines = content.splitlines()
     if not lines:
         return ""
-    if re.fullmatch(r"\s*<!--\s*vaulthalla-release-version:\s*[0-9]+\.[0-9]+\.[0-9]+\s*-->\s*", lines[0]):
-        body = "\n".join(lines[1:]).lstrip("\n")
+    start_index = 0
+    while start_index < len(lines):
+        line = lines[start_index]
+        is_version = re.fullmatch(
+            r"\s*<!--\s*vaulthalla-release-version:\s*[0-9]+\.[0-9]+\.[0-9]+\s*-->\s*",
+            line,
+        )
+        is_context = re.fullmatch(r"\s*<!--\s*vaulthalla-release-context:\s*\{.*\}\s*-->\s*", line)
+        if not is_version and not is_context:
+            break
+        start_index += 1
+    if start_index:
+        body = "\n".join(lines[start_index:]).lstrip("\n")
         return f"{body}\n" if body and not body.endswith("\n") else body
     return content
 

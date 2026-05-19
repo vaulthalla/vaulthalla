@@ -57,6 +57,9 @@ class ReleaseContext:
     commits: list[CommitInfo] = field(default_factory=list)
     uncategorized_commits: list[CommitInfo] = field(default_factory=list)
     cross_cutting_notes: list[str] = field(default_factory=list)
+    latest_tag: str | None = None
+    skipped_current_release_tag: bool = False
+    explicit_previous_tag: bool = False
 
 
 @dataclass(frozen=True)

@@ -29,6 +29,7 @@ from tools.release.cli_tools.path import (
     DEFAULT_CHANGELOG_RAW_OUTPUT,
     DEFAULT_CHANGELOG_PAYLOAD_OUTPUT,
     DEFAULT_CHANGELOG_SEMANTIC_PAYLOAD_OUTPUT,
+    DEFAULT_CHANGELOG_CONTEXT_OUTPUT,
     DEFAULT_RELEASE_NOTES_OUTPUT,
 )
 
@@ -200,6 +201,13 @@ CHANGELOG_EVIDENCE_ARGS = [
         "kwargs": {
             "default": DEFAULT_CHANGELOG_SEMANTIC_PAYLOAD_OUTPUT,
             "help": "Output path for deterministic semantic payload evidence JSON.",
+        },
+    },
+    {
+        "flags": ["--context-output"],
+        "kwargs": {
+            "default": DEFAULT_CHANGELOG_CONTEXT_OUTPUT,
+            "help": "Output path for deterministic changelog context metadata JSON.",
         },
     },
 ]

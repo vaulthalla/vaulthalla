@@ -57,6 +57,13 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         self.assertIn("rm -rf \"$scratch_dir\" \"$artifact_dir\"", action)
         self.assertIn("clearing volatile changelog scratch", action)
 
+    def test_package_action_writes_changelog_context_artifact(self) -> None:
+        action = self._package_action()
+        self.assertIn("--context-output", action)
+        self.assertIn("changelog.context.json", action)
+        self.assertIn("--semantic-payload-output", action)
+        self.assertIn("changelog.semantic_payload.json", action)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -43,6 +43,7 @@ def cmd_changelog_ai_release(args: argparse.Namespace) -> int:
         raw_output=args.raw_output,
         payload_output=args.payload_output,
         semantic_payload_output=args.semantic_payload_output,
+        context_output=args.context_output,
         release_notes_output=args.release_notes_output,
         selection_output=getattr(args, "selection_output", None),
         manual_changelog_path=args.manual_changelog_path,

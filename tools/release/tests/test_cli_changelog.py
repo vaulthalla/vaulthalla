@@ -138,6 +138,8 @@ class CliChangelogDraftTests(unittest.TestCase):
                 "/tmp/release-payload.json",
                 "--semantic-payload-output",
                 "/tmp/release-semantic-payload.json",
+                "--context-output",
+                "/tmp/release-context.json",
                 "--manual-changelog-path",
                 "debian/changelog",
             ]
@@ -149,6 +151,7 @@ class CliChangelogDraftTests(unittest.TestCase):
         self.assertEqual(parsed_release.raw_output, "/tmp/raw.md")
         self.assertEqual(parsed_release.payload_output, "/tmp/release-payload.json")
         self.assertEqual(parsed_release.semantic_payload_output, "/tmp/release-semantic-payload.json")
+        self.assertEqual(parsed_release.context_output, "/tmp/release-context.json")
         self.assertEqual(parsed_release.manual_changelog_path, "debian/changelog")
         self.assertEqual(parsed_release.cached_draft_path, ".changelog_scratch/changelog.draft.md")
         self.assertIsNone(parsed_release.debian_distribution)
@@ -323,6 +326,7 @@ class CliChangelogReleaseTests(unittest.TestCase):
         raw_output: str = ".changelog_scratch/changelog.raw.md",
         payload_output: str = ".changelog_scratch/changelog.payload.json",
         semantic_payload_output: str = ".changelog_scratch/changelog.semantic_payload.json",
+        context_output: str = ".changelog_scratch/changelog.context.json",
         release_notes_output: str = ".changelog_scratch/release_notes.md",
         selection_output: str | None = None,
         manual_changelog_path: str = "debian/changelog",
@@ -337,6 +341,7 @@ class CliChangelogReleaseTests(unittest.TestCase):
             raw_output=raw_output,
             payload_output=payload_output,
             semantic_payload_output=semantic_payload_output,
+            context_output=context_output,
             release_notes_output=release_notes_output,
             selection_output=selection_output,
             manual_changelog_path=manual_changelog_path,
@@ -351,6 +356,7 @@ class CliChangelogReleaseTests(unittest.TestCase):
             raw_target = Path(temp_dir) / "raw.md"
             payload_target = Path(temp_dir) / "payload.json"
             semantic_payload_target = Path(temp_dir) / "semantic-payload.json"
+            context_target = Path(temp_dir) / "context.json"
             release_notes_target = Path(temp_dir) / "release-notes.md"
             selection_target = Path(temp_dir) / "selection.json"
             args = self._args(
@@ -358,6 +364,7 @@ class CliChangelogReleaseTests(unittest.TestCase):
                 raw_output=str(raw_target),
                 payload_output=str(payload_target),
                 semantic_payload_output=str(semantic_payload_target),
+                context_output=str(context_target),
                 release_notes_output=str(release_notes_target),
                 selection_output=str(selection_target),
             )
@@ -421,15 +428,20 @@ class CliChangelogReleaseTests(unittest.TestCase):
                 semantic_payload_target.read_text(encoding="utf-8"),
                 '{"schema_version":"semantic-x"}\n',
             )
+            context_metadata = json.loads(context_target.read_text(encoding="utf-8"))
+            self.assertEqual(context_metadata["schema_version"], "vaulthalla.release.changelog_context.v1")
             self.assertEqual(release_notes_target.read_text(encoding="utf-8"), "# Public Notes\n")
             metadata = json.loads(selection_target.read_text(encoding="utf-8"))
+            self.assertEqual(metadata["schema_version"], "vaulthalla.release.changelog_selection.v2")
             self.assertEqual(metadata["selected_path"], "openai")
+            self.assertIn("context", metadata)
             self.assertTrue(metadata["release_notes_generated"])
             refresh.assert_called_once()
             rendered = h.stdout()
             self.assertIn("Wrote changelog raw evidence to", rendered)
             self.assertIn("Wrote changelog payload evidence to", rendered)
             self.assertIn("Wrote changelog semantic payload evidence to", rendered)
+            self.assertIn("Wrote changelog context metadata to", rendered)
             self.assertIn("Wrote release changelog to", rendered)
             self.assertIn("Wrote release notes artifact to", rendered)
             self.assertIn("Wrote changelog selection metadata to", rendered)
@@ -440,11 +452,13 @@ class CliChangelogReleaseTests(unittest.TestCase):
             raw_target = Path(temp_dir) / "raw.md"
             payload_target = Path(temp_dir) / "payload.json"
             semantic_payload_target = Path(temp_dir) / "semantic-payload.json"
+            context_target = Path(temp_dir) / "context.json"
             args = self._args(
                 output=str(target),
                 raw_output=str(raw_target),
                 payload_output=str(payload_target),
                 semantic_payload_output=str(semantic_payload_target),
+                context_output=str(context_target),
                 debian_distribution="stable",
                 debian_urgency="high",
             )
@@ -516,6 +530,7 @@ class CliChangelogAIReleaseTests(unittest.TestCase):
             raw_output=".changelog_scratch/changelog.raw.md",
             payload_output=".changelog_scratch/changelog.payload.json",
             semantic_payload_output=".changelog_scratch/changelog.semantic_payload.json",
+            context_output=".changelog_scratch/changelog.context.json",
             manual_changelog_path="debian/changelog",
             debian_distribution=None,
             debian_urgency=None,

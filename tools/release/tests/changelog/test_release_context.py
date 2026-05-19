@@ -61,6 +61,29 @@ class ContextBuilderTests(unittest.TestCase):
         self.assertTrue(context.cross_cutting_notes)
         self.assertIn("using previous tag `none`", context.cross_cutting_notes[0])
 
+    def test_default_resolution_rejects_current_release_tag_checkpoint(self) -> None:
+        with (
+            patch("tools.release.changelog.context_builder.get_latest_tag", return_value="v1.4.0"),
+            patch("tools.release.changelog.context_builder.get_previous_release_tag_before", return_value="v1.4.0"),
+        ):
+            with self.assertRaisesRegex(ValueError, "current release tag"):
+                _ = build_release_context(version="1.4.0", repo_root=".")
+
+    def test_explicit_current_release_tag_checkpoint_warns_without_default_guard(self) -> None:
+        with (
+            patch("tools.release.changelog.context_builder.get_latest_tag", return_value="v1.4.0"),
+            patch("tools.release.changelog.context_builder.get_head_sha", return_value="abc123"),
+            patch("tools.release.changelog.context_builder.get_commits_since_tag", return_value=[]),
+            patch("tools.release.changelog.context_builder.get_release_file_stats", return_value={}),
+            patch("tools.release.changelog.context_builder.extract_relevant_snippets", return_value={}),
+        ):
+            context = build_release_context(version="1.4.0", repo_root=".", previous_tag="v1.4.0")
+
+        self.assertEqual(context.previous_tag, "v1.4.0")
+        self.assertTrue(context.explicit_previous_tag)
+        self.assertTrue(context.cross_cutting_notes)
+        self.assertIn("Explicit changelog checkpoint points at the current release tag", context.cross_cutting_notes[0])
+
     def test_patch_release_defaults_to_previous_release_before_line_base(self) -> None:
         with (
             patch("tools.release.changelog.context_builder.get_latest_tag", return_value="v0.34.1"),

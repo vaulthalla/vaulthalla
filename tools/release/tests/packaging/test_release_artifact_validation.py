@@ -73,6 +73,8 @@ class ReleaseArtifactValidationTests(unittest.TestCase):
             _write(output_dir / "changelog.release.md", "# release")
             _write(output_dir / "changelog.raw.md", "# raw")
             _write(output_dir / "changelog.payload.json", '{"schema_version":"x"}')
+            _write(output_dir / "changelog.semantic_payload.json", '{"schema_version":"semantic"}')
+            _write(output_dir / "changelog.context.json", '{"schema_version":"context"}')
 
             with patch(
                 "tools.release.packaging.debian._read_debian_package_members",
@@ -83,7 +85,7 @@ class ReleaseArtifactValidationTests(unittest.TestCase):
             self.assertEqual(result.output_dir, output_dir.resolve())
             self.assertEqual(len(result.debian_artifacts), 1)
             self.assertEqual(len(result.web_artifacts), 1)
-            self.assertEqual(len(result.changelog_artifacts), 3)
+            self.assertEqual(len(result.changelog_artifacts), 5)
 
     def test_validation_reports_missing_outputs_clearly(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -118,6 +120,8 @@ class ReleaseArtifactValidationTests(unittest.TestCase):
             _write(output_dir / "changelog.release.md", "# release")
             _write(output_dir / "changelog.raw.md", "# raw")
             _write(output_dir / "changelog.payload.json", '{"schema_version":"x"}')
+            _write(output_dir / "changelog.semantic_payload.json", '{"schema_version":"semantic"}')
+            _write(output_dir / "changelog.context.json", '{"schema_version":"context"}')
 
             members = self._valid_debian_members()
             members.remove("usr/bin/vaulthalla-cli")
@@ -147,6 +151,8 @@ class ReleaseArtifactValidationTests(unittest.TestCase):
             _write(output_dir / "changelog.release.md", "# release")
             _write(output_dir / "changelog.raw.md", "# raw")
             _write(output_dir / "changelog.payload.json", '{"schema_version":"x"}')
+            _write(output_dir / "changelog.semantic_payload.json", '{"schema_version":"semantic"}')
+            _write(output_dir / "changelog.context.json", '{"schema_version":"context"}')
 
             with (
                 patch(
@@ -166,6 +172,8 @@ class ReleaseArtifactValidationTests(unittest.TestCase):
             _write(output_dir / "changelog.release.md", "# release")
             _write(output_dir / "changelog.raw.md", "# raw")
             _write(output_dir / "changelog.payload.json", '{"schema_version":"x"}')
+            _write(output_dir / "changelog.semantic_payload.json", '{"schema_version":"semantic"}')
+            _write(output_dir / "changelog.context.json", '{"schema_version":"context"}')
 
             members = self._valid_debian_members()
             members.remove("usr/share/doc/vaulthalla/LICENSE.gz")

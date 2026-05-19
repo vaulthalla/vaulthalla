@@ -8,7 +8,11 @@ from tools.release.changelog.ai import run_emergency_triage_stage, render_emerge
     AIPolishResult, run_polish_stage, run_release_notes_stage, render_polish_markdown, render_polish_result_json, \
     render_draft_result_json, build_triage_ir_payload, render_triage_result_json
 from tools.release.changelog.ai.providers import StructuredJSONProvider
-from tools.release.changelog.release_workflow import DEFAULT_CHANGELOG_SCRATCH_DIR, render_cached_draft_markdown
+from tools.release.changelog.release_workflow import (
+    DEFAULT_CHANGELOG_SCRATCH_DIR,
+    render_cached_draft_markdown,
+    write_release_notes_context_metadata,
+)
 from tools.release.cli_tools.changelog.failure import capture_stage_failure_artifact, stage_failure
 from tools.release.cli_tools.changelog.output import write_output
 from tools.release.cli_tools.changelog.run import run_stage_preflight
@@ -294,7 +298,12 @@ def cmd_changelog_ai_draft(args: argparse.Namespace) -> int:
         release_notes_output = getattr(args, "release_notes_output", DEFAULT_RELEASE_NOTES_OUTPUT)
         write_output(release_notes_result.markdown, release_notes_output)
         if release_notes_output != "-":
-            print(f"Wrote AI release notes to {Path(release_notes_output).resolve()}")
+            release_notes_path = Path(release_notes_output).resolve()
+            write_release_notes_context_metadata(
+                release_notes_path=release_notes_path,
+                context=context,
+            )
+            print(f"Wrote AI release notes to {release_notes_path}")
 
     if polish_result is not None:
         final_markdown = render_polish_markdown(polish_result)
@@ -303,7 +312,7 @@ def cmd_changelog_ai_draft(args: argparse.Namespace) -> int:
         final_markdown = draft_markdown
 
     version = read_version_file(repo_root / "VERSION")
-    cached_markdown = render_cached_draft_markdown(version=str(version), content=final_markdown)
+    cached_markdown = render_cached_draft_markdown(version=str(version), content=final_markdown, context=context)
     cached_target = args.output
     if cached_target is None or cached_target == "-":
         cached_target = DEFAULT_CHANGELOG_DRAFT_OUTPUT

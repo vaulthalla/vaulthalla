@@ -231,6 +231,8 @@ def validate_release_artifacts(
         destination / "changelog.release.md",
         destination / "changelog.raw.md",
         destination / "changelog.payload.json",
+        destination / "changelog.semantic_payload.json",
+        destination / "changelog.context.json",
     )
     changelog_artifacts = tuple(path for path in changelog_expected if path.is_file())
 

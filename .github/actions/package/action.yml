@@ -120,7 +120,9 @@ runs:
           --output "${{ inputs.output_dir }}/changelog.release.md"
           --raw-output "${{ inputs.output_dir }}/changelog.raw.md"
           --payload-output "${{ inputs.output_dir }}/changelog.payload.json"
+          --semantic-payload-output "${{ inputs.output_dir }}/changelog.semantic_payload.json"
           --release-notes-output "${{ inputs.output_dir }}/release_notes.md"
+          --context-output "${{ inputs.output_dir }}/changelog.context.json"
           --selection-output "${selection_output}"
         )
         case "$mode" in

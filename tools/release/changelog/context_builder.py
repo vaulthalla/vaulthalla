@@ -27,6 +27,7 @@ from tools.release.version.models import Version
 @dataclass(frozen=True)
 class _ResolvedPreviousTag:
     previous_tag: str | None
+    latest_tag: str | None = None
     skipped_current_release_tag: bool = False
 
 
@@ -36,11 +37,25 @@ def build_release_context(
     previous_tag: str | None = None,
 ) -> ReleaseContext:
     repo_root = Path(repo_root).resolve()
+    explicit_previous_tag = previous_tag is not None
+    latest_tag: str | None = None
     skipped_current_release_tag = False
+    parsed_version: Version | None = None
+    try:
+        parsed_version = Version.parse(version)
+    except ValueError:
+        parsed_version = None
+
     if previous_tag is None:
         resolved_previous_tag = _resolve_default_previous_tag_result(repo_root, version)
         previous_tag = resolved_previous_tag.previous_tag
+        latest_tag = resolved_previous_tag.latest_tag
         skipped_current_release_tag = resolved_previous_tag.skipped_current_release_tag
+        if parsed_version is not None and _is_current_release_tag(previous_tag, parsed_version):
+            raise ValueError(
+                "Default changelog checkpoint resolved to the current release tag "
+                f"`{previous_tag}` for VERSION {version}; refusing to build an empty post-tag release range."
+            )
     head_sha = get_head_sha(repo_root)
 
     commits = get_commits_since_tag(repo_root, previous_tag)
@@ -74,9 +89,10 @@ def build_release_context(
         )
 
     cross_cutting_notes: list[str] = []
-    if previous_tag == f"v{version}" and commits:
+    if parsed_version is not None and _is_current_release_tag(previous_tag, parsed_version):
         cross_cutting_notes.append(
-            "Release tag already exists for this version while HEAD is ahead; bump VERSION or pass --since-tag explicitly."
+            "Explicit changelog checkpoint points at the current release tag; "
+            "the release range may be empty or contain only post-tag commits."
         )
     if skipped_current_release_tag:
         resolved_label = previous_tag or "none"
@@ -94,6 +110,9 @@ def build_release_context(
         commits=commits,
         uncategorized_commits=uncategorized_commits,
         cross_cutting_notes=cross_cutting_notes,
+        latest_tag=latest_tag,
+        skipped_current_release_tag=skipped_current_release_tag,
+        explicit_previous_tag=explicit_previous_tag,
     )
 
 
@@ -106,11 +125,13 @@ def _resolve_default_previous_tag_result(repo_root: Path, version: str) -> _Reso
     try:
         parsed_version = Version.parse(version)
     except ValueError:
-        return _ResolvedPreviousTag(previous_tag=latest_tag)
+        return _ResolvedPreviousTag(previous_tag=latest_tag, latest_tag=latest_tag)
     skipped_current_release_tag = _is_current_release_tag(latest_tag, parsed_version)
     if parsed_version.patch <= 0:
+        previous_tag = get_previous_release_tag_before(repo_root, parsed_version)
         return _ResolvedPreviousTag(
-            previous_tag=get_previous_release_tag_before(repo_root, parsed_version),
+            previous_tag=previous_tag,
+            latest_tag=latest_tag,
             skipped_current_release_tag=skipped_current_release_tag,
         )
     line_base = Version(parsed_version.major, parsed_version.minor, 0)
@@ -120,6 +141,7 @@ def _resolve_default_previous_tag_result(repo_root: Path, version: str) -> _Reso
         candidate = get_previous_release_tag_before(repo_root, parsed_version)
     return _ResolvedPreviousTag(
         previous_tag=candidate,
+        latest_tag=latest_tag,
         skipped_current_release_tag=skipped_current_release_tag,
     )
 
