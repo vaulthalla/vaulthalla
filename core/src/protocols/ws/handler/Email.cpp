@@ -251,6 +251,35 @@ json Email::setProviderSecret(const json& payload, const std::shared_ptr<Session
     return {{"secrets", secretStatus()}};
 }
 
+json Email::getProviderSecret(const json& payload, const std::shared_ptr<Session>& session) {
+    requireSuperAdmin(session);
+    if (!payload.is_object()) throw std::invalid_argument("email.provider.secret.get payload must be an object");
+
+    auto& deps = runtime::Deps::get();
+    if (!deps.secretsManager) throw std::runtime_error("secrets manager is unavailable");
+
+    const auto provider = ::vh::config::emailProviderKindFromString(payload.at("provider").get<std::string>());
+    if (provider != ::vh::config::EmailProviderKind::Ses)
+        throw std::invalid_argument("secret reads are only supported for SES");
+
+    const auto includeSecretAccessKey = payload.value("include_secret_access_key", false);
+    const auto accessKey = deps.secretsManager->getSecret(::vh::email::providers::SesProvider::kAccessKeySecret);
+
+    json out = {
+        {"provider", "ses"},
+        {"access_key_id", accessKey ? json(*accessKey) : json(nullptr)},
+        {"secret_access_key", json(nullptr)},
+        {"secrets", secretStatus()}
+    };
+
+    if (includeSecretAccessKey) {
+        const auto secretKey = deps.secretsManager->getSecret(::vh::email::providers::SesProvider::kSecretKeySecret);
+        out["secret_access_key"] = secretKey ? json(*secretKey) : json(nullptr);
+    }
+
+    return out;
+}
+
 json Email::testSend(const json& payload, const std::shared_ptr<Session>& session) {
     requireSuperAdmin(session);
     if (!payload.is_object()) throw std::invalid_argument("email.test.send payload must be an object");
