@@ -1,8 +1,18 @@
 #include "sync/Executor.hpp"
 #include "sync/Cloud.hpp"
 #include "sync/model/Action.hpp"
+#include "storage/CloudEngine.hpp"
+#include "storage/s3/Controller.hpp"
 
 using namespace vh::sync;
+
+namespace {
+    void throwIfS3BudgetExceeded(const std::shared_ptr<Cloud>& ctx) {
+        const auto metrics = ctx->cloudEngine()->s3RequestMetrics();
+        if (!metrics.budget_exceeded) return;
+        throw vh::storage::s3::RequestBudgetExceeded(metrics.budget_exceeded_reason);
+    }
+}
 
 void Executor::run(const std::shared_ptr<Cloud>& ctx, const std::vector<model::Action>& plan) {
     // Option: stable grouping for determinism & perf
@@ -14,7 +24,8 @@ void Executor::run(const std::shared_ptr<Cloud>& ctx, const std::vector<model::A
             dispatch(ctx, a);
         }
         ctx->processFutures(); // barrier between phases
-        }
+        throwIfS3BudgetExceeded(ctx);
+    }
 }
 
 void Executor::dispatch(const std::shared_ptr<Cloud>& ctx, const model::Action& action) {
@@ -37,4 +48,3 @@ void Executor::dispatch(const std::shared_ptr<Cloud>& ctx, const model::Action& 
         return;
     }
 }
-

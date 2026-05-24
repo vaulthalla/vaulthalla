@@ -3,6 +3,7 @@
 #include "db/query/sync/Event.hpp"
 #include "log/Registry.hpp"
 #include "sync/model/Conflict.hpp"
+#include "storage/s3/Controller.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -57,6 +58,13 @@ Event::Event(const pqxx::row& row)
     , num_conflicts(as_or_default<std::uint64_t>(row, "num_conflicts", 0))
     , bytes_up(as_or_default<std::uint64_t>(row, "bytes_up", 0))
     , bytes_down(as_or_default<std::uint64_t>(row, "bytes_down", 0))
+    , s3_list_requests(as_or_default<std::uint64_t>(row, "s3_list_requests", 0))
+    , s3_head_requests(as_or_default<std::uint64_t>(row, "s3_head_requests", 0))
+    , s3_get_requests(as_or_default<std::uint64_t>(row, "s3_get_requests", 0))
+    , s3_put_requests(as_or_default<std::uint64_t>(row, "s3_put_requests", 0))
+    , s3_copy_requests(as_or_default<std::uint64_t>(row, "s3_copy_requests", 0))
+    , s3_delete_requests(as_or_default<std::uint64_t>(row, "s3_delete_requests", 0))
+    , s3_downloaded_bytes(as_or_default<std::uint64_t>(row, "s3_downloaded_bytes", 0))
     , divergence_detected(as_or_default<bool>(row, "divergence_detected", false))
     , local_state_hash(as_or_empty(row, "local_state_hash"))
     , remote_state_hash(as_or_empty(row, "remote_state_hash"))
@@ -102,6 +110,7 @@ void Event::parseCurrentStatus() {
         case Status::SUCCESS:
         case Status::ERROR:
         case Status::CANCELLED:
+        case Status::STALLED:
             return;
         default:
             break;
@@ -196,8 +205,10 @@ Throughput& Event::getOrCreateThroughput(const Throughput::Metric& metric) {
 }
 
 void Event::computeDashboardStats() {
-    // Reset derived values (leave num_failed_ops/num_conflicts as they may be tracked elsewhere too)
+    // Reset derived values before recomputing so repeated status checks do not amplify counters.
     num_ops_total = 0;
+    num_failed_ops = 0;
+    num_conflicts = conflicts.size();
     bytes_up = 0;
     bytes_down = 0;
 
@@ -220,6 +231,16 @@ void Event::computeDashboardStats() {
                 break;
         }
     }
+}
+
+void Event::applyS3RequestMetrics(const vh::storage::s3::S3RequestMetrics& metrics) {
+    s3_list_requests = metrics.list_requests;
+    s3_head_requests = metrics.head_requests;
+    s3_get_requests = metrics.get_requests;
+    s3_put_requests = metrics.put_requests;
+    s3_copy_requests = metrics.copy_requests;
+    s3_delete_requests = metrics.delete_requests;
+    s3_downloaded_bytes = metrics.downloaded_bytes;
 }
 
 // -------------------------
@@ -294,6 +315,14 @@ pqxx::params Event::getParams() const noexcept {
         bytes_up,
         bytes_down,
 
+        s3_list_requests,
+        s3_head_requests,
+        s3_get_requests,
+        s3_put_requests,
+        s3_copy_requests,
+        s3_delete_requests,
+        s3_downloaded_bytes,
+
         divergence_detected,
         local_state_hash,
         remote_state_hash,
@@ -333,6 +362,13 @@ void vh::sync::model::to_json(nlohmann::json& j, const std::shared_ptr<Event>& e
         {"num_conflicts", e->num_conflicts},
         {"bytes_up", e->bytes_up},
         {"bytes_down", e->bytes_down},
+        {"s3_list_requests", e->s3_list_requests},
+        {"s3_head_requests", e->s3_head_requests},
+        {"s3_get_requests", e->s3_get_requests},
+        {"s3_put_requests", e->s3_put_requests},
+        {"s3_copy_requests", e->s3_copy_requests},
+        {"s3_delete_requests", e->s3_delete_requests},
+        {"s3_downloaded_bytes", e->s3_downloaded_bytes},
 
         {"conflicts", e->conflicts},
         {"throughputs", e->throughputs},

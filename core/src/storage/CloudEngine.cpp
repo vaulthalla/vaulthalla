@@ -10,6 +10,7 @@
 #include "db/query/fs/File.hpp"
 #include "db/query/fs/Directory.hpp"
 #include "db/query/identities/User.hpp"
+#include "db/query/sync/RemoteObjectIndex.hpp"
 #include "fs/ops/file.hpp"
 #include "preview/thumbnail/Worker.hpp"
 #include "fs/Filesystem.hpp"
@@ -17,6 +18,10 @@
 #include "vault/APIKeyManager.hpp"
 #include "config/Registry.hpp"
 #include "sync/model/RemotePolicy.hpp"
+#include "sync/model/RemoteManifest.hpp"
+
+#include <algorithm>
+#include <cctype>
 
 using namespace vh::fs;
 using namespace vh::fs::model;
@@ -36,6 +41,37 @@ static constexpr std::string_view META_VH_IV = "x-amz-meta-vh-iv";
 static constexpr std::string_view META_VH_KEY_VERSION = "x-amz-meta-vh-key-version";
 static constexpr std::string_view META_CONTENT_HASH = "x-amz-meta-content-hash";
 
+namespace {
+    std::optional<std::string> header_value(
+        const std::unordered_map<std::string, std::string>& headers,
+        const std::string_view name) {
+        auto target = std::string(name);
+        std::ranges::transform(target, target.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+
+        for (const auto& [key, value] : headers) {
+            auto normalized = key;
+            std::ranges::transform(normalized, normalized.begin(), [](unsigned char c) {
+                return static_cast<char>(std::tolower(c));
+            });
+            if (normalized == target) return value;
+        }
+
+        return std::nullopt;
+    }
+
+    bool contains_case_insensitive(std::string haystack, std::string needle) {
+        std::ranges::transform(haystack, haystack.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+        std::ranges::transform(needle, needle.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+        return haystack.find(needle) != std::string::npos;
+    }
+}
+
 std::unordered_map<std::string, std::string> CloudEngine::getMetaMapFromFile(const std::shared_ptr<File>& f) const {
     std::unordered_map<std::string, std::string> meta;
     const auto encrypt = s3Vault()->encrypt_upstream;
@@ -54,6 +90,11 @@ CloudEngine::CloudEngine(const std::shared_ptr<S3Vault>& vault)
       key_(runtime::Deps::get().apiKeyManager->getAPIKey(vault->api_key_id, vault->owner_id)),
       s3Provider_(std::make_shared<s3::Controller>(key_, vault->bucket)) {}
 
+CloudEngine::CloudEngine(const std::shared_ptr<S3Vault>& vault, std::shared_ptr<s3::Controller> s3Provider)
+    : Engine(vault),
+      key_(runtime::Deps::get().apiKeyManager->getAPIKey(vault->api_key_id, vault->owner_id)),
+      s3Provider_(std::move(s3Provider)) {}
+
 void CloudEngine::upload(const std::shared_ptr<File>& f) const {
     if (!fs::exists(f->backing_path) || !fs::is_regular_file(f->backing_path))
         throw std::runtime_error("[CloudStorageEngine] Invalid file: " + f->path.string());
@@ -66,15 +107,13 @@ void CloudEngine::upload(const std::shared_ptr<File>& f) const {
 
     const fs::path s3Key = stripLeadingSlash(f->path);
 
-    if (fs::file_size(f->backing_path) < s3::Controller::MIN_PART_SIZE) s3Provider_->uploadObject(s3Key, f->backing_path);
-    else s3Provider_->uploadLargeObject(s3Key, f->backing_path);
-
-    std::vector<uint8_t> buffer;
-    s3Provider_->downloadToBuffer(s3Key, buffer);
-
     if (!f->content_hash) f->content_hash = db::query::fs::File::getContentHash(vault->id, f->path);
-    s3Provider_->setObjectContentHash(s3Key, *f->content_hash);
-    s3Provider_->setObjectEncryptionMetadata(s3Key, f->encryption_iv, f->encrypted_with_key_version);
+    const auto meta = getMetaMapFromFile(f);
+
+    if (fs::file_size(f->backing_path) < s3::Controller::MIN_PART_SIZE)
+        s3Provider_->uploadObjectWithMetadata(s3Key, f->backing_path, meta);
+    else
+        s3Provider_->uploadLargeObject(s3Key, f->backing_path, s3::Controller::MIN_PART_SIZE, meta);
 }
 
 void CloudEngine::upload(const std::shared_ptr<File>& f, const std::vector<uint8_t>& buffer, const bool isCiphertext) const {
@@ -91,7 +130,7 @@ void CloudEngine::upload(const std::shared_ptr<File>& f, const std::vector<uint8
     const auto meta = getMetaMapFromFile(f);
 
     if (buffer.size() < s3::Controller::MIN_PART_SIZE) s3Provider_->uploadBufferWithMetadata(s3Key, buffer, meta);
-    else s3Provider_->uploadLargeObject(s3Key, buffer);
+    else s3Provider_->uploadLargeObject(s3Key, buffer, s3::Controller::MIN_PART_SIZE, meta);
 }
 
 std::vector<uint8_t> CloudEngine::downloadToBuffer(const fs::path& rel_path) const {
@@ -124,21 +163,132 @@ std::shared_ptr<File> CloudEngine::downloadFile(const fs::path& rel_path) {
             .overwrite = true
         });
 
-    s3Provider_->uploadBufferWithMetadata(s3Key, buffer, getMetaMapFromFile(f));
-
     preview::thumbnail::Worker::enqueue(shared_from_this(), buffer, f);
 
     return f;
 }
 
-void CloudEngine::indexAndDeleteFile(const fs::path& rel_path) {
-    const auto index = downloadFile(rel_path);
-    fs::remove(paths->absPath(index->path, PathType::FILE_CACHE_ROOT));
+void CloudEngine::indexAndDeleteFile(const std::shared_ptr<File>& remoteFile) {
+    if (!remoteFile) throw std::invalid_argument("[CloudStorageEngine] Cannot index null remote file");
+
+    const auto owner = db::query::identities::User::getUserById(vault->owner_id);
+    if (!owner) throw std::runtime_error("[CloudStorageEngine] Vault owner not found for metadata-only indexing");
+
+    const auto rel_path = makeAbsolute(remoteFile->path);
+    auto indexed = db::query::fs::File::getFileByPath(vault->id, rel_path);
+
+    if (!indexed) {
+        indexed = Filesystem::createFile({
+            .path = rel_path,
+            .fuse_path = vaultPathToFusePath(rel_path),
+            .buffer = {},
+            .engine = shared_from_this(),
+            .user = owner,
+            .overwrite = true
+        });
+    }
+
+    indexed->size_bytes = remoteFile->size_bytes;
+    indexed->content_hash = remoteFile->content_hash;
+    indexed->updated_at = remoteFile->updated_at;
+    indexed->last_modified_by = vault->owner_id;
+    db::query::fs::File::updateFile(indexed);
+
+    if (!indexed->backing_path.empty() && fs::exists(indexed->backing_path))
+        fs::remove(indexed->backing_path);
 }
 
 std::unordered_map<std::u8string, std::shared_ptr<File>>
 CloudEngine::getGroupedFilesFromS3(const fs::path& prefix) const {
     return groupEntriesByPath(filesFromS3XML(s3Provider_->listObjects(prefix)));
+}
+
+bool CloudEngine::refreshRemoteIndexFromManifestIfChanged() const {
+    const std::string manifestKey = remote_manifest::INDEX_V1_KEY;
+    const auto head = s3Provider_->getHeadObject(manifestKey);
+    if (!head) return false;
+
+    const auto remoteEtag = header_value(*head, "ETag");
+    const auto localEtag = db::query::sync::RemoteObjectIndex::getManifestETag(vault->id, manifestKey);
+    if (remoteEtag && localEtag && *remoteEtag == *localEtag &&
+        db::query::sync::RemoteObjectIndex::countForVault(vault->id) > 0)
+        return true;
+
+    std::vector<uint8_t> buffer;
+    s3Provider_->downloadToBuffer(manifestKey, buffer);
+    const std::string manifest(buffer.begin(), buffer.end());
+    const auto files = remote_manifest::parseIndexV1(manifest);
+    db::query::sync::RemoteObjectIndex::replaceFromManifest(vault->id, files);
+    db::query::sync::RemoteObjectIndex::upsertManifestETag(vault->id, manifestKey, remoteEtag);
+    return true;
+}
+
+void CloudEngine::publishRemoteIndexManifest() const {
+    const auto files = db::query::sync::RemoteObjectIndex::listFilesForVault(vault->id);
+    const auto manifest = remote_manifest::buildIndexV1(vault->id, files);
+    const std::vector<uint8_t> payload(manifest.begin(), manifest.end());
+
+    s3Provider_->uploadBufferWithMetadata(
+        remote_manifest::INDEX_V1_KEY,
+        payload,
+        {{"vh-manifest-version", std::to_string(remote_manifest::INDEX_V1_VERSION)}});
+
+    const auto head = s3Provider_->getHeadObject(remote_manifest::INDEX_V1_KEY);
+    db::query::sync::RemoteObjectIndex::upsertManifestETag(
+        vault->id,
+        remote_manifest::INDEX_V1_KEY,
+        head ? header_value(*head, "ETag") : std::nullopt);
+}
+
+void CloudEngine::applyRemoteIndexMutation(const std::vector<Action>& plan) const {
+    bool mutated = false;
+
+    for (const auto& action : plan) {
+        switch (action.type) {
+        case ActionType::Upload:
+            if (action.local) {
+                db::query::sync::RemoteObjectIndex::upsertFile(vault->id, action.local);
+                mutated = true;
+            }
+            break;
+        case ActionType::DeleteRemote:
+            if (action.remote) {
+                db::query::sync::RemoteObjectIndex::deleteKey(vault->id, action.remote->path);
+                mutated = true;
+            }
+            break;
+        default:
+            break;
+        }
+    }
+
+    if (mutated) publishRemoteIndexManifest();
+}
+
+bool CloudEngine::selectedDownloadRequiresRestore(const std::shared_ptr<File>& remoteFile) const {
+    if (!remoteFile) return false;
+    if (remoteFile->requiresArchiveRestoreForBodyGet()) return true;
+
+    if (!remoteFile->remote_storage_class) return false;
+    auto storageClass = *remoteFile->remote_storage_class;
+    std::ranges::transform(storageClass, storageClass.begin(), [](unsigned char c) {
+        return static_cast<char>(std::toupper(c));
+    });
+    if (storageClass != "INTELLIGENT_TIERING")
+        return false;
+
+    const auto head = s3Provider_->getHeadObject(stripLeadingSlash(remoteFile->path));
+    if (!head) return true;
+
+    if (const auto archiveStatus = header_value(*head, "x-amz-archive-status");
+        archiveStatus && !archiveStatus->empty())
+        return true;
+
+    if (const auto restore = header_value(*head, "x-amz-restore");
+        restore && contains_case_insensitive(*restore, "ongoing-request=\"true\""))
+        return true;
+
+    return false;
 }
 
 std::string CloudEngine::getRemoteContentHash(const fs::path& rel_path) const {
@@ -241,4 +391,25 @@ std::shared_ptr<S3Vault> CloudEngine::s3Vault() const { return std::static_point
 
 std::shared_ptr<RemotePolicy> CloudEngine::remote_policy() const {
     return std::static_pointer_cast<RemotePolicy>(sync);
+}
+
+void CloudEngine::configureS3RequestBudget(const s3::S3RequestBudget& budget) const {
+    if (s3Provider_) s3Provider_->setRequestBudget(budget);
+}
+
+void CloudEngine::clearS3RequestBudget() const {
+    if (s3Provider_) s3Provider_->clearRequestBudget();
+}
+
+void CloudEngine::resetS3RequestMetrics() const {
+    if (s3Provider_) s3Provider_->resetRequestMetrics();
+}
+
+s3::S3RequestMetrics CloudEngine::s3RequestMetrics() const {
+    if (!s3Provider_) return {};
+    return s3Provider_->requestMetrics();
+}
+
+void CloudEngine::setS3ControllerForTesting(std::shared_ptr<s3::Controller> s3Provider) {
+    s3Provider_ = std::move(s3Provider);
 }

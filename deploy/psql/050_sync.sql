@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS sync
     UNIQUE (vault_id)
     );
 
+UPDATE sync SET interval = 300 WHERE interval <= 0;
+
 CREATE TABLE IF NOT EXISTS fsync
 (
     sync_id         INTEGER PRIMARY KEY REFERENCES sync (id) ON DELETE CASCADE,
@@ -43,7 +45,14 @@ CREATE TABLE IF NOT EXISTS rsync
     strategy        VARCHAR(8) DEFAULT 'cache'
     CHECK (strategy IN ('cache', 'sync', 'mirror')),
     conflict_policy VARCHAR(12) DEFAULT 'keep_local'
-    CHECK (conflict_policy IN ('keep_local', 'keep_remote', 'keep_newest', 'ask'))
+    CHECK (conflict_policy IN ('keep_local', 'keep_remote', 'keep_newest', 'ask')),
+    s3_budget_list_requests BIGINT DEFAULT NULL,
+    s3_budget_head_requests BIGINT DEFAULT NULL,
+    s3_budget_get_requests BIGINT DEFAULT NULL,
+    s3_budget_put_requests BIGINT DEFAULT NULL,
+    s3_budget_copy_requests BIGINT DEFAULT NULL,
+    s3_budget_delete_requests BIGINT DEFAULT NULL,
+    s3_budget_downloaded_bytes BIGINT DEFAULT NULL
     );
 
 -- -----------------------------------
@@ -80,6 +89,13 @@ CREATE TABLE IF NOT EXISTS sync_event
     num_conflicts     BIGINT NOT NULL DEFAULT 0,
     bytes_up          BIGINT NOT NULL DEFAULT 0,
     bytes_down        BIGINT NOT NULL DEFAULT 0,
+    s3_list_requests  BIGINT NOT NULL DEFAULT 0,
+    s3_head_requests  BIGINT NOT NULL DEFAULT 0,
+    s3_get_requests   BIGINT NOT NULL DEFAULT 0,
+    s3_put_requests   BIGINT NOT NULL DEFAULT 0,
+    s3_copy_requests  BIGINT NOT NULL DEFAULT 0,
+    s3_delete_requests BIGINT NOT NULL DEFAULT 0,
+    s3_downloaded_bytes BIGINT NOT NULL DEFAULT 0,
 
     -- divergence / watermarks (optional but lets "diverged" be provable)
     divergence_detected      BOOLEAN NOT NULL DEFAULT FALSE,
@@ -172,6 +188,31 @@ CREATE TABLE IF NOT EXISTS sync_throughput
     UNIQUE (vault_id, run_uuid, metric_type)
     );
 
+CREATE TABLE IF NOT EXISTS remote_object_index
+(
+    id             SERIAL PRIMARY KEY,
+    vault_id       INTEGER NOT NULL REFERENCES vault (id) ON DELETE CASCADE,
+    object_key     TEXT NOT NULL,
+    size_bytes     BIGINT NOT NULL DEFAULT 0,
+    last_modified  TIMESTAMP DEFAULT NULL,
+    etag           TEXT DEFAULT NULL,
+    storage_class  TEXT DEFAULT NULL,
+    restore_status TEXT DEFAULT NULL,
+    source         VARCHAR(24) NOT NULL DEFAULT 'list_objects_v2'
+    CHECK (source IN ('list_objects_v2', 'inventory', 'manifest', 'event')),
+    indexed_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (vault_id, object_key)
+    );
+
+CREATE TABLE IF NOT EXISTS remote_manifest_state
+(
+    vault_id      INTEGER NOT NULL REFERENCES vault (id) ON DELETE CASCADE,
+    manifest_key  TEXT NOT NULL,
+    etag          TEXT DEFAULT NULL,
+    updated_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (vault_id, manifest_key)
+    );
+
 
 -- ##################################
 -- Indexes (dashboards + health queries)
@@ -193,6 +234,9 @@ CREATE INDEX IF NOT EXISTS idx_sync_event_vault_uuid
 -- throughput lookups by run
 CREATE INDEX IF NOT EXISTS idx_sync_throughput_run
     ON sync_throughput (vault_id, run_uuid);
+
+CREATE INDEX IF NOT EXISTS idx_remote_object_index_vault_key
+    ON remote_object_index (vault_id, object_key);
 
 -- conflicts by event
 CREATE INDEX IF NOT EXISTS idx_sync_conflict_reason_conflict

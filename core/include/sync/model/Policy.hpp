@@ -11,15 +11,19 @@ namespace vh::sync::model {
 struct Conflict;
 
 struct Policy {
+    static constexpr std::chrono::seconds DEFAULT_SYNC_INTERVAL{300};
+
     unsigned int id{}, vault_id{};
-    std::chrono::seconds interval{};
-    bool enabled{};
+    std::chrono::seconds interval{DEFAULT_SYNC_INTERVAL};
+    bool enabled{true};
     std::time_t last_sync_at{}, last_success_at{}, created_at{}, updated_at{};
     std::string config_hash{};
 
     Policy() = default;
     virtual ~Policy() = default;
     explicit Policy(const pqxx::row& row);
+
+    static std::chrono::seconds clampInterval(std::chrono::seconds value);
 
     virtual void rehash_config() = 0;
     [[nodiscard]] virtual bool resolve_conflict(const std::shared_ptr<Conflict>& conflict) const = 0;

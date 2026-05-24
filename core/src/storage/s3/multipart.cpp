@@ -6,7 +6,11 @@
 using namespace vh::storage::s3;
 using namespace vh::storage::s3::curl;
 
-std::string Controller::initiateMultipartUpload(const std::filesystem::path& key) const {
+std::string Controller::initiateMultipartUpload(
+    const std::filesystem::path& key,
+    const std::unordered_map<std::string, std::string>& metadata) const {
+    recordRequest(RequestKind::Put);
+
     CURL* curl = curl_easy_init();
     if (!curl) return "";
 
@@ -20,6 +24,7 @@ std::string Controller::initiateMultipartUpload(const std::filesystem::path& key
     HeaderList headers;
     headers.add("Authorization: " + authHeader);
     for (const auto& [k, v] : hdrMap) headers.add(k + ": " + v);
+    for (const auto& [k, v] : metadata) headers.add(fmt::format("x-amz-meta-{}: {}", k, v));
 
     std::string response;
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
@@ -52,6 +57,8 @@ std::string Controller::initiateMultipartUpload(const std::filesystem::path& key
 
 void Controller::uploadPart(const std::filesystem::path& key, const std::string& uploadId,
                              const int partNumber, const std::string& partData, std::string& etagOut) const {
+    recordRequest(RequestKind::Put);
+
     CURL* curl = curl_easy_init();
     if (!curl) throw std::runtime_error("Failed to init curl for S3 multipart upload");
 
@@ -92,6 +99,7 @@ void Controller::uploadPart(const std::filesystem::path& key, const std::string&
 void Controller::completeMultipartUpload(const std::filesystem::path& key, const std::string& uploadId,
                                          const std::vector<std::string>& etags) const {
     if (etags.empty()) throw std::runtime_error("No ETags provided to completeMultipartUpload");
+    recordRequest(RequestKind::Put);
 
     CURL* curl = curl_easy_init();
     if (!curl) throw std::runtime_error("Failed to init curl for S3 complete multipart upload");
@@ -133,6 +141,8 @@ void Controller::completeMultipartUpload(const std::filesystem::path& key, const
 }
 
 void Controller::abortMultipartUpload(const std::filesystem::path& key, const std::string& uploadId) const {
+    recordRequest(RequestKind::Delete);
+
     CURL* curl = curl_easy_init();
     if (!curl) throw std::runtime_error("Failed to init curl for S3 abort multipart upload");
 

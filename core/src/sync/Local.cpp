@@ -22,6 +22,7 @@
 #include "db/query/sync/Policy.hpp"
 #include "sync/tasks/RotateKey.hpp"
 #include "sync/tasks/Delete.hpp"
+#include "storage/s3/Controller.hpp"
 
 using namespace vh::sync;
 using namespace vh::sync::model;
@@ -35,9 +36,16 @@ using namespace vh::fs::model;
 using namespace vh::fs::ops;
 
 Local::Local(const std::shared_ptr<Engine>& engine)
-: next_run(system_clock::from_time_t(engine->sync->last_sync_at) + seconds(engine->sync->interval.count())),
-  engine(engine),
-  event(std::make_shared<Event>()) {}
+    : engine(engine),
+      event(std::make_shared<Event>()) {
+    if (!engine || !engine->sync) {
+        next_run = system_clock::now() + Policy::DEFAULT_SYNC_INTERVAL;
+        return;
+    }
+
+    engine->sync->interval = Policy::clampInterval(engine->sync->interval);
+    next_run = system_clock::from_time_t(engine->sync->last_sync_at) + seconds(engine->sync->interval.count());
+}
 
 void Local::operator()() {
     startTask();
@@ -66,6 +74,11 @@ void Local::runStages(const std::span<const Stage> stages) const {
             handleInterrupt();
             if (event) event->heartbeat();
         } catch (const std::exception& e) {
+            if (dynamic_cast<const vh::storage::s3::RequestBudgetExceeded*>(&e)) {
+                event->status = Event::Status::STALLED;
+                event->stall_reason = e.what();
+                break;
+            }
             handleError(std::format("[FSTask:{}] {}", std::string(name), e.what()));
             break;
         } catch (...) {

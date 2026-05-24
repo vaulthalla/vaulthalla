@@ -4,6 +4,7 @@
 #include "sync/model/helpers.hpp"
 #include "sync/model/Conflict.hpp"
 #include "fs/model/File.hpp"
+#include "log/Registry.hpp"
 
 using namespace vh::sync;
 using namespace vh::sync::model;
@@ -36,8 +37,17 @@ std::vector<Action> Planner::build(
         }
 
         if (!L && R) {
-            if (policy->downloadRemoteOnly())
-                plan.push_back({ ActionType::Download, k, nullptr, R });
+            if (policy->downloadRemoteOnly()) {
+                const bool indexOnly = policy->strategy == RemotePolicy::Strategy::Cache;
+                if (!indexOnly && R->requiresArchiveRestoreForBodyGet()) {
+                    log::Registry::sync()->warn(
+                        "[SyncPlanner] Skipping automatic body GET for archived S3 object '{}'",
+                        R->path.string());
+                    continue;
+                }
+
+                plan.push_back({ ActionType::Download, k, nullptr, R, indexOnly });
+            }
             continue;
         }
 
@@ -65,8 +75,15 @@ std::vector<Action> Planner::build(
             }
 
             // Non-conflict decision: by strategy/policy
-            if (auto a = policy->decideForBoth(L, R))
+            if (auto a = policy->decideForBoth(L, R)) {
+                if (*a == ActionType::Download && R->requiresArchiveRestoreForBodyGet()) {
+                    log::Registry::sync()->warn(
+                        "[SyncPlanner] Skipping automatic body GET for archived S3 object '{}'",
+                        R->path.string());
+                    continue;
+                }
                 plan.push_back({ *a, k, L, R });
+            }
         }
     }
 

@@ -9,6 +9,7 @@
 #include "vault/model/Vault.hpp"
 #include "db/query/fs/File.hpp"
 #include "db/query/fs/Directory.hpp"
+#include "db/query/sync/RemoteObjectIndex.hpp"
 #include "fs/model/Entry.hpp"
 #include "fs/model/File.hpp"
 #include "fs/model/Directory.hpp"
@@ -43,6 +44,8 @@ using namespace vh::crypto;
 
 void Cloud::operator()() {
     startTask();
+    cloudEngine()->resetS3RequestMetrics();
+    cloudEngine()->configureS3RequestBudget(cloudEngine()->remote_policy()->s3_request_budget);
 
     const Stage stages[] = {
         {"shared",   [this]{ processSharedOps(); }},
@@ -52,6 +55,23 @@ void Cloud::operator()() {
     };
 
     runStages(stages);
+    const auto s3Metrics = cloudEngine()->s3RequestMetrics();
+    event->applyS3RequestMetrics(s3Metrics);
+    if (s3Metrics.budget_exceeded) {
+        event->status = Event::Status::STALLED;
+        event->stall_reason = s3Metrics.budget_exceeded_reason;
+    }
+    log::Registry::sync()->info(
+        "[CloudSync] S3 counters for vault {}: LIST={} HEAD={} GET={} PUT={} COPY={} DELETE={} downloaded_bytes={}",
+        engine->vault->id,
+        event->s3_list_requests,
+        event->s3_head_requests,
+        event->s3_get_requests,
+        event->s3_put_requests,
+        event->s3_copy_requests,
+        event->s3_delete_requests,
+        event->s3_downloaded_bytes);
+    cloudEngine()->clearS3RequestBudget();
     shutdown();
 }
 
@@ -61,21 +81,28 @@ void Cloud::operator()() {
 
 void Cloud::sync() {
     const auto self = std::static_pointer_cast<Cloud>(shared_from_this());
-    Executor::run(self, Planner::build(self, cloudEngine()->remote_policy()));
+    const auto plan = Planner::build(self, cloudEngine()->remote_policy());
+    Executor::run(self, plan);
+    event->computeDashboardStats();
+    if (event->num_failed_ops == 0)
+        cloudEngine()->applyRemoteIndexMutation(plan);
 }
 
 void Cloud::initBins() {
-    s3Map = cloudEngine()->getGroupedFilesFromS3();
+    if (cloudEngine()->refreshRemoteIndexFromManifestIfChanged() ||
+        db::query::sync::RemoteObjectIndex::countForVault(engine->vault->id) > 0) {
+        s3Map = groupEntriesByPath(db::query::sync::RemoteObjectIndex::listFilesForVault(engine->vault->id));
+    } else {
+        s3Map = cloudEngine()->getGroupedFilesFromS3();
+        db::query::sync::RemoteObjectIndex::replaceFromListObjects(engine->vault->id, uMap2Vector(s3Map));
+        cloudEngine()->publishRemoteIndexManifest();
+    }
     s3Files = uMap2Vector(s3Map);
 
     localFiles = db::query::fs::File::listFilesInDir(engine->vault->id);
     localMap = groupEntriesByPath(localFiles);
 
     event->heartbeat();
-
-    for (const auto& [path, entry] : intersect(s3Map, localMap))
-        remoteHashMap.insert({entry->path.u8string(),
-                              cloudEngine()->getRemoteContentHash(entry->path)});
 }
 
 void Cloud::clearBins() {

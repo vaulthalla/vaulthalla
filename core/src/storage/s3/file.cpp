@@ -8,11 +8,12 @@ using namespace vh::storage::s3::curl;
 
 void Controller::uploadLargeObject(const std::filesystem::path& key,
 const std::filesystem::path& filePath,
-const uintmax_t partSize) const {
+const uintmax_t partSize,
+const std::unordered_map<std::string, std::string>& metadata) const {
     std::ifstream file(filePath, std::ios::binary);
     if (!file) throw std::runtime_error("Failed to open file for large upload: " + filePath.string());
 
-    const std::string uploadId = initiateMultipartUpload(key);
+    const std::string uploadId = initiateMultipartUpload(key, metadata);
     if (uploadId.empty()) throw std::runtime_error("Failed to initiate multipart upload for: " + key.string());
 
     std::vector<std::string> etags;
@@ -55,6 +56,15 @@ const uintmax_t partSize) const {
 }
 
 void Controller::uploadObject(const std::filesystem::path& key, const std::filesystem::path& filePath) const {
+    uploadObjectWithMetadata(key, filePath, {});
+}
+
+void Controller::uploadObjectWithMetadata(
+    const std::filesystem::path& key,
+    const std::filesystem::path& filePath,
+    const std::unordered_map<std::string, std::string>& metadata) const {
+    recordRequest(RequestKind::Put);
+
     std::ifstream fin(filePath, std::ios::binary);
     if (!fin) throw std::runtime_error("Failed to open file for upload: " + filePath.string());
 
@@ -73,6 +83,9 @@ void Controller::uploadObject(const std::filesystem::path& key, const std::files
 
     SList hdrs = makeSigHeaders("PUT", canonical, payloadHash);
     hdrs.add("Content-Type: application/octet-stream");
+    for (const auto& [k, v] : metadata) {
+        hdrs.add(fmt::format("x-amz-meta-{}: {}", k, v));
+    }
 
     HttpResponse resp = performCurl([&](CURL* h) {
         curl_easy_setopt(h, CURLOPT_URL, url.c_str());
@@ -94,6 +107,8 @@ void Controller::uploadObject(const std::filesystem::path& key, const std::files
 
 void Controller::downloadObject(const std::filesystem::path& key,
                                 const std::filesystem::path& outputPath) const {
+    recordRequest(RequestKind::Get);
+
     CURL* curl = curl_easy_init();
     if (!curl) throw std::runtime_error("Failed to init curl for S3 download");
 
@@ -113,9 +128,15 @@ void Controller::downloadObject(const std::filesystem::path& key,
     headers.add("Authorization: " + authHeader);
     for (const auto& [k, v] : hdrMap) headers.add(fmt::format("{}: {}", k, v));
 
+    struct WriteCtx {
+        std::ofstream* fout;
+        uint64_t bytes{};
+    } writeCtx{&file, 0};
+
     auto writeFn = +[](const char* ptr, const size_t size, const size_t nmemb, void* userdata) -> size_t {
-        auto* fout = static_cast<std::ofstream*>(userdata);
-        fout->write(ptr, size * nmemb);
+        auto* ctx = static_cast<WriteCtx*>(userdata);
+        ctx->fout->write(ptr, size * nmemb);
+        ctx->bytes += size * nmemb;
         return size * nmemb;
     };
 
@@ -123,7 +144,7 @@ void Controller::downloadObject(const std::filesystem::path& key,
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers.list);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeFn);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &file);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &writeCtx);
 
     const CURLcode res = curl_easy_perform(curl);
     curl_easy_cleanup(curl);
@@ -131,4 +152,6 @@ void Controller::downloadObject(const std::filesystem::path& key,
 
     if (res != CURLE_OK) throw std::runtime_error(
         fmt::format("Failed to download file from S3: CURL error {}", res));
+
+    recordRequest(RequestKind::DownloadBytes, writeCtx.bytes);
 }

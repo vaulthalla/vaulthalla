@@ -32,6 +32,8 @@ SList Controller::makeSigHeaders(const std::string &method,
 
 std::optional<std::unordered_map<std::string, std::string> >
 Controller::getHeadObject(const std::filesystem::path &key) const {
+    recordRequest(RequestKind::Head);
+
     const auto [canonicalPath, url] = constructPaths(nullptr, key);
     const std::string payloadHash = "UNSIGNED-PAYLOAD";
 
@@ -72,6 +74,8 @@ Controller::getHeadObject(const std::filesystem::path &key) const {
 }
 
 void Controller::setObjectContentHash(const std::filesystem::path &key, const std::string &hash) const {
+    recordRequest(RequestKind::Copy);
+
     CurlEasy curl;
     const auto [canonicalPath, url] = constructPaths(static_cast<CURL *>(curl), key);
 
@@ -108,6 +112,8 @@ void Controller::setObjectContentHash(const std::filesystem::path &key, const st
 
 void Controller::setObjectEncryptionMetadata(const std::string &key, const std::string &iv_b64,
                                              unsigned int key_version) const {
+    recordRequest(RequestKind::Copy);
+
     CurlEasy curl;
     const auto [canonicalPath, url] = constructPaths(static_cast<CURL *>(curl), key);
     const std::string payloadHash = "UNSIGNED-PAYLOAD";

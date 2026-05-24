@@ -16,10 +16,46 @@ using namespace vh::fs::model;
 using namespace vh::concurrency;
 using namespace vh::db::encoding;
 
+namespace {
+    std::optional<uint64_t> optional_uint64(const pqxx::row& row, const char* name) {
+        const auto field = row[name];
+        if (field.is_null()) return std::nullopt;
+        return field.as<uint64_t>();
+    }
+
+    void add_budget_hash(std::string& hash, const char* name, const std::optional<uint64_t>& value) {
+        hash += ";";
+        hash += name;
+        hash += "=";
+        hash += value ? std::to_string(*value) : "null";
+    }
+
+    std::optional<uint64_t> json_budget_value(const nlohmann::json& j, const char* name) {
+        if (!j.contains(name) || j.at(name).is_null()) return std::nullopt;
+        return j.at(name).get<uint64_t>();
+    }
+
+    nlohmann::json json_budget_value(const std::optional<uint64_t>& value) {
+        if (!value) return nullptr;
+        return *value;
+    }
+
+    std::string budgetToString(const std::optional<uint64_t>& value) {
+        return value ? std::to_string(*value) : "unlimited";
+    }
+}
+
 RemotePolicy::RemotePolicy(const pqxx::row& row)
     : Policy(row),
       strategy(strategyFromString(row.at("strategy").as<std::string>())),
       conflict_policy(rsConflictPolicyFromString(row.at("conflict_policy").as<std::string>())) {
+    s3_request_budget.max_list_requests = optional_uint64(row, "s3_budget_list_requests");
+    s3_request_budget.max_head_requests = optional_uint64(row, "s3_budget_head_requests");
+    s3_request_budget.max_get_requests = optional_uint64(row, "s3_budget_get_requests");
+    s3_request_budget.max_put_requests = optional_uint64(row, "s3_budget_put_requests");
+    s3_request_budget.max_copy_requests = optional_uint64(row, "s3_budget_copy_requests");
+    s3_request_budget.max_delete_requests = optional_uint64(row, "s3_budget_delete_requests");
+    s3_request_budget.max_downloaded_bytes = optional_uint64(row, "s3_budget_downloaded_bytes");
     rehash_config();
 }
 
@@ -29,6 +65,13 @@ void RemotePolicy::rehash_config() {
                   ";enabled=" + (enabled ? "true" : "false") +
                   ";strategy=" + to_string(strategy) +
                   ";conflict_policy=" + to_string(conflict_policy);
+    add_budget_hash(config_hash, "s3_budget_list_requests", s3_request_budget.max_list_requests);
+    add_budget_hash(config_hash, "s3_budget_head_requests", s3_request_budget.max_head_requests);
+    add_budget_hash(config_hash, "s3_budget_get_requests", s3_request_budget.max_get_requests);
+    add_budget_hash(config_hash, "s3_budget_put_requests", s3_request_budget.max_put_requests);
+    add_budget_hash(config_hash, "s3_budget_copy_requests", s3_request_budget.max_copy_requests);
+    add_budget_hash(config_hash, "s3_budget_delete_requests", s3_request_budget.max_delete_requests);
+    add_budget_hash(config_hash, "s3_budget_downloaded_bytes", s3_request_budget.max_downloaded_bytes);
 }
 
 bool RemotePolicy::resolve_conflict(const std::shared_ptr<Conflict>& conflict) const {
@@ -192,6 +235,7 @@ void RemotePolicy::preflightSpaceForPlan(const std::weak_ptr<Cloud>& ctx, const 
 
     for (const auto& a : plan) {
         if (a.type != ActionType::Download) continue;
+        if (a.freeAfterDownload) continue;
 
         // Prefer remote artifact when present; fall back to local if your planner uses that.
         if (a.remote) downloads.push_back(a.remote);
@@ -252,12 +296,32 @@ void vh::sync::model::to_json(nlohmann::json& j, const RemotePolicy& s) {
     to_json(j, static_cast<const Policy&>(s));
     j["strategy"] = to_string(s.strategy);
     j["conflict_policy"] = to_string(s.conflict_policy);
+    j["s3_request_budget"] = {
+        {"list_requests", json_budget_value(s.s3_request_budget.max_list_requests)},
+        {"head_requests", json_budget_value(s.s3_request_budget.max_head_requests)},
+        {"get_requests", json_budget_value(s.s3_request_budget.max_get_requests)},
+        {"put_requests", json_budget_value(s.s3_request_budget.max_put_requests)},
+        {"copy_requests", json_budget_value(s.s3_request_budget.max_copy_requests)},
+        {"delete_requests", json_budget_value(s.s3_request_budget.max_delete_requests)},
+        {"downloaded_bytes", json_budget_value(s.s3_request_budget.max_downloaded_bytes)}
+    };
 }
 
 void vh::sync::model::from_json(const nlohmann::json& j, RemotePolicy& s) {
     from_json(j, static_cast<Policy&>(s));
     s.strategy = strategyFromString(j.at("strategy").get<std::string>());
     s.conflict_policy = rsConflictPolicyFromString(j.at("conflict_policy").get<std::string>());
+    if (j.contains("s3_request_budget") && j.at("s3_request_budget").is_object()) {
+        const auto& budget = j.at("s3_request_budget");
+        s.s3_request_budget.max_list_requests = json_budget_value(budget, "list_requests");
+        s.s3_request_budget.max_head_requests = json_budget_value(budget, "head_requests");
+        s.s3_request_budget.max_get_requests = json_budget_value(budget, "get_requests");
+        s.s3_request_budget.max_put_requests = json_budget_value(budget, "put_requests");
+        s.s3_request_budget.max_copy_requests = json_budget_value(budget, "copy_requests");
+        s.s3_request_budget.max_delete_requests = json_budget_value(budget, "delete_requests");
+        s.s3_request_budget.max_downloaded_bytes = json_budget_value(budget, "downloaded_bytes");
+    }
+    s.rehash_config();
 }
 
 std::string vh::sync::model::to_string(const RemotePolicy::Strategy& s) {
@@ -302,6 +366,14 @@ std::string vh::sync::model::to_string(const std::shared_ptr<RemotePolicy>& sync
            "  Enabled: " + (sync->enabled ? "true" : "false") + "\n"
            "  Strategy: " + to_string(sync->strategy) + "\n"
            "  Conflict Policy: " + to_string(sync->conflict_policy) + "\n"
+           "  S3 Request Budget:\n"
+           "    LIST: " + budgetToString(sync->s3_request_budget.max_list_requests) + "\n"
+           "    HEAD: " + budgetToString(sync->s3_request_budget.max_head_requests) + "\n"
+           "    GET: " + budgetToString(sync->s3_request_budget.max_get_requests) + "\n"
+           "    PUT: " + budgetToString(sync->s3_request_budget.max_put_requests) + "\n"
+           "    COPY: " + budgetToString(sync->s3_request_budget.max_copy_requests) + "\n"
+           "    DELETE: " + budgetToString(sync->s3_request_budget.max_delete_requests) + "\n"
+           "    Downloaded Bytes: " + budgetToString(sync->s3_request_budget.max_downloaded_bytes) + "\n"
            "  Last Sync At: " + timestampToString(sync->last_sync_at) + "\n"
            "  Last Success At: " + timestampToString(sync->last_success_at) + "\n"
            "  Created At: " + timestampToString(sync->created_at) + "\n"

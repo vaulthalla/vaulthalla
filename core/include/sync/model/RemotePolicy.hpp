@@ -2,6 +2,7 @@
 
 #include "sync/model/Policy.hpp"
 #include "sync/model/Action.hpp"
+#include "storage/s3/Controller.hpp"
 
 #include <string>
 #include <optional>
@@ -30,6 +31,7 @@ struct RemotePolicy final : public Policy {
 
     Strategy strategy{Strategy::Cache};
     ConflictPolicy conflict_policy{ConflictPolicy::KeepLocal};
+    vh::storage::s3::S3RequestBudget s3_request_budget{};
 
     RemotePolicy() = default;
     ~RemotePolicy() override = default;

@@ -20,7 +20,66 @@ namespace vh::storage::s3 {
 
     Controller::~Controller() = default;
 
+    void Controller::setRequestBudget(const S3RequestBudget& budget) const {
+        std::scoped_lock lock(metricsMutex_);
+        requestBudget_ = budget;
+    }
+
+    void Controller::clearRequestBudget() const {
+        std::scoped_lock lock(metricsMutex_);
+        requestBudget_.reset();
+    }
+
+    void Controller::resetRequestMetrics() const {
+        std::scoped_lock lock(metricsMutex_);
+        metrics_ = {};
+    }
+
+    S3RequestMetrics Controller::requestMetrics() const {
+        std::scoped_lock lock(metricsMutex_);
+        return metrics_;
+    }
+
+    void Controller::recordRequest(const RequestKind kind, const uint64_t amount) const {
+        std::scoped_lock lock(metricsMutex_);
+
+        auto bump = [&](uint64_t& current, const std::optional<uint64_t>& limit, const char* label) {
+            if (limit && current + amount > *limit) {
+                metrics_.budget_exceeded = true;
+                metrics_.budget_exceeded_reason = fmt::format("S3 request budget exceeded for {}", label);
+                throw RequestBudgetExceeded(metrics_.budget_exceeded_reason);
+            }
+            current += amount;
+        };
+
+        switch (kind) {
+        case RequestKind::List:
+            bump(metrics_.list_requests, requestBudget_ ? requestBudget_->max_list_requests : std::optional<uint64_t>{}, "LIST");
+            return;
+        case RequestKind::Head:
+            bump(metrics_.head_requests, requestBudget_ ? requestBudget_->max_head_requests : std::optional<uint64_t>{}, "HEAD");
+            return;
+        case RequestKind::Get:
+            bump(metrics_.get_requests, requestBudget_ ? requestBudget_->max_get_requests : std::optional<uint64_t>{}, "GET");
+            return;
+        case RequestKind::Put:
+            bump(metrics_.put_requests, requestBudget_ ? requestBudget_->max_put_requests : std::optional<uint64_t>{}, "PUT");
+            return;
+        case RequestKind::Copy:
+            bump(metrics_.copy_requests, requestBudget_ ? requestBudget_->max_copy_requests : std::optional<uint64_t>{}, "COPY");
+            return;
+        case RequestKind::Delete:
+            bump(metrics_.delete_requests, requestBudget_ ? requestBudget_->max_delete_requests : std::optional<uint64_t>{}, "DELETE");
+            return;
+        case RequestKind::DownloadBytes:
+            bump(metrics_.downloaded_bytes, requestBudget_ ? requestBudget_->max_downloaded_bytes : std::optional<uint64_t>{}, "downloaded bytes");
+            return;
+        }
+    }
+
     void Controller::deleteObject(const fs::path& key) const {
+        recordRequest(RequestKind::Delete);
+
         const CurlEasy tmpHandle;
         const auto [canonical, url] = constructPaths(static_cast<CURL*>(tmpHandle), key);
 
@@ -48,6 +107,8 @@ namespace vh::storage::s3 {
         bool moreResults = true;
 
         while (moreResults) {
+            recordRequest(RequestKind::List);
+
             CURL* curl = curl_easy_init();
             if (!curl) break;
 

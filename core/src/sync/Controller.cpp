@@ -145,6 +145,14 @@ void Controller::pruneStaleTasks(const std::vector<std::shared_ptr<Engine> >& en
 void Controller::processTask(const std::shared_ptr<Engine>& engine) {
     std::scoped_lock lock(taskMapMutex_, pqMutex_);
 
+    if (!engine || !engine->sync || !engine->sync->enabled) {
+        if (engine && taskMap_.contains(engine->vault->id)) {
+            if (const auto& task = taskMap_[engine->vault->id]) task->interrupt();
+            taskMap_.erase(engine->vault->id);
+        }
+        return;
+    }
+
     if (!taskMap_.contains(engine->vault->id)) {
         const auto task = createTask(engine);
         taskMap_[engine->vault->id] = task;

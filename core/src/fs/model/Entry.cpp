@@ -7,6 +7,7 @@
 #include "log/Registry.hpp"
 #include "config/Registry.hpp"
 #include "db/encoding/u8.hpp"
+#include "sync/model/RemoteManifest.hpp"
 
 #include <nlohmann/json.hpp>
 #include <pqxx/result>
@@ -182,6 +183,10 @@ std::vector<std::shared_ptr<Entry>> vh::fs::model::fromS3XML(const std::u8string
         }
 
         const std::u8string key = reinterpret_cast<const char8_t*>(keyNode.text().get());
+        if (vh::sync::model::remote_manifest::isVaulthallaManifestKey(
+                std::string(reinterpret_cast<const char*>(key.c_str()))))
+            continue;
+
         const std::string lastMod = modifiedNode.text().get();
         const uint64_t size = std::stoull(sizeNode.text().get());
 

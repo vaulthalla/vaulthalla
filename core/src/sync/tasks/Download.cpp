@@ -18,8 +18,12 @@ void Download::operator()() {
     try {
         if (!op) throw std::runtime_error("DownloadTask: null scoped operation");
         op->start(file->size_bytes);
-        if (freeAfterDownload) engine->indexAndDeleteFile(file->path);
-        else engine->downloadFile(file->path);
+        if (freeAfterDownload) engine->indexAndDeleteFile(file);
+        else {
+            if (engine->selectedDownloadRequiresRestore(file))
+                throw std::runtime_error("S3 object is in an archive tier and requires explicit restore before download");
+            engine->downloadFile(file->path);
+        }
         op->success = true;
     } catch (const std::exception& e) {
         log::Registry::sync()->error("[DownloadTask] Failed to download file: {} - {}", file->path.string(), e.what());

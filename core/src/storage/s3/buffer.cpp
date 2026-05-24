@@ -7,11 +7,12 @@ using namespace vh::storage::s3::curl;
 
 void Controller::uploadLargeObject(const std::filesystem::path& key,
                                      const std::vector<uint8_t>& buffer,
-                                     const uintmax_t partSize) const {
+                                     const uintmax_t partSize,
+                                     const std::unordered_map<std::string, std::string>& metadata) const {
     if (buffer.empty())
         throw std::runtime_error("Buffer is empty, cannot perform multipart upload");
 
-    const std::string uploadId = initiateMultipartUpload(key);
+    const std::string uploadId = initiateMultipartUpload(key, metadata);
     if (uploadId.empty())
         throw std::runtime_error("Failed to initiate multipart upload for: " + key.string());
 
@@ -59,6 +60,8 @@ void Controller::uploadBufferWithMetadata(
     const std::vector<uint8_t>& buffer,
     const std::unordered_map<std::string, std::string>& metadata) const
 {
+    recordRequest(RequestKind::Put);
+
     log::Registry::cloud()->debug("[S3Provider] Uploading buffer to S3 key: {}, buffer_size: {}",
                                key.string(), buffer.size());
 
@@ -123,6 +126,8 @@ void Controller::uploadBufferWithMetadata(
 }
 
 void Controller::downloadToBuffer(const std::filesystem::path& key, std::vector<uint8_t>& outBuffer) const {
+    recordRequest(RequestKind::Get);
+
     CURL* curl = curl_easy_init();
     if (!curl) throw std::runtime_error("Failed to init curl for S3 download to buffer");
 
@@ -154,4 +159,6 @@ void Controller::downloadToBuffer(const std::filesystem::path& key, std::vector<
 
     if (res != CURLE_OK) throw std::runtime_error(
         fmt::format("Failed to download object from S3 to buffer: CURL error {}", res));
+
+    recordRequest(RequestKind::DownloadBytes, outBuffer.size());
 }
