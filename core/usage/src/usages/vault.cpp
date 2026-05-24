@@ -25,6 +25,28 @@ static const Optional s3ConflictOpt = Optional::Multi("s3_conflict", "Conflict r
 
 static const auto intervalOpt = Optional::ManyToOne("interval", "Sync interval in seconds (default 5m)", {"interval", "sync-interval"}, "interval");
 
+static const auto s3BudgetListOpt = Optional::ManyToOne("s3_budget_list",
+                                                        "Maximum LIST requests per S3 sync run; use 'unlimited' to clear.",
+                                                        {"s3-budget-list"}, "count");
+static const auto s3BudgetHeadOpt = Optional::ManyToOne("s3_budget_head",
+                                                        "Maximum HEAD requests per S3 sync run; use 'unlimited' to clear.",
+                                                        {"s3-budget-head"}, "count");
+static const auto s3BudgetGetOpt = Optional::ManyToOne("s3_budget_get",
+                                                       "Maximum GET requests per S3 sync run; use 'unlimited' to clear.",
+                                                       {"s3-budget-get"}, "count");
+static const auto s3BudgetPutOpt = Optional::ManyToOne("s3_budget_put",
+                                                       "Maximum PUT requests per S3 sync run; use 'unlimited' to clear.",
+                                                       {"s3-budget-put"}, "count");
+static const auto s3BudgetCopyOpt = Optional::ManyToOne("s3_budget_copy",
+                                                        "Maximum COPY requests per S3 sync run; use 'unlimited' to clear.",
+                                                        {"s3-budget-copy"}, "count");
+static const auto s3BudgetDeleteOpt = Optional::ManyToOne("s3_budget_delete",
+                                                          "Maximum DELETE requests per S3 sync run; use 'unlimited' to clear.",
+                                                          {"s3-budget-delete"}, "count");
+static const auto s3BudgetDownloadBytesOpt = Optional::ManyToOne("s3_budget_download_bytes",
+                                                                 "Maximum downloaded bytes per S3 sync run; use 'unlimited' to clear.",
+                                                                 {"s3-budget-download-bytes"}, "bytes");
+
 static const auto interactiveFlag = Flag::WithAliases("interactive_mode",
                                                       "Run in interactive mode, prompting for missing information",
                                                       {"interactive", "i"});
@@ -52,6 +74,14 @@ static const auto syncNowFlag = Flag::WithAliases("sync_now", "Immediately synch
 static const auto roleId = Positional::Alias("role_id", "ID of the role to override", "id");
 
 static const auto bitPosition = Positional::Same("bit_position", "Bit position of the permission override to update");
+static const auto inventoryFileOpt = Option::Single("file", "Path to a local S3 Inventory CSV file.", "file", "path");
+static const auto inventorySchemaOpt = Optional::ManyToOne("schema",
+                                                           "Comma-separated CSV columns when the inventory file has no header.",
+                                                           {"schema"}, "columns");
+static const auto inventoryHeaderFlag = Flag::WithAliases("has_header",
+                                                          "Treat the first inventory CSV row as a header row.",
+                                                          {"has-header", "header"});
+static const auto eventFileOpt = Option::Single("file", "Path to an S3 Event Notifications JSON file.", "file", "path");
 
 static const auto enableFlag = Flag::Alias("enable", "Enable the override (default)", "enable");
 static const auto disableFlag = Flag::Alias("disable", "Disable the override", "disable");
@@ -395,21 +425,72 @@ static std::shared_ptr<CommandUsage> sync_set(const std::weak_ptr<CommandUsage>&
     cmd->aliases = {"set", "update", "modify", "edit"};
     cmd->description = "Set or update synchronization settings for a specific vault.";
     cmd->positionals = {vaultPos};
-    cmd->optional = {owner};
+    cmd->optional = {owner, intervalOpt};
     cmd->groups = {
         {"Local Vault Options", {
              localConflictOpt
          }},
         {"S3 Vault Options", {
              syncStrategyOpt,
-             s3ConflictOpt
+             s3ConflictOpt,
+             s3BudgetListOpt,
+             s3BudgetHeadOpt,
+             s3BudgetGetOpt,
+             s3BudgetPutOpt,
+             s3BudgetCopyOpt,
+             s3BudgetDeleteOpt,
+             s3BudgetDownloadBytesOpt
          }}
     };
     cmd->examples = {
         {"vh vault sync set 42 --sync-strategy mirror --on-sync-conflict keep_remote",
          "Set sync configuration for the vault with ID 42."},
-        {"vh vault sync set myvault --sync-strategy cache --owner alice",
-         "Set sync configuration for the vault named 'myvault' owned by 'alice'."}
+        {"vh vault sync set myvault --sync-strategy cache --s3-budget-get 10 --owner alice",
+         "Set sync configuration and a GET request budget for the vault named 'myvault' owned by 'alice'."}
+    };
+    return cmd;
+}
+
+static std::shared_ptr<CommandUsage> sync_reconcile(const std::weak_ptr<CommandUsage>& parent) {
+    auto cmd = buildBaseUsage(parent);
+    cmd->aliases = {"reconcile"};
+    cmd->description = "Refresh the remote S3 object index using an explicit ListObjectsV2 reconciliation pass.";
+    cmd->positionals = {vaultPos};
+    cmd->optional = {owner};
+    cmd->examples = {
+        {"vh vault sync reconcile 42",
+         "Rebuild the remote object index for S3 vault 42. This can issue roughly one S3 LIST request per 1,000 objects."}
+    };
+    return cmd;
+}
+
+static std::shared_ptr<CommandUsage> sync_inventory(const std::weak_ptr<CommandUsage>& parent) {
+    auto cmd = buildBaseUsage(parent);
+    cmd->aliases = {"inventory", "import-inventory", "inventory-import"};
+    cmd->description = "Import a local S3 Inventory CSV into the remote object index without downloading object bodies.";
+    cmd->positionals = {vaultPos};
+    cmd->required = {inventoryFileOpt};
+    cmd->optional = {owner, inventorySchemaOpt};
+    cmd->optional_flags = {inventoryHeaderFlag};
+    cmd->examples = {
+        {"vh vault sync inventory 42 --file inventory.csv",
+         "Replace the remote object index for S3 vault 42 using a local S3 Inventory CSV."},
+        {"vh vault sync inventory 42 --file inventory.csv --schema bucket,key,size,last_modified_date,etag,storage_class",
+         "Import an inventory CSV that has no header row."}
+    };
+    return cmd;
+}
+
+static std::shared_ptr<CommandUsage> sync_events(const std::weak_ptr<CommandUsage>& parent) {
+    auto cmd = buildBaseUsage(parent);
+    cmd->aliases = {"events", "ingest-events", "event"};
+    cmd->description = "Ingest S3 Event Notifications JSON into the remote object index.";
+    cmd->positionals = {vaultPos};
+    cmd->required = {eventFileOpt};
+    cmd->optional = {owner};
+    cmd->examples = {
+        {"vh vault sync events 42 --file s3-events.json",
+         "Apply ObjectCreated and ObjectRemoved notifications to the remote object index for S3 vault 42."}
     };
     return cmd;
 }
@@ -422,12 +503,18 @@ static std::shared_ptr<CommandUsage> sync(const std::weak_ptr<CommandUsage>& par
     cmd->examples = {
         {"vh vault sync 42", "Manually trigger a sync for the vault with ID 42."},
         {"vh vault sync info 42", "Show sync configuration for the vault with ID 42."},
+        {"vh vault sync reconcile 42", "Rebuild the S3 remote object index with an explicit LIST pass."},
+        {"vh vault sync inventory 42 --file inventory.csv", "Import a local S3 Inventory CSV into the remote index."},
+        {"vh vault sync events 42 --file s3-events.json", "Ingest S3 event notifications into the remote index."},
         {"vh vault sync set 42 --sync-strategy mirror --on-sync-conflict keep_remote",
          "Set sync configuration for the vault with ID 42."},
         {"vh vault sync update 42 --sync-strategy cache", "Update the sync strategy for the vault with ID 42."}
     };
     cmd->subcommands = {
         sync_info(cmd->weak_from_this()),
+        sync_reconcile(cmd->weak_from_this()),
+        sync_inventory(cmd->weak_from_this()),
+        sync_events(cmd->weak_from_this()),
         sync_set(cmd->weak_from_this())
     };
     return cmd;
