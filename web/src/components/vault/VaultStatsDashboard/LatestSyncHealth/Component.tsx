@@ -162,6 +162,17 @@ export default function LatestSyncHealth({ event, title = 'Latest sync health' }
 
     const bytesUp = clampNonNeg(eventData.bytes_up ?? 0)
     const bytesDown = clampNonNeg(eventData.bytes_down ?? 0)
+    const s3Requests = {
+      list: clampNonNeg(eventData.s3_list_requests ?? 0),
+      head: clampNonNeg(eventData.s3_head_requests ?? 0),
+      get: clampNonNeg(eventData.s3_get_requests ?? 0),
+      put: clampNonNeg(eventData.s3_put_requests ?? 0),
+      copy: clampNonNeg(eventData.s3_copy_requests ?? 0),
+      delete: clampNonNeg(eventData.s3_delete_requests ?? 0),
+      downloadedBytes: clampNonNeg(eventData.s3_downloaded_bytes ?? 0),
+    }
+    const s3RequestTotal =
+      s3Requests.list + s3Requests.head + s3Requests.get + s3Requests.put + s3Requests.copy + s3Requests.delete
 
     const conflicts = Array.isArray(eventData.conflicts) ? eventData.conflicts : []
     const numConflicts = clampNonNeg(eventData.num_conflicts ?? conflicts.length ?? 0)
@@ -205,6 +216,8 @@ export default function LatestSyncHealth({ event, title = 'Latest sync health' }
       opsOk,
       bytesUp,
       bytesDown,
+      s3Requests,
+      s3RequestTotal,
       numConflicts,
       unresolved,
       divergence,
@@ -415,6 +428,7 @@ export default function LatestSyncHealth({ event, title = 'Latest sync health' }
     `Fail ${pct(d.opsFailed, d.opsTotal)}`,
     `Up ${bytes(d.bytesUp)}`,
     `Down ${bytes(d.bytesDown)}`,
+    d.s3RequestTotal ? `S3 req ${d.s3RequestTotal.toLocaleString()}` : null,
     d.numConflicts ? `Conflicts ${d.numConflicts}` : null,
   ].filter(Boolean)
 
@@ -516,6 +530,16 @@ export default function LatestSyncHealth({ event, title = 'Latest sync health' }
               <div className="text-[11px] text-white/45">
                 Up {bytes(d.bytesUp)} • Down {bytes(d.bytesDown)}
               </div>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
+              <div className="text-[11px] text-white/55">S3 requests</div>
+              <div className="text-sm font-semibold text-white/90">{d.s3RequestTotal.toLocaleString()}</div>
+              <div className="text-[11px] text-white/45">
+                L {d.s3Requests.list.toLocaleString()} • H {d.s3Requests.head.toLocaleString()} • G{' '}
+                {d.s3Requests.get.toLocaleString()} • P {d.s3Requests.put.toLocaleString()}
+              </div>
+              <div className="text-[11px] text-white/45">S3 bytes down {bytes(d.s3Requests.downloadedBytes)}</div>
             </div>
 
             <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2">

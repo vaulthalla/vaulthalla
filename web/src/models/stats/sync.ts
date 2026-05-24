@@ -89,6 +89,13 @@ export interface IEvent {
   num_conflicts: number
   bytes_up: number
   bytes_down: number
+  s3_list_requests: number
+  s3_head_requests: number
+  s3_get_requests: number
+  s3_put_requests: number
+  s3_copy_requests: number
+  s3_delete_requests: number
+  s3_downloaded_bytes: number
 
   divergence_detected: boolean
   local_state_hash: string | null
@@ -319,6 +326,13 @@ export class SyncEvent implements IEvent {
   num_conflicts: number
   bytes_up: number
   bytes_down: number
+  s3_list_requests: number
+  s3_head_requests: number
+  s3_get_requests: number
+  s3_put_requests: number
+  s3_copy_requests: number
+  s3_delete_requests: number
+  s3_downloaded_bytes: number
 
   divergence_detected: boolean
   local_state_hash: string | null
@@ -350,6 +364,13 @@ export class SyncEvent implements IEvent {
     this.num_conflicts = raw.num_conflicts
     this.bytes_up = raw.bytes_up
     this.bytes_down = raw.bytes_down
+    this.s3_list_requests = raw.s3_list_requests
+    this.s3_head_requests = raw.s3_head_requests
+    this.s3_get_requests = raw.s3_get_requests
+    this.s3_put_requests = raw.s3_put_requests
+    this.s3_copy_requests = raw.s3_copy_requests
+    this.s3_delete_requests = raw.s3_delete_requests
+    this.s3_downloaded_bytes = raw.s3_downloaded_bytes
 
     this.divergence_detected = raw.divergence_detected
     this.local_state_hash = raw.local_state_hash
@@ -408,6 +429,13 @@ export class SyncEvent implements IEvent {
       num_conflicts: asNumber(data.num_conflicts),
       bytes_up: asNumber(data.bytes_up),
       bytes_down: asNumber(data.bytes_down),
+      s3_list_requests: asNumber(data.s3_list_requests),
+      s3_head_requests: asNumber(data.s3_head_requests),
+      s3_get_requests: asNumber(data.s3_get_requests),
+      s3_put_requests: asNumber(data.s3_put_requests),
+      s3_copy_requests: asNumber(data.s3_copy_requests),
+      s3_delete_requests: asNumber(data.s3_delete_requests),
+      s3_downloaded_bytes: asNumber(data.s3_downloaded_bytes),
 
       divergence_detected: asBoolean(data.divergence_detected),
       local_state_hash: asStringOrNull(data.local_state_hash),
