@@ -14,7 +14,7 @@ export type ConflictResolution =
   | 'overwritten'
   | 'fixed_remote_encryption'
 
-export type ThroughputMetricType = 'upload' | 'download' | 'rename' | 'delete' | 'copy'
+export type ThroughputMetricType = 'upload' | 'download' | 'index' | 'rename' | 'delete' | 'copy'
 
 export type EventStatus = 'pending' | 'running' | 'success' | 'stalled' | 'error' | 'canceled' | 'cancelled'
 export type EventTrigger = 'schedule' | 'manual' | 'startup' | 'webhook' | 'retry'
@@ -96,6 +96,16 @@ export interface IEvent {
   s3_copy_requests: number
   s3_delete_requests: number
   s3_downloaded_bytes: number
+  s3_estimated_list_requests: number
+  s3_estimated_head_requests: number
+  s3_estimated_get_requests: number
+  s3_estimated_put_requests: number
+  s3_estimated_copy_requests: number
+  s3_estimated_delete_requests: number
+  s3_estimated_body_download_bytes: number
+  s3_estimated_upload_bytes: number
+  s3_remote_index_objects: number
+  s3_archive_downloads_skipped: number
 
   divergence_detected: boolean
   local_state_hash: string | null
@@ -333,6 +343,16 @@ export class SyncEvent implements IEvent {
   s3_copy_requests: number
   s3_delete_requests: number
   s3_downloaded_bytes: number
+  s3_estimated_list_requests: number
+  s3_estimated_head_requests: number
+  s3_estimated_get_requests: number
+  s3_estimated_put_requests: number
+  s3_estimated_copy_requests: number
+  s3_estimated_delete_requests: number
+  s3_estimated_body_download_bytes: number
+  s3_estimated_upload_bytes: number
+  s3_remote_index_objects: number
+  s3_archive_downloads_skipped: number
 
   divergence_detected: boolean
   local_state_hash: string | null
@@ -371,6 +391,16 @@ export class SyncEvent implements IEvent {
     this.s3_copy_requests = raw.s3_copy_requests
     this.s3_delete_requests = raw.s3_delete_requests
     this.s3_downloaded_bytes = raw.s3_downloaded_bytes
+    this.s3_estimated_list_requests = raw.s3_estimated_list_requests
+    this.s3_estimated_head_requests = raw.s3_estimated_head_requests
+    this.s3_estimated_get_requests = raw.s3_estimated_get_requests
+    this.s3_estimated_put_requests = raw.s3_estimated_put_requests
+    this.s3_estimated_copy_requests = raw.s3_estimated_copy_requests
+    this.s3_estimated_delete_requests = raw.s3_estimated_delete_requests
+    this.s3_estimated_body_download_bytes = raw.s3_estimated_body_download_bytes
+    this.s3_estimated_upload_bytes = raw.s3_estimated_upload_bytes
+    this.s3_remote_index_objects = raw.s3_remote_index_objects
+    this.s3_archive_downloads_skipped = raw.s3_archive_downloads_skipped
 
     this.divergence_detected = raw.divergence_detected
     this.local_state_hash = raw.local_state_hash
@@ -436,6 +466,16 @@ export class SyncEvent implements IEvent {
       s3_copy_requests: asNumber(data.s3_copy_requests),
       s3_delete_requests: asNumber(data.s3_delete_requests),
       s3_downloaded_bytes: asNumber(data.s3_downloaded_bytes),
+      s3_estimated_list_requests: asNumber(data.s3_estimated_list_requests),
+      s3_estimated_head_requests: asNumber(data.s3_estimated_head_requests),
+      s3_estimated_get_requests: asNumber(data.s3_estimated_get_requests),
+      s3_estimated_put_requests: asNumber(data.s3_estimated_put_requests),
+      s3_estimated_copy_requests: asNumber(data.s3_estimated_copy_requests),
+      s3_estimated_delete_requests: asNumber(data.s3_estimated_delete_requests),
+      s3_estimated_body_download_bytes: asNumber(data.s3_estimated_body_download_bytes),
+      s3_estimated_upload_bytes: asNumber(data.s3_estimated_upload_bytes),
+      s3_remote_index_objects: asNumber(data.s3_remote_index_objects),
+      s3_archive_downloads_skipped: asNumber(data.s3_archive_downloads_skipped),
 
       divergence_detected: asBoolean(data.divergence_detected),
       local_state_hash: asStringOrNull(data.local_state_hash),

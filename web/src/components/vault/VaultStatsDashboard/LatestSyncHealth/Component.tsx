@@ -125,6 +125,8 @@ function metricLabel(k: string): string {
       return 'Upload'
     case 'download':
       return 'Download'
+    case 'index':
+      return 'Index'
     case 'rename':
       return 'Rename'
     case 'delete':
@@ -171,8 +173,22 @@ export default function LatestSyncHealth({ event, title = 'Latest sync health' }
       delete: clampNonNeg(eventData.s3_delete_requests ?? 0),
       downloadedBytes: clampNonNeg(eventData.s3_downloaded_bytes ?? 0),
     }
+    const s3Estimate = {
+      list: clampNonNeg(eventData.s3_estimated_list_requests ?? 0),
+      head: clampNonNeg(eventData.s3_estimated_head_requests ?? 0),
+      get: clampNonNeg(eventData.s3_estimated_get_requests ?? 0),
+      put: clampNonNeg(eventData.s3_estimated_put_requests ?? 0),
+      copy: clampNonNeg(eventData.s3_estimated_copy_requests ?? 0),
+      delete: clampNonNeg(eventData.s3_estimated_delete_requests ?? 0),
+      downloadedBytes: clampNonNeg(eventData.s3_estimated_body_download_bytes ?? 0),
+      uploadBytes: clampNonNeg(eventData.s3_estimated_upload_bytes ?? 0),
+      remoteIndexObjects: clampNonNeg(eventData.s3_remote_index_objects ?? 0),
+      archiveSkipped: clampNonNeg(eventData.s3_archive_downloads_skipped ?? 0),
+    }
     const s3RequestTotal =
       s3Requests.list + s3Requests.head + s3Requests.get + s3Requests.put + s3Requests.copy + s3Requests.delete
+    const s3EstimatedTotal =
+      s3Estimate.list + s3Estimate.head + s3Estimate.get + s3Estimate.put + s3Estimate.copy + s3Estimate.delete
 
     const conflicts = Array.isArray(eventData.conflicts) ? eventData.conflicts : []
     const numConflicts = clampNonNeg(eventData.num_conflicts ?? conflicts.length ?? 0)
@@ -217,7 +233,9 @@ export default function LatestSyncHealth({ event, title = 'Latest sync health' }
       bytesUp,
       bytesDown,
       s3Requests,
+      s3Estimate,
       s3RequestTotal,
+      s3EstimatedTotal,
       numConflicts,
       unresolved,
       divergence,
@@ -403,6 +421,11 @@ export default function LatestSyncHealth({ event, title = 'Latest sync health' }
     d.unresolved > 0 ? `${d.unresolved} unresolved` : null,
     d.status === 'stalled' ? 'stalled' : null,
     d.status === 'error' ? 'error' : null,
+    d.s3Estimate.archiveSkipped > 0 ? `${d.s3Estimate.archiveSkipped} archive skips` : null,
+    d.s3EstimatedTotal > 0 && d.s3RequestTotal > d.s3EstimatedTotal ? 'S3 requests over estimate' : null,
+    d.stall_reason && d.stall_reason.toLowerCase().includes('download') && d.stall_reason.toLowerCase().includes('budget') ?
+      'byte budget preflight'
+    : null,
   ].filter(Boolean) as string[]
 
   const right = (
@@ -429,6 +452,7 @@ export default function LatestSyncHealth({ event, title = 'Latest sync health' }
     `Up ${bytes(d.bytesUp)}`,
     `Down ${bytes(d.bytesDown)}`,
     d.s3RequestTotal ? `S3 req ${d.s3RequestTotal.toLocaleString()}` : null,
+    d.s3EstimatedTotal ? `est ${d.s3EstimatedTotal.toLocaleString()}` : null,
     d.numConflicts ? `Conflicts ${d.numConflicts}` : null,
   ].filter(Boolean)
 
@@ -540,6 +564,22 @@ export default function LatestSyncHealth({ event, title = 'Latest sync health' }
                 {d.s3Requests.get.toLocaleString()} • P {d.s3Requests.put.toLocaleString()}
               </div>
               <div className="text-[11px] text-white/45">S3 bytes down {bytes(d.s3Requests.downloadedBytes)}</div>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
+              <div className="text-[11px] text-white/55">S3 estimate</div>
+              <div className="text-sm font-semibold text-white/90">
+                {d.s3EstimatedTotal.toLocaleString()} req / {bytes(d.s3Estimate.downloadedBytes)} down
+              </div>
+              <div className="text-[11px] text-white/45">
+                actual {pct(d.s3RequestTotal, d.s3EstimatedTotal)} • upload {bytes(d.s3Estimate.uploadBytes)}
+              </div>
+              {d.s3Estimate.remoteIndexObjects || d.s3Estimate.archiveSkipped ?
+                <div className="text-[11px] text-white/45">
+                  index {d.s3Estimate.remoteIndexObjects.toLocaleString()} • archive skipped{' '}
+                  {d.s3Estimate.archiveSkipped.toLocaleString()}
+                </div>
+              : null}
             </div>
 
             <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2">

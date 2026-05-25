@@ -72,6 +72,19 @@ function formatRate(bytesPerSec: number): string {
   return `${formatBytes(bytesPerSec)}/s`
 }
 
+function formatBudget(used: number, limit: number | null | undefined): string {
+  if (limit == null || !Number.isFinite(limit)) return `${formatInt(used)} / unlim`
+  return `${formatInt(used)} / ${formatInt(limit)}`
+}
+
+function budgetTone(used: number, limit: number | null | undefined): Tone | undefined {
+  if (limit == null || !Number.isFinite(limit) || limit <= 0) return undefined
+  const ratio = used / limit
+  if (ratio >= 1) return tones.critical
+  if (ratio >= 0.8) return tones.warning
+  return tones.healthy
+}
+
 function formatAge(seconds: number | null | undefined): string {
   if (seconds == null || !Number.isFinite(seconds)) return 'unknown'
   const s = Math.max(0, seconds)
@@ -228,6 +241,22 @@ export default function SyncHealth({ vaultId, initialLatestEvent = null, interva
   const latestStatus = latest?.status ?? 'none'
   const latestTrigger = latest?.trigger ?? 'none'
   const latestRetry = latest?.retry_attempt ?? 0
+  const latestS3Total = latest ?
+    (latest.s3_list_requests ?? 0)
+    + (latest.s3_head_requests ?? 0)
+    + (latest.s3_get_requests ?? 0)
+    + (latest.s3_put_requests ?? 0)
+    + (latest.s3_copy_requests ?? 0)
+    + (latest.s3_delete_requests ?? 0)
+  : 0
+  const latestS3EstimatedTotal = latest ?
+    (latest.s3_estimated_list_requests ?? 0)
+    + (latest.s3_estimated_head_requests ?? 0)
+    + (latest.s3_estimated_get_requests ?? 0)
+    + (latest.s3_estimated_put_requests ?? 0)
+    + (latest.s3_estimated_copy_requests ?? 0)
+    + (latest.s3_estimated_delete_requests ?? 0)
+  : 0
   const problemTone = data.hasProblems() ? tones.critical : tones.healthy
 
   return (
@@ -307,6 +336,12 @@ export default function SyncHealth({ vaultId, initialLatestEvent = null, interva
                 tone={data.divergence_detected || data.hash_mismatch ? tones.critical : tones.healthy}
               />
               <DetailMetric
+                label="Remote index"
+                value={data.remote_index_stale ? 'stale' : 'fresh'}
+                detail={`${formatInt(data.remote_index_object_count)} objects${data.remote_index_source ? ` / ${data.remote_index_source}` : ''}`}
+                tone={data.remote_index_stale ? tones.warning : tones.healthy}
+              />
+              <DetailMetric
                 label="Failed ops 24h"
                 value={formatInt(data.failed_ops_24h)}
                 tone={data.failed_ops_24h ? tones.critical : undefined}
@@ -378,6 +413,31 @@ export default function SyncHealth({ vaultId, initialLatestEvent = null, interva
                   label="Stalled"
                   value={formatInt(data.stalled_run_count)}
                   tone={data.stalled_run_count ? tones.critical : undefined}
+                />
+                <DetailMetric
+                  label="S3 actual/est"
+                  value={`${formatInt(latestS3Total)} / ${formatInt(latestS3EstimatedTotal)}`}
+                  detail="latest run"
+                  tone={latestS3EstimatedTotal && latestS3Total > latestS3EstimatedTotal ? tones.warning : undefined}
+                />
+                <DetailMetric
+                  label="LIST budget"
+                  value={formatBudget(latest?.s3_list_requests ?? 0, data.s3_budget_list_requests)}
+                  tone={budgetTone(latest?.s3_list_requests ?? 0, data.s3_budget_list_requests)}
+                />
+                <DetailMetric
+                  label="GET budget"
+                  value={formatBudget(latest?.s3_get_requests ?? 0, data.s3_budget_get_requests)}
+                  tone={budgetTone(latest?.s3_get_requests ?? 0, data.s3_budget_get_requests)}
+                />
+                <DetailMetric
+                  label="Byte budget"
+                  value={
+                    data.s3_budget_downloaded_bytes == null ?
+                      `${formatBytes(latest?.s3_downloaded_bytes ?? 0)} / unlim`
+                    : `${formatBytes(latest?.s3_downloaded_bytes ?? 0)} / ${formatBytes(data.s3_budget_downloaded_bytes)}`
+                  }
+                  tone={budgetTone(latest?.s3_downloaded_bytes ?? 0, data.s3_budget_downloaded_bytes)}
                 />
               </div>
             </div>
