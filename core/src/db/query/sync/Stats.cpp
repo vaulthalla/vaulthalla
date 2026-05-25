@@ -62,6 +62,14 @@ void applyConfig(Health& health, const pqxx::result& res) {
     health.syncIntervalSeconds = row["interval"].is_null() ? 0 : row["interval"].as<std::uint64_t>();
     health.configuredStrategy = optionalString(row, "configured_strategy");
     health.conflictPolicy = optionalString(row, "conflict_policy");
+    health.s3BudgetListRequests = optionalUInt64(row, "s3_budget_list_requests");
+    health.s3BudgetHeadRequests = optionalUInt64(row, "s3_budget_head_requests");
+    health.s3BudgetGetRequests = optionalUInt64(row, "s3_budget_get_requests");
+    health.s3BudgetPutRequests = optionalUInt64(row, "s3_budget_put_requests");
+    health.s3BudgetCopyRequests = optionalUInt64(row, "s3_budget_copy_requests");
+    health.s3BudgetDeleteRequests = optionalUInt64(row, "s3_budget_delete_requests");
+    health.s3BudgetDownloadedBytes = optionalUInt64(row, "s3_budget_downloaded_bytes");
+    health.maxRemoteIndexAgeSeconds = optionalUInt64(row, "max_remote_index_age_seconds");
 
     health.lastSyncAt = optionalTimestamp(row, "last_sync_at");
     health.lastSuccessAt = optionalTimestamp(row, "last_success_at");
@@ -137,6 +145,18 @@ void applyThroughput(Health& health, const pqxx::result& res) {
     health.peakThroughputBytesPerSec24h = asDouble(row, "peak_throughput_bytes_per_sec_24h");
 }
 
+void applyRemoteIndex(Health& health, const pqxx::result& res) {
+    if (res.empty()) return;
+
+    const auto row = res.one_row();
+    health.remoteIndexObjectCount = asUInt64(row, "object_count");
+    health.remoteIndexSource = optionalString(row, "source");
+    if (!row["indexed_at"].is_null()) {
+        health.remoteIndexIndexedAt = static_cast<std::uint64_t>(
+            parsePostgresTimestamp(row["indexed_at"].as<std::string>()));
+    }
+}
+
 void applyLastError(Health& health, const pqxx::result& res) {
     if (res.empty()) return;
 
@@ -163,6 +183,7 @@ std::shared_ptr<vh::stats::model::VaultSyncHealth> Stats::getVaultSyncHealth(con
         applyEventWindows(*health, txn.exec(pqxx::prepped{"sync_stats.event_windows"}, vaultId));
         applyConflictWindows(*health, txn.exec(pqxx::prepped{"sync_stats.conflict_windows"}, vaultId));
         applyThroughput(*health, txn.exec(pqxx::prepped{"sync_stats.throughput_24h"}, vaultId));
+        applyRemoteIndex(*health, txn.exec(pqxx::prepped{"remote_object_index.summary_for_vault"}, vaultId));
         applyLastError(*health, txn.exec(pqxx::prepped{"sync_stats.last_error"}, vaultId));
 
         health->finalize();

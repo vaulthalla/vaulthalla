@@ -46,6 +46,13 @@ static const auto s3BudgetDeleteOpt = Optional::ManyToOne("s3_budget_delete",
 static const auto s3BudgetDownloadBytesOpt = Optional::ManyToOne("s3_budget_download_bytes",
                                                                  "Maximum downloaded bytes per S3 sync run; use 'unlimited' to clear.",
                                                                  {"s3-budget-download-bytes"}, "bytes");
+static const auto s3BudgetPresetOpt = Optional::Multi("s3_budget_preset",
+                                                      "Apply an S3 budget preset. Individual budget flags override preset fields.",
+                                                      {"s3-budget-preset", "budget-preset"},
+                                                      {"conservative", "balanced", "bulk", "unlimited"});
+static const auto maxRemoteIndexAgeOpt = Optional::ManyToOne("max_remote_index_age",
+                                                             "Maximum age for trusting the local S3 remote index when manifest refresh fails; use 'unlimited' to clear.",
+                                                             {"max-remote-index-age", "remote-index-age"}, "duration");
 
 static const auto interactiveFlag = Flag::WithAliases("interactive_mode",
                                                       "Run in interactive mode, prompting for missing information",
@@ -82,6 +89,9 @@ static const auto inventoryHeaderFlag = Flag::WithAliases("has_header",
                                                           "Treat the first inventory CSV row as a header row.",
                                                           {"has-header", "header"});
 static const auto eventFileOpt = Option::Single("file", "Path to an S3 Event Notifications JSON file.", "file", "path");
+static const auto allowListScanFlag = Flag::WithAliases("allow_list_scan",
+                                                        "Allow a full S3 ListObjectsV2 scan when no LIST budget is configured.",
+                                                        {"allow-list-scan"});
 
 static const auto enableFlag = Flag::Alias("enable", "Enable the override (default)", "enable");
 static const auto disableFlag = Flag::Alias("disable", "Disable the override", "disable");
@@ -433,6 +443,8 @@ static std::shared_ptr<CommandUsage> sync_set(const std::weak_ptr<CommandUsage>&
         {"S3 Vault Options", {
              syncStrategyOpt,
              s3ConflictOpt,
+             s3BudgetPresetOpt,
+             maxRemoteIndexAgeOpt,
              s3BudgetListOpt,
              s3BudgetHeadOpt,
              s3BudgetGetOpt,
@@ -457,9 +469,23 @@ static std::shared_ptr<CommandUsage> sync_reconcile(const std::weak_ptr<CommandU
     cmd->description = "Refresh the remote S3 object index using an explicit ListObjectsV2 reconciliation pass.";
     cmd->positionals = {vaultPos};
     cmd->optional = {owner};
+    cmd->optional_flags = {allowListScanFlag};
     cmd->examples = {
         {"vh vault sync reconcile 42",
          "Rebuild the remote object index for S3 vault 42. This can issue roughly one S3 LIST request per 1,000 objects."}
+    };
+    return cmd;
+}
+
+static std::shared_ptr<CommandUsage> sync_dry_run(const std::weak_ptr<CommandUsage>& parent) {
+    auto cmd = buildBaseUsage(parent);
+    cmd->aliases = {"dry-run", "dryrun", "plan"};
+    cmd->description = "Estimate S3 request and byte pressure for the next sync plan without executing file changes.";
+    cmd->positionals = {vaultPos};
+    cmd->optional = {owner};
+    cmd->examples = {
+        {"vh vault sync dry-run 42",
+         "Estimate S3 request counts, upload bytes, and body-download bytes for S3 vault 42."}
     };
     return cmd;
 }
@@ -503,6 +529,7 @@ static std::shared_ptr<CommandUsage> sync(const std::weak_ptr<CommandUsage>& par
     cmd->examples = {
         {"vh vault sync 42", "Manually trigger a sync for the vault with ID 42."},
         {"vh vault sync info 42", "Show sync configuration for the vault with ID 42."},
+        {"vh vault sync dry-run 42", "Estimate the S3 request and byte pressure of the next sync."},
         {"vh vault sync reconcile 42", "Rebuild the S3 remote object index with an explicit LIST pass."},
         {"vh vault sync inventory 42 --file inventory.csv", "Import a local S3 Inventory CSV into the remote index."},
         {"vh vault sync events 42 --file s3-events.json", "Ingest S3 event notifications into the remote index."},
@@ -512,6 +539,7 @@ static std::shared_ptr<CommandUsage> sync(const std::weak_ptr<CommandUsage>& par
     };
     cmd->subcommands = {
         sync_info(cmd->weak_from_this()),
+        sync_dry_run(cmd->weak_from_this()),
         sync_reconcile(cmd->weak_from_this()),
         sync_inventory(cmd->weak_from_this()),
         sync_events(cmd->weak_from_this()),

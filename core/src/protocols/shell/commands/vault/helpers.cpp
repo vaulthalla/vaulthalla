@@ -232,6 +232,8 @@ void parseSync(const CommandCall& call, const std::shared_ptr<CommandUsage>& usa
         const auto rsync = std::static_pointer_cast<sync::model::RemotePolicy>(sync);
         if (const auto syncStrategyOpt = optVal(call, usage->resolveGroupOptional("S3 Vault Options", "strategy")->option_tokens))
             rsync->strategy = sync::model::strategyFromString(*syncStrategyOpt);
+        if (const auto indexAgeOpt = optVal(call, "max-remote-index-age"))
+            rsync->max_remote_index_age = sync::model::remoteIndexAgeFromString(*indexAgeOpt);
     }
 }
 

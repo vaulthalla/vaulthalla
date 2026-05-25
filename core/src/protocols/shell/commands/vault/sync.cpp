@@ -2,6 +2,8 @@
 #include "protocols/shell/util/argsHelpers.hpp"
 #include "runtime/Deps.hpp"
 #include "sync/Controller.hpp"
+#include "sync/Cloud.hpp"
+#include "sync/Planner.hpp"
 #include "storage/Engine.hpp"
 #include "identities/User.hpp"
 #include "vault/model/Vault.hpp"
@@ -10,17 +12,21 @@
 #include "sync/model/Policy.hpp"
 #include "db/encoding/interval.hpp"
 #include "db/query/vault/Vault.hpp"
+#include "db/query/fs/File.hpp"
 #include "db/query/sync/RemoteObjectIndex.hpp"
 #include "db/encoding/timestamp.hpp"
 #include "CommandUsage.hpp"
 #include "rbac/resolver/vault/all.hpp"
 #include "storage/CloudEngine.hpp"
+#include "storage/ScopedS3RequestBudget.hpp"
 #include "fs/model/File.hpp"
+#include "sync/model/Event.hpp"
 #include "sync/model/RemoteManifest.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <nlohmann/json.hpp>
@@ -239,6 +245,8 @@ namespace {
 
             if (auto etag = fieldAt(row, findColumn(columns, {"etag", "e_tag"})); !etag.empty())
                 file->remote_etag = etag;
+            if (auto version = fieldAt(row, findColumn(columns, {"version_id", "versionid"})); !version.empty())
+                file->remote_version_id = version;
 
             if (auto storageClass = fieldAt(row, findColumn(columns, {"storage_class", "storageclass"}));
                 !storageClass.empty())
@@ -344,8 +352,16 @@ namespace {
                 continue;
             }
 
+            const auto& object = record.at("s3").at("object");
+            const auto sequencer = object.contains("sequencer") && object.at("sequencer").is_string()
+                ? std::make_optional(object.at("sequencer").get<std::string>())
+                : std::optional<std::string>{};
+            const auto versionId = object.contains("versionId") && object.at("versionId").is_string()
+                ? std::make_optional(object.at("versionId").get<std::string>())
+                : std::optional<std::string>{};
+
             if (startsWith(eventName, "ObjectRemoved:")) {
-                db::query::sync::RemoteObjectIndex::deleteKey(vaultId, key);
+                db::query::sync::RemoteObjectIndex::deleteEventKey(vaultId, key, sequencer);
                 ++result.deletes;
                 continue;
             }
@@ -355,7 +371,6 @@ namespace {
                 continue;
             }
 
-            const auto& object = record.at("s3").at("object");
             const auto size = object.contains("size") && object.at("size").is_number_integer() &&
                               object.at("size").get<int64_t>() >= 0
                 ? static_cast<uint64_t>(object.at("size").get<int64_t>())
@@ -367,8 +382,10 @@ namespace {
                 parseObjectTime(record.value("eventTime", std::string{})));
             if (object.contains("eTag") && object.at("eTag").is_string())
                 file->remote_etag = object.at("eTag").get<std::string>();
+            file->remote_version_id = versionId;
+            file->remote_sequencer = sequencer;
 
-            db::query::sync::RemoteObjectIndex::upsertFile(vaultId, file, "event");
+            db::query::sync::RemoteObjectIndex::upsertEventFile(vaultId, file);
             ++result.upserts;
         }
 
@@ -398,6 +415,49 @@ namespace {
         }
         budgetValue = parsed;
         return true;
+    }
+
+    std::string remoteIndexSummaryString(
+        const db::query::sync::RemoteIndexSummary& summary,
+        const std::optional<std::chrono::seconds>& maxAge) {
+        const auto optionalTime = [](const std::optional<std::time_t>& value) {
+            return value ? timestampToString(*value) : std::string("unknown");
+        };
+
+        std::ostringstream out;
+        out << "\n  Remote Index:\n"
+            << "    Source: " << summary.source.value_or(summary.object_count > 0 ? "mixed" : "none") << "\n"
+            << "    Indexed At: " << optionalTime(summary.indexed_at) << "\n"
+            << "    Object Count: " << summary.object_count << "\n"
+            << "    Freshness: " << (summary.isStale(maxAge) ? "stale" : "fresh") << "\n"
+            << "    Manifest ETag: " << summary.manifest_etag.value_or("unknown") << "\n"
+            << "    Manifest Generated At: " << optionalTime(summary.manifest_generated_at) << "\n"
+            << "    Manifest Object Count: "
+            << (summary.manifest_object_count ? std::to_string(*summary.manifest_object_count) : std::string("unknown"));
+        return out.str();
+    }
+
+    std::string s3CostEstimateString(const S3CostEstimate& estimate) {
+        std::ostringstream out;
+        out << "  Estimated S3 requests:\n"
+            << "    LIST: " << estimate.list_requests << "\n"
+            << "    HEAD: " << estimate.head_requests << "\n"
+            << "    GET: " << estimate.get_requests << "\n"
+            << "    PUT: " << estimate.put_requests << "\n"
+            << "    COPY: " << estimate.copy_requests << "\n"
+            << "    DELETE: " << estimate.delete_requests << "\n"
+            << "  Estimated traffic:\n"
+            << "    Body download bytes: " << estimate.planned_body_download_bytes << "\n"
+            << "    Upload bytes: " << estimate.planned_upload_bytes << "\n"
+            << "    Cache/index-only objects: " << estimate.remote_index_objects << "\n"
+            << "    Archive-tier body downloads skipped: " << estimate.archive_tier_downloads_skipped;
+        return out.str();
+    }
+
+    uint64_t countPlanActions(const std::vector<Action>& plan, const ActionType type) {
+        return static_cast<uint64_t>(std::ranges::count_if(plan, [type](const auto& action) {
+            return action.type == type;
+        }));
     }
 }
 
@@ -477,6 +537,22 @@ static CommandResult handle_vault_sync_update(const CommandCall& call) {
             }
         }
 
+        if (const auto presetOpt = optVal(call, "s3-budget-preset")) {
+            try {
+                rsync->s3_request_budget = s3RequestBudgetForPreset(s3BudgetPresetFromString(*presetOpt));
+            } catch (const std::exception& e) {
+                return invalid("vault sync update: " + std::string(e.what()));
+            }
+        }
+
+        if (const auto indexAgeOpt = optVal(call, "max-remote-index-age")) {
+            try {
+                rsync->max_remote_index_age = remoteIndexAgeFromString(*indexAgeOpt);
+            } catch (const std::exception& e) {
+                return invalid("vault sync update: " + std::string(e.what()));
+            }
+        }
+
         std::string budgetError;
         if (!applyBudgetOption(call, "s3-budget-list", rsync->s3_request_budget.max_list_requests, budgetError) ||
             !applyBudgetOption(call, "s3-budget-head", rsync->s3_request_budget.max_head_requests, budgetError) ||
@@ -530,33 +606,45 @@ static CommandResult handle_vault_sync_reconcile(const CommandCall& call) {
     const auto priorIndexedObjects = db::query::sync::RemoteObjectIndex::countForVault(engine->vault->id);
     const auto estimatedListRequests = priorIndexedObjects > 0 ? ((priorIndexedObjects + 999) / 1000) : uint64_t{0};
 
-    cloud->resetS3RequestMetrics();
-    cloud->configureS3RequestBudget(policy->s3_request_budget);
+    if (!policy->s3_request_budget.max_list_requests &&
+        !hasFlag(call, std::vector<std::string>{"allow-list-scan"})) {
+        return invalid(
+            "vault sync reconcile: full bucket LIST scans require --allow-list-scan or a configured --s3-budget-list.\n"
+            "  Pre-run LIST estimate: " + (
+                priorIndexedObjects > 0
+                    ? std::to_string(estimatedListRequests) + " based on " + std::to_string(priorIndexedObjects) + " indexed objects"
+                    : std::string("unknown; no prior remote index was available")));
+    }
 
-    const auto remoteMap = cloud->getGroupedFilesFromS3();
-    std::vector<std::shared_ptr<vh::fs::model::File>> files;
-    files.reserve(remoteMap.size());
-    for (const auto& [_, file] : remoteMap) files.push_back(file);
-    db::query::sync::RemoteObjectIndex::replaceFromListObjects(engine->vault->id, files);
-    cloud->publishRemoteIndexManifest();
+    try {
+        const ScopedS3RequestBudget s3Budget(cloud, policy->s3_request_budget);
 
-    const auto metrics = cloud->s3RequestMetrics();
-    cloud->clearS3RequestBudget();
+        const auto remoteMap = cloud->getGroupedFilesFromS3();
+        std::vector<std::shared_ptr<vh::fs::model::File>> files;
+        files.reserve(remoteMap.size());
+        for (const auto& [_, file] : remoteMap) files.push_back(file);
+        db::query::sync::RemoteObjectIndex::replaceFromListObjects(engine->vault->id, files);
+        cloud->publishRemoteIndexManifest();
 
-    return ok(
-        "Remote index reconciled for '" + engine->vault->name + "' (ID: " + std::to_string(engine->vault->id) + ")\n"
-        "  Pre-run LIST estimate: " + (
-            priorIndexedObjects > 0
-                ? std::to_string(estimatedListRequests) + " based on " + std::to_string(priorIndexedObjects) + " indexed objects"
-                : std::string("unknown; no prior remote index was available")) + "\n"
-        "  Objects indexed: " + std::to_string(files.size()) + "\n"
-        "  LIST requests: " + std::to_string(metrics.list_requests) + " (S3 returns up to 1,000 objects per request)\n"
-        "  HEAD requests: " + std::to_string(metrics.head_requests) + "\n"
-        "  GET requests: " + std::to_string(metrics.get_requests) + "\n"
-        "  PUT requests: " + std::to_string(metrics.put_requests) + "\n"
-        "  COPY requests: " + std::to_string(metrics.copy_requests) + "\n"
-        "  DELETE requests: " + std::to_string(metrics.delete_requests) + "\n"
-        "  Downloaded bytes: " + std::to_string(metrics.downloaded_bytes));
+        const auto metrics = s3Budget.metrics();
+
+        return ok(
+            "Remote index reconciled for '" + engine->vault->name + "' (ID: " + std::to_string(engine->vault->id) + ")\n"
+            "  Pre-run LIST estimate: " + (
+                priorIndexedObjects > 0
+                    ? std::to_string(estimatedListRequests) + " based on " + std::to_string(priorIndexedObjects) + " indexed objects"
+                    : std::string("unknown; no prior remote index was available")) + "\n"
+            "  Objects indexed: " + std::to_string(files.size()) + "\n"
+            "  LIST requests: " + std::to_string(metrics.list_requests) + " (S3 returns up to 1,000 objects per request)\n"
+            "  HEAD requests: " + std::to_string(metrics.head_requests) + "\n"
+            "  GET requests: " + std::to_string(metrics.get_requests) + "\n"
+            "  PUT requests: " + std::to_string(metrics.put_requests) + "\n"
+            "  COPY requests: " + std::to_string(metrics.copy_requests) + "\n"
+            "  DELETE requests: " + std::to_string(metrics.delete_requests) + "\n"
+            "  Downloaded bytes: " + std::to_string(metrics.downloaded_bytes));
+    } catch (const std::exception& e) {
+        return invalid("vault sync reconcile: " + std::string(e.what()));
+    }
 }
 
 static CommandResult handle_vault_sync_inventory(const CommandCall& call) {
@@ -600,11 +688,9 @@ static CommandResult handle_vault_sync_inventory(const CommandCall& call) {
 
         db::query::sync::RemoteObjectIndex::replace(engine->vault->id, files, "inventory");
 
-        cloud->resetS3RequestMetrics();
-        cloud->configureS3RequestBudget(policy->s3_request_budget);
+        const ScopedS3RequestBudget s3Budget(cloud, policy->s3_request_budget);
         cloud->publishRemoteIndexManifest();
-        const auto metrics = cloud->s3RequestMetrics();
-        cloud->clearS3RequestBudget();
+        const auto metrics = s3Budget.metrics();
 
         return ok(
             "S3 inventory imported for '" + engine->vault->name + "' (ID: " + std::to_string(engine->vault->id) + ")\n"
@@ -613,7 +699,6 @@ static CommandResult handle_vault_sync_inventory(const CommandCall& call) {
             "  Manifest PUT requests: " + std::to_string(metrics.put_requests) + "\n"
             "  Manifest HEAD requests: " + std::to_string(metrics.head_requests));
     } catch (const std::exception& e) {
-        cloud->clearS3RequestBudget();
         return invalid("vault sync inventory: " + std::string(e.what()));
     }
 }
@@ -652,11 +737,9 @@ static CommandResult handle_vault_sync_events(const CommandCall& call) {
         const auto result = ingestS3EventFile(engine->vault->id, eventPath);
         if (result.records == 0) return invalid("vault sync events: no S3 event records found");
 
-        cloud->resetS3RequestMetrics();
-        cloud->configureS3RequestBudget(policy->s3_request_budget);
+        const ScopedS3RequestBudget s3Budget(cloud, policy->s3_request_budget);
         if (result.upserts > 0 || result.deletes > 0) cloud->publishRemoteIndexManifest();
-        const auto metrics = cloud->s3RequestMetrics();
-        cloud->clearS3RequestBudget();
+        const auto metrics = s3Budget.metrics();
 
         return ok(
             "S3 event notifications ingested for '" + engine->vault->name + "' (ID: " + std::to_string(engine->vault->id) + ")\n"
@@ -667,7 +750,6 @@ static CommandResult handle_vault_sync_events(const CommandCall& call) {
             "  Manifest PUT requests: " + std::to_string(metrics.put_requests) + "\n"
             "  Manifest HEAD requests: " + std::to_string(metrics.head_requests));
     } catch (const std::exception& e) {
-        cloud->clearS3RequestBudget();
         return invalid("vault sync events: " + std::string(e.what()));
     }
 }
@@ -691,7 +773,82 @@ static CommandResult handle_vault_sync_info(const CommandCall& call) {
 
     if (!engine->sync) return invalid("vault sync info: vault does not have a sync configuration");
 
+    if (engine->vault->type == VaultType::S3) {
+        const auto rsync = std::static_pointer_cast<RemotePolicy>(engine->sync);
+        const auto summary = db::query::sync::RemoteObjectIndex::summaryForVault(engine->vault->id);
+        return ok(to_string(rsync) + remoteIndexSummaryString(summary, rsync->max_remote_index_age));
+    }
+
     return ok(to_string(engine->sync));
+}
+
+static CommandResult handle_vault_sync_dry_run(const CommandCall& call) {
+    constexpr const auto* ERR = "vault sync dry-run";
+
+    const auto usage = resolveUsage({"vault", "sync", "dry-run"});
+    validatePositionals(call, usage);
+
+    const auto eLkp = resolveEngine(call, call.positionals[0], usage, ERR);
+    if (!eLkp || !eLkp.ptr) return invalid(eLkp.error);
+    const auto engine = eLkp.ptr;
+
+    using Perm = rbac::permission::vault::sync::SyncConfigPermissions;
+    if (!rbac::resolver::Vault::has<Perm>({
+        .user = call.user,
+        .permission = Perm::View,
+        .vault_id = engine->vault->id
+    })) return invalid("vault sync dry-run: you do not have permission to view this vault's sync plan");
+
+    if (engine->vault->type != VaultType::S3)
+        return invalid("vault sync dry-run: S3 cost dry-run is only available for S3 vaults");
+
+    const auto cloud = std::static_pointer_cast<CloudEngine>(engine);
+    const auto policy = cloud->remote_policy();
+
+    try {
+        const ScopedS3RequestBudget s3Budget(cloud, policy->s3_request_budget);
+        const bool manifestRefreshed = cloud->refreshRemoteIndexFromManifestIfChanged();
+        const auto summary = db::query::sync::RemoteObjectIndex::summaryForVault(engine->vault->id);
+
+        if (!manifestRefreshed && !summary.indexed_at)
+            return invalid("vault sync dry-run: no remote index is available; run reconcile, inventory import, or event ingestion first");
+
+        if (!manifestRefreshed && summary.isStale(policy->max_remote_index_age))
+            return invalid("vault sync dry-run: remote index is stale and manifest refresh failed");
+
+        auto ctx = std::make_shared<sync::Cloud>(cloud);
+        ctx->event = std::make_shared<Event>();
+        ctx->event->vault_id = engine->vault->id;
+        ctx->localFiles = db::query::fs::File::listFilesInDir(engine->vault->id);
+        ctx->localMap = vh::fs::model::groupEntriesByPath(ctx->localFiles);
+        ctx->s3Files = db::query::sync::RemoteObjectIndex::listFilesForVault(engine->vault->id);
+        ctx->s3Map = vh::fs::model::groupEntriesByPath(ctx->s3Files);
+
+        S3CostEstimate planningNotes;
+        const auto plan = vh::sync::Planner::build(ctx, policy, &planningNotes);
+        auto estimate = vh::sync::Planner::estimateS3Cost(plan);
+        estimate.archive_tier_downloads_skipped = planningNotes.archive_tier_downloads_skipped;
+
+        const auto metrics = s3Budget.metrics();
+        std::ostringstream out;
+        out << "S3 sync dry-run for '" << engine->vault->name << "' (ID: " << engine->vault->id << ")\n"
+            << "  Plan actions:\n"
+            << "    Upload: " << countPlanActions(plan, ActionType::Upload) << "\n"
+            << "    Download: " << countPlanActions(plan, ActionType::Download) << "\n"
+            << "    Index remote-only: " << countPlanActions(plan, ActionType::IndexRemoteOnly) << "\n"
+            << "    Delete remote: " << countPlanActions(plan, ActionType::DeleteRemote) << "\n"
+            << "    Delete local: " << countPlanActions(plan, ActionType::DeleteLocal) << "\n"
+            << s3CostEstimateString(estimate) << "\n"
+            << "  Planning S3 requests used:\n"
+            << "    HEAD: " << metrics.head_requests << "\n"
+            << "    GET: " << metrics.get_requests << "\n"
+            << "    LIST: " << metrics.list_requests << "\n"
+            << remoteIndexSummaryString(summary, policy->max_remote_index_age);
+
+        return ok(out.str());
+    } catch (const std::exception& e) {
+        return invalid("vault sync dry-run: " + std::string(e.what()));
+    }
 }
 
 static bool isVaultSyncMatch(const std::string& cmd, const std::string_view input) {
@@ -706,6 +863,8 @@ CommandResult commands::vault::handle_sync(const CommandCall& call) {
     if (isVaultSyncMatch("inventory", arg)) return handle_vault_sync_inventory(subcall);
     if (isVaultSyncMatch("events", arg)) return handle_vault_sync_events(subcall);
     if (isVaultSyncMatch("info", arg)) return handle_vault_sync_info(subcall);
+    if (isVaultSyncMatch("dry-run", arg) || isVaultSyncMatch("dryrun", arg) || isVaultSyncMatch("plan", arg))
+        return handle_vault_sync_dry_run(subcall);
 
     return invalid(call.constructFullArgs(), "vault sync: unknown subcommand: '" + std::string(arg) + "'");
 }

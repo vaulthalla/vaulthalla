@@ -43,6 +43,14 @@ struct VaultSyncHealth {
     std::uint64_t syncIntervalSeconds = 0;
     std::optional<std::string> configuredStrategy;
     std::optional<std::string> conflictPolicy;
+    std::optional<std::uint64_t> s3BudgetListRequests;
+    std::optional<std::uint64_t> s3BudgetHeadRequests;
+    std::optional<std::uint64_t> s3BudgetGetRequests;
+    std::optional<std::uint64_t> s3BudgetPutRequests;
+    std::optional<std::uint64_t> s3BudgetCopyRequests;
+    std::optional<std::uint64_t> s3BudgetDeleteRequests;
+    std::optional<std::uint64_t> s3BudgetDownloadedBytes;
+    std::optional<std::uint64_t> maxRemoteIndexAgeSeconds;
 
     std::shared_ptr<sync::model::Event> latestEvent;
     std::optional<std::uint32_t> latestEventId;
@@ -87,6 +95,10 @@ struct VaultSyncHealth {
     std::optional<std::string> localStateHash;
     std::optional<std::string> remoteStateHash;
     bool hashMismatch = false;
+    std::uint64_t remoteIndexObjectCount = 0;
+    std::optional<std::string> remoteIndexSource;
+    std::optional<std::uint64_t> remoteIndexIndexedAt;
+    bool remoteIndexStale = false;
 
     std::optional<std::string> lastErrorCode;
     std::optional<std::string> lastErrorMessage;
