@@ -32,6 +32,8 @@ RemoteObject::RemoteObject(const pqxx::row& row)
       etag(optional_string(row, "etag")),
       storage_class(optional_string(row, "storage_class")),
       restore_status(optional_string(row, "restore_status")),
+      version_id(optional_string(row, "version_id")),
+      event_sequencer(optional_string(row, "event_sequencer")),
       source(row["source"].as<std::string>()) {
     if (!row["last_modified"].is_null())
         last_modified = parsePostgresTimestamp(row["last_modified"].as<std::string>());
@@ -45,6 +47,8 @@ RemoteObject::RemoteObject(const uint32_t vaultId, const std::shared_ptr<fs::mod
       etag(file ? file->remote_etag : std::nullopt),
       storage_class(file ? file->remote_storage_class : std::nullopt),
       restore_status(file ? file->remote_restore_status : std::nullopt),
+      version_id(file ? file->remote_version_id : std::nullopt),
+      event_sequencer(file ? file->remote_sequencer : std::nullopt),
       source(std::move(src)) {}
 
 std::shared_ptr<vh::fs::model::File> RemoteObject::toFile() const {
@@ -55,5 +59,7 @@ std::shared_ptr<vh::fs::model::File> RemoteObject::toFile() const {
     file->remote_etag = etag;
     file->remote_storage_class = storage_class;
     file->remote_restore_status = restore_status;
+    file->remote_version_id = version_id;
+    file->remote_sequencer = event_sequencer;
     return file;
 }

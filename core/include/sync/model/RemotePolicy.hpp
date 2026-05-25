@@ -6,6 +6,7 @@
 
 #include <string>
 #include <optional>
+#include <chrono>
 #include <nlohmann/json_fwd.hpp>
 #include <memory>
 
@@ -18,6 +19,19 @@ struct File;
 }
 
 namespace vh::sync::model {
+
+enum class S3BudgetPreset {
+    Conservative,
+    Balanced,
+    Bulk,
+    Unlimited
+};
+
+[[nodiscard]] vh::storage::s3::S3RequestBudget s3RequestBudgetForPreset(S3BudgetPreset preset);
+[[nodiscard]] S3BudgetPreset s3BudgetPresetFromString(const std::string& str);
+[[nodiscard]] std::string to_string(S3BudgetPreset preset);
+[[nodiscard]] std::string s3BudgetPresetName(const vh::storage::s3::S3RequestBudget& budget);
+[[nodiscard]] std::optional<std::chrono::seconds> remoteIndexAgeFromString(const std::string& str);
 
 struct RemotePolicy final : public Policy {
     enum class Strategy { Cache, Sync, Mirror };
@@ -32,8 +46,9 @@ struct RemotePolicy final : public Policy {
     Strategy strategy{Strategy::Cache};
     ConflictPolicy conflict_policy{ConflictPolicy::KeepLocal};
     vh::storage::s3::S3RequestBudget s3_request_budget{};
+    std::optional<std::chrono::seconds> max_remote_index_age{std::chrono::hours(24)};
 
-    RemotePolicy() = default;
+    RemotePolicy();
     ~RemotePolicy() override = default;
     explicit RemotePolicy(const pqxx::row& row);
 

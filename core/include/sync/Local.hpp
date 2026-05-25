@@ -69,6 +69,7 @@ struct Local : concurrency::Task, std::enable_shared_from_this<Local> {
 
     void startTask();
     void processSharedOps();
+    [[nodiscard]] bool markBudgetExceededIfAny() const;
     void handleError(const std::string& message) const;
     void shutdown();
     void newEvent();

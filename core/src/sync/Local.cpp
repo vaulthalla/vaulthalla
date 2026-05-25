@@ -3,6 +3,7 @@
 #include "concurrency/ThreadPool.hpp"
 #include "sync/Controller.hpp"
 #include "storage/Engine.hpp"
+#include "storage/CloudEngine.hpp"
 #include "sync/model/Policy.hpp"
 #include "sync/model/Operation.hpp"
 #include "vault/model/Vault.hpp"
@@ -71,14 +72,18 @@ void Local::runStages(const std::span<const Stage> stages) const {
         if (!isRunning()) break;
         try {
             fn();
+            if (markBudgetExceededIfAny()) break;
             handleInterrupt();
             if (event) event->heartbeat();
+        } catch (const vh::storage::s3::RequestBudgetExceeded& e) {
+            event->status = Event::Status::STALLED;
+            event->stall_reason = e.what();
+            break;
+        } catch (const SyncStalled& e) {
+            event->status = Event::Status::STALLED;
+            event->stall_reason = e.what();
+            break;
         } catch (const std::exception& e) {
-            if (dynamic_cast<const vh::storage::s3::RequestBudgetExceeded*>(&e)) {
-                event->status = Event::Status::STALLED;
-                event->stall_reason = e.what();
-                break;
-            }
             handleError(std::format("[FSTask:{}] {}", std::string(name), e.what()));
             break;
         } catch (...) {
@@ -120,13 +125,37 @@ void Local::processSharedOps() {
 
         try {
             op();
+            if (markBudgetExceededIfAny()) break;
             handleInterrupt();
             event->heartbeat();
+        } catch (const vh::storage::s3::RequestBudgetExceeded& e) {
+            event->status = Event::Status::STALLED;
+            event->stall_reason = e.what();
+            break;
+        } catch (const SyncStalled& e) {
+            event->status = Event::Status::STALLED;
+            event->stall_reason = e.what();
+            break;
         } catch (const std::exception& e) {
             handleError(std::format("[FSTask] Exception during {}: {}", name, e.what()));
             break;
         }
     }
+}
+
+bool Local::markBudgetExceededIfAny() const {
+    if (!engine || !event || engine->type() != StorageType::Cloud) return false;
+
+    const auto cloud = std::static_pointer_cast<CloudEngine>(engine);
+    const auto metrics = cloud->s3RequestMetrics();
+    event->applyS3RequestMetrics(metrics);
+    if (!metrics.budget_exceeded) return false;
+
+    event->status = Event::Status::STALLED;
+    event->stall_reason = metrics.budget_exceeded_reason;
+    event->error_code.clear();
+    event->error_message.clear();
+    return true;
 }
 
 void Local::handleError(const std::string& message) const {

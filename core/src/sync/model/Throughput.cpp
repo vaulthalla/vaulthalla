@@ -12,7 +12,9 @@ Throughput::Throughput(const pqxx::row& row) :
     num_ops(row["num_ops"].as<uint64_t>()),
     failed_ops(row["failed_ops"].as<uint64_t>()),
     size_bytes(row["size_bytes"].as<uint64_t>()),
-    duration_ms(row["duration_ms"].as<uint64_t>()) {}
+    duration_ms(row["duration_ms"].as<uint64_t>()) {
+    parseMetric(row["metric_type"].as<std::string>());
+}
 
 void Throughput::computeDashboardStats() {
     num_ops = scoped_ops.size();
@@ -40,6 +42,7 @@ void Throughput::parseMetric(const std::string& str) {
     else if (str == "delete") metric_type = DELETE;
     else if (str == "upload") metric_type = UPLOAD;
     else if (str == "download") metric_type = DOWNLOAD;
+    else if (str == "index") metric_type = INDEX;
 }
 
 std::string Throughput::metricToString() const {
@@ -49,6 +52,7 @@ std::string Throughput::metricToString() const {
         case DELETE: return "delete";
         case UPLOAD: return "upload";
         case DOWNLOAD: return "download";
+        case INDEX: return "index";
         default: return "unknown";
     }
 }

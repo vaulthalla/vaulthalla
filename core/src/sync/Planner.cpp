@@ -12,7 +12,8 @@ using namespace vh::fs::model;
 
 std::vector<Action> Planner::build(
     const std::shared_ptr<Cloud>& ctx,
-    const std::shared_ptr<RemotePolicy>& policy)
+    const std::shared_ptr<RemotePolicy>& policy,
+    S3CostEstimate* planningNotes)
 {
     std::vector<Action> plan;
 
@@ -40,13 +41,14 @@ std::vector<Action> Planner::build(
             if (policy->downloadRemoteOnly()) {
                 const bool indexOnly = policy->strategy == RemotePolicy::Strategy::Cache;
                 if (!indexOnly && R->requiresArchiveRestoreForBodyGet()) {
+                    if (planningNotes) ++planningNotes->archive_tier_downloads_skipped;
                     log::Registry::sync()->warn(
                         "[SyncPlanner] Skipping automatic body GET for archived S3 object '{}'",
                         R->path.string());
                     continue;
                 }
 
-                plan.push_back({ ActionType::Download, k, nullptr, R, indexOnly });
+                plan.push_back({ indexOnly ? ActionType::IndexRemoteOnly : ActionType::Download, k, nullptr, R, indexOnly });
             }
             continue;
         }
@@ -77,6 +79,7 @@ std::vector<Action> Planner::build(
             // Non-conflict decision: by strategy/policy
             if (auto a = policy->decideForBoth(L, R)) {
                 if (*a == ActionType::Download && R->requiresArchiveRestoreForBodyGet()) {
+                    if (planningNotes) ++planningNotes->archive_tier_downloads_skipped;
                     log::Registry::sync()->warn(
                         "[SyncPlanner] Skipping automatic body GET for archived S3 object '{}'",
                         R->path.string());
@@ -99,4 +102,42 @@ std::vector<Action> Planner::build(
 
     policy->preflightSpaceForPlan(ctx, plan);
     return plan;
+}
+
+S3CostEstimate Planner::estimateS3Cost(const std::vector<Action>& plan) {
+    S3CostEstimate estimate;
+    bool mutatesRemoteIndex = false;
+
+    for (const auto& action : plan) {
+        switch (action.type) {
+        case ActionType::Upload:
+            ++estimate.put_requests;
+            if (action.local) estimate.planned_upload_bytes += action.local->size_bytes;
+            mutatesRemoteIndex = true;
+            break;
+        case ActionType::Download:
+            ++estimate.get_requests;
+            estimate.head_requests += 2;
+            if (action.remote) estimate.planned_body_download_bytes += action.remote->size_bytes;
+            else if (action.local) estimate.planned_body_download_bytes += action.local->size_bytes;
+            break;
+        case ActionType::IndexRemoteOnly:
+            ++estimate.remote_index_objects;
+            break;
+        case ActionType::DeleteRemote:
+            ++estimate.delete_requests;
+            mutatesRemoteIndex = true;
+            break;
+        case ActionType::EnsureDirectories:
+        case ActionType::DeleteLocal:
+            break;
+        }
+    }
+
+    if (mutatesRemoteIndex) {
+        ++estimate.put_requests;
+        estimate.head_requests += 2;
+    }
+
+    return estimate;
 }

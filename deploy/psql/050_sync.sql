@@ -52,7 +52,8 @@ CREATE TABLE IF NOT EXISTS rsync
     s3_budget_put_requests BIGINT DEFAULT NULL,
     s3_budget_copy_requests BIGINT DEFAULT NULL,
     s3_budget_delete_requests BIGINT DEFAULT NULL,
-    s3_budget_downloaded_bytes BIGINT DEFAULT NULL
+    s3_budget_downloaded_bytes BIGINT DEFAULT NULL,
+    max_remote_index_age_seconds BIGINT DEFAULT 86400
     );
 
 -- -----------------------------------
@@ -96,6 +97,16 @@ CREATE TABLE IF NOT EXISTS sync_event
     s3_copy_requests  BIGINT NOT NULL DEFAULT 0,
     s3_delete_requests BIGINT NOT NULL DEFAULT 0,
     s3_downloaded_bytes BIGINT NOT NULL DEFAULT 0,
+    s3_estimated_list_requests BIGINT NOT NULL DEFAULT 0,
+    s3_estimated_head_requests BIGINT NOT NULL DEFAULT 0,
+    s3_estimated_get_requests BIGINT NOT NULL DEFAULT 0,
+    s3_estimated_put_requests BIGINT NOT NULL DEFAULT 0,
+    s3_estimated_copy_requests BIGINT NOT NULL DEFAULT 0,
+    s3_estimated_delete_requests BIGINT NOT NULL DEFAULT 0,
+    s3_estimated_body_download_bytes BIGINT NOT NULL DEFAULT 0,
+    s3_estimated_upload_bytes BIGINT NOT NULL DEFAULT 0,
+    s3_remote_index_objects BIGINT NOT NULL DEFAULT 0,
+    s3_archive_downloads_skipped BIGINT NOT NULL DEFAULT 0,
 
     -- divergence / watermarks (optional but lets "diverged" be provable)
     divergence_detected      BOOLEAN NOT NULL DEFAULT FALSE,
@@ -179,7 +190,7 @@ CREATE TABLE IF NOT EXISTS sync_throughput
     ON DELETE CASCADE,
 
     metric_type      VARCHAR(12) NOT NULL
-    CHECK (metric_type IN ('upload', 'download', 'rename', 'copy', 'delete')),
+    CHECK (metric_type IN ('upload', 'download', 'index', 'rename', 'copy', 'delete')),
 
     num_ops          BIGINT NOT NULL DEFAULT 0,
     size_bytes       BIGINT NOT NULL DEFAULT 0,
@@ -198,6 +209,8 @@ CREATE TABLE IF NOT EXISTS remote_object_index
     etag           TEXT DEFAULT NULL,
     storage_class  TEXT DEFAULT NULL,
     restore_status TEXT DEFAULT NULL,
+    version_id     TEXT DEFAULT NULL,
+    event_sequencer TEXT DEFAULT NULL,
     source         VARCHAR(24) NOT NULL DEFAULT 'list_objects_v2'
     CHECK (source IN ('list_objects_v2', 'inventory', 'manifest', 'event')),
     indexed_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -209,6 +222,9 @@ CREATE TABLE IF NOT EXISTS remote_manifest_state
     vault_id      INTEGER NOT NULL REFERENCES vault (id) ON DELETE CASCADE,
     manifest_key  TEXT NOT NULL,
     etag          TEXT DEFAULT NULL,
+    generated_at  TIMESTAMP DEFAULT NULL,
+    object_count  BIGINT DEFAULT NULL,
+    object_checksum TEXT DEFAULT NULL,
     updated_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (vault_id, manifest_key)
     );

@@ -5,6 +5,7 @@
 
 #include <unordered_map>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace vh::vault::model {
@@ -58,6 +59,7 @@ namespace vh::storage {
                     bool isCiphertext = true) const;
 
         std::shared_ptr<vh::fs::model::File> downloadFile(const std::filesystem::path &rel_path);
+        std::shared_ptr<vh::fs::model::File> downloadFile(const std::shared_ptr<vh::fs::model::File> &remoteFile);
 
         std::vector<uint8_t> downloadToBuffer(const std::filesystem::path &rel_path) const;
 
@@ -69,7 +71,7 @@ namespace vh::storage {
             const std::filesystem::path &prefix = {}) const;
 
         [[nodiscard]] bool refreshRemoteIndexFromManifestIfChanged() const;
-        void publishRemoteIndexManifest() const;
+        void publishRemoteIndexManifest(const std::optional<std::string>& expectedETag = std::nullopt) const;
         void applyRemoteIndexMutation(const std::vector<sync::model::Action>& plan) const;
         [[nodiscard]] bool selectedDownloadRequiresRestore(const std::shared_ptr<vh::fs::model::File>& remoteFile) const;
 
@@ -98,5 +100,9 @@ namespace vh::storage {
 
         std::unordered_map<std::string, std::string> getMetaMapFromFile(
             const std::shared_ptr<vh::fs::model::File> &f) const;
+
+        std::shared_ptr<vh::fs::model::File> downloadFileWithRemoteMetadata(
+            const std::filesystem::path &rel_path,
+            const std::shared_ptr<vh::fs::model::File> &remoteFile);
     };
 } // namespace vh::storage

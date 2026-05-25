@@ -2,6 +2,7 @@
 #include "db/encoding/timestamp.hpp"
 #include "db/query/sync/Event.hpp"
 #include "log/Registry.hpp"
+#include "sync/model/Action.hpp"
 #include "sync/model/Conflict.hpp"
 #include "storage/s3/Controller.hpp"
 
@@ -65,6 +66,16 @@ Event::Event(const pqxx::row& row)
     , s3_copy_requests(as_or_default<std::uint64_t>(row, "s3_copy_requests", 0))
     , s3_delete_requests(as_or_default<std::uint64_t>(row, "s3_delete_requests", 0))
     , s3_downloaded_bytes(as_or_default<std::uint64_t>(row, "s3_downloaded_bytes", 0))
+    , s3_estimated_list_requests(as_or_default<std::uint64_t>(row, "s3_estimated_list_requests", 0))
+    , s3_estimated_head_requests(as_or_default<std::uint64_t>(row, "s3_estimated_head_requests", 0))
+    , s3_estimated_get_requests(as_or_default<std::uint64_t>(row, "s3_estimated_get_requests", 0))
+    , s3_estimated_put_requests(as_or_default<std::uint64_t>(row, "s3_estimated_put_requests", 0))
+    , s3_estimated_copy_requests(as_or_default<std::uint64_t>(row, "s3_estimated_copy_requests", 0))
+    , s3_estimated_delete_requests(as_or_default<std::uint64_t>(row, "s3_estimated_delete_requests", 0))
+    , s3_estimated_body_download_bytes(as_or_default<std::uint64_t>(row, "s3_estimated_body_download_bytes", 0))
+    , s3_estimated_upload_bytes(as_or_default<std::uint64_t>(row, "s3_estimated_upload_bytes", 0))
+    , s3_remote_index_objects(as_or_default<std::uint64_t>(row, "s3_remote_index_objects", 0))
+    , s3_archive_downloads_skipped(as_or_default<std::uint64_t>(row, "s3_archive_downloads_skipped", 0))
     , divergence_detected(as_or_default<bool>(row, "divergence_detected", false))
     , local_state_hash(as_or_empty(row, "local_state_hash"))
     , remote_state_hash(as_or_empty(row, "remote_state_hash"))
@@ -243,6 +254,19 @@ void Event::applyS3RequestMetrics(const vh::storage::s3::S3RequestMetrics& metri
     s3_downloaded_bytes = metrics.downloaded_bytes;
 }
 
+void Event::applyS3CostEstimate(const S3CostEstimate& estimate) {
+    s3_estimated_list_requests = estimate.list_requests;
+    s3_estimated_head_requests = estimate.head_requests;
+    s3_estimated_get_requests = estimate.get_requests;
+    s3_estimated_put_requests = estimate.put_requests;
+    s3_estimated_copy_requests = estimate.copy_requests;
+    s3_estimated_delete_requests = estimate.delete_requests;
+    s3_estimated_body_download_bytes = estimate.planned_body_download_bytes;
+    s3_estimated_upload_bytes = estimate.planned_upload_bytes;
+    s3_remote_index_objects = estimate.remote_index_objects;
+    s3_archive_downloads_skipped = estimate.archive_tier_downloads_skipped;
+}
+
 // -------------------------
 // Enum ↔ string
 // -------------------------
@@ -322,6 +346,16 @@ pqxx::params Event::getParams() const noexcept {
         s3_copy_requests,
         s3_delete_requests,
         s3_downloaded_bytes,
+        s3_estimated_list_requests,
+        s3_estimated_head_requests,
+        s3_estimated_get_requests,
+        s3_estimated_put_requests,
+        s3_estimated_copy_requests,
+        s3_estimated_delete_requests,
+        s3_estimated_body_download_bytes,
+        s3_estimated_upload_bytes,
+        s3_remote_index_objects,
+        s3_archive_downloads_skipped,
 
         divergence_detected,
         local_state_hash,
@@ -369,6 +403,16 @@ void vh::sync::model::to_json(nlohmann::json& j, const std::shared_ptr<Event>& e
         {"s3_copy_requests", e->s3_copy_requests},
         {"s3_delete_requests", e->s3_delete_requests},
         {"s3_downloaded_bytes", e->s3_downloaded_bytes},
+        {"s3_estimated_list_requests", e->s3_estimated_list_requests},
+        {"s3_estimated_head_requests", e->s3_estimated_head_requests},
+        {"s3_estimated_get_requests", e->s3_estimated_get_requests},
+        {"s3_estimated_put_requests", e->s3_estimated_put_requests},
+        {"s3_estimated_copy_requests", e->s3_estimated_copy_requests},
+        {"s3_estimated_delete_requests", e->s3_estimated_delete_requests},
+        {"s3_estimated_body_download_bytes", e->s3_estimated_body_download_bytes},
+        {"s3_estimated_upload_bytes", e->s3_estimated_upload_bytes},
+        {"s3_remote_index_objects", e->s3_remote_index_objects},
+        {"s3_archive_downloads_skipped", e->s3_archive_downloads_skipped},
 
         {"conflicts", e->conflicts},
         {"throughputs", e->throughputs},

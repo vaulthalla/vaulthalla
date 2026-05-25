@@ -22,7 +22,7 @@ void Download::operator()() {
         else {
             if (engine->selectedDownloadRequiresRestore(file))
                 throw std::runtime_error("S3 object is in an archive tier and requires explicit restore before download");
-            engine->downloadFile(file->path);
+            engine->downloadFile(file);
         }
         op->success = true;
     } catch (const std::exception& e) {

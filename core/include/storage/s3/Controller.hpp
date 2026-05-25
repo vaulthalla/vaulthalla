@@ -52,6 +52,11 @@ namespace vh::storage::s3 {
         explicit RequestBudgetExceeded(const std::string& message) : std::runtime_error(message) {}
     };
 
+    class ConditionalRequestFailed final : public std::runtime_error {
+    public:
+        explicit ConditionalRequestFailed(const std::string& message) : std::runtime_error(message) {}
+    };
+
     class Controller {
     public:
         static constexpr uintmax_t MIN_PART_SIZE = 5 * 1024 * 1024; // 5 MiB
@@ -60,10 +65,10 @@ namespace vh::storage::s3 {
 
         virtual ~Controller();
 
-        void setRequestBudget(const S3RequestBudget& budget) const;
-        void clearRequestBudget() const;
-        void resetRequestMetrics() const;
-        [[nodiscard]] S3RequestMetrics requestMetrics() const;
+        virtual void setRequestBudget(const S3RequestBudget& budget) const;
+        virtual void clearRequestBudget() const;
+        virtual void resetRequestMetrics() const;
+        [[nodiscard]] virtual S3RequestMetrics requestMetrics() const;
 
         // #########################################################################
         // ########################### FILE OPS ####################################
@@ -94,6 +99,13 @@ namespace vh::storage::s3 {
             const fs::path &key,
             const std::vector<uint8_t> &buffer,
             const std::unordered_map<std::string, std::string> &metadata) const;
+
+        virtual void uploadBufferWithMetadataConditional(
+            const fs::path &key,
+            const std::vector<uint8_t> &buffer,
+            const std::unordered_map<std::string, std::string> &metadata,
+            const std::optional<std::string> &ifMatch,
+            const std::optional<std::string> &ifNoneMatch = std::nullopt) const;
 
         virtual void downloadToBuffer(const fs::path &key, std::vector<uint8_t> &outBuffer) const;
 
@@ -141,9 +153,11 @@ namespace vh::storage::s3 {
 
         [[nodiscard]] virtual std::u8string listObjects(const fs::path &prefix = {}) const;
 
-    private:
+    protected:
         enum class RequestKind { List, Head, Get, Put, Copy, Delete, DownloadBytes };
+        void recordRequest(RequestKind kind, uint64_t amount = 1) const;
 
+    private:
         std::shared_ptr<vault::model::APIKey> apiKey_;
         std::string bucket_;
         mutable std::mutex metricsMutex_;
@@ -160,6 +174,5 @@ namespace vh::storage::s3 {
                                            const std::string &payloadHash,
                                            const std::string &query = "") const;
 
-        void recordRequest(RequestKind kind, uint64_t amount = 1) const;
     };
 }

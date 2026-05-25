@@ -19,6 +19,7 @@
 #include "config/Registry.hpp"
 #include "sync/model/RemotePolicy.hpp"
 #include "sync/model/RemoteManifest.hpp"
+#include "sync/model/Event.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -42,6 +43,8 @@ static constexpr std::string_view META_VH_KEY_VERSION = "x-amz-meta-vh-key-versi
 static constexpr std::string_view META_CONTENT_HASH = "x-amz-meta-content-hash";
 
 namespace {
+    constexpr int REMOTE_MANIFEST_PUBLISH_MAX_ATTEMPTS = 3;
+
     std::optional<std::string> header_value(
         const std::unordered_map<std::string, std::string>& headers,
         const std::string_view name) {
@@ -140,11 +143,30 @@ std::vector<uint8_t> CloudEngine::downloadToBuffer(const fs::path& rel_path) con
 }
 
 std::shared_ptr<File> CloudEngine::downloadFile(const fs::path& rel_path) {
-    auto buffer = downloadToBuffer(rel_path);
-    const auto s3Key = stripLeadingSlash(rel_path);
+    return downloadFileWithRemoteMetadata(rel_path, nullptr);
+}
 
-    if (remoteFileIsEncrypted(rel_path)) {
-        auto payload = getRemoteIVBase64AndVersion(rel_path);
+std::shared_ptr<File> CloudEngine::downloadFile(const std::shared_ptr<File>& remoteFile) {
+    if (!remoteFile) throw std::invalid_argument("[CloudStorageEngine] Cannot download null remote file");
+    return downloadFileWithRemoteMetadata(remoteFile->path, remoteFile);
+}
+
+std::shared_ptr<File> CloudEngine::downloadFileWithRemoteMetadata(
+    const fs::path& rel_path,
+    const std::shared_ptr<File>& remoteFile) {
+    auto buffer = downloadToBuffer(rel_path);
+
+    std::optional<std::pair<std::string, unsigned int>> payload;
+    bool encrypted = false;
+    if (remoteFile && !remoteFile->encryption_iv.empty() && remoteFile->encrypted_with_key_version > 0) {
+        encrypted = true;
+        payload = std::make_pair(remoteFile->encryption_iv, remoteFile->encrypted_with_key_version);
+    } else {
+        encrypted = remoteFileIsEncrypted(rel_path);
+    }
+
+    if (encrypted) {
+        if (!payload) payload = getRemoteIVBase64AndVersion(rel_path);
         if (!payload) payload = db::query::fs::File::getEncryptionIVAndVersion(vault->id, rel_path);
         if (!payload) throw std::runtime_error("[CloudStorageEngine] No IV found for encrypted file: " + rel_path.string());
         const auto& [iv_b64, key_version] = *payload;
@@ -211,58 +233,121 @@ bool CloudEngine::refreshRemoteIndexFromManifestIfChanged() const {
     const auto remoteEtag = header_value(*head, "ETag");
     const auto localEtag = db::query::sync::RemoteObjectIndex::getManifestETag(vault->id, manifestKey);
     if (remoteEtag && localEtag && *remoteEtag == *localEtag &&
-        db::query::sync::RemoteObjectIndex::countForVault(vault->id) > 0)
+        db::query::sync::RemoteObjectIndex::countForVault(vault->id) > 0) {
+        db::query::sync::RemoteObjectIndex::upsertManifestETag(vault->id, manifestKey, remoteEtag);
         return true;
+    }
 
     std::vector<uint8_t> buffer;
     s3Provider_->downloadToBuffer(manifestKey, buffer);
     const std::string manifest(buffer.begin(), buffer.end());
-    const auto files = remote_manifest::parseIndexV1(manifest);
+    const auto metadata = remote_manifest::inspectIndexV1Metadata(manifest, vault->id);
+    const auto files = remote_manifest::parseIndexV1(manifest, vault->id);
     db::query::sync::RemoteObjectIndex::replaceFromManifest(vault->id, files);
-    db::query::sync::RemoteObjectIndex::upsertManifestETag(vault->id, manifestKey, remoteEtag);
+    db::query::sync::RemoteObjectIndex::upsertManifestState(
+        vault->id,
+        manifestKey,
+        remoteEtag,
+        metadata.generated_at == 0 ? std::optional<std::time_t>{} : std::make_optional(metadata.generated_at),
+        metadata.object_count,
+        metadata.object_checksum);
     return true;
 }
 
-void CloudEngine::publishRemoteIndexManifest() const {
+void CloudEngine::publishRemoteIndexManifest(const std::optional<std::string>& expectedETag) const {
     const auto files = db::query::sync::RemoteObjectIndex::listFilesForVault(vault->id);
     const auto manifest = remote_manifest::buildIndexV1(vault->id, files);
+    const auto metadata = remote_manifest::inspectIndexV1Metadata(manifest, vault->id);
     const std::vector<uint8_t> payload(manifest.begin(), manifest.end());
 
-    s3Provider_->uploadBufferWithMetadata(
+    auto ifMatch = expectedETag;
+    if (!ifMatch) {
+        const auto head = s3Provider_->getHeadObject(remote_manifest::INDEX_V1_KEY);
+        if (head) ifMatch = header_value(*head, "ETag");
+    }
+
+    s3Provider_->uploadBufferWithMetadataConditional(
         remote_manifest::INDEX_V1_KEY,
         payload,
-        {{"vh-manifest-version", std::to_string(remote_manifest::INDEX_V1_VERSION)}});
+        {{"vh-manifest-version", std::to_string(remote_manifest::INDEX_V1_VERSION)}},
+        ifMatch);
 
     const auto head = s3Provider_->getHeadObject(remote_manifest::INDEX_V1_KEY);
-    db::query::sync::RemoteObjectIndex::upsertManifestETag(
+    db::query::sync::RemoteObjectIndex::upsertManifestState(
         vault->id,
         remote_manifest::INDEX_V1_KEY,
-        head ? header_value(*head, "ETag") : std::nullopt);
+        head ? header_value(*head, "ETag") : std::nullopt,
+        metadata.generated_at == 0 ? std::optional<std::time_t>{} : std::make_optional(metadata.generated_at),
+        metadata.object_count,
+        metadata.object_checksum);
 }
 
 void CloudEngine::applyRemoteIndexMutation(const std::vector<Action>& plan) const {
-    bool mutated = false;
+    const auto replayMutation = [&]() {
+        bool mutated = false;
 
-    for (const auto& action : plan) {
-        switch (action.type) {
-        case ActionType::Upload:
-            if (action.local) {
-                db::query::sync::RemoteObjectIndex::upsertFile(vault->id, action.local);
-                mutated = true;
+        for (const auto& action : plan) {
+            switch (action.type) {
+            case ActionType::Upload:
+                if (action.local) {
+                    db::query::sync::RemoteObjectIndex::upsertFile(vault->id, action.local);
+                    mutated = true;
+                }
+                break;
+            case ActionType::DeleteRemote:
+                if (action.remote) {
+                    db::query::sync::RemoteObjectIndex::deleteKey(vault->id, action.remote->path);
+                    mutated = true;
+                }
+                break;
+            default:
+                break;
             }
-            break;
-        case ActionType::DeleteRemote:
-            if (action.remote) {
-                db::query::sync::RemoteObjectIndex::deleteKey(vault->id, action.remote->path);
-                mutated = true;
-            }
-            break;
-        default:
-            break;
+        }
+
+        return mutated;
+    };
+
+    std::string lastConflict;
+    auto expectedETag = db::query::sync::RemoteObjectIndex::getManifestETag(
+        vault->id,
+        remote_manifest::INDEX_V1_KEY);
+    if (!expectedETag) {
+        (void)refreshRemoteIndexFromManifestIfChanged();
+        expectedETag = db::query::sync::RemoteObjectIndex::getManifestETag(
+            vault->id,
+            remote_manifest::INDEX_V1_KEY);
+    }
+
+    if (!replayMutation()) return;
+
+    for (int attempt = 1; attempt <= REMOTE_MANIFEST_PUBLISH_MAX_ATTEMPTS; ++attempt) {
+        if (attempt > 1) {
+            log::Registry::cloud()->warn(
+                "[CloudStorageEngine] Remote index manifest publish conflict for vault {}; reloading manifest before retry {}/{}",
+                vault->id,
+                attempt,
+                REMOTE_MANIFEST_PUBLISH_MAX_ATTEMPTS);
+            (void)refreshRemoteIndexFromManifestIfChanged();
+            expectedETag = db::query::sync::RemoteObjectIndex::getManifestETag(
+                vault->id,
+                remote_manifest::INDEX_V1_KEY);
+            replayMutation();
+        }
+
+        try {
+            publishRemoteIndexManifest(expectedETag);
+            return;
+        } catch (const s3::ConditionalRequestFailed& e) {
+            lastConflict = e.what();
         }
     }
 
-    if (mutated) publishRemoteIndexManifest();
+    throw SyncStalled(
+        "remote index manifest update conflict after " +
+        std::to_string(REMOTE_MANIFEST_PUBLISH_MAX_ATTEMPTS) +
+        " attempts" +
+        (lastConflict.empty() ? std::string{} : ": " + lastConflict));
 }
 
 bool CloudEngine::selectedDownloadRequiresRestore(const std::shared_ptr<File>& remoteFile) const {

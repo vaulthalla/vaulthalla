@@ -23,6 +23,11 @@ namespace {
         params.append(budget.max_delete_requests);
         params.append(budget.max_downloaded_bytes);
     }
+
+    void append_remote_index_age(pqxx::params& params, const std::shared_ptr<RemotePolicy>& sync) {
+        if (sync->max_remote_index_age) params.append(sync->max_remote_index_age->count());
+        else params.append(std::optional<int64_t>{});
+    }
 }
 
 unsigned int Vault::upsertVault(const VaultPtr& vault,
@@ -62,6 +67,7 @@ unsigned int Vault::upsertVault(const VaultPtr& vault,
                 pqxx::params sync_params{vaultId, rSync->interval.count(), to_string(rSync->conflict_policy),
                                          to_string(rSync->strategy)};
                 append_s3_budget(sync_params, rSync->s3_request_budget);
+                append_remote_index_age(sync_params, rSync);
                 txn.exec(pqxx::prepped{"insert_sync_and_rsync"}, sync_params);
             }
         } else if (sync) {  // exists and sync is provided
@@ -85,6 +91,7 @@ unsigned int Vault::upsertVault(const VaultPtr& vault,
                     to_string(rsync->conflict_policy)
                 };
                 append_s3_budget(r, rsync->s3_request_budget);
+                append_remote_index_age(r, rsync);
                 txn.exec(pqxx::prepped{"update_sync_and_rsync"}, r);
             }
         }
@@ -270,6 +277,7 @@ void Vault::updateVaultSync(const PolicyPtr& sync, const vh::vault::model::Vault
             pqxx::params p{rsync->id, rsync->interval.count(), rsync->enabled, to_string(rsync->strategy),
                            to_string(rsync->conflict_policy)};
             append_s3_budget(p, rsync->s3_request_budget);
+            append_remote_index_age(p, rsync);
             txn.exec(pqxx::prepped{"update_sync_and_rsync"}, p);
         } else throw std::runtime_error("Unsupported VaultType in updateVaultSync(): " + to_string(type));
     });

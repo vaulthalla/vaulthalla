@@ -22,6 +22,8 @@ struct RemoteObject {
     std::optional<std::string> etag;
     std::optional<std::string> storage_class;
     std::optional<std::string> restore_status;
+    std::optional<std::string> version_id;
+    std::optional<std::string> event_sequencer;
     std::string source{"list_objects_v2"};
 
     RemoteObject() = default;
