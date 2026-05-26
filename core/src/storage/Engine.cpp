@@ -48,7 +48,6 @@ namespace vh::storage {
                 sync::model::Event::Status::CANCELLED) {
                 log::Registry::storage()->warn("[StorageEngine] Previous sync event failed with status: {}",
                                                std::string(sync::model::Event::toString(latestSyncEvent->status)));
-                return;
             }
         }
 

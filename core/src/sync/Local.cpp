@@ -61,7 +61,7 @@ void Local::operator()() {
 
 void Local::handleInterrupt() const { if (isInterrupted()) throw std::runtime_error("Sync task interrupted"); }
 
-bool Local::isRunning() const { return runningFlag; }
+bool Local::isRunning() const { return runningFlag.load(); }
 
 void Local::interrupt() { interruptFlag.store(true); }
 
@@ -101,11 +101,16 @@ void Local::startTask() {
 
     log::Registry::sync()->debug("[FSTask] Starting sync for vault '{}'", engine->vault->id);
 
-    runningFlag = true;
+    interruptFlag.store(false);
+    runningFlag.store(true);
     db::query::sync::Policy::reportSyncStarted(engine->sync->id);
 
     newEvent();
     event = engine->latestSyncEvent;
+    if (!event) {
+        runningFlag.store(false);
+        throw std::runtime_error("[FSTask] Failed to create sync event");
+    }
     event->status = Event::Status::RUNNING;
     engine->saveSyncEvent();
     event->start();
@@ -165,19 +170,36 @@ void Local::handleError(const std::string& message) const {
 }
 
 void Local::shutdown() {
-    runningFlag = false;
+    runningFlag.store(false);
     futures.clear();
     event->stop();
     event->parseCurrentStatus();
     engine->saveSyncEvent();
     if (event->status == Event::Status::SUCCESS) {
         db::query::sync::Policy::reportSyncSuccess(engine->sync->id);
+        uint8_t pending{};
+        if (consumeRunAfterCurrent(pending)) {
+            if (runtime::Deps::get().syncController) {
+                runtime::Deps::get().syncController->runNow(engine->vault->id, pending);
+            } else {
+                runNow(pending);
+                requeue();
+            }
+            log::Registry::sync()->debug(
+                "[FSTask] Sync task queued for immediate rerun for vault '{}'",
+                engine->vault->id);
+            log::Registry::sync()->info("[FSTask] Sync completed for vault '{}' in {}s",
+                                  engine->vault->id, event->durationSeconds());
+            return;
+        }
+
         next_run = system_clock::now() + seconds(engine->sync->interval.count());
         requeue();
         log::Registry::sync()->debug("[FSTask] Sync task requeued for vault '{}'", engine->vault->id);
         log::Registry::sync()->info("[FSTask] Sync completed for vault '{}' in {}s",
                               engine->vault->id, event->durationSeconds());
     } else {
+        pendingRunNowFlag.store(false);
         log::Registry::sync()->error("[FSTask] Sync failed for vault '{}': {}", engine->vault->id, event->error_message);
     }
 }
@@ -208,6 +230,17 @@ void Local::runNow(const uint8_t trigger) {
     runNowFlag = true;
     this->trigger = trigger;
     next_run = system_clock::now();
+}
+
+void Local::requestRunAfterCurrent(const uint8_t trigger) {
+    pendingTrigger.store(trigger);
+    pendingRunNowFlag.store(true);
+}
+
+bool Local::consumeRunAfterCurrent(uint8_t& trigger) {
+    if (!pendingRunNowFlag.exchange(false)) return false;
+    trigger = pendingTrigger.load();
+    return true;
 }
 
 void Local::push(const std::shared_ptr<Task>& task) {
@@ -292,10 +325,10 @@ void Local::handleVaultKeyRotation() {
         log::Registry::audit()->info("[FSTask] Vault key rotation finished for vault '{}'", engine->vault->id);
     } catch (const std::exception& e) {
         log::Registry::sync()->error("[FSTask] Exception during vault key rotation for vault '{}': {}", engine->vault->id, e.what());
-        runningFlag = false;
+        runningFlag.store(false);
     } catch (...) {
         log::Registry::sync()->error("[FSTask] Unknown exception during vault key rotation for vault '{}'", engine->vault->id);
-        runningFlag = false;
+        runningFlag.store(false);
     }
 }
 

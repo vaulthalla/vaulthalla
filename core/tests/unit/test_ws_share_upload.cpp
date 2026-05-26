@@ -697,7 +697,8 @@ TEST_F(WsShareUploadTest, HttpShareUploadStreamsBodyToTempFileAndRecordsBytes) {
 
     const auto batchId = created.at("upload_id").get<std::string>();
     const auto transferId = created.at("files").at(0).at("transfer_id").get<std::string>();
-    const auto tempPath = httpEngine->paths->vaultRoot / "reports" / (".upload-http-" + batchId + "-f0.part");
+    const auto tempPath = httpEngine->paths->cacheRoot / "http-uploads" / batchId / "f0.part";
+    const auto legacyFuseTempPath = httpEngine->paths->vaultRoot / "reports" / (".upload-http-" + batchId + "-f0.part");
 
     auto stream = http_upload::Coordinator::instance().beginFile(
         httpRequest(vh::protocols::http::verb::put, "/upload/" + batchId + "/files/f0?share=1"),
@@ -710,10 +711,12 @@ TEST_F(WsShareUploadTest, HttpShareUploadStreamsBodyToTempFileAndRecordsBytes) {
     EXPECT_TRUE(fileDone.at("complete").get<bool>());
     EXPECT_EQ(fileDone.at("received_size"), 5u);
     EXPECT_TRUE(std::filesystem::exists(tempPath));
+    EXPECT_FALSE(std::filesystem::exists(legacyFuseTempPath));
     ASSERT_NE(store->getUpload(transferId), nullptr);
     EXPECT_EQ(store->getUpload(transferId)->received_size_bytes, 5u);
     EXPECT_TRUE(writer->bytes_by_path.empty());
-    EXPECT_EQ(readOnlyRegularFileUnder(vh::paths::mountPath), "hello");
+    EXPECT_EQ(readOnlyRegularFileUnder(httpEngine->paths->cacheRoot), "hello");
+    EXPECT_EQ(readOnlyRegularFileUnder(vh::paths::mountPath), "");
 
     const auto cancelled = http_upload::Coordinator::instance().cancelSession(
         httpRequest(vh::protocols::http::verb::delete_, "/upload/" + batchId + "?share=1"),
@@ -738,7 +741,7 @@ TEST_F(WsShareUploadTest, HttpShareUploadStreamsBodyToTempFileAndRecordsBytes) {
     );
     const auto recreatedBatchId = recreated.at("upload_id").get<std::string>();
     EXPECT_NE(recreatedBatchId, batchId);
-    const auto recreatedTempPath = httpEngine->paths->vaultRoot / "reports" / (".upload-http-" + recreatedBatchId + "-f0.part");
+    const auto recreatedTempPath = httpEngine->paths->cacheRoot / "http-uploads" / recreatedBatchId / "f0.part";
 
     auto recreatedStream = http_upload::Coordinator::instance().beginFile(
         httpRequest(vh::protocols::http::verb::put, "/upload/" + recreatedBatchId + "/files/f0?share=1"),
@@ -780,7 +783,7 @@ TEST_F(WsShareUploadTest, HttpShareUploadAbortAllFailsActiveStreamsAndClearsTemp
 
     const auto batchId = created.at("upload_id").get<std::string>();
     const auto transferId = created.at("files").at(0).at("transfer_id").get<std::string>();
-    const auto tempPath = httpEngine->paths->vaultRoot / "reports" / (".upload-http-" + batchId + "-f0.part");
+    const auto tempPath = httpEngine->paths->cacheRoot / "http-uploads" / batchId / "f0.part";
 
     auto stream = http_upload::Coordinator::instance().beginFile(
         httpRequest(vh::protocols::http::verb::put, "/upload/" + batchId + "/files/f0?share=1"),
