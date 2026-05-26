@@ -1,84 +1,83 @@
-![v1.4 release banner](https://media.vaulthalla.io/Vaulthalla_v1_4_release_banner.png)
+![Vaulthalla v1.5.0 release banner](https://media.vaulthalla.io/Vaulthalla_v1_5_summer_banner.png)
 
 [![build](https://img.shields.io/github/actions/workflow/status/vaulthalla/vaulthalla/build_and_test.yml?label=build)](https://github.com/vaulthalla/vaulthalla/actions)
-[![release](https://img.shields.io/github/v/release/vaulthalla/vaulthalla?display_name=tag\&sort=semver)](https://github.com/vaulthalla/vaulthalla/releases)
+[![release](https://img.shields.io/github/v/release/vaulthalla/vaulthalla?display_name=tag&sort=semver)](https://github.com/vaulthalla/vaulthalla/releases)
 [![license](https://img.shields.io/github/license/vaulthalla/vaulthalla?v=2)](https://github.com/vaulthalla/vaulthalla/blob/main/LICENSE)
 [![debian-first](https://img.shields.io/badge/debian-first-8A2BE2)](https://github.com/vaulthalla/vaulthalla)
 [![linux-native](https://img.shields.io/badge/linux-native-2ea44f)](https://github.com/vaulthalla/vaulthalla)
 [![AES-256-GCM/NI](https://img.shields.io/badge/AES--256--GCM%2FNI-encrypted-cyan)](https://github.com/vaulthalla/vaulthalla)
+[![S3-guardrails](https://img.shields.io/badge/S3-guardrails-blue)](https://github.com/vaulthalla/vaulthalla)
+[![TPM-aware](https://img.shields.io/badge/TPM-aware-gold)](https://github.com/vaulthalla/vaulthalla)
 
-Vaulthalla is a Linux-native self-hosted cloud platform built around a compiled core daemon, privileged FUSE integration, encrypted storage workflows, TPM-aware secret handling, RBAC-driven access control, a CLI control plane, and a packaged web console.
+# Vaulthalla
 
-It is designed for operators who want cloud storage to behave like infrastructure again: mounted, controlled, encrypted, inspectable, and owned by the machine it runs on.
+**The final cloud for operators who want their storage mounted, encrypted, observable, and under command.**
 
-## ⚠️ Read This First
+Vaulthalla is a Linux-native self-hosted cloud platform built around a compiled C++ daemon, a native FUSE filesystem, encrypted storage workflows, TPM-aware secret handling, RBAC, a CLI control plane, and a packaged web console.
 
-Vaulthalla is system-level Linux software.
+It is not a file-themed web app pretending to be infrastructure.
 
-It installs services, prepares runtime directories, mounts a native FUSE filesystem, manages local control sockets, uses PostgreSQL for runtime state, and can integrate with TPM/swtpm, Nginx, and Certbot.
+It is infrastructure.
 
-That is intentional. Vaulthalla is designed to run as host infrastructure, not as a self-contained web app.
+## v1.5.0: S3 Safety Lockdown
 
-### What installation may prepare
+Vaulthalla v1.5.0 is a critical S3 safety and remote-sync hardening release.
 
-Installing Vaulthalla with `sudo apt install vaulthalla` or the hosted installer may:
+If you use S3-compatible storage, run v1.5.0 or newer. This release adds the guardrails Vaulthalla needs before real cloud credentials, real buckets, and real billing accounts are placed behind it.
 
-* create the `vaulthalla` system user and group
-* install systemd units
-* prepare `/etc/vaulthalla`, `/var/lib/vaulthalla`, `/run/vaulthalla`, and `/var/log/vaulthalla`
-* prepare the default FUSE mount path at `/mnt/vaulthalla`
-* configure runtime permissions for the daemon and CLI socket
-* prepare or reuse local PostgreSQL resources when the local DB flow is enabled
-* use hardware TPM2 when available
-* provision managed `swtpm` fallback when hardware TPM is unavailable
-* stage packaged web console assets under `/usr/share/vaulthalla-web`
-* prepare writable web runtime cache under `/var/cache/vaulthalla-web`
+v1.5.0 adds:
 
-Optional host integrations are handled through explicit setup commands:
+- S3 request budgets for LIST, HEAD, GET, PUT, COPY, DELETE, and downloaded-byte limits
+- sync event metrics for planned and actual cloud request pressure
+- remote object indexing and manifest-backed remote state tracking
+- safer default sync intervals to prevent accidental cloud churn
+- archive-tier and restore-state awareness for cold S3 objects
+- safer delete propagation for S3-backed vaults
+- encryption provenance fixes so local-at-rest metadata is not confused with remote-object metadata
+- stronger remote index mutation behavior for plaintext and encrypted upstream objects
+- database, model, controller, and test coverage for S3 cost guardrails
 
-* `vh setup nginx` installs the managed Vaulthalla Nginx site
-* `vh setup nginx --certbot` allows Certbot to modify that managed site
+This is a minor version bump with major operational consequences.
 
-Package installation is conservative by default. Environment-specific setup is kept behind explicit CLI flows where possible.
+## What Vaulthalla Ships
 
-### Operational expectations
+| Layer | Model |
+| --- | --- |
+| Core runtime | Compiled C++ daemon managed by systemd |
+| Filesystem | Native FUSE mount, defaulting to `/mnt/vaulthalla` |
+| CLI | `vh` operator control plane over local runtime IPC |
+| Web console | Packaged Next.js standalone runtime |
+| Database | PostgreSQL-backed metadata and runtime state |
+| Secrets | Hardware TPM2 when available; managed `swtpm` fallback when not |
+| Encryption | AES-256-GCM/NI-oriented encrypted storage workflows |
+| Access control | RBAC-driven admin and vault role model |
+| Storage | Local vaults plus S3-compatible cloud workflows |
+| Deployment | Debian-first packaging with explicit Nginx/Certbot setup |
 
-Vaulthalla is probably not the right fit if you want a self-contained web app that never touches the host beyond one process and one config file.
+## Install
 
-It is built for operators who want Linux-native self-hosted storage with a real daemon, a real filesystem surface, encrypted workflows, RBAC, TPM-aware secret handling, and explicit host-level control.
-
-Welcome to the kernel, brother.
-
-## Quick Start
-
-### Recommended Installer
+### Recommended installer
 
 ```bash
 curl -fsSL https://apt.vaulthalla.sh/install.sh | bash
 ```
 
-Interactive installer flow:
+Interactive mode:
 
 ```bash
 curl -fsSL https://apt.vaulthalla.sh/install.sh | bash -s -- --interactive
 ```
 
-Local clone installer:
+Local clone:
 
 ```bash
 ./bin/vh/install.sh
 ./bin/vh/install.sh --interactive
 ```
 
-The hosted installer performs the standard operator path:
+The installer configures the Vaulthalla APT repository, installs the Debian package, prepares runtime services, and hands host-specific setup to the `vh` CLI.
 
-* configures the Vaulthalla APT repository
-* installs the Debian package
-* prepares runtime directories and services
-* performs conservative package-time setup
-* hands off explicit operator setup to the `vh` CLI
-
-### Manual Debian / Ubuntu Install
+### Manual Debian / Ubuntu install
 
 ```bash
 sudo curl -fsSL https://apt.vaulthalla.sh/pubkey.gpg \
@@ -91,51 +90,54 @@ sudo apt update
 sudo apt install vaulthalla
 ```
 
-Optional install modes:
+Lean install:
 
 ```bash
-sudo apt install vaulthalla
 sudo apt install --no-install-recommends vaulthalla
+```
+
+Skip package-time DB bootstrap:
+
+```bash
 VH_SKIP_DB_BOOTSTRAP=1 sudo -E apt install vaulthalla
+```
+
+Skip package-time Nginx configuration:
+
+```bash
 VH_SKIP_NGINX_CONFIG=1 sudo -E apt install vaulthalla
 ```
 
-### Post-Install Setup
+## First Run
 
-Claim/verify admin ownership:
+Claim or verify admin ownership:
 
 ```bash
 vh setup assign-admin
 ```
 
-Local PostgreSQL bootstrap:
+Configure local PostgreSQL:
 
 ```bash
 vh setup db
 ```
 
-Remote PostgreSQL configuration:
+Configure remote PostgreSQL:
 
 ```bash
 vh setup remote-db
 ```
 
-Nginx integration:
+Configure Nginx:
 
 ```bash
 sudo vh setup nginx --domain <domain>
 ```
 
-Nginx + Certbot integration:
+Configure Nginx with Certbot:
 
 ```bash
 sudo vh setup nginx --domain <domain> --certbot
-```
-
-If a managed Vaulthalla Nginx site already has a domain, Certbot can also be run later against that managed site:
-
-```bash
-sudo vh setup nginx --certbot
 ```
 
 Remove only Vaulthalla-managed Nginx integration:
@@ -144,13 +146,15 @@ Remove only Vaulthalla-managed Nginx integration:
 sudo vh teardown nginx
 ```
 
-## Verify Runtime
+## Operate
+
+Check runtime status:
 
 ```bash
 vh status
 ```
 
-Service checks:
+Inspect services:
 
 ```bash
 sudo systemctl status vaulthalla.service
@@ -160,95 +164,86 @@ sudo systemctl status vaulthalla-web.service
 sudo systemctl status vaulthalla-swtpm.service
 ```
 
-Live logs:
+Follow logs:
 
 ```bash
 sudo journalctl -fu vaulthalla.service
 sudo journalctl -fu vaulthalla-web.service
 ```
 
-## What Vaulthalla Ships Today
+## Host-Level by Design
 
-| Capability             | Current Model                                                        |
-| ---------------------- | -------------------------------------------------------------------- |
-| Core runtime           | Compiled C++ daemon managed by systemd                               |
-| Filesystem integration | Native FUSE mount, default path `/mnt/vaulthalla`                    |
-| CLI control plane      | `vh` command surface backed by local runtime IPC                     |
-| Web console            | Packaged Next.js standalone runtime behind `vaulthalla-web.service`  |
-| Database               | PostgreSQL-backed metadata and runtime state                         |
-| Secret handling        | Hardware TPM2 when available, managed `swtpm` fallback when not      |
-| Encryption             | AES-256-GCM/NI-oriented encrypted storage workflows                  |
-| Access control         | RBAC-driven admin and vault role model                               |
-| Sharing model          | Authenticated user/vault access; public link sharing planned post-v1 |
-| Deployment             | Debian-first packaging with explicit Nginx/Certbot setup             |
-| Storage providers      | Local runtime plus S3-compatible provider workflows                  |
+Vaulthalla runs as system software.
 
-## Why These Pieces Exist
+A normal installation may prepare:
 
-### Native FUSE
+- the `vaulthalla` system user and group
+- systemd units
+- `/etc/vaulthalla`
+- `/var/lib/vaulthalla`
+- `/run/vaulthalla`
+- `/var/log/vaulthalla`
+- the default FUSE mount path at `/mnt/vaulthalla`
+- PostgreSQL runtime resources when local DB setup is enabled
+- hardware TPM2 integration when available
+- managed `swtpm` fallback when hardware TPM is unavailable
+- packaged web console assets under `/usr/share/vaulthalla-web`
+- writable web runtime cache under `/var/cache/vaulthalla-web`
 
-Vaulthalla is not just a web UI for files. The filesystem is part of the product.
+This is intentional. Vaulthalla is built to behave like host infrastructure, not like a single-process toy.
 
-FUSE gives Vaulthalla a Linux-native surface area: files can be mounted, traversed, and operated on like real filesystem entries while the daemon enforces Vaulthalla’s storage, metadata, and permission model underneath.
+## Runtime Paths
+
+| Purpose | Path |
+| --- | --- |
+| Main config | `/etc/vaulthalla/config.yaml` |
+| Runtime directory | `/run/vaulthalla` |
+| State directory | `/var/lib/vaulthalla` |
+| Logs | `/var/log/vaulthalla` |
+| FUSE mount | `/mnt/vaulthalla` |
+| Software TPM state | `/var/lib/swtpm/vaulthalla` |
+| SQL deploy assets | `/usr/share/vaulthalla/psql` |
+| Web runtime payload | `/usr/share/vaulthalla-web` |
+| Web runtime cache | `/var/cache/vaulthalla-web` |
+| Nginx template | `/usr/share/vaulthalla/nginx/vaulthalla.conf` |
+
+## Why It Exists
+
+### Native Filesystem Surface
+
+Vaulthalla exposes storage through FUSE because the filesystem is part of the product.
+
+Files can be mounted, traversed, opened, copied, deleted, shared, and synchronized while Vaulthalla enforces metadata, encryption, policy, and access control underneath.
 
 ### CLI First
 
-The CLI is the control plane.
+The CLI is the operator control plane.
 
-Privileged setup, admin ownership, DB configuration, Nginx integration, teardown, status checks, and operational flows are explicit commands. This keeps dangerous setup actions visible instead of hiding them behind web buttons that may or may not have enough context to safely mutate the host.
+Admin ownership, DB setup, Nginx integration, teardown, status checks, and privileged host mutations live behind explicit commands instead of hidden web-side magic.
 
 ### TPM-Aware Secrets
 
-Vaulthalla treats host secrets as infrastructure, not as loose strings in a random config file.
+Vaulthalla treats host secrets as infrastructure.
 
-On machines with TPM2 hardware, Vaulthalla uses the host TPM path. On VPS and virtualized environments without exposed TPM hardware, the package can provision a managed `swtpm` backend. The goal is to avoid silent plaintext downgrades while keeping the product deployable on real servers operators actually rent.
+On machines with TPM2 hardware, Vaulthalla uses the host TPM path. On VPS and virtualized systems without TPM hardware, the package can provision managed `swtpm` fallback.
 
-### RBAC Before Public Links
+The goal is simple: avoid silent plaintext downgrades while staying deployable on real servers.
 
-Vaulthalla v1 focuses on authenticated, role-scoped collaboration.
+### S3 With Guardrails
 
-You can create users, assign scoped privileges, and share access through Vaulthalla’s user/vault model. Public unauthenticated links and external upload/drop links are planned post-v1 because they require careful handling of expiry, revocation, abuse boundaries, rate limiting, and auditability.
+S3-backed storage needs cost awareness.
 
-### Debian First
+v1.5.0 adds request budgets, transfer metrics, remote object indexing, manifest tracking, archive-tier awareness, and safer reconciliation logic so cloud sync can be trusted against real buckets.
 
-Vaulthalla is packaged as system software because it behaves like system software.
+## Removal and Reinstall
 
-The Debian package owns installed artifacts, systemd units, runtime directories, service wiring, and conservative post-install setup. Mutable runtime state lives under the appropriate `/var`, `/run`, and `/etc` paths. Packaged artifacts stay under `/usr/share`.
-
-## Install-Time TPM Behavior
-
-During package configuration:
-
-* Hardware TPM hosts (`/dev/tpmrm0` or `/dev/tpm0`) use hardware TPM.
-* Hosts without hardware TPM use managed `swtpm` fallback through `vaulthalla-swtpm.service`.
-* Managed `swtpm` state lives under `/var/lib/swtpm/vaulthalla`.
-* AppArmor-aware setup is handled for the managed software TPM path.
-* If no viable TPM backend is available, setup fails with actionable logs.
-
-Lean installs using `--no-install-recommends` on TPM-less hosts should install `swtpm` and `swtpm-tools` before retrying configure.
-
-## Runtime Defaults
-
-* Main config: `/etc/vaulthalla/config.yaml`
-* Runtime directory: `/run/vaulthalla`
-* State directory: `/var/lib/vaulthalla`
-* Log directory: `/var/log/vaulthalla`
-* Default FUSE mount: `/mnt/vaulthalla`
-* Software TPM state: `/var/lib/swtpm/vaulthalla`
-* SQL deploy assets: `/usr/share/vaulthalla/psql`
-* Web runtime payload: `/usr/share/vaulthalla-web`
-* Web runtime cache: `/var/cache/vaulthalla-web`
-* Packaged Nginx template: `/usr/share/vaulthalla/nginx/vaulthalla.conf`
-
-## Removal, Purge, and Reinstall
-
-Normal remove preserves local data:
+Remove the package while preserving local data:
 
 ```bash
 sudo apt remove vaulthalla
 ```
 
-Purge removes package configuration and may offer optional destructive local PostgreSQL cleanup when interactive:
+Purge package configuration:
 
 ```bash
 sudo apt purge vaulthalla
@@ -256,22 +251,16 @@ sudo apt purge vaulthalla
 
 Default behavior is conservative:
 
-* `apt remove` preserves local PostgreSQL role/database data.
-* Interactive purge can offer local DB/role teardown.
-* Noninteractive purge preserves local PostgreSQL resources.
-* Manual local DB teardown is explicit:
+- `apt remove` preserves local PostgreSQL role/database data
+- interactive purge may offer local DB/role teardown
+- noninteractive purge preserves local PostgreSQL resources
+- manual DB teardown is explicit
 
 ```bash
 sudo vh teardown db
 ```
 
-Reinstalling with preserved local PostgreSQL resources requires either:
-
-* interactive reuse flow with password handoff
-* destructive drop/recreate
-* manual reseed of `/run/vaulthalla/db_password`
-
-Manual reseed example:
+If reinstalling with preserved local PostgreSQL resources, use the interactive reuse flow, destructive recreate flow, or manually reseed the runtime DB password:
 
 ```bash
 sudo install -d -m 0755 /run/vaulthalla
@@ -289,36 +278,23 @@ cd vaulthalla
 sudo make install -- -d
 ```
 
-`-d` enables volatile developer mode and can reset local Vaulthalla state.
+`-d` enables volatile developer mode and may reset local Vaulthalla state.
 
 Do not use developer mode on hosts with production data.
 
 ## Documentation
 
-* Debian operator/install policy: [`debian/README.Debian`](debian/README.Debian)
-* Installed Debian policy doc: `/usr/share/doc/vaulthalla/README.Debian`
-* Packaging/distribution notes: [`DISTRIBUTION.md`](DISTRIBUTION.md)
-* Web app notes: [`web/README.md`](web/README.md)
+- Debian operator/install policy: [`debian/README.Debian`](debian/README.Debian)
+- Installed Debian policy doc: `/usr/share/doc/vaulthalla/README.Debian`
+- Packaging and distribution notes: [`DISTRIBUTION.md`](DISTRIBUTION.md)
+- S3 guardrails: [`docs/admin/s3-cost-guardrails.md`](docs/admin/s3-cost-guardrails.md)
+- Web app notes: [`web/README.md`](web/README.md)
 
-## Current v1 Notes
-
-Vaulthalla v1 is a foundation release. The core daemon, CLI, packaging, TPM/swtpm integration, FUSE runtime, authenticated access model, Nginx/Certbot flow, and packaged web console are the priority.
-
-Known post-v1 work includes:
-
-* public unauthenticated link sharing
-* public upload/drop links
-* deeper web console polish
-* broader install validation across more VPS providers
-* expanded contributor-facing docs and issue templates
-
-## Support and Contribution
+## Support
 
 Issues and pull requests are welcome.
 
-Vaulthalla touches privileged Linux services, filesystem integration, PostgreSQL, TPM/swtpm, AppArmor, Nginx, Certbot, and a packaged web runtime. Good contributions are scoped, reproducible, and clear about which subsystem they affect.
-
-If you are reporting an install issue, include:
+If reporting an install or runtime issue, include:
 
 ```bash
 vh status
@@ -327,5 +303,9 @@ sudo systemctl status vaulthalla-web.service --no-pager
 sudo journalctl -u vaulthalla.service -n 150 --no-pager
 sudo journalctl -u vaulthalla-web.service -n 150 --no-pager
 ```
+
+Good reports are scoped, reproducible, and clear about which subsystem is involved: packaging, FUSE, PostgreSQL, TPM/swtpm, Nginx, Certbot, S3, sync, RBAC, CLI, or web runtime.
+
+---
 
 Welcome to the kernel, brother.
