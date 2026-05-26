@@ -107,5 +107,11 @@ but production-mount smoke failures can be environmental even when the FUSE
 integration harness passes. Prefer `make run_test` and `/tmp/vh_mount` for
 reproducible FUSE validation.
 
+Production/dev R2 dogfooding writes to the real configured R2 test bucket. Use a
+unique smoke-test prefix and clean it up afterward. If leaked payload objects are
+removed, also check whether `.vaulthalla/index-v1.json` only indexed those smoke
+objects; otherwise the dev remote index manifest can be left stale. Prefer the
+integration harness when the behavior under test does not require real R2.
+
 Avoid `bin/vh/install.sh` for working-tree dogfooding; it builds from the latest
 apt package rather than the current checkout.
