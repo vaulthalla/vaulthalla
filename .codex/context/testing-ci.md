@@ -113,5 +113,11 @@ removed, also check whether `.vaulthalla/index-v1.json` only indexed those smoke
 objects; otherwise the dev remote index manifest can be left stale. Prefer the
 integration harness when the behavior under test does not require real R2.
 
+When `dev.enabled` or test mode is active and `dev.init_r2_test_vault` is true,
+initdb clears the configured `VAULTHALLA_TEST_R2_*` bucket before seed data is
+created. This prevents old smoke-test objects or stale `.vaulthalla/index-v1.json`
+state from reappearing as phantom files when the dev R2 vault indexes remote
+state.
+
 Avoid `bin/vh/install.sh` for working-tree dogfooding; it builds from the latest
 apt package rather than the current checkout.
