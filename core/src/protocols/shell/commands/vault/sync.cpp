@@ -509,7 +509,7 @@ static CommandResult handle_vault_sync_update(const CommandCall& call) {
     }
 
     if (engine->vault->type == VaultType::Local) {
-        if (const auto onSyncConflictOpt = optVal(call, usage->resolveOptional("on-sync-conflict")->option_tokens)) {
+        if (const auto onSyncConflictOpt = optVal(call, "on-sync-conflict")) {
             const auto fsync = std::static_pointer_cast<LocalPolicy>(engine->sync);
 
             try {
@@ -521,7 +521,7 @@ static CommandResult handle_vault_sync_update(const CommandCall& call) {
     } else if (engine->vault->type == VaultType::S3) {
         const auto rsync = std::static_pointer_cast<RemotePolicy>(engine->sync);
 
-        if (const auto syncStrategyOpt = optVal(call, usage->resolveOptional("sync-strategy")->option_tokens)) {
+        if (const auto syncStrategyOpt = optVal(call, "sync-strategy")) {
             try {
                 rsync->strategy = strategyFromString(*syncStrategyOpt);
             } catch (const std::exception& e) {
@@ -529,7 +529,7 @@ static CommandResult handle_vault_sync_update(const CommandCall& call) {
             }
         }
 
-        if (const auto onSyncConflictOpt = optVal(call, usage->resolveOptional("on-sync-conflict")->option_tokens)) {
+        if (const auto onSyncConflictOpt = optVal(call, "on-sync-conflict")) {
             try {
                 rsync->conflict_policy = rsConflictPolicyFromString(*onSyncConflictOpt);
             } catch (const std::exception& e) {
@@ -624,7 +624,7 @@ static CommandResult handle_vault_sync_reconcile(const CommandCall& call) {
         files.reserve(remoteMap.size());
         for (const auto& [_, file] : remoteMap) files.push_back(file);
         db::query::sync::RemoteObjectIndex::replaceFromListObjects(engine->vault->id, files);
-        cloud->publishRemoteIndexManifest();
+        cloud->publishRemoteIndexManifestWithRetry();
 
         const auto metrics = s3Budget.metrics();
 
@@ -689,7 +689,7 @@ static CommandResult handle_vault_sync_inventory(const CommandCall& call) {
         db::query::sync::RemoteObjectIndex::replace(engine->vault->id, files, "inventory");
 
         const ScopedS3RequestBudget s3Budget(cloud, policy->s3_request_budget);
-        cloud->publishRemoteIndexManifest();
+        cloud->publishRemoteIndexManifestWithRetry();
         const auto metrics = s3Budget.metrics();
 
         return ok(
@@ -738,7 +738,7 @@ static CommandResult handle_vault_sync_events(const CommandCall& call) {
         if (result.records == 0) return invalid("vault sync events: no S3 event records found");
 
         const ScopedS3RequestBudget s3Budget(cloud, policy->s3_request_budget);
-        if (result.upserts > 0 || result.deletes > 0) cloud->publishRemoteIndexManifest();
+        if (result.upserts > 0 || result.deletes > 0) cloud->publishRemoteIndexManifestWithRetry();
         const auto metrics = s3Budget.metrics();
 
         return ok(

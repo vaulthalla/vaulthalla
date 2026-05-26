@@ -140,7 +140,7 @@ void Cloud::initBins() {
     } else {
         s3Map = cloud->getGroupedFilesFromS3();
         db::query::sync::RemoteObjectIndex::replaceFromListObjects(engine->vault->id, uMap2Vector(s3Map));
-        cloud->publishRemoteIndexManifest();
+        cloud->publishRemoteIndexManifestWithRetry();
     }
     s3Files = uMap2Vector(s3Map);
 

@@ -442,6 +442,32 @@ TEST(S3CostSafetyTest, FirstManifestPublishUsesIfNoneMatchAndReportsConflict) {
     EXPECT_EQ("*", *fake->if_none_match_values[0]);
 }
 
+TEST(S3CostSafetyTest, DirectManifestPublishRetriesFirstPublishConflictWithFreshETag) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed manifest retry regression test due to missing environment variables.";
+    ensureDbReady();
+
+    for (const auto code : {412, 409}) {
+        const auto vaultId = seedS3VaultForDbTest(uniqueSuffix("manifest_first_retry_" + std::to_string(code)));
+        auto fake = std::make_shared<ManifestRaceS3Controller>();
+        fake->conditional_failures = {code};
+        fake->head_responses = {
+            std::unordered_map<std::string, std::string>{{"ETag", "\"etag-existing\""}},
+            std::unordered_map<std::string, std::string>{{"ETag", "\"etag-after-publish\""}},
+        };
+        auto engine = makeDbBackedCloudEngine(vaultId, fake);
+
+        EXPECT_NO_THROW(engine->publishRemoteIndexManifestWithRetry());
+
+        ASSERT_EQ(2u, fake->if_match_values.size());
+        EXPECT_FALSE(fake->if_match_values[0].has_value());
+        ASSERT_TRUE(fake->if_none_match_values[0].has_value());
+        EXPECT_EQ("*", *fake->if_none_match_values[0]);
+        ASSERT_TRUE(fake->if_match_values[1].has_value());
+        EXPECT_EQ("\"etag-existing\"", *fake->if_match_values[1]);
+        EXPECT_FALSE(fake->if_none_match_values[1].has_value());
+    }
+}
+
 TEST(S3CostSafetyTest, ManifestPublishConflictRetriesAfterRefreshingKnownETag) {
     if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed manifest retry regression test due to missing environment variables.";
     ensureDbReady();

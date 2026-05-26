@@ -72,6 +72,7 @@ namespace vh::storage {
 
         [[nodiscard]] bool refreshRemoteIndexFromManifestIfChanged() const;
         void publishRemoteIndexManifest(const std::optional<std::string>& expectedETag = std::nullopt) const;
+        void publishRemoteIndexManifestWithRetry() const;
         void applyRemoteIndexMutation(const std::vector<sync::model::Action>& plan) const;
         [[nodiscard]] bool selectedDownloadRequiresRestore(const std::shared_ptr<vh::fs::model::File>& remoteFile) const;
 

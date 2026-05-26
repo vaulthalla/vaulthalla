@@ -282,6 +282,40 @@ void CloudEngine::publishRemoteIndexManifest(const std::optional<std::string>& e
         metadata.object_checksum);
 }
 
+void CloudEngine::publishRemoteIndexManifestWithRetry() const {
+    std::string lastConflict;
+    auto expectedETag = db::query::sync::RemoteObjectIndex::getManifestETag(
+        vault->id,
+        remote_manifest::INDEX_V1_KEY);
+
+    for (int attempt = 1; attempt <= REMOTE_MANIFEST_PUBLISH_MAX_ATTEMPTS; ++attempt) {
+        try {
+            publishRemoteIndexManifest(expectedETag);
+            return;
+        } catch (const s3::ConditionalRequestFailed& e) {
+            lastConflict = e.what();
+            log::Registry::cloud()->warn(
+                "[CloudStorageEngine] Remote index manifest publish conflict for vault {}; refreshing ETag before retry {}/{}",
+                vault->id,
+                attempt,
+                REMOTE_MANIFEST_PUBLISH_MAX_ATTEMPTS);
+
+            const auto head = s3Provider_->getHeadObject(remote_manifest::INDEX_V1_KEY);
+            expectedETag = head ? header_value(*head, "ETag") : std::nullopt;
+            db::query::sync::RemoteObjectIndex::upsertManifestETag(
+                vault->id,
+                remote_manifest::INDEX_V1_KEY,
+                expectedETag);
+        }
+    }
+
+    throw std::runtime_error(
+        "remote index manifest publish conflict after " +
+        std::to_string(REMOTE_MANIFEST_PUBLISH_MAX_ATTEMPTS) +
+        " attempts" +
+        (lastConflict.empty() ? std::string{} : ": " + lastConflict));
+}
+
 void CloudEngine::applyRemoteIndexMutation(const std::vector<Action>& plan) const {
     const auto replayMutation = [&]() {
         bool mutated = false;

@@ -37,8 +37,10 @@
 #include <memory>
 #include <version.h>
 #include <optional>
+#include <cstdlib>
 #include <fstream>
 #include <string>
+#include <string_view>
 #include <filesystem>
 #include <spdlog/spdlog.h>
 #include <paths.h>
@@ -511,21 +513,31 @@ void vh::seed::initDevCloudVault() {
         const auto accessKey = prefix + "ACCESS_KEY";
         const auto secretKey = prefix + "SECRET_ACCESS_KEY";
         const auto endpoint = prefix + "ENDPOINT";
+        const auto region = prefix + "REGION";
+        const auto bucket = prefix + "BUCKET";
+
+        const auto readRequired = [](const std::string_view name) -> std::optional<std::string> {
+            if (const auto* value = std::getenv(std::string(name).c_str()); value && *value)
+                return std::string(value);
+            log::Registry::vaulthalla()->info("[initdb] Skipping R2 test vault seed; missing {}", name);
+            return std::nullopt;
+        };
+
+        const auto accessKeyValue = readRequired(accessKey);
+        const auto secretKeyValue = readRequired(secretKey);
+        const auto endpointValue = readRequired(endpoint);
+        const auto regionValue = readRequired(region);
+        const auto bucketValue = readRequired(bucket);
+        if (!accessKeyValue || !secretKeyValue || !endpointValue || !regionValue || !bucketValue) return;
 
         auto key = std::make_shared<APIKey>();
         key->user_id = 1; // Default user ID for dev mode
         key->name = "R2 Test Key";
         key->provider = S3Provider::CloudflareR2;
-        key->region = "wnam";
-
-        if (std::getenv(accessKey.c_str())) key->access_key = std::getenv(accessKey.c_str());
-        else return;
-
-        if (std::getenv(secretKey.c_str())) key->secret_access_key = std::getenv(secretKey.c_str());
-        else return;
-
-        if (std::getenv(endpoint.c_str())) key->endpoint = std::getenv(endpoint.c_str());
-        else return;
+        key->region = *regionValue;
+        key->access_key = *accessKeyValue;
+        key->secret_access_key = *secretKeyValue;
+        key->endpoint = *endpointValue;
 
         key->id = runtime::Deps::get().apiKeyManager->addAPIKey(key);
 
@@ -540,7 +552,7 @@ void vh::seed::initDevCloudVault() {
         vault->mount_point = id::Generator({ .namespace_token = vault->name }).generate();
         vault->api_key_id = key->id;
         vault->owner_id = 1;
-        vault->bucket = "vaulthalla-test";
+        vault->bucket = *bucketValue;
         vault->type = VaultType::S3;
 
         const auto sync = std::make_shared<RemotePolicy>();
