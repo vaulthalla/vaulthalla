@@ -16,6 +16,12 @@ namespace {
         return field.as<std::string>();
     }
 
+    std::optional<bool> optional_bool(const pqxx::row& row, const char* name) {
+        const auto field = row[name];
+        if (field.is_null()) return std::nullopt;
+        return field.as<bool>();
+    }
+
     std::filesystem::path normalize_object_key(std::filesystem::path key) {
         key = key.lexically_normal();
         auto native = key.string();
@@ -34,6 +40,12 @@ RemoteObject::RemoteObject(const pqxx::row& row)
       restore_status(optional_string(row, "restore_status")),
       version_id(optional_string(row, "version_id")),
       event_sequencer(optional_string(row, "event_sequencer")),
+      content_hash(optional_string(row, "content_hash")),
+      encrypted(optional_bool(row, "encrypted")),
+      encryption_iv(row["encryption_iv"].is_null() ? std::string{} : row["encryption_iv"].as<std::string>()),
+      encrypted_with_key_version(row["encrypted_with_key_version"].is_null()
+          ? 0
+          : row["encrypted_with_key_version"].as<unsigned int>()),
       source(row["source"].as<std::string>()) {
     if (!row["last_modified"].is_null())
         last_modified = parsePostgresTimestamp(row["last_modified"].as<std::string>());
@@ -49,6 +61,16 @@ RemoteObject::RemoteObject(const uint32_t vaultId, const std::shared_ptr<fs::mod
       restore_status(file ? file->remote_restore_status : std::nullopt),
       version_id(file ? file->remote_version_id : std::nullopt),
       event_sequencer(file ? file->remote_sequencer : std::nullopt),
+      content_hash(file ? file->content_hash : std::nullopt),
+      encrypted(file
+          ? file->remote_encrypted
+              ? file->remote_encrypted
+              : ((!file->encryption_iv.empty() || file->encrypted_with_key_version > 0)
+                  ? std::make_optional(true)
+                  : std::optional<bool>{})
+          : std::nullopt),
+      encryption_iv(file ? file->encryption_iv : std::string{}),
+      encrypted_with_key_version(file ? file->encrypted_with_key_version : 0),
       source(std::move(src)) {}
 
 std::shared_ptr<vh::fs::model::File> RemoteObject::toFile() const {
@@ -61,5 +83,9 @@ std::shared_ptr<vh::fs::model::File> RemoteObject::toFile() const {
     file->remote_restore_status = restore_status;
     file->remote_version_id = version_id;
     file->remote_sequencer = event_sequencer;
+    file->content_hash = content_hash;
+    file->remote_encrypted = encrypted;
+    file->encryption_iv = encryption_iv;
+    file->encrypted_with_key_version = encrypted_with_key_version;
     return file;
 }

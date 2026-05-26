@@ -25,9 +25,12 @@
 #include "sync/model/Policy.hpp"
 #include "sync/model/RemoteManifest.hpp"
 #include "sync/model/RemotePolicy.hpp"
+#include "sync/model/ScopedOp.hpp"
+#include "sync/tasks/Delete.hpp"
 #include "vault/model/APIKey.hpp"
 #include "vault/model/S3Vault.hpp"
 #include "vault/APIKeyManager.hpp"
+#include "vault/EncryptionManager.hpp"
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
@@ -64,8 +67,10 @@ public:
     int head_object_calls = 0;
     int download_to_buffer_calls = 0;
     int upload_object_with_metadata_calls = 0;
+    int delete_object_calls = 0;
     std::unordered_map<std::string, std::string> last_metadata;
     std::optional<std::unordered_map<std::string, std::string>> head_response;
+    std::vector<uint8_t> download_payload;
 
     CountingS3Controller()
         : Controller(dummyApiKey(), "unit-bucket") {}
@@ -88,10 +93,11 @@ public:
         self->last_metadata = metadata;
     }
 
-    void downloadToBuffer(const std::filesystem::path&, std::vector<uint8_t>&) const override {
+    void downloadToBuffer(const std::filesystem::path&, std::vector<uint8_t>& out) const override {
         auto* self = const_cast<CountingS3Controller*>(this);
         ++self->download_to_buffer_calls;
         self->recordRequest(RequestKind::Get);
+        out = self->download_payload;
     }
 
     std::optional<std::unordered_map<std::string, std::string>> getHeadObject(
@@ -100,6 +106,12 @@ public:
         ++self->head_object_calls;
         self->recordRequest(RequestKind::Head);
         return head_response;
+    }
+
+    void deleteObject(const std::filesystem::path&) const override {
+        auto* self = const_cast<CountingS3Controller*>(this);
+        ++self->delete_object_calls;
+        self->recordRequest(RequestKind::Delete);
     }
 };
 
@@ -203,8 +215,22 @@ void ensureDbReady() {
     initialized = true;
 }
 
+void ensureWritableTestPathRoots() {
+    static bool initialized = false;
+    if (initialized) return;
+
+    const auto root = std::filesystem::temp_directory_path() / uniqueSuffix("vh_s3_cost_safety_paths");
+    std::filesystem::remove_all(root);
+    vh::paths::backingPath = root / "backing";
+    vh::paths::mountPath = root / "mount";
+    std::filesystem::create_directories(vh::paths::backingPath);
+    std::filesystem::create_directories(vh::paths::mountPath);
+    initialized = true;
+}
+
 void ensureSeededRuntimeReady() {
     static bool seeded = false;
+    ensureWritableTestPathRoots();
     ensureDbReady();
     if (!seeded) {
         vh::seed::seed_database();
@@ -732,6 +758,193 @@ TEST(S3CostSafetyTest, SigV4SignedHeadersIncludeMetadataHeaders) {
         auth.find(
             "SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date;"
             "x-amz-meta-vh-encrypted;x-amz-meta-vh-iv;x-amz-meta-vh-key-version"));
+}
+
+TEST(S3CostSafetyTest, RemoteEncryptedPayloadUsesCaseInsensitiveHeadMetadata) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed encrypted remote metadata test due to missing environment variables.";
+
+    auto fake = std::make_shared<CountingS3Controller>();
+    const auto vaultId = seedDryRunS3VaultForDbTest(uniqueSuffix("head_iv_case"), fake);
+    auto engine = std::static_pointer_cast<vh::storage::CloudEngine>(
+        vh::runtime::Deps::get().storageManager->getEngine(vaultId));
+    engine->setS3ControllerForTesting(fake);
+
+    const std::vector<uint8_t> plaintext{'s', 'e', 'c', 'r', 'e', 't'};
+    auto encryptedSource = remoteFile("mixed-case-head.bin");
+    const auto ciphertext = engine->encryptionManager->encrypt(plaintext, encryptedSource);
+
+    fake->head_response = std::unordered_map<std::string, std::string>{
+        {"X-Amz-Meta-Vh-Encrypted", "true"},
+        {"X-Amz-Meta-Vh-Iv", encryptedSource->encryption_iv},
+        {"X-Amz-Meta-Vh-Key-Version", std::to_string(encryptedSource->encrypted_with_key_version)},
+    };
+
+    auto remote = remoteFile("mixed-case-head.bin");
+    remote->remote_encrypted = true;
+    const auto decrypted = engine->decryptRemotePayload(remote->path, ciphertext, remote);
+
+    EXPECT_EQ(plaintext, decrypted);
+    EXPECT_EQ(1, fake->head_object_calls);
+}
+
+TEST(S3CostSafetyTest, RemoteObjectIndexRoundTripsEncryptionMetadata) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed remote index metadata test due to missing environment variables.";
+    ensureDbReady();
+
+    const auto vaultId = seedS3VaultForDbTest(uniqueSuffix("remote_index_iv"));
+    auto remote = remoteFile("encrypted/from-index.txt");
+    remote->content_hash = "content-hash";
+    remote->remote_encrypted = true;
+    remote->encryption_iv = "iv-from-index";
+    remote->encrypted_with_key_version = 7;
+
+    vh::db::query::sync::RemoteObjectIndex::upsertFile(vaultId, remote, "manifest");
+    const auto files = vh::db::query::sync::RemoteObjectIndex::listFilesForVault(vaultId);
+
+    ASSERT_EQ(1u, files.size());
+    EXPECT_EQ("/encrypted/from-index.txt", files[0]->path.string());
+    ASSERT_TRUE(files[0]->content_hash);
+    EXPECT_EQ("content-hash", *files[0]->content_hash);
+    ASSERT_TRUE(files[0]->remote_encrypted);
+    EXPECT_TRUE(*files[0]->remote_encrypted);
+    EXPECT_EQ("iv-from-index", files[0]->encryption_iv);
+    EXPECT_EQ(7u, files[0]->encrypted_with_key_version);
+}
+
+TEST(S3CostSafetyTest, RemoteObjectIndexPreservesEncryptionMetadataForSameObjectOnly) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed remote index metadata test due to missing environment variables.";
+    ensureDbReady();
+
+    const auto vaultId = seedS3VaultForDbTest(uniqueSuffix("remote_index_preserve_iv"));
+    auto manifest = remoteFile("encrypted/preserve.txt");
+    manifest->updated_at = 1'777'777'000;
+    manifest->remote_etag = "\"same-etag\"";
+    manifest->remote_version_id = "version-a";
+    manifest->content_hash = "content-hash";
+    manifest->remote_encrypted = true;
+    manifest->encryption_iv = "iv-from-manifest";
+    manifest->encrypted_with_key_version = 4;
+    vh::db::query::sync::RemoteObjectIndex::upsertFile(vaultId, manifest, "manifest");
+
+    auto sameFromList = remoteFile("encrypted/preserve.txt");
+    sameFromList->updated_at = manifest->updated_at;
+    sameFromList->size_bytes = manifest->size_bytes;
+    sameFromList->remote_etag = manifest->remote_etag;
+    sameFromList->remote_version_id = manifest->remote_version_id;
+    vh::db::query::sync::RemoteObjectIndex::upsertFile(vaultId, sameFromList, "list_objects_v2");
+
+    auto files = vh::db::query::sync::RemoteObjectIndex::listFilesForVault(vaultId);
+    ASSERT_EQ(1u, files.size());
+    EXPECT_EQ("content-hash", files[0]->content_hash.value_or(""));
+    ASSERT_TRUE(files[0]->remote_encrypted);
+    EXPECT_TRUE(*files[0]->remote_encrypted);
+    EXPECT_EQ("iv-from-manifest", files[0]->encryption_iv);
+    EXPECT_EQ(4u, files[0]->encrypted_with_key_version);
+
+    auto changedFromList = remoteFile("encrypted/preserve.txt");
+    changedFromList->updated_at = manifest->updated_at;
+    changedFromList->size_bytes = manifest->size_bytes;
+    changedFromList->remote_etag = "\"changed-etag\"";
+    changedFromList->remote_version_id = manifest->remote_version_id;
+    vh::db::query::sync::RemoteObjectIndex::upsertFile(vaultId, changedFromList, "list_objects_v2");
+
+    files = vh::db::query::sync::RemoteObjectIndex::listFilesForVault(vaultId);
+    ASSERT_EQ(1u, files.size());
+    EXPECT_FALSE(files[0]->content_hash);
+    EXPECT_FALSE(files[0]->remote_encrypted);
+    EXPECT_TRUE(files[0]->encryption_iv.empty());
+    EXPECT_EQ(0u, files[0]->encrypted_with_key_version);
+}
+
+TEST(S3CostSafetyTest, IndexRemoteOnlyPreservesEncryptionMetadataInLocalRow) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed remote index-only test due to missing environment variables.";
+
+    auto fake = std::make_shared<CountingS3Controller>();
+    const auto vaultId = seedDryRunS3VaultForDbTest(uniqueSuffix("index_only_iv"), fake);
+    auto engine = std::static_pointer_cast<vh::storage::CloudEngine>(
+        vh::runtime::Deps::get().storageManager->getEngine(vaultId));
+    engine->setS3ControllerForTesting(fake);
+
+    auto remote = remoteFile("index-only-encrypted.txt");
+    remote->content_hash = "remote-content-hash";
+    remote->remote_encrypted = true;
+    remote->encryption_iv = "remote-iv";
+    remote->encrypted_with_key_version = 5;
+
+    engine->indexAndDeleteFile(remote);
+
+    const auto indexed = vh::db::query::fs::File::getFileByPath(vaultId, "/index-only-encrypted.txt");
+    ASSERT_TRUE(indexed);
+    ASSERT_TRUE(indexed->content_hash);
+    EXPECT_EQ("remote-content-hash", *indexed->content_hash);
+    EXPECT_EQ("remote-iv", indexed->encryption_iv);
+    EXPECT_EQ(5u, indexed->encrypted_with_key_version);
+}
+
+TEST(S3CostSafetyTest, RemoteEncryptedDownloadCreatesBackingParentsAndDecrypts) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed encrypted remote download test due to missing environment variables.";
+
+    auto fake = std::make_shared<CountingS3Controller>();
+    const auto vaultId = seedDryRunS3VaultForDbTest(uniqueSuffix("download_parents"), fake);
+    auto engine = std::static_pointer_cast<vh::storage::CloudEngine>(
+        vh::runtime::Deps::get().storageManager->getEngine(vaultId));
+    engine->setS3ControllerForTesting(fake);
+
+    const std::vector<uint8_t> plaintext{'d', 'o', 'w', 'n', 'l', 'o', 'a', 'd'};
+    auto remote = remoteFile("nested/remote/encrypted.png");
+    remote->remote_encrypted = true;
+    fake->download_payload = engine->encryptionManager->encrypt(plaintext, remote);
+
+    auto task = std::make_shared<vh::sync::Cloud>(engine);
+    task->s3Map.emplace(remote->path.u8string(), remote);
+    task->ensureDirectoriesFromRemote();
+
+    const auto created = engine->downloadFile(remote);
+    ASSERT_TRUE(created);
+    EXPECT_TRUE(std::filesystem::exists(created->backing_path.parent_path()));
+    EXPECT_TRUE(std::filesystem::exists(created->backing_path));
+    EXPECT_EQ(plaintext, engine->decrypt(created));
+}
+
+TEST(S3CostSafetyTest, KnownEncryptedRemoteWithoutIvFailsBeforeLocalCreate) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed encrypted remote failure test due to missing environment variables.";
+
+    auto fake = std::make_shared<CountingS3Controller>();
+    const auto vaultId = seedDryRunS3VaultForDbTest(uniqueSuffix("missing_iv"), fake);
+    auto engine = std::static_pointer_cast<vh::storage::CloudEngine>(
+        vh::runtime::Deps::get().storageManager->getEngine(vaultId));
+    engine->setS3ControllerForTesting(fake);
+    fake->download_payload = {'c', 'i', 'p', 'h', 'e', 'r'};
+    fake->head_response = std::unordered_map<std::string, std::string>{
+        {"x-amz-meta-vh-encrypted", "true"},
+    };
+
+    auto remote = remoteFile("missing-iv.txt");
+    remote->remote_encrypted = true;
+
+    EXPECT_THROW((void)engine->downloadFile(remote), std::runtime_error);
+    EXPECT_FALSE(vh::db::query::fs::File::getFileByPath(vaultId, "/missing-iv.txt"));
+}
+
+TEST(S3CostSafetyTest, DeleteRemoteDoesNotRequireEncryptionMetadata) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed delete remote test due to missing environment variables.";
+
+    auto fake = std::make_shared<CountingS3Controller>();
+    const auto vaultId = seedDryRunS3VaultForDbTest(uniqueSuffix("delete_no_iv"), fake);
+    auto engine = std::static_pointer_cast<vh::storage::CloudEngine>(
+        vh::runtime::Deps::get().storageManager->getEngine(vaultId));
+    engine->setS3ControllerForTesting(fake);
+
+    auto remote = remoteFile("delete-without-iv.txt");
+    auto op = std::make_shared<vh::sync::model::ScopedOp>();
+    vh::sync::tasks::Delete task(engine, remote, op, vh::sync::tasks::Delete::Type::REMOTE);
+
+    task();
+
+    EXPECT_TRUE(op->success);
+    EXPECT_EQ(1, fake->delete_object_calls);
+    EXPECT_EQ(0, fake->head_object_calls);
+    EXPECT_EQ(0, fake->download_to_buffer_calls);
 }
 
 TEST(S3CostSafetyTest, PlannerMarksCacheRemoteOnlyAsIndexOnly) {

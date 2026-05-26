@@ -10,7 +10,8 @@ void vh::db::Connection::initPreparedFiles() const {
                    "content_hash = EXCLUDED.content_hash");
 
     conn_->prepare("update_file_only",
-                   "UPDATE files SET size_bytes = $2, mime_type = $3, content_hash = $4, encryption_iv = $5 "
+                   "UPDATE files SET size_bytes = $2, mime_type = $3, content_hash = $4, "
+                   "encryption_iv = $5, encrypted_with_key_version = $6 "
                    "WHERE fs_entry_id = $1");
 
     conn_->prepare("upsert_file_full",
@@ -29,13 +30,14 @@ void vh::db::Connection::initPreparedFiles() const {
                    "    updated_at = NOW() "
                    "  RETURNING id"
                    ") "
-                   "INSERT INTO files (fs_entry_id, size_bytes, mime_type, content_hash, encryption_iv) "
-                   "SELECT id, $14, $15, $16, $17 FROM upsert_entry "
+                   "INSERT INTO files (fs_entry_id, size_bytes, mime_type, content_hash, encryption_iv, encrypted_with_key_version) "
+                   "SELECT id, $14, $15, $16, $17, $18 FROM upsert_entry "
                    "ON CONFLICT (fs_entry_id) DO UPDATE SET "
                    "  size_bytes = EXCLUDED.size_bytes, "
                    "  mime_type = EXCLUDED.mime_type, "
                    "  content_hash = EXCLUDED.content_hash, "
-                   "  encryption_iv = EXCLUDED.encryption_iv "
+                   "  encryption_iv = EXCLUDED.encryption_iv, "
+                   "  encrypted_with_key_version = EXCLUDED.encrypted_with_key_version "
                    "RETURNING fs_entry_id");
 
     conn_->prepare("get_file_mime_type",

@@ -62,6 +62,10 @@ namespace vh::storage {
         std::shared_ptr<vh::fs::model::File> downloadFile(const std::shared_ptr<vh::fs::model::File> &remoteFile);
 
         std::vector<uint8_t> downloadToBuffer(const std::filesystem::path &rel_path) const;
+        [[nodiscard]] std::vector<uint8_t> decryptRemotePayload(
+            const std::filesystem::path &rel_path,
+            const std::vector<uint8_t> &payload,
+            const std::shared_ptr<vh::fs::model::File> &remoteFile = nullptr) const;
 
         void indexAndDeleteFile(const std::shared_ptr<vh::fs::model::File> &remoteFile);
 
@@ -94,6 +98,11 @@ namespace vh::storage {
         void setS3ControllerForTesting(std::shared_ptr<s3::Controller> s3Provider);
 
     private:
+        struct RemoteEncryptionContext {
+            bool encrypted{};
+            std::optional<std::pair<std::string, unsigned int>> payload;
+        };
+
         std::shared_ptr<vault::model::APIKey> key_;
         std::shared_ptr<s3::Controller> s3Provider_;
 
@@ -105,5 +114,9 @@ namespace vh::storage {
         std::shared_ptr<vh::fs::model::File> downloadFileWithRemoteMetadata(
             const std::filesystem::path &rel_path,
             const std::shared_ptr<vh::fs::model::File> &remoteFile);
+
+        [[nodiscard]] RemoteEncryptionContext resolveRemoteEncryptionContext(
+            const std::filesystem::path &rel_path,
+            const std::shared_ptr<vh::fs::model::File> &remoteFile = nullptr) const;
     };
 } // namespace vh::storage

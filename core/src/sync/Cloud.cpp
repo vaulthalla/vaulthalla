@@ -15,6 +15,8 @@
 #include "fs/model/File.hpp"
 #include "fs/model/Directory.hpp"
 #include "fs/model/Path.hpp"
+#include "runtime/Deps.hpp"
+#include "fs/cache/Registry.hpp"
 
 #include "log/Registry.hpp"
 
@@ -220,6 +222,21 @@ void Cloud::ensureDirectoriesFromRemote() {
             dir->base32_alias = id::Generator({ .namespace_token = dir->name }).generate();
             db::query::fs::Directory::upsertDirectory(dir);
         }
+
+        auto persisted = db::query::fs::Directory::getDirectoryByPath(engine->vault->id, dir->path);
+        if (!persisted) continue;
+        const auto cache = runtime::Deps::get().fsCache;
+        if (!persisted->inode) {
+            const auto cachePath = persisted->fuse_path.empty()
+                ? engine->paths->absPath(persisted->path, PathType::VAULT_ROOT)
+                : persisted->fuse_path;
+            persisted->inode = cache->assignInode(cachePath);
+            db::query::fs::Directory::upsertDirectory(persisted);
+            persisted = db::query::fs::Directory::getDirectoryByPath(engine->vault->id, dir->path);
+            if (!persisted) continue;
+        }
+        std::filesystem::create_directories(persisted->backing_path);
+        cache->cacheEntry(persisted);
     }
 }
 

@@ -88,6 +88,8 @@ std::unordered_map<std::string, std::string> CloudEngine::getMetaMapFromFile(con
     meta[std::string(META_VH_ENCRYPTED_FLAG)] = encrypt ? "true" : "false";
     if (f->content_hash) meta[std::string(META_CONTENT_HASH_FLAG)] = *f->content_hash;
     if (encrypt) {
+        if (f->encryption_iv.empty() || f->encrypted_with_key_version == 0)
+            throw std::runtime_error("[CloudStorageEngine] Missing encryption metadata for upload: " + f->path.string());
         meta[std::string(META_VH_KEY_VERSION_FLAG)] = std::to_string(f->encrypted_with_key_version);
         meta[std::string(META_VH_IV_FLAG)] = f->encryption_iv;
     }
@@ -150,6 +152,19 @@ std::vector<uint8_t> CloudEngine::downloadToBuffer(const fs::path& rel_path) con
     return buffer;
 }
 
+std::vector<uint8_t> CloudEngine::decryptRemotePayload(
+    const fs::path& rel_path,
+    const std::vector<uint8_t>& payload,
+    const std::shared_ptr<File>& remoteFile) const {
+    const auto context = resolveRemoteEncryptionContext(rel_path, remoteFile);
+    if (!context.encrypted) return payload;
+    if (!context.payload)
+        throw std::runtime_error("[CloudStorageEngine] No IV found for encrypted file: " + rel_path.string());
+
+    const auto& [iv_b64, key_version] = *context.payload;
+    return encryptionManager->decrypt(payload, iv_b64, key_version);
+}
+
 std::shared_ptr<File> CloudEngine::downloadFile(const fs::path& rel_path) {
     return downloadFileWithRemoteMetadata(rel_path, nullptr);
 }
@@ -164,22 +179,7 @@ std::shared_ptr<File> CloudEngine::downloadFileWithRemoteMetadata(
     const std::shared_ptr<File>& remoteFile) {
     auto buffer = downloadToBuffer(rel_path);
 
-    std::optional<std::pair<std::string, unsigned int>> payload;
-    bool encrypted = false;
-    if (remoteFile && !remoteFile->encryption_iv.empty() && remoteFile->encrypted_with_key_version > 0) {
-        encrypted = true;
-        payload = std::make_pair(remoteFile->encryption_iv, remoteFile->encrypted_with_key_version);
-    } else {
-        encrypted = remoteFileIsEncrypted(rel_path);
-    }
-
-    if (encrypted) {
-        if (!payload) payload = getRemoteIVBase64AndVersion(rel_path);
-        if (!payload) payload = db::query::fs::File::getEncryptionIVAndVersion(vault->id, rel_path);
-        if (!payload) throw std::runtime_error("[CloudStorageEngine] No IV found for encrypted file: " + rel_path.string());
-        const auto& [iv_b64, key_version] = *payload;
-        buffer = encryptionManager->decrypt(buffer, iv_b64, key_version);
-    }
+    buffer = decryptRemotePayload(rel_path, buffer, remoteFile);
 
     const auto owner = db::query::identities::User::getUserById(vault->owner_id);
     if (!owner) throw std::runtime_error("[CloudStorageEngine] Vault owner not found for file creation");
@@ -220,6 +220,11 @@ void CloudEngine::indexAndDeleteFile(const std::shared_ptr<File>& remoteFile) {
 
     indexed->size_bytes = remoteFile->size_bytes;
     indexed->content_hash = remoteFile->content_hash;
+    indexed->remote_encrypted = remoteFile->remote_encrypted;
+    if (!remoteFile->encryption_iv.empty())
+        indexed->encryption_iv = remoteFile->encryption_iv;
+    if (remoteFile->encrypted_with_key_version > 0)
+        indexed->encrypted_with_key_version = remoteFile->encrypted_with_key_version;
     indexed->updated_at = remoteFile->updated_at;
     indexed->last_modified_by = vault->owner_id;
     db::query::fs::File::updateFile(indexed);
@@ -420,21 +425,12 @@ bool CloudEngine::selectedDownloadRequiresRestore(const std::shared_ptr<File>& r
 
 std::string CloudEngine::getRemoteContentHash(const fs::path& rel_path) const {
     if (const auto head = s3Provider_->getHeadObject(stripLeadingSlash(rel_path)))
-        if (head->contains(std::string(META_CONTENT_HASH))) return head->at(std::string(META_CONTENT_HASH));
+        if (const auto hash = header_value(*head, META_CONTENT_HASH)) return *hash;
     return "";
 }
 
 bool CloudEngine::remoteFileIsEncrypted(const fs::path& rel_path) const {
-    const auto s3Key = stripLeadingSlash(rel_path);
-
-    if (const auto head = s3Provider_->getHeadObject(s3Key)) {
-        if (head->contains(std::string(META_VH_ENCRYPTED))) {
-            const std::string& val = head->at(std::string(META_VH_ENCRYPTED));
-            return val == "true" || val == "1";
-        }
-    }
-
-    return false; // assume unencrypted if metadata is missing or head request failed
+    return resolveRemoteEncryptionContext(rel_path).encrypted;
 }
 
 std::vector<std::shared_ptr<Directory>> CloudEngine::extractDirectories(
@@ -474,23 +470,57 @@ std::vector<std::shared_ptr<Directory>> CloudEngine::extractDirectories(
 }
 
 std::optional<std::pair<std::string, unsigned int>> CloudEngine::getRemoteIVBase64AndVersion(const fs::path& rel_path) const {
-    const fs::path s3Key = stripLeadingSlash(rel_path);
-
-    std::string iv_b64;
-    unsigned int key_version = 0;
-
-    if (const auto head = s3Provider_->getHeadObject(s3Key)) {
-        if (head->contains(std::string(META_VH_IV))) iv_b64 = head->at(std::string(META_VH_IV));
-        if (head->contains(std::string(META_VH_KEY_VERSION)))
-            key_version = std::stoul(head->at(std::string(META_VH_KEY_VERSION)));
-    }
-
-    if (iv_b64.empty() || key_version == 0) {
+    const auto context = resolveRemoteEncryptionContext(rel_path);
+    if (!context.payload) {
         log::Registry::cloud()->error("[CloudStorageEngine] No IV or key version found for encrypted file: {}", rel_path.string());
         return std::nullopt;
     }
 
-    return std::make_pair(iv_b64, key_version);
+    return context.payload;
+}
+
+CloudEngine::RemoteEncryptionContext CloudEngine::resolveRemoteEncryptionContext(
+    const fs::path& rel_path,
+    const std::shared_ptr<File>& remoteFile) const {
+    RemoteEncryptionContext context;
+
+    if (remoteFile) {
+        context.encrypted = remoteFile->remote_encrypted.value_or(false);
+        if (!remoteFile->encryption_iv.empty() && remoteFile->encrypted_with_key_version > 0) {
+            context.encrypted = true;
+            context.payload = std::make_pair(remoteFile->encryption_iv, remoteFile->encrypted_with_key_version);
+            return context;
+        }
+    }
+
+    if (const auto head = s3Provider_->getHeadObject(stripLeadingSlash(rel_path))) {
+        if (const auto encrypted = header_value(*head, META_VH_ENCRYPTED)) {
+            auto value = *encrypted;
+            std::ranges::transform(value, value.begin(), [](unsigned char c) {
+                return static_cast<char>(std::tolower(c));
+            });
+            context.encrypted = context.encrypted || value == "true" || value == "1";
+        }
+
+        std::string iv_b64;
+        unsigned int key_version = 0;
+        if (const auto iv = header_value(*head, META_VH_IV)) iv_b64 = *iv;
+        if (const auto version = header_value(*head, META_VH_KEY_VERSION))
+            key_version = std::stoul(*version);
+
+        if (!iv_b64.empty() && key_version > 0) {
+            context.encrypted = true;
+            context.payload = std::make_pair(iv_b64, key_version);
+            return context;
+        }
+    }
+
+    if (const auto localPayload = db::query::fs::File::getEncryptionIVAndVersion(vault->id, rel_path)) {
+        context.encrypted = true;
+        context.payload = localPayload;
+    }
+
+    return context;
 }
 
 void CloudEngine::purge(const fs::path& rel_path) const {

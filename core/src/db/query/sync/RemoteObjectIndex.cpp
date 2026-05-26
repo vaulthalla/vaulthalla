@@ -110,6 +110,12 @@ void RemoteObjectIndex::replace(const uint32_t vaultId, const std::vector<FilePt
                 object.restore_status,
                 object.version_id,
                 object.event_sequencer,
+                object.content_hash,
+                object.encrypted,
+                object.encryption_iv.empty() ? std::optional<std::string>{} : std::make_optional(object.encryption_iv),
+                object.encrypted_with_key_version == 0
+                    ? std::optional<unsigned int>{}
+                    : std::make_optional(object.encrypted_with_key_version),
                 object.source
             };
             txn.exec(pqxx::prepped{"remote_object_index.upsert"}, params);
@@ -132,6 +138,12 @@ void RemoteObjectIndex::upsertFile(const uint32_t vaultId, const FilePtr& file, 
             object.restore_status,
             object.version_id,
             object.event_sequencer,
+            object.content_hash,
+            object.encrypted,
+            object.encryption_iv.empty() ? std::optional<std::string>{} : std::make_optional(object.encryption_iv),
+            object.encrypted_with_key_version == 0
+                ? std::optional<unsigned int>{}
+                : std::make_optional(object.encrypted_with_key_version),
             object.source
         };
         txn.exec(pqxx::prepped{"remote_object_index.upsert"}, params);

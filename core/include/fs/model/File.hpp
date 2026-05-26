@@ -8,6 +8,7 @@ namespace vh::fs::model {
         std::optional<std::string> mime_type, content_hash;
         std::optional<std::string> remote_storage_class, remote_etag, remote_restore_status;
         std::optional<std::string> remote_version_id, remote_sequencer;
+        std::optional<bool> remote_encrypted;
         unsigned int encrypted_with_key_version{};
 
         File() = default;

@@ -24,6 +24,10 @@ struct RemoteObject {
     std::optional<std::string> restore_status;
     std::optional<std::string> version_id;
     std::optional<std::string> event_sequencer;
+    std::optional<std::string> content_hash;
+    std::optional<bool> encrypted;
+    std::string encryption_iv;
+    unsigned int encrypted_with_key_version{};
     std::string source{"list_objects_v2"};
 
     RemoteObject() = default;

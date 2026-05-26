@@ -42,12 +42,15 @@ std::string buildIndexV1(const uint32_t vaultId, const std::vector<std::shared_p
         const auto objectKey = object_key_for_manifest(file->path);
         if (objectKey.empty() || isVaulthallaManifestKey(objectKey)) continue;
 
+        const bool encrypted = file->remote_encrypted.value_or(
+            file->encrypted_with_key_version > 0 || !file->encryption_iv.empty());
+
         nlohmann::json object = {
             {"key", objectKey},
             {"size_bytes", file->size_bytes},
             {"last_modified", file->updated_at == 0 ? nullptr : nlohmann::json(timestampToString(file->updated_at))},
             {"content_hash", file->content_hash ? nlohmann::json(*file->content_hash) : nlohmann::json(nullptr)},
-            {"encrypted", file->encrypted_with_key_version > 0 || !file->encryption_iv.empty()},
+            {"encrypted", encrypted},
             {"iv", file->encryption_iv.empty() ? nlohmann::json(nullptr) : nlohmann::json(file->encryption_iv)},
             {"key_version", file->encrypted_with_key_version == 0 ? nlohmann::json(nullptr) : nlohmann::json(file->encrypted_with_key_version)},
             {"etag", file->remote_etag ? nlohmann::json(*file->remote_etag) : nlohmann::json(nullptr)},
@@ -140,6 +143,8 @@ std::vector<std::shared_ptr<fs::model::File>> parseIndexV1(
             file->remote_sequencer = object.at("sequencer").get<std::string>();
         if (object.contains("content_hash") && object.at("content_hash").is_string())
             file->content_hash = object.at("content_hash").get<std::string>();
+        if (object.contains("encrypted") && object.at("encrypted").is_boolean())
+            file->remote_encrypted = object.at("encrypted").get<bool>();
         if (object.contains("iv") && object.at("iv").is_string())
             file->encryption_iv = object.at("iv").get<std::string>();
         if (object.contains("key_version") && object.at("key_version").is_number_unsigned())

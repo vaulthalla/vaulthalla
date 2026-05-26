@@ -44,6 +44,7 @@ unsigned int File::upsertFile(const FilePtr& file) {
         p.append(file->mime_type);
         p.append(file->content_hash);
         p.append(file->encryption_iv);
+        p.append(file->encrypted_with_key_version);
 
         const auto fileId = txn.exec(pqxx::prepped{"upsert_file_full"}, p).one_row()["fs_entry_id"].as<unsigned int>();
         txn.exec(
@@ -85,6 +86,7 @@ void File::updateFile(const FilePtr& file) {
         p.append(file->mime_type);
         p.append(file->content_hash);
         p.append(file->encryption_iv);
+        p.append(file->encrypted_with_key_version);
 
         txn.exec(pqxx::prepped{"update_file_only"}, p);
         txn.exec(
@@ -156,12 +158,21 @@ void File::moveFile(const FilePtr& file, const std::filesystem::path& newPath, u
         p.append(file->vault_id);
         p.append(file->parent_id);
         p.append(file->name);
+        p.append(file->base32_alias);
         p.append(file->created_by);
         p.append(file->last_modified_by);
         p.append(to_utf8_string(file->path.u8string()));
+        p.append(file->inode);
+        p.append(file->mode);
+        p.append(file->owner_uid);
+        p.append(file->group_gid);
+        p.append(file->is_hidden);
+        p.append(file->is_system);
         p.append(file->size_bytes);
         p.append(file->mime_type);
         p.append(file->content_hash);
+        p.append(file->encryption_iv);
+        p.append(file->encrypted_with_key_version);
 
         txn.exec(pqxx::prepped{"upsert_file_full"}, p);
 
@@ -302,7 +313,12 @@ std::optional<std::pair<std::string, unsigned int>>  File::getEncryptionIVAndVer
         const auto res = txn.exec(pqxx::prepped{"get_file_encryption_iv_and_version"}, p);
         if (res.empty()) return std::nullopt;
         const auto row = res.one_row();
-        return std::make_pair(row["encryption_iv"].as<std::string>(), row["encrypted_with_key_version"].as<unsigned int>());
+        if (row["encryption_iv"].is_null() || row["encrypted_with_key_version"].is_null())
+            return std::nullopt;
+        const auto iv = row["encryption_iv"].as<std::string>();
+        const auto keyVersion = row["encrypted_with_key_version"].as<unsigned int>();
+        if (iv.empty() || keyVersion == 0) return std::nullopt;
+        return std::make_pair(iv, keyVersion);
     });
 }
 

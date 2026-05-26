@@ -105,6 +105,7 @@ static void updateFile(pqxx::work& txn, const std::shared_ptr<File>& file) {
     p.append(file->mime_type);
     p.append(file->content_hash);
     p.append(file->encryption_iv);
+    p.append(file->encrypted_with_key_version);
 
     txn.exec(pqxx::prepped{"update_file_only"}, p);
 
@@ -652,8 +653,7 @@ std::shared_ptr<File> Filesystem::createFile(const NewFileContext& ctx) {
         }
 
         const auto f = std::static_pointer_cast<File>(entry);
-
-        f->content_hash = hash::blake2b(entry->backing_path);
+        std::filesystem::create_directories(entry->backing_path.parent_path());
 
         if (!ctx.buffer.empty()) {
             const auto ciphertext = engine->encryptionManager->encrypt(ctx.buffer, f);
@@ -665,6 +665,7 @@ std::shared_ptr<File> Filesystem::createFile(const NewFileContext& ctx) {
             f->mime_type = inferMimeTypeFromPath(ctx.path);
         }
 
+        f->content_hash = hash::blake2b(entry->backing_path);
         f->last_modified_by = userIdFor(ctx.user);
         db::query::fs::File::updateFile(f);
 
@@ -697,9 +698,9 @@ std::shared_ptr<File> Filesystem::createFile(const NewFileContext& ctx) {
     f->mime_type = ctx.buffer.empty() ? inferMimeTypeFromPath(ctx.path) : Magic::get_mime_type_from_buffer(ctx.buffer);
     f->size_bytes = ctx.buffer.size();
 
+    std::filesystem::create_directories(f->backing_path.parent_path());
     if (ctx.buffer.empty()) std::ofstream(f->backing_path).close();
     else {
-        std::string iv_b64;
         const auto ciphertext = engine->encryptionManager->encrypt(ctx.buffer, f);
         writeFile(f->backing_path, ciphertext);
     }

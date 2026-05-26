@@ -485,8 +485,7 @@ private:
         const auto cloud = std::dynamic_pointer_cast<vh::storage::CloudEngine>(engine);
         if (!cloud) throw std::runtime_error("Cloud storage engine is unavailable");
         bytes = cloud->downloadToBuffer(file->path);
-        if (cloud->remoteFileIsEncrypted(file->path))
-            bytes = cloud->decrypt(engine->vault->id, file->path, bytes);
+        bytes = cloud->decryptRemotePayload(file->path, bytes, file);
     } else {
         bytes = engine->decrypt(file);
     }
