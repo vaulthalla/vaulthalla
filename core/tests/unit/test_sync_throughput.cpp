@@ -2,6 +2,8 @@
 #include "fs/model/Path.hpp"
 #include "fs/model/file/Trashed.hpp"
 #include "storage/Engine.hpp"
+#include "sync/Local.hpp"
+#include "sync/model/Event.hpp"
 #include "sync/model/Throughput.hpp"
 #include "sync/tasks/Delete.hpp"
 #include "vault/model/Vault.hpp"
@@ -122,6 +124,22 @@ TEST_F(SyncThroughputTest, DeleteTasksKeepStableScopedOpsAcrossThroughputGrowth)
     EXPECT_EQ(kDeleteTasks + kExtraOps, throughput.num_ops);
     EXPECT_EQ(0u, throughput.failed_ops);
     EXPECT_EQ(kDeleteTasks * 8u, throughput.size_bytes);
+}
+
+TEST_F(SyncThroughputTest, FailedFuturesMarkEventError) {
+    vh::sync::Local task;
+    task.event = std::make_shared<vh::sync::model::Event>();
+
+    std::promise<ExpectedFuture> failedPromise;
+    auto failedFuture = failedPromise.get_future();
+    failedPromise.set_value(false);
+    task.futures.push_back(std::move(failedFuture));
+
+    task.processFutures();
+
+    EXPECT_TRUE(task.futures.empty());
+    EXPECT_EQ(vh::sync::model::Event::Status::ERROR, task.event->status);
+    EXPECT_EQ("1 async sync operation(s) failed", task.event->error_message);
 }
 
 } // namespace vh::sync::test

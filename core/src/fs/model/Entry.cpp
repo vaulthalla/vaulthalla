@@ -60,12 +60,21 @@ Entry::Entry(const pqxx::row& row, const pqxx::result& parentRows)
     if (row["is_system"].is_null()) is_system = false;
     else is_system = row["is_system"].as<bool>();
 
+    const auto isGlobalRoot = !vault_id && !parent_id && path == "/" && name == "/";
     fuse_path = std::filesystem::path("/");
     backing_path = paths::getBackingPath();
+    if (isGlobalRoot) return;
+
     for (const auto& r : parentRows) {
-        fuse_path /= r["name"].as<std::string>();
-        backing_path /= r["base32_alias"].as<std::string>();
+        const auto parentName = r["name"].as<std::string>();
+        const auto parentIsGlobalRoot = r["parent_id"].is_null() && parentName == "/";
+        if (parentIsGlobalRoot) continue;
+
+        fuse_path /= parentName;
+        if (!r["base32_alias"].is_null())
+            backing_path /= r["base32_alias"].as<std::string>();
     }
+
     fuse_path /= name;
     backing_path /= base32_alias;
 }

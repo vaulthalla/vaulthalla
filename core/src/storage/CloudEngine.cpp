@@ -73,6 +73,13 @@ namespace {
         });
         return haystack.find(needle) != std::string::npos;
     }
+
+    fs::path resolvedBackingPath(const CloudEngine& engine, const std::shared_ptr<File>& file) {
+        if (!file) throw std::invalid_argument("[CloudStorageEngine] Invalid file");
+        if (file->backing_path.is_absolute()) return file->backing_path;
+        if (!engine.paths) return file->backing_path;
+        return engine.paths->absPath(file->backing_path, PathType::BACKING_ROOT);
+    }
 }
 
 std::unordered_map<std::string, std::string> CloudEngine::getMetaMapFromFile(const std::shared_ptr<File>& f) const {
@@ -99,11 +106,12 @@ CloudEngine::CloudEngine(const std::shared_ptr<S3Vault>& vault, std::shared_ptr<
       s3Provider_(std::move(s3Provider)) {}
 
 void CloudEngine::upload(const std::shared_ptr<File>& f) const {
-    if (!fs::exists(f->backing_path) || !fs::is_regular_file(f->backing_path))
+    const auto backingPath = resolvedBackingPath(*this, f);
+    if (!fs::exists(backingPath) || !fs::is_regular_file(backingPath))
         throw std::runtime_error("[CloudStorageEngine] Invalid file: " + f->path.string());
 
     if (!s3Vault()->encrypt_upstream) {
-        const auto ciphertext = readFileToVector(f->backing_path);
+        const auto ciphertext = readFileToVector(backingPath);
         upload(f, ciphertext);
         return;
     }
@@ -113,10 +121,10 @@ void CloudEngine::upload(const std::shared_ptr<File>& f) const {
     if (!f->content_hash) f->content_hash = db::query::fs::File::getContentHash(vault->id, f->path);
     const auto meta = getMetaMapFromFile(f);
 
-    if (fs::file_size(f->backing_path) < s3::Controller::MIN_PART_SIZE)
-        s3Provider_->uploadObjectWithMetadata(s3Key, f->backing_path, meta);
+    if (fs::file_size(backingPath) < s3::Controller::MIN_PART_SIZE)
+        s3Provider_->uploadObjectWithMetadata(s3Key, backingPath, meta);
     else
-        s3Provider_->uploadLargeObject(s3Key, f->backing_path, s3::Controller::MIN_PART_SIZE, meta);
+        s3Provider_->uploadLargeObject(s3Key, backingPath, s3::Controller::MIN_PART_SIZE, meta);
 }
 
 void CloudEngine::upload(const std::shared_ptr<File>& f, const std::vector<uint8_t>& buffer, const bool isCiphertext) const {

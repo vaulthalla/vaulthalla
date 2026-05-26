@@ -176,7 +176,7 @@ std::shared_ptr<Entry> Registry::getEntry(const std::filesystem::path& absPath) 
 }
 
 std::shared_ptr<Entry> Registry::getEntry(const fuse_ino_t ino) {
-    log::Registry::storage()->debug("[FSCache] Retrieving entry for inode: {}", ino);
+    log::Registry::storage()->trace("[FSCache] Retrieving entry for inode: {}", ino);
 
     {
         std::shared_lock lock(mutex_);

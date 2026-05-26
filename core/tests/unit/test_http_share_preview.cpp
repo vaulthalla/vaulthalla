@@ -221,6 +221,7 @@ protected:
     std::shared_ptr<vh::storage::Engine> engine;
     std::shared_ptr<vh::fs::model::File> file;
     std::shared_ptr<vh::auth::session::Manager> oldSessionManager;
+    std::shared_ptr<vh::stats::model::CacheStats> oldHttpCacheStats;
     vh::share::GeneratedToken sessionToken;
     std::filesystem::path oldBackingPath;
     std::filesystem::path oldMountPath;
@@ -229,6 +230,7 @@ protected:
 
     void SetUp() override {
         vh::share::Token::setPepperForTesting(std::vector<uint8_t>(32, 7));
+        oldHttpCacheStats = vh::runtime::Deps::get().httpCacheStats;
         vh::runtime::Deps::get().httpCacheStats = std::make_shared<vh::stats::model::CacheStats>();
         oldSessionManager = vh::runtime::Deps::get().sessionManager;
         vh::runtime::Deps::get().sessionManager = std::make_shared<vh::auth::session::Manager>();
@@ -291,6 +293,7 @@ protected:
         vh::share::Token::clearPepperForTesting();
         if (engine && engine->paths)
             std::filesystem::remove_all(engine->paths->thumbnailRoot / file->base32_alias);
+        vh::runtime::Deps::get().httpCacheStats = oldHttpCacheStats;
         vh::runtime::Deps::get().sessionManager = oldSessionManager;
         vh::auth::session::Issuer::clearJwtSecretForTesting();
         vh::paths::backingPath = oldBackingPath;

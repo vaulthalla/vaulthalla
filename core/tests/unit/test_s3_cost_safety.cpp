@@ -1,5 +1,6 @@
 #include "db/encoding/interval.hpp"
 #include "db/Transactions.hpp"
+#include "db/query/fs/File.hpp"
 #include "db/query/sync/RemoteObjectIndex.hpp"
 #include "db/query/identities/User.hpp"
 #include "db/query/vault/Vault.hpp"
@@ -631,6 +632,81 @@ TEST(S3CostSafetyTest, DryRunReportsMissingAndStaleLocalIndexWithoutS3Refresh) {
         "vault sync dry-run: remote index is stale; run dry-run --refresh-index, reconcile, inventory import, or event ingestion.",
         stale.stderr_text);
     EXPECT_EQ(0, staleFake->head_object_calls);
+}
+
+TEST(S3CostSafetyTest, DbFileBackingPathOmitsGlobalRootAlias) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed backing path reconstruction test due to missing environment variables.";
+
+    ensureSeededRuntimeReady();
+    const auto suffix = uniqueSuffix("entry_backing");
+    const auto mountAlias = vh::crypto::id::Generator({.namespace_token = "vault-" + suffix}).generate();
+    const auto dirAlias = vh::crypto::id::Generator({.namespace_token = "dir-" + suffix}).generate();
+    const auto fileAlias = vh::crypto::id::Generator({.namespace_token = "file-" + suffix}).generate();
+    const auto dirName = "folder-" + suffix;
+    const auto fileName = "file-" + suffix + ".txt";
+    const auto filePath = std::filesystem::path("/") / dirName / fileName;
+
+    const auto vaultId = vh::db::Transactions::exec("S3CostSafetyTest::seedEntryBackingPathRows", [&](pqxx::work& txn) {
+        const auto userId = txn.exec(
+            "INSERT INTO users (name, email, password_hash) VALUES ($1, $2, $3) RETURNING id",
+            pqxx::params{
+                "entry_backing_user_" + suffix,
+                "entry-backing-" + suffix + "@vaulthalla.test",
+                "hash"
+            }).one_field().as<uint32_t>();
+
+        const auto seededVaultId = txn.exec(
+            "INSERT INTO vault (type, name, owner_id, mount_point, description) VALUES ($1, $2, $3, $4, $5) RETURNING id",
+            pqxx::params{
+                "local",
+                "Entry Backing " + suffix,
+                userId,
+                mountAlias,
+                ""
+            }).one_field().as<uint32_t>();
+        txn.exec(
+            "WITH ins AS (INSERT INTO sync (vault_id, interval) VALUES ($1, 300) RETURNING id) "
+            "INSERT INTO fsync (sync_id, conflict_policy) SELECT id, 'keep_both' FROM ins",
+            pqxx::params{seededVaultId});
+
+        const auto rootId = txn.exec(
+            "SELECT id FROM fs_entry WHERE parent_id IS NULL AND vault_id IS NULL AND path = '/' AND name = '/'"
+        ).one_field().as<uint32_t>();
+
+        const auto vaultEntryId = txn.exec(
+            "INSERT INTO fs_entry (vault_id, parent_id, name, base32_alias, created_by, last_modified_by, path, mode) "
+            "VALUES ($1, $2, $3, $4, $5, $5, '/', 0755) RETURNING id",
+            pqxx::params{seededVaultId, rootId, "entry_backing_" + suffix, mountAlias, userId}
+        ).one_field().as<uint32_t>();
+        txn.exec(
+            "INSERT INTO directories (fs_entry_id, size_bytes, file_count, subdirectory_count) VALUES ($1, 4, 1, 1)",
+            pqxx::params{vaultEntryId});
+
+        const auto dirId = txn.exec(
+            "INSERT INTO fs_entry (vault_id, parent_id, name, base32_alias, created_by, last_modified_by, path, mode) "
+            "VALUES ($1, $2, $3, $4, $5, $5, $6, 0755) RETURNING id",
+            pqxx::params{seededVaultId, vaultEntryId, dirName, dirAlias, userId, "/" + dirName}
+        ).one_field().as<uint32_t>();
+        txn.exec(
+            "INSERT INTO directories (fs_entry_id, size_bytes, file_count, subdirectory_count) VALUES ($1, 4, 1, 0)",
+            pqxx::params{dirId});
+
+        const auto fileId = txn.exec(
+            "INSERT INTO fs_entry (vault_id, parent_id, name, base32_alias, created_by, last_modified_by, path, mode) "
+            "VALUES ($1, $2, $3, $4, $5, $5, $6, 0644) RETURNING id",
+            pqxx::params{seededVaultId, dirId, fileName, fileAlias, userId, filePath.string()}
+        ).one_field().as<uint32_t>();
+        txn.exec(
+            "INSERT INTO files (fs_entry_id, size_bytes, mime_type, content_hash, encryption_iv) "
+            "VALUES ($1, 4, 'text/plain', 'hash', 'iv')",
+            pqxx::params{fileId});
+
+        return seededVaultId;
+    });
+
+    const auto file = vh::db::query::fs::File::getFileByPath(vaultId, filePath);
+    ASSERT_TRUE(file);
+    EXPECT_EQ(vh::paths::getBackingPath() / mountAlias / dirAlias / fileAlias, file->backing_path);
 }
 
 TEST(S3CostSafetyTest, SigV4SignedHeadersIncludeMetadataHeaders) {
@@ -1291,6 +1367,59 @@ TEST(S3CostSafetyTest, EncryptedUploadDoesNotDownloadAfterPut) {
     EXPECT_EQ("true", fake->last_metadata.at("vh-encrypted"));
     EXPECT_EQ("iv", fake->last_metadata.at("vh-iv"));
     EXPECT_EQ("3", fake->last_metadata.at("vh-key-version"));
+
+    std::filesystem::remove_all(tempDir);
+}
+
+TEST(S3CostSafetyTest, EncryptedUploadResolvesRelativeBackingPath) {
+    const auto oldBackingPath = vh::paths::backingPath;
+    const auto oldMountPath = vh::paths::mountPath;
+    struct PathRestore {
+        std::filesystem::path backing;
+        std::filesystem::path mount;
+        ~PathRestore() {
+            vh::paths::backingPath = backing;
+            vh::paths::mountPath = mount;
+        }
+    } restore{oldBackingPath, oldMountPath};
+
+    const auto tempDir = std::filesystem::temp_directory_path() / "vh_s3_cost_safety_relative_upload";
+    std::filesystem::remove_all(tempDir);
+    vh::paths::backingPath = tempDir / "backing";
+    vh::paths::mountPath = tempDir / "mount";
+    std::filesystem::create_directories(vh::paths::backingPath);
+    std::filesystem::create_directories(vh::paths::mountPath);
+
+    const std::filesystem::path relBacking = std::filesystem::path("vault-alias") / "file-alias";
+    const auto absBacking = vh::paths::backingPath / relBacking;
+    std::filesystem::create_directories(absBacking.parent_path());
+    std::ofstream(absBacking, std::ios::binary) << "ciphertext";
+
+    auto vault = std::make_shared<vh::vault::model::S3Vault>();
+    vault->id = 99;
+    vault->owner_id = 100;
+    vault->name = "relative-upload";
+    vault->mount_point = "vault-alias";
+    vault->encrypt_upstream = true;
+
+    auto fake = std::make_shared<CountingS3Controller>();
+    vh::storage::CloudEngine engine;
+    engine.vault = vault;
+    engine.paths = std::make_shared<vh::fs::model::Path>("relative-upload", "vault-alias");
+    engine.setS3ControllerForTesting(fake);
+
+    auto file = std::make_shared<vh::fs::model::File>();
+    file->path = "/ciphertext.bin";
+    file->backing_path = relBacking;
+    file->size_bytes = std::filesystem::file_size(absBacking);
+    file->content_hash = "content-hash";
+    file->encryption_iv = "iv";
+    file->encrypted_with_key_version = 3;
+
+    engine.upload(file);
+
+    EXPECT_EQ(1, fake->upload_object_with_metadata_calls);
+    EXPECT_EQ(0, fake->download_to_buffer_calls);
 
     std::filesystem::remove_all(tempDir);
 }

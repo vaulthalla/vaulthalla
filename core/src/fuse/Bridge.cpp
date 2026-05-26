@@ -811,7 +811,7 @@ void fsync(const fuse_req_t req, const fuse_ino_t ino, const int datasync, fuse_
 
 void statfs(const fuse_req_t req, const fuse_ino_t ino) {
     ScopedFuseOpTimer timer(fuseStats(), FuseOperation::StatFs);
-    log::Registry::fuse()->debug("[statfs] Called for inode: {}", ino);
+    log::Registry::fuse()->trace("[statfs] Called for inode: {}", ino);
 
     const auto resolved = Resolver::resolve({
         .caller = "statfs",

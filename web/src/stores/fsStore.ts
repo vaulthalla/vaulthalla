@@ -829,7 +829,6 @@ export const useFSStore = create<FsStore>()(
               const refreshStartedAt = nowMs()
               try {
                 if (payload.mode === 'authenticated') {
-                  await useVaultStore.getState().syncVault({ id: payload.vault?.id || 0 })
                   if (get().mode === 'authenticated' && get().currVault?.id === payload.vault?.id) {
                     await get().fetchFiles()
                   }

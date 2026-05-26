@@ -7,6 +7,7 @@
 #include <chrono>
 #include <future>
 #include <atomic>
+#include <mutex>
 #include <vector>
 
 namespace vh::storage {
@@ -33,10 +34,12 @@ struct Local : concurrency::Task, std::enable_shared_from_this<Local> {
     std::chrono::system_clock::time_point next_run;
     std::shared_ptr<storage::Engine> engine;
     std::vector<std::future<ExpectedFuture>> futures;
-    bool runningFlag{false}, runNowFlag{false};
+    std::atomic<bool> runningFlag{false};
+    bool runNowFlag{false};
     std::atomic<bool> interruptFlag{false};
     std::shared_ptr<model::Event> event;
     uint8_t trigger{3};
+    mutable std::mutex runNowMutex_;
 
     Local() = default;
     ~Local() override = default;
@@ -56,6 +59,10 @@ struct Local : concurrency::Task, std::enable_shared_from_this<Local> {
     void requeue();
 
     void runNow(uint8_t trigger = 3);  // sync::Event::Trigger::WEBHOOK
+
+    [[nodiscard]] bool hasPendingRunNow() const;
+
+    [[nodiscard]] bool consumePendingRunNow(uint8_t& trigger);
 
     std::shared_ptr<model::ScopedOp> op(const model::Throughput::Metric& metric) const;
 

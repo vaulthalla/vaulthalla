@@ -107,6 +107,12 @@ but production-mount smoke failures can be environmental even when the FUSE
 integration harness passes. Prefer `make run_test` and `/tmp/vh_mount` for
 reproducible FUSE validation.
 
+HTTP directory uploads intentionally stage `.upload-http-*.part` files through
+FUSE before finalizing. Do not move those temp files out of FUSE just to reduce
+sync churn; directory upload UX and rename/finalization semantics rely on the
+visible staged file path. Fix duplicate sync triggers or backing-path resolution
+instead.
+
 Production/dev R2 dogfooding writes to the real configured R2 test bucket. Use a
 unique smoke-test prefix and clean it up afterward. If leaked payload objects are
 removed, also check whether `.vaulthalla/index-v1.json` only indexed those smoke

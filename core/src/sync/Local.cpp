@@ -61,7 +61,7 @@ void Local::operator()() {
 
 void Local::handleInterrupt() const { if (isInterrupted()) throw std::runtime_error("Sync task interrupted"); }
 
-bool Local::isRunning() const { return runningFlag; }
+bool Local::isRunning() const { return runningFlag.load(); }
 
 void Local::interrupt() { interruptFlag.store(true); }
 
@@ -172,7 +172,9 @@ void Local::shutdown() {
     engine->saveSyncEvent();
     if (event->status == Event::Status::SUCCESS) {
         db::query::sync::Policy::reportSyncSuccess(engine->sync->id);
-        next_run = system_clock::now() + seconds(engine->sync->interval.count());
+        next_run = hasPendingRunNow()
+            ? system_clock::now()
+            : system_clock::now() + seconds(engine->sync->interval.count());
         requeue();
         log::Registry::sync()->debug("[FSTask] Sync task requeued for vault '{}'", engine->vault->id);
         log::Registry::sync()->info("[FSTask] Sync completed for vault '{}' in {}s",
@@ -183,31 +185,62 @@ void Local::shutdown() {
 }
 
 void Local::newEvent() {
-    if (!runNowFlag) engine->newSyncEvent();
-    else {
-        engine->newSyncEvent(trigger);
-        runNowFlag = false;
-    }
+    uint8_t runNowTrigger = 3;
+    if (consumePendingRunNow(runNowTrigger)) engine->newSyncEvent(runNowTrigger);
+    else engine->newSyncEvent();
 }
 
 void Local::processFutures() {
-    for (auto& f : futures)
-        if (std::get<bool>(f.get()) == false)
+    std::size_t failed = 0;
+    for (auto& f : futures) {
+        try {
+            const auto result = f.get();
+            const auto* ok = std::get_if<bool>(&result);
+            if (ok && !*ok) {
+                ++failed;
+                log::Registry::sync()->error("[FSTask] Future failed");
+            }
+        } catch (const std::exception& e) {
+            ++failed;
+            log::Registry::sync()->error("[FSTask] Future failed: {}", e.what());
+        } catch (...) {
+            ++failed;
             log::Registry::sync()->error("[FSTask] Future failed");
+        }
+    }
     futures.clear();
+
+    if (failed > 0 && event && event->status != Event::Status::ERROR &&
+        event->status != Event::Status::STALLED &&
+        event->status != Event::Status::CANCELLED) {
+        handleError(std::format("{} async sync operation(s) failed", failed));
+    }
 }
 
 unsigned int Local::vaultId() const { return engine->vault->id; }
 
 void Local::requeue() {
-    next_run = system_clock::now() + seconds(engine->sync->interval.count());
     runtime::Deps::get().syncController->requeue(shared_from_this());
 }
 
 void Local::runNow(const uint8_t trigger) {
+    std::scoped_lock lock(runNowMutex_);
     runNowFlag = true;
     this->trigger = trigger;
     next_run = system_clock::now();
+}
+
+bool Local::hasPendingRunNow() const {
+    std::scoped_lock lock(runNowMutex_);
+    return runNowFlag;
+}
+
+bool Local::consumePendingRunNow(uint8_t& pendingTrigger) {
+    std::scoped_lock lock(runNowMutex_);
+    if (!runNowFlag) return false;
+    pendingTrigger = trigger;
+    runNowFlag = false;
+    return true;
 }
 
 void Local::push(const std::shared_ptr<Task>& task) {
