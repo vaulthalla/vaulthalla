@@ -638,6 +638,7 @@ void vh::seed::initDevCloudVault() {
         vault->owner_id = 1;
         vault->bucket = env->bucket;
         vault->type = VaultType::S3;
+        vault->quota = 10ull * 1024ull * 1024ull * 1024ull;
 
         const auto sync = std::make_shared<RemotePolicy>();
         sync->interval = std::chrono::minutes(10);

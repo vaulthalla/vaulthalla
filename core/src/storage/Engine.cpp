@@ -19,6 +19,8 @@
 #include "fs/model/File.hpp"
 #include "identities/User.hpp"
 
+#include <system_error>
+
 using namespace vh::fs::model;
 using namespace vh::fs;
 using namespace vh::crypto;
@@ -108,7 +110,21 @@ namespace vh::storage {
     uintmax_t Engine::getVaultSize() const { return getDirectorySize(paths->backingRoot); }
     uintmax_t Engine::getCacheSize() const { return getDirectorySize(paths->cacheRoot); }
     uintmax_t Engine::getVaultAndCacheTotalSize() const { return getVaultSize() + getCacheSize(); }
-    uintmax_t Engine::freeSpace() const { return vault->quota - getVaultAndCacheTotalSize() - MIN_FREE_SPACE; }
+    uintmax_t Engine::freeSpace() const {
+        if (!vault) return 0;
+
+        if (vault->quota == 0) {
+            if (!paths) return 0;
+
+            std::error_code ec;
+            const auto info = fs::space(paths->backingRoot, ec);
+            if (ec || info.available <= MIN_FREE_SPACE) return 0;
+            return info.available - MIN_FREE_SPACE;
+        }
+
+        const auto usedWithReserve = getVaultAndCacheTotalSize() + MIN_FREE_SPACE;
+        return vault->quota > usedWithReserve ? vault->quota - usedWithReserve : 0;
+    }
 
     void Engine::purgeThumbnails(const fs::path &rel_path) const {
         for (const auto &size: Registry::get().caching.thumbnails.sizes)

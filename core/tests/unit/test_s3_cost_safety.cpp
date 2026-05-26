@@ -5,6 +5,7 @@
 #include "db/query/vault/Vault.hpp"
 #include "crypto/id/Generator.hpp"
 #include "fs/Filesystem.hpp"
+#include "fs/model/Path.hpp"
 #include "fs/model/File.hpp"
 #include "identities/User.hpp"
 #include "protocols/shell/commands/vault.hpp"
@@ -357,6 +358,31 @@ std::shared_ptr<vh::sync::model::RemotePolicy> loadRemotePolicyForDbTest(const u
     });
 }
 
+class ScopedPathRoots {
+public:
+    explicit ScopedPathRoots(std::filesystem::path root)
+        : root_(std::move(root)),
+          oldBackingPath_(vh::paths::backingPath),
+          oldMountPath_(vh::paths::mountPath) {
+        std::filesystem::remove_all(root_);
+        vh::paths::backingPath = root_ / "backing";
+        vh::paths::mountPath = root_ / "mount";
+        std::filesystem::create_directories(vh::paths::backingPath);
+        std::filesystem::create_directories(vh::paths::mountPath);
+    }
+
+    ~ScopedPathRoots() {
+        vh::paths::backingPath = oldBackingPath_;
+        vh::paths::mountPath = oldMountPath_;
+        std::filesystem::remove_all(root_);
+    }
+
+private:
+    std::filesystem::path root_;
+    std::filesystem::path oldBackingPath_;
+    std::filesystem::path oldMountPath_;
+};
+
 std::shared_ptr<vh::storage::CloudEngine> makePlanningEngine() {
     auto vault = std::make_shared<vh::vault::model::S3Vault>();
     vault->id = 77;
@@ -401,6 +427,56 @@ TEST(S3CostSafetyTest, PolicyIntervalsDefaultAndClampToNonZero) {
     EXPECT_EQ(300, vh::sync::model::Policy::clampInterval(std::chrono::seconds(-5)).count());
     EXPECT_EQ(15, vh::sync::model::Policy::clampInterval(std::chrono::seconds(15)).count());
     EXPECT_EQ(300, vh::db::encoding::parseSyncInterval("").count());
+}
+
+TEST(S3CostSafetyTest, EngineFreeSpaceSaturatesFiniteQuota) {
+    ScopedPathRoots paths(std::filesystem::temp_directory_path() / "vh_engine_quota_finite");
+
+    auto vault = std::make_shared<vh::vault::model::Vault>();
+    vault->id = 1001;
+    vault->name = "quota-test";
+    vault->mount_point = "quota-test";
+    vault->quota = vh::storage::Engine::MIN_FREE_SPACE + 1024;
+
+    vh::storage::Engine engine;
+    engine.vault = vault;
+    engine.paths = std::make_shared<vh::fs::model::Path>("quota-test", "quota-test");
+    std::filesystem::create_directories(engine.paths->backingVaultRoot);
+    std::filesystem::create_directories(engine.paths->cacheRoot);
+
+    EXPECT_EQ(1024u, engine.freeSpace());
+
+    std::ofstream(engine.paths->backingVaultRoot / "used.bin", std::ios::binary) << std::string(200, 'x');
+    EXPECT_EQ(824u, engine.freeSpace());
+
+    vault->quota = vh::storage::Engine::MIN_FREE_SPACE - 1;
+    EXPECT_EQ(0u, engine.freeSpace());
+}
+
+TEST(S3CostSafetyTest, EngineFreeSpaceTreatsZeroQuotaAsUnlimitedWithoutUnderflow) {
+    ScopedPathRoots paths(std::filesystem::temp_directory_path() / "vh_engine_quota_unlimited");
+
+    auto vault = std::make_shared<vh::vault::model::Vault>();
+    vault->id = 1002;
+    vault->name = "quota-unlimited-test";
+    vault->mount_point = "quota-unlimited-test";
+    vault->quota = 0;
+
+    vh::storage::Engine engine;
+    engine.vault = vault;
+    engine.paths = std::make_shared<vh::fs::model::Path>("quota-unlimited-test", "quota-unlimited-test");
+    std::filesystem::create_directories(engine.paths->backingVaultRoot);
+    std::filesystem::create_directories(engine.paths->cacheRoot);
+
+    std::error_code ec;
+    const auto available = std::filesystem::space(engine.paths->backingRoot, ec).available;
+    ASSERT_FALSE(ec);
+    const auto expected = available > vh::storage::Engine::MIN_FREE_SPACE
+        ? available - vh::storage::Engine::MIN_FREE_SPACE
+        : 0;
+
+    EXPECT_EQ(expected, engine.freeSpace());
+    EXPECT_LE(engine.freeSpace(), available);
 }
 
 TEST(S3CostSafetyTest, UnlimitedBudgetPolicyPrintsLegacyWarning) {

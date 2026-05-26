@@ -98,7 +98,18 @@ void Controller::runNow(const unsigned int vaultId, const uint8_t trigger) {
     {
         std::scoped_lock lock(taskMapMutex_);
         if (!taskMap_.contains(vaultId)) {
-            log::Registry::sync()->error("[SyncController] No task found for vault ID: {}", vaultId);
+            log::Registry::sync()->warn("[SyncController] No task found for vault ID: {}, refreshing sync engines", vaultId);
+        } else {
+            task = taskMap_[vaultId];
+        }
+    }
+
+    if (!task) {
+        refreshEngines();
+
+        std::scoped_lock lock(taskMapMutex_);
+        if (!taskMap_.contains(vaultId)) {
+            log::Registry::sync()->error("[SyncController] No task found for vault ID: {} after refresh", vaultId);
             return;
         }
         task = taskMap_[vaultId];
