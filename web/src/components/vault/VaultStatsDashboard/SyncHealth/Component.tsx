@@ -401,6 +401,11 @@ export default function SyncHealth({ vaultId, initialLatestEvent = null, interva
 
             <div className={['rounded-2xl border p-3 backdrop-blur', problemTone.border, problemTone.bg].join(' ')}>
               <div className="text-xs font-semibold text-white/70 uppercase">Open risks</div>
+              {data.s3_budget_warning ?
+                <div className="mt-2 rounded-2xl border border-amber-300/25 bg-amber-400/10 px-3 py-2 text-xs text-amber-100/90">
+                  {data.s3_budget_warning}
+                </div>
+              : null}
               <div className="mt-2 grid grid-cols-2 gap-2">
                 <DetailMetric
                   label="Open conflicts"

@@ -133,7 +133,8 @@ void Cloud::initBins() {
                 ? std::to_string(std::time(nullptr) - *indexSummary.indexed_at) + "s old"
                 : std::string("missing indexed_at");
             throw SyncStalled(
-                "remote index is stale and manifest refresh failed; index is " + age);
+                "remote index is stale and manifest refresh failed; index is " + age +
+                ". Run vault sync reconcile, import S3 Inventory, or ingest S3 events before retrying.");
         }
         s3Map = groupEntriesByPath(db::query::sync::RemoteObjectIndex::listFilesForVault(engine->vault->id));
     } else {

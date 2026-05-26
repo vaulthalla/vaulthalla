@@ -113,11 +113,12 @@ Use dry-run before changing a budget or launching a large sync:
 vh vault sync dry-run <vault>
 ```
 
-The command refreshes the manifest when possible, builds the next sync plan from
-the local files and remote index, and prints estimated LIST, HEAD, GET, PUT,
-COPY, DELETE, body-download bytes, upload bytes, cache/index-only objects, and
-archive-tier body downloads skipped. It refuses to invent a plan when no remote
-index exists; import Inventory, ingest events, or reconcile first.
+The command may refresh the remote index manifest before planning. It builds the
+next sync plan from the local files and remote index, and prints estimated LIST,
+HEAD, GET, PUT, COPY, DELETE, body-download bytes, upload bytes,
+cache/index-only objects, and archive-tier body downloads skipped. It refuses to
+invent a plan when no remote index exists; import Inventory, ingest events, or
+reconcile first.
 
 ## Failure Modes
 

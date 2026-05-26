@@ -27,6 +27,8 @@ export interface IVaultSyncHealth {
   s3_budget_copy_requests: number | null
   s3_budget_delete_requests: number | null
   s3_budget_downloaded_bytes: number | null
+  s3_budget_unlimited_legacy: boolean
+  s3_budget_warning: string | null
   max_remote_index_age_seconds: number | null
   latest_event: SyncEvent | null
   latest_event_id: number | null
@@ -142,6 +144,8 @@ export class VaultSyncHealth implements IVaultSyncHealth {
   s3_budget_copy_requests: number | null = null
   s3_budget_delete_requests: number | null = null
   s3_budget_downloaded_bytes: number | null = null
+  s3_budget_unlimited_legacy = false
+  s3_budget_warning: string | null = null
   max_remote_index_age_seconds: number | null = null
   latest_event: SyncEvent | null = null
   latest_event_id: number | null = null
@@ -210,6 +214,8 @@ export class VaultSyncHealth implements IVaultSyncHealth {
       s3_budget_copy_requests: asNullableNumber(data.s3_budget_copy_requests),
       s3_budget_delete_requests: asNullableNumber(data.s3_budget_delete_requests),
       s3_budget_downloaded_bytes: asNullableNumber(data.s3_budget_downloaded_bytes),
+      s3_budget_unlimited_legacy: asBoolean(data.s3_budget_unlimited_legacy),
+      s3_budget_warning: asStringOrNull(data.s3_budget_warning),
       max_remote_index_age_seconds: asNullableNumber(data.max_remote_index_age_seconds),
       latest_event: latestEvent,
       latest_event_id: asNullableNumber(data.latest_event_id),

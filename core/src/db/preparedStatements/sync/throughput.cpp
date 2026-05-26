@@ -12,6 +12,7 @@ void vh::db::Connection::initPreparedSyncThroughput() const {
                 run_uuid,
                 metric_type,
                 num_ops,
+                failed_ops,
                 size_bytes,
                 duration_ms
             )
@@ -22,11 +23,13 @@ void vh::db::Connection::initPreparedSyncThroughput() const {
                 $3,
                 COALESCE($4, 0),
                 COALESCE($5, 0),
-                COALESCE($6, 0)
+                COALESCE($6, 0),
+                COALESCE($7, 0)
             )
             ON CONFLICT (vault_id, run_uuid, metric_type)
             DO UPDATE SET
                 num_ops     = EXCLUDED.num_ops,
+                failed_ops  = EXCLUDED.failed_ops,
                 size_bytes  = EXCLUDED.size_bytes,
                 duration_ms = EXCLUDED.duration_ms
             RETURNING id;
@@ -44,6 +47,7 @@ void vh::db::Connection::initPreparedSyncThroughput() const {
                 run_uuid,
                 metric_type,
                 num_ops,
+                failed_ops,
                 size_bytes,
                 duration_ms
             )
@@ -54,11 +58,13 @@ void vh::db::Connection::initPreparedSyncThroughput() const {
                 $3,
                 COALESCE($4, 0),
                 COALESCE($5, 0),
-                COALESCE($6, 0)
+                COALESCE($6, 0),
+                COALESCE($7, 0)
             )
             ON CONFLICT (vault_id, run_uuid, metric_type)
             DO UPDATE SET
                 num_ops     = sync_throughput.num_ops + EXCLUDED.num_ops,
+                failed_ops  = sync_throughput.failed_ops + EXCLUDED.failed_ops,
                 size_bytes  = sync_throughput.size_bytes + EXCLUDED.size_bytes,
                 duration_ms = sync_throughput.duration_ms + EXCLUDED.duration_ms
             RETURNING id;

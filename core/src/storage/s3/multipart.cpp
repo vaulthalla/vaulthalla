@@ -19,12 +19,13 @@ std::string Controller::initiateMultipartUpload(
     const std::string payloadHash = "UNSIGNED-PAYLOAD";
 
     auto hdrMap = buildHeaderMap(payloadHash);
+    for (const auto& [k, v] : metadata) hdrMap[fmt::format("x-amz-meta-{}", k)] = v;
+
     const std::string authHeader = buildAuthorizationHeader(apiKey_, "POST", canonicalPath, hdrMap, payloadHash);
 
     HeaderList headers;
     headers.add("Authorization: " + authHeader);
     for (const auto& [k, v] : hdrMap) headers.add(k + ": " + v);
-    for (const auto& [k, v] : metadata) headers.add(fmt::format("x-amz-meta-{}: {}", k, v));
 
     std::string response;
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());

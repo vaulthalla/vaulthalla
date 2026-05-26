@@ -832,6 +832,7 @@ static CommandResult handle_vault_sync_dry_run(const CommandCall& call) {
         const auto metrics = s3Budget.metrics();
         std::ostringstream out;
         out << "S3 sync dry-run for '" << engine->vault->name << "' (ID: " << engine->vault->id << ")\n"
+            << "  Note: dry-run may refresh the remote index manifest before planning.\n"
             << "  Plan actions:\n"
             << "    Upload: " << countPlanActions(plan, ActionType::Upload) << "\n"
             << "    Download: " << countPlanActions(plan, ActionType::Download) << "\n"

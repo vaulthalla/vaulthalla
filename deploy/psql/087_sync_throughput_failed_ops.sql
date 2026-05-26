@@ -1,0 +1,2 @@
+ALTER TABLE sync_throughput
+    ADD COLUMN IF NOT EXISTS failed_ops BIGINT NOT NULL DEFAULT 0;

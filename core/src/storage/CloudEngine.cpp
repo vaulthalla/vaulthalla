@@ -260,17 +260,17 @@ void CloudEngine::publishRemoteIndexManifest(const std::optional<std::string>& e
     const auto metadata = remote_manifest::inspectIndexV1Metadata(manifest, vault->id);
     const std::vector<uint8_t> payload(manifest.begin(), manifest.end());
 
-    auto ifMatch = expectedETag;
-    if (!ifMatch) {
-        const auto head = s3Provider_->getHeadObject(remote_manifest::INDEX_V1_KEY);
-        if (head) ifMatch = header_value(*head, "ETag");
-    }
+    const auto ifMatch = expectedETag;
+    const auto ifNoneMatch = ifMatch
+        ? std::optional<std::string>{}
+        : std::make_optional<std::string>("*");
 
     s3Provider_->uploadBufferWithMetadataConditional(
         remote_manifest::INDEX_V1_KEY,
         payload,
         {{"vh-manifest-version", std::to_string(remote_manifest::INDEX_V1_VERSION)}},
-        ifMatch);
+        ifMatch,
+        ifNoneMatch);
 
     const auto head = s3Provider_->getHeadObject(remote_manifest::INDEX_V1_KEY);
     db::query::sync::RemoteObjectIndex::upsertManifestState(

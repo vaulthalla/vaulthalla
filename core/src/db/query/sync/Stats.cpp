@@ -69,6 +69,20 @@ void applyConfig(Health& health, const pqxx::result& res) {
     health.s3BudgetCopyRequests = optionalUInt64(row, "s3_budget_copy_requests");
     health.s3BudgetDeleteRequests = optionalUInt64(row, "s3_budget_delete_requests");
     health.s3BudgetDownloadedBytes = optionalUInt64(row, "s3_budget_downloaded_bytes");
+    health.s3BudgetUnlimitedLegacy =
+        health.configuredStrategy.has_value() &&
+        !health.s3BudgetListRequests &&
+        !health.s3BudgetHeadRequests &&
+        !health.s3BudgetGetRequests &&
+        !health.s3BudgetPutRequests &&
+        !health.s3BudgetCopyRequests &&
+        !health.s3BudgetDeleteRequests &&
+        !health.s3BudgetDownloadedBytes;
+    if (health.s3BudgetUnlimitedLegacy) {
+        health.s3BudgetWarning =
+            "Unlimited/legacy S3 budget: no S3 request or downloaded-byte guardrails are enforced. "
+            "Set the balanced preset to enable guardrails.";
+    }
     health.maxRemoteIndexAgeSeconds = optionalUInt64(row, "max_remote_index_age_seconds");
 
     health.lastSyncAt = optionalTimestamp(row, "last_sync_at");

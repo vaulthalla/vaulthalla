@@ -1,9 +1,12 @@
 #include "db/encoding/interval.hpp"
+#include "db/Transactions.hpp"
 #include "db/query/sync/RemoteObjectIndex.hpp"
 #include "fs/model/File.hpp"
+#include "seed/include/init_db_tables.hpp"
 #include "storage/CloudEngine.hpp"
 #include "storage/ScopedS3RequestBudget.hpp"
 #include "storage/s3/Controller.hpp"
+#include "storage/s3/curl/helpers.hpp"
 #include "sync/Cloud.hpp"
 #include "sync/Planner.hpp"
 #include "sync/model/Event.hpp"
@@ -18,11 +21,15 @@
 
 #include <chrono>
 #include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <optional>
+#include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -76,6 +83,46 @@ public:
     }
 };
 
+class ManifestRaceS3Controller final : public vh::storage::s3::Controller {
+public:
+    mutable std::vector<std::optional<std::unordered_map<std::string, std::string>>> head_responses;
+    mutable std::size_t head_index = 0;
+    mutable std::vector<int> conditional_failures;
+    mutable std::size_t failure_index = 0;
+    mutable std::vector<std::optional<std::string>> if_match_values;
+    mutable std::vector<std::optional<std::string>> if_none_match_values;
+    std::string manifest;
+
+    explicit ManifestRaceS3Controller(std::string manifestBody = {})
+        : Controller(dummyApiKey(), "unit-bucket"),
+          manifest(std::move(manifestBody)) {}
+
+    void uploadBufferWithMetadataConditional(
+        const std::filesystem::path&,
+        const std::vector<uint8_t>&,
+        const std::unordered_map<std::string, std::string>&,
+        const std::optional<std::string>& ifMatch,
+        const std::optional<std::string>& ifNoneMatch) const override {
+        if_match_values.push_back(ifMatch);
+        if_none_match_values.push_back(ifNoneMatch);
+        if (failure_index < conditional_failures.size()) {
+            const auto code = conditional_failures[failure_index++];
+            throw vh::storage::s3::ConditionalRequestFailed(
+                "Conditional S3 PUT failed for manifest (HTTP " + std::to_string(code) + ")");
+        }
+    }
+
+    void downloadToBuffer(const std::filesystem::path&, std::vector<uint8_t>& outBuffer) const override {
+        outBuffer.assign(manifest.begin(), manifest.end());
+    }
+
+    std::optional<std::unordered_map<std::string, std::string>> getHeadObject(
+        const std::filesystem::path&) const override {
+        if (head_index < head_responses.size()) return head_responses[head_index++];
+        return std::nullopt;
+    }
+};
+
 class BudgetProbeS3Controller final : public vh::storage::s3::Controller {
 public:
     using RequestKind = vh::storage::s3::Controller::RequestKind;
@@ -112,6 +159,70 @@ public:
         count(RequestKind::Put); // complete
     }
 };
+
+bool hasDbEnv() {
+    return std::getenv("VH_TEST_DB_USER") &&
+           std::getenv("VH_TEST_DB_PASS") &&
+           std::getenv("VH_TEST_DB_HOST") &&
+           std::getenv("VH_TEST_DB_PORT") &&
+           std::getenv("VH_TEST_DB_NAME");
+}
+
+std::string uniqueSuffix(const std::string& label) {
+    const auto ticks = std::chrono::steady_clock::now().time_since_epoch().count();
+    return label + "_" + std::to_string(ticks);
+}
+
+void ensureDbReady() {
+    static bool initialized = false;
+    if (initialized) return;
+
+    vh::db::Transactions::init();
+    vh::db::seed::nuke_and_recreate_schema_public();
+    vh::db::Transactions::dbPool_->initPreparedStatements();
+    initialized = true;
+}
+
+uint32_t seedS3VaultForDbTest(const std::string& suffix) {
+    return vh::db::Transactions::exec("S3CostSafetyTest::seedS3Vault", [&](pqxx::work& txn) {
+        const auto userId = txn.exec(
+            "INSERT INTO users (name, email, password_hash) VALUES ($1, $2, $3) RETURNING id",
+            pqxx::params{
+                "s3_cost_safety_user_" + suffix,
+                "s3-cost-safety-" + suffix + "@vaulthalla.test",
+                "hash"
+            }).one_field().as<uint32_t>();
+
+        return txn.exec(
+            "INSERT INTO vault (type, name, owner_id, mount_point) VALUES ($1, $2, $3, $4) RETURNING id",
+            pqxx::params{
+                "s3",
+                "S3 Cost Safety " + suffix,
+                userId,
+                "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+            }).one_field().as<uint32_t>();
+    });
+}
+
+std::shared_ptr<vh::storage::CloudEngine> makeDbBackedCloudEngine(
+    const uint32_t vaultId,
+    const std::shared_ptr<vh::storage::s3::Controller>& controller) {
+    auto vault = std::make_shared<vh::vault::model::S3Vault>();
+    vault->id = vaultId;
+    vault->owner_id = 1;
+    vault->type = vh::vault::model::VaultType::S3;
+    vault->name = "s3-cost-safety-db";
+    vault->mount_point = "s3-cost-safety-db";
+
+    auto policy = std::make_shared<vh::sync::model::RemotePolicy>();
+    policy->vault_id = vaultId;
+
+    auto engine = std::make_shared<vh::storage::CloudEngine>();
+    engine->vault = vault;
+    engine->sync = policy;
+    engine->setS3ControllerForTesting(controller);
+    return engine;
+}
 
 std::shared_ptr<vh::storage::CloudEngine> makePlanningEngine() {
     auto vault = std::make_shared<vh::vault::model::S3Vault>();
@@ -157,6 +268,41 @@ TEST(S3CostSafetyTest, PolicyIntervalsDefaultAndClampToNonZero) {
     EXPECT_EQ(300, vh::sync::model::Policy::clampInterval(std::chrono::seconds(-5)).count());
     EXPECT_EQ(15, vh::sync::model::Policy::clampInterval(std::chrono::seconds(15)).count());
     EXPECT_EQ(300, vh::db::encoding::parseSyncInterval("").count());
+}
+
+TEST(S3CostSafetyTest, UnlimitedBudgetPolicyPrintsLegacyWarning) {
+    auto remote = std::make_shared<vh::sync::model::RemotePolicy>();
+    remote->s3_request_budget = vh::sync::model::s3RequestBudgetForPreset(
+        vh::sync::model::S3BudgetPreset::Unlimited);
+
+    const auto text = vh::sync::model::to_string(remote);
+    EXPECT_NE(std::string::npos, text.find("unlimited/legacy budget"));
+    EXPECT_NE(std::string::npos, text.find("--s3-budget-preset balanced"));
+}
+
+TEST(S3CostSafetyTest, SigV4SignedHeadersIncludeMetadataHeaders) {
+    const std::map<std::string, std::string> headers{
+        {"content-type", "application/octet-stream"},
+        {"host", "s3.example.com"},
+        {"x-amz-content-sha256", vh::storage::s3::curl::sha256Hex("ciphertext")},
+        {"x-amz-date", "20260525T000000Z"},
+        {"x-amz-meta-vh-encrypted", "true"},
+        {"x-amz-meta-vh-iv", "iv"},
+        {"x-amz-meta-vh-key-version", "3"},
+    };
+
+    const auto auth = vh::storage::s3::curl::buildAuthorizationHeader(
+        dummyApiKey(),
+        "PUT",
+        "/unit-bucket/ciphertext.bin",
+        headers,
+        headers.at("x-amz-content-sha256"));
+
+    EXPECT_NE(
+        std::string::npos,
+        auth.find(
+            "SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date;"
+            "x-amz-meta-vh-encrypted;x-amz-meta-vh-iv;x-amz-meta-vh-key-version"));
 }
 
 TEST(S3CostSafetyTest, PlannerMarksCacheRemoteOnlyAsIndexOnly) {
@@ -243,6 +389,94 @@ TEST(S3CostSafetyTest, RemoteIndexSummaryAppliesMaxAgeFreshnessPolicy) {
     EXPECT_FALSE(summary.isStale(std::chrono::seconds(60), 1059));
     EXPECT_TRUE(summary.isStale(std::chrono::seconds(60), 1061));
     EXPECT_FALSE(summary.isStale(std::nullopt, 999999));
+}
+
+TEST(S3CostSafetyTest, StaleRemoteIndexAfterManifestRefreshFailureStallsWithoutGenericError) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed stale index regression test due to missing environment variables.";
+    ensureDbReady();
+
+    const auto vaultId = seedS3VaultForDbTest(uniqueSuffix("stale_index"));
+    vh::db::Transactions::exec("S3CostSafetyTest::seedStaleRemoteIndex", [&](pqxx::work& txn) {
+        txn.exec(
+            "INSERT INTO remote_object_index "
+            "(vault_id, object_key, size_bytes, last_modified, etag, source, indexed_at) "
+            "VALUES ($1, $2, $3, CURRENT_TIMESTAMP - INTERVAL '2 hours', $4, $5, CURRENT_TIMESTAMP - INTERVAL '2 hours')",
+            pqxx::params{vaultId, "stale.txt", 1, "\"stale\"", "manifest"});
+    });
+
+    auto fake = std::make_shared<ManifestRaceS3Controller>();
+    auto engine = makeDbBackedCloudEngine(vaultId, fake);
+    std::static_pointer_cast<vh::sync::model::RemotePolicy>(engine->sync)->max_remote_index_age = std::chrono::seconds(60);
+
+    auto cloud = std::make_shared<vh::sync::Cloud>(engine);
+    cloud->event = std::make_shared<vh::sync::model::Event>();
+    cloud->runningFlag = true;
+
+    const vh::sync::Stage stages[] = {
+        {"initBins", [&] { cloud->initBins(); }}
+    };
+    cloud->runStages(stages);
+
+    EXPECT_EQ(vh::sync::model::Event::Status::STALLED, cloud->event->status);
+    EXPECT_TRUE(cloud->event->error_message.empty());
+    EXPECT_NE(std::string::npos, cloud->event->stall_reason.find("remote index is stale and manifest refresh failed"));
+    EXPECT_NE(std::string::npos, cloud->event->stall_reason.find("vault sync reconcile"));
+}
+
+TEST(S3CostSafetyTest, FirstManifestPublishUsesIfNoneMatchAndReportsConflict) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed manifest publish regression test due to missing environment variables.";
+    ensureDbReady();
+
+    const auto vaultId = seedS3VaultForDbTest(uniqueSuffix("manifest_first"));
+    auto fake = std::make_shared<ManifestRaceS3Controller>();
+    fake->conditional_failures = {412};
+    auto engine = makeDbBackedCloudEngine(vaultId, fake);
+
+    EXPECT_THROW(
+        engine->publishRemoteIndexManifest(std::nullopt),
+        vh::storage::s3::ConditionalRequestFailed);
+
+    ASSERT_EQ(1u, fake->if_match_values.size());
+    EXPECT_FALSE(fake->if_match_values[0].has_value());
+    ASSERT_TRUE(fake->if_none_match_values[0].has_value());
+    EXPECT_EQ("*", *fake->if_none_match_values[0]);
+}
+
+TEST(S3CostSafetyTest, ManifestPublishConflictRetriesAfterRefreshingKnownETag) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed manifest retry regression test due to missing environment variables.";
+    ensureDbReady();
+
+    for (const auto code : {412, 409}) {
+        const auto vaultId = seedS3VaultForDbTest(uniqueSuffix("manifest_retry_" + std::to_string(code)));
+        const auto manifest = vh::sync::model::remote_manifest::buildIndexV1(vaultId, {});
+        auto fake = std::make_shared<ManifestRaceS3Controller>(manifest);
+        fake->conditional_failures = {code};
+        fake->head_responses = {
+            std::unordered_map<std::string, std::string>{{"ETag", "\"etag-1\""}},
+            std::unordered_map<std::string, std::string>{{"ETag", "\"etag-2\""}},
+            std::unordered_map<std::string, std::string>{{"ETag", "\"etag-3\""}},
+        };
+        auto engine = makeDbBackedCloudEngine(vaultId, fake);
+
+        auto file = std::make_shared<vh::fs::model::File>();
+        file->path = "/docs/report.txt";
+        file->size_bytes = 12;
+        file->updated_at = std::time(nullptr);
+
+        const std::vector<vh::sync::model::Action> plan{
+            {vh::sync::model::ActionType::Upload, {.rel = u8"docs/report.txt"}, file, nullptr}
+        };
+
+        EXPECT_NO_THROW(engine->applyRemoteIndexMutation(plan));
+
+        ASSERT_EQ(2u, fake->if_match_values.size());
+        ASSERT_TRUE(fake->if_match_values[0].has_value());
+        ASSERT_TRUE(fake->if_match_values[1].has_value());
+        EXPECT_EQ("\"etag-1\"", *fake->if_match_values[0]);
+        EXPECT_EQ("\"etag-2\"", *fake->if_match_values[1]);
+        EXPECT_FALSE(fake->if_none_match_values[0].has_value());
+        EXPECT_FALSE(fake->if_none_match_values[1].has_value());
+    }
 }
 
 TEST(S3CostSafetyTest, BudgetMetricsAfterAsyncFailureMarkEventStalled) {
@@ -473,6 +707,38 @@ TEST(S3CostSafetyTest, EventStoresS3PlanEstimateForDashboard) {
     EXPECT_EQ(8u, event.s3_estimated_upload_bytes);
     EXPECT_EQ(9u, event.s3_remote_index_objects);
     EXPECT_EQ(10u, event.s3_archive_downloads_skipped);
+}
+
+TEST(S3CostSafetyTest, IndexThroughputDoesNotInflateTransferredBytes) {
+    vh::sync::model::Event event;
+
+    auto upload = std::make_unique<vh::sync::model::Throughput>();
+    upload->metric_type = vh::sync::model::Throughput::UPLOAD;
+    auto uploadOp = upload->newOp();
+    uploadOp->size_bytes = 10;
+    uploadOp->success = true;
+
+    auto download = std::make_unique<vh::sync::model::Throughput>();
+    download->metric_type = vh::sync::model::Throughput::DOWNLOAD;
+    auto downloadOp = download->newOp();
+    downloadOp->size_bytes = 20;
+    downloadOp->success = true;
+
+    auto index = std::make_unique<vh::sync::model::Throughput>();
+    index->metric_type = vh::sync::model::Throughput::INDEX;
+    auto indexOp = index->newOp();
+    indexOp->size_bytes = 1024;
+    indexOp->success = true;
+
+    event.throughputs.push_back(std::move(upload));
+    event.throughputs.push_back(std::move(download));
+    event.throughputs.push_back(std::move(index));
+
+    event.computeDashboardStats();
+
+    EXPECT_EQ(3u, event.num_ops_total);
+    EXPECT_EQ(10u, event.bytes_up);
+    EXPECT_EQ(20u, event.bytes_down);
 }
 
 TEST(S3CostSafetyTest, FilesFromS3XmlParsesStorageClassETagAndRestoreStatus) {

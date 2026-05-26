@@ -138,6 +138,10 @@ std::string vh::sync::model::to_string(const S3BudgetPreset preset) {
     return "unknown";
 }
 
+bool vh::sync::model::s3BudgetIsUnlimited(const vh::storage::s3::S3RequestBudget& budget) {
+    return sameBudget(budget, s3RequestBudgetForPreset(S3BudgetPreset::Unlimited));
+}
+
 std::string vh::sync::model::s3BudgetPresetName(const vh::storage::s3::S3RequestBudget& budget) {
     for (const auto preset : {
              S3BudgetPreset::Conservative,
@@ -511,6 +515,12 @@ RemotePolicy::ConflictPolicy vh::sync::model::rsConflictPolicyFromString(const s
 
 std::string vh::sync::model::to_string(const std::shared_ptr<RemotePolicy>& sync) {
     if (!sync) return "null";
+    const auto unlimitedBudgetWarning = s3BudgetIsUnlimited(sync->s3_request_budget)
+        ? std::string(
+              "    Warning: unlimited/legacy budget; no S3 request or downloaded-byte guardrails are enforced. "
+              "Run 'vh vault sync set <vault> --s3-budget-preset balanced' to enable them.\n")
+        : std::string{};
+
     return "Remote Vault Sync Configuration:\n"
            "  Vault ID: " + std::to_string(sync->vault_id) + "\n"
            "  Interval: " + intervalToString(sync->interval) + "\n"
@@ -519,6 +529,7 @@ std::string vh::sync::model::to_string(const std::shared_ptr<RemotePolicy>& sync
            "  Conflict Policy: " + to_string(sync->conflict_policy) + "\n"
            "  S3 Request Budget:\n"
            "    Preset: " + s3BudgetPresetName(sync->s3_request_budget) + "\n"
+           + unlimitedBudgetWarning +
            "    LIST: " + budgetToString(sync->s3_request_budget.max_list_requests) + "\n"
            "    HEAD: " + budgetToString(sync->s3_request_budget.max_head_requests) + "\n"
            "    GET: " + budgetToString(sync->s3_request_budget.max_get_requests) + "\n"

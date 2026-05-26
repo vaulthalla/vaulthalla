@@ -30,6 +30,7 @@ enum class S3BudgetPreset {
 [[nodiscard]] vh::storage::s3::S3RequestBudget s3RequestBudgetForPreset(S3BudgetPreset preset);
 [[nodiscard]] S3BudgetPreset s3BudgetPresetFromString(const std::string& str);
 [[nodiscard]] std::string to_string(S3BudgetPreset preset);
+[[nodiscard]] bool s3BudgetIsUnlimited(const vh::storage::s3::S3RequestBudget& budget);
 [[nodiscard]] std::string s3BudgetPresetName(const vh::storage::s3::S3RequestBudget& budget);
 [[nodiscard]] std::optional<std::chrono::seconds> remoteIndexAgeFromString(const std::string& str);
 

@@ -72,6 +72,7 @@ void VaultSyncHealth::finalize() {
         errorCount7d > 0 ||
         conflictCountOpen > 0 ||
         retryCount24h > 0 ||
+        s3BudgetUnlimitedLegacy ||
         remoteIndexStale ||
         (latestHeartbeatAgeSeconds && *latestHeartbeatAgeSeconds >= kStaleHeartbeatWarningSeconds)
     ) {
@@ -141,6 +142,8 @@ void to_json(nlohmann::json& j, const VaultSyncHealth& health) {
         {"s3_budget_copy_requests", health.s3BudgetCopyRequests ? nlohmann::json(*health.s3BudgetCopyRequests) : nlohmann::json(nullptr)},
         {"s3_budget_delete_requests", health.s3BudgetDeleteRequests ? nlohmann::json(*health.s3BudgetDeleteRequests) : nlohmann::json(nullptr)},
         {"s3_budget_downloaded_bytes", health.s3BudgetDownloadedBytes ? nlohmann::json(*health.s3BudgetDownloadedBytes) : nlohmann::json(nullptr)},
+        {"s3_budget_unlimited_legacy", health.s3BudgetUnlimitedLegacy},
+        {"s3_budget_warning", health.s3BudgetWarning ? nlohmann::json(*health.s3BudgetWarning) : nlohmann::json(nullptr)},
         {"max_remote_index_age_seconds", health.maxRemoteIndexAgeSeconds ? nlohmann::json(*health.maxRemoteIndexAgeSeconds) : nlohmann::json(nullptr)},
         {"latest_event", health.latestEvent},
         {"latest_event_id", health.latestEventId ? nlohmann::json(*health.latestEventId) : nlohmann::json(nullptr)},

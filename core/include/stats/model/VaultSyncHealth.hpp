@@ -50,6 +50,8 @@ struct VaultSyncHealth {
     std::optional<std::uint64_t> s3BudgetCopyRequests;
     std::optional<std::uint64_t> s3BudgetDeleteRequests;
     std::optional<std::uint64_t> s3BudgetDownloadedBytes;
+    bool s3BudgetUnlimitedLegacy = false;
+    std::optional<std::string> s3BudgetWarning;
     std::optional<std::uint64_t> maxRemoteIndexAgeSeconds;
 
     std::shared_ptr<sync::model::Event> latestEvent;

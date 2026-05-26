@@ -58,11 +58,12 @@ std::string Throughput::metricToString() const {
 }
 
 void vh::sync::model::to_json(nlohmann::json& j, const std::unique_ptr<Throughput>& t) {
-    t->computeDashboardStats();
+    if (!t->scoped_ops.empty()) t->computeDashboardStats();
     j = {
         {"id", t->id},
         {"run_uuid", t->run_uuid},
         {"num_ops", t->num_ops},
+        {"failed_ops", t->failed_ops},
         {"size_bytes", t->size_bytes},
         {"duration_ms", t->duration_ms},
         {"metric_type", t->metricToString()}

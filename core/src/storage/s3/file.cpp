@@ -1,4 +1,5 @@
 #include "storage/s3/Controller.hpp"
+#include "storage/s3/curl/helpers.hpp"
 #include "log/Registry.hpp"
 
 #include <fstream>
@@ -81,11 +82,18 @@ void Controller::uploadObjectWithMetadata(
     CurlEasy tmpHandle;
     const auto [canonical, url] = constructPaths(static_cast<CURL*>(tmpHandle), key);
 
-    SList hdrs = makeSigHeaders("PUT", canonical, payloadHash);
-    hdrs.add("Content-Type: application/octet-stream");
+    auto hdrMap = buildHeaderMap(payloadHash);
+    hdrMap["content-type"] = "application/octet-stream";
     for (const auto& [k, v] : metadata) {
-        hdrs.add(fmt::format("x-amz-meta-{}: {}", k, v));
+        hdrMap[fmt::format("x-amz-meta-{}", k)] = v;
     }
+
+    const std::string authHeader = buildAuthorizationHeader(apiKey_, "PUT", canonical, hdrMap, payloadHash);
+
+    SList hdrs;
+    hdrs.add("Authorization: " + authHeader);
+    for (const auto& [k, v] : hdrMap) hdrs.add(k + ": " + v);
+    hdrs.add("Expect:");
 
     HttpResponse resp = performCurl([&](CURL* h) {
         curl_easy_setopt(h, CURLOPT_URL, url.c_str());

@@ -152,6 +152,7 @@ void vh::db::Connection::initPreparedSyncStats() const {
             JOIN sync_event e ON e.vault_id = t.vault_id AND e.run_uuid = t.run_uuid
             WHERE t.vault_id = $1
               AND e.timestamp_begin >= CURRENT_TIMESTAMP - INTERVAL '24 hours'
+              AND t.metric_type IN ('upload', 'download')
               AND t.duration_ms > 0;
         )SQL"
     );
