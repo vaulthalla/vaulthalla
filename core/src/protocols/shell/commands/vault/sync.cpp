@@ -459,6 +459,12 @@ namespace {
             return action.type == type;
         }));
     }
+
+    bool hasUsableLocalRemoteIndex(const db::query::sync::RemoteIndexSummary& summary) {
+        return summary.indexed_at.has_value() ||
+               summary.manifest_updated_at.has_value() ||
+               summary.manifest_object_count.has_value();
+    }
 }
 
 static CommandResult handle_vault_sync(const CommandCall& call) {
@@ -804,17 +810,29 @@ static CommandResult handle_vault_sync_dry_run(const CommandCall& call) {
 
     const auto cloud = std::static_pointer_cast<CloudEngine>(engine);
     const auto policy = cloud->remote_policy();
+    const bool refreshIndex = hasFlag(call, std::vector<std::string>{"refresh-index", "refresh-remote-index"});
+
+    if (refreshIndex) {
+        using ActionPerm = rbac::permission::vault::sync::SyncActionPermissions;
+        if (!rbac::resolver::Vault::has<ActionPerm>({
+            .user = call.user,
+            .permission = ActionPerm::Trigger,
+            .vault_id = engine->vault->id
+        })) return invalid("vault sync dry-run: you do not have permission to refresh this vault's remote index");
+    }
 
     try {
         const ScopedS3RequestBudget s3Budget(cloud, policy->s3_request_budget);
-        const bool manifestRefreshed = cloud->refreshRemoteIndexFromManifestIfChanged();
+        const bool manifestRefreshed = refreshIndex
+            ? cloud->refreshRemoteIndexFromManifestIfChanged()
+            : false;
         const auto summary = db::query::sync::RemoteObjectIndex::summaryForVault(engine->vault->id);
 
-        if (!manifestRefreshed && !summary.indexed_at)
-            return invalid("vault sync dry-run: no remote index is available; run reconcile, inventory import, or event ingestion first");
+        if (!hasUsableLocalRemoteIndex(summary))
+            return invalid("vault sync dry-run: no remote index is available; run reconcile, inventory import, event ingestion, or dry-run --refresh-index.");
 
         if (!manifestRefreshed && summary.isStale(policy->max_remote_index_age))
-            return invalid("vault sync dry-run: remote index is stale and manifest refresh failed");
+            return invalid("vault sync dry-run: remote index is stale; run dry-run --refresh-index, reconcile, inventory import, or event ingestion.");
 
         auto ctx = std::make_shared<sync::Cloud>(cloud);
         ctx->event = std::make_shared<Event>();
@@ -831,9 +849,10 @@ static CommandResult handle_vault_sync_dry_run(const CommandCall& call) {
 
         const auto metrics = s3Budget.metrics();
         std::ostringstream out;
-        out << "S3 sync dry-run for '" << engine->vault->name << "' (ID: " << engine->vault->id << ")\n"
-            << "  Note: dry-run may refresh the remote index manifest before planning.\n"
-            << "  Plan actions:\n"
+        out << "S3 sync dry-run for '" << engine->vault->name << "' (ID: " << engine->vault->id << ")\n";
+        if (refreshIndex)
+            out << "  Note: --refresh-index may refresh the remote index manifest before planning.\n";
+        out << "  Plan actions:\n"
             << "    Upload: " << countPlanActions(plan, ActionType::Upload) << "\n"
             << "    Download: " << countPlanActions(plan, ActionType::Download) << "\n"
             << "    Index remote-only: " << countPlanActions(plan, ActionType::IndexRemoteOnly) << "\n"

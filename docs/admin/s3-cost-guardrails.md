@@ -49,7 +49,8 @@ Avoid starting with a full ListObjectsV2 scan on large buckets.
 1. Configure `conservative` or a custom LIST budget before the first run.
 2. Import S3 Inventory first when available.
 3. Enable event ingestion to keep the remote index warm.
-4. Use `vh vault sync dry-run <vault>` to inspect planned request pressure.
+4. Use `vh vault sync dry-run <vault>` to inspect planned request pressure from
+   the local remote index.
 5. Run reconcile only during a maintenance window with either an explicit LIST
    budget or `--allow-list-scan`.
 6. Set a remote-index freshness window that matches the event/inventory cadence:
@@ -113,12 +114,24 @@ Use dry-run before changing a budget or launching a large sync:
 vh vault sync dry-run <vault>
 ```
 
-The command may refresh the remote index manifest before planning. It builds the
-next sync plan from the local files and remote index, and prints estimated LIST,
-HEAD, GET, PUT, COPY, DELETE, body-download bytes, upload bytes,
-cache/index-only objects, and archive-tier body downloads skipped. It refuses to
-invent a plan when no remote index exists; import Inventory, ingest events, or
-reconcile first.
+By default, dry-run is local-index-only: it reads local database state and does
+not call S3, refresh manifest state, or mutate the remote object index. It builds
+the next sync plan from the local files and remote index, and prints estimated
+LIST, HEAD, GET, PUT, COPY, DELETE, body-download bytes, upload bytes,
+cache/index-only objects, and archive-tier body downloads skipped.
+
+Use an explicit refresh only when the operator is allowed to trigger sync work:
+
+```sh
+vh vault sync dry-run <vault> --refresh-index
+vh vault sync dry-run <vault> --refresh-remote-index
+```
+
+`--refresh-index` may use S3 HEAD/GET requests to refresh the remote index
+manifest before planning and requires sync trigger permission. Without a local
+remote index, or when the local index is stale, default dry-run refuses to invent
+a plan; import Inventory, ingest events, reconcile, or run dry-run with
+`--refresh-index`.
 
 ## Failure Modes
 

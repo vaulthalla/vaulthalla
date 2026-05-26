@@ -1,9 +1,19 @@
 #include "db/encoding/interval.hpp"
 #include "db/Transactions.hpp"
 #include "db/query/sync/RemoteObjectIndex.hpp"
+#include "db/query/identities/User.hpp"
+#include "db/query/vault/Vault.hpp"
+#include "crypto/id/Generator.hpp"
+#include "fs/Filesystem.hpp"
 #include "fs/model/File.hpp"
+#include "identities/User.hpp"
+#include "protocols/shell/commands/vault.hpp"
+#include "rbac/role/Admin.hpp"
+#include "runtime/Deps.hpp"
 #include "seed/include/init_db_tables.hpp"
+#include "seed/include/seed_db.hpp"
 #include "storage/CloudEngine.hpp"
+#include "storage/Manager.hpp"
 #include "storage/ScopedS3RequestBudget.hpp"
 #include "storage/s3/Controller.hpp"
 #include "storage/s3/curl/helpers.hpp"
@@ -15,9 +25,11 @@
 #include "sync/model/RemotePolicy.hpp"
 #include "vault/model/APIKey.hpp"
 #include "vault/model/S3Vault.hpp"
+#include "vault/APIKeyManager.hpp"
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
+#include <paths.h>
 
 #include <chrono>
 #include <algorithm>
@@ -47,6 +59,7 @@ std::shared_ptr<vh::vault::model::APIKey> dummyApiKey() {
 
 class CountingS3Controller final : public vh::storage::s3::Controller {
 public:
+    int head_object_calls = 0;
     int download_to_buffer_calls = 0;
     int upload_object_with_metadata_calls = 0;
     std::unordered_map<std::string, std::string> last_metadata;
@@ -74,11 +87,16 @@ public:
     }
 
     void downloadToBuffer(const std::filesystem::path&, std::vector<uint8_t>&) const override {
-        ++const_cast<CountingS3Controller*>(this)->download_to_buffer_calls;
+        auto* self = const_cast<CountingS3Controller*>(this);
+        ++self->download_to_buffer_calls;
+        self->recordRequest(RequestKind::Get);
     }
 
     std::optional<std::unordered_map<std::string, std::string>> getHeadObject(
         const std::filesystem::path&) const override {
+        auto* self = const_cast<CountingS3Controller*>(this);
+        ++self->head_object_calls;
+        self->recordRequest(RequestKind::Head);
         return head_response;
     }
 };
@@ -183,6 +201,17 @@ void ensureDbReady() {
     initialized = true;
 }
 
+void ensureSeededRuntimeReady() {
+    static bool seeded = false;
+    ensureDbReady();
+    if (!seeded) {
+        vh::seed::seed_database();
+        vh::runtime::Deps::init();
+        vh::fs::Filesystem::init(vh::runtime::Deps::get().storageManager);
+        seeded = true;
+    }
+}
+
 uint32_t seedS3VaultForDbTest(const std::string& suffix) {
     return vh::db::Transactions::exec("S3CostSafetyTest::seedS3Vault", [&](pqxx::work& txn) {
         const auto userId = txn.exec(
@@ -194,12 +223,13 @@ uint32_t seedS3VaultForDbTest(const std::string& suffix) {
             }).one_field().as<uint32_t>();
 
         return txn.exec(
-            "INSERT INTO vault (type, name, owner_id, mount_point) VALUES ($1, $2, $3, $4) RETURNING id",
+            "INSERT INTO vault (type, name, owner_id, mount_point, description) VALUES ($1, $2, $3, $4, $5) RETURNING id",
             pqxx::params{
                 "s3",
                 "S3 Cost Safety " + suffix,
                 userId,
-                "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+                "0123456789ABCDEFGHJKMNPQRSTVWXYZ",
+                ""
             }).one_field().as<uint32_t>();
     });
 }
@@ -222,6 +252,109 @@ std::shared_ptr<vh::storage::CloudEngine> makeDbBackedCloudEngine(
     engine->sync = policy;
     engine->setS3ControllerForTesting(controller);
     return engine;
+}
+
+uint32_t seedDryRunS3VaultForDbTest(
+    const std::string& suffix,
+    const std::shared_ptr<CountingS3Controller>& controller) {
+    ensureSeededRuntimeReady();
+    vh::db::Transactions::exec("S3CostSafetyTest::deleteIncompleteS3VaultFixtures", [&](pqxx::work& txn) {
+        txn.exec(
+            "DELETE FROM vault v "
+            "WHERE v.type = 's3' "
+            "AND NOT EXISTS (SELECT 1 FROM s3 WHERE s3.vault_id = v.id)");
+    });
+
+    const auto owner = vh::db::query::identities::User::getUserByName("admin");
+    if (!owner) throw std::runtime_error("admin user not available for dry-run test");
+
+    auto key = std::make_shared<vh::vault::model::APIKey>(
+        owner->id,
+        "dry-run-key-" + suffix,
+        vh::vault::model::S3Provider::AWS,
+        "ABCDEFGHIJKLMNOPQRST",
+        "ABCDEFGHIJKLMNOPQRSTABCDEFGHIJKLMNOPQRST",
+        "us-east-1",
+        "https://s3.example.com");
+    vh::runtime::Deps::get().apiKeyManager->addAPIKey(key);
+
+    auto vault = std::make_shared<vh::vault::model::S3Vault>(
+        "dry-run-vault-" + suffix,
+        key->id,
+        "dry-run-bucket-" + suffix);
+    vault->owner_id = owner->id;
+    vault->description = "dry-run auth test";
+    vault->mount_point = vh::crypto::id::Generator({.namespace_token = vault->name}).generate();
+
+    auto policy = std::make_shared<vh::sync::model::RemotePolicy>();
+    const auto vaultId = vh::db::query::vault::Vault::upsertVault(vault, policy);
+
+    vh::runtime::Deps::get().storageManager->initStorageEngines();
+    const auto engine = std::static_pointer_cast<vh::storage::CloudEngine>(
+        vh::runtime::Deps::get().storageManager->getEngine(vaultId));
+    engine->setS3ControllerForTesting(controller);
+    return vaultId;
+}
+
+std::shared_ptr<vh::identities::User> dryRunActor(
+    const uint32_t id,
+    vh::rbac::role::Admin role) {
+    auto user = std::make_shared<vh::identities::User>();
+    user->id = id;
+    user->name = "dry-run-actor-" + std::to_string(id);
+    user->password_hash = "hash";
+    user->roles.admin = std::make_shared<vh::rbac::role::Admin>(std::move(role));
+    return user;
+}
+
+vh::protocols::shell::CommandResult runDryRunCommand(
+    const uint32_t vaultId,
+    const std::shared_ptr<vh::identities::User>& user,
+    const bool refreshIndex = false) {
+    vh::protocols::shell::CommandCall call;
+    call.name = "vault";
+    call.user = user;
+    call.positionals = {"dry-run", std::to_string(vaultId)};
+    if (refreshIndex) call.options.push_back({"refresh-index", std::nullopt});
+    return vh::protocols::shell::commands::vault::handle_sync(call);
+}
+
+uint32_t seedLegacyRsyncPolicyForDbTest(
+    const std::string& suffix,
+    const std::optional<uint64_t> customGetBudget = std::nullopt) {
+    const auto vaultId = seedS3VaultForDbTest(suffix);
+    vh::db::Transactions::exec("S3CostSafetyTest::seedLegacyRsyncPolicy", [&](pqxx::work& txn) {
+        const auto syncId = txn.exec(
+            "INSERT INTO sync (vault_id) VALUES ($1) RETURNING id",
+            pqxx::params{vaultId}).one_field().as<uint32_t>();
+
+        if (customGetBudget) {
+            txn.exec(
+                "INSERT INTO rsync (sync_id, s3_budget_get_requests) VALUES ($1, $2)",
+                pqxx::params{syncId, *customGetBudget});
+        } else {
+            txn.exec("INSERT INTO rsync (sync_id) VALUES ($1)", pqxx::params{syncId});
+        }
+    });
+    return vaultId;
+}
+
+void applyS3BudgetBackfillMigrationForDbTest() {
+    vh::db::Transactions::exec("S3CostSafetyTest::applyS3BudgetBackfillMigration", [&](pqxx::work& txn) {
+        const auto migration = vh::paths::getPsqlSchemasPath() / "088_backfill_s3_budget_defaults.sql";
+        txn.exec(vh::db::seed::readFileToString(migration));
+    });
+}
+
+std::shared_ptr<vh::sync::model::RemotePolicy> loadRemotePolicyForDbTest(const uint32_t vaultId) {
+    return vh::db::Transactions::exec("S3CostSafetyTest::loadRemotePolicy", [&](pqxx::work& txn) {
+        const auto res = txn.exec(
+            "SELECT rs.*, s.* "
+            "FROM rsync rs JOIN sync s ON s.id = rs.sync_id "
+            "WHERE s.vault_id = $1",
+            pqxx::params{vaultId});
+        return std::make_shared<vh::sync::model::RemotePolicy>(res.one_row());
+    });
 }
 
 std::shared_ptr<vh::storage::CloudEngine> makePlanningEngine() {
@@ -278,6 +411,150 @@ TEST(S3CostSafetyTest, UnlimitedBudgetPolicyPrintsLegacyWarning) {
     const auto text = vh::sync::model::to_string(remote);
     EXPECT_NE(std::string::npos, text.find("unlimited/legacy budget"));
     EXPECT_NE(std::string::npos, text.find("--s3-budget-preset balanced"));
+}
+
+TEST(S3CostSafetyTest, MigrationBackfillsAllNullLegacyS3BudgetsToBalancedPreset) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed S3 budget migration test due to missing environment variables.";
+    ensureDbReady();
+
+    const auto vaultId = seedLegacyRsyncPolicyForDbTest(uniqueSuffix("budget_backfill"));
+    applyS3BudgetBackfillMigrationForDbTest();
+
+    const auto policy = loadRemotePolicyForDbTest(vaultId);
+    const auto balanced = vh::sync::model::s3RequestBudgetForPreset(vh::sync::model::S3BudgetPreset::Balanced);
+    EXPECT_EQ(balanced.max_list_requests, policy->s3_request_budget.max_list_requests);
+    EXPECT_EQ(balanced.max_head_requests, policy->s3_request_budget.max_head_requests);
+    EXPECT_EQ(balanced.max_get_requests, policy->s3_request_budget.max_get_requests);
+    EXPECT_EQ(balanced.max_put_requests, policy->s3_request_budget.max_put_requests);
+    EXPECT_EQ(balanced.max_copy_requests, policy->s3_request_budget.max_copy_requests);
+    EXPECT_EQ(balanced.max_delete_requests, policy->s3_request_budget.max_delete_requests);
+    EXPECT_EQ(balanced.max_downloaded_bytes, policy->s3_request_budget.max_downloaded_bytes);
+    EXPECT_EQ("balanced", vh::sync::model::s3BudgetPresetName(policy->s3_request_budget));
+    EXPECT_EQ(100u, policy->s3_request_budget.max_list_requests.value_or(0));
+
+    const auto text = vh::sync::model::to_string(policy);
+    EXPECT_NE(std::string::npos, text.find("Preset: balanced"));
+    EXPECT_EQ(std::string::npos, text.find("unlimited/legacy budget"));
+}
+
+TEST(S3CostSafetyTest, MigrationDoesNotOverwriteCustomS3BudgetRows) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed S3 budget migration test due to missing environment variables.";
+    ensureDbReady();
+
+    const auto vaultId = seedLegacyRsyncPolicyForDbTest(uniqueSuffix("budget_custom"), 42);
+    applyS3BudgetBackfillMigrationForDbTest();
+
+    const auto policy = loadRemotePolicyForDbTest(vaultId);
+    EXPECT_FALSE(policy->s3_request_budget.max_list_requests.has_value());
+    ASSERT_TRUE(policy->s3_request_budget.max_get_requests.has_value());
+    EXPECT_EQ(42u, *policy->s3_request_budget.max_get_requests);
+    EXPECT_FALSE(policy->s3_request_budget.max_head_requests.has_value());
+    EXPECT_FALSE(policy->s3_request_budget.max_put_requests.has_value());
+    EXPECT_FALSE(policy->s3_request_budget.max_copy_requests.has_value());
+    EXPECT_FALSE(policy->s3_request_budget.max_delete_requests.has_value());
+    EXPECT_FALSE(policy->s3_request_budget.max_downloaded_bytes.has_value());
+    EXPECT_EQ("custom", vh::sync::model::s3BudgetPresetName(policy->s3_request_budget));
+}
+
+TEST(S3CostSafetyTest, DryRunViewOnlyUsesFreshLocalIndexWithoutS3Refresh) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed dry-run auth test due to missing environment variables.";
+
+    auto fake = std::make_shared<CountingS3Controller>();
+    const auto vaultId = seedDryRunS3VaultForDbTest(uniqueSuffix("dryrun_view"), fake);
+    vh::db::query::sync::RemoteObjectIndex::upsertFile(vaultId, remoteFile("remote.txt"), "manifest");
+
+    const auto viewOnly = dryRunActor(
+        90'001,
+        vh::rbac::role::Admin::Auditor(90'001));
+    const auto before = vh::db::query::sync::RemoteObjectIndex::summaryForVault(vaultId);
+
+    const auto result = runDryRunCommand(vaultId, viewOnly);
+    const auto after = vh::db::query::sync::RemoteObjectIndex::summaryForVault(vaultId);
+
+    EXPECT_EQ(0, result.exit_code) << result.stderr_text;
+    EXPECT_EQ(0, fake->head_object_calls);
+    EXPECT_EQ(0, fake->download_to_buffer_calls);
+    EXPECT_EQ(0u, fake->requestMetrics().head_requests);
+    EXPECT_EQ(0u, fake->requestMetrics().get_requests);
+    EXPECT_EQ(before.manifest_updated_at, after.manifest_updated_at);
+    EXPECT_EQ(std::string::npos, result.stdout_text.find("may refresh"));
+}
+
+TEST(S3CostSafetyTest, DryRunRefreshIndexRequiresTriggerPermission) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed dry-run auth test due to missing environment variables.";
+
+    auto fake = std::make_shared<CountingS3Controller>();
+    const auto vaultId = seedDryRunS3VaultForDbTest(uniqueSuffix("dryrun_refresh_denied"), fake);
+    vh::db::query::sync::RemoteObjectIndex::upsertFile(vaultId, remoteFile("remote.txt"), "manifest");
+
+    const auto viewOnly = dryRunActor(
+        90'002,
+        vh::rbac::role::Admin::Auditor(90'002));
+
+    const auto result = runDryRunCommand(vaultId, viewOnly, true);
+
+    EXPECT_EQ(2, result.exit_code);
+    EXPECT_NE(std::string::npos, result.stderr_text.find("permission to refresh"));
+    EXPECT_EQ(0, fake->head_object_calls);
+    EXPECT_EQ(0, fake->download_to_buffer_calls);
+}
+
+TEST(S3CostSafetyTest, DryRunRefreshIndexWithTriggerMayUseS3HeadMetrics) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed dry-run auth test due to missing environment variables.";
+
+    auto fake = std::make_shared<CountingS3Controller>();
+    const auto vaultId = seedDryRunS3VaultForDbTest(uniqueSuffix("dryrun_refresh_allowed"), fake);
+    vh::db::query::sync::RemoteObjectIndex::upsertFile(vaultId, remoteFile("remote.txt"), "manifest");
+
+    const auto trigger = dryRunActor(
+        90'003,
+        vh::rbac::role::Admin::PlatformOperator(90'003));
+
+    const auto result = runDryRunCommand(vaultId, trigger, true);
+
+    EXPECT_EQ(0, result.exit_code) << result.stderr_text;
+    EXPECT_EQ(1, fake->head_object_calls);
+    EXPECT_EQ(0, fake->download_to_buffer_calls);
+    EXPECT_EQ(1u, fake->requestMetrics().head_requests);
+    EXPECT_NE(std::string::npos, result.stdout_text.find("Note: --refresh-index may refresh the remote index manifest before planning."));
+    EXPECT_NE(std::string::npos, result.stdout_text.find("HEAD: 1"));
+}
+
+TEST(S3CostSafetyTest, DryRunReportsMissingAndStaleLocalIndexWithoutS3Refresh) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed dry-run auth test due to missing environment variables.";
+
+    const auto viewOnly = dryRunActor(
+        90'004,
+        vh::rbac::role::Admin::Auditor(90'004));
+
+    auto missingFake = std::make_shared<CountingS3Controller>();
+    const auto missingVaultId = seedDryRunS3VaultForDbTest(uniqueSuffix("dryrun_missing"), missingFake);
+    const auto missing = runDryRunCommand(missingVaultId, viewOnly);
+    EXPECT_EQ(2, missing.exit_code);
+    EXPECT_EQ(
+        "vault sync dry-run: no remote index is available; run reconcile, inventory import, event ingestion, or dry-run --refresh-index.",
+        missing.stderr_text);
+    EXPECT_EQ(0, missingFake->head_object_calls);
+
+    auto staleFake = std::make_shared<CountingS3Controller>();
+    const auto staleVaultId = seedDryRunS3VaultForDbTest(uniqueSuffix("dryrun_stale"), staleFake);
+    vh::db::Transactions::exec("S3CostSafetyTest::seedStaleDryRunIndex", [&](pqxx::work& txn) {
+        txn.exec(
+            "INSERT INTO remote_object_index "
+            "(vault_id, object_key, size_bytes, last_modified, etag, source, indexed_at) "
+            "VALUES ($1, $2, $3, CURRENT_TIMESTAMP - INTERVAL '2 hours', $4, $5, CURRENT_TIMESTAMP - INTERVAL '2 hours')",
+            pqxx::params{staleVaultId, "stale.txt", 1, "\"stale\"", "manifest"});
+    });
+    auto staleEngine = std::static_pointer_cast<vh::storage::CloudEngine>(
+        vh::runtime::Deps::get().storageManager->getEngine(staleVaultId));
+    staleEngine->remote_policy()->max_remote_index_age = std::chrono::seconds(60);
+
+    const auto stale = runDryRunCommand(staleVaultId, viewOnly);
+    EXPECT_EQ(2, stale.exit_code);
+    EXPECT_EQ(
+        "vault sync dry-run: remote index is stale; run dry-run --refresh-index, reconcile, inventory import, or event ingestion.",
+        stale.stderr_text);
+    EXPECT_EQ(0, staleFake->head_object_calls);
 }
 
 TEST(S3CostSafetyTest, SigV4SignedHeadersIncludeMetadataHeaders) {

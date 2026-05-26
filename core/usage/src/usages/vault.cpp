@@ -92,6 +92,9 @@ static const auto eventFileOpt = Option::Single("file", "Path to an S3 Event Not
 static const auto allowListScanFlag = Flag::WithAliases("allow_list_scan",
                                                         "Allow a full S3 ListObjectsV2 scan when no LIST budget is configured.",
                                                         {"allow-list-scan"});
+static const auto refreshIndexFlag = Flag::WithAliases("refresh_index",
+                                                       "Refresh the remote index manifest before planning. Requires sync trigger permission and may issue S3 HEAD/GET requests.",
+                                                       {"refresh-index", "refresh-remote-index"});
 
 static const auto enableFlag = Flag::Alias("enable", "Enable the override (default)", "enable");
 static const auto disableFlag = Flag::Alias("disable", "Disable the override", "disable");
@@ -480,12 +483,15 @@ static std::shared_ptr<CommandUsage> sync_reconcile(const std::weak_ptr<CommandU
 static std::shared_ptr<CommandUsage> sync_dry_run(const std::weak_ptr<CommandUsage>& parent) {
     auto cmd = buildBaseUsage(parent);
     cmd->aliases = {"dry-run", "dryrun", "plan"};
-    cmd->description = "Estimate S3 request and byte pressure for the next sync plan without executing file changes; this may refresh the remote index manifest.";
+    cmd->description = "Estimate S3 request and byte pressure for the next sync plan without executing file changes using the local remote index.";
     cmd->positionals = {vaultPos};
     cmd->optional = {owner};
+    cmd->optional_flags = {refreshIndexFlag};
     cmd->examples = {
         {"vh vault sync dry-run 42",
-         "Estimate S3 request counts, upload bytes, and body-download bytes for S3 vault 42; the dry-run may refresh the remote index."}
+         "Estimate S3 request counts, upload bytes, and body-download bytes for S3 vault 42 using the local remote index."},
+        {"vh vault sync dry-run 42 --refresh-index",
+         "Refresh the remote index manifest before planning; this may issue S3 HEAD/GET requests and requires sync trigger permission."}
     };
     return cmd;
 }
@@ -529,7 +535,7 @@ static std::shared_ptr<CommandUsage> sync(const std::weak_ptr<CommandUsage>& par
     cmd->examples = {
         {"vh vault sync 42", "Manually trigger a sync for the vault with ID 42."},
         {"vh vault sync info 42", "Show sync configuration for the vault with ID 42."},
-        {"vh vault sync dry-run 42", "Estimate the S3 request and byte pressure of the next sync; may refresh the remote index."},
+        {"vh vault sync dry-run 42", "Estimate the S3 request and byte pressure of the next sync using the local remote index."},
         {"vh vault sync reconcile 42", "Rebuild the S3 remote object index with an explicit LIST pass."},
         {"vh vault sync inventory 42 --file inventory.csv", "Import a local S3 Inventory CSV into the remote index."},
         {"vh vault sync events 42 --file s3-events.json", "Ingest S3 event notifications into the remote index."},
