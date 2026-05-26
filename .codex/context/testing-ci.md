@@ -36,6 +36,8 @@
 Toolkit scripts:
 
 - `bash .codex/scripts/verify.sh web`
+- `bash .codex/scripts/verify.sh core`
+- `bash .codex/scripts/verify.sh integration`
 - `bash .codex/scripts/verify.sh release`
 - `bash .codex/scripts/verify.sh all`
 - `bash .codex/scripts/changed.sh all`
@@ -44,7 +46,10 @@ Core-specific:
 
 - `make build`
 - `make test`
-- `core/bin/tests/install.sh --run`
+- `make run_test`
+- `make uninstall && make clean-full && make run_test`
+- `ninja -C build-ci`
+- `meson test -C build-ci --print-errorlogs`
 
 Web-specific:
 
@@ -64,3 +69,23 @@ Release/version-specific:
 ## Integration Harness Notes
 
 `core/tests/integrations/main.cpp` enables test mode paths, resets/seeds DB, starts selected runtime services, and runs CLI/FUSE integration suites. This surface is useful for validating command parsing + runtime behaviors end-to-end.
+
+Use the make target for integration validation. The clean known-good sequence is:
+
+```bash
+make uninstall
+make clean-full
+make run_test
+```
+
+`make run_test` prepares the integration test environment and runs the harness
+against `/tmp/vh_mount`. Prefer this path for FUSE dogfooding because it is
+repeatable and isolated from production/dev systemd state.
+
+Do not treat `/mnt/vaulthalla` as the integration harness mount. That is the
+production/dev mount and can retain stale systemd/FUSE state from a previous
+install if the dev install was not torn down. Use `/mnt/vaulthalla` only when
+specifically checking the production-style mount, and run `make dev` first so
+the local build is installed and the current operator UID has seeded access to
+the default admin vaults. Avoid `bin/vh/install.sh` for this purpose; it builds
+from the latest apt package rather than the current working tree.

@@ -32,10 +32,37 @@ run_release_checks() {
   eval "$RELEASE_CHECK_CMD"
 }
 
+run_core_ci_checks() {
+  [[ -n "${CORE_CI_BUILD_CMD:-}" ]] || die "CORE_CI_BUILD_CMD missing in .codex/config/project.env"
+  [[ -n "${CORE_CI_TEST_CMD:-}" ]] || die "CORE_CI_TEST_CMD missing in .codex/config/project.env"
+
+  log "Core CI build: $CORE_CI_BUILD_CMD"
+  eval "$CORE_CI_BUILD_CMD"
+
+  log "Core CI test: $CORE_CI_TEST_CMD"
+  eval "$CORE_CI_TEST_CMD"
+}
+
+run_clean_integration_checks() {
+  [[ -n "${CORE_INTEGRATION_CLEAN_CMD:-}" ]] || die "CORE_INTEGRATION_CLEAN_CMD missing in .codex/config/project.env"
+  warn "This profile intentionally tears down dev/prod and integration test state before rebuilding."
+  warn "It validates the integration harness on /tmp/vh_mount, not the production /mnt/vaulthalla mount."
+  log "Clean integration test: $CORE_INTEGRATION_CLEAN_CMD"
+  eval "$CORE_INTEGRATION_CLEAN_CMD"
+}
+
 case "$profile" in
   web)
     log "Running verification profile: web"
     run_web_checks
+    ;;
+  core)
+    log "Running verification profile: core"
+    run_core_ci_checks
+    ;;
+  integration)
+    log "Running verification profile: integration"
+    run_clean_integration_checks
     ;;
   release)
     log "Running verification profile: release"
@@ -47,7 +74,7 @@ case "$profile" in
     run_release_checks
     ;;
   *)
-    die "Unknown profile '$profile'. Use: web | release | all"
+    die "Unknown profile '$profile'. Use: web | core | integration | release | all"
     ;;
 esac
 
