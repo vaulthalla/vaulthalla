@@ -62,15 +62,11 @@ RemoteObject::RemoteObject(const uint32_t vaultId, const std::shared_ptr<fs::mod
       version_id(file ? file->remote_version_id : std::nullopt),
       event_sequencer(file ? file->remote_sequencer : std::nullopt),
       content_hash(file ? file->content_hash : std::nullopt),
-      encrypted(file
-          ? file->remote_encrypted
-              ? file->remote_encrypted
-              : ((!file->encryption_iv.empty() || file->encrypted_with_key_version > 0)
-                  ? std::make_optional(true)
-                  : std::optional<bool>{})
-          : std::nullopt),
-      encryption_iv(file ? file->encryption_iv : std::string{}),
-      encrypted_with_key_version(file ? file->encrypted_with_key_version : 0),
+      encrypted(file ? file->remote_encrypted : std::nullopt),
+      encryption_iv(file && file->remote_encrypted.value_or(false) ? file->encryption_iv : std::string{}),
+      encrypted_with_key_version(file && file->remote_encrypted.value_or(false)
+          ? file->encrypted_with_key_version
+          : 0),
       source(std::move(src)) {}
 
 std::shared_ptr<vh::fs::model::File> RemoteObject::toFile() const {

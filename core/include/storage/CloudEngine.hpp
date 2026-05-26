@@ -35,6 +35,18 @@ namespace vh::storage {
 
     class CloudEngine final : public Engine {
     public:
+        struct RemoteEncryptionResolveOptions {
+            bool trust_file_encryption_metadata{false};
+            bool allow_local_db_recovery{false};
+
+            constexpr RemoteEncryptionResolveOptions() = default;
+            constexpr RemoteEncryptionResolveOptions(
+                bool trustFileEncryptionMetadata,
+                bool allowLocalDbRecovery)
+                : trust_file_encryption_metadata(trustFileEncryptionMetadata),
+                  allow_local_db_recovery(allowLocalDbRecovery) {}
+        };
+
         CloudEngine() = default;
 
         ~CloudEngine() override = default;
@@ -66,6 +78,12 @@ namespace vh::storage {
             const std::filesystem::path &rel_path,
             const std::vector<uint8_t> &payload,
             const std::shared_ptr<vh::fs::model::File> &remoteFile = nullptr) const;
+
+        [[nodiscard]] std::vector<uint8_t> decryptRemotePayload(
+            const std::filesystem::path &rel_path,
+            const std::vector<uint8_t> &payload,
+            const std::shared_ptr<vh::fs::model::File> &remoteFile,
+            RemoteEncryptionResolveOptions options) const;
 
         void indexAndDeleteFile(const std::shared_ptr<vh::fs::model::File> &remoteFile);
 
@@ -117,6 +135,7 @@ namespace vh::storage {
 
         [[nodiscard]] RemoteEncryptionContext resolveRemoteEncryptionContext(
             const std::filesystem::path &rel_path,
-            const std::shared_ptr<vh::fs::model::File> &remoteFile = nullptr) const;
+            const std::shared_ptr<vh::fs::model::File> &remoteFile,
+            RemoteEncryptionResolveOptions options) const;
     };
 } // namespace vh::storage

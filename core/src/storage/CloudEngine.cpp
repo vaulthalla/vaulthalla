@@ -74,6 +74,34 @@ namespace {
         return haystack.find(needle) != std::string::npos;
     }
 
+    std::optional<bool> parse_encrypted_flag(std::string value) {
+        std::ranges::transform(value, value.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+        if (value == "true" || value == "1") return true;
+        if (value == "false" || value == "0") return false;
+        return std::nullopt;
+    }
+
+    std::optional<std::pair<std::string, unsigned int>> encryption_payload_from_file(
+        const std::shared_ptr<File>& file,
+        const bool trustFileEncryptionMetadata) {
+        if (!trustFileEncryptionMetadata || !file) return std::nullopt;
+        if (file->encryption_iv.empty() || file->encrypted_with_key_version == 0) return std::nullopt;
+        return std::make_pair(file->encryption_iv, file->encrypted_with_key_version);
+    }
+
+    std::optional<std::pair<std::string, unsigned int>> encryption_payload_from_headers(
+        const std::unordered_map<std::string, std::string>& headers) {
+        std::string iv_b64;
+        unsigned int key_version = 0;
+        if (const auto iv = header_value(headers, META_VH_IV)) iv_b64 = *iv;
+        if (const auto version = header_value(headers, META_VH_KEY_VERSION))
+            key_version = std::stoul(*version);
+        if (iv_b64.empty() || key_version == 0) return std::nullopt;
+        return std::make_pair(iv_b64, key_version);
+    }
+
     fs::path resolvedBackingPath(const CloudEngine& engine, const std::shared_ptr<File>& file) {
         if (!file) throw std::invalid_argument("[CloudStorageEngine] Invalid file");
         if (file->backing_path.is_absolute()) return file->backing_path;
@@ -156,7 +184,15 @@ std::vector<uint8_t> CloudEngine::decryptRemotePayload(
     const fs::path& rel_path,
     const std::vector<uint8_t>& payload,
     const std::shared_ptr<File>& remoteFile) const {
-    const auto context = resolveRemoteEncryptionContext(rel_path, remoteFile);
+    return decryptRemotePayload(rel_path, payload, remoteFile, RemoteEncryptionResolveOptions{});
+}
+
+std::vector<uint8_t> CloudEngine::decryptRemotePayload(
+    const fs::path& rel_path,
+    const std::vector<uint8_t>& payload,
+    const std::shared_ptr<File>& remoteFile,
+    const RemoteEncryptionResolveOptions options) const {
+    const auto context = resolveRemoteEncryptionContext(rel_path, remoteFile, options);
     if (!context.encrypted) return payload;
     if (!context.payload)
         throw std::runtime_error("[CloudStorageEngine] No IV found for encrypted file: " + rel_path.string());
@@ -179,7 +215,13 @@ std::shared_ptr<File> CloudEngine::downloadFileWithRemoteMetadata(
     const std::shared_ptr<File>& remoteFile) {
     auto buffer = downloadToBuffer(rel_path);
 
-    buffer = decryptRemotePayload(rel_path, buffer, remoteFile);
+    buffer = decryptRemotePayload(
+        rel_path,
+        buffer,
+        remoteFile,
+        remoteFile
+            ? RemoteEncryptionResolveOptions{true, true}
+            : RemoteEncryptionResolveOptions{});
 
     const auto owner = db::query::identities::User::getUserById(vault->owner_id);
     if (!owner) throw std::runtime_error("[CloudStorageEngine] Vault owner not found for file creation");
@@ -337,7 +379,15 @@ void CloudEngine::applyRemoteIndexMutation(const std::vector<Action>& plan) cons
             switch (action.type) {
             case ActionType::Upload:
                 if (action.local) {
-                    db::query::sync::RemoteObjectIndex::upsertFile(vault->id, action.local);
+                    auto indexed = std::make_shared<File>(*action.local);
+                    if (s3Vault()->encrypt_upstream) {
+                        indexed->remote_encrypted = true;
+                    } else {
+                        indexed->remote_encrypted = false;
+                        indexed->encryption_iv.clear();
+                        indexed->encrypted_with_key_version = 0;
+                    }
+                    db::query::sync::RemoteObjectIndex::upsertFile(vault->id, indexed);
                     mutated = true;
                 }
                 break;
@@ -430,7 +480,7 @@ std::string CloudEngine::getRemoteContentHash(const fs::path& rel_path) const {
 }
 
 bool CloudEngine::remoteFileIsEncrypted(const fs::path& rel_path) const {
-    return resolveRemoteEncryptionContext(rel_path).encrypted;
+    return resolveRemoteEncryptionContext(rel_path, nullptr, RemoteEncryptionResolveOptions{}).encrypted;
 }
 
 std::vector<std::shared_ptr<Directory>> CloudEngine::extractDirectories(
@@ -470,7 +520,7 @@ std::vector<std::shared_ptr<Directory>> CloudEngine::extractDirectories(
 }
 
 std::optional<std::pair<std::string, unsigned int>> CloudEngine::getRemoteIVBase64AndVersion(const fs::path& rel_path) const {
-    const auto context = resolveRemoteEncryptionContext(rel_path);
+    const auto context = resolveRemoteEncryptionContext(rel_path, nullptr, RemoteEncryptionResolveOptions{});
     if (!context.payload) {
         log::Registry::cloud()->error("[CloudStorageEngine] No IV or key version found for encrypted file: {}", rel_path.string());
         return std::nullopt;
@@ -481,46 +531,69 @@ std::optional<std::pair<std::string, unsigned int>> CloudEngine::getRemoteIVBase
 
 CloudEngine::RemoteEncryptionContext CloudEngine::resolveRemoteEncryptionContext(
     const fs::path& rel_path,
-    const std::shared_ptr<File>& remoteFile) const {
-    RemoteEncryptionContext context;
+    const std::shared_ptr<File>& remoteFile,
+    const RemoteEncryptionResolveOptions options) const {
+    const auto filePayload = encryption_payload_from_file(remoteFile, options.trust_file_encryption_metadata);
 
-    if (remoteFile) {
-        context.encrypted = remoteFile->remote_encrypted.value_or(false);
-        if (!remoteFile->encryption_iv.empty() && remoteFile->encrypted_with_key_version > 0) {
-            context.encrypted = true;
-            context.payload = std::make_pair(remoteFile->encryption_iv, remoteFile->encrypted_with_key_version);
-            return context;
+    bool headLoaded = false;
+    std::optional<std::unordered_map<std::string, std::string>> head;
+    const auto loadHead = [&]() -> const std::optional<std::unordered_map<std::string, std::string>>& {
+        if (!headLoaded) {
+            head = s3Provider_->getHeadObject(stripLeadingSlash(rel_path));
+            headLoaded = true;
         }
-    }
+        return head;
+    };
 
-    if (const auto head = s3Provider_->getHeadObject(stripLeadingSlash(rel_path))) {
-        if (const auto encrypted = header_value(*head, META_VH_ENCRYPTED)) {
-            auto value = *encrypted;
-            std::ranges::transform(value, value.begin(), [](unsigned char c) {
-                return static_cast<char>(std::tolower(c));
-            });
-            context.encrypted = context.encrypted || value == "true" || value == "1";
-        }
+    const auto localPayload = [&]() -> std::optional<std::pair<std::string, unsigned int>> {
+        if (!options.allow_local_db_recovery) return std::nullopt;
+        return db::query::fs::File::getEncryptionIVAndVersion(vault->id, rel_path);
+    };
 
-        std::string iv_b64;
-        unsigned int key_version = 0;
-        if (const auto iv = header_value(*head, META_VH_IV)) iv_b64 = *iv;
-        if (const auto version = header_value(*head, META_VH_KEY_VERSION))
-            key_version = std::stoul(*version);
-
-        if (!iv_b64.empty() && key_version > 0) {
-            context.encrypted = true;
-            context.payload = std::make_pair(iv_b64, key_version);
-            return context;
-        }
-    }
-
-    if (const auto localPayload = db::query::fs::File::getEncryptionIVAndVersion(vault->id, rel_path)) {
+    const auto encryptedWith = [](std::optional<std::pair<std::string, unsigned int>> payload = std::nullopt) {
+        RemoteEncryptionContext context;
         context.encrypted = true;
-        context.payload = localPayload;
+        context.payload = std::move(payload);
+        return context;
+    };
+
+    if (remoteFile && remoteFile->remote_encrypted.has_value()) {
+        if (!*remoteFile->remote_encrypted) return {};
+        if (filePayload) return encryptedWith(filePayload);
+
+        if (const auto& loadedHead = loadHead()) {
+            if (const auto flag = header_value(*loadedHead, META_VH_ENCRYPTED)) {
+                const auto encrypted = parse_encrypted_flag(*flag);
+                if (encrypted && !*encrypted) return {};
+            }
+            if (const auto headPayload = encryption_payload_from_headers(*loadedHead))
+                return encryptedWith(headPayload);
+        }
+
+        if (const auto recoveryPayload = localPayload()) return encryptedWith(recoveryPayload);
+        return encryptedWith();
     }
 
-    return context;
+    if (const auto& loadedHead = loadHead()) {
+        if (const auto flag = header_value(*loadedHead, META_VH_ENCRYPTED)) {
+            if (const auto encrypted = parse_encrypted_flag(*flag)) {
+                if (!*encrypted) return {};
+                if (const auto headPayload = encryption_payload_from_headers(*loadedHead))
+                    return encryptedWith(headPayload);
+                if (filePayload) return encryptedWith(filePayload);
+                if (const auto recoveryPayload = localPayload()) return encryptedWith(recoveryPayload);
+                return encryptedWith();
+            }
+        }
+
+        if (const auto headPayload = encryption_payload_from_headers(*loadedHead))
+            return encryptedWith(headPayload);
+    }
+
+    if (filePayload) return encryptedWith(filePayload);
+    if (const auto recoveryPayload = localPayload()) return encryptedWith(recoveryPayload);
+
+    return {};
 }
 
 void CloudEngine::purge(const fs::path& rel_path) const {

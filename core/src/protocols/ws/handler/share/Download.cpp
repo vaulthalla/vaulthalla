@@ -66,7 +66,7 @@ public:
             auto cloud = std::dynamic_pointer_cast<vh::storage::CloudEngine>(engine);
             if (!cloud) throw std::runtime_error("Share download cloud engine is unavailable");
             auto payload = cloud->downloadToBuffer(file->path);
-            return cloud->decryptRemotePayload(file->path, payload, file);
+            return cloud->decryptRemotePayload(file->path, payload, file, {});
         }
 
         return engine->decrypt(file);
