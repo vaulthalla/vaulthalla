@@ -106,7 +106,9 @@ static void updateFile(pqxx::work& txn, const std::shared_ptr<File>& file) {
     p.append(file->content_hash);
     p.append(file->encryption_iv);
     p.append(file->encrypted_with_key_version);
+    p.append(file->last_modified_by);
 
+    file->updated_at = std::time(nullptr);
     txn.exec(pqxx::prepped{"update_file_only"}, p);
 
     std::optional<unsigned int> parentId = file->parent_id;
@@ -220,6 +222,7 @@ int Filesystem::mkdir(const MkdirContext& ctx) {
             dir->is_hidden = !dir->name.empty() && dir->name.front() == '.' && !dir->name.starts_with("..");
             dir->is_system = false;
             dir->created_by = dir->last_modified_by = userIdFor(ctx.user);
+            dir->created_at = dir->updated_at = std::time(nullptr);
 
             dir->id = db::query::fs::Directory::upsertDirectory(dir);
             cache->cacheEntry(dir);
@@ -529,6 +532,7 @@ int Filesystem::copy(const std::filesystem::path& from,
             copied->base32_alias = id::Generator({ .namespace_token = copied->name }).generate();
             copied->backing_path = parent->backing_path / copied->base32_alias;
             copied->created_by = copied->last_modified_by = userId;
+            copied->created_at = copied->updated_at = std::time(nullptr);
             copied->parent_id = parent->id;
             copied->inode = cache->getOrAssignInode(to);
             copied->is_hidden = !copied->name.empty() && copied->name.front() == '.' && !copied->name.starts_with("..");
@@ -549,6 +553,7 @@ int Filesystem::copy(const std::filesystem::path& from,
             copied->base32_alias = id::Generator({ .namespace_token = copied->name }).generate();
             copied->backing_path = parent->backing_path / copied->base32_alias;
             copied->created_by = copied->last_modified_by = userId;
+            copied->created_at = copied->updated_at = std::time(nullptr);
             copied->parent_id = parent->id;
             copied->inode = cache->getOrAssignInode(to);
             copied->is_hidden = !copied->name.empty() && copied->name.front() == '.' && !copied->name.starts_with("..");
@@ -565,6 +570,7 @@ int Filesystem::copy(const std::filesystem::path& from,
             copied->base32_alias = id::Generator({ .namespace_token = copied->name }).generate();
             copied->backing_path = parent->backing_path / copied->base32_alias;
             copied->created_by = copied->last_modified_by = userId;
+            copied->created_at = copied->updated_at = std::time(nullptr);
             copied->parent_id = parent->id;
             copied->inode = cache->getOrAssignInode(to);
             copied->is_hidden = !copied->name.empty() && copied->name.front() == '.' && !copied->name.starts_with("..");
@@ -667,6 +673,7 @@ std::shared_ptr<File> Filesystem::createFile(const NewFileContext& ctx) {
 
         f->content_hash = hash::blake2b(entry->backing_path);
         f->last_modified_by = userIdFor(ctx.user);
+        f->updated_at = std::time(nullptr);
         db::query::fs::File::updateFile(f);
 
         return f;
@@ -694,6 +701,7 @@ std::shared_ptr<File> Filesystem::createFile(const NewFileContext& ctx) {
     f->group_gid = linuxGidFor(ctx.group);
     f->is_hidden = ctx.path.filename().string().starts_with('.');
     f->created_by = f->last_modified_by = userIdFor(ctx.user);
+    f->created_at = f->updated_at = std::time(nullptr);
     f->inode = std::make_optional(cache->getOrAssignInode(ctx.fuse_path));
     f->mime_type = ctx.buffer.empty() ? inferMimeTypeFromPath(ctx.path) : Magic::get_mime_type_from_buffer(ctx.buffer);
     f->size_bytes = ctx.buffer.size();
@@ -1025,6 +1033,7 @@ int Filesystem::handleRename(const RenameContext& ctx) {
         entry->fuse_path = ctx.to;
         entry->parent_id = parent->id;
         entry->created_by = entry->last_modified_by = userIdFor(ctx.user);
+        entry->updated_at = std::time(nullptr);
         entry->backing_path = parent->backing_path / entry->base32_alias;
 
         if (entry->isDirectory()) {

@@ -1,4 +1,4 @@
-import { FSEntry } from '@/models/fsEntry'
+import { FSEntry, FSEntryWire, normalizeFsEntryTimestamps } from '@/models/fsEntry'
 
 export interface IDirectory extends FSEntry {
   size_bytes: number
@@ -22,7 +22,7 @@ export class Directory implements IDirectory {
   subdirectory_count: number = 0
   last_modified: Date = new Date()
 
-  constructor(data?: Partial<IDirectory>) {
-    if (data) Object.assign(this, data)
+  constructor(data?: FSEntryWire<Partial<IDirectory>>) {
+    if (data) Object.assign(this, normalizeFsEntryTimestamps(data))
   }
 }

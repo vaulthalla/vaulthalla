@@ -10,9 +10,15 @@ void vh::db::Connection::initPreparedFiles() const {
                    "content_hash = EXCLUDED.content_hash");
 
     conn_->prepare("update_file_only",
+                   "WITH updated_entry AS ("
+                   "  UPDATE fs_entry "
+                   "  SET last_modified_by = $7, updated_at = NOW() "
+                   "  WHERE id = $1 "
+                   "  RETURNING id"
+                   ") "
                    "UPDATE files SET size_bytes = $2, mime_type = $3, content_hash = $4, "
                    "encryption_iv = $5, encrypted_with_key_version = $6 "
-                   "WHERE fs_entry_id = $1");
+                   "WHERE fs_entry_id = (SELECT id FROM updated_entry)");
 
     conn_->prepare("upsert_file_full",
                    "WITH upsert_entry AS ("

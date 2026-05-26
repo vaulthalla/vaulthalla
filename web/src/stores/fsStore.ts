@@ -1280,7 +1280,7 @@ export const useFSStore = create<FsStore>()(
 
         try {
           const response = await ws.sendCommand('fs.dir.list', { vault_id, path })
-          return response.files
+          return response.files.map(wireEntryToFsEntry)
         } catch (error) {
           console.error('Error listing directory:', error)
           throw error

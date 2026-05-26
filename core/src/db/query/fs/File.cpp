@@ -11,6 +11,7 @@
 
 #include <optional>
 #include <stdexcept>
+#include <ctime>
 
 namespace vh::db::query::fs {
 
@@ -19,6 +20,8 @@ using vh::db::encoding::to_utf8_string;
 unsigned int File::upsertFile(const FilePtr& file) {
     if (!file) throw std::invalid_argument("File cannot be null");
     if (!file->path.string().starts_with("/")) file->setPath("/" + to_utf8_string(file->path.u8string()));
+    if (file->created_at == 0) file->created_at = std::time(nullptr);
+    if (file->updated_at == 0) file->updated_at = file->created_at;
 
     return Transactions::exec("File::addFile", [&](pqxx::work& txn) {
         const auto exists = txn.exec(pqxx::prepped{"fs_entry_exists_by_inode"}, file->inode).one_field().as<bool>();
@@ -87,7 +90,9 @@ void File::updateFile(const FilePtr& file) {
         p.append(file->content_hash);
         p.append(file->encryption_iv);
         p.append(file->encrypted_with_key_version);
+        p.append(file->last_modified_by);
 
+        file->updated_at = std::time(nullptr);
         txn.exec(pqxx::prepped{"update_file_only"}, p);
         txn.exec(
             pqxx::prepped{"insert_file_activity"},

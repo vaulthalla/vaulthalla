@@ -1,4 +1,4 @@
-import { FSEntry } from '@/models/fsEntry'
+import { FSEntry, FSEntryWire, normalizeFsEntryTimestamps } from '@/models/fsEntry'
 
 export interface IFile extends FSEntry {
   size_bytes: number
@@ -18,8 +18,8 @@ export class File implements IFile {
   path?: string
   mime_type?: string
 
-  constructor(data?: Partial<IFile>) {
-    if (data) Object.assign(this, data)
+  constructor(data?: FSEntryWire<Partial<IFile>>) {
+    if (data) Object.assign(this, normalizeFsEntryTimestamps(data))
   }
 }
 
