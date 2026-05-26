@@ -85,7 +85,27 @@ repeatable and isolated from production/dev systemd state.
 Do not treat `/mnt/vaulthalla` as the integration harness mount. That is the
 production/dev mount and can retain stale systemd/FUSE state from a previous
 install if the dev install was not torn down. Use `/mnt/vaulthalla` only when
-specifically checking the production-style mount, and run `make dev` first so
-the local build is installed and the current operator UID has seeded access to
-the default admin vaults. Avoid `bin/vh/install.sh` for this purpose; it builds
-from the latest apt package rather than the current working tree.
+specifically checking the production-style mount.
+
+If `/mnt/vaulthalla` dogfooding is required, the working-tree install path is:
+
+```bash
+make dev
+id -nG | grep -qw vaulthalla
+vh setup assign-admin
+```
+
+Then use `vh` normally before making FUSE calls. The CLI call after `make dev`
+associates the current operator UID with the admin user; on this workspace that
+UID is normally `1000`.
+
+This manual path has a real agent reliability caveat. If the `vaulthalla` group
+did not exist when the current shell session started, the install script may add
+the user to the group but the current shell will not observe that membership
+until a relogin/new session. Most sessions already have the group and work fine,
+but production-mount smoke failures can be environmental even when the FUSE
+integration harness passes. Prefer `make run_test` and `/tmp/vh_mount` for
+reproducible FUSE validation.
+
+Avoid `bin/vh/install.sh` for working-tree dogfooding; it builds from the latest
+apt package rather than the current checkout.
