@@ -26,6 +26,8 @@ ValidateResult Controller::validateAPICredentials() const {
         return {false, errors};
 
     // --- Live probe: ListBuckets ---
+    recordRequest(RequestKind::List);
+
     const auto rstrip = [](std::string s) {
         while (!s.empty() && s.back() == '/') s.pop_back();
         return s;
@@ -64,6 +66,8 @@ ValidateResult Controller::validateAPICredentials() const {
 }
 
 bool Controller::isBucketEmpty() const {
+    recordRequest(RequestKind::List);
+
     const auto rstrip = [](std::string s){ while(!s.empty() && s.back()=='/') s.pop_back(); return s; };
     const std::string base = rstrip(apiKey_->endpoint);
     const std::string path = "/" + bucket_;          // canonical URI

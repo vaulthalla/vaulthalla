@@ -5,10 +5,13 @@
 #include "fs/model/File.hpp"
 #include "sync/Cloud.hpp"
 #include "storage/Engine.hpp"
+#include "storage/CloudEngine.hpp"
 #include "sync/model/Event.hpp"
+#include "storage/s3/Controller.hpp"
 
 #include <sstream>
 #include <stdexcept>
+#include <cctype>
 #include <nlohmann/json.hpp>
 
 using namespace vh::sync::model;
@@ -16,10 +19,172 @@ using namespace vh::fs::model;
 using namespace vh::concurrency;
 using namespace vh::db::encoding;
 
+namespace {
+    std::optional<uint64_t> optional_uint64(const pqxx::row& row, const char* name) {
+        const auto field = row[name];
+        if (field.is_null()) return std::nullopt;
+        return field.as<uint64_t>();
+    }
+
+    std::optional<std::chrono::seconds> optional_seconds(const pqxx::row& row, const char* name) {
+        const auto raw = optional_uint64(row, name);
+        if (!raw) return std::nullopt;
+        return std::chrono::seconds(*raw);
+    }
+
+    void add_budget_hash(std::string& hash, const char* name, const std::optional<uint64_t>& value) {
+        hash += ";";
+        hash += name;
+        hash += "=";
+        hash += value ? std::to_string(*value) : "null";
+    }
+
+    void add_duration_hash(std::string& hash, const char* name, const std::optional<std::chrono::seconds>& value) {
+        hash += ";";
+        hash += name;
+        hash += "=";
+        hash += value ? std::to_string(value->count()) : "null";
+    }
+
+    std::optional<uint64_t> json_budget_value(const nlohmann::json& j, const char* name) {
+        if (!j.contains(name) || j.at(name).is_null()) return std::nullopt;
+        return j.at(name).get<uint64_t>();
+    }
+
+    nlohmann::json json_budget_value(const std::optional<uint64_t>& value) {
+        if (!value) return nullptr;
+        return *value;
+    }
+
+    std::string budgetToString(const std::optional<uint64_t>& value) {
+        return value ? std::to_string(*value) : "unlimited";
+    }
+
+    std::string durationToString(const std::optional<std::chrono::seconds>& value) {
+        return value ? intervalToString(*value) : "unlimited";
+    }
+
+    bool sameBudgetValue(const std::optional<uint64_t>& a, const std::optional<uint64_t>& b) {
+        return a == b;
+    }
+
+    bool sameBudget(
+        const vh::storage::s3::S3RequestBudget& a,
+        const vh::storage::s3::S3RequestBudget& b) {
+        return sameBudgetValue(a.max_list_requests, b.max_list_requests) &&
+               sameBudgetValue(a.max_head_requests, b.max_head_requests) &&
+               sameBudgetValue(a.max_get_requests, b.max_get_requests) &&
+               sameBudgetValue(a.max_put_requests, b.max_put_requests) &&
+               sameBudgetValue(a.max_copy_requests, b.max_copy_requests) &&
+               sameBudgetValue(a.max_delete_requests, b.max_delete_requests) &&
+               sameBudgetValue(a.max_downloaded_bytes, b.max_downloaded_bytes);
+    }
+}
+
+vh::storage::s3::S3RequestBudget vh::sync::model::s3RequestBudgetForPreset(const S3BudgetPreset preset) {
+    using Budget = vh::storage::s3::S3RequestBudget;
+    switch (preset) {
+    case S3BudgetPreset::Conservative:
+        return Budget{
+            .max_list_requests = 10,
+            .max_head_requests = 100,
+            .max_get_requests = 100,
+            .max_put_requests = 100,
+            .max_copy_requests = 20,
+            .max_delete_requests = 100,
+            .max_downloaded_bytes = 1024ull * 1024ull * 1024ull
+        };
+    case S3BudgetPreset::Balanced:
+        return Budget{
+            .max_list_requests = 100,
+            .max_head_requests = 1000,
+            .max_get_requests = 1000,
+            .max_put_requests = 1000,
+            .max_copy_requests = 100,
+            .max_delete_requests = 1000,
+            .max_downloaded_bytes = 10ull * 1024ull * 1024ull * 1024ull
+        };
+    case S3BudgetPreset::Bulk:
+        return Budget{
+            .max_list_requests = 1000,
+            .max_head_requests = 10000,
+            .max_get_requests = 10000,
+            .max_put_requests = 10000,
+            .max_copy_requests = 1000,
+            .max_delete_requests = 10000,
+            .max_downloaded_bytes = 100ull * 1024ull * 1024ull * 1024ull
+        };
+    case S3BudgetPreset::Unlimited:
+        return Budget{};
+    }
+    return Budget{};
+}
+
+S3BudgetPreset vh::sync::model::s3BudgetPresetFromString(const std::string& str) {
+    if (str == "conservative") return S3BudgetPreset::Conservative;
+    if (str == "balanced") return S3BudgetPreset::Balanced;
+    if (str == "bulk") return S3BudgetPreset::Bulk;
+    if (str == "unlimited") return S3BudgetPreset::Unlimited;
+    throw std::invalid_argument("Unknown S3 budget preset: " + str);
+}
+
+std::string vh::sync::model::to_string(const S3BudgetPreset preset) {
+    switch (preset) {
+    case S3BudgetPreset::Conservative: return "conservative";
+    case S3BudgetPreset::Balanced: return "balanced";
+    case S3BudgetPreset::Bulk: return "bulk";
+    case S3BudgetPreset::Unlimited: return "unlimited";
+    }
+    return "unknown";
+}
+
+bool vh::sync::model::s3BudgetIsUnlimited(const vh::storage::s3::S3RequestBudget& budget) {
+    return sameBudget(budget, s3RequestBudgetForPreset(S3BudgetPreset::Unlimited));
+}
+
+std::string vh::sync::model::s3BudgetPresetName(const vh::storage::s3::S3RequestBudget& budget) {
+    for (const auto preset : {
+             S3BudgetPreset::Conservative,
+             S3BudgetPreset::Balanced,
+             S3BudgetPreset::Bulk,
+             S3BudgetPreset::Unlimited
+         }) {
+        if (sameBudget(budget, s3RequestBudgetForPreset(preset))) return to_string(preset);
+    }
+    return "custom";
+}
+
+std::optional<std::chrono::seconds> vh::sync::model::remoteIndexAgeFromString(const std::string& str) {
+    const auto normalized = [&] {
+        std::string out;
+        out.reserve(str.size());
+        for (const auto c : str) {
+            if (!std::isspace(static_cast<unsigned char>(c)))
+                out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+        }
+        return out;
+    }();
+    if (normalized.empty() || normalized == "none" || normalized == "null" || normalized == "unlimited")
+        return std::nullopt;
+    return parseSyncInterval(str);
+}
+
+RemotePolicy::RemotePolicy() {
+    s3_request_budget = s3RequestBudgetForPreset(S3BudgetPreset::Balanced);
+}
+
 RemotePolicy::RemotePolicy(const pqxx::row& row)
     : Policy(row),
       strategy(strategyFromString(row.at("strategy").as<std::string>())),
       conflict_policy(rsConflictPolicyFromString(row.at("conflict_policy").as<std::string>())) {
+    s3_request_budget.max_list_requests = optional_uint64(row, "s3_budget_list_requests");
+    s3_request_budget.max_head_requests = optional_uint64(row, "s3_budget_head_requests");
+    s3_request_budget.max_get_requests = optional_uint64(row, "s3_budget_get_requests");
+    s3_request_budget.max_put_requests = optional_uint64(row, "s3_budget_put_requests");
+    s3_request_budget.max_copy_requests = optional_uint64(row, "s3_budget_copy_requests");
+    s3_request_budget.max_delete_requests = optional_uint64(row, "s3_budget_delete_requests");
+    s3_request_budget.max_downloaded_bytes = optional_uint64(row, "s3_budget_downloaded_bytes");
+    max_remote_index_age = optional_seconds(row, "max_remote_index_age_seconds");
     rehash_config();
 }
 
@@ -29,6 +194,14 @@ void RemotePolicy::rehash_config() {
                   ";enabled=" + (enabled ? "true" : "false") +
                   ";strategy=" + to_string(strategy) +
                   ";conflict_policy=" + to_string(conflict_policy);
+    add_budget_hash(config_hash, "s3_budget_list_requests", s3_request_budget.max_list_requests);
+    add_budget_hash(config_hash, "s3_budget_head_requests", s3_request_budget.max_head_requests);
+    add_budget_hash(config_hash, "s3_budget_get_requests", s3_request_budget.max_get_requests);
+    add_budget_hash(config_hash, "s3_budget_put_requests", s3_request_budget.max_put_requests);
+    add_budget_hash(config_hash, "s3_budget_copy_requests", s3_request_budget.max_copy_requests);
+    add_budget_hash(config_hash, "s3_budget_delete_requests", s3_request_budget.max_delete_requests);
+    add_budget_hash(config_hash, "s3_budget_downloaded_bytes", s3_request_budget.max_downloaded_bytes);
+    add_duration_hash(config_hash, "max_remote_index_age_seconds", max_remote_index_age);
 }
 
 bool RemotePolicy::resolve_conflict(const std::shared_ptr<Conflict>& conflict) const {
@@ -192,6 +365,7 @@ void RemotePolicy::preflightSpaceForPlan(const std::weak_ptr<Cloud>& ctx, const 
 
     for (const auto& a : plan) {
         if (a.type != ActionType::Download) continue;
+        if (a.freeAfterDownload) continue;
 
         // Prefer remote artifact when present; fall back to local if your planner uses that.
         if (a.remote) downloads.push_back(a.remote);
@@ -199,6 +373,29 @@ void RemotePolicy::preflightSpaceForPlan(const std::weak_ptr<Cloud>& ctx, const 
     }
 
     if (downloads.empty()) return;
+
+    uintmax_t requiredBodyDownloadBytes = 0;
+    for (const auto& file : downloads) {
+        if (!file) continue;
+        requiredBodyDownloadBytes += file->size_bytes;
+    }
+
+    if (s3_request_budget.max_downloaded_bytes) {
+        const auto metrics = task->cloudEngine()->s3RequestMetrics();
+        const auto used = metrics.downloaded_bytes;
+        const auto limit = *s3_request_budget.max_downloaded_bytes;
+        const auto remaining = used >= limit ? uint64_t{0} : limit - used;
+        if (requiredBodyDownloadBytes > remaining) {
+            const auto reason =
+                "S3 downloaded-byte budget would be exceeded by planned body downloads. Planned: " +
+                std::to_string(requiredBodyDownloadBytes) + ", Remaining: " + std::to_string(remaining);
+            if (task->event) {
+                task->event->status = Event::Status::STALLED;
+                task->event->stall_reason = reason;
+            }
+            throw vh::storage::s3::RequestBudgetExceeded(reason);
+        }
+    }
 
     // Decide enforcement strictness by strategy
     // - Sync: hard requirement (Safe behavior)
@@ -223,10 +420,7 @@ void RemotePolicy::preflightSpaceForPlan(const std::weak_ptr<Cloud>& ctx, const 
     } else {
         // Fallback: sum sizes. Less accurate (doesn't include temp overhead),
         // but deterministic and safe enough as a baseline.
-        for (const auto& f : downloads) {
-            if (!f) continue;
-            required += f->size_bytes;
-        }
+        required = requiredBodyDownloadBytes;
     }
 
     const auto available = task->engine->freeSpace();
@@ -252,12 +446,37 @@ void vh::sync::model::to_json(nlohmann::json& j, const RemotePolicy& s) {
     to_json(j, static_cast<const Policy&>(s));
     j["strategy"] = to_string(s.strategy);
     j["conflict_policy"] = to_string(s.conflict_policy);
+    j["s3_request_budget"] = {
+        {"list_requests", json_budget_value(s.s3_request_budget.max_list_requests)},
+        {"head_requests", json_budget_value(s.s3_request_budget.max_head_requests)},
+        {"get_requests", json_budget_value(s.s3_request_budget.max_get_requests)},
+        {"put_requests", json_budget_value(s.s3_request_budget.max_put_requests)},
+        {"copy_requests", json_budget_value(s.s3_request_budget.max_copy_requests)},
+        {"delete_requests", json_budget_value(s.s3_request_budget.max_delete_requests)},
+        {"downloaded_bytes", json_budget_value(s.s3_request_budget.max_downloaded_bytes)}
+    };
+    j["max_remote_index_age_seconds"] = s.max_remote_index_age ? nlohmann::json(s.max_remote_index_age->count()) : nlohmann::json(nullptr);
 }
 
 void vh::sync::model::from_json(const nlohmann::json& j, RemotePolicy& s) {
     from_json(j, static_cast<Policy&>(s));
     s.strategy = strategyFromString(j.at("strategy").get<std::string>());
     s.conflict_policy = rsConflictPolicyFromString(j.at("conflict_policy").get<std::string>());
+    if (j.contains("s3_request_budget") && j.at("s3_request_budget").is_object()) {
+        const auto& budget = j.at("s3_request_budget");
+        s.s3_request_budget.max_list_requests = json_budget_value(budget, "list_requests");
+        s.s3_request_budget.max_head_requests = json_budget_value(budget, "head_requests");
+        s.s3_request_budget.max_get_requests = json_budget_value(budget, "get_requests");
+        s.s3_request_budget.max_put_requests = json_budget_value(budget, "put_requests");
+        s.s3_request_budget.max_copy_requests = json_budget_value(budget, "copy_requests");
+        s.s3_request_budget.max_delete_requests = json_budget_value(budget, "delete_requests");
+        s.s3_request_budget.max_downloaded_bytes = json_budget_value(budget, "downloaded_bytes");
+    }
+    if (j.contains("max_remote_index_age_seconds")) {
+        if (j.at("max_remote_index_age_seconds").is_null()) s.max_remote_index_age = std::nullopt;
+        else s.max_remote_index_age = std::chrono::seconds(j.at("max_remote_index_age_seconds").get<int64_t>());
+    }
+    s.rehash_config();
 }
 
 std::string vh::sync::model::to_string(const RemotePolicy::Strategy& s) {
@@ -296,12 +515,29 @@ RemotePolicy::ConflictPolicy vh::sync::model::rsConflictPolicyFromString(const s
 
 std::string vh::sync::model::to_string(const std::shared_ptr<RemotePolicy>& sync) {
     if (!sync) return "null";
+    const auto unlimitedBudgetWarning = s3BudgetIsUnlimited(sync->s3_request_budget)
+        ? std::string(
+              "    Warning: unlimited/legacy budget; no S3 request or downloaded-byte guardrails are enforced. "
+              "Run 'vh vault sync set <vault> --s3-budget-preset balanced' to enable them.\n")
+        : std::string{};
+
     return "Remote Vault Sync Configuration:\n"
            "  Vault ID: " + std::to_string(sync->vault_id) + "\n"
            "  Interval: " + intervalToString(sync->interval) + "\n"
            "  Enabled: " + (sync->enabled ? "true" : "false") + "\n"
            "  Strategy: " + to_string(sync->strategy) + "\n"
            "  Conflict Policy: " + to_string(sync->conflict_policy) + "\n"
+           "  S3 Request Budget:\n"
+           "    Preset: " + s3BudgetPresetName(sync->s3_request_budget) + "\n"
+           + unlimitedBudgetWarning +
+           "    LIST: " + budgetToString(sync->s3_request_budget.max_list_requests) + "\n"
+           "    HEAD: " + budgetToString(sync->s3_request_budget.max_head_requests) + "\n"
+           "    GET: " + budgetToString(sync->s3_request_budget.max_get_requests) + "\n"
+           "    PUT: " + budgetToString(sync->s3_request_budget.max_put_requests) + "\n"
+           "    COPY: " + budgetToString(sync->s3_request_budget.max_copy_requests) + "\n"
+           "    DELETE: " + budgetToString(sync->s3_request_budget.max_delete_requests) + "\n"
+           "    Downloaded Bytes: " + budgetToString(sync->s3_request_budget.max_downloaded_bytes) + "\n"
+           "  Max Remote Index Age: " + durationToString(sync->max_remote_index_age) + "\n"
            "  Last Sync At: " + timestampToString(sync->last_sync_at) + "\n"
            "  Last Success At: " + timestampToString(sync->last_success_at) + "\n"
            "  Created At: " + timestampToString(sync->created_at) + "\n"

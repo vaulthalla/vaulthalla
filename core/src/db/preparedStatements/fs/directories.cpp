@@ -2,9 +2,15 @@
 
 void vh::db::Connection::initPreparedDirectories() const {
     conn_->prepare("update_dir_stats",
-                   "UPDATE directories "
-                   "SET size_bytes = size_bytes + $2, file_count = file_count + $3, subdirectory_count = subdirectory_count + $4 "
-                   "WHERE fs_entry_id = $1 RETURNING file_count");
+                   "WITH updated_stats AS ("
+                   "  UPDATE directories "
+                   "  SET size_bytes = size_bytes + $2, file_count = file_count + $3, subdirectory_count = subdirectory_count + $4 "
+                   "  WHERE fs_entry_id = $1 RETURNING fs_entry_id, file_count"
+                   "), updated_entry AS ("
+                   "  UPDATE fs_entry SET updated_at = NOW() "
+                   "  WHERE id = (SELECT fs_entry_id FROM updated_stats)"
+                   ") "
+                   "SELECT file_count FROM updated_stats");
 
     conn_->prepare("get_dir_file_count", "SELECT file_count FROM directories WHERE fs_entry_id = $1");
 
@@ -95,6 +101,7 @@ void vh::db::Connection::initPreparedDirectories() const {
                    "    f.parent_id, "
                    "    f.name, "
                    "    f.base32_alias, "
+                   "    f.updated_at, "
                    "    d.size_bytes, "
                    "    d.file_count, "
                    "    d.subdirectory_count "
@@ -107,6 +114,7 @@ void vh::db::Connection::initPreparedDirectories() const {
                    "    f.parent_id, "
                    "    f.name, "
                    "    f.base32_alias, "
+                   "    f.updated_at, "
                    "    d.size_bytes, "
                    "    d.file_count, "
                    "    d.subdirectory_count "

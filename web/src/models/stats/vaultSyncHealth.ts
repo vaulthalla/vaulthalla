@@ -20,6 +20,16 @@ export interface IVaultSyncHealth {
   sync_interval_seconds: number
   configured_strategy: string | null
   conflict_policy: string | null
+  s3_budget_list_requests: number | null
+  s3_budget_head_requests: number | null
+  s3_budget_get_requests: number | null
+  s3_budget_put_requests: number | null
+  s3_budget_copy_requests: number | null
+  s3_budget_delete_requests: number | null
+  s3_budget_downloaded_bytes: number | null
+  s3_budget_unlimited_legacy: boolean
+  s3_budget_warning: string | null
+  max_remote_index_age_seconds: number | null
   latest_event: SyncEvent | null
   latest_event_id: number | null
   latest_run_uuid: string | null
@@ -53,6 +63,10 @@ export interface IVaultSyncHealth {
   local_state_hash: string | null
   remote_state_hash: string | null
   hash_mismatch: boolean
+  remote_index_object_count: number
+  remote_index_source: string | null
+  remote_index_indexed_at: number | string | null
+  remote_index_stale: boolean
   last_error_code: string | null
   last_error_message: string | null
   last_stall_reason: string | null
@@ -123,6 +137,16 @@ export class VaultSyncHealth implements IVaultSyncHealth {
   sync_interval_seconds = 0
   configured_strategy: string | null = null
   conflict_policy: string | null = null
+  s3_budget_list_requests: number | null = null
+  s3_budget_head_requests: number | null = null
+  s3_budget_get_requests: number | null = null
+  s3_budget_put_requests: number | null = null
+  s3_budget_copy_requests: number | null = null
+  s3_budget_delete_requests: number | null = null
+  s3_budget_downloaded_bytes: number | null = null
+  s3_budget_unlimited_legacy = false
+  s3_budget_warning: string | null = null
+  max_remote_index_age_seconds: number | null = null
   latest_event: SyncEvent | null = null
   latest_event_id: number | null = null
   latest_run_uuid: string | null = null
@@ -156,6 +180,10 @@ export class VaultSyncHealth implements IVaultSyncHealth {
   local_state_hash: string | null = null
   remote_state_hash: string | null = null
   hash_mismatch = false
+  remote_index_object_count = 0
+  remote_index_source: string | null = null
+  remote_index_indexed_at: number | string | null = null
+  remote_index_stale = false
   last_error_code: string | null = null
   last_error_message: string | null = null
   last_stall_reason: string | null = null
@@ -179,6 +207,16 @@ export class VaultSyncHealth implements IVaultSyncHealth {
       sync_interval_seconds: asNumber(data.sync_interval_seconds),
       configured_strategy: asStringOrNull(data.configured_strategy),
       conflict_policy: asStringOrNull(data.conflict_policy),
+      s3_budget_list_requests: asNullableNumber(data.s3_budget_list_requests),
+      s3_budget_head_requests: asNullableNumber(data.s3_budget_head_requests),
+      s3_budget_get_requests: asNullableNumber(data.s3_budget_get_requests),
+      s3_budget_put_requests: asNullableNumber(data.s3_budget_put_requests),
+      s3_budget_copy_requests: asNullableNumber(data.s3_budget_copy_requests),
+      s3_budget_delete_requests: asNullableNumber(data.s3_budget_delete_requests),
+      s3_budget_downloaded_bytes: asNullableNumber(data.s3_budget_downloaded_bytes),
+      s3_budget_unlimited_legacy: asBoolean(data.s3_budget_unlimited_legacy),
+      s3_budget_warning: asStringOrNull(data.s3_budget_warning),
+      max_remote_index_age_seconds: asNullableNumber(data.max_remote_index_age_seconds),
       latest_event: latestEvent,
       latest_event_id: asNullableNumber(data.latest_event_id),
       latest_run_uuid: asStringOrNull(data.latest_run_uuid),
@@ -212,6 +250,10 @@ export class VaultSyncHealth implements IVaultSyncHealth {
       local_state_hash: asStringOrNull(data.local_state_hash),
       remote_state_hash: asStringOrNull(data.remote_state_hash),
       hash_mismatch: asBoolean(data.hash_mismatch),
+      remote_index_object_count: asNumber(data.remote_index_object_count),
+      remote_index_source: asStringOrNull(data.remote_index_source),
+      remote_index_indexed_at: asCheckedAt(data.remote_index_indexed_at),
+      remote_index_stale: asBoolean(data.remote_index_stale),
       last_error_code: asStringOrNull(data.last_error_code),
       last_error_message: asStringOrNull(data.last_error_message),
       last_stall_reason: asStringOrNull(data.last_stall_reason),

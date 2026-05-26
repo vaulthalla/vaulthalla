@@ -7,6 +7,7 @@
 #include "log/Registry.hpp"
 #include "config/Registry.hpp"
 #include "db/encoding/u8.hpp"
+#include "sync/model/RemoteManifest.hpp"
 
 #include <nlohmann/json.hpp>
 #include <pqxx/result>
@@ -59,12 +60,21 @@ Entry::Entry(const pqxx::row& row, const pqxx::result& parentRows)
     if (row["is_system"].is_null()) is_system = false;
     else is_system = row["is_system"].as<bool>();
 
+    const auto isGlobalRoot = !vault_id && !parent_id && path == "/" && name == "/";
     fuse_path = std::filesystem::path("/");
     backing_path = paths::getBackingPath();
+    if (isGlobalRoot) return;
+
     for (const auto& r : parentRows) {
-        fuse_path /= r["name"].as<std::string>();
-        backing_path /= r["base32_alias"].as<std::string>();
+        const auto parentName = r["name"].as<std::string>();
+        const auto parentIsGlobalRoot = r["parent_id"].is_null() && parentName == "/";
+        if (parentIsGlobalRoot) continue;
+
+        fuse_path /= parentName;
+        if (!r["base32_alias"].is_null())
+            backing_path /= r["base32_alias"].as<std::string>();
     }
+
     fuse_path /= name;
     backing_path /= base32_alias;
 }
@@ -182,6 +192,10 @@ std::vector<std::shared_ptr<Entry>> vh::fs::model::fromS3XML(const std::u8string
         }
 
         const std::u8string key = reinterpret_cast<const char8_t*>(keyNode.text().get());
+        if (vh::sync::model::remote_manifest::isVaulthallaManifestKey(
+                std::string(reinterpret_cast<const char*>(key.c_str()))))
+            continue;
+
         const std::string lastMod = modifiedNode.text().get();
         const uint64_t size = std::stoull(sizeNode.text().get());
 

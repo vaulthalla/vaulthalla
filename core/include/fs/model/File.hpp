@@ -6,6 +6,9 @@ namespace vh::fs::model {
     struct File final : Entry {
         std::string encryption_iv;
         std::optional<std::string> mime_type, content_hash;
+        std::optional<std::string> remote_storage_class, remote_etag, remote_restore_status;
+        std::optional<std::string> remote_version_id, remote_sequencer;
+        std::optional<bool> remote_encrypted;
         unsigned int encrypted_with_key_version{};
 
         File() = default;
@@ -17,6 +20,8 @@ namespace vh::fs::model {
         [[nodiscard]] bool isDirectory() const override { return false; }
 
         [[nodiscard]] bool operator==(const File &other) const;
+
+        [[nodiscard]] bool requiresArchiveRestoreForBodyGet() const;
     };
 
     void to_json(nlohmann::json &j, const File &f);

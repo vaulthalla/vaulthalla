@@ -1,11 +1,14 @@
 #include "fs/model/File.hpp"
 #include "log/Registry.hpp"
 #include "db/query/fs/Entry.hpp"
+#include "sync/model/RemoteManifest.hpp"
 
 #include <nlohmann/json.hpp>
 #include <pqxx/result>
 #include <regex>
 #include <pugixml.hpp>
+#include <algorithm>
+#include <cctype>
 
 using namespace vh::fs::model;
 
@@ -28,6 +31,22 @@ bool File::operator==(const File& other) const {
            mime_type == other.mime_type &&
            content_hash == other.content_hash &&
            encrypted_with_key_version == other.encrypted_with_key_version;
+}
+
+bool File::requiresArchiveRestoreForBodyGet() const {
+    if (!remote_storage_class) return false;
+
+    std::string storageClass = *remote_storage_class;
+    std::ranges::transform(storageClass, storageClass.begin(), [](unsigned char c) {
+        return static_cast<char>(std::toupper(c));
+    });
+
+    if (storageClass == "GLACIER" || storageClass == "DEEP_ARCHIVE") return true;
+
+    if (storageClass == "INTELLIGENT_TIERING" && remote_restore_status && !remote_restore_status->empty())
+        return true;
+
+    return false;
 }
 
 void vh::fs::model::to_json(nlohmann::json& j, const File& f) {
@@ -89,6 +108,10 @@ std::vector<std::shared_ptr<File>> vh::fs::model::filesFromS3XML(const std::u8st
         }
 
         const std::u8string key = reinterpret_cast<const char8_t*>(keyNode.text().get());
+        if (vh::sync::model::remote_manifest::isVaulthallaManifestKey(
+                std::string(reinterpret_cast<const char*>(key.c_str()))))
+            continue;
+
         const std::string lastMod = modifiedNode.text().get();
         const uint64_t size = std::stoull(sizeNode.text().get());
 
@@ -98,6 +121,15 @@ std::vector<std::shared_ptr<File>> vh::fs::model::filesFromS3XML(const std::u8st
         std::time_t ts = ss.fail() ? std::time(nullptr) : timegm(&tm);
 
         auto file = std::make_shared<File>(std::string(reinterpret_cast<const char*>(key.c_str())), size, ts);
+        if (const auto storageClassNode = content.child("StorageClass"))
+            file->remote_storage_class = storageClassNode.text().get();
+        if (const auto eTagNode = content.child("ETag"))
+            file->remote_etag = eTagNode.text().get();
+        if (const auto restoreStatusNode = content.child("RestoreStatus")) {
+            std::ostringstream restore;
+            restoreStatusNode.print(restore, "", pugi::format_raw);
+            file->remote_restore_status = restore.str();
+        }
         files.push_back(file);
     }
 

@@ -19,6 +19,8 @@
 #include "fs/model/File.hpp"
 #include "identities/User.hpp"
 
+#include <system_error>
+
 using namespace vh::fs::model;
 using namespace vh::fs;
 using namespace vh::crypto;
@@ -46,7 +48,6 @@ namespace vh::storage {
                 sync::model::Event::Status::CANCELLED) {
                 log::Registry::storage()->warn("[StorageEngine] Previous sync event failed with status: {}",
                                                std::string(sync::model::Event::toString(latestSyncEvent->status)));
-                return;
             }
         }
 
@@ -108,7 +109,21 @@ namespace vh::storage {
     uintmax_t Engine::getVaultSize() const { return getDirectorySize(paths->backingRoot); }
     uintmax_t Engine::getCacheSize() const { return getDirectorySize(paths->cacheRoot); }
     uintmax_t Engine::getVaultAndCacheTotalSize() const { return getVaultSize() + getCacheSize(); }
-    uintmax_t Engine::freeSpace() const { return vault->quota - getVaultAndCacheTotalSize() - MIN_FREE_SPACE; }
+    uintmax_t Engine::freeSpace() const {
+        if (!vault) return 0;
+
+        if (vault->quota == 0) {
+            if (!paths) return 0;
+
+            std::error_code ec;
+            const auto info = fs::space(paths->backingRoot, ec);
+            if (ec || info.available <= MIN_FREE_SPACE) return 0;
+            return info.available - MIN_FREE_SPACE;
+        }
+
+        const auto usedWithReserve = getVaultAndCacheTotalSize() + MIN_FREE_SPACE;
+        return vault->quota > usedWithReserve ? vault->quota - usedWithReserve : 0;
+    }
 
     void Engine::purgeThumbnails(const fs::path &rel_path) const {
         for (const auto &size: Registry::get().caching.thumbnails.sizes)
@@ -208,7 +223,8 @@ namespace vh::storage {
     void Engine::removeLocally(const std::shared_ptr<file::Trashed> &f) const {
         namespace fs = std::filesystem;
 
-        fs::path absPath = paths->absPath(f->backing_path, PathType::BACKING_ROOT);
+        fs::path absPath = f->backing_path;
+        if (absPath.is_relative()) absPath = paths->absPath(absPath, PathType::BACKING_ROOT);
 
         // Remove the file if present
         std::error_code ec;
@@ -239,7 +255,7 @@ namespace vh::storage {
             absPath = parent;
         }
 
-        const auto vaultPath = fusePathToVaultPath(f->path);
+        const auto vaultPath = makeAbsolute(f->path);
 
         for (const auto &size: Registry::get().caching.thumbnails.sizes) {
             const auto thumbPath = paths->absPath(vaultPath, PathType::THUMBNAIL_ROOT) / std::to_string(size);

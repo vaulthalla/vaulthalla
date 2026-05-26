@@ -2,6 +2,7 @@
 
 #include "sync/model/Event.hpp"
 
+#include <ctime>
 #include <nlohmann/json.hpp>
 
 namespace vh::stats::model {
@@ -23,6 +24,10 @@ void VaultSyncHealth::finalize() {
 
     hashMismatch = localStateHash && remoteStateHash && *localStateHash != *remoteStateHash;
     divergenceDetected = divergenceDetected || hashMismatch;
+    if (remoteIndexIndexedAt && maxRemoteIndexAgeSeconds) {
+        const auto now = static_cast<std::uint64_t>(std::time(nullptr));
+        remoteIndexStale = now > *remoteIndexIndexedAt && now - *remoteIndexIndexedAt > *maxRemoteIndexAgeSeconds;
+    }
 
     if (!syncConfigPresent && !syncHistoryPresent) {
         overallStatus = VaultSyncOverallStatus::Unknown;
@@ -67,6 +72,8 @@ void VaultSyncHealth::finalize() {
         errorCount7d > 0 ||
         conflictCountOpen > 0 ||
         retryCount24h > 0 ||
+        s3BudgetUnlimitedLegacy ||
+        remoteIndexStale ||
         (latestHeartbeatAgeSeconds && *latestHeartbeatAgeSeconds >= kStaleHeartbeatWarningSeconds)
     ) {
         overallStatus = VaultSyncOverallStatus::Warning;
@@ -128,6 +135,16 @@ void to_json(nlohmann::json& j, const VaultSyncHealth& health) {
         {"sync_interval_seconds", health.syncIntervalSeconds},
         {"configured_strategy", health.configuredStrategy ? nlohmann::json(*health.configuredStrategy) : nlohmann::json(nullptr)},
         {"conflict_policy", health.conflictPolicy ? nlohmann::json(*health.conflictPolicy) : nlohmann::json(nullptr)},
+        {"s3_budget_list_requests", health.s3BudgetListRequests ? nlohmann::json(*health.s3BudgetListRequests) : nlohmann::json(nullptr)},
+        {"s3_budget_head_requests", health.s3BudgetHeadRequests ? nlohmann::json(*health.s3BudgetHeadRequests) : nlohmann::json(nullptr)},
+        {"s3_budget_get_requests", health.s3BudgetGetRequests ? nlohmann::json(*health.s3BudgetGetRequests) : nlohmann::json(nullptr)},
+        {"s3_budget_put_requests", health.s3BudgetPutRequests ? nlohmann::json(*health.s3BudgetPutRequests) : nlohmann::json(nullptr)},
+        {"s3_budget_copy_requests", health.s3BudgetCopyRequests ? nlohmann::json(*health.s3BudgetCopyRequests) : nlohmann::json(nullptr)},
+        {"s3_budget_delete_requests", health.s3BudgetDeleteRequests ? nlohmann::json(*health.s3BudgetDeleteRequests) : nlohmann::json(nullptr)},
+        {"s3_budget_downloaded_bytes", health.s3BudgetDownloadedBytes ? nlohmann::json(*health.s3BudgetDownloadedBytes) : nlohmann::json(nullptr)},
+        {"s3_budget_unlimited_legacy", health.s3BudgetUnlimitedLegacy},
+        {"s3_budget_warning", health.s3BudgetWarning ? nlohmann::json(*health.s3BudgetWarning) : nlohmann::json(nullptr)},
+        {"max_remote_index_age_seconds", health.maxRemoteIndexAgeSeconds ? nlohmann::json(*health.maxRemoteIndexAgeSeconds) : nlohmann::json(nullptr)},
         {"latest_event", health.latestEvent},
         {"latest_event_id", health.latestEventId ? nlohmann::json(*health.latestEventId) : nlohmann::json(nullptr)},
         {"latest_run_uuid", health.latestRunUuid ? nlohmann::json(*health.latestRunUuid) : nlohmann::json(nullptr)},
@@ -161,6 +178,10 @@ void to_json(nlohmann::json& j, const VaultSyncHealth& health) {
         {"local_state_hash", health.localStateHash ? nlohmann::json(*health.localStateHash) : nlohmann::json(nullptr)},
         {"remote_state_hash", health.remoteStateHash ? nlohmann::json(*health.remoteStateHash) : nlohmann::json(nullptr)},
         {"hash_mismatch", health.hashMismatch},
+        {"remote_index_object_count", health.remoteIndexObjectCount},
+        {"remote_index_source", health.remoteIndexSource ? nlohmann::json(*health.remoteIndexSource) : nlohmann::json(nullptr)},
+        {"remote_index_indexed_at", health.remoteIndexIndexedAt ? nlohmann::json(*health.remoteIndexIndexedAt) : nlohmann::json(nullptr)},
+        {"remote_index_stale", health.remoteIndexStale},
         {"last_error_code", health.lastErrorCode ? nlohmann::json(*health.lastErrorCode) : nlohmann::json(nullptr)},
         {"last_error_message", health.lastErrorMessage ? nlohmann::json(*health.lastErrorMessage) : nlohmann::json(nullptr)},
         {"last_stall_reason", health.lastStallReason ? nlohmann::json(*health.lastStallReason) : nlohmann::json(nullptr)},

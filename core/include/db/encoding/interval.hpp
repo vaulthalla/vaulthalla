@@ -45,7 +45,7 @@ inline std::string intervalToString(const std::chrono::seconds& interval) {
 }
 
 inline std::chrono::seconds parseSyncInterval(const std::string& intervalStr) {
-    if (intervalStr.empty()) return std::chrono::seconds(0); // No interval set
+    if (intervalStr.empty()) return std::chrono::seconds(300);
 
     if (!std::isalpha(intervalStr.back())) {
         // If the last character is not a letter, assume it's a number of seconds

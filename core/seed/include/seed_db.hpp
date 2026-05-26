@@ -17,6 +17,7 @@ void initRoot();
 void reconcileSystemPrincipals();
 
 // dev
+void cleanupDevR2TestBucket();
 void initDevCloudVault();
 
 }

@@ -8,6 +8,9 @@
 #include <fstream>
 #include <gtest/gtest.h>
 #include <algorithm>
+#include <cctype>
+#include <optional>
+#include <unordered_map>
 #include <pdfium/fpdfview.h>
 
 using namespace vh::storage::s3;
@@ -27,25 +30,37 @@ protected:
         test_dir = std::filesystem::temp_directory_path() / "vaulthalla_test_dir";
         std::filesystem::create_directory(test_dir);
 
-        if (!static_cast<bool>(std::getenv("VAULTHALLA_TEST_R2_ACCESS_KEY")) ||
-            !static_cast<bool>(std::getenv("VAULTHALLA_TEST_R2_SECRET_ACCESS_KEY")) ||
-            !static_cast<bool>(std::getenv("VAULTHALLA_TEST_R2_REGION")) ||
-            !static_cast<bool>(std::getenv("VAULTHALLA_TEST_R2_ENDPOINT")) ||
-            !static_cast<bool>(std::getenv("VAULTHALLA_TEST_R2_BUCKET"))) {
+        const auto* accessKey = std::getenv("VAULTHALLA_TEST_S3_ACCESS_KEY");
+        const auto* secretKey = std::getenv("VAULTHALLA_TEST_S3_SECRET_ACCESS_KEY");
+        const auto* region = std::getenv("VAULTHALLA_TEST_S3_REGION");
+        const auto* endpoint = std::getenv("VAULTHALLA_TEST_S3_ENDPOINT");
+        const auto* bucket = std::getenv("VAULTHALLA_TEST_S3_BUCKET");
+        auto provider = S3Provider::MinIO;
+
+        if (!accessKey || !secretKey || !region || !endpoint || !bucket) {
+            accessKey = std::getenv("VAULTHALLA_TEST_R2_ACCESS_KEY");
+            secretKey = std::getenv("VAULTHALLA_TEST_R2_SECRET_ACCESS_KEY");
+            region = std::getenv("VAULTHALLA_TEST_R2_REGION");
+            endpoint = std::getenv("VAULTHALLA_TEST_R2_ENDPOINT");
+            bucket = std::getenv("VAULTHALLA_TEST_R2_BUCKET");
+            provider = S3Provider::CloudflareR2;
+        }
+
+        if (!accessKey || !secretKey || !region || !endpoint || !bucket) {
             skipTests = true;
-            std::cout << "[test_S3Provider] Skipping S3 tests due to missing environment variables." << std::endl;
+            std::cout << "[test_S3Provider] Skipping S3 tests due to missing S3/MinIO or R2 environment variables." << std::endl;
             return;
         }
 
         apiKey_ = std::make_shared<APIKey>(1,
                                            "Test S3 Key",
-                                           S3Provider::CloudflareR2,
-                                           std::getenv("VAULTHALLA_TEST_R2_ACCESS_KEY"),
-                                           std::getenv("VAULTHALLA_TEST_R2_SECRET_ACCESS_KEY"),
-                                           std::getenv("VAULTHALLA_TEST_R2_REGION"),
-                                           std::getenv("VAULTHALLA_TEST_R2_ENDPOINT"));
+                                           provider,
+                                           accessKey,
+                                           secretKey,
+                                           region,
+                                           endpoint);
 
-        bucket_ = std::getenv("VAULTHALLA_TEST_R2_BUCKET");
+        bucket_ = bucket;
 
         s3Provider_ = std::make_shared<Controller>(apiKey_, bucket_);
 
@@ -65,6 +80,22 @@ protected:
     static void writeTextFile(const std::filesystem::path &path, const std::string &content) {
         std::ofstream out(path);
         out << content;
+    }
+
+    static std::optional<std::string> headerValue(
+        const std::unordered_map<std::string, std::string>& headers,
+        std::string name) {
+        std::ranges::transform(name, name.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+        for (const auto& [key, value] : headers) {
+            auto normalized = key;
+            std::ranges::transform(normalized, normalized.begin(), [](unsigned char c) {
+                return static_cast<char>(std::tolower(c));
+            });
+            if (normalized == name) return value;
+        }
+        return std::nullopt;
     }
 };
 
@@ -154,6 +185,34 @@ TEST_F(S3ProviderIntegrationTest, test_S3SimpleUploadRoundTrip) {
     EXPECT_TRUE(originalContent.str() == downloadedContent.str());
 
     // Cleanup
+    EXPECT_NO_THROW(s3Provider_->deleteObject(key));
+}
+
+TEST_F(S3ProviderIntegrationTest, test_S3EncryptedFileMetadataRoundTrip) {
+    if (skipTests)
+        GTEST_SKIP() << "Skipping test due to missing environment variables.";
+
+    const std::filesystem::path key = {"encrypted-metadata-test.bin"};
+    const auto filePath = test_dir / key;
+    writeTextFile(filePath, "ciphertext metadata payload");
+
+    ASSERT_NO_THROW(s3Provider_->uploadObjectWithMetadata(
+        key,
+        filePath,
+        {
+            {"vh-encrypted", "true"},
+            {"vh-iv", "bWluaW8tdGVzdC1pdi0xMg=="},
+            {"vh-key-version", "3"},
+            {"content-hash", "metadata-round-trip"},
+        }));
+
+    const auto head = s3Provider_->getHeadObject(key);
+    ASSERT_TRUE(head.has_value());
+    EXPECT_EQ("true", headerValue(*head, "x-amz-meta-vh-encrypted").value_or(""));
+    EXPECT_EQ("bWluaW8tdGVzdC1pdi0xMg==", headerValue(*head, "x-amz-meta-vh-iv").value_or(""));
+    EXPECT_EQ("3", headerValue(*head, "x-amz-meta-vh-key-version").value_or(""));
+    EXPECT_EQ("metadata-round-trip", headerValue(*head, "x-amz-meta-content-hash").value_or(""));
+
     EXPECT_NO_THROW(s3Provider_->deleteObject(key));
 }
 

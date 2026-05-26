@@ -113,10 +113,16 @@ namespace vh::fuse {
         if (req.ino) {
             out.entry = runtime::Deps::get().fsCache->getEntry(*req.ino);
             if (out.entry) {
-                log::Registry::fuse()->debug(
-                    "[{}] Resolved entry from inode {}: {}",
-                    req.caller, *req.ino, out.entry->fuse_path.string()
-                );
+                if (req.caller == "statfs")
+                    log::Registry::fuse()->trace(
+                        "[{}] Resolved entry from inode {}: {}",
+                        req.caller, *req.ino, out.entry->fuse_path.string()
+                    );
+                else
+                    log::Registry::fuse()->debug(
+                        "[{}] Resolved entry from inode {}: {}",
+                        req.caller, *req.ino, out.entry->fuse_path.string()
+                    );
                 return true;
             }
 
@@ -168,10 +174,16 @@ namespace vh::fuse {
                 out.entry = entry;
                 out.path = entry->fuse_path;
 
-                log::Registry::fuse()->debug(
-                    "[{}] Resolved path from inode {} via entry: {}",
-                    req.caller, *req.ino, out.path->string()
-                );
+                if (req.caller == "statfs")
+                    log::Registry::fuse()->trace(
+                        "[{}] Resolved path from inode {} via entry: {}",
+                        req.caller, *req.ino, out.path->string()
+                    );
+                else
+                    log::Registry::fuse()->debug(
+                        "[{}] Resolved path from inode {} via entry: {}",
+                        req.caller, *req.ino, out.path->string()
+                    );
                 return true;
             }
         }

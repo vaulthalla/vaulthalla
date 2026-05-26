@@ -8,6 +8,7 @@
 #include "fs/model/Entry.hpp"
 #include "fs/model/File.hpp"
 #include "fs/model/Path.hpp"
+#include "fs/ops/file.hpp"
 #include "identities/User.hpp"
 #include "log/Registry.hpp"
 #include "protocols/cookie.hpp"
@@ -418,21 +419,74 @@ void verifySessionOwner(
     return out;
 }
 
-[[nodiscard]] std::shared_ptr<vh::fs::model::File> fileEntryAfterRename(const UploadFileState& file) {
-    const auto entry = vh::runtime::Deps::get().fsCache->getEntry(file.fuse_to);
-    auto created = entry && !entry->isDirectory() ? std::dynamic_pointer_cast<vh::fs::model::File>(entry) : nullptr;
-    if (!created) throw std::runtime_error("Uploaded file creation failed");
-    return created;
-}
-
 void runSyncForVaults(const std::set<uint32_t>& vaults) noexcept {
     for (const auto vaultId : vaults) {
         try {
             if (vh::runtime::Deps::get().syncController)
                 vh::runtime::Deps::get().syncController->runNow(vaultId);
+            else
+                vh::log::Registry::sync()->warn("[HttpUpload] Sync controller is unavailable for vault {}", vaultId);
+        } catch (const std::exception& e) {
+            vh::log::Registry::sync()->error("[HttpUpload] Failed to trigger sync for vault {}: {}", vaultId, e.what());
         } catch (...) {
+            vh::log::Registry::sync()->error("[HttpUpload] Failed to trigger sync for vault {}: unknown error", vaultId);
         }
     }
+}
+
+void reserveUploadSpace(
+    std::unordered_map<uint32_t, uintmax_t>& plannedBytesByVault,
+    const uint32_t vaultId,
+    const uint64_t size,
+    const std::shared_ptr<vh::storage::Engine>& engine,
+    const char* message
+) {
+    const auto requested = static_cast<uintmax_t>(size);
+    const auto available = engine ? engine->freeSpace() : 0;
+    auto& planned = plannedBytesByVault[vaultId];
+
+    if (requested > available || planned > available - requested)
+        throw std::runtime_error(message);
+
+    planned += requested;
+}
+
+std::vector<uint8_t> readCompletedUploadFile(const UploadFileState& file) {
+    if (!std::filesystem::exists(file.tmp_path))
+        throw std::runtime_error("Uploaded temp file is missing: " + file.tmp_path.string());
+
+    const auto actualSize = std::filesystem::file_size(file.tmp_path);
+    if (actualSize != file.expected_size)
+        throw std::runtime_error("Uploaded temp file size mismatch");
+
+    if (actualSize == 0) return {};
+    return vh::fs::ops::readFileToVector(file.tmp_path);
+}
+
+std::shared_ptr<vh::fs::model::File> commitCompletedUploadFile(
+    const UploadFileState& file,
+    const std::shared_ptr<vh::identities::User>& user
+) {
+    if (!user) throw std::runtime_error("Upload requires a user");
+
+    auto created = vh::fs::Filesystem::createFile({
+        .path = file.vault_path,
+        .fuse_path = file.fuse_to,
+        .buffer = readCompletedUploadFile(file),
+        .engine = file.engine,
+        .user = user
+    });
+
+    std::error_code ec;
+    std::filesystem::remove(file.tmp_path, ec);
+    if (ec) {
+        vh::log::Registry::fs()->warn(
+            "[HttpUpload] Failed to remove completed upload temp file {}: {}",
+            file.tmp_path.string(),
+            ec.message());
+    }
+
+    return created;
 }
 
 } // namespace
@@ -592,6 +646,7 @@ nlohmann::json Coordinator::createSession(const request& req, const nlohmann::js
             auto principal = refreshSharePrincipal(session, *manager);
             const auto actor = session->rbacActor();
             upload->share_session_id = principal->share_session_id;
+            std::unordered_map<uint32_t, uintmax_t> plannedBytesByVault;
 
             for (const auto& item : payload.at("files")) {
                 const auto fileId = safeIdComponent(
@@ -625,7 +680,12 @@ nlohmann::json Coordinator::createSession(const request& req, const nlohmann::js
                 const auto size = fileSizeFromJson(item);
                 const auto mime = mimeTypeFromJson(item);
                 auto engine = engineFor(parent.vault_id);
-                if (size > engine->freeSpace()) throw std::runtime_error("Share upload exceeds available vault storage");
+                reserveUploadSpace(
+                    plannedBytesByVault,
+                    parent.vault_id,
+                    size,
+                    engine,
+                    "Share upload exceeds available vault storage");
 
                 const auto vaultPath = std::filesystem::path(finalVaultPath);
                 const auto absPath = engine->paths->absPath(vaultPath, PathType::VAULT_ROOT);
@@ -673,6 +733,7 @@ nlohmann::json Coordinator::createSession(const request& req, const nlohmann::js
         } else {
             if (!session || !session->user) throw std::runtime_error("Upload requires a user session");
             upload->user_id = session->user->id;
+            std::unordered_map<uint32_t, uintmax_t> plannedBytesByVault;
 
             for (const auto& item : payload.at("files")) {
                 const auto fileId = safeIdComponent(
@@ -693,7 +754,12 @@ nlohmann::json Coordinator::createSession(const request& req, const nlohmann::js
 
                 auto engine = engineFor(vaultId);
                 enforceHumanWritePermission(session, engine, vaultPath);
-                if (size > engine->freeSpace()) throw std::runtime_error("Upload exceeds available vault storage");
+                reserveUploadSpace(
+                    plannedBytesByVault,
+                    vaultId,
+                    size,
+                    engine,
+                    "Upload exceeds available vault storage");
 
                 const auto absPath = engine->paths->absPath(vaultPath, PathType::VAULT_ROOT);
                 const auto tmpPath = absPath.parent_path() / (".upload-http-" + upload->id + "-" + fileId + ".part");
@@ -811,25 +877,7 @@ nlohmann::json Coordinator::finishSession(const request& req, const std::string_
         if (upload->mode == UploadMode::Authenticated) {
             if (!session || !session->user) throw std::runtime_error("Upload requires a user session");
             for (const auto& file : files) {
-                if (const auto err = vh::fs::Filesystem::rename(file.fuse_from, file.fuse_to, session->user, file.engine); err)
-                    throw std::runtime_error(
-                        "Failed to move uploaded file to final location"
-                        " (upload_id: " + uploadId +
-                        ", file_id: " + file.file_id +
-                        ", from: " + file.fuse_from.string() +
-                        ", to: " + file.fuse_to.string() +
-                        "): " + std::strerror(-err));
-                try {
-                    (void)fileEntryAfterRename(file);
-                } catch (const std::exception& e) {
-                    throw std::runtime_error(
-                        "Uploaded file missing after rename"
-                        " (upload_id: " + uploadId +
-                        ", file_id: " + file.file_id +
-                        ", from: " + file.fuse_from.string() +
-                        ", to: " + file.fuse_to.string() +
-                        "): " + e.what());
-                }
+                (void)commitCompletedUploadFile(file, session->user);
                 vaults.insert(file.vault_id);
                 entries.push_back(fileResponseJson(file));
             }
@@ -862,10 +910,7 @@ nlohmann::json Coordinator::finishSession(const request& req, const std::string_
                 if (!scope.allowed) throw std::runtime_error("Share upload scope denied: " + scope.reason);
                 ensureNoExistingShareTarget(*resolver, actor, currentParent.vault_id, file.share_final_path);
 
-                if (const auto err = vh::fs::Filesystem::rename(file.fuse_from, file.fuse_to, creator, file.engine); err)
-                    throw std::runtime_error(std::string("Failed to move uploaded file to final location: ") + std::strerror(-err));
-
-                auto created = fileEntryAfterRename(file);
+                auto created = commitCompletedUploadFile(file, creator);
                 manager->finishUpload({
                     .principal = *principal,
                     .upload_id = file.share_upload_id,

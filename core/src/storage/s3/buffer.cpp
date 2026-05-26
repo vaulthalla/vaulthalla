@@ -7,11 +7,12 @@ using namespace vh::storage::s3::curl;
 
 void Controller::uploadLargeObject(const std::filesystem::path& key,
                                      const std::vector<uint8_t>& buffer,
-                                     const uintmax_t partSize) const {
+                                     const uintmax_t partSize,
+                                     const std::unordered_map<std::string, std::string>& metadata) const {
     if (buffer.empty())
         throw std::runtime_error("Buffer is empty, cannot perform multipart upload");
 
-    const std::string uploadId = initiateMultipartUpload(key);
+    const std::string uploadId = initiateMultipartUpload(key, metadata);
     if (uploadId.empty())
         throw std::runtime_error("Failed to initiate multipart upload for: " + key.string());
 
@@ -59,6 +60,18 @@ void Controller::uploadBufferWithMetadata(
     const std::vector<uint8_t>& buffer,
     const std::unordered_map<std::string, std::string>& metadata) const
 {
+    uploadBufferWithMetadataConditional(key, buffer, metadata, std::nullopt);
+}
+
+void Controller::uploadBufferWithMetadataConditional(
+    const std::filesystem::path& key,
+    const std::vector<uint8_t>& buffer,
+    const std::unordered_map<std::string, std::string>& metadata,
+    const std::optional<std::string>& ifMatch,
+    const std::optional<std::string>& ifNoneMatch) const
+{
+    recordRequest(RequestKind::Put);
+
     log::Registry::cloud()->debug("[S3Provider] Uploading buffer to S3 key: {}, buffer_size: {}",
                                key.string(), buffer.size());
 
@@ -68,14 +81,21 @@ void Controller::uploadBufferWithMetadata(
     const CurlEasy tmpHandle;
     const auto [canonical, url] = constructPaths(static_cast<CURL*>(tmpHandle), key);
 
-    SList hdrs = makeSigHeaders("PUT", canonical, payloadHash);
-    hdrs.add("Content-Type: application/octet-stream");
-    // (Optional) avoid Expect: 100-continue stalls on small uploads
-    hdrs.add("Expect:");
-
+    auto hdrMap = buildHeaderMap(payloadHash);
+    hdrMap["content-type"] = "application/octet-stream";
+    if (ifMatch) hdrMap["if-match"] = *ifMatch;
+    if (ifNoneMatch) hdrMap["if-none-match"] = *ifNoneMatch;
     for (const auto& [k, v] : metadata) {
-        hdrs.add(fmt::format("x-amz-meta-{}: {}", k, v));
+        hdrMap[fmt::format("x-amz-meta-{}", k)] = v;
     }
+
+    const std::string authHeader = buildAuthorizationHeader(apiKey_, "PUT", canonical, hdrMap, payloadHash);
+
+    SList hdrs;
+    hdrs.add("Authorization: " + authHeader);
+    for (const auto& [k, v] : hdrMap) hdrs.add(k + ": " + v);
+    // Avoid Expect: 100-continue stalls on small uploads. This header is not part of the signature.
+    hdrs.add("Expect:");
 
     struct ReadCtx {
         const uint8_t* data{nullptr};
@@ -118,11 +138,18 @@ void Controller::uploadBufferWithMetadata(
             });
     });
 
+    if (resp.http == 409 || resp.http == 412) {
+        throw ConditionalRequestFailed(
+            fmt::format("Conditional S3 PUT failed for {} (HTTP {}): {}", key.string(), resp.http, resp.body));
+    }
+
     if (!resp.ok()) throw std::runtime_error(
         fmt::format("Failed to upload buffer to S3 (HTTP {}): {}", resp.http, resp.body));
 }
 
 void Controller::downloadToBuffer(const std::filesystem::path& key, std::vector<uint8_t>& outBuffer) const {
+    recordRequest(RequestKind::Get);
+
     CURL* curl = curl_easy_init();
     if (!curl) throw std::runtime_error("Failed to init curl for S3 download to buffer");
 
@@ -135,18 +162,34 @@ void Controller::downloadToBuffer(const std::filesystem::path& key, std::vector<
     headers.add("Authorization: " + authHeader);
     for (const auto& [k, v] : hdrMap) headers.add(k + ": " + v);
 
+    struct WriteCtx {
+        const Controller* controller;
+        std::vector<uint8_t>* data;
+        std::string budgetError;
+    } writeCtx{this, &outBuffer, {}};
+
     outBuffer.clear();
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers.list);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, +[](char* ptr, size_t size, size_t nmemb, std::vector<uint8_t>* data) {
-        data->insert(data->end(), ptr, ptr + size * nmemb);
-        return size * nmemb;
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, +[](char* ptr, size_t size, size_t nmemb, void* userdata) -> size_t {
+        auto* ctx = static_cast<WriteCtx*>(userdata);
+        const auto bytes = size * nmemb;
+        try {
+            ctx->controller->recordRequest(RequestKind::DownloadBytes, bytes);
+        } catch (const RequestBudgetExceeded& e) {
+            ctx->budgetError = e.what();
+            return 0;
+        }
+        ctx->data->insert(ctx->data->end(), ptr, ptr + bytes);
+        return bytes;
     });
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &outBuffer);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &writeCtx);
 
     const CURLcode res = curl_easy_perform(curl);
     curl_easy_cleanup(curl);
+
+    if (!writeCtx.budgetError.empty()) throw RequestBudgetExceeded(writeCtx.budgetError);
 
     if (res != CURLE_OK)
         log::Registry::cloud()->error("[S3Provider] downloadToBuffer failed for {}: CURL={} Response:\n{}",

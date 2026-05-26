@@ -8,15 +8,23 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <stdexcept>
 #include <pqxx/params>
 
 #include <nlohmann/json_fwd.hpp>
 
 namespace pqxx { class row; class result; }
+namespace vh::storage::s3 { struct S3RequestMetrics; }
 
 namespace vh::sync::model {
 
+struct S3CostEstimate;
 struct Conflict;
+
+class SyncStalled final : public std::runtime_error {
+public:
+    explicit SyncStalled(const std::string& message) : std::runtime_error(message) {}
+};
 
 struct Event : public std::enable_shared_from_this<Event> {
     // Mirrors DB values:
@@ -70,6 +78,23 @@ struct Event : public std::enable_shared_from_this<Event> {
     std::uint64_t num_conflicts{0};
     std::uint64_t bytes_up{0};
     std::uint64_t bytes_down{0};
+    std::uint64_t s3_list_requests{0};
+    std::uint64_t s3_head_requests{0};
+    std::uint64_t s3_get_requests{0};
+    std::uint64_t s3_put_requests{0};
+    std::uint64_t s3_copy_requests{0};
+    std::uint64_t s3_delete_requests{0};
+    std::uint64_t s3_downloaded_bytes{0};
+    std::uint64_t s3_estimated_list_requests{0};
+    std::uint64_t s3_estimated_head_requests{0};
+    std::uint64_t s3_estimated_get_requests{0};
+    std::uint64_t s3_estimated_put_requests{0};
+    std::uint64_t s3_estimated_copy_requests{0};
+    std::uint64_t s3_estimated_delete_requests{0};
+    std::uint64_t s3_estimated_body_download_bytes{0};
+    std::uint64_t s3_estimated_upload_bytes{0};
+    std::uint64_t s3_remote_index_objects{0};
+    std::uint64_t s3_archive_downloads_skipped{0};
 
     // Divergence / watermarks
     bool divergence_detected{false};
@@ -126,6 +151,8 @@ struct Event : public std::enable_shared_from_this<Event> {
     // Recompute summary fields from throughputs.
     // Call at end-of-run (and optionally periodically for live dashboards).
     void computeDashboardStats();
+    void applyS3RequestMetrics(const vh::storage::s3::S3RequestMetrics& metrics);
+    void applyS3CostEstimate(const S3CostEstimate& estimate);
 
     // -------------------------
     // Enum ↔ string

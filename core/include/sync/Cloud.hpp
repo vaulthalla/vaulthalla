@@ -59,6 +59,8 @@ namespace vh::sync {
 
         void download(const std::shared_ptr<fs::model::File> &file, bool freeAfterDownload = false);
 
+        void indexRemoteOnly(const std::shared_ptr<fs::model::File> &file);
+
         void remove(const std::shared_ptr<fs::model::File> &file,
                     const tasks::Delete::Type &type = tasks::Delete::Type::PURGE);
 

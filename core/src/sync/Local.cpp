@@ -3,10 +3,12 @@
 #include "concurrency/ThreadPool.hpp"
 #include "sync/Controller.hpp"
 #include "storage/Engine.hpp"
+#include "storage/CloudEngine.hpp"
 #include "sync/model/Policy.hpp"
 #include "sync/model/Operation.hpp"
 #include "vault/model/Vault.hpp"
 #include "fs/model/File.hpp"
+#include "fs/model/file/Trashed.hpp"
 #include "fs/model/Path.hpp"
 #include "fs/ops/file.hpp"
 #include "db/query/sync/Operation.hpp"
@@ -22,6 +24,8 @@
 #include "db/query/sync/Policy.hpp"
 #include "sync/tasks/RotateKey.hpp"
 #include "sync/tasks/Delete.hpp"
+#include "storage/s3/Controller.hpp"
+#include "db/query/sync/RemoteObjectIndex.hpp"
 
 using namespace vh::sync;
 using namespace vh::sync::model;
@@ -35,9 +39,16 @@ using namespace vh::fs::model;
 using namespace vh::fs::ops;
 
 Local::Local(const std::shared_ptr<Engine>& engine)
-: next_run(system_clock::from_time_t(engine->sync->last_sync_at) + seconds(engine->sync->interval.count())),
-  engine(engine),
-  event(std::make_shared<Event>()) {}
+    : engine(engine),
+      event(std::make_shared<Event>()) {
+    if (!engine || !engine->sync) {
+        next_run = system_clock::now() + Policy::DEFAULT_SYNC_INTERVAL;
+        return;
+    }
+
+    engine->sync->interval = Policy::clampInterval(engine->sync->interval);
+    next_run = system_clock::from_time_t(engine->sync->last_sync_at) + seconds(engine->sync->interval.count());
+}
 
 void Local::operator()() {
     startTask();
@@ -52,7 +63,7 @@ void Local::operator()() {
 
 void Local::handleInterrupt() const { if (isInterrupted()) throw std::runtime_error("Sync task interrupted"); }
 
-bool Local::isRunning() const { return runningFlag; }
+bool Local::isRunning() const { return runningFlag.load(); }
 
 void Local::interrupt() { interruptFlag.store(true); }
 
@@ -63,8 +74,17 @@ void Local::runStages(const std::span<const Stage> stages) const {
         if (!isRunning()) break;
         try {
             fn();
+            if (markBudgetExceededIfAny()) break;
             handleInterrupt();
             if (event) event->heartbeat();
+        } catch (const vh::storage::s3::RequestBudgetExceeded& e) {
+            event->status = Event::Status::STALLED;
+            event->stall_reason = e.what();
+            break;
+        } catch (const SyncStalled& e) {
+            event->status = Event::Status::STALLED;
+            event->stall_reason = e.what();
+            break;
         } catch (const std::exception& e) {
             handleError(std::format("[FSTask:{}] {}", std::string(name), e.what()));
             break;
@@ -107,13 +127,37 @@ void Local::processSharedOps() {
 
         try {
             op();
+            if (markBudgetExceededIfAny()) break;
             handleInterrupt();
             event->heartbeat();
+        } catch (const vh::storage::s3::RequestBudgetExceeded& e) {
+            event->status = Event::Status::STALLED;
+            event->stall_reason = e.what();
+            break;
+        } catch (const SyncStalled& e) {
+            event->status = Event::Status::STALLED;
+            event->stall_reason = e.what();
+            break;
         } catch (const std::exception& e) {
             handleError(std::format("[FSTask] Exception during {}: {}", name, e.what()));
             break;
         }
     }
+}
+
+bool Local::markBudgetExceededIfAny() const {
+    if (!engine || !event || engine->type() != StorageType::Cloud) return false;
+
+    const auto cloud = std::static_pointer_cast<CloudEngine>(engine);
+    const auto metrics = cloud->s3RequestMetrics();
+    event->applyS3RequestMetrics(metrics);
+    if (!metrics.budget_exceeded) return false;
+
+    event->status = Event::Status::STALLED;
+    event->stall_reason = metrics.budget_exceeded_reason;
+    event->error_code.clear();
+    event->error_message.clear();
+    return true;
 }
 
 void Local::handleError(const std::string& message) const {
@@ -130,7 +174,9 @@ void Local::shutdown() {
     engine->saveSyncEvent();
     if (event->status == Event::Status::SUCCESS) {
         db::query::sync::Policy::reportSyncSuccess(engine->sync->id);
-        next_run = system_clock::now() + seconds(engine->sync->interval.count());
+        next_run = hasPendingRunNow()
+            ? system_clock::now()
+            : system_clock::now() + seconds(engine->sync->interval.count());
         requeue();
         log::Registry::sync()->debug("[FSTask] Sync task requeued for vault '{}'", engine->vault->id);
         log::Registry::sync()->info("[FSTask] Sync completed for vault '{}' in {}s",
@@ -141,31 +187,62 @@ void Local::shutdown() {
 }
 
 void Local::newEvent() {
-    if (!runNowFlag) engine->newSyncEvent();
-    else {
-        engine->newSyncEvent(trigger);
-        runNowFlag = false;
-    }
+    uint8_t runNowTrigger = 3;
+    if (consumePendingRunNow(runNowTrigger)) engine->newSyncEvent(runNowTrigger);
+    else engine->newSyncEvent();
 }
 
 void Local::processFutures() {
-    for (auto& f : futures)
-        if (std::get<bool>(f.get()) == false)
+    std::size_t failed = 0;
+    for (auto& f : futures) {
+        try {
+            const auto result = f.get();
+            const auto* ok = std::get_if<bool>(&result);
+            if (ok && !*ok) {
+                ++failed;
+                log::Registry::sync()->error("[FSTask] Future failed");
+            }
+        } catch (const std::exception& e) {
+            ++failed;
+            log::Registry::sync()->error("[FSTask] Future failed: {}", e.what());
+        } catch (...) {
+            ++failed;
             log::Registry::sync()->error("[FSTask] Future failed");
+        }
+    }
     futures.clear();
+
+    if (failed > 0 && event && event->status != Event::Status::ERROR &&
+        event->status != Event::Status::STALLED &&
+        event->status != Event::Status::CANCELLED) {
+        handleError(std::format("{} async sync operation(s) failed", failed));
+    }
 }
 
 unsigned int Local::vaultId() const { return engine->vault->id; }
 
 void Local::requeue() {
-    next_run = system_clock::now() + seconds(engine->sync->interval.count());
     runtime::Deps::get().syncController->requeue(shared_from_this());
 }
 
 void Local::runNow(const uint8_t trigger) {
+    std::scoped_lock lock(runNowMutex_);
     runNowFlag = true;
     this->trigger = trigger;
     next_run = system_clock::now();
+}
+
+bool Local::hasPendingRunNow() const {
+    std::scoped_lock lock(runNowMutex_);
+    return runNowFlag;
+}
+
+bool Local::consumePendingRunNow(uint8_t& pendingTrigger) {
+    std::scoped_lock lock(runNowMutex_);
+    if (!runNowFlag) return false;
+    pendingTrigger = trigger;
+    runNowFlag = false;
+    return true;
 }
 
 void Local::push(const std::shared_ptr<Task>& task) {
@@ -259,11 +336,96 @@ void Local::handleVaultKeyRotation() {
 
 void Local::removeTrashedFiles() {
     const auto files = db::query::fs::File::listTrashedFiles(engine->vault->id);
-    const auto type = engine->type() == StorageType::Local ? tasks::Delete::Type::LOCAL : tasks::Delete::Type::PURGE;
+    if (files.empty()) return;
+
+    if (engine->type() == StorageType::Cloud) {
+        const auto cloud = std::static_pointer_cast<CloudEngine>(engine);
+        struct PurgedTrash {
+            std::shared_ptr<vh::fs::model::file::Trashed> file;
+            std::shared_ptr<ScopedOp> scoped;
+        };
+
+        std::vector<PurgedTrash> purged;
+        purged.reserve(files.size());
+        bool remoteIndexMutated = false;
+        std::size_t failed = 0;
+
+        for (const auto& file : files) {
+            auto scoped = op(Throughput::Metric::DELETE);
+            bool purgeSucceeded = false;
+            try {
+                if (!file) throw std::runtime_error("null trashed file");
+                scoped->start(file->size_bytes);
+                cloud->purge(file);
+                db::query::sync::RemoteObjectIndex::deleteKey(file->vault_id, file->path);
+                purged.push_back({file, scoped});
+                remoteIndexMutated = true;
+                purgeSucceeded = true;
+            } catch (const std::exception& e) {
+                ++failed;
+                log::Registry::sync()->error(
+                    "[FSTask] Failed to purge trashed file {}: {}",
+                    file ? file->path.string() : std::string{"<null>"},
+                    e.what());
+            } catch (...) {
+                ++failed;
+                log::Registry::sync()->error(
+                    "[FSTask] Failed to purge trashed file {}: unknown error",
+                    file ? file->path.string() : std::string{"<null>"});
+            }
+            if (!purgeSucceeded) scoped->stop();
+        }
+
+        bool manifestPublished = true;
+        if (remoteIndexMutated) {
+            try {
+                cloud->publishRemoteIndexManifestWithRetry();
+            } catch (const std::exception& e) {
+                ++failed;
+                manifestPublished = false;
+                log::Registry::sync()->error(
+                    "[FSTask] Failed to publish remote index manifest after trash purge: {}",
+                    e.what());
+            } catch (...) {
+                ++failed;
+                manifestPublished = false;
+                log::Registry::sync()->error(
+                    "[FSTask] Failed to publish remote index manifest after trash purge: unknown error");
+            }
+        }
+
+        for (const auto& done : purged) {
+            if (manifestPublished) {
+                try {
+                    db::query::fs::File::markTrashedFileDeleted(done.file->id);
+                    done.scoped->success = true;
+                } catch (const std::exception& e) {
+                    ++failed;
+                    log::Registry::sync()->error(
+                        "[FSTask] Failed to mark trashed file {} deleted: {}",
+                        done.file ? done.file->path.string() : std::string{"<null>"},
+                        e.what());
+                } catch (...) {
+                    ++failed;
+                    log::Registry::sync()->error(
+                        "[FSTask] Failed to mark trashed file {} deleted: unknown error",
+                        done.file ? done.file->path.string() : std::string{"<null>"});
+                }
+            }
+            done.scoped->stop();
+        }
+
+        if (failed > 0) {
+            handleError(std::format("{} trashed cloud file purge(s) failed", failed));
+            runningFlag = false;
+        }
+
+        return;
+    }
 
     futures.reserve(files.size());
     for (const auto& file : files)
-        push(std::make_shared<tasks::Delete>(engine, file, op(Throughput::Metric::DELETE), type));
+        push(std::make_shared<tasks::Delete>(engine, file, op(Throughput::Metric::DELETE), tasks::Delete::Type::LOCAL));
 
     processFutures();
 }

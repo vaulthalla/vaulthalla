@@ -67,6 +67,7 @@ void Event::upsert(const EventPtr& event) {
                 event->run_uuid,
                 throughput->metricToString(),
                 throughput->num_ops,
+                throughput->failed_ops,
                 throughput->size_bytes,
                 throughput->duration_ms
             };

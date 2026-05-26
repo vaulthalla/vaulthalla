@@ -15,6 +15,7 @@ import { buildPreviewUrl } from '@/util/previewUrl'
 import { parseTimestamp } from '@/util/formatTimestamp'
 import { buildDownloadUrl } from '@/util/downloadUrl'
 import { isPreviewableMime } from '@/util/previewMime'
+import { useStatsStore } from '@/stores/statsStore'
 
 type FsMode = 'authenticated' | 'share'
 type FsEntry = DBFile | Directory
@@ -61,6 +62,7 @@ interface FsStore {
   uploading: boolean
   uploadProgress: number
   uploadError: string | null
+  uploadErrorVaultId: number | null
   uploadSuccess: UploadSuccessState | null
   uploadLabel: string | null
   downloading: boolean
@@ -298,9 +300,31 @@ const isDuplicateUploadTargetError = (message: string) => {
     normalized.includes('target already exists')
 }
 
+const isUploadQuotaError = (message: string) => {
+  const normalized = message.toLowerCase()
+  return normalized.includes('upload exceeds available vault storage') ||
+    normalized.includes('share upload exceeds available vault storage') ||
+    normalized.includes('upload exceeds vault quota')
+}
+
+const formatBytesValue = (bytes: number) => {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1)
+  const value = bytes / (1024 ** index)
+  return `${value.toFixed(value < 10 && index > 0 ? 1 : 0)} ${units[index]}`
+}
+
+const quotaUploadMessage = (vaultName: string, selectedBytes: number, availableBytes?: number | null) => (
+  availableBytes == null
+    ? `Upload exceeds vault quota for ${vaultName}. Selected ${formatBytesValue(selectedBytes)} is larger than available vault storage.`
+    : `Upload exceeds vault quota for ${vaultName}. Selected ${formatBytesValue(selectedBytes)}; available ${formatBytesValue(availableBytes)}.`
+)
+
 const uploadErrorMessage = (error: unknown, fallback: string, mode: FsMode) => {
   const message = errorMessage(error, fallback)
   if (mode === 'share' && isDuplicateUploadTargetError(message)) return 'A file with that name already exists in this share.'
+  if (isUploadQuotaError(message)) return 'Upload exceeds vault quota.'
   return message
 }
 
@@ -335,6 +359,29 @@ const createUploadSuccess = (files: FileWithRelativePath[], listUnavailable: boo
   }
 }
 
+const uploadQuotaPreflightError = async (
+  mode: FsMode,
+  currVault: Vault | LocalDiskVault | S3Vault | null,
+  selectedBytes: number,
+) => {
+  if (mode !== 'authenticated' || !currVault || selectedBytes <= 0) return null
+
+  try {
+    const stats = await useStatsStore.getState().getVaultStorageBackendStats({ vault_id: currVault.id })
+    const vaultStats = stats.vaults.find(vault => vault.vault_id === currVault.id) ?? stats.vaults[0]
+    if (!vaultStats || vaultStats.quota_bytes <= 0 || vaultStats.free_space_bytes == null) return null
+    if (selectedBytes <= vaultStats.free_space_bytes) return null
+
+    return {
+      message: quotaUploadMessage(currVault.name, selectedBytes, vaultStats.free_space_bytes),
+      vaultId: currVault.id,
+    }
+  } catch (error) {
+    console.debug('[FsStore] upload quota preflight unavailable:', error)
+    return null
+  }
+}
+
 const clearTransferState = (uploadSuccess?: UploadSuccessState | null) => {
   revokeUploadPreview(uploadSuccess)
   return {
@@ -342,6 +389,7 @@ const clearTransferState = (uploadSuccess?: UploadSuccessState | null) => {
     uploadProgress: 0,
     uploading: false,
     uploadError: null,
+    uploadErrorVaultId: null,
     uploadSuccess: null,
     uploadLabel: null,
     downloadProgress: 0,
@@ -739,6 +787,7 @@ export const useFSStore = create<FsStore>()(
               uploading: true,
               uploadProgress: 0,
               uploadError: null,
+              uploadErrorVaultId: null,
               uploadLabel: label,
             })
 
@@ -775,12 +824,11 @@ export const useFSStore = create<FsStore>()(
               const uploadSuccess = createUploadSuccess(payload.files, listUnavailable)
               revokeUploadPreview(get().uploadSuccess)
               updateTransferTask(task.id, { status: 'complete', progress: 100, transferredBytes: totalBytes, totalBytes, error: null })
-              set({ uploadProgress: 100, uploading: false, uploadLabel: null, uploadError: null, uploadSuccess })
+              set({ uploadProgress: 100, uploading: false, uploadLabel: null, uploadError: null, uploadErrorVaultId: null, uploadSuccess })
 
               const refreshStartedAt = nowMs()
               try {
                 if (payload.mode === 'authenticated') {
-                  await useVaultStore.getState().syncVault({ id: payload.vault?.id || 0 })
                   if (get().mode === 'authenticated' && get().currVault?.id === payload.vault?.id) {
                     await get().fetchFiles()
                   }
@@ -794,9 +842,13 @@ export const useFSStore = create<FsStore>()(
               payload.resolve?.()
             } catch (err) {
               console.error('[FsStore] upload task failed:', err)
-              const message = uploadErrorMessage(err, 'Upload failed', payload.mode)
+              const rawMessage = errorMessage(err, 'Upload failed')
+              const quotaVaultId = payload.mode === 'authenticated' && isUploadQuotaError(rawMessage) ? payload.vault?.id ?? null : null
+              const message = quotaVaultId && payload.vault
+                ? quotaUploadMessage(payload.vault.name, totalBytes)
+                : uploadErrorMessage(err, 'Upload failed', payload.mode)
               updateTransferTask(task.id, { status: 'failed', error: message })
-              set({ uploadError: message })
+              set({ uploadError: message, uploadErrorVaultId: quotaVaultId })
               payload.reject?.(err)
             } finally {
               stopUploadDirectoryHydration()
@@ -813,7 +865,7 @@ export const useFSStore = create<FsStore>()(
         }
       }
 
-      const enqueueUploadTask = (
+      const enqueueUploadTask = async (
         files: FileWithRelativePath[],
         options: {
           targetPaths?: string[]
@@ -842,6 +894,25 @@ export const useFSStore = create<FsStore>()(
           updatedAt: timestamp,
         }
 
+        const quotaError = await uploadQuotaPreflightError(mode, currVault, totalBytes)
+        if (quotaError) {
+          revokeUploadPreview(get().uploadSuccess)
+          set(state => ({
+            tasks: trimTransferTasks([{
+              ...task,
+              status: 'failed',
+              error: quotaError.message,
+              updatedAt: Date.now(),
+            }, ...state.tasks]),
+            uploadError: quotaError.message,
+            uploadErrorVaultId: quotaError.vaultId,
+            uploadSuccess: null,
+            uploading: false,
+            uploadLabel: null,
+          }))
+          return Promise.reject(new Error(quotaError.message))
+        }
+
         let completion: Promise<void> | undefined
         const payload: UploadTaskPayload = {
           files,
@@ -864,6 +935,7 @@ export const useFSStore = create<FsStore>()(
         set(state => ({
           tasks: trimTransferTasks([task, ...state.tasks]),
           uploadError: null,
+          uploadErrorVaultId: null,
           uploadSuccess: null,
         }))
         void runUploadQueue()
@@ -879,6 +951,7 @@ export const useFSStore = create<FsStore>()(
       uploading: false,
       uploadProgress: 0,
       uploadError: null,
+      uploadErrorVaultId: null,
       uploadSuccess: null,
       uploadLabel: null,
       downloading: false,
@@ -1207,7 +1280,7 @@ export const useFSStore = create<FsStore>()(
 
         try {
           const response = await ws.sendCommand('fs.dir.list', { vault_id, path })
-          return response.files
+          return response.files.map(wireEntryToFsEntry)
         } catch (error) {
           console.error('Error listing directory:', error)
           throw error

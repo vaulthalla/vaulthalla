@@ -17,6 +17,7 @@ struct Throughput {
     enum Metric {
         UPLOAD,
         DOWNLOAD,
+        INDEX,
         RENAME,
         COPY,
         DELETE

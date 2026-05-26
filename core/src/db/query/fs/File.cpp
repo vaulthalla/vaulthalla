@@ -11,6 +11,7 @@
 
 #include <optional>
 #include <stdexcept>
+#include <ctime>
 
 namespace vh::db::query::fs {
 
@@ -19,6 +20,8 @@ using vh::db::encoding::to_utf8_string;
 unsigned int File::upsertFile(const FilePtr& file) {
     if (!file) throw std::invalid_argument("File cannot be null");
     if (!file->path.string().starts_with("/")) file->setPath("/" + to_utf8_string(file->path.u8string()));
+    if (file->created_at == 0) file->created_at = std::time(nullptr);
+    if (file->updated_at == 0) file->updated_at = file->created_at;
 
     return Transactions::exec("File::addFile", [&](pqxx::work& txn) {
         const auto exists = txn.exec(pqxx::prepped{"fs_entry_exists_by_inode"}, file->inode).one_field().as<bool>();
@@ -44,6 +47,7 @@ unsigned int File::upsertFile(const FilePtr& file) {
         p.append(file->mime_type);
         p.append(file->content_hash);
         p.append(file->encryption_iv);
+        p.append(file->encrypted_with_key_version);
 
         const auto fileId = txn.exec(pqxx::prepped{"upsert_file_full"}, p).one_row()["fs_entry_id"].as<unsigned int>();
         txn.exec(
@@ -85,7 +89,10 @@ void File::updateFile(const FilePtr& file) {
         p.append(file->mime_type);
         p.append(file->content_hash);
         p.append(file->encryption_iv);
+        p.append(file->encrypted_with_key_version);
+        p.append(file->last_modified_by);
 
+        file->updated_at = std::time(nullptr);
         txn.exec(pqxx::prepped{"update_file_only"}, p);
         txn.exec(
             pqxx::prepped{"insert_file_activity"},
@@ -156,12 +163,21 @@ void File::moveFile(const FilePtr& file, const std::filesystem::path& newPath, u
         p.append(file->vault_id);
         p.append(file->parent_id);
         p.append(file->name);
+        p.append(file->base32_alias);
         p.append(file->created_by);
         p.append(file->last_modified_by);
         p.append(to_utf8_string(file->path.u8string()));
+        p.append(file->inode);
+        p.append(file->mode);
+        p.append(file->owner_uid);
+        p.append(file->group_gid);
+        p.append(file->is_hidden);
+        p.append(file->is_system);
         p.append(file->size_bytes);
         p.append(file->mime_type);
         p.append(file->content_hash);
+        p.append(file->encryption_iv);
+        p.append(file->encrypted_with_key_version);
 
         txn.exec(pqxx::prepped{"upsert_file_full"}, p);
 
@@ -302,7 +318,12 @@ std::optional<std::pair<std::string, unsigned int>>  File::getEncryptionIVAndVer
         const auto res = txn.exec(pqxx::prepped{"get_file_encryption_iv_and_version"}, p);
         if (res.empty()) return std::nullopt;
         const auto row = res.one_row();
-        return std::make_pair(row["encryption_iv"].as<std::string>(), row["encrypted_with_key_version"].as<unsigned int>());
+        if (row["encryption_iv"].is_null() || row["encrypted_with_key_version"].is_null())
+            return std::nullopt;
+        const auto iv = row["encryption_iv"].as<std::string>();
+        const auto keyVersion = row["encrypted_with_key_version"].as<unsigned int>();
+        if (iv.empty() || keyVersion == 0) return std::nullopt;
+        return std::make_pair(iv, keyVersion);
     });
 }
 

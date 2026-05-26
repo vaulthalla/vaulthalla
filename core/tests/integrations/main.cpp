@@ -14,6 +14,7 @@
 #include <iostream>
 #include <string>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <paths.h>
@@ -25,13 +26,26 @@ using namespace vh::concurrency;
 using namespace vh::storage;
 using namespace vh::fs;
 
+static uid_t integrationAdminUid() {
+    if (const auto* forced = std::getenv("VH_TEST_ADMIN_UID"); forced && *forced)
+        return static_cast<uid_t>(std::stoul(forced));
+
+    const auto current = getuid();
+    if (current != 0) return current;
+
+    if (const auto* sudoUid = std::getenv("SUDO_UID"); sudoUid && *sudoUid)
+        return static_cast<uid_t>(std::stoul(sudoUid));
+
+    return current;
+}
+
 static void initBase() {
     vh::paths::enableTestMode();
     std::filesystem::remove_all(vh::paths::getBackingPath());
     std::filesystem::create_directories(vh::paths::getBackingPath());
     std::filesystem::create_directories(vh::paths::getMountPath());
     std::filesystem::create_directories(vh::paths::getRuntimePath());
-    std::ofstream(vh::paths::getRuntimePath() / "superadmin_uid") << getuid() << '\n';
+    std::ofstream(vh::paths::getRuntimePath() / "superadmin_uid") << integrationAdminUid() << '\n';
     vh::config::Registry::init();
     vh::log::Registry::init();
     ThreadPoolManager::instance().init();

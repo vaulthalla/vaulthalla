@@ -10,7 +10,15 @@ void vh::db::Connection::initPreparedSyncStats() const {
                 s.last_sync_at,
                 s.last_success_at,
                 rs.strategy AS configured_strategy,
-                COALESCE(rs.conflict_policy, fs.conflict_policy) AS conflict_policy
+                COALESCE(rs.conflict_policy, fs.conflict_policy) AS conflict_policy,
+                rs.s3_budget_list_requests,
+                rs.s3_budget_head_requests,
+                rs.s3_budget_get_requests,
+                rs.s3_budget_put_requests,
+                rs.s3_budget_copy_requests,
+                rs.s3_budget_delete_requests,
+                rs.s3_budget_downloaded_bytes,
+                rs.max_remote_index_age_seconds
             FROM sync s
             LEFT JOIN rsync rs ON rs.sync_id = s.id
             LEFT JOIN fsync fs ON fs.sync_id = s.id
@@ -144,6 +152,7 @@ void vh::db::Connection::initPreparedSyncStats() const {
             JOIN sync_event e ON e.vault_id = t.vault_id AND e.run_uuid = t.run_uuid
             WHERE t.vault_id = $1
               AND e.timestamp_begin >= CURRENT_TIMESTAMP - INTERVAL '24 hours'
+              AND t.metric_type IN ('upload', 'download')
               AND t.duration_ms > 0;
         )SQL"
     );

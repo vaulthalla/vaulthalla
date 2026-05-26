@@ -886,6 +886,29 @@ TEST_F(WsShareUploadTest, HttpShareUploadRejectsDuplicatesScopeDenialAndSizeMism
     );
 }
 
+TEST_F(WsShareUploadTest, HttpShareUploadRejectsAggregateQuotaOverflow) {
+    namespace http_upload = vh::protocols::http::upload;
+
+    auto session = readySession();
+    http_upload::Coordinator::setSessionResolverForTesting([session](const vh::protocols::http::request&) {
+        return session;
+    });
+
+    httpEngine->vault->quota = vh::storage::Engine::MIN_FREE_SPACE + 100;
+
+    EXPECT_THROW({
+        (void)http_upload::Coordinator::instance().createSession(
+            httpRequest(vh::protocols::http::verb::post, "/upload/session?share=1"),
+            {
+                {"files", nlohmann::json::array({
+                    {{"file_id", "f0"}, {"path", "/quota-a.txt"}, {"size_bytes", 60}},
+                    {{"file_id", "f1"}, {"path", "/quota-b.txt"}, {"size_bytes", 60}}
+                })}
+            }
+        );
+    }, std::runtime_error);
+}
+
 TEST_F(WsShareUploadTest, BinaryUploadFinishesThroughWriterAndManager) {
     auto session = readySession();
     const auto shareId = session->sharePrincipal()->share_id;

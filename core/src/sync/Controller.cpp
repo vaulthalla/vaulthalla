@@ -98,15 +98,32 @@ void Controller::runNow(const unsigned int vaultId, const uint8_t trigger) {
     {
         std::scoped_lock lock(taskMapMutex_);
         if (!taskMap_.contains(vaultId)) {
-            log::Registry::sync()->error("[SyncController] No task found for vault ID: {}", vaultId);
+            log::Registry::sync()->warn("[SyncController] No task found for vault ID: {}, refreshing sync engines", vaultId);
+        } else {
+            task = taskMap_[vaultId];
+        }
+    }
+
+    if (!task) {
+        refreshEngines();
+
+        std::scoped_lock lock(taskMapMutex_);
+        if (!taskMap_.contains(vaultId)) {
+            log::Registry::sync()->error("[SyncController] No task found for vault ID: {} after refresh", vaultId);
             return;
         }
         task = taskMap_[vaultId];
     }
 
-    task->interrupt();
+    if (task->isRunning()) {
+        task->runNow(trigger);
+        log::Registry::sync()->debug(
+            "[SyncController] Sync already running for vault ID: {}; queued immediate rerun",
+            vaultId);
+        return;
+    }
 
-    while (task->isRunning()) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    task->interrupt();
 
     task = createTask(task->engine);
     task->runNow(trigger);
@@ -144,6 +161,14 @@ void Controller::pruneStaleTasks(const std::vector<std::shared_ptr<Engine> >& en
 
 void Controller::processTask(const std::shared_ptr<Engine>& engine) {
     std::scoped_lock lock(taskMapMutex_, pqMutex_);
+
+    if (!engine || !engine->sync || !engine->sync->enabled) {
+        if (engine && taskMap_.contains(engine->vault->id)) {
+            if (const auto& task = taskMap_[engine->vault->id]) task->interrupt();
+            taskMap_.erase(engine->vault->id);
+        }
+        return;
+    }
 
     if (!taskMap_.contains(engine->vault->id)) {
         const auto task = createTask(engine);

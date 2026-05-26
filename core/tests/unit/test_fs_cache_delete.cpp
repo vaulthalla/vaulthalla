@@ -1,4 +1,5 @@
 #include "db/Transactions.hpp"
+#include "db/query/fs/Entry.hpp"
 #include "db/query/fs/Directory.hpp"
 #include "db/query/fs/File.hpp"
 #include "fs/cache/Registry.hpp"
@@ -10,6 +11,7 @@
 #include <gtest/gtest.h>
 #include <paths.h>
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
@@ -237,6 +239,49 @@ TEST_F(FsCacheDeleteTest, DeleteFileTrashesAndMarksDeletedWithRegisteredStatemen
     EXPECT_EQ(row.trashedCount, 1u);
     EXPECT_EQ(row.backingPath, file->backing_path.string());
     EXPECT_TRUE(row.markedDeleted);
+}
+
+TEST_F(FsCacheDeleteTest, CachedNewFileAndDirectoryHaveNonZeroTimestamps) {
+    const std::filesystem::path dirPath = "/cache_vault/timestamps";
+    auto dir = makeDirectory(dirPath, aliasFor('T'));
+    dir->id = vh::db::query::fs::Directory::upsertDirectory(dir);
+    vh::runtime::Deps::get().fsCache->cacheEntry(dir);
+
+    EXPECT_GT(dir->created_at, 0);
+    EXPECT_GT(dir->updated_at, 0);
+
+    const std::filesystem::path filePath = "/cache_vault/timestamped.txt";
+    auto file = makeFile(filePath, aliasFor('U'));
+    file->id = vh::db::query::fs::File::upsertFile(file);
+    vh::runtime::Deps::get().fsCache->cacheEntry(file);
+
+    EXPECT_GT(file->created_at, 0);
+    EXPECT_GT(file->updated_at, 0);
+
+    const auto listed = vh::runtime::Deps::get().fsCache->listDir(ids.vaultRootId);
+    auto listedFile = std::ranges::find_if(listed, [](const auto& entry) {
+        return entry && entry->name == "timestamped.txt";
+    });
+    ASSERT_NE(listedFile, listed.end());
+    EXPECT_GT((*listedFile)->updated_at, 0);
+}
+
+TEST_F(FsCacheDeleteTest, FileUpdateTouchesFsEntryUpdatedAt) {
+    const std::filesystem::path path = "/cache_vault/update-time.txt";
+    auto file = makeFile(path, aliasFor('W'));
+    file->id = vh::db::query::fs::File::upsertFile(file);
+    vh::runtime::Deps::get().fsCache->cacheEntry(file);
+
+    file->updated_at = 1;
+    file->size_bytes = 8;
+    file->last_modified_by = ids.userId;
+    vh::db::query::fs::File::updateFile(file);
+
+    EXPECT_GT(file->updated_at, 1);
+
+    const auto reloaded = vh::db::query::fs::Entry::getFSEntryById(file->id);
+    ASSERT_TRUE(reloaded);
+    EXPECT_GT(reloaded->updated_at, 1);
 }
 
 } // namespace

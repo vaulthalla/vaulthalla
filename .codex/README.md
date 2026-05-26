@@ -18,6 +18,8 @@ bash .codex/scripts/doctor.sh
 bash .codex/scripts/index.sh
 bash .codex/scripts/changed.sh all
 bash .codex/scripts/verify.sh all
+bash .codex/scripts/verify.sh core
+bash .codex/scripts/verify.sh integration  # destructive clean integration path
 # optional strict lint gate:
 VERIFY_STRICT_LINT=1 bash .codex/scripts/verify.sh web
 ```
@@ -27,7 +29,7 @@ VERIFY_STRICT_LINT=1 bash .codex/scripts/verify.sh web
 - `.codex/config/project.env`: command and path defaults for monorepo checks.
 - `.codex/scripts/doctor.sh`: environment + toolchain sanity checks.
 - `.codex/scripts/index.sh`: refreshes `.codex/context/generated-index.md`.
-- `.codex/scripts/verify.sh`: profile-based verification (`web`, `release`, `all`).
+- `.codex/scripts/verify.sh`: profile-based verification (`web`, `core`, `integration`, `release`, `all`).
 - `.codex/scripts/changed.sh`: change-aware checks for web/release surfaces.
 - `.codex/scripts/snapshot.sh`: writes task handoff snapshot to `.codex/context/`.
 - `.codex/context/`: durable architecture and workflow context extracted from source files.

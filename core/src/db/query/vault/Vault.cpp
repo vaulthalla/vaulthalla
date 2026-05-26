@@ -13,10 +13,31 @@ using vh::db::model::ListQueryParams;
 using vh::sync::model::LocalPolicy;
 using vh::sync::model::RemotePolicy;
 
+namespace {
+    void append_s3_budget(pqxx::params& params, const vh::storage::s3::S3RequestBudget& budget) {
+        params.append(budget.max_list_requests);
+        params.append(budget.max_head_requests);
+        params.append(budget.max_get_requests);
+        params.append(budget.max_put_requests);
+        params.append(budget.max_copy_requests);
+        params.append(budget.max_delete_requests);
+        params.append(budget.max_downloaded_bytes);
+    }
+
+    void append_remote_index_age(pqxx::params& params, const std::shared_ptr<RemotePolicy>& sync) {
+        if (sync->max_remote_index_age) params.append(sync->max_remote_index_age->count());
+        else params.append(std::optional<int64_t>{});
+    }
+}
+
 unsigned int Vault::upsertVault(const VaultPtr& vault,
                                        const PolicyPtr& sync) {
     const auto exists = vault->id != 0;
     if (!exists && !sync) throw std::invalid_argument("Sync cannot be null on vault creation.");
+    if (sync) {
+        sync->interval = vh::sync::model::Policy::clampInterval(sync->interval);
+        sync->rehash_config();
+    }
 
     return Transactions::exec("Vault::upsertVault", [&](pqxx::work& txn) {
         pqxx::params p{
@@ -45,6 +66,8 @@ unsigned int Vault::upsertVault(const VaultPtr& vault,
                 const auto rSync = std::static_pointer_cast<RemotePolicy>(sync);
                 pqxx::params sync_params{vaultId, rSync->interval.count(), to_string(rSync->conflict_policy),
                                          to_string(rSync->strategy)};
+                append_s3_budget(sync_params, rSync->s3_request_budget);
+                append_remote_index_age(sync_params, rSync);
                 txn.exec(pqxx::prepped{"insert_sync_and_rsync"}, sync_params);
             }
         } else if (sync) {  // exists and sync is provided
@@ -67,6 +90,8 @@ unsigned int Vault::upsertVault(const VaultPtr& vault,
                     to_string(rsync->strategy),
                     to_string(rsync->conflict_policy)
                 };
+                append_s3_budget(r, rsync->s3_request_budget);
+                append_remote_index_age(r, rsync);
                 txn.exec(pqxx::prepped{"update_sync_and_rsync"}, r);
             }
         }
@@ -239,17 +264,21 @@ bool Vault::vaultRootExists(const unsigned int vaultId) {
 
 void Vault::updateVaultSync(const PolicyPtr& sync, const vh::vault::model::VaultType& type) {
     if (!sync) throw std::invalid_argument("Sync cannot be null on vault sync update.");
+    sync->interval = vh::sync::model::Policy::clampInterval(sync->interval);
+    sync->rehash_config();
 
     Transactions::exec("Vault::updateVaultSync", [&](pqxx::work& txn) {
         if (type == vh::vault::model::VaultType::Local) {
             const auto fsync = std::static_pointer_cast<LocalPolicy>(sync);
             pqxx::params p{fsync->id, fsync->interval.count(), fsync->enabled, to_string(fsync->conflict_policy)};
-            txn.exec(pqxx::prepped{"update_fsync"}, p);
+            txn.exec(pqxx::prepped{"update_sync_and_fsync"}, p);
         } else if (type == vh::vault::model::VaultType::S3) {
             const auto rsync = std::static_pointer_cast<RemotePolicy>(sync);
             pqxx::params p{rsync->id, rsync->interval.count(), rsync->enabled, to_string(rsync->strategy),
                            to_string(rsync->conflict_policy)};
-            txn.exec(pqxx::prepped{"update_rsync"}, p);
+            append_s3_budget(p, rsync->s3_request_budget);
+            append_remote_index_age(p, rsync);
+            txn.exec(pqxx::prepped{"update_sync_and_rsync"}, p);
         } else throw std::runtime_error("Unsupported VaultType in updateVaultSync(): " + to_string(type));
     });
 }

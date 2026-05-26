@@ -5,6 +5,7 @@
 #include "fs/model/Path.hpp"
 
 #include <optional>
+#include <ctime>
 
 namespace vh::db::query::fs {
 
@@ -12,6 +13,8 @@ using vh::db::encoding::to_utf8_string;
 
 unsigned int Directory::upsertDirectory(const DirPtr& directory) {
     if (!directory->path.string().starts_with("/")) directory->setPath("/" + to_utf8_string(directory->path.u8string()));
+    if (directory->created_at == 0) directory->created_at = std::time(nullptr);
+    if (directory->updated_at == 0) directory->updated_at = directory->created_at;
     return Transactions::exec("Directory::addDirectory", [&](pqxx::work& txn) {
         const auto exists = txn.exec(pqxx::prepped{"fs_entry_exists_by_inode"}, directory->inode).one_field().as<bool>();
         if (directory->inode && *directory->inode != 1) txn.exec(pqxx::prepped{"delete_fs_entry_by_inode"}, directory->inode);

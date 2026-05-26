@@ -32,6 +32,8 @@ SList Controller::makeSigHeaders(const std::string &method,
 
 std::optional<std::unordered_map<std::string, std::string> >
 Controller::getHeadObject(const std::filesystem::path &key) const {
+    recordRequest(RequestKind::Head);
+
     const auto [canonicalPath, url] = constructPaths(nullptr, key);
     const std::string payloadHash = "UNSIGNED-PAYLOAD";
 
@@ -72,24 +74,25 @@ Controller::getHeadObject(const std::filesystem::path &key) const {
 }
 
 void Controller::setObjectContentHash(const std::filesystem::path &key, const std::string &hash) const {
+    recordRequest(RequestKind::Copy);
+
     CurlEasy curl;
     const auto [canonicalPath, url] = constructPaths(static_cast<CURL *>(curl), key);
 
     const std::string payloadHash = "UNSIGNED-PAYLOAD";
 
+    std::ostringstream source;
+    source << "/" << bucket_ << "/" << escapeKeyPreserveSlashes(static_cast<CURL *>(curl), key);
+
     auto hdrMap = buildHeaderMap(payloadHash);
+    hdrMap["x-amz-copy-source"] = source.str();
+    hdrMap["x-amz-metadata-directive"] = "REPLACE";
+    hdrMap["x-amz-meta-content-hash"] = hash;
     const std::string authHeader = buildAuthorizationHeader(apiKey_, "PUT", canonicalPath, hdrMap, payloadHash);
 
     SList headers;
     headers.add("Authorization: " + authHeader);
     for (const auto &[k, v]: hdrMap) headers.add(k + ": " + v);
-
-    std::ostringstream source;
-    source << "/" << bucket_ << "/" << escapeKeyPreserveSlashes(static_cast<CURL *>(curl), key);
-
-    headers.add("x-amz-copy-source: " + source.str());
-    headers.add("x-amz-metadata-directive: REPLACE");
-    headers.add("x-amz-meta-content-hash: " + hash);
 
     HttpResponse resp = performCurl([&](CURL *h) {
         curl_easy_setopt(h, CURLOPT_URL, url.c_str());
@@ -108,27 +111,27 @@ void Controller::setObjectContentHash(const std::filesystem::path &key, const st
 
 void Controller::setObjectEncryptionMetadata(const std::string &key, const std::string &iv_b64,
                                              unsigned int key_version) const {
+    recordRequest(RequestKind::Copy);
+
     CurlEasy curl;
     const auto [canonicalPath, url] = constructPaths(static_cast<CURL *>(curl), key);
     const std::string payloadHash = "UNSIGNED-PAYLOAD";
 
+    std::ostringstream source;
+    source << "/" << bucket_ << "/" << escapeKeyPreserveSlashes(static_cast<CURL *>(curl), key);
+
     auto hdrMap = buildHeaderMap(payloadHash);
+    hdrMap["x-amz-copy-source"] = source.str();
+    hdrMap["x-amz-metadata-directive"] = "REPLACE";
+    hdrMap["x-amz-meta-vh-encrypted"] = "true";
+    hdrMap["x-amz-meta-vh-iv"] = iv_b64;
+    hdrMap["x-amz-meta-vh-algo"] = "aes256gcm";
+    hdrMap["x-amz-meta-vh-key-version"] = std::to_string(key_version);
     const std::string authHeader = buildAuthorizationHeader(apiKey_, "PUT", canonicalPath, hdrMap, payloadHash);
 
     SList headers;
     headers.add("Authorization: " + authHeader);
     for (const auto &[k, v]: hdrMap) headers.add(k + ": " + v);
-
-    std::ostringstream source;
-    source << "/" << bucket_ << "/" << escapeKeyPreserveSlashes(static_cast<CURL *>(curl), key);
-
-    headers.add("x-amz-copy-source: " + source.str());
-    headers.add("x-amz-metadata-directive: REPLACE");
-
-    headers.add("x-amz-meta-vh-encrypted: true");
-    headers.add("x-amz-meta-vh-iv: " + iv_b64);
-    headers.add("x-amz-meta-vh-algo: aes256gcm");
-    headers.add("x-amz-meta-vh-key-version: " + std::to_string(key_version));
 
     HttpResponse resp = performCurl([&](CURL *h) {
         curl_easy_setopt(h, CURLOPT_URL, url.c_str());

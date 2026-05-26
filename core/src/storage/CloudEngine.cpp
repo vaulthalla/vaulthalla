@@ -10,6 +10,7 @@
 #include "db/query/fs/File.hpp"
 #include "db/query/fs/Directory.hpp"
 #include "db/query/identities/User.hpp"
+#include "db/query/sync/RemoteObjectIndex.hpp"
 #include "fs/ops/file.hpp"
 #include "preview/thumbnail/Worker.hpp"
 #include "fs/Filesystem.hpp"
@@ -17,6 +18,11 @@
 #include "vault/APIKeyManager.hpp"
 #include "config/Registry.hpp"
 #include "sync/model/RemotePolicy.hpp"
+#include "sync/model/RemoteManifest.hpp"
+#include "sync/model/Event.hpp"
+
+#include <algorithm>
+#include <cctype>
 
 using namespace vh::fs;
 using namespace vh::fs::model;
@@ -36,12 +42,82 @@ static constexpr std::string_view META_VH_IV = "x-amz-meta-vh-iv";
 static constexpr std::string_view META_VH_KEY_VERSION = "x-amz-meta-vh-key-version";
 static constexpr std::string_view META_CONTENT_HASH = "x-amz-meta-content-hash";
 
+namespace {
+    constexpr int REMOTE_MANIFEST_PUBLISH_MAX_ATTEMPTS = 3;
+
+    std::optional<std::string> header_value(
+        const std::unordered_map<std::string, std::string>& headers,
+        const std::string_view name) {
+        auto target = std::string(name);
+        std::ranges::transform(target, target.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+
+        for (const auto& [key, value] : headers) {
+            auto normalized = key;
+            std::ranges::transform(normalized, normalized.begin(), [](unsigned char c) {
+                return static_cast<char>(std::tolower(c));
+            });
+            if (normalized == target) return value;
+        }
+
+        return std::nullopt;
+    }
+
+    bool contains_case_insensitive(std::string haystack, std::string needle) {
+        std::ranges::transform(haystack, haystack.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+        std::ranges::transform(needle, needle.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+        return haystack.find(needle) != std::string::npos;
+    }
+
+    std::optional<bool> parse_encrypted_flag(std::string value) {
+        std::ranges::transform(value, value.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+        if (value == "true" || value == "1") return true;
+        if (value == "false" || value == "0") return false;
+        return std::nullopt;
+    }
+
+    std::optional<std::pair<std::string, unsigned int>> encryption_payload_from_file(
+        const std::shared_ptr<File>& file,
+        const bool trustFileEncryptionMetadata) {
+        if (!trustFileEncryptionMetadata || !file) return std::nullopt;
+        if (file->encryption_iv.empty() || file->encrypted_with_key_version == 0) return std::nullopt;
+        return std::make_pair(file->encryption_iv, file->encrypted_with_key_version);
+    }
+
+    std::optional<std::pair<std::string, unsigned int>> encryption_payload_from_headers(
+        const std::unordered_map<std::string, std::string>& headers) {
+        std::string iv_b64;
+        unsigned int key_version = 0;
+        if (const auto iv = header_value(headers, META_VH_IV)) iv_b64 = *iv;
+        if (const auto version = header_value(headers, META_VH_KEY_VERSION))
+            key_version = std::stoul(*version);
+        if (iv_b64.empty() || key_version == 0) return std::nullopt;
+        return std::make_pair(iv_b64, key_version);
+    }
+
+    fs::path resolvedBackingPath(const CloudEngine& engine, const std::shared_ptr<File>& file) {
+        if (!file) throw std::invalid_argument("[CloudStorageEngine] Invalid file");
+        if (file->backing_path.is_absolute()) return file->backing_path;
+        if (!engine.paths) return file->backing_path;
+        return engine.paths->absPath(file->backing_path, PathType::BACKING_ROOT);
+    }
+}
+
 std::unordered_map<std::string, std::string> CloudEngine::getMetaMapFromFile(const std::shared_ptr<File>& f) const {
     std::unordered_map<std::string, std::string> meta;
     const auto encrypt = s3Vault()->encrypt_upstream;
     meta[std::string(META_VH_ENCRYPTED_FLAG)] = encrypt ? "true" : "false";
     if (f->content_hash) meta[std::string(META_CONTENT_HASH_FLAG)] = *f->content_hash;
     if (encrypt) {
+        if (f->encryption_iv.empty() || f->encrypted_with_key_version == 0)
+            throw std::runtime_error("[CloudStorageEngine] Missing encryption metadata for upload: " + f->path.string());
         meta[std::string(META_VH_KEY_VERSION_FLAG)] = std::to_string(f->encrypted_with_key_version);
         meta[std::string(META_VH_IV_FLAG)] = f->encryption_iv;
     }
@@ -54,27 +130,31 @@ CloudEngine::CloudEngine(const std::shared_ptr<S3Vault>& vault)
       key_(runtime::Deps::get().apiKeyManager->getAPIKey(vault->api_key_id, vault->owner_id)),
       s3Provider_(std::make_shared<s3::Controller>(key_, vault->bucket)) {}
 
+CloudEngine::CloudEngine(const std::shared_ptr<S3Vault>& vault, std::shared_ptr<s3::Controller> s3Provider)
+    : Engine(vault),
+      key_(runtime::Deps::get().apiKeyManager->getAPIKey(vault->api_key_id, vault->owner_id)),
+      s3Provider_(std::move(s3Provider)) {}
+
 void CloudEngine::upload(const std::shared_ptr<File>& f) const {
-    if (!fs::exists(f->backing_path) || !fs::is_regular_file(f->backing_path))
+    const auto backingPath = resolvedBackingPath(*this, f);
+    if (!fs::exists(backingPath) || !fs::is_regular_file(backingPath))
         throw std::runtime_error("[CloudStorageEngine] Invalid file: " + f->path.string());
 
     if (!s3Vault()->encrypt_upstream) {
-        const auto ciphertext = readFileToVector(f->backing_path);
+        const auto ciphertext = readFileToVector(backingPath);
         upload(f, ciphertext);
         return;
     }
 
     const fs::path s3Key = stripLeadingSlash(f->path);
 
-    if (fs::file_size(f->backing_path) < s3::Controller::MIN_PART_SIZE) s3Provider_->uploadObject(s3Key, f->backing_path);
-    else s3Provider_->uploadLargeObject(s3Key, f->backing_path);
-
-    std::vector<uint8_t> buffer;
-    s3Provider_->downloadToBuffer(s3Key, buffer);
-
     if (!f->content_hash) f->content_hash = db::query::fs::File::getContentHash(vault->id, f->path);
-    s3Provider_->setObjectContentHash(s3Key, *f->content_hash);
-    s3Provider_->setObjectEncryptionMetadata(s3Key, f->encryption_iv, f->encrypted_with_key_version);
+    const auto meta = getMetaMapFromFile(f);
+
+    if (fs::file_size(backingPath) < s3::Controller::MIN_PART_SIZE)
+        s3Provider_->uploadObjectWithMetadata(s3Key, backingPath, meta);
+    else
+        s3Provider_->uploadLargeObject(s3Key, backingPath, s3::Controller::MIN_PART_SIZE, meta);
 }
 
 void CloudEngine::upload(const std::shared_ptr<File>& f, const std::vector<uint8_t>& buffer, const bool isCiphertext) const {
@@ -91,7 +171,7 @@ void CloudEngine::upload(const std::shared_ptr<File>& f, const std::vector<uint8
     const auto meta = getMetaMapFromFile(f);
 
     if (buffer.size() < s3::Controller::MIN_PART_SIZE) s3Provider_->uploadBufferWithMetadata(s3Key, buffer, meta);
-    else s3Provider_->uploadLargeObject(s3Key, buffer);
+    else s3Provider_->uploadLargeObject(s3Key, buffer, s3::Controller::MIN_PART_SIZE, meta);
 }
 
 std::vector<uint8_t> CloudEngine::downloadToBuffer(const fs::path& rel_path) const {
@@ -100,17 +180,48 @@ std::vector<uint8_t> CloudEngine::downloadToBuffer(const fs::path& rel_path) con
     return buffer;
 }
 
-std::shared_ptr<File> CloudEngine::downloadFile(const fs::path& rel_path) {
-    auto buffer = downloadToBuffer(rel_path);
-    const auto s3Key = stripLeadingSlash(rel_path);
+std::vector<uint8_t> CloudEngine::decryptRemotePayload(
+    const fs::path& rel_path,
+    const std::vector<uint8_t>& payload,
+    const std::shared_ptr<File>& remoteFile) const {
+    return decryptRemotePayload(rel_path, payload, remoteFile, RemoteEncryptionResolveOptions{});
+}
 
-    if (remoteFileIsEncrypted(rel_path)) {
-        auto payload = getRemoteIVBase64AndVersion(rel_path);
-        if (!payload) payload = db::query::fs::File::getEncryptionIVAndVersion(vault->id, rel_path);
-        if (!payload) throw std::runtime_error("[CloudStorageEngine] No IV found for encrypted file: " + rel_path.string());
-        const auto& [iv_b64, key_version] = *payload;
-        buffer = encryptionManager->decrypt(buffer, iv_b64, key_version);
-    }
+std::vector<uint8_t> CloudEngine::decryptRemotePayload(
+    const fs::path& rel_path,
+    const std::vector<uint8_t>& payload,
+    const std::shared_ptr<File>& remoteFile,
+    const RemoteEncryptionResolveOptions options) const {
+    const auto context = resolveRemoteEncryptionContext(rel_path, remoteFile, options);
+    if (!context.encrypted) return payload;
+    if (!context.payload)
+        throw std::runtime_error("[CloudStorageEngine] No IV found for encrypted file: " + rel_path.string());
+
+    const auto& [iv_b64, key_version] = *context.payload;
+    return encryptionManager->decrypt(payload, iv_b64, key_version);
+}
+
+std::shared_ptr<File> CloudEngine::downloadFile(const fs::path& rel_path) {
+    return downloadFileWithRemoteMetadata(rel_path, nullptr);
+}
+
+std::shared_ptr<File> CloudEngine::downloadFile(const std::shared_ptr<File>& remoteFile) {
+    if (!remoteFile) throw std::invalid_argument("[CloudStorageEngine] Cannot download null remote file");
+    return downloadFileWithRemoteMetadata(remoteFile->path, remoteFile);
+}
+
+std::shared_ptr<File> CloudEngine::downloadFileWithRemoteMetadata(
+    const fs::path& rel_path,
+    const std::shared_ptr<File>& remoteFile) {
+    auto buffer = downloadToBuffer(rel_path);
+
+    buffer = decryptRemotePayload(
+        rel_path,
+        buffer,
+        remoteFile,
+        remoteFile
+            ? RemoteEncryptionResolveOptions{true, true}
+            : RemoteEncryptionResolveOptions{});
 
     const auto owner = db::query::identities::User::getUserById(vault->owner_id);
     if (!owner) throw std::runtime_error("[CloudStorageEngine] Vault owner not found for file creation");
@@ -124,16 +235,44 @@ std::shared_ptr<File> CloudEngine::downloadFile(const fs::path& rel_path) {
             .overwrite = true
         });
 
-    s3Provider_->uploadBufferWithMetadata(s3Key, buffer, getMetaMapFromFile(f));
-
     preview::thumbnail::Worker::enqueue(shared_from_this(), buffer, f);
 
     return f;
 }
 
-void CloudEngine::indexAndDeleteFile(const fs::path& rel_path) {
-    const auto index = downloadFile(rel_path);
-    fs::remove(paths->absPath(index->path, PathType::FILE_CACHE_ROOT));
+void CloudEngine::indexAndDeleteFile(const std::shared_ptr<File>& remoteFile) {
+    if (!remoteFile) throw std::invalid_argument("[CloudStorageEngine] Cannot index null remote file");
+
+    const auto owner = db::query::identities::User::getUserById(vault->owner_id);
+    if (!owner) throw std::runtime_error("[CloudStorageEngine] Vault owner not found for metadata-only indexing");
+
+    const auto rel_path = makeAbsolute(remoteFile->path);
+    auto indexed = db::query::fs::File::getFileByPath(vault->id, rel_path);
+
+    if (!indexed) {
+        indexed = Filesystem::createFile({
+            .path = rel_path,
+            .fuse_path = vaultPathToFusePath(rel_path),
+            .buffer = {},
+            .engine = shared_from_this(),
+            .user = owner,
+            .overwrite = true
+        });
+    }
+
+    indexed->size_bytes = remoteFile->size_bytes;
+    indexed->content_hash = remoteFile->content_hash;
+    indexed->remote_encrypted = remoteFile->remote_encrypted;
+    if (!remoteFile->encryption_iv.empty())
+        indexed->encryption_iv = remoteFile->encryption_iv;
+    if (remoteFile->encrypted_with_key_version > 0)
+        indexed->encrypted_with_key_version = remoteFile->encrypted_with_key_version;
+    indexed->updated_at = remoteFile->updated_at;
+    indexed->last_modified_by = vault->owner_id;
+    db::query::fs::File::updateFile(indexed);
+
+    if (!indexed->backing_path.empty() && fs::exists(indexed->backing_path))
+        fs::remove(indexed->backing_path);
 }
 
 std::unordered_map<std::u8string, std::shared_ptr<File>>
@@ -141,23 +280,207 @@ CloudEngine::getGroupedFilesFromS3(const fs::path& prefix) const {
     return groupEntriesByPath(filesFromS3XML(s3Provider_->listObjects(prefix)));
 }
 
+bool CloudEngine::refreshRemoteIndexFromManifestIfChanged() const {
+    const std::string manifestKey = remote_manifest::INDEX_V1_KEY;
+    const auto head = s3Provider_->getHeadObject(manifestKey);
+    if (!head) return false;
+
+    const auto remoteEtag = header_value(*head, "ETag");
+    const auto localEtag = db::query::sync::RemoteObjectIndex::getManifestETag(vault->id, manifestKey);
+    if (remoteEtag && localEtag && *remoteEtag == *localEtag &&
+        db::query::sync::RemoteObjectIndex::countForVault(vault->id) > 0) {
+        db::query::sync::RemoteObjectIndex::upsertManifestETag(vault->id, manifestKey, remoteEtag);
+        return true;
+    }
+
+    std::vector<uint8_t> buffer;
+    s3Provider_->downloadToBuffer(manifestKey, buffer);
+    const std::string manifest(buffer.begin(), buffer.end());
+    const auto metadata = remote_manifest::inspectIndexV1Metadata(manifest, vault->id);
+    const auto files = remote_manifest::parseIndexV1(manifest, vault->id);
+    db::query::sync::RemoteObjectIndex::replaceFromManifest(vault->id, files);
+    db::query::sync::RemoteObjectIndex::upsertManifestState(
+        vault->id,
+        manifestKey,
+        remoteEtag,
+        metadata.generated_at == 0 ? std::optional<std::time_t>{} : std::make_optional(metadata.generated_at),
+        metadata.object_count,
+        metadata.object_checksum);
+    return true;
+}
+
+void CloudEngine::publishRemoteIndexManifest(const std::optional<std::string>& expectedETag) const {
+    const auto files = db::query::sync::RemoteObjectIndex::listFilesForVault(vault->id);
+    const auto manifest = remote_manifest::buildIndexV1(vault->id, files);
+    const auto metadata = remote_manifest::inspectIndexV1Metadata(manifest, vault->id);
+    const std::vector<uint8_t> payload(manifest.begin(), manifest.end());
+
+    const auto ifMatch = expectedETag;
+    const auto ifNoneMatch = ifMatch
+        ? std::optional<std::string>{}
+        : std::make_optional<std::string>("*");
+
+    s3Provider_->uploadBufferWithMetadataConditional(
+        remote_manifest::INDEX_V1_KEY,
+        payload,
+        {{"vh-manifest-version", std::to_string(remote_manifest::INDEX_V1_VERSION)}},
+        ifMatch,
+        ifNoneMatch);
+
+    const auto head = s3Provider_->getHeadObject(remote_manifest::INDEX_V1_KEY);
+    db::query::sync::RemoteObjectIndex::upsertManifestState(
+        vault->id,
+        remote_manifest::INDEX_V1_KEY,
+        head ? header_value(*head, "ETag") : std::nullopt,
+        metadata.generated_at == 0 ? std::optional<std::time_t>{} : std::make_optional(metadata.generated_at),
+        metadata.object_count,
+        metadata.object_checksum);
+}
+
+void CloudEngine::publishRemoteIndexManifestWithRetry() const {
+    std::string lastConflict;
+    auto expectedETag = db::query::sync::RemoteObjectIndex::getManifestETag(
+        vault->id,
+        remote_manifest::INDEX_V1_KEY);
+
+    for (int attempt = 1; attempt <= REMOTE_MANIFEST_PUBLISH_MAX_ATTEMPTS; ++attempt) {
+        try {
+            publishRemoteIndexManifest(expectedETag);
+            return;
+        } catch (const s3::ConditionalRequestFailed& e) {
+            lastConflict = e.what();
+            log::Registry::cloud()->warn(
+                "[CloudStorageEngine] Remote index manifest publish conflict for vault {}; refreshing ETag before retry {}/{}",
+                vault->id,
+                attempt,
+                REMOTE_MANIFEST_PUBLISH_MAX_ATTEMPTS);
+
+            const auto head = s3Provider_->getHeadObject(remote_manifest::INDEX_V1_KEY);
+            expectedETag = head ? header_value(*head, "ETag") : std::nullopt;
+            db::query::sync::RemoteObjectIndex::upsertManifestETag(
+                vault->id,
+                remote_manifest::INDEX_V1_KEY,
+                expectedETag);
+        }
+    }
+
+    throw std::runtime_error(
+        "remote index manifest publish conflict after " +
+        std::to_string(REMOTE_MANIFEST_PUBLISH_MAX_ATTEMPTS) +
+        " attempts" +
+        (lastConflict.empty() ? std::string{} : ": " + lastConflict));
+}
+
+void CloudEngine::applyRemoteIndexMutation(const std::vector<Action>& plan) const {
+    const auto replayMutation = [&]() {
+        bool mutated = false;
+
+        for (const auto& action : plan) {
+            switch (action.type) {
+            case ActionType::Upload:
+                if (action.local) {
+                    auto indexed = std::make_shared<File>(*action.local);
+                    if (s3Vault()->encrypt_upstream) {
+                        indexed->remote_encrypted = true;
+                    } else {
+                        indexed->remote_encrypted = false;
+                        indexed->encryption_iv.clear();
+                        indexed->encrypted_with_key_version = 0;
+                    }
+                    db::query::sync::RemoteObjectIndex::upsertFile(vault->id, indexed);
+                    mutated = true;
+                }
+                break;
+            case ActionType::DeleteRemote:
+                if (action.remote) {
+                    db::query::sync::RemoteObjectIndex::deleteKey(vault->id, action.remote->path);
+                    mutated = true;
+                }
+                break;
+            default:
+                break;
+            }
+        }
+
+        return mutated;
+    };
+
+    std::string lastConflict;
+    auto expectedETag = db::query::sync::RemoteObjectIndex::getManifestETag(
+        vault->id,
+        remote_manifest::INDEX_V1_KEY);
+    if (!expectedETag) {
+        (void)refreshRemoteIndexFromManifestIfChanged();
+        expectedETag = db::query::sync::RemoteObjectIndex::getManifestETag(
+            vault->id,
+            remote_manifest::INDEX_V1_KEY);
+    }
+
+    if (!replayMutation()) return;
+
+    for (int attempt = 1; attempt <= REMOTE_MANIFEST_PUBLISH_MAX_ATTEMPTS; ++attempt) {
+        if (attempt > 1) {
+            log::Registry::cloud()->warn(
+                "[CloudStorageEngine] Remote index manifest publish conflict for vault {}; reloading manifest before retry {}/{}",
+                vault->id,
+                attempt,
+                REMOTE_MANIFEST_PUBLISH_MAX_ATTEMPTS);
+            (void)refreshRemoteIndexFromManifestIfChanged();
+            expectedETag = db::query::sync::RemoteObjectIndex::getManifestETag(
+                vault->id,
+                remote_manifest::INDEX_V1_KEY);
+            replayMutation();
+        }
+
+        try {
+            publishRemoteIndexManifest(expectedETag);
+            return;
+        } catch (const s3::ConditionalRequestFailed& e) {
+            lastConflict = e.what();
+        }
+    }
+
+    throw SyncStalled(
+        "remote index manifest update conflict after " +
+        std::to_string(REMOTE_MANIFEST_PUBLISH_MAX_ATTEMPTS) +
+        " attempts" +
+        (lastConflict.empty() ? std::string{} : ": " + lastConflict));
+}
+
+bool CloudEngine::selectedDownloadRequiresRestore(const std::shared_ptr<File>& remoteFile) const {
+    if (!remoteFile) return false;
+    if (remoteFile->requiresArchiveRestoreForBodyGet()) return true;
+
+    if (!remoteFile->remote_storage_class) return false;
+    auto storageClass = *remoteFile->remote_storage_class;
+    std::ranges::transform(storageClass, storageClass.begin(), [](unsigned char c) {
+        return static_cast<char>(std::toupper(c));
+    });
+    if (storageClass != "INTELLIGENT_TIERING")
+        return false;
+
+    const auto head = s3Provider_->getHeadObject(stripLeadingSlash(remoteFile->path));
+    if (!head) return true;
+
+    if (const auto archiveStatus = header_value(*head, "x-amz-archive-status");
+        archiveStatus && !archiveStatus->empty())
+        return true;
+
+    if (const auto restore = header_value(*head, "x-amz-restore");
+        restore && contains_case_insensitive(*restore, "ongoing-request=\"true\""))
+        return true;
+
+    return false;
+}
+
 std::string CloudEngine::getRemoteContentHash(const fs::path& rel_path) const {
     if (const auto head = s3Provider_->getHeadObject(stripLeadingSlash(rel_path)))
-        if (head->contains(std::string(META_CONTENT_HASH))) return head->at(std::string(META_CONTENT_HASH));
+        if (const auto hash = header_value(*head, META_CONTENT_HASH)) return *hash;
     return "";
 }
 
 bool CloudEngine::remoteFileIsEncrypted(const fs::path& rel_path) const {
-    const auto s3Key = stripLeadingSlash(rel_path);
-
-    if (const auto head = s3Provider_->getHeadObject(s3Key)) {
-        if (head->contains(std::string(META_VH_ENCRYPTED))) {
-            const std::string& val = head->at(std::string(META_VH_ENCRYPTED));
-            return val == "true" || val == "1";
-        }
-    }
-
-    return false; // assume unencrypted if metadata is missing or head request failed
+    return resolveRemoteEncryptionContext(rel_path, nullptr, RemoteEncryptionResolveOptions{}).encrypted;
 }
 
 std::vector<std::shared_ptr<Directory>> CloudEngine::extractDirectories(
@@ -197,23 +520,80 @@ std::vector<std::shared_ptr<Directory>> CloudEngine::extractDirectories(
 }
 
 std::optional<std::pair<std::string, unsigned int>> CloudEngine::getRemoteIVBase64AndVersion(const fs::path& rel_path) const {
-    const fs::path s3Key = stripLeadingSlash(rel_path);
-
-    std::string iv_b64;
-    unsigned int key_version = 0;
-
-    if (const auto head = s3Provider_->getHeadObject(s3Key)) {
-        if (head->contains(std::string(META_VH_IV))) iv_b64 = head->at(std::string(META_VH_IV));
-        if (head->contains(std::string(META_VH_KEY_VERSION)))
-            key_version = std::stoul(head->at(std::string(META_VH_KEY_VERSION)));
-    }
-
-    if (iv_b64.empty() || key_version == 0) {
+    const auto context = resolveRemoteEncryptionContext(rel_path, nullptr, RemoteEncryptionResolveOptions{});
+    if (!context.payload) {
         log::Registry::cloud()->error("[CloudStorageEngine] No IV or key version found for encrypted file: {}", rel_path.string());
         return std::nullopt;
     }
 
-    return std::make_pair(iv_b64, key_version);
+    return context.payload;
+}
+
+CloudEngine::RemoteEncryptionContext CloudEngine::resolveRemoteEncryptionContext(
+    const fs::path& rel_path,
+    const std::shared_ptr<File>& remoteFile,
+    const RemoteEncryptionResolveOptions options) const {
+    const auto filePayload = encryption_payload_from_file(remoteFile, options.trust_file_encryption_metadata);
+
+    bool headLoaded = false;
+    std::optional<std::unordered_map<std::string, std::string>> head;
+    const auto loadHead = [&]() -> const std::optional<std::unordered_map<std::string, std::string>>& {
+        if (!headLoaded) {
+            head = s3Provider_->getHeadObject(stripLeadingSlash(rel_path));
+            headLoaded = true;
+        }
+        return head;
+    };
+
+    const auto localPayload = [&]() -> std::optional<std::pair<std::string, unsigned int>> {
+        if (!options.allow_local_db_recovery) return std::nullopt;
+        return db::query::fs::File::getEncryptionIVAndVersion(vault->id, rel_path);
+    };
+
+    const auto encryptedWith = [](std::optional<std::pair<std::string, unsigned int>> payload = std::nullopt) {
+        RemoteEncryptionContext context;
+        context.encrypted = true;
+        context.payload = std::move(payload);
+        return context;
+    };
+
+    if (remoteFile && remoteFile->remote_encrypted.has_value()) {
+        if (!*remoteFile->remote_encrypted) return {};
+        if (filePayload) return encryptedWith(filePayload);
+
+        if (const auto& loadedHead = loadHead()) {
+            if (const auto flag = header_value(*loadedHead, META_VH_ENCRYPTED)) {
+                const auto encrypted = parse_encrypted_flag(*flag);
+                if (encrypted && !*encrypted) return {};
+            }
+            if (const auto headPayload = encryption_payload_from_headers(*loadedHead))
+                return encryptedWith(headPayload);
+        }
+
+        if (const auto recoveryPayload = localPayload()) return encryptedWith(recoveryPayload);
+        return encryptedWith();
+    }
+
+    if (const auto& loadedHead = loadHead()) {
+        if (const auto flag = header_value(*loadedHead, META_VH_ENCRYPTED)) {
+            if (const auto encrypted = parse_encrypted_flag(*flag)) {
+                if (!*encrypted) return {};
+                if (const auto headPayload = encryption_payload_from_headers(*loadedHead))
+                    return encryptedWith(headPayload);
+                if (filePayload) return encryptedWith(filePayload);
+                if (const auto recoveryPayload = localPayload()) return encryptedWith(recoveryPayload);
+                return encryptedWith();
+            }
+        }
+
+        if (const auto headPayload = encryption_payload_from_headers(*loadedHead))
+            return encryptedWith(headPayload);
+    }
+
+    if (filePayload) return encryptedWith(filePayload);
+    if (const auto recoveryPayload = localPayload()) return encryptedWith(recoveryPayload);
+
+    return {};
 }
 
 void CloudEngine::purge(const fs::path& rel_path) const {
@@ -232,7 +612,7 @@ void CloudEngine::removeRemotely(const fs::path& rel_path, const bool rmThumbnai
 }
 
 void CloudEngine::removeRemotely(const std::shared_ptr<file::Trashed>& f, bool rmThumbnails) const {
-    const auto vaultPath = fusePathToVaultPath(f->path);
+    const auto vaultPath = makeAbsolute(f->path);
     s3Provider_->deleteObject(stripLeadingSlash(vaultPath));
     if (rmThumbnails) purgeThumbnails(vaultPath);
 }
@@ -241,4 +621,25 @@ std::shared_ptr<S3Vault> CloudEngine::s3Vault() const { return std::static_point
 
 std::shared_ptr<RemotePolicy> CloudEngine::remote_policy() const {
     return std::static_pointer_cast<RemotePolicy>(sync);
+}
+
+void CloudEngine::configureS3RequestBudget(const s3::S3RequestBudget& budget) const {
+    if (s3Provider_) s3Provider_->setRequestBudget(budget);
+}
+
+void CloudEngine::clearS3RequestBudget() const {
+    if (s3Provider_) s3Provider_->clearRequestBudget();
+}
+
+void CloudEngine::resetS3RequestMetrics() const {
+    if (s3Provider_) s3Provider_->resetRequestMetrics();
+}
+
+s3::S3RequestMetrics CloudEngine::s3RequestMetrics() const {
+    if (!s3Provider_) return {};
+    return s3Provider_->requestMetrics();
+}
+
+void CloudEngine::setS3ControllerForTesting(std::shared_ptr<s3::Controller> s3Provider) {
+    s3Provider_ = std::move(s3Provider);
 }

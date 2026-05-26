@@ -4,6 +4,7 @@
 #include "fs/model/Directory.hpp"
 #include "db/query/fs/Entry.hpp"
 #include "db/query/fs/Directory.hpp"
+#include "db/encoding/timestamp.hpp"
 #include "log/Registry.hpp"
 #include "crypto/id/Generator.hpp"
 #include "stats/model/CacheStats.hpp"
@@ -176,7 +177,7 @@ std::shared_ptr<Entry> Registry::getEntry(const std::filesystem::path& absPath) 
 }
 
 std::shared_ptr<Entry> Registry::getEntry(const fuse_ino_t ino) {
-    log::Registry::storage()->debug("[FSCache] Retrieving entry for inode: {}", ino);
+    log::Registry::storage()->trace("[FSCache] Retrieving entry for inode: {}", ino);
 
     {
         std::shared_lock lock(mutex_);
@@ -418,6 +419,8 @@ void Registry::cacheEntry(const std::shared_ptr<Entry>& entry, const bool isFirs
                 dir->size_bytes = s["size_bytes"].as<uintmax_t>();
                 dir->file_count = s["file_count"].as<unsigned int>();
                 dir->subdirectory_count = s["subdirectory_count"].as<unsigned int>();
+                if (!s["updated_at"].is_null())
+                    dir->updated_at = db::encoding::parsePostgresTimestamp(s["updated_at"].as<std::string>());
             } else {
                 insert(db::query::fs::Entry::getFSEntryById(id));
             }
