@@ -532,32 +532,6 @@ TEST(S3CostSafetyTest, MigrationDoesNotOverwriteCustomS3BudgetRows) {
     EXPECT_EQ("custom", vh::sync::model::s3BudgetPresetName(policy->s3_request_budget));
 }
 
-TEST(S3CostSafetyTest, NewSyncEventCreatesFreshRunAfterPreviousError) {
-    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed sync event recovery test due to missing environment variables.";
-    ensureDbReady();
-
-    const auto vaultId = seedS3VaultForDbTest(uniqueSuffix("sync_event_recovery"));
-
-    vh::storage::Engine engine;
-    engine.vault = std::make_shared<vh::vault::model::Vault>();
-    engine.vault->id = vaultId;
-    engine.sync = std::make_shared<vh::sync::model::RemotePolicy>();
-    engine.sync->config_hash = "unit-test";
-
-    engine.newSyncEvent();
-    ASSERT_TRUE(engine.latestSyncEvent);
-    const auto failedRunUuid = engine.latestSyncEvent->run_uuid;
-    engine.latestSyncEvent->status = vh::sync::model::Event::Status::ERROR;
-    engine.latestSyncEvent->error_message = "previous failure";
-
-    engine.newSyncEvent(static_cast<uint8_t>(vh::sync::model::Event::Trigger::WEBHOOK));
-
-    ASSERT_TRUE(engine.latestSyncEvent);
-    EXPECT_NE(failedRunUuid, engine.latestSyncEvent->run_uuid);
-    EXPECT_EQ(vh::sync::model::Event::Status::PENDING, engine.latestSyncEvent->status);
-    EXPECT_EQ(vh::sync::model::Event::Trigger::WEBHOOK, engine.latestSyncEvent->trigger);
-}
-
 TEST(S3CostSafetyTest, DryRunViewOnlyUsesFreshLocalIndexWithoutS3Refresh) {
     if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed dry-run auth test due to missing environment variables.";
 

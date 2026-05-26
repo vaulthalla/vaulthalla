@@ -33,11 +33,8 @@ struct Local : concurrency::Task, std::enable_shared_from_this<Local> {
     std::chrono::system_clock::time_point next_run;
     std::shared_ptr<storage::Engine> engine;
     std::vector<std::future<ExpectedFuture>> futures;
-    bool runNowFlag{false};
-    std::atomic<bool> runningFlag{false};
+    bool runningFlag{false}, runNowFlag{false};
     std::atomic<bool> interruptFlag{false};
-    std::atomic<bool> pendingRunNowFlag{false};
-    std::atomic<uint8_t> pendingTrigger{3};
     std::shared_ptr<model::Event> event;
     uint8_t trigger{3};
 
@@ -59,10 +56,6 @@ struct Local : concurrency::Task, std::enable_shared_from_this<Local> {
     void requeue();
 
     void runNow(uint8_t trigger = 3);  // sync::Event::Trigger::WEBHOOK
-
-    void requestRunAfterCurrent(uint8_t trigger = 3);
-
-    bool consumeRunAfterCurrent(uint8_t& trigger);
 
     std::shared_ptr<model::ScopedOp> op(const model::Throughput::Metric& metric) const;
 

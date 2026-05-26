@@ -2,8 +2,6 @@
 #include "fs/model/Path.hpp"
 #include "fs/model/file/Trashed.hpp"
 #include "storage/Engine.hpp"
-#include "sync/Local.hpp"
-#include "sync/model/Event.hpp"
 #include "sync/model/Throughput.hpp"
 #include "sync/tasks/Delete.hpp"
 #include "vault/model/Vault.hpp"
@@ -124,21 +122,6 @@ TEST_F(SyncThroughputTest, DeleteTasksKeepStableScopedOpsAcrossThroughputGrowth)
     EXPECT_EQ(kDeleteTasks + kExtraOps, throughput.num_ops);
     EXPECT_EQ(0u, throughput.failed_ops);
     EXPECT_EQ(kDeleteTasks * 8u, throughput.size_bytes);
-}
-
-TEST_F(SyncThroughputTest, ActiveSyncRerunRequestDoesNotInterruptCurrentRun) {
-    vh::sync::Local task(engine);
-    task.runningFlag.store(true);
-
-    task.requestRunAfterCurrent(static_cast<uint8_t>(vh::sync::model::Event::Trigger::MANUAL));
-
-    EXPECT_TRUE(task.isRunning());
-    EXPECT_FALSE(task.isInterrupted());
-
-    uint8_t trigger = 0;
-    ASSERT_TRUE(task.consumeRunAfterCurrent(trigger));
-    EXPECT_EQ(static_cast<uint8_t>(vh::sync::model::Event::Trigger::MANUAL), trigger);
-    EXPECT_FALSE(task.consumeRunAfterCurrent(trigger));
 }
 
 } // namespace vh::sync::test

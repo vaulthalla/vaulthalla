@@ -78,6 +78,7 @@ struct UploadSessionState {
 } // namespace vh::protocols::http::upload::detail
 
 namespace {
+using vh::fs::model::PathType;
 using vh::protocols::http::request;
 using vh::protocols::http::upload::detail::FileStatus;
 using vh::protocols::http::upload::detail::UploadFileState;
@@ -304,27 +305,12 @@ void createEmptyTempFile(const std::filesystem::path& path) {
     if (!out.is_open()) throw std::runtime_error("Unable to create upload temp file");
 }
 
-std::filesystem::path uploadTempPath(
-    const std::shared_ptr<vh::storage::Engine>& engine,
-    const std::string& uploadId,
-    const std::string& fileId
-) {
-    if (!engine || !engine->paths) throw std::runtime_error("Upload storage engine paths are unavailable");
-    return engine->paths->cacheRoot / "http-uploads" / uploadId / (fileId + ".part");
-}
-
-void cleanupTempParent(const UploadFileState& file) noexcept {
-    std::error_code ec;
-    std::filesystem::remove(file.tmp_path.parent_path(), ec);
-}
-
 void cleanupFile(const UploadFileState& file) noexcept {
     std::error_code ec;
     std::filesystem::remove(file.tmp_path, ec);
-    cleanupTempParent(file);
     try {
         const auto& cache = vh::runtime::Deps::get().fsCache;
-        if (cache && !file.fuse_from.empty() && cache->entryExists(file.fuse_from)) cache->evictPath(file.fuse_from);
+        if (cache && cache->entryExists(file.fuse_from)) cache->evictPath(file.fuse_from);
     } catch (...) {
     }
 }
@@ -493,7 +479,6 @@ std::shared_ptr<vh::fs::model::File> commitCompletedUploadFile(
 
     std::error_code ec;
     std::filesystem::remove(file.tmp_path, ec);
-    cleanupTempParent(file);
     if (ec) {
         vh::log::Registry::fs()->warn(
             "[HttpUpload] Failed to remove completed upload temp file {}: {}",
@@ -695,15 +680,18 @@ nlohmann::json Coordinator::createSession(const request& req, const nlohmann::js
                 const auto size = fileSizeFromJson(item);
                 const auto mime = mimeTypeFromJson(item);
                 auto engine = engineFor(parent.vault_id);
-                const auto vaultPath = std::filesystem::path(finalVaultPath);
-                const auto fuseTo = engine->vaultPathToFusePath(vaultPath);
-                const auto tmpPath = uploadTempPath(engine, upload->id, fileId);
                 reserveUploadSpace(
                     plannedBytesByVault,
                     parent.vault_id,
                     size,
                     engine,
                     "Share upload exceeds available vault storage");
+
+                const auto vaultPath = std::filesystem::path(finalVaultPath);
+                const auto absPath = engine->paths->absPath(vaultPath, PathType::VAULT_ROOT);
+                const auto tmpPath = absPath.parent_path() / (".upload-http-" + upload->id + "-" + fileId + ".part");
+                const auto fuseTo = engine->paths->absRelToRoot(absPath, PathType::FUSE_ROOT);
+                const auto fuseFrom = engine->paths->absRelToRoot(tmpPath, PathType::FUSE_ROOT);
 
                 auto started = manager->startUpload({
                     .principal = *principal,
@@ -720,7 +708,7 @@ nlohmann::json Coordinator::createSession(const request& req, const nlohmann::js
                     .vault_id = parent.vault_id,
                     .vault_path = vaultPath,
                     .tmp_path = tmpPath,
-                    .fuse_from = {},
+                    .fuse_from = fuseFrom,
                     .fuse_to = fuseTo,
                     .expected_size = size,
                     .received_size = 0,
@@ -765,8 +753,6 @@ nlohmann::json Coordinator::createSession(const request& req, const nlohmann::js
                 if (!targetKeys.insert(targetKey).second) throw std::runtime_error("Duplicate upload target");
 
                 auto engine = engineFor(vaultId);
-                const auto fuseTo = engine->vaultPathToFusePath(vaultPath);
-                const auto tmpPath = uploadTempPath(engine, upload->id, fileId);
                 enforceHumanWritePermission(session, engine, vaultPath);
                 reserveUploadSpace(
                     plannedBytesByVault,
@@ -775,11 +761,16 @@ nlohmann::json Coordinator::createSession(const request& req, const nlohmann::js
                     engine,
                     "Upload exceeds available vault storage");
 
+                const auto absPath = engine->paths->absPath(vaultPath, PathType::VAULT_ROOT);
+                const auto tmpPath = absPath.parent_path() / (".upload-http-" + upload->id + "-" + fileId + ".part");
+                const auto fuseTo = engine->paths->absRelToRoot(absPath, PathType::FUSE_ROOT);
+                const auto fuseFrom = engine->paths->absRelToRoot(tmpPath, PathType::FUSE_ROOT);
+
                 if (vh::runtime::Deps::get().fsCache && vh::runtime::Deps::get().fsCache->entryExists(fuseTo))
                     throw std::runtime_error("Upload target already exists");
 
                 if (const auto err = vh::fs::Filesystem::mkdir({
-                        .path = fuseTo.parent_path(),
+                        .path = fuseFrom.parent_path(),
                         .engine = engine,
                         .user = session->user
                     }); err)
@@ -790,7 +781,7 @@ nlohmann::json Coordinator::createSession(const request& req, const nlohmann::js
                     .vault_id = vaultId,
                     .vault_path = vaultPath,
                     .tmp_path = tmpPath,
-                    .fuse_from = {},
+                    .fuse_from = fuseFrom,
                     .fuse_to = fuseTo,
                     .expected_size = size,
                     .received_size = 0,

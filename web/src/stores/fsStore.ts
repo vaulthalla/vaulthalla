@@ -20,6 +20,8 @@ import { useStatsStore } from '@/stores/statsStore'
 type FsMode = 'authenticated' | 'share'
 type FsEntry = DBFile | Directory
 
+const UPLOAD_DIRECTORY_HYDRATE_INTERVAL_MS = 7000
+
 let transferTaskCounter = 0
 
 const nextTransferTaskId = () => {
@@ -731,6 +733,10 @@ export const useFSStore = create<FsStore>()(
             const totalBytes = payload.files.reduce((sum, file) => sum + file.size, 0)
             let uploadedBytes = 0
             const label = payload.files.length === 1 ? payload.files[0].name : `${payload.files.length} files`
+            let uploadHydrationStarted = false
+            let uploadHydrationInFlight = false
+            let uploadHydrationLastStartedAt = 0
+            let uploadHydrationTimer: ReturnType<typeof setInterval> | null = null
 
             const hydrateUploadDirectorySafely = async (reason: string) => {
               try {
@@ -738,6 +744,35 @@ export const useFSStore = create<FsStore>()(
               } catch (error) {
                 console.debug(`[FsStore] upload directory hydration (${reason}) failed:`, error)
               }
+            }
+
+            const requestUploadDirectoryHydration = (reason: string, force = false) => {
+              const now = Date.now()
+              if (!force && now - uploadHydrationLastStartedAt < UPLOAD_DIRECTORY_HYDRATE_INTERVAL_MS) return
+              if (uploadHydrationInFlight) return
+
+              uploadHydrationLastStartedAt = now
+              uploadHydrationInFlight = true
+              void hydrateUploadDirectorySafely(reason)
+                .finally(() => {
+                  uploadHydrationInFlight = false
+                })
+            }
+
+            const startUploadDirectoryHydration = () => {
+              if (uploadHydrationStarted) return
+              uploadHydrationStarted = true
+              requestUploadDirectoryHydration('first-file', true)
+              uploadHydrationTimer = setInterval(
+                () => requestUploadDirectoryHydration('interval'),
+                UPLOAD_DIRECTORY_HYDRATE_INTERVAL_MS,
+              )
+            }
+
+            const stopUploadDirectoryHydration = () => {
+              if (!uploadHydrationTimer) return
+              clearInterval(uploadHydrationTimer)
+              uploadHydrationTimer = null
             }
 
             updateTransferTask(task.id, {
@@ -764,6 +799,7 @@ export const useFSStore = create<FsStore>()(
                 currentPath: payload.currentPath,
                 targetPaths: payload.targetPaths,
                 onFileStart: filename => set({ uploadLabel: filename }),
+                onFileComplete: () => startUploadDirectoryHydration(),
                 onProgress: bytes => {
                   uploadedBytes += bytes
                   payload.onProgress?.(bytes)
@@ -793,6 +829,7 @@ export const useFSStore = create<FsStore>()(
               const refreshStartedAt = nowMs()
               try {
                 if (payload.mode === 'authenticated') {
+                  await useVaultStore.getState().syncVault({ id: payload.vault?.id || 0 })
                   if (get().mode === 'authenticated' && get().currVault?.id === payload.vault?.id) {
                     await get().fetchFiles()
                   }
@@ -815,6 +852,7 @@ export const useFSStore = create<FsStore>()(
               set({ uploadError: message, uploadErrorVaultId: quotaVaultId })
               payload.reject?.(err)
             } finally {
+              stopUploadDirectoryHydration()
               uploadTaskPayloads.delete(task.id)
               const hasQueuedUpload = get().tasks.some(candidate => candidate.type === 'upload' && candidate.status === 'queued')
               if (!hasQueuedUpload) set({ uploading: false, uploadLabel: null })

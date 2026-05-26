@@ -115,15 +115,9 @@ void Controller::runNow(const unsigned int vaultId, const uint8_t trigger) {
         task = taskMap_[vaultId];
     }
 
-    if (task->isRunning()) {
-        task->requestRunAfterCurrent(trigger);
-        log::Registry::sync()->debug(
-            "[SyncController] Sync already running for vault ID: {}; queued immediate rerun",
-            vaultId);
-        return;
-    }
-
     task->interrupt();
+
+    while (task->isRunning()) std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     task = createTask(task->engine);
     task->runNow(trigger);
