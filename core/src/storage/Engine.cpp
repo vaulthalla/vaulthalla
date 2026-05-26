@@ -223,7 +223,8 @@ namespace vh::storage {
     void Engine::removeLocally(const std::shared_ptr<file::Trashed> &f) const {
         namespace fs = std::filesystem;
 
-        fs::path absPath = paths->absPath(f->backing_path, PathType::BACKING_ROOT);
+        fs::path absPath = f->backing_path;
+        if (absPath.is_relative()) absPath = paths->absPath(absPath, PathType::BACKING_ROOT);
 
         // Remove the file if present
         std::error_code ec;
@@ -254,7 +255,7 @@ namespace vh::storage {
             absPath = parent;
         }
 
-        const auto vaultPath = fusePathToVaultPath(f->path);
+        const auto vaultPath = makeAbsolute(f->path);
 
         for (const auto &size: Registry::get().caching.thumbnails.sizes) {
             const auto thumbPath = paths->absPath(vaultPath, PathType::THUMBNAIL_ROOT) / std::to_string(size);

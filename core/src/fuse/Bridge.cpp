@@ -813,23 +813,16 @@ void statfs(const fuse_req_t req, const fuse_ino_t ino) {
     ScopedFuseOpTimer timer(fuseStats(), FuseOperation::StatFs);
     log::Registry::fuse()->trace("[statfs] Called for inode: {}", ino);
 
-    const auto resolved = Resolver::resolve({
-        .caller = "statfs",
-        .fuseReq = req,
-        .ino = ino,
-        .action = permission::vault::FilesystemAction::Read,
-        .target = resolver::Target::Entry
-    });
-
-    if (!resolved.ok()) {
-        replyError(req, timer, resolved.errnum);
+    const auto entry = runtime::Deps::get().fsCache->getEntry(ino);
+    if (!entry) {
+        replyError(req, timer, ENOENT);
         return;
     }
 
     struct statvfs st{};
 
-    if (::statvfs(resolved.entry->backing_path.c_str(), &st) < 0) {
-        log::Registry::fuse()->debug("[statfs] Failed to get filesystem stats for: {}: {}", resolved.entry->backing_path.string(), strerror(errno));
+    if (::statvfs(entry->backing_path.c_str(), &st) < 0) {
+        log::Registry::fuse()->debug("[statfs] Failed to get filesystem stats for: {}: {}", entry->backing_path.string(), strerror(errno));
         replyError(req, timer, errno);
         return;
     }

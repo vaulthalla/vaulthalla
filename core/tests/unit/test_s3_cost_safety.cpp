@@ -8,6 +8,7 @@
 #include "fs/Filesystem.hpp"
 #include "fs/model/Path.hpp"
 #include "fs/model/File.hpp"
+#include "fs/model/file/Trashed.hpp"
 #include "identities/User.hpp"
 #include "protocols/shell/commands/vault.hpp"
 #include "rbac/role/Admin.hpp"
@@ -67,10 +68,14 @@ public:
     int head_object_calls = 0;
     int download_to_buffer_calls = 0;
     int upload_object_with_metadata_calls = 0;
+    int upload_buffer_conditional_calls = 0;
     int delete_object_calls = 0;
+    int list_objects_calls = 0;
     std::unordered_map<std::string, std::string> last_metadata;
     std::optional<std::unordered_map<std::string, std::string>> head_response;
     std::vector<uint8_t> download_payload;
+    std::vector<std::filesystem::path> deleted_keys;
+    std::u8string list_objects_xml = u8"<ListBucketResult></ListBucketResult>";
 
     CountingS3Controller()
         : Controller(dummyApiKey(), "unit-bucket") {}
@@ -100,6 +105,17 @@ public:
         out = self->download_payload;
     }
 
+    void uploadBufferWithMetadataConditional(
+        const std::filesystem::path&,
+        const std::vector<uint8_t>&,
+        const std::unordered_map<std::string, std::string>&,
+        const std::optional<std::string>&,
+        const std::optional<std::string>&) const override {
+        auto* self = const_cast<CountingS3Controller*>(this);
+        ++self->upload_buffer_conditional_calls;
+        self->recordRequest(RequestKind::Put);
+    }
+
     std::optional<std::unordered_map<std::string, std::string>> getHeadObject(
         const std::filesystem::path&) const override {
         auto* self = const_cast<CountingS3Controller*>(this);
@@ -108,10 +124,18 @@ public:
         return head_response;
     }
 
-    void deleteObject(const std::filesystem::path&) const override {
+    void deleteObject(const std::filesystem::path& key) const override {
         auto* self = const_cast<CountingS3Controller*>(this);
         ++self->delete_object_calls;
+        self->deleted_keys.push_back(key);
         self->recordRequest(RequestKind::Delete);
+    }
+
+    std::u8string listObjects(const std::filesystem::path&) const override {
+        auto* self = const_cast<CountingS3Controller*>(this);
+        ++self->list_objects_calls;
+        self->recordRequest(RequestKind::List);
+        return self->list_objects_xml;
     }
 };
 
@@ -945,6 +969,92 @@ TEST(S3CostSafetyTest, DeleteRemoteDoesNotRequireEncryptionMetadata) {
     EXPECT_EQ(1, fake->delete_object_calls);
     EXPECT_EQ(0, fake->head_object_calls);
     EXPECT_EQ(0, fake->download_to_buffer_calls);
+}
+
+TEST(S3CostSafetyTest, CloudTrashPurgeDeletesRemoteIndexWithoutRemoteOnlyDownload) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed cloud trash purge test due to missing environment variables.";
+
+    auto fake = std::make_shared<CountingS3Controller>();
+    const auto vaultId = seedDryRunS3VaultForDbTest(uniqueSuffix("trash_purge"), fake);
+    auto engine = std::static_pointer_cast<vh::storage::CloudEngine>(
+        vh::runtime::Deps::get().storageManager->getEngine(vaultId));
+    engine->setS3ControllerForTesting(fake);
+
+    const auto owner = vh::db::query::identities::User::getUserById(engine->vault->owner_id);
+    ASSERT_TRUE(owner);
+
+    const std::filesystem::path dir = "/Vaulthalla-media";
+    const std::filesystem::path path = dir / "foo.txt";
+    ASSERT_NO_THROW(engine->mkdir(dir, owner));
+
+    auto created = vh::fs::Filesystem::createFile({
+        .path = path,
+        .fuse_path = engine->vaultPathToFusePath(path),
+        .buffer = {'d', 'e', 'l', 'e', 't', 'e', 'd'},
+        .engine = engine,
+        .user = owner,
+    });
+    ASSERT_TRUE(created);
+
+    auto remote = remoteFile("Vaulthalla-media/foo.txt");
+    remote->size_bytes = created->size_bytes;
+    remote->updated_at = created->updated_at;
+    remote->remote_etag = "\"remote-before-delete\"";
+    vh::db::query::sync::RemoteObjectIndex::upsertFile(vaultId, remote, "manifest");
+
+    ASSERT_NO_THROW(engine->remove(path, owner->id));
+    EXPECT_FALSE(vh::db::query::fs::File::getFileByPath(vaultId, path));
+    ASSERT_EQ(1u, vh::db::query::fs::File::listTrashedFiles(vaultId).size());
+
+    auto task = std::make_shared<vh::sync::Cloud>(engine);
+    task->startTask();
+    task->removeTrashedFiles();
+    ASSERT_NE(vh::sync::model::Event::Status::ERROR, task->event->status);
+    task->initBins();
+    task->sync();
+    task->clearBins();
+
+    EXPECT_EQ(1, fake->delete_object_calls);
+    ASSERT_EQ(1u, fake->deleted_keys.size());
+    EXPECT_EQ("Vaulthalla-media/foo.txt", fake->deleted_keys[0].generic_string());
+    EXPECT_EQ(0, fake->download_to_buffer_calls);
+    EXPECT_EQ(0u, fake->requestMetrics().get_requests);
+    EXPECT_FALSE(vh::db::query::fs::File::getFileByPath(vaultId, path));
+    EXPECT_TRUE(vh::db::query::fs::File::listTrashedFiles(vaultId).empty());
+
+    const auto indexed = vh::db::query::sync::RemoteObjectIndex::listFilesForVault(vaultId);
+    EXPECT_TRUE(std::ranges::none_of(indexed, [&](const auto& file) {
+        return file && file->path == path;
+    }));
+}
+
+TEST(S3CostSafetyTest, RemoveTrashedFileUsesAbsoluteBackingPathDirectly) {
+    ScopedPathRoots paths(std::filesystem::temp_directory_path() / "vh_trash_absolute_backing");
+
+    auto vault = std::make_shared<vh::vault::model::Vault>();
+    vault->id = 2001;
+    vault->name = "trash-absolute";
+    vault->mount_point = "trash-absolute";
+
+    vh::storage::Engine engine;
+    engine.vault = vault;
+    engine.paths = std::make_shared<vh::fs::model::Path>("trash-absolute", "trash-absolute");
+
+    const auto backing = engine.paths->backingVaultRoot / "nested" / "file.txt";
+    std::filesystem::create_directories(backing.parent_path());
+    std::ofstream(backing, std::ios::binary) << "deleted";
+    ASSERT_TRUE(std::filesystem::exists(backing));
+
+    auto trashed = std::make_shared<vh::fs::model::file::Trashed>();
+    trashed->vault_id = vault->id;
+    trashed->path = "/nested/file.txt";
+    trashed->backing_path = backing;
+    trashed->base32_alias = backing.filename().string();
+    trashed->size_bytes = 7;
+
+    engine.removeLocally(trashed);
+
+    EXPECT_FALSE(std::filesystem::exists(backing));
 }
 
 TEST(S3CostSafetyTest, PlannerMarksCacheRemoteOnlyAsIndexOnly) {

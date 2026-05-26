@@ -8,6 +8,7 @@
 #include "sync/model/Operation.hpp"
 #include "vault/model/Vault.hpp"
 #include "fs/model/File.hpp"
+#include "fs/model/file/Trashed.hpp"
 #include "fs/model/Path.hpp"
 #include "fs/ops/file.hpp"
 #include "db/query/sync/Operation.hpp"
@@ -24,6 +25,7 @@
 #include "sync/tasks/RotateKey.hpp"
 #include "sync/tasks/Delete.hpp"
 #include "storage/s3/Controller.hpp"
+#include "db/query/sync/RemoteObjectIndex.hpp"
 
 using namespace vh::sync;
 using namespace vh::sync::model;
@@ -334,11 +336,96 @@ void Local::handleVaultKeyRotation() {
 
 void Local::removeTrashedFiles() {
     const auto files = db::query::fs::File::listTrashedFiles(engine->vault->id);
-    const auto type = engine->type() == StorageType::Local ? tasks::Delete::Type::LOCAL : tasks::Delete::Type::PURGE;
+    if (files.empty()) return;
+
+    if (engine->type() == StorageType::Cloud) {
+        const auto cloud = std::static_pointer_cast<CloudEngine>(engine);
+        struct PurgedTrash {
+            std::shared_ptr<vh::fs::model::file::Trashed> file;
+            std::shared_ptr<ScopedOp> scoped;
+        };
+
+        std::vector<PurgedTrash> purged;
+        purged.reserve(files.size());
+        bool remoteIndexMutated = false;
+        std::size_t failed = 0;
+
+        for (const auto& file : files) {
+            auto scoped = op(Throughput::Metric::DELETE);
+            bool purgeSucceeded = false;
+            try {
+                if (!file) throw std::runtime_error("null trashed file");
+                scoped->start(file->size_bytes);
+                cloud->purge(file);
+                db::query::sync::RemoteObjectIndex::deleteKey(file->vault_id, file->path);
+                purged.push_back({file, scoped});
+                remoteIndexMutated = true;
+                purgeSucceeded = true;
+            } catch (const std::exception& e) {
+                ++failed;
+                log::Registry::sync()->error(
+                    "[FSTask] Failed to purge trashed file {}: {}",
+                    file ? file->path.string() : std::string{"<null>"},
+                    e.what());
+            } catch (...) {
+                ++failed;
+                log::Registry::sync()->error(
+                    "[FSTask] Failed to purge trashed file {}: unknown error",
+                    file ? file->path.string() : std::string{"<null>"});
+            }
+            if (!purgeSucceeded) scoped->stop();
+        }
+
+        bool manifestPublished = true;
+        if (remoteIndexMutated) {
+            try {
+                cloud->publishRemoteIndexManifestWithRetry();
+            } catch (const std::exception& e) {
+                ++failed;
+                manifestPublished = false;
+                log::Registry::sync()->error(
+                    "[FSTask] Failed to publish remote index manifest after trash purge: {}",
+                    e.what());
+            } catch (...) {
+                ++failed;
+                manifestPublished = false;
+                log::Registry::sync()->error(
+                    "[FSTask] Failed to publish remote index manifest after trash purge: unknown error");
+            }
+        }
+
+        for (const auto& done : purged) {
+            if (manifestPublished) {
+                try {
+                    db::query::fs::File::markTrashedFileDeleted(done.file->id);
+                    done.scoped->success = true;
+                } catch (const std::exception& e) {
+                    ++failed;
+                    log::Registry::sync()->error(
+                        "[FSTask] Failed to mark trashed file {} deleted: {}",
+                        done.file ? done.file->path.string() : std::string{"<null>"},
+                        e.what());
+                } catch (...) {
+                    ++failed;
+                    log::Registry::sync()->error(
+                        "[FSTask] Failed to mark trashed file {} deleted: unknown error",
+                        done.file ? done.file->path.string() : std::string{"<null>"});
+                }
+            }
+            done.scoped->stop();
+        }
+
+        if (failed > 0) {
+            handleError(std::format("{} trashed cloud file purge(s) failed", failed));
+            runningFlag = false;
+        }
+
+        return;
+    }
 
     futures.reserve(files.size());
     for (const auto& file : files)
-        push(std::make_shared<tasks::Delete>(engine, file, op(Throughput::Metric::DELETE), type));
+        push(std::make_shared<tasks::Delete>(engine, file, op(Throughput::Metric::DELETE), tasks::Delete::Type::LOCAL));
 
     processFutures();
 }

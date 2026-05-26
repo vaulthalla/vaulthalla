@@ -539,7 +539,7 @@ void CloudEngine::removeRemotely(const fs::path& rel_path, const bool rmThumbnai
 }
 
 void CloudEngine::removeRemotely(const std::shared_ptr<file::Trashed>& f, bool rmThumbnails) const {
-    const auto vaultPath = fusePathToVaultPath(f->path);
+    const auto vaultPath = makeAbsolute(f->path);
     s3Provider_->deleteObject(stripLeadingSlash(vaultPath));
     if (rmThumbnails) purgeThumbnails(vaultPath);
 }
