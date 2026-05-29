@@ -3,6 +3,8 @@
 #include "config/Registry.hpp"
 #include "log/Registry.hpp"
 #include "storage/CloudEngine.hpp"
+#include "storage/s3/pricing/LocalEstimator.hpp"
+#include "storage/s3/pricing/PriceCatalogStore.hpp"
 #include "storage/s3/pricing/PriceBotUsage.hpp"
 #include "storage/s3/pricing/PriceProfileResolver.hpp"
 #include "sync/model/Action.hpp"
@@ -33,13 +35,45 @@ bool budgetConservativeResponseMatchesRequest(const EstimateResult& result) {
         result.free_tier_policy == "ignore_account_wide_free_tiers";
 }
 
+PriceEstimateReport reportFromEstimate(
+    const PriceProfileTarget& target,
+    const RatingProfile& profile,
+    const EstimateResult& estimate,
+    const PriceEstimateMode requestedMode,
+    const bool stale,
+    std::string catalogSource) {
+    PriceEstimateReport report;
+    report.available = true;
+    report.supported = true;
+    report.stale = stale;
+    report.target = target;
+    report.estimated_cost = estimate.estimated_cost;
+    report.currency = estimate.currency;
+    report.price_profile_id = profile.profile_id;
+    report.catalog_version = profile.catalog_version;
+    report.catalog_source = std::move(catalogSource);
+    report.confidence_level = estimate.confidence_level.empty()
+        ? profile.confidence_level
+        : estimate.confidence_level;
+    report.estimate_mode = estimate.estimate_mode.empty()
+        ? toString(requestedMode)
+        : estimate.estimate_mode;
+    report.free_tier_policy = estimate.free_tier_policy;
+    report.free_tiers_applied = estimate.free_tiers_applied;
+    report.unknowns = estimate.unknowns;
+    appendIfMissing(report.unknowns, kStorageForecastUnknown);
+    report.breakdown = estimate.breakdown;
+    return report;
+}
+
 } // namespace
 
 PriceEstimateReport estimatePlannedS3Sync(
     const vh::storage::CloudEngine& engine,
     const vh::sync::model::S3CostEstimate& s3Estimate,
     const PriceEstimateOptions options,
-    IPriceBotClient* client) {
+    IPriceBotClient* client,
+    IPriceCatalogStore* catalogStore) {
     const auto& cfg = config::Registry::get().pricing.storage_rates_api;
     if (options.disabled || !cfg.enabled)
         return PriceEstimateReport::unsupported("pricing disabled");
@@ -50,6 +84,40 @@ PriceEstimateReport estimatePlannedS3Sync(
         engine.resolvedStorageTier());
     if (!target)
         return PriceEstimateReport::unsupported("S3 provider has no price-bot profile");
+
+    const auto usage = toPriceBotUsageInput(s3Estimate, engine.resolvedStorageTier());
+
+    if (!cfg.use_remote_estimator_for_debug) {
+        PriceCatalogStore ownedStore(cfg);
+        auto& store = catalogStore ? *catalogStore : static_cast<IPriceCatalogStore&>(ownedStore);
+        const auto profileResult = store.getProfile(*target, options.force_refresh);
+        if (!profileResult.ok) {
+            log::Registry::sync()->warn(
+                "[PriceCatalog] Profile unavailable for {}: {}",
+                target->profileId(),
+                profileResult.error);
+            return unavailableFromTarget(target, profileResult.error);
+        }
+
+        const auto estimateResult = LocalEstimator{}.estimate(
+            profileResult.profile,
+            usage,
+            {.mode = options.mode, .apply_free_tiers = options.mode != PriceEstimateMode::BudgetConservative});
+        if (options.mode == PriceEstimateMode::BudgetConservative &&
+            !budgetConservativeResponseMatchesRequest(estimateResult)) {
+            return unavailableFromTarget(
+                target,
+                "local estimator did not return a budget-conservative free-tier policy");
+        }
+
+        return reportFromEstimate(
+            *target,
+            profileResult.profile,
+            estimateResult,
+            options.mode,
+            profileResult.stale,
+            profileResult.source.empty() ? kCatalogSourceDiskCache : profileResult.source);
+    }
 
     PriceBotClient ownedClient(cfg);
     auto& priceClient = client ? *client : static_cast<IPriceBotClient&>(ownedClient);
@@ -67,7 +135,6 @@ PriceEstimateReport estimatePlannedS3Sync(
         return unavailableFromTarget(target, profileResult.error);
     }
 
-    const auto usage = toPriceBotUsageInput(s3Estimate, engine.resolvedStorageTier());
     const auto estimateResult = priceClient.estimate(
         profileResult.value.raw,
         usage,
@@ -87,27 +154,13 @@ PriceEstimateReport estimatePlannedS3Sync(
             "price-bot did not return a budget-conservative free-tier policy");
     }
 
-    PriceEstimateReport report;
-    report.available = true;
-    report.supported = true;
-    report.stale = profileResult.stale || estimateResult.stale;
-    report.target = *target;
-    report.estimated_cost = estimateResult.value.estimated_cost;
-    report.currency = estimateResult.value.currency;
-    report.price_profile_id = profileResult.value.profile_id;
-    report.catalog_version = profileResult.value.catalog_version;
-    report.confidence_level = estimateResult.value.confidence_level.empty()
-        ? profileResult.value.confidence_level
-        : estimateResult.value.confidence_level;
-    report.estimate_mode = estimateResult.value.estimate_mode.empty()
-        ? toString(options.mode)
-        : estimateResult.value.estimate_mode;
-    report.free_tier_policy = estimateResult.value.free_tier_policy;
-    report.free_tiers_applied = estimateResult.value.free_tiers_applied;
-    report.unknowns = estimateResult.value.unknowns;
-    appendIfMissing(report.unknowns, kStorageForecastUnknown);
-    report.breakdown = estimateResult.value.breakdown;
-    return report;
+    return reportFromEstimate(
+        *target,
+        profileResult.value,
+        estimateResult.value,
+        options.mode,
+        profileResult.stale || estimateResult.stale,
+        "remote-estimator");
 }
 
 std::string formatPriceEstimateForLog(const PriceEstimateReport& report) {
@@ -118,6 +171,7 @@ std::string formatPriceEstimateForLog(const PriceEstimateReport& report) {
     out << "estimated_cost=" << report.estimated_cost << ' ' << report.currency
         << " profile=" << report.price_profile_id
         << " catalog=" << report.catalog_version
+        << " source=" << (report.catalog_source.empty() ? "unknown" : report.catalog_source)
         << " confidence=" << report.confidence_level
         << " mode=" << (report.estimate_mode.empty() ? "unknown" : report.estimate_mode)
         << " free_tier_policy=" << (report.free_tier_policy.empty() ? "unknown" : report.free_tier_policy)
@@ -144,6 +198,7 @@ std::string formatPriceEstimateForDryRun(
     out << "    Estimated cost: " << report.estimated_cost << ' ' << report.currency << "\n"
         << "    Profile: " << report.price_profile_id << "\n"
         << "    Catalog: " << (report.catalog_version.empty() ? "unknown" : report.catalog_version) << "\n"
+        << "    Catalog source: " << (report.catalog_source.empty() ? "unknown" : report.catalog_source) << "\n"
         << "    Confidence: " << (report.confidence_level.empty() ? "unknown" : report.confidence_level) << "\n"
         << "    Mode: " << (report.estimate_mode.empty() ? "unknown" : report.estimate_mode) << "\n"
         << "    Free tier policy: "

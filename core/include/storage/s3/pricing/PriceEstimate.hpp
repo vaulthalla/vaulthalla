@@ -12,6 +12,8 @@ namespace vh::sync::model { struct S3CostEstimate; }
 
 namespace vh::storage::s3::pricing {
 
+class IPriceCatalogStore;
+
 struct PriceEstimateOptions {
     bool force_refresh{false};
     bool disabled{false};
@@ -22,7 +24,8 @@ struct PriceEstimateOptions {
     const vh::storage::CloudEngine& engine,
     const vh::sync::model::S3CostEstimate& s3Estimate,
     PriceEstimateOptions options = {},
-    IPriceBotClient* client = nullptr);
+    IPriceBotClient* client = nullptr,
+    IPriceCatalogStore* catalogStore = nullptr);
 
 [[nodiscard]] std::string formatPriceEstimateForLog(const PriceEstimateReport& report);
 [[nodiscard]] std::string formatPriceEstimateForDryRun(

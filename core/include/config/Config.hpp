@@ -65,10 +65,14 @@ struct StorageRatesApiConfig {
     bool enabled = true;
     std::string base_url = "https://storage-rates-api.vaulthalla.cloud";
     uint32_t timeout_ms = 5000;
-    uint32_t cache_ttl_seconds = 86400;
+    uint32_t cache_ttl_seconds = 43200;
+    uint32_t refresh_interval_seconds = 43200;
     bool fail_open = true;
     bool signature_warning_only = true;
     std::optional<std::filesystem::path> signature_public_key_path;
+    std::vector<std::string> fallback_artifact_base_urls;
+    bool prefer_full_catalog = true;
+    bool use_remote_estimator_for_debug = false;
 };
 
 struct PricingConfig {

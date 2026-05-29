@@ -315,11 +315,15 @@ namespace vh::config {
             {"base_url", c.base_url},
             {"timeout_ms", c.timeout_ms},
             {"cache_ttl_seconds", c.cache_ttl_seconds},
+            {"refresh_interval_seconds", c.refresh_interval_seconds},
             {"fail_open", c.fail_open},
             {"signature_warning_only", c.signature_warning_only},
             {"signature_public_key_path", c.signature_public_key_path
                 ? nlohmann::json(c.signature_public_key_path->string())
-                : nlohmann::json(nullptr)}
+                : nlohmann::json(nullptr)},
+            {"fallback_artifact_base_urls", c.fallback_artifact_base_urls},
+            {"prefer_full_catalog", c.prefer_full_catalog},
+            {"use_remote_estimator_for_debug", c.use_remote_estimator_for_debug}
         };
     }
 
@@ -327,13 +331,17 @@ namespace vh::config {
         c.enabled = j.value("enabled", true);
         c.base_url = j.value("base_url", std::string("https://storage-rates-api.vaulthalla.cloud"));
         c.timeout_ms = std::max(100u, j.value("timeout_ms", 5000u));
-        c.cache_ttl_seconds = std::max(60u, j.value("cache_ttl_seconds", 86400u));
+        c.cache_ttl_seconds = std::max(60u, j.value("cache_ttl_seconds", 43200u));
+        c.refresh_interval_seconds = std::max(60u, j.value("refresh_interval_seconds", 43200u));
         c.fail_open = j.value("fail_open", true);
         c.signature_warning_only = j.value("signature_warning_only", true);
         if (j.contains("signature_public_key_path") && !j.at("signature_public_key_path").is_null())
             c.signature_public_key_path = std::filesystem::path(j.at("signature_public_key_path").get<std::string>());
         else
             c.signature_public_key_path.reset();
+        c.fallback_artifact_base_urls = j.value("fallback_artifact_base_urls", std::vector<std::string>{});
+        c.prefer_full_catalog = j.value("prefer_full_catalog", true);
+        c.use_remote_estimator_for_debug = j.value("use_remote_estimator_for_debug", false);
     }
 
     void to_json(nlohmann::json &j, const PricingConfig &c) {

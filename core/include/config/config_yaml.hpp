@@ -240,11 +240,15 @@ struct convert<StorageRatesApiConfig> {
         node["base_url"] = rhs.base_url;
         node["timeout_ms"] = rhs.timeout_ms;
         node["cache_ttl_seconds"] = rhs.cache_ttl_seconds;
+        node["refresh_interval_seconds"] = rhs.refresh_interval_seconds;
         node["fail_open"] = rhs.fail_open;
         node["signature_warning_only"] = rhs.signature_warning_only;
         node["signature_public_key_path"] = rhs.signature_public_key_path
             ? Node(rhs.signature_public_key_path->string())
             : Node(NodeType::Null);
+        node["fallback_artifact_base_urls"] = rhs.fallback_artifact_base_urls;
+        node["prefer_full_catalog"] = rhs.prefer_full_catalog;
+        node["use_remote_estimator_for_debug"] = rhs.use_remote_estimator_for_debug;
         return node;
     }
 
@@ -253,13 +257,19 @@ struct convert<StorageRatesApiConfig> {
         rhs.enabled = node["enabled"].as<bool>(true);
         rhs.base_url = node["base_url"].as<std::string>("https://storage-rates-api.vaulthalla.cloud");
         rhs.timeout_ms = std::max(static_cast<uint32_t>(100), node["timeout_ms"].as<uint32_t>(5000));
-        rhs.cache_ttl_seconds = std::max(static_cast<uint32_t>(60), node["cache_ttl_seconds"].as<uint32_t>(86400));
+        rhs.cache_ttl_seconds = std::max(static_cast<uint32_t>(60), node["cache_ttl_seconds"].as<uint32_t>(43200));
+        rhs.refresh_interval_seconds = std::max(
+            static_cast<uint32_t>(60),
+            node["refresh_interval_seconds"].as<uint32_t>(43200));
         rhs.fail_open = node["fail_open"].as<bool>(true);
         rhs.signature_warning_only = node["signature_warning_only"].as<bool>(true);
         if (node["signature_public_key_path"] && !node["signature_public_key_path"].IsNull())
             rhs.signature_public_key_path = node["signature_public_key_path"].as<std::filesystem::path>();
         else
             rhs.signature_public_key_path.reset();
+        rhs.fallback_artifact_base_urls = node["fallback_artifact_base_urls"].as<std::vector<std::string>>(std::vector<std::string>{});
+        rhs.prefer_full_catalog = node["prefer_full_catalog"].as<bool>(true);
+        rhs.use_remote_estimator_for_debug = node["use_remote_estimator_for_debug"].as<bool>(false);
         return true;
     }
 };

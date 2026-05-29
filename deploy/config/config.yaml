@@ -57,17 +57,21 @@ sync:
 
 
 # === 💸 PRICING ESTIMATES ===
-# Uses Vaulthalla's storage-rates API for S3 request/tier-aware estimates.
+# Uses signed storage-rate artifacts for local S3 request/tier-aware estimates.
 # Pricing is report-only and fail-open; sync does not enforce price budgets.
 pricing:
   storage_rates_api:
     enabled: true
     base_url: https://storage-rates-api.vaulthalla.cloud
     timeout_ms: 5000
-    cache_ttl_seconds: 86400
+    cache_ttl_seconds: 43200
+    refresh_interval_seconds: 43200
     fail_open: true
     signature_warning_only: true
     signature_public_key_path:
+    fallback_artifact_base_urls: []
+    prefer_full_catalog: true
+    use_remote_estimator_for_debug: false
 
 
 # === ⚙️ SERVICE SETTINGS ===

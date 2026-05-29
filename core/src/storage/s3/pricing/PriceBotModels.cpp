@@ -139,6 +139,7 @@ void to_json(nlohmann::json& j, const PriceEstimateReport& report) {
         {"currency", report.available ? nlohmann::json(report.currency) : nlohmann::json(nullptr)},
         {"price_profile_id", report.price_profile_id.empty() ? nlohmann::json(nullptr) : nlohmann::json(report.price_profile_id)},
         {"catalog_version", report.catalog_version.empty() ? nlohmann::json(nullptr) : nlohmann::json(report.catalog_version)},
+        {"catalog_source", report.catalog_source.empty() ? nlohmann::json(nullptr) : nlohmann::json(report.catalog_source)},
         {"confidence_level", report.confidence_level.empty() ? nlohmann::json(nullptr) : nlohmann::json(report.confidence_level)},
         {"estimate_mode", report.estimate_mode.empty() ? nlohmann::json(nullptr) : nlohmann::json(report.estimate_mode)},
         {"free_tier_policy", report.free_tier_policy.empty() ? nlohmann::json(nullptr) : nlohmann::json(report.free_tier_policy)},

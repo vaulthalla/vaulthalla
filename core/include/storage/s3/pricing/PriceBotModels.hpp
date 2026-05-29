@@ -78,6 +78,7 @@ struct PriceEstimateReport {
     std::string currency;
     std::string price_profile_id;
     std::string catalog_version;
+    std::string catalog_source;
     std::string confidence_level;
     std::string estimate_mode;
     std::string free_tier_policy;
