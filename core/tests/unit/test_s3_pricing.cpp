@@ -8,11 +8,18 @@
 #include "vault/model/APIKey.hpp"
 
 #include <filesystem>
+#include <fstream>
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
+#include <openssl/evp.h>
+#include <openssl/pem.h>
 #include <paths.h>
 #include <queue>
+#include <sodium.h>
 #include <chrono>
+#include <stdexcept>
+#include <system_error>
+#include <vector>
 
 namespace {
 
@@ -25,11 +32,87 @@ public:
         const vh::storage::s3::pricing::HttpRequest& request,
         std::uint32_t) override {
         requests.push_back(request);
-    if (replies.empty()) return {.status = 500, .body = "", .error = ""};
+        if (replies.empty()) return {.status = 500, .body = "", .error = ""};
         auto reply = replies.front();
         replies.pop();
         return reply;
     }
+};
+
+class Ed25519TestKey {
+public:
+    Ed25519TestKey()
+        : publicKeyPath_(std::filesystem::temp_directory_path() /
+              ("vh_s3_pricing_ed25519_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".pem")) {
+        if (sodium_init() < 0) throw std::runtime_error("libsodium initialization failed");
+
+        EVP_PKEY_CTX* keygen = EVP_PKEY_CTX_new_id(EVP_PKEY_ED25519, nullptr);
+        if (!keygen) throw std::runtime_error("failed to allocate Ed25519 keygen context");
+        if (EVP_PKEY_keygen_init(keygen) != 1 || EVP_PKEY_keygen(keygen, &key_) != 1) {
+            EVP_PKEY_CTX_free(keygen);
+            throw std::runtime_error("failed to generate Ed25519 test key");
+        }
+        EVP_PKEY_CTX_free(keygen);
+
+        BIO* bio = BIO_new(BIO_s_mem());
+        if (!bio) throw std::runtime_error("failed to allocate PEM buffer");
+        if (PEM_write_bio_PUBKEY(bio, key_) != 1) {
+            BIO_free(bio);
+            throw std::runtime_error("failed to encode Ed25519 public key");
+        }
+        char* data = nullptr;
+        const auto len = BIO_get_mem_data(bio, &data);
+        std::ofstream output(publicKeyPath_, std::ios::binary | std::ios::trunc);
+        output.write(data, len);
+        BIO_free(bio);
+        if (!output) throw std::runtime_error("failed to write Ed25519 public key");
+    }
+
+    ~Ed25519TestKey() {
+        if (key_) EVP_PKEY_free(key_);
+        std::error_code ec;
+        std::filesystem::remove(publicKeyPath_, ec);
+    }
+
+    [[nodiscard]] const std::filesystem::path& publicKeyPath() const {
+        return publicKeyPath_;
+    }
+
+    [[nodiscard]] std::string sign(const std::string& payload) const {
+        EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+        if (!ctx) throw std::runtime_error("failed to allocate Ed25519 signing context");
+
+        size_t signatureLen = 0;
+        if (EVP_DigestSignInit(ctx, nullptr, nullptr, nullptr, key_) != 1 ||
+            EVP_DigestSign(ctx, nullptr, &signatureLen,
+                reinterpret_cast<const unsigned char*>(payload.data()), payload.size()) != 1) {
+            EVP_MD_CTX_free(ctx);
+            throw std::runtime_error("failed to size Ed25519 signature");
+        }
+
+        std::vector<unsigned char> signature(signatureLen);
+        if (EVP_DigestSign(ctx, signature.data(), &signatureLen,
+                reinterpret_cast<const unsigned char*>(payload.data()), payload.size()) != 1) {
+            EVP_MD_CTX_free(ctx);
+            throw std::runtime_error("failed to sign payload");
+        }
+        EVP_MD_CTX_free(ctx);
+        signature.resize(signatureLen);
+
+        std::string encoded(sodium_base64_encoded_len(signature.size(), sodium_base64_VARIANT_ORIGINAL), '\0');
+        sodium_bin2base64(
+            encoded.data(),
+            encoded.size(),
+            signature.data(),
+            signature.size(),
+            sodium_base64_VARIANT_ORIGINAL);
+        if (!encoded.empty() && encoded.back() == '\0') encoded.pop_back();
+        return encoded;
+    }
+
+private:
+    EVP_PKEY* key_{nullptr};
+    std::filesystem::path publicKeyPath_;
 };
 
 std::shared_ptr<vh::vault::model::APIKey> priceKey(
@@ -84,6 +167,13 @@ vh::config::StorageRatesApiConfig testPricingConfig() {
     cfg.cache_ttl_seconds = 86400;
     cfg.signature_warning_only = true;
     cfg.signature_public_key_path.reset();
+    return cfg;
+}
+
+vh::config::StorageRatesApiConfig strictPricingConfig(const std::filesystem::path& publicKeyPath) {
+    auto cfg = testPricingConfig();
+    cfg.signature_warning_only = false;
+    cfg.signature_public_key_path = publicKeyPath;
     return cfg;
 }
 
@@ -233,6 +323,102 @@ TEST(S3PricingTest, ClientReturnsUnavailableWithoutCacheOnHttpFailure) {
     EXPECT_FALSE(result.ok);
     EXPECT_EQ(404, result.http_status);
     EXPECT_NE(std::string::npos, result.error.find("HTTP 404"));
+}
+
+TEST(S3PricingTest, ClientStrictVerificationUsesRawManifestArtifactEndpoint) {
+    const PriceCachePathGuard cacheGuard;
+    clearPriceCache();
+    const Ed25519TestKey key;
+
+    const auto manifestBody = nlohmann::json{
+        {"schema_version", "1.0"},
+        {"kind", "vaulthalla.price_manifest"},
+        {"profiles", nlohmann::json::array()}
+    }.dump();
+
+    auto transport = std::make_shared<FakeTransport>();
+    transport->replies.push({.status = 200, .body = manifestBody, .error = ""});
+    transport->replies.push({.status = 200, .body = key.sign(manifestBody) + "\n", .error = ""});
+
+    vh::storage::s3::pricing::PriceBotClient client(strictPricingConfig(key.publicKeyPath()), transport);
+    const auto result = client.getManifest(true);
+    ASSERT_TRUE(result.ok) << result.error;
+    EXPECT_EQ("vaulthalla.price_manifest", result.value.at("kind"));
+
+    ASSERT_EQ(2u, transport->requests.size());
+    EXPECT_EQ("GET", transport->requests[0].method);
+    EXPECT_EQ("http://price-bot.test/v1/artifacts/manifest.json", transport->requests[0].url);
+    EXPECT_EQ("GET", transport->requests[1].method);
+    EXPECT_EQ("http://price-bot.test/v1/artifacts/manifest.json.sig", transport->requests[1].url);
+}
+
+TEST(S3PricingTest, ClientStrictVerificationSucceedsForRawProfileAndCachedSignature) {
+    const PriceCachePathGuard cacheGuard;
+    clearPriceCache();
+    const Ed25519TestKey key;
+
+    const auto profileBody = minimalProfile("aws-s3", "us-east-1", "standard").dump();
+
+    auto transport = std::make_shared<FakeTransport>();
+    transport->replies.push({.status = 200, .body = profileBody, .error = ""});
+    transport->replies.push({.status = 200, .body = key.sign(profileBody) + "\n", .error = ""});
+
+    vh::storage::s3::pricing::PriceBotClient client(strictPricingConfig(key.publicKeyPath()), transport);
+    const auto fresh = client.getProfile("aws-s3", "us-east-1", "standard", true);
+    ASSERT_TRUE(fresh.ok) << fresh.error;
+    EXPECT_FALSE(fresh.stale);
+    EXPECT_EQ("aws-s3/us-east-1/standard", fresh.value.profile_id);
+
+    ASSERT_EQ(2u, transport->requests.size());
+    EXPECT_EQ("http://price-bot.test/v1/artifacts/profiles/aws-s3/us-east-1/standard.json", transport->requests[0].url);
+    EXPECT_EQ("http://price-bot.test/v1/artifacts/profiles/aws-s3/us-east-1/standard.json.sig", transport->requests[1].url);
+
+    auto cachedTransport = std::make_shared<FakeTransport>();
+    vh::storage::s3::pricing::PriceBotClient cachedClient(strictPricingConfig(key.publicKeyPath()), cachedTransport);
+    const auto cached = cachedClient.getProfile("aws-s3", "us-east-1", "standard", false);
+    ASSERT_TRUE(cached.ok) << cached.error;
+    EXPECT_TRUE(cachedTransport->requests.empty());
+    EXPECT_EQ("aws-s3/us-east-1/standard", cached.value.profile_id);
+}
+
+TEST(S3PricingTest, ClientStrictVerificationFailsWhenRawProfileBytesAreModified) {
+    const PriceCachePathGuard cacheGuard;
+    clearPriceCache();
+    const Ed25519TestKey key;
+
+    const auto signedBody = minimalProfile("aws-s3", "us-east-1", "standard").dump();
+    auto modifiedProfile = minimalProfile("aws-s3", "us-east-1", "standard");
+    modifiedProfile["catalog_version"] = "tampered-catalog";
+    const auto modifiedBody = modifiedProfile.dump();
+
+    auto transport = std::make_shared<FakeTransport>();
+    transport->replies.push({.status = 200, .body = modifiedBody, .error = ""});
+    transport->replies.push({.status = 200, .body = key.sign(signedBody), .error = ""});
+
+    vh::storage::s3::pricing::PriceBotClient client(strictPricingConfig(key.publicKeyPath()), transport);
+    const auto result = client.getProfile("aws-s3", "us-east-1", "standard", true);
+    EXPECT_FALSE(result.ok);
+    EXPECT_EQ("signature verification failed", result.error);
+}
+
+TEST(S3PricingTest, ClientDoesNotTreatEstimateResponsesAsSignedArtifacts) {
+    const PriceCachePathGuard cacheGuard;
+    clearPriceCache();
+    const Ed25519TestKey key;
+    vh::storage::s3::pricing::UsageInput usage;
+    usage.provider_operation_counts["PutObject"] = "10";
+
+    auto transport = std::make_shared<FakeTransport>();
+    transport->replies.push({.status = 200, .body = minimalEstimate("0.06000000").dump(), .error = ""});
+
+    vh::storage::s3::pricing::PriceBotClient client(strictPricingConfig(key.publicKeyPath()), transport);
+    const auto result = client.estimate("aws-s3", "us-east-1", "standard", usage, true);
+    ASSERT_TRUE(result.ok) << result.error;
+    EXPECT_EQ("0.06000000", result.value.estimated_cost);
+
+    ASSERT_EQ(1u, transport->requests.size());
+    EXPECT_EQ("POST", transport->requests[0].method);
+    EXPECT_EQ("http://price-bot.test/v1/estimate", transport->requests[0].url);
 }
 
 TEST(S3PricingTest, ClientUsesStaleEstimateCacheWhenNetworkFails) {

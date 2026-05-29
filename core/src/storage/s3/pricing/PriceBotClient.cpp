@@ -41,6 +41,17 @@ std::string readFile(const std::filesystem::path& path) {
     return out.str();
 }
 
+std::string trimSignature(std::string signature) {
+    while (!signature.empty() && (
+        signature.back() == '\n' ||
+        signature.back() == '\r' ||
+        signature.back() == ' ' ||
+        signature.back() == '\t')) {
+        signature.pop_back();
+    }
+    return signature;
+}
+
 bool verifyEd25519Pem(
     const std::filesystem::path& publicKeyPath,
     const std::string& payload,
@@ -154,11 +165,16 @@ PriceBotClient::PriceBotClient(config::StorageRatesApiConfig config, std::shared
       cacheRoot_(paths::getBackingPath() / "price-cache") {}
 
 PriceBotResponse<nlohmann::json> PriceBotClient::getHealth() {
-    return getJsonWithCache("/health", cacheRoot_ / "health.json", true, "health");
+    return getJsonWithCache("/health", cacheRoot_ / "health.json", true);
 }
 
 PriceBotResponse<nlohmann::json> PriceBotClient::getManifest(const bool forceRefresh) {
-    return getJsonWithCache("/v1/manifest", manifestCachePath(), forceRefresh, "manifest");
+    return getArtifactJsonWithCache(
+        "/v1/artifacts/manifest.json",
+        "/v1/artifacts/manifest.json.sig",
+        manifestCachePath(),
+        forceRefresh,
+        "manifest");
 }
 
 PriceBotResponse<RatingProfile> PriceBotClient::getProfile(
@@ -166,8 +182,10 @@ PriceBotResponse<RatingProfile> PriceBotClient::getProfile(
     const std::string& region,
     const std::string& storageClass,
     const bool forceRefresh) {
-    const auto result = getJsonWithCache(
-        "/v1/profiles/" + provider + "/" + region + "/" + storageClass,
+    const auto artifactPath = "/v1/artifacts/profiles/" + provider + "/" + region + "/" + storageClass + ".json";
+    const auto result = getArtifactJsonWithCache(
+        artifactPath,
+        artifactPath + ".sig",
         profileCachePath(provider, region, storageClass),
         forceRefresh,
         "profile " + provider + "/" + region + "/" + storageClass);
@@ -249,6 +267,12 @@ std::filesystem::path PriceBotClient::estimateCachePath(const nlohmann::json& re
     return cacheRoot_ / "estimates" / (digest + ".json");
 }
 
+std::filesystem::path PriceBotClient::signatureCachePath(const std::filesystem::path& artifactCachePath) const {
+    auto path = artifactCachePath;
+    path += ".sig";
+    return path;
+}
+
 PriceBotClient::CacheEntry PriceBotClient::readCache(const std::filesystem::path& path) const {
     CacheEntry entry;
     std::error_code ec;
@@ -275,8 +299,7 @@ void PriceBotClient::writeCache(const std::filesystem::path& path, const std::st
 PriceBotResponse<nlohmann::json> PriceBotClient::getJsonWithCache(
     const std::string& path,
     const std::filesystem::path& cachePath,
-    const bool forceRefresh,
-    const std::string& artifactLabel) {
+    const bool forceRefresh) {
     const auto cached = readCache(cachePath);
     if (!forceRefresh && cached.exists && cached.fresh) {
         try {
@@ -290,8 +313,6 @@ PriceBotResponse<nlohmann::json> PriceBotClient::getJsonWithCache(
     if (reply.ok()) {
         try {
             auto parsed = nlohmann::json::parse(reply.body);
-            if (!verifyArtifactIfConfigured(artifactLabel, reply.body, parsed))
-                return PriceBotResponse<nlohmann::json>::failure("signature verification failed", reply.status);
             writeCache(cachePath, reply.body);
             return PriceBotResponse<nlohmann::json>::success(std::move(parsed), false, reply.status);
         } catch (const std::exception& e) {
@@ -305,6 +326,77 @@ PriceBotResponse<nlohmann::json> PriceBotClient::getJsonWithCache(
         } catch (const std::exception& e) {
             return PriceBotResponse<nlohmann::json>::failure(e.what(), reply.status);
         }
+    }
+
+    if (!reply.error.empty()) return PriceBotResponse<nlohmann::json>::failure(reply.error, reply.status);
+    return PriceBotResponse<nlohmann::json>::failure(
+        "price-bot returned HTTP " + std::to_string(reply.status),
+        reply.status);
+}
+
+PriceBotResponse<nlohmann::json> PriceBotClient::getArtifactJsonWithCache(
+    const std::string& artifactPath,
+    const std::string& signaturePath,
+    const std::filesystem::path& cachePath,
+    const bool forceRefresh,
+    const std::string& artifactLabel) {
+    const auto signatureCache = signatureCachePath(cachePath);
+    const auto cached = readCache(cachePath);
+    const auto cachedSignature = readCache(signatureCache);
+
+    const auto parseVerified = [&](const std::string& payload,
+                                   const std::optional<std::string>& signature,
+                                   const bool stale,
+                                   const long httpStatus) -> PriceBotResponse<nlohmann::json> {
+        if (!verifyArtifactIfConfigured(artifactLabel, payload, signature))
+            return PriceBotResponse<nlohmann::json>::failure("signature verification failed", httpStatus);
+        try {
+            return PriceBotResponse<nlohmann::json>::success(nlohmann::json::parse(payload), stale, httpStatus);
+        } catch (const std::exception& e) {
+            return PriceBotResponse<nlohmann::json>::failure(e.what(), httpStatus);
+        }
+    };
+
+    if (!forceRefresh && cached.exists && cached.fresh) {
+        const auto signature = cachedSignature.exists
+            ? std::make_optional(cachedSignature.body)
+            : std::optional<std::string>{};
+        auto cachedResult = parseVerified(cached.body, signature, false, 200);
+        if (cachedResult.ok) return cachedResult;
+        // Malformed or unverifiable cached artifacts can be recovered by a network refresh below.
+    }
+
+    const auto reply = transport_->perform(
+        {.method = "GET", .url = url(artifactPath), .body = "", .headers = {}},
+        config_.timeout_ms);
+    if (reply.ok()) {
+        const auto signature = fetchSignature(signaturePath);
+        auto result = parseVerified(reply.body, signature, false, reply.status);
+        if (!result.ok) {
+            if (result.error == "signature verification failed" || !cached.exists)
+                return result;
+
+            const auto cachedSignatureValue = cachedSignature.exists
+                ? std::make_optional(cachedSignature.body)
+                : std::optional<std::string>{};
+            return parseVerified(cached.body, cachedSignatureValue, true, reply.status);
+        }
+
+        writeCache(cachePath, reply.body);
+        if (signature) {
+            writeCache(signatureCache, *signature);
+        } else {
+            std::error_code ec;
+            std::filesystem::remove(signatureCache, ec);
+        }
+        return result;
+    }
+
+    if (cached.exists) {
+        const auto signature = cachedSignature.exists
+            ? std::make_optional(cachedSignature.body)
+            : std::optional<std::string>{};
+        return parseVerified(cached.body, signature, true, reply.status);
     }
 
     if (!reply.error.empty()) return PriceBotResponse<nlohmann::json>::failure(reply.error, reply.status);
@@ -383,27 +475,36 @@ PriceBotResponse<EstimateResult> PriceBotClient::postEstimateWithCache(
 bool PriceBotClient::verifyArtifactIfConfigured(
     const std::string& artifactLabel,
     const std::string& payload,
-    const nlohmann::json& parsed) {
-    // TODO: once price-bot publishes a packaged production public key and raw
-    // static artifact route, prefer verifying those exact bytes instead of the
-    // JSON object returned by the API route.
+    const std::optional<std::string>& signatureBase64) {
     if (!config_.signature_public_key_path) {
-        log::Registry::storage()->warn(
-            "[PriceBot] Signature verification is warning-only for {}: no Ed25519 public key path is configured",
-            artifactLabel);
+        if (config_.signature_warning_only) {
+            log::Registry::storage()->warn(
+                "[PriceBot] Signature verification is warning-only for {}: no Ed25519 public key path is configured",
+                artifactLabel);
+        } else {
+            log::Registry::storage()->error(
+                "[PriceBot] Signature verification is strict for {} but no Ed25519 public key path is configured",
+                artifactLabel);
+        }
         return config_.signature_warning_only;
     }
 
-    const auto signature = fetchSignature(parsed);
-    if (!signature) {
-        log::Registry::storage()->warn(
-            "[PriceBot] Signature verification is warning-only for {}: signature artifact is unavailable",
-            artifactLabel);
+    const auto signature = signatureBase64 ? trimSignature(*signatureBase64) : std::string{};
+    if (signature.empty()) {
+        if (config_.signature_warning_only) {
+            log::Registry::storage()->warn(
+                "[PriceBot] Signature verification is warning-only for {}: signature artifact is unavailable",
+                artifactLabel);
+        } else {
+            log::Registry::storage()->error(
+                "[PriceBot] Signature verification failed for {}: signature artifact is unavailable",
+                artifactLabel);
+        }
         return config_.signature_warning_only;
     }
 
     std::string error;
-    if (verifyEd25519Pem(*config_.signature_public_key_path, payload, *signature, error))
+    if (verifyEd25519Pem(*config_.signature_public_key_path, payload, signature, error))
         return true;
 
     if (config_.signature_warning_only) {
@@ -421,22 +522,13 @@ bool PriceBotClient::verifyArtifactIfConfigured(
     return false;
 }
 
-std::optional<std::string> PriceBotClient::fetchSignature(const nlohmann::json& parsed) {
-    if (!parsed.contains("integrity") || !parsed.at("integrity").is_object())
-        return std::nullopt;
-    const auto signatureRef = parsed.at("integrity").value("signature_ref", "");
-    if (signatureRef.empty()) return std::nullopt;
-
-    const auto sigPath = signatureRef.front() == '/'
-        ? signatureRef
-        : "/v1/" + signatureRef;
-    const auto reply = transport_->perform({.method = "GET", .url = url(sigPath), .body = "", .headers = {}}, config_.timeout_ms);
+std::optional<std::string> PriceBotClient::fetchSignature(const std::string& signaturePath) {
+    const auto reply = transport_->perform(
+        {.method = "GET", .url = url(signaturePath), .body = "", .headers = {}},
+        config_.timeout_ms);
     if (!reply.ok()) return std::nullopt;
 
-    auto signature = reply.body;
-    while (!signature.empty() && (signature.back() == '\n' || signature.back() == '\r' || signature.back() == ' '))
-        signature.pop_back();
-    return signature.empty() ? std::nullopt : std::make_optional(std::move(signature));
+    return trimSignature(reply.body).empty() ? std::nullopt : std::make_optional(reply.body);
 }
 
 } // namespace vh::storage::s3::pricing

@@ -141,10 +141,16 @@ private:
         const std::string& region,
         const std::string& storageClass) const;
     [[nodiscard]] std::filesystem::path estimateCachePath(const nlohmann::json& request) const;
+    [[nodiscard]] std::filesystem::path signatureCachePath(const std::filesystem::path& artifactCachePath) const;
     [[nodiscard]] CacheEntry readCache(const std::filesystem::path& path) const;
     void writeCache(const std::filesystem::path& path, const std::string& body) const;
     [[nodiscard]] PriceBotResponse<nlohmann::json> getJsonWithCache(
         const std::string& path,
+        const std::filesystem::path& cachePath,
+        bool forceRefresh);
+    [[nodiscard]] PriceBotResponse<nlohmann::json> getArtifactJsonWithCache(
+        const std::string& artifactPath,
+        const std::string& signaturePath,
         const std::filesystem::path& cachePath,
         bool forceRefresh,
         const std::string& artifactLabel);
@@ -157,8 +163,8 @@ private:
     [[nodiscard]] bool verifyArtifactIfConfigured(
         const std::string& artifactLabel,
         const std::string& payload,
-        const nlohmann::json& parsed);
-    [[nodiscard]] std::optional<std::string> fetchSignature(const nlohmann::json& parsed);
+        const std::optional<std::string>& signatureBase64);
+    [[nodiscard]] std::optional<std::string> fetchSignature(const std::string& signaturePath);
 };
 
 } // namespace vh::storage::s3::pricing
