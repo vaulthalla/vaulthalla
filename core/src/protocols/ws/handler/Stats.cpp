@@ -35,6 +35,7 @@
 #include "runtime/Deps.hpp"
 #include "fs/cache/Registry.hpp"
 #include "rbac/resolver/admin/all.hpp"
+#include "storage/s3/pricing/PriceBudget.hpp"
 
 #include <future>
 #include <utility>
@@ -265,6 +266,40 @@ json Stats::systemTrends(const json& payload, const std::shared_ptr<Session>& se
     if (!session->user->isAdmin()) throw std::runtime_error("Must be an admin to view trend stats.");
     const auto stats = vh::db::query::stats::Snapshot::systemTrends(statsTrendWindowHours(payload));
     return {{"stats", stats ? json(*stats) : json(nullptr)}};
+}
+
+json Stats::pricingBudget(const json& payload, const std::shared_ptr<Session>& session) {
+    if (!payload.is_object() || !payload.contains("vault_id") || payload.at("vault_id").is_null()) {
+        if (!session->user->isAdmin()) throw std::runtime_error("Must be an admin to view system pricing budget stats.");
+        return {{"stats", vh::storage::s3::pricing::PriceBudgetService{}.dashboardStats()}};
+    }
+
+    const auto vaultId = payload.at("vault_id").get<std::uint32_t>();
+    using Perm = permission::admin::VaultPermissions;
+    if (!resolver::Admin::has<Perm>({
+        .user = session->user,
+        .permissions = { Perm::View, Perm::ViewStats },
+        .vault_id = vaultId
+    })) throw std::runtime_error("You do not have permission to view pricing budget stats for this vault.");
+
+    return {{"stats", vh::storage::s3::pricing::PriceBudgetService{}.dashboardStats(vaultId)}};
+}
+
+json Stats::vaultPricing(const json& payload, const std::shared_ptr<Session>& session) {
+    const auto vaultId = payload.at("vault_id").get<std::uint32_t>();
+    using Perm = permission::admin::VaultPermissions;
+    if (!resolver::Admin::has<Perm>({
+        .user = session->user,
+        .permissions = { Perm::View, Perm::ViewStats },
+        .vault_id = vaultId
+    })) throw std::runtime_error("You do not have permission to view pricing stats for this vault.");
+
+    return {{"stats", vh::storage::s3::pricing::PriceBudgetService{}.dashboardStats(vaultId)}};
+}
+
+json Stats::systemPricing(const std::shared_ptr<Session>& session) {
+    if (!session->user->isAdmin()) throw std::runtime_error("Must be an admin to view system pricing stats.");
+    return {{"stats", vh::storage::s3::pricing::PriceBudgetService{}.dashboardStats()}};
 }
 
 json Stats::fsCache(const std::shared_ptr<Session>& session) {

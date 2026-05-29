@@ -5,6 +5,7 @@ import { VaultStats } from '@/models/stats/vaultStats'
 import SyncHealth from '@/components/vault/VaultStatsDashboard/SyncHealth/Component'
 import VaultActivity from '@/components/vault/VaultStatsDashboard/VaultActivity/Component'
 import OperationQueue from '@/components/vault/VaultStatsDashboard/OperationQueue/Component'
+import PricingBudget from '@/components/vault/VaultStatsDashboard/PricingBudget/Component'
 import RecoveryReadiness from '@/components/vault/VaultStatsDashboard/RecoveryReadiness/Component'
 import RetentionPressure from '@/components/vault/VaultStatsDashboard/RetentionPressure/Component'
 import ShareStats from '@/components/vault/VaultStatsDashboard/ShareStats/Component'
@@ -25,6 +26,7 @@ const VaultStatsDashboard = ({ vault_id }: { vault_id: number }) => {
       <div className="VaultStatsDashboard">
         <CapacityStats capacityStats={stats.capacity} />
         <StorageBackend vaultId={vault_id} />
+        <PricingBudget vaultId={vault_id} />
         <SyncHealth vaultId={vault_id} initialLatestEvent={stats.latest_sync_event} />
         <RecoveryReadiness vaultId={vault_id} />
         <VaultActivity vaultId={vault_id} />

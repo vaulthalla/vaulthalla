@@ -18,6 +18,7 @@ import { StatsTrends } from '@/models/stats/statsTrends'
 import { StorageBackendStats } from '@/models/stats/storageBackendStats'
 import { SystemHealth } from '@/models/stats/systemHealth'
 import { ThreadPoolManagerStats } from '@/models/stats/threadPoolStats'
+import { PricingBudgetStats } from '@/models/stats/pricingBudgetStats'
 import { getErrorMessage } from '@/util/handleErrors'
 
 /**
@@ -187,6 +188,8 @@ interface StatsStore {
   getVaultStorageBackendStats: (payload: WSCommandPayload<'stats.vault.storage'>) => Promise<StorageBackendStats>
   getVaultRetentionStats: (payload: WSCommandPayload<'stats.vault.retention'>) => Promise<RetentionStats>
   getVaultTrends: (payload: WSCommandPayload<'stats.vault.trends'>) => Promise<StatsTrends>
+  getVaultPricingStats: (payload: WSCommandPayload<'stats.vault.pricing'>) => Promise<PricingBudgetStats>
+  getPricingBudgetStats: (payload?: WSCommandPayload<'stats.pricing.budget'>) => Promise<PricingBudgetStats>
   getSystemHealth: (payload?: WSCommandPayload<'stats.system.health'>) => Promise<SystemHealth>
   getThreadPoolStats: (payload?: WSCommandPayload<'stats.system.threadpools'>) => Promise<ThreadPoolManagerStats>
   getFuseStats: (payload?: WSCommandPayload<'stats.system.fuse'>) => Promise<FuseStats>
@@ -196,6 +199,7 @@ interface StatsStore {
   getStorageBackendStats: (payload?: WSCommandPayload<'stats.system.storage'>) => Promise<StorageBackendStats>
   getRetentionStats: (payload?: WSCommandPayload<'stats.system.retention'>) => Promise<RetentionStats>
   getSystemTrends: (payload?: WSCommandPayload<'stats.system.trends'>) => Promise<StatsTrends>
+  getSystemPricingStats: (payload?: WSCommandPayload<'stats.system.pricing'>) => Promise<PricingBudgetStats>
   getDashboardOverview: (payload?: WSCommandPayload<'stats.dashboard.overview'>) => Promise<DashboardOverview>
   getFsCacheStats: (payload?: WSCommandPayload<'stats.fs.cache'>) => Promise<CacheStats>
   getHttpCacheStats: (payload?: WSCommandPayload<'stats.http.cache'>) => Promise<CacheStats>
@@ -354,6 +358,20 @@ export const useStatsStore = create<StatsStore>((set, get) => ({
     return StatsTrends.from(response.stats)
   },
 
+  async getVaultPricingStats(payload) {
+    const ws = useWebSocketStore.getState()
+    await ws.waitForConnection()
+    const response = await ws.sendCommand('stats.vault.pricing', payload)
+    return PricingBudgetStats.from(response.stats)
+  },
+
+  async getPricingBudgetStats(payload = null) {
+    const ws = useWebSocketStore.getState()
+    await ws.waitForConnection()
+    const response = await ws.sendCommand('stats.pricing.budget', payload)
+    return PricingBudgetStats.from(response.stats)
+  },
+
   async getSystemHealth() {
     const ws = useWebSocketStore.getState()
     await ws.waitForConnection()
@@ -415,6 +433,13 @@ export const useStatsStore = create<StatsStore>((set, get) => ({
     await ws.waitForConnection()
     const response = await ws.sendCommand('stats.system.trends', payload)
     return StatsTrends.from(response.stats)
+  },
+
+  async getSystemPricingStats() {
+    const ws = useWebSocketStore.getState()
+    await ws.waitForConnection()
+    const response = await ws.sendCommand('stats.system.pricing', null)
+    return PricingBudgetStats.from(response.stats)
   },
 
   async getDashboardOverview(payload = { scope: 'system' as const, mode: 'dashboard_home' }) {

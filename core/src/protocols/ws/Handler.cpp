@@ -5,6 +5,7 @@
 #include "protocols/ws/handler/rbac/Permissions.hpp"
 #include "protocols/ws/handler/Settings.hpp"
 #include "protocols/ws/handler/Email.hpp"
+#include "protocols/ws/handler/Pricing.hpp"
 #include "protocols/ws/handler/Groups.hpp"
 #include "protocols/ws/handler/Stats.hpp"
 #include "protocols/ws/handler/dashboard/Preferences.hpp"
@@ -31,6 +32,7 @@ void Handler::registerAllHandlers(const std::shared_ptr<Router>& r) {
     registerPermissionsHandlers(r);
     registerSettingsHandlers(r);
     registerEmailHandlers(r);
+    registerPricingHandlers(r);
     registerGroupHandlers(r);
     registerStatHandlers(r);
     registerDashboardPreferenceHandlers(r);
@@ -131,6 +133,21 @@ void Handler::registerEmailHandlers(const std::shared_ptr<Router>& r) {
     r->registerPayload("email.history", &handler::Email::history);
 }
 
+void Handler::registerPricingHandlers(const std::shared_ptr<Router>& r) {
+    r->registerPayload("pricing.budget.policy.list", &handler::Pricing::policyList);
+    r->registerPayload("pricing.budget.policy.upsert", &handler::Pricing::policyUpsert);
+    r->registerPayload("pricing.budget.policy.disable", &handler::Pricing::policyDisable);
+    r->registerPayload("pricing.budget.ledger.list", &handler::Pricing::ledgerList);
+    r->registerPayload("pricing.budget.status", &handler::Pricing::status);
+    r->registerPayload("pricing.budget.preflight", &handler::Pricing::preflight);
+    r->registerPayload("pricing.budget.override.request", &handler::Pricing::overrideRequest);
+    r->registerPayload("pricing.budget.override.approve", &handler::Pricing::overrideApprove);
+    r->registerPayload("pricing.budget.override.deny", &handler::Pricing::overrideDeny);
+    r->registerPayload("pricing.budget.override.list", &handler::Pricing::overrideList);
+    r->registerPayload("pricing.notifications.list", &handler::Pricing::notificationsList);
+    r->registerPayload("pricing.notifications.ack", &handler::Pricing::notificationsAck);
+}
+
 void Handler::registerGroupHandlers(const std::shared_ptr<Router>& r) {
     r->registerPayload("group.add", &handler::Groups::add);
     r->registerPayload("group.update", &handler::Groups::update);
@@ -164,6 +181,9 @@ void Handler::registerStatHandlers(const std::shared_ptr<Router>& r) {
     r->registerSessionOnlyHandler("stats.system.storage", &handler::Stats::systemStorage);
     r->registerSessionOnlyHandler("stats.system.retention", &handler::Stats::systemRetention);
     r->registerPayload("stats.system.trends", &handler::Stats::systemTrends);
+    r->registerPayload("stats.pricing.budget", &handler::Stats::pricingBudget);
+    r->registerPayload("stats.vault.pricing", &handler::Stats::vaultPricing);
+    r->registerSessionOnlyHandler("stats.system.pricing", &handler::Stats::systemPricing);
     r->registerSessionOnlyHandler("stats.fs.cache", &handler::Stats::fsCache);
     r->registerSessionOnlyHandler("stats.http.cache", &handler::Stats::httpCache);
 }

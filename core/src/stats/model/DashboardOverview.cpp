@@ -16,6 +16,7 @@
 #include "stats/model/StorageBackendStats.hpp"
 #include "stats/model/SystemHealth.hpp"
 #include "stats/model/ThreadPoolStats.hpp"
+#include "storage/s3/pricing/PriceBudget.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -314,6 +315,7 @@ std::vector<DashboardOverviewSectionDescriptor> dashboardOverviewSectionDescript
         {"filesystem", "Filesystem", "FUSE activity and preview cache readiness.", "/dashboard/filesystem"},
         {"storage", "Storage", "Backing providers, database health, and cleanup pressure.", "/dashboard/storage"},
         {"operations", "Operations", "Queued work, active transfers, and stuck-operation pressure.", "/dashboard/operations"},
+        {"cost_control", "Cost Control", "S3 price budgets, projected spend, catalog health, and override activity.", "/pricing-budget"},
         {"trends", "Trends", "Historical samples for live telemetry surfaces.", "/dashboard/trends"},
     };
 }
@@ -330,6 +332,12 @@ std::vector<DashboardOverviewCardDescriptor> dashboardOverviewCardDescriptors() 
         {"system.db", "storage", "Database Health", "Database connectivity, connection pressure, cache hit ratio, and table size.", "/dashboard/storage#database", "visual", "2x1"},
         {"system.retention", "storage", "Retention / Cleanup", "Trash, audit, sync, share, and cache cleanup backlog.", "/dashboard/storage#retention", "visual", "2x1"},
         {"system.operations", "operations", "Operation Queue", "Pending, active, failed, and stalled filesystem/share work.", "/dashboard/operations#operation-queue", "visual", "2x2"},
+        {"system.pricing_budget", "cost_control", "S3 Price Budget Overview", "Active S3 price budget policies, current spend, projected spend, and budget blocks.", "/pricing-budget#overview", "tiles", "2x1"},
+        {"system.pricing_providers", "cost_control", "Provider Spend", "AWS S3 and Cloudflare R2 committed and projected budget pressure.", "/pricing-budget#providers", "tiles", "2x1"},
+        {"system.pricing_vaults", "cost_control", "Vault Spend", "Top vault spend and projected overage pressure.", "/pricing-budget#vaults", "tiles", "2x1"},
+        {"system.pricing_alerts", "cost_control", "Budget Alerts", "Active budget warnings, critical events, and acknowledgement backlog.", "/pricing-budget#alerts", "tiles", "2x1"},
+        {"system.pricing_catalog", "cost_control", "Catalog Health", "Pricing catalog verification, stale catalog, and unsupported-provider events.", "/pricing-budget#catalog", "tiles", "2x1"},
+        {"system.pricing_overrides", "cost_control", "Recent Blocks and Overrides", "Blocked syncs and single-run override request decisions.", "/pricing-budget#overrides", "tiles", "2x1"},
         {"system.trends", "trends", "Trends", "Recently collected stats snapshot series.", "/dashboard/trends#trends", "visual", "2x1"},
     };
 }
@@ -739,6 +747,164 @@ DashboardCardSummary dashboardOverviewBuildTrends(const DashboardOverviewCardDes
     return card;
 }
 
+std::string dashboardOverviewFormatBudgetMoney(const std::string& amount, const std::string& currency) {
+    return amount + " " + (currency.empty() ? "USD" : currency);
+}
+
+double dashboardOverviewBudgetNumber(const std::string& amount) {
+    try {
+        return std::stod(amount.empty() ? "0" : amount);
+    } catch (...) {
+        return 0.0;
+    }
+}
+
+std::string dashboardOverviewFormatBudgetNumber(const double amount) {
+    char buffer[48];
+    std::snprintf(buffer, sizeof(buffer), "%.8f", amount);
+    return buffer;
+}
+
+std::string dashboardOverviewBudgetSeverity(const vh::storage::s3::pricing::PriceBudgetDashboardStats& stats) {
+    if (stats.critical_notifications > 0 || stats.blocked_syncs_24h > 0) return "error";
+    if (stats.warning_notifications > 0 || stats.pending_overrides > 0) return "warning";
+    return stats.active_policies > 0 ? "healthy" : "info";
+}
+
+DashboardCardSummary dashboardOverviewBuildPricingBudget(const DashboardOverviewCardDescriptor& descriptor) {
+    auto card = dashboardOverviewBaseCard(descriptor);
+    const auto stats = vh::storage::s3::pricing::PriceBudgetService{}.dashboardStats();
+    card.severity = dashboardOverviewBudgetSeverity(stats);
+    card.summary = stats.active_policies == 0
+        ? "No S3 price budget policies are active."
+        : "S3 price budget guardrails are configured.";
+
+    dashboardOverviewAddMetric(card, "active_policies", "Policies", dashboardOverviewFormatCount(stats.active_policies), stats.active_policies == 0 ? "info" : "healthy", stats.active_policies);
+    dashboardOverviewAddMetric(card, "blocked_syncs", "Blocked 24h", dashboardOverviewFormatCount(stats.blocked_syncs_24h), stats.blocked_syncs_24h == 0 ? "healthy" : "error", stats.blocked_syncs_24h);
+    dashboardOverviewAddMetric(card, "warnings", "Warnings", dashboardOverviewFormatCount(stats.warning_notifications), stats.warning_notifications == 0 ? "healthy" : "warning", stats.warning_notifications);
+    dashboardOverviewAddMetric(card, "critical", "Critical", dashboardOverviewFormatCount(stats.critical_notifications), stats.critical_notifications == 0 ? "healthy" : "error", stats.critical_notifications);
+    dashboardOverviewAddMetric(card, "monthly_spend", "Month", dashboardOverviewFormatBudgetMoney(stats.current_monthly_spend, stats.currency), "info");
+    dashboardOverviewAddMetric(card, "projected_monthly", "Projected", dashboardOverviewFormatBudgetMoney(stats.projected_monthly_spend, stats.currency), stats.critical_notifications ? "error" : "info");
+    dashboardOverviewAddMetric(card, "pending_overrides", "Overrides", dashboardOverviewFormatCount(stats.pending_overrides), stats.pending_overrides == 0 ? "healthy" : "warning", stats.pending_overrides);
+
+    if (stats.blocked_syncs_24h > 0)
+        dashboardOverviewAddIssue(card, "system.pricing.blocked", "error", "S3 price budget enforcement blocked syncs in the last 24 hours.", "blocked_syncs");
+    else if (stats.warning_notifications > 0)
+        dashboardOverviewAddIssue(card, "system.pricing.warnings", "warning", "Unacknowledged S3 price budget warnings are active.", "warnings");
+
+    return card;
+}
+
+DashboardCardSummary dashboardOverviewBuildPricingProviders(const DashboardOverviewCardDescriptor& descriptor) {
+    auto card = dashboardOverviewBaseCard(descriptor);
+    const auto stats = vh::storage::s3::pricing::PriceBudgetService{}.dashboardStats();
+    card.severity = dashboardOverviewBudgetSeverity(stats);
+    card.summary = "Provider S3 budget pressure is based on active policy trends.";
+
+    std::map<std::string, double> totals;
+    std::map<std::string, double> projections;
+    for (const auto& trend : stats.trends) {
+        if (trend.window_type != "monthly") continue;
+        const auto provider = trend.provider_key.value_or("global");
+        totals[provider] += dashboardOverviewBudgetNumber(trend.total_cost);
+        if (trend.projected_window_cost) projections[provider] += dashboardOverviewBudgetNumber(*trend.projected_window_cost);
+    }
+
+    for (const auto& provider : {std::string{"aws-s3"}, std::string{"cloudflare-r2"}}) {
+        dashboardOverviewAddMetric(card, provider + "_current", provider, dashboardOverviewFormatBudgetMoney(dashboardOverviewFormatBudgetNumber(totals[provider]), stats.currency), "info");
+        dashboardOverviewAddMetric(card, provider + "_projected", provider + " Proj", dashboardOverviewFormatBudgetMoney(dashboardOverviewFormatBudgetNumber(projections[provider]), stats.currency), "info");
+    }
+    dashboardOverviewAddMetric(card, "provider_policies", "Policies", dashboardOverviewFormatCount(stats.active_policies), stats.active_policies == 0 ? "info" : "healthy", stats.active_policies);
+    return card;
+}
+
+DashboardCardSummary dashboardOverviewBuildPricingVaults(const DashboardOverviewCardDescriptor& descriptor) {
+    auto card = dashboardOverviewBaseCard(descriptor);
+    const auto stats = vh::storage::s3::pricing::PriceBudgetService{}.dashboardStats();
+    card.severity = dashboardOverviewBudgetSeverity(stats);
+
+    std::map<std::uint32_t, double> totals;
+    std::uint32_t overageVaults = 0;
+    for (const auto& trend : stats.trends) {
+        if (!trend.vault_id || trend.window_type != "monthly") continue;
+        totals[*trend.vault_id] += dashboardOverviewBudgetNumber(trend.total_cost);
+        if (trend.projected_overage) ++overageVaults;
+    }
+    const auto top = std::max_element(totals.begin(), totals.end(), [](const auto& a, const auto& b) {
+        return a.second < b.second;
+    });
+
+    card.summary = totals.empty() ? "No vault-scoped S3 budget spend is visible." : "Vault spend trends are available.";
+    dashboardOverviewAddMetric(card, "tracked_vaults", "Vaults", dashboardOverviewFormatCount(totals.size()), totals.empty() ? "info" : "healthy", static_cast<double>(totals.size()));
+    dashboardOverviewAddMetric(card, "top_vault", "Top Vault", top == totals.end() ? "none" : std::to_string(top->first), "info");
+    dashboardOverviewAddMetric(card, "top_spend", "Top Spend", top == totals.end() ? "0.00000000 " + stats.currency : dashboardOverviewFormatBudgetMoney(dashboardOverviewFormatBudgetNumber(top->second), stats.currency), "info");
+    dashboardOverviewAddMetric(card, "projected_overage_vaults", "Overage", dashboardOverviewFormatCount(overageVaults), overageVaults == 0 ? "healthy" : "warning", overageVaults);
+    if (overageVaults > 0)
+        dashboardOverviewAddIssue(card, "system.pricing.vault_overage", "warning", "One or more vaults are projected to exceed a budget.", "projected_overage_vaults");
+    return card;
+}
+
+DashboardCardSummary dashboardOverviewBuildPricingAlerts(const DashboardOverviewCardDescriptor& descriptor) {
+    auto card = dashboardOverviewBaseCard(descriptor);
+    const auto stats = vh::storage::s3::pricing::PriceBudgetService{}.dashboardStats();
+    card.severity = stats.critical_notifications > 0 ? "error" : stats.warning_notifications > 0 ? "warning" : "healthy";
+    card.summary = stats.unacknowledged_notifications == 0 ? "No active budget alerts require acknowledgement." : "Budget alerts require review.";
+
+    dashboardOverviewAddMetric(card, "unacknowledged", "Unacked", dashboardOverviewFormatCount(stats.unacknowledged_notifications), stats.unacknowledged_notifications == 0 ? "healthy" : "warning", stats.unacknowledged_notifications);
+    dashboardOverviewAddMetric(card, "critical", "Critical", dashboardOverviewFormatCount(stats.critical_notifications), stats.critical_notifications == 0 ? "healthy" : "error", stats.critical_notifications);
+    dashboardOverviewAddMetric(card, "warnings", "Warnings", dashboardOverviewFormatCount(stats.warning_notifications), stats.warning_notifications == 0 ? "healthy" : "warning", stats.warning_notifications);
+    dashboardOverviewAddMetric(card, "active_alerts", "Active", dashboardOverviewFormatCount(stats.active_notifications.size()), stats.active_notifications.empty() ? "healthy" : "warning", static_cast<double>(stats.active_notifications.size()));
+    if (stats.critical_notifications > 0)
+        dashboardOverviewAddIssue(card, "system.pricing.critical_alerts", "error", "Critical S3 budget notifications are unacknowledged.", "critical");
+    return card;
+}
+
+DashboardCardSummary dashboardOverviewBuildPricingCatalog(const DashboardOverviewCardDescriptor& descriptor) {
+    auto card = dashboardOverviewBaseCard(descriptor);
+    const auto stats = vh::storage::s3::pricing::PriceBudgetService{}.dashboardStats();
+    std::uint32_t stale = 0;
+    std::uint32_t unverified = 0;
+    std::uint32_t unsupported = 0;
+    for (const auto& notification : stats.active_notifications) {
+        if (notification.type == "pricing.catalog_stale") ++stale;
+        if (notification.type == "pricing.catalog_unverified") ++unverified;
+        if (notification.type == "pricing.provider_unsupported") ++unsupported;
+    }
+    const auto issues = stale + unverified + unsupported;
+    card.severity = issues == 0 ? "healthy" : "warning";
+    card.summary = issues == 0 ? "No active pricing catalog health alerts." : "Pricing catalog health alerts are active.";
+    dashboardOverviewAddMetric(card, "catalog_issues", "Issues", dashboardOverviewFormatCount(issues), issues == 0 ? "healthy" : "warning", issues);
+    dashboardOverviewAddMetric(card, "stale", "Stale", dashboardOverviewFormatCount(stale), stale == 0 ? "healthy" : "warning", stale);
+    dashboardOverviewAddMetric(card, "unverified", "Unverified", dashboardOverviewFormatCount(unverified), unverified == 0 ? "healthy" : "warning", unverified);
+    dashboardOverviewAddMetric(card, "unsupported", "Unsupported", dashboardOverviewFormatCount(unsupported), unsupported == 0 ? "healthy" : "warning", unsupported);
+    if (issues > 0)
+        dashboardOverviewAddIssue(card, "system.pricing.catalog", "warning", "Pricing catalog health affects budget enforcement.", "catalog_issues");
+    return card;
+}
+
+DashboardCardSummary dashboardOverviewBuildPricingOverrides(const DashboardOverviewCardDescriptor& descriptor) {
+    auto card = dashboardOverviewBaseCard(descriptor);
+    const auto stats = vh::storage::s3::pricing::PriceBudgetService{}.dashboardStats();
+    std::uint32_t approved = 0;
+    std::uint32_t denied = 0;
+    std::uint32_t used = 0;
+    for (const auto& budgetOverride : stats.recent_overrides) {
+        if (budgetOverride.status == "approved") ++approved;
+        if (budgetOverride.status == "denied") ++denied;
+        if (budgetOverride.status == "used") ++used;
+    }
+    card.severity = stats.blocked_syncs_24h > 0 ? "error" : stats.pending_overrides > 0 ? "warning" : "healthy";
+    card.summary = stats.pending_overrides > 0 ? "Budget override requests are waiting for review." : "No pending budget override requests.";
+    dashboardOverviewAddMetric(card, "blocked_syncs", "Blocked 24h", dashboardOverviewFormatCount(stats.blocked_syncs_24h), stats.blocked_syncs_24h == 0 ? "healthy" : "error", stats.blocked_syncs_24h);
+    dashboardOverviewAddMetric(card, "pending", "Pending", dashboardOverviewFormatCount(stats.pending_overrides), stats.pending_overrides == 0 ? "healthy" : "warning", stats.pending_overrides);
+    dashboardOverviewAddMetric(card, "approved", "Approved", dashboardOverviewFormatCount(approved), "info", approved);
+    dashboardOverviewAddMetric(card, "denied", "Denied", dashboardOverviewFormatCount(denied), denied == 0 ? "healthy" : "info", denied);
+    dashboardOverviewAddMetric(card, "used", "Used", dashboardOverviewFormatCount(used), "info", used);
+    if (stats.pending_overrides > 0)
+        dashboardOverviewAddIssue(card, "system.pricing.pending_overrides", "warning", "S3 price budget override requests are pending.", "pending");
+    return card;
+}
+
 DashboardCardSummary dashboardOverviewBuildCard(const DashboardOverviewCardDescriptor& descriptor) {
     try {
         if (descriptor.id == "system.health") return dashboardOverviewBuildSystemHealth(descriptor);
@@ -751,6 +917,12 @@ DashboardCardSummary dashboardOverviewBuildCard(const DashboardOverviewCardDescr
         if (descriptor.id == "system.db") return dashboardOverviewBuildDb(descriptor);
         if (descriptor.id == "system.retention") return dashboardOverviewBuildRetention(descriptor);
         if (descriptor.id == "system.operations") return dashboardOverviewBuildOperations(descriptor);
+        if (descriptor.id == "system.pricing_budget") return dashboardOverviewBuildPricingBudget(descriptor);
+        if (descriptor.id == "system.pricing_providers") return dashboardOverviewBuildPricingProviders(descriptor);
+        if (descriptor.id == "system.pricing_vaults") return dashboardOverviewBuildPricingVaults(descriptor);
+        if (descriptor.id == "system.pricing_alerts") return dashboardOverviewBuildPricingAlerts(descriptor);
+        if (descriptor.id == "system.pricing_catalog") return dashboardOverviewBuildPricingCatalog(descriptor);
+        if (descriptor.id == "system.pricing_overrides") return dashboardOverviewBuildPricingOverrides(descriptor);
         if (descriptor.id == "system.trends") return dashboardOverviewBuildTrends(descriptor);
         return dashboardOverviewUnavailableCard(descriptor, "Unknown dashboard card.");
     } catch (const std::exception& e) {

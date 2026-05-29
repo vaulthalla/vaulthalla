@@ -993,3 +993,75 @@ TEST(S3PricingTest, PriceBudgetDryRunFormatShowsFailingEnforcementDecision) {
     EXPECT_NE(std::string::npos, output.find("Enforcement would stall: yes"));
     EXPECT_NE(std::string::npos, output.find("remaining before 0.50000000"));
 }
+
+TEST(S3PricingTest, PriceBudgetOverrideEligibilityOnlyAllowsLimitExceedance) {
+    using namespace vh::storage::s3::pricing;
+
+    PriceBudgetService service;
+    PriceBudgetDecision limitDecision;
+    limitDecision.stalled = true;
+    limitDecision.allowed = false;
+    limitDecision.reason = "S3 price budget exceeded for monthly global";
+    limitDecision.checks.push_back({
+        .policy_id = 12,
+        .scope = PriceBudgetScope::Global,
+        .mode = PriceBudgetMode::Enforce,
+        .window = PriceBudgetWindow::Monthly,
+        .currency = "USD",
+        .limit = "10.00000000",
+        .used_before = "9.50000000",
+        .remaining_before = "0.50000000",
+        .requested = "1.00000000",
+        .exceeded = true
+    });
+
+    EXPECT_TRUE(service.isLimitOverrideEligible(limitDecision));
+    EXPECT_EQ((std::vector<std::uint32_t>{12}), service.exceededEnforcePolicyIds(limitDecision));
+
+    PriceBudgetDecision catalogDecision = limitDecision;
+    catalogDecision.reason = "S3 pricing catalog is unverified";
+    EXPECT_FALSE(service.isLimitOverrideEligible(catalogDecision));
+    EXPECT_EQ((std::vector<std::uint32_t>{12}), service.exceededEnforcePolicyIds(catalogDecision));
+}
+
+TEST(S3PricingTest, PriceBudgetCommandCenterModelsSerializeForWeb) {
+    using namespace vh::storage::s3::pricing;
+
+    PriceBudgetNotification notification;
+    notification.id = 5;
+    notification.type = "budget.sync_blocked";
+    notification.severity = "critical";
+    notification.title = "S3 price budget blocked sync";
+    notification.message = "Projected cost exceeds policy.";
+    notification.scope = "vault";
+    notification.vault_id = 42;
+    notification.provider_key = "aws-s3";
+    notification.policy_id = 12;
+    notification.run_uuid = "run-1";
+    notification.metadata = {{"estimated_cost", "1.00000000"}};
+    notification.created_at = "2026-05-29T00:00:00Z";
+
+    nlohmann::json notificationJson = notification;
+    EXPECT_EQ("budget.sync_blocked", notificationJson.at("type"));
+    EXPECT_EQ("critical", notificationJson.at("severity"));
+    EXPECT_EQ(42, notificationJson.at("vault_id"));
+    EXPECT_EQ("1.00000000", notificationJson.at("metadata").at("estimated_cost"));
+
+    PriceBudgetOverride budgetOverride;
+    budgetOverride.id = 8;
+    budgetOverride.vault_id = 42;
+    budgetOverride.requested_by = 7;
+    budgetOverride.status = "requested";
+    budgetOverride.reason = "One-time migration";
+    budgetOverride.policy_ids = {12};
+    budgetOverride.estimated_cost = "1.00000000";
+    budgetOverride.currency = "USD";
+    budgetOverride.expires_at = "2026-05-29T00:30:00Z";
+    budgetOverride.created_at = "2026-05-29T00:00:00Z";
+
+    nlohmann::json overrideJson = budgetOverride;
+    EXPECT_EQ("requested", overrideJson.at("status"));
+    EXPECT_EQ(42, overrideJson.at("vault_id"));
+    EXPECT_EQ(12, overrideJson.at("policy_ids").at(0));
+    EXPECT_EQ("1.00000000", overrideJson.at("estimated_cost"));
+}

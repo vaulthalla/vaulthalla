@@ -152,14 +152,29 @@ void Cloud::sync() {
         vh::storage::s3::pricing::isSupportedPriceBudgetProvider(*costProfileId);
 
     const vh::storage::s3::pricing::PriceBudgetService budgetService;
-    auto budgetDecision = budgetService.preflight({
+    vh::storage::s3::pricing::PriceBudgetPreflightRequest budgetRequest{
         .vault_id = engine->vault->id,
         .run_uuid = event->run_uuid,
         .provider_key = providerKey,
         .provider_supported = providerSupported,
         .estimate = budgetPriceEstimate,
-        .dry_run = false
-    });
+        .dry_run = false,
+        .override_policy_ids = {}
+    };
+    auto budgetDecision = budgetService.preflight(budgetRequest);
+    if (!budgetDecision.allowed && budgetService.isLimitOverrideEligible(budgetDecision)) {
+        const auto policyIds = budgetService.exceededEnforcePolicyIds(budgetDecision);
+        if (const auto consumedOverride = budgetService.consumeApprovedOverride(engine->vault->id, policyIds, event->run_uuid)) {
+            log::Registry::sync()->warn(
+                "[CloudSync] S3 price budget override {} consumed for vault {} run {}",
+                consumedOverride->id,
+                engine->vault->id,
+                event->run_uuid);
+            budgetRequest.override_policy_ids = policyIds;
+            budgetDecision = budgetService.preflight(budgetRequest);
+        }
+    }
+    budgetService.recordPreflightNotifications(budgetRequest, budgetDecision);
     for (const auto& warning : budgetDecision.warnings) {
         log::Registry::sync()->warn(
             "[CloudSync] S3 price budget warning for vault {}: {}",
