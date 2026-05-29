@@ -19,6 +19,7 @@
 #include "rbac/resolver/vault/all.hpp"
 #include "storage/CloudEngine.hpp"
 #include "storage/ScopedS3RequestBudget.hpp"
+#include "storage/s3/pricing/PriceBudget.hpp"
 #include "storage/s3/pricing/PriceEstimate.hpp"
 #include "fs/model/File.hpp"
 #include "sync/model/Event.hpp"
@@ -861,6 +862,22 @@ static CommandResult handle_vault_sync_dry_run(const CommandCall& call) {
                 .disabled = noPricing,
                 .mode = vh::storage::s3::pricing::PriceEstimateMode::BudgetConservative
             });
+        const auto profile = cloud->s3ProviderProfile();
+        const auto costProfileId = profile ? profile->costProfileId() : std::optional<std::string>{};
+        const auto providerKey = costProfileId
+            ? *costProfileId
+            : (profile ? profile->id() : std::string{"unknown"});
+        const bool providerSupported = costProfileId &&
+            vh::storage::s3::pricing::isSupportedPriceBudgetProvider(*costProfileId);
+        const vh::storage::s3::pricing::PriceBudgetService priceBudgetService;
+        const auto priceBudgetDecision = priceBudgetService.preflight({
+            .vault_id = engine->vault->id,
+            .run_uuid = ctx->event->run_uuid,
+            .provider_key = providerKey,
+            .provider_supported = providerSupported,
+            .estimate = budgetPriceEstimate,
+            .dry_run = true
+        });
 
         const auto metrics = s3Budget.metrics();
         std::ostringstream out;
@@ -886,6 +903,7 @@ static CommandResult handle_vault_sync_dry_run(const CommandCall& call) {
             << vh::storage::s3::pricing::formatPriceEstimateForDryRun(
                 budgetPriceEstimate,
                 "Budget-safe estimate") << "\n"
+            << vh::storage::s3::pricing::formatPriceBudgetDecisionForDryRun(priceBudgetDecision) << "\n"
             << remoteIndexSummaryString(summary, policy->max_remote_index_age);
 
         return ok(out.str());

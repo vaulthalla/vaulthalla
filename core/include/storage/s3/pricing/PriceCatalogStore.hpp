@@ -6,6 +6,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -16,6 +17,8 @@ namespace vh::storage::s3::pricing {
 struct PriceCatalogProfileResult {
     bool ok{false};
     bool stale{false};
+    bool signature_verified{false};
+    std::optional<std::int64_t> age_seconds;
     std::string source;
     std::string error;
     RatingProfile profile;

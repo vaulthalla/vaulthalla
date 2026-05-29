@@ -311,7 +311,7 @@ namespace vh::config {
 
     void to_json(nlohmann::json &j, const StorageRatesApiConfig &c) {
         j = {
-            {"enabled", c.enabled},
+            {"remote_refresh_enabled", c.remote_refresh_enabled},
             {"base_url", c.base_url},
             {"timeout_ms", c.timeout_ms},
             {"cache_ttl_seconds", c.cache_ttl_seconds},
@@ -328,7 +328,8 @@ namespace vh::config {
     }
 
     void from_json(const nlohmann::json &j, StorageRatesApiConfig &c) {
-        c.enabled = j.value("enabled", true);
+        if (j.contains("remote_refresh_enabled")) c.remote_refresh_enabled = j.value("remote_refresh_enabled", false);
+        else c.remote_refresh_enabled = j.value("enabled", false);
         c.base_url = j.value("base_url", std::string("https://storage-rates-api.vaulthalla.cloud"));
         c.timeout_ms = std::max(100u, j.value("timeout_ms", 5000u));
         c.cache_ttl_seconds = std::max(60u, j.value("cache_ttl_seconds", 43200u));
@@ -346,11 +347,13 @@ namespace vh::config {
 
     void to_json(nlohmann::json &j, const PricingConfig &c) {
         j = {
+            {"enabled", c.enabled},
             {"storage_rates_api", c.storage_rates_api}
         };
     }
 
     void from_json(const nlohmann::json &j, PricingConfig &c) {
+        c.enabled = j.value("enabled", true);
         if (j.contains("storage_rates_api")) j.at("storage_rates_api").get_to(c.storage_rates_api);
     }
 

@@ -193,6 +193,16 @@ bool catalogFileFresh(const std::filesystem::path& path, const std::chrono::seco
     return age <= maxAge;
 }
 
+std::optional<std::int64_t> catalogFileAgeSeconds(const std::filesystem::path& path) {
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec)) return std::nullopt;
+    const auto modified = std::filesystem::last_write_time(path, ec);
+    if (ec) return std::nullopt;
+    const auto now = std::filesystem::file_time_type::clock::now();
+    const auto age = now > modified ? now - modified : std::filesystem::file_time_type::duration::zero();
+    return std::chrono::duration_cast<std::chrono::seconds>(age).count();
+}
+
 PriceCatalogRefreshResult catalogFailure(std::string source, std::string error) {
     PriceCatalogRefreshResult result;
     result.ok = false;
@@ -233,23 +243,41 @@ PriceCatalogProfileResult PriceCatalogStore::getProfile(
     }
 
     if (forceRefresh || catalog_.empty() || refreshDue()) {
-        const auto refreshed = refresh();
-        if (refreshed.ok) {
-            catalog_ = refreshed.catalog;
-        } else if (!catalog_.empty()) {
+        if (!config_.remote_refresh_enabled) {
+            if (catalog_.empty()) {
+                return {
+                    .ok = false,
+                    .stale = false,
+                    .signature_verified = false,
+                    .age_seconds = std::nullopt,
+                    .source = {},
+                    .error = "pricing catalog unavailable; remote refresh is disabled and no verified cache is available",
+                    .profile = {}
+                };
+            }
             catalog_.stale = true;
             catalog_.source = kCatalogSourceDiskCache;
-            log::Registry::storage()->warn(
-                "[PriceCatalog] Refresh failed; using stale verified cache: {}",
-                refreshed.error);
         } else {
-            return {
-                .ok = false,
-                .stale = false,
-                .source = {},
-                .error = refreshed.error.empty() ? "pricing catalog unavailable" : refreshed.error,
-                .profile = {}
-            };
+            const auto refreshed = refresh();
+            if (refreshed.ok) {
+                catalog_ = refreshed.catalog;
+            } else if (!catalog_.empty()) {
+                catalog_.stale = true;
+                catalog_.source = kCatalogSourceDiskCache;
+                log::Registry::storage()->warn(
+                    "[PriceCatalog] Refresh failed; using stale verified cache: {}",
+                    refreshed.error);
+            } else {
+                return {
+                    .ok = false,
+                    .stale = false,
+                    .signature_verified = false,
+                    .age_seconds = std::nullopt,
+                    .source = {},
+                    .error = refreshed.error.empty() ? "pricing catalog unavailable" : refreshed.error,
+                    .profile = {}
+                };
+            }
         }
     }
 
@@ -258,6 +286,8 @@ PriceCatalogProfileResult PriceCatalogStore::getProfile(
         return {
             .ok = false,
             .stale = catalog_.stale,
+            .signature_verified = catalog_.signature_verified,
+            .age_seconds = catalog_.age_seconds,
             .source = catalog_.source,
             .error = "pricing profile not found in catalog: " + target.profileId(),
             .profile = {}
@@ -267,6 +297,8 @@ PriceCatalogProfileResult PriceCatalogStore::getProfile(
     return {
         .ok = true,
         .stale = catalog_.stale,
+        .signature_verified = catalog_.signature_verified,
+        .age_seconds = catalog_.age_seconds,
         .source = catalog_.source,
         .error = {},
         .profile = *profile
@@ -328,7 +360,11 @@ PriceCatalogRefreshResult PriceCatalogStore::hydrateFromDisk() {
 
     result.catalog.source = kCatalogSourceDiskCache;
     result.catalog.stale = !catalogFileFresh(manifestPath, std::chrono::seconds(config_.cache_ttl_seconds));
+    result.catalog.signature_verified = config_.signature_public_key_path.has_value() && !config_.signature_warning_only;
+    result.catalog.age_seconds = catalogFileAgeSeconds(manifestPath);
     result.stale = result.catalog.stale;
+    result.signature_verified = result.catalog.signature_verified;
+    result.age_seconds = result.catalog.age_seconds;
     result.source = kCatalogSourceDiskCache;
     return result;
 }
@@ -419,6 +455,8 @@ PriceCatalogRefreshResult PriceCatalogStore::parseCatalogFromArtifacts(
     PriceCatalog catalog;
     catalog.catalog_version = manifest.value("catalog_version", "");
     catalog.source = sourceLabel;
+    catalog.signature_verified = config_.signature_public_key_path.has_value() && !config_.signature_warning_only;
+    catalog.age_seconds = 0;
 
     for (const auto& ref : manifest.value("profiles", nlohmann::json::array())) {
         const auto href = ref.value("href", "");
@@ -445,7 +483,15 @@ PriceCatalogRefreshResult PriceCatalogStore::parseCatalogFromArtifacts(
         }
     }
 
-    return {.ok = true, .stale = false, .source = sourceLabel, .error = {}, .catalog = std::move(catalog)};
+    return {
+        .ok = true,
+        .stale = false,
+        .signature_verified = catalog.signature_verified,
+        .age_seconds = catalog.age_seconds,
+        .source = sourceLabel,
+        .error = {},
+        .catalog = std::move(catalog)
+    };
 }
 
 bool PriceCatalogStore::verifyArtifact(

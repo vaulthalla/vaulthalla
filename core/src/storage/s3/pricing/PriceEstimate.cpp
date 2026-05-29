@@ -41,6 +41,8 @@ PriceEstimateReport reportFromEstimate(
     const EstimateResult& estimate,
     const PriceEstimateMode requestedMode,
     const bool stale,
+    const bool catalogVerified,
+    std::optional<std::int64_t> catalogAgeSeconds,
     std::string catalogSource) {
     PriceEstimateReport report;
     report.available = true;
@@ -52,6 +54,8 @@ PriceEstimateReport reportFromEstimate(
     report.price_profile_id = profile.profile_id;
     report.catalog_version = profile.catalog_version;
     report.catalog_source = std::move(catalogSource);
+    report.catalog_verified = catalogVerified;
+    report.catalog_age_seconds = catalogAgeSeconds;
     report.confidence_level = estimate.confidence_level.empty()
         ? profile.confidence_level
         : estimate.confidence_level;
@@ -74,8 +78,9 @@ PriceEstimateReport estimatePlannedS3Sync(
     const PriceEstimateOptions options,
     IPriceBotClient* client,
     IPriceCatalogStore* catalogStore) {
-    const auto& cfg = config::Registry::get().pricing.storage_rates_api;
-    if (options.disabled || !cfg.enabled)
+    const auto& pricing = config::Registry::get().pricing;
+    const auto& cfg = pricing.storage_rates_api;
+    if (options.disabled || !pricing.enabled)
         return PriceEstimateReport::unsupported("pricing disabled");
 
     const auto target = resolvePriceProfileTarget(
@@ -116,6 +121,8 @@ PriceEstimateReport estimatePlannedS3Sync(
             estimateResult,
             options.mode,
             profileResult.stale,
+            profileResult.signature_verified,
+            profileResult.age_seconds,
             profileResult.source.empty() ? kCatalogSourceDiskCache : profileResult.source);
     }
 
@@ -160,6 +167,8 @@ PriceEstimateReport estimatePlannedS3Sync(
         estimateResult.value,
         options.mode,
         profileResult.stale || estimateResult.stale,
+        true,
+        std::nullopt,
         "remote-estimator");
 }
 
@@ -172,6 +181,8 @@ std::string formatPriceEstimateForLog(const PriceEstimateReport& report) {
         << " profile=" << report.price_profile_id
         << " catalog=" << report.catalog_version
         << " source=" << (report.catalog_source.empty() ? "unknown" : report.catalog_source)
+        << " verified=" << (report.catalog_verified ? "true" : "false")
+        << " age_seconds=" << (report.catalog_age_seconds ? std::to_string(*report.catalog_age_seconds) : std::string("unknown"))
         << " confidence=" << report.confidence_level
         << " mode=" << (report.estimate_mode.empty() ? "unknown" : report.estimate_mode)
         << " free_tier_policy=" << (report.free_tier_policy.empty() ? "unknown" : report.free_tier_policy)
@@ -199,6 +210,9 @@ std::string formatPriceEstimateForDryRun(
         << "    Profile: " << report.price_profile_id << "\n"
         << "    Catalog: " << (report.catalog_version.empty() ? "unknown" : report.catalog_version) << "\n"
         << "    Catalog source: " << (report.catalog_source.empty() ? "unknown" : report.catalog_source) << "\n"
+        << "    Catalog verified: " << (report.catalog_verified ? "yes" : "no") << "\n"
+        << "    Catalog age seconds: "
+        << (report.catalog_age_seconds ? std::to_string(*report.catalog_age_seconds) : std::string("unknown")) << "\n"
         << "    Confidence: " << (report.confidence_level.empty() ? "unknown" : report.confidence_level) << "\n"
         << "    Mode: " << (report.estimate_mode.empty() ? "unknown" : report.estimate_mode) << "\n"
         << "    Free tier policy: "

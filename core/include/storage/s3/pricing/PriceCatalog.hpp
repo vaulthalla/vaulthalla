@@ -3,6 +3,7 @@
 #include "storage/s3/pricing/PriceBotModels.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <map>
 #include <optional>
 #include <string>
@@ -31,6 +32,8 @@ public:
 
     std::string catalog_version;
     bool stale{false};
+    bool signature_verified{false};
+    std::optional<std::int64_t> age_seconds;
     std::string source{kCatalogSourceDiskCache};
 
 private:
@@ -40,6 +43,8 @@ private:
 struct PriceCatalogRefreshResult {
     bool ok{false};
     bool stale{false};
+    bool signature_verified{false};
+    std::optional<std::int64_t> age_seconds;
     std::string source;
     std::string error;
     PriceCatalog catalog;

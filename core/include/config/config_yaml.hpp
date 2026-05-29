@@ -236,7 +236,7 @@ template<>
 struct convert<StorageRatesApiConfig> {
     static Node encode(const StorageRatesApiConfig& rhs) {
         Node node;
-        node["enabled"] = rhs.enabled;
+        node["remote_refresh_enabled"] = rhs.remote_refresh_enabled;
         node["base_url"] = rhs.base_url;
         node["timeout_ms"] = rhs.timeout_ms;
         node["cache_ttl_seconds"] = rhs.cache_ttl_seconds;
@@ -254,7 +254,8 @@ struct convert<StorageRatesApiConfig> {
 
     static bool decode(const Node& node, StorageRatesApiConfig& rhs) {
         if (!node.IsMap()) return false;
-        rhs.enabled = node["enabled"].as<bool>(true);
+        if (node["remote_refresh_enabled"]) rhs.remote_refresh_enabled = node["remote_refresh_enabled"].as<bool>(false);
+        else rhs.remote_refresh_enabled = node["enabled"].as<bool>(false);
         rhs.base_url = node["base_url"].as<std::string>("https://storage-rates-api.vaulthalla.cloud");
         rhs.timeout_ms = std::max(static_cast<uint32_t>(100), node["timeout_ms"].as<uint32_t>(5000));
         rhs.cache_ttl_seconds = std::max(static_cast<uint32_t>(60), node["cache_ttl_seconds"].as<uint32_t>(43200));
@@ -278,12 +279,14 @@ template<>
 struct convert<PricingConfig> {
     static Node encode(const PricingConfig& rhs) {
         Node node;
+        node["enabled"] = rhs.enabled;
         node["storage_rates_api"] = rhs.storage_rates_api;
         return node;
     }
 
     static bool decode(const Node& node, PricingConfig& rhs) {
         if (!node.IsMap()) return false;
+        rhs.enabled = node["enabled"].as<bool>(true);
         if (node["storage_rates_api"]) rhs.storage_rates_api = node["storage_rates_api"].as<StorageRatesApiConfig>();
         return true;
     }

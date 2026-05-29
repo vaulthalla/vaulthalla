@@ -1,4 +1,5 @@
 #include "storage/s3/pricing/PriceBotClient.hpp"
+#include "storage/s3/pricing/PriceBudget.hpp"
 #include "storage/s3/pricing/PriceEstimate.hpp"
 #include "storage/s3/pricing/PriceBotModels.hpp"
 #include "storage/s3/pricing/PriceBotUsage.hpp"
@@ -295,6 +296,7 @@ nlohmann::json budgetEstimate(const std::string& cost = "0.12345678") {
 
 vh::config::StorageRatesApiConfig testPricingConfig() {
     vh::config::StorageRatesApiConfig cfg;
+    cfg.remote_refresh_enabled = true;
     cfg.base_url = "http://price-bot.test";
     cfg.timeout_ms = 100;
     cfg.cache_ttl_seconds = 86400;
@@ -734,6 +736,21 @@ TEST(S3PricingTest, CatalogStoreFetchesPrimaryArtifactsAndHydratesProfile) {
     std::filesystem::remove_all(cacheRoot);
 }
 
+TEST(S3PricingTest, CatalogStoreDoesNotCallUpstreamWhenRemoteRefreshDisabled) {
+    auto cfg = testPricingConfig();
+    cfg.remote_refresh_enabled = false;
+
+    auto transport = std::make_shared<FakeTransport>();
+    const auto cacheRoot = std::filesystem::temp_directory_path() /
+        ("vh_catalog_no_refresh_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    vh::storage::s3::pricing::PriceCatalogStore store(cfg, transport, cacheRoot);
+    const auto result = store.getProfile({"cloudflare-r2", "global", "standard"}, true);
+    EXPECT_FALSE(result.ok);
+    EXPECT_NE(std::string::npos, result.error.find("remote refresh is disabled"));
+    EXPECT_TRUE(transport->requests.empty());
+    std::filesystem::remove_all(cacheRoot);
+}
+
 TEST(S3PricingTest, CatalogStoreFallsBackWhenPrimaryArtifactSourceFails) {
     const Ed25519TestKey key;
     auto cfg = strictPricingConfig(key.publicKeyPath());
@@ -925,4 +942,54 @@ TEST(S3PricingTest, DryRunFormatShowsEstimateModeAndFreeTierPolicy) {
     EXPECT_NE(std::string::npos, output.find("Free tier policy: ignore_account_wide_free_tiers"));
     EXPECT_NE(std::string::npos, output.find("Free tiers applied: no"));
     EXPECT_NE(std::string::npos, output.find("Catalog source: disk-cache"));
+}
+
+TEST(S3PricingTest, PriceBudgetValidationRejectsUnsafeInputs) {
+    using namespace vh::storage::s3::pricing;
+
+    EXPECT_TRUE(isSupportedPriceBudgetProvider("aws-s3"));
+    EXPECT_TRUE(isSupportedPriceBudgetProvider("cloudflare-r2"));
+    EXPECT_FALSE(isSupportedPriceBudgetProvider("generic-s3-compatible"));
+
+    EXPECT_TRUE(isValidPriceBudgetDecimal("0"));
+    EXPECT_TRUE(isValidPriceBudgetDecimal("12.34567890"));
+    EXPECT_FALSE(isValidPriceBudgetDecimal("-1"));
+    EXPECT_FALSE(isValidPriceBudgetDecimal("1.123456789"));
+    EXPECT_FALSE(isValidPriceBudgetDecimal("1e6"));
+
+    EXPECT_EQ("USD", normalizePriceBudgetCurrency("usd"));
+    EXPECT_TRUE(isValidPriceBudgetCurrency("USD"));
+    EXPECT_FALSE(isValidPriceBudgetCurrency("US"));
+}
+
+TEST(S3PricingTest, PriceBudgetDryRunFormatShowsFailingEnforcementDecision) {
+    vh::storage::s3::pricing::PriceBudgetDecision decision;
+    decision.allowed = false;
+    decision.stalled = true;
+    decision.reason = "S3 price budget exceeded for monthly global";
+    vh::storage::s3::pricing::PriceBudgetPolicy policy;
+    policy.id = 7;
+    policy.scope = vh::storage::s3::pricing::PriceBudgetScope::Global;
+    policy.mode = vh::storage::s3::pricing::PriceBudgetMode::Enforce;
+    policy.currency = "USD";
+    policy.max_monthly_cost = "10.00000000";
+    decision.policies.push_back(policy);
+    decision.checks.push_back({
+        .policy_id = 7,
+        .scope = vh::storage::s3::pricing::PriceBudgetScope::Global,
+        .mode = vh::storage::s3::pricing::PriceBudgetMode::Enforce,
+        .window = vh::storage::s3::pricing::PriceBudgetWindow::Monthly,
+        .currency = "USD",
+        .limit = "10.00000000",
+        .used_before = "9.50000000",
+        .remaining_before = "0.50000000",
+        .requested = "1.00000000",
+        .exceeded = true
+    });
+
+    const auto output = vh::storage::s3::pricing::formatPriceBudgetDecisionForDryRun(decision);
+    EXPECT_NE(std::string::npos, output.find("Applicable policies: 1"));
+    EXPECT_NE(std::string::npos, output.find("Result: fail"));
+    EXPECT_NE(std::string::npos, output.find("Enforcement would stall: yes"));
+    EXPECT_NE(std::string::npos, output.find("remaining before 0.50000000"));
 }

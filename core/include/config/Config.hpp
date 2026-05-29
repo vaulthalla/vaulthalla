@@ -62,7 +62,7 @@ struct SyncConfig {
 };
 
 struct StorageRatesApiConfig {
-    bool enabled = true;
+    bool remote_refresh_enabled = false;
     std::string base_url = "https://storage-rates-api.vaulthalla.cloud";
     uint32_t timeout_ms = 5000;
     uint32_t cache_ttl_seconds = 43200;
@@ -76,6 +76,7 @@ struct StorageRatesApiConfig {
 };
 
 struct PricingConfig {
+    bool enabled = true;
     StorageRatesApiConfig storage_rates_api;
 };
 

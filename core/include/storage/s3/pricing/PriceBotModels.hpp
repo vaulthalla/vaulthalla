@@ -79,6 +79,8 @@ struct PriceEstimateReport {
     std::string price_profile_id;
     std::string catalog_version;
     std::string catalog_source;
+    bool catalog_verified{false};
+    std::optional<std::int64_t> catalog_age_seconds;
     std::string confidence_level;
     std::string estimate_mode;
     std::string free_tier_policy;
