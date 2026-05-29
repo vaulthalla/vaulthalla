@@ -4,6 +4,25 @@
 #include <stdexcept>
 
 namespace vh::storage::s3::pricing {
+namespace {
+
+std::string optionalStringField(const nlohmann::json& payload, const char* key) {
+    const auto it = payload.find(key);
+    if (it == payload.end() || !it->is_string()) return {};
+    return it->get<std::string>();
+}
+
+} // namespace
+
+std::string toString(const PriceEstimateMode mode) {
+    switch (mode) {
+        case PriceEstimateMode::BudgetConservative:
+            return "budget_conservative";
+        case PriceEstimateMode::Reporting:
+        default:
+            return "reporting";
+    }
+}
 
 std::string PriceProfileTarget::profileId() const {
     return provider + "/" + region + "/" + storage_class;
@@ -50,6 +69,10 @@ EstimateResult EstimateResult::parse(const nlohmann::json& payload) {
         throw std::invalid_argument("price-bot estimate is missing estimated_cost");
     result.estimated_cost = jsonDecimalToString(payload.at("estimated_cost"));
     result.currency = payload.value("currency", "USD");
+    result.estimate_mode = optionalStringField(payload, "estimate_mode");
+    result.free_tier_policy = optionalStringField(payload, "free_tier_policy");
+    if (payload.contains("free_tiers_applied") && payload.at("free_tiers_applied").is_boolean())
+        result.free_tiers_applied = payload.at("free_tiers_applied").get<bool>();
     result.breakdown = payload.value("breakdown", nlohmann::json::array());
     result.free_tier_applied = payload.value("free_tier_applied", nlohmann::json::object());
     result.rounding_applied = payload.value("rounding_applied", nlohmann::json::object());
@@ -117,6 +140,9 @@ void to_json(nlohmann::json& j, const PriceEstimateReport& report) {
         {"price_profile_id", report.price_profile_id.empty() ? nlohmann::json(nullptr) : nlohmann::json(report.price_profile_id)},
         {"catalog_version", report.catalog_version.empty() ? nlohmann::json(nullptr) : nlohmann::json(report.catalog_version)},
         {"confidence_level", report.confidence_level.empty() ? nlohmann::json(nullptr) : nlohmann::json(report.confidence_level)},
+        {"estimate_mode", report.estimate_mode.empty() ? nlohmann::json(nullptr) : nlohmann::json(report.estimate_mode)},
+        {"free_tier_policy", report.free_tier_policy.empty() ? nlohmann::json(nullptr) : nlohmann::json(report.free_tier_policy)},
+        {"free_tiers_applied", report.free_tiers_applied ? nlohmann::json(*report.free_tiers_applied) : nlohmann::json(nullptr)},
         {"unknowns", report.unknowns},
         {"breakdown", report.breakdown.is_null() ? nlohmann::json::array() : report.breakdown},
         {"unavailable_reason", report.unavailable_reason.empty() ? nlohmann::json(nullptr) : nlohmann::json(report.unavailable_reason)}

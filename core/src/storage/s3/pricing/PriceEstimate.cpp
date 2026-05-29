@@ -28,6 +28,11 @@ PriceEstimateReport unavailableFromTarget(
     return PriceEstimateReport::unavailable(*target, reason);
 }
 
+bool budgetConservativeResponseMatchesRequest(const EstimateResult& result) {
+    return result.estimate_mode == "budget_conservative" &&
+        result.free_tier_policy == "ignore_account_wide_free_tiers";
+}
+
 } // namespace
 
 PriceEstimateReport estimatePlannedS3Sync(
@@ -63,13 +68,23 @@ PriceEstimateReport estimatePlannedS3Sync(
     }
 
     const auto usage = toPriceBotUsageInput(s3Estimate, engine.resolvedStorageTier());
-    const auto estimateResult = priceClient.estimate(profileResult.value.raw, usage, options.force_refresh);
+    const auto estimateResult = priceClient.estimate(
+        profileResult.value.raw,
+        usage,
+        options.force_refresh,
+        options.mode);
     if (!estimateResult.ok) {
         log::Registry::sync()->warn(
             "[PriceBot] Estimate unavailable for {}: {}",
             target->profileId(),
             estimateResult.error);
         return unavailableFromTarget(target, estimateResult.error);
+    }
+    if (options.mode == PriceEstimateMode::BudgetConservative &&
+        !budgetConservativeResponseMatchesRequest(estimateResult.value)) {
+        return unavailableFromTarget(
+            target,
+            "price-bot did not return a budget-conservative free-tier policy");
     }
 
     PriceEstimateReport report;
@@ -84,6 +99,11 @@ PriceEstimateReport estimatePlannedS3Sync(
     report.confidence_level = estimateResult.value.confidence_level.empty()
         ? profileResult.value.confidence_level
         : estimateResult.value.confidence_level;
+    report.estimate_mode = estimateResult.value.estimate_mode.empty()
+        ? toString(options.mode)
+        : estimateResult.value.estimate_mode;
+    report.free_tier_policy = estimateResult.value.free_tier_policy;
+    report.free_tiers_applied = estimateResult.value.free_tiers_applied;
     report.unknowns = estimateResult.value.unknowns;
     appendIfMissing(report.unknowns, kStorageForecastUnknown);
     report.breakdown = estimateResult.value.breakdown;
@@ -99,14 +119,18 @@ std::string formatPriceEstimateForLog(const PriceEstimateReport& report) {
         << " profile=" << report.price_profile_id
         << " catalog=" << report.catalog_version
         << " confidence=" << report.confidence_level
+        << " mode=" << (report.estimate_mode.empty() ? "unknown" : report.estimate_mode)
+        << " free_tier_policy=" << (report.free_tier_policy.empty() ? "unknown" : report.free_tier_policy)
         << " stale=" << (report.stale ? "true" : "false")
         << " unknowns=" << report.unknowns.size();
     return out.str();
 }
 
-std::string formatPriceEstimateForDryRun(const PriceEstimateReport& report) {
+std::string formatPriceEstimateForDryRun(
+    const PriceEstimateReport& report,
+    const std::string_view label) {
     std::ostringstream out;
-    out << "  Price estimate:\n";
+    out << "  " << label << ":\n";
     if (!report.supported) {
         out << "    Status: skipped (" << report.unavailable_reason << ")";
         return out.str();
@@ -121,6 +145,12 @@ std::string formatPriceEstimateForDryRun(const PriceEstimateReport& report) {
         << "    Profile: " << report.price_profile_id << "\n"
         << "    Catalog: " << (report.catalog_version.empty() ? "unknown" : report.catalog_version) << "\n"
         << "    Confidence: " << (report.confidence_level.empty() ? "unknown" : report.confidence_level) << "\n"
+        << "    Mode: " << (report.estimate_mode.empty() ? "unknown" : report.estimate_mode) << "\n"
+        << "    Free tier policy: "
+        << (report.free_tier_policy.empty() ? "unknown" : report.free_tier_policy) << "\n"
+        << "    Free tiers applied: "
+        << (report.free_tiers_applied ? (*report.free_tiers_applied ? "yes" : "no") : "unknown")
+        << "\n"
         << "    Stale cache: " << (report.stale ? "yes" : "no") << "\n"
         << "    Unknowns: " << report.unknowns.size();
     if (!report.unknowns.empty()) out << " (" << report.unknowns.front() << ")";

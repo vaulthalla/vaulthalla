@@ -116,6 +116,14 @@ bool verifyEd25519Pem(
     return ok;
 }
 
+void attachEstimateOptions(nlohmann::json& request, const PriceEstimateMode mode) {
+    if (mode != PriceEstimateMode::BudgetConservative) return;
+    request["options"] = {
+        {"mode", toString(mode)},
+        {"apply_free_tiers", false}
+    };
+}
+
 } // namespace
 
 HttpReply CurlHttpTransport::perform(const HttpRequest& request, const std::uint32_t timeoutMs) {
@@ -218,24 +226,28 @@ PriceBotResponse<EstimateResult> PriceBotClient::estimate(
     const std::string& region,
     const std::string& storageClass,
     const UsageInput& usage,
-    const bool forceRefresh) {
-    const nlohmann::json request = {
+    const bool forceRefresh,
+    const PriceEstimateMode mode) {
+    nlohmann::json request = {
         {"provider", provider},
         {"region", region},
         {"storage_class", storageClass},
         {"usage", usage}
     };
+    attachEstimateOptions(request, mode);
     return postEstimateWithCache(request, forceRefresh);
 }
 
 PriceBotResponse<EstimateResult> PriceBotClient::estimate(
     const nlohmann::json& profileJson,
     const UsageInput& usage,
-    const bool forceRefresh) {
-    const nlohmann::json request = {
+    const bool forceRefresh,
+    const PriceEstimateMode mode) {
+    nlohmann::json request = {
         {"profile", profileJson},
         {"usage", usage}
     };
+    attachEstimateOptions(request, mode);
     return postEstimateWithCache(request, forceRefresh);
 }
 

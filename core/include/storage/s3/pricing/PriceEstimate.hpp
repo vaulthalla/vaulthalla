@@ -5,6 +5,7 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 
 namespace vh::storage { class CloudEngine; }
 namespace vh::sync::model { struct S3CostEstimate; }
@@ -14,6 +15,7 @@ namespace vh::storage::s3::pricing {
 struct PriceEstimateOptions {
     bool force_refresh{false};
     bool disabled{false};
+    PriceEstimateMode mode{PriceEstimateMode::Reporting};
 };
 
 [[nodiscard]] PriceEstimateReport estimatePlannedS3Sync(
@@ -23,6 +25,8 @@ struct PriceEstimateOptions {
     IPriceBotClient* client = nullptr);
 
 [[nodiscard]] std::string formatPriceEstimateForLog(const PriceEstimateReport& report);
-[[nodiscard]] std::string formatPriceEstimateForDryRun(const PriceEstimateReport& report);
+[[nodiscard]] std::string formatPriceEstimateForDryRun(
+    const PriceEstimateReport& report,
+    std::string_view label = "Price estimate");
 
 } // namespace vh::storage::s3::pricing

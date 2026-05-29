@@ -1,4 +1,5 @@
 #include "storage/s3/pricing/PriceBotClient.hpp"
+#include "storage/s3/pricing/PriceEstimate.hpp"
 #include "storage/s3/pricing/PriceBotModels.hpp"
 #include "storage/s3/pricing/PriceBotUsage.hpp"
 #include "storage/s3/pricing/PriceProfileResolver.hpp"
@@ -160,6 +161,14 @@ nlohmann::json minimalEstimate(const std::string& cost = "0.01234567") {
     };
 }
 
+nlohmann::json budgetEstimate(const std::string& cost = "0.12345678") {
+    auto estimate = minimalEstimate(cost);
+    estimate["estimate_mode"] = "budget_conservative";
+    estimate["free_tier_policy"] = "ignore_account_wide_free_tiers";
+    estimate["free_tiers_applied"] = false;
+    return estimate;
+}
+
 vh::config::StorageRatesApiConfig testPricingConfig() {
     vh::config::StorageRatesApiConfig cfg;
     cfg.base_url = "http://price-bot.test";
@@ -287,8 +296,19 @@ TEST(S3PricingTest, ParsesProfileAndEstimatePreservingDecimalStrings) {
     EXPECT_EQ("12.34000000", estimate.estimated_cost);
     EXPECT_EQ("USD", estimate.currency);
     EXPECT_EQ("high", estimate.confidence_level);
+    EXPECT_TRUE(estimate.estimate_mode.empty());
+    EXPECT_TRUE(estimate.free_tier_policy.empty());
+    EXPECT_FALSE(estimate.free_tiers_applied.has_value());
     ASSERT_EQ(1u, estimate.unknowns.size());
     EXPECT_EQ("taxes", estimate.unknowns.front());
+
+    const auto budget = vh::storage::s3::pricing::EstimateResult::parse(
+        budgetEstimate("13.37000000"));
+    EXPECT_EQ("13.37000000", budget.estimated_cost);
+    EXPECT_EQ("budget_conservative", budget.estimate_mode);
+    EXPECT_EQ("ignore_account_wide_free_tiers", budget.free_tier_policy);
+    ASSERT_TRUE(budget.free_tiers_applied.has_value());
+    EXPECT_FALSE(*budget.free_tiers_applied);
 }
 
 TEST(S3PricingTest, ClientUsesStaleProfileCacheWhenNetworkFails) {
@@ -421,6 +441,36 @@ TEST(S3PricingTest, ClientDoesNotTreatEstimateResponsesAsSignedArtifacts) {
     EXPECT_EQ("http://price-bot.test/v1/estimate", transport->requests[0].url);
 }
 
+TEST(S3PricingTest, ClientSendsBudgetConservativeEstimateOptions) {
+    const PriceCachePathGuard cacheGuard;
+    clearPriceCache();
+    vh::storage::s3::pricing::UsageInput usage;
+    usage.provider_operation_counts["PutObject"] = "10";
+
+    auto transport = std::make_shared<FakeTransport>();
+    transport->replies.push({.status = 200, .body = budgetEstimate("0.06000000").dump(), .error = ""});
+
+    vh::storage::s3::pricing::PriceBotClient client(testPricingConfig(), transport);
+    const auto result = client.estimate(
+        "aws-s3",
+        "us-east-1",
+        "standard",
+        usage,
+        true,
+        vh::storage::s3::pricing::PriceEstimateMode::BudgetConservative);
+    ASSERT_TRUE(result.ok) << result.error;
+    EXPECT_EQ("budget_conservative", result.value.estimate_mode);
+    EXPECT_EQ("ignore_account_wide_free_tiers", result.value.free_tier_policy);
+    ASSERT_TRUE(result.value.free_tiers_applied.has_value());
+    EXPECT_FALSE(*result.value.free_tiers_applied);
+
+    ASSERT_EQ(1u, transport->requests.size());
+    const auto body = nlohmann::json::parse(transport->requests[0].body);
+    ASSERT_TRUE(body.contains("options"));
+    EXPECT_EQ("budget_conservative", body.at("options").at("mode"));
+    EXPECT_FALSE(body.at("options").at("apply_free_tiers"));
+}
+
 TEST(S3PricingTest, ClientUsesStaleEstimateCacheWhenNetworkFails) {
     const PriceCachePathGuard cacheGuard;
     clearPriceCache();
@@ -453,11 +503,21 @@ TEST(S3PricingTest, EventJsonIncludesPriceEstimateFields) {
     report.price_profile_id = "aws-s3/us-east-1/standard";
     report.catalog_version = "20260526T200010Z";
     report.confidence_level = "high";
+    report.estimate_mode = "reporting";
+    report.free_tier_policy = "apply_free_tiers";
+    report.free_tiers_applied = true;
     report.unknowns = {"taxes"};
     report.breakdown = nlohmann::json::array({{{"meter_key", "request_write"}, {"cost", "0.12345678"}}});
 
     auto event = std::make_shared<vh::sync::model::Event>();
     event->applyS3PriceEstimate(report);
+
+    vh::storage::s3::pricing::PriceEstimateReport budget = report;
+    budget.estimated_cost = "1.23000000";
+    budget.estimate_mode = "budget_conservative";
+    budget.free_tier_policy = "ignore_account_wide_free_tiers";
+    budget.free_tiers_applied = false;
+    event->applyS3BudgetPriceEstimate(budget);
 
     nlohmann::json encoded = event;
     EXPECT_EQ("0.12345678", encoded.at("s3_estimated_cost"));
@@ -465,7 +525,38 @@ TEST(S3PricingTest, EventJsonIncludesPriceEstimateFields) {
     EXPECT_EQ("aws-s3/us-east-1/standard", encoded.at("s3_price_profile_id"));
     EXPECT_EQ("20260526T200010Z", encoded.at("s3_price_catalog_version"));
     EXPECT_EQ("high", encoded.at("s3_price_confidence_level"));
+    EXPECT_EQ("reporting", encoded.at("s3_price_estimate_mode"));
+    EXPECT_EQ("apply_free_tiers", encoded.at("s3_price_free_tier_policy"));
+    EXPECT_TRUE(encoded.at("s3_price_free_tiers_applied"));
     ASSERT_TRUE(encoded.at("s3_price_unknowns").is_array());
     EXPECT_EQ("taxes", encoded.at("s3_price_unknowns").at(0));
     ASSERT_TRUE(encoded.at("s3_price_breakdown").is_array());
+    EXPECT_EQ("1.23000000", encoded.at("s3_budget_estimated_cost"));
+    EXPECT_EQ("USD", encoded.at("s3_budget_estimated_cost_currency"));
+    EXPECT_EQ("budget_conservative", encoded.at("s3_budget_estimate_mode"));
+    EXPECT_EQ("ignore_account_wide_free_tiers", encoded.at("s3_budget_free_tier_policy"));
+    EXPECT_FALSE(encoded.at("s3_budget_free_tiers_applied"));
+}
+
+TEST(S3PricingTest, DryRunFormatShowsEstimateModeAndFreeTierPolicy) {
+    vh::storage::s3::pricing::PriceEstimateReport report;
+    report.available = true;
+    report.supported = true;
+    report.target = {"cloudflare-r2", "global", "standard"};
+    report.estimated_cost = "0.00000000";
+    report.currency = "USD";
+    report.price_profile_id = "cloudflare-r2/global/standard";
+    report.catalog_version = "fixture";
+    report.confidence_level = "high";
+    report.estimate_mode = "budget_conservative";
+    report.free_tier_policy = "ignore_account_wide_free_tiers";
+    report.free_tiers_applied = false;
+
+    const auto output = vh::storage::s3::pricing::formatPriceEstimateForDryRun(
+        report,
+        "Budget-safe estimate");
+    EXPECT_NE(std::string::npos, output.find("Budget-safe estimate"));
+    EXPECT_NE(std::string::npos, output.find("Mode: budget_conservative"));
+    EXPECT_NE(std::string::npos, output.find("Free tier policy: ignore_account_wide_free_tiers"));
+    EXPECT_NE(std::string::npos, output.find("Free tiers applied: no"));
 }

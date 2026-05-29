@@ -87,11 +87,13 @@ public:
         const std::string& region,
         const std::string& storageClass,
         const UsageInput& usage,
-        bool forceRefresh = false) = 0;
+        bool forceRefresh = false,
+        PriceEstimateMode mode = PriceEstimateMode::Reporting) = 0;
     [[nodiscard]] virtual PriceBotResponse<EstimateResult> estimate(
         const nlohmann::json& profileJson,
         const UsageInput& usage,
-        bool forceRefresh = false) = 0;
+        bool forceRefresh = false,
+        PriceEstimateMode mode = PriceEstimateMode::Reporting) = 0;
 };
 
 class PriceBotClient final : public IPriceBotClient {
@@ -116,11 +118,13 @@ public:
         const std::string& region,
         const std::string& storageClass,
         const UsageInput& usage,
-        bool forceRefresh = false) override;
+        bool forceRefresh = false,
+        PriceEstimateMode mode = PriceEstimateMode::Reporting) override;
     [[nodiscard]] PriceBotResponse<EstimateResult> estimate(
         const nlohmann::json& profileJson,
         const UsageInput& usage,
-        bool forceRefresh = false) override;
+        bool forceRefresh = false,
+        PriceEstimateMode mode = PriceEstimateMode::Reporting) override;
 
 private:
     struct CacheEntry {

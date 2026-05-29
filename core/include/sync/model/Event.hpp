@@ -101,8 +101,16 @@ struct Event : public std::enable_shared_from_this<Event> {
     std::optional<std::string> s3_price_profile_id;
     std::optional<std::string> s3_price_catalog_version;
     std::optional<std::string> s3_price_confidence_level;
+    std::optional<std::string> s3_price_estimate_mode;
+    std::optional<std::string> s3_price_free_tier_policy;
+    std::optional<bool> s3_price_free_tiers_applied;
     std::optional<std::string> s3_price_unknowns_json;
     std::optional<std::string> s3_price_breakdown_json;
+    std::optional<std::string> s3_budget_estimated_cost;
+    std::optional<std::string> s3_budget_estimated_cost_currency;
+    std::optional<std::string> s3_budget_estimate_mode;
+    std::optional<std::string> s3_budget_free_tier_policy;
+    std::optional<bool> s3_budget_free_tiers_applied;
 
     // Divergence / watermarks
     bool divergence_detected{false};
@@ -162,6 +170,7 @@ struct Event : public std::enable_shared_from_this<Event> {
     void applyS3RequestMetrics(const vh::storage::s3::S3RequestMetrics& metrics);
     void applyS3CostEstimate(const S3CostEstimate& estimate);
     void applyS3PriceEstimate(const vh::storage::s3::pricing::PriceEstimateReport& estimate);
+    void applyS3BudgetPriceEstimate(const vh::storage::s3::pricing::PriceEstimateReport& estimate);
 
     // -------------------------
     // Enum ↔ string

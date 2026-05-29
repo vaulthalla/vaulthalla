@@ -853,6 +853,14 @@ static CommandResult handle_vault_sync_dry_run(const CommandCall& call) {
             *cloud,
             estimate,
             {.force_refresh = refreshPricing, .disabled = noPricing});
+        const auto budgetPriceEstimate = vh::storage::s3::pricing::estimatePlannedS3Sync(
+            *cloud,
+            estimate,
+            {
+                .force_refresh = refreshPricing,
+                .disabled = noPricing,
+                .mode = vh::storage::s3::pricing::PriceEstimateMode::BudgetConservative
+            });
 
         const auto metrics = s3Budget.metrics();
         std::ostringstream out;
@@ -872,7 +880,12 @@ static CommandResult handle_vault_sync_dry_run(const CommandCall& call) {
             << "    HEAD: " << metrics.head_requests << "\n"
             << "    GET: " << metrics.get_requests << "\n"
             << "    LIST: " << metrics.list_requests << "\n"
-            << vh::storage::s3::pricing::formatPriceEstimateForDryRun(priceEstimate) << "\n"
+            << vh::storage::s3::pricing::formatPriceEstimateForDryRun(
+                priceEstimate,
+                "Reporting estimate") << "\n"
+            << vh::storage::s3::pricing::formatPriceEstimateForDryRun(
+                budgetPriceEstimate,
+                "Budget-safe estimate") << "\n"
             << remoteIndexSummaryString(summary, policy->max_remote_index_age);
 
         return ok(out.str());

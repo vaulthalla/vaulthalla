@@ -13,6 +13,13 @@ namespace vh::storage::s3::pricing {
 
 inline constexpr const char* kDefaultStorageRatesApiBaseUrl = "https://storage-rates-api.vaulthalla.cloud";
 
+enum class PriceEstimateMode {
+    Reporting,
+    BudgetConservative
+};
+
+[[nodiscard]] std::string toString(PriceEstimateMode mode);
+
 struct PriceProfileTarget {
     std::string provider;
     std::string region;
@@ -49,6 +56,9 @@ struct RatingProfile {
 struct EstimateResult {
     std::string estimated_cost;
     std::string currency;
+    std::string estimate_mode;
+    std::string free_tier_policy;
+    std::optional<bool> free_tiers_applied;
     nlohmann::json breakdown;
     nlohmann::json free_tier_applied;
     nlohmann::json rounding_applied;
@@ -69,6 +79,9 @@ struct PriceEstimateReport {
     std::string price_profile_id;
     std::string catalog_version;
     std::string confidence_level;
+    std::string estimate_mode;
+    std::string free_tier_policy;
+    std::optional<bool> free_tiers_applied;
     std::vector<std::string> unknowns;
     nlohmann::json breakdown;
     std::string unavailable_reason;

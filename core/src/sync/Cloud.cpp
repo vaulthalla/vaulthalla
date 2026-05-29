@@ -106,6 +106,10 @@ void Cloud::sync() {
     estimate.archive_tier_downloads_skipped = planningNotes.archive_tier_downloads_skipped;
     event->applyS3CostEstimate(estimate);
     const auto priceEstimate = vh::storage::s3::pricing::estimatePlannedS3Sync(*cloudEngine(), estimate);
+    const auto budgetPriceEstimate = vh::storage::s3::pricing::estimatePlannedS3Sync(
+        *cloudEngine(),
+        estimate,
+        {.mode = vh::storage::s3::pricing::PriceEstimateMode::BudgetConservative});
     if (priceEstimate.available) {
         event->applyS3PriceEstimate(priceEstimate);
         log::Registry::sync()->info(
@@ -122,6 +126,18 @@ void Cloud::sync() {
             "[CloudSync] S3 price estimate skipped for vault {}: {}",
             engine->vault->id,
             priceEstimate.unavailable_reason);
+    }
+    if (budgetPriceEstimate.available) {
+        event->applyS3BudgetPriceEstimate(budgetPriceEstimate);
+        log::Registry::sync()->info(
+            "[CloudSync] Budget-safe S3 price estimate for vault {}: {}",
+            engine->vault->id,
+            vh::storage::s3::pricing::formatPriceEstimateForLog(budgetPriceEstimate));
+    } else if (budgetPriceEstimate.supported) {
+        log::Registry::sync()->debug(
+            "[CloudSync] Budget-safe S3 price estimate unavailable for vault {}: {}",
+            engine->vault->id,
+            vh::storage::s3::pricing::formatPriceEstimateForLog(budgetPriceEstimate));
     }
     log::Registry::sync()->info(
         "[CloudSync] Estimated S3 cost pressure for vault {}: LIST={} HEAD={} GET={} PUT={} COPY={} DELETE={} body_download_bytes={} upload_bytes={} index_only_objects={} archive_skipped={}",

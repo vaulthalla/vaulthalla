@@ -40,6 +40,11 @@ namespace {
         return f.is_null() ? std::nullopt : std::make_optional(f.as<std::string>());
     }
 
+    std::optional<bool> as_optional_bool(const pqxx::row& r, const char* col) {
+        const auto f = r[col];
+        return f.is_null() ? std::nullopt : std::make_optional(f.as<bool>());
+    }
+
     nlohmann::json parseOptionalJson(const std::optional<std::string>& payload, const nlohmann::json& fallback) {
         if (!payload || payload->empty()) return fallback;
         try {
@@ -96,8 +101,16 @@ Event::Event(const pqxx::row& row)
     , s3_price_profile_id(as_optional_string(row, "s3_price_profile_id"))
     , s3_price_catalog_version(as_optional_string(row, "s3_price_catalog_version"))
     , s3_price_confidence_level(as_optional_string(row, "s3_price_confidence_level"))
+    , s3_price_estimate_mode(as_optional_string(row, "s3_price_estimate_mode"))
+    , s3_price_free_tier_policy(as_optional_string(row, "s3_price_free_tier_policy"))
+    , s3_price_free_tiers_applied(as_optional_bool(row, "s3_price_free_tiers_applied"))
     , s3_price_unknowns_json(as_optional_string(row, "s3_price_unknowns"))
     , s3_price_breakdown_json(as_optional_string(row, "s3_price_breakdown"))
+    , s3_budget_estimated_cost(as_optional_string(row, "s3_budget_estimated_cost"))
+    , s3_budget_estimated_cost_currency(as_optional_string(row, "s3_budget_estimated_cost_currency"))
+    , s3_budget_estimate_mode(as_optional_string(row, "s3_budget_estimate_mode"))
+    , s3_budget_free_tier_policy(as_optional_string(row, "s3_budget_free_tier_policy"))
+    , s3_budget_free_tiers_applied(as_optional_bool(row, "s3_budget_free_tiers_applied"))
     , divergence_detected(as_or_default<bool>(row, "divergence_detected", false))
     , local_state_hash(as_or_empty(row, "local_state_hash"))
     , remote_state_hash(as_or_empty(row, "remote_state_hash"))
@@ -297,10 +310,23 @@ void Event::applyS3PriceEstimate(const vh::storage::s3::pricing::PriceEstimateRe
     s3_price_profile_id = estimate.price_profile_id;
     s3_price_catalog_version = estimate.catalog_version;
     s3_price_confidence_level = estimate.confidence_level;
+    s3_price_estimate_mode = estimate.estimate_mode;
+    s3_price_free_tier_policy = estimate.free_tier_policy;
+    s3_price_free_tiers_applied = estimate.free_tiers_applied;
     s3_price_unknowns_json = nlohmann::json(estimate.unknowns).dump();
     s3_price_breakdown_json = estimate.breakdown.is_null()
         ? nlohmann::json::array().dump()
         : estimate.breakdown.dump();
+}
+
+void Event::applyS3BudgetPriceEstimate(const vh::storage::s3::pricing::PriceEstimateReport& estimate) {
+    if (!estimate.available) return;
+
+    s3_budget_estimated_cost = estimate.estimated_cost;
+    s3_budget_estimated_cost_currency = estimate.currency;
+    s3_budget_estimate_mode = estimate.estimate_mode;
+    s3_budget_free_tier_policy = estimate.free_tier_policy;
+    s3_budget_free_tiers_applied = estimate.free_tiers_applied;
 }
 
 // -------------------------
@@ -397,8 +423,16 @@ pqxx::params Event::getParams() const noexcept {
         s3_price_profile_id,
         s3_price_catalog_version,
         s3_price_confidence_level,
+        s3_price_estimate_mode,
+        s3_price_free_tier_policy,
+        s3_price_free_tiers_applied,
         s3_price_unknowns_json,
         s3_price_breakdown_json,
+        s3_budget_estimated_cost,
+        s3_budget_estimated_cost_currency,
+        s3_budget_estimate_mode,
+        s3_budget_free_tier_policy,
+        s3_budget_free_tiers_applied,
 
         divergence_detected,
         local_state_hash,
@@ -461,8 +495,16 @@ void vh::sync::model::to_json(nlohmann::json& j, const std::shared_ptr<Event>& e
         {"s3_price_profile_id", e->s3_price_profile_id ? nlohmann::json(*e->s3_price_profile_id) : nlohmann::json(nullptr)},
         {"s3_price_catalog_version", e->s3_price_catalog_version ? nlohmann::json(*e->s3_price_catalog_version) : nlohmann::json(nullptr)},
         {"s3_price_confidence_level", e->s3_price_confidence_level ? nlohmann::json(*e->s3_price_confidence_level) : nlohmann::json(nullptr)},
+        {"s3_price_estimate_mode", e->s3_price_estimate_mode ? nlohmann::json(*e->s3_price_estimate_mode) : nlohmann::json(nullptr)},
+        {"s3_price_free_tier_policy", e->s3_price_free_tier_policy ? nlohmann::json(*e->s3_price_free_tier_policy) : nlohmann::json(nullptr)},
+        {"s3_price_free_tiers_applied", e->s3_price_free_tiers_applied ? nlohmann::json(*e->s3_price_free_tiers_applied) : nlohmann::json(nullptr)},
         {"s3_price_unknowns", parseOptionalJson(e->s3_price_unknowns_json, nlohmann::json::array())},
         {"s3_price_breakdown", parseOptionalJson(e->s3_price_breakdown_json, nlohmann::json::array())},
+        {"s3_budget_estimated_cost", e->s3_budget_estimated_cost ? nlohmann::json(*e->s3_budget_estimated_cost) : nlohmann::json(nullptr)},
+        {"s3_budget_estimated_cost_currency", e->s3_budget_estimated_cost_currency ? nlohmann::json(*e->s3_budget_estimated_cost_currency) : nlohmann::json(nullptr)},
+        {"s3_budget_estimate_mode", e->s3_budget_estimate_mode ? nlohmann::json(*e->s3_budget_estimate_mode) : nlohmann::json(nullptr)},
+        {"s3_budget_free_tier_policy", e->s3_budget_free_tier_policy ? nlohmann::json(*e->s3_budget_free_tier_policy) : nlohmann::json(nullptr)},
+        {"s3_budget_free_tiers_applied", e->s3_budget_free_tiers_applied ? nlohmann::json(*e->s3_budget_free_tiers_applied) : nlohmann::json(nullptr)},
 
         {"conflicts", e->conflicts},
         {"throughputs", e->throughputs},
