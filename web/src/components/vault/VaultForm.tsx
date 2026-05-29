@@ -7,12 +7,32 @@ import * as motion from 'motion/react-client'
 import { Button } from '@/components/Button'
 import { LocalDiskVault, S3Vault } from '@/models/vaults'
 import { useRouter } from 'next/navigation'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import VaultIcon from '@/fa-duotone/vault.svg'
 
 type VaultFormValues =
   | ({ type: 'local' } & Pick<LocalDiskVault, 'name' | 'mount_point'>)
-  | ({ type: 's3' } & Pick<S3Vault, 'name' | 'api_key_id' | 'bucket'>)
+  | ({ type: 's3' } & Pick<S3Vault, 'name' | 'api_key_id' | 'bucket' | 'storage_tier_id'>)
+
+const storageTierOptionsForProvider = (provider?: string) => {
+  if (provider === 'AWS') {
+    return [
+      { value: '', label: 'Provider default' },
+      { value: 'standard', label: 'Standard' },
+      { value: 'standard_ia', label: 'Standard-IA' },
+    ]
+  }
+
+  if (provider === 'Cloudflare R2') {
+    return [
+      { value: '', label: 'Provider default' },
+      { value: 'standard', label: 'Standard' },
+      { value: 'infrequent_access', label: 'Infrequent Access' },
+    ]
+  }
+
+  return null
+}
 
 const VaultForm = ({ initialValues }: { initialValues?: Partial<LocalDiskVault | S3Vault> }) => {
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -25,10 +45,19 @@ const VaultForm = ({ initialValues }: { initialValues?: Partial<LocalDiskVault |
     register,
     handleSubmit,
     control,
+    setValue,
     formState: { errors },
   } = useForm<VaultFormValues>({ defaultValues: initialValues || { name: '', type: 'local', mount_point: '' } })
 
   const type = useWatch({ control, name: 'type' }) ?? 'local'
+  const selectedApiKeyId = useWatch({ control, name: 'api_key_id' })
+  const selectedApiKey = apiKeys.find(k => k.api_key_id === Number(selectedApiKeyId))
+  const storageTierOptions = storageTierOptionsForProvider(selectedApiKey?.provider)
+  const providerKnown = Boolean(selectedApiKey?.provider)
+
+  useEffect(() => {
+    if (type === 's3' && providerKnown && !storageTierOptions) setValue('storage_tier_id', null)
+  }, [providerKnown, setValue, storageTierOptions, type])
 
   const onSubmit = async (data: VaultFormValues) => {
     setIsSubmitting(true)
@@ -85,6 +114,34 @@ const VaultForm = ({ initialValues }: { initialValues?: Partial<LocalDiskVault |
         <label className="mt-2 block text-sm font-medium">Bucket</label>
         <input {...register('bucket', { required: 'Bucket is required' })} className="mt-1 w-full rounded border p-2" />
         {'bucket' in errors && errors.bucket && <span className="text-sm text-red-400">{errors.bucket.message}</span>}
+
+        <label className="mt-2 block text-sm font-medium">Storage Tier</label>
+        {storageTierOptions ?
+          <Controller
+            name="storage_tier_id"
+            control={control}
+            render={({ field }) => (
+              <select
+                {...field}
+                value={field.value ?? ''}
+                onChange={e => field.onChange(e.target.value || null)}
+                className="mt-1 w-full rounded border p-2">
+                {storageTierOptions.map(option => (
+                  <option key={option.value || 'default'} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            )}
+          />
+        : providerKnown ?
+          <input value="Provider default" readOnly className="mt-1 w-full rounded border p-2 opacity-70" />
+        : <input
+            {...register('storage_tier_id')}
+            placeholder="Provider default"
+            className="mt-1 w-full rounded border p-2"
+          />
+        }
       </motion.div>
     )
 

@@ -98,7 +98,13 @@ unsigned int Vault::upsertVault(const VaultPtr& vault,
 
         if (vault->type == vh::vault::model::VaultType::S3) {
             const auto s3Vault = std::static_pointer_cast<vh::vault::model::S3Vault>(vault);
-            pqxx::params s3p{vaultId, s3Vault->api_key_id, s3Vault->bucket, s3Vault->encrypt_upstream};
+            pqxx::params s3p{
+                vaultId,
+                s3Vault->api_key_id,
+                s3Vault->bucket,
+                s3Vault->encrypt_upstream,
+                s3Vault->storage_tier_id
+            };
             txn.exec(pqxx::prepped{"upsert_s3_vault"}, s3p);
         }
 

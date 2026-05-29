@@ -7,9 +7,13 @@
 #include "db/query/sync/Policy.hpp"
 
 #include "storage/Manager.hpp"
+#include "storage/s3/provider/Registry.hpp"
 
 #include "vault/model/Vault.hpp"
+#include "vault/model/S3Vault.hpp"
+#include "vault/model/APIKey.hpp"
 #include "identities/User.hpp"
+#include "db/query/vault/APIKey.hpp"
 
 #include "config/Registry.hpp"
 #include "CommandUsage.hpp"
@@ -49,6 +53,18 @@ CommandResult commands::vault::handle_vault_update(const CommandCall& call) {
     const auto sync = db::query::sync::Policy::getSync(vault->id);
     parseSync(call, usage, vault, sync);
     parseS3API(call, usage, vault, false);
+
+    if (hasFlag(call, "interactive") && vault->type == VaultType::S3) {
+        const auto s3Vault = std::static_pointer_cast<S3Vault>(vault);
+        const auto apiKey = db::query::vault::APIKey::getAPIKey(s3Vault->api_key_id);
+        if (!apiKey) return invalid("vault update: API key not found: " + std::to_string(s3Vault->api_key_id));
+
+        const auto current = s3Vault->storage_tier_id.value_or("provider default");
+        const auto tierStr = call.io->prompt("Storage tier [provider default]:", current);
+        const auto tier = storage::s3::provider::resolve(apiKey->provider)->normalizeStorageTier(tierStr);
+        if (!tier.ok) return invalid("vault update: " + tier.error);
+        s3Vault->storage_tier_id = tier.normalized_id;
+    }
 
     const auto [okToProceed, waiver] = handle_encryption_waiver({call, vault, true});
     if (!okToProceed) return invalid("vault create: user did not accept encryption waiver");

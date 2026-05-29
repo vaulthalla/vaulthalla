@@ -50,6 +50,7 @@ const VaultHeroClient = ({ vault, rightSlot, usedBytes, totalBytes }: VaultHeroP
   const typeLabel = useMemo(() => getVaultType(vault.type), [vault.type])
   const Icon = getVaultIcon({ type: vault.type, provider })
   const p = pct(usedBytes, totalBytes)
+  const storageTier = vault.type === 's3' ? new S3Vault(vault).storage_tier_id : null
 
   return (
     <motion.section
@@ -92,6 +93,11 @@ const VaultHeroClient = ({ vault, rightSlot, usedBytes, totalBytes }: VaultHeroP
               <Chip>
                 Provider&nbsp;<span className="text-white/85">{provider || '—'}</span>
               </Chip>
+              {vault.type === 's3' && (
+                <Chip>
+                  Storage tier&nbsp;<span className="text-white/85">{storageTier || 'provider default'}</span>
+                </Chip>
+              )}
               <Chip>
                 Created&nbsp;
                 <span className="text-white/85">{new Date(vault.created_at).toLocaleDateString()}</span>

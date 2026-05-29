@@ -127,7 +127,12 @@ std::shared_ptr<Vault> Manager::addVault(std::shared_ptr<Vault> vault,
     vault->mount_point = id::Generator({ .namespace_token = vault->name }).generate();
     vault->id = db::query::vault::Vault::upsertVault(vault, sync);
     vault = db::query::vault::Vault::getVault(vault->id);
-    const auto engine = std::make_shared<Engine>(vault);
+    std::shared_ptr<Engine> engine;
+    if (vault->type == VaultType::S3) {
+        engine = std::make_shared<CloudEngine>(std::static_pointer_cast<S3Vault>(vault));
+    } else {
+        engine = std::make_shared<Engine>(vault);
+    }
     engines_[engine->paths->absRelToRoot(engine->paths->vaultRoot, PathType::FUSE_ROOT)] = engine;
     vaultToEngine_[vault->id] = engine;
 
@@ -142,7 +147,18 @@ void Manager::updateVault(const std::shared_ptr<Vault>& vault) {
     if (vault->id == 0) throw std::invalid_argument("Vault ID cannot be zero");
     std::scoped_lock lock(mutex_);
     db::query::vault::Vault::upsertVault(vault);
-    vaultToEngine_[vault->id]->vault = vault;
+    const auto refreshed = db::query::vault::Vault::getVault(vault->id);
+    if (!refreshed) throw std::runtime_error("Failed to reload updated vault with ID " + std::to_string(vault->id));
+
+    std::shared_ptr<Engine> engine;
+    if (refreshed->type == VaultType::S3) {
+        engine = std::make_shared<CloudEngine>(std::static_pointer_cast<S3Vault>(refreshed));
+    } else {
+        engine = std::make_shared<Engine>(refreshed);
+    }
+
+    vaultToEngine_[refreshed->id] = engine;
+    engines_[engine->paths->absRelToRoot(engine->paths->vaultRoot, PathType::FUSE_ROOT)] = engine;
     log::Registry::storage()->info("[StorageManager] Updated vault with ID: {}", vault->id);
 }
 

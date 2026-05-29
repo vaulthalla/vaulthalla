@@ -8,6 +8,7 @@
 #include "db/query/vault/Waiver.hpp"
 
 #include "storage/Manager.hpp"
+#include "storage/s3/provider/Registry.hpp"
 
 #include "vault/model/Vault.hpp"
 #include "vault/model/S3Vault.hpp"
@@ -176,6 +177,12 @@ namespace vh::protocols::shell::commands::vault {
 
             s3Vault->bucket = io->prompt("Enter S3 bucket name (required):");
             if (s3Vault->bucket.empty()) return invalid("vault create: S3 bucket name is required");
+
+            const auto tierStr = io->prompt("Storage tier [provider default]:", "");
+            const auto profile = storage::s3::provider::resolve(apiKey->provider);
+            const auto tier = profile->normalizeStorageTier(tierStr);
+            if (!tier.ok) return invalid("vault create: " + tier.error);
+            s3Vault->storage_tier_id = tier.normalized_id;
 
             auto strategyStr = io->prompt("Enter sync strategy (cache/sync/mirror) [cache] --help for details:",
                                           "cache");

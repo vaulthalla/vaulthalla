@@ -9,10 +9,19 @@ void Controller::uploadLargeObject(const std::filesystem::path& key,
                                      const std::vector<uint8_t>& buffer,
                                      const uintmax_t partSize,
                                      const std::unordered_map<std::string, std::string>& metadata) const {
+    RequestOptions options;
+    options.metadata = metadata;
+    uploadLargeObject(key, buffer, partSize, options);
+}
+
+void Controller::uploadLargeObject(const std::filesystem::path& key,
+                                     const std::vector<uint8_t>& buffer,
+                                     const uintmax_t partSize,
+                                     const RequestOptions& options) const {
     if (buffer.empty())
         throw std::runtime_error("Buffer is empty, cannot perform multipart upload");
 
-    const std::string uploadId = initiateMultipartUpload(key, metadata);
+    const std::string uploadId = initiateMultipartUpload(key, options);
     if (uploadId.empty())
         throw std::runtime_error("Failed to initiate multipart upload for: " + key.string());
 
@@ -63,10 +72,30 @@ void Controller::uploadBufferWithMetadata(
     uploadBufferWithMetadataConditional(key, buffer, metadata, std::nullopt);
 }
 
+void Controller::uploadBufferWithMetadata(
+    const std::filesystem::path& key,
+    const std::vector<uint8_t>& buffer,
+    const RequestOptions& options) const
+{
+    uploadBufferWithMetadataConditional(key, buffer, options, std::nullopt);
+}
+
 void Controller::uploadBufferWithMetadataConditional(
     const std::filesystem::path& key,
     const std::vector<uint8_t>& buffer,
     const std::unordered_map<std::string, std::string>& metadata,
+    const std::optional<std::string>& ifMatch,
+    const std::optional<std::string>& ifNoneMatch) const
+{
+    RequestOptions options;
+    options.metadata = metadata;
+    uploadBufferWithMetadataConditional(key, buffer, options, ifMatch, ifNoneMatch);
+}
+
+void Controller::uploadBufferWithMetadataConditional(
+    const std::filesystem::path& key,
+    const std::vector<uint8_t>& buffer,
+    const RequestOptions& options,
     const std::optional<std::string>& ifMatch,
     const std::optional<std::string>& ifNoneMatch) const
 {
@@ -85,9 +114,7 @@ void Controller::uploadBufferWithMetadataConditional(
     hdrMap["content-type"] = "application/octet-stream";
     if (ifMatch) hdrMap["if-match"] = *ifMatch;
     if (ifNoneMatch) hdrMap["if-none-match"] = *ifNoneMatch;
-    for (const auto& [k, v] : metadata) {
-        hdrMap[fmt::format("x-amz-meta-{}", k)] = v;
-    }
+    applyRequestOptions(hdrMap, options);
 
     const std::string authHeader = buildAuthorizationHeader(apiKey_, "PUT", canonical, hdrMap, payloadHash);
 

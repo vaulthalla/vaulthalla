@@ -9,6 +9,14 @@ using namespace vh::storage::s3::curl;
 std::string Controller::initiateMultipartUpload(
     const std::filesystem::path& key,
     const std::unordered_map<std::string, std::string>& metadata) const {
+    RequestOptions options;
+    options.metadata = metadata;
+    return initiateMultipartUpload(key, options);
+}
+
+std::string Controller::initiateMultipartUpload(
+    const std::filesystem::path& key,
+    const RequestOptions& options) const {
     recordRequest(RequestKind::Put);
 
     CURL* curl = curl_easy_init();
@@ -19,7 +27,7 @@ std::string Controller::initiateMultipartUpload(
     const std::string payloadHash = "UNSIGNED-PAYLOAD";
 
     auto hdrMap = buildHeaderMap(payloadHash);
-    for (const auto& [k, v] : metadata) hdrMap[fmt::format("x-amz-meta-{}", k)] = v;
+    applyRequestOptions(hdrMap, options);
 
     const std::string authHeader = buildAuthorizationHeader(apiKey_, "POST", canonicalPath, hdrMap, payloadHash);
 

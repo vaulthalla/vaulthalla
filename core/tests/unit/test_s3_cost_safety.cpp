@@ -20,6 +20,7 @@
 #include "storage/ScopedS3RequestBudget.hpp"
 #include "storage/s3/Controller.hpp"
 #include "storage/s3/curl/helpers.hpp"
+#include "storage/s3/provider/Registry.hpp"
 #include "sync/Cloud.hpp"
 #include "sync/Planner.hpp"
 #include "sync/model/Event.hpp"
@@ -72,6 +73,7 @@ public:
     int delete_object_calls = 0;
     int list_objects_calls = 0;
     std::unordered_map<std::string, std::string> last_metadata;
+    std::map<std::string, std::string> last_system_headers;
     std::optional<std::unordered_map<std::string, std::string>> head_response;
     std::vector<uint8_t> download_payload;
     std::vector<std::filesystem::path> deleted_keys;
@@ -84,9 +86,19 @@ public:
         const std::filesystem::path&,
         const std::filesystem::path&,
         const std::unordered_map<std::string, std::string>& metadata) const override {
+        vh::storage::s3::RequestOptions options;
+        options.metadata = metadata;
+        uploadObjectWithMetadata(std::filesystem::path{}, std::filesystem::path{}, options);
+    }
+
+    void uploadObjectWithMetadata(
+        const std::filesystem::path&,
+        const std::filesystem::path&,
+        const vh::storage::s3::RequestOptions& options) const override {
         auto* self = const_cast<CountingS3Controller*>(this);
         ++self->upload_object_with_metadata_calls;
-        self->last_metadata = metadata;
+        self->last_metadata = options.metadata;
+        self->last_system_headers = options.system_headers;
     }
 
     void uploadLargeObject(
@@ -94,8 +106,29 @@ public:
         const std::filesystem::path&,
         uintmax_t,
         const std::unordered_map<std::string, std::string>& metadata) const override {
+        vh::storage::s3::RequestOptions options;
+        options.metadata = metadata;
+        uploadLargeObject(std::filesystem::path{}, std::filesystem::path{}, 0, options);
+    }
+
+    void uploadLargeObject(
+        const std::filesystem::path&,
+        const std::filesystem::path&,
+        uintmax_t,
+        const vh::storage::s3::RequestOptions& options) const override {
         auto* self = const_cast<CountingS3Controller*>(this);
-        self->last_metadata = metadata;
+        self->last_metadata = options.metadata;
+        self->last_system_headers = options.system_headers;
+    }
+
+    void uploadLargeObject(
+        const std::filesystem::path&,
+        const std::vector<uint8_t>&,
+        uintmax_t,
+        const vh::storage::s3::RequestOptions& options) const override {
+        auto* self = const_cast<CountingS3Controller*>(this);
+        self->last_metadata = options.metadata;
+        self->last_system_headers = options.system_headers;
     }
 
     void downloadToBuffer(const std::filesystem::path&, std::vector<uint8_t>& out) const override {
@@ -111,8 +144,24 @@ public:
         const std::unordered_map<std::string, std::string>&,
         const std::optional<std::string>&,
         const std::optional<std::string>&) const override {
+        uploadBufferWithMetadataConditional(
+            std::filesystem::path{},
+            std::vector<uint8_t>{},
+            vh::storage::s3::RequestOptions{},
+            std::nullopt,
+            std::nullopt);
+    }
+
+    void uploadBufferWithMetadataConditional(
+        const std::filesystem::path&,
+        const std::vector<uint8_t>&,
+        const vh::storage::s3::RequestOptions& options,
+        const std::optional<std::string>&,
+        const std::optional<std::string>&) const override {
         auto* self = const_cast<CountingS3Controller*>(this);
         ++self->upload_buffer_conditional_calls;
+        self->last_metadata = options.metadata;
+        self->last_system_headers = options.system_headers;
         self->recordRequest(RequestKind::Put);
     }
 
@@ -157,6 +206,20 @@ public:
         const std::filesystem::path&,
         const std::vector<uint8_t>&,
         const std::unordered_map<std::string, std::string>&,
+        const std::optional<std::string>& ifMatch,
+        const std::optional<std::string>& ifNoneMatch) const override {
+        uploadBufferWithMetadataConditional(
+            std::filesystem::path{},
+            std::vector<uint8_t>{},
+            vh::storage::s3::RequestOptions{},
+            ifMatch,
+            ifNoneMatch);
+    }
+
+    void uploadBufferWithMetadataConditional(
+        const std::filesystem::path&,
+        const std::vector<uint8_t>&,
+        const vh::storage::s3::RequestOptions&,
         const std::optional<std::string>& ifMatch,
         const std::optional<std::string>& ifNoneMatch) const override {
         if_match_values.push_back(ifMatch);
@@ -999,6 +1062,7 @@ TEST(S3CostSafetyTest, PlaintextUpstreamUploadMutationDoesNotPoisonRemoteIndexWi
     EXPECT_FALSE(*indexed[0]->remote_encrypted);
     EXPECT_TRUE(indexed[0]->encryption_iv.empty());
     EXPECT_EQ(0u, indexed[0]->encrypted_with_key_version);
+    EXPECT_FALSE(indexed[0]->remote_storage_class);
 }
 
 TEST(S3CostSafetyTest, EncryptedUpstreamUploadMutationStoresRemoteEncryptionMetadata) {
@@ -1028,6 +1092,98 @@ TEST(S3CostSafetyTest, EncryptedUpstreamUploadMutationStoresRemoteEncryptionMeta
     EXPECT_TRUE(*indexed[0]->remote_encrypted);
     EXPECT_EQ(local->encryption_iv, indexed[0]->encryption_iv);
     EXPECT_EQ(local->encrypted_with_key_version, indexed[0]->encrypted_with_key_version);
+    EXPECT_FALSE(indexed[0]->remote_storage_class);
+}
+
+TEST(S3CostSafetyTest, UploadMutationStoresConfiguredAwsStorageClass) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed remote index storage tier test due to missing environment variables.";
+
+    auto fake = std::make_shared<CountingS3Controller>();
+    const auto vaultId = seedDryRunS3VaultForDbTest(uniqueSuffix("upload_aws_tier_index"), fake);
+    auto engine = std::static_pointer_cast<vh::storage::CloudEngine>(
+        vh::runtime::Deps::get().storageManager->getEngine(vaultId));
+    engine->setS3ControllerForTesting(fake);
+
+    const auto s3Vault = std::static_pointer_cast<vh::vault::model::S3Vault>(engine->vault);
+    s3Vault->storage_tier_id = "standard_ia";
+    engine->setS3ProviderProfileForTesting(
+        vh::storage::s3::provider::resolve(vh::vault::model::S3Provider::AWS));
+
+    auto local = remoteFile("uploads/aws-tier.txt");
+    local->size_bytes = 5;
+    local->updated_at = std::time(nullptr);
+    (void)engine->encryptionManager->encrypt({'l', 'o', 'c', 'a', 'l'}, local);
+
+    const std::vector<vh::sync::model::Action> plan{
+        {vh::sync::model::ActionType::Upload, {.rel = u8"uploads/aws-tier.txt"}, local, nullptr}
+    };
+
+    ASSERT_NO_THROW(engine->applyRemoteIndexMutation(plan));
+
+    const auto indexed = vh::db::query::sync::RemoteObjectIndex::listFilesForVault(vaultId);
+    ASSERT_EQ(1u, indexed.size());
+    ASSERT_TRUE(indexed[0]->remote_storage_class);
+    EXPECT_EQ("STANDARD_IA", *indexed[0]->remote_storage_class);
+}
+
+TEST(S3CostSafetyTest, UploadMutationStoresConfiguredR2StorageClass) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed remote index storage tier test due to missing environment variables.";
+
+    auto fake = std::make_shared<CountingS3Controller>();
+    const auto vaultId = seedDryRunS3VaultForDbTest(uniqueSuffix("upload_r2_tier_index"), fake);
+    auto engine = std::static_pointer_cast<vh::storage::CloudEngine>(
+        vh::runtime::Deps::get().storageManager->getEngine(vaultId));
+    engine->setS3ControllerForTesting(fake);
+
+    const auto s3Vault = std::static_pointer_cast<vh::vault::model::S3Vault>(engine->vault);
+    s3Vault->storage_tier_id = "infrequent_access";
+    engine->setS3ProviderProfileForTesting(
+        vh::storage::s3::provider::resolve(vh::vault::model::S3Provider::CloudflareR2));
+
+    auto local = remoteFile("uploads/r2-tier.txt");
+    local->size_bytes = 5;
+    local->updated_at = std::time(nullptr);
+    (void)engine->encryptionManager->encrypt({'l', 'o', 'c', 'a', 'l'}, local);
+
+    const std::vector<vh::sync::model::Action> plan{
+        {vh::sync::model::ActionType::Upload, {.rel = u8"uploads/r2-tier.txt"}, local, nullptr}
+    };
+
+    ASSERT_NO_THROW(engine->applyRemoteIndexMutation(plan));
+
+    const auto indexed = vh::db::query::sync::RemoteObjectIndex::listFilesForVault(vaultId);
+    ASSERT_EQ(1u, indexed.size());
+    ASSERT_TRUE(indexed[0]->remote_storage_class);
+    EXPECT_EQ("STANDARD_IA", *indexed[0]->remote_storage_class);
+}
+
+TEST(S3CostSafetyTest, S3VaultDbRoundTripsStorageTierId) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed S3 vault storage tier test due to missing environment variables.";
+
+    auto fake = std::make_shared<CountingS3Controller>();
+    const auto vaultId = seedDryRunS3VaultForDbTest(uniqueSuffix("vault_tier_roundtrip"), fake);
+
+    auto vault = std::static_pointer_cast<vh::vault::model::S3Vault>(
+        vh::db::query::vault::Vault::getVault(vaultId));
+    ASSERT_TRUE(vault);
+    EXPECT_FALSE(vault->storage_tier_id);
+
+    vault->storage_tier_id = "standard_ia";
+    vh::db::query::vault::Vault::upsertVault(vault);
+
+    auto reloaded = std::static_pointer_cast<vh::vault::model::S3Vault>(
+        vh::db::query::vault::Vault::getVault(vaultId));
+    ASSERT_TRUE(reloaded);
+    ASSERT_TRUE(reloaded->storage_tier_id);
+    EXPECT_EQ("standard_ia", *reloaded->storage_tier_id);
+
+    reloaded->storage_tier_id = std::nullopt;
+    vh::db::query::vault::Vault::upsertVault(reloaded);
+
+    auto cleared = std::static_pointer_cast<vh::vault::model::S3Vault>(
+        vh::db::query::vault::Vault::getVault(vaultId));
+    ASSERT_TRUE(cleared);
+    EXPECT_FALSE(cleared->storage_tier_id);
 }
 
 TEST(S3CostSafetyTest, IndexRemoteOnlyPreservesEncryptionMetadataInLocalRow) {
@@ -1840,6 +1996,44 @@ TEST(S3CostSafetyTest, EncryptedUploadDoesNotDownloadAfterPut) {
     EXPECT_EQ("true", fake->last_metadata.at("vh-encrypted"));
     EXPECT_EQ("iv", fake->last_metadata.at("vh-iv"));
     EXPECT_EQ("3", fake->last_metadata.at("vh-key-version"));
+
+    std::filesystem::remove_all(tempDir);
+}
+
+TEST(S3CostSafetyTest, EncryptedUploadPassesConfiguredStorageClassAsSystemHeader) {
+    const auto tempDir = std::filesystem::temp_directory_path() / "vh_s3_storage_tier_upload";
+    std::filesystem::remove_all(tempDir);
+    std::filesystem::create_directories(tempDir);
+    const auto backing = tempDir / "ciphertext.bin";
+    std::ofstream(backing, std::ios::binary) << "ciphertext";
+
+    auto vault = std::make_shared<vh::vault::model::S3Vault>();
+    vault->id = 99;
+    vault->owner_id = 100;
+    vault->encrypt_upstream = true;
+    vault->storage_tier_id = "standard_ia";
+
+    auto fake = std::make_shared<CountingS3Controller>();
+    vh::storage::CloudEngine engine;
+    engine.vault = vault;
+    engine.setS3ControllerForTesting(fake);
+    engine.setS3ProviderProfileForTesting(
+        vh::storage::s3::provider::resolve(vh::vault::model::S3Provider::AWS));
+
+    auto file = std::make_shared<vh::fs::model::File>();
+    file->path = "/ciphertext.bin";
+    file->backing_path = backing;
+    file->size_bytes = std::filesystem::file_size(backing);
+    file->content_hash = "content-hash";
+    file->encryption_iv = "iv";
+    file->encrypted_with_key_version = 3;
+
+    engine.upload(file);
+
+    EXPECT_EQ(1, fake->upload_object_with_metadata_calls);
+    ASSERT_TRUE(fake->last_system_headers.contains("x-amz-storage-class"));
+    EXPECT_EQ("STANDARD_IA", fake->last_system_headers.at("x-amz-storage-class"));
+    EXPECT_FALSE(fake->last_metadata.contains("storage-class"));
 
     std::filesystem::remove_all(tempDir);
 }

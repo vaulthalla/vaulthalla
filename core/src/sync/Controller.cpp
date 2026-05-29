@@ -3,6 +3,7 @@
 #include "concurrency/ThreadPoolManager.hpp"
 #include "sync/Local.hpp"
 #include "sync/Cloud.hpp"
+#include "sync/model/Policy.hpp"
 #include "concurrency/ThreadPool.hpp"
 #include "storage/CloudEngine.hpp"
 #include "db/query/vault/Vault.hpp"

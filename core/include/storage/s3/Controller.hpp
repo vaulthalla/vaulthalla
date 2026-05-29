@@ -47,6 +47,11 @@ namespace vh::storage::s3 {
         std::optional<uint64_t> max_downloaded_bytes;
     };
 
+    struct RequestOptions {
+        std::map<std::string, std::string> system_headers;
+        std::unordered_map<std::string, std::string> metadata;
+    };
+
     class RequestBudgetExceeded final : public std::runtime_error {
     public:
         explicit RequestBudgetExceeded(const std::string& message) : std::runtime_error(message) {}
@@ -78,12 +83,21 @@ namespace vh::storage::s3 {
                                        uintmax_t partSize = MIN_PART_SIZE,
                                        const std::unordered_map<std::string, std::string> &metadata = {}) const;
 
+        virtual void uploadLargeObject(const fs::path &key, const fs::path &filePath,
+                                       uintmax_t partSize,
+                                       const RequestOptions &options) const;
+
         virtual void uploadObject(const fs::path &key, const fs::path &filePath) const;
 
         virtual void uploadObjectWithMetadata(
             const fs::path &key,
             const fs::path &filePath,
             const std::unordered_map<std::string, std::string> &metadata) const;
+
+        virtual void uploadObjectWithMetadata(
+            const fs::path &key,
+            const fs::path &filePath,
+            const RequestOptions &options) const;
 
         virtual void downloadObject(const fs::path &key, const fs::path &outputPath) const;
 
@@ -95,15 +109,31 @@ namespace vh::storage::s3 {
                                        uintmax_t partSize = MIN_PART_SIZE,
                                        const std::unordered_map<std::string, std::string> &metadata = {}) const;
 
+        virtual void uploadLargeObject(const fs::path &key, const std::vector<uint8_t> &buffer,
+                                       uintmax_t partSize,
+                                       const RequestOptions &options) const;
+
         virtual void uploadBufferWithMetadata(
             const fs::path &key,
             const std::vector<uint8_t> &buffer,
             const std::unordered_map<std::string, std::string> &metadata) const;
 
+        virtual void uploadBufferWithMetadata(
+            const fs::path &key,
+            const std::vector<uint8_t> &buffer,
+            const RequestOptions &options) const;
+
         virtual void uploadBufferWithMetadataConditional(
             const fs::path &key,
             const std::vector<uint8_t> &buffer,
             const std::unordered_map<std::string, std::string> &metadata,
+            const std::optional<std::string> &ifMatch,
+            const std::optional<std::string> &ifNoneMatch = std::nullopt) const;
+
+        virtual void uploadBufferWithMetadataConditional(
+            const fs::path &key,
+            const std::vector<uint8_t> &buffer,
+            const RequestOptions &options,
             const std::optional<std::string> &ifMatch,
             const std::optional<std::string> &ifNoneMatch = std::nullopt) const;
 
@@ -116,6 +146,10 @@ namespace vh::storage::s3 {
         [[nodiscard]] virtual std::string initiateMultipartUpload(
             const fs::path &key,
             const std::unordered_map<std::string, std::string> &metadata = {}) const;
+
+        [[nodiscard]] virtual std::string initiateMultipartUpload(
+            const fs::path &key,
+            const RequestOptions &options) const;
 
         virtual void uploadPart(const fs::path &key, const std::string &uploadId,
                         int partNumber, const std::string &partData, std::string &etagOut) const;
@@ -132,10 +166,12 @@ namespace vh::storage::s3 {
         [[nodiscard]] virtual std::optional<std::unordered_map<std::string, std::string> > getHeadObject(
             const fs::path &key) const;
 
-        virtual void setObjectContentHash(const fs::path &key, const std::string &hash) const;
+        virtual void setObjectContentHash(const fs::path &key, const std::string &hash,
+                                          const RequestOptions &options = {}) const;
 
         virtual void setObjectEncryptionMetadata(const std::string &key, const std::string &iv_b64,
-                                         unsigned int key_version) const;
+                                         unsigned int key_version,
+                                         const RequestOptions &options = {}) const;
 
         // #########################################################################
         // ########################### VALIDATION ##################################
@@ -156,6 +192,10 @@ namespace vh::storage::s3 {
     protected:
         enum class RequestKind { List, Head, Get, Put, Copy, Delete, DownloadBytes };
         void recordRequest(RequestKind kind, uint64_t amount = 1) const;
+        [[nodiscard]] std::map<std::string, std::string> buildHeaderMap(const std::string &payloadHash) const;
+        static void applyRequestOptions(std::map<std::string, std::string>& headers,
+                                        const RequestOptions& options,
+                                        bool includeMetadata = true);
 
     private:
         std::shared_ptr<vault::model::APIKey> apiKey_;
@@ -163,8 +203,6 @@ namespace vh::storage::s3 {
         mutable std::mutex metricsMutex_;
         mutable S3RequestMetrics metrics_;
         mutable std::optional<S3RequestBudget> requestBudget_;
-
-        [[nodiscard]] std::map<std::string, std::string> buildHeaderMap(const std::string &payloadHash) const;
 
         std::pair<std::string, std::string> constructPaths(CURL *curl, const fs::path &p,
                                                            const std::string &query = "") const;

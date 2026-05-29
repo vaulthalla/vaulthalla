@@ -110,6 +110,11 @@ static const auto apiKeyOpt = Optional::OneToMany("s3_api_key", "Name or ID of t
                                                   "api-key", {"name", "id"});
 
 static const auto s3BucketOpt = Optional::Single("s3_bucket", "Name of the S3 bucket", "bucket", "name");
+static const auto s3StorageTierOpt = Optional::ManyToOne(
+    "s3_storage_tier",
+    "Provider-local S3 storage tier for new uploads; use 'none' or 'default' to clear.",
+    {"storage-tier", "storage-class"},
+    "tier");
 
 static const auto enableS3Encryption = Flag::On("enable_s3_encrypt",
                                                 "Enable upstream encryption for S3 vaults. This is the default.",
@@ -128,6 +133,7 @@ static const GroupedOptions localVaultOpts("Local Vault Options", {localConflict
 static const GroupedOptions s3VaultOpts("S3 Vault Options", {
                                             apiKeyOpt,
                                             s3BucketOpt,
+                                            s3StorageTierOpt,
                                             syncStrategyOpt,
                                             s3ConflictOpt,
                                             enableS3Encryption,
@@ -148,7 +154,9 @@ static std::shared_ptr<CommandUsage> create(const std::weak_ptr<CommandUsage>& p
     cmd->examples = {
         {"vh vault create myvault --local --desc \"My Local Vault\" --quota 10G",
          "Create a local vault with a 10GB quota."},
-        {"vh vault create s3vault --s3 --api-key myapikey --bucket mybucket", "Create an S3-backed vault."}
+        {"vh vault create s3vault --s3 --api-key myapikey --bucket mybucket", "Create an S3-backed vault."},
+        {"vh vault create archive-ready --s3 --api-key aws-prod --bucket vaulthalla --storage-tier standard_ia",
+         "Create an AWS S3 vault using the provider-local Standard-IA tier for new uploads."}
     };
     return cmd;
 }
@@ -166,7 +174,9 @@ static std::shared_ptr<CommandUsage> update(const std::weak_ptr<CommandUsage>& p
          "Update the description and quota of the vault with ID 42."},
         {"vh vault update myvault --owner bob --api-key newkey --bucket newbucket --sync-strategy mirror "
          "--on-sync-conflict keep_remote --owner alice",
-         "Update multiple properties of the vault named 'myvault' owned by 'alice'."}
+         "Update multiple properties of the vault named 'myvault' owned by 'alice'."},
+        {"vh vault update 42 --storage-tier none",
+         "Clear an S3 vault storage tier so the provider default is used."}
     };
     return cmd;
 }

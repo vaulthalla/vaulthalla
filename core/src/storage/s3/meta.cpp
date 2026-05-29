@@ -4,6 +4,9 @@
 #include "storage/s3/curl/helpers.hpp"
 #include "log/Registry.hpp"
 
+#include <algorithm>
+#include <cctype>
+
 using namespace vh::storage::s3;
 using namespace vh::vault::model;
 using namespace vh::storage::s3::curl;
@@ -15,6 +18,25 @@ std::map<std::string, std::string> Controller::buildHeaderMap(const std::string 
         {"x-amz-content-sha256", payloadHash},
         {"x-amz-date", getCurrentTimestamp()}
     };
+}
+
+void Controller::applyRequestOptions(
+    std::map<std::string, std::string>& headers,
+    const RequestOptions& options,
+    const bool includeMetadata) {
+    for (const auto& [key, value] : options.system_headers) {
+        auto normalized = key;
+        std::ranges::transform(normalized, normalized.begin(), [](unsigned char ch) {
+            return static_cast<char>(std::tolower(ch));
+        });
+        headers[normalized] = value;
+    }
+
+    if (!includeMetadata) return;
+
+    for (const auto& [key, value] : options.metadata) {
+        headers[fmt::format("x-amz-meta-{}", key)] = value;
+    }
 }
 
 SList Controller::makeSigHeaders(const std::string &method,
@@ -73,7 +95,8 @@ Controller::getHeadObject(const std::filesystem::path &key) const {
     return metadata;
 }
 
-void Controller::setObjectContentHash(const std::filesystem::path &key, const std::string &hash) const {
+void Controller::setObjectContentHash(const std::filesystem::path &key, const std::string &hash,
+                                      const RequestOptions& options) const {
     recordRequest(RequestKind::Copy);
 
     CurlEasy curl;
@@ -88,6 +111,7 @@ void Controller::setObjectContentHash(const std::filesystem::path &key, const st
     hdrMap["x-amz-copy-source"] = source.str();
     hdrMap["x-amz-metadata-directive"] = "REPLACE";
     hdrMap["x-amz-meta-content-hash"] = hash;
+    applyRequestOptions(hdrMap, options, false);
     const std::string authHeader = buildAuthorizationHeader(apiKey_, "PUT", canonicalPath, hdrMap, payloadHash);
 
     SList headers;
@@ -110,7 +134,8 @@ void Controller::setObjectContentHash(const std::filesystem::path &key, const st
 }
 
 void Controller::setObjectEncryptionMetadata(const std::string &key, const std::string &iv_b64,
-                                             unsigned int key_version) const {
+                                             unsigned int key_version,
+                                             const RequestOptions& options) const {
     recordRequest(RequestKind::Copy);
 
     CurlEasy curl;
@@ -127,6 +152,7 @@ void Controller::setObjectEncryptionMetadata(const std::string &key, const std::
     hdrMap["x-amz-meta-vh-iv"] = iv_b64;
     hdrMap["x-amz-meta-vh-algo"] = "aes256gcm";
     hdrMap["x-amz-meta-vh-key-version"] = std::to_string(key_version);
+    applyRequestOptions(hdrMap, options, false);
     const std::string authHeader = buildAuthorizationHeader(apiKey_, "PUT", canonicalPath, hdrMap, payloadHash);
 
     SList headers;

@@ -6,7 +6,9 @@
 #include "sync/model/Policy.hpp"
 #include "sync/model/RemotePolicy.hpp"
 #include "db/query/vault/Vault.hpp"
+#include "db/query/vault/APIKey.hpp"
 #include "storage/Manager.hpp"
+#include "storage/s3/provider/Registry.hpp"
 #include "protocols/ws/Session.hpp"
 #include "runtime/Deps.hpp"
 #include "sync/Controller.hpp"
@@ -55,7 +57,18 @@ json Vaults::add(const json &payload, const std::shared_ptr<Session> &session) {
         })) throw std::runtime_error("User does not have permission to add this api-key to vault.");
 
         const std::string bucket = payload.at("bucket").get<std::string>();
-        vault = std::make_shared<S3Vault>(name, apiKeyID, bucket);
+        const auto s3Vault = std::make_shared<S3Vault>(name, apiKeyID, bucket);
+        const auto apiKey = db::query::vault::APIKey::getAPIKey(apiKeyID);
+        if (!apiKey) throw std::runtime_error("API key not found: " + std::to_string(apiKeyID));
+
+        const auto requestedTier = payload.contains("storage_tier_id") && !payload.at("storage_tier_id").is_null()
+            ? std::make_optional(payload.at("storage_tier_id").get<std::string>())
+            : std::optional<std::string>{};
+        const auto tier = storage::s3::provider::resolve(apiKey->provider)->normalizeStorageTier(requestedTier);
+        if (!tier.ok) throw std::runtime_error(tier.error);
+        s3Vault->storage_tier_id = tier.normalized_id;
+
+        vault = s3Vault;
         sync = std::make_shared<RemotePolicy>(payload);
     }
 
@@ -69,7 +82,22 @@ json Vaults::add(const json &payload, const std::shared_ptr<Session> &session) {
 }
 
 json Vaults::update(const json &payload, const std::shared_ptr<Session> &session) {
-    const auto vault = std::make_shared<Vault>(payload);
+    std::shared_ptr<Vault> vault;
+    const auto type = from_string(payload.at("type").get<std::string>());
+    if (type == VaultType::S3) {
+        const auto s3Vault = std::make_shared<S3Vault>();
+        from_json(payload, *s3Vault);
+        const auto apiKey = db::query::vault::APIKey::getAPIKey(s3Vault->api_key_id);
+        if (!apiKey) throw std::runtime_error("API key not found: " + std::to_string(s3Vault->api_key_id));
+
+        const auto tier = storage::s3::provider::resolve(apiKey->provider)->normalizeStorageTier(s3Vault->storage_tier_id);
+        if (!tier.ok) throw std::runtime_error(tier.error);
+        s3Vault->storage_tier_id = tier.normalized_id;
+        vault = s3Vault;
+    } else {
+        vault = std::make_shared<Vault>();
+        from_json(payload, *vault);
+    }
 
     if (!resolver::Admin::has<permission::admin::VaultPermissions>({
         .user = session->user,

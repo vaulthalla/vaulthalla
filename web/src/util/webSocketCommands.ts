@@ -99,7 +99,7 @@ export interface WebSocketCommandMap {
   'storage.vault.add': {
     payload:
       | { name: string; type: 'local'; mount_point: string }
-      | { name: string; type: 's3'; api_key_id: number; bucket: string }
+      | { name: string; type: 's3'; api_key_id: number; bucket: string; storage_tier_id?: string | null }
     response: { vault: LocalDiskVault | S3Vault }
   }
 

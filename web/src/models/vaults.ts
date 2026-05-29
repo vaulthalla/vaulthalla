@@ -18,6 +18,7 @@ interface IS3 extends IVault {
   vault_id: number
   api_key_id: number
   bucket: string
+  storage_tier_id?: string | null
   region: string
   access_key: string
   secret_access_key: string
@@ -64,6 +65,7 @@ export class S3Vault implements IS3 {
   vault_id: number = 0
   api_key_id: number = 0
   bucket: string = ''
+  storage_tier_id: string | null = null
   region: string = ''
   access_key: string = ''
   secret_access_key: string = ''
