@@ -2,6 +2,7 @@
 
 #include "storage/CloudEngine.hpp"
 #include "storage/ScopedS3RequestBudget.hpp"
+#include "storage/s3/pricing/PriceEstimate.hpp"
 #include "sync/tasks/Download.hpp"
 #include "sync/tasks/Upload.hpp"
 #include "sync/tasks/Delete.hpp"
@@ -104,6 +105,24 @@ void Cloud::sync() {
     auto estimate = Planner::estimateS3Cost(plan);
     estimate.archive_tier_downloads_skipped = planningNotes.archive_tier_downloads_skipped;
     event->applyS3CostEstimate(estimate);
+    const auto priceEstimate = vh::storage::s3::pricing::estimatePlannedS3Sync(*cloudEngine(), estimate);
+    if (priceEstimate.available) {
+        event->applyS3PriceEstimate(priceEstimate);
+        log::Registry::sync()->info(
+            "[CloudSync] S3 price estimate for vault {}: {}",
+            engine->vault->id,
+            vh::storage::s3::pricing::formatPriceEstimateForLog(priceEstimate));
+    } else if (priceEstimate.supported) {
+        log::Registry::sync()->warn(
+            "[CloudSync] S3 price estimate unavailable for vault {}: {}",
+            engine->vault->id,
+            vh::storage::s3::pricing::formatPriceEstimateForLog(priceEstimate));
+    } else {
+        log::Registry::sync()->debug(
+            "[CloudSync] S3 price estimate skipped for vault {}: {}",
+            engine->vault->id,
+            priceEstimate.unavailable_reason);
+    }
     log::Registry::sync()->info(
         "[CloudSync] Estimated S3 cost pressure for vault {}: LIST={} HEAD={} GET={} PUT={} COPY={} DELETE={} body_download_bytes={} upload_bytes={} index_only_objects={} archive_skipped={}",
         engine->vault->id,

@@ -233,6 +233,53 @@ struct convert<SyncConfig> {
 };
 
 template<>
+struct convert<StorageRatesApiConfig> {
+    static Node encode(const StorageRatesApiConfig& rhs) {
+        Node node;
+        node["enabled"] = rhs.enabled;
+        node["base_url"] = rhs.base_url;
+        node["timeout_ms"] = rhs.timeout_ms;
+        node["cache_ttl_seconds"] = rhs.cache_ttl_seconds;
+        node["fail_open"] = rhs.fail_open;
+        node["signature_warning_only"] = rhs.signature_warning_only;
+        node["signature_public_key_path"] = rhs.signature_public_key_path
+            ? Node(rhs.signature_public_key_path->string())
+            : Node(NodeType::Null);
+        return node;
+    }
+
+    static bool decode(const Node& node, StorageRatesApiConfig& rhs) {
+        if (!node.IsMap()) return false;
+        rhs.enabled = node["enabled"].as<bool>(true);
+        rhs.base_url = node["base_url"].as<std::string>("https://storage-rates-api.vaulthalla.cloud");
+        rhs.timeout_ms = std::max(static_cast<uint32_t>(100), node["timeout_ms"].as<uint32_t>(5000));
+        rhs.cache_ttl_seconds = std::max(static_cast<uint32_t>(60), node["cache_ttl_seconds"].as<uint32_t>(86400));
+        rhs.fail_open = node["fail_open"].as<bool>(true);
+        rhs.signature_warning_only = node["signature_warning_only"].as<bool>(true);
+        if (node["signature_public_key_path"] && !node["signature_public_key_path"].IsNull())
+            rhs.signature_public_key_path = node["signature_public_key_path"].as<std::filesystem::path>();
+        else
+            rhs.signature_public_key_path.reset();
+        return true;
+    }
+};
+
+template<>
+struct convert<PricingConfig> {
+    static Node encode(const PricingConfig& rhs) {
+        Node node;
+        node["storage_rates_api"] = rhs.storage_rates_api;
+        return node;
+    }
+
+    static bool decode(const Node& node, PricingConfig& rhs) {
+        if (!node.IsMap()) return false;
+        if (node["storage_rates_api"]) rhs.storage_rates_api = node["storage_rates_api"].as<StorageRatesApiConfig>();
+        return true;
+    }
+};
+
+template<>
 struct convert<DBSweeperConfig> {
     static Node encode(const DBSweeperConfig& rhs) {
         Node node;

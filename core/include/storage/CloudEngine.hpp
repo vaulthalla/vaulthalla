@@ -114,6 +114,9 @@ namespace vh::storage {
         void clearS3RequestBudget() const;
         void resetS3RequestMetrics() const;
         [[nodiscard]] s3::S3RequestMetrics s3RequestMetrics() const;
+        [[nodiscard]] std::shared_ptr<vault::model::APIKey> s3ApiKey() const { return key_; }
+        [[nodiscard]] s3::provider::ProfilePtr s3ProviderProfile() const { return s3Profile_; }
+        [[nodiscard]] std::optional<s3::provider::StorageTier> resolvedStorageTier() const { return storageTier_; }
 
         void setS3ControllerForTesting(std::shared_ptr<s3::Controller> s3Provider);
         void setS3ProviderProfileForTesting(s3::provider::ProfilePtr profile);

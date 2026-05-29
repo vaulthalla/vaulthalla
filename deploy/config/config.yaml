@@ -56,6 +56,20 @@ sync:
   event_audit_max_entries: 5000           # Max number of database events/conflicts to retain, minimum 1000
 
 
+# === 💸 PRICING ESTIMATES ===
+# Uses Vaulthalla's storage-rates API for S3 request/tier-aware estimates.
+# Pricing is report-only and fail-open; sync does not enforce price budgets.
+pricing:
+  storage_rates_api:
+    enabled: true
+    base_url: https://storage-rates-api.vaulthalla.cloud
+    timeout_ms: 5000
+    cache_ttl_seconds: 86400
+    fail_open: true
+    signature_warning_only: true
+    signature_public_key_path:
+
+
 # === ⚙️ SERVICE SETTINGS ===
 # Service settings manage background tasks like database sweeping.
 services:

@@ -19,6 +19,7 @@
 #include "rbac/resolver/vault/all.hpp"
 #include "storage/CloudEngine.hpp"
 #include "storage/ScopedS3RequestBudget.hpp"
+#include "storage/s3/pricing/PriceEstimate.hpp"
 #include "fs/model/File.hpp"
 #include "sync/model/Event.hpp"
 #include "sync/model/RemoteManifest.hpp"
@@ -811,6 +812,8 @@ static CommandResult handle_vault_sync_dry_run(const CommandCall& call) {
     const auto cloud = std::static_pointer_cast<CloudEngine>(engine);
     const auto policy = cloud->remote_policy();
     const bool refreshIndex = hasFlag(call, std::vector<std::string>{"refresh-index", "refresh-remote-index"});
+    const bool refreshPricing = hasFlag(call, "refresh-pricing");
+    const bool noPricing = hasFlag(call, "no-pricing");
 
     if (refreshIndex) {
         using ActionPerm = rbac::permission::vault::sync::SyncActionPermissions;
@@ -846,12 +849,18 @@ static CommandResult handle_vault_sync_dry_run(const CommandCall& call) {
         const auto plan = vh::sync::Planner::build(ctx, policy, &planningNotes);
         auto estimate = vh::sync::Planner::estimateS3Cost(plan);
         estimate.archive_tier_downloads_skipped = planningNotes.archive_tier_downloads_skipped;
+        const auto priceEstimate = vh::storage::s3::pricing::estimatePlannedS3Sync(
+            *cloud,
+            estimate,
+            {.force_refresh = refreshPricing, .disabled = noPricing});
 
         const auto metrics = s3Budget.metrics();
         std::ostringstream out;
         out << "S3 sync dry-run for '" << engine->vault->name << "' (ID: " << engine->vault->id << ")\n";
         if (refreshIndex)
             out << "  Note: --refresh-index may refresh the remote index manifest before planning.\n";
+        if (refreshPricing)
+            out << "  Note: --refresh-pricing may refresh cached storage-rate profile data before estimating.\n";
         out << "  Plan actions:\n"
             << "    Upload: " << countPlanActions(plan, ActionType::Upload) << "\n"
             << "    Download: " << countPlanActions(plan, ActionType::Download) << "\n"
@@ -863,6 +872,7 @@ static CommandResult handle_vault_sync_dry_run(const CommandCall& call) {
             << "    HEAD: " << metrics.head_requests << "\n"
             << "    GET: " << metrics.get_requests << "\n"
             << "    LIST: " << metrics.list_requests << "\n"
+            << vh::storage::s3::pricing::formatPriceEstimateForDryRun(priceEstimate) << "\n"
             << remoteIndexSummaryString(summary, policy->max_remote_index_age);
 
         return ok(out.str());

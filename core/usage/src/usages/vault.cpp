@@ -95,6 +95,12 @@ static const auto allowListScanFlag = Flag::WithAliases("allow_list_scan",
 static const auto refreshIndexFlag = Flag::WithAliases("refresh_index",
                                                        "Refresh the remote index manifest before planning. Requires sync trigger permission and may issue S3 HEAD/GET requests.",
                                                        {"refresh-index", "refresh-remote-index"});
+static const auto refreshPricingFlag = Flag::WithAliases("refresh_pricing",
+                                                         "Refresh cached storage-rate profile and estimate data before pricing the dry-run.",
+                                                         {"refresh-pricing"});
+static const auto noPricingFlag = Flag::WithAliases("no_pricing",
+                                                    "Skip storage-rate price estimates for this dry-run.",
+                                                    {"no-pricing"});
 
 static const auto enableFlag = Flag::Alias("enable", "Enable the override (default)", "enable");
 static const auto disableFlag = Flag::Alias("disable", "Disable the override", "disable");
@@ -496,12 +502,14 @@ static std::shared_ptr<CommandUsage> sync_dry_run(const std::weak_ptr<CommandUsa
     cmd->description = "Estimate S3 request and byte pressure for the next sync plan without executing file changes using the local remote index.";
     cmd->positionals = {vaultPos};
     cmd->optional = {owner};
-    cmd->optional_flags = {refreshIndexFlag};
+    cmd->optional_flags = {refreshIndexFlag, refreshPricingFlag, noPricingFlag};
     cmd->examples = {
         {"vh vault sync dry-run 42",
          "Estimate S3 request counts, upload bytes, and body-download bytes for S3 vault 42 using the local remote index."},
         {"vh vault sync dry-run 42 --refresh-index",
-         "Refresh the remote index manifest before planning; this may issue S3 HEAD/GET requests and requires sync trigger permission."}
+         "Refresh the remote index manifest before planning; this may issue S3 HEAD/GET requests and requires sync trigger permission."},
+        {"vh vault sync dry-run 42 --refresh-pricing",
+         "Refresh cached storage-rate profile data before showing the optional price estimate."}
     };
     return cmd;
 }
