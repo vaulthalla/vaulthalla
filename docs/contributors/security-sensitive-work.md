@@ -1,3 +1,13 @@
+---
+title: Security-Sensitive Work
+description: Contributor guidance for auth, permissions, crypto, secrets, and privileged host changes.
+order: 940
+status: published
+tags:
+  - contributors
+  - security
+---
+
 # Security-Sensitive Work
 
 If your change touches auth, permissions, crypto, secrets, local trust boundaries, or privileged host behavior, slow down and read this first.

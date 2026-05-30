@@ -6,6 +6,7 @@
 - `web/`: Next.js app router client using websocket commands + preview/auth middleware.
 - `deploy/`: runtime config, SQL schema/migrations, systemd templates, env example.
 - `debian/`: Debian packaging for single package `vaulthalla`.
+- `docs/`: Payload Markdown Docs source for operator/end-user documentation and contributor guides.
 - `tools/release/`: version management, deterministic changelog pipeline, AI draft stages, Debian packaging orchestration.
 - `bin/`: install, uninstall, test install flows and system setup scripts.
 - `.github/`: composite actions and workflows for core/web build+test and release package.
@@ -62,3 +63,14 @@ python3 -m tools.release build-deb --dry-run
 - State: `/var/lib/vaulthalla`
 - Logs: `/var/log/vaulthalla`
 - SQL assets: `/usr/share/vaulthalla/psql` (installed)
+
+## Documentation Surface
+
+`docs/` is the source tree for consumer/operator documentation. New docs should prioritize how to install, configure, operate, back up, recover, troubleshoot, and use Vaulthalla. Keep implementation explanations short unless they directly affect operator decisions.
+
+Docs are authored with Payload Markdown Docs conventions:
+
+- YAML frontmatter on each page using supported fields only.
+- Root-relative route links such as `/vaults/sync`.
+- No generated AI export files in the repo root.
+- Use `.codex/context/consumer-docs.md` for current coverage and validation notes.

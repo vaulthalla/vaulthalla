@@ -1,3 +1,13 @@
+---
+title: Contributor Guide
+navTitle: Contributors
+description: Contributor-facing entry point for Vaulthalla development.
+order: 900
+status: published
+tags:
+  - contributors
+---
+
 # Contributor Guide
 
 Vaulthalla is Linux-native infrastructure software. It includes a C++ core daemon, a FUSE filesystem surface, a local CLI control socket and service, a packaged Next.js admin client, PostgreSQL-backed state, systemd units, Debian lifecycle scripts, and release tooling.
@@ -8,11 +18,11 @@ Small, scoped PRs are much easier to review and merge than giant mystery rewrite
 
 ## Start Here
 
-1. Read [Contribution Boundaries](./contribution-boundaries.md) before choosing work.
-2. Skim the [Architecture Map](./architecture-map.md) so you know which subsystem you are touching.
+1. Read [Contribution Boundaries](/contributors/contribution-boundaries) before choosing work.
+2. Skim the [Architecture Map](/contributors/architecture-map) so you know which subsystem you are touching.
 3. Use the GitHub Projects roadmap linked from the repository or organization page as the default task source for early contributions.
-4. Follow [Development Setup](./development-setup.md) for your environment.
-5. Run the checks in the [Validation Guide](./validation-guide.md) before you open a PR.
+4. Follow [Development Setup](/contributors/development-setup) for your environment.
+5. Run the checks in the [Validation Guide](/contributors/validation-guide) before you open a PR.
 
 When in doubt, open an issue first.
 
@@ -43,13 +53,13 @@ Contributors with a proven track record, or with a strong specialized skill set 
 
 ## Quick Links
 
-- [Contribution Boundaries](./contribution-boundaries.md)
-- [Architecture Map](./architecture-map.md)
-- [Development Setup](./development-setup.md)
-- [Validation Guide](./validation-guide.md)
-- [Packaging and Release](./packaging-and-release.md)
-- [Security-Sensitive Work](./security-sensitive-work.md)
-- [AI-Assisted Contributions](./ai-assisted-contributions.md)
+- [Contribution Boundaries](/contributors/contribution-boundaries)
+- [Architecture Map](/contributors/architecture-map)
+- [Development Setup](/contributors/development-setup)
+- [Validation Guide](/contributors/validation-guide)
+- [Packaging and Release](/contributors/packaging-and-release)
+- [Security-Sensitive Work](/contributors/security-sensitive-work)
+- [AI-Assisted Contributions](/contributors/ai-assisted-contributions)
 
 ## Boundary Summary
 
@@ -62,7 +72,7 @@ Vaulthalla work generally falls into four buckets:
 | Maintainer-guided areas | Core correctness, data safety, lifecycle, or architecture-sensitive work. Design discussion comes first. |
 | Security-sensitive or restricted work | Auth, permissions, crypto, secret handling, trust boundaries, or vulnerability work. Some of this should not start as a public PR. |
 
-The full breakdown lives in [Contribution Boundaries](./contribution-boundaries.md).
+The full breakdown lives in [Contribution Boundaries](/contributors/contribution-boundaries).
 
 ## PR Expectations
 
@@ -80,13 +90,13 @@ AI assistance is allowed.
 
 AI abdication is not.
 
-If you use AI, you still own the patch. Read [AI-Assisted Contributions](./ai-assisted-contributions.md) before sending generated changes into the repo.
+If you use AI, you still own the patch. Read [AI-Assisted Contributions](/contributors/ai-assisted-contributions) before sending generated changes into the repo.
 
 ## Validation
 
 Vaulthalla contributors are expected to validate changes honestly. Some work can be checked quickly. Some work needs a real Linux environment with FUSE, PostgreSQL, systemd, and package lifecycle behavior in play.
 
-Use the [Validation Guide](./validation-guide.md). If you could not run the meaningful checks for your change, say so clearly in the PR.
+Use the [Validation Guide](/contributors/validation-guide). If you could not run the meaningful checks for your change, say so clearly in the PR.
 
 ## Ownership, Trust, And Maintainer Path
 

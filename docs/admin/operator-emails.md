@@ -1,6 +1,20 @@
+---
+title: Operator Emails
+description: Configure and troubleshoot Resend or AWS SES operator notifications.
+order: 10
+status: published
+tags:
+  - admin
+  - email
+  - operations
+---
+
 # Operator Emails
 
 Vaulthalla can send operator email through Resend or AWS SES. The runtime uses this channel for watchdog alerts, weekly digests, and security notifications.
+
+:::toc[On this page]{depth="3" theme="compact"}
+:::
 
 ## Configuration
 

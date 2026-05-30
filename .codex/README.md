@@ -6,6 +6,7 @@ This folder is the shared Codex operator toolkit for the entire `vaulthalla` mon
 - `web/`: Next.js web client
 - `deploy/`: config templates, postgres schema SQL, systemd unit templates
 - `debian/`: Debian packaging for the single `vaulthalla` package
+- `docs/`: Payload Markdown Docs source for operator/end-user documentation
 - `tools/release/`: semantic version + release/changelog automation
 - `bin/`: install/uninstall/test automation scripts
 
@@ -22,6 +23,9 @@ bash .codex/scripts/verify.sh core
 bash .codex/scripts/verify.sh integration  # destructive clean integration path
 # optional strict lint gate:
 VERIFY_STRICT_LINT=1 bash .codex/scripts/verify.sh web
+# docs package validation when tooling is installed:
+pmdocs validate --source main-docs
+python3 .agents/skills/payload-markdown/scripts/check_payload_markdown_doc.py docs/**/*.md
 ```
 
 ## Layout
@@ -33,6 +37,7 @@ VERIFY_STRICT_LINT=1 bash .codex/scripts/verify.sh web
 - `.codex/scripts/changed.sh`: change-aware checks for web/release surfaces.
 - `.codex/scripts/snapshot.sh`: writes task handoff snapshot to `.codex/context/`.
 - `.codex/context/`: durable architecture and workflow context extracted from source files.
+- `docs/`: authored user/operator docs; see `.codex/context/consumer-docs.md` before changing documentation.
 - `.codex/checklists/`: delivery checklists for feature/bugfix/review flows.
 - `.codex/prompts/`: reusable high-signal prompts for scoping and handoff.
 - `.codex/templates/`: markdown templates for plans and PR summaries.

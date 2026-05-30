@@ -1,4 +1,14 @@
-## AI-Assisted Contributions
+---
+title: AI-Assisted Contributions
+description: Standards for contributors using AI tools on Vaulthalla changes.
+order: 970
+status: published
+tags:
+  - contributors
+  - ai
+---
+
+# AI-Assisted Contributions
 
 AI-assisted development is allowed in Vaulthalla.
 
@@ -81,6 +91,6 @@ The agent can help. It cannot be the maintainer.
 
 See also:
 
-- [Contributor Guide](./README.md)
-- [Contribution Boundaries](./contribution-boundaries.md)
-- [Validation Guide](./validation-guide.md)
+- [Contributor Guide](/contributors/README)
+- [Contribution Boundaries](/contributors/contribution-boundaries)
+- [Validation Guide](/contributors/validation-guide)

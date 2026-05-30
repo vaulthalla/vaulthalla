@@ -1,3 +1,13 @@
+---
+title: Validation Guide
+description: Contributor validation guidance for Vaulthalla changes.
+order: 960
+status: published
+tags:
+  - contributors
+  - validation
+---
+
 # Validation Guide
 
 This is the "what should I run before opening a PR?" guide.
@@ -148,7 +158,7 @@ Use a disposable PostgreSQL-backed environment when you can. Document migration 
 
 ## Security-Sensitive Changes
 
-Before you even get to validation, read [Security-Sensitive Work](./security-sensitive-work.md).
+Before you even get to validation, read [Security-Sensitive Work](/contributors/security-sensitive-work).
 
 If the change was approved for public work, do not rely on partial validation. Sensitive changes should include:
 

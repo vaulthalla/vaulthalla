@@ -1,3 +1,12 @@
+---
+title: Contribution Boundaries
+description: Contribution policy map for safe Vaulthalla changes.
+order: 910
+status: published
+tags:
+  - contributors
+---
+
 # Contribution Boundaries
 
 This guide is the policy map for where contributors can move quickly, where discussion should happen first, and where the maintainer needs to stay in the loop.
@@ -45,7 +54,7 @@ Do not show up with a giant uncoordinated rewrite in these areas and expect it t
 
 ### 4. Security-sensitive or restricted work
 
-If the work touches auth bypasses, privilege escalation, RBAC, crypto, secrets, local trust boundaries, TPM/swtpm, or privileged package behavior, read [Security-Sensitive Work](./security-sensitive-work.md) first.
+If the work touches auth bypasses, privilege escalation, RBAC, crypto, secrets, local trust boundaries, TPM/swtpm, or privileged package behavior, read [Security-Sensitive Work](/contributors/security-sensitive-work) first.
 
 Some of that work should begin as a private report, not a public PR.
 

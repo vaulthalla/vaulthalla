@@ -1,3 +1,13 @@
+---
+title: Packaging And Release
+description: Contributor guidance for Debian packaging, install lifecycle, and release tooling.
+order: 950
+status: published
+tags:
+  - contributors
+  - packaging
+---
+
 # Packaging And Release
 
 This guide is for contributors touching Debian packaging, lifecycle scripts, systemd wiring, install helpers, release tooling, or publication-related code.
@@ -14,9 +24,9 @@ Contributors can help with packaging and release work, but package lifecycle cha
 
 Read this together with:
 
-- [Contribution Boundaries](./contribution-boundaries.md)
-- [Validation Guide](./validation-guide.md)
-- [Security-Sensitive Work](./security-sensitive-work.md)
+- [Contribution Boundaries](/contributors/contribution-boundaries)
+- [Validation Guide](/contributors/validation-guide)
+- [Security-Sensitive Work](/contributors/security-sensitive-work)
 
 ## Where Packaging Lives
 

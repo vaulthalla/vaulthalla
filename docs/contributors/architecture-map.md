@@ -1,3 +1,13 @@
+---
+title: Architecture Map
+description: Contributor-facing map of Vaulthalla subsystems and validation expectations.
+order: 920
+status: published
+tags:
+  - contributors
+  - architecture
+---
+
 # Architecture Map
 
 This is the contributor-facing map of the repo. It is not a full internal design document. Its job is to help you answer five questions quickly:
@@ -74,8 +84,8 @@ The Debian maintainer scripts in `debian/postinst`, `debian/prerm`, and `debian/
 
 If you are working on:
 
-- docs and onboarding: start with [Contribution Boundaries](./contribution-boundaries.md) and [Validation Guide](./validation-guide.md)
+- docs and onboarding: start with [Contribution Boundaries](/contributors/contribution-boundaries) and [Validation Guide](/contributors/validation-guide)
 - web/admin polish: read `web/src/app/*`, `web/src/components/*`, and `web/src/stores/*`
 - CLI help and examples: read `core/usage/*` and `core/main/cli.cpp`
-- packaging: read [Packaging and Release](./packaging-and-release.md), then `debian/*` and `deploy/systemd/*`
-- security-sensitive work: read [Security-Sensitive Work](./security-sensitive-work.md) first
+- packaging: read [Packaging and Release](/contributors/packaging-and-release), then `debian/*` and `deploy/systemd/*`
+- security-sensitive work: read [Security-Sensitive Work](/contributors/security-sensitive-work) first

@@ -1,8 +1,23 @@
+---
+title: S3 Cost Guardrails Runbook
+description: Operate S3 and R2 sync safely with request budgets, inventory imports, event ingestion, dry-runs, and reconcile windows.
+order: 20
+status: published
+tags:
+  - admin
+  - cost-control
+  - s3
+  - r2
+---
+
 # S3 Cost Guardrails Runbook
 
 Vaulthalla S3 vaults apply a non-unlimited request budget by default. New S3
 sync policies start with the `balanced` preset unless an operator changes the
 policy with `vh vault sync set`.
+
+:::toc[On this page]{depth="3" theme="compact"}
+:::
 
 ## Budget Presets
 

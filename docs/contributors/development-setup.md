@@ -1,3 +1,13 @@
+---
+title: Development Setup
+description: Local development setup for Vaulthalla contributors.
+order: 930
+status: published
+tags:
+  - contributors
+  - development
+---
+
 # Development Setup
 
 This guide is for contributors getting from clone to useful local work.
@@ -36,7 +46,7 @@ bash .codex/scripts/index.sh
 
 ### Streamlined local install via `Makefile`
 
-If you want the repo's higher-level entrypoints instead of driving the scripts manually, the top-level [`Makefile`](../../Makefile) is the streamlined route.
+If you want the repo's higher-level entrypoints instead of driving the scripts manually, the top-level `Makefile` is the streamlined route.
 
 Common targets:
 
@@ -266,6 +276,6 @@ If you changed FUSE, packaging, auth/session, systemd, PostgreSQL lifecycle, or 
 
 ## Where To Go Next
 
-- Read [Contribution Boundaries](./contribution-boundaries.md) before picking sharp work.
-- Use the [Architecture Map](./architecture-map.md) to find the right subsystem.
-- Follow the [Validation Guide](./validation-guide.md) before opening a PR.
+- Read [Contribution Boundaries](/contributors/contribution-boundaries) before picking sharp work.
+- Use the [Architecture Map](/contributors/architecture-map) to find the right subsystem.
+- Follow the [Validation Guide](/contributors/validation-guide) before opening a PR.
