@@ -1341,6 +1341,44 @@ TEST(S3CostSafetyTest, S3VaultDbRoundTripsStorageTierId) {
     EXPECT_FALSE(cleared->storage_tier_id);
 }
 
+TEST(S3CostSafetyTest, StorageManagerUpdateRemovesOldEnginePathEntry) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed storage manager update test due to missing environment variables.";
+
+    auto fake = std::make_shared<CountingS3Controller>();
+    const auto vaultId = seedDryRunS3VaultForDbTest(uniqueSuffix("manager_update_path"), fake);
+    const auto manager = vh::runtime::Deps::get().storageManager;
+
+    const auto originalEngine = manager->getEngine(vaultId);
+    ASSERT_TRUE(originalEngine);
+    ASSERT_TRUE(originalEngine->paths);
+    const auto oldPath = originalEngine->paths->absRelToRoot(
+        originalEngine->paths->vaultRoot,
+        vh::fs::model::PathType::FUSE_ROOT);
+
+    auto vault = vh::db::query::vault::Vault::getVault(vaultId);
+    ASSERT_TRUE(vault);
+    vault->name += " renamed";
+    manager->updateVault(vault);
+
+    const auto refreshedEngine = manager->getEngine(vaultId);
+    ASSERT_TRUE(refreshedEngine);
+    ASSERT_TRUE(refreshedEngine->paths);
+    const auto newPath = refreshedEngine->paths->absRelToRoot(
+        refreshedEngine->paths->vaultRoot,
+        vh::fs::model::PathType::FUSE_ROOT);
+
+    EXPECT_NE(oldPath, newPath);
+    EXPECT_NE(originalEngine.get(), refreshedEngine.get());
+
+    const auto engines = manager->getEngines();
+    const auto matchingVaults = std::count_if(engines.begin(), engines.end(), [vaultId](const auto& engine) {
+        return engine && engine->vault && engine->vault->id == vaultId;
+    });
+    EXPECT_EQ(1, matchingVaults);
+    EXPECT_EQ(nullptr, manager->resolveStorageEngine(oldPath));
+    EXPECT_EQ(refreshedEngine, manager->resolveStorageEngine(newPath));
+}
+
 TEST(S3CostSafetyTest, IndexRemoteOnlyPreservesEncryptionMetadataInLocalRow) {
     if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed remote index-only test due to missing environment variables.";
 
