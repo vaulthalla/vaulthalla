@@ -2,7 +2,14 @@
 
 import { useApiKeyStore } from '@/stores/apiKeyStore'
 import { useVaultStore } from '@/stores/vaultStore'
-import { Controller, useForm, useWatch } from 'react-hook-form'
+import {
+  Controller,
+  useForm,
+  useWatch,
+  type Control,
+  type UseFormRegister,
+  type UseFormSetValue,
+} from 'react-hook-form'
 import * as motion from 'motion/react-client'
 import { Button } from '@/components/Button'
 import {
@@ -232,6 +239,147 @@ const buildSyncPayload = (
   }
 }
 
+const BudgetInput = ({
+  name,
+  label,
+  register,
+}: {
+  name: BudgetKey
+  label: string
+  register: UseFormRegister<VaultFormValues>
+}) => (
+  <div>
+    <label className="block text-xs font-medium text-white/70">{label}</label>
+    <input
+      type="number"
+      min={0}
+      placeholder="Unlimited"
+      {...register(`sync.s3_request_budget.${name}`, { setValueAs: nullableNumber })}
+      className="mt-1 w-full rounded border p-2"
+    />
+  </div>
+)
+
+const BudgetPreview = ({ budget }: { budget: S3RequestBudget }) => (
+  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+    {BUDGET_FIELDS.map(field => (
+      <div key={field.key} className="rounded border border-white/10 bg-white/[0.03] px-3 py-2 text-left">
+        <div className="text-[11px] font-medium text-white/45 uppercase">{field.label}</div>
+        <div className="mt-1 text-sm text-white/85">{formatBudgetValue(budget[field.key])}</div>
+      </div>
+    ))}
+  </div>
+)
+
+const S3Guardrails = ({
+  control,
+  register,
+  setValue,
+}: {
+  control: Control<VaultFormValues>
+  register: UseFormRegister<VaultFormValues>
+  setValue: UseFormSetValue<VaultFormValues>
+}) => {
+  const budgetPreset = useWatch({ control, name: 'budget_preset' }) ?? 'balanced'
+  const previewBudget = budgetPreset === 'custom' ? null : S3_BUDGET_PRESETS[budgetPreset]
+
+  useEffect(() => {
+    if (budgetPreset === 'custom') return
+    const budget = S3_BUDGET_PRESETS[budgetPreset]
+    setValue('sync.s3_request_budget.list_requests', budget.list_requests)
+    setValue('sync.s3_request_budget.head_requests', budget.head_requests)
+    setValue('sync.s3_request_budget.get_requests', budget.get_requests)
+    setValue('sync.s3_request_budget.put_requests', budget.put_requests)
+    setValue('sync.s3_request_budget.copy_requests', budget.copy_requests)
+    setValue('sync.s3_request_budget.delete_requests', budget.delete_requests)
+    setValue('sync.s3_request_budget.downloaded_bytes', budget.downloaded_bytes)
+  }, [budgetPreset, setValue])
+
+  return (
+    <section id="s3-guardrails" className="border-t border-white/10 pt-4 text-left">
+      <div className="flex flex-col gap-1">
+        <h2 className="text-base font-semibold">Cost Controls</h2>
+        <p className="text-sm text-white/50">S3 request and index guardrails for this vault.</p>
+      </div>
+
+      <div className="mt-4 grid gap-4 md:grid-cols-2">
+        <div>
+          <label className="block text-sm font-medium">Budget preset</label>
+          <select {...register('budget_preset')} className="mt-1 w-full rounded border p-2">
+            <option value="conservative">Conservative</option>
+            <option value="balanced">Balanced</option>
+            <option value="bulk">Bulk</option>
+            <option value="unlimited">Unlimited</option>
+            <option value="custom">Custom</option>
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium">Sync interval (seconds)</label>
+          <input
+            type="number"
+            min={1}
+            {...register('sync.interval', {
+              setValueAs: value => normalizeNumber(value, DEFAULT_SYNC_POLICY.interval),
+            })}
+            className="mt-1 w-full rounded border p-2"
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium">Max remote index age (seconds)</label>
+          <input
+            type="number"
+            min={1}
+            placeholder="Unlimited"
+            {...register('sync.max_remote_index_age_seconds', { setValueAs: nullableNumber })}
+            className="mt-1 w-full rounded border p-2"
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium">Strategy</label>
+          <select {...register('sync.strategy')} className="mt-1 w-full rounded border p-2">
+            <option value="cache">Cache</option>
+            <option value="sync">Sync</option>
+            <option value="mirror">Mirror</option>
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium">Conflict policy</label>
+          <select {...register('sync.conflict_policy')} className="mt-1 w-full rounded border p-2">
+            <option value="keep_local">Keep local</option>
+            <option value="keep_remote">Keep remote</option>
+            <option value="keep_newest">Keep newest</option>
+            <option value="ask">Ask</option>
+          </select>
+        </div>
+
+        <label className="flex items-center gap-2 self-end text-sm font-medium">
+          <input type="checkbox" {...register('sync.enabled')} className="h-4 w-4" />
+          Sync enabled
+        </label>
+      </div>
+
+      <div className="mt-4">
+        <div className="mb-2 text-sm font-medium">Request limits</div>
+        {budgetPreset === 'custom' ?
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {BUDGET_FIELDS.map(field => (
+              <BudgetInput key={field.key} name={field.key} label={field.label} register={register} />
+            ))}
+          </div>
+        : <details className="rounded border border-white/10 bg-white/[0.03] p-3">
+            <summary className="cursor-pointer text-sm text-white/75">Preset request limits</summary>
+            <div className="mt-3">{previewBudget && <BudgetPreview budget={previewBudget} />}</div>
+          </details>
+        }
+      </div>
+    </section>
+  )
+}
+
 const VaultForm = ({ initialValues }: { initialValues?: Partial<LocalDiskVault | S3Vault | Vault> }) => {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const router = useRouter()
@@ -250,7 +398,6 @@ const VaultForm = ({ initialValues }: { initialValues?: Partial<LocalDiskVault |
   } = useForm<VaultFormValues>({ defaultValues: defaults })
 
   const type = useWatch({ control, name: 'type' }) ?? 'local'
-  const budgetPreset = useWatch({ control, name: 'budget_preset' }) ?? 'balanced'
   const selectedApiKeyId = useWatch({ control, name: 'api_key_id' })
   const selectedApiKey = apiKeys.find(k => k.api_key_id === Number(selectedApiKeyId))
   const storageTierOptions = storageTierOptionsForProvider(selectedApiKey?.provider)
@@ -259,18 +406,6 @@ const VaultForm = ({ initialValues }: { initialValues?: Partial<LocalDiskVault |
   useEffect(() => {
     if (type === 's3' && providerKnown && !storageTierOptions) setValue('storage_tier_id', null)
   }, [providerKnown, setValue, storageTierOptions, type])
-
-  useEffect(() => {
-    if (budgetPreset === 'custom') return
-    const budget = S3_BUDGET_PRESETS[budgetPreset]
-    setValue('sync.s3_request_budget.list_requests', budget.list_requests)
-    setValue('sync.s3_request_budget.head_requests', budget.head_requests)
-    setValue('sync.s3_request_budget.get_requests', budget.get_requests)
-    setValue('sync.s3_request_budget.put_requests', budget.put_requests)
-    setValue('sync.s3_request_budget.copy_requests', budget.copy_requests)
-    setValue('sync.s3_request_budget.delete_requests', budget.delete_requests)
-    setValue('sync.s3_request_budget.downloaded_bytes', budget.downloaded_bytes)
-  }, [budgetPreset, setValue])
 
   const onSubmit = async (data: VaultFormValues) => {
     setIsSubmitting(true)
@@ -338,119 +473,6 @@ const VaultForm = ({ initialValues }: { initialValues?: Partial<LocalDiskVault |
         )}
       </motion.div>
     )
-
-  const BudgetInput = ({ name, label }: { name: BudgetKey; label: string }) => (
-    <div>
-      <label className="block text-xs font-medium text-white/70">{label}</label>
-      <input
-        type="number"
-        min={0}
-        placeholder="Unlimited"
-        {...register(`sync.s3_request_budget.${name}`, { setValueAs: nullableNumber })}
-        className="mt-1 w-full rounded border p-2"
-      />
-    </div>
-  )
-
-  const BudgetPreview = ({ budget }: { budget: S3RequestBudget }) => (
-    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-      {BUDGET_FIELDS.map(field => (
-        <div key={field.key} className="rounded border border-white/10 bg-white/[0.03] px-3 py-2 text-left">
-          <div className="text-[11px] font-medium text-white/45 uppercase">{field.label}</div>
-          <div className="mt-1 text-sm text-white/85">{formatBudgetValue(budget[field.key])}</div>
-        </div>
-      ))}
-    </div>
-  )
-
-  const S3Guardrails = () => {
-    if (type !== 's3') return null
-    const previewBudget = budgetPreset === 'custom' ? null : S3_BUDGET_PRESETS[budgetPreset]
-
-    return (
-      <section id="s3-guardrails" className="border-t border-white/10 pt-4 text-left">
-        <div className="flex flex-col gap-1">
-          <h2 className="text-base font-semibold">Cost Controls</h2>
-          <p className="text-sm text-white/50">S3 request and index guardrails for this vault.</p>
-        </div>
-
-        <div className="mt-4 grid gap-4 md:grid-cols-2">
-          <div>
-            <label className="block text-sm font-medium">Budget preset</label>
-            <select {...register('budget_preset')} className="mt-1 w-full rounded border p-2">
-              <option value="conservative">Conservative</option>
-              <option value="balanced">Balanced</option>
-              <option value="bulk">Bulk</option>
-              <option value="unlimited">Unlimited</option>
-              <option value="custom">Custom</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium">Sync interval (seconds)</label>
-            <input
-              type="number"
-              min={1}
-              {...register('sync.interval', {
-                setValueAs: value => normalizeNumber(value, DEFAULT_SYNC_POLICY.interval),
-              })}
-              className="mt-1 w-full rounded border p-2"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium">Max remote index age (seconds)</label>
-            <input
-              type="number"
-              min={1}
-              placeholder="Unlimited"
-              {...register('sync.max_remote_index_age_seconds', { setValueAs: nullableNumber })}
-              className="mt-1 w-full rounded border p-2"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium">Strategy</label>
-            <select {...register('sync.strategy')} className="mt-1 w-full rounded border p-2">
-              <option value="cache">Cache</option>
-              <option value="sync">Sync</option>
-              <option value="mirror">Mirror</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium">Conflict policy</label>
-            <select {...register('sync.conflict_policy')} className="mt-1 w-full rounded border p-2">
-              <option value="keep_local">Keep local</option>
-              <option value="keep_remote">Keep remote</option>
-              <option value="keep_newest">Keep newest</option>
-              <option value="ask">Ask</option>
-            </select>
-          </div>
-
-          <label className="flex items-center gap-2 self-end text-sm font-medium">
-            <input type="checkbox" {...register('sync.enabled')} className="h-4 w-4" />
-            Sync enabled
-          </label>
-        </div>
-
-        <div className="mt-4">
-          <div className="mb-2 text-sm font-medium">Request limits</div>
-          {budgetPreset === 'custom' ?
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {BUDGET_FIELDS.map(field => (
-                <BudgetInput key={field.key} name={field.key} label={field.label} />
-              ))}
-            </div>
-          : <details className="rounded border border-white/10 bg-white/[0.03] p-3">
-              <summary className="cursor-pointer text-sm text-white/75">Preset request limits</summary>
-              <div className="mt-3">{previewBudget && <BudgetPreview budget={previewBudget} />}</div>
-            </details>
-          }
-        </div>
-      </section>
-    )
-  }
 
   const S3Inputs = () =>
     type === 's3' && (
@@ -530,7 +552,7 @@ const VaultForm = ({ initialValues }: { initialValues?: Partial<LocalDiskVault |
           Encrypt upstream objects
         </label>
 
-        <S3Guardrails />
+        <S3Guardrails control={control} register={register} setValue={setValue} />
       </motion.div>
     )
 
