@@ -8,7 +8,7 @@ interface VaultStore {
   vaults: Vault[]
   fetchVaults: () => Promise<void>
   addVault: (vaultPayload: WSCommandPayload<'storage.vault.add'>) => Promise<void>
-  updateVault: (payload: WSCommandPayload<'storage.vault.update'>) => Promise<void>
+  updateVault: (payload: WSCommandPayload<'storage.vault.update'>) => Promise<LocalDiskVault | S3Vault>
   removeVault: (payload: WSCommandPayload<'storage.vault.remove'>) => Promise<void>
   getVault: (payload: WSCommandPayload<'storage.vault.get'>) => Promise<LocalDiskVault | S3Vault | Vault>
   getLocalVault: () => Promise<LocalDiskVault | undefined>
@@ -36,8 +36,10 @@ export const useVaultStore = create<VaultStore>()(
       async updateVault(vault) {
         const sendCommand = useWebSocketStore.getState().sendCommand
         const response = await sendCommand('storage.vault.update', vault)
-        const updatedVault = response.vault
+        const refreshed = await sendCommand('storage.vault.get', { id: response.vault.id })
+        const updatedVault = refreshed.vault
         set(state => ({ vaults: state.vaults.map(v => (v.id === updatedVault.id ? updatedVault : v)) }))
+        return updatedVault
       },
 
       async removeVault({ id }) {
@@ -48,6 +50,12 @@ export const useVaultStore = create<VaultStore>()(
       async getVault({ id }) {
         const sendCommand = useWebSocketStore.getState().sendCommand
         const response = await sendCommand('storage.vault.get', { id })
+        set(state => ({
+          vaults:
+            state.vaults.some(v => v.id === response.vault.id) ?
+              state.vaults.map(v => (v.id === response.vault.id ? response.vault : v))
+            : [...state.vaults, response.vault],
+        }))
         return response.vault
       },
 

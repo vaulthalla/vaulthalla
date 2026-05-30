@@ -1,4 +1,4 @@
-import { LocalDiskVault, S3Vault, Vault } from '@/models/vaults'
+import { LocalDiskVault, RemoteSyncPolicy, S3Vault, Vault } from '@/models/vaults'
 import { VaultStats } from '@/models/stats/vaultStats'
 import { VaultActivity } from '@/models/stats/vaultActivity'
 import { VaultRecovery } from '@/models/stats/vaultRecovery'
@@ -111,7 +111,15 @@ export interface WebSocketCommandMap {
   'storage.vault.add': {
     payload:
       | { name: string; type: 'local'; mount_point: string }
-      | { name: string; type: 's3'; api_key_id: number; bucket: string; storage_tier_id?: string | null }
+      | {
+          name: string
+          type: 's3'
+          api_key_id: number
+          bucket: string
+          storage_tier_id?: string | null
+          encrypt_upstream?: boolean
+          sync?: RemoteSyncPolicy
+        }
     response: { vault: LocalDiskVault | S3Vault }
   }
 

@@ -136,6 +136,8 @@ const VaultHeroClient = ({ vault, rightSlot, usedBytes, totalBytes }: VaultHeroP
           </div>
           {rightSlot ?? null}
         </div>
+
+        {rightSlot && <div className="flex md:hidden">{rightSlot}</div>}
       </div>
     </motion.section>
   )

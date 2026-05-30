@@ -11,6 +11,9 @@
 #include "fs/model/file/Trashed.hpp"
 #include "identities/User.hpp"
 #include "protocols/shell/commands/vault.hpp"
+#include "protocols/ws/handler/vault/Vaults.hpp"
+#include "protocols/ws/Router.hpp"
+#include "protocols/ws/Session.hpp"
 #include "rbac/role/Admin.hpp"
 #include "runtime/Deps.hpp"
 #include "seed/include/init_db_tables.hpp"
@@ -504,6 +507,19 @@ std::shared_ptr<vh::identities::User> dryRunActor(
     return user;
 }
 
+std::shared_ptr<vh::protocols::ws::Session> superAdminWsSession() {
+    auto session = std::make_shared<vh::protocols::ws::Session>(
+        std::make_shared<vh::protocols::ws::Router>());
+    auto user = std::make_shared<vh::identities::User>();
+    user->id = 1;
+    user->name = "admin";
+    user->password_hash = "hash";
+    user->roles.admin = std::make_shared<vh::rbac::role::Admin>(
+        vh::rbac::role::Admin::SuperAdmin(user->id));
+    session->user = user;
+    return session;
+}
+
 vh::protocols::shell::CommandResult runDryRunCommand(
     const uint32_t vaultId,
     const std::shared_ptr<vh::identities::User>& user,
@@ -726,6 +742,63 @@ TEST(S3CostSafetyTest, MigrationDoesNotOverwriteCustomS3BudgetRows) {
     EXPECT_FALSE(policy->s3_request_budget.max_delete_requests.has_value());
     EXPECT_FALSE(policy->s3_request_budget.max_downloaded_bytes.has_value());
     EXPECT_EQ("custom", vh::sync::model::s3BudgetPresetName(policy->s3_request_budget));
+}
+
+TEST(S3CostSafetyTest, WsVaultGetAndUpdateRoundTripS3SyncBudget) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed websocket vault update test due to missing environment variables.";
+
+    auto fake = std::make_shared<CountingS3Controller>();
+    const auto vaultId = seedDryRunS3VaultForDbTest(uniqueSuffix("ws_budget"), fake);
+    const auto session = superAdminWsSession();
+
+    auto before = vh::protocols::ws::handler::Vaults::get({{"id", vaultId}}, session);
+    ASSERT_TRUE(before.contains("vault"));
+    ASSERT_TRUE(before["vault"].contains("sync"));
+    ASSERT_TRUE(before["vault"]["sync"].contains("s3_request_budget"));
+
+    auto payload = before["vault"];
+    payload["name"] = "ws-budget-updated-" + std::to_string(vaultId);
+    payload["sync"]["enabled"] = true;
+    payload["sync"]["interval"] = 120;
+    payload["sync"]["strategy"] = "sync";
+    payload["sync"]["conflict_policy"] = "keep_newest";
+    payload["sync"]["max_remote_index_age_seconds"] = 60;
+    payload["sync"]["s3_request_budget"] = {
+        {"list_requests", nullptr},
+        {"head_requests", 12},
+        {"get_requests", 42},
+        {"put_requests", 13},
+        {"copy_requests", 14},
+        {"delete_requests", 15},
+        {"downloaded_bytes", nullptr}
+    };
+
+    const auto update = vh::protocols::ws::handler::Vaults::update(payload, session);
+    ASSERT_TRUE(update.contains("vault"));
+    EXPECT_EQ(payload["name"].get<std::string>(), update["vault"]["name"].get<std::string>());
+
+    const auto persisted = loadRemotePolicyForDbTest(vaultId);
+    EXPECT_FALSE(persisted->s3_request_budget.max_list_requests.has_value());
+    ASSERT_TRUE(persisted->s3_request_budget.max_get_requests.has_value());
+    EXPECT_EQ(42u, *persisted->s3_request_budget.max_get_requests);
+    EXPECT_FALSE(persisted->s3_request_budget.max_downloaded_bytes.has_value());
+    EXPECT_EQ(120, persisted->interval.count());
+    EXPECT_EQ(vh::sync::model::RemotePolicy::Strategy::Sync, persisted->strategy);
+    EXPECT_EQ(vh::sync::model::RemotePolicy::ConflictPolicy::KeepNewest, persisted->conflict_policy);
+    ASSERT_TRUE(persisted->max_remote_index_age);
+    EXPECT_EQ(60, persisted->max_remote_index_age->count());
+
+    const auto after = vh::protocols::ws::handler::Vaults::get({{"id", vaultId}}, session);
+    EXPECT_TRUE(after["vault"]["sync"]["s3_request_budget"]["list_requests"].is_null());
+    EXPECT_EQ(42u, after["vault"]["sync"]["s3_request_budget"]["get_requests"].get<uint32_t>());
+    EXPECT_TRUE(after["vault"]["sync"]["s3_request_budget"]["downloaded_bytes"].is_null());
+    EXPECT_EQ(60, after["vault"]["sync"]["max_remote_index_age_seconds"].get<int>());
+
+    const auto engine = std::static_pointer_cast<vh::storage::CloudEngine>(
+        vh::runtime::Deps::get().storageManager->getEngine(vaultId));
+    ASSERT_TRUE(engine);
+    ASSERT_TRUE(engine->remote_policy()->s3_request_budget.max_get_requests);
+    EXPECT_EQ(42u, *engine->remote_policy()->s3_request_budget.max_get_requests);
 }
 
 TEST(S3CostSafetyTest, DryRunViewOnlyUsesFreshLocalIndexWithoutS3Refresh) {
