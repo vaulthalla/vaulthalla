@@ -1,13 +1,43 @@
 from __future__ import annotations
 
+import subprocess
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from tools.release.changelog.context_builder import build_release_context
 from tools.release.changelog.git_collect import get_commits_since_tag, get_previous_release_tag_before
 from tools.release.changelog.models import CommitInfo
 from tools.release.version.models import Version
+
+
+def _git(repo: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise AssertionError(f"git {' '.join(args)} failed: {result.stderr}")
+    return result.stdout
+
+
+def _init_git_repo(repo: Path) -> Path:
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "release-tests@example.com")
+    _git(repo, "config", "user.name", "Release Tests")
+    return repo
+
+
+def _commit_file(repo: Path, relative_path: str, content: str, message: str) -> None:
+    target = repo / relative_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+    _git(repo, "add", relative_path)
+    _git(repo, "commit", "-q", "-m", message)
 
 
 class ContextBuilderTests(unittest.TestCase):
@@ -69,32 +99,22 @@ class ContextBuilderTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "current release tag"):
                 _ = build_release_context(version="1.4.0", repo_root=".")
 
-    def test_explicit_current_release_tag_checkpoint_warns_without_default_guard(self) -> None:
-        with (
-            patch("tools.release.changelog.context_builder.get_latest_tag", return_value="v1.4.0"),
-            patch("tools.release.changelog.context_builder.get_head_sha", return_value="abc123"),
-            patch("tools.release.changelog.context_builder.get_commits_since_tag", return_value=[]),
-            patch("tools.release.changelog.context_builder.get_release_file_stats", return_value={}),
-            patch("tools.release.changelog.context_builder.extract_relevant_snippets", return_value={}),
-        ):
-            context = build_release_context(version="1.4.0", repo_root=".", previous_tag="v1.4.0")
+    def test_explicit_current_release_tag_checkpoint_fails(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Explicit changelog checkpoint equals the current release tag"):
+            _ = build_release_context(version="1.4.0", repo_root=".", previous_tag="v1.4.0")
 
-        self.assertEqual(context.previous_tag, "v1.4.0")
-        self.assertTrue(context.explicit_previous_tag)
-        self.assertTrue(context.cross_cutting_notes)
-        self.assertIn("Explicit changelog checkpoint points at the current release tag", context.cross_cutting_notes[0])
-
-    def test_patch_release_defaults_to_previous_release_before_line_base(self) -> None:
+    def test_patch_release_defaults_to_nearest_lower_release(self) -> None:
         with (
             patch("tools.release.changelog.context_builder.get_latest_tag", return_value="v0.34.1"),
-            patch("tools.release.changelog.context_builder.get_previous_release_tag_before", return_value="v0.33.0"),
+            patch("tools.release.changelog.context_builder.get_previous_release_tag_before", return_value="v0.34.1") as lower_before,
             patch("tools.release.changelog.context_builder.get_head_sha", return_value="abc123"),
             patch("tools.release.changelog.context_builder.get_commits_since_tag", return_value=[]),
             patch("tools.release.changelog.context_builder.get_release_file_stats", return_value={}),
             patch("tools.release.changelog.context_builder.extract_relevant_snippets", return_value={}),
         ):
             context = build_release_context(version="0.34.4", repo_root=".")
-        self.assertEqual(context.previous_tag, "v0.33.0")
+        self.assertEqual(context.previous_tag, "v0.34.1")
+        lower_before.assert_called_once_with(Path(".").resolve(), Version(0, 34, 4))
 
     def test_non_patch_release_defaults_to_previous_lower_release_tag(self) -> None:
         with (
@@ -161,6 +181,71 @@ class ContextBuilderTests(unittest.TestCase):
         ):
             context = build_release_context(version="0.34.2", repo_root=".")
         self.assertEqual([commit.sha for commit in context.commits], ["newest", "older"])
+
+    def test_tag_triggered_patch_release_uses_previous_patch_tag_in_temp_repo(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo = _init_git_repo(Path(temp_dir))
+            _commit_file(repo, "VERSION", "1.5.0\n", "release 1.5.0")
+            _git(repo, "tag", "v1.5.0")
+            _commit_file(repo, "tools/release/changelog/context_builder.py", "print('1.5.1')\n", "release 1.5.1")
+            _git(repo, "tag", "v1.5.1")
+
+            context = build_release_context(version="1.5.1", repo_root=repo)
+
+        self.assertEqual(context.previous_tag, "v1.5.0")
+        self.assertTrue(context.skipped_current_release_tag)
+        self.assertEqual(context.commit_count, 1)
+
+    def test_tag_triggered_minor_release_uses_nearest_lower_semver_tag_in_temp_repo(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo = _init_git_repo(Path(temp_dir))
+            _commit_file(repo, "VERSION", "1.5.1\n", "release 1.5.1")
+            _git(repo, "tag", "v1.5.1")
+            _commit_file(repo, "tools/release/changelog/context_builder.py", "print('1.6.0')\n", "release 1.6.0")
+            _git(repo, "tag", "v1.6.0")
+
+            context = build_release_context(version="1.6.0", repo_root=repo)
+
+        self.assertEqual(context.previous_tag, "v1.5.1")
+        self.assertTrue(context.skipped_current_release_tag)
+        self.assertEqual(context.commit_count, 1)
+
+    def test_explicit_since_tag_override_is_respected_in_temp_repo(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo = _init_git_repo(Path(temp_dir))
+            _commit_file(repo, "VERSION", "1.4.0\n", "release 1.4.0")
+            _git(repo, "tag", "v1.4.0")
+            _commit_file(repo, "VERSION", "1.5.0\n", "release 1.5.0")
+            _git(repo, "tag", "v1.5.0")
+            _commit_file(repo, "tools/release/changelog/context_builder.py", "print('1.6.0')\n", "release 1.6.0")
+            _git(repo, "tag", "v1.6.0")
+
+            context = build_release_context(version="1.6.0", repo_root=repo, previous_tag="v1.4.0")
+
+        self.assertEqual(context.previous_tag, "v1.4.0")
+        self.assertTrue(context.explicit_previous_tag)
+        self.assertGreaterEqual(context.commit_count, 2)
+
+    def test_explicit_since_tag_equal_current_tag_fails_in_temp_repo(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo = _init_git_repo(Path(temp_dir))
+            _commit_file(repo, "VERSION", "1.5.1\n", "release 1.5.1")
+            _git(repo, "tag", "v1.5.1")
+
+            with self.assertRaisesRegex(ValueError, "Explicit changelog checkpoint equals the current release tag"):
+                _ = build_release_context(version="1.5.1", repo_root=repo, previous_tag="v1.5.1")
+
+    def test_no_previous_tag_for_current_release_tag_does_not_crash_in_temp_repo(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo = _init_git_repo(Path(temp_dir))
+            _commit_file(repo, "VERSION", "2.0.0\n", "release 2.0.0")
+            _git(repo, "tag", "v2.0.0")
+
+            context = build_release_context(version="2.0.0", repo_root=repo)
+
+        self.assertIsNone(context.previous_tag)
+        self.assertTrue(context.skipped_current_release_tag)
+        self.assertEqual(context.commit_count, 1)
 
 
 

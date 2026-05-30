@@ -87,21 +87,21 @@ profiles:
     provider: openai
 
     default_max_output_tokens:
-      emergency_triage: 40000
-      triage: 30000
-      draft: 25000
+      emergency_triage: 30000
+      triage: 25000
+      draft: 20000
       polish: 22000
       release_notes: 25000
 
     stages:
       emergency_triage:
-        model: gpt-5.4-nano
+        model: gpt-5-nano
         reasoning_effort: low
       triage:
-        model: gpt-5.4-mini
+        model: gpt-5.4-nano
         reasoning_effort: medium
       draft:
-        model: gpt-5.4
+        model: gpt-5.4-mini
         reasoning_effort: high
         structured_mode: strict_json_schema
       polish:

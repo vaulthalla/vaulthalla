@@ -46,6 +46,13 @@ def build_release_context(
     except ValueError:
         parsed_version = None
 
+    if previous_tag is not None and parsed_version is not None and _is_current_release_tag(previous_tag, parsed_version):
+        raise ValueError(
+            "Explicit changelog checkpoint equals the current release tag "
+            f"`{previous_tag}` for VERSION {version}; refusing to build an empty release range. "
+            "Use --since-tag with the previous release tag."
+        )
+
     if previous_tag is None:
         resolved_previous_tag = _resolve_default_previous_tag_result(repo_root, version)
         previous_tag = resolved_previous_tag.previous_tag
@@ -127,20 +134,9 @@ def _resolve_default_previous_tag_result(repo_root: Path, version: str) -> _Reso
     except ValueError:
         return _ResolvedPreviousTag(previous_tag=latest_tag, latest_tag=latest_tag)
     skipped_current_release_tag = _is_current_release_tag(latest_tag, parsed_version)
-    if parsed_version.patch <= 0:
-        previous_tag = get_previous_release_tag_before(repo_root, parsed_version)
-        return _ResolvedPreviousTag(
-            previous_tag=previous_tag,
-            latest_tag=latest_tag,
-            skipped_current_release_tag=skipped_current_release_tag,
-        )
-    line_base = Version(parsed_version.major, parsed_version.minor, 0)
-    lower_release_tag = get_previous_release_tag_before(repo_root, line_base)
-    candidate = lower_release_tag or latest_tag
-    if _is_current_release_tag(candidate, parsed_version):
-        candidate = get_previous_release_tag_before(repo_root, parsed_version)
+    previous_tag = get_previous_release_tag_before(repo_root, parsed_version)
     return _ResolvedPreviousTag(
-        previous_tag=candidate,
+        previous_tag=previous_tag,
         latest_tag=latest_tag,
         skipped_current_release_tag=skipped_current_release_tag,
     )

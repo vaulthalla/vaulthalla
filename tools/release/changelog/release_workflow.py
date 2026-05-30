@@ -28,7 +28,10 @@ from tools.release.changelog.ai.providers.base import StructuredJSONProvider
 from tools.release.changelog.ai.render.markdown import render_draft_markdown, render_polish_markdown
 from tools.release.changelog.ai.stages.draft import generate_draft_from_payload
 from tools.release.changelog.ai.stages.emergency_triage import (
+    EMERGENCY_TRIAGE_ZERO_ITEMS_ERROR,
     build_triage_input_from_emergency_result,
+    is_non_empty_emergency_triage_source,
+    render_emergency_triage_context_json,
     render_emergency_triage_result_json,
     run_emergency_triage_stage,
 )
@@ -672,6 +675,12 @@ def _run_release_ai_pipeline(
 
     if run_triage:
         if has_empty_semantic_categories:
+            if (
+                run_emergency_triage
+                and isinstance(semantic_payload, dict)
+                and is_non_empty_emergency_triage_source(semantic_payload)
+            ):
+                raise ValueError(EMERGENCY_TRIAGE_ZERO_ITEMS_ERROR)
             emit(
                 "Skipping triage stages: semantic payload has no categories; "
                 "falling back to deterministic payload draft input."
@@ -709,6 +718,10 @@ def _run_release_ai_pipeline(
                 raise ValueError(f"Emergency triage stage failed: {exc}") from exc
             emit("Emergency triage: artifact write start")
             _write_emergency_triage_artifact(repo_root=repo_root, content=render_emergency_triage_result_json(emergency_triage_result))
+            _write_emergency_triage_context_artifact(
+                repo_root=repo_root,
+                content=render_emergency_triage_context_json(semantic_payload, emergency_triage_result),
+            )
             emit("Emergency triage: artifact write end")
             if emergency_triage_result.items:
                 triage_input_payload = build_triage_input_from_emergency_result(
@@ -717,6 +730,11 @@ def _run_release_ai_pipeline(
                 )
                 triage_input_mode = "synthesized_semantic"
             else:
+                if is_non_empty_emergency_triage_source(semantic_payload):
+                    raise ValueError(
+                        "Emergency triage produced zero synthesized items for a non-empty release; "
+                        "refusing to fall back to raw semantic triage."
+                    )
                 emit(
                     "Emergency triage produced zero synthesized items; "
                     "falling back to raw semantic triage input."
@@ -899,6 +917,15 @@ def _build_stage_providers(
 
 def _write_emergency_triage_artifact(*, repo_root: Path, content: str) -> None:
     target = (repo_root / DEFAULT_CHANGELOG_SCRATCH_DIR / "emergency_triage.json").resolve()
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+    except Exception:
+        return
+
+
+def _write_emergency_triage_context_artifact(*, repo_root: Path, content: str) -> None:
+    target = (repo_root / DEFAULT_CHANGELOG_SCRATCH_DIR / "emergency_triage.context.json").resolve()
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")

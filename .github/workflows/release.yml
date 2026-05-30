@@ -386,7 +386,10 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
+            const child_process = require('node:child_process');
             const fs = require('node:fs');
+            const os = require('node:os');
+            const path = require('node:path');
 
             const notesPath = process.env.RELEASE_NOTES_PATH;
             if (!notesPath) {
@@ -398,8 +401,8 @@ jobs:
               return;
             }
 
-            const body = fs.readFileSync(notesPath, 'utf8');
-            if (!body.trim()) {
+            const generatedBody = fs.readFileSync(notesPath, 'utf8');
+            if (!generatedBody.trim()) {
               core.setFailed(`Generated release notes artifact is empty: ${notesPath}`);
               return;
             }
@@ -422,6 +425,44 @@ jobs:
               return;
             }
 
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vaulthalla-release-notes-'));
+            const existingBodyPath = path.join(tempDir, 'existing_release_body.md');
+            const mergedBodyPath = path.join(tempDir, 'merged_release_body.md');
+            fs.writeFileSync(existingBodyPath, release.data.body || '', 'utf8');
+
+            const releasePython = process.env.RELEASE_PYTHON || 'python3';
+            child_process.execFileSync(
+              releasePython,
+              [
+                '-c',
+                [
+                  'import os',
+                  'from pathlib import Path',
+                  'from tools.release.changelog.release_notes_merge import merge_release_notes_body',
+                  'existing = Path(os.environ["EXISTING_RELEASE_BODY_PATH"]).read_text(encoding="utf-8")',
+                  'generated = Path(os.environ["RELEASE_NOTES_PATH"]).read_text(encoding="utf-8")',
+                  'merged = merge_release_notes_body(existing, generated, tag=os.environ.get("RELEASE_TAG") or None)',
+                  'Path(os.environ["MERGED_RELEASE_BODY_PATH"]).write_text(merged, encoding="utf-8")',
+                ].join('\n'),
+              ],
+              {
+                cwd: process.env.GITHUB_WORKSPACE,
+                env: {
+                  ...process.env,
+                  EXISTING_RELEASE_BODY_PATH: existingBodyPath,
+                  MERGED_RELEASE_BODY_PATH: mergedBodyPath,
+                  RELEASE_TAG: tag,
+                },
+                stdio: 'inherit',
+              },
+            );
+
+            const body = fs.readFileSync(mergedBodyPath, 'utf8');
+            if (!body.trim()) {
+              core.setFailed(`Merged GitHub Release body is empty for tag ${tag}.`);
+              return;
+            }
+
             await github.rest.repos.updateRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -431,4 +472,4 @@ jobs:
               body,
             });
 
-            core.info(`Updated GitHub Release ${release.data.id} for tag ${tag} from ${notesPath}.`);
+            core.info(`Merged generated notes into GitHub Release ${release.data.id} for tag ${tag} from ${notesPath}.`);

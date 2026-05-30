@@ -109,9 +109,29 @@ class AIPromptDisciplineTests(unittest.TestCase):
         assert_contains_all(
             self,
             system,
-            ("do not invent", "engineering-focused", "do not contradict", "do not write marketing copy", "preserve cautions"),
+            (
+                "short factual overview",
+                "## what's changed",
+                "append",
+                "do not invent",
+                "engineering-focused",
+                "do not contradict",
+                "do not write marketing copy",
+                "preserve cautions",
+            ),
         )
-        assert_contains_all(self, user, ("remove classifier residue", "schema_version", "return markdown in `markdown`"))
+        assert_contains_all(
+            self,
+            user,
+            (
+                "short overview paragraph",
+                "## what's changed",
+                "appending below user-provided release notes",
+                "remove classifier residue",
+                "schema_version",
+                "return markdown in `markdown`",
+            ),
+        )
 
     def test_emergency_triage_prompt_requires_version_and_non_empty_items(self) -> None:
         user = build_emergency_triage_user_prompt({"schema_version": "x", "version": "1.2.3", "items": []}).lower()
