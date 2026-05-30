@@ -4,6 +4,7 @@
 #include <string>
 #include <nlohmann/json_fwd.hpp>
 #include <cstdint>
+#include <optional>
 
 namespace pqxx {
 class row;
@@ -14,6 +15,7 @@ namespace vh::vault::model {
 struct S3Vault : Vault {
     uint32_t api_key_id{};
     std::string bucket;
+    std::optional<std::string> storage_tier_id;
     bool encrypt_upstream{true};
 
     S3Vault() = default;

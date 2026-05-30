@@ -95,6 +95,12 @@ static const auto allowListScanFlag = Flag::WithAliases("allow_list_scan",
 static const auto refreshIndexFlag = Flag::WithAliases("refresh_index",
                                                        "Refresh the remote index manifest before planning. Requires sync trigger permission and may issue S3 HEAD/GET requests.",
                                                        {"refresh-index", "refresh-remote-index"});
+static const auto refreshPricingFlag = Flag::WithAliases("refresh_pricing",
+                                                         "Refresh cached storage-rate profile and estimate data before pricing the dry-run.",
+                                                         {"refresh-pricing"});
+static const auto noPricingFlag = Flag::WithAliases("no_pricing",
+                                                    "Skip storage-rate price estimates for this dry-run.",
+                                                    {"no-pricing"});
 
 static const auto enableFlag = Flag::Alias("enable", "Enable the override (default)", "enable");
 static const auto disableFlag = Flag::Alias("disable", "Disable the override", "disable");
@@ -110,6 +116,11 @@ static const auto apiKeyOpt = Optional::OneToMany("s3_api_key", "Name or ID of t
                                                   "api-key", {"name", "id"});
 
 static const auto s3BucketOpt = Optional::Single("s3_bucket", "Name of the S3 bucket", "bucket", "name");
+static const auto s3StorageTierOpt = Optional::ManyToOne(
+    "s3_storage_tier",
+    "Provider-local S3 storage tier for new uploads; use 'none' or 'default' to clear.",
+    {"storage-tier", "storage-class"},
+    "tier");
 
 static const auto enableS3Encryption = Flag::On("enable_s3_encrypt",
                                                 "Enable upstream encryption for S3 vaults. This is the default.",
@@ -128,6 +139,7 @@ static const GroupedOptions localVaultOpts("Local Vault Options", {localConflict
 static const GroupedOptions s3VaultOpts("S3 Vault Options", {
                                             apiKeyOpt,
                                             s3BucketOpt,
+                                            s3StorageTierOpt,
                                             syncStrategyOpt,
                                             s3ConflictOpt,
                                             enableS3Encryption,
@@ -148,7 +160,9 @@ static std::shared_ptr<CommandUsage> create(const std::weak_ptr<CommandUsage>& p
     cmd->examples = {
         {"vh vault create myvault --local --desc \"My Local Vault\" --quota 10G",
          "Create a local vault with a 10GB quota."},
-        {"vh vault create s3vault --s3 --api-key myapikey --bucket mybucket", "Create an S3-backed vault."}
+        {"vh vault create s3vault --s3 --api-key myapikey --bucket mybucket", "Create an S3-backed vault."},
+        {"vh vault create archive-ready --s3 --api-key aws-prod --bucket vaulthalla --storage-tier standard_ia",
+         "Create an AWS S3 vault using the provider-local Standard-IA tier for new uploads."}
     };
     return cmd;
 }
@@ -166,7 +180,9 @@ static std::shared_ptr<CommandUsage> update(const std::weak_ptr<CommandUsage>& p
          "Update the description and quota of the vault with ID 42."},
         {"vh vault update myvault --owner bob --api-key newkey --bucket newbucket --sync-strategy mirror "
          "--on-sync-conflict keep_remote --owner alice",
-         "Update multiple properties of the vault named 'myvault' owned by 'alice'."}
+         "Update multiple properties of the vault named 'myvault' owned by 'alice'."},
+        {"vh vault update 42 --storage-tier none",
+         "Clear an S3 vault storage tier so the provider default is used."}
     };
     return cmd;
 }
@@ -486,12 +502,14 @@ static std::shared_ptr<CommandUsage> sync_dry_run(const std::weak_ptr<CommandUsa
     cmd->description = "Estimate S3 request and byte pressure for the next sync plan without executing file changes using the local remote index.";
     cmd->positionals = {vaultPos};
     cmd->optional = {owner};
-    cmd->optional_flags = {refreshIndexFlag};
+    cmd->optional_flags = {refreshIndexFlag, refreshPricingFlag, noPricingFlag};
     cmd->examples = {
         {"vh vault sync dry-run 42",
          "Estimate S3 request counts, upload bytes, and body-download bytes for S3 vault 42 using the local remote index."},
         {"vh vault sync dry-run 42 --refresh-index",
-         "Refresh the remote index manifest before planning; this may issue S3 HEAD/GET requests and requires sync trigger permission."}
+         "Refresh the remote index manifest before planning; this may issue S3 HEAD/GET requests and requires sync trigger permission."},
+        {"vh vault sync dry-run 42 --refresh-pricing",
+         "Refresh cached storage-rate profile data before showing the optional price estimate."}
     };
     return cmd;
 }

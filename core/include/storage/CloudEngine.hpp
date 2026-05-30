@@ -2,6 +2,7 @@
 
 #include "storage/Engine.hpp"
 #include "sync/model/Action.hpp"
+#include "storage/s3/provider/Provider.hpp"
 
 #include <unordered_map>
 #include <memory>
@@ -29,6 +30,7 @@ namespace vh::fs::model {
 namespace vh::storage {
     namespace s3 {
         class Controller;
+        struct RequestOptions;
         struct S3RequestBudget;
         struct S3RequestMetrics;
     }
@@ -112,8 +114,12 @@ namespace vh::storage {
         void clearS3RequestBudget() const;
         void resetS3RequestMetrics() const;
         [[nodiscard]] s3::S3RequestMetrics s3RequestMetrics() const;
+        [[nodiscard]] std::shared_ptr<vault::model::APIKey> s3ApiKey() const { return key_; }
+        [[nodiscard]] s3::provider::ProfilePtr s3ProviderProfile() const { return s3Profile_; }
+        [[nodiscard]] std::optional<s3::provider::StorageTier> resolvedStorageTier() const { return storageTier_; }
 
         void setS3ControllerForTesting(std::shared_ptr<s3::Controller> s3Provider);
+        void setS3ProviderProfileForTesting(s3::provider::ProfilePtr profile);
 
     private:
         struct RemoteEncryptionContext {
@@ -123,8 +129,13 @@ namespace vh::storage {
 
         std::shared_ptr<vault::model::APIKey> key_;
         std::shared_ptr<s3::Controller> s3Provider_;
+        s3::provider::ProfilePtr s3Profile_;
+        std::optional<s3::provider::StorageTier> storageTier_;
 
         std::shared_ptr<vault::model::S3Vault> s3Vault() const;
+        void resolveS3ProviderConfiguration();
+        [[nodiscard]] s3::RequestOptions requestOptionsFor(s3::provider::RequestOperation operation) const;
+        [[nodiscard]] std::optional<std::string> configuredStorageClass() const;
 
         std::unordered_map<std::string, std::string> getMetaMapFromFile(
             const std::shared_ptr<vh::fs::model::File> &f) const;

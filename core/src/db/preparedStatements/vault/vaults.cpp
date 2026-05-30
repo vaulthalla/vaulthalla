@@ -14,13 +14,14 @@ void vh::db::Connection::initPreparedVaults() const {
        RETURNING id)");
 
     conn_->prepare("upsert_s3_vault",
-                   "INSERT INTO s3 (vault_id, api_key_id, bucket, encrypt_upstream) VALUES ($1, $2, $3, $4) "
+                   "INSERT INTO s3 (vault_id, api_key_id, bucket, encrypt_upstream, storage_tier_id) VALUES ($1, $2, $3, $4, $5) "
                    "ON CONFLICT (api_key_id, bucket) DO UPDATE "
                    "SET bucket = EXCLUDED.bucket, api_key_id = EXCLUDED.api_key_id, "
-                   "encrypt_upstream = EXCLUDED.encrypt_upstream, vault_id = EXCLUDED.vault_id "
+                   "encrypt_upstream = EXCLUDED.encrypt_upstream, storage_tier_id = EXCLUDED.storage_tier_id, "
+                   "vault_id = EXCLUDED.vault_id "
                    "RETURNING vault_id");
 
-    conn_->prepare("insert_s3_vault", "INSERT INTO s3 (vault_id, api_key_id, bucket) VALUES ($1, $2, $3) "
+    conn_->prepare("insert_s3_vault", "INSERT INTO s3 (vault_id, api_key_id, bucket, storage_tier_id) VALUES ($1, $2, $3, $4) "
                    "ON CONFLICT (vault_id) DO NOTHING");
 
     conn_->prepare("vault_root_exists",

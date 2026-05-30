@@ -3,6 +3,7 @@
 #include "concurrency/ThreadPoolManager.hpp"
 #include "sync/Local.hpp"
 #include "sync/Cloud.hpp"
+#include "sync/model/Policy.hpp"
 #include "concurrency/ThreadPool.hpp"
 #include "storage/CloudEngine.hpp"
 #include "db/query/vault/Vault.hpp"
@@ -170,7 +171,16 @@ void Controller::processTask(const std::shared_ptr<Engine>& engine) {
         return;
     }
 
-    if (!taskMap_.contains(engine->vault->id)) {
+    const auto existing = taskMap_.find(engine->vault->id);
+    if (existing == taskMap_.end()) {
+        const auto task = createTask(engine);
+        taskMap_[engine->vault->id] = task;
+        pq.push(task);
+        return;
+    }
+
+    if (!existing->second || existing->second->engine != engine) {
+        if (existing->second) existing->second->interrupt();
         const auto task = createTask(engine);
         taskMap_[engine->vault->id] = task;
         pq.push(task);

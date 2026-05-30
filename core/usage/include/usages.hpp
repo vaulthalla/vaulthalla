@@ -15,6 +15,7 @@ namespace user { std::shared_ptr<CommandBook> get(const std::weak_ptr<CommandUsa
 namespace group { std::shared_ptr<CommandBook> get(const std::weak_ptr<CommandUsage>& parent); }
 namespace secrets { std::shared_ptr<CommandBook> get(const std::weak_ptr<CommandUsage>& parent); }
 namespace email { std::shared_ptr<CommandBook> get(const std::weak_ptr<CommandUsage>& parent); }
+namespace pricing { std::shared_ptr<CommandBook> get(const std::weak_ptr<CommandUsage>& parent); }
 namespace aku { std::shared_ptr<CommandBook> get(const std::weak_ptr<CommandUsage>& parent); }
 namespace role { std::shared_ptr<CommandBook> get(const std::weak_ptr<CommandUsage>& parent); }
 namespace permissions { std::shared_ptr<CommandBook> get(const std::weak_ptr<CommandUsage>& parent); }

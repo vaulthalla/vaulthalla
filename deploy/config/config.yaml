@@ -56,6 +56,29 @@ sync:
   event_audit_max_entries: 5000           # Max number of database events/conflicts to retain, minimum 1000
 
 
+# === 💸 PRICING ESTIMATES ===
+# Uses signed storage-rate artifacts for local S3 request/tier-aware estimates.
+# Price-budget enforcement is opt-in through explicit report/warn/enforce policies.
+# Catalog lookup remains local by default, and enforcement fails closed when a
+# policy requires verified or fresh catalog data that is not available.
+# Remote artifact refresh is disabled by default so a fresh install does not
+# call upstream price services unless the operator opts in.
+pricing:
+  enabled: true
+  storage_rates_api:
+    remote_refresh_enabled: false
+    base_url: https://storage-rates-api.vaulthalla.cloud
+    timeout_ms: 5000
+    cache_ttl_seconds: 43200
+    refresh_interval_seconds: 43200
+    fail_open: true
+    signature_warning_only: true
+    signature_public_key_path:
+    fallback_artifact_base_urls: []
+    prefer_full_catalog: true
+    use_remote_estimator_for_debug: false
+
+
 # === ⚙️ SERVICE SETTINGS ===
 # Service settings manage background tasks like database sweeping.
 services:

@@ -12,12 +12,29 @@
 #include "seed/include/seed_db.hpp"
 #include "crypto/id/Generator.hpp"
 
+#include <string>
+
 using namespace vh::storage;
 using namespace vh::vault::model;
 using namespace vh::identities;
 using namespace vh::config;
 using namespace vh::fs::model;
 using namespace vh::crypto;
+
+namespace {
+
+std::string enginePathKey(const std::shared_ptr<Engine>& engine) {
+    return engine->paths->absRelToRoot(engine->paths->vaultRoot, PathType::FUSE_ROOT).string();
+}
+
+void eraseEnginePathEntry(
+    std::pmr::unordered_map<std::string, std::shared_ptr<Engine>>& engines,
+    const std::shared_ptr<Engine>& engine) {
+    if (!engine || !engine->paths) return;
+    engines.erase(enginePathKey(engine));
+}
+
+}
 
 Manager::Manager() = default;
 
@@ -51,7 +68,7 @@ void Manager::initStorageEngines() {
                 const auto s3Vault = std::static_pointer_cast<S3Vault>(vault);
                 engine = std::make_shared<CloudEngine>(s3Vault);
             }
-            engines_[engine->paths->absRelToRoot(engine->paths->vaultRoot, PathType::FUSE_ROOT)] = engine;
+            engines_[enginePathKey(engine)] = engine;
             vaultToEngine_[vault->id] = engine;
         }
     } catch (const std::exception& e) {
@@ -127,8 +144,13 @@ std::shared_ptr<Vault> Manager::addVault(std::shared_ptr<Vault> vault,
     vault->mount_point = id::Generator({ .namespace_token = vault->name }).generate();
     vault->id = db::query::vault::Vault::upsertVault(vault, sync);
     vault = db::query::vault::Vault::getVault(vault->id);
-    const auto engine = std::make_shared<Engine>(vault);
-    engines_[engine->paths->absRelToRoot(engine->paths->vaultRoot, PathType::FUSE_ROOT)] = engine;
+    std::shared_ptr<Engine> engine;
+    if (vault->type == VaultType::S3) {
+        engine = std::make_shared<CloudEngine>(std::static_pointer_cast<S3Vault>(vault));
+    } else {
+        engine = std::make_shared<Engine>(vault);
+    }
+    engines_[enginePathKey(engine)] = engine;
     vaultToEngine_[vault->id] = engine;
 
     log::Registry::storage()->info("[StorageManager] Added new vault with ID: {}, Name: {}, Type: {}",
@@ -141,13 +163,31 @@ void Manager::updateVault(const std::shared_ptr<Vault>& vault) {
     if (!vault) throw std::invalid_argument("Vault cannot be null");
     if (vault->id == 0) throw std::invalid_argument("Vault ID cannot be zero");
     std::scoped_lock lock(mutex_);
+    const auto oldEngineIt = vaultToEngine_.find(vault->id);
+    const auto oldEngine = oldEngineIt != vaultToEngine_.end() ? oldEngineIt->second : nullptr;
+
     db::query::vault::Vault::upsertVault(vault);
-    vaultToEngine_[vault->id]->vault = vault;
+    const auto refreshed = db::query::vault::Vault::getVault(vault->id);
+    if (!refreshed) throw std::runtime_error("Failed to reload updated vault with ID " + std::to_string(vault->id));
+
+    std::shared_ptr<Engine> engine;
+    if (refreshed->type == VaultType::S3) {
+        engine = std::make_shared<CloudEngine>(std::static_pointer_cast<S3Vault>(refreshed));
+    } else {
+        engine = std::make_shared<Engine>(refreshed);
+    }
+
+    eraseEnginePathEntry(engines_, oldEngine);
+    vaultToEngine_[refreshed->id] = engine;
+    engines_[enginePathKey(engine)] = engine;
     log::Registry::storage()->info("[StorageManager] Updated vault with ID: {}", vault->id);
 }
 
 void Manager::removeVault(const unsigned int vaultId) {
     std::scoped_lock lock(mutex_);
+    const auto oldEngineIt = vaultToEngine_.find(vaultId);
+    if (oldEngineIt != vaultToEngine_.end()) eraseEnginePathEntry(engines_, oldEngineIt->second);
+
     db::query::vault::Vault::removeVault(vaultId);
 
     vaultToEngine_.erase(vaultId);

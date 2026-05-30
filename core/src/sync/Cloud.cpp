@@ -2,6 +2,8 @@
 
 #include "storage/CloudEngine.hpp"
 #include "storage/ScopedS3RequestBudget.hpp"
+#include "storage/s3/pricing/PriceBudget.hpp"
+#include "storage/s3/pricing/PriceEstimate.hpp"
 #include "sync/tasks/Download.hpp"
 #include "sync/tasks/Upload.hpp"
 #include "sync/tasks/Delete.hpp"
@@ -31,6 +33,7 @@
 
 #include "crypto/id/Generator.hpp"
 
+#include <optional>
 #include <utility>
 
 using namespace vh::sync;
@@ -82,6 +85,12 @@ void Cloud::operator()() {
         if (cloud) event->applyS3RequestMetrics(cloud->s3RequestMetrics());
         event->status = Event::Status::STALLED;
         event->stall_reason = e.what();
+    } catch (const SyncStalled& e) {
+        if (cloud) event->applyS3RequestMetrics(cloud->s3RequestMetrics());
+        event->status = Event::Status::STALLED;
+        event->stall_reason = e.what();
+        event->error_code.clear();
+        event->error_message.clear();
     } catch (const std::exception& e) {
         if (cloud) event->applyS3RequestMetrics(cloud->s3RequestMetrics());
         handleError(std::format("[CloudSync] {}", e.what()));
@@ -104,6 +113,92 @@ void Cloud::sync() {
     auto estimate = Planner::estimateS3Cost(plan);
     estimate.archive_tier_downloads_skipped = planningNotes.archive_tier_downloads_skipped;
     event->applyS3CostEstimate(estimate);
+    const auto priceEstimate = vh::storage::s3::pricing::estimatePlannedS3Sync(*cloudEngine(), estimate);
+    const auto budgetPriceEstimate = vh::storage::s3::pricing::estimatePlannedS3Sync(
+        *cloudEngine(),
+        estimate,
+        {.mode = vh::storage::s3::pricing::PriceEstimateMode::BudgetConservative});
+    if (priceEstimate.available) {
+        event->applyS3PriceEstimate(priceEstimate);
+        log::Registry::sync()->info(
+            "[CloudSync] S3 price estimate for vault {}: {}",
+            engine->vault->id,
+            vh::storage::s3::pricing::formatPriceEstimateForLog(priceEstimate));
+    } else if (priceEstimate.supported) {
+        log::Registry::sync()->warn(
+            "[CloudSync] S3 price estimate unavailable for vault {}: {}",
+            engine->vault->id,
+            vh::storage::s3::pricing::formatPriceEstimateForLog(priceEstimate));
+    } else {
+        log::Registry::sync()->debug(
+            "[CloudSync] S3 price estimate skipped for vault {}: {}",
+            engine->vault->id,
+            priceEstimate.unavailable_reason);
+    }
+    if (budgetPriceEstimate.available) {
+        event->applyS3BudgetPriceEstimate(budgetPriceEstimate);
+        log::Registry::sync()->info(
+            "[CloudSync] Budget-safe S3 price estimate for vault {}: {}",
+            engine->vault->id,
+            vh::storage::s3::pricing::formatPriceEstimateForLog(budgetPriceEstimate));
+    } else if (budgetPriceEstimate.supported) {
+        log::Registry::sync()->debug(
+            "[CloudSync] Budget-safe S3 price estimate unavailable for vault {}: {}",
+            engine->vault->id,
+            vh::storage::s3::pricing::formatPriceEstimateForLog(budgetPriceEstimate));
+    }
+
+    const auto cloud = cloudEngine();
+    const auto profile = cloud->s3ProviderProfile();
+    const auto costProfileId = profile ? profile->costProfileId() : std::optional<std::string>{};
+    const auto providerKey = costProfileId
+        ? *costProfileId
+        : (profile ? profile->id() : std::string{"unknown"});
+    const bool providerSupported = costProfileId &&
+        vh::storage::s3::pricing::isSupportedPriceBudgetProvider(*costProfileId);
+
+    const vh::storage::s3::pricing::PriceBudgetService budgetService;
+    vh::storage::s3::pricing::PriceBudgetPreflightRequest budgetRequest{
+        .vault_id = engine->vault->id,
+        .run_uuid = event->run_uuid,
+        .provider_key = providerKey,
+        .provider_supported = providerSupported,
+        .estimate = budgetPriceEstimate,
+        .dry_run = false,
+        .override_policy_ids = {}
+    };
+    auto budgetDecision = budgetService.preflight(budgetRequest);
+    if (!budgetDecision.allowed && budgetService.isLimitOverrideEligible(budgetDecision)) {
+        const auto policyIds = budgetService.exceededEnforcePolicyIds(budgetDecision);
+        if (const auto consumedOverride = budgetService.consumeApprovedOverride(engine->vault->id, policyIds, event->run_uuid)) {
+            log::Registry::sync()->warn(
+                "[CloudSync] S3 price budget override {} consumed for vault {} run {}",
+                consumedOverride->id,
+                engine->vault->id,
+                event->run_uuid);
+            budgetRequest.override_policy_ids = policyIds;
+            budgetDecision = budgetService.preflight(budgetRequest);
+        }
+    }
+    budgetService.recordPreflightNotifications(budgetRequest, budgetDecision);
+    for (const auto& warning : budgetDecision.warnings) {
+        log::Registry::sync()->warn(
+            "[CloudSync] S3 price budget warning for vault {}: {}",
+            engine->vault->id,
+            warning);
+    }
+    if (!budgetDecision.allowed) {
+        event->status = Event::Status::STALLED;
+        event->stall_reason = budgetDecision.reason.empty()
+            ? "S3 price budget would be exceeded"
+            : budgetDecision.reason;
+        log::Registry::sync()->warn(
+            "[CloudSync] S3 price budget stalled vault {} before remote operations: {}",
+            engine->vault->id,
+            event->stall_reason);
+        throw SyncStalled(event->stall_reason);
+    }
+
     log::Registry::sync()->info(
         "[CloudSync] Estimated S3 cost pressure for vault {}: LIST={} HEAD={} GET={} PUT={} COPY={} DELETE={} body_download_bytes={} upload_bytes={} index_only_objects={} archive_skipped={}",
         engine->vault->id,
@@ -117,10 +212,25 @@ void Cloud::sync() {
         estimate.planned_upload_bytes,
         estimate.remote_index_objects,
         estimate.archive_tier_downloads_skipped);
-    Executor::run(self, plan);
-    event->computeDashboardStats();
-    if (event->num_failed_ops == 0)
-        cloudEngine()->applyRemoteIndexMutation(plan);
+    bool remoteExecutionStarted = false;
+    try {
+        remoteExecutionStarted = true;
+        Executor::run(self, plan);
+        event->computeDashboardStats();
+        if (event->num_failed_ops == 0)
+            cloud->applyRemoteIndexMutation(plan);
+        budgetService.commit(
+            budgetDecision.reservations,
+            budgetPriceEstimate.available
+                ? std::make_optional(budgetPriceEstimate.estimated_cost)
+                : std::optional<std::string>{});
+    } catch (...) {
+        // Once the executor starts, remote writes may already have happened; committing
+        // the reservation is intentionally conservative for the shared budget ledger.
+        if (remoteExecutionStarted) budgetService.commit(budgetDecision.reservations, std::nullopt);
+        else budgetService.release(budgetDecision.reservations);
+        throw;
+    }
 }
 
 void Cloud::initBins() {

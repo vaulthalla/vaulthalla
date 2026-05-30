@@ -30,6 +30,9 @@ struct Stats {
     static json systemStorage(const std::shared_ptr<Session>& session);
     static json systemRetention(const std::shared_ptr<Session>& session);
     static json systemTrends(const json& payload, const std::shared_ptr<Session>& session);
+    static json pricingBudget(const json& payload, const std::shared_ptr<Session>& session);
+    static json vaultPricing(const json& payload, const std::shared_ptr<Session>& session);
+    static json systemPricing(const std::shared_ptr<Session>& session);
     static json fsCache(const std::shared_ptr<Session>& session);
     static json httpCache(const std::shared_ptr<Session>& session);
 };

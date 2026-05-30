@@ -233,6 +233,66 @@ struct convert<SyncConfig> {
 };
 
 template<>
+struct convert<StorageRatesApiConfig> {
+    static Node encode(const StorageRatesApiConfig& rhs) {
+        Node node;
+        node["remote_refresh_enabled"] = rhs.remote_refresh_enabled;
+        node["base_url"] = rhs.base_url;
+        node["timeout_ms"] = rhs.timeout_ms;
+        node["cache_ttl_seconds"] = rhs.cache_ttl_seconds;
+        node["refresh_interval_seconds"] = rhs.refresh_interval_seconds;
+        node["fail_open"] = rhs.fail_open;
+        node["signature_warning_only"] = rhs.signature_warning_only;
+        node["signature_public_key_path"] = rhs.signature_public_key_path
+            ? Node(rhs.signature_public_key_path->string())
+            : Node(NodeType::Null);
+        node["fallback_artifact_base_urls"] = rhs.fallback_artifact_base_urls;
+        node["prefer_full_catalog"] = rhs.prefer_full_catalog;
+        node["use_remote_estimator_for_debug"] = rhs.use_remote_estimator_for_debug;
+        return node;
+    }
+
+    static bool decode(const Node& node, StorageRatesApiConfig& rhs) {
+        if (!node.IsMap()) return false;
+        if (node["remote_refresh_enabled"]) rhs.remote_refresh_enabled = node["remote_refresh_enabled"].as<bool>(false);
+        else rhs.remote_refresh_enabled = node["enabled"].as<bool>(false);
+        rhs.base_url = node["base_url"].as<std::string>("https://storage-rates-api.vaulthalla.cloud");
+        rhs.timeout_ms = std::max(static_cast<uint32_t>(100), node["timeout_ms"].as<uint32_t>(5000));
+        rhs.cache_ttl_seconds = std::max(static_cast<uint32_t>(60), node["cache_ttl_seconds"].as<uint32_t>(43200));
+        rhs.refresh_interval_seconds = std::max(
+            static_cast<uint32_t>(60),
+            node["refresh_interval_seconds"].as<uint32_t>(43200));
+        rhs.fail_open = node["fail_open"].as<bool>(true);
+        rhs.signature_warning_only = node["signature_warning_only"].as<bool>(true);
+        if (node["signature_public_key_path"] && !node["signature_public_key_path"].IsNull())
+            rhs.signature_public_key_path = node["signature_public_key_path"].as<std::filesystem::path>();
+        else
+            rhs.signature_public_key_path.reset();
+        rhs.fallback_artifact_base_urls = node["fallback_artifact_base_urls"].as<std::vector<std::string>>(std::vector<std::string>{});
+        rhs.prefer_full_catalog = node["prefer_full_catalog"].as<bool>(true);
+        rhs.use_remote_estimator_for_debug = node["use_remote_estimator_for_debug"].as<bool>(false);
+        return true;
+    }
+};
+
+template<>
+struct convert<PricingConfig> {
+    static Node encode(const PricingConfig& rhs) {
+        Node node;
+        node["enabled"] = rhs.enabled;
+        node["storage_rates_api"] = rhs.storage_rates_api;
+        return node;
+    }
+
+    static bool decode(const Node& node, PricingConfig& rhs) {
+        if (!node.IsMap()) return false;
+        rhs.enabled = node["enabled"].as<bool>(true);
+        if (node["storage_rates_api"]) rhs.storage_rates_api = node["storage_rates_api"].as<StorageRatesApiConfig>();
+        return true;
+    }
+};
+
+template<>
 struct convert<DBSweeperConfig> {
     static Node encode(const DBSweeperConfig& rhs) {
         Node node;

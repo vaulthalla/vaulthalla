@@ -20,6 +20,7 @@
 #include "sync/model/RemotePolicy.hpp"
 #include "sync/model/RemoteManifest.hpp"
 #include "sync/model/Event.hpp"
+#include "storage/s3/provider/Registry.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -128,12 +129,16 @@ std::unordered_map<std::string, std::string> CloudEngine::getMetaMapFromFile(con
 CloudEngine::CloudEngine(const std::shared_ptr<S3Vault>& vault)
     : Engine(vault),
       key_(runtime::Deps::get().apiKeyManager->getAPIKey(vault->api_key_id, vault->owner_id)),
-      s3Provider_(std::make_shared<s3::Controller>(key_, vault->bucket)) {}
+      s3Provider_(std::make_shared<s3::Controller>(key_, vault->bucket)) {
+    resolveS3ProviderConfiguration();
+}
 
 CloudEngine::CloudEngine(const std::shared_ptr<S3Vault>& vault, std::shared_ptr<s3::Controller> s3Provider)
     : Engine(vault),
       key_(runtime::Deps::get().apiKeyManager->getAPIKey(vault->api_key_id, vault->owner_id)),
-      s3Provider_(std::move(s3Provider)) {}
+      s3Provider_(std::move(s3Provider)) {
+    resolveS3ProviderConfiguration();
+}
 
 void CloudEngine::upload(const std::shared_ptr<File>& f) const {
     const auto backingPath = resolvedBackingPath(*this, f);
@@ -150,11 +155,20 @@ void CloudEngine::upload(const std::shared_ptr<File>& f) const {
 
     if (!f->content_hash) f->content_hash = db::query::fs::File::getContentHash(vault->id, f->path);
     const auto meta = getMetaMapFromFile(f);
+    auto options = requestOptionsFor(s3::provider::RequestOperation::PutObject);
+    options.metadata = meta;
 
     if (fs::file_size(backingPath) < s3::Controller::MIN_PART_SIZE)
-        s3Provider_->uploadObjectWithMetadata(s3Key, backingPath, meta);
-    else
-        s3Provider_->uploadLargeObject(s3Key, backingPath, s3::Controller::MIN_PART_SIZE, meta);
+        s3Provider_->uploadObjectWithMetadata(s3Key, backingPath, options);
+    else {
+        auto multipartOptions = requestOptionsFor(s3::provider::RequestOperation::CreateMultipartUpload);
+        multipartOptions.metadata = meta;
+        s3Provider_->uploadLargeObject(
+            s3Key,
+            backingPath,
+            s3::Controller::MIN_PART_SIZE,
+            multipartOptions);
+    }
 }
 
 void CloudEngine::upload(const std::shared_ptr<File>& f, const std::vector<uint8_t>& buffer, const bool isCiphertext) const {
@@ -163,15 +177,27 @@ void CloudEngine::upload(const std::shared_ptr<File>& f, const std::vector<uint8
 
     if (!s3Vault()->encrypt_upstream) {
         const auto plaintext = isCiphertext ? decrypt(f, buffer) : buffer;
-        s3Provider_->uploadBufferWithMetadata(stripLeadingSlash(f->path), plaintext, getMetaMapFromFile(f));
+        auto options = requestOptionsFor(s3::provider::RequestOperation::PutObject);
+        options.metadata = getMetaMapFromFile(f);
+        s3Provider_->uploadBufferWithMetadata(stripLeadingSlash(f->path), plaintext, options);
         return;
     }
 
     const auto s3Key = stripLeadingSlash(f->path);
     const auto meta = getMetaMapFromFile(f);
+    auto options = requestOptionsFor(s3::provider::RequestOperation::PutObject);
+    options.metadata = meta;
 
-    if (buffer.size() < s3::Controller::MIN_PART_SIZE) s3Provider_->uploadBufferWithMetadata(s3Key, buffer, meta);
-    else s3Provider_->uploadLargeObject(s3Key, buffer, s3::Controller::MIN_PART_SIZE, meta);
+    if (buffer.size() < s3::Controller::MIN_PART_SIZE) s3Provider_->uploadBufferWithMetadata(s3Key, buffer, options);
+    else {
+        auto multipartOptions = requestOptionsFor(s3::provider::RequestOperation::CreateMultipartUpload);
+        multipartOptions.metadata = meta;
+        s3Provider_->uploadLargeObject(
+            s3Key,
+            buffer,
+            s3::Controller::MIN_PART_SIZE,
+            multipartOptions);
+    }
 }
 
 std::vector<uint8_t> CloudEngine::downloadToBuffer(const fs::path& rel_path) const {
@@ -320,10 +346,13 @@ void CloudEngine::publishRemoteIndexManifest(const std::optional<std::string>& e
         ? std::optional<std::string>{}
         : std::make_optional<std::string>("*");
 
+    auto options = requestOptionsFor(s3::provider::RequestOperation::PutObject);
+    options.metadata = {{"vh-manifest-version", std::to_string(remote_manifest::INDEX_V1_VERSION)}};
+
     s3Provider_->uploadBufferWithMetadataConditional(
         remote_manifest::INDEX_V1_KEY,
         payload,
-        {{"vh-manifest-version", std::to_string(remote_manifest::INDEX_V1_VERSION)}},
+        options,
         ifMatch,
         ifNoneMatch);
 
@@ -387,6 +416,7 @@ void CloudEngine::applyRemoteIndexMutation(const std::vector<Action>& plan) cons
                         indexed->encryption_iv.clear();
                         indexed->encrypted_with_key_version = 0;
                     }
+                    indexed->remote_storage_class = configuredStorageClass();
                     db::query::sync::RemoteObjectIndex::upsertFile(vault->id, indexed);
                     mutated = true;
                 }
@@ -619,6 +649,38 @@ void CloudEngine::removeRemotely(const std::shared_ptr<file::Trashed>& f, bool r
 
 std::shared_ptr<S3Vault> CloudEngine::s3Vault() const { return std::static_pointer_cast<S3Vault>(vault); }
 
+void CloudEngine::resolveS3ProviderConfiguration() {
+    s3Profile_.reset();
+    storageTier_.reset();
+
+    const auto s3 = std::dynamic_pointer_cast<S3Vault>(vault);
+    if (!s3) return;
+
+    if (key_) s3Profile_ = s3::provider::resolve(key_->provider);
+    else s3Profile_ = s3::provider::resolve(vh::vault::model::S3Provider::Other);
+
+    const auto resolution = s3Profile_->normalizeStorageTier(s3->storage_tier_id);
+    if (!resolution.ok) throw std::runtime_error(resolution.error);
+
+    storageTier_ = resolution.resolved;
+    if (resolution.normalized_id) s3->storage_tier_id = resolution.normalized_id;
+    else if (s3->storage_tier_id && s3::provider::isProviderDefaultTierValue(*s3->storage_tier_id)) s3->storage_tier_id.reset();
+}
+
+s3::RequestOptions CloudEngine::requestOptionsFor(const s3::provider::RequestOperation operation) const {
+    if (!s3Profile_) return {};
+
+    const auto mutation = s3Profile_->requestMutation(operation, storageTier_);
+    s3::RequestOptions options;
+    options.system_headers = mutation.system_headers;
+    return options;
+}
+
+std::optional<std::string> CloudEngine::configuredStorageClass() const {
+    if (!storageTier_ || !storageTier_->wire_class) return std::nullopt;
+    return storageTier_->wire_class;
+}
+
 std::shared_ptr<RemotePolicy> CloudEngine::remote_policy() const {
     return std::static_pointer_cast<RemotePolicy>(sync);
 }
@@ -642,4 +704,18 @@ s3::S3RequestMetrics CloudEngine::s3RequestMetrics() const {
 
 void CloudEngine::setS3ControllerForTesting(std::shared_ptr<s3::Controller> s3Provider) {
     s3Provider_ = std::move(s3Provider);
+}
+
+void CloudEngine::setS3ProviderProfileForTesting(s3::provider::ProfilePtr profile) {
+    s3Profile_ = std::move(profile);
+    storageTier_.reset();
+
+    const auto s3 = std::dynamic_pointer_cast<S3Vault>(vault);
+    if (!s3 || !s3Profile_) return;
+
+    const auto resolution = s3Profile_->normalizeStorageTier(s3->storage_tier_id);
+    if (!resolution.ok) throw std::runtime_error(resolution.error);
+    storageTier_ = resolution.resolved;
+    if (resolution.normalized_id) s3->storage_tier_id = resolution.normalized_id;
+    else if (s3->storage_tier_id && s3::provider::isProviderDefaultTierValue(*s3->storage_tier_id)) s3->storage_tier_id.reset();
 }

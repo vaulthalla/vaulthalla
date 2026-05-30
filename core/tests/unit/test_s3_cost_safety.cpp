@@ -11,6 +11,9 @@
 #include "fs/model/file/Trashed.hpp"
 #include "identities/User.hpp"
 #include "protocols/shell/commands/vault.hpp"
+#include "protocols/ws/handler/vault/Vaults.hpp"
+#include "protocols/ws/Router.hpp"
+#include "protocols/ws/Session.hpp"
 #include "rbac/role/Admin.hpp"
 #include "runtime/Deps.hpp"
 #include "seed/include/init_db_tables.hpp"
@@ -20,6 +23,8 @@
 #include "storage/ScopedS3RequestBudget.hpp"
 #include "storage/s3/Controller.hpp"
 #include "storage/s3/curl/helpers.hpp"
+#include "storage/s3/pricing/PriceBudget.hpp"
+#include "storage/s3/provider/Registry.hpp"
 #include "sync/Cloud.hpp"
 #include "sync/Planner.hpp"
 #include "sync/model/Event.hpp"
@@ -72,6 +77,7 @@ public:
     int delete_object_calls = 0;
     int list_objects_calls = 0;
     std::unordered_map<std::string, std::string> last_metadata;
+    std::map<std::string, std::string> last_system_headers;
     std::optional<std::unordered_map<std::string, std::string>> head_response;
     std::vector<uint8_t> download_payload;
     std::vector<std::filesystem::path> deleted_keys;
@@ -84,9 +90,19 @@ public:
         const std::filesystem::path&,
         const std::filesystem::path&,
         const std::unordered_map<std::string, std::string>& metadata) const override {
+        vh::storage::s3::RequestOptions options;
+        options.metadata = metadata;
+        uploadObjectWithMetadata(std::filesystem::path{}, std::filesystem::path{}, options);
+    }
+
+    void uploadObjectWithMetadata(
+        const std::filesystem::path&,
+        const std::filesystem::path&,
+        const vh::storage::s3::RequestOptions& options) const override {
         auto* self = const_cast<CountingS3Controller*>(this);
         ++self->upload_object_with_metadata_calls;
-        self->last_metadata = metadata;
+        self->last_metadata = options.metadata;
+        self->last_system_headers = options.system_headers;
     }
 
     void uploadLargeObject(
@@ -94,8 +110,29 @@ public:
         const std::filesystem::path&,
         uintmax_t,
         const std::unordered_map<std::string, std::string>& metadata) const override {
+        vh::storage::s3::RequestOptions options;
+        options.metadata = metadata;
+        uploadLargeObject(std::filesystem::path{}, std::filesystem::path{}, 0, options);
+    }
+
+    void uploadLargeObject(
+        const std::filesystem::path&,
+        const std::filesystem::path&,
+        uintmax_t,
+        const vh::storage::s3::RequestOptions& options) const override {
         auto* self = const_cast<CountingS3Controller*>(this);
-        self->last_metadata = metadata;
+        self->last_metadata = options.metadata;
+        self->last_system_headers = options.system_headers;
+    }
+
+    void uploadLargeObject(
+        const std::filesystem::path&,
+        const std::vector<uint8_t>&,
+        uintmax_t,
+        const vh::storage::s3::RequestOptions& options) const override {
+        auto* self = const_cast<CountingS3Controller*>(this);
+        self->last_metadata = options.metadata;
+        self->last_system_headers = options.system_headers;
     }
 
     void downloadToBuffer(const std::filesystem::path&, std::vector<uint8_t>& out) const override {
@@ -111,8 +148,24 @@ public:
         const std::unordered_map<std::string, std::string>&,
         const std::optional<std::string>&,
         const std::optional<std::string>&) const override {
+        uploadBufferWithMetadataConditional(
+            std::filesystem::path{},
+            std::vector<uint8_t>{},
+            vh::storage::s3::RequestOptions{},
+            std::nullopt,
+            std::nullopt);
+    }
+
+    void uploadBufferWithMetadataConditional(
+        const std::filesystem::path&,
+        const std::vector<uint8_t>&,
+        const vh::storage::s3::RequestOptions& options,
+        const std::optional<std::string>&,
+        const std::optional<std::string>&) const override {
         auto* self = const_cast<CountingS3Controller*>(this);
         ++self->upload_buffer_conditional_calls;
+        self->last_metadata = options.metadata;
+        self->last_system_headers = options.system_headers;
         self->recordRequest(RequestKind::Put);
     }
 
@@ -157,6 +210,20 @@ public:
         const std::filesystem::path&,
         const std::vector<uint8_t>&,
         const std::unordered_map<std::string, std::string>&,
+        const std::optional<std::string>& ifMatch,
+        const std::optional<std::string>& ifNoneMatch) const override {
+        uploadBufferWithMetadataConditional(
+            std::filesystem::path{},
+            std::vector<uint8_t>{},
+            vh::storage::s3::RequestOptions{},
+            ifMatch,
+            ifNoneMatch);
+    }
+
+    void uploadBufferWithMetadataConditional(
+        const std::filesystem::path&,
+        const std::vector<uint8_t>&,
+        const vh::storage::s3::RequestOptions&,
         const std::optional<std::string>& ifMatch,
         const std::optional<std::string>& ifNoneMatch) const override {
         if_match_values.push_back(ifMatch);
@@ -286,6 +353,87 @@ uint32_t seedS3VaultForDbTest(const std::string& suffix) {
     });
 }
 
+vh::storage::s3::pricing::PriceEstimateReport budgetEstimateForDbTest(
+    const std::string& cost,
+    const bool verified = true,
+    const bool stale = false) {
+    vh::storage::s3::pricing::PriceEstimateReport report;
+    report.available = true;
+    report.supported = true;
+    report.stale = stale;
+    report.estimated_cost = cost;
+    report.currency = "USD";
+    report.price_profile_id = "aws-s3/us-east-1/standard";
+    report.catalog_version = "test";
+    report.catalog_source = "test";
+    report.catalog_verified = verified;
+    report.catalog_age_seconds = 60;
+    report.confidence_level = "high";
+    report.estimate_mode = "budget_conservative";
+    report.free_tier_policy = "ignore_account_wide_free_tiers";
+    report.free_tiers_applied = false;
+    report.breakdown = nlohmann::json::array();
+    return report;
+}
+
+std::uint32_t ownerForVaultDbTest(const std::uint32_t vaultId) {
+    return vh::db::Transactions::exec("S3CostSafetyTest::ownerForVault", [&](pqxx::work& txn) {
+        return txn.exec(
+            "SELECT owner_id FROM vault WHERE id = $1",
+            pqxx::params{vaultId}).one_field().as<std::uint32_t>();
+    });
+}
+
+void attachS3ProviderForDbTest(const std::uint32_t vaultId, const std::string& provider) {
+    vh::db::Transactions::exec("S3CostSafetyTest::attachS3Provider", [&](pqxx::work& txn) {
+        const auto ownerId = txn.exec(
+            "SELECT owner_id FROM vault WHERE id = $1",
+            pqxx::params{vaultId}).one_field().as<std::uint32_t>();
+        const auto apiKeyId = txn.exec(
+            "INSERT INTO api_keys "
+            "(user_id, name, provider, access_key, encrypted_secret_access_key, iv, region, endpoint) "
+            "VALUES ($1, $2, $3, $4, decode('00','hex'), decode('00','hex'), $5, $6) RETURNING id",
+            pqxx::params{
+                ownerId,
+                "budget-provider-" + std::to_string(vaultId),
+                provider,
+                "access-" + std::to_string(vaultId),
+                "us-east-1",
+                "https://s3.example.com"
+            }).one_field().as<std::uint32_t>();
+        txn.exec(
+            "INSERT INTO s3 (vault_id, api_key_id, bucket) VALUES ($1, $2, $3) "
+            "ON CONFLICT (vault_id) DO UPDATE SET api_key_id = EXCLUDED.api_key_id, bucket = EXCLUDED.bucket",
+            pqxx::params{vaultId, apiKeyId, "bucket-" + std::to_string(vaultId)});
+    });
+}
+
+vh::storage::s3::pricing::PriceBudgetPolicy saveVaultBudgetPolicyForDbTest(
+    const std::uint32_t vaultId,
+    std::optional<std::string> providerKey,
+    const vh::storage::s3::pricing::PriceBudgetMode mode,
+    const std::optional<std::string>& monthlyLimit,
+    const bool requireVerified = true) {
+    vh::storage::s3::pricing::PriceBudgetPolicy policy;
+    policy.scope = vh::storage::s3::pricing::PriceBudgetScope::Vault;
+    policy.vault_id = vaultId;
+    policy.provider_key = std::move(providerKey);
+    policy.mode = mode;
+    policy.currency = "USD";
+    policy.max_monthly_cost = monthlyLimit;
+    policy.require_verified_catalog = requireVerified;
+    policy.allow_stale_catalog = false;
+    return vh::storage::s3::pricing::PriceBudgetService{}.upsertPolicy(std::move(policy));
+}
+
+std::uint32_t countPriceBudgetLedgerForRunDbTest(const std::string& runUuid) {
+    return vh::db::Transactions::exec("S3CostSafetyTest::countPriceBudgetLedgerForRun", [&](pqxx::work& txn) {
+        return txn.exec(
+            "SELECT COUNT(*) AS c FROM s3_price_budget_ledger WHERE run_uuid = $1",
+            pqxx::params{runUuid}).one_row()["c"].as<std::uint32_t>();
+    });
+}
+
 std::shared_ptr<vh::storage::CloudEngine> makeDbBackedCloudEngine(
     const uint32_t vaultId,
     const std::shared_ptr<vh::storage::s3::Controller>& controller) {
@@ -357,6 +505,19 @@ std::shared_ptr<vh::identities::User> dryRunActor(
     user->password_hash = "hash";
     user->roles.admin = std::make_shared<vh::rbac::role::Admin>(std::move(role));
     return user;
+}
+
+std::shared_ptr<vh::protocols::ws::Session> superAdminWsSession() {
+    auto session = std::make_shared<vh::protocols::ws::Session>(
+        std::make_shared<vh::protocols::ws::Router>());
+    auto user = std::make_shared<vh::identities::User>();
+    user->id = 1;
+    user->name = "admin";
+    user->password_hash = "hash";
+    user->roles.admin = std::make_shared<vh::rbac::role::Admin>(
+        vh::rbac::role::Admin::SuperAdmin(user->id));
+    session->user = user;
+    return session;
 }
 
 vh::protocols::shell::CommandResult runDryRunCommand(
@@ -581,6 +742,63 @@ TEST(S3CostSafetyTest, MigrationDoesNotOverwriteCustomS3BudgetRows) {
     EXPECT_FALSE(policy->s3_request_budget.max_delete_requests.has_value());
     EXPECT_FALSE(policy->s3_request_budget.max_downloaded_bytes.has_value());
     EXPECT_EQ("custom", vh::sync::model::s3BudgetPresetName(policy->s3_request_budget));
+}
+
+TEST(S3CostSafetyTest, WsVaultGetAndUpdateRoundTripS3SyncBudget) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed websocket vault update test due to missing environment variables.";
+
+    auto fake = std::make_shared<CountingS3Controller>();
+    const auto vaultId = seedDryRunS3VaultForDbTest(uniqueSuffix("ws_budget"), fake);
+    const auto session = superAdminWsSession();
+
+    auto before = vh::protocols::ws::handler::Vaults::get({{"id", vaultId}}, session);
+    ASSERT_TRUE(before.contains("vault"));
+    ASSERT_TRUE(before["vault"].contains("sync"));
+    ASSERT_TRUE(before["vault"]["sync"].contains("s3_request_budget"));
+
+    auto payload = before["vault"];
+    payload["name"] = "ws-budget-updated-" + std::to_string(vaultId);
+    payload["sync"]["enabled"] = true;
+    payload["sync"]["interval"] = 120;
+    payload["sync"]["strategy"] = "sync";
+    payload["sync"]["conflict_policy"] = "keep_newest";
+    payload["sync"]["max_remote_index_age_seconds"] = 60;
+    payload["sync"]["s3_request_budget"] = {
+        {"list_requests", nullptr},
+        {"head_requests", 12},
+        {"get_requests", 42},
+        {"put_requests", 13},
+        {"copy_requests", 14},
+        {"delete_requests", 15},
+        {"downloaded_bytes", nullptr}
+    };
+
+    const auto update = vh::protocols::ws::handler::Vaults::update(payload, session);
+    ASSERT_TRUE(update.contains("vault"));
+    EXPECT_EQ(payload["name"].get<std::string>(), update["vault"]["name"].get<std::string>());
+
+    const auto persisted = loadRemotePolicyForDbTest(vaultId);
+    EXPECT_FALSE(persisted->s3_request_budget.max_list_requests.has_value());
+    ASSERT_TRUE(persisted->s3_request_budget.max_get_requests.has_value());
+    EXPECT_EQ(42u, *persisted->s3_request_budget.max_get_requests);
+    EXPECT_FALSE(persisted->s3_request_budget.max_downloaded_bytes.has_value());
+    EXPECT_EQ(120, persisted->interval.count());
+    EXPECT_EQ(vh::sync::model::RemotePolicy::Strategy::Sync, persisted->strategy);
+    EXPECT_EQ(vh::sync::model::RemotePolicy::ConflictPolicy::KeepNewest, persisted->conflict_policy);
+    ASSERT_TRUE(persisted->max_remote_index_age);
+    EXPECT_EQ(60, persisted->max_remote_index_age->count());
+
+    const auto after = vh::protocols::ws::handler::Vaults::get({{"id", vaultId}}, session);
+    EXPECT_TRUE(after["vault"]["sync"]["s3_request_budget"]["list_requests"].is_null());
+    EXPECT_EQ(42u, after["vault"]["sync"]["s3_request_budget"]["get_requests"].get<uint32_t>());
+    EXPECT_TRUE(after["vault"]["sync"]["s3_request_budget"]["downloaded_bytes"].is_null());
+    EXPECT_EQ(60, after["vault"]["sync"]["max_remote_index_age_seconds"].get<int>());
+
+    const auto engine = std::static_pointer_cast<vh::storage::CloudEngine>(
+        vh::runtime::Deps::get().storageManager->getEngine(vaultId));
+    ASSERT_TRUE(engine);
+    ASSERT_TRUE(engine->remote_policy()->s3_request_budget.max_get_requests);
+    EXPECT_EQ(42u, *engine->remote_policy()->s3_request_budget.max_get_requests);
 }
 
 TEST(S3CostSafetyTest, DryRunViewOnlyUsesFreshLocalIndexWithoutS3Refresh) {
@@ -999,6 +1217,7 @@ TEST(S3CostSafetyTest, PlaintextUpstreamUploadMutationDoesNotPoisonRemoteIndexWi
     EXPECT_FALSE(*indexed[0]->remote_encrypted);
     EXPECT_TRUE(indexed[0]->encryption_iv.empty());
     EXPECT_EQ(0u, indexed[0]->encrypted_with_key_version);
+    EXPECT_FALSE(indexed[0]->remote_storage_class);
 }
 
 TEST(S3CostSafetyTest, EncryptedUpstreamUploadMutationStoresRemoteEncryptionMetadata) {
@@ -1028,6 +1247,136 @@ TEST(S3CostSafetyTest, EncryptedUpstreamUploadMutationStoresRemoteEncryptionMeta
     EXPECT_TRUE(*indexed[0]->remote_encrypted);
     EXPECT_EQ(local->encryption_iv, indexed[0]->encryption_iv);
     EXPECT_EQ(local->encrypted_with_key_version, indexed[0]->encrypted_with_key_version);
+    EXPECT_FALSE(indexed[0]->remote_storage_class);
+}
+
+TEST(S3CostSafetyTest, UploadMutationStoresConfiguredAwsStorageClass) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed remote index storage tier test due to missing environment variables.";
+
+    auto fake = std::make_shared<CountingS3Controller>();
+    const auto vaultId = seedDryRunS3VaultForDbTest(uniqueSuffix("upload_aws_tier_index"), fake);
+    auto engine = std::static_pointer_cast<vh::storage::CloudEngine>(
+        vh::runtime::Deps::get().storageManager->getEngine(vaultId));
+    engine->setS3ControllerForTesting(fake);
+
+    const auto s3Vault = std::static_pointer_cast<vh::vault::model::S3Vault>(engine->vault);
+    s3Vault->storage_tier_id = "standard_ia";
+    engine->setS3ProviderProfileForTesting(
+        vh::storage::s3::provider::resolve(vh::vault::model::S3Provider::AWS));
+
+    auto local = remoteFile("uploads/aws-tier.txt");
+    local->size_bytes = 5;
+    local->updated_at = std::time(nullptr);
+    (void)engine->encryptionManager->encrypt({'l', 'o', 'c', 'a', 'l'}, local);
+
+    const std::vector<vh::sync::model::Action> plan{
+        {vh::sync::model::ActionType::Upload, {.rel = u8"uploads/aws-tier.txt"}, local, nullptr}
+    };
+
+    ASSERT_NO_THROW(engine->applyRemoteIndexMutation(plan));
+
+    const auto indexed = vh::db::query::sync::RemoteObjectIndex::listFilesForVault(vaultId);
+    ASSERT_EQ(1u, indexed.size());
+    ASSERT_TRUE(indexed[0]->remote_storage_class);
+    EXPECT_EQ("STANDARD_IA", *indexed[0]->remote_storage_class);
+}
+
+TEST(S3CostSafetyTest, UploadMutationStoresConfiguredR2StorageClass) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed remote index storage tier test due to missing environment variables.";
+
+    auto fake = std::make_shared<CountingS3Controller>();
+    const auto vaultId = seedDryRunS3VaultForDbTest(uniqueSuffix("upload_r2_tier_index"), fake);
+    auto engine = std::static_pointer_cast<vh::storage::CloudEngine>(
+        vh::runtime::Deps::get().storageManager->getEngine(vaultId));
+    engine->setS3ControllerForTesting(fake);
+
+    const auto s3Vault = std::static_pointer_cast<vh::vault::model::S3Vault>(engine->vault);
+    s3Vault->storage_tier_id = "infrequent_access";
+    engine->setS3ProviderProfileForTesting(
+        vh::storage::s3::provider::resolve(vh::vault::model::S3Provider::CloudflareR2));
+
+    auto local = remoteFile("uploads/r2-tier.txt");
+    local->size_bytes = 5;
+    local->updated_at = std::time(nullptr);
+    (void)engine->encryptionManager->encrypt({'l', 'o', 'c', 'a', 'l'}, local);
+
+    const std::vector<vh::sync::model::Action> plan{
+        {vh::sync::model::ActionType::Upload, {.rel = u8"uploads/r2-tier.txt"}, local, nullptr}
+    };
+
+    ASSERT_NO_THROW(engine->applyRemoteIndexMutation(plan));
+
+    const auto indexed = vh::db::query::sync::RemoteObjectIndex::listFilesForVault(vaultId);
+    ASSERT_EQ(1u, indexed.size());
+    ASSERT_TRUE(indexed[0]->remote_storage_class);
+    EXPECT_EQ("STANDARD_IA", *indexed[0]->remote_storage_class);
+}
+
+TEST(S3CostSafetyTest, S3VaultDbRoundTripsStorageTierId) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed S3 vault storage tier test due to missing environment variables.";
+
+    auto fake = std::make_shared<CountingS3Controller>();
+    const auto vaultId = seedDryRunS3VaultForDbTest(uniqueSuffix("vault_tier_roundtrip"), fake);
+
+    auto vault = std::static_pointer_cast<vh::vault::model::S3Vault>(
+        vh::db::query::vault::Vault::getVault(vaultId));
+    ASSERT_TRUE(vault);
+    EXPECT_FALSE(vault->storage_tier_id);
+
+    vault->storage_tier_id = "standard_ia";
+    vh::db::query::vault::Vault::upsertVault(vault);
+
+    auto reloaded = std::static_pointer_cast<vh::vault::model::S3Vault>(
+        vh::db::query::vault::Vault::getVault(vaultId));
+    ASSERT_TRUE(reloaded);
+    ASSERT_TRUE(reloaded->storage_tier_id);
+    EXPECT_EQ("standard_ia", *reloaded->storage_tier_id);
+
+    reloaded->storage_tier_id = std::nullopt;
+    vh::db::query::vault::Vault::upsertVault(reloaded);
+
+    auto cleared = std::static_pointer_cast<vh::vault::model::S3Vault>(
+        vh::db::query::vault::Vault::getVault(vaultId));
+    ASSERT_TRUE(cleared);
+    EXPECT_FALSE(cleared->storage_tier_id);
+}
+
+TEST(S3CostSafetyTest, StorageManagerUpdateRemovesOldEnginePathEntry) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed storage manager update test due to missing environment variables.";
+
+    auto fake = std::make_shared<CountingS3Controller>();
+    const auto vaultId = seedDryRunS3VaultForDbTest(uniqueSuffix("manager_update_path"), fake);
+    const auto manager = vh::runtime::Deps::get().storageManager;
+
+    const auto originalEngine = manager->getEngine(vaultId);
+    ASSERT_TRUE(originalEngine);
+    ASSERT_TRUE(originalEngine->paths);
+    const auto oldPath = originalEngine->paths->absRelToRoot(
+        originalEngine->paths->vaultRoot,
+        vh::fs::model::PathType::FUSE_ROOT);
+
+    auto vault = vh::db::query::vault::Vault::getVault(vaultId);
+    ASSERT_TRUE(vault);
+    vault->name += " renamed";
+    manager->updateVault(vault);
+
+    const auto refreshedEngine = manager->getEngine(vaultId);
+    ASSERT_TRUE(refreshedEngine);
+    ASSERT_TRUE(refreshedEngine->paths);
+    const auto newPath = refreshedEngine->paths->absRelToRoot(
+        refreshedEngine->paths->vaultRoot,
+        vh::fs::model::PathType::FUSE_ROOT);
+
+    EXPECT_NE(oldPath, newPath);
+    EXPECT_NE(originalEngine.get(), refreshedEngine.get());
+
+    const auto engines = manager->getEngines();
+    const auto matchingVaults = std::count_if(engines.begin(), engines.end(), [vaultId](const auto& engine) {
+        return engine && engine->vault && engine->vault->id == vaultId;
+    });
+    EXPECT_EQ(1, matchingVaults);
+    EXPECT_EQ(nullptr, manager->resolveStorageEngine(oldPath));
+    EXPECT_EQ(refreshedEngine, manager->resolveStorageEngine(newPath));
 }
 
 TEST(S3CostSafetyTest, IndexRemoteOnlyPreservesEncryptionMetadataInLocalRow) {
@@ -1281,6 +1630,277 @@ TEST(S3CostSafetyTest, StaleIndexFailureMarksEventStalledWithoutGenericError) {
     EXPECT_EQ(vh::sync::model::Event::Status::STALLED, cloud->event->status);
     EXPECT_EQ("remote index is stale and manifest refresh failed", cloud->event->stall_reason);
     EXPECT_TRUE(cloud->event->error_message.empty());
+}
+
+TEST(S3CostSafetyTest, TerminalStalledEventStatusSurvivesShutdownStatusParsing) {
+    vh::sync::model::Event event;
+    event.status = vh::sync::model::Event::Status::STALLED;
+    event.stall_reason = "S3 price budget would be exceeded";
+    event.timestamp_begin = std::time(nullptr) - 10;
+    event.timestamp_end = std::time(nullptr);
+
+    event.parseCurrentStatus();
+
+    EXPECT_EQ(vh::sync::model::Event::Status::STALLED, event.status);
+    EXPECT_EQ("S3 price budget would be exceeded", event.stall_reason);
+    EXPECT_TRUE(event.error_message.empty());
+}
+
+TEST(S3CostSafetyTest, PriceBudgetDryRunDoesNotCreateReservations) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed price budget reservation test due to missing environment variables.";
+    ensureDbReady();
+
+    const auto vaultId = seedS3VaultForDbTest(uniqueSuffix("budget_dry_run"));
+    saveVaultBudgetPolicyForDbTest(
+        vaultId,
+        std::nullopt,
+        vh::storage::s3::pricing::PriceBudgetMode::Enforce,
+        "10.00000000");
+
+    const auto runUuid = uniqueSuffix("dry-run");
+    const auto decision = vh::storage::s3::pricing::PriceBudgetService{}.preflight({
+        .vault_id = vaultId,
+        .run_uuid = runUuid,
+        .provider_key = "aws-s3",
+        .provider_supported = true,
+        .estimate = budgetEstimateForDbTest("1.00000000"),
+        .dry_run = true,
+        .override_policy_ids = {}
+    });
+
+    EXPECT_TRUE(decision.allowed);
+    EXPECT_TRUE(decision.reservations.empty());
+    EXPECT_EQ(0u, countPriceBudgetLedgerForRunDbTest(runUuid));
+}
+
+TEST(S3CostSafetyTest, PriceBudgetBlockedBeforeExecuteDoesNotReserveSpend) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed price budget reservation test due to missing environment variables.";
+    ensureDbReady();
+
+    const auto vaultId = seedS3VaultForDbTest(uniqueSuffix("budget_blocked"));
+    saveVaultBudgetPolicyForDbTest(
+        vaultId,
+        std::nullopt,
+        vh::storage::s3::pricing::PriceBudgetMode::Enforce,
+        "0.10000000");
+
+    const auto runUuid = uniqueSuffix("blocked-run");
+    const auto decision = vh::storage::s3::pricing::PriceBudgetService{}.preflight({
+        .vault_id = vaultId,
+        .run_uuid = runUuid,
+        .provider_key = "aws-s3",
+        .provider_supported = true,
+        .estimate = budgetEstimateForDbTest("1.00000000"),
+        .dry_run = false,
+        .override_policy_ids = {}
+    });
+
+    EXPECT_FALSE(decision.allowed);
+    EXPECT_TRUE(decision.stalled);
+    EXPECT_TRUE(decision.reservations.empty());
+    EXPECT_EQ(0u, countPriceBudgetLedgerForRunDbTest(runUuid));
+}
+
+TEST(S3CostSafetyTest, PriceBudgetWarnPolicyWithUnverifiedCatalogDoesNotReserveSpend) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed price budget reservation test due to missing environment variables.";
+    ensureDbReady();
+
+    const auto vaultId = seedS3VaultForDbTest(uniqueSuffix("budget_unverified_warn"));
+    saveVaultBudgetPolicyForDbTest(
+        vaultId,
+        std::nullopt,
+        vh::storage::s3::pricing::PriceBudgetMode::Warn,
+        "10.00000000");
+
+    const auto runUuid = uniqueSuffix("unverified-warn");
+    const auto decision = vh::storage::s3::pricing::PriceBudgetService{}.preflight({
+        .vault_id = vaultId,
+        .run_uuid = runUuid,
+        .provider_key = "aws-s3",
+        .provider_supported = true,
+        .estimate = budgetEstimateForDbTest("1.00000000", false),
+        .dry_run = false,
+        .override_policy_ids = {}
+    });
+
+    EXPECT_TRUE(decision.allowed);
+    ASSERT_FALSE(decision.warnings.empty());
+    EXPECT_TRUE(decision.reservations.empty());
+    EXPECT_EQ(0u, countPriceBudgetLedgerForRunDbTest(runUuid));
+}
+
+TEST(S3CostSafetyTest, PriceBudgetReservationsConstrainSubsequentSharedPolicyChecks) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed price budget concurrency test due to missing environment variables.";
+    ensureDbReady();
+
+    const auto vaultId = seedS3VaultForDbTest(uniqueSuffix("budget_shared"));
+    saveVaultBudgetPolicyForDbTest(
+        vaultId,
+        std::nullopt,
+        vh::storage::s3::pricing::PriceBudgetMode::Enforce,
+        "1.00000000");
+
+    vh::storage::s3::pricing::PriceBudgetService service;
+    const auto first = service.preflight({
+        .vault_id = vaultId,
+        .run_uuid = uniqueSuffix("shared-a"),
+        .provider_key = "aws-s3",
+        .provider_supported = true,
+        .estimate = budgetEstimateForDbTest("0.60000000"),
+        .dry_run = false,
+        .override_policy_ids = {}
+    });
+    ASSERT_TRUE(first.allowed);
+    ASSERT_FALSE(first.reservations.empty());
+
+    const auto second = service.preflight({
+        .vault_id = vaultId,
+        .run_uuid = uniqueSuffix("shared-b"),
+        .provider_key = "aws-s3",
+        .provider_supported = true,
+        .estimate = budgetEstimateForDbTest("0.60000000"),
+        .dry_run = false,
+        .override_policy_ids = {}
+    });
+
+    EXPECT_FALSE(second.allowed);
+    EXPECT_TRUE(second.stalled);
+    EXPECT_TRUE(second.reservations.empty());
+}
+
+TEST(S3CostSafetyTest, PriceBudgetStaleReservationsExpireSafely) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed price budget stale reservation test due to missing environment variables.";
+    ensureDbReady();
+
+    const auto vaultId = seedS3VaultForDbTest(uniqueSuffix("budget_stale"));
+    saveVaultBudgetPolicyForDbTest(
+        vaultId,
+        std::nullopt,
+        vh::storage::s3::pricing::PriceBudgetMode::Report,
+        "10.00000000");
+
+    vh::storage::s3::pricing::PriceBudgetService service;
+    const auto decision = service.preflight({
+        .vault_id = vaultId,
+        .run_uuid = uniqueSuffix("stale-reservation"),
+        .provider_key = "aws-s3",
+        .provider_supported = true,
+        .estimate = budgetEstimateForDbTest("1.00000000"),
+        .dry_run = false,
+        .override_policy_ids = {}
+    });
+    ASSERT_FALSE(decision.reservations.empty());
+    const auto reservationId = decision.reservations.front().id;
+
+    vh::db::Transactions::exec("S3CostSafetyTest::agePriceBudgetReservation", [&](pqxx::work& txn) {
+        txn.exec(
+            "UPDATE s3_price_budget_ledger "
+            "SET created_at = CURRENT_TIMESTAMP - interval '25 hours' "
+            "WHERE id = $1",
+            pqxx::params{reservationId});
+    });
+
+    service.expireStaleReservations();
+
+    const auto status = vh::db::Transactions::exec("S3CostSafetyTest::priceBudgetReservationStatus", [&](pqxx::work& txn) {
+        return txn.exec(
+            "SELECT status FROM s3_price_budget_ledger WHERE id = $1",
+            pqxx::params{reservationId}).one_field().as<std::string>();
+    });
+    EXPECT_EQ("expired", status);
+}
+
+TEST(S3CostSafetyTest, PriceBudgetOverrideRequiresExactVaultRunPolicySet) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed price budget override test due to missing environment variables.";
+    ensureDbReady();
+
+    const auto vaultId = seedS3VaultForDbTest(uniqueSuffix("budget_override_exact"));
+    const auto ownerId = ownerForVaultDbTest(vaultId);
+    const auto basePolicy = saveVaultBudgetPolicyForDbTest(
+        vaultId,
+        std::nullopt,
+        vh::storage::s3::pricing::PriceBudgetMode::Enforce,
+        "0.10000000");
+    const auto providerPolicy = saveVaultBudgetPolicyForDbTest(
+        vaultId,
+        "aws-s3",
+        vh::storage::s3::pricing::PriceBudgetMode::Enforce,
+        "0.10000000");
+
+    vh::storage::s3::pricing::PriceBudgetService service;
+    const auto runUuid = uniqueSuffix("override-run");
+    const auto requested = service.requestOverride({
+        .run_uuid = runUuid,
+        .vault_id = vaultId,
+        .requested_by = ownerId,
+        .reason = "release readiness exact policy set test",
+        .policy_ids = {basePolicy.id, providerPolicy.id},
+        .estimated_cost = "1.00000000",
+        .currency = "USD",
+        .ttl_minutes = 30
+    });
+    const auto approved = service.approveOverride(requested.id, ownerId);
+    ASSERT_EQ("approved", approved.status);
+
+    EXPECT_FALSE(service.consumeApprovedOverride(vaultId, {basePolicy.id}, runUuid));
+
+    const auto consumed = service.consumeApprovedOverride(vaultId, {basePolicy.id, providerPolicy.id}, runUuid);
+    ASSERT_TRUE(consumed);
+    EXPECT_EQ(requested.id, consumed->id);
+    EXPECT_EQ("used", consumed->status);
+
+    EXPECT_FALSE(service.consumeApprovedOverride(vaultId, {basePolicy.id, providerPolicy.id}, runUuid));
+}
+
+TEST(S3CostSafetyTest, VaultPricingDashboardStatsOnlyUseApplicableProviderScopeAndVaultLedgerRows) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed pricing dashboard scope test due to missing environment variables.";
+    ensureDbReady();
+
+    const auto awsVaultId = seedS3VaultForDbTest(uniqueSuffix("pricing_aws"));
+    const auto r2VaultId = seedS3VaultForDbTest(uniqueSuffix("pricing_r2"));
+    const auto localVaultId = vh::db::Transactions::exec("S3CostSafetyTest::seedLocalVaultForPricingStats", [&](pqxx::work& txn) {
+        const auto userId = txn.exec(
+            "INSERT INTO users (name, email, password_hash) VALUES ($1, $2, $3) RETURNING id",
+            pqxx::params{"local-pricing-user", uniqueSuffix("local-pricing") + "@vaulthalla.test", "hash"})
+            .one_field().as<std::uint32_t>();
+        return txn.exec(
+            "INSERT INTO vault (type, name, owner_id, mount_point, description) VALUES ($1, $2, $3, $4, $5) RETURNING id",
+            pqxx::params{"local", uniqueSuffix("Local Pricing"), userId, "ABCDEFGHJKMNPQRSTVWXYZ0123456789", ""})
+            .one_field().as<std::uint32_t>();
+    });
+    attachS3ProviderForDbTest(awsVaultId, "AWS");
+    attachS3ProviderForDbTest(r2VaultId, "Cloudflare R2");
+
+    vh::storage::s3::pricing::PriceBudgetPolicy awsProviderPolicy;
+    awsProviderPolicy.scope = vh::storage::s3::pricing::PriceBudgetScope::Provider;
+    awsProviderPolicy.provider_key = "aws-s3";
+    awsProviderPolicy.mode = vh::storage::s3::pricing::PriceBudgetMode::Report;
+    awsProviderPolicy.currency = "USD";
+    awsProviderPolicy.max_monthly_cost = "10.00000000";
+    awsProviderPolicy = vh::storage::s3::pricing::PriceBudgetService{}.upsertPolicy(std::move(awsProviderPolicy));
+
+    vh::storage::s3::pricing::PriceBudgetService service;
+    const auto awsDecision = service.preflight({
+        .vault_id = awsVaultId,
+        .run_uuid = uniqueSuffix("aws-ledger"),
+        .provider_key = "aws-s3",
+        .provider_supported = true,
+        .estimate = budgetEstimateForDbTest("3.00000000"),
+        .dry_run = false,
+        .override_policy_ids = {}
+    });
+    ASSERT_FALSE(awsDecision.reservations.empty());
+    service.commit(awsDecision.reservations, std::make_optional<std::string>("3.00000000"));
+
+    const auto r2Stats = service.dashboardStats(r2VaultId);
+    EXPECT_EQ(0u, r2Stats.active_policies);
+    EXPECT_EQ("0.00000000", r2Stats.current_monthly_spend);
+    EXPECT_TRUE(r2Stats.trends.empty());
+
+    const auto localStats = service.dashboardStats(localVaultId);
+    EXPECT_EQ(0u, localStats.active_policies);
+    EXPECT_EQ("0.00000000", localStats.current_monthly_spend);
+    EXPECT_TRUE(localStats.trends.empty());
 }
 
 TEST(S3CostSafetyTest, RemoteIndexSummaryAppliesMaxAgeFreshnessPolicy) {
@@ -1840,6 +2460,44 @@ TEST(S3CostSafetyTest, EncryptedUploadDoesNotDownloadAfterPut) {
     EXPECT_EQ("true", fake->last_metadata.at("vh-encrypted"));
     EXPECT_EQ("iv", fake->last_metadata.at("vh-iv"));
     EXPECT_EQ("3", fake->last_metadata.at("vh-key-version"));
+
+    std::filesystem::remove_all(tempDir);
+}
+
+TEST(S3CostSafetyTest, EncryptedUploadPassesConfiguredStorageClassAsSystemHeader) {
+    const auto tempDir = std::filesystem::temp_directory_path() / "vh_s3_storage_tier_upload";
+    std::filesystem::remove_all(tempDir);
+    std::filesystem::create_directories(tempDir);
+    const auto backing = tempDir / "ciphertext.bin";
+    std::ofstream(backing, std::ios::binary) << "ciphertext";
+
+    auto vault = std::make_shared<vh::vault::model::S3Vault>();
+    vault->id = 99;
+    vault->owner_id = 100;
+    vault->encrypt_upstream = true;
+    vault->storage_tier_id = "standard_ia";
+
+    auto fake = std::make_shared<CountingS3Controller>();
+    vh::storage::CloudEngine engine;
+    engine.vault = vault;
+    engine.setS3ControllerForTesting(fake);
+    engine.setS3ProviderProfileForTesting(
+        vh::storage::s3::provider::resolve(vh::vault::model::S3Provider::AWS));
+
+    auto file = std::make_shared<vh::fs::model::File>();
+    file->path = "/ciphertext.bin";
+    file->backing_path = backing;
+    file->size_bytes = std::filesystem::file_size(backing);
+    file->content_hash = "content-hash";
+    file->encryption_iv = "iv";
+    file->encrypted_with_key_version = 3;
+
+    engine.upload(file);
+
+    EXPECT_EQ(1, fake->upload_object_with_metadata_calls);
+    ASSERT_TRUE(fake->last_system_headers.contains("x-amz-storage-class"));
+    EXPECT_EQ("STANDARD_IA", fake->last_system_headers.at("x-amz-storage-class"));
+    EXPECT_FALSE(fake->last_metadata.contains("storage-class"));
 
     std::filesystem::remove_all(tempDir);
 }

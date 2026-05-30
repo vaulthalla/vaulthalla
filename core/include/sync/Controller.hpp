@@ -30,6 +30,8 @@ public:
 
     void runNow(unsigned int vaultId, uint8_t trigger = 3); // Event::Trigger::WEBHOOK
 
+    void refreshEngines();
+
 protected:
     void runLoop() override;
 
@@ -45,8 +47,6 @@ private:
     mutable std::shared_mutex taskMapMutex_;
 
     std::unordered_map<unsigned int, std::shared_ptr<Local>> taskMap_{};
-
-    void refreshEngines();
 
     void pruneStaleTasks(const std::vector<std::shared_ptr<storage::Engine>>& engines);
 

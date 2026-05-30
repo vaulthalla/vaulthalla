@@ -13,6 +13,7 @@
 #include "protocols/shell/util/argsHelpers.hpp"
 #include "runtime/Deps.hpp"
 #include "storage/Manager.hpp"
+#include "storage/s3/provider/Registry.hpp"
 #include "CommandUsage.hpp"
 #include "sync/model/LocalPolicy.hpp"
 #include "sync/model/RemotePolicy.hpp"
@@ -243,26 +244,39 @@ void parseS3API(const CommandCall& call, const std::shared_ptr<CommandUsage>& us
     const auto s3Vault = std::static_pointer_cast<vh::vault::model::S3Vault>(vault);
 
     if (const auto apiKeyOpt = optVal(call, usage->resolveGroupOptional("S3 Vault Options", "api-key")->option_tokens)) {
-        if (const auto apiKeyId = parseUInt(*apiKeyOpt); db::query::vault::APIKey::getAPIKey(*apiKeyId)) s3Vault->api_key_id = *apiKeyId;
-        else {
-            const auto apiKey = db::query::vault::APIKey::getAPIKey(*apiKeyOpt);
+        std::shared_ptr<vh::vault::model::APIKey> apiKey;
+        if (const auto apiKeyId = parseUInt(*apiKeyOpt)) {
+            apiKey = db::query::vault::APIKey::getAPIKey(*apiKeyId);
             if (!apiKey) throw std::runtime_error("API key not found: " + *apiKeyOpt);
-
-            using AKPerm = ::vh::rbac::permission::admin::keys::APIPermissions;
-            if (!::vh::rbac::resolver::Admin::has<AKPerm>({
-                .user = call.user,
-                .permission = AKPerm::Consume,
-                .api_key_id = s3Vault->api_key_id
-            })) throw std::runtime_error("you do not have permission to use this API key");
-
-            s3Vault->api_key_id = apiKey->id;
+        } else {
+            apiKey = db::query::vault::APIKey::getAPIKey(*apiKeyOpt);
+            if (!apiKey) throw std::runtime_error("API key not found: " + *apiKeyOpt);
         }
+
+        using AKPerm = ::vh::rbac::permission::admin::keys::APIPermissions;
+        if (!::vh::rbac::resolver::Admin::has<AKPerm>({
+            .user = call.user,
+            .permission = AKPerm::Consume,
+            .api_key_id = apiKey->id
+        })) throw std::runtime_error("you do not have permission to use this API key");
+
+        s3Vault->api_key_id = apiKey->id;
     } else if (required) throw std::runtime_error("--api-key is required for S3 vaults");
 
     if (const auto bucketOpt = optVal(call, usage->resolveGroupOptional("S3 Vault Options", "bucket")->option_tokens)) {
         if (bucketOpt->empty()) throw std::runtime_error("--bucket cannot be empty");
         s3Vault->bucket = *bucketOpt;
     } else if (required) throw std::runtime_error("--bucket is required for S3 vaults");
+
+    if (const auto tierOpt = optVal(call, std::vector<std::string>{"storage-tier", "storage-class"})) {
+        const auto apiKey = db::query::vault::APIKey::getAPIKey(s3Vault->api_key_id);
+        if (!apiKey) throw std::runtime_error("API key not found: " + std::to_string(s3Vault->api_key_id));
+
+        const auto profile = storage::s3::provider::resolve(apiKey->provider);
+        const auto tier = profile->normalizeStorageTier(*tierOpt);
+        if (!tier.ok) throw std::runtime_error(tier.error);
+        s3Vault->storage_tier_id = tier.normalized_id;
+    }
 }
 
 }

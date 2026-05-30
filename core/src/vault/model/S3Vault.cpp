@@ -18,12 +18,14 @@ S3Vault::S3Vault(const pqxx::row& row)
     : Vault(row),
       api_key_id(row["api_key_id"].as<unsigned int>()),
       bucket(row["bucket"].as<std::string>()),
+      storage_tier_id(row["storage_tier_id"].as<std::optional<std::string>>()),
       encrypt_upstream(row["encrypt_upstream"].as<bool>()) {}
 
 void to_json(nlohmann::json& j, const S3Vault& v) {
     to_json(j, static_cast<const Vault&>(v));
     j["api_key_id"] = v.api_key_id;
     j["bucket"] = v.bucket;
+    j["storage_tier_id"] = v.storage_tier_id ? nlohmann::json(*v.storage_tier_id) : nlohmann::json(nullptr);
     j["encrypt_upstream"] = v.encrypt_upstream;
 }
 
@@ -31,6 +33,10 @@ void from_json(const nlohmann::json& j, S3Vault& v) {
     from_json(j, static_cast<Vault&>(v));
     v.api_key_id = j.at("api_key_id").get<unsigned int>();
     v.bucket = j.at("bucket").get<std::string>();
+    if (j.contains("storage_tier_id") && !j.at("storage_tier_id").is_null())
+        v.storage_tier_id = j.at("storage_tier_id").get<std::string>();
+    else
+        v.storage_tier_id = std::nullopt;
     v.encrypt_upstream = j.value("encrypt_upstream", true);
 }
 

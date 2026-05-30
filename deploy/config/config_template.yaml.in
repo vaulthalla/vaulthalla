@@ -22,6 +22,10 @@ auth: {}
 sharing: {}
 
 
+# === 💸 PRICING ESTIMATES ===
+pricing: {}
+
+
 # === OPERATOR EMAIL DELIVERY ===
 email: {}
 

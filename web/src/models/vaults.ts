@@ -1,4 +1,32 @@
 export type VaultType = 'local' | 's3'
+export type S3BudgetPreset = 'conservative' | 'balanced' | 'bulk' | 'unlimited' | 'custom'
+export type RemoteSyncStrategy = 'cache' | 'sync' | 'mirror'
+export type RemoteConflictPolicy = 'keep_local' | 'keep_remote' | 'keep_newest' | 'ask'
+
+export interface S3RequestBudget {
+  list_requests: number | null
+  head_requests: number | null
+  get_requests: number | null
+  put_requests: number | null
+  copy_requests: number | null
+  delete_requests: number | null
+  downloaded_bytes: number | null
+}
+
+export interface RemoteSyncPolicy {
+  id?: number
+  vault_id?: number
+  strategy: RemoteSyncStrategy
+  conflict_policy: RemoteConflictPolicy
+  interval: number | string
+  enabled: boolean
+  s3_request_budget: S3RequestBudget
+  max_remote_index_age_seconds: number | null
+  last_sync_at?: string
+  last_success_at?: string
+  created_at?: string
+  updated_at?: string
+}
 
 interface IVault {
   id: number
@@ -18,10 +46,13 @@ interface IS3 extends IVault {
   vault_id: number
   api_key_id: number
   bucket: string
+  storage_tier_id?: string | null
+  encrypt_upstream: boolean
   region: string
   access_key: string
   secret_access_key: string
   endpoint: string
+  sync?: RemoteSyncPolicy
 }
 
 export class Vault implements IVault {
@@ -64,10 +95,13 @@ export class S3Vault implements IS3 {
   vault_id: number = 0
   api_key_id: number = 0
   bucket: string = ''
+  storage_tier_id: string | null = null
+  encrypt_upstream: boolean = true
   region: string = ''
   access_key: string = ''
   secret_access_key: string = ''
   endpoint: string = ''
+  sync?: RemoteSyncPolicy
 
   constructor(data?: Partial<IS3>) {
     if (data) Object.assign(this, data)

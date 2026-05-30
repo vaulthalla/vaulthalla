@@ -11,10 +11,19 @@ void Controller::uploadLargeObject(const std::filesystem::path& key,
 const std::filesystem::path& filePath,
 const uintmax_t partSize,
 const std::unordered_map<std::string, std::string>& metadata) const {
+    RequestOptions options;
+    options.metadata = metadata;
+    uploadLargeObject(key, filePath, partSize, options);
+}
+
+void Controller::uploadLargeObject(const std::filesystem::path& key,
+const std::filesystem::path& filePath,
+const uintmax_t partSize,
+const RequestOptions& options) const {
     std::ifstream file(filePath, std::ios::binary);
     if (!file) throw std::runtime_error("Failed to open file for large upload: " + filePath.string());
 
-    const std::string uploadId = initiateMultipartUpload(key, metadata);
+    const std::string uploadId = initiateMultipartUpload(key, options);
     if (uploadId.empty()) throw std::runtime_error("Failed to initiate multipart upload for: " + key.string());
 
     std::vector<std::string> etags;
@@ -57,13 +66,22 @@ const std::unordered_map<std::string, std::string>& metadata) const {
 }
 
 void Controller::uploadObject(const std::filesystem::path& key, const std::filesystem::path& filePath) const {
-    uploadObjectWithMetadata(key, filePath, {});
+    uploadObjectWithMetadata(key, filePath, RequestOptions{});
 }
 
 void Controller::uploadObjectWithMetadata(
     const std::filesystem::path& key,
     const std::filesystem::path& filePath,
     const std::unordered_map<std::string, std::string>& metadata) const {
+    RequestOptions options;
+    options.metadata = metadata;
+    uploadObjectWithMetadata(key, filePath, options);
+}
+
+void Controller::uploadObjectWithMetadata(
+    const std::filesystem::path& key,
+    const std::filesystem::path& filePath,
+    const RequestOptions& options) const {
     recordRequest(RequestKind::Put);
 
     std::ifstream fin(filePath, std::ios::binary);
@@ -84,9 +102,7 @@ void Controller::uploadObjectWithMetadata(
 
     auto hdrMap = buildHeaderMap(payloadHash);
     hdrMap["content-type"] = "application/octet-stream";
-    for (const auto& [k, v] : metadata) {
-        hdrMap[fmt::format("x-amz-meta-{}", k)] = v;
-    }
+    applyRequestOptions(hdrMap, options);
 
     const std::string authHeader = buildAuthorizationHeader(apiKey_, "PUT", canonical, hdrMap, payloadHash);
 

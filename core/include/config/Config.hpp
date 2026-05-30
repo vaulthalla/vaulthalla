@@ -61,6 +61,25 @@ struct SyncConfig {
     uint32_t event_audit_max_entries = 10000;
 };
 
+struct StorageRatesApiConfig {
+    bool remote_refresh_enabled = false;
+    std::string base_url = "https://storage-rates-api.vaulthalla.cloud";
+    uint32_t timeout_ms = 5000;
+    uint32_t cache_ttl_seconds = 43200;
+    uint32_t refresh_interval_seconds = 43200;
+    bool fail_open = true;
+    bool signature_warning_only = true;
+    std::optional<std::filesystem::path> signature_public_key_path;
+    std::vector<std::string> fallback_artifact_base_urls;
+    bool prefer_full_catalog = true;
+    bool use_remote_estimator_for_debug = false;
+};
+
+struct PricingConfig {
+    bool enabled = true;
+    StorageRatesApiConfig storage_rates_api;
+};
+
 struct DBSweeperConfig {
     uint32_t sweep_interval_minutes = 60;
 };
@@ -212,6 +231,7 @@ struct Config {
     DatabaseConfig database;
     AuthConfig auth;
     SyncConfig sync;
+    PricingConfig pricing;
     ServicesConfig services;
     StatsSnapshotsConfig stats_snapshots;
     SharingConfig sharing;
@@ -250,6 +270,10 @@ void to_json(nlohmann::json& j, const AuthConfig& c);
 void from_json(const nlohmann::json& j, AuthConfig& c);
 void to_json(nlohmann::json& j, const SyncConfig& c);
 void from_json(const nlohmann::json& j, SyncConfig& c);
+void to_json(nlohmann::json& j, const StorageRatesApiConfig& c);
+void from_json(const nlohmann::json& j, StorageRatesApiConfig& c);
+void to_json(nlohmann::json& j, const PricingConfig& c);
+void from_json(const nlohmann::json& j, PricingConfig& c);
 void to_json(nlohmann::json& j, const DBSweeperConfig& c);
 void from_json(const nlohmann::json& j, DBSweeperConfig& c);
 void to_json(nlohmann::json& j, const ConnectionLifecycleManagerConfig& c);

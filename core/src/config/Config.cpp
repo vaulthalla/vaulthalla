@@ -48,6 +48,7 @@ namespace vh::config {
         if (auto node = root["database"]) YAML::convert<DatabaseConfig>::decode(node, cfg.database);
         if (auto node = root["auth"]) YAML::convert<AuthConfig>::decode(node, cfg.auth);
         if (auto node = root["sync"]) YAML::convert<SyncConfig>::decode(node, cfg.sync);
+        if (auto node = root["pricing"]) YAML::convert<PricingConfig>::decode(node, cfg.pricing);
         if (auto node = root["services"]) YAML::convert<ServicesConfig>::decode(node, cfg.services);
         if (auto node = root["stats_snapshots"]) YAML::convert<StatsSnapshotsConfig>::decode(node, cfg.stats_snapshots);
         if (auto node = root["sharing"]) YAML::convert<SharingConfig>::decode(node, cfg.sharing);
@@ -84,6 +85,7 @@ namespace vh::config {
         put("database", database);
         put("auth", auth);
         put("sync", sync);
+        put("pricing", pricing);
         put("services", services);
         put("stats_snapshots", stats_snapshots);
         put("sharing", sharing);
@@ -114,6 +116,7 @@ namespace vh::config {
             {"database", c.database},
             {"auth", c.auth},
             {"sync", c.sync},
+            {"pricing", c.pricing},
             {"services", c.services},
             {"stats_snapshots", c.stats_snapshots},
             {"sharing", c.sharing},
@@ -132,6 +135,7 @@ namespace vh::config {
         j.at("database").get_to(c.database);
         j.at("auth").get_to(c.auth);
         j.at("sync").get_to(c.sync);
+        if (j.contains("pricing")) j.at("pricing").get_to(c.pricing);
         j.at("services").get_to(c.services);
         if (j.contains("stats_snapshots")) j.at("stats_snapshots").get_to(c.stats_snapshots);
         j.at("sharing").get_to(c.sharing);
@@ -303,6 +307,54 @@ namespace vh::config {
     void from_json(const nlohmann::json &j, SyncConfig &c) {
         c.event_audit_retention_days = std::max(7, j.value("event_audit_retention_days", 30));
         c.event_audit_max_entries = std::max(1000, j.value("event_audit_max_entries", 10000));
+    }
+
+    void to_json(nlohmann::json &j, const StorageRatesApiConfig &c) {
+        j = {
+            {"remote_refresh_enabled", c.remote_refresh_enabled},
+            {"base_url", c.base_url},
+            {"timeout_ms", c.timeout_ms},
+            {"cache_ttl_seconds", c.cache_ttl_seconds},
+            {"refresh_interval_seconds", c.refresh_interval_seconds},
+            {"fail_open", c.fail_open},
+            {"signature_warning_only", c.signature_warning_only},
+            {"signature_public_key_path", c.signature_public_key_path
+                ? nlohmann::json(c.signature_public_key_path->string())
+                : nlohmann::json(nullptr)},
+            {"fallback_artifact_base_urls", c.fallback_artifact_base_urls},
+            {"prefer_full_catalog", c.prefer_full_catalog},
+            {"use_remote_estimator_for_debug", c.use_remote_estimator_for_debug}
+        };
+    }
+
+    void from_json(const nlohmann::json &j, StorageRatesApiConfig &c) {
+        if (j.contains("remote_refresh_enabled")) c.remote_refresh_enabled = j.value("remote_refresh_enabled", false);
+        else c.remote_refresh_enabled = j.value("enabled", false);
+        c.base_url = j.value("base_url", std::string("https://storage-rates-api.vaulthalla.cloud"));
+        c.timeout_ms = std::max(100u, j.value("timeout_ms", 5000u));
+        c.cache_ttl_seconds = std::max(60u, j.value("cache_ttl_seconds", 43200u));
+        c.refresh_interval_seconds = std::max(60u, j.value("refresh_interval_seconds", 43200u));
+        c.fail_open = j.value("fail_open", true);
+        c.signature_warning_only = j.value("signature_warning_only", true);
+        if (j.contains("signature_public_key_path") && !j.at("signature_public_key_path").is_null())
+            c.signature_public_key_path = std::filesystem::path(j.at("signature_public_key_path").get<std::string>());
+        else
+            c.signature_public_key_path.reset();
+        c.fallback_artifact_base_urls = j.value("fallback_artifact_base_urls", std::vector<std::string>{});
+        c.prefer_full_catalog = j.value("prefer_full_catalog", true);
+        c.use_remote_estimator_for_debug = j.value("use_remote_estimator_for_debug", false);
+    }
+
+    void to_json(nlohmann::json &j, const PricingConfig &c) {
+        j = {
+            {"enabled", c.enabled},
+            {"storage_rates_api", c.storage_rates_api}
+        };
+    }
+
+    void from_json(const nlohmann::json &j, PricingConfig &c) {
+        c.enabled = j.value("enabled", true);
+        if (j.contains("storage_rates_api")) j.at("storage_rates_api").get_to(c.storage_rates_api);
     }
 
     void to_json(nlohmann::json &j, const DBSweeperConfig &c) {

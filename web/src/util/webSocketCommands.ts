@@ -1,4 +1,4 @@
-import { LocalDiskVault, S3Vault, Vault } from '@/models/vaults'
+import { LocalDiskVault, RemoteSyncPolicy, S3Vault, Vault } from '@/models/vaults'
 import { VaultStats } from '@/models/stats/vaultStats'
 import { VaultActivity } from '@/models/stats/vaultActivity'
 import { VaultRecovery } from '@/models/stats/vaultRecovery'
@@ -56,6 +56,18 @@ import {
   OperatorEmailTestPayload,
   OperatorEmailTestResponse,
 } from '@/models/operatorEmail'
+import {
+  PriceBudgetPolicy,
+  PriceBudgetPolicyPayload,
+  PriceBudgetPreflightPayload,
+  PriceBudgetPreflightResult,
+  PriceBudgetScope,
+  PriceBudgetStatus,
+} from '@/models/pricing/priceBudget'
+import { PriceBudgetLedgerEntry } from '@/models/pricing/priceBudgetLedger'
+import { PriceNotification } from '@/models/pricing/priceNotification'
+import { PriceOverride, PriceOverrideRequestPayload } from '@/models/pricing/priceOverride'
+import { PricingBudgetStats } from '@/models/stats/pricingBudgetStats'
 
 export interface WebSocketCommandMap {
   // Auth
@@ -99,7 +111,15 @@ export interface WebSocketCommandMap {
   'storage.vault.add': {
     payload:
       | { name: string; type: 'local'; mount_point: string }
-      | { name: string; type: 's3'; api_key_id: number; bucket: string }
+      | {
+          name: string
+          type: 's3'
+          api_key_id: number
+          bucket: string
+          storage_tier_id?: string | null
+          encrypt_upstream?: boolean
+          sync?: RemoteSyncPolicy
+        }
     response: { vault: LocalDiskVault | S3Vault }
   }
 
@@ -172,6 +192,52 @@ export interface WebSocketCommandMap {
   'email.test.send': { payload: OperatorEmailTestPayload; response: OperatorEmailTestResponse }
 
   'email.history': { payload: { limit?: number } | null; response: { history: OperatorEmailHistoryRecord[] } }
+
+  // S3 price budget command center
+  'pricing.budget.policy.list': {
+    payload: { vault_id?: number | null; include_inactive?: boolean } | null
+    response: { policies: PriceBudgetPolicy[] }
+  }
+
+  'pricing.budget.policy.upsert': { payload: PriceBudgetPolicyPayload; response: { policy: PriceBudgetPolicy } }
+
+  'pricing.budget.policy.disable': {
+    payload: { scope: PriceBudgetScope; provider_key?: string | null; vault_id?: number | null }
+    response: { disabled: boolean }
+  }
+
+  'pricing.budget.ledger.list': {
+    payload: { vault_id?: number | null; limit?: number } | null
+    response: { ledger: PriceBudgetLedgerEntry[] }
+  }
+
+  'pricing.budget.status': {
+    payload: { vault_id?: number | null; limit?: number; include_inactive?: boolean } | null
+    response: PriceBudgetStatus
+  }
+
+  'pricing.budget.preflight': { payload: PriceBudgetPreflightPayload; response: PriceBudgetPreflightResult }
+
+  'pricing.budget.override.request': { payload: PriceOverrideRequestPayload; response: { override: PriceOverride } }
+
+  'pricing.budget.override.approve': { payload: { id: number }; response: { override: PriceOverride } }
+
+  'pricing.budget.override.deny': { payload: { id: number; reason?: string | null }; response: { override: PriceOverride } }
+
+  'pricing.budget.override.list': {
+    payload: { vault_id?: number | null; limit?: number; include_expired?: boolean } | null
+    response: { overrides: PriceOverride[] }
+  }
+
+  'pricing.notifications.list': {
+    payload: { vault_id?: number | null; limit?: number; include_acknowledged?: boolean } | null
+    response: { notifications: PriceNotification[] }
+  }
+
+  'pricing.notifications.ack': {
+    payload: { id: number; vault_id?: number | null }
+    response: { notification: PriceNotification }
+  }
 
   // Dashboard preferences
 
@@ -334,7 +400,11 @@ export interface WebSocketCommandMap {
 
   'stats.vault.trends': { payload: { vault_id: number; window_hours?: number }; response: { stats: StatsTrends } }
 
+  'stats.vault.pricing': { payload: { vault_id: number }; response: { stats: PricingBudgetStats } }
+
   'stats.dashboard.overview': { payload: DashboardOverviewRequest | null; response: { stats: DashboardOverview } }
+
+  'stats.pricing.budget': { payload: { vault_id?: number | null } | null; response: { stats: PricingBudgetStats } }
 
   'stats.system.health': { payload: null; response: { stats: SystemHealth } }
 
@@ -353,6 +423,8 @@ export interface WebSocketCommandMap {
   'stats.system.retention': { payload: null; response: { stats: RetentionStats } }
 
   'stats.system.trends': { payload: { window_hours?: number }; response: { stats: StatsTrends } }
+
+  'stats.system.pricing': { payload: null; response: { stats: PricingBudgetStats } }
 
   'stats.fs.cache': { payload: null; response: { stats: CacheStats } }
 
