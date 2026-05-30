@@ -18,7 +18,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           <AdminSidebar config={adminNav} />
 
           <div className="flex max-h-screen min-w-0 grow flex-col overflow-scroll">
-            <div className="flex items-center justify-between border-b border-white/10 bg-black/20 p-3 backdrop-blur">
+            <div className="flex items-center justify-between border-b border-white/10 bg-black/20 p-3 backdrop-blur z-50">
               <div className="md:hidden">
                 <MobileDrawer mode="admin" title="Admin" />
               </div>
