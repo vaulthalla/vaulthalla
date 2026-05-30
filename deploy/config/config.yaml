@@ -58,7 +58,9 @@ sync:
 
 # === 💸 PRICING ESTIMATES ===
 # Uses signed storage-rate artifacts for local S3 request/tier-aware estimates.
-# Pricing is report-only and fail-open; sync does not enforce price budgets.
+# Price-budget enforcement is opt-in through explicit report/warn/enforce policies.
+# Catalog lookup remains local by default, and enforcement fails closed when a
+# policy requires verified or fresh catalog data that is not available.
 # Remote artifact refresh is disabled by default so a fresh install does not
 # call upstream price services unless the operator opts in.
 pricing:

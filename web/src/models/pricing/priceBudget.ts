@@ -16,7 +16,7 @@ import {
 
 export type PriceBudgetScope = 'global' | 'provider' | 'vault'
 export type PriceBudgetMode = 'off' | 'report' | 'warn' | 'enforce'
-export type PriceBudgetWindow = 'run' | 'day' | 'month'
+export type PriceBudgetWindow = 'per_run' | 'daily' | 'monthly'
 export type PriceBudgetConfidence = 'none' | 'low' | 'medium' | 'high' | string
 
 function asScope(value: unknown): PriceBudgetScope {
@@ -28,7 +28,9 @@ function asMode(value: unknown): PriceBudgetMode {
 }
 
 function asWindow(value: unknown): PriceBudgetWindow {
-  return value === 'day' || value === 'month' ? value : 'run'
+  if (value === 'monthly' || value === 'month') return 'monthly'
+  if (value === 'daily' || value === 'day') return 'daily'
+  return 'per_run'
 }
 
 export interface PriceBudgetPolicyPayload {
@@ -102,7 +104,7 @@ export class PriceBudgetWindowCheck {
   policy_id: number | null = null
   scope: PriceBudgetScope = 'global'
   mode: PriceBudgetMode = 'report'
-  window: PriceBudgetWindow = 'run'
+  window: PriceBudgetWindow = 'per_run'
   currency = 'USD'
   limit: string | null = null
   used_before = '0'

@@ -85,6 +85,12 @@ void Cloud::operator()() {
         if (cloud) event->applyS3RequestMetrics(cloud->s3RequestMetrics());
         event->status = Event::Status::STALLED;
         event->stall_reason = e.what();
+    } catch (const SyncStalled& e) {
+        if (cloud) event->applyS3RequestMetrics(cloud->s3RequestMetrics());
+        event->status = Event::Status::STALLED;
+        event->stall_reason = e.what();
+        event->error_code.clear();
+        event->error_message.clear();
     } catch (const std::exception& e) {
         if (cloud) event->applyS3RequestMetrics(cloud->s3RequestMetrics());
         handleError(std::format("[CloudSync] {}", e.what()));
@@ -206,7 +212,9 @@ void Cloud::sync() {
         estimate.planned_upload_bytes,
         estimate.remote_index_objects,
         estimate.archive_tier_downloads_skipped);
+    bool remoteExecutionStarted = false;
     try {
+        remoteExecutionStarted = true;
         Executor::run(self, plan);
         event->computeDashboardStats();
         if (event->num_failed_ops == 0)
@@ -217,7 +225,10 @@ void Cloud::sync() {
                 ? std::make_optional(budgetPriceEstimate.estimated_cost)
                 : std::optional<std::string>{});
     } catch (...) {
-        budgetService.commit(budgetDecision.reservations, std::nullopt);
+        // Once the executor starts, remote writes may already have happened; committing
+        // the reservation is intentionally conservative for the shared budget ledger.
+        if (remoteExecutionStarted) budgetService.commit(budgetDecision.reservations, std::nullopt);
+        else budgetService.release(budgetDecision.reservations);
         throw;
     }
 }

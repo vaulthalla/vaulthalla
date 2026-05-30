@@ -5,6 +5,8 @@
 #include "protocols/shell/Table.hpp"
 #include "protocols/shell/commands/helpers.hpp"
 #include "protocols/shell/util/argsHelpers.hpp"
+#include "rbac/permission/admin/Vaults.hpp"
+#include "rbac/resolver/admin/all.hpp"
 #include "runtime/Deps.hpp"
 #include "storage/s3/pricing/PriceBudget.hpp"
 #include "usage/include/UsageManager.hpp"
@@ -29,6 +31,17 @@ using vh::vault::model::VaultType;
 CommandResult requirePricingSuperAdmin(const CommandCall& call) {
     if (call.user && call.user->isSuperAdmin()) return {};
     return invalid("pricing budget: insufficient permissions; requires super-admin");
+}
+
+CommandResult requireVaultBudgetEdit(const CommandCall& call, const std::uint32_t vaultId) {
+    if (call.user && call.user->isSuperAdmin()) return {};
+    using Perm = vh::rbac::permission::admin::VaultPermissions;
+    if (vh::rbac::resolver::Admin::has<Perm>({
+        .user = call.user,
+        .permission = Perm::Edit,
+        .vault_id = vaultId
+    })) return {};
+    return invalid("pricing budget: insufficient permissions; requires vault edit permission");
 }
 
 std::string valueOrDash(const std::optional<std::string>& value) {
@@ -210,7 +223,8 @@ std::string renderLedger(const std::vector<PriceBudgetLedgerEntry>& entries) {
     return table.render();
 }
 
-CommandResult handleBudgetList(const CommandCall&) {
+CommandResult handleBudgetList(const CommandCall& call) {
+    if (auto denied = requirePricingSuperAdmin(call); denied.exit_code != 0) return denied;
     return ok(renderPolicies(PriceBudgetService{}.listPolicies(true)));
 }
 
@@ -219,7 +233,10 @@ CommandResult setPolicy(
     const PriceBudgetScope scope,
     std::optional<std::string> providerKey,
     std::optional<std::uint32_t> vaultId) {
-    if (auto denied = requirePricingSuperAdmin(call); denied.exit_code != 0) return denied;
+    const auto denied = scope == PriceBudgetScope::Vault && vaultId
+        ? requireVaultBudgetEdit(call, *vaultId)
+        : requirePricingSuperAdmin(call);
+    if (denied.exit_code != 0) return denied;
 
     std::string error;
     auto policy = parsePolicyOptions(call, scope, std::move(providerKey), vaultId, error);
@@ -260,7 +277,10 @@ CommandResult disablePolicy(
     const PriceBudgetScope scope,
     const std::optional<std::string>& providerKey,
     const std::optional<std::uint32_t>& vaultId) {
-    if (auto denied = requirePricingSuperAdmin(call); denied.exit_code != 0) return denied;
+    const auto denied = scope == PriceBudgetScope::Vault && vaultId
+        ? requireVaultBudgetEdit(call, *vaultId)
+        : requirePricingSuperAdmin(call);
+    if (denied.exit_code != 0) return denied;
     try {
         const bool disabled = PriceBudgetService{}.disablePolicy(scope, providerKey, vaultId);
         return ok(disabled
@@ -293,7 +313,8 @@ CommandResult handleDisableVault(const CommandCall& call) {
     return disablePolicy(call, PriceBudgetScope::Vault, std::nullopt, vaultId);
 }
 
-CommandResult handleStatus(const CommandCall&) {
+CommandResult handleStatus(const CommandCall& call) {
+    if (auto denied = requirePricingSuperAdmin(call); denied.exit_code != 0) return denied;
     PriceBudgetService service;
     service.expireStaleReservations();
     std::ostringstream out;
@@ -305,6 +326,7 @@ CommandResult handleStatus(const CommandCall&) {
 }
 
 CommandResult handleLedger(const CommandCall& call) {
+    if (auto denied = requirePricingSuperAdmin(call); denied.exit_code != 0) return denied;
     auto limit = std::uint32_t{50};
     if (const auto limitOpt = optVal(call, "limit")) {
         const auto parsed = parseUInt(*limitOpt);

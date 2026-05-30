@@ -4,6 +4,8 @@
 #include "db/Transactions.hpp"
 #include "email/RenderedEmail.hpp"
 #include "notifications/OperatorNotificationBus.hpp"
+#include "storage/s3/provider/Registry.hpp"
+#include "vault/model/APIKey.hpp"
 
 #include <algorithm>
 #include <boost/multiprecision/cpp_dec_float.hpp>
@@ -383,6 +385,56 @@ bool isLimitExceededReason(const std::string& reason) {
     return reason.rfind("S3 price budget exceeded", 0) == 0;
 }
 
+struct VaultBudgetContext {
+    bool is_s3{false};
+    std::string provider_key{"unknown"};
+    bool provider_supported{false};
+};
+
+std::optional<VaultBudgetContext> vaultBudgetContext(pqxx::work& txn, const std::uint32_t vaultId) {
+    const auto rows = txn.exec(
+        "SELECT v.type, ak.provider "
+        "FROM vault v "
+        "LEFT JOIN s3 ON s3.vault_id = v.id "
+        "LEFT JOIN api_keys ak ON ak.id = s3.api_key_id "
+        "WHERE v.id = " + std::to_string(vaultId) + " LIMIT 1");
+    if (rows.empty()) return std::nullopt;
+
+    VaultBudgetContext context;
+    if (rows.one_row()["type"].as<std::string>() != "s3") return context;
+
+    context.is_s3 = true;
+    try {
+        const auto providerText = optionalString(rows.one_row(), "provider").value_or("Other");
+        const auto profile = provider::resolve(vault::model::s3_provider_from_string(providerText));
+        const auto costProfileId = profile ? profile->costProfileId() : std::optional<std::string>{};
+        context.provider_key = costProfileId ? *costProfileId : (profile ? profile->id() : std::string{"unknown"});
+        context.provider_supported = costProfileId && isSupportedPriceBudgetProvider(*costProfileId);
+    } catch (...) {
+        context.provider_key = "generic-s3-compatible";
+        context.provider_supported = false;
+    }
+    return context;
+}
+
+std::string statsPolicyWhereClause(pqxx::work& txn, const std::optional<std::uint32_t>& vaultId) {
+    if (!vaultId) return "is_active = TRUE AND mode <> 'off'";
+
+    const auto context = vaultBudgetContext(txn, *vaultId);
+    if (!context || !context->is_s3) return "FALSE";
+
+    return policyWhereClause(
+        txn,
+        *vaultId,
+        context->provider_key,
+        context->provider_supported,
+        false);
+}
+
+std::string scopedLedgerVaultFilter(const std::optional<std::uint32_t>& vaultId) {
+    return vaultId ? "AND vault_id = " + std::to_string(*vaultId) + " " : std::string{};
+}
+
 std::string notificationTypeForPricingEvaluationIssue(const std::string& reason) {
     const auto lowered = lower(reason);
     if (lowered.find("provider is unsupported") != std::string::npos ||
@@ -683,6 +735,7 @@ PriceBudgetDecision PriceBudgetService::preflight(const PriceBudgetPreflightRequ
         if (decision.policies.empty()) return decision;
 
         const bool canReserve = estimateCanBeReserved(request.estimate);
+        std::set<std::uint32_t> reservablePolicyIds;
         for (const auto& policy : decision.policies) {
             const auto mode = policy.mode;
             if (mode == PriceBudgetMode::Off) continue;
@@ -722,6 +775,7 @@ PriceBudgetDecision PriceBudgetService::preflight(const PriceBudgetPreflightRequ
                 continue;
             }
 
+            reservablePolicyIds.insert(policy.id);
             const auto requested = budgetDecimalFromString(request.estimate.estimated_cost);
             for (const auto window : configuredWindows(policy)) {
                 PriceBudgetWindowCheck check;
@@ -776,6 +830,7 @@ PriceBudgetDecision PriceBudgetService::preflight(const PriceBudgetPreflightRequ
 
         for (const auto& policy : decision.policies) {
             if (policy.mode == PriceBudgetMode::Off) continue;
+            if (!reservablePolicyIds.contains(policy.id)) continue;
             if (normalizePriceBudgetCurrency(request.estimate.currency) != normalizePriceBudgetCurrency(policy.currency))
                 continue;
             for (const auto window : configuredWindows(policy)) {
@@ -835,7 +890,8 @@ std::optional<PriceBudgetOverride> PriceBudgetService::consumeApprovedOverride(
             "AND status = 'approved' "
             "AND scope = 'single_run' "
             "AND expires_at > CURRENT_TIMESTAMP "
-            "AND policy_ids @> " + uintVectorJsonSql(txn, policyIds) + " ";
+            "AND policy_ids @> " + uintVectorJsonSql(txn, policyIds) + " "
+            "AND policy_ids <@ " + uintVectorJsonSql(txn, policyIds) + " ";
         if (runUuid && !runUuid->empty())
             where += "AND (run_uuid IS NULL OR run_uuid = " + txn.quote(*runUuid) + ") ";
 
@@ -1273,13 +1329,9 @@ std::vector<PriceBudgetTrendStats> PriceBudgetService::trendStats(const std::opt
     std::vector<PriceBudgetNotification> pendingNotifications;
 
     auto trends = db::Transactions::exec("PriceBudgetService::trendStats", [&](pqxx::work& txn) {
-        auto policySql = std::string{
-            "SELECT * FROM s3_price_budget_policy "
-            "WHERE is_active = TRUE AND mode <> 'off' "
-        };
-        if (vaultId)
-            policySql += "AND (scope IN ('global', 'provider') OR vault_id = " + std::to_string(*vaultId) + ") ";
-        policySql += "ORDER BY id";
+        auto policySql = "SELECT * FROM s3_price_budget_policy WHERE " +
+            statsPolicyWhereClause(txn, vaultId) + " ORDER BY id";
+        const auto ledgerVaultFilter = scopedLedgerVaultFilter(vaultId);
 
         const auto policyRows = txn.exec(policySql);
         std::vector<PriceBudgetTrendStats> out;
@@ -1293,6 +1345,7 @@ std::vector<PriceBudgetTrendStats> PriceBudgetService::trendStats(const std::opt
                 "WHERE policy_id = " + std::to_string(policy.id) + " "
                 "AND window_type = " + txn.quote(toString(window)) + " "
                 "AND status IN ('reserved', 'committed') "
+                + ledgerVaultFilter +
                 "AND created_at >= CURRENT_TIMESTAMP - interval '" + std::to_string(days) + " days' "
                 "GROUP BY 1"
                 ") daily");
@@ -1370,6 +1423,7 @@ std::vector<PriceBudgetTrendStats> PriceBudgetService::trendStats(const std::opt
                     "WHERE policy_id = " + std::to_string(policy.id) + " "
                     "AND window_type = " + txn.quote(toString(window)) + " "
                     "AND window_start = " + windowStartExpr(window) + " "
+                    + ledgerVaultFilter +
                     "AND status IN ('reserved', 'committed')");
                 if (current.empty()) continue;
                 const auto row = current.one_row();
@@ -1483,8 +1537,7 @@ PriceBudgetDashboardStats PriceBudgetService::dashboardStats(const std::optional
         nlohmann::json result;
         result["active_policies"] = txn.exec(
             "SELECT COUNT(*) AS c FROM s3_price_budget_policy "
-            "WHERE is_active = TRUE AND mode <> 'off'" +
-            (vaultId ? " AND (scope IN ('global', 'provider') OR vault_id = " + std::to_string(*vaultId) + ")" : std::string{}))
+            "WHERE " + statsPolicyWhereClause(txn, vaultId))
             .one_row()["c"].as<std::uint32_t>();
         result["blocked_syncs_24h"] = txn.exec(
             "SELECT COUNT(*) AS c FROM sync_event "

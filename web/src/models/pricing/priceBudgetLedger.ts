@@ -19,7 +19,7 @@ export class PriceBudgetLedgerEntry {
   vault_id = 0
   provider_key = ''
   currency = 'USD'
-  window: PriceBudgetWindow = 'run'
+  window: PriceBudgetWindow = 'per_run'
   window_start: number | string | null = null
   window_end: number | string | null = null
   reserved_cost = '0'
@@ -35,7 +35,11 @@ export class PriceBudgetLedgerEntry {
     this.vault_id = asNumber(data.vault_id)
     this.provider_key = asString(data.provider_key)
     this.currency = asString(data.currency, 'USD')
-    this.window = data.window === 'day' || data.window === 'month' ? data.window : 'run'
+    this.window = data.window === 'monthly' || data.window === 'month'
+      ? 'monthly'
+      : data.window === 'daily' || data.window === 'day'
+        ? 'daily'
+        : 'per_run'
     this.window_start = asDateValue(data.window_start)
     this.window_end = asDateValue(data.window_end)
     this.reserved_cost = asDecimalString(data.reserved_cost)

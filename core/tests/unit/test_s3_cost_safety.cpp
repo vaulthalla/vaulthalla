@@ -20,6 +20,7 @@
 #include "storage/ScopedS3RequestBudget.hpp"
 #include "storage/s3/Controller.hpp"
 #include "storage/s3/curl/helpers.hpp"
+#include "storage/s3/pricing/PriceBudget.hpp"
 #include "storage/s3/provider/Registry.hpp"
 #include "sync/Cloud.hpp"
 #include "sync/Planner.hpp"
@@ -346,6 +347,87 @@ uint32_t seedS3VaultForDbTest(const std::string& suffix) {
                 "0123456789ABCDEFGHJKMNPQRSTVWXYZ",
                 ""
             }).one_field().as<uint32_t>();
+    });
+}
+
+vh::storage::s3::pricing::PriceEstimateReport budgetEstimateForDbTest(
+    const std::string& cost,
+    const bool verified = true,
+    const bool stale = false) {
+    vh::storage::s3::pricing::PriceEstimateReport report;
+    report.available = true;
+    report.supported = true;
+    report.stale = stale;
+    report.estimated_cost = cost;
+    report.currency = "USD";
+    report.price_profile_id = "aws-s3/us-east-1/standard";
+    report.catalog_version = "test";
+    report.catalog_source = "test";
+    report.catalog_verified = verified;
+    report.catalog_age_seconds = 60;
+    report.confidence_level = "high";
+    report.estimate_mode = "budget_conservative";
+    report.free_tier_policy = "ignore_account_wide_free_tiers";
+    report.free_tiers_applied = false;
+    report.breakdown = nlohmann::json::array();
+    return report;
+}
+
+std::uint32_t ownerForVaultDbTest(const std::uint32_t vaultId) {
+    return vh::db::Transactions::exec("S3CostSafetyTest::ownerForVault", [&](pqxx::work& txn) {
+        return txn.exec(
+            "SELECT owner_id FROM vault WHERE id = $1",
+            pqxx::params{vaultId}).one_field().as<std::uint32_t>();
+    });
+}
+
+void attachS3ProviderForDbTest(const std::uint32_t vaultId, const std::string& provider) {
+    vh::db::Transactions::exec("S3CostSafetyTest::attachS3Provider", [&](pqxx::work& txn) {
+        const auto ownerId = txn.exec(
+            "SELECT owner_id FROM vault WHERE id = $1",
+            pqxx::params{vaultId}).one_field().as<std::uint32_t>();
+        const auto apiKeyId = txn.exec(
+            "INSERT INTO api_keys "
+            "(user_id, name, provider, access_key, encrypted_secret_access_key, iv, region, endpoint) "
+            "VALUES ($1, $2, $3, $4, decode('00','hex'), decode('00','hex'), $5, $6) RETURNING id",
+            pqxx::params{
+                ownerId,
+                "budget-provider-" + std::to_string(vaultId),
+                provider,
+                "access-" + std::to_string(vaultId),
+                "us-east-1",
+                "https://s3.example.com"
+            }).one_field().as<std::uint32_t>();
+        txn.exec(
+            "INSERT INTO s3 (vault_id, api_key_id, bucket) VALUES ($1, $2, $3) "
+            "ON CONFLICT (vault_id) DO UPDATE SET api_key_id = EXCLUDED.api_key_id, bucket = EXCLUDED.bucket",
+            pqxx::params{vaultId, apiKeyId, "bucket-" + std::to_string(vaultId)});
+    });
+}
+
+vh::storage::s3::pricing::PriceBudgetPolicy saveVaultBudgetPolicyForDbTest(
+    const std::uint32_t vaultId,
+    std::optional<std::string> providerKey,
+    const vh::storage::s3::pricing::PriceBudgetMode mode,
+    const std::optional<std::string>& monthlyLimit,
+    const bool requireVerified = true) {
+    vh::storage::s3::pricing::PriceBudgetPolicy policy;
+    policy.scope = vh::storage::s3::pricing::PriceBudgetScope::Vault;
+    policy.vault_id = vaultId;
+    policy.provider_key = std::move(providerKey);
+    policy.mode = mode;
+    policy.currency = "USD";
+    policy.max_monthly_cost = monthlyLimit;
+    policy.require_verified_catalog = requireVerified;
+    policy.allow_stale_catalog = false;
+    return vh::storage::s3::pricing::PriceBudgetService{}.upsertPolicy(std::move(policy));
+}
+
+std::uint32_t countPriceBudgetLedgerForRunDbTest(const std::string& runUuid) {
+    return vh::db::Transactions::exec("S3CostSafetyTest::countPriceBudgetLedgerForRun", [&](pqxx::work& txn) {
+        return txn.exec(
+            "SELECT COUNT(*) AS c FROM s3_price_budget_ledger WHERE run_uuid = $1",
+            pqxx::params{runUuid}).one_row()["c"].as<std::uint32_t>();
     });
 }
 
@@ -1437,6 +1519,277 @@ TEST(S3CostSafetyTest, StaleIndexFailureMarksEventStalledWithoutGenericError) {
     EXPECT_EQ(vh::sync::model::Event::Status::STALLED, cloud->event->status);
     EXPECT_EQ("remote index is stale and manifest refresh failed", cloud->event->stall_reason);
     EXPECT_TRUE(cloud->event->error_message.empty());
+}
+
+TEST(S3CostSafetyTest, TerminalStalledEventStatusSurvivesShutdownStatusParsing) {
+    vh::sync::model::Event event;
+    event.status = vh::sync::model::Event::Status::STALLED;
+    event.stall_reason = "S3 price budget would be exceeded";
+    event.timestamp_begin = std::time(nullptr) - 10;
+    event.timestamp_end = std::time(nullptr);
+
+    event.parseCurrentStatus();
+
+    EXPECT_EQ(vh::sync::model::Event::Status::STALLED, event.status);
+    EXPECT_EQ("S3 price budget would be exceeded", event.stall_reason);
+    EXPECT_TRUE(event.error_message.empty());
+}
+
+TEST(S3CostSafetyTest, PriceBudgetDryRunDoesNotCreateReservations) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed price budget reservation test due to missing environment variables.";
+    ensureDbReady();
+
+    const auto vaultId = seedS3VaultForDbTest(uniqueSuffix("budget_dry_run"));
+    saveVaultBudgetPolicyForDbTest(
+        vaultId,
+        std::nullopt,
+        vh::storage::s3::pricing::PriceBudgetMode::Enforce,
+        "10.00000000");
+
+    const auto runUuid = uniqueSuffix("dry-run");
+    const auto decision = vh::storage::s3::pricing::PriceBudgetService{}.preflight({
+        .vault_id = vaultId,
+        .run_uuid = runUuid,
+        .provider_key = "aws-s3",
+        .provider_supported = true,
+        .estimate = budgetEstimateForDbTest("1.00000000"),
+        .dry_run = true,
+        .override_policy_ids = {}
+    });
+
+    EXPECT_TRUE(decision.allowed);
+    EXPECT_TRUE(decision.reservations.empty());
+    EXPECT_EQ(0u, countPriceBudgetLedgerForRunDbTest(runUuid));
+}
+
+TEST(S3CostSafetyTest, PriceBudgetBlockedBeforeExecuteDoesNotReserveSpend) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed price budget reservation test due to missing environment variables.";
+    ensureDbReady();
+
+    const auto vaultId = seedS3VaultForDbTest(uniqueSuffix("budget_blocked"));
+    saveVaultBudgetPolicyForDbTest(
+        vaultId,
+        std::nullopt,
+        vh::storage::s3::pricing::PriceBudgetMode::Enforce,
+        "0.10000000");
+
+    const auto runUuid = uniqueSuffix("blocked-run");
+    const auto decision = vh::storage::s3::pricing::PriceBudgetService{}.preflight({
+        .vault_id = vaultId,
+        .run_uuid = runUuid,
+        .provider_key = "aws-s3",
+        .provider_supported = true,
+        .estimate = budgetEstimateForDbTest("1.00000000"),
+        .dry_run = false,
+        .override_policy_ids = {}
+    });
+
+    EXPECT_FALSE(decision.allowed);
+    EXPECT_TRUE(decision.stalled);
+    EXPECT_TRUE(decision.reservations.empty());
+    EXPECT_EQ(0u, countPriceBudgetLedgerForRunDbTest(runUuid));
+}
+
+TEST(S3CostSafetyTest, PriceBudgetWarnPolicyWithUnverifiedCatalogDoesNotReserveSpend) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed price budget reservation test due to missing environment variables.";
+    ensureDbReady();
+
+    const auto vaultId = seedS3VaultForDbTest(uniqueSuffix("budget_unverified_warn"));
+    saveVaultBudgetPolicyForDbTest(
+        vaultId,
+        std::nullopt,
+        vh::storage::s3::pricing::PriceBudgetMode::Warn,
+        "10.00000000");
+
+    const auto runUuid = uniqueSuffix("unverified-warn");
+    const auto decision = vh::storage::s3::pricing::PriceBudgetService{}.preflight({
+        .vault_id = vaultId,
+        .run_uuid = runUuid,
+        .provider_key = "aws-s3",
+        .provider_supported = true,
+        .estimate = budgetEstimateForDbTest("1.00000000", false),
+        .dry_run = false,
+        .override_policy_ids = {}
+    });
+
+    EXPECT_TRUE(decision.allowed);
+    ASSERT_FALSE(decision.warnings.empty());
+    EXPECT_TRUE(decision.reservations.empty());
+    EXPECT_EQ(0u, countPriceBudgetLedgerForRunDbTest(runUuid));
+}
+
+TEST(S3CostSafetyTest, PriceBudgetReservationsConstrainSubsequentSharedPolicyChecks) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed price budget concurrency test due to missing environment variables.";
+    ensureDbReady();
+
+    const auto vaultId = seedS3VaultForDbTest(uniqueSuffix("budget_shared"));
+    saveVaultBudgetPolicyForDbTest(
+        vaultId,
+        std::nullopt,
+        vh::storage::s3::pricing::PriceBudgetMode::Enforce,
+        "1.00000000");
+
+    vh::storage::s3::pricing::PriceBudgetService service;
+    const auto first = service.preflight({
+        .vault_id = vaultId,
+        .run_uuid = uniqueSuffix("shared-a"),
+        .provider_key = "aws-s3",
+        .provider_supported = true,
+        .estimate = budgetEstimateForDbTest("0.60000000"),
+        .dry_run = false,
+        .override_policy_ids = {}
+    });
+    ASSERT_TRUE(first.allowed);
+    ASSERT_FALSE(first.reservations.empty());
+
+    const auto second = service.preflight({
+        .vault_id = vaultId,
+        .run_uuid = uniqueSuffix("shared-b"),
+        .provider_key = "aws-s3",
+        .provider_supported = true,
+        .estimate = budgetEstimateForDbTest("0.60000000"),
+        .dry_run = false,
+        .override_policy_ids = {}
+    });
+
+    EXPECT_FALSE(second.allowed);
+    EXPECT_TRUE(second.stalled);
+    EXPECT_TRUE(second.reservations.empty());
+}
+
+TEST(S3CostSafetyTest, PriceBudgetStaleReservationsExpireSafely) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed price budget stale reservation test due to missing environment variables.";
+    ensureDbReady();
+
+    const auto vaultId = seedS3VaultForDbTest(uniqueSuffix("budget_stale"));
+    saveVaultBudgetPolicyForDbTest(
+        vaultId,
+        std::nullopt,
+        vh::storage::s3::pricing::PriceBudgetMode::Report,
+        "10.00000000");
+
+    vh::storage::s3::pricing::PriceBudgetService service;
+    const auto decision = service.preflight({
+        .vault_id = vaultId,
+        .run_uuid = uniqueSuffix("stale-reservation"),
+        .provider_key = "aws-s3",
+        .provider_supported = true,
+        .estimate = budgetEstimateForDbTest("1.00000000"),
+        .dry_run = false,
+        .override_policy_ids = {}
+    });
+    ASSERT_FALSE(decision.reservations.empty());
+    const auto reservationId = decision.reservations.front().id;
+
+    vh::db::Transactions::exec("S3CostSafetyTest::agePriceBudgetReservation", [&](pqxx::work& txn) {
+        txn.exec(
+            "UPDATE s3_price_budget_ledger "
+            "SET created_at = CURRENT_TIMESTAMP - interval '25 hours' "
+            "WHERE id = $1",
+            pqxx::params{reservationId});
+    });
+
+    service.expireStaleReservations();
+
+    const auto status = vh::db::Transactions::exec("S3CostSafetyTest::priceBudgetReservationStatus", [&](pqxx::work& txn) {
+        return txn.exec(
+            "SELECT status FROM s3_price_budget_ledger WHERE id = $1",
+            pqxx::params{reservationId}).one_field().as<std::string>();
+    });
+    EXPECT_EQ("expired", status);
+}
+
+TEST(S3CostSafetyTest, PriceBudgetOverrideRequiresExactVaultRunPolicySet) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed price budget override test due to missing environment variables.";
+    ensureDbReady();
+
+    const auto vaultId = seedS3VaultForDbTest(uniqueSuffix("budget_override_exact"));
+    const auto ownerId = ownerForVaultDbTest(vaultId);
+    const auto basePolicy = saveVaultBudgetPolicyForDbTest(
+        vaultId,
+        std::nullopt,
+        vh::storage::s3::pricing::PriceBudgetMode::Enforce,
+        "0.10000000");
+    const auto providerPolicy = saveVaultBudgetPolicyForDbTest(
+        vaultId,
+        "aws-s3",
+        vh::storage::s3::pricing::PriceBudgetMode::Enforce,
+        "0.10000000");
+
+    vh::storage::s3::pricing::PriceBudgetService service;
+    const auto runUuid = uniqueSuffix("override-run");
+    const auto requested = service.requestOverride({
+        .run_uuid = runUuid,
+        .vault_id = vaultId,
+        .requested_by = ownerId,
+        .reason = "release readiness exact policy set test",
+        .policy_ids = {basePolicy.id, providerPolicy.id},
+        .estimated_cost = "1.00000000",
+        .currency = "USD",
+        .ttl_minutes = 30
+    });
+    const auto approved = service.approveOverride(requested.id, ownerId);
+    ASSERT_EQ("approved", approved.status);
+
+    EXPECT_FALSE(service.consumeApprovedOverride(vaultId, {basePolicy.id}, runUuid));
+
+    const auto consumed = service.consumeApprovedOverride(vaultId, {basePolicy.id, providerPolicy.id}, runUuid);
+    ASSERT_TRUE(consumed);
+    EXPECT_EQ(requested.id, consumed->id);
+    EXPECT_EQ("used", consumed->status);
+
+    EXPECT_FALSE(service.consumeApprovedOverride(vaultId, {basePolicy.id, providerPolicy.id}, runUuid));
+}
+
+TEST(S3CostSafetyTest, VaultPricingDashboardStatsOnlyUseApplicableProviderScopeAndVaultLedgerRows) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed pricing dashboard scope test due to missing environment variables.";
+    ensureDbReady();
+
+    const auto awsVaultId = seedS3VaultForDbTest(uniqueSuffix("pricing_aws"));
+    const auto r2VaultId = seedS3VaultForDbTest(uniqueSuffix("pricing_r2"));
+    const auto localVaultId = vh::db::Transactions::exec("S3CostSafetyTest::seedLocalVaultForPricingStats", [&](pqxx::work& txn) {
+        const auto userId = txn.exec(
+            "INSERT INTO users (name, email, password_hash) VALUES ($1, $2, $3) RETURNING id",
+            pqxx::params{"local-pricing-user", uniqueSuffix("local-pricing") + "@vaulthalla.test", "hash"})
+            .one_field().as<std::uint32_t>();
+        return txn.exec(
+            "INSERT INTO vault (type, name, owner_id, mount_point, description) VALUES ($1, $2, $3, $4, $5) RETURNING id",
+            pqxx::params{"local", uniqueSuffix("Local Pricing"), userId, "ABCDEFGHJKMNPQRSTVWXYZ0123456789", ""})
+            .one_field().as<std::uint32_t>();
+    });
+    attachS3ProviderForDbTest(awsVaultId, "AWS");
+    attachS3ProviderForDbTest(r2VaultId, "Cloudflare R2");
+
+    vh::storage::s3::pricing::PriceBudgetPolicy awsProviderPolicy;
+    awsProviderPolicy.scope = vh::storage::s3::pricing::PriceBudgetScope::Provider;
+    awsProviderPolicy.provider_key = "aws-s3";
+    awsProviderPolicy.mode = vh::storage::s3::pricing::PriceBudgetMode::Report;
+    awsProviderPolicy.currency = "USD";
+    awsProviderPolicy.max_monthly_cost = "10.00000000";
+    awsProviderPolicy = vh::storage::s3::pricing::PriceBudgetService{}.upsertPolicy(std::move(awsProviderPolicy));
+
+    vh::storage::s3::pricing::PriceBudgetService service;
+    const auto awsDecision = service.preflight({
+        .vault_id = awsVaultId,
+        .run_uuid = uniqueSuffix("aws-ledger"),
+        .provider_key = "aws-s3",
+        .provider_supported = true,
+        .estimate = budgetEstimateForDbTest("3.00000000"),
+        .dry_run = false,
+        .override_policy_ids = {}
+    });
+    ASSERT_FALSE(awsDecision.reservations.empty());
+    service.commit(awsDecision.reservations, std::make_optional<std::string>("3.00000000"));
+
+    const auto r2Stats = service.dashboardStats(r2VaultId);
+    EXPECT_EQ(0u, r2Stats.active_policies);
+    EXPECT_EQ("0.00000000", r2Stats.current_monthly_spend);
+    EXPECT_TRUE(r2Stats.trends.empty());
+
+    const auto localStats = service.dashboardStats(localVaultId);
+    EXPECT_EQ(0u, localStats.active_policies);
+    EXPECT_EQ("0.00000000", localStats.current_monthly_spend);
+    EXPECT_TRUE(localStats.trends.empty());
 }
 
 TEST(S3CostSafetyTest, RemoteIndexSummaryAppliesMaxAgeFreshnessPolicy) {
