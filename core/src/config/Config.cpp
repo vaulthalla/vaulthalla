@@ -44,6 +44,7 @@ namespace vh::config {
 
         if (auto node = root["websocket_server"]) YAML::convert<WebsocketConfig>::decode(node, cfg.websocket);
         if (auto node = root["http_preview_server"]) YAML::convert<HttpPreviewConfig>::decode(node, cfg.http_preview);
+        if (auto node = root["s3_gateway"]) YAML::convert<S3GatewayConfig>::decode(node, cfg.s3_gateway);
         if (auto node = root["caching"]) YAML::convert<CachingConfig>::decode(node, cfg.caching);
         if (auto node = root["database"]) YAML::convert<DatabaseConfig>::decode(node, cfg.database);
         if (auto node = root["auth"]) YAML::convert<AuthConfig>::decode(node, cfg.auth);
@@ -82,6 +83,7 @@ namespace vh::config {
 
         put("websocket_server", websocket);
         put("http_preview_server", http_preview);
+        put("s3_gateway", s3_gateway);
         put("database", database);
         put("auth", auth);
         put("sync", sync);
@@ -112,6 +114,7 @@ namespace vh::config {
         j = {
             {"websocket_server", c.websocket},
             {"http_preview_server", c.http_preview},
+            {"s3_gateway", c.s3_gateway},
             {"caching", c.caching},
             {"database", c.database},
             {"auth", c.auth},
@@ -131,6 +134,7 @@ namespace vh::config {
     void from_json(const nlohmann::json &j, Config &c) {
         j.at("websocket_server").get_to(c.websocket);
         j.at("http_preview_server").get_to(c.http_preview);
+        if (j.contains("s3_gateway")) j.at("s3_gateway").get_to(c.s3_gateway);
         j.at("caching").get_to(c.caching);
         j.at("database").get_to(c.database);
         j.at("auth").get_to(c.auth);
@@ -178,6 +182,62 @@ namespace vh::config {
         c.port = j.value("port", 33370);
         c.max_connections = j.value("max_connections", 512);
         c.max_preview_size_bytes = j.value("max_preview_size_bytes", MAX_PREVIEW_SIZE_BYTES);
+    }
+
+    void to_json(nlohmann::json &j, const S3GatewayMultipartConfig &c) {
+        j = {
+            {"part_dir", c.part_dir.empty() ? nlohmann::json(nullptr) : nlohmann::json(c.part_dir.string())},
+            {"min_part_size_mb", c.min_part_size_mb},
+            {"abort_after_days", c.abort_after_days}
+        };
+    }
+
+    void from_json(const nlohmann::json &j, S3GatewayMultipartConfig &c) {
+        if (j.contains("part_dir") && !j.at("part_dir").is_null())
+            c.part_dir = std::filesystem::path(j.at("part_dir").get<std::string>());
+        else
+            c.part_dir.clear();
+        c.min_part_size_mb = std::max(5u, j.value("min_part_size_mb", 5u));
+        c.abort_after_days = std::max(1u, j.value("abort_after_days", 7u));
+    }
+
+    void to_json(nlohmann::json &j, const S3GatewayConfig &c) {
+        j = {
+            {"enabled", c.enabled},
+            {"host", c.host},
+            {"port", c.port},
+            {"max_connections", c.max_connections},
+            {"max_body_size_bytes", c.max_body_size_bytes},
+            {"require_sigv4", c.require_sigv4},
+            {"allow_path_style", c.allow_path_style},
+            {"allow_virtual_hosted_style", c.allow_virtual_hosted_style},
+            {"default_bucket_mode", c.default_bucket_mode},
+            {"default_api_exclusive", c.default_api_exclusive},
+            {"default_remote_sync_strategy", c.default_remote_sync_strategy},
+            {"default_remote_conflict_policy", c.default_remote_conflict_policy},
+            {"multipart", c.multipart}
+        };
+    }
+
+    void from_json(const nlohmann::json &j, S3GatewayConfig &c) {
+        c.enabled = j.value("enabled", false);
+        c.host = j.value("host", "0.0.0.0");
+        c.port = j.value("port", static_cast<uint16_t>(39000));
+        c.max_connections = j.value("max_connections", 1024u);
+        if (j.contains("max_body_size_bytes"))
+            c.max_body_size_bytes = j.at("max_body_size_bytes").get<uintmax_t>();
+        else if (j.contains("max_body_size_mb"))
+            c.max_body_size_bytes = j.at("max_body_size_mb").get<uintmax_t>() * 1024ull * 1024ull;
+        else
+            c.max_body_size_bytes = 5ull * 1024ull * 1024ull * 1024ull;
+        c.require_sigv4 = j.value("require_sigv4", true);
+        c.allow_path_style = j.value("allow_path_style", true);
+        c.allow_virtual_hosted_style = j.value("allow_virtual_hosted_style", true);
+        c.default_bucket_mode = j.value("default_bucket_mode", "local");
+        c.default_api_exclusive = j.value("default_api_exclusive", true);
+        c.default_remote_sync_strategy = j.value("default_remote_sync_strategy", "cache");
+        c.default_remote_conflict_policy = j.value("default_remote_conflict_policy", "keep_local");
+        if (j.contains("multipart")) j.at("multipart").get_to(c.multipart);
     }
 
     void to_json(nlohmann::json &j, const LoggingConfig &c) {
