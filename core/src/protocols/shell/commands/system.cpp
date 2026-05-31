@@ -57,6 +57,15 @@ CommandResult handleStatus(const CommandCall& call) {
     out << "  http preview: configured=" << yesNo(health.protocols.httpPreviewConfigured)
         << ", ready=" << yesNo(health.protocols.httpPreviewReady) << "\n";
 
+    out << "s3 gateway:\n";
+    out << "  running: " << yesNo(health.s3Gateway.running) << "\n";
+    out << "  configured: " << yesNo(health.s3Gateway.configured)
+        << ", ready=" << yesNo(health.s3Gateway.ready) << "\n";
+    out << "  endpoint: " << health.s3Gateway.host << ":" << health.s3Gateway.port << "\n";
+    out << "  sessions: active=" << health.s3Gateway.activeSessions
+        << ", requests=" << health.s3Gateway.totalRequests
+        << ", failed=" << health.s3Gateway.failedRequests << "\n";
+
     out << "deps sanity:\n";
     out << "  core deps: " << renderDepsCoreReady(health.summary) << "\n";
     out << "  fuse session: " << (health.deps.fuseSession ? "present" : "missing") << "\n";

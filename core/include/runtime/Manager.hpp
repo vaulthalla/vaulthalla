@@ -13,6 +13,7 @@
 
 namespace vh::protocols {
 class ProtocolService;
+namespace s3 { class GatewayService; }
 namespace shell { class Server; }
 namespace ws { class ConnectionLifecycleManager; }
 }
@@ -54,6 +55,7 @@ public:
     [[nodiscard]] Status status() const;
     [[nodiscard]] std::shared_ptr<sync::Controller> getSyncController() const { return syncController; }
     [[nodiscard]] std::shared_ptr<protocols::ProtocolService> getProtocolService() const { return protocolService; }
+    [[nodiscard]] std::shared_ptr<protocols::s3::GatewayService> getS3GatewayService() const { return s3GatewayService; }
     [[nodiscard]] std::shared_ptr<protocols::shell::Server> getShellServer() const { return shellServer; }
     [[nodiscard]] std::shared_ptr<protocols::ws::ConnectionLifecycleManager> getConnectionLifecycleManager() const { return connectionLifecycleManager; }
 
@@ -81,6 +83,7 @@ private:
     std::shared_ptr<sync::Controller> syncController;
     std::shared_ptr<fuse::Service> fuseService;
     std::shared_ptr<protocols::ProtocolService> protocolService;
+    std::shared_ptr<protocols::s3::GatewayService> s3GatewayService;
     std::shared_ptr<protocols::shell::Server> shellServer;
     std::shared_ptr<protocols::ws::ConnectionLifecycleManager> connectionLifecycleManager;
     std::shared_ptr<log::RotationService> logRotationService;

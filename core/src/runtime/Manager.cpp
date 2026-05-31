@@ -7,6 +7,7 @@
 #include "log/RotationService.hpp"
 #include "notifications/OperatorEmailService.hpp"
 #include "protocols/ProtocolService.hpp"
+#include "protocols/s3/GatewayService.hpp"
 #include "protocols/shell/Server.hpp"
 #include "protocols/ws/ConnectionLifecycleManager.hpp"
 #include "runtime/Deps.hpp"
@@ -34,10 +35,12 @@ constexpr std::array kBaseStartOrder{
     "StatsSnapshotService",
     "OperatorEmailService",
     "ConnectionLifecycleManager",
-    "ProtocolService"
+    "ProtocolService",
+    "S3GatewayService"
 };
 
 constexpr std::array kBaseStopOrder{
+    "S3GatewayService",
     "ProtocolService",
     "ShellServer",
     "ConnectionLifecycleManager",
@@ -59,6 +62,7 @@ Manager::Manager()
     : syncController(std::make_shared<sync::Controller>()),
       fuseService(std::make_shared<fuse::Service>()),
       protocolService(std::make_shared<protocols::ProtocolService>()),
+      s3GatewayService(std::make_shared<protocols::s3::GatewayService>()),
       connectionLifecycleManager(std::make_shared<protocols::ws::ConnectionLifecycleManager>()),
       logRotationService(std::make_shared<log::RotationService>()),
       dbSweeperService(std::make_shared<db::Janitor>()),
@@ -68,6 +72,7 @@ Manager::Manager()
     services_["SyncController"] = syncController;
     services_["FUSE"] = fuseService;
     services_["ProtocolService"] = protocolService;
+    services_["S3GatewayService"] = s3GatewayService;
     services_["ConnectionLifecycleManager"] = connectionLifecycleManager;
     services_["LogRotationService"] = logRotationService;
     services_["DBJanitor"] = dbSweeperService;

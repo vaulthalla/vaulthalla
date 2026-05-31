@@ -38,6 +38,17 @@ struct ProtocolHealth {
     bool httpPreviewReady = false;
 };
 
+struct S3GatewayHealth {
+    bool running = false;
+    bool configured = false;
+    bool ready = false;
+    std::string host;
+    std::uint16_t port = 0;
+    std::uint64_t activeSessions = 0;
+    std::uint64_t totalRequests = 0;
+    std::uint64_t failedRequests = 0;
+};
+
 struct DependencyHealth {
     bool storageManager = false;
     bool apiKeyManager = false;
@@ -69,6 +80,7 @@ struct SystemHealth {
     SystemHealthStatus overallStatus = SystemHealthStatus::Degraded;
     RuntimeHealth runtime;
     ProtocolHealth protocols;
+    S3GatewayHealth s3Gateway;
     DependencyHealth deps;
     ShellHealth shell;
     HealthSummary summary;
@@ -84,6 +96,7 @@ std::string to_string(SystemHealthStatus status);
 void to_json(nlohmann::json& j, const RuntimeServiceHealth& health);
 void to_json(nlohmann::json& j, const RuntimeHealth& health);
 void to_json(nlohmann::json& j, const ProtocolHealth& health);
+void to_json(nlohmann::json& j, const S3GatewayHealth& health);
 void to_json(nlohmann::json& j, const DependencyHealth& health);
 void to_json(nlohmann::json& j, const ShellHealth& health);
 void to_json(nlohmann::json& j, const HealthSummary& health);

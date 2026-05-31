@@ -1,6 +1,7 @@
 #include "stats/model/SystemHealth.hpp"
 
 #include "protocols/ProtocolService.hpp"
+#include "protocols/s3/GatewayService.hpp"
 #include "protocols/shell/Server.hpp"
 #include "runtime/Deps.hpp"
 #include "runtime/Manager.hpp"
@@ -39,12 +40,14 @@ bool depsHealthy(const DependencyHealth& deps, const HealthSummary& summary) {
     return summary.depsReady == summary.depsTotal && deps.fuseSession;
 }
 
-bool protocolsHealthy(const ProtocolHealth& protocols) {
+bool protocolsHealthy(const ProtocolHealth& protocols, const S3GatewayHealth& s3Gateway) {
     return (!protocols.websocketConfigured || protocols.websocketReady)
-        && (!protocols.httpPreviewConfigured || protocols.httpPreviewReady);
+        && (!protocols.httpPreviewConfigured || protocols.httpPreviewReady)
+        && (!s3Gateway.configured || s3Gateway.ready);
 }
 
-std::pair<std::size_t, std::size_t> protocolReadySummary(const ProtocolHealth& protocols) {
+std::pair<std::size_t, std::size_t> protocolReadySummary(const ProtocolHealth& protocols,
+                                                         const S3GatewayHealth& s3Gateway) {
     std::size_t ready = 0;
     std::size_t total = 0;
 
@@ -58,6 +61,11 @@ std::pair<std::size_t, std::size_t> protocolReadySummary(const ProtocolHealth& p
         if (protocols.httpPreviewReady) ++ready;
     }
 
+    if (s3Gateway.configured) {
+        ++total;
+        if (s3Gateway.ready) ++ready;
+    }
+
     return {ready, total};
 }
 
@@ -69,7 +77,7 @@ SystemHealthStatus computeOverallStatus(const SystemHealth& health) {
         return SystemHealthStatus::Critical;
 
     const bool ok = health.runtime.allRunning
-        && protocolsHealthy(health.protocols)
+        && protocolsHealthy(health.protocols, health.s3Gateway)
         && depsHealthy(health.deps, health.summary);
 
     return ok ? SystemHealthStatus::Healthy : SystemHealthStatus::Degraded;
@@ -89,10 +97,14 @@ SystemHealth SystemHealth::snapshot() {
     const auto& manager = runtime::Manager::instance();
     const auto runtimeStatus = manager.status();
     const auto protocolService = manager.getProtocolService();
+    const auto s3GatewayService = manager.getS3GatewayService();
     const auto shellServer = manager.getShellServer();
     const auto protocolStatus = protocolService
         ? protocolService->protocolStatus()
         : protocols::ProtocolService::RuntimeStatus{};
+    const auto s3GatewayStatus = s3GatewayService
+        ? s3GatewayService->gatewayStatus()
+        : protocols::s3::GatewayService::RuntimeStatus{};
     const auto depsStatus = runtime::Deps::get().sanityStatus();
 
     SystemHealth out;
@@ -118,6 +130,17 @@ SystemHealth SystemHealth::snapshot() {
         .httpPreviewReady = protocolStatus.httpPreviewReady
     };
 
+    out.s3Gateway = {
+        .running = s3GatewayStatus.running,
+        .configured = s3GatewayStatus.configured,
+        .ready = s3GatewayStatus.ready,
+        .host = s3GatewayStatus.host,
+        .port = s3GatewayStatus.port,
+        .activeSessions = s3GatewayStatus.activeSessions,
+        .totalRequests = s3GatewayStatus.totalRequests,
+        .failedRequests = s3GatewayStatus.failedRequests
+    };
+
     out.deps = {
         .storageManager = depsStatus.storageManager,
         .apiKeyManager = depsStatus.apiKeyManager,
@@ -133,7 +156,7 @@ SystemHealth SystemHealth::snapshot() {
 
     out.shell.adminUidBound = shellServer ? std::optional<bool>(shellServer->adminUIDSet()) : std::nullopt;
 
-    const auto [protocolsReady, protocolsTotal] = protocolReadySummary(out.protocols);
+    const auto [protocolsReady, protocolsTotal] = protocolReadySummary(out.protocols, out.s3Gateway);
     out.summary = {
         .servicesReady = static_cast<std::size_t>(std::ranges::count_if(
             out.runtime.services,
@@ -191,6 +214,19 @@ void to_json(nlohmann::json& j, const ProtocolHealth& health) {
     };
 }
 
+void to_json(nlohmann::json& j, const S3GatewayHealth& health) {
+    j = nlohmann::json{
+        {"running", health.running},
+        {"configured", health.configured},
+        {"ready", health.ready},
+        {"host", health.host},
+        {"port", health.port},
+        {"active_sessions", health.activeSessions},
+        {"total_requests", health.totalRequests},
+        {"failed_requests", health.failedRequests},
+    };
+}
+
 void to_json(nlohmann::json& j, const DependencyHealth& health) {
     j = nlohmann::json{
         {"storage_manager", health.storageManager},
@@ -229,6 +265,7 @@ void to_json(nlohmann::json& j, const SystemHealth& health) {
         {"overall_status", to_string(health.overallStatus)},
         {"runtime", health.runtime},
         {"protocols", health.protocols},
+        {"s3_gateway", health.s3Gateway},
         {"deps", health.deps},
         {"shell", health.shell},
         {"summary", health.summary},
