@@ -62,6 +62,11 @@ namespace vh::storage::s3 {
         explicit ConditionalRequestFailed(const std::string& message) : std::runtime_error(message) {}
     };
 
+    class ObjectNotFound final : public std::runtime_error {
+    public:
+        explicit ObjectNotFound(const std::string& message) : std::runtime_error(message) {}
+    };
+
     class Controller {
     public:
         static constexpr uintmax_t MIN_PART_SIZE = 5 * 1024 * 1024; // 5 MiB

@@ -35,6 +35,7 @@ public:
     std::shared_ptr<fs::model::Entry> getEntryFromInode(fuse_ino_t ino) const;
 
     void evictIno(fuse_ino_t ino);
+    void evictId(unsigned int id);
     void evictPath(const std::filesystem::path& path);
 
     std::vector<std::shared_ptr<fs::model::Entry>> listDir(unsigned int parentId, bool recursive = false) const;

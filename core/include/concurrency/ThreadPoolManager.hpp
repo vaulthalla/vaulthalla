@@ -43,12 +43,14 @@ public:
         unsigned int thumbN = base + (rem > 2 ? 1 : 0);
         unsigned int httpN  = base + (rem > 3 ? 1 : 0);
         unsigned int statsN = base + (rem > 4 ? 1 : 0);
+        unsigned int s3N    = base + (rem > 5 ? 1 : 0);
 
         fuse_  = std::make_shared<ThreadPool>(nullptr, fuseN);
         sync_  = std::make_shared<ThreadPool>(nullptr, syncN);
         thumb_ = std::make_shared<ThreadPool>(nullptr, thumbN);
         http_  = std::make_shared<ThreadPool>(nullptr, httpN);
         stats_ = std::make_shared<ThreadPool>(nullptr, statsN);
+        s3_    = std::make_shared<ThreadPool>(nullptr, s3N);
 
         stopFlag_.store(false);
 
@@ -72,6 +74,7 @@ public:
         if (thumb_) thumb_->stop();
         if (http_)  http_->stop();
         if (stats_) stats_->stop();
+        if (s3_)    s3_->stop();
 
         running_.store(false);
     }
@@ -81,6 +84,7 @@ public:
     std::shared_ptr<ThreadPool>& thumbPool() { return thumb_; }
     std::shared_ptr<ThreadPool>& httpPool() { return http_; }
     std::shared_ptr<ThreadPool>& statsPool() { return stats_; }
+    std::shared_ptr<ThreadPool>& s3Pool() { return s3_; }
 
     [[nodiscard]] std::vector<NamedThreadPoolSnapshot> snapshotPools() const {
         return {
@@ -88,7 +92,8 @@ public:
             namedSnapshot("sync", sync_),
             namedSnapshot("thumb", thumb_),
             namedSnapshot("http", http_),
-            namedSnapshot("stats", stats_)
+            namedSnapshot("stats", stats_),
+            namedSnapshot("s3", s3_)
         };
     }
 
@@ -135,6 +140,7 @@ private:
             const auto httpQ  = http_->queueDepth();
             const auto thumbQ = thumb_->queueDepth();
             const auto statsQ = stats_->queueDepth();
+            const auto s3Q    = s3_->queueDepth();
 
             // Compare backlog/worker ratios
             const auto fuseRatio  = fuseQ  / std::max(1u, fuse_->workerCount());
@@ -142,10 +148,13 @@ private:
             const auto httpRatio  = httpQ  / std::max(1u, http_->workerCount());
             const auto thumbRatio = thumbQ / std::max(1u, thumb_->workerCount());
             const auto statsRatio = statsQ / std::max(1u, stats_->workerCount());
+            const auto s3Ratio    = s3Q    / std::max(1u, s3_->workerCount());
 
             maybeReassign(fuse_, http_, fuseRatio, httpRatio);
             maybeReassign(fuse_, stats_, fuseRatio, statsRatio);
             maybeReassign(sync_, thumb_, syncRatio, thumbRatio);
+            maybeReassign(s3_, http_, s3Ratio, httpRatio);
+            maybeReassign(s3_, stats_, s3Ratio, statsRatio);
         }
     }
 
@@ -165,8 +174,8 @@ private:
         }
     }
 
-    static constexpr unsigned int RESERVE_FACTOR = 3, NUM_POOLS = 5;
-    std::shared_ptr<ThreadPool> fuse_, sync_, thumb_, http_, stats_;
+    static constexpr unsigned int RESERVE_FACTOR = 3, NUM_POOLS = 6;
+    std::shared_ptr<ThreadPool> fuse_, sync_, thumb_, http_, stats_, s3_;
     std::atomic<bool> stopFlag_{false};
     std::atomic<bool> running_{false};
     std::thread monitorThread_;

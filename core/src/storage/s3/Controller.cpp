@@ -12,6 +12,14 @@ using namespace vh::vault::model;
 using namespace vh::storage::s3::curl;
 
 namespace vh::storage::s3 {
+    namespace {
+        bool isNoSuchKeyDeleteResponse(const HttpResponse& resp) {
+            if (resp.curl != CURLE_OK || resp.http != 404) return false;
+            return resp.body.find("NoSuchKey") != std::string::npos ||
+                   resp.body.find("<Code>NotFound</Code>") != std::string::npos;
+        }
+    }
+
     Controller::Controller(const std::shared_ptr<APIKey>& apiKey, std::string bucket)
     : apiKey_(apiKey), bucket_(std::move(bucket)) {
         if (!apiKey_) throw std::runtime_error("S3Provider requires a valid S3APIKey");
@@ -91,6 +99,15 @@ namespace vh::storage::s3 {
             curl_easy_setopt(h, CURLOPT_CUSTOMREQUEST, "DELETE");
             curl_easy_setopt(h, CURLOPT_HTTPHEADER, hdrs.get());
         });
+
+        if (isNoSuchKeyDeleteResponse(resp)) {
+            log::Registry::cloud()->warn(
+                "[S3Provider] deleteObject confirmed object is already absent: key={} HTTP={} Response:\n{}",
+                key.string(),
+                resp.http,
+                resp.body);
+            throw ObjectNotFound(fmt::format("Object not found in upstream S3 during delete: {}", key.string()));
+        }
 
         if (!resp.ok()) log::Registry::cloud()->error(
             "[S3Provider] deleteObject failed: CURL={} HTTP={} Response:\n{}",

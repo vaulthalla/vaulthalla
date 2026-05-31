@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <ctime>
 
 using namespace vh::fs;
 using namespace vh::fs::model;
@@ -145,20 +146,37 @@ void CloudEngine::upload(const std::shared_ptr<File>& f) const {
     if (!fs::exists(backingPath) || !fs::is_regular_file(backingPath))
         throw std::runtime_error("[CloudStorageEngine] Invalid file: " + f->path.string());
 
+    const fs::path s3Key = stripLeadingSlash(f->path);
+    const auto backingSize = fs::file_size(backingPath);
+
     if (!s3Vault()->encrypt_upstream) {
         const auto ciphertext = readFileToVector(backingPath);
+        if (ciphertext.empty()) {
+            auto options = requestOptionsFor(s3::provider::RequestOperation::PutObject);
+            options.metadata = getMetaMapFromFile(f);
+            s3Provider_->uploadBufferWithMetadata(s3Key, {}, options);
+            return;
+        }
         upload(f, ciphertext);
         return;
     }
 
-    const fs::path s3Key = stripLeadingSlash(f->path);
+    if (backingSize == 0) {
+        if (!encryptionManager)
+            throw std::runtime_error("[CloudStorageEngine] Encryption manager unavailable for empty encrypted upload");
+        const auto ciphertext = encryptionManager->encrypt({}, f);
+        auto options = requestOptionsFor(s3::provider::RequestOperation::PutObject);
+        options.metadata = getMetaMapFromFile(f);
+        s3Provider_->uploadBufferWithMetadata(s3Key, ciphertext, options);
+        return;
+    }
 
     if (!f->content_hash) f->content_hash = db::query::fs::File::getContentHash(vault->id, f->path);
     const auto meta = getMetaMapFromFile(f);
     auto options = requestOptionsFor(s3::provider::RequestOperation::PutObject);
     options.metadata = meta;
 
-    if (fs::file_size(backingPath) < s3::Controller::MIN_PART_SIZE)
+    if (backingSize < s3::Controller::MIN_PART_SIZE)
         s3Provider_->uploadObjectWithMetadata(s3Key, backingPath, options);
     else {
         auto multipartOptions = requestOptionsFor(s3::provider::RequestOperation::CreateMultipartUpload);
@@ -198,6 +216,51 @@ void CloudEngine::upload(const std::shared_ptr<File>& f, const std::vector<uint8
             s3::Controller::MIN_PART_SIZE,
             multipartOptions);
     }
+}
+
+std::shared_ptr<File> CloudEngine::uploadBufferObject(
+    const fs::path& rel_path,
+    const std::vector<uint8_t>& plaintext,
+    std::optional<std::string> contentHash) const {
+    auto file = std::make_shared<File>();
+    file->vault_id = vault ? vault->id : 0;
+    file->path = makeAbsolute(rel_path);
+    file->name = file->path.filename();
+    file->size_bytes = plaintext.size();
+    file->content_hash = std::move(contentHash);
+    file->created_at = file->updated_at = std::time(nullptr);
+    file->remote_storage_class = configuredStorageClass();
+
+    std::vector<uint8_t> payload;
+    if (s3Vault()->encrypt_upstream) {
+        if (!encryptionManager)
+            throw std::runtime_error("[CloudStorageEngine] Encryption manager unavailable for buffer upload");
+        payload = encryptionManager->encrypt(plaintext, file);
+        file->remote_encrypted = true;
+    } else {
+        payload = plaintext;
+        file->remote_encrypted = false;
+        file->encryption_iv.clear();
+        file->encrypted_with_key_version = 0;
+    }
+
+    const auto s3Key = stripLeadingSlash(file->path);
+    auto options = requestOptionsFor(s3::provider::RequestOperation::PutObject);
+    options.metadata = getMetaMapFromFile(file);
+
+    if (payload.size() < s3::Controller::MIN_PART_SIZE) {
+        s3Provider_->uploadBufferWithMetadata(s3Key, payload, options);
+    } else {
+        auto multipartOptions = requestOptionsFor(s3::provider::RequestOperation::CreateMultipartUpload);
+        multipartOptions.metadata = options.metadata;
+        s3Provider_->uploadLargeObject(
+            s3Key,
+            payload,
+            s3::Controller::MIN_PART_SIZE,
+            multipartOptions);
+    }
+
+    return file;
 }
 
 std::vector<uint8_t> CloudEngine::downloadToBuffer(const fs::path& rel_path) const {
