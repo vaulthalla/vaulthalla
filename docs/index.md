@@ -68,7 +68,7 @@ Use request budgets and price budgets to keep S3/R2 operations bounded before sy
 
 ## Administration
 
-Use [Users, Groups, And Roles](/admin/users-groups-roles) to grant access, [Operator Emails](/admin/operator-emails) to configure notifications, and [Sharing](/sharing) to issue controlled public or email-validated links.
+Use [Users, Groups, And Roles](/admin/users-groups-roles) to grant access, [S3 Gateway](/admin/s3-gateway) to expose vaults through an S3-compatible endpoint, [Operator Emails](/admin/operator-emails) to configure notifications, and [Sharing](/sharing) to issue controlled public or email-validated links.
 
 When something breaks, start with [Install Troubleshooting](/troubleshooting/install-troubleshooting) for package and service issues, then use [General Troubleshooting](/troubleshooting/general-troubleshooting) for CLI, web, vault, sync, encryption, and cost-control symptoms.
 

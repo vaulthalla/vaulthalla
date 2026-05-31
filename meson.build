@@ -13,6 +13,8 @@ project('vaulthalla', 'cpp',
         ]
 )
 
+fs = import('fs')
+
 subdir('core')
 
 if get_option('install_data')
@@ -28,8 +30,13 @@ if get_option('install_data')
     install_emptydir(state_dir)
     install_emptydir(log_dir)
 
+    install_config_file = 'deploy/config/config.yaml'
+    if fs.exists(meson.project_source_root() / 'config.yaml')
+        install_config_file = 'config.yaml'
+    endif
+
     install_data(
-        'deploy/config/config.yaml',
+        install_config_file,
         'deploy/config/config_template.yaml.in',
         install_dir: sysconf_dir,
     )

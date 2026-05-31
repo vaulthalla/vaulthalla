@@ -40,6 +40,18 @@ http_preview_server:
 
 The web service itself is managed by `vaulthalla-web.service` and normally listens on localhost for Nginx proxying.
 
+The S3-compatible gateway is a separate runtime service and is disabled by default:
+
+```yaml
+s3_gateway:
+  enabled: false
+  host: 0.0.0.0
+  port: 39000
+  require_sigv4: true
+```
+
+See [S3 Gateway](/admin/s3-gateway) before enabling it on a network interface.
+
 ## Database
 
 The database section controls PostgreSQL connection shape:

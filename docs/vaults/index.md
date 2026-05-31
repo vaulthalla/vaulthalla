@@ -101,4 +101,4 @@ vh vault create archive \
   --encrypt
 ```
 
-See [Local Vaults](/vaults/local-vaults) and [S3 And R2 Vaults](/vaults/s3-r2-vaults).
+See [Local Vaults](/vaults/local-vaults), [S3 And R2 Vaults](/vaults/s3-r2-vaults), and [S3 Gateway Vaults](/vaults/s3-gateway).
