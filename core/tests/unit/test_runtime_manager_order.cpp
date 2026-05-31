@@ -21,6 +21,7 @@ TEST(RuntimeManagerOrderTest, StopOrderClosesProtocolSocketsBeforeFuse) {
     const auto names = vh::runtime::Manager::serviceStopOrder(true);
 
     EXPECT_LT(indexOf(names, "ProtocolService"), indexOf(names, "FUSE"));
+    EXPECT_LT(indexOf(names, "S3GatewayService"), indexOf(names, "ProtocolService"));
     EXPECT_LT(indexOf(names, "ShellServer"), indexOf(names, "FUSE"));
     EXPECT_LT(indexOf(names, "ConnectionLifecycleManager"), indexOf(names, "FUSE"));
     EXPECT_EQ(names.back(), "FUSE");
@@ -31,7 +32,8 @@ TEST(RuntimeManagerOrderTest, StartOrderIsExplicitAndDependencyAware) {
 
     EXPECT_EQ(names.front(), "FUSE");
     EXPECT_LT(indexOf(names, "ConnectionLifecycleManager"), indexOf(names, "ProtocolService"));
-    EXPECT_LT(indexOf(names, "ProtocolService"), indexOf(names, "ShellServer"));
+    EXPECT_LT(indexOf(names, "ProtocolService"), indexOf(names, "S3GatewayService"));
+    EXPECT_LT(indexOf(names, "S3GatewayService"), indexOf(names, "ShellServer"));
 }
 
 TEST(RuntimeManagerOrderTest, TestModeOrderOmitsShellServerWhenRequested) {

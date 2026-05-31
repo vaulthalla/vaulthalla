@@ -1,6 +1,7 @@
 #include "db/encoding/interval.hpp"
 #include "db/Transactions.hpp"
 #include "db/query/fs/File.hpp"
+#include "db/query/s3/Gateway.hpp"
 #include "db/query/sync/RemoteObjectIndex.hpp"
 #include "db/query/identities/User.hpp"
 #include "db/query/vault/Vault.hpp"
@@ -10,6 +11,7 @@
 #include "fs/model/File.hpp"
 #include "fs/model/file/Trashed.hpp"
 #include "identities/User.hpp"
+#include "protocols/s3/ObjectStore.hpp"
 #include "protocols/shell/commands/vault.hpp"
 #include "protocols/ws/handler/vault/Vaults.hpp"
 #include "protocols/ws/Router.hpp"
@@ -73,9 +75,14 @@ public:
     int head_object_calls = 0;
     int download_to_buffer_calls = 0;
     int upload_object_with_metadata_calls = 0;
+    int upload_buffer_with_metadata_calls = 0;
     int upload_buffer_conditional_calls = 0;
     int delete_object_calls = 0;
     int list_objects_calls = 0;
+    bool delete_object_not_found = false;
+    bool delete_object_failure = false;
+    std::filesystem::path last_uploaded_key;
+    std::size_t last_uploaded_buffer_size = 0;
     std::unordered_map<std::string, std::string> last_metadata;
     std::map<std::string, std::string> last_system_headers;
     std::optional<std::unordered_map<std::string, std::string>> head_response;
@@ -142,6 +149,28 @@ public:
         out = self->download_payload;
     }
 
+    void uploadBufferWithMetadata(
+        const std::filesystem::path& key,
+        const std::vector<uint8_t>& buffer,
+        const std::unordered_map<std::string, std::string>& metadata) const override {
+        vh::storage::s3::RequestOptions options;
+        options.metadata = metadata;
+        uploadBufferWithMetadata(key, buffer, options);
+    }
+
+    void uploadBufferWithMetadata(
+        const std::filesystem::path& key,
+        const std::vector<uint8_t>& buffer,
+        const vh::storage::s3::RequestOptions& options) const override {
+        auto* self = const_cast<CountingS3Controller*>(this);
+        ++self->upload_buffer_with_metadata_calls;
+        self->last_uploaded_key = key;
+        self->last_uploaded_buffer_size = buffer.size();
+        self->last_metadata = options.metadata;
+        self->last_system_headers = options.system_headers;
+        self->recordRequest(RequestKind::Put);
+    }
+
     void uploadBufferWithMetadataConditional(
         const std::filesystem::path&,
         const std::vector<uint8_t>&,
@@ -182,6 +211,10 @@ public:
         ++self->delete_object_calls;
         self->deleted_keys.push_back(key);
         self->recordRequest(RequestKind::Delete);
+        if (self->delete_object_not_found)
+            throw vh::storage::s3::ObjectNotFound("NoSuchKey");
+        if (self->delete_object_failure)
+            throw std::runtime_error("delete failed");
     }
 
     std::u8string listObjects(const std::filesystem::path&) const override {
@@ -1470,6 +1503,126 @@ TEST(S3CostSafetyTest, DeleteRemoteDoesNotRequireEncryptionMetadata) {
     EXPECT_EQ(0, fake->download_to_buffer_calls);
 }
 
+TEST(S3CostSafetyTest, GatewayRemoteDeleteCleansIndexesWhenUpstreamReportsNoSuchKey) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed gateway remote delete test due to missing environment variables.";
+
+    auto fake = std::make_shared<CountingS3Controller>();
+    fake->delete_object_not_found = true;
+    const auto suffix = uniqueSuffix("gateway_delete_nosuchkey");
+    const auto vaultId = seedDryRunS3VaultForDbTest(suffix, fake);
+    auto engine = std::static_pointer_cast<vh::storage::CloudEngine>(
+        vh::runtime::Deps::get().storageManager->getEngine(vaultId));
+    engine->setS3ControllerForTesting(fake);
+
+    const auto owner = vh::db::query::identities::User::getUserByName("admin");
+    ASSERT_TRUE(owner);
+    ASSERT_TRUE(owner->isSuperAdmin());
+
+    constexpr std::string_view objectKey = "already-gone.txt";
+    vh::db::query::s3::Gateway::bindBucket({
+        .vault_id = vaultId,
+        .bucket_name = "gateway-delete-" + suffix,
+        .api_exclusive = true,
+        .mode = "remote_cache",
+        .created_by = owner->id
+    });
+    vh::db::query::s3::Gateway::upsertObject({
+        .vault_id = vaultId,
+        .object_key = std::string(objectKey),
+        .etag = "\"gateway-etag\"",
+        .size_bytes = 42,
+        .content_type = "text/plain",
+        .storage_class = std::nullopt,
+        .last_modified = std::time(nullptr),
+        .multipart = false,
+        .part_count = std::nullopt
+    });
+    vh::db::query::s3::Gateway::upsertObjectMetadata(vaultId, std::string(objectKey), {{"color", "blue"}});
+    vh::db::query::sync::RemoteObjectIndex::upsertFile(vaultId, remoteFile(std::string(objectKey)), "manifest");
+
+    vh::protocols::s3::ObjectStore store;
+    vh::protocols::s3::ResolvedBucket bucket{
+        .bucket_name = "gateway-delete-" + suffix,
+        .vault_id = vaultId,
+        .mode = "remote_cache",
+        .api_exclusive = true,
+        .engine = engine,
+        .actor = owner
+    };
+
+    ASSERT_NO_THROW(store.deleteObject(bucket, std::string(objectKey)));
+
+    EXPECT_EQ(1, fake->delete_object_calls);
+    ASSERT_EQ(1u, fake->deleted_keys.size());
+    EXPECT_EQ(objectKey, fake->deleted_keys[0].generic_string());
+    EXPECT_FALSE(vh::db::query::s3::Gateway::getObjectState(vaultId, std::string(objectKey)));
+    EXPECT_TRUE(vh::db::query::s3::Gateway::listObjectMetadata(vaultId, std::string(objectKey)).empty());
+
+    const auto indexed = vh::db::query::sync::RemoteObjectIndex::listFilesForVault(vaultId);
+    EXPECT_TRUE(std::ranges::none_of(indexed, [&](const auto& file) {
+        return file && file->path.generic_string() == std::string("/") + std::string(objectKey);
+    }));
+}
+
+TEST(S3CostSafetyTest, GatewayRemoteDeleteFailurePreservesLocalAndIndexState) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed gateway remote delete test due to missing environment variables.";
+
+    auto fake = std::make_shared<CountingS3Controller>();
+    fake->delete_object_failure = true;
+    const auto suffix = uniqueSuffix("gateway_delete_failure");
+    const auto vaultId = seedDryRunS3VaultForDbTest(suffix, fake);
+    auto engine = std::static_pointer_cast<vh::storage::CloudEngine>(
+        vh::runtime::Deps::get().storageManager->getEngine(vaultId));
+    engine->setS3ControllerForTesting(fake);
+
+    const auto owner = vh::db::query::identities::User::getUserByName("admin");
+    ASSERT_TRUE(owner);
+    ASSERT_TRUE(owner->isSuperAdmin());
+
+    constexpr std::string_view objectKey = "must-not-local-delete.txt";
+    vh::db::query::s3::Gateway::bindBucket({
+        .vault_id = vaultId,
+        .bucket_name = "gateway-delete-fail-" + suffix,
+        .api_exclusive = true,
+        .mode = "remote_cache",
+        .created_by = owner->id
+    });
+    vh::db::query::s3::Gateway::upsertObject({
+        .vault_id = vaultId,
+        .object_key = std::string(objectKey),
+        .etag = "\"gateway-etag\"",
+        .size_bytes = 42,
+        .content_type = "text/plain",
+        .storage_class = std::nullopt,
+        .last_modified = std::time(nullptr),
+        .multipart = false,
+        .part_count = std::nullopt
+    });
+    vh::db::query::s3::Gateway::upsertObjectMetadata(vaultId, std::string(objectKey), {{"color", "red"}});
+    vh::db::query::sync::RemoteObjectIndex::upsertFile(vaultId, remoteFile(std::string(objectKey)), "manifest");
+
+    vh::protocols::s3::ObjectStore store;
+    vh::protocols::s3::ResolvedBucket bucket{
+        .bucket_name = "gateway-delete-fail-" + suffix,
+        .vault_id = vaultId,
+        .mode = "remote_cache",
+        .api_exclusive = true,
+        .engine = engine,
+        .actor = owner
+    };
+
+    EXPECT_THROW(store.deleteObject(bucket, std::string(objectKey)), std::runtime_error);
+
+    EXPECT_EQ(1, fake->delete_object_calls);
+    ASSERT_TRUE(vh::db::query::s3::Gateway::getObjectState(vaultId, std::string(objectKey)));
+    EXPECT_EQ("red", vh::db::query::s3::Gateway::listObjectMetadata(vaultId, std::string(objectKey)).at("color"));
+
+    const auto indexed = vh::db::query::sync::RemoteObjectIndex::listFilesForVault(vaultId);
+    EXPECT_TRUE(std::ranges::any_of(indexed, [&](const auto& file) {
+        return file && file->path.generic_string() == std::string("/") + std::string(objectKey);
+    }));
+}
+
 TEST(S3CostSafetyTest, CloudTrashPurgeDeletesRemoteIndexWithoutRemoteOnlyDownload) {
     if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed cloud trash purge test due to missing environment variables.";
 
@@ -2460,6 +2613,103 @@ TEST(S3CostSafetyTest, EncryptedUploadDoesNotDownloadAfterPut) {
     EXPECT_EQ("true", fake->last_metadata.at("vh-encrypted"));
     EXPECT_EQ("iv", fake->last_metadata.at("vh-iv"));
     EXPECT_EQ("3", fake->last_metadata.at("vh-key-version"));
+
+    std::filesystem::remove_all(tempDir);
+}
+
+TEST(S3CostSafetyTest, PlaintextUpstreamEmptyUploadWritesZeroByteRemoteObject) {
+    const auto tempDir = std::filesystem::temp_directory_path() / "vh_s3_plain_empty_upload";
+    std::filesystem::remove_all(tempDir);
+    std::filesystem::create_directories(tempDir);
+    const auto backing = tempDir / "empty.bin";
+    std::ofstream(backing, std::ios::binary | std::ios::trunc).close();
+
+    auto vault = std::make_shared<vh::vault::model::S3Vault>();
+    vault->id = 99;
+    vault->owner_id = 100;
+    vault->encrypt_upstream = false;
+
+    auto fake = std::make_shared<CountingS3Controller>();
+    vh::storage::CloudEngine engine;
+    engine.vault = vault;
+    engine.setS3ControllerForTesting(fake);
+
+    auto file = std::make_shared<vh::fs::model::File>();
+    file->path = "/empty.txt";
+    file->backing_path = backing;
+    file->size_bytes = 0;
+    file->content_hash = "empty-content-hash";
+
+    engine.upload(file);
+
+    EXPECT_EQ(1, fake->upload_buffer_with_metadata_calls);
+    EXPECT_EQ("empty.txt", fake->last_uploaded_key.generic_string());
+    EXPECT_EQ(0u, fake->last_uploaded_buffer_size);
+    EXPECT_EQ("false", fake->last_metadata.at("vh-encrypted"));
+    EXPECT_EQ("empty-content-hash", fake->last_metadata.at("content-hash"));
+
+    std::filesystem::remove_all(tempDir);
+}
+
+TEST(S3CostSafetyTest, PlaintextUploadBufferObjectWritesDirectoryMarkerKey) {
+    auto vault = std::make_shared<vh::vault::model::S3Vault>();
+    vault->id = 99;
+    vault->owner_id = 100;
+    vault->encrypt_upstream = false;
+
+    auto fake = std::make_shared<CountingS3Controller>();
+    vh::storage::CloudEngine engine;
+    engine.vault = vault;
+    engine.setS3ControllerForTesting(fake);
+
+    const auto file = engine.uploadBufferObject("/folder/", {}, "marker-content-hash");
+
+    EXPECT_EQ(1, fake->upload_buffer_with_metadata_calls);
+    EXPECT_EQ("folder/", fake->last_uploaded_key.generic_string());
+    EXPECT_EQ(0u, fake->last_uploaded_buffer_size);
+    ASSERT_TRUE(file);
+    EXPECT_EQ("/folder/", file->path.generic_string());
+    EXPECT_EQ(0u, file->size_bytes);
+    ASSERT_TRUE(file->remote_encrypted);
+    EXPECT_FALSE(*file->remote_encrypted);
+    ASSERT_TRUE(file->content_hash);
+    EXPECT_EQ("marker-content-hash", *file->content_hash);
+    EXPECT_EQ("false", fake->last_metadata.at("vh-encrypted"));
+    EXPECT_EQ("marker-content-hash", fake->last_metadata.at("content-hash"));
+}
+
+TEST(S3CostSafetyTest, EncryptedUpstreamEmptyUploadStoresEncryptedPayloadMetadata) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed empty encrypted upload test due to missing environment variables.";
+
+    const auto tempDir = std::filesystem::temp_directory_path() / "vh_s3_encrypted_empty_upload";
+    std::filesystem::remove_all(tempDir);
+    std::filesystem::create_directories(tempDir);
+    const auto backing = tempDir / "empty.bin";
+    std::ofstream(backing, std::ios::binary | std::ios::trunc).close();
+
+    auto fake = std::make_shared<CountingS3Controller>();
+    const auto vaultId = seedDryRunS3VaultForDbTest(uniqueSuffix("empty_encrypted_upload"), fake);
+    auto engine = std::static_pointer_cast<vh::storage::CloudEngine>(
+        vh::runtime::Deps::get().storageManager->getEngine(vaultId));
+    engine->setS3ControllerForTesting(fake);
+    std::static_pointer_cast<vh::vault::model::S3Vault>(engine->vault)->encrypt_upstream = true;
+
+    auto file = std::make_shared<vh::fs::model::File>();
+    file->path = "/empty.txt";
+    file->backing_path = backing;
+    file->size_bytes = 0;
+    file->content_hash = "empty-content-hash";
+
+    engine->upload(file);
+
+    EXPECT_EQ(1, fake->upload_buffer_with_metadata_calls);
+    EXPECT_EQ("empty.txt", fake->last_uploaded_key.generic_string());
+    EXPECT_GT(fake->last_uploaded_buffer_size, 0u);
+    EXPECT_EQ("true", fake->last_metadata.at("vh-encrypted"));
+    ASSERT_FALSE(file->encryption_iv.empty());
+    EXPECT_EQ(file->encryption_iv, fake->last_metadata.at("vh-iv"));
+    EXPECT_GT(file->encrypted_with_key_version, 0u);
+    EXPECT_EQ(std::to_string(file->encrypted_with_key_version), fake->last_metadata.at("vh-key-version"));
 
     std::filesystem::remove_all(tempDir);
 }

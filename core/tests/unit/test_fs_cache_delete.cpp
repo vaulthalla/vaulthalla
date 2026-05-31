@@ -1,12 +1,19 @@
 #include "db/Transactions.hpp"
+#include "config/Registry.hpp"
 #include "db/query/fs/Entry.hpp"
 #include "db/query/fs/Directory.hpp"
 #include "db/query/fs/File.hpp"
+#include "db/query/identities/User.hpp"
+#include "fs/Filesystem.hpp"
 #include "fs/cache/Registry.hpp"
 #include "fs/model/Directory.hpp"
 #include "fs/model/File.hpp"
+#include "fs/model/Path.hpp"
+#include "protocols/s3/ObjectStore.hpp"
 #include "runtime/Deps.hpp"
 #include "seed/include/init_db_tables.hpp"
+#include "storage/Engine.hpp"
+#include "vault/model/Vault.hpp"
 
 #include <gtest/gtest.h>
 #include <paths.h>
@@ -14,6 +21,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -107,6 +115,7 @@ protected:
         vh::paths::mountPath = testRoot / "mount";
         std::filesystem::create_directories(vh::paths::backingPath);
         std::filesystem::create_directories(vh::paths::mountPath);
+        vh::config::Registry::set(vh::config::Config{});
 
         previousCache = vh::runtime::Deps::get().fsCache;
         vh::runtime::Deps::get().fsCache = std::make_shared<vh::fs::cache::Registry>();
@@ -241,6 +250,94 @@ TEST_F(FsCacheDeleteTest, DeleteFileTrashesAndMarksDeletedWithRegisteredStatemen
     EXPECT_TRUE(row.markedDeleted);
 }
 
+TEST_F(FsCacheDeleteTest, DeleteAndEvictFileClearsPathInodeAndIdCacheMaps) {
+    const std::filesystem::path path = "/cache_vault/delete-evict-me.txt";
+    auto file = makeFile(path, aliasFor('E'));
+    file->id = vh::db::query::fs::File::upsertFile(file);
+    vh::runtime::Deps::get().fsCache->cacheEntry(file);
+
+    const auto oldInode = file->inode;
+    const auto oldId = file->id;
+    ASSERT_TRUE(oldInode.has_value());
+
+    ASSERT_NE(vh::runtime::Deps::get().fsCache->getEntry(path), nullptr);
+    ASSERT_NE(vh::runtime::Deps::get().fsCache->getEntry(*oldInode), nullptr);
+    ASSERT_NE(vh::runtime::Deps::get().fsCache->getEntryById(oldId), nullptr);
+
+    ASSERT_NO_THROW(vh::db::query::fs::File::deleteFile(ids.userId, file));
+    vh::runtime::Deps::get().fsCache->evictPath(path);
+    vh::runtime::Deps::get().fsCache->evictIno(*oldInode);
+
+    EXPECT_EQ(vh::runtime::Deps::get().fsCache->getEntry(path), nullptr);
+    EXPECT_EQ(vh::runtime::Deps::get().fsCache->getEntry(*oldInode), nullptr);
+    EXPECT_EQ(vh::runtime::Deps::get().fsCache->getEntryById(oldId), nullptr);
+    EXPECT_EQ(vh::db::query::fs::File::getFileByPath(ids.vaultId, "/delete-evict-me.txt"), nullptr);
+}
+
+TEST_F(FsCacheDeleteTest, EvictIdClearsPathInodeAndIdCacheMaps) {
+    const std::filesystem::path path = "/cache_vault/delete-by-id.txt";
+    auto file = makeFile(path, aliasFor('I'));
+    file->id = vh::db::query::fs::File::upsertFile(file);
+    vh::runtime::Deps::get().fsCache->cacheEntry(file);
+
+    const auto oldInode = file->inode;
+    const auto oldId = file->id;
+    ASSERT_TRUE(oldInode.has_value());
+
+    ASSERT_NE(vh::runtime::Deps::get().fsCache->getEntry(path), nullptr);
+    ASSERT_NE(vh::runtime::Deps::get().fsCache->getEntry(*oldInode), nullptr);
+    ASSERT_NE(vh::runtime::Deps::get().fsCache->getEntryById(oldId), nullptr);
+
+    ASSERT_NO_THROW(vh::db::query::fs::File::deleteFile(ids.userId, file));
+    ASSERT_NO_THROW(vh::runtime::Deps::get().fsCache->evictId(oldId));
+
+    EXPECT_EQ(vh::runtime::Deps::get().fsCache->getEntry(path), nullptr);
+    EXPECT_EQ(vh::runtime::Deps::get().fsCache->getEntry(*oldInode), nullptr);
+    EXPECT_EQ(vh::runtime::Deps::get().fsCache->getEntryById(oldId), nullptr);
+}
+
+TEST_F(FsCacheDeleteTest, GatewayPurgeLocalObjectStateClearsStaleCacheAndBackingBytes) {
+    const std::filesystem::path path = "/cache_vault/s3-delete-me.txt";
+    auto file = makeFile(path, aliasFor('G'));
+    file->id = vh::db::query::fs::File::upsertFile(file);
+    vh::runtime::Deps::get().fsCache->cacheEntry(file);
+
+    std::filesystem::create_directories(file->backing_path.parent_path());
+    {
+        std::ofstream out(file->backing_path, std::ios::binary);
+        out << "test";
+    }
+
+    auto vault = std::make_shared<vh::vault::model::Vault>();
+    vault->id = ids.vaultId;
+    vault->name = "Cache Delete Vault";
+    vault->mount_point = "cache_delete_vault";
+
+    auto engine = std::make_shared<vh::storage::Engine>();
+    engine->vault = vault;
+    engine->paths = std::make_shared<vh::fs::model::Path>("/cache_vault", "cache_delete_vault");
+
+    const auto cachePath = engine->paths->absPath(file->path, vh::fs::model::PathType::CACHE_ROOT);
+    const auto fileCachePath = engine->paths->absPath(file->path, vh::fs::model::PathType::FILE_CACHE_ROOT);
+    std::filesystem::create_directories(cachePath);
+    std::filesystem::create_directories(fileCachePath);
+
+    const auto oldInode = file->inode;
+    const auto oldId = file->id;
+    ASSERT_TRUE(oldInode.has_value());
+
+    vh::protocols::s3::ObjectStore store;
+    ASSERT_NO_THROW(store.purgeLocalObjectState(engine, file->path, ids.userId));
+
+    EXPECT_EQ(vh::runtime::Deps::get().fsCache->getEntry(path), nullptr);
+    EXPECT_EQ(vh::runtime::Deps::get().fsCache->getEntry(*oldInode), nullptr);
+    EXPECT_EQ(vh::runtime::Deps::get().fsCache->getEntryById(oldId), nullptr);
+    EXPECT_EQ(vh::db::query::fs::File::getFileByPath(ids.vaultId, "/s3-delete-me.txt"), nullptr);
+    EXPECT_FALSE(std::filesystem::exists(file->backing_path));
+    EXPECT_FALSE(std::filesystem::exists(cachePath));
+    EXPECT_FALSE(std::filesystem::exists(fileCachePath));
+}
+
 TEST_F(FsCacheDeleteTest, CachedNewFileAndDirectoryHaveNonZeroTimestamps) {
     const std::filesystem::path dirPath = "/cache_vault/timestamps";
     auto dir = makeDirectory(dirPath, aliasFor('T'));
@@ -282,6 +379,51 @@ TEST_F(FsCacheDeleteTest, FileUpdateTouchesFsEntryUpdatedAt) {
     const auto reloaded = vh::db::query::fs::Entry::getFSEntryById(file->id);
     ASSERT_TRUE(reloaded);
     EXPECT_GT(reloaded->updated_at, 1);
+}
+
+TEST_F(FsCacheDeleteTest, CreateFileOverwriteWithEmptyBufferTruncatesExistingBackingBytes) {
+    const std::filesystem::path path = "/cache_vault/empty-overwrite.txt";
+    auto file = makeFile(path, aliasFor('Z'));
+    file->id = vh::db::query::fs::File::upsertFile(file);
+    vh::runtime::Deps::get().fsCache->cacheEntry(file);
+
+    std::filesystem::create_directories(file->backing_path.parent_path());
+    {
+        std::ofstream out(file->backing_path, std::ios::binary);
+        out << "stale";
+    }
+    ASSERT_EQ(std::filesystem::file_size(file->backing_path), 5u);
+
+    auto vault = std::make_shared<vh::vault::model::Vault>();
+    vault->id = ids.vaultId;
+    vault->name = "Cache Delete Vault";
+    vault->mount_point = "cache_delete_vault";
+
+    auto engine = std::make_shared<vh::storage::Engine>();
+    engine->vault = vault;
+    engine->paths = std::make_shared<vh::fs::model::Path>("/cache_vault", "cache_delete_vault");
+
+    const auto user = vh::db::query::identities::User::getUserById(ids.userId);
+    ASSERT_TRUE(user);
+
+    const auto overwritten = vh::fs::Filesystem::createFile({
+        .path = file->path,
+        .fuse_path = path,
+        .buffer = {},
+        .engine = engine,
+        .user = user,
+        .overwrite = true
+    });
+
+    ASSERT_TRUE(overwritten);
+    EXPECT_EQ(overwritten->size_bytes, 0u);
+    EXPECT_TRUE(overwritten->encryption_iv.empty());
+    EXPECT_EQ(overwritten->encrypted_with_key_version, 0u);
+    EXPECT_EQ(std::filesystem::file_size(file->backing_path), 0u);
+
+    const auto reloaded = vh::db::query::fs::File::getFileByPath(ids.vaultId, "/empty-overwrite.txt");
+    ASSERT_TRUE(reloaded);
+    EXPECT_EQ(reloaded->size_bytes, 0u);
 }
 
 } // namespace
