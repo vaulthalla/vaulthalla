@@ -56,10 +56,12 @@ std::shared_ptr<CommandUsage> creds(const std::weak_ptr<CommandUsage>& parent) {
         Flag::WithAliases("write", "Allow Write operations for scoped vaults", {"write"}),
         Flag::WithAliases("delete", "Allow Delete operations for scoped vaults", {"delete"}),
         Flag::WithAliases("admin", "Allow bucket admin operations for scoped vaults", {"admin"}),
+        Flag::WithAliases("enforce-budget-for-local-requests", "Count local/cache hits against gateway key budgets", {"enforce-budget-for-local-requests"}),
         jsonFlag
     };
     create->examples = {
         {"vh s3-gateway creds create laptop --json", "Create a user-access key and print the secret once."},
+        {"vh s3-gateway creds create laptop --enforce-budget-for-local-requests", "Create a key that counts local/cache hits against gateway budgets."},
         {"vh s3-gateway creds create backup --scope vault-allowlist --vault photos --read --write --json",
          "Create a key restricted to one vault."}
     };
@@ -94,7 +96,15 @@ std::shared_ptr<CommandUsage> creds(const std::weak_ptr<CommandUsage>& parent) {
         Optional::ManyToOne("expires", "Credential lifetime, such as 30d or 12h", {"expires"}, "duration"),
         Optional::ManyToOne("description", "Credential description", {"description"}, "text")
     };
-    scopeSet->examples = {{"vh s3-gateway creds scope backup set --scope vault-allowlist", "Change credential scope mode."}};
+    scopeSet->optional_flags = {
+        Flag::WithAliases("enforce-budget-for-local-requests", "Count local/cache hits against gateway key budgets", {"enforce-budget-for-local-requests"}),
+        Flag::WithAliases("no-enforce-budget-for-local-requests", "Do not count local/cache hits against gateway key budgets", {"no-enforce-budget-for-local-requests"})
+    };
+    scopeSet->examples = {
+        {"vh s3-gateway creds scope backup set --scope vault-allowlist", "Change credential scope mode."},
+        {"vh s3-gateway creds scope backup set --enforce-budget-for-local-requests", "Enable synthetic local/cache gateway budget accounting."},
+        {"vh s3-gateway creds scope backup set --no-enforce-budget-for-local-requests", "Disable synthetic local/cache gateway budget accounting."}
+    };
 
     auto allowVault = build(scope->weak_from_this());
     allowVault->aliases = {"allow-vault"};

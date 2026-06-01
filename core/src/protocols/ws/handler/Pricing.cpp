@@ -227,7 +227,10 @@ json buildPreflight(const json& payload) {
         .gateway_credential_id = {},
         .request_uuid = {},
         .operation = {},
-        .object_key = {}
+        .object_key = {},
+        .gateway_scopes_only = false,
+        .synthetic = false,
+        .usage_source = {}
     });
 
     return {

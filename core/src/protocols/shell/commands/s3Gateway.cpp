@@ -360,6 +360,7 @@ CommandResult handleCredsCreate(const CommandCall& call) {
     options.description = optVal(call, "description");
     options.expires_at = parseExpiresAt(call);
     options.vault_scopes = scopesFromVaultOptions(call);
+    options.enforce_budget_for_local_requests = hasFlag(call, "enforce-budget-for-local-requests");
     if (!options.vault_scopes.empty() && options.scope_mode == "user_access")
         options.scope_mode = "vault_allowlist";
     const auto secret = manager.createCredential(options);
@@ -373,6 +374,7 @@ CommandResult handleCredsCreate(const CommandCall& call) {
             {"access_key", secret.credential.access_key},
             {"secret_access_key", secret.secret_access_key},
             {"scope_mode", secret.credential.scope_mode},
+            {"enforce_budget_for_local_requests", secret.credential.enforce_budget_for_local_requests},
             {"expires_at", secret.credential.expires_at ? nlohmann::json(*secret.credential.expires_at) : nlohmann::json(nullptr)}
         };
         return ok(j.dump(4) + "\n");
@@ -383,6 +385,7 @@ CommandResult handleCredsCreate(const CommandCall& call) {
     out << "  user: " << user->name << " (" << user->id << ")\n";
     out << "  name: " << call.positionals[0] << "\n";
     out << "  scope: " << secret.credential.scope_mode << "\n";
+    out << "  count local/cache budget usage: " << yesNo(secret.credential.enforce_budget_for_local_requests) << "\n";
     out << "  access key: " << secret.credential.access_key << "\n";
     out << "  secret access key: " << secret.secret_access_key << "\n";
     out << "store the secret now; it cannot be listed again.\n";
@@ -404,6 +407,7 @@ CommandResult handleCredsList(const CommandCall& call) {
                 {"name", credential.name},
                 {"access_key", credential.access_key},
                 {"scope_mode", credential.scope_mode},
+                {"enforce_budget_for_local_requests", credential.enforce_budget_for_local_requests},
                 {"description", credential.description ? nlohmann::json(*credential.description) : nlohmann::json(nullptr)},
                 {"enabled", credential.enabled},
                 {"created_at", credential.created_at},
@@ -420,6 +424,7 @@ CommandResult handleCredsList(const CommandCall& call) {
     for (const auto& credential : creds) {
         out << "- " << credential.name << " " << credential.access_key
             << " scope=" << credential.scope_mode
+            << " local_budget=" << yesNo(credential.enforce_budget_for_local_requests)
             << " enabled=" << yesNo(credential.enabled);
         if (credential.last_used_at) out << " last_used=" << *credential.last_used_at;
         if (credential.expires_at) out << " expires=" << *credential.expires_at;
@@ -446,6 +451,7 @@ std::string renderCredentialScopes(const db::query::s3::GatewayCredential& crede
     out << "  access key: " << credential.access_key << "\n";
     out << "  principal: " << credential.principal_user_id << "\n";
     out << "  scope: " << credential.scope_mode << "\n";
+    out << "  count local/cache budget usage: " << yesNo(credential.enforce_budget_for_local_requests) << "\n";
     const auto scopes = db::query::s3::Gateway::listCredentialScopes(credential.id);
     if (scopes.empty()) {
         out << "  vault scopes: none\n";
@@ -486,15 +492,32 @@ CommandResult handleCredsScope(const CommandCall& call) {
                     {"can_admin", scope.can_admin}
                 });
             }
-            return ok(nlohmann::json{{"credential_id", credential->id}, {"scope_mode", credential->scope_mode}, {"scopes", scopes}}.dump(4) + "\n");
+            return ok(nlohmann::json{
+                {"credential_id", credential->id},
+                {"scope_mode", credential->scope_mode},
+                {"enforce_budget_for_local_requests", credential->enforce_budget_for_local_requests},
+                {"scopes", scopes}
+            }.dump(4) + "\n");
         }
         return ok(renderCredentialScopes(*credential));
     }
 
     if (action == "set") {
         const auto scopeOpt = optVal(call, "scope");
-        if (!scopeOpt || scopeOpt->empty()) return invalid("s3-gateway creds scope set: --scope is required");
-        const auto scopeMode = normalizeScopeMode(*scopeOpt);
+        if (hasFlag(call, "enforce-budget-for-local-requests") && hasFlag(call, "no-enforce-budget-for-local-requests"))
+            return invalid("s3-gateway creds scope set: local budget enforcement flags are mutually exclusive");
+        std::optional<bool> enforceLocalBudget;
+        if (hasFlag(call, "enforce-budget-for-local-requests")) enforceLocalBudget = true;
+        if (hasFlag(call, "no-enforce-budget-for-local-requests")) enforceLocalBudget = false;
+        if ((!scopeOpt || scopeOpt->empty()) &&
+            !enforceLocalBudget &&
+            !hasKey(call, "description") &&
+            !hasKey(call, "expires") &&
+            !hasKey(call, "user"))
+            return invalid("s3-gateway creds scope set: --scope or a setting flag is required");
+        const auto scopeMode = scopeOpt && !scopeOpt->empty()
+            ? normalizeScopeMode(*scopeOpt)
+            : credential->scope_mode;
         if (scopeMode == "global" && !call.user->isAdmin())
             return invalid("s3-gateway creds scope set: global scope requires admin permission");
         auto principalUserId = credential->principal_user_id;
@@ -532,7 +555,8 @@ CommandResult handleCredsScope(const CommandCall& call) {
             principalUserId,
             createdBy,
             description,
-            expiresAt);
+            expiresAt,
+            enforceLocalBudget);
         if (scopeMode != "vault_allowlist")
             db::query::s3::Gateway::replaceCredentialScopes(credential->id, {});
         return ok("S3 gateway credential scope updated.\n");
@@ -995,7 +1019,10 @@ CommandResult handleBudgetLedger(const CommandCall& call) {
             << " reserved=" << entry.reserved_cost
             << " committed=" << gwValueOrDash(entry.committed_cost)
             << " " << entry.currency
-            << " status=" << entry.status << "\n";
+            << " status=" << entry.status;
+        if (entry.synthetic) out << " synthetic=true";
+        if (entry.usage_source) out << " source=" << *entry.usage_source;
+        out << "\n";
     }
     return ok(out.str());
 }
@@ -1046,7 +1073,10 @@ CommandResult handleBudgetStatus(const CommandCall& call) {
                 << " reserved=" << entry.reserved_cost
                 << " committed=" << gwValueOrDash(entry.committed_cost)
                 << " " << entry.currency
-                << " status=" << entry.status << "\n";
+                << " status=" << entry.status;
+            if (entry.synthetic) out << " synthetic=true";
+            if (entry.usage_source) out << " source=" << *entry.usage_source;
+            out << "\n";
         }
     }
     return ok(out.str());

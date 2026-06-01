@@ -27,6 +27,7 @@ struct CredentialCreateOptions {
     std::optional<std::string> description;
     std::optional<std::time_t> expires_at;
     std::vector<CredentialVaultScope> vault_scopes;
+    bool enforce_budget_for_local_requests{false};
 };
 
 class CredentialManager {

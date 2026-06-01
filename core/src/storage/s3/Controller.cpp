@@ -1,18 +1,27 @@
 #include "storage/s3/Controller.hpp"
+#include "storage/ScopedS3RequestUsageCapture.hpp"
 #include "vault/model/APIKey.hpp"
 #include "storage/s3/curl/helpers.hpp"
 #include "log/Registry.hpp"
 
+#include <algorithm>
 #include <ctime>
 #include <curl/curl.h>
 #include <sstream>
 #include <utility>
+#include <vector>
 
 using namespace vh::vault::model;
 using namespace vh::storage::s3::curl;
 
 namespace vh::storage::s3 {
     namespace {
+        thread_local std::vector<ScopedS3RequestUsageCapture*> requestUsageCaptures;
+
+        ScopedS3RequestUsageCapture* activeRequestUsageCapture() {
+            return requestUsageCaptures.empty() ? nullptr : requestUsageCaptures.back();
+        }
+
         bool isNoSuchKeyDeleteResponse(const HttpResponse& resp) {
             if (resp.curl != CURLE_OK || resp.http != 404) return false;
             return resp.body.find("NoSuchKey") != std::string::npos ||
@@ -48,7 +57,48 @@ namespace vh::storage::s3 {
         return metrics_;
     }
 
+    void Controller::pushRequestUsageCapture(ScopedS3RequestUsageCapture* capture) {
+        if (capture) requestUsageCaptures.push_back(capture);
+    }
+
+    void Controller::popRequestUsageCapture(ScopedS3RequestUsageCapture* capture) noexcept {
+        if (!capture || requestUsageCaptures.empty()) return;
+        if (requestUsageCaptures.back() == capture) {
+            requestUsageCaptures.pop_back();
+            return;
+        }
+        const auto it = std::find(requestUsageCaptures.rbegin(), requestUsageCaptures.rend(), capture);
+        if (it != requestUsageCaptures.rend())
+            requestUsageCaptures.erase(std::next(it).base());
+    }
+
     void Controller::recordRequest(const RequestKind kind, const uint64_t amount) const {
+        if (auto* capture = activeRequestUsageCapture()) {
+            switch (kind) {
+            case RequestKind::List:
+                capture->checkList(amount);
+                break;
+            case RequestKind::Head:
+                capture->checkHead(amount);
+                break;
+            case RequestKind::Get:
+                capture->checkGet(amount);
+                break;
+            case RequestKind::Put:
+                capture->checkPut(amount);
+                break;
+            case RequestKind::Copy:
+                capture->checkCopy(amount);
+                break;
+            case RequestKind::Delete:
+                capture->checkDelete(amount);
+                break;
+            case RequestKind::DownloadBytes:
+                capture->checkDownloadBytes(amount);
+                break;
+            }
+        }
+
         std::scoped_lock lock(metricsMutex_);
 
         auto bump = [&](uint64_t& current, const std::optional<uint64_t>& limit, const char* label) {
@@ -63,26 +113,62 @@ namespace vh::storage::s3 {
         switch (kind) {
         case RequestKind::List:
             bump(metrics_.list_requests, requestBudget_ ? requestBudget_->max_list_requests : std::optional<uint64_t>{}, "LIST");
-            return;
+            break;
         case RequestKind::Head:
             bump(metrics_.head_requests, requestBudget_ ? requestBudget_->max_head_requests : std::optional<uint64_t>{}, "HEAD");
-            return;
+            break;
         case RequestKind::Get:
             bump(metrics_.get_requests, requestBudget_ ? requestBudget_->max_get_requests : std::optional<uint64_t>{}, "GET");
-            return;
+            break;
         case RequestKind::Put:
             bump(metrics_.put_requests, requestBudget_ ? requestBudget_->max_put_requests : std::optional<uint64_t>{}, "PUT");
-            return;
+            break;
         case RequestKind::Copy:
             bump(metrics_.copy_requests, requestBudget_ ? requestBudget_->max_copy_requests : std::optional<uint64_t>{}, "COPY");
-            return;
+            break;
         case RequestKind::Delete:
             bump(metrics_.delete_requests, requestBudget_ ? requestBudget_->max_delete_requests : std::optional<uint64_t>{}, "DELETE");
-            return;
+            break;
         case RequestKind::DownloadBytes:
             bump(metrics_.downloaded_bytes, requestBudget_ ? requestBudget_->max_downloaded_bytes : std::optional<uint64_t>{}, "downloaded bytes");
-            return;
+            break;
         }
+
+        if (auto* capture = activeRequestUsageCapture()) {
+            switch (kind) {
+            case RequestKind::List:
+                capture->recordList(amount);
+                break;
+            case RequestKind::Head:
+                capture->recordHead(amount);
+                break;
+            case RequestKind::Get:
+                capture->recordGet(amount);
+                break;
+            case RequestKind::Put:
+                capture->recordPut(amount);
+                break;
+            case RequestKind::Copy:
+                capture->recordCopy(amount);
+                break;
+            case RequestKind::Delete:
+                capture->recordDelete(amount);
+                break;
+            case RequestKind::DownloadBytes:
+                capture->recordDownloadBytes(amount);
+                break;
+            }
+        }
+    }
+
+    void Controller::recordUploadBytes(const uint64_t amount) const {
+        if (amount == 0) return;
+        {
+            std::scoped_lock lock(metricsMutex_);
+            metrics_.uploaded_bytes += amount;
+        }
+        if (auto* capture = activeRequestUsageCapture())
+            capture->recordUploadBytes(amount);
     }
 
     void Controller::deleteObject(const fs::path& key) const {

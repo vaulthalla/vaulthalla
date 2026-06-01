@@ -90,6 +90,7 @@ void Controller::uploadObjectWithMetadata(
     fin.seekg(0, std::ios::end);
     const curl_off_t sz = fin.tellg();
     fin.seekg(0);
+    if (sz > 0) recordUploadBytes(static_cast<uint64_t>(sz));
 
     const std::string fileContents = slurp(fin);
     const std::string payloadHash = sha256Hex(fileContents);

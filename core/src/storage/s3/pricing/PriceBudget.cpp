@@ -120,6 +120,8 @@ PriceBudgetLedgerEntry ledgerFromRow(const pqxx::row& row) {
     entry.operation = optionalString(row, "operation");
     entry.object_key = optionalString(row, "object_key");
     entry.estimated_cost = optionalString(row, "estimated_cost");
+    entry.usage_source = optionalString(row, "usage_source");
+    entry.synthetic = row["synthetic"].as<bool>();
     entry.provider_key = row["provider_key"].as<std::string>();
     entry.currency = row["currency"].as<std::string>();
     entry.window = priceBudgetWindowFromString(row["window_type"].as<std::string>());
@@ -277,23 +279,33 @@ std::string policyWhereClause(
     const std::string& providerKey,
     const bool providerSupported,
     const std::optional<std::uint32_t>& gatewayCredentialId,
-    const bool includeInactive) {
+    const bool includeInactive,
+    const bool gatewayScopesOnly = false) {
     (void)providerSupported;
     std::string where = includeInactive ? "TRUE" : "is_active = TRUE AND mode <> 'off'";
     where += " AND (";
-    where += "scope = 'global' OR ";
-    where += "(scope = 'provider' AND provider_key = " + txn.quote(providerKey) + ") OR ";
-    where += "(scope = 'vault' AND vault_id = " + std::to_string(vaultId) +
-        " AND (provider_key IS NULL OR provider_key = " + txn.quote(providerKey) + "))";
+    bool appended = false;
+    const auto appendClause = [&](const std::string& clause) {
+        if (appended) where += " OR ";
+        where += clause;
+        appended = true;
+    };
+    if (!gatewayScopesOnly) {
+        appendClause("scope = 'global'");
+        appendClause("(scope = 'provider' AND provider_key = " + txn.quote(providerKey) + ")");
+        appendClause("(scope = 'vault' AND vault_id = " + std::to_string(vaultId) +
+            " AND (provider_key IS NULL OR provider_key = " + txn.quote(providerKey) + "))");
+    }
     if (gatewayCredentialId) {
-        where += " OR (scope = 'gateway_credential' AND gateway_credential_id = " +
+        appendClause("(scope = 'gateway_credential' AND gateway_credential_id = " +
             std::to_string(*gatewayCredentialId) +
-            " AND (provider_key IS NULL OR provider_key = " + txn.quote(providerKey) + "))";
-        where += " OR (scope = 'gateway_credential_vault' AND gateway_credential_id = " +
+            " AND (provider_key IS NULL OR provider_key = " + txn.quote(providerKey) + "))");
+        appendClause("(scope = 'gateway_credential_vault' AND gateway_credential_id = " +
             std::to_string(*gatewayCredentialId) +
             " AND vault_id = " + std::to_string(vaultId) +
-            " AND (provider_key IS NULL OR provider_key = " + txn.quote(providerKey) + "))";
+            " AND (provider_key IS NULL OR provider_key = " + txn.quote(providerKey) + "))");
     }
+    if (!appended) where += "FALSE";
     where += ")";
     return where;
 }
@@ -687,6 +699,9 @@ nlohmann::json preflightMetadata(const PriceBudgetPreflightRequest& request, con
         {"request_uuid", request.request_uuid},
         {"operation", request.operation},
         {"object_key", request.object_key ? nlohmann::json(*request.object_key) : nlohmann::json(nullptr)},
+        {"gateway_scopes_only", request.gateway_scopes_only},
+        {"synthetic", request.synthetic},
+        {"usage_source", request.usage_source ? nlohmann::json(*request.usage_source) : nlohmann::json(nullptr)},
         {"estimated_cost", request.estimate.estimated_cost},
         {"currency", request.estimate.currency},
         {"catalog_verified", request.estimate.catalog_verified},
@@ -911,7 +926,9 @@ std::string formatGatewayBudgetDenialForS3(
         : decision.currency;
 
     std::ostringstream out;
-    out << "S3 gateway price budget exceeded: "
+    out << (request.synthetic
+            ? "S3 gateway synthetic local budget exceeded: "
+            : "S3 gateway price budget exceeded: ")
         << "scope=" << scope
         << ", policy_id=" << policyId
         << ", window=" << window
@@ -946,7 +963,8 @@ PriceBudgetDecision PriceBudgetService::preflight(const PriceBudgetPreflightRequ
                 request.provider_key,
                 request.provider_supported,
                 request.gateway_credential_id,
-                false) +
+                false,
+                request.gateway_scopes_only) +
             " ORDER BY id FOR UPDATE";
         const auto policies = txn.exec(policySql);
         for (const auto& row : policies) decision.policies.push_back(policyFromRow(row));
@@ -1051,7 +1069,7 @@ PriceBudgetDecision PriceBudgetService::preflight(const PriceBudgetPreflightRequ
                 const auto insertSql =
                     "INSERT INTO s3_price_budget_ledger "
                     "(policy_id, run_uuid, vault_id, gateway_credential_id, request_uuid, operation, object_key, "
-                    "provider_key, currency, window_type, window_start, window_end, reserved_cost, estimated_cost, status) "
+                    "usage_source, synthetic, provider_key, currency, window_type, window_start, window_end, reserved_cost, estimated_cost, status) "
                     "VALUES (" +
                     std::to_string(policy.id) + ", " +
                     txn.quote(request.run_uuid) + ", " +
@@ -1064,6 +1082,8 @@ PriceBudgetDecision PriceBudgetService::preflight(const PriceBudgetPreflightRequ
                         ? std::optional<std::string>{}
                         : std::make_optional(request.operation)) + ", " +
                     optionalSql(txn, request.object_key) + ", " +
+                    optionalSql(txn, request.usage_source) + ", " +
+                    std::string(request.synthetic ? "TRUE" : "FALSE") + ", " +
                     txn.quote(request.provider_key) + ", " +
                     txn.quote(policy.currency) + ", " +
                     txn.quote(toString(window)) + ", " +
@@ -1900,6 +1920,8 @@ void to_json(nlohmann::json& j, const PriceBudgetLedgerEntry& entry) {
         {"operation", entry.operation ? nlohmann::json(*entry.operation) : nlohmann::json(nullptr)},
         {"object_key", entry.object_key ? nlohmann::json(*entry.object_key) : nlohmann::json(nullptr)},
         {"estimated_cost", entry.estimated_cost ? nlohmann::json(*entry.estimated_cost) : nlohmann::json(nullptr)},
+        {"usage_source", entry.usage_source ? nlohmann::json(*entry.usage_source) : nlohmann::json(nullptr)},
+        {"synthetic", entry.synthetic},
         {"provider_key", entry.provider_key},
         {"currency", entry.currency},
         {"window", toString(entry.window)},

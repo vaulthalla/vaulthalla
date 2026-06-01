@@ -20,6 +20,7 @@ struct GatewayCredential {
     std::vector<uint8_t> encrypted_secret_access_key;
     std::vector<uint8_t> iv;
     bool enabled{true};
+    bool enforce_budget_for_local_requests{false};
     std::string scope_mode{"user_access"};
     std::optional<std::string> description;
     std::time_t created_at{};
@@ -116,7 +117,14 @@ public:
         uint32_t principalUserId,
         std::optional<uint32_t> createdBy,
         std::optional<std::string> description,
-        std::optional<std::time_t> expiresAt);
+        std::optional<std::time_t> expiresAt,
+        std::optional<bool> enforceBudgetForLocalRequests = std::nullopt);
+    static void recordSyncOrigin(
+        uint32_t vaultId,
+        const std::string& objectKey,
+        const std::string& operation,
+        std::optional<uint32_t> gatewayCredentialId,
+        const std::string& requestUuid);
 
     static void bindBucket(const BucketBinding& binding);
     static bool unbindBucket(const std::string& bucketName);

@@ -34,13 +34,13 @@ export function CredentialsSection({
       title="Credentials"
       icon={KeyIcon}
       right={
-        <button className={primaryButtonClass} type="button" onClick={onCreateOpen}>
+        <button className={primaryButtonClass} data-testid="s3-gateway-open-create-credential" type="button" onClick={onCreateOpen}>
           <PlusIcon className="h-4 w-4" />
           Create
         </button>
       }>
       {createdSecret && (
-        <div className="mb-4 rounded border border-emerald-300/25 bg-emerald-500/10 p-3 text-sm text-emerald-50">
+        <div className="mb-4 rounded border border-emerald-300/25 bg-emerald-500/10 p-3 text-sm text-emerald-50" data-testid="s3-gateway-secret-panel">
           <div className="mb-2 flex items-center gap-2 font-medium">
             <EyeIcon className="h-4 w-4" />
             Secret access key
@@ -52,7 +52,7 @@ export function CredentialsSection({
               Copy
             </button>
           </div>
-          <button className="mt-2 text-xs text-emerald-100/75 underline" type="button" onClick={onHideSecret}>
+          <button className="mt-2 text-xs text-emerald-100/75 underline" data-testid="s3-gateway-hide-secret" type="button" onClick={onHideSecret}>
             Hide
           </button>
         </div>
@@ -66,6 +66,7 @@ export function CredentialsSection({
               <th className="px-3 py-2">Access key</th>
               <th className="px-3 py-2">Principal</th>
               <th className="px-3 py-2">Scope</th>
+              <th className="px-3 py-2">Local budget</th>
               <th className="px-3 py-2">Enabled</th>
               <th className="px-3 py-2">Expires</th>
               <th className="px-3 py-2">Last used</th>
@@ -75,10 +76,11 @@ export function CredentialsSection({
           <tbody className="divide-y divide-white/10">
             {credentials.map(credential => (
               <tr key={credential.id} className={selectedCredential?.id === credential.id ? 'bg-cyan-400/10' : ''}>
-                <td className="px-3 py-2 font-medium text-white">{credential.name}</td>
+                <td className="px-3 py-2 font-medium text-white" data-testid="s3-gateway-credential-name">{credential.name}</td>
                 <td className="px-3 py-2 font-mono text-xs text-white/70">{credential.access_key}</td>
                 <td className="px-3 py-2 text-white/70">{credential.principal_user_id}</td>
                 <td className="px-3 py-2 text-white/70">{scopeLabel(credential.scope_mode)}</td>
+                <td className="px-3 py-2">{credential.enforce_budget_for_local_requests ? <CheckIcon className="h-4 w-4 text-emerald-300" /> : <XIcon className="h-4 w-4 text-white/30" />}</td>
                 <td className="px-3 py-2">{credential.enabled ? <CheckIcon className="h-4 w-4 text-emerald-300" /> : <XIcon className="h-4 w-4 text-red-300" />}</td>
                 <td className="px-3 py-2 text-white/55">{formatDate(credential.expires_at)}</td>
                 <td className="px-3 py-2 text-white/55">{formatDate(credential.last_used_at)}</td>
@@ -98,7 +100,7 @@ export function CredentialsSection({
             ))}
             {credentials.length === 0 && (
               <tr>
-                <td className="px-3 py-6 text-center text-white/50" colSpan={8}>No gateway credentials</td>
+                <td className="px-3 py-6 text-center text-white/50" colSpan={9}>No gateway credentials</td>
               </tr>
             )}
           </tbody>

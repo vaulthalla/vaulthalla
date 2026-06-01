@@ -40,6 +40,7 @@ export function ScopeEditor({
 }) {
   const [editScopeMode, setEditScopeMode] = useState<S3GatewayCredentialScopeMode>('user_access')
   const [editDescription, setEditDescription] = useState('')
+  const [editEnforceLocalBudget, setEditEnforceLocalBudget] = useState(false)
   const [scopeDraft, setScopeDraft] = useState<S3GatewayCredentialVaultScopePayload[]>([])
   const vaultById = useMemo(() => new Map(vaults.map(vault => [vault.id, vault])), [vaults])
 
@@ -47,6 +48,7 @@ export function ScopeEditor({
     if (!selectedCredential) return
     setEditScopeMode(selectedCredential.scope_mode)
     setEditDescription(selectedCredential.description ?? '')
+    setEditEnforceLocalBudget(selectedCredential.enforce_budget_for_local_requests)
   }, [selectedCredential])
 
   useEffect(() => {
@@ -75,6 +77,7 @@ export function ScopeEditor({
       access_key: selectedCredential.access_key,
       scope_mode: editScopeMode,
       description: editDescription.trim() || null,
+      enforce_budget_for_local_requests: editEnforceLocalBudget,
       vault_scopes: scopeDraft,
     })
   }
@@ -86,7 +89,7 @@ export function ScopeEditor({
           <div className="grid gap-3 md:grid-cols-[220px_1fr_auto]">
             <label className="flex flex-col gap-1 text-xs text-white/60">
               Scope
-              <select className={fieldClass} value={editScopeMode} onChange={event => setEditScopeMode(event.target.value as S3GatewayCredentialScopeMode)}>
+              <select className={fieldClass} data-testid="s3-gateway-scope-editor-scope-select" value={editScopeMode} onChange={event => setEditScopeMode(event.target.value as S3GatewayCredentialScopeMode)}>
                 {scopeModes.map(mode => <option key={mode} value={mode}>{scopeLabel(mode)}</option>)}
               </select>
             </label>
@@ -100,9 +103,24 @@ export function ScopeEditor({
             </button>
           </div>
 
+          <label className="flex items-start gap-3 rounded border border-white/10 bg-white/[0.03] p-3 text-sm text-white/75">
+            <input
+              className="mt-1 h-4 w-4 accent-cyan-400"
+              type="checkbox"
+              checked={editEnforceLocalBudget}
+              onChange={event => setEditEnforceLocalBudget(event.target.checked)}
+            />
+            <span>
+              <span className="block font-medium text-white">Count local/cache hits against gateway request budgets</span>
+              <span className="mt-1 block text-xs leading-5 text-white/55">
+                Default off. When off, cache/local hits do not consume upstream-style request budgets. When on, local/cache hits are treated as gateway usage for this key even when no upstream S3/R2 call occurs.
+              </span>
+            </span>
+          </label>
+
           <div className="grid gap-3">
             {scopeDraft.map(row => (
-              <div key={row.vault_id} className="grid gap-3 rounded border border-white/10 bg-white/[0.03] p-3 lg:grid-cols-[1fr_auto]">
+              <div key={row.vault_id} className="grid gap-3 rounded border border-white/10 bg-white/[0.03] p-3 lg:grid-cols-[1fr_auto]" data-testid="s3-gateway-scope-row">
                 <div>
                   <div className="font-medium text-white">{vaultById.get(row.vault_id)?.name ?? `Vault ${row.vault_id}`}</div>
                   <div className="text-xs text-white/45">#{row.vault_id}</div>

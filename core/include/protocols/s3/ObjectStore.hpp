@@ -23,6 +23,7 @@ struct GatewayAccessContext {
     std::string access_key;
     std::string scope_mode{"user_access"};
     db::query::s3::GatewayCredential credential;
+    bool enforce_budget_for_local_requests{false};
     bool dev_context{false};
 };
 

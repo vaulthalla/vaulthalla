@@ -73,7 +73,8 @@ GatewaySecret CredentialManager::createCredential(const uint32_t userId, const s
         .scope_mode = "user_access",
         .description = std::nullopt,
         .expires_at = std::nullopt,
-        .vault_scopes = {}
+        .vault_scopes = {},
+        .enforce_budget_for_local_requests = false
     });
 }
 
@@ -92,6 +93,7 @@ GatewaySecret CredentialManager::createCredential(const CredentialCreateOptions&
     out.credential.encrypted_secret_access_key = encryptSecret(out.secret_access_key, iv);
     out.credential.iv = std::move(iv);
     out.credential.enabled = true;
+    out.credential.enforce_budget_for_local_requests = options.enforce_budget_for_local_requests;
     out.credential.scope_mode = options.scope_mode;
     out.credential.description = options.description;
     out.credential.expires_at = options.expires_at;

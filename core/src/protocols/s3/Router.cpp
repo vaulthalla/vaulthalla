@@ -4,9 +4,13 @@
 #include "identities/User.hpp"
 #include "log/Registry.hpp"
 #include "protocols/s3/Xml.hpp"
+#include "storage/ScopedS3RequestUsageCapture.hpp"
+#include "db/query/fs/File.hpp"
 #include "sync/model/RemotePolicy.hpp"
+#include "sync/model/Action.hpp"
 #include "storage/s3/pricing/GatewayPriceEstimate.hpp"
 #include "storage/s3/pricing/PriceBudget.hpp"
+#include "storage/s3/pricing/PriceEstimate.hpp"
 
 #include <boost/uuid/random_generator.hpp>
 #include <boost/uuid/uuid_io.hpp>
@@ -15,6 +19,7 @@
 #include <array>
 #include <cctype>
 #include <cstdlib>
+#include <functional>
 #include <fstream>
 #include <limits>
 #include <map>
@@ -26,6 +31,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <vector>
 #include <zlib.h>
 
@@ -434,9 +440,11 @@ xml::DeleteError deleteErrorFromMessage(const std::string& key, const std::strin
 
 struct GatewayBudgetReservation {
     storage::s3::pricing::PriceBudgetPreflightRequest request;
-    storage::s3::pricing::S3GatewayPriceEstimate estimate;
+    storage::s3::pricing::PriceEstimateReport estimate;
     storage::s3::pricing::PriceBudgetDecision decision;
 };
+
+using GatewayUsage = storage::s3::S3GatewayUpstreamUsage;
 
 std::pair<std::string, bool> providerBudgetIdentity(const std::shared_ptr<storage::CloudEngine>& cloud) {
     const auto profile = cloud ? cloud->s3ProviderProfile() : nullptr;
@@ -447,29 +455,110 @@ std::pair<std::string, bool> providerBudgetIdentity(const std::shared_ptr<storag
     };
 }
 
-bool gatewayOperationHasRemoteCost(const storage::s3::pricing::S3GatewayOperation operation) {
+bool shouldEnforceLocalGatewayUsage(const AuthContext& auth) {
+    return auth.enforce_budget_for_local_requests ||
+        auth.credential.enforce_budget_for_local_requests;
+}
+
+bool usageHasBudgetImpact(const GatewayUsage& usage) {
+    return !usage.empty();
+}
+
+GatewayUsage syntheticUsageForGatewayOperation(
+    const storage::s3::pricing::S3GatewayOperation operation,
+    const uint64_t uploadBytes = 0,
+    const uint64_t downloadBytes = 0,
+    const uint64_t objectCount = 1,
+    std::string source = "synthetic_local") {
+    GatewayUsage usage;
+    usage.synthetic = true;
+    usage.source = std::move(source);
+    const auto count = std::max<uint64_t>(1, objectCount);
+
     switch (operation) {
+    case storage::s3::pricing::S3GatewayOperation::ListBuckets:
+    case storage::s3::pricing::S3GatewayOperation::ListObjectsV2:
+    case storage::s3::pricing::S3GatewayOperation::ListMultipartUploads:
+    case storage::s3::pricing::S3GatewayOperation::ListParts:
+        usage.list_requests = 1;
+        break;
+    case storage::s3::pricing::S3GatewayOperation::CreateBucket:
+    case storage::s3::pricing::S3GatewayOperation::HeadBucket:
+    case storage::s3::pricing::S3GatewayOperation::HeadObject:
+        usage.head_requests = 1;
+        break;
     case storage::s3::pricing::S3GatewayOperation::GetObject:
+        usage.get_requests = 1;
+        usage.downloaded_bytes = downloadBytes;
+        break;
     case storage::s3::pricing::S3GatewayOperation::PutObject:
-    case storage::s3::pricing::S3GatewayOperation::DeleteObject:
-    case storage::s3::pricing::S3GatewayOperation::DeleteObjects:
-    case storage::s3::pricing::S3GatewayOperation::CopyObject:
     case storage::s3::pricing::S3GatewayOperation::CreateMultipartUpload:
     case storage::s3::pricing::S3GatewayOperation::UploadPart:
     case storage::s3::pricing::S3GatewayOperation::CompleteMultipartUpload:
-    case storage::s3::pricing::S3GatewayOperation::AbortMultipartUpload:
-        return true;
-    case storage::s3::pricing::S3GatewayOperation::ListBuckets:
-    case storage::s3::pricing::S3GatewayOperation::HeadBucket:
-    case storage::s3::pricing::S3GatewayOperation::CreateBucket:
+        usage.put_requests = 1;
+        usage.uploaded_bytes = uploadBytes;
+        break;
+    case storage::s3::pricing::S3GatewayOperation::CopyObject:
+        usage.copy_requests = 1;
+        usage.downloaded_bytes = downloadBytes;
+        usage.uploaded_bytes = uploadBytes;
+        break;
     case storage::s3::pricing::S3GatewayOperation::DeleteBucket:
-    case storage::s3::pricing::S3GatewayOperation::ListObjectsV2:
-    case storage::s3::pricing::S3GatewayOperation::HeadObject:
-    case storage::s3::pricing::S3GatewayOperation::ListMultipartUploads:
-    case storage::s3::pricing::S3GatewayOperation::ListParts:
-        return false;
+    case storage::s3::pricing::S3GatewayOperation::DeleteObject:
+    case storage::s3::pricing::S3GatewayOperation::AbortMultipartUpload:
+        usage.delete_requests = 1;
+        break;
+    case storage::s3::pricing::S3GatewayOperation::DeleteObjects:
+        usage.delete_requests = count;
+        break;
     }
-    return false;
+
+    return usage;
+}
+
+vh::sync::model::S3CostEstimate s3CostEstimateFromUsage(const GatewayUsage& usage) {
+    vh::sync::model::S3CostEstimate estimate;
+    estimate.list_requests = usage.list_requests;
+    estimate.head_requests = usage.head_requests;
+    estimate.get_requests = usage.get_requests;
+    estimate.put_requests = usage.put_requests;
+    estimate.copy_requests = usage.copy_requests;
+    estimate.delete_requests = usage.delete_requests;
+    estimate.planned_body_download_bytes = usage.downloaded_bytes;
+    estimate.planned_upload_bytes = usage.uploaded_bytes;
+    estimate.remote_index_objects = 1;
+    return estimate;
+}
+
+storage::s3::pricing::PriceEstimateReport estimateGatewayUsage(
+    const storage::CloudEngine& cloud,
+    const GatewayUsage& usage,
+    const std::optional<std::string>& storageClass) {
+    storage::s3::pricing::PriceEstimateOptions options{
+        .mode = storage::s3::pricing::PriceEstimateMode::BudgetConservative
+    };
+    if (storageClass) {
+        const auto profile = cloud.s3ProviderProfile();
+        if (!profile)
+            return storage::s3::pricing::PriceEstimateReport::unsupported("S3 provider has no price-bot profile");
+        const auto resolution = profile->normalizeStorageTier(*storageClass);
+        if (!resolution.ok)
+            return storage::s3::pricing::PriceEstimateReport::unsupported(resolution.error);
+        options.storage_tier_override = resolution.resolved;
+    }
+    return storage::s3::pricing::estimatePlannedS3Sync(
+        cloud,
+        s3CostEstimateFromUsage(usage),
+        options);
+}
+
+std::string localUsageSource(const ResolvedBucket& bucket) {
+    return ObjectStore::isRemoteBacked(bucket) ? "local_cache" : "local_file";
+}
+
+bool hasLocalMaterializedObject(const ResolvedBucket& bucket, const std::string& key) {
+    if (!key.empty() && key.back() == '/') return true;
+    return static_cast<bool>(db::query::fs::File::getFileByPath(bucket.vault_id, ObjectStore::keyToVaultPath(key)));
 }
 
 std::string formatGatewayRequestBudgetDenialForS3(
@@ -490,124 +579,39 @@ std::string formatGatewayRequestBudgetDenialForS3(
     return out.str();
 }
 
-void enforceGatewayRequestBudget(
-    const ResolvedBucket& bucket,
-    const AuthContext& auth,
-    const std::string& rid,
-    const storage::s3::pricing::S3GatewayOperation operation,
-    const uint64_t uploadBytes,
-    const uint64_t downloadBytes,
-    const uint64_t objectCount,
-    const std::string& providerKey) {
-    if (!ObjectStore::isRemoteBacked(bucket)) return;
-
-    const auto cloud = ObjectStore::cloudEngine(bucket);
-    if (!cloud) return;
-    const auto policy = cloud->remote_policy();
-    if (!policy) return;
-    const auto& budget = policy->s3_request_budget;
-    const auto metrics = cloud->s3RequestMetrics();
-
-    const auto deny = [&](const std::string& kind) {
-        throw S3Error{
-            "SlowDown",
-            formatGatewayRequestBudgetDenialForS3(kind, bucket, auth, rid, operation, providerKey),
-            http::status::service_unavailable,
-            bucket.bucket_name};
-    };
-    const auto checkCount = [&](
-        const std::optional<uint64_t>& limit,
-        const uint64_t current,
-        const uint64_t requested,
-        const std::string& kind) {
-        if (limit && current + requested > *limit) deny(kind);
-    };
-
-    switch (operation) {
-    case storage::s3::pricing::S3GatewayOperation::GetObject:
-        checkCount(budget.max_get_requests, metrics.get_requests, 1, "GET");
-        checkCount(budget.max_downloaded_bytes, metrics.downloaded_bytes, downloadBytes, "downloaded bytes");
-        break;
-    case storage::s3::pricing::S3GatewayOperation::PutObject:
-    case storage::s3::pricing::S3GatewayOperation::CreateMultipartUpload:
-    case storage::s3::pricing::S3GatewayOperation::UploadPart:
-    case storage::s3::pricing::S3GatewayOperation::CompleteMultipartUpload:
-        (void)uploadBytes;
-        checkCount(budget.max_put_requests, metrics.put_requests, 1, "PUT");
-        break;
-    case storage::s3::pricing::S3GatewayOperation::CopyObject:
-        checkCount(budget.max_copy_requests, metrics.copy_requests, 1, "COPY");
-        if (downloadBytes > 0) checkCount(budget.max_downloaded_bytes, metrics.downloaded_bytes, downloadBytes, "downloaded bytes");
-        break;
-    case storage::s3::pricing::S3GatewayOperation::DeleteObject:
-    case storage::s3::pricing::S3GatewayOperation::DeleteObjects:
-    case storage::s3::pricing::S3GatewayOperation::DeleteBucket:
-    case storage::s3::pricing::S3GatewayOperation::AbortMultipartUpload:
-        checkCount(budget.max_delete_requests, metrics.delete_requests, std::max<uint64_t>(1, objectCount), "DELETE");
-        break;
-    case storage::s3::pricing::S3GatewayOperation::HeadBucket:
-    case storage::s3::pricing::S3GatewayOperation::HeadObject:
-    case storage::s3::pricing::S3GatewayOperation::ListBuckets:
-    case storage::s3::pricing::S3GatewayOperation::CreateBucket:
-    case storage::s3::pricing::S3GatewayOperation::ListObjectsV2:
-    case storage::s3::pricing::S3GatewayOperation::ListMultipartUploads:
-    case storage::s3::pricing::S3GatewayOperation::ListParts:
-        break;
-    }
-}
-
 std::optional<GatewayBudgetReservation> preflightGatewayBudget(
     const ResolvedBucket& bucket,
     const AuthContext& auth,
     const std::string& rid,
     const storage::s3::pricing::S3GatewayOperation operation,
-    const uint64_t uploadBytes = 0,
-    const uint64_t downloadBytes = 0,
-    const uint64_t objectCount = 1,
+    const GatewayUsage& usage,
+    const bool gatewayScopesOnly = false,
     const std::optional<std::string>& storageClass = std::nullopt,
     const std::optional<std::string>& objectKey = std::nullopt) {
     if (!ObjectStore::isRemoteBacked(bucket)) return std::nullopt;
-    if (!gatewayOperationHasRemoteCost(operation)) return std::nullopt;
+    if (!usageHasBudgetImpact(usage)) return std::nullopt;
 
     const auto cloud = ObjectStore::cloudEngine(bucket);
     if (!cloud) throw invalidArgument("Bucket is not backed by a CloudEngine", bucket.bucket_name);
 
     const auto [providerKey, providerSupported] = providerBudgetIdentity(cloud);
-    enforceGatewayRequestBudget(
-        bucket,
-        auth,
-        rid,
-        operation,
-        uploadBytes,
-        downloadBytes,
-        objectCount,
-        providerKey);
-    storage::s3::pricing::S3GatewayPriceEstimateRequest estimateRequest{
-        .vault_id = bucket.vault_id,
-        .gateway_credential_id = auth.credential_id == 0 ? std::optional<uint32_t>{} : std::make_optional(auth.credential_id),
-        .provider_key = providerKey,
-        .provider_supported = providerSupported,
-        .operation = operation,
-        .request_count = 1,
-        .upload_bytes = uploadBytes,
-        .download_bytes = downloadBytes,
-        .object_count = objectCount,
-        .storage_class = storageClass
-    };
-    auto estimate = storage::s3::pricing::estimateGatewayS3Request(*cloud, estimateRequest);
+    auto estimate = estimateGatewayUsage(*cloud, usage, storageClass);
 
     storage::s3::pricing::PriceBudgetPreflightRequest budgetRequest{
         .vault_id = bucket.vault_id,
         .run_uuid = rid,
         .provider_key = providerKey,
         .provider_supported = providerSupported,
-        .estimate = estimate.as_price_estimate_report,
+        .estimate = estimate,
         .dry_run = false,
         .override_policy_ids = {},
         .gateway_credential_id = auth.credential_id == 0 ? std::optional<uint32_t>{} : std::make_optional(auth.credential_id),
         .request_uuid = rid,
         .operation = storage::s3::pricing::toString(operation),
-        .object_key = objectKey
+        .object_key = objectKey,
+        .gateway_scopes_only = gatewayScopesOnly,
+        .synthetic = usage.synthetic,
+        .usage_source = usage.source.empty() ? std::optional<std::string>{} : std::make_optional(usage.source)
     };
 
     storage::s3::pricing::PriceBudgetService service;
@@ -628,6 +632,29 @@ std::optional<GatewayBudgetReservation> preflightGatewayBudget(
     };
 }
 
+std::optional<GatewayBudgetReservation> preflightSyntheticGatewayBudget(
+    const ResolvedBucket& bucket,
+    const AuthContext& auth,
+    const std::string& rid,
+    const storage::s3::pricing::S3GatewayOperation operation,
+    const uint64_t uploadBytes = 0,
+    const uint64_t downloadBytes = 0,
+    const uint64_t objectCount = 1,
+    const std::optional<std::string>& storageClass = std::nullopt,
+    const std::optional<std::string>& objectKey = std::nullopt,
+    const std::string& source = "synthetic_local") {
+    if (!shouldEnforceLocalGatewayUsage(auth)) return std::nullopt;
+    return preflightGatewayBudget(
+        bucket,
+        auth,
+        rid,
+        operation,
+        syntheticUsageForGatewayOperation(operation, uploadBytes, downloadBytes, objectCount, source),
+        true,
+        storageClass,
+        objectKey);
+}
+
 void commitGatewayBudget(const std::optional<GatewayBudgetReservation>& budget, const bool finalCostKnown = true) {
     if (!budget) return;
     storage::s3::pricing::PriceBudgetService{}.commit(
@@ -637,9 +664,118 @@ void commitGatewayBudget(const std::optional<GatewayBudgetReservation>& budget, 
             : std::optional<std::string>{});
 }
 
+void commitGatewayBudget(
+    const std::optional<GatewayBudgetReservation>& budget,
+    const std::optional<std::string>& finalCostOverride) {
+    if (!budget) return;
+    storage::s3::pricing::PriceBudgetService{}.commit(
+        budget->decision.reservations,
+        finalCostOverride ? finalCostOverride : (
+            budget->estimate.available
+                ? std::make_optional(budget->estimate.estimated_cost)
+                : std::optional<std::string>{}));
+}
+
 void releaseGatewayBudget(const std::optional<GatewayBudgetReservation>& budget) {
     if (!budget) return;
     storage::s3::pricing::PriceBudgetService{}.release(budget->decision.reservations);
+}
+
+std::optional<std::string> estimatedCostForGatewayUsage(
+    const ResolvedBucket& bucket,
+    const GatewayUsage& usage,
+    const std::optional<std::string>& storageClass) {
+    if (!ObjectStore::isRemoteBacked(bucket) || usage.empty()) return std::nullopt;
+    const auto cloud = ObjectStore::cloudEngine(bucket);
+    if (!cloud) return std::nullopt;
+    const auto estimate = estimateGatewayUsage(*cloud, usage, storageClass);
+    if (!estimate.available) return std::nullopt;
+    return estimate.estimated_cost;
+}
+
+std::optional<storage::s3::S3RequestBudget> requestBudgetForBucket(const ResolvedBucket& bucket) {
+    const auto cloud = ObjectStore::cloudEngine(bucket);
+    if (!cloud) return std::nullopt;
+    const auto policy = cloud->remote_policy();
+    if (!policy) return std::nullopt;
+    return policy->s3_request_budget;
+}
+
+S3Error requestBudgetExceededForGateway(
+    const storage::s3::RequestBudgetExceeded& error,
+    const ResolvedBucket& bucket,
+    const AuthContext& auth,
+    const std::string& rid,
+    const storage::s3::pricing::S3GatewayOperation operation) {
+    const auto cloud = ObjectStore::cloudEngine(bucket);
+    const auto [providerKey, providerSupported] = providerBudgetIdentity(cloud);
+    (void)providerSupported;
+    return S3Error{
+        "SlowDown",
+        formatGatewayRequestBudgetDenialForS3(
+            error.kind().empty() ? std::string{"unknown"} : error.kind(),
+            bucket,
+            auth,
+            rid,
+            operation,
+            providerKey),
+        http::status::service_unavailable,
+        bucket.bucket_name};
+}
+
+template <typename Fn>
+auto executeWithActualUsageCapture(
+    const ResolvedBucket& bucket,
+    const AuthContext& auth,
+    const std::string& rid,
+    const storage::s3::pricing::S3GatewayOperation operation,
+    Fn&& fn) {
+    using Result = std::invoke_result_t<Fn>;
+
+    const auto cloud = ObjectStore::cloudEngine(bucket);
+    if (!cloud) {
+        try {
+            if constexpr (std::is_void_v<Result>) {
+                fn();
+                return GatewayUsage{};
+            } else {
+                return std::pair<Result, GatewayUsage>{fn(), GatewayUsage{}};
+            }
+        } catch (const storage::s3::RequestBudgetExceeded& e) {
+            throw requestBudgetExceededForGateway(e, bucket, auth, rid, operation);
+        }
+    }
+
+    // S3 gateway provider calls are synchronous on the current session worker thread,
+    // so thread-local capture does not mix concurrent sessions. The capture object
+    // itself still snapshots usage behind a mutex.
+    storage::ScopedS3RequestUsageCapture capture(*cloud, requestBudgetForBucket(bucket));
+    try {
+        if constexpr (std::is_void_v<Result>) {
+            fn();
+            return capture.usage();
+        } else {
+            auto value = fn();
+            return std::pair<Result, GatewayUsage>{std::move(value), capture.usage()};
+        }
+    } catch (const storage::s3::RequestBudgetExceeded& e) {
+        throw requestBudgetExceededForGateway(e, bucket, auth, rid, operation);
+    }
+}
+
+void recordGatewaySyncOrigin(
+    const ResolvedBucket& bucket,
+    const AuthContext& auth,
+    const std::string& rid,
+    const std::string& operation,
+    const std::string& objectKey) {
+    if (!ObjectStore::isRemoteBacked(bucket)) return;
+    db::query::s3::Gateway::recordSyncOrigin(
+        bucket.vault_id,
+        objectKey,
+        operation,
+        auth.credential_id == 0 ? std::optional<uint32_t>{} : std::make_optional(auth.credential_id),
+        rid);
 }
 }
 
@@ -727,6 +863,17 @@ Router::Response Router::route(Request&& request, BodyPayload payload) const {
         return response;
     } catch (const S3Error& e) {
         return errorResponse(request, e, rid);
+    } catch (const storage::s3::RequestBudgetExceeded& e) {
+        return errorResponse(
+            request,
+            S3Error{
+                "SlowDown",
+                std::string{"S3 gateway request budget exceeded: kind="} +
+                    (e.kind().empty() ? std::string{"unknown"} : e.kind()) +
+                    ", request_uuid=" + rid,
+                http::status::service_unavailable,
+                std::string(request.target())},
+            rid);
     } catch (const std::exception& e) {
         log::Registry::runtime()->error("[S3Gateway] Request failed: {}", e.what());
         return errorResponse(request, S3Error{"InternalError", e.what(), http::status::internal_server_error, std::string(request.target())}, rid);
@@ -764,7 +911,17 @@ Router::Response Router::routeAuthenticated(
         }
         if (request.method() == http::verb::head) {
             auto bucket = objects_.headBucket(parsed.bucket, auth);
-            auto budget = preflightGatewayBudget(bucket, auth, rid, storage::s3::pricing::S3GatewayOperation::HeadBucket);
+            auto budget = preflightSyntheticGatewayBudget(
+                bucket,
+                auth,
+                rid,
+                storage::s3::pricing::S3GatewayOperation::HeadBucket,
+                0,
+                0,
+                1,
+                std::nullopt,
+                std::nullopt,
+                "metadata");
             commitGatewayBudget(budget);
             auto response = makeResponse(request, http::status::ok, {});
             response.body().clear();
@@ -775,7 +932,11 @@ Router::Response Router::routeAuthenticated(
             auto bucket = objects_.resolveBucket(parsed.bucket, auth);
             objects_.requireBucketRbacPermission(bucket, Action::Delete);
             if (!ObjectStore::credentialAllowsAdmin(bucket)) throw accessDenied(parsed.bucket);
-            auto budget = preflightGatewayBudget(bucket, auth, rid, storage::s3::pricing::S3GatewayOperation::DeleteBucket);
+            auto budget = preflightSyntheticGatewayBudget(
+                bucket,
+                auth,
+                rid,
+                storage::s3::pricing::S3GatewayOperation::DeleteBucket);
             try {
                 objects_.deleteBucket(parsed.bucket, auth);
                 commitGatewayBudget(budget);
@@ -789,7 +950,17 @@ Router::Response Router::routeAuthenticated(
         auto bucket = objects_.headBucket(parsed.bucket, auth);
         if (request.method() == http::verb::get && hasQuery(parsed.query, "uploads"))
         {
-            auto budget = preflightGatewayBudget(bucket, auth, rid, storage::s3::pricing::S3GatewayOperation::ListMultipartUploads);
+            auto budget = preflightSyntheticGatewayBudget(
+                bucket,
+                auth,
+                rid,
+                storage::s3::pricing::S3GatewayOperation::ListMultipartUploads,
+                0,
+                0,
+                1,
+                std::nullopt,
+                std::nullopt,
+                "metadata");
             try {
                 auto response = makeResponse(request, http::status::ok, xml::listMultipartUploads(parsed.bucket, multipart_.listUploads(bucket, parsed.query.contains("prefix") ? parsed.query.at("prefix") : "")));
                 commitGatewayBudget(budget);
@@ -808,7 +979,17 @@ Router::Response Router::routeAuthenticated(
             if (parsed.query.contains("continuation-token")) params.continuation_token = parsed.query.at("continuation-token");
             params.max_keys = parseMaxKeys(parsed.query);
             const auto encodingType = parseEncodingType(parsed.query);
-            auto budget = preflightGatewayBudget(bucket, auth, rid, storage::s3::pricing::S3GatewayOperation::ListObjectsV2);
+            auto budget = preflightSyntheticGatewayBudget(
+                bucket,
+                auth,
+                rid,
+                storage::s3::pricing::S3GatewayOperation::ListObjectsV2,
+                0,
+                0,
+                1,
+                std::nullopt,
+                std::nullopt,
+                "metadata");
             try {
                 auto result = objects_.listObjects(bucket, params);
                 auto response = makeResponse(
@@ -830,21 +1011,26 @@ Router::Response Router::routeAuthenticated(
             const auto keys = parseDeleteObjects(request.body(), quiet);
             for (const auto& key : keys)
                 objects_.requireObjectPermission(bucket, key, Action::Delete);
-            auto budget = preflightGatewayBudget(
+            auto budget = preflightSyntheticGatewayBudget(
                 bucket,
                 auth,
                 rid,
                 storage::s3::pricing::S3GatewayOperation::DeleteObjects,
                 0,
                 0,
-                keys.size());
+                keys.size(),
+                std::nullopt,
+                std::nullopt,
+                "sync_deferred");
             std::vector<std::pair<std::string, std::optional<std::string>>> results;
             try {
                 results = objects_.deleteObjects(bucket, keys);
             } catch (...) {
-                commitGatewayBudget(budget, false);
+                releaseGatewayBudget(budget);
                 throw;
             }
+            for (const auto& [key, error] : results)
+                if (!error) recordGatewaySyncOrigin(bucket, auth, rid, "delete", key);
             std::vector<xml::DeletedObject> deleted;
             std::vector<xml::DeleteError> errors;
             for (const auto& [key, error] : results) {
@@ -863,7 +1049,8 @@ Router::Response Router::routeAuthenticated(
 
     if (request.method() == http::verb::post && hasQuery(parsed.query, "uploads")) {
         objects_.requireObjectPermission(bucket, parsed.key, Action::Write);
-        auto budget = preflightGatewayBudget(
+        const auto options = putOptionsFromRequest(request);
+        auto budget = preflightSyntheticGatewayBudget(
             bucket,
             auth,
             rid,
@@ -871,10 +1058,11 @@ Router::Response Router::routeAuthenticated(
             0,
             0,
             1,
-            putOptionsFromRequest(request).storage_class,
-            parsed.key);
+            options.storage_class,
+            parsed.key,
+            "sync_deferred");
         try {
-            const auto uploadId = multipart_.createUpload(bucket, parsed.key, putOptionsFromRequest(request));
+            const auto uploadId = multipart_.createUpload(bucket, parsed.key, options);
             commitGatewayBudget(budget);
             return makeResponse(request, http::status::ok, xml::initiateMultipartUpload(parsed.bucket, parsed.key, uploadId));
         } catch (...) {
@@ -886,7 +1074,7 @@ Router::Response Router::routeAuthenticated(
     if (request.method() == http::verb::put && hasQuery(parsed.query, "partNumber") && hasQuery(parsed.query, "uploadId")) {
         objects_.requireObjectPermission(bucket, parsed.key, Action::Write);
         const auto partNumber = parsePartNumber(parsed.query);
-        auto budget = preflightGatewayBudget(
+        auto budget = preflightSyntheticGatewayBudget(
             bucket,
             auth,
             rid,
@@ -895,7 +1083,8 @@ Router::Response Router::routeAuthenticated(
             0,
             1,
             std::nullopt,
-            parsed.key);
+            parsed.key,
+            "sync_deferred");
         db::query::s3::MultipartPart part;
         try {
             if (payload.temp_file) {
@@ -925,7 +1114,7 @@ Router::Response Router::routeAuthenticated(
         for (const auto& part : multipart_.listParts(bucket, parsed.key, parsed.query.at("uploadId")))
             totalSize += part.size_bytes;
         const auto completeParts = parseCompleteParts(request.body());
-        auto budget = preflightGatewayBudget(
+        auto budget = preflightSyntheticGatewayBudget(
             bucket,
             auth,
             rid,
@@ -934,23 +1123,25 @@ Router::Response Router::routeAuthenticated(
             0,
             1,
             std::nullopt,
-            parsed.key);
+            parsed.key,
+            "sync_deferred");
         try {
             const auto state = multipart_.completeUpload(bucket, parsed.key, parsed.query.at("uploadId"), completeParts);
+            recordGatewaySyncOrigin(bucket, auth, rid, "multipart_complete", parsed.key);
             commitGatewayBudget(budget);
             return makeResponse(
                 request,
                 http::status::ok,
                 xml::completeMultipartUpload("/" + parsed.bucket + "/" + parsed.key, parsed.bucket, parsed.key, state.etag));
         } catch (...) {
-            commitGatewayBudget(budget, false);
+            releaseGatewayBudget(budget);
             throw;
         }
     }
 
     if (request.method() == http::verb::delete_ && hasQuery(parsed.query, "uploadId")) {
         objects_.requireObjectPermission(bucket, parsed.key, Action::Delete);
-        auto budget = preflightGatewayBudget(
+        auto budget = preflightSyntheticGatewayBudget(
             bucket,
             auth,
             rid,
@@ -959,7 +1150,8 @@ Router::Response Router::routeAuthenticated(
             0,
             1,
             std::nullopt,
-            parsed.key);
+            parsed.key,
+            "sync_deferred");
         try {
             multipart_.abortUpload(bucket, parsed.key, parsed.query.at("uploadId"));
             commitGatewayBudget(budget);
@@ -972,7 +1164,7 @@ Router::Response Router::routeAuthenticated(
 
     if (request.method() == http::verb::get && hasQuery(parsed.query, "uploadId")) {
         objects_.requireObjectPermission(bucket, parsed.key, Action::Read);
-        auto budget = preflightGatewayBudget(
+        auto budget = preflightSyntheticGatewayBudget(
             bucket,
             auth,
             rid,
@@ -981,7 +1173,8 @@ Router::Response Router::routeAuthenticated(
             0,
             1,
             std::nullopt,
-            parsed.key);
+            parsed.key,
+            "metadata");
         try {
             auto response = makeResponse(
                 request,
@@ -998,7 +1191,7 @@ Router::Response Router::routeAuthenticated(
 
     if (request.method() == http::verb::head) {
         objects_.requireObjectPermission(bucket, parsed.key, Action::Read);
-        auto budget = preflightGatewayBudget(
+        auto budget = preflightSyntheticGatewayBudget(
             bucket,
             auth,
             rid,
@@ -1007,7 +1200,8 @@ Router::Response Router::routeAuthenticated(
             0,
             1,
             std::nullopt,
-            parsed.key);
+            parsed.key,
+            "metadata");
         db::query::s3::ObjectState state;
         try {
             state = objects_.headObject(bucket, parsed.key);
@@ -1040,21 +1234,79 @@ Router::Response Router::routeAuthenticated(
         enforceIfMatch(request, state, parsed.key);
         if (ifNoneMatchMatches(request, state)) return notModifiedResponse(request, state);
         const auto range = parseRange(request);
-        auto budget = preflightGatewayBudget(
-            bucket,
-            auth,
-            rid,
-            storage::s3::pricing::S3GatewayOperation::GetObject,
-            0,
-            state.size_bytes,
-            1,
-            state.storage_class,
-            parsed.key);
+        const auto localMaterialized = hasLocalMaterializedObject(bucket, parsed.key);
+        std::optional<GatewayBudgetReservation> budget;
+        if (ObjectStore::isRemoteBacked(bucket) && !localMaterialized) {
+            GatewayUsage expected;
+            expected.get_requests = 1;
+            expected.downloaded_bytes = state.size_bytes;
+            expected.touched_upstream = true;
+            expected.source = "remote_download";
+            budget = preflightGatewayBudget(
+                bucket,
+                auth,
+                rid,
+                storage::s3::pricing::S3GatewayOperation::GetObject,
+                expected,
+                false,
+                state.storage_class,
+                parsed.key);
+        } else {
+            budget = preflightSyntheticGatewayBudget(
+                bucket,
+                auth,
+                rid,
+                storage::s3::pricing::S3GatewayOperation::GetObject,
+                0,
+                state.size_bytes,
+                1,
+                state.storage_class,
+                parsed.key,
+                localUsageSource(bucket));
+        }
         ObjectBody object;
+        std::optional<std::string> finalBudgetCost;
         try {
-            object = objects_.getObject(bucket, parsed.key, range);
+            auto captured = executeWithActualUsageCapture(
+                bucket,
+                auth,
+                rid,
+                storage::s3::pricing::S3GatewayOperation::GetObject,
+                [&] {
+                    return objects_.getObject(bucket, parsed.key, range);
+                });
+            object = std::move(captured.first);
+            auto actual = captured.second;
+            if (actual.touched_upstream) {
+                actual.source = actual.source.empty() ? "remote_download" : actual.source;
+                finalBudgetCost = estimatedCostForGatewayUsage(bucket, actual, object.state.storage_class);
+                if (!budget) {
+                    budget = preflightGatewayBudget(
+                        bucket,
+                        auth,
+                        rid,
+                        storage::s3::pricing::S3GatewayOperation::GetObject,
+                        actual,
+                        false,
+                        object.state.storage_class,
+                        parsed.key);
+                }
+            } else if (budget && !budget->request.synthetic) {
+                releaseGatewayBudget(budget);
+                budget = preflightSyntheticGatewayBudget(
+                    bucket,
+                    auth,
+                    rid,
+                    storage::s3::pricing::S3GatewayOperation::GetObject,
+                    0,
+                    object.state.size_bytes,
+                    1,
+                    object.state.storage_class,
+                    parsed.key,
+                    localUsageSource(bucket));
+            }
         } catch (...) {
-            commitGatewayBudget(budget, false);
+            releaseGatewayBudget(budget);
             throw;
         }
         auto response = makeResponse(
@@ -1073,7 +1325,7 @@ Router::Response Router::routeAuthenticated(
         for (const auto& [name, value] : object.metadata)
             response.set("x-amz-meta-" + name, value);
         response.prepare_payload();
-        commitGatewayBudget(budget);
+        commitGatewayBudget(budget, finalBudgetCost);
         return response;
     }
 
@@ -1111,16 +1363,28 @@ Router::Response Router::routeAuthenticated(
                 sourceState,
                 source.bucket + "/" + source.key);
             const auto copyOptions = copyOptionsFromRequest(request);
-            const auto sameRemoteVault =
-                ObjectStore::isRemoteBacked(sourceBucket) &&
-                ObjectStore::isRemoteBacked(bucket) &&
-                sourceBucket.vault_id == bucket.vault_id;
             std::optional<GatewayBudgetReservation> sourceBudget;
             std::optional<GatewayBudgetReservation> destBudget;
-            bool upstreamMayHaveStarted = false;
+            std::optional<std::string> sourceFinalBudgetCost;
+            const auto sourceLocal = hasLocalMaterializedObject(sourceBucket, source.key);
             try {
-                if (sameRemoteVault) {
-                    destBudget = preflightGatewayBudget(
+                if (ObjectStore::isRemoteBacked(sourceBucket) && !sourceLocal) {
+                    GatewayUsage expected;
+                    expected.get_requests = 1;
+                    expected.downloaded_bytes = sourceState.size_bytes;
+                    expected.touched_upstream = true;
+                    expected.source = "remote_download";
+                    sourceBudget = preflightGatewayBudget(
+                        sourceBucket,
+                        auth,
+                        rid,
+                        storage::s3::pricing::S3GatewayOperation::CopyObject,
+                        expected,
+                        false,
+                        sourceState.storage_class,
+                        source.key);
+                } else {
+                    destBudget = preflightSyntheticGatewayBudget(
                         bucket,
                         auth,
                         rid,
@@ -1129,47 +1393,60 @@ Router::Response Router::routeAuthenticated(
                         sourceState.size_bytes,
                         1,
                         copyOptions.storage_class,
-                        parsed.key);
-                } else {
-                    sourceBudget = preflightGatewayBudget(
-                        sourceBucket,
-                        auth,
-                        rid,
-                        storage::s3::pricing::S3GatewayOperation::GetObject,
-                        0,
-                        sourceState.size_bytes,
-                        1,
-                        sourceState.storage_class,
-                        source.key);
-                    destBudget = preflightGatewayBudget(
+                        parsed.key,
+                        localUsageSource(sourceBucket));
+                }
+                auto captured = executeWithActualUsageCapture(
+                    sourceBucket,
+                    auth,
+                    rid,
+                    storage::s3::pricing::S3GatewayOperation::CopyObject,
+                    [&] {
+                        return objects_.copyObject(
+                            sourceBucket,
+                            source.key,
+                            bucket,
+                            parsed.key,
+                            copyOptions);
+                    });
+                const auto state = std::move(captured.first);
+                auto actual = captured.second;
+                if (actual.touched_upstream) {
+                    actual.source = actual.source.empty() ? "remote_download" : actual.source;
+                    sourceFinalBudgetCost = estimatedCostForGatewayUsage(sourceBucket, actual, sourceState.storage_class);
+                    if (!sourceBudget) {
+                        sourceBudget = preflightGatewayBudget(
+                            sourceBucket,
+                            auth,
+                            rid,
+                            storage::s3::pricing::S3GatewayOperation::CopyObject,
+                            actual,
+                            false,
+                            sourceState.storage_class,
+                            source.key);
+                    }
+                } else if (sourceBudget && !sourceBudget->request.synthetic) {
+                    releaseGatewayBudget(sourceBudget);
+                    sourceBudget.reset();
+                    destBudget = preflightSyntheticGatewayBudget(
                         bucket,
                         auth,
                         rid,
-                        storage::s3::pricing::S3GatewayOperation::PutObject,
+                        storage::s3::pricing::S3GatewayOperation::CopyObject,
                         sourceState.size_bytes,
-                        0,
+                        sourceState.size_bytes,
                         1,
                         copyOptions.storage_class,
-                        parsed.key);
+                        parsed.key,
+                        localUsageSource(sourceBucket));
                 }
-                upstreamMayHaveStarted = true;
-                const auto state = objects_.copyObject(
-                    sourceBucket,
-                    source.key,
-                    bucket,
-                    parsed.key,
-                    copyOptions);
-                commitGatewayBudget(sourceBudget);
+                recordGatewaySyncOrigin(bucket, auth, rid, "copy", parsed.key);
+                commitGatewayBudget(sourceBudget, sourceFinalBudgetCost);
                 commitGatewayBudget(destBudget);
                 return makeResponse(request, http::status::ok, copyObjectResult(state.etag, state.last_modified));
             } catch (...) {
-                if (upstreamMayHaveStarted) {
-                    commitGatewayBudget(sourceBudget, false);
-                    commitGatewayBudget(destBudget, false);
-                } else {
-                    releaseGatewayBudget(sourceBudget);
-                    releaseGatewayBudget(destBudget);
-                }
+                releaseGatewayBudget(sourceBudget);
+                releaseGatewayBudget(destBudget);
                 throw;
             }
         }
@@ -1184,7 +1461,7 @@ Router::Response Router::routeAuthenticated(
             validateContentMd5(request, *bufferedBody);
             validateS3Checksums(request, *bufferedBody);
         }
-        auto budget = preflightGatewayBudget(
+        auto budget = preflightSyntheticGatewayBudget(
             bucket,
             auth,
             rid,
@@ -1193,23 +1470,26 @@ Router::Response Router::routeAuthenticated(
             0,
             1,
             options.storage_class,
-            parsed.key);
+            parsed.key,
+            "sync_deferred");
         if (payload.temp_file) {
             auto fileOptions = options;
             if (payload.md5_hex) fileOptions.etag_override = "\"" + *payload.md5_hex + "\"";
             try {
                 state = objects_.putObjectFromFile(bucket, parsed.key, *payload.temp_file, payload.size, fileOptions);
+                recordGatewaySyncOrigin(bucket, auth, rid, "put", parsed.key);
                 commitGatewayBudget(budget);
             } catch (...) {
-                commitGatewayBudget(budget, false);
+                releaseGatewayBudget(budget);
                 throw;
             }
         } else {
             try {
                 state = objects_.putObject(bucket, parsed.key, *bufferedBody, options);
+                recordGatewaySyncOrigin(bucket, auth, rid, "put", parsed.key);
                 commitGatewayBudget(budget);
             } catch (...) {
-                commitGatewayBudget(budget, false);
+                releaseGatewayBudget(budget);
                 throw;
             }
         }
@@ -1230,7 +1510,7 @@ Router::Response Router::routeAuthenticated(
                 throw;
             }
         }
-        auto budget = preflightGatewayBudget(
+        auto budget = preflightSyntheticGatewayBudget(
             bucket,
             auth,
             rid,
@@ -1239,12 +1519,14 @@ Router::Response Router::routeAuthenticated(
             0,
             1,
             std::nullopt,
-            parsed.key);
+            parsed.key,
+            "sync_deferred");
         try {
             objects_.deleteObject(bucket, parsed.key);
+            recordGatewaySyncOrigin(bucket, auth, rid, "delete", parsed.key);
             commitGatewayBudget(budget);
         } catch (...) {
-            commitGatewayBudget(budget, false);
+            releaseGatewayBudget(budget);
             throw;
         }
         return makeResponse(request, http::status::no_content, {});

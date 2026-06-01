@@ -67,6 +67,7 @@ std::string Controller::initiateMultipartUpload(
 void Controller::uploadPart(const std::filesystem::path& key, const std::string& uploadId,
                              const int partNumber, const std::string& partData, std::string& etagOut) const {
     recordRequest(RequestKind::Put);
+    recordUploadBytes(partData.size());
 
     CURL* curl = curl_easy_init();
     if (!curl) throw std::runtime_error("Failed to init curl for S3 multipart upload");

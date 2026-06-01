@@ -102,6 +102,9 @@ struct PriceBudgetPreflightRequest {
     std::string request_uuid;
     std::string operation;
     std::optional<std::string> object_key;
+    bool gateway_scopes_only{false};
+    bool synthetic{false};
+    std::optional<std::string> usage_source{};
 };
 
 struct PriceBudgetLedgerEntry {
@@ -114,6 +117,8 @@ struct PriceBudgetLedgerEntry {
     std::optional<std::string> operation;
     std::optional<std::string> object_key;
     std::optional<std::string> estimated_cost;
+    std::optional<std::string> usage_source;
+    bool synthetic{false};
     std::string provider_key;
     std::string currency{"USD"};
     PriceBudgetWindow window{PriceBudgetWindow::PerRun};

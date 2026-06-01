@@ -114,6 +114,7 @@ json credentialJson(const db::query::s3::GatewayCredential& credential) {
         {"access_key", credential.access_key},
         {"enabled", credential.enabled},
         {"scope_mode", credential.scope_mode},
+        {"enforce_budget_for_local_requests", credential.enforce_budget_for_local_requests},
         {"description", credential.description ? json(*credential.description) : json(nullptr)},
         {"created_at", credential.created_at},
         {"last_used_at", credential.last_used_at ? json(*credential.last_used_at) : json(nullptr)},
@@ -326,6 +327,7 @@ json S3Gateway::credentialsCreate(const json& payload, const std::shared_ptr<Ses
     if (const auto expiresAt = optionalUInt(payload, "expires_at"))
         options.expires_at = static_cast<std::time_t>(*expiresAt);
     options.vault_scopes = scopesFromPayload(payload, 0);
+    options.enforce_budget_for_local_requests = payload.value("enforce_budget_for_local_requests", false);
 
     const protocols::s3::CredentialManager manager;
     auto secret = manager.createCredential(options);
@@ -382,6 +384,9 @@ json S3Gateway::credentialsScopeUpdate(const json& payload, const std::shared_pt
         else
             expiresAt = std::nullopt;
     }
+    const auto enforceLocalBudget = payload.contains("enforce_budget_for_local_requests")
+        ? std::make_optional(payload.at("enforce_budget_for_local_requests").get<bool>())
+        : std::optional<bool>{};
 
     const auto requestedScopes = payload.contains("vault_scopes")
         ? scopesFromPayload(payload, credential->id)
@@ -400,7 +405,8 @@ json S3Gateway::credentialsScopeUpdate(const json& payload, const std::shared_pt
         principalId,
         scopeMode == "global" ? std::make_optional(session->user->id) : credential->created_by,
         description,
-        expiresAt);
+        expiresAt,
+        enforceLocalBudget);
     if (scopeMode != "vault_allowlist")
         db::query::s3::Gateway::replaceCredentialScopes(credential->id, {});
     else if (payload.contains("vault_scopes"))

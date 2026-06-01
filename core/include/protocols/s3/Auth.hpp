@@ -18,6 +18,7 @@ struct AuthContext {
     uint32_t credential_id{};
     std::string access_key;
     std::string scope_mode{"user_access"};
+    bool enforce_budget_for_local_requests{false};
     bool dev_context{false};
 };
 

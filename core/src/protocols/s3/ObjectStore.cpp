@@ -138,6 +138,7 @@ std::optional<GatewayAccessContext> accessFromAuth(const AuthContext& auth) {
         .access_key = auth.access_key,
         .scope_mode = auth.scope_mode.empty() ? std::string{"user_access"} : auth.scope_mode,
         .credential = auth.credential,
+        .enforce_budget_for_local_requests = auth.enforce_budget_for_local_requests,
         .dev_context = auth.dev_context
     };
 }

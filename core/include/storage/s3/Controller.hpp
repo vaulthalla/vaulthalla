@@ -18,6 +18,10 @@ namespace vh::vault::model {
     struct APIKey;
 }
 
+namespace vh::storage {
+    class ScopedS3RequestUsageCapture;
+}
+
 namespace vh::storage::s3 {
     namespace fs = std::filesystem;
 
@@ -34,6 +38,7 @@ namespace vh::storage::s3 {
         uint64_t copy_requests{};
         uint64_t delete_requests{};
         uint64_t downloaded_bytes{};
+        uint64_t uploaded_bytes{};
         bool budget_exceeded{};
         std::string budget_exceeded_reason;
     };
@@ -86,6 +91,8 @@ namespace vh::storage::s3 {
         virtual void clearRequestBudget() const;
         virtual void resetRequestMetrics() const;
         [[nodiscard]] virtual S3RequestMetrics requestMetrics() const;
+        static void pushRequestUsageCapture(ScopedS3RequestUsageCapture* capture);
+        static void popRequestUsageCapture(ScopedS3RequestUsageCapture* capture) noexcept;
 
         // #########################################################################
         // ########################### FILE OPS ####################################
@@ -204,6 +211,7 @@ namespace vh::storage::s3 {
     protected:
         enum class RequestKind { List, Head, Get, Put, Copy, Delete, DownloadBytes };
         void recordRequest(RequestKind kind, uint64_t amount = 1) const;
+        void recordUploadBytes(uint64_t amount) const;
         [[nodiscard]] std::map<std::string, std::string> buildHeaderMap(const std::string &payloadHash) const;
         static void applyRequestOptions(std::map<std::string, std::string>& headers,
                                         const RequestOptions& options,

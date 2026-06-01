@@ -56,6 +56,7 @@ AuthContext Authenticator::authenticate(const sigv4::VerificationInput& input) c
             .credential_id = 0,
             .access_key = "dev-only",
             .scope_mode = "user_access",
+            .enforce_budget_for_local_requests = false,
             .dev_context = true
         };
     }
@@ -84,6 +85,7 @@ AuthContext Authenticator::authenticate(const sigv4::VerificationInput& input) c
         .credential_id = secret->credential.id,
         .access_key = secret->credential.access_key,
         .scope_mode = secret->credential.scope_mode,
+        .enforce_budget_for_local_requests = secret->credential.enforce_budget_for_local_requests,
         .dev_context = false
     };
 }

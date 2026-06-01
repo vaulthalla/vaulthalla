@@ -83,6 +83,7 @@ export class S3GatewayCredential {
   name = ''
   access_key = ''
   enabled = false
+  enforce_budget_for_local_requests = false
   scope_mode: S3GatewayCredentialScopeMode = 'user_access'
   description: string | null = null
   created_at: number | string | null = null
@@ -98,6 +99,7 @@ export class S3GatewayCredential {
     this.name = asString(data.name)
     this.access_key = asString(data.access_key)
     this.enabled = asBoolean(data.enabled)
+    this.enforce_budget_for_local_requests = asBoolean(data.enforce_budget_for_local_requests)
     this.scope_mode = asGatewayScopeMode(data.scope_mode)
     this.description = asNullableString(data.description)
     this.created_at = asDateValue(data.created_at)
@@ -118,6 +120,7 @@ export interface S3GatewayCredentialCreatePayload {
   description?: string | null
   expires_at?: number | null
   vault_scopes?: S3GatewayCredentialVaultScopePayload[]
+  enforce_budget_for_local_requests?: boolean
 }
 
 export interface S3GatewayCredentialVaultScopePayload {
@@ -137,6 +140,7 @@ export interface S3GatewayCredentialScopeUpdatePayload {
   description?: string | null
   expires_at?: number | null
   vault_scopes?: S3GatewayCredentialVaultScopePayload[]
+  enforce_budget_for_local_requests?: boolean
 }
 
 export class S3GatewayBucketBinding {

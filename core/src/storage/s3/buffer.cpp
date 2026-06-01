@@ -100,6 +100,7 @@ void Controller::uploadBufferWithMetadataConditional(
     const std::optional<std::string>& ifNoneMatch) const
 {
     recordRequest(RequestKind::Put);
+    recordUploadBytes(buffer.size());
 
     log::Registry::cloud()->debug("[S3Provider] Uploading buffer to S3 key: {}, buffer_size: {}",
                                key.string(), buffer.size());
@@ -194,7 +195,7 @@ void Controller::downloadToBuffer(const std::filesystem::path& key, std::vector<
         std::vector<uint8_t>* data;
         std::string budgetError;
         std::string budgetKind;
-    } writeCtx{this, &outBuffer, {}};
+    } writeCtx{this, &outBuffer, {}, {}};
 
     outBuffer.clear();
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());

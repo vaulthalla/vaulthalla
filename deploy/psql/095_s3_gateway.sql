@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS s3_gateway_credentials
     encrypted_secret_access_key BYTEA NOT NULL,
     iv                          BYTEA NOT NULL,
     enabled                     BOOLEAN NOT NULL DEFAULT TRUE,
+    enforce_budget_for_local_requests BOOLEAN NOT NULL DEFAULT FALSE,
     created_at                  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_used_at                TIMESTAMP DEFAULT NULL,
     UNIQUE(user_id, name)

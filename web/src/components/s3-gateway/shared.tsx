@@ -41,8 +41,9 @@ export function Section({ title, icon: Icon, right, children }: {
   right?: React.ReactNode
   children: React.ReactNode
 }) {
+  const testId = `s3-gateway-section-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
   return (
-    <section className={cardClass}>
+    <section className={cardClass} data-testid={testId}>
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
         <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-normal text-cyan-100">
           <Icon className="h-4 w-4" />

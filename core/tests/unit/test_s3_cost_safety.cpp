@@ -32,6 +32,7 @@
 #include "storage/CloudEngine.hpp"
 #include "storage/Manager.hpp"
 #include "storage/ScopedS3RequestBudget.hpp"
+#include "storage/ScopedS3RequestUsageCapture.hpp"
 #include "storage/s3/Controller.hpp"
 #include "storage/s3/curl/helpers.hpp"
 #include "storage/s3/pricing/PriceBudget.hpp"
@@ -56,10 +57,12 @@
 
 #include <chrono>
 #include <algorithm>
+#include <barrier>
 #include <cstdlib>
 #include <ctime>
 #include <deque>
 #include <filesystem>
+#include <future>
 #include <fstream>
 #include <functional>
 #include <iomanip>
@@ -173,14 +176,16 @@ public:
 
     void downloadToBuffer(const std::filesystem::path&, std::vector<uint8_t>& out) const override {
         auto* self = const_cast<CountingS3Controller*>(this);
-        ++self->download_to_buffer_calls;
         self->recordRequest(RequestKind::Get);
+        ++self->download_to_buffer_calls;
         if (!self->download_payloads.empty()) {
             out = std::move(self->download_payloads.front());
             self->download_payloads.pop_front();
+            self->recordRequest(RequestKind::DownloadBytes, out.size());
             return;
         }
         out = self->download_payload;
+        self->recordRequest(RequestKind::DownloadBytes, out.size());
     }
 
     void uploadBufferWithMetadata(
@@ -203,6 +208,7 @@ public:
         self->last_metadata = options.metadata;
         self->last_system_headers = options.system_headers;
         self->recordRequest(RequestKind::Put);
+        self->recordUploadBytes(buffer.size());
         if (self->upload_buffer_with_metadata_failure)
             throw std::runtime_error("upload failed after upstream PUT attempt");
     }
@@ -1053,7 +1059,8 @@ GatewayRouteBudgetFixture setupGatewayRouteBudgetFixture(
     const std::string& label,
     const vh::storage::s3::pricing::PriceBudgetScope scope,
     const std::string& monthlyLimit,
-    const vh::storage::s3::pricing::PriceBudgetMode mode = vh::storage::s3::pricing::PriceBudgetMode::Enforce) {
+    const vh::storage::s3::pricing::PriceBudgetMode mode = vh::storage::s3::pricing::PriceBudgetMode::Enforce,
+    const bool enforceBudgetForLocalRequests = false) {
     ensureSeededRuntimeReady();
     seedAwsGatewayRoutePriceCatalog();
 
@@ -1085,7 +1092,8 @@ GatewayRouteBudgetFixture setupGatewayRouteBudgetFixture(
         .scope_mode = "user_access",
         .description = std::nullopt,
         .expires_at = std::nullopt,
-        .vault_scopes = {}
+        .vault_scopes = {},
+        .enforce_budget_for_local_requests = enforceBudgetForLocalRequests
     });
 
     saveGatewayBudgetPolicyForDbTest(
@@ -1142,7 +1150,9 @@ std::string textBetween(const std::string& text, const std::string& open, const 
 void expectGatewayLedgerCommitted(
     const GatewayRouteBudgetFixture& fixture,
     const std::string& operation,
-    const std::string& objectKey) {
+    const std::string& objectKey,
+    const std::optional<bool> synthetic = std::nullopt,
+    const std::optional<std::string>& usageSource = std::nullopt) {
     const auto ledger = vh::storage::s3::pricing::PriceBudgetService{}.listLedger(
         20,
         fixture.vault_id,
@@ -1159,6 +1169,13 @@ void expectGatewayLedgerCommitted(
     EXPECT_TRUE(it->estimated_cost);
     EXPECT_EQ("committed", it->status);
     ASSERT_TRUE(it->committed_cost);
+    if (synthetic) {
+        EXPECT_EQ(*synthetic, it->synthetic);
+    }
+    if (usageSource) {
+        ASSERT_TRUE(it->usage_source);
+        EXPECT_EQ(*usageSource, *it->usage_source);
+    }
 }
 
 void expectGatewayLedgerAbsent(
@@ -1176,27 +1193,36 @@ void expectGatewayLedgerAbsent(
     EXPECT_EQ(it, ledger.end());
 }
 
-void expectGatewayLedgerStatus(
-    const GatewayRouteBudgetFixture& fixture,
-    const std::string& operation,
-    const std::string& objectKey,
-    const std::string& status) {
-    const auto ledger = vh::storage::s3::pricing::PriceBudgetService{}.listLedger(
-        20,
-        fixture.vault_id,
-        fixture.secret.credential.id);
-    const auto it = std::ranges::find_if(ledger, [&](const auto& entry) {
-        return entry.operation && *entry.operation == operation &&
-            entry.object_key && *entry.object_key == objectKey;
-    });
-    ASSERT_NE(it, ledger.end());
-    EXPECT_EQ(status, it->status);
-    EXPECT_EQ(fixture.vault_id, it->vault_id);
-    ASSERT_TRUE(it->gateway_credential_id);
-    EXPECT_EQ(fixture.secret.credential.id, *it->gateway_credential_id);
-}
-
 } // namespace
+
+TEST(S3CostSafetyTest, ScopedS3RequestUsageCaptureDoesNotCrossContaminateConcurrentThreads) {
+    std::barrier start(2);
+
+    auto worker = [&](const std::size_t payloadSize) {
+        vh::storage::CloudEngine engine;
+        CountingS3Controller controller;
+        controller.download_payload.assign(payloadSize, static_cast<uint8_t>('x'));
+        start.arrive_and_wait();
+
+        vh::storage::ScopedS3RequestUsageCapture capture(engine);
+        std::vector<uint8_t> out;
+        controller.downloadToBuffer("object.bin", out);
+        return capture.usage();
+    };
+
+    auto first = std::async(std::launch::async, worker, 3);
+    auto second = std::async(std::launch::async, worker, 11);
+
+    const auto firstUsage = first.get();
+    const auto secondUsage = second.get();
+
+    EXPECT_EQ(1, firstUsage.get_requests);
+    EXPECT_EQ(3, firstUsage.downloaded_bytes);
+    EXPECT_TRUE(firstUsage.touched_upstream);
+    EXPECT_EQ(1, secondUsage.get_requests);
+    EXPECT_EQ(11, secondUsage.downloaded_bytes);
+    EXPECT_TRUE(secondUsage.touched_upstream);
+}
 
 TEST(S3CostSafetyTest, PolicyIntervalsDefaultAndClampToNonZero) {
     vh::sync::model::RemotePolicy remote;
@@ -3490,7 +3516,7 @@ TEST(S3CostSafetyTest, S3GatewayCliScopeSetRetargetsPrincipalAndAuditsGlobalConv
         vh::rbac::permission::vault::FilesystemAction::Write));
 }
 
-TEST(S3CostSafetyTest, GatewayRemotePutRoutePreflightsAndCommitsCredentialBudget) {
+TEST(S3CostSafetyTest, GatewayRemotePutLocalFirstDoesNotCommitCredentialBudgetByDefault) {
     if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed S3 gateway route budget test due to missing environment variables.";
     S3CostConfigRestore restoreConfig(vh::config::Registry::get());
     configureS3GatewayRouteBudgetConfig();
@@ -3513,7 +3539,7 @@ TEST(S3CostSafetyTest, GatewayRemotePutRoutePreflightsAndCommitsCredentialBudget
     EXPECT_EQ(0, fixture.controller->upload_buffer_with_metadata_calls);
     EXPECT_TRUE(vh::db::query::fs::File::getFileByPath(fixture.vault_id, "/put-object.txt"));
     ASSERT_TRUE(vh::db::query::s3::Gateway::getObjectState(fixture.vault_id, "put-object.txt"));
-    expectGatewayLedgerCommitted(fixture, "PutObject", "put-object.txt");
+    expectGatewayLedgerAbsent(fixture, "PutObject", "put-object.txt");
 }
 
 TEST(S3CostSafetyTest, GatewayRemoteGetRoutePreflightsAndCommitsCredentialVaultBudget) {
@@ -3556,7 +3582,101 @@ TEST(S3CostSafetyTest, GatewayRemoteGetRoutePreflightsAndCommitsCredentialVaultB
     expectGatewayLedgerCommitted(fixture, "GetObject", std::string(objectKey));
 }
 
-TEST(S3CostSafetyTest, GatewayRemoteDeleteRoutePreflightsAndCommitsCredentialBudget) {
+TEST(S3CostSafetyTest, GatewayRemoteListDoesNotConsumeRequestOrPriceBudgetByDefault) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed S3 gateway route budget test due to missing environment variables.";
+    S3CostConfigRestore restoreConfig(vh::config::Registry::get());
+    configureS3GatewayRouteBudgetConfig();
+
+    auto fixture = setupGatewayRouteBudgetFixture(
+        "route-list-no-budget",
+        vh::storage::s3::pricing::PriceBudgetScope::GatewayCredential,
+        "0.00000100");
+    setGatewayRouteRequestBudget(fixture, [](auto& budget) {
+        budget.max_list_requests = 0;
+    });
+
+    auto request = signedGatewayRouteRequest(
+        http::verb::get,
+        "/" + fixture.bucket_name + "?list-type=2",
+        fixture.secret);
+
+    const vh::protocols::s3::Router router;
+    const auto response = router.route(std::move(request));
+
+    EXPECT_EQ(response.result(), http::status::ok) << response.body();
+    EXPECT_EQ(0, fixture.controller->list_objects_calls);
+    const auto ledger = vh::storage::s3::pricing::PriceBudgetService{}.listLedger(
+        10,
+        fixture.vault_id,
+        fixture.secret.credential.id);
+    EXPECT_TRUE(ledger.empty());
+}
+
+TEST(S3CostSafetyTest, GatewayLocalMaterializedGetDoesNotConsumeUpstreamBudgetByDefault) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed S3 gateway route budget test due to missing environment variables.";
+    S3CostConfigRestore restoreConfig(vh::config::Registry::get());
+    configureS3GatewayRouteBudgetConfig();
+
+    auto fixture = setupGatewayRouteBudgetFixture(
+        "route-local-get-no-budget",
+        vh::storage::s3::pricing::PriceBudgetScope::GatewayCredential,
+        "1.00000000");
+    constexpr std::string_view objectKey = "local-get.txt";
+    const vh::protocols::s3::Router router;
+    auto put = signedGatewayRouteRequest(
+        http::verb::put,
+        "/" + fixture.bucket_name + "/" + std::string(objectKey),
+        fixture.secret,
+        "local payload");
+    ASSERT_EQ(router.route(std::move(put)).result(), http::status::ok);
+    setGatewayRouteRequestBudget(fixture, [](auto& budget) {
+        budget.max_get_requests = 0;
+    });
+
+    auto get = signedGatewayRouteRequest(
+        http::verb::get,
+        "/" + fixture.bucket_name + "/" + std::string(objectKey),
+        fixture.secret);
+    const auto response = router.route(std::move(get));
+
+    EXPECT_EQ(response.result(), http::status::ok) << response.body();
+    EXPECT_EQ("local payload", response.body());
+    EXPECT_EQ(0, fixture.controller->download_to_buffer_calls);
+    expectGatewayLedgerAbsent(fixture, "GetObject", std::string(objectKey));
+}
+
+TEST(S3CostSafetyTest, GatewayLocalMaterializedGetCanCommitSyntheticGatewayBudgetWhenEnabled) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed S3 gateway route budget test due to missing environment variables.";
+    S3CostConfigRestore restoreConfig(vh::config::Registry::get());
+    configureS3GatewayRouteBudgetConfig();
+
+    auto fixture = setupGatewayRouteBudgetFixture(
+        "route-local-get-synthetic",
+        vh::storage::s3::pricing::PriceBudgetScope::GatewayCredential,
+        "1.00000000",
+        vh::storage::s3::pricing::PriceBudgetMode::Enforce,
+        true);
+    constexpr std::string_view objectKey = "local-get-synthetic.txt";
+    const vh::protocols::s3::Router router;
+    auto put = signedGatewayRouteRequest(
+        http::verb::put,
+        "/" + fixture.bucket_name + "/" + std::string(objectKey),
+        fixture.secret,
+        "local payload");
+    ASSERT_EQ(router.route(std::move(put)).result(), http::status::ok);
+
+    auto get = signedGatewayRouteRequest(
+        http::verb::get,
+        "/" + fixture.bucket_name + "/" + std::string(objectKey),
+        fixture.secret);
+    const auto response = router.route(std::move(get));
+
+    EXPECT_EQ(response.result(), http::status::ok) << response.body();
+    EXPECT_EQ(0, fixture.controller->download_to_buffer_calls);
+    expectGatewayLedgerCommitted(fixture, "GetObject", std::string(objectKey), true, "local_cache");
+}
+
+TEST(S3CostSafetyTest, GatewayRemoteDeleteLocalFirstDoesNotCommitCredentialBudgetByDefault) {
     if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed S3 gateway route budget test due to missing environment variables.";
     S3CostConfigRestore restoreConfig(vh::config::Registry::get());
     configureS3GatewayRouteBudgetConfig();
@@ -3602,10 +3722,10 @@ TEST(S3CostSafetyTest, GatewayRemoteDeleteRoutePreflightsAndCommitsCredentialBud
     const vh::protocols::s3::ObjectStore objectStore;
     const auto listed = objectStore.listObjects(objectStore.resolveBucket(fixture.bucket_name, actor), {});
     EXPECT_TRUE(listed.objects.empty());
-    expectGatewayLedgerCommitted(fixture, "DeleteObject", std::string(objectKey));
+    expectGatewayLedgerAbsent(fixture, "DeleteObject", std::string(objectKey));
 }
 
-TEST(S3CostSafetyTest, GatewayRemoteMultipartRoutePreflightsAndCommitsCredentialBudget) {
+TEST(S3CostSafetyTest, GatewayRemoteMultipartLocalFirstDoesNotCommitCredentialBudgetByDefault) {
     if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed S3 gateway route budget test due to missing environment variables.";
     S3CostConfigRestore restoreConfig(vh::config::Registry::get());
     configureS3GatewayRouteBudgetConfig();
@@ -3651,9 +3771,9 @@ TEST(S3CostSafetyTest, GatewayRemoteMultipartRoutePreflightsAndCommitsCredential
     EXPECT_TRUE(vh::db::query::fs::File::getFileByPath(fixture.vault_id, "/" + std::string(objectKey)));
     ASSERT_TRUE(vh::db::query::s3::Gateway::getObjectState(fixture.vault_id, std::string(objectKey)));
 
-    expectGatewayLedgerCommitted(fixture, "CreateMultipartUpload", std::string(objectKey));
-    expectGatewayLedgerCommitted(fixture, "UploadPart", std::string(objectKey));
-    expectGatewayLedgerCommitted(fixture, "CompleteMultipartUpload", std::string(objectKey));
+    expectGatewayLedgerAbsent(fixture, "CreateMultipartUpload", std::string(objectKey));
+    expectGatewayLedgerAbsent(fixture, "UploadPart", std::string(objectKey));
+    expectGatewayLedgerAbsent(fixture, "CompleteMultipartUpload", std::string(objectKey));
 }
 
 TEST(S3CostSafetyTest, GatewayRemoteCopyRoutePreflightsAndCommitsCopyBudget) {
@@ -3709,10 +3829,10 @@ TEST(S3CostSafetyTest, GatewayRemoteCopyRoutePreflightsAndCommitsCopyBudget) {
     EXPECT_EQ(0, fixture.controller->upload_buffer_with_metadata_calls);
     EXPECT_TRUE(vh::db::query::fs::File::getFileByPath(fixture.vault_id, "/" + std::string(destKey)));
     expectGatewayLedgerAbsent(fixture, "GetObject", std::string(sourceKey));
-    expectGatewayLedgerCommitted(fixture, "CopyObject", std::string(destKey));
+    expectGatewayLedgerCommitted(fixture, "CopyObject", std::string(sourceKey));
 }
 
-TEST(S3CostSafetyTest, GatewayRemoteUploadPartFailureBeforeUpstreamReleasesBudget) {
+TEST(S3CostSafetyTest, GatewayRemoteUploadPartFailureBeforeSyncDoesNotReserveBudgetByDefault) {
     if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed S3 gateway route budget test due to missing environment variables.";
     S3CostConfigRestore restoreConfig(vh::config::Registry::get());
     configureS3GatewayRouteBudgetConfig();
@@ -3744,10 +3864,10 @@ TEST(S3CostSafetyTest, GatewayRemoteUploadPartFailureBeforeUpstreamReleasesBudge
     EXPECT_EQ(uploadPartResponse.result(), http::status::bad_request);
     EXPECT_NE(std::string::npos, uploadPartResponse.body().find("<Code>BadDigest</Code>"));
     EXPECT_EQ(0, fixture.controller->upload_buffer_with_metadata_calls);
-    expectGatewayLedgerStatus(fixture, "UploadPart", std::string(objectKey), "released");
+    expectGatewayLedgerAbsent(fixture, "UploadPart", std::string(objectKey));
 }
 
-TEST(S3CostSafetyTest, GatewayRemotePutRequestBudgetDeniedBeforePriceReservation) {
+TEST(S3CostSafetyTest, GatewayRemotePutLocalFirstIgnoresUpstreamRequestBudgetByDefault) {
     if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed S3 gateway route budget test due to missing environment variables.";
     S3CostConfigRestore restoreConfig(vh::config::Registry::get());
     configureS3GatewayRouteBudgetConfig();
@@ -3769,11 +3889,9 @@ TEST(S3CostSafetyTest, GatewayRemotePutRequestBudgetDeniedBeforePriceReservation
     const vh::protocols::s3::Router router;
     const auto response = router.route(std::move(request));
 
-    EXPECT_EQ(response.result(), http::status::service_unavailable);
-    EXPECT_NE(std::string::npos, response.body().find("<Code>SlowDown</Code>"));
-    EXPECT_NE(std::string::npos, response.body().find("S3 gateway request budget exceeded"));
-    EXPECT_NE(std::string::npos, response.body().find("kind=PUT"));
+    EXPECT_EQ(response.result(), http::status::ok) << response.body();
     EXPECT_EQ(0, fixture.controller->upload_buffer_with_metadata_calls);
+    EXPECT_TRUE(vh::db::query::fs::File::getFileByPath(fixture.vault_id, "/request-budget-denied.txt"));
     expectGatewayLedgerAbsent(fixture, "PutObject", "request-budget-denied.txt");
 }
 
@@ -3817,7 +3935,7 @@ TEST(S3CostSafetyTest, GatewayRemoteGetRequestBudgetDeniedBeforeRemoteDownload) 
     expectGatewayLedgerAbsent(fixture, "GetObject", std::string(objectKey));
 }
 
-TEST(S3CostSafetyTest, GatewayRemoteGetDownloadedBytesBudgetDeniedBeforeRemoteDownload) {
+TEST(S3CostSafetyTest, GatewayRemoteGetDownloadedBytesBudgetDeniedDuringRemoteDownload) {
     if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed S3 gateway route budget test due to missing environment variables.";
     S3CostConfigRestore restoreConfig(vh::config::Registry::get());
     configureS3GatewayRouteBudgetConfig();
@@ -3854,11 +3972,11 @@ TEST(S3CostSafetyTest, GatewayRemoteGetDownloadedBytesBudgetDeniedBeforeRemoteDo
     EXPECT_EQ(response.result(), http::status::service_unavailable);
     EXPECT_NE(std::string::npos, response.body().find("<Code>SlowDown</Code>"));
     EXPECT_NE(std::string::npos, response.body().find("kind=downloaded bytes"));
-    EXPECT_EQ(0, fixture.controller->download_to_buffer_calls);
+    EXPECT_EQ(1, fixture.controller->download_to_buffer_calls);
     expectGatewayLedgerAbsent(fixture, "GetObject", std::string(objectKey));
 }
 
-TEST(S3CostSafetyTest, GatewayRemoteDeleteRequestBudgetDeniedBeforeLocalTombstone) {
+TEST(S3CostSafetyTest, GatewayRemoteDeleteLocalFirstIgnoresUpstreamRequestBudgetByDefault) {
     if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed S3 gateway route budget test due to missing environment variables.";
     S3CostConfigRestore restoreConfig(vh::config::Registry::get());
     configureS3GatewayRouteBudgetConfig();
@@ -3891,16 +4009,13 @@ TEST(S3CostSafetyTest, GatewayRemoteDeleteRequestBudgetDeniedBeforeLocalTombston
     const vh::protocols::s3::Router router;
     const auto response = router.route(std::move(request));
 
-    EXPECT_EQ(response.result(), http::status::service_unavailable);
-    EXPECT_NE(std::string::npos, response.body().find("<Code>SlowDown</Code>"));
-    EXPECT_NE(std::string::npos, response.body().find("kind=DELETE"));
+    EXPECT_EQ(response.result(), http::status::no_content) << response.body();
     EXPECT_EQ(0, fixture.controller->delete_object_calls);
-    ASSERT_TRUE(vh::db::query::s3::Gateway::getObjectState(fixture.vault_id, std::string(objectKey)));
-    EXPECT_TRUE(vh::db::query::fs::File::listTrashedFiles(fixture.vault_id).empty());
+    EXPECT_FALSE(vh::db::query::s3::Gateway::getObjectState(fixture.vault_id, std::string(objectKey)));
     expectGatewayLedgerAbsent(fixture, "DeleteObject", std::string(objectKey));
 }
 
-TEST(S3CostSafetyTest, GatewayRemoteBudgetDeniedReturnsXmlAccessDeniedBeforeUpstreamPut) {
+TEST(S3CostSafetyTest, GatewaySyntheticLocalBudgetDeniedReturnsXmlAccessDeniedBeforeLocalPut) {
     if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed S3 gateway route budget test due to missing environment variables.";
     S3CostConfigRestore restoreConfig(vh::config::Registry::get());
     configureS3GatewayRouteBudgetConfig();
@@ -3908,7 +4023,9 @@ TEST(S3CostSafetyTest, GatewayRemoteBudgetDeniedReturnsXmlAccessDeniedBeforeUpst
     auto fixture = setupGatewayRouteBudgetFixture(
         "route-budget-denied",
         vh::storage::s3::pricing::PriceBudgetScope::GatewayCredentialVault,
-        "0.00000100");
+        "0.00000100",
+        vh::storage::s3::pricing::PriceBudgetMode::Enforce,
+        true);
 
     auto request = signedGatewayRouteRequest(
         http::verb::put,
@@ -3921,7 +4038,7 @@ TEST(S3CostSafetyTest, GatewayRemoteBudgetDeniedReturnsXmlAccessDeniedBeforeUpst
 
     EXPECT_EQ(response.result(), http::status::forbidden);
     EXPECT_NE(std::string::npos, response.body().find("<Code>AccessDenied</Code>"));
-    EXPECT_NE(std::string::npos, response.body().find("S3 gateway price budget exceeded"));
+    EXPECT_NE(std::string::npos, response.body().find("S3 gateway synthetic local budget exceeded"));
     EXPECT_NE(std::string::npos, response.body().find("scope=gateway_credential_vault"));
     EXPECT_NE(std::string::npos, response.body().find("policy_id="));
     EXPECT_NE(std::string::npos, response.body().find("window=monthly"));
@@ -3932,6 +4049,7 @@ TEST(S3CostSafetyTest, GatewayRemoteBudgetDeniedReturnsXmlAccessDeniedBeforeUpst
     EXPECT_NE(std::string::npos, response.body().find("request_uuid="));
     EXPECT_EQ(0, fixture.controller->upload_buffer_with_metadata_calls);
     EXPECT_EQ(0, fixture.controller->upload_object_with_metadata_calls);
+    EXPECT_FALSE(vh::db::query::fs::File::getFileByPath(fixture.vault_id, "/denied-object.txt"));
     const auto ledger = vh::storage::s3::pricing::PriceBudgetService{}.listLedger(
         10,
         fixture.vault_id,
@@ -3939,7 +4057,7 @@ TEST(S3CostSafetyTest, GatewayRemoteBudgetDeniedReturnsXmlAccessDeniedBeforeUpst
     EXPECT_TRUE(ledger.empty());
 }
 
-TEST(S3CostSafetyTest, GatewayRemoteKeyBudgetDeniedReturnsPolicyScopeWindowInXml) {
+TEST(S3CostSafetyTest, GatewaySyntheticLocalKeyBudgetDeniedReturnsPolicyScopeWindowInXml) {
     if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed S3 gateway route budget test due to missing environment variables.";
     S3CostConfigRestore restoreConfig(vh::config::Registry::get());
     configureS3GatewayRouteBudgetConfig();
@@ -3947,7 +4065,9 @@ TEST(S3CostSafetyTest, GatewayRemoteKeyBudgetDeniedReturnsPolicyScopeWindowInXml
     auto fixture = setupGatewayRouteBudgetFixture(
         "route-key-budget-denied",
         vh::storage::s3::pricing::PriceBudgetScope::GatewayCredential,
-        "0.00000100");
+        "0.00000100",
+        vh::storage::s3::pricing::PriceBudgetMode::Enforce,
+        true);
 
     auto request = signedGatewayRouteRequest(
         http::verb::put,
@@ -3960,12 +4080,13 @@ TEST(S3CostSafetyTest, GatewayRemoteKeyBudgetDeniedReturnsPolicyScopeWindowInXml
 
     EXPECT_EQ(response.result(), http::status::forbidden);
     EXPECT_NE(std::string::npos, response.body().find("<Code>AccessDenied</Code>"));
-    EXPECT_NE(std::string::npos, response.body().find("S3 gateway price budget exceeded"));
+    EXPECT_NE(std::string::npos, response.body().find("S3 gateway synthetic local budget exceeded"));
     EXPECT_NE(std::string::npos, response.body().find("scope=gateway_credential"));
     EXPECT_NE(std::string::npos, response.body().find("policy_id="));
     EXPECT_NE(std::string::npos, response.body().find("window=monthly"));
     EXPECT_NE(std::string::npos, response.body().find("operation=PutObject"));
     EXPECT_EQ(0, fixture.controller->upload_buffer_with_metadata_calls);
+    EXPECT_FALSE(vh::db::query::fs::File::getFileByPath(fixture.vault_id, "/denied-key-budget.txt"));
 }
 
 TEST(S3CostSafetyTest, PriceBudgetStaleReservationsExpireSafely) {

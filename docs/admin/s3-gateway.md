@@ -97,6 +97,16 @@ vh s3-gateway creds scope backup allow-vault archive --read --write
 vh s3-gateway creds scope backup revoke-vault archive
 ```
 
+By default, local/cache hits do not consume gateway key budgets because they do not perform upstream S3/R2 work. Operators who want API throttling independent of upstream cost can opt in per credential:
+
+```bash
+vh s3-gateway creds create backup --enforce-budget-for-local-requests
+vh s3-gateway creds scope backup set --enforce-budget-for-local-requests
+vh s3-gateway creds scope backup set --no-enforce-budget-for-local-requests
+```
+
+The web console exposes the same option as **Count local/cache hits against gateway request budgets**. Leave it off for normal cost accounting.
+
 ## Buckets
 
 Bind an existing vault:
@@ -119,7 +129,9 @@ Remote-backed API-created buckets should default to smart-cache behavior: `Remot
 
 ## Gateway Cost Controls
 
-Remote-backed gateway operations run a price-budget preflight before upstream-costing work. Local-only gateway buckets do not consume remote S3 provider price budgets.
+Gateway accounting is based on actual upstream usage, not route intent. A `GET` against a remote-backed bucket might be served from a local encrypted file, a materialized remote-cache file, metadata, or a real upstream download. Only real upstream provider calls consume provider/vault/global upstream price budgets or the vault's upstream request budget.
+
+Remote-backed gateway operations run a price-budget preflight only when upstream-costing work is about to happen inside that gateway request. Local-only gateway buckets, metadata-only requests, local/cache hits, and local-first PUT/DELETE/COPY/multipart writes do not consume remote S3 provider price budgets at gateway request time. Sync owns provider/vault/global upstream accounting later when it performs the actual upstream PUT/DELETE/COPY/upload work.
 
 Gateway budget scopes extend the normal global/provider/vault price-budget model:
 
@@ -160,6 +172,8 @@ When a remote-backed operation is denied by price budget, clients receive a norm
 All exceeded enforce checks are retained in budget decision metadata for CLI/web status, notifications, and logs. The top-level message uses a deterministic primary blocker instead of whichever policy row happened to be read first.
 
 Remote-backed gateway operations also honor the S3/R2 request budgets configured on the Vaulthalla remote policy. Request-budget failures are distinct from price-budget failures and return S3 XML with code `SlowDown` and a message beginning `S3 gateway request budget exceeded`. The message identifies the request budget kind, such as `GET`, `PUT`, `DELETE`, `COPY`, or downloaded bytes.
+
+If `enforce_budget_for_local_requests` is enabled on a gateway credential, local/cache/sync-deferred requests are recorded as synthetic gateway usage for `gateway_credential` and `gateway_credential_vault` scopes only. Synthetic rows are marked with `synthetic=true` and a `usage_source` such as `local_cache`, `local_file`, `metadata`, or `sync_deferred`. Synthetic local usage never creates provider/vault/global upstream ledger rows.
 
 ## Web Console
 

@@ -69,8 +69,8 @@ export function BucketsSection({
         <div className="rounded border border-white/10 bg-white/[0.03] p-3">
           <div className="mb-3 text-sm font-medium text-white">Create local</div>
           <div className="space-y-2">
-            <input className={fieldClass} placeholder="Bucket name" value={localBucketName} onChange={event => setLocalBucketName(event.target.value)} />
-            <button className={primaryButtonClass} type="button" disabled={!localBucketName} onClick={() => void onCreateLocalBucket({ bucket_name: localBucketName })}>
+            <input className={fieldClass} data-testid="s3-gateway-local-bucket-name-input" placeholder="Bucket name" value={localBucketName} onChange={event => setLocalBucketName(event.target.value)} />
+            <button className={primaryButtonClass} data-testid="s3-gateway-create-local-bucket" type="button" disabled={!localBucketName} onClick={() => void onCreateLocalBucket({ bucket_name: localBucketName })}>
               <PlusIcon className="h-4 w-4" />
               Create
             </button>
@@ -114,7 +114,7 @@ export function BucketsSection({
           <tbody className="divide-y divide-white/10">
             {buckets.map(bucket => (
               <tr key={bucket.bucket_name}>
-                <td className="px-3 py-2 font-medium text-white">{bucket.bucket_name}</td>
+                <td className="px-3 py-2 font-medium text-white" data-testid="s3-gateway-bucket-name">{bucket.bucket_name}</td>
                 <td className="px-3 py-2 text-white/70">{vaultById.get(bucket.vault_id)?.name ?? bucket.vault_id}</td>
                 <td className="px-3 py-2 text-white/70">{bucket.mode}</td>
                 <td className="px-3 py-2">{bucket.api_exclusive ? <CheckIcon className="h-4 w-4 text-emerald-300" /> : <XIcon className="h-4 w-4 text-white/35" />}</td>

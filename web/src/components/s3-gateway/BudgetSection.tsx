@@ -117,8 +117,8 @@ export function BudgetSection({
             <div className="rounded border border-white/10 bg-white/[0.03] p-3">
               <div className="mb-3 text-sm font-medium text-white">Per-key monthly cap</div>
               <div className="flex flex-wrap gap-2">
-                <input className={fieldClass} inputMode="decimal" placeholder="Amount" value={keyMonthly} onChange={event => setKeyMonthly(event.target.value)} />
-                <button className={primaryButtonClass} type="button" disabled={!keyMonthly || saving} onClick={() => void saveKeyBudget()}>
+                <input className={fieldClass} data-testid="s3-gateway-key-budget-input" inputMode="decimal" placeholder="Amount" value={keyMonthly} onChange={event => setKeyMonthly(event.target.value)} />
+                <button className={primaryButtonClass} data-testid="s3-gateway-key-budget-save" type="button" disabled={!keyMonthly || saving} onClick={() => void saveKeyBudget()}>
                   <SaveIcon className="h-4 w-4" />
                   Save
                 </button>
@@ -136,12 +136,12 @@ export function BudgetSection({
             <div className="rounded border border-white/10 bg-white/[0.03] p-3">
               <div className="mb-3 text-sm font-medium text-white">Per-key/vault monthly cap</div>
               <div className="flex flex-wrap gap-2">
-                <select className={fieldClass} value={budgetVaultId} onChange={event => setBudgetVaultId(event.target.value)}>
+                <select className={fieldClass} data-testid="s3-gateway-key-vault-budget-vault-select" value={budgetVaultId} onChange={event => setBudgetVaultId(event.target.value)}>
                   <option value="">Vault</option>
                   {vaults.map(vault => <option key={vault.id} value={vault.id}>{vault.name}</option>)}
                 </select>
-                <input className={fieldClass} inputMode="decimal" placeholder="Amount" value={keyVaultMonthly} onChange={event => setKeyVaultMonthly(event.target.value)} />
-                <button className={primaryButtonClass} type="button" disabled={!budgetVaultId || !keyVaultMonthly || saving} onClick={() => void saveKeyVaultBudget()}>
+                <input className={fieldClass} data-testid="s3-gateway-key-vault-budget-input" inputMode="decimal" placeholder="Amount" value={keyVaultMonthly} onChange={event => setKeyVaultMonthly(event.target.value)} />
+                <button className={primaryButtonClass} data-testid="s3-gateway-key-vault-budget-save" type="button" disabled={!budgetVaultId || !keyVaultMonthly || saving} onClick={() => void saveKeyVaultBudget()}>
                   <SaveIcon className="h-4 w-4" />
                   Save
                 </button>

@@ -25,6 +25,8 @@ Remote-backed gateway buckets bind to Vaulthalla S3/R2 vaults. Writes and delete
 
 For smart-cache buckets, remote-only indexed objects can be listed and headed without downloading bodies or touching upstream. A GET can download and materialize the object according to the vault policy.
 
+Accounting follows the same rule. LIST and metadata-backed HEAD are metadata-only and do not consume upstream request budgets. GET consumes upstream request and price budgets only when the gateway actually downloads from the provider. If the object is already present as a local encrypted file or a materialized remote-cache file, the gateway serves it locally and records no upstream provider usage by default.
+
 ## Scoped Gateway Access
 
 Each inbound S3 gateway key authenticates as a principal Vaulthalla user. The principal's normal RBAC must allow the action, and the key's gateway scope must also allow the vault and action.
@@ -62,7 +64,7 @@ Use `user_access` for a personal key that follows the user's normal vault permis
 
 ## Gateway Price Budgets
 
-Remote-backed gateway requests can consume provider cost one operation at a time. Vaulthalla estimates that operation before upstream work and evaluates:
+Remote-backed gateway requests can consume provider cost one operation at a time. Vaulthalla estimates actual upstream work before that work starts and evaluates:
 
 - Global price policies.
 - Provider price policies.
@@ -70,7 +72,7 @@ Remote-backed gateway requests can consume provider cost one operation at a time
 - Per-gateway-key monthly policies.
 - Per-gateway-key/per-vault monthly policies.
 
-Local gateway buckets are not charged against remote S3 provider budgets.
+Local gateway buckets, cache hits, metadata hits, and local-first PUT/DELETE/COPY/multipart completion are not charged against remote S3 provider budgets at gateway request time. For remote-backed writes and deletes, sync later owns the upstream provider/vault/global ledger entry when it performs the actual provider upload or purge.
 
 ```bash
 # Admin-managed key-wide cap.
@@ -82,6 +84,8 @@ vh s3-gateway budget status --key backup --vault archive
 ```
 
 Budget ledger rows include the gateway credential id, vault id, operation, request UUID, object key when available, and estimated cost. This makes it possible to audit which inbound key consumed gateway budget.
+
+The credential option `enforce_budget_for_local_requests` changes only per-key gateway accounting. When disabled, local/cache hits are free from gateway key and key/vault budgets. When enabled, local/cache/sync-deferred requests are charged as synthetic gateway usage and ledger/status output marks them with `synthetic=true` and a source such as `local_cache`, `local_file`, `metadata`, or `sync_deferred`. Synthetic local usage never pollutes global/provider/vault upstream accounting.
 
 Budget denial XML includes the exact blocking policy id, scope, window, limit, used-before amount, remaining-before amount, requested cost, currency, provider key, vault id, credential id, operation, and request UUID. If several enforce policies are exceeded, Vaulthalla keeps the whole blocker chain and chooses the top-level blocker deterministically.
 

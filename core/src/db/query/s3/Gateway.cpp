@@ -42,6 +42,7 @@ GatewayCredential credentialFromRow(const pqxx::row& row) {
         .encrypted_secret_access_key = from_hex_bytea(row["encrypted_secret_access_key"].as<std::string>()),
         .iv = from_hex_bytea(row["iv"].as<std::string>()),
         .enabled = row["enabled"].as<bool>(),
+        .enforce_budget_for_local_requests = row["enforce_budget_for_local_requests"].as<bool>(),
         .scope_mode = row["scope_mode"].as<std::string>(),
         .description = row["description"].as<std::optional<std::string>>(),
         .created_at = ts(row, "created_at"),
@@ -165,9 +166,9 @@ uint32_t Gateway::createCredential(const GatewayCredential& credential) {
             R"SQL(
                 INSERT INTO s3_gateway_credentials
                     (user_id, created_by, principal_user_id, name, access_key, encrypted_secret_access_key, iv,
-                     enabled, scope_mode, description, expires_at)
+                     enabled, enforce_budget_for_local_requests, scope_mode, description, expires_at)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-                        CASE WHEN $11::bigint IS NULL THEN NULL ELSE TO_TIMESTAMP($11::double precision) END)
+                        $11, CASE WHEN $12::bigint IS NULL THEN NULL ELSE TO_TIMESTAMP($12::double precision) END)
                 ON CONFLICT (user_id, name) DO UPDATE SET
                     created_by = EXCLUDED.created_by,
                     principal_user_id = EXCLUDED.principal_user_id,
@@ -175,6 +176,7 @@ uint32_t Gateway::createCredential(const GatewayCredential& credential) {
                     encrypted_secret_access_key = EXCLUDED.encrypted_secret_access_key,
                     iv = EXCLUDED.iv,
                     enabled = EXCLUDED.enabled,
+                    enforce_budget_for_local_requests = EXCLUDED.enforce_budget_for_local_requests,
                     scope_mode = EXCLUDED.scope_mode,
                     description = EXCLUDED.description,
                     expires_at = EXCLUDED.expires_at
@@ -189,6 +191,7 @@ uint32_t Gateway::createCredential(const GatewayCredential& credential) {
                 to_hex_bytea(credential.encrypted_secret_access_key),
                 to_hex_bytea(credential.iv),
                 credential.enabled,
+                credential.enforce_budget_for_local_requests,
                 credential.scope_mode.empty() ? std::string{"user_access"} : credential.scope_mode,
                 credential.description,
                 credential.expires_at
@@ -320,7 +323,8 @@ void Gateway::updateCredentialScopeMode(
     const uint32_t principalUserId,
     const std::optional<uint32_t> createdBy,
     const std::optional<std::string> description,
-    const std::optional<std::time_t> expiresAt) {
+    const std::optional<std::time_t> expiresAt,
+    const std::optional<bool> enforceBudgetForLocalRequests) {
     Transactions::exec("S3Gateway::updateCredentialScopeMode", [&](pqxx::work& txn) {
         txn.exec(
             R"SQL(
@@ -330,10 +334,28 @@ void Gateway::updateCredentialScopeMode(
                     user_id = $3,
                     created_by = $4,
                     description = $5,
-                    expires_at = CASE WHEN $6::bigint IS NULL THEN NULL ELSE TO_TIMESTAMP($6::double precision) END
+                    expires_at = CASE WHEN $6::bigint IS NULL THEN NULL ELSE TO_TIMESTAMP($6::double precision) END,
+                    enforce_budget_for_local_requests = COALESCE($7::boolean, enforce_budget_for_local_requests)
                 WHERE id = $1
             )SQL",
-            pqxx::params{credentialId, scopeMode, principalUserId, createdBy, description, expiresAt});
+            pqxx::params{credentialId, scopeMode, principalUserId, createdBy, description, expiresAt, enforceBudgetForLocalRequests});
+    });
+}
+
+void Gateway::recordSyncOrigin(
+    const uint32_t vaultId,
+    const std::string& objectKey,
+    const std::string& operation,
+    const std::optional<uint32_t> gatewayCredentialId,
+    const std::string& requestUuid) {
+    Transactions::exec("S3Gateway::recordSyncOrigin", [&](pqxx::work& txn) {
+        txn.exec(
+            R"SQL(
+                INSERT INTO s3_gateway_sync_origin
+                    (vault_id, object_key, operation, gateway_credential_id, request_uuid)
+                VALUES ($1, $2, $3, $4, $5)
+            )SQL",
+            pqxx::params{vaultId, normalizeKey(objectKey), operation, gatewayCredentialId, requestUuid});
     });
 }
 

@@ -36,6 +36,7 @@ export function CredentialCreateModal({
   const [newExpiresDays, setNewExpiresDays] = useState('')
   const [newVaultIds, setNewVaultIds] = useState<number[]>([])
   const [newPerms, setNewPerms] = useState({ can_list: true, can_read: true, can_write: false, can_delete: false, can_admin: false })
+  const [enforceLocalBudget, setEnforceLocalBudget] = useState(false)
 
   if (!open) return null
 
@@ -58,6 +59,7 @@ export function CredentialCreateModal({
       description: newDescription.trim() || null,
       expires_at,
       vault_scopes: buildNewVaultScopes(),
+      enforce_budget_for_local_requests: enforceLocalBudget,
     })
     onCreated(result.credential.id)
     onClose()
@@ -66,10 +68,11 @@ export function CredentialCreateModal({
     setNewDescription('')
     setNewExpiresDays('')
     setNewVaultIds([])
+    setEnforceLocalBudget(false)
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" data-testid="s3-gateway-create-credential-modal">
       <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded border border-white/10 bg-zinc-950 p-5 text-white shadow-2xl">
         <div className="mb-4 flex items-center justify-between gap-3">
           <h2 className="text-lg font-semibold text-cyan-100">Create credential</h2>
@@ -78,7 +81,7 @@ export function CredentialCreateModal({
         <div className="grid gap-3 md:grid-cols-2">
           <label className="flex flex-col gap-1 text-xs text-white/60">
             Name
-            <input className={fieldClass} value={newName} onChange={event => setNewName(event.target.value)} />
+            <input className={fieldClass} data-testid="s3-gateway-credential-name-input" value={newName} onChange={event => setNewName(event.target.value)} />
           </label>
           <label className="flex flex-col gap-1 text-xs text-white/60">
             Principal user id
@@ -86,7 +89,7 @@ export function CredentialCreateModal({
           </label>
           <label className="flex flex-col gap-1 text-xs text-white/60">
             Scope
-            <select className={fieldClass} value={newScopeMode} onChange={event => setNewScopeMode(event.target.value as S3GatewayCredentialScopeMode)}>
+            <select className={fieldClass} data-testid="s3-gateway-credential-scope-select" value={newScopeMode} onChange={event => setNewScopeMode(event.target.value as S3GatewayCredentialScopeMode)}>
               {scopeModes.map(mode => <option key={mode} value={mode}>{scopeLabel(mode)}</option>)}
             </select>
           </label>
@@ -97,6 +100,20 @@ export function CredentialCreateModal({
           <label className="flex flex-col gap-1 text-xs text-white/60 md:col-span-2">
             Description
             <input className={fieldClass} value={newDescription} onChange={event => setNewDescription(event.target.value)} />
+          </label>
+          <label className="flex items-start gap-3 rounded border border-white/10 bg-white/[0.03] p-3 text-sm text-white/75 md:col-span-2">
+            <input
+              className="mt-1 h-4 w-4 accent-cyan-400"
+              type="checkbox"
+              checked={enforceLocalBudget}
+              onChange={event => setEnforceLocalBudget(event.target.checked)}
+            />
+            <span>
+              <span className="block font-medium text-white">Count local/cache hits against gateway request budgets</span>
+              <span className="mt-1 block text-xs leading-5 text-white/55">
+                Default off. When off, cache/local hits do not consume upstream-style request budgets. When on, local/cache hits are treated as gateway usage for this key even when no upstream S3/R2 call occurs.
+              </span>
+            </span>
           </label>
         </div>
 
@@ -117,6 +134,7 @@ export function CredentialCreateModal({
                 <label key={vault.id} className="flex min-h-10 items-center gap-2 rounded border border-white/10 bg-white/[0.03] px-3 text-sm text-white/75">
                   <input
                     className="h-4 w-4 accent-cyan-400"
+                    data-testid="s3-gateway-create-vault-checkbox"
                     type="checkbox"
                     checked={newVaultIds.includes(vault.id)}
                     onChange={event => {
@@ -132,7 +150,7 @@ export function CredentialCreateModal({
 
         <div className="mt-5 flex justify-end gap-2">
           <button className={buttonClass} type="button" onClick={onClose}>Cancel</button>
-          <button className={primaryButtonClass} type="button" disabled={!newName.trim() || saving} onClick={() => void submitCreate()}>
+          <button className={primaryButtonClass} data-testid="s3-gateway-submit-create-credential" type="button" disabled={!newName.trim() || saving} onClick={() => void submitCreate()}>
             <PlusIcon className="h-4 w-4" />
             Create
           </button>

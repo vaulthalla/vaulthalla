@@ -72,6 +72,36 @@ You can also run the repo helper from the root:
 bash .codex/scripts/verify.sh web
 ```
 
+## S3 Gateway Browser And Smoke Validation
+
+The focused S3 Gateway browser suite runs against an already-running Vaulthalla dev stack. It does not boot the full stack for you.
+
+```bash
+VAULTHALLA_E2E_BASE_URL=http://127.0.0.1:3000 \
+VAULTHALLA_E2E_USER=admin \
+VAULTHALLA_E2E_PASSWORD=... \
+pnpm --dir web run test:e2e:s3-gateway
+```
+
+Missing credentials fail clearly. Set `VAULTHALLA_E2E_SKIP=1` only when you are intentionally skipping the browser suite.
+
+For data-plane validation, use the smoke wrapper:
+
+```bash
+tools/smoke/s3_gateway_e2e.sh
+```
+
+The wrapper checks that the web app and S3 gateway are reachable, runs the Playwright S3 Gateway suite, and then runs `tools/smoke/s3_gateway_scoped_budget_smoke.sh --local-only`.
+Set `S3_GATEWAY_ENDPOINT` when the gateway is not on `http://127.0.0.1:39000`.
+
+Remote R2/S3 validation is opt-in:
+
+```bash
+tools/smoke/s3_gateway_e2e.sh --require-remote --prefix s3-gateway-e2e/manual-$(date -u +%Y%m%dT%H%M%SZ)
+```
+
+Remote smoke uses existing `S3_GATEWAY_SMOKE_*` and `VAULTHALLA_TEST_R2_*` settings. It deletes only the unique prefix it was given. If cleanup fails, the script prints the exact prefix to remove manually.
+
 ## C++ Core Changes
 
 Use the CI-style Meson build path:
