@@ -15,6 +15,10 @@ namespace vh::protocols::s3 {
 struct AuthContext {
     std::shared_ptr<identities::User> user;
     db::query::s3::GatewayCredential credential;
+    uint32_t credential_id{};
+    std::string access_key;
+    std::string scope_mode{"user_access"};
+    bool dev_context{false};
 };
 
 class Authenticator {

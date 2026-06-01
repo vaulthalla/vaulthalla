@@ -4,6 +4,8 @@
 #include "identities/User.hpp"
 #include "log/Registry.hpp"
 #include "protocols/s3/Xml.hpp"
+#include "storage/s3/pricing/GatewayPriceEstimate.hpp"
+#include "storage/s3/pricing/PriceBudget.hpp"
 
 #include <boost/uuid/random_generator.hpp>
 #include <boost/uuid/uuid_io.hpp>
@@ -428,6 +430,98 @@ xml::DeleteError deleteErrorFromMessage(const std::string& key, const std::strin
         .message = raw.substr(split + 2)
     };
 }
+
+struct GatewayBudgetReservation {
+    storage::s3::pricing::PriceBudgetPreflightRequest request;
+    storage::s3::pricing::S3GatewayPriceEstimate estimate;
+    storage::s3::pricing::PriceBudgetDecision decision;
+};
+
+std::pair<std::string, bool> providerBudgetIdentity(const std::shared_ptr<storage::CloudEngine>& cloud) {
+    const auto profile = cloud ? cloud->s3ProviderProfile() : nullptr;
+    const auto costProfileId = profile ? profile->costProfileId() : std::optional<std::string>{};
+    return {
+        costProfileId ? *costProfileId : (profile ? profile->id() : std::string{"unknown"}),
+        costProfileId && storage::s3::pricing::isSupportedPriceBudgetProvider(*costProfileId)
+    };
+}
+
+std::optional<GatewayBudgetReservation> preflightGatewayBudget(
+    const ResolvedBucket& bucket,
+    const AuthContext& auth,
+    const std::string& rid,
+    const storage::s3::pricing::S3GatewayOperation operation,
+    const uint64_t uploadBytes = 0,
+    const uint64_t downloadBytes = 0,
+    const uint64_t objectCount = 1,
+    const std::optional<std::string>& storageClass = std::nullopt,
+    const std::optional<std::string>& objectKey = std::nullopt) {
+    if (!ObjectStore::isRemoteBacked(bucket)) return std::nullopt;
+
+    const auto cloud = ObjectStore::cloudEngine(bucket);
+    if (!cloud) throw invalidArgument("Bucket is not backed by a CloudEngine", bucket.bucket_name);
+
+    const auto [providerKey, providerSupported] = providerBudgetIdentity(cloud);
+    storage::s3::pricing::S3GatewayPriceEstimateRequest estimateRequest{
+        .vault_id = bucket.vault_id,
+        .gateway_credential_id = auth.credential_id == 0 ? std::optional<uint32_t>{} : std::make_optional(auth.credential_id),
+        .provider_key = providerKey,
+        .provider_supported = providerSupported,
+        .operation = operation,
+        .request_count = 1,
+        .upload_bytes = uploadBytes,
+        .download_bytes = downloadBytes,
+        .object_count = objectCount,
+        .storage_class = storageClass
+    };
+    auto estimate = storage::s3::pricing::estimateGatewayS3Request(*cloud, estimateRequest);
+
+    storage::s3::pricing::PriceBudgetPreflightRequest budgetRequest{
+        .vault_id = bucket.vault_id,
+        .run_uuid = rid,
+        .provider_key = providerKey,
+        .provider_supported = providerSupported,
+        .estimate = estimate.as_price_estimate_report,
+        .dry_run = false,
+        .override_policy_ids = {},
+        .gateway_credential_id = auth.credential_id == 0 ? std::optional<uint32_t>{} : std::make_optional(auth.credential_id),
+        .request_uuid = rid,
+        .operation = storage::s3::pricing::toString(operation),
+        .object_key = objectKey
+    };
+
+    storage::s3::pricing::PriceBudgetService service;
+    auto decision = service.preflight(budgetRequest);
+    service.recordPreflightNotifications(budgetRequest, decision);
+    if (!decision.allowed) {
+        throw S3Error{
+            "AccessDenied",
+            "S3 gateway price budget would be exceeded: " +
+                (decision.reason.empty() ? std::string{"request denied by price budget policy"} : decision.reason),
+            http::status::forbidden,
+            bucket.bucket_name};
+    }
+
+    return GatewayBudgetReservation{
+        .request = std::move(budgetRequest),
+        .estimate = std::move(estimate),
+        .decision = std::move(decision)
+    };
+}
+
+void commitGatewayBudget(const std::optional<GatewayBudgetReservation>& budget, const bool finalCostKnown = true) {
+    if (!budget) return;
+    storage::s3::pricing::PriceBudgetService{}.commit(
+        budget->decision.reservations,
+        finalCostKnown && budget->estimate.available
+            ? std::make_optional(budget->estimate.estimated_cost)
+            : std::optional<std::string>{});
+}
+
+void releaseGatewayBudget(const std::optional<GatewayBudgetReservation>& budget) {
+    if (!budget) return;
+    storage::s3::pricing::PriceBudgetService{}.release(budget->decision.reservations);
+}
 }
 
 Router::Router()
@@ -532,38 +626,60 @@ Router::Response Router::errorResponse(const Request& request, const S3Error& er
 Router::Response Router::routeAuthenticated(
     Request&& request,
     const AuthContext& auth,
-    const std::string&,
+    const std::string& rid,
     const BodyPayload& payload) const {
     const auto parsed = parseRequestTarget(request);
 
     if (parsed.bucket.empty()) {
         if (request.method() != http::verb::get) throw notImplemented("Only GET / is supported at service root", "/");
         std::vector<xml::Bucket> buckets;
-        for (const auto& bucket : objects_.listBuckets(auth.user))
+        for (const auto& bucket : objects_.listBuckets(auth))
             buckets.push_back({.name = bucket.bucket_name, .created_at = bucket.created_at});
         return makeResponse(request, http::status::ok, xml::listBuckets(buckets, auth.user->name));
     }
 
     if (parsed.key.empty()) {
         if (request.method() == http::verb::put) {
-            objects_.createBucket(parsed.bucket, auth.user, config::Registry::get().s3_gateway.default_bucket_mode);
+            objects_.createBucket(parsed.bucket, auth, config::Registry::get().s3_gateway.default_bucket_mode);
             return makeResponse(request, http::status::ok, {});
         }
         if (request.method() == http::verb::head) {
-            objects_.headBucket(parsed.bucket, auth.user);
+            auto bucket = objects_.headBucket(parsed.bucket, auth);
+            auto budget = preflightGatewayBudget(bucket, auth, rid, storage::s3::pricing::S3GatewayOperation::HeadBucket);
+            commitGatewayBudget(budget);
             auto response = makeResponse(request, http::status::ok, {});
             response.body().clear();
             response.prepare_payload();
             return response;
         }
         if (request.method() == http::verb::delete_) {
-            objects_.deleteBucket(parsed.bucket, auth.user);
+            auto bucket = objects_.resolveBucket(parsed.bucket, auth);
+            objects_.requireBucketRbacPermission(bucket, Action::Delete);
+            if (!ObjectStore::credentialAllowsAdmin(bucket)) throw accessDenied(parsed.bucket);
+            auto budget = preflightGatewayBudget(bucket, auth, rid, storage::s3::pricing::S3GatewayOperation::DeleteBucket);
+            try {
+                objects_.deleteBucket(parsed.bucket, auth);
+                commitGatewayBudget(budget);
+            } catch (...) {
+                releaseGatewayBudget(budget);
+                throw;
+            }
             return makeResponse(request, http::status::no_content, {});
         }
 
-        auto bucket = objects_.headBucket(parsed.bucket, auth.user);
+        auto bucket = objects_.headBucket(parsed.bucket, auth);
         if (request.method() == http::verb::get && hasQuery(parsed.query, "uploads"))
-            return makeResponse(request, http::status::ok, xml::listMultipartUploads(parsed.bucket, multipart_.listUploads(bucket, parsed.query.contains("prefix") ? parsed.query.at("prefix") : "")));
+        {
+            auto budget = preflightGatewayBudget(bucket, auth, rid, storage::s3::pricing::S3GatewayOperation::ListMultipartUploads);
+            try {
+                auto response = makeResponse(request, http::status::ok, xml::listMultipartUploads(parsed.bucket, multipart_.listUploads(bucket, parsed.query.contains("prefix") ? parsed.query.at("prefix") : "")));
+                commitGatewayBudget(budget);
+                return response;
+            } catch (...) {
+                releaseGatewayBudget(budget);
+                throw;
+            }
+        }
 
         if (request.method() == http::verb::get) {
             db::query::s3::ObjectListParams params;
@@ -573,54 +689,111 @@ Router::Response Router::routeAuthenticated(
             if (parsed.query.contains("continuation-token")) params.continuation_token = parsed.query.at("continuation-token");
             params.max_keys = parseMaxKeys(parsed.query);
             const auto encodingType = parseEncodingType(parsed.query);
-            auto result = objects_.listObjects(bucket, params);
-            auto response = makeResponse(
-                request,
-                http::status::ok,
-                xml::listObjectsV2(parsed.bucket, result, params.prefix, params.delimiter, params.max_keys, encodingType));
-            if (objects_.remoteIndexStale(bucket))
-                response.set("x-vaulthalla-index-stale", "true");
-            return response;
+            auto budget = preflightGatewayBudget(bucket, auth, rid, storage::s3::pricing::S3GatewayOperation::ListObjectsV2);
+            try {
+                auto result = objects_.listObjects(bucket, params);
+                auto response = makeResponse(
+                    request,
+                    http::status::ok,
+                    xml::listObjectsV2(parsed.bucket, result, params.prefix, params.delimiter, params.max_keys, encodingType));
+                if (objects_.remoteIndexStale(bucket))
+                    response.set("x-vaulthalla-index-stale", "true");
+                commitGatewayBudget(budget);
+                return response;
+            } catch (...) {
+                releaseGatewayBudget(budget);
+                throw;
+            }
         }
 
         if (request.method() == http::verb::post && hasQuery(parsed.query, "delete")) {
             bool quiet = false;
             const auto keys = parseDeleteObjects(request.body(), quiet);
-            const auto results = objects_.deleteObjects(bucket, keys);
+            for (const auto& key : keys)
+                objects_.requireObjectPermission(bucket, key, Action::Delete);
+            auto budget = preflightGatewayBudget(
+                bucket,
+                auth,
+                rid,
+                storage::s3::pricing::S3GatewayOperation::DeleteObjects,
+                0,
+                0,
+                keys.size());
+            std::vector<std::pair<std::string, std::optional<std::string>>> results;
+            try {
+                results = objects_.deleteObjects(bucket, keys);
+            } catch (...) {
+                commitGatewayBudget(budget, false);
+                throw;
+            }
             std::vector<xml::DeletedObject> deleted;
             std::vector<xml::DeleteError> errors;
             for (const auto& [key, error] : results) {
                 if (!error) deleted.push_back({.key = key});
                 else errors.push_back(deleteErrorFromMessage(key, *error));
             }
-            return makeResponse(request, http::status::ok, xml::deleteResult(deleted, errors, quiet));
+            auto response = makeResponse(request, http::status::ok, xml::deleteResult(deleted, errors, quiet));
+            commitGatewayBudget(budget);
+            return response;
         }
 
         throw notImplemented("Unsupported bucket operation", parsed.bucket);
     }
 
-    auto bucket = objects_.resolveBucket(parsed.bucket, auth.user);
+    auto bucket = objects_.resolveBucket(parsed.bucket, auth);
 
     if (request.method() == http::verb::post && hasQuery(parsed.query, "uploads")) {
         objects_.requireObjectPermission(bucket, parsed.key, Action::Write);
-        const auto uploadId = multipart_.createUpload(bucket, parsed.key, putOptionsFromRequest(request));
-        return makeResponse(request, http::status::ok, xml::initiateMultipartUpload(parsed.bucket, parsed.key, uploadId));
+        auto budget = preflightGatewayBudget(
+            bucket,
+            auth,
+            rid,
+            storage::s3::pricing::S3GatewayOperation::CreateMultipartUpload,
+            0,
+            0,
+            1,
+            putOptionsFromRequest(request).storage_class,
+            parsed.key);
+        try {
+            const auto uploadId = multipart_.createUpload(bucket, parsed.key, putOptionsFromRequest(request));
+            commitGatewayBudget(budget);
+            return makeResponse(request, http::status::ok, xml::initiateMultipartUpload(parsed.bucket, parsed.key, uploadId));
+        } catch (...) {
+            releaseGatewayBudget(budget);
+            throw;
+        }
     }
 
     if (request.method() == http::verb::put && hasQuery(parsed.query, "partNumber") && hasQuery(parsed.query, "uploadId")) {
         objects_.requireObjectPermission(bucket, parsed.key, Action::Write);
         const auto partNumber = parsePartNumber(parsed.query);
+        auto budget = preflightGatewayBudget(
+            bucket,
+            auth,
+            rid,
+            storage::s3::pricing::S3GatewayOperation::UploadPart,
+            payload.size,
+            0,
+            1,
+            std::nullopt,
+            parsed.key);
         db::query::s3::MultipartPart part;
-        if (payload.temp_file) {
-            validateContentMd5(request, payload);
-            validateS3Checksums(request, payload);
-            part = multipart_.uploadPartFromFile(bucket, parsed.key, parsed.query.at("uploadId"), partNumber,
-                                                 *payload.temp_file, payload.size);
-        } else {
-            auto body = bodyBytes(request, payload);
-            validateContentMd5(request, body);
-            validateS3Checksums(request, body);
-            part = multipart_.uploadPart(bucket, parsed.key, parsed.query.at("uploadId"), partNumber, body);
+        try {
+            if (payload.temp_file) {
+                validateContentMd5(request, payload);
+                validateS3Checksums(request, payload);
+                part = multipart_.uploadPartFromFile(bucket, parsed.key, parsed.query.at("uploadId"), partNumber,
+                                                     *payload.temp_file, payload.size);
+            } else {
+                auto body = bodyBytes(request, payload);
+                validateContentMd5(request, body);
+                validateS3Checksums(request, body);
+                part = multipart_.uploadPart(bucket, parsed.key, parsed.query.at("uploadId"), partNumber, body);
+            }
+            commitGatewayBudget(budget);
+        } catch (...) {
+            releaseGatewayBudget(budget);
+            throw;
         }
         auto response = makeResponse(request, http::status::ok, {});
         response.set(http::field::etag, part.etag);
@@ -629,44 +802,118 @@ Router::Response Router::routeAuthenticated(
 
     if (request.method() == http::verb::post && hasQuery(parsed.query, "uploadId")) {
         objects_.requireObjectPermission(bucket, parsed.key, Action::Write);
-        const auto state = multipart_.completeUpload(bucket, parsed.key, parsed.query.at("uploadId"), parseCompleteParts(request.body()));
-        return makeResponse(
-            request,
-            http::status::ok,
-            xml::completeMultipartUpload("/" + parsed.bucket + "/" + parsed.key, parsed.bucket, parsed.key, state.etag));
+        uint64_t totalSize = 0;
+        for (const auto& part : multipart_.listParts(bucket, parsed.key, parsed.query.at("uploadId")))
+            totalSize += part.size_bytes;
+        const auto completeParts = parseCompleteParts(request.body());
+        auto budget = preflightGatewayBudget(
+            bucket,
+            auth,
+            rid,
+            storage::s3::pricing::S3GatewayOperation::CompleteMultipartUpload,
+            totalSize,
+            0,
+            1,
+            std::nullopt,
+            parsed.key);
+        try {
+            const auto state = multipart_.completeUpload(bucket, parsed.key, parsed.query.at("uploadId"), completeParts);
+            commitGatewayBudget(budget);
+            return makeResponse(
+                request,
+                http::status::ok,
+                xml::completeMultipartUpload("/" + parsed.bucket + "/" + parsed.key, parsed.bucket, parsed.key, state.etag));
+        } catch (...) {
+            commitGatewayBudget(budget, false);
+            throw;
+        }
     }
 
     if (request.method() == http::verb::delete_ && hasQuery(parsed.query, "uploadId")) {
         objects_.requireObjectPermission(bucket, parsed.key, Action::Delete);
-        multipart_.abortUpload(bucket, parsed.key, parsed.query.at("uploadId"));
-        return makeResponse(request, http::status::no_content, {});
+        auto budget = preflightGatewayBudget(
+            bucket,
+            auth,
+            rid,
+            storage::s3::pricing::S3GatewayOperation::AbortMultipartUpload,
+            0,
+            0,
+            1,
+            std::nullopt,
+            parsed.key);
+        try {
+            multipart_.abortUpload(bucket, parsed.key, parsed.query.at("uploadId"));
+            commitGatewayBudget(budget);
+            return makeResponse(request, http::status::no_content, {});
+        } catch (...) {
+            releaseGatewayBudget(budget);
+            throw;
+        }
     }
 
     if (request.method() == http::verb::get && hasQuery(parsed.query, "uploadId")) {
         objects_.requireObjectPermission(bucket, parsed.key, Action::Read);
-        return makeResponse(
-            request,
-            http::status::ok,
-            xml::listParts(parsed.bucket, parsed.key, parsed.query.at("uploadId"),
-                           multipart_.listParts(bucket, parsed.key, parsed.query.at("uploadId"))));
+        auto budget = preflightGatewayBudget(
+            bucket,
+            auth,
+            rid,
+            storage::s3::pricing::S3GatewayOperation::ListParts,
+            0,
+            0,
+            1,
+            std::nullopt,
+            parsed.key);
+        try {
+            auto response = makeResponse(
+                request,
+                http::status::ok,
+                xml::listParts(parsed.bucket, parsed.key, parsed.query.at("uploadId"),
+                               multipart_.listParts(bucket, parsed.key, parsed.query.at("uploadId"))));
+            commitGatewayBudget(budget);
+            return response;
+        } catch (...) {
+            releaseGatewayBudget(budget);
+            throw;
+        }
     }
 
     if (request.method() == http::verb::head) {
-        const auto state = objects_.headObject(bucket, parsed.key);
-        enforceIfMatch(request, state, parsed.key);
-        if (ifNoneMatchMatches(request, state)) return notModifiedResponse(request, state);
-        const auto objectKey = ObjectStore::vaultPathToKey(ObjectStore::keyToVaultPath(parsed.key));
-        const auto metadata = db::query::s3::Gateway::listObjectMetadata(bucket.vault_id, objectKey);
-        auto response = makeResponse(request, http::status::ok, {});
-        response.set(http::field::etag, state.etag);
-        response.set(http::field::content_length, std::to_string(state.size_bytes));
-        response.set(http::field::content_type, state.content_type.value_or("application/octet-stream"));
-        response.set(http::field::last_modified, xml::httpDate(state.last_modified));
-        for (const auto& [name, value] : metadata)
-            response.set("x-amz-meta-" + name, value);
-        // Do not call prepare_payload() again: HEAD must advertise object size, not empty-body size.
-        response.body().clear();
-        return response;
+        objects_.requireObjectPermission(bucket, parsed.key, Action::Read);
+        auto budget = preflightGatewayBudget(
+            bucket,
+            auth,
+            rid,
+            storage::s3::pricing::S3GatewayOperation::HeadObject,
+            0,
+            0,
+            1,
+            std::nullopt,
+            parsed.key);
+        db::query::s3::ObjectState state;
+        try {
+            state = objects_.headObject(bucket, parsed.key);
+            enforceIfMatch(request, state, parsed.key);
+            if (ifNoneMatchMatches(request, state)) {
+                commitGatewayBudget(budget);
+                return notModifiedResponse(request, state);
+            }
+            const auto objectKey = ObjectStore::vaultPathToKey(ObjectStore::keyToVaultPath(parsed.key));
+            const auto metadata = db::query::s3::Gateway::listObjectMetadata(bucket.vault_id, objectKey);
+            auto response = makeResponse(request, http::status::ok, {});
+            response.set(http::field::etag, state.etag);
+            response.set(http::field::content_length, std::to_string(state.size_bytes));
+            response.set(http::field::content_type, state.content_type.value_or("application/octet-stream"));
+            response.set(http::field::last_modified, xml::httpDate(state.last_modified));
+            for (const auto& [name, value] : metadata)
+                response.set("x-amz-meta-" + name, value);
+            // Do not call prepare_payload() again: HEAD must advertise object size, not empty-body size.
+            response.body().clear();
+            commitGatewayBudget(budget);
+            return response;
+        } catch (...) {
+            releaseGatewayBudget(budget);
+            throw;
+        }
     }
 
     if (request.method() == http::verb::get) {
@@ -674,7 +921,23 @@ Router::Response Router::routeAuthenticated(
         enforceIfMatch(request, state, parsed.key);
         if (ifNoneMatchMatches(request, state)) return notModifiedResponse(request, state);
         const auto range = parseRange(request);
-        const auto object = objects_.getObject(bucket, parsed.key, range);
+        auto budget = preflightGatewayBudget(
+            bucket,
+            auth,
+            rid,
+            storage::s3::pricing::S3GatewayOperation::GetObject,
+            0,
+            state.size_bytes,
+            1,
+            state.storage_class,
+            parsed.key);
+        ObjectBody object;
+        try {
+            object = objects_.getObject(bucket, parsed.key, range);
+        } catch (...) {
+            commitGatewayBudget(budget, false);
+            throw;
+        }
         auto response = makeResponse(
             request,
             range ? http::status::partial_content : http::status::ok,
@@ -691,10 +954,12 @@ Router::Response Router::routeAuthenticated(
         for (const auto& [name, value] : object.metadata)
             response.set("x-amz-meta-" + name, value);
         response.prepare_payload();
+        commitGatewayBudget(budget);
         return response;
     }
 
     if (request.method() == http::verb::put) {
+        objects_.requireObjectPermission(bucket, parsed.key, Action::Write);
         const auto ifMatch = headerOr(request, http::field::if_match);
         const auto ifNoneMatch = headerOr(request, http::field::if_none_match);
         if (!ifMatch.empty()) {
@@ -720,31 +985,114 @@ Router::Response Router::routeAuthenticated(
             const auto source = parseCopySource(copySource);
             if (source.query.contains("versionId"))
                 throw notImplemented("Versioned CopyObject sources are not supported", copySource);
-            const auto sourceBucket = objects_.resolveBucket(source.bucket, auth.user);
+            const auto sourceBucket = objects_.resolveBucket(source.bucket, auth);
+            const auto sourceState = objects_.headObject(sourceBucket, source.key);
             enforceCopySourcePreconditions(
                 request,
-                objects_.headObject(sourceBucket, source.key),
+                sourceState,
                 source.bucket + "/" + source.key);
-            const auto state = objects_.copyObject(
-                sourceBucket,
-                source.key,
-                bucket,
-                parsed.key,
-                copyOptionsFromRequest(request));
-            return makeResponse(request, http::status::ok, copyObjectResult(state.etag, state.last_modified));
+            const auto copyOptions = copyOptionsFromRequest(request);
+            const auto sameRemoteVault =
+                ObjectStore::isRemoteBacked(sourceBucket) &&
+                ObjectStore::isRemoteBacked(bucket) &&
+                sourceBucket.vault_id == bucket.vault_id;
+            std::optional<GatewayBudgetReservation> sourceBudget;
+            std::optional<GatewayBudgetReservation> destBudget;
+            bool upstreamMayHaveStarted = false;
+            try {
+                if (sameRemoteVault) {
+                    destBudget = preflightGatewayBudget(
+                        bucket,
+                        auth,
+                        rid,
+                        storage::s3::pricing::S3GatewayOperation::CopyObject,
+                        sourceState.size_bytes,
+                        sourceState.size_bytes,
+                        1,
+                        copyOptions.storage_class,
+                        parsed.key);
+                } else {
+                    sourceBudget = preflightGatewayBudget(
+                        sourceBucket,
+                        auth,
+                        rid,
+                        storage::s3::pricing::S3GatewayOperation::GetObject,
+                        0,
+                        sourceState.size_bytes,
+                        1,
+                        sourceState.storage_class,
+                        source.key);
+                    destBudget = preflightGatewayBudget(
+                        bucket,
+                        auth,
+                        rid,
+                        storage::s3::pricing::S3GatewayOperation::PutObject,
+                        sourceState.size_bytes,
+                        0,
+                        1,
+                        copyOptions.storage_class,
+                        parsed.key);
+                }
+                upstreamMayHaveStarted = true;
+                const auto state = objects_.copyObject(
+                    sourceBucket,
+                    source.key,
+                    bucket,
+                    parsed.key,
+                    copyOptions);
+                commitGatewayBudget(sourceBudget);
+                commitGatewayBudget(destBudget);
+                return makeResponse(request, http::status::ok, copyObjectResult(state.etag, state.last_modified));
+            } catch (...) {
+                if (upstreamMayHaveStarted) {
+                    commitGatewayBudget(sourceBudget, false);
+                    commitGatewayBudget(destBudget, false);
+                } else {
+                    releaseGatewayBudget(sourceBudget);
+                    releaseGatewayBudget(destBudget);
+                }
+                throw;
+            }
         }
         db::query::s3::ObjectState state;
+        const auto options = putOptionsFromRequest(request);
+        std::optional<std::vector<uint8_t>> bufferedBody;
         if (payload.temp_file) {
             validateContentMd5(request, payload);
             validateS3Checksums(request, payload);
-            auto options = putOptionsFromRequest(request);
-            if (payload.md5_hex) options.etag_override = "\"" + *payload.md5_hex + "\"";
-            state = objects_.putObjectFromFile(bucket, parsed.key, *payload.temp_file, payload.size, options);
         } else {
-            auto body = bodyBytes(request, payload);
-            validateContentMd5(request, body);
-            validateS3Checksums(request, body);
-            state = objects_.putObject(bucket, parsed.key, body, putOptionsFromRequest(request));
+            bufferedBody = bodyBytes(request, payload);
+            validateContentMd5(request, *bufferedBody);
+            validateS3Checksums(request, *bufferedBody);
+        }
+        auto budget = preflightGatewayBudget(
+            bucket,
+            auth,
+            rid,
+            storage::s3::pricing::S3GatewayOperation::PutObject,
+            payload.temp_file ? payload.size : bufferedBody->size(),
+            0,
+            1,
+            options.storage_class,
+            parsed.key);
+        if (payload.temp_file) {
+            auto fileOptions = options;
+            if (payload.md5_hex) fileOptions.etag_override = "\"" + *payload.md5_hex + "\"";
+            try {
+                state = objects_.putObjectFromFile(bucket, parsed.key, *payload.temp_file, payload.size, fileOptions);
+                commitGatewayBudget(budget);
+            } catch (...) {
+                commitGatewayBudget(budget, false);
+                throw;
+            }
+        } else {
+            try {
+                state = objects_.putObject(bucket, parsed.key, *bufferedBody, options);
+                commitGatewayBudget(budget);
+            } catch (...) {
+                commitGatewayBudget(budget, false);
+                throw;
+            }
         }
         auto response = makeResponse(request, http::status::ok, {});
         response.set(http::field::etag, state.etag);
@@ -752,6 +1100,7 @@ Router::Response Router::routeAuthenticated(
     }
 
     if (request.method() == http::verb::delete_) {
+        objects_.requireObjectPermission(bucket, parsed.key, Action::Delete);
         const auto ifMatch = headerOr(request, http::field::if_match);
         if (!ifMatch.empty()) {
             try {
@@ -762,7 +1111,23 @@ Router::Response Router::routeAuthenticated(
                 throw;
             }
         }
-        objects_.deleteObject(bucket, parsed.key);
+        auto budget = preflightGatewayBudget(
+            bucket,
+            auth,
+            rid,
+            storage::s3::pricing::S3GatewayOperation::DeleteObject,
+            0,
+            0,
+            1,
+            std::nullopt,
+            parsed.key);
+        try {
+            objects_.deleteObject(bucket, parsed.key);
+            commitGatewayBudget(budget);
+        } catch (...) {
+            commitGatewayBudget(budget, false);
+            throw;
+        }
         return makeResponse(request, http::status::no_content, {});
     }
 

@@ -10,6 +10,7 @@
 #include "fs/model/File.hpp"
 #include "fs/model/Path.hpp"
 #include "protocols/s3/ObjectStore.hpp"
+#include "rbac/role/Admin.hpp"
 #include "runtime/Deps.hpp"
 #include "seed/include/init_db_tables.hpp"
 #include "storage/Engine.hpp"
@@ -38,6 +39,55 @@ struct SeedIds {
 
 std::string aliasFor(const char c) {
     return std::string(33, c);
+}
+
+uint32_t ensureFsCacheUnprivilegedAdminRole(pqxx::work& txn) {
+    const auto role = vh::rbac::role::Admin::None();
+    return txn.exec(
+        R"SQL(
+            INSERT INTO admin_role (
+                name,
+                description,
+                identity_permissions,
+                audit_permissions,
+                settings_permissions,
+                roles_permissions,
+                vaults_permissions,
+                keys_permissions
+            )
+            VALUES ($1, $2, $3::bit(32), $4::bit(8), $5::bit(64), $6::bit(16), $7::bit(32), $8::bit(32))
+            ON CONFLICT (name) DO UPDATE SET
+                description = EXCLUDED.description,
+                identity_permissions = EXCLUDED.identity_permissions,
+                audit_permissions = EXCLUDED.audit_permissions,
+                settings_permissions = EXCLUDED.settings_permissions,
+                roles_permissions = EXCLUDED.roles_permissions,
+                vaults_permissions = EXCLUDED.vaults_permissions,
+                keys_permissions = EXCLUDED.keys_permissions
+            RETURNING id
+        )SQL",
+        pqxx::params{
+            role.name,
+            role.description,
+            role.identities.toBitString(),
+            role.audits.toBitString(),
+            role.settings.toBitString(),
+            role.roles.toBitString(),
+            role.vaults.toBitString(),
+            role.keys.toBitString()
+        }).one_field().as<uint32_t>();
+}
+
+uint32_t insertFsCacheHydratableTestUser(pqxx::work& txn, const std::string& name, const std::string& email) {
+    const auto userId = txn.exec(
+        "INSERT INTO users (name, email, password_hash) VALUES ($1, $2, $3) RETURNING id",
+        pqxx::params{name, email, "hash"}
+    ).one_field().as<uint32_t>();
+    const auto roleId = ensureFsCacheUnprivilegedAdminRole(txn);
+    txn.exec(
+        "INSERT INTO admin_role_assignments (user_id, role_id) VALUES ($1, $2)",
+        pqxx::params{userId, roleId});
+    return userId;
 }
 
 class FsCacheDeleteTest : public ::testing::Test {
@@ -73,10 +123,10 @@ protected:
 
         ids = vh::db::Transactions::exec("FsCacheDeleteTest::seed", [](pqxx::work& txn) {
             SeedIds seeded;
-            seeded.userId = txn.exec(
-                "INSERT INTO users (name, email, password_hash) VALUES ($1, $2, $3) RETURNING id",
-                pqxx::params{"fs_cache_delete_user", "fs-cache-delete@vaulthalla.test", "hash"}
-            ).one_field().as<uint32_t>();
+            seeded.userId = insertFsCacheHydratableTestUser(
+                txn,
+                "fs_cache_delete_user",
+                "fs-cache-delete@vaulthalla.test");
 
             seeded.vaultId = txn.exec(
                 "INSERT INTO vault (type, name, owner_id, mount_point) VALUES ($1, $2, $3, $4) RETURNING id",

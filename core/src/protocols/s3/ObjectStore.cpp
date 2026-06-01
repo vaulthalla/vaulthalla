@@ -117,6 +117,67 @@ bool shouldMaterializeRemoteObject(
         return false;
     }
 }
+
+std::optional<GatewayAccessContext> accessFromAuth(const AuthContext& auth) {
+    return GatewayAccessContext{
+        .credential_id = auth.credential_id,
+        .access_key = auth.access_key,
+        .scope_mode = auth.scope_mode.empty() ? std::string{"user_access"} : auth.scope_mode,
+        .credential = auth.credential,
+        .dev_context = auth.dev_context
+    };
+}
+
+ResolvedBucket resolvedFromBinding(
+    const db::query::s3::BucketBinding& binding,
+    std::shared_ptr<storage::Engine> engine,
+    std::shared_ptr<identities::User> actor,
+    std::optional<GatewayAccessContext> access) {
+    return {
+        .bucket_name = binding.bucket_name,
+        .vault_id = binding.vault_id,
+        .mode = binding.mode,
+        .api_exclusive = binding.api_exclusive,
+        .engine = std::move(engine),
+        .actor = std::move(actor),
+        .gateway_access = std::move(access)
+    };
+}
+}
+
+std::vector<db::query::s3::BucketBinding> ObjectStore::listBuckets(const AuthContext& auth) const {
+    if (!auth.user) throw accessDenied("/");
+    const auto bindings = db::query::s3::Gateway::listBuckets(std::nullopt);
+
+    std::vector<db::query::s3::BucketBinding> visible;
+    visible.reserve(bindings.size());
+
+    const auto storageManager = runtime::Deps::get().storageManager;
+    if (!storageManager) return visible;
+
+    for (const auto& binding : bindings) {
+        auto engine = storageManager->getEngine(binding.vault_id);
+        if (!engine) continue;
+
+        auto bucket = resolvedFromBinding(binding, std::move(engine), auth.user, accessFromAuth(auth));
+        try {
+            requirePermission(bucket, "/", Action::List);
+            visible.push_back(binding);
+        } catch (const S3Error& e) {
+            if (e.code != "AccessDenied")
+                log::Registry::runtime()->warn(
+                    "[S3Gateway] Failed to evaluate bucket visibility for {}: {}",
+                    binding.bucket_name,
+                    e.what());
+        } catch (const std::exception& e) {
+            log::Registry::runtime()->warn(
+                "[S3Gateway] Failed to evaluate bucket visibility for {}: {}",
+                binding.bucket_name,
+                e.what());
+        }
+    }
+
+    return visible;
 }
 
 std::vector<db::query::s3::BucketBinding> ObjectStore::listBuckets(const std::shared_ptr<identities::User>& actor) const {
@@ -134,14 +195,7 @@ std::vector<db::query::s3::BucketBinding> ObjectStore::listBuckets(const std::sh
         auto engine = storageManager->getEngine(binding.vault_id);
         if (!engine) continue;
 
-        ResolvedBucket bucket{
-            .bucket_name = binding.bucket_name,
-            .vault_id = binding.vault_id,
-            .mode = binding.mode,
-            .api_exclusive = binding.api_exclusive,
-            .engine = std::move(engine),
-            .actor = actor
-        };
+        auto bucket = resolvedFromBinding(binding, std::move(engine), actor, std::nullopt);
 
         try {
             requirePermission(bucket, "/", Action::List);
@@ -163,6 +217,12 @@ std::vector<db::query::s3::BucketBinding> ObjectStore::listBuckets(const std::sh
     return visible;
 }
 
+ResolvedBucket ObjectStore::resolveBucket(const std::string& bucket, const AuthContext& auth) const {
+    auto out = resolveBucket(bucket, auth.user);
+    out.gateway_access = accessFromAuth(auth);
+    return out;
+}
+
 ResolvedBucket ObjectStore::resolveBucket(const std::string& bucket, const std::shared_ptr<identities::User>& actor) const {
     requireBucketName(bucket);
     if (!actor) throw accessDenied(bucket);
@@ -173,14 +233,12 @@ ResolvedBucket ObjectStore::resolveBucket(const std::string& bucket, const std::
     auto engine = runtime::Deps::get().storageManager->getEngine(binding->vault_id);
     if (!engine) throw noSuchBucket(bucket);
 
-    ResolvedBucket out{
-        .bucket_name = binding->bucket_name,
-        .vault_id = binding->vault_id,
-        .mode = binding->mode,
-        .api_exclusive = binding->api_exclusive,
-        .engine = std::move(engine),
-        .actor = actor
-    };
+    return resolvedFromBinding(*binding, std::move(engine), actor, std::nullopt);
+}
+
+ResolvedBucket ObjectStore::headBucket(const std::string& bucket, const AuthContext& auth) const {
+    auto out = resolveBucket(bucket, auth);
+    requirePermission(out, "/", Action::List);
     return out;
 }
 
@@ -188,6 +246,23 @@ ResolvedBucket ObjectStore::headBucket(const std::string& bucket, const std::sha
     auto out = resolveBucket(bucket, actor);
     requirePermission(out, "/", Action::List);
     return out;
+}
+
+ResolvedBucket ObjectStore::createBucket(
+    const std::string& bucket,
+    const AuthContext& auth,
+    const std::string& mode,
+    const uintmax_t quotaBytes) const {
+    if (db::query::s3::Gateway::resolveBucket(bucket))
+        return headBucket(bucket, auth);
+    const auto access = accessFromAuth(auth);
+    if (!auth.user || !auth.user->isAdmin())
+        throw accessDenied(bucket);
+    if (access && access->scope_mode == "vault_allowlist")
+        throw accessDenied(bucket);
+    if (access && access->scope_mode == "global" && !credentialAllows(*access, auth.user, 0, Action::Write))
+        throw accessDenied(bucket);
+    return createBucket(bucket, auth.user, mode, quotaBytes);
 }
 
 ResolvedBucket ObjectStore::createBucket(
@@ -225,8 +300,26 @@ ResolvedBucket ObjectStore::createBucket(
     return headBucket(bucket, actor);
 }
 
+void ObjectStore::deleteBucket(const std::string& bucket, const AuthContext& auth) const {
+    auto resolved = resolveBucket(bucket, auth);
+    requireRbacPermission(resolved, "/", Action::Delete);
+    if (!credentialAllowsAdmin(resolved)) throw accessDenied(bucket);
+    const auto objects = db::query::s3::Gateway::listObjectStates(resolved.vault_id, {
+        .prefix = {},
+        .delimiter = std::nullopt,
+        .start_after = std::nullopt,
+        .continuation_token = std::nullopt,
+        .max_keys = 1
+    });
+    if (!objects.objects.empty() || !objects.common_prefixes.empty())
+        throw S3Error{"BucketNotEmpty", "The bucket you tried to delete is not empty", http::status::conflict, bucket};
+    db::query::s3::Gateway::unbindBucket(bucket);
+    if (resolved.api_exclusive)
+        runtime::Deps::get().storageManager->removeVault(resolved.vault_id);
+}
+
 void ObjectStore::deleteBucket(const std::string& bucket, const std::shared_ptr<identities::User>& actor) const {
-    auto resolved = headBucket(bucket, actor);
+    auto resolved = resolveBucket(bucket, actor);
     requirePermission(resolved, "/", Action::Delete);
     const auto objects = db::query::s3::Gateway::listObjectStates(resolved.vault_id, {
         .prefix = {},
@@ -650,26 +743,106 @@ void ObjectStore::requireObjectPermission(
     requirePermission(bucket, keyToVaultPath(key), action);
 }
 
+void ObjectStore::requireBucketPermission(
+    const ResolvedBucket& bucket,
+    const rbac::permission::vault::FilesystemAction action) const {
+    requirePermission(bucket, "/", action);
+}
+
+void ObjectStore::requireBucketRbacPermission(
+    const ResolvedBucket& bucket,
+    const rbac::permission::vault::FilesystemAction action) const {
+    requireRbacPermission(bucket, "/", action);
+}
+
 void ObjectStore::requireBucketName(const std::string& bucket) {
     if (bucket.size() < 3 || bucket.size() > 63) throw invalidArgument("Invalid bucket name", bucket);
     if (bucket.find('/') != std::string::npos || bucket.find('\\') != std::string::npos)
         throw invalidArgument("Invalid bucket name", bucket);
 }
 
-void ObjectStore::requirePermission(
+void ObjectStore::requireRbacPermission(
     const ResolvedBucket& bucket,
     const std::filesystem::path& vaultPath,
     const rbac::permission::vault::FilesystemAction action) {
     if (!bucket.actor) throw accessDenied(bucket.bucket_name);
-    if (bucket.actor->isSuperAdmin()) return;
     const auto fusePath = bucket.engine->vaultPathToFusePath(makeAbsolute(vaultPath));
-    if (!rbac::resolver::Vault::has<rbac::permission::vault::FilesystemAction>({
-            .user = bucket.actor,
-            .permission = action,
-            .vault_id = bucket.vault_id,
-            .path = fusePath
-        }))
+    if (!bucket.actor->isSuperAdmin()) {
+        if (!rbac::resolver::Vault::has<rbac::permission::vault::FilesystemAction>({
+                .user = bucket.actor,
+                .permission = action,
+                .vault_id = bucket.vault_id,
+                .path = fusePath
+            }))
+            throw accessDenied(fusePath.string());
+    }
+}
+
+void ObjectStore::requirePermission(
+    const ResolvedBucket& bucket,
+    const std::filesystem::path& vaultPath,
+    const rbac::permission::vault::FilesystemAction action) {
+    requireRbacPermission(bucket, vaultPath, action);
+    const auto fusePath = bucket.engine->vaultPathToFusePath(makeAbsolute(vaultPath));
+    if (bucket.gateway_access && !credentialAllows(*bucket.gateway_access, bucket.actor, bucket.vault_id, action))
         throw accessDenied(fusePath.string());
+}
+
+bool ObjectStore::credentialAllows(
+    const AuthContext& auth,
+    const uint32_t vaultId,
+    const rbac::permission::vault::FilesystemAction action) {
+    const auto access = accessFromAuth(auth);
+    return access && credentialAllows(*access, auth.user, vaultId, action);
+}
+
+bool ObjectStore::credentialAllows(
+    const GatewayAccessContext& access,
+    const std::shared_ptr<identities::User>& principal,
+    const uint32_t vaultId,
+    const rbac::permission::vault::FilesystemAction action) {
+    if (access.dev_context || access.credential_id == 0) return true;
+    if (access.scope_mode == "user_access") return true;
+    if (access.scope_mode == "global") {
+        if (!principal || !principal->isAdmin()) return false;
+        if (!access.credential.created_by) return false;
+        const auto creator = db::query::identities::User::getUserById(*access.credential.created_by);
+        return creator && creator->isAdmin();
+    }
+    if (access.scope_mode != "vault_allowlist") return false;
+
+    const auto scope = db::query::s3::Gateway::getCredentialScopeForVault(access.credential_id, vaultId);
+    if (!scope) return false;
+    switch (action) {
+    case Action::List:
+        return scope->can_list;
+    case Action::Read:
+        return scope->can_read;
+    case Action::Delete:
+        return scope->can_delete;
+    case Action::Write:
+    case Action::Touch:
+    case Action::Overwrite:
+    case Action::Rename:
+    case Action::Move:
+    case Action::Copy:
+    case Action::Link:
+        return scope->can_write;
+    default:
+        return scope->can_read;
+    }
+}
+
+bool ObjectStore::credentialAllowsAdmin(const ResolvedBucket& bucket) {
+    if (!bucket.gateway_access) return true;
+    const auto& access = *bucket.gateway_access;
+    if (access.dev_context || access.credential_id == 0) return true;
+    if (access.scope_mode == "user_access") return bucket.actor && bucket.actor->isAdmin();
+    if (access.scope_mode == "global")
+        return credentialAllows(access, bucket.actor, bucket.vault_id, Action::Write);
+    if (access.scope_mode != "vault_allowlist") return false;
+    const auto scope = db::query::s3::Gateway::getCredentialScopeForVault(access.credential_id, bucket.vault_id);
+    return scope && scope->can_admin;
 }
 
 bool ObjectStore::isRemoteBacked(const ResolvedBucket& bucket) {

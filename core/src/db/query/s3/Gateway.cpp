@@ -29,16 +29,36 @@ std::optional<std::time_t> optionalTs(const pqxx::row& row, const char* column) 
 }
 
 GatewayCredential credentialFromRow(const pqxx::row& row) {
+    const auto userId = row["user_id"].as<uint32_t>();
     return {
         .id = row["id"].as<uint32_t>(),
-        .user_id = row["user_id"].as<uint32_t>(),
+        .user_id = userId,
+        .created_by = row["created_by"].as<std::optional<uint32_t>>(),
+        .principal_user_id = row["principal_user_id"].is_null()
+            ? userId
+            : row["principal_user_id"].as<uint32_t>(),
         .name = row["name"].as<std::string>(),
         .access_key = row["access_key"].as<std::string>(),
         .encrypted_secret_access_key = from_hex_bytea(row["encrypted_secret_access_key"].as<std::string>()),
         .iv = from_hex_bytea(row["iv"].as<std::string>()),
         .enabled = row["enabled"].as<bool>(),
+        .scope_mode = row["scope_mode"].as<std::string>(),
+        .description = row["description"].as<std::optional<std::string>>(),
         .created_at = ts(row, "created_at"),
-        .last_used_at = optionalTs(row, "last_used_at")
+        .last_used_at = optionalTs(row, "last_used_at"),
+        .expires_at = optionalTs(row, "expires_at")
+    };
+}
+
+CredentialVaultScope scopeFromRow(const pqxx::row& row) {
+    return {
+        .credential_id = row["credential_id"].as<uint32_t>(),
+        .vault_id = row["vault_id"].as<uint32_t>(),
+        .can_list = row["can_list"].as<bool>(),
+        .can_read = row["can_read"].as<bool>(),
+        .can_write = row["can_write"].as<bool>(),
+        .can_delete = row["can_delete"].as<bool>(),
+        .can_admin = row["can_admin"].as<bool>()
     };
 }
 
@@ -118,25 +138,43 @@ std::string makeMetadataJson(const std::map<std::string, std::string>& metadata)
 
 uint32_t Gateway::createCredential(const GatewayCredential& credential) {
     return Transactions::exec("S3Gateway::createCredential", [&](pqxx::work& txn) {
+        const auto principalUserId = credential.principal_user_id == 0
+            ? credential.user_id
+            : credential.principal_user_id;
+        const auto compatibilityUserId = credential.user_id == 0
+            ? principalUserId
+            : credential.user_id;
         const auto res = txn.exec(
             R"SQL(
                 INSERT INTO s3_gateway_credentials
-                    (user_id, name, access_key, encrypted_secret_access_key, iv, enabled)
-                VALUES ($1, $2, $3, $4, $5, $6)
+                    (user_id, created_by, principal_user_id, name, access_key, encrypted_secret_access_key, iv,
+                     enabled, scope_mode, description, expires_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                        CASE WHEN $11::bigint IS NULL THEN NULL ELSE TO_TIMESTAMP($11::double precision) END)
                 ON CONFLICT (user_id, name) DO UPDATE SET
+                    created_by = EXCLUDED.created_by,
+                    principal_user_id = EXCLUDED.principal_user_id,
                     access_key = EXCLUDED.access_key,
                     encrypted_secret_access_key = EXCLUDED.encrypted_secret_access_key,
                     iv = EXCLUDED.iv,
-                    enabled = EXCLUDED.enabled
+                    enabled = EXCLUDED.enabled,
+                    scope_mode = EXCLUDED.scope_mode,
+                    description = EXCLUDED.description,
+                    expires_at = EXCLUDED.expires_at
                 RETURNING id
             )SQL",
             pqxx::params{
-                credential.user_id,
+                compatibilityUserId,
+                credential.created_by,
+                principalUserId,
                 credential.name,
                 credential.access_key,
                 to_hex_bytea(credential.encrypted_secret_access_key),
                 to_hex_bytea(credential.iv),
-                credential.enabled
+                credential.enabled,
+                credential.scope_mode.empty() ? std::string{"user_access"} : credential.scope_mode,
+                credential.description,
+                credential.expires_at
             });
         return res.one_field().as<uint32_t>();
     });
@@ -145,8 +183,25 @@ uint32_t Gateway::createCredential(const GatewayCredential& credential) {
 std::vector<GatewayCredential> Gateway::listCredentials(const std::optional<uint32_t> userId) {
     return Transactions::exec("S3Gateway::listCredentials", [&](pqxx::work& txn) {
         const auto res = userId
-            ? txn.exec("SELECT * FROM s3_gateway_credentials WHERE user_id = " + txn.quote(*userId) + " ORDER BY id")
+            ? txn.exec("SELECT * FROM s3_gateway_credentials WHERE principal_user_id = " + txn.quote(*userId) +
+                       " OR (principal_user_id IS NULL AND user_id = " + txn.quote(*userId) + ") ORDER BY id")
             : txn.exec("SELECT * FROM s3_gateway_credentials ORDER BY id");
+        std::vector<GatewayCredential> out;
+        out.reserve(res.size());
+        for (const auto& row : res) out.push_back(credentialFromRow(row));
+        return out;
+    });
+}
+
+std::vector<GatewayCredential> Gateway::listCredentialsForPrincipal(const uint32_t userId) {
+    return listCredentials(userId);
+}
+
+std::vector<GatewayCredential> Gateway::listCredentialsAdmin(const bool includeDisabled) {
+    return Transactions::exec("S3Gateway::listCredentialsAdmin", [&](pqxx::work& txn) {
+        const auto res = txn.exec(std::string{"SELECT * FROM s3_gateway_credentials "} +
+                                  (includeDisabled ? "" : "WHERE enabled = TRUE ") +
+                                  "ORDER BY principal_user_id NULLS LAST, id");
         std::vector<GatewayCredential> out;
         out.reserve(res.size());
         for (const auto& row : res) out.push_back(credentialFromRow(row));
@@ -173,7 +228,8 @@ bool Gateway::deleteCredentialByAccessKey(const std::string& accessKey) {
 bool Gateway::deleteCredentialByName(const uint32_t userId, const std::string& name) {
     return Transactions::exec("S3Gateway::deleteCredentialByName", [&](pqxx::work& txn) {
         return txn.exec(
-            "DELETE FROM s3_gateway_credentials WHERE user_id = $1 AND name = $2",
+            "DELETE FROM s3_gateway_credentials "
+            "WHERE (principal_user_id = $1 OR (principal_user_id IS NULL AND user_id = $1)) AND name = $2",
             pqxx::params{userId, name}).affected_rows() > 0;
     });
 }
@@ -181,6 +237,86 @@ bool Gateway::deleteCredentialByName(const uint32_t userId, const std::string& n
 void Gateway::updateCredentialLastUsed(const uint32_t id) {
     Transactions::exec("S3Gateway::updateCredentialLastUsed", [&](pqxx::work& txn) {
         txn.exec("UPDATE s3_gateway_credentials SET last_used_at = NOW() WHERE id = $1", pqxx::params{id});
+    });
+}
+
+std::vector<CredentialVaultScope> Gateway::listCredentialScopes(const uint32_t credentialId) {
+    return Transactions::exec("S3Gateway::listCredentialScopes", [&](pqxx::work& txn) {
+        const auto res = txn.exec(
+            "SELECT * FROM s3_gateway_credential_vault_scope WHERE credential_id = $1 ORDER BY vault_id",
+            pqxx::params{credentialId});
+        std::vector<CredentialVaultScope> out;
+        out.reserve(res.size());
+        for (const auto& row : res) out.push_back(scopeFromRow(row));
+        return out;
+    });
+}
+
+void Gateway::replaceCredentialScopes(
+    const uint32_t credentialId,
+    const std::vector<CredentialVaultScope>& scopes) {
+    Transactions::exec("S3Gateway::replaceCredentialScopes", [&](pqxx::work& txn) {
+        txn.exec(
+            "DELETE FROM s3_gateway_credential_vault_scope WHERE credential_id = $1",
+            pqxx::params{credentialId});
+        for (const auto& scope : scopes) {
+            txn.exec(
+                R"SQL(
+                    INSERT INTO s3_gateway_credential_vault_scope
+                        (credential_id, vault_id, can_list, can_read, can_write, can_delete, can_admin)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    ON CONFLICT (credential_id, vault_id) DO UPDATE SET
+                        can_list = EXCLUDED.can_list,
+                        can_read = EXCLUDED.can_read,
+                        can_write = EXCLUDED.can_write,
+                        can_delete = EXCLUDED.can_delete,
+                        can_admin = EXCLUDED.can_admin
+                )SQL",
+                pqxx::params{
+                    credentialId,
+                    scope.vault_id,
+                    scope.can_list,
+                    scope.can_read,
+                    scope.can_write,
+                    scope.can_delete,
+                    scope.can_admin
+                });
+        }
+    });
+}
+
+std::optional<CredentialVaultScope> Gateway::getCredentialScopeForVault(
+    const uint32_t credentialId,
+    const uint32_t vaultId) {
+    return Transactions::exec("S3Gateway::getCredentialScopeForVault", [&](pqxx::work& txn) -> std::optional<CredentialVaultScope> {
+        const auto res = txn.exec(
+            "SELECT * FROM s3_gateway_credential_vault_scope WHERE credential_id = $1 AND vault_id = $2",
+            pqxx::params{credentialId, vaultId});
+        if (res.empty()) return std::nullopt;
+        return scopeFromRow(res.one_row());
+    });
+}
+
+void Gateway::updateCredentialScopeMode(
+    const uint32_t credentialId,
+    const std::string& scopeMode,
+    const uint32_t principalUserId,
+    const std::optional<uint32_t> createdBy,
+    const std::optional<std::string> description,
+    const std::optional<std::time_t> expiresAt) {
+    Transactions::exec("S3Gateway::updateCredentialScopeMode", [&](pqxx::work& txn) {
+        txn.exec(
+            R"SQL(
+                UPDATE s3_gateway_credentials
+                SET scope_mode = $2,
+                    principal_user_id = $3,
+                    user_id = $3,
+                    created_by = $4,
+                    description = $5,
+                    expires_at = CASE WHEN $6::bigint IS NULL THEN NULL ELSE TO_TIMESTAMP($6::double precision) END
+                WHERE id = $1
+            )SQL",
+            pqxx::params{credentialId, scopeMode, principalUserId, createdBy, description, expiresAt});
     });
 }
 

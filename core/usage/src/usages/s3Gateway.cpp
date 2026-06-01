@@ -43,9 +43,26 @@ std::shared_ptr<CommandUsage> creds(const std::weak_ptr<CommandUsage>& parent) {
     auto create = build(cmd->weak_from_this());
     create->aliases = {"create", "new", "add"};
     create->positionals = {Positional::Alias("name", "Credential name", "name")};
-    create->optional = {Optional::ManyToOne("user", "User name or ID to own the credential", {"user", "u"}, "user")};
-    create->optional_flags = {jsonFlag};
-    create->examples = {{"vh s3-gateway creds create laptop --json", "Create an S3 access key and print the secret once."}};
+    create->optional = {
+        Optional::ManyToOne("user", "Principal user name or ID", {"user", "u"}, "user"),
+        Optional::ManyToOne("scope", "Scope: user-access, global, or vault-allowlist", {"scope"}, "scope"),
+        Optional::ManyToOne("vault", "Vault ID or name allowed by the credential; repeat for multiple vaults", {"vault"}, "vault"),
+        Optional::ManyToOne("expires", "Credential lifetime, such as 30d or 12h", {"expires"}, "duration"),
+        Optional::ManyToOne("description", "Credential description", {"description"}, "text")
+    };
+    create->optional_flags = {
+        Flag::WithAliases("list", "Allow List operations for scoped vaults", {"list"}),
+        Flag::WithAliases("read", "Allow Read operations for scoped vaults", {"read"}),
+        Flag::WithAliases("write", "Allow Write operations for scoped vaults", {"write"}),
+        Flag::WithAliases("delete", "Allow Delete operations for scoped vaults", {"delete"}),
+        Flag::WithAliases("admin", "Allow bucket admin operations for scoped vaults", {"admin"}),
+        jsonFlag
+    };
+    create->examples = {
+        {"vh s3-gateway creds create laptop --json", "Create a user-access key and print the secret once."},
+        {"vh s3-gateway creds create backup --scope vault-allowlist --vault photos --read --write --json",
+         "Create a key restricted to one vault."}
+    };
 
     auto list = build(cmd->weak_from_this());
     list->aliases = {"list", "ls"};
@@ -59,7 +76,48 @@ std::shared_ptr<CommandUsage> creds(const std::weak_ptr<CommandUsage>& parent) {
     revoke->optional = {Optional::ManyToOne("user", "User name or ID when revoking by name", {"user", "u"}, "user")};
     revoke->examples = {{"vh s3-gateway creds revoke VH...", "Revoke a gateway credential."}};
 
-    cmd->subcommands = {create, list, revoke};
+    auto scope = build(cmd->weak_from_this());
+    scope->aliases = {"scope"};
+    scope->positionals = {Positional::Alias("access_key_or_name", "Access key ID or credential name", "access-key-or-name")};
+    scope->description = "View or change S3 gateway credential vault scope.";
+
+    auto scopeShow = build(scope->weak_from_this());
+    scopeShow->aliases = {"show"};
+    scopeShow->optional_flags = {jsonFlag};
+    scopeShow->examples = {{"vh s3-gateway creds scope backup show", "Show scope rows for a credential."}};
+
+    auto scopeSet = build(scope->weak_from_this());
+    scopeSet->aliases = {"set"};
+    scopeSet->optional = {
+        Optional::ManyToOne("scope", "Scope: user-access, global, or vault-allowlist", {"scope"}, "scope"),
+        Optional::ManyToOne("user", "Retarget principal user name or ID", {"user", "u"}, "user"),
+        Optional::ManyToOne("expires", "Credential lifetime, such as 30d or 12h", {"expires"}, "duration"),
+        Optional::ManyToOne("description", "Credential description", {"description"}, "text")
+    };
+    scopeSet->examples = {{"vh s3-gateway creds scope backup set --scope vault-allowlist", "Change credential scope mode."}};
+
+    auto allowVault = build(scope->weak_from_this());
+    allowVault->aliases = {"allow-vault"};
+    allowVault->positionals = {Positional::Alias("vault", "Vault ID or name to allow", "vault")};
+    allowVault->optional_flags = {
+        Flag::WithAliases("list", "Allow List operations", {"list"}),
+        Flag::WithAliases("read", "Allow Read operations", {"read"}),
+        Flag::WithAliases("write", "Allow Write operations", {"write"}),
+        Flag::WithAliases("delete", "Allow Delete operations", {"delete"}),
+        Flag::WithAliases("admin", "Allow bucket admin operations", {"admin"}),
+    };
+    allowVault->examples = {
+        {"vh s3-gateway creds scope backup allow-vault photos --read --write",
+         "Allow read/write access to one vault, still subject to RBAC."}
+    };
+
+    auto revokeVault = build(scope->weak_from_this());
+    revokeVault->aliases = {"revoke-vault"};
+    revokeVault->positionals = {Positional::Alias("vault", "Vault ID or name to revoke", "vault")};
+    revokeVault->examples = {{"vh s3-gateway creds scope backup revoke-vault photos", "Remove one vault from the allowlist."}};
+
+    scope->subcommands = {scopeShow, scopeSet, allowVault, revokeVault};
+    cmd->subcommands = {create, list, revoke, scope};
     return cmd;
 }
 
@@ -117,6 +175,81 @@ std::shared_ptr<CommandUsage> bucket(const std::weak_ptr<CommandUsage>& parent) 
     cmd->subcommands = {list, bind, unbind, createLocal, createRemoteCache};
     return cmd;
 }
+
+std::shared_ptr<CommandUsage> budget(const std::weak_ptr<CommandUsage>& parent) {
+    auto cmd = build(parent);
+    cmd->aliases = {"budget", "budgets"};
+    cmd->description = "Manage S3 gateway per-key and per-key/vault price budgets.";
+
+    auto setKey = build(cmd->weak_from_this());
+    setKey->aliases = {"set-key"};
+    setKey->positionals = {Positional::Alias("access_key_or_name", "Access key ID or credential name", "access-key-or-name")};
+    setKey->required = {Option::Single("monthly", "Monthly cost cap", "monthly", "amount")};
+    setKey->optional = {
+        Optional::ManyToOne("mode", "Budget mode: report, warn, or enforce", {"mode"}, "mode"),
+        Optional::ManyToOne("currency", "Currency code", {"currency"}, "currency")
+    };
+    setKey->examples = {{"vh s3-gateway budget set-key backup --monthly 5 --mode enforce", "Set an admin-managed monthly cap for one key."}};
+
+    auto setKeyVault = build(cmd->weak_from_this());
+    setKeyVault->aliases = {"set-key-vault"};
+    setKeyVault->positionals = {Positional::Alias("access_key_or_name", "Access key ID or credential name", "access-key-or-name")};
+    setKeyVault->required = {
+        Option::Single("vault", "Vault ID or name", "vault", "vault"),
+        Option::Single("monthly", "Monthly cost cap", "monthly", "amount")
+    };
+    setKeyVault->optional = {
+        Optional::ManyToOne("mode", "Budget mode: report, warn, or enforce", {"mode"}, "mode"),
+        Optional::ManyToOne("currency", "Currency code", {"currency"}, "currency")
+    };
+    setKeyVault->examples = {
+        {"vh s3-gateway budget set-key-vault backup --vault photos --monthly 2 --mode enforce",
+         "Set a monthly cap for one key/vault pair you can manage."}
+    };
+
+    auto list = build(cmd->weak_from_this());
+    list->aliases = {"list", "ls"};
+    list->optional = {
+        Optional::ManyToOne("key", "Access key ID or credential name", {"key"}, "access-key-or-name"),
+        Optional::ManyToOne("vault", "Vault ID or name", {"vault"}, "vault")
+    };
+    list->optional_flags = {jsonFlag};
+    list->examples = {{"vh s3-gateway budget list --key backup", "List gateway budget policies for one key."}};
+
+    auto disableKey = build(cmd->weak_from_this());
+    disableKey->aliases = {"disable-key"};
+    disableKey->positionals = {Positional::Alias("access_key_or_name", "Access key ID or credential name", "access-key-or-name")};
+    disableKey->examples = {{"vh s3-gateway budget disable-key backup", "Disable the admin-managed per-key budget policy."}};
+
+    auto disableKeyVault = build(cmd->weak_from_this());
+    disableKeyVault->aliases = {"disable-key-vault"};
+    disableKeyVault->positionals = {Positional::Alias("access_key_or_name", "Access key ID or credential name", "access-key-or-name")};
+    disableKeyVault->required = {Option::Single("vault", "Vault ID or name", "vault", "vault")};
+    disableKeyVault->examples = {{"vh s3-gateway budget disable-key-vault backup --vault photos", "Disable the key/vault budget policy."}};
+
+    auto ledger = build(cmd->weak_from_this());
+    ledger->aliases = {"ledger"};
+    ledger->optional = {
+        Optional::ManyToOne("key", "Access key ID or credential name", {"key"}, "access-key-or-name"),
+        Optional::ManyToOne("vault", "Vault ID or name", {"vault"}, "vault"),
+        Optional::ManyToOne("limit", "Maximum rows", {"limit"}, "N")
+    };
+    ledger->optional_flags = {jsonFlag};
+    ledger->examples = {{"vh s3-gateway budget ledger --key backup --limit 25", "Show recent gateway budget ledger rows."}};
+
+    auto status = build(cmd->weak_from_this());
+    status->aliases = {"status"};
+    status->optional = {
+        Optional::ManyToOne("key", "Access key ID or credential name", {"key"}, "access-key-or-name"),
+        Optional::ManyToOne("vault", "Vault ID or name", {"vault"}, "vault"),
+        Optional::ManyToOne("limit", "Maximum ledger rows", {"limit"}, "N")
+    };
+    status->optional_flags = {jsonFlag};
+    status->examples = {{"vh s3-gateway budget status --key backup", "Show policy, usage, and ledger status for one key."}};
+
+    cmd->subcommands = {setKey, setKeyVault, list, disableKey, disableKeyVault, ledger, status};
+    return cmd;
+}
 } // namespace
 
 std::shared_ptr<CommandBook> get(const std::weak_ptr<CommandUsage>& parent) {
@@ -126,11 +259,12 @@ std::shared_ptr<CommandBook> get(const std::weak_ptr<CommandUsage>& parent) {
     root->aliases = {"s3-gateway", "s3gw"};
     root->description = "Manage the Vaulthalla S3-compatible gateway.";
     root->subcommands = {status(root->weak_from_this()), enable(root->weak_from_this()), disable(root->weak_from_this()),
-                         creds(root->weak_from_this()), bucket(root->weak_from_this())};
+                         creds(root->weak_from_this()), bucket(root->weak_from_this()), budget(root->weak_from_this())};
     root->examples = {
         {"vh s3-gateway status", "Show gateway runtime status."},
         {"vh s3-gateway creds create laptop", "Create inbound S3 credentials."},
-        {"vh s3-gateway bucket bind photos --vault 12", "Expose an existing vault as a bucket."}
+        {"vh s3-gateway bucket bind photos --vault 12", "Expose an existing vault as a bucket."},
+        {"vh s3-gateway budget set-key backup --monthly 5 --mode enforce", "Enforce a monthly gateway budget."}
     };
     book->root = root;
     return book;

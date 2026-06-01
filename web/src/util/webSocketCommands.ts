@@ -68,6 +68,17 @@ import { PriceBudgetLedgerEntry } from '@/models/pricing/priceBudgetLedger'
 import { PriceNotification } from '@/models/pricing/priceNotification'
 import { PriceOverride, PriceOverrideRequestPayload } from '@/models/pricing/priceOverride'
 import { PricingBudgetStats } from '@/models/stats/pricingBudgetStats'
+import {
+  S3GatewayBucketBinding,
+  S3GatewayBucketBindPayload,
+  S3GatewayCreateLocalBucketPayload,
+  S3GatewayCreateRemoteCachePayload,
+  S3GatewayCredential,
+  S3GatewayCredentialCreatePayload,
+  S3GatewayCredentialScopeUpdatePayload,
+  S3GatewayCredentialVaultScope,
+  S3GatewayStatus,
+} from '@/models/s3Gateway'
 
 export interface WebSocketCommandMap {
   // Auth
@@ -195,24 +206,24 @@ export interface WebSocketCommandMap {
 
   // S3 price budget command center
   'pricing.budget.policy.list': {
-    payload: { vault_id?: number | null; include_inactive?: boolean } | null
+    payload: { vault_id?: number | null; gateway_credential_id?: number | null; include_inactive?: boolean } | null
     response: { policies: PriceBudgetPolicy[] }
   }
 
   'pricing.budget.policy.upsert': { payload: PriceBudgetPolicyPayload; response: { policy: PriceBudgetPolicy } }
 
   'pricing.budget.policy.disable': {
-    payload: { scope: PriceBudgetScope; provider_key?: string | null; vault_id?: number | null }
+    payload: { scope: PriceBudgetScope; provider_key?: string | null; vault_id?: number | null; gateway_credential_id?: number | null }
     response: { disabled: boolean }
   }
 
   'pricing.budget.ledger.list': {
-    payload: { vault_id?: number | null; limit?: number } | null
+    payload: { vault_id?: number | null; gateway_credential_id?: number | null; limit?: number } | null
     response: { ledger: PriceBudgetLedgerEntry[] }
   }
 
   'pricing.budget.status': {
-    payload: { vault_id?: number | null; limit?: number; include_inactive?: boolean } | null
+    payload: { vault_id?: number | null; gateway_credential_id?: number | null; limit?: number; include_inactive?: boolean } | null
     response: PriceBudgetStatus
   }
 
@@ -237,6 +248,70 @@ export interface WebSocketCommandMap {
   'pricing.notifications.ack': {
     payload: { id: number; vault_id?: number | null }
     response: { notification: PriceNotification }
+  }
+
+  // S3 gateway management
+
+  's3.gateway.status': { payload: null; response: { status: S3GatewayStatus } }
+
+  's3.gateway.credentials.create': {
+    payload: S3GatewayCredentialCreatePayload
+    response: { credential: S3GatewayCredential; secret_access_key: string }
+  }
+
+  's3.gateway.credentials.list': {
+    payload: { include_disabled?: boolean } | null
+    response: { credentials: S3GatewayCredential[] }
+  }
+
+  's3.gateway.credentials.revoke': {
+    payload: { access_key?: string; name?: string }
+    response: { revoked: boolean }
+  }
+
+  's3.gateway.credentials.scope.update': {
+    payload: S3GatewayCredentialScopeUpdatePayload
+    response: { credential: S3GatewayCredential | null }
+  }
+
+  's3.gateway.credentials.scope.list': {
+    payload: { access_key?: string; name?: string }
+    response: { credential: S3GatewayCredential; scopes: S3GatewayCredentialVaultScope[] }
+  }
+
+  's3.gateway.buckets.list': { payload: null; response: { buckets: S3GatewayBucketBinding[] } }
+
+  's3.gateway.buckets.bind': { payload: S3GatewayBucketBindPayload; response: { bound: boolean } }
+
+  's3.gateway.buckets.unbind': { payload: { bucket_name: string }; response: { unbound: boolean } }
+
+  's3.gateway.buckets.createLocal': {
+    payload: S3GatewayCreateLocalBucketPayload
+    response: { bucket: S3GatewayBucketBinding }
+  }
+
+  's3.gateway.buckets.createRemoteCache': {
+    payload: S3GatewayCreateRemoteCachePayload
+    response: { bucket: S3GatewayBucketBinding }
+  }
+
+  's3.gateway.budget.policy.list': {
+    payload: { gateway_credential_id?: number | null; vault_id?: number | null; include_inactive?: boolean } | null
+    response: { policies: PriceBudgetPolicy[] }
+  }
+
+  's3.gateway.budget.policy.upsert': { payload: PriceBudgetPolicyPayload; response: { policy: PriceBudgetPolicy } }
+
+  's3.gateway.budget.policy.disable': { payload: PriceBudgetPolicyPayload; response: { disabled: boolean } }
+
+  's3.gateway.budget.ledger.list': {
+    payload: { gateway_credential_id?: number | null; vault_id?: number | null; limit?: number } | null
+    response: { ledger: PriceBudgetLedgerEntry[] }
+  }
+
+  's3.gateway.budget.status': {
+    payload: { gateway_credential_id?: number | null; vault_id?: number | null; limit?: number } | null
+    response: PriceBudgetStatus
   }
 
   // Dashboard preferences

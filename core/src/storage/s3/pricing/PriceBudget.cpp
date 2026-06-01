@@ -96,6 +96,7 @@ PriceBudgetPolicy policyFromRow(const pqxx::row& row) {
     policy.scope = priceBudgetScopeFromString(row["scope"].as<std::string>());
     policy.provider_key = optionalString(row, "provider_key");
     policy.vault_id = optionalUInt(row, "vault_id");
+    policy.gateway_credential_id = optionalUInt(row, "gateway_credential_id");
     policy.mode = priceBudgetModeFromString(row["mode"].as<std::string>());
     policy.currency = row["currency"].as<std::string>();
     policy.max_run_cost = optionalString(row, "max_run_cost");
@@ -114,6 +115,11 @@ PriceBudgetLedgerEntry ledgerFromRow(const pqxx::row& row) {
     entry.policy_id = row["policy_id"].as<std::uint32_t>();
     entry.run_uuid = row["run_uuid"].as<std::string>();
     entry.vault_id = row["vault_id"].as<std::uint32_t>();
+    entry.gateway_credential_id = optionalUInt(row, "gateway_credential_id");
+    entry.request_uuid = optionalString(row, "request_uuid");
+    entry.operation = optionalString(row, "operation");
+    entry.object_key = optionalString(row, "object_key");
+    entry.estimated_cost = optionalString(row, "estimated_cost");
     entry.provider_key = row["provider_key"].as<std::string>();
     entry.currency = row["currency"].as<std::string>();
     entry.window = priceBudgetWindowFromString(row["window_type"].as<std::string>());
@@ -270,14 +276,24 @@ std::string policyWhereClause(
     const std::uint32_t vaultId,
     const std::string& providerKey,
     const bool providerSupported,
+    const std::optional<std::uint32_t>& gatewayCredentialId,
     const bool includeInactive) {
+    (void)providerSupported;
     std::string where = includeInactive ? "TRUE" : "is_active = TRUE AND mode <> 'off'";
     where += " AND (";
-    if (providerSupported)
-        where += "scope = 'global' OR ";
+    where += "scope = 'global' OR ";
     where += "(scope = 'provider' AND provider_key = " + txn.quote(providerKey) + ") OR ";
     where += "(scope = 'vault' AND vault_id = " + std::to_string(vaultId) +
         " AND (provider_key IS NULL OR provider_key = " + txn.quote(providerKey) + "))";
+    if (gatewayCredentialId) {
+        where += " OR (scope = 'gateway_credential' AND gateway_credential_id = " +
+            std::to_string(*gatewayCredentialId) +
+            " AND (provider_key IS NULL OR provider_key = " + txn.quote(providerKey) + "))";
+        where += " OR (scope = 'gateway_credential_vault' AND gateway_credential_id = " +
+            std::to_string(*gatewayCredentialId) +
+            " AND vault_id = " + std::to_string(vaultId) +
+            " AND (provider_key IS NULL OR provider_key = " + txn.quote(providerKey) + "))";
+    }
     where += ")";
     return where;
 }
@@ -286,7 +302,8 @@ std::string policyIdentityWhere(
     pqxx::work& txn,
     const PriceBudgetScope scope,
     const std::optional<std::string>& providerKey,
-    const std::optional<std::uint32_t>& vaultId) {
+    const std::optional<std::uint32_t>& vaultId,
+    const std::optional<std::uint32_t>& gatewayCredentialId) {
     switch (scope) {
     case PriceBudgetScope::Global:
         return "scope = 'global'";
@@ -299,6 +316,20 @@ std::string policyIdentityWhere(
             " AND " + (providerKey
                 ? "provider_key = " + txn.quote(*providerKey)
                 : std::string{"provider_key IS NULL"});
+    case PriceBudgetScope::GatewayCredential:
+        if (!gatewayCredentialId) throw std::invalid_argument("gateway credential budget requires gateway credential id");
+        return "scope = 'gateway_credential' AND gateway_credential_id = " + std::to_string(*gatewayCredentialId) +
+            " AND " + (providerKey
+                ? "provider_key = " + txn.quote(*providerKey)
+                : std::string{"provider_key IS NULL"});
+    case PriceBudgetScope::GatewayCredentialVault:
+        if (!gatewayCredentialId) throw std::invalid_argument("gateway credential vault budget requires gateway credential id");
+        if (!vaultId) throw std::invalid_argument("gateway credential vault budget requires vault id");
+        return "scope = 'gateway_credential_vault' AND gateway_credential_id = " + std::to_string(*gatewayCredentialId) +
+            " AND vault_id = " + std::to_string(*vaultId) +
+            " AND " + (providerKey
+                ? "provider_key = " + txn.quote(*providerKey)
+                : std::string{"provider_key IS NULL"});
     }
     return "FALSE";
 }
@@ -306,6 +337,7 @@ std::string policyIdentityWhere(
 std::string scopeLabel(const PriceBudgetPolicy& policy) {
     auto label = toString(policy.scope);
     if (policy.provider_key) label += ":" + *policy.provider_key;
+    if (policy.gateway_credential_id) label += ":credential:" + std::to_string(*policy.gateway_credential_id);
     if (policy.vault_id) label += ":" + std::to_string(*policy.vault_id);
     return label;
 }
@@ -342,12 +374,18 @@ void validatePolicyForWrite(const PriceBudgetPolicy& policy) {
             throw std::invalid_argument("invalid budget decimal: " + *value);
     }
 
-    if (policy.scope == PriceBudgetScope::Global && (policy.provider_key || policy.vault_id))
-        throw std::invalid_argument("global price budget cannot include provider_key or vault_id");
-    if (policy.scope == PriceBudgetScope::Provider && (!policy.provider_key || policy.vault_id))
-        throw std::invalid_argument("provider price budget requires provider_key and no vault_id");
-    if (policy.scope == PriceBudgetScope::Vault && !policy.vault_id)
+    if (policy.scope == PriceBudgetScope::Global && (policy.provider_key || policy.vault_id || policy.gateway_credential_id))
+        throw std::invalid_argument("global price budget cannot include provider_key, vault_id, or gateway_credential_id");
+    if (policy.scope == PriceBudgetScope::Provider && (!policy.provider_key || policy.vault_id || policy.gateway_credential_id))
+        throw std::invalid_argument("provider price budget requires provider_key and no vault_id or gateway_credential_id");
+    if (policy.scope == PriceBudgetScope::Vault && (!policy.vault_id || policy.gateway_credential_id))
         throw std::invalid_argument("vault price budget requires vault_id");
+    if (policy.scope == PriceBudgetScope::GatewayCredential &&
+        (!policy.gateway_credential_id || policy.vault_id || !policy.max_monthly_cost))
+        throw std::invalid_argument("gateway credential price budget requires gateway_credential_id, monthly cost, and no vault_id");
+    if (policy.scope == PriceBudgetScope::GatewayCredentialVault &&
+        (!policy.gateway_credential_id || !policy.vault_id || !policy.max_monthly_cost))
+        throw std::invalid_argument("gateway credential vault price budget requires gateway_credential_id, vault_id, and monthly cost");
 }
 
 std::vector<std::uint32_t> reservationIds(const std::vector<PriceBudgetReservation>& reservations) {
@@ -417,22 +455,47 @@ std::optional<VaultBudgetContext> vaultBudgetContext(pqxx::work& txn, const std:
     return context;
 }
 
-std::string statsPolicyWhereClause(pqxx::work& txn, const std::optional<std::uint32_t>& vaultId) {
-    if (!vaultId) return "is_active = TRUE AND mode <> 'off'";
+std::string statsPolicyWhereClause(
+    pqxx::work& txn,
+    const std::optional<std::uint32_t>& vaultId,
+    const std::optional<std::uint32_t>& gatewayCredentialId) {
+    if (!vaultId) {
+        auto where = std::string{"is_active = TRUE AND mode <> 'off'"};
+        if (gatewayCredentialId) {
+            where += " AND ("
+                "scope = 'gateway_credential' OR "
+                "scope = 'gateway_credential_vault') "
+                "AND gateway_credential_id = " + std::to_string(*gatewayCredentialId);
+        }
+        return where;
+    }
 
     const auto context = vaultBudgetContext(txn, *vaultId);
     if (!context || !context->is_s3) return "FALSE";
 
-    return policyWhereClause(
+    auto where = policyWhereClause(
         txn,
         *vaultId,
         context->provider_key,
         context->provider_supported,
+        gatewayCredentialId,
         false);
+    if (!gatewayCredentialId) {
+        where = "(" + where + ") OR (is_active = TRUE AND mode <> 'off' "
+            "AND scope = 'gateway_credential_vault' "
+            "AND vault_id = " + std::to_string(*vaultId) + " "
+            "AND (provider_key IS NULL OR provider_key = " + txn.quote(context->provider_key) + "))";
+    }
+    return where;
 }
 
-std::string scopedLedgerVaultFilter(const std::optional<std::uint32_t>& vaultId) {
-    return vaultId ? "AND vault_id = " + std::to_string(*vaultId) + " " : std::string{};
+std::string scopedLedgerFilter(
+    const std::optional<std::uint32_t>& vaultId,
+    const std::optional<std::uint32_t>& gatewayCredentialId) {
+    std::string filter;
+    if (vaultId) filter += "AND vault_id = " + std::to_string(*vaultId) + " ";
+    if (gatewayCredentialId) filter += "AND gateway_credential_id = " + std::to_string(*gatewayCredentialId) + " ";
+    return filter;
 }
 
 std::string notificationTypeForPricingEvaluationIssue(const std::string& reason) {
@@ -537,6 +600,10 @@ nlohmann::json preflightMetadata(const PriceBudgetPreflightRequest& request, con
     nlohmann::json metadata = {
         {"provider_key", request.provider_key},
         {"provider_supported", request.provider_supported},
+        {"gateway_credential_id", request.gateway_credential_id ? nlohmann::json(*request.gateway_credential_id) : nlohmann::json(nullptr)},
+        {"request_uuid", request.request_uuid},
+        {"operation", request.operation},
+        {"object_key", request.object_key ? nlohmann::json(*request.object_key) : nlohmann::json(nullptr)},
         {"estimated_cost", request.estimate.estimated_cost},
         {"currency", request.estimate.currency},
         {"catalog_verified", request.estimate.catalog_verified},
@@ -594,6 +661,10 @@ std::string toString(const PriceBudgetScope scope) {
         return "provider";
     case PriceBudgetScope::Vault:
         return "vault";
+    case PriceBudgetScope::GatewayCredential:
+        return "gateway_credential";
+    case PriceBudgetScope::GatewayCredentialVault:
+        return "gateway_credential_vault";
     }
     return "vault";
 }
@@ -624,6 +695,10 @@ PriceBudgetScope priceBudgetScopeFromString(const std::string_view value) {
     if (normalized == "global") return PriceBudgetScope::Global;
     if (normalized == "provider") return PriceBudgetScope::Provider;
     if (normalized == "vault") return PriceBudgetScope::Vault;
+    if (normalized == "gateway_credential" || normalized == "gateway-credential")
+        return PriceBudgetScope::GatewayCredential;
+    if (normalized == "gateway_credential_vault" || normalized == "gateway-credential-vault")
+        return PriceBudgetScope::GatewayCredentialVault;
     throw std::invalid_argument("unknown price budget scope: " + normalized);
 }
 
@@ -728,7 +803,13 @@ PriceBudgetDecision PriceBudgetService::preflight(const PriceBudgetPreflightRequ
 
         const auto policySql =
             "SELECT * FROM s3_price_budget_policy WHERE " +
-            policyWhereClause(txn, request.vault_id, request.provider_key, request.provider_supported, false) +
+            policyWhereClause(
+                txn,
+                request.vault_id,
+                request.provider_key,
+                request.provider_supported,
+                request.gateway_credential_id,
+                false) +
             " ORDER BY id FOR UPDATE";
         const auto policies = txn.exec(policySql);
         for (const auto& row : policies) decision.policies.push_back(policyFromRow(row));
@@ -836,16 +917,26 @@ PriceBudgetDecision PriceBudgetService::preflight(const PriceBudgetPreflightRequ
             for (const auto window : configuredWindows(policy)) {
                 const auto insertSql =
                     "INSERT INTO s3_price_budget_ledger "
-                    "(policy_id, run_uuid, vault_id, provider_key, currency, window_type, window_start, window_end, reserved_cost, status) "
+                    "(policy_id, run_uuid, vault_id, gateway_credential_id, request_uuid, operation, object_key, "
+                    "provider_key, currency, window_type, window_start, window_end, reserved_cost, estimated_cost, status) "
                     "VALUES (" +
                     std::to_string(policy.id) + ", " +
                     txn.quote(request.run_uuid) + ", " +
                     std::to_string(request.vault_id) + ", " +
+                    optionalUintSql(request.gateway_credential_id) + ", " +
+                    optionalSql(txn, request.request_uuid.empty()
+                        ? std::optional<std::string>{}
+                        : std::make_optional(request.request_uuid)) + ", " +
+                    optionalSql(txn, request.operation.empty()
+                        ? std::optional<std::string>{}
+                        : std::make_optional(request.operation)) + ", " +
+                    optionalSql(txn, request.object_key) + ", " +
                     txn.quote(request.provider_key) + ", " +
                     txn.quote(policy.currency) + ", " +
                     txn.quote(toString(window)) + ", " +
                     windowStartExpr(window) + ", " +
                     windowEndExpr(window) + ", " +
+                    txn.quote(request.estimate.estimated_cost) + "::numeric, " +
                     txn.quote(request.estimate.estimated_cost) + "::numeric, 'reserved') "
                     "RETURNING id";
                 const auto inserted = txn.exec(insertSql);
@@ -1030,18 +1121,24 @@ PriceBudgetPolicy PriceBudgetService::upsertPolicy(PriceBudgetPolicy policy) con
     policy.currency = normalizePriceBudgetCurrency(policy.currency);
 
     auto saved = db::Transactions::exec("PriceBudgetService::upsertPolicy", [&](pqxx::work& txn) {
-        const auto identity = policyIdentityWhere(txn, policy.scope, policy.provider_key, policy.vault_id);
+        const auto identity = policyIdentityWhere(
+            txn,
+            policy.scope,
+            policy.provider_key,
+            policy.vault_id,
+            policy.gateway_credential_id);
         const auto existing = txn.exec("SELECT id FROM s3_price_budget_policy WHERE " + identity + " LIMIT 1");
 
         std::string sql;
         if (existing.empty()) {
             sql =
                 "INSERT INTO s3_price_budget_policy "
-                "(scope, provider_key, vault_id, mode, currency, max_run_cost, max_daily_cost, max_monthly_cost, "
+                "(scope, provider_key, vault_id, gateway_credential_id, mode, currency, max_run_cost, max_daily_cost, max_monthly_cost, "
                 "require_verified_catalog, allow_stale_catalog, max_catalog_age_seconds, is_active) VALUES (" +
                 txn.quote(toString(policy.scope)) + ", " +
                 optionalSql(txn, policy.provider_key) + ", " +
                 optionalUintSql(policy.vault_id) + ", " +
+                optionalUintSql(policy.gateway_credential_id) + ", " +
                 txn.quote(toString(policy.mode)) + ", " +
                 txn.quote(policy.currency) + ", " +
                 optionalNumericSql(txn, policy.max_run_cost) + ", " +
@@ -1079,7 +1176,11 @@ PriceBudgetPolicy PriceBudgetService::upsertPolicy(PriceBudgetPolicy policy) con
     notification.vault_id = saved.vault_id;
     notification.provider_key = saved.provider_key;
     notification.policy_id = saved.id;
-    notification.metadata = {{"mode", toString(saved.mode)}, {"currency", saved.currency}};
+    notification.metadata = {
+        {"mode", toString(saved.mode)},
+        {"currency", saved.currency},
+        {"gateway_credential_id", saved.gateway_credential_id ? nlohmann::json(*saved.gateway_credential_id) : nlohmann::json(nullptr)}
+    };
     (void)createNotification(std::move(notification));
 
     return saved;
@@ -1088,9 +1189,10 @@ PriceBudgetPolicy PriceBudgetService::upsertPolicy(PriceBudgetPolicy policy) con
 bool PriceBudgetService::disablePolicy(
     const PriceBudgetScope scope,
     const std::optional<std::string>& providerKey,
-    const std::optional<std::uint32_t>& vaultId) const {
+    const std::optional<std::uint32_t>& vaultId,
+    const std::optional<std::uint32_t>& gatewayCredentialId) const {
     auto disabledId = db::Transactions::exec("PriceBudgetService::disablePolicy", [&](pqxx::work& txn) -> std::optional<std::uint32_t> {
-        const auto identity = policyIdentityWhere(txn, scope, providerKey, vaultId);
+        const auto identity = policyIdentityWhere(txn, scope, providerKey, vaultId, gatewayCredentialId);
         const auto result = txn.exec(
             "UPDATE s3_price_budget_policy "
             "SET is_active = FALSE, mode = 'off' "
@@ -1108,7 +1210,10 @@ bool PriceBudgetService::disablePolicy(
         notification.vault_id = vaultId;
         notification.provider_key = providerKey;
         notification.policy_id = *disabledId;
-        notification.metadata = {{"mode", "off"}};
+        notification.metadata = {
+            {"mode", "off"},
+            {"gateway_credential_id", gatewayCredentialId ? nlohmann::json(*gatewayCredentialId) : nlohmann::json(nullptr)}
+        };
         (void)createNotification(std::move(notification));
     }
     return disabledId.has_value();
@@ -1116,11 +1221,22 @@ bool PriceBudgetService::disablePolicy(
 
 std::vector<PriceBudgetLedgerEntry> PriceBudgetService::listLedger(
     const std::uint32_t limit,
-    const std::optional<std::uint32_t>& vaultId) const {
+    const std::optional<std::uint32_t>& vaultId,
+    const std::optional<std::uint32_t>& gatewayCredentialId) const {
     return db::Transactions::exec("PriceBudgetService::listLedger", [&](pqxx::work& txn) {
         const auto safeLimit = std::max<std::uint32_t>(1, std::min<std::uint32_t>(limit, 1000));
         auto sql = std::string{"SELECT * FROM s3_price_budget_ledger "};
-        if (vaultId) sql += "WHERE vault_id = " + std::to_string(*vaultId) + " ";
+        std::vector<std::string> filters;
+        if (vaultId) filters.push_back("vault_id = " + std::to_string(*vaultId));
+        if (gatewayCredentialId) filters.push_back("gateway_credential_id = " + std::to_string(*gatewayCredentialId));
+        if (!filters.empty()) {
+            sql += "WHERE ";
+            for (std::size_t i = 0; i < filters.size(); ++i) {
+                if (i > 0) sql += " AND ";
+                sql += filters[i];
+            }
+            sql += " ";
+        }
         sql += "ORDER BY created_at DESC, id DESC LIMIT " + std::to_string(safeLimit);
         const auto result = txn.exec(sql);
         std::vector<PriceBudgetLedgerEntry> entries;
@@ -1325,13 +1441,15 @@ std::vector<PriceBudgetOverride> PriceBudgetService::listOverrides(
     });
 }
 
-std::vector<PriceBudgetTrendStats> PriceBudgetService::trendStats(const std::optional<std::uint32_t>& vaultId) const {
+std::vector<PriceBudgetTrendStats> PriceBudgetService::trendStats(
+    const std::optional<std::uint32_t>& vaultId,
+    const std::optional<std::uint32_t>& gatewayCredentialId) const {
     std::vector<PriceBudgetNotification> pendingNotifications;
 
     auto trends = db::Transactions::exec("PriceBudgetService::trendStats", [&](pqxx::work& txn) {
         auto policySql = "SELECT * FROM s3_price_budget_policy WHERE " +
-            statsPolicyWhereClause(txn, vaultId) + " ORDER BY id";
-        const auto ledgerVaultFilter = scopedLedgerVaultFilter(vaultId);
+            statsPolicyWhereClause(txn, vaultId, gatewayCredentialId) + " ORDER BY id";
+        const auto ledgerScopeFilter = scopedLedgerFilter(vaultId, gatewayCredentialId);
 
         const auto policyRows = txn.exec(policySql);
         std::vector<PriceBudgetTrendStats> out;
@@ -1345,7 +1463,7 @@ std::vector<PriceBudgetTrendStats> PriceBudgetService::trendStats(const std::opt
                 "WHERE policy_id = " + std::to_string(policy.id) + " "
                 "AND window_type = " + txn.quote(toString(window)) + " "
                 "AND status IN ('reserved', 'committed') "
-                + ledgerVaultFilter +
+                + ledgerScopeFilter +
                 "AND created_at >= CURRENT_TIMESTAMP - interval '" + std::to_string(days) + " days' "
                 "GROUP BY 1"
                 ") daily");
@@ -1412,8 +1530,8 @@ std::vector<PriceBudgetTrendStats> PriceBudgetService::trendStats(const std::opt
                 if (!limit) continue;
 
                 const auto current = txn.exec(
-                    "SELECT " + windowStartExpr(window) + "::text AS window_start, "
-                    + windowEndExpr(window) + "::text AS window_end, "
+                    "SELECT (" + windowStartExpr(window) + ")::text AS window_start, "
+                    "(" + windowEndExpr(window) + ")::text AS window_end, "
                     "COALESCE(SUM(CASE WHEN status = 'committed' THEN COALESCE(committed_cost, reserved_cost) ELSE 0 END), 0)::numeric(20,8)::text AS committed_cost, "
                     "COALESCE(SUM(CASE WHEN status = 'reserved' THEN reserved_cost ELSE 0 END), 0)::numeric(20,8)::text AS reserved_cost, "
                     "COALESCE(SUM(COALESCE(committed_cost, reserved_cost)), 0)::numeric(20,8)::text AS total_cost, "
@@ -1423,7 +1541,7 @@ std::vector<PriceBudgetTrendStats> PriceBudgetService::trendStats(const std::opt
                     "WHERE policy_id = " + std::to_string(policy.id) + " "
                     "AND window_type = " + txn.quote(toString(window)) + " "
                     "AND window_start = " + windowStartExpr(window) + " "
-                    + ledgerVaultFilter +
+                    + ledgerScopeFilter +
                     "AND status IN ('reserved', 'committed')");
                 if (current.empty()) continue;
                 const auto row = current.one_row();
@@ -1435,6 +1553,7 @@ std::vector<PriceBudgetTrendStats> PriceBudgetService::trendStats(const std::opt
                 trend.scope = toString(policy.scope);
                 trend.provider_key = policy.provider_key;
                 trend.vault_id = policy.vault_id;
+                trend.gateway_credential_id = policy.gateway_credential_id;
                 trend.policy_id = policy.id;
                 trend.currency = policy.currency;
                 trend.window_type = toString(window);
@@ -1537,7 +1656,7 @@ PriceBudgetDashboardStats PriceBudgetService::dashboardStats(const std::optional
         nlohmann::json result;
         result["active_policies"] = txn.exec(
             "SELECT COUNT(*) AS c FROM s3_price_budget_policy "
-            "WHERE " + statsPolicyWhereClause(txn, vaultId))
+            "WHERE " + statsPolicyWhereClause(txn, vaultId, std::nullopt))
             .one_row()["c"].as<std::uint32_t>();
         result["blocked_syncs_24h"] = txn.exec(
             "SELECT COUNT(*) AS c FROM sync_event "
@@ -1585,6 +1704,7 @@ void to_json(nlohmann::json& j, const PriceBudgetPolicy& policy) {
         {"scope", toString(policy.scope)},
         {"provider_key", policy.provider_key ? nlohmann::json(*policy.provider_key) : nlohmann::json(nullptr)},
         {"vault_id", policy.vault_id ? nlohmann::json(*policy.vault_id) : nlohmann::json(nullptr)},
+        {"gateway_credential_id", policy.gateway_credential_id ? nlohmann::json(*policy.gateway_credential_id) : nlohmann::json(nullptr)},
         {"mode", toString(policy.mode)},
         {"currency", policy.currency},
         {"max_run_cost", policy.max_run_cost ? nlohmann::json(*policy.max_run_cost) : nlohmann::json(nullptr)},
@@ -1635,6 +1755,11 @@ void to_json(nlohmann::json& j, const PriceBudgetLedgerEntry& entry) {
         {"policy_id", entry.policy_id},
         {"run_uuid", entry.run_uuid},
         {"vault_id", entry.vault_id},
+        {"gateway_credential_id", entry.gateway_credential_id ? nlohmann::json(*entry.gateway_credential_id) : nlohmann::json(nullptr)},
+        {"request_uuid", entry.request_uuid ? nlohmann::json(*entry.request_uuid) : nlohmann::json(nullptr)},
+        {"operation", entry.operation ? nlohmann::json(*entry.operation) : nlohmann::json(nullptr)},
+        {"object_key", entry.object_key ? nlohmann::json(*entry.object_key) : nlohmann::json(nullptr)},
+        {"estimated_cost", entry.estimated_cost ? nlohmann::json(*entry.estimated_cost) : nlohmann::json(nullptr)},
         {"provider_key", entry.provider_key},
         {"currency", entry.currency},
         {"window", toString(entry.window)},
@@ -1692,6 +1817,7 @@ void to_json(nlohmann::json& j, const PriceBudgetTrendStats& stats) {
         {"scope", stats.scope},
         {"provider_key", stats.provider_key ? nlohmann::json(*stats.provider_key) : nlohmann::json(nullptr)},
         {"vault_id", stats.vault_id ? nlohmann::json(*stats.vault_id) : nlohmann::json(nullptr)},
+        {"gateway_credential_id", stats.gateway_credential_id ? nlohmann::json(*stats.gateway_credential_id) : nlohmann::json(nullptr)},
         {"policy_id", stats.policy_id},
         {"currency", stats.currency},
         {"window_type", stats.window_type},

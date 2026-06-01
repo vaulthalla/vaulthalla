@@ -9,11 +9,13 @@
 #include "protocols/s3/GatewayService.hpp"
 #include "protocols/s3/ObjectStore.hpp"
 #include "protocols/shell/Router.hpp"
+#include "protocols/shell/Table.hpp"
 #include "protocols/shell/commands/helpers.hpp"
 #include "protocols/shell/util/argsHelpers.hpp"
 #include "runtime/Deps.hpp"
 #include "runtime/Manager.hpp"
 #include "storage/Manager.hpp"
+#include "storage/s3/pricing/PriceBudget.hpp"
 #include "sync/model/RemotePolicy.hpp"
 #include "vault/model/APIKey.hpp"
 #include "vault/model/S3Vault.hpp"
@@ -35,6 +37,156 @@ namespace {
 
 std::string yesNo(const bool value) {
     return value ? "yes" : "no";
+}
+
+std::vector<std::string> optVals(const CommandCall& call, const std::string& key) {
+    std::vector<std::string> values;
+    for (const auto& [k, v] : call.options)
+        if (k == key && v) values.push_back(*v);
+    return values;
+}
+
+std::string normalizeScopeMode(std::string value) {
+    std::ranges::transform(value, value.begin(), [](const unsigned char c) {
+        return c == '-' ? '_' : static_cast<char>(std::tolower(c));
+    });
+    if (value == "user_access" || value == "global" || value == "vault_allowlist") return value;
+    throw std::runtime_error("s3-gateway: scope must be user-access, global, or vault-allowlist");
+}
+
+std::optional<std::time_t> parseExpiresAt(const CommandCall& call) {
+    const auto value = optVal(call, "expires");
+    if (!value || value->empty()) return std::nullopt;
+    const auto suffix = value->back();
+    const auto number = (suffix >= '0' && suffix <= '9') ? *value : value->substr(0, value->size() - 1);
+    const auto parsed = parseUInt(number);
+    if (!parsed || *parsed == 0) throw std::runtime_error("s3-gateway: --expires must be a positive duration such as 30d or 12h");
+    std::time_t seconds = *parsed;
+    switch (std::tolower(static_cast<unsigned char>(suffix))) {
+    case 'd': seconds *= 24 * 60 * 60; break;
+    case 'h': seconds *= 60 * 60; break;
+    case 'm': seconds *= 60; break;
+    case 's': break;
+    default:
+        if (suffix < '0' || suffix > '9') throw std::runtime_error("s3-gateway: unsupported --expires suffix");
+    }
+    return std::time(nullptr) + seconds;
+}
+
+std::optional<db::query::s3::GatewayCredential> resolveCredentialForCaller(
+    const CommandCall& call,
+    const std::string& value) {
+    const auto credentials = call.user->isAdmin()
+        ? db::query::s3::Gateway::listCredentialsAdmin(true)
+        : db::query::s3::Gateway::listCredentialsForPrincipal(call.user->id);
+    for (const auto& credential : credentials) {
+        if (credential.access_key == value || credential.name == value || std::to_string(credential.id) == value)
+            return credential;
+    }
+    return std::nullopt;
+}
+
+std::optional<db::query::s3::GatewayCredential> resolveCredentialForGatewayBudget(
+    const CommandCall& call,
+    const std::string& value,
+    const bool allowAnyCredential) {
+    if (!allowAnyCredential) return resolveCredentialForCaller(call, value);
+    const auto credentials = db::query::s3::Gateway::listCredentialsAdmin(true);
+    for (const auto& credential : credentials) {
+        if (credential.access_key == value || credential.name == value || std::to_string(credential.id) == value)
+            return credential;
+    }
+    return std::nullopt;
+}
+
+bool callerOwnsCredential(const CommandCall& call, const std::uint32_t credentialId) {
+    const auto owned = db::query::s3::Gateway::listCredentialsForPrincipal(call.user->id);
+    return std::ranges::any_of(owned, [&](const auto& credential) {
+        return credential.id == credentialId;
+    });
+}
+
+std::shared_ptr<::vh::vault::model::Vault> resolveVaultArg(const CommandCall& call, const std::string& value);
+
+std::vector<db::query::s3::CredentialVaultScope> scopesFromVaultOptions(const CommandCall& call, const uint32_t credentialId = 0) {
+    std::vector<db::query::s3::CredentialVaultScope> scopes;
+    for (const auto& vaultValue : optVals(call, "vault")) {
+        const auto vault = resolveVaultArg(call, vaultValue);
+        scopes.push_back({
+            .credential_id = credentialId,
+            .vault_id = vault->id,
+            .can_list = hasFlag(call, "list") || (!hasFlag(call, "read") && !hasFlag(call, "write") && !hasFlag(call, "delete") && !hasFlag(call, "admin")),
+            .can_read = hasFlag(call, "read") || (!hasFlag(call, "write") && !hasFlag(call, "delete") && !hasFlag(call, "admin")),
+            .can_write = hasFlag(call, "write"),
+            .can_delete = hasFlag(call, "delete"),
+            .can_admin = hasFlag(call, "admin")
+        });
+    }
+    return scopes;
+}
+
+std::string gwValueOrDash(const std::optional<std::string>& value) {
+    return value && !value->empty() ? *value : "-";
+}
+
+std::string gwValueOrDash(const std::optional<std::uint32_t>& value) {
+    return value ? std::to_string(*value) : "-";
+}
+
+std::string renderGatewayBudgetPolicies(const std::vector<storage::s3::pricing::PriceBudgetPolicy>& policies) {
+    if (policies.empty()) return "No S3 gateway budget policies configured.\n";
+    Table table({
+        {"ID", Align::Right, 2, 6, false, false},
+        {"Scope", Align::Left, 8, 26, false, false},
+        {"Key", Align::Right, 1, 8, false, false},
+        {"Vault", Align::Right, 1, 8, false, false},
+        {"Mode", Align::Left, 3, 8, false, false},
+        {"Monthly", Align::Right, 1, 14, false, false},
+        {"Currency", Align::Left, 3, 8, false, false},
+        {"Active", Align::Left, 3, 6, false, false}
+    });
+    for (const auto& policy : policies) {
+        table.add_row({
+            std::to_string(policy.id),
+            storage::s3::pricing::toString(policy.scope),
+            gwValueOrDash(policy.gateway_credential_id),
+            gwValueOrDash(policy.vault_id),
+            storage::s3::pricing::toString(policy.mode),
+            gwValueOrDash(policy.max_monthly_cost),
+            policy.currency,
+            yesNo(policy.is_active)
+        });
+    }
+    return table.render();
+}
+
+std::string renderGatewayBudgetTrends(const std::vector<storage::s3::pricing::PriceBudgetTrendStats>& trends) {
+    if (trends.empty()) return "No S3 gateway budget usage yet.\n";
+    Table table({
+        {"Policy", Align::Right, 2, 6, false, false},
+        {"Scope", Align::Left, 8, 26, false, false},
+        {"Key", Align::Right, 1, 8, false, false},
+        {"Vault", Align::Right, 1, 8, false, false},
+        {"Window", Align::Left, 5, 8, false, false},
+        {"Used", Align::Right, 1, 14, false, false},
+        {"Remaining", Align::Right, 1, 14, false, false},
+        {"Limit", Align::Right, 1, 14, false, false},
+        {"Currency", Align::Left, 3, 8, false, false}
+    });
+    for (const auto& trend : trends) {
+        table.add_row({
+            std::to_string(trend.policy_id),
+            trend.scope,
+            gwValueOrDash(trend.gateway_credential_id),
+            gwValueOrDash(trend.vault_id),
+            trend.window_type,
+            trend.total_cost,
+            gwValueOrDash(trend.remaining),
+            gwValueOrDash(trend.limit),
+            trend.currency
+        });
+    }
+    return table.render();
 }
 
 bool isGatewayMatch(const std::string& cmd, const std::string_view input) {
@@ -93,6 +245,18 @@ std::string modeOrDefault(const CommandCall& call, std::string fallback = "local
     return mode;
 }
 
+void validateBucketModeForVault(
+    const std::shared_ptr<::vh::vault::model::Vault>& vault,
+    const std::string& mode,
+    const std::string& action) {
+    if (!vault) throw std::runtime_error("s3-gateway " + action + ": vault not found");
+    const bool s3Backed = vault->type == ::vh::vault::model::VaultType::S3;
+    if (s3Backed && mode == "local")
+        throw std::runtime_error("s3-gateway " + action + ": S3/R2 vaults must use remote_cache or remote_proxy mode");
+    if (!s3Backed && mode != "local")
+        throw std::runtime_error("s3-gateway " + action + ": local vaults can only use local mode");
+}
+
 CommandResult saveConfigAndRestart(config::Config cfg, const std::string& message) {
     try {
         cfg.save();
@@ -104,7 +268,14 @@ CommandResult saveConfigAndRestart(config::Config cfg, const std::string& messag
     }
 }
 
-CommandResult handleS3GatewayStatus(const CommandCall&) {
+std::optional<CommandResult> requireAdminCommand(const CommandCall& call, const std::string& action) {
+    if (!call.user || !call.user->isAdmin())
+        return invalid("s3-gateway " + action + ": admin permission is required");
+    return std::nullopt;
+}
+
+CommandResult handleS3GatewayStatus(const CommandCall& call) {
+    if (auto adminError = requireAdminCommand(call, "status")) return *adminError;
     const auto service = runtime::Manager::instance().getS3GatewayService();
     const auto status = service ? service->gatewayStatus() : protocols::s3::GatewayService::RuntimeStatus{};
 
@@ -120,13 +291,15 @@ CommandResult handleS3GatewayStatus(const CommandCall&) {
     return ok(out.str());
 }
 
-CommandResult handleEnable(const CommandCall&) {
+CommandResult handleEnable(const CommandCall& call) {
+    if (auto adminError = requireAdminCommand(call, "enable")) return *adminError;
     auto cfg = config::Registry::get();
     cfg.s3_gateway.enabled = true;
     return saveConfigAndRestart(cfg, "S3 gateway enabled.\n");
 }
 
-CommandResult handleDisable(const CommandCall&) {
+CommandResult handleDisable(const CommandCall& call) {
+    if (auto adminError = requireAdminCommand(call, "disable")) return *adminError;
     auto cfg = config::Registry::get();
     cfg.s3_gateway.enabled = false;
     return saveConfigAndRestart(cfg, "S3 gateway disabled.\n");
@@ -136,14 +309,28 @@ CommandResult handleCredsCreate(const CommandCall& call) {
     if (call.positionals.empty()) return usage(call.constructFullArgs());
     const auto user = resolveTargetUser(call);
     const protocols::s3::CredentialManager manager;
-    const auto secret = manager.createCredential(user->id, call.positionals[0]);
+    protocols::s3::CredentialCreateOptions options;
+    options.created_by = call.user->id;
+    options.principal_user_id = user->id;
+    options.name = call.positionals[0];
+    options.scope_mode = normalizeScopeMode(optVal(call, "scope").value_or("user_access"));
+    options.description = optVal(call, "description");
+    options.expires_at = parseExpiresAt(call);
+    options.vault_scopes = scopesFromVaultOptions(call);
+    if (!options.vault_scopes.empty() && options.scope_mode == "user_access")
+        options.scope_mode = "vault_allowlist";
+    const auto secret = manager.createCredential(options);
 
     if (hasFlag(call, "json")) {
         nlohmann::json j = {
             {"user_id", user->id},
+            {"principal_user_id", secret.credential.principal_user_id},
+            {"created_by", secret.credential.created_by ? nlohmann::json(*secret.credential.created_by) : nlohmann::json(nullptr)},
             {"name", call.positionals[0]},
             {"access_key", secret.credential.access_key},
-            {"secret_access_key", secret.secret_access_key}
+            {"secret_access_key", secret.secret_access_key},
+            {"scope_mode", secret.credential.scope_mode},
+            {"expires_at", secret.credential.expires_at ? nlohmann::json(*secret.credential.expires_at) : nlohmann::json(nullptr)}
         };
         return ok(j.dump(4) + "\n");
     }
@@ -152,6 +339,7 @@ CommandResult handleCredsCreate(const CommandCall& call) {
     out << "created S3 gateway credential\n";
     out << "  user: " << user->name << " (" << user->id << ")\n";
     out << "  name: " << call.positionals[0] << "\n";
+    out << "  scope: " << secret.credential.scope_mode << "\n";
     out << "  access key: " << secret.credential.access_key << "\n";
     out << "  secret access key: " << secret.secret_access_key << "\n";
     out << "store the secret now; it cannot be listed again.\n";
@@ -168,11 +356,16 @@ CommandResult handleCredsList(const CommandCall& call) {
             rows.push_back({
                 {"id", credential.id},
                 {"user_id", credential.user_id},
+                {"principal_user_id", credential.principal_user_id},
+                {"created_by", credential.created_by ? nlohmann::json(*credential.created_by) : nlohmann::json(nullptr)},
                 {"name", credential.name},
                 {"access_key", credential.access_key},
+                {"scope_mode", credential.scope_mode},
+                {"description", credential.description ? nlohmann::json(*credential.description) : nlohmann::json(nullptr)},
                 {"enabled", credential.enabled},
                 {"created_at", credential.created_at},
-                {"last_used_at", credential.last_used_at ? nlohmann::json(*credential.last_used_at) : nlohmann::json(nullptr)}
+                {"last_used_at", credential.last_used_at ? nlohmann::json(*credential.last_used_at) : nlohmann::json(nullptr)},
+                {"expires_at", credential.expires_at ? nlohmann::json(*credential.expires_at) : nlohmann::json(nullptr)}
             });
         }
         return ok(rows.dump(4) + "\n");
@@ -183,8 +376,10 @@ CommandResult handleCredsList(const CommandCall& call) {
     if (creds.empty()) out << "none\n";
     for (const auto& credential : creds) {
         out << "- " << credential.name << " " << credential.access_key
+            << " scope=" << credential.scope_mode
             << " enabled=" << yesNo(credential.enabled);
         if (credential.last_used_at) out << " last_used=" << *credential.last_used_at;
+        if (credential.expires_at) out << " expires=" << *credential.expires_at;
         out << "\n";
     }
     return ok(out.str());
@@ -193,17 +388,163 @@ CommandResult handleCredsList(const CommandCall& call) {
 CommandResult handleCredsRevoke(const CommandCall& call) {
     if (call.positionals.empty()) return usage(call.constructFullArgs());
     const auto value = call.positionals[0];
-    bool removed = false;
-
-    if (value.starts_with("VH")) {
-        removed = db::query::s3::Gateway::deleteCredentialByAccessKey(value);
-    } else {
-        const auto user = resolveTargetUser(call);
-        removed = db::query::s3::Gateway::deleteCredentialByName(user->id, value);
-    }
+    const auto credential = resolveCredentialForCaller(call, value);
+    if (!credential) return invalid("s3-gateway creds revoke: credential not found");
+    const auto removed = db::query::s3::Gateway::deleteCredentialByAccessKey(credential->access_key);
 
     if (!removed) return invalid("s3-gateway creds revoke: credential not found");
     return ok("S3 gateway credential revoked.\n");
+}
+
+std::string renderCredentialScopes(const db::query::s3::GatewayCredential& credential) {
+    std::ostringstream out;
+    out << "S3 gateway credential scope\n";
+    out << "  name: " << credential.name << "\n";
+    out << "  access key: " << credential.access_key << "\n";
+    out << "  principal: " << credential.principal_user_id << "\n";
+    out << "  scope: " << credential.scope_mode << "\n";
+    const auto scopes = db::query::s3::Gateway::listCredentialScopes(credential.id);
+    if (scopes.empty()) {
+        out << "  vault scopes: none\n";
+        return out.str();
+    }
+    out << "  vault scopes:\n";
+    for (const auto& scope : scopes) {
+        out << "  - vault=" << scope.vault_id
+            << " list=" << yesNo(scope.can_list)
+            << " read=" << yesNo(scope.can_read)
+            << " write=" << yesNo(scope.can_write)
+            << " delete=" << yesNo(scope.can_delete)
+            << " admin=" << yesNo(scope.can_admin)
+            << "\n";
+    }
+    return out.str();
+}
+
+CommandResult handleCredsScope(const CommandCall& call) {
+    if (call.positionals.size() < 2) return usage(call.constructFullArgs());
+    const auto credential = resolveCredentialForCaller(call, call.positionals[0]);
+    if (!credential) return invalid("s3-gateway creds scope: credential not found");
+    if (!call.user->isAdmin() && credential->principal_user_id != call.user->id)
+        return invalid("s3-gateway creds scope: permission denied");
+
+    const auto action = call.positionals[1];
+    if (action == "show" || action == "list") {
+        if (hasFlag(call, "json")) {
+            nlohmann::json scopes = nlohmann::json::array();
+            for (const auto& scope : db::query::s3::Gateway::listCredentialScopes(credential->id)) {
+                scopes.push_back({
+                    {"credential_id", scope.credential_id},
+                    {"vault_id", scope.vault_id},
+                    {"can_list", scope.can_list},
+                    {"can_read", scope.can_read},
+                    {"can_write", scope.can_write},
+                    {"can_delete", scope.can_delete},
+                    {"can_admin", scope.can_admin}
+                });
+            }
+            return ok(nlohmann::json{{"credential_id", credential->id}, {"scope_mode", credential->scope_mode}, {"scopes", scopes}}.dump(4) + "\n");
+        }
+        return ok(renderCredentialScopes(*credential));
+    }
+
+    if (action == "set") {
+        const auto scopeOpt = optVal(call, "scope");
+        if (!scopeOpt || scopeOpt->empty()) return invalid("s3-gateway creds scope set: --scope is required");
+        const auto scopeMode = normalizeScopeMode(*scopeOpt);
+        if (scopeMode == "global" && !call.user->isAdmin())
+            return invalid("s3-gateway creds scope set: global scope requires admin permission");
+        auto principalUserId = credential->principal_user_id;
+        if (const auto userOpt = optVal(call, "user"); userOpt && !userOpt->empty()) {
+            auto target = resolveUser(*userOpt, "s3-gateway creds scope set");
+            if (!target) return invalid(target.error);
+            if (!call.user->isAdmin() && target.ptr->id != call.user->id)
+                return invalid("s3-gateway creds scope set: only admins can retarget another user");
+            principalUserId = target.ptr->id;
+        }
+        const auto description = hasKey(call, "description")
+            ? optVal(call, "description")
+            : credential->description;
+        const auto expiresAt = hasKey(call, "expires")
+            ? parseExpiresAt(call)
+            : credential->expires_at;
+        const auto scopes = scopeMode == "vault_allowlist"
+            ? db::query::s3::Gateway::listCredentialScopes(credential->id)
+            : std::vector<db::query::s3::CredentialVaultScope>{};
+        try {
+            protocols::s3::CredentialManager::validateScopeMutation(
+                call.user->id,
+                principalUserId,
+                scopeMode,
+                scopes);
+        } catch (const std::exception& e) {
+            return invalid(e.what());
+        }
+        const auto createdBy = scopeMode == "global"
+            ? std::make_optional(call.user->id)
+            : credential->created_by;
+        db::query::s3::Gateway::updateCredentialScopeMode(
+            credential->id,
+            scopeMode,
+            principalUserId,
+            createdBy,
+            description,
+            expiresAt);
+        if (scopeMode != "vault_allowlist")
+            db::query::s3::Gateway::replaceCredentialScopes(credential->id, {});
+        return ok("S3 gateway credential scope updated.\n");
+    }
+
+    if (action == "allow-vault") {
+        const auto vaultValue = call.positionals.size() >= 3
+            ? call.positionals[2]
+            : optVal(call, "vault").value_or("");
+        if (vaultValue.empty()) return invalid("s3-gateway creds scope allow-vault: vault is required");
+        const auto vault = resolveVaultArg(call, vaultValue);
+        auto scopes = db::query::s3::Gateway::listCredentialScopes(credential->id);
+        std::erase_if(scopes, [&](const auto& scope) { return scope.vault_id == vault->id; });
+        scopes.push_back({
+            .credential_id = credential->id,
+            .vault_id = vault->id,
+            .can_list = hasFlag(call, "list") || (!hasFlag(call, "read") && !hasFlag(call, "write") && !hasFlag(call, "delete") && !hasFlag(call, "admin")),
+            .can_read = hasFlag(call, "read") || (!hasFlag(call, "write") && !hasFlag(call, "delete") && !hasFlag(call, "admin")),
+            .can_write = hasFlag(call, "write"),
+            .can_delete = hasFlag(call, "delete"),
+            .can_admin = call.user->isAdmin() && hasFlag(call, "admin")
+        });
+        try {
+            protocols::s3::CredentialManager::validateScopeMutation(
+                call.user->id,
+                credential->principal_user_id,
+                "vault_allowlist",
+                scopes);
+        } catch (const std::exception& e) {
+            return invalid(e.what());
+        }
+        db::query::s3::Gateway::updateCredentialScopeMode(
+            credential->id,
+            "vault_allowlist",
+            credential->principal_user_id,
+            credential->created_by,
+            credential->description,
+            credential->expires_at);
+        db::query::s3::Gateway::replaceCredentialScopes(credential->id, scopes);
+        return ok("S3 gateway credential vault scope added.\n");
+    }
+
+    if (action == "revoke-vault") {
+        const auto vaultValue = call.positionals.size() >= 3
+            ? call.positionals[2]
+            : optVal(call, "vault").value_or("");
+        if (vaultValue.empty()) return invalid("s3-gateway creds scope revoke-vault: vault is required");
+        const auto vault = resolveVaultArg(call, vaultValue);
+        auto scopes = db::query::s3::Gateway::listCredentialScopes(credential->id);
+        std::erase_if(scopes, [&](const auto& scope) { return scope.vault_id == vault->id; });
+        db::query::s3::Gateway::replaceCredentialScopes(credential->id, scopes);
+        return ok("S3 gateway credential vault scope revoked.\n");
+    }
+
+    return invalid(call.constructFullArgs(), "Unknown s3-gateway creds scope action: '" + action + "'");
 }
 
 CommandResult handleCreds(const CommandCall& call) {
@@ -214,6 +555,7 @@ CommandResult handleCreds(const CommandCall& call) {
     if (isCommandMatch({"s3-gateway", "creds", "create"}, sub)) return handleCredsCreate(subcall);
     if (isCommandMatch({"s3-gateway", "creds", "list"}, sub)) return handleCredsList(subcall);
     if (isCommandMatch({"s3-gateway", "creds", "revoke"}, sub)) return handleCredsRevoke(subcall);
+    if (isCommandMatch({"s3-gateway", "creds", "scope"}, sub) || sub == "scope") return handleCredsScope(subcall);
     return invalid(call.constructFullArgs(), "Unknown s3-gateway creds subcommand: '" + std::string(sub) + "'");
 }
 
@@ -254,6 +596,7 @@ CommandResult handleBucketBind(const CommandCall& call) {
     const auto vault = resolveVaultArg(call, *vaultOpt);
     requireVaultOwnerOrAdmin(call, vault);
     const auto mode = modeOrDefault(call, vault->type == ::vh::vault::model::VaultType::S3 ? "remote_cache" : "local");
+    validateBucketModeForVault(vault, mode, "bucket bind");
     db::query::s3::Gateway::bindBucket({
         .vault_id = vault->id,
         .bucket_name = call.positionals[0],
@@ -266,6 +609,10 @@ CommandResult handleBucketBind(const CommandCall& call) {
 
 CommandResult handleBucketUnbind(const CommandCall& call) {
     if (call.positionals.empty()) return usage(call.constructFullArgs());
+    const auto binding = db::query::s3::Gateway::resolveBucket(call.positionals[0]);
+    if (!binding) return invalid("s3-gateway bucket unbind: bucket binding not found");
+    const auto vault = db::query::vault::Vault::getVault(binding->vault_id);
+    requireVaultOwnerOrAdmin(call, vault);
     if (!db::query::s3::Gateway::unbindBucket(call.positionals[0]))
         return invalid("s3-gateway bucket unbind: bucket binding not found");
     return ok("Unbound bucket " + call.positionals[0] + ".\n");
@@ -351,6 +698,278 @@ CommandResult handleBucket(const CommandCall& call) {
     return invalid(call.constructFullArgs(), "Unknown s3-gateway bucket subcommand: '" + std::string(sub) + "'");
 }
 
+std::optional<std::uint32_t> optionalCredentialFilter(const CommandCall& call, const bool allowAnyCredential) {
+    const auto keyOpt = optVal(call, "key");
+    if (!keyOpt || keyOpt->empty()) return std::nullopt;
+    const auto credential = resolveCredentialForGatewayBudget(call, *keyOpt, allowAnyCredential);
+    if (!credential) throw std::runtime_error("s3-gateway budget: credential not found");
+    return credential->id;
+}
+
+std::optional<std::uint32_t> optionalVaultFilter(const CommandCall& call) {
+    const auto vaultOpt = optVal(call, "vault");
+    if (!vaultOpt || vaultOpt->empty()) return std::nullopt;
+    return resolveVaultArg(call, *vaultOpt)->id;
+}
+
+void requireCanViewBudgetFilters(
+    const CommandCall& call,
+    const std::optional<std::uint32_t>& credentialId,
+    const std::optional<std::uint32_t>& vaultId) {
+    if (call.user->isAdmin()) return;
+    if (vaultId) {
+        auto vault = db::query::vault::Vault::getVault(*vaultId);
+        requireVaultOwnerOrAdmin(call, vault);
+        return;
+    }
+    if (credentialId) return;
+    throw std::runtime_error("s3-gateway budget: non-admin users must pass --key or --vault");
+}
+
+std::vector<storage::s3::pricing::PriceBudgetPolicy> gatewayBudgetPoliciesForCall(
+    const CommandCall& call,
+    const std::optional<std::uint32_t>& credentialId,
+    const std::optional<std::uint32_t>& vaultId) {
+    auto policies = storage::s3::pricing::PriceBudgetService{}.listPolicies(true);
+    std::erase_if(policies, [&](const auto& policy) {
+        if (policy.scope != storage::s3::pricing::PriceBudgetScope::GatewayCredential &&
+            policy.scope != storage::s3::pricing::PriceBudgetScope::GatewayCredentialVault)
+            return true;
+        if (credentialId && policy.gateway_credential_id != credentialId) return true;
+        if (vaultId) {
+            if (policy.scope == storage::s3::pricing::PriceBudgetScope::GatewayCredentialVault &&
+                policy.vault_id != vaultId)
+                return true;
+            if (policy.scope == storage::s3::pricing::PriceBudgetScope::GatewayCredential && !credentialId)
+                return true;
+        }
+        if (!call.user->isAdmin() && policy.gateway_credential_id) {
+            const auto ownsCredential = callerOwnsCredential(call, *policy.gateway_credential_id);
+            if (policy.scope == storage::s3::pricing::PriceBudgetScope::GatewayCredential && !ownsCredential)
+                return true;
+            if (!vaultId && credentialId && !ownsCredential)
+                return true;
+        }
+        return false;
+    });
+    return policies;
+}
+
+void filterGatewayBudgetLedger(std::vector<storage::s3::pricing::PriceBudgetLedgerEntry>& ledger) {
+    std::erase_if(ledger, [](const auto& entry) {
+        return !entry.gateway_credential_id;
+    });
+}
+
+void filterGatewayBudgetTrends(std::vector<storage::s3::pricing::PriceBudgetTrendStats>& trends) {
+    std::erase_if(trends, [](const auto& trend) {
+        return trend.scope != "gateway_credential" &&
+            trend.scope != "gateway_credential_vault";
+    });
+}
+
+storage::s3::pricing::PriceBudgetPolicy gatewayBudgetPolicyFromCall(
+    const CommandCall& call,
+    const storage::s3::pricing::PriceBudgetScope scope,
+    const uint32_t credentialId,
+    const std::optional<uint32_t> vaultId) {
+    const auto monthly = optVal(call, "monthly");
+    if (!monthly || monthly->empty() || !storage::s3::pricing::isValidPriceBudgetDecimal(*monthly))
+        throw std::runtime_error("s3-gateway budget: --monthly must be a non-negative decimal with at most 8 fractional digits");
+    storage::s3::pricing::PriceBudgetPolicy policy;
+    policy.scope = scope;
+    policy.gateway_credential_id = credentialId;
+    policy.vault_id = vaultId;
+    policy.mode = storage::s3::pricing::PriceBudgetMode::Enforce;
+    if (const auto mode = optVal(call, "mode"))
+        policy.mode = storage::s3::pricing::priceBudgetModeFromString(*mode);
+    policy.currency = storage::s3::pricing::normalizePriceBudgetCurrency(optVal(call, "currency").value_or("USD"));
+    policy.max_monthly_cost = *monthly;
+    policy.require_verified_catalog = !hasFlag(call, "no-require-verified-catalog");
+    policy.allow_stale_catalog = hasFlag(call, "allow-stale-catalog");
+    policy.max_catalog_age_seconds = 43200;
+    return policy;
+}
+
+CommandResult handleBudgetSetKey(const CommandCall& call) {
+    if (!call.user->isAdmin())
+        return invalid("s3-gateway budget set-key: admin permission is required for key-only budgets");
+    if (call.positionals.empty()) return usage(call.constructFullArgs());
+    const auto credential = resolveCredentialForCaller(call, call.positionals[0]);
+    if (!credential) return invalid("s3-gateway budget set-key: credential not found");
+    auto policy = gatewayBudgetPolicyFromCall(
+        call,
+        storage::s3::pricing::PriceBudgetScope::GatewayCredential,
+        credential->id,
+        std::nullopt);
+    const auto saved = storage::s3::pricing::PriceBudgetService{}.upsertPolicy(policy);
+    return ok("S3 gateway key budget saved.\n" + renderGatewayBudgetPolicies({saved}));
+}
+
+CommandResult handleBudgetSetKeyVault(const CommandCall& call) {
+    if (call.positionals.empty()) return usage(call.constructFullArgs());
+    const auto vaultOpt = optVal(call, "vault");
+    if (!vaultOpt || vaultOpt->empty()) return invalid("s3-gateway budget set-key-vault: --vault is required");
+    const auto vault = resolveVaultArg(call, *vaultOpt);
+    requireVaultOwnerOrAdmin(call, vault);
+    const auto credential = resolveCredentialForGatewayBudget(call, call.positionals[0], true);
+    if (!credential) return invalid("s3-gateway budget set-key-vault: credential not found");
+    auto policy = gatewayBudgetPolicyFromCall(
+        call,
+        storage::s3::pricing::PriceBudgetScope::GatewayCredentialVault,
+        credential->id,
+        vault->id);
+    const auto saved = storage::s3::pricing::PriceBudgetService{}.upsertPolicy(policy);
+    return ok("S3 gateway key/vault budget saved.\n" + renderGatewayBudgetPolicies({saved}));
+}
+
+CommandResult handleGatewayBudgetList(const CommandCall& call) {
+    const auto vaultId = optionalVaultFilter(call);
+    if (!call.user->isAdmin() && vaultId) {
+        auto vault = db::query::vault::Vault::getVault(*vaultId);
+        requireVaultOwnerOrAdmin(call, vault);
+    }
+    const auto credentialId = optionalCredentialFilter(call, call.user->isAdmin() || vaultId.has_value());
+    requireCanViewBudgetFilters(call, credentialId, vaultId);
+    auto policies = gatewayBudgetPoliciesForCall(call, credentialId, vaultId);
+    if (hasFlag(call, "json")) return ok(nlohmann::json(policies).dump(4) + "\n");
+    return ok(renderGatewayBudgetPolicies(policies));
+}
+
+CommandResult handleBudgetDisableKey(const CommandCall& call) {
+    if (!call.user->isAdmin())
+        return invalid("s3-gateway budget disable-key: admin permission is required for key-only budgets");
+    if (call.positionals.empty()) return usage(call.constructFullArgs());
+    const auto credential = resolveCredentialForCaller(call, call.positionals[0]);
+    if (!credential) return invalid("s3-gateway budget disable-key: credential not found");
+    const auto disabled = storage::s3::pricing::PriceBudgetService{}.disablePolicy(
+        storage::s3::pricing::PriceBudgetScope::GatewayCredential,
+        std::nullopt,
+        std::nullopt,
+        credential->id);
+    return ok(disabled ? "S3 gateway key budget disabled.\n" : "No matching S3 gateway key budget was configured.\n");
+}
+
+CommandResult handleBudgetDisableKeyVault(const CommandCall& call) {
+    if (call.positionals.empty()) return usage(call.constructFullArgs());
+    const auto vaultOpt = optVal(call, "vault");
+    if (!vaultOpt || vaultOpt->empty()) return invalid("s3-gateway budget disable-key-vault: --vault is required");
+    const auto vault = resolveVaultArg(call, *vaultOpt);
+    requireVaultOwnerOrAdmin(call, vault);
+    const auto credential = resolveCredentialForGatewayBudget(call, call.positionals[0], true);
+    if (!credential) return invalid("s3-gateway budget disable-key-vault: credential not found");
+    const auto disabled = storage::s3::pricing::PriceBudgetService{}.disablePolicy(
+        storage::s3::pricing::PriceBudgetScope::GatewayCredentialVault,
+        std::nullopt,
+        vault->id,
+        credential->id);
+    return ok(disabled ? "S3 gateway key/vault budget disabled.\n" : "No matching S3 gateway key/vault budget was configured.\n");
+}
+
+CommandResult handleBudgetLedger(const CommandCall& call) {
+    auto limit = std::uint32_t{50};
+    if (const auto limitOpt = optVal(call, "limit")) {
+        const auto parsed = parseUInt(*limitOpt);
+        if (!parsed || *parsed == 0) return invalid("s3-gateway budget ledger: --limit must be a positive integer");
+        limit = *parsed;
+    }
+    const auto vaultId = optionalVaultFilter(call);
+    if (!call.user->isAdmin() && vaultId) {
+        auto vault = db::query::vault::Vault::getVault(*vaultId);
+        requireVaultOwnerOrAdmin(call, vault);
+    }
+    const auto credentialId = optionalCredentialFilter(call, call.user->isAdmin() || vaultId.has_value());
+    if (!call.user->isAdmin() && !vaultId && !credentialId)
+        return invalid("s3-gateway budget ledger: non-admin users must pass --key or --vault");
+    auto ledger = storage::s3::pricing::PriceBudgetService{}.listLedger(
+        limit,
+        vaultId,
+        credentialId);
+    filterGatewayBudgetLedger(ledger);
+    if (hasFlag(call, "json")) return ok(nlohmann::json(ledger).dump(4) + "\n");
+    if (ledger.empty()) return ok("No S3 gateway budget ledger rows.\n");
+    std::ostringstream out;
+    for (const auto& entry : ledger) {
+        out << "- id=" << entry.id
+            << " policy=" << entry.policy_id
+            << " key=" << gwValueOrDash(entry.gateway_credential_id)
+            << " vault=" << entry.vault_id
+            << " op=" << gwValueOrDash(entry.operation)
+            << " reserved=" << entry.reserved_cost
+            << " committed=" << gwValueOrDash(entry.committed_cost)
+            << " " << entry.currency
+            << " status=" << entry.status << "\n";
+    }
+    return ok(out.str());
+}
+
+CommandResult handleBudgetStatus(const CommandCall& call) {
+    storage::s3::pricing::PriceBudgetService service;
+    service.expireStaleReservations();
+    auto limit = std::uint32_t{50};
+    if (const auto limitOpt = optVal(call, "limit")) {
+        const auto parsed = parseUInt(*limitOpt);
+        if (!parsed || *parsed == 0) return invalid("s3-gateway budget status: --limit must be a positive integer");
+        limit = *parsed;
+    }
+    const auto vaultId = optionalVaultFilter(call);
+    if (!call.user->isAdmin() && vaultId) {
+        auto vault = db::query::vault::Vault::getVault(*vaultId);
+        requireVaultOwnerOrAdmin(call, vault);
+    }
+    const auto credentialId = optionalCredentialFilter(call, call.user->isAdmin() || vaultId.has_value());
+    requireCanViewBudgetFilters(call, credentialId, vaultId);
+
+    const auto policies = gatewayBudgetPoliciesForCall(call, credentialId, vaultId);
+    auto ledger = service.listLedger(limit, vaultId, credentialId);
+    filterGatewayBudgetLedger(ledger);
+    auto trends = service.trendStats(vaultId, credentialId);
+    filterGatewayBudgetTrends(trends);
+    if (hasFlag(call, "json")) {
+        return ok(nlohmann::json{
+            {"policies", policies},
+            {"ledger", ledger},
+            {"trends", trends}
+        }.dump(4) + "\n");
+    }
+
+    std::ostringstream out;
+    out << "S3 gateway budgets\n" << renderGatewayBudgetPolicies(policies)
+        << "\nCurrent usage\n" << renderGatewayBudgetTrends(trends)
+        << "\nRecent ledger rows\n";
+    if (ledger.empty()) {
+        out << "No S3 gateway budget ledger rows.\n";
+    } else {
+        for (const auto& entry : ledger) {
+            out << "- id=" << entry.id
+                << " policy=" << entry.policy_id
+                << " key=" << gwValueOrDash(entry.gateway_credential_id)
+                << " vault=" << entry.vault_id
+                << " op=" << gwValueOrDash(entry.operation)
+                << " reserved=" << entry.reserved_cost
+                << " committed=" << gwValueOrDash(entry.committed_cost)
+                << " " << entry.currency
+                << " status=" << entry.status << "\n";
+        }
+    }
+    return ok(out.str());
+}
+
+CommandResult handleGatewayBudget(const CommandCall& call) {
+    if (call.positionals.empty() || hasKey(call, "help") || hasKey(call, "h"))
+        return usage(call.constructFullArgs());
+
+    const auto [sub, subcall] = descend(call);
+    if (isCommandMatch({"s3-gateway", "budget", "set-key"}, sub) || sub == "set-key") return handleBudgetSetKey(subcall);
+    if (isCommandMatch({"s3-gateway", "budget", "set-key-vault"}, sub) || sub == "set-key-vault") return handleBudgetSetKeyVault(subcall);
+    if (isCommandMatch({"s3-gateway", "budget", "list"}, sub) || sub == "list") return handleGatewayBudgetList(subcall);
+    if (isCommandMatch({"s3-gateway", "budget", "disable-key"}, sub) || sub == "disable-key") return handleBudgetDisableKey(subcall);
+    if (isCommandMatch({"s3-gateway", "budget", "disable-key-vault"}, sub) || sub == "disable-key-vault") return handleBudgetDisableKeyVault(subcall);
+    if (isCommandMatch({"s3-gateway", "budget", "ledger"}, sub) || sub == "ledger") return handleBudgetLedger(subcall);
+    if (isCommandMatch({"s3-gateway", "budget", "status"}, sub) || sub == "status") return handleBudgetStatus(subcall);
+    return invalid(call.constructFullArgs(), "Unknown s3-gateway budget subcommand: '" + std::string(sub) + "'");
+}
+
 CommandResult handleS3Gateway(const CommandCall& call) {
     if (call.positionals.empty() || hasKey(call, "help") || hasKey(call, "h"))
         return usage(call.constructFullArgs());
@@ -362,6 +981,7 @@ CommandResult handleS3Gateway(const CommandCall& call) {
         if (isGatewayMatch("disable", sub)) return handleDisable(subcall);
         if (isGatewayMatch("creds", sub)) return handleCreds(subcall);
         if (isGatewayMatch("bucket", sub)) return handleBucket(subcall);
+        if (isGatewayMatch("budget", sub) || sub == "budget") return handleGatewayBudget(subcall);
         return invalid(call.constructFullArgs(), "Unknown s3-gateway subcommand: '" + std::string(sub) + "'");
     } catch (const std::exception& e) {
         return invalid(e.what());

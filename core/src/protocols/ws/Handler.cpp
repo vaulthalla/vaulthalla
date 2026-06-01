@@ -6,6 +6,7 @@
 #include "protocols/ws/handler/Settings.hpp"
 #include "protocols/ws/handler/Email.hpp"
 #include "protocols/ws/handler/Pricing.hpp"
+#include "protocols/ws/handler/S3Gateway.hpp"
 #include "protocols/ws/handler/Groups.hpp"
 #include "protocols/ws/handler/Stats.hpp"
 #include "protocols/ws/handler/dashboard/Preferences.hpp"
@@ -33,6 +34,7 @@ void Handler::registerAllHandlers(const std::shared_ptr<Router>& r) {
     registerSettingsHandlers(r);
     registerEmailHandlers(r);
     registerPricingHandlers(r);
+    registerS3GatewayHandlers(r);
     registerGroupHandlers(r);
     registerStatHandlers(r);
     registerDashboardPreferenceHandlers(r);
@@ -146,6 +148,25 @@ void Handler::registerPricingHandlers(const std::shared_ptr<Router>& r) {
     r->registerPayload("pricing.budget.override.list", &handler::Pricing::overrideList);
     r->registerPayload("pricing.notifications.list", &handler::Pricing::notificationsList);
     r->registerPayload("pricing.notifications.ack", &handler::Pricing::notificationsAck);
+}
+
+void Handler::registerS3GatewayHandlers(const std::shared_ptr<Router>& r) {
+    r->registerPayload("s3.gateway.status", &handler::S3Gateway::status);
+    r->registerPayload("s3.gateway.credentials.create", &handler::S3Gateway::credentialsCreate);
+    r->registerPayload("s3.gateway.credentials.list", &handler::S3Gateway::credentialsList);
+    r->registerPayload("s3.gateway.credentials.revoke", &handler::S3Gateway::credentialsRevoke);
+    r->registerPayload("s3.gateway.credentials.scope.update", &handler::S3Gateway::credentialsScopeUpdate);
+    r->registerPayload("s3.gateway.credentials.scope.list", &handler::S3Gateway::credentialsScopeList);
+    r->registerPayload("s3.gateway.buckets.list", &handler::S3Gateway::bucketsList);
+    r->registerPayload("s3.gateway.buckets.bind", &handler::S3Gateway::bucketsBind);
+    r->registerPayload("s3.gateway.buckets.unbind", &handler::S3Gateway::bucketsUnbind);
+    r->registerPayload("s3.gateway.buckets.createLocal", &handler::S3Gateway::bucketsCreateLocal);
+    r->registerPayload("s3.gateway.buckets.createRemoteCache", &handler::S3Gateway::bucketsCreateRemoteCache);
+    r->registerPayload("s3.gateway.budget.policy.list", &handler::S3Gateway::budgetPolicyList);
+    r->registerPayload("s3.gateway.budget.policy.upsert", &handler::S3Gateway::budgetPolicyUpsert);
+    r->registerPayload("s3.gateway.budget.policy.disable", &handler::S3Gateway::budgetPolicyDisable);
+    r->registerPayload("s3.gateway.budget.ledger.list", &handler::S3Gateway::budgetLedgerList);
+    r->registerPayload("s3.gateway.budget.status", &handler::S3Gateway::budgetStatus);
 }
 
 void Handler::registerGroupHandlers(const std::shared_ptr<Router>& r) {

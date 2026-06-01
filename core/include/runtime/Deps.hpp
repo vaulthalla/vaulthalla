@@ -60,7 +60,6 @@ namespace vh::runtime {
 
     private:
         Deps() = default;
-        [[nodiscard]] bool initialized() const;
     };
 
 }

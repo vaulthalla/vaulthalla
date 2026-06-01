@@ -2,7 +2,10 @@
 
 #include "crypto/secrets/TPMKeyProvider.hpp"
 #include "crypto/util/encrypt.hpp"
+#include "db/query/identities/User.hpp"
 #include "db/query/s3/Gateway.hpp"
+#include "rbac/permission/vault/Filesystem.hpp"
+#include "rbac/resolver/vault/all.hpp"
 
 #include <algorithm>
 #include <array>
@@ -25,6 +28,35 @@ std::string randomFromAlphabet(const std::string_view alphabet, const std::size_
         out.push_back(alphabet[randombytes_uniform(alphabet.size())]);
     return out;
 }
+
+bool validScopeMode(const std::string& mode) {
+    return mode == "user_access" || mode == "global" || mode == "vault_allowlist";
+}
+
+bool actionAllowedByPrincipal(
+    const std::shared_ptr<identities::User>& user,
+    const uint32_t vaultId,
+    const rbac::permission::vault::FilesystemAction action) {
+    if (!user) return false;
+    if (user->isSuperAdmin()) return true;
+    return rbac::resolver::Vault::has<rbac::permission::vault::FilesystemAction>({
+        .user = user,
+        .permission = action,
+        .vault_id = vaultId,
+        .path = "/"
+    });
+}
+
+void validateScopeRequest(const CredentialCreateOptions& options) {
+    if (options.created_by == 0) throw std::invalid_argument("credential creation requires created_by");
+    if (options.principal_user_id == 0) throw std::invalid_argument("credential creation requires principal_user_id");
+    if (options.name.empty()) throw std::invalid_argument("credential name must not be empty");
+    CredentialManager::validateScopeMutation(
+        options.created_by,
+        options.principal_user_id,
+        options.scope_mode,
+        options.vault_scopes);
+}
 }
 
 CredentialManager::CredentialManager()
@@ -34,17 +66,43 @@ CredentialManager::CredentialManager()
 }
 
 GatewaySecret CredentialManager::createCredential(const uint32_t userId, const std::string& name) const {
+    return createCredential({
+        .created_by = userId,
+        .principal_user_id = userId,
+        .name = name,
+        .scope_mode = "user_access",
+        .description = std::nullopt,
+        .expires_at = std::nullopt,
+        .vault_scopes = {}
+    });
+}
+
+GatewaySecret CredentialManager::createCredential(const CredentialCreateOptions& options) const {
+    validateScopeRequest(options);
+
     GatewaySecret out;
     out.secret_access_key = generateSecretKey();
 
     std::vector<uint8_t> iv;
-    out.credential.user_id = userId;
-    out.credential.name = name;
+    out.credential.user_id = options.principal_user_id;
+    out.credential.created_by = options.created_by;
+    out.credential.principal_user_id = options.principal_user_id;
+    out.credential.name = options.name;
     out.credential.access_key = generateAccessKey();
     out.credential.encrypted_secret_access_key = encryptSecret(out.secret_access_key, iv);
     out.credential.iv = std::move(iv);
     out.credential.enabled = true;
+    out.credential.scope_mode = options.scope_mode;
+    out.credential.description = options.description;
+    out.credential.expires_at = options.expires_at;
     out.credential.id = db::query::s3::Gateway::createCredential(out.credential);
+    if (out.credential.scope_mode == "vault_allowlist") {
+        auto scopes = options.vault_scopes;
+        for (auto& scope : scopes) scope.credential_id = out.credential.id;
+        db::query::s3::Gateway::replaceCredentialScopes(out.credential.id, scopes);
+    } else {
+        db::query::s3::Gateway::replaceCredentialScopes(out.credential.id, {});
+    }
     return out;
 }
 
@@ -62,6 +120,7 @@ bool CredentialManager::revokeCredential(const std::string& accessKeyOrName, con
 std::optional<GatewaySecret> CredentialManager::findEnabledSecret(const std::string& accessKey) const {
     const auto credential = db::query::s3::Gateway::getCredentialByAccessKey(accessKey);
     if (!credential || !credential->enabled) return std::nullopt;
+    if (credential->expires_at && *credential->expires_at <= std::time(nullptr)) return std::nullopt;
     return GatewaySecret{
         .credential = *credential,
         .secret_access_key = decryptSecret(credential->encrypted_secret_access_key, credential->iv)
@@ -78,6 +137,52 @@ std::string CredentialManager::generateAccessKey() {
 
 std::string CredentialManager::generateSecretKey() {
     return randomFromAlphabet(kSecretAlphabet, 40);
+}
+
+void CredentialManager::validateScopeMutation(
+    const uint32_t actorUserId,
+    const uint32_t principalUserId,
+    const std::string& scopeMode,
+    const std::vector<CredentialVaultScope>& vaultScopes) {
+    if (actorUserId == 0) throw std::invalid_argument("S3 gateway credential scope update requires an actor user");
+    if (principalUserId == 0) throw std::invalid_argument("S3 gateway credential scope update requires a principal user");
+    if (!validScopeMode(scopeMode)) throw std::invalid_argument("invalid S3 gateway credential scope mode: " + scopeMode);
+
+    const auto actor = db::query::identities::User::getUserById(actorUserId);
+    const auto principal = db::query::identities::User::getUserById(principalUserId);
+    if (!actor || !actor->meta.is_active) throw std::invalid_argument("credential scope actor is not active");
+    if (!principal || !principal->meta.is_active) throw std::invalid_argument("credential principal is not active");
+
+    const bool actorAdmin = actor->isAdmin();
+    if (!actorAdmin && principalUserId != actorUserId)
+        throw std::invalid_argument("non-admin users can only manage S3 gateway credentials for themselves");
+    if (!actorAdmin && scopeMode == "global")
+        throw std::invalid_argument("global S3 gateway credentials require admin permission");
+    if (scopeMode == "global" && !principal->isAdmin())
+        throw std::invalid_argument("global S3 gateway credentials require an admin principal");
+    if (scopeMode != "vault_allowlist") return;
+
+    if (!actorAdmin) {
+        for (const auto& scope : vaultScopes) {
+            if (scope.can_admin)
+                throw std::invalid_argument("non-admin users cannot grant S3 gateway admin scope");
+            const auto hasAnyVaultAccess =
+                actionAllowedByPrincipal(principal, scope.vault_id, rbac::permission::vault::FilesystemAction::List) ||
+                actionAllowedByPrincipal(principal, scope.vault_id, rbac::permission::vault::FilesystemAction::Read) ||
+                actionAllowedByPrincipal(principal, scope.vault_id, rbac::permission::vault::FilesystemAction::Write) ||
+                actionAllowedByPrincipal(principal, scope.vault_id, rbac::permission::vault::FilesystemAction::Delete);
+            if (!hasAnyVaultAccess)
+                throw std::invalid_argument("principal cannot access vault " + std::to_string(scope.vault_id));
+            if (scope.can_list && !actionAllowedByPrincipal(principal, scope.vault_id, rbac::permission::vault::FilesystemAction::List))
+                throw std::invalid_argument("principal cannot list vault " + std::to_string(scope.vault_id));
+            if (scope.can_read && !actionAllowedByPrincipal(principal, scope.vault_id, rbac::permission::vault::FilesystemAction::Read))
+                throw std::invalid_argument("principal cannot read vault " + std::to_string(scope.vault_id));
+            if (scope.can_write && !actionAllowedByPrincipal(principal, scope.vault_id, rbac::permission::vault::FilesystemAction::Write))
+                throw std::invalid_argument("principal cannot write vault " + std::to_string(scope.vault_id));
+            if (scope.can_delete && !actionAllowedByPrincipal(principal, scope.vault_id, rbac::permission::vault::FilesystemAction::Delete))
+                throw std::invalid_argument("principal cannot delete from vault " + std::to_string(scope.vault_id));
+        }
+    }
 }
 
 std::vector<uint8_t> CredentialManager::encryptSecret(const std::string& secret, std::vector<uint8_t>& iv) const {

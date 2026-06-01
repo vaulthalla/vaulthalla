@@ -1,5 +1,6 @@
 #pragma once
 
+#include "protocols/s3/Auth.hpp"
 #include "db/query/s3/Gateway.hpp"
 #include "rbac/permission/vault/Filesystem.hpp"
 
@@ -17,6 +18,14 @@ namespace vh::fs::model { struct File; }
 
 namespace vh::protocols::s3 {
 
+struct GatewayAccessContext {
+    uint32_t credential_id{};
+    std::string access_key;
+    std::string scope_mode{"user_access"};
+    db::query::s3::GatewayCredential credential;
+    bool dev_context{false};
+};
+
 struct ResolvedBucket {
     std::string bucket_name;
     uint32_t vault_id{};
@@ -24,6 +33,7 @@ struct ResolvedBucket {
     bool api_exclusive{};
     std::shared_ptr<storage::Engine> engine;
     std::shared_ptr<identities::User> actor;
+    std::optional<GatewayAccessContext> gateway_access;
 };
 
 enum class MetadataDirective {
@@ -56,12 +66,19 @@ struct ObjectBody {
 
 class ObjectStore {
 public:
+    std::vector<db::query::s3::BucketBinding> listBuckets(const AuthContext& auth) const;
     std::vector<db::query::s3::BucketBinding> listBuckets(const std::shared_ptr<identities::User>& actor) const;
+    ResolvedBucket resolveBucket(const std::string& bucket, const AuthContext& auth) const;
     ResolvedBucket resolveBucket(const std::string& bucket, const std::shared_ptr<identities::User>& actor) const;
+    ResolvedBucket headBucket(const std::string& bucket, const AuthContext& auth) const;
     ResolvedBucket headBucket(const std::string& bucket, const std::shared_ptr<identities::User>& actor) const;
+    ResolvedBucket createBucket(const std::string& bucket, const AuthContext& auth,
+                                const std::string& mode = "local",
+                                uintmax_t quotaBytes = 0) const;
     ResolvedBucket createBucket(const std::string& bucket, const std::shared_ptr<identities::User>& actor,
                                 const std::string& mode = "local",
                                 uintmax_t quotaBytes = 0) const;
+    void deleteBucket(const std::string& bucket, const AuthContext& auth) const;
     void deleteBucket(const std::string& bucket, const std::shared_ptr<identities::User>& actor) const;
 
     db::query::s3::ObjectListResult listObjects(const ResolvedBucket& bucket,
@@ -96,14 +113,28 @@ public:
     void requireObjectPermission(const ResolvedBucket& bucket,
                                  const std::string& key,
                                  rbac::permission::vault::FilesystemAction action) const;
+    void requireBucketPermission(const ResolvedBucket& bucket,
+                                 rbac::permission::vault::FilesystemAction action) const;
+    void requireBucketRbacPermission(const ResolvedBucket& bucket,
+                                     rbac::permission::vault::FilesystemAction action) const;
+    static bool credentialAllows(const AuthContext& auth,
+                                 uint32_t vaultId,
+                                 rbac::permission::vault::FilesystemAction action);
+    static bool credentialAllowsAdmin(const ResolvedBucket& bucket);
+    static bool isRemoteBacked(const ResolvedBucket& bucket);
+    static std::shared_ptr<storage::CloudEngine> cloudEngine(const ResolvedBucket& bucket);
 
 private:
     static void requireBucketName(const std::string& bucket);
+    static void requireRbacPermission(const ResolvedBucket& bucket, const std::filesystem::path& vaultPath,
+                                      rbac::permission::vault::FilesystemAction action);
     static void requirePermission(const ResolvedBucket& bucket, const std::filesystem::path& vaultPath,
                                   rbac::permission::vault::FilesystemAction action);
-    static bool isRemoteBacked(const ResolvedBucket& bucket);
     static bool isDirectoryMarker(const std::string& key);
-    static std::shared_ptr<storage::CloudEngine> cloudEngine(const ResolvedBucket& bucket);
+    static bool credentialAllows(const GatewayAccessContext& access,
+                                 const std::shared_ptr<identities::User>& principal,
+                                 uint32_t vaultId,
+                                 rbac::permission::vault::FilesystemAction action);
     static std::map<std::string, std::string> lowerMetadata(const std::map<std::string, std::string>& metadata);
     void ensureParentDirectories(const ResolvedBucket& bucket, const std::filesystem::path& vaultPath) const;
     void backfillLocalObjectState(const ResolvedBucket& bucket) const;

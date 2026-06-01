@@ -48,9 +48,13 @@ s3_gateway:
   host: 0.0.0.0
   port: 39000
   require_sigv4: true
+  allow_path_style: true
+  allow_virtual_hosted_style: true
 ```
 
 See [S3 Gateway](/admin/s3-gateway) before enabling it on a network interface.
+
+`require_sigv4` should stay enabled outside development. When it is disabled, the gateway accepts a development-only auth context only if `dev.enabled` is true or the configured host is loopback. Production listeners should use real gateway credentials with explicit scope and normal Vaulthalla RBAC.
 
 ## Database
 
@@ -111,6 +115,8 @@ storage_rates_api:
 ```
 
 Remote refresh is opt-in. If you enforce price budgets, review catalog freshness policy and verification requirements in [Price Budgets](/cost-control/price-budgets).
+
+S3 gateway per-key budgets use the same price-budget service and pricing catalogs. Remote-backed gateway operations evaluate global, provider, vault, gateway credential, and gateway credential/vault policies before upstream-costing work. Local-only gateway buckets do not consume remote provider price budgets.
 
 ## Sync Audit Retention
 

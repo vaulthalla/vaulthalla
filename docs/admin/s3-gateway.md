@@ -45,6 +45,58 @@ vh s3-gateway creds revoke VH...
 
 The secret access key is printed only when the credential is created. It is encrypted at rest using the gateway TPM key and decrypted only for SigV4 verification.
 
+Gateway credentials have an effective principal user and an additional credential scope. Scope is a restriction layered on top of normal Vaulthalla RBAC:
+
+```text
+allowed = principal RBAC allows the action
+          and credential scope allows the bucket/vault/action
+          and gateway budget preflight allows estimated cost
+```
+
+Scope never replaces RBAC. A scoped key cannot reach a vault just because the key lists that vault; the principal user must also have the matching Vaulthalla permission.
+
+Scope modes:
+
+| Scope | Behavior |
+| --- | --- |
+| `user_access` | The key can access S3 gateway buckets that the principal user can already access through RBAC. |
+| `vault_allowlist` | The key can access only listed vaults, with independent list/read/write/delete/admin flags per vault. |
+| `global` | Admin-created service credential for all gateway bucket bindings, still subject to admin principal validation and audit fields. |
+
+Examples:
+
+```bash
+# Personal full-access key, bounded by the user's normal vault permissions.
+vh s3-gateway creds create laptop --scope user-access --json
+
+# Single-bucket backup key.
+vh s3-gateway creds create backup \
+  --scope vault-allowlist \
+  --vault archive \
+  --read --write \
+  --json
+
+# Multi-vault read-only analytics key.
+vh s3-gateway creds create analytics \
+  --scope vault-allowlist \
+  --vault photos \
+  --vault reports \
+  --list --read \
+  --json
+
+# Global admin service key. Requires admin permission.
+vh s3-gateway creds create gateway-ops --scope global --user admin --json
+```
+
+Update an existing credential scope:
+
+```bash
+vh s3-gateway creds scope backup show
+vh s3-gateway creds scope backup set --scope vault-allowlist
+vh s3-gateway creds scope backup allow-vault archive --read --write
+vh s3-gateway creds scope backup revoke-vault archive
+```
+
 ## Buckets
 
 Bind an existing vault:
@@ -55,6 +107,8 @@ vh s3-gateway bucket list
 vh s3-gateway bucket unbind photos
 ```
 
+Local vaults must be bound as `local`. S3/R2 vaults must be bound as `remote_cache` or `remote_proxy`; the management commands reject mismatched mode/vault-type combinations so remote price-budget checks only run against cloud-backed engines.
+
 Create a local encrypted bucket:
 
 ```bash
@@ -62,6 +116,50 @@ vh s3-gateway bucket create-local archive
 ```
 
 Remote-backed API-created buckets should default to smart-cache behavior: `RemotePolicy::Strategy::Cache`, `keep_local` conflicts, balanced request budgets, and API-exclusive ownership unless explicitly overridden.
+
+## Gateway Cost Controls
+
+Remote-backed gateway operations run a price-budget preflight before upstream-costing work. Local-only gateway buckets do not consume remote S3 provider price budgets.
+
+Gateway budget scopes extend the normal global/provider/vault price-budget model:
+
+- `gateway_credential`: monthly cap for one inbound S3 gateway key across all gateway vaults.
+- `gateway_credential_vault`: monthly cap for one inbound S3 gateway key on one vault.
+
+Monthly caps are required for gateway credential scopes. Modes match existing price budgets:
+
+| Mode | Behavior |
+| --- | --- |
+| `off` | Ignore the policy. |
+| `report` | Record/report usage but never block. |
+| `warn` | Allow and emit warning/notification context. |
+| `enforce` | Return S3 XML `AccessDenied` with HTTP 403 when the monthly cap would be exceeded. |
+
+Examples:
+
+```bash
+# Monthly spend cap per key. Key-wide caps are admin-managed.
+vh s3-gateway budget set-key backup \
+  --monthly 5 \
+  --mode enforce \
+  --currency USD
+
+# Monthly spend cap for one key/vault pair. Vault owners/admins can manage these for vaults they control.
+vh s3-gateway budget set-key-vault backup \
+  --vault archive \
+  --monthly 2 \
+  --mode enforce \
+  --currency USD
+
+vh s3-gateway budget status --key backup
+vh s3-gateway budget ledger --key backup --limit 50
+```
+
+When a remote-backed operation is denied, clients receive a normal S3-compatible error response with code `AccessDenied` and a message beginning `S3 gateway price budget would be exceeded`.
+
+## Web Console
+
+The web console includes an `S3 Gateway` admin page. It shows service readiness, request counters, credentials, scope rows, bucket bindings, per-key budgets, per-key/vault budgets, recent ledger rows, and AWS CLI / MinIO client setup snippets. The secret key is shown only immediately after credential creation.
 
 ## Client Examples
 
@@ -104,3 +202,4 @@ This means gateway deletes are destructive for remote-backed buckets today. Plan
 - No object lock, legal hold, or MFA delete.
 - Large PUT and multipart bodies are accepted by the gateway path, but operators should still size `max_body_size_mb`, multipart part directories, and request budgets for the workload.
 - Remote-backed listing uses Vaulthalla known state and remote indexes; it does not perform unbounded upstream listing on every request.
+- Gateway price estimates use the configured provider pricing catalog. They are conservative estimates for preflight/ledger control, not a provider invoice reconciliation system.

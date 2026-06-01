@@ -25,6 +25,64 @@ Remote-backed gateway buckets bind to Vaulthalla S3/R2 vaults. Writes flow throu
 
 For smart-cache buckets, remote-only indexed objects can be listed and headed without downloading bodies. A GET can download and materialize the object according to the vault policy.
 
+## Scoped Gateway Access
+
+Each inbound S3 gateway key authenticates as a principal Vaulthalla user. The principal's normal RBAC must allow the action, and the key's gateway scope must also allow the vault and action.
+
+`vault_allowlist` credentials can expose one or more vaults with independent action flags:
+
+| Flag | S3 gateway operations |
+| --- | --- |
+| `list` | List buckets and objects. |
+| `read` | HEAD/GET object and metadata reads. |
+| `write` | PUT, COPY destination writes, and multipart upload writes. |
+| `delete` | Object delete and multi-delete. |
+| `admin` | Bucket bind/unbind/create/delete style administration. |
+
+Examples:
+
+```bash
+# Single-bucket backup key.
+vh s3-gateway creds create backup \
+  --scope vault-allowlist \
+  --vault archive \
+  --list --read --write \
+  --json
+
+# Multi-vault read-only analytics key.
+vh s3-gateway creds create analytics \
+  --scope vault-allowlist \
+  --vault archive \
+  --vault reports \
+  --list --read \
+  --json
+```
+
+Use `user_access` for a personal key that follows the user's normal vault permissions. Use `global` only for admin-created service keys that need all gateway bucket bindings and are audited through `created_by` and `principal_user_id`.
+
+## Gateway Price Budgets
+
+Remote-backed gateway requests can consume provider cost one operation at a time. Vaulthalla estimates that operation before upstream work and evaluates:
+
+- Global price policies.
+- Provider price policies.
+- Vault price policies.
+- Per-gateway-key monthly policies.
+- Per-gateway-key/per-vault monthly policies.
+
+Local gateway buckets are not charged against remote S3 provider budgets.
+
+```bash
+# Admin-managed key-wide cap.
+vh s3-gateway budget set-key backup --monthly 5 --mode enforce
+
+# Vault owners/admins can manage caps for key/vault pairs they control.
+vh s3-gateway budget set-key-vault backup --vault archive --monthly 2 --mode warn
+vh s3-gateway budget status --key backup --vault archive
+```
+
+Budget ledger rows include the gateway credential id, vault id, operation, request UUID, object key when available, and estimated cost. This makes it possible to audit which inbound key consumed gateway budget.
+
 ## Metadata And ETags
 
 S3 ETags are client-visible gateway metadata. They are not the same thing as Vaulthalla local `content_hash`.

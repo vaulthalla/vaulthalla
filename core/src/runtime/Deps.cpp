@@ -17,32 +17,18 @@ namespace vh::runtime {
         return instance;
     }
 
-    bool Deps::initialized() const {
-        return storageManager
-            || apiKeyManager
-            || authManager
-            || sessionManager
-            || secretsManager
-            || syncController
-            || fsCache
-            || shellUsageManager
-            || httpCacheStats
-            || fuseStats;
-    }
-
     void Deps::init() {
         auto& deps = get();
-        if (deps.initialized()) return;
 
-        deps.storageManager = std::make_shared<storage::Manager>();
-        deps.apiKeyManager = std::make_shared<vault::APIKeyManager>();
-        deps.authManager = std::make_shared<auth::Manager>();
-        deps.sessionManager = std::make_shared<auth::session::Manager>();
-        deps.secretsManager = std::make_shared<crypto::secrets::Manager>();
-        deps.fsCache = std::make_shared<fs::cache::Registry>();
-        deps.shellUsageManager = std::make_shared<protocols::shell::UsageManager>();
-        deps.httpCacheStats = std::make_shared<stats::model::CacheStats>();
-        deps.fuseStats = std::make_shared<stats::model::FuseStats>();
+        if (!deps.storageManager) deps.storageManager = std::make_shared<storage::Manager>();
+        if (!deps.apiKeyManager) deps.apiKeyManager = std::make_shared<vault::APIKeyManager>();
+        if (!deps.authManager) deps.authManager = std::make_shared<auth::Manager>();
+        if (!deps.sessionManager) deps.sessionManager = std::make_shared<auth::session::Manager>();
+        if (!deps.secretsManager) deps.secretsManager = std::make_shared<crypto::secrets::Manager>();
+        if (!deps.fsCache) deps.fsCache = std::make_shared<fs::cache::Registry>();
+        if (!deps.shellUsageManager) deps.shellUsageManager = std::make_shared<protocols::shell::UsageManager>();
+        if (!deps.httpCacheStats) deps.httpCacheStats = std::make_shared<stats::model::CacheStats>();
+        if (!deps.fuseStats) deps.fuseStats = std::make_shared<stats::model::FuseStats>();
     }
 
     void Deps::setSyncController(std::shared_ptr<sync::Controller> controller) {

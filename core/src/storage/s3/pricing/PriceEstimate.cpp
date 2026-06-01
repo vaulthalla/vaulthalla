@@ -83,14 +83,17 @@ PriceEstimateReport estimatePlannedS3Sync(
     if (options.disabled || !pricing.enabled)
         return PriceEstimateReport::unsupported("pricing disabled");
 
+    const auto tier = options.storage_tier_override
+        ? options.storage_tier_override
+        : engine.resolvedStorageTier();
     const auto target = resolvePriceProfileTarget(
         engine.s3ProviderProfile(),
         engine.s3ApiKey(),
-        engine.resolvedStorageTier());
+        tier);
     if (!target)
         return PriceEstimateReport::unsupported("S3 provider has no price-bot profile");
 
-    const auto usage = toPriceBotUsageInput(s3Estimate, engine.resolvedStorageTier());
+    const auto usage = toPriceBotUsageInput(s3Estimate, tier);
 
     if (!cfg.use_remote_estimator_for_debug) {
         PriceCatalogStore ownedStore(cfg);

@@ -1,5 +1,6 @@
 #include "protocols/s3/Auth.hpp"
 
+#include "config/Registry.hpp"
 #include "db/query/identities/User.hpp"
 #include "protocols/s3/Error.hpp"
 
@@ -19,6 +20,14 @@ bool hasSecurityTokenHeader(const sigv4::VerificationInput& input) {
     }
     return false;
 }
+
+bool configuredHostIsLoopback() {
+    auto host = config::Registry::get().s3_gateway.host;
+    std::ranges::transform(host, host.begin(), [](const unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "[::1]";
+}
 }
 
 Authenticator::Authenticator(const bool requireSigV4)
@@ -33,9 +42,22 @@ CredentialManager& Authenticator::credentials() const {
 
 AuthContext Authenticator::authenticate(const sigv4::VerificationInput& input) const {
     if (!requireSigV4_) {
+        if (!config::Registry::get().dev.enabled && !configuredHostIsLoopback())
+            throw S3Error{
+                "AccessDenied",
+                "Unsigned S3 gateway requests are only allowed in dev mode or on loopback listeners",
+                http::status::forbidden,
+                input.target};
         auto user = db::query::identities::User::getUserById(1);
         if (!user) throw accessDenied("/");
-        return {.user = std::move(user), .credential = {}};
+        return {
+            .user = std::move(user),
+            .credential = {},
+            .credential_id = 0,
+            .access_key = "dev-only",
+            .scope_mode = "user_access",
+            .dev_context = true
+        };
     }
 
     std::string parseError;
@@ -52,13 +74,17 @@ AuthContext Authenticator::authenticate(const sigv4::VerificationInput& input) c
     const auto result = sigv4::verify(input, secret->secret_access_key);
     if (!result.ok) throw S3Error{"SignatureDoesNotMatch", result.error, http::status::forbidden, input.target};
 
-    auto user = db::query::identities::User::getUserById(secret->credential.user_id);
+    auto user = db::query::identities::User::getUserById(secret->credential.principal_user_id);
     if (!user || !user->meta.is_active) throw accessDenied(input.target);
 
     credentialManager.markUsed(secret->credential.id);
     return {
         .user = std::move(user),
-        .credential = secret->credential
+        .credential = secret->credential,
+        .credential_id = secret->credential.id,
+        .access_key = secret->credential.access_key,
+        .scope_mode = secret->credential.scope_mode,
+        .dev_context = false
     };
 }
 

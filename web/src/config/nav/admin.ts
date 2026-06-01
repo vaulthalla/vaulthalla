@@ -11,6 +11,7 @@ import VaultShield from '@/fa-duotone/file-shield.svg'
 import ShareNodes from '@/fa-duotone/share-nodes.svg'
 import Envelope from '@/fa-duotone/envelope.svg'
 import SackDollar from '@/fa-duotone/sack-dollar.svg'
+import Cloud from '@/fa-duotone/cloud.svg'
 
 export const adminNavItems: NavItem[] = [
   {
@@ -21,6 +22,7 @@ export const adminNavItems: NavItem[] = [
   },
   { label: 'Vaults', href: '/vaults', icon: Vault },
   { label: 'Shares', href: '/shares', icon: ShareNodes },
+  { label: 'S3 Gateway', href: '/s3-gateway', icon: Cloud },
   { label: 'Cost Control', href: '/pricing-budget', icon: SackDollar },
   { label: 'Operator Email', href: '/operator-email', icon: Envelope },
   { label: 'API Keys', href: '/api-keys', icon: KeySkeleton },

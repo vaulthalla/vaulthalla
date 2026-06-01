@@ -13,13 +13,28 @@ namespace vh::db::query::s3 {
 struct GatewayCredential {
     uint32_t id{};
     uint32_t user_id{};
+    std::optional<uint32_t> created_by;
+    uint32_t principal_user_id{};
     std::string name;
     std::string access_key;
     std::vector<uint8_t> encrypted_secret_access_key;
     std::vector<uint8_t> iv;
     bool enabled{true};
+    std::string scope_mode{"user_access"};
+    std::optional<std::string> description;
     std::time_t created_at{};
     std::optional<std::time_t> last_used_at;
+    std::optional<std::time_t> expires_at;
+};
+
+struct CredentialVaultScope {
+    uint32_t credential_id{};
+    uint32_t vault_id{};
+    bool can_list{true};
+    bool can_read{true};
+    bool can_write{false};
+    bool can_delete{false};
+    bool can_admin{false};
 };
 
 struct BucketBinding {
@@ -86,10 +101,22 @@ class Gateway {
 public:
     static uint32_t createCredential(const GatewayCredential& credential);
     static std::vector<GatewayCredential> listCredentials(std::optional<uint32_t> userId = std::nullopt);
+    static std::vector<GatewayCredential> listCredentialsForPrincipal(uint32_t userId);
+    static std::vector<GatewayCredential> listCredentialsAdmin(bool includeDisabled = false);
     static std::optional<GatewayCredential> getCredentialByAccessKey(const std::string& accessKey);
     static bool deleteCredentialByAccessKey(const std::string& accessKey);
     static bool deleteCredentialByName(uint32_t userId, const std::string& name);
     static void updateCredentialLastUsed(uint32_t id);
+    static std::vector<CredentialVaultScope> listCredentialScopes(uint32_t credentialId);
+    static void replaceCredentialScopes(uint32_t credentialId, const std::vector<CredentialVaultScope>& scopes);
+    static std::optional<CredentialVaultScope> getCredentialScopeForVault(uint32_t credentialId, uint32_t vaultId);
+    static void updateCredentialScopeMode(
+        uint32_t credentialId,
+        const std::string& scopeMode,
+        uint32_t principalUserId,
+        std::optional<uint32_t> createdBy,
+        std::optional<std::string> description,
+        std::optional<std::time_t> expiresAt);
 
     static void bindBucket(const BucketBinding& binding);
     static bool unbindBucket(const std::string& bucketName);
