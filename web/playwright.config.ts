@@ -15,6 +15,7 @@ const webServerCommand = [
 
 export default defineConfig({
   testDir: './tests/e2e',
+  globalSetup: './tests/e2e/globalSetup.ts',
   fullyParallel: false,
   timeout: 45_000,
   expect: {

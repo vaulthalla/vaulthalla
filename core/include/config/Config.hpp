@@ -38,6 +38,17 @@ struct S3GatewayMultipartConfig {
     uint32_t abort_after_days = 7;
 };
 
+struct S3GatewaySyntheticLocalRequestCostConfig {
+    std::string list = "0.00000001";
+    std::string head = "0.00000001";
+    std::string get = "0.00000001";
+    std::string put = "0.00000001";
+    std::string delete_ = "0.00000001";
+    std::string copy = "0.00000001";
+    std::string downloaded_gb = "0.00000000";
+    std::string uploaded_gb = "0.00000000";
+};
+
 struct S3GatewayConfig {
     bool enabled = false;
     std::string host = "0.0.0.0";
@@ -52,6 +63,7 @@ struct S3GatewayConfig {
     std::string default_remote_sync_strategy = "cache";
     std::string default_remote_conflict_policy = "keep_local";
     S3GatewayMultipartConfig multipart;
+    S3GatewaySyntheticLocalRequestCostConfig synthetic_local_request_cost_usd;
 };
 
 struct ThumbnailsConfig {
@@ -279,6 +291,8 @@ void to_json(nlohmann::json& j, const HttpPreviewConfig& c);
 void from_json(const nlohmann::json& j, HttpPreviewConfig& c);
 void to_json(nlohmann::json& j, const S3GatewayMultipartConfig& c);
 void from_json(const nlohmann::json& j, S3GatewayMultipartConfig& c);
+void to_json(nlohmann::json& j, const S3GatewaySyntheticLocalRequestCostConfig& c);
+void from_json(const nlohmann::json& j, S3GatewaySyntheticLocalRequestCostConfig& c);
 void to_json(nlohmann::json& j, const S3GatewayConfig& c);
 void from_json(const nlohmann::json& j, S3GatewayConfig& c);
 void to_json(nlohmann::json& j, const LogLevelsConfig& c);

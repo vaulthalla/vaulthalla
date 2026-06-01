@@ -79,6 +79,49 @@ test('admin can set a per-key/vault budget', async ({ page }) => {
   await saveKeyVaultBudget(page, '0.15', vaultName)
 })
 
+test('admin can create and update local budget enforcement on a credential', async ({ page }) => {
+  await gotoS3Gateway(page)
+  const credentialName = uniqueE2EName('pw-local-budget')
+  await createCredential(page, credentialName, 'user_access', undefined, true)
+  await hideSecret(page)
+  await selectCredential(page, credentialName)
+  await expect(page.getByTestId('s3-gateway-scope-enforce-local-budget')).toBeChecked()
+
+  await page.getByTestId('s3-gateway-scope-enforce-local-budget').uncheck()
+  await page.getByTestId('s3-gateway-scope-save').click()
+  await page.reload()
+  await expect(page.getByTestId('s3-gateway-section-service')).toBeVisible()
+  await selectCredential(page, credentialName)
+  await expect(page.getByTestId('s3-gateway-scope-enforce-local-budget')).not.toBeChecked()
+})
+
+test('admin can disable a key budget policy', async ({ page }) => {
+  await gotoS3Gateway(page)
+  await ensureUserCredential(page)
+  await saveKeyBudget(page, '0.37')
+  await expect(page.getByTestId('s3-gateway-key-budget-disable')).toBeEnabled()
+  await page.getByTestId('s3-gateway-key-budget-disable').click()
+  await expect(page.getByTestId('s3-gateway-key-budget-disable')).toBeDisabled()
+})
+
+test('budget panel scopes policy controls to the selected credential and shows ledger source column', async ({ page }) => {
+  await gotoS3Gateway(page)
+  const first = uniqueE2EName('pw-budget-filter-a')
+  const second = uniqueE2EName('pw-budget-filter-b')
+  await createCredential(page, first)
+  await hideSecret(page)
+  await createCredential(page, second)
+  await hideSecret(page)
+
+  await selectCredential(page, first)
+  await saveKeyBudget(page, '0.41')
+  await expect(page.getByTestId('s3-gateway-key-budget-disable')).toBeEnabled()
+
+  await selectCredential(page, second)
+  await expect(page.getByTestId('s3-gateway-key-budget-disable')).toBeDisabled()
+  await expect(page.getByTestId('s3-gateway-section-budgets').getByText('Source')).toBeVisible()
+})
+
 test('invalid budget value reports a visible error', async ({ page }) => {
   await gotoS3Gateway(page)
   await ensureUserCredential(page)

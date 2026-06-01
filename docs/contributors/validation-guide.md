@@ -96,14 +96,7 @@ The focused browser suite can auto-start the local Next dev server when the base
 pnpm --dir web run test:e2e:s3-gateway
 ```
 
-If browser credentials are not configured, provision a local/dev E2E user before running Playwright:
-
-```bash
-eval "$(tools/e2e/provision_e2e_user.sh --print-exports)"
-pnpm --dir web run test:e2e:s3-gateway
-```
-
-The provisioner uses configured credentials when present. Otherwise it creates or verifies `e2e_s3_gateway_admin` against the loaded test/dev DB and stores generated credentials only under `test-results/s3-gateway-e2e/e2e.env` with private permissions. Set `VAULTHALLA_E2E_SKIP=1` only when you are intentionally skipping the browser suite.
+The Playwright suite seeds its own admin login during global setup. For local/dev runs it assumes the Vaulthalla backend is already running in dev mode, creates a fresh `e2e_s3gw_*` admin user in the configured local dev DB, exports the generated username/password to the test workers, and stores the password only under `test-results/s3-gateway-e2e/e2e.env` with private permissions. Set `VAULTHALLA_E2E_SKIP=1` only when you are intentionally skipping the browser suite.
 
 For data-plane validation, use the smoke wrapper:
 
@@ -111,7 +104,7 @@ For data-plane validation, use the smoke wrapper:
 tools/smoke/s3_gateway_e2e.sh
 ```
 
-The wrapper sources the env loader, starts the web dev server when needed, attempts to enable/start the S3 gateway before declaring it unreachable, provisions E2E credentials when missing, runs the Playwright S3 Gateway suite, and then runs `tools/smoke/s3_gateway_scoped_budget_smoke.sh --local-only`. Set `S3_GATEWAY_ENDPOINT` when the gateway is not on `http://127.0.0.1:39000`.
+The wrapper sources the env loader, starts the web dev server when needed, attempts to enable/start the S3 gateway before declaring it unreachable, runs the self-seeding Playwright S3 Gateway suite, and then runs `tools/smoke/s3_gateway_scoped_budget_smoke.sh --local-only`. Set `S3_GATEWAY_ENDPOINT` when the gateway is not on `http://127.0.0.1:39000`.
 
 Useful wrapper options:
 
@@ -129,6 +122,24 @@ tools/smoke/s3_gateway_e2e.sh --require-remote --prefix s3-gateway-e2e/manual-$(
 ```
 
 Remote smoke uses existing `S3_GATEWAY_SMOKE_*` and `VAULTHALLA_TEST_R2_*` settings. It deletes only the unique prefix it was given. If cleanup fails, the script prints the exact prefix to remove manually.
+
+The scoped smoke has explicit budget-denial modes:
+
+```bash
+tools/smoke/s3_gateway_scoped_budget_smoke.sh --budget-denial synthetic
+tools/smoke/s3_gateway_scoped_budget_smoke.sh --require-remote --budget-denial actual-upstream
+tools/smoke/s3_gateway_scoped_budget_smoke.sh --require-remote --budget-denial both
+```
+
+Use `synthetic` for deterministic local validation. It enables `enforce_budget_for_local_requests`, uses nominal gateway-local synthetic rates, and asserts local/cache ledger rows have `synthetic=true`. Use `actual-upstream` only with remote env available; it seeds remote-only objects, imports the remote index, validates remote-only GET behavior, and checks `AccessDenied` price-budget plus `SlowDown` request-budget denial. If the local/dev pricing catalog for the live provider is unavailable, the smoke reports that `synthetic=false` `remote_download` price-ledger capture is catalog-gated; the DB-backed accounting tests cover that ledger assertion with a seeded catalog. Do not use a local-first PUT loop as proof of upstream provider spend.
+
+For final S3 Gateway merge readiness, run:
+
+```bash
+tools/smoke/s3_gateway_merge_ready.sh
+```
+
+The wrapper runs shell syntax checks, `meson compile -C build`, the DB-backed S3 gateway/cost/pricing filter, web unit tests, Playwright S3 Gateway E2E, local smoke, remote smoke when R2 env exists, and `git diff --check`. It writes `test-results/s3-gateway-e2e/merge-ready-report.txt` with pass/fail per stage, exact commands, env-source status, E2E credential status, smoke prefixes, and R2 cleanup result.
 
 Do not report "DB env missing", "E2E credentials missing", "web stack unreachable", or "S3 gateway unreachable" until the loader, provisioner, and startup attempts above have run and their redacted diagnostics/log paths are captured.
 

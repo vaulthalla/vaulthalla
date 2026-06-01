@@ -810,12 +810,15 @@ CommandResult handleBucket(const CommandCall& call) {
         return usage(call.constructFullArgs());
 
     const auto [sub, subcall] = descend(call);
-    if (isCommandMatch({"s3-gateway", "bucket", "list"}, sub)) return handleBucketList(subcall);
-    if (isCommandMatch({"s3-gateway", "bucket", "bind"}, sub)) return handleBucketBind(subcall);
-    if (isCommandMatch({"s3-gateway", "bucket", "unbind"}, sub)) return handleBucketUnbind(subcall);
-    if (isCommandMatch({"s3-gateway", "bucket", "create-local"}, sub)) return handleBucketCreateLocal(subcall);
-    if (isCommandMatch({"s3-gateway", "bucket", "create-remote-cache"}, sub)) return handleBucketCreateRemoteCache(subcall);
-    if (isCommandMatch({"s3-gateway", "bucket", "backfill"}, sub)) return handleBucketBackfill(subcall);
+    if (isCommandMatch({"s3-gateway", "bucket", "list"}, sub) || sub == "list" || sub == "ls")
+        return handleBucketList(subcall);
+    if (isCommandMatch({"s3-gateway", "bucket", "bind"}, sub) || sub == "bind") return handleBucketBind(subcall);
+    if (isCommandMatch({"s3-gateway", "bucket", "unbind"}, sub) || sub == "unbind") return handleBucketUnbind(subcall);
+    if (isCommandMatch({"s3-gateway", "bucket", "create-local"}, sub) || sub == "create-local")
+        return handleBucketCreateLocal(subcall);
+    if (isCommandMatch({"s3-gateway", "bucket", "create-remote-cache"}, sub) || sub == "create-remote-cache")
+        return handleBucketCreateRemoteCache(subcall);
+    if (isCommandMatch({"s3-gateway", "bucket", "backfill"}, sub) || sub == "backfill") return handleBucketBackfill(subcall);
     return invalid(call.constructFullArgs(), "Unknown s3-gateway bucket subcommand: '" + std::string(sub) + "'");
 }
 

@@ -28,6 +28,7 @@ export async function createCredential(
   name: string,
   scope: 'user_access' | 'vault_allowlist' = 'user_access',
   vaultName?: string,
+  enforceLocalBudget = false,
 ) {
   await page.getByTestId('s3-gateway-open-create-credential').click()
   await expect(page.getByTestId('s3-gateway-create-credential-modal')).toBeVisible()
@@ -40,6 +41,9 @@ export async function createCredential(
     const count = await vaultCheckboxes.count()
     if (count === 0) throw new Error('S3 Gateway E2E requires at least one vault for vault_allowlist scope tests.')
     await vaultCheckboxes.first().check()
+  }
+  if (enforceLocalBudget) {
+    await page.getByTestId('s3-gateway-create-enforce-local-budget').check()
   }
   await page.getByTestId('s3-gateway-submit-create-credential').click()
   await expect(page.getByTestId('s3-gateway-secret-panel')).toBeVisible()

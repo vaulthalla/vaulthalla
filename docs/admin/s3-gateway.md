@@ -29,9 +29,20 @@ s3_gateway:
     part_dir: ""
     min_part_size_mb: 5
     abort_after_days: 7
+  synthetic_local_request_cost_usd:
+    list: "0.00000001"
+    head: "0.00000001"
+    get: "0.00000001"
+    put: "0.00000001"
+    delete: "0.00000001"
+    copy: "0.00000001"
+    downloaded_gb: "0.00000000"
+    uploaded_gb: "0.00000000"
 ```
 
 Use `vh s3-gateway enable` or `vh s3-gateway disable` to update config and restart only `S3GatewayService`.
+
+`synthetic_local_request_cost_usd` controls the nominal cost used only when `enforce_budget_for_local_requests` is enabled on a gateway credential and the request is served locally or deferred to sync. The default is intentionally tiny but nonzero per request so gateway credential budgets can throttle pure local buckets and cache hits. These synthetic charges are scoped only to `gateway_credential` and `gateway_credential_vault` policies.
 
 ## Credentials
 
@@ -173,7 +184,7 @@ All exceeded enforce checks are retained in budget decision metadata for CLI/web
 
 Remote-backed gateway operations also honor the S3/R2 request budgets configured on the Vaulthalla remote policy. Request-budget failures are distinct from price-budget failures and return S3 XML with code `SlowDown` and a message beginning `S3 gateway request budget exceeded`. The message identifies the request budget kind, such as `GET`, `PUT`, `DELETE`, `COPY`, or downloaded bytes.
 
-If `enforce_budget_for_local_requests` is enabled on a gateway credential, local/cache/sync-deferred requests are recorded as synthetic gateway usage for `gateway_credential` and `gateway_credential_vault` scopes only. Synthetic rows are marked with `synthetic=true` and a `usage_source` such as `local_cache`, `local_file`, `metadata`, or `sync_deferred`. Synthetic local usage never creates provider/vault/global upstream ledger rows.
+If `enforce_budget_for_local_requests` is enabled on a gateway credential, pure local buckets, remote-cache hits, metadata-only requests, and sync-deferred local-first writes/deletes are recorded as synthetic gateway usage for `gateway_credential` and `gateway_credential_vault` scopes only. Synthetic rows are marked with `synthetic=true` and a `usage_source` such as `local_cache`, `local_file`, `metadata`, or `sync_deferred`. Synthetic local usage uses the configured nominal local gateway rates and never creates provider/vault/global upstream ledger rows.
 
 ## Web Console
 
@@ -187,7 +198,7 @@ For local/dev validation, use the self-provisioning E2E wrapper from the repo ro
 tools/smoke/s3_gateway_e2e.sh --local-only
 ```
 
-The wrapper sources the known local env files, starts the web dev server when needed, attempts to enable/start the S3 gateway before failing reachability, provisions an E2E admin login when `VAULTHALLA_E2E_USER` and `VAULTHALLA_E2E_PASSWORD` are absent, runs the Playwright S3 Gateway suite, and then runs local S3 smoke.
+The wrapper sources the known local env files, starts the web dev server when needed, attempts to enable/start the S3 gateway before failing reachability, runs the self-seeding Playwright S3 Gateway suite, and then runs local S3 smoke. The browser suite creates a fresh `e2e_s3gw_*` admin user during global setup for local/dev validation and keeps the generated password under `test-results/s3-gateway-e2e/e2e.env` with private permissions.
 
 Remote R2/S3 smoke runs when remote env is present or required explicitly:
 
@@ -195,7 +206,23 @@ Remote R2/S3 smoke runs when remote env is present or required explicitly:
 tools/smoke/s3_gateway_e2e.sh --require-remote --prefix s3-gateway-e2e/manual-$(date -u +%Y%m%dT%H%M%SZ)
 ```
 
-The remote smoke deletes only the supplied unique prefix. If cleanup fails, it reports the prefix and exits non-zero.
+The scoped smoke supports explicit budget-denial modes:
+
+```bash
+tools/smoke/s3_gateway_scoped_budget_smoke.sh --budget-denial synthetic
+tools/smoke/s3_gateway_scoped_budget_smoke.sh --require-remote --budget-denial actual-upstream
+tools/smoke/s3_gateway_scoped_budget_smoke.sh --require-remote --budget-denial both
+```
+
+Synthetic mode uses local/cache gateway requests with `enforce_budget_for_local_requests` and does not require upstream R2 activity. Actual-upstream mode seeds remote-only objects, imports their metadata into the remote index, and uses gateway GET to validate remote-only download behavior plus `AccessDenied` price-budget and `SlowDown` request-budget denial paths. When the local/dev pricing catalog for the live provider is unavailable, the smoke prints that the `synthetic=false` `remote_download` price-ledger assertion is catalog-gated; the DB-backed tests cover that ledger path with a seeded catalog. No smoke test expects local-first PUT or DELETE to create provider/vault/global spend at gateway request time. The remote smoke deletes only the supplied unique prefix. If cleanup fails, it reports the prefix and exits non-zero.
+
+For final branch validation, run:
+
+```bash
+tools/smoke/s3_gateway_merge_ready.sh
+```
+
+The wrapper writes `test-results/s3-gateway-e2e/merge-ready-report.txt` with pass/fail status, exact commands, env-source status, credential provisioning status, local/remote smoke prefixes, and R2 cleanup result.
 
 ## Client Examples
 

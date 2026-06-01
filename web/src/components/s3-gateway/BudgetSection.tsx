@@ -124,6 +124,7 @@ export function BudgetSection({
                 </button>
                 <button
                   className={dangerButtonClass}
+                  data-testid="s3-gateway-key-budget-disable"
                   type="button"
                   disabled={!keyPolicy}
                   onClick={() => void onDisablePolicy(policyPayload({ scope: 'gateway_credential', credentialId: selectedCredential.id, monthly: keyMonthly, mode: budgetMode, currency: budgetCurrency }))}>
@@ -147,6 +148,7 @@ export function BudgetSection({
                 </button>
                 <button
                   className={dangerButtonClass}
+                  data-testid="s3-gateway-key-vault-budget-disable"
                   type="button"
                   disabled={!keyVaultPolicy || !budgetVaultId}
                   onClick={() => void onDisablePolicy(policyPayload({

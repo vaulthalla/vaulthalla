@@ -201,6 +201,30 @@ namespace vh::config {
         c.abort_after_days = std::max(1u, j.value("abort_after_days", 7u));
     }
 
+    void to_json(nlohmann::json &j, const S3GatewaySyntheticLocalRequestCostConfig &c) {
+        j = {
+            {"list", c.list},
+            {"head", c.head},
+            {"get", c.get},
+            {"put", c.put},
+            {"delete", c.delete_},
+            {"copy", c.copy},
+            {"downloaded_gb", c.downloaded_gb},
+            {"uploaded_gb", c.uploaded_gb}
+        };
+    }
+
+    void from_json(const nlohmann::json &j, S3GatewaySyntheticLocalRequestCostConfig &c) {
+        c.list = j.value("list", c.list);
+        c.head = j.value("head", c.head);
+        c.get = j.value("get", c.get);
+        c.put = j.value("put", c.put);
+        c.delete_ = j.value("delete", c.delete_);
+        c.copy = j.value("copy", c.copy);
+        c.downloaded_gb = j.value("downloaded_gb", c.downloaded_gb);
+        c.uploaded_gb = j.value("uploaded_gb", c.uploaded_gb);
+    }
+
     void to_json(nlohmann::json &j, const S3GatewayConfig &c) {
         j = {
             {"enabled", c.enabled},
@@ -215,7 +239,8 @@ namespace vh::config {
             {"default_api_exclusive", c.default_api_exclusive},
             {"default_remote_sync_strategy", c.default_remote_sync_strategy},
             {"default_remote_conflict_policy", c.default_remote_conflict_policy},
-            {"multipart", c.multipart}
+            {"multipart", c.multipart},
+            {"synthetic_local_request_cost_usd", c.synthetic_local_request_cost_usd}
         };
     }
 
@@ -238,6 +263,8 @@ namespace vh::config {
         c.default_remote_sync_strategy = j.value("default_remote_sync_strategy", "cache");
         c.default_remote_conflict_policy = j.value("default_remote_conflict_policy", "keep_local");
         if (j.contains("multipart")) j.at("multipart").get_to(c.multipart);
+        if (j.contains("synthetic_local_request_cost_usd"))
+            j.at("synthetic_local_request_cost_usd").get_to(c.synthetic_local_request_cost_usd);
     }
 
     void to_json(nlohmann::json &j, const LoggingConfig &c) {

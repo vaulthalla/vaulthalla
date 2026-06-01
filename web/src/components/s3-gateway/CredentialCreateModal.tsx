@@ -104,6 +104,7 @@ export function CredentialCreateModal({
           <label className="flex items-start gap-3 rounded border border-white/10 bg-white/[0.03] p-3 text-sm text-white/75 md:col-span-2">
             <input
               className="mt-1 h-4 w-4 accent-cyan-400"
+              data-testid="s3-gateway-create-enforce-local-budget"
               type="checkbox"
               checked={enforceLocalBudget}
               onChange={event => setEnforceLocalBudget(event.target.checked)}

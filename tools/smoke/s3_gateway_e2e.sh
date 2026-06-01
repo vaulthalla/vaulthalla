@@ -13,12 +13,16 @@ WEB_LOG="$RESULT_DIR/web.log"
 GATEWAY_LOG="$RESULT_DIR/gateway.log"
 GATEWAY_SYSTEMD_LOG="$RESULT_DIR/gateway-systemd.log"
 ENV_REPORT="$RESULT_DIR/env-report.txt"
+DEFAULT_VH_BIN="$REPO_ROOT/build/core/vaulthalla-cli"
+[[ -x "$DEFAULT_VH_BIN" ]] || DEFAULT_VH_BIN="vh"
+VH_BIN="${VH_BIN:-$DEFAULT_VH_BIN}"
 
 WEB_URL="${VAULTHALLA_E2E_BASE_URL:-http://127.0.0.1:3000}"
 GATEWAY_ENDPOINT="${S3_GATEWAY_ENDPOINT:-http://127.0.0.1:39000}"
 PREFIX="${S3_GATEWAY_E2E_PREFIX:-s3-gateway-e2e/$(date -u +%Y%m%dT%H%M%SZ)-$$}"
 WEB_TIMEOUT=120
 GATEWAY_TIMEOUT=90
+USE_BUILD_RUNTIME="${S3_GATEWAY_E2E_USE_BUILD_RUNTIME:-0}"
 REQUIRE_REMOTE=0
 LOCAL_ONLY=0
 NO_START_WEB=0
@@ -29,6 +33,7 @@ WEB_STATUS=not-run
 LOCAL_STATUS=not-run
 REMOTE_STATUS=not-run
 FAILED=0
+STOPPED_SYSTEMD_GATEWAY=0
 
 usage() {
   cat <<'USAGE'
@@ -40,6 +45,7 @@ Options:
   --prefix <prefix>        Prefix for smoke data. Defaults to s3-gateway-e2e/<timestamp>-<pid>.
   --no-start-web           Do not start the Next dev server if the web URL is unreachable.
   --keep-processes         Keep wrapper-started background processes running after exit.
+  --use-build-runtime      Run smoke against build/core/vaulthalla-server and restore systemd afterward.
   --web-timeout <seconds>  Time to wait for a wrapper-started web server. Default: 120.
   -h, --help               Show this help.
 USAGE
@@ -69,6 +75,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --keep-processes)
       KEEP_PROCESSES=1
+      shift
+      ;;
+    --use-build-runtime)
+      USE_BUILD_RUNTIME=1
       shift
       ;;
     --web-timeout)
@@ -117,6 +127,9 @@ cleanup() {
   if [[ -n "$RUNTIME_PID" ]] && kill -0 "$RUNTIME_PID" >/dev/null 2>&1; then
     kill "$RUNTIME_PID" >/dev/null 2>&1 || true
     wait "$RUNTIME_PID" >/dev/null 2>&1 || true
+  fi
+  if [[ "$STOPPED_SYSTEMD_GATEWAY" == "1" ]]; then
+    run_root systemctl start vaulthalla.service >/dev/null 2>&1 || true
   fi
 }
 trap cleanup EXIT
@@ -305,10 +318,29 @@ start_gateway_with_fallback_runtime() {
   return 1
 }
 
+start_gateway_with_build_runtime() {
+  local server="$REPO_ROOT/build/core/vaulthalla-server"
+  [[ -x "$server" ]] || {
+    echo "build runtime requested but $server is not executable" >&2
+    return 1
+  }
+
+  : >"$GATEWAY_LOG"
+  : >"$GATEWAY_SYSTEMD_LOG"
+  echo "Starting branch-built gateway runtime $server; log: $GATEWAY_LOG"
+  run_root systemctl stop vaulthalla.service >>"$GATEWAY_SYSTEMD_LOG" 2>&1 || true
+  STOPPED_SYSTEMD_GATEWAY=1
+  sudo -n -u vaulthalla bash -lc \
+    'set -a; source /etc/vaulthalla/vaulthalla.env; set +a; cd /var/lib/vaulthalla; exec "$1"' \
+    _ "$server" >"$GATEWAY_LOG" 2>&1 &
+  RUNTIME_PID=$!
+  wait_for_url "$GATEWAY_ENDPOINT" "$GATEWAY_TIMEOUT" runtime
+}
+
 gateway_diagnostics() {
   echo "S3 gateway diagnostics:"
-  if command -v "${VH_BIN:-vh}" >/dev/null 2>&1; then
-    "${VH_BIN:-vh}" s3-gateway status || true
+  if command -v "$VH_BIN" >/dev/null 2>&1 || [[ -x "$VH_BIN" ]]; then
+    "$VH_BIN" s3-gateway status || true
   fi
   if [[ -s "$GATEWAY_SYSTEMD_LOG" ]]; then
     echo "Last systemd diagnostics from $GATEWAY_SYSTEMD_LOG:"
@@ -321,6 +353,16 @@ gateway_diagnostics() {
 }
 
 start_gateway_if_needed() {
+  if [[ "$USE_BUILD_RUNTIME" == "1" ]]; then
+    if start_gateway_with_build_runtime; then
+      echo "Branch-built S3 gateway is reachable at $GATEWAY_ENDPOINT"
+      return 0
+    fi
+    echo "Branch-built S3 gateway did not become reachable at $GATEWAY_ENDPOINT." >&2
+    gateway_diagnostics >&2
+    return 1
+  fi
+
   if reachable "$GATEWAY_ENDPOINT"; then
     echo "S3 gateway already reachable at $GATEWAY_ENDPOINT; reusing it."
     return 0
@@ -329,16 +371,16 @@ start_gateway_if_needed() {
   : >"$GATEWAY_SYSTEMD_LOG"
   echo "S3 gateway is not reachable at $GATEWAY_ENDPOINT; attempting enable/start."
 
-  if command -v "${VH_BIN:-vh}" >/dev/null 2>&1; then
+  if command -v "$VH_BIN" >/dev/null 2>&1 || [[ -x "$VH_BIN" ]]; then
     {
       echo "===== vh s3-gateway status before enable ====="
-      "${VH_BIN:-vh}" s3-gateway status || true
+      "$VH_BIN" s3-gateway status || true
       echo
       echo "===== vh s3-gateway enable ====="
-      "${VH_BIN:-vh}" s3-gateway enable || true
+      "$VH_BIN" s3-gateway enable || true
       echo
       echo "===== vh s3-gateway status after enable ====="
-      "${VH_BIN:-vh}" s3-gateway status || true
+      "$VH_BIN" s3-gateway status || true
     } >>"$GATEWAY_LOG" 2>&1
   else
     echo "vh CLI not found; skipping vh s3-gateway enable." >>"$GATEWAY_LOG"
@@ -354,19 +396,6 @@ start_gateway_if_needed() {
   echo "S3 gateway is not reachable at $GATEWAY_ENDPOINT after enable/start attempts." >&2
   gateway_diagnostics >&2
   return 1
-}
-
-ensure_e2e_credentials() {
-  local exports
-  if ! exports="$("$REPO_ROOT/tools/e2e/provision_e2e_user.sh" --print-exports)"; then
-    echo "E2E credential provisioning failed." >&2
-    return 1
-  fi
-  eval "$exports"
-  if [[ -z "${VAULTHALLA_E2E_USER:-}" || -z "${VAULTHALLA_E2E_PASSWORD:-}" ]]; then
-    echo "E2E credential provisioning did not export required variables." >&2
-    return 1
-  fi
 }
 
 ensure_playwright_chromium() {
@@ -389,10 +418,7 @@ if ! start_web_if_needed; then
   WEB_STATUS=unreachable
   FAILED=1
 else
-  if ! ensure_e2e_credentials; then
-    WEB_STATUS=credential-provision-fail
-    FAILED=1
-  elif ! ensure_playwright_chromium; then
+  if ! ensure_playwright_chromium; then
     WEB_STATUS=browser-install-fail
     FAILED=1
   elif VAULTHALLA_E2E_BASE_URL="$WEB_URL" pnpm --dir web run test:e2e:s3-gateway; then
@@ -407,7 +433,7 @@ if ! start_gateway_if_needed; then
   LOCAL_STATUS=unreachable
   FAILED=1
 else
-  if tools/smoke/s3_gateway_scoped_budget_smoke.sh --local-only --prefix "$PREFIX/local"; then
+  if VH_BIN="$VH_BIN" tools/smoke/s3_gateway_scoped_budget_smoke.sh --local-only --budget-denial synthetic --prefix "$PREFIX/local"; then
     LOCAL_STATUS=pass
   else
     LOCAL_STATUS=fail
@@ -418,7 +444,7 @@ fi
 if [[ "$LOCAL_ONLY" == "1" ]]; then
   REMOTE_STATUS=skipped-local-only
 elif [[ "$REQUIRE_REMOTE" == "1" ]] || remote_configured; then
-  if tools/smoke/s3_gateway_scoped_budget_smoke.sh --require-remote --prefix "$PREFIX/remote"; then
+  if VH_BIN="$VH_BIN" tools/smoke/s3_gateway_scoped_budget_smoke.sh --require-remote --budget-denial both --prefix "$PREFIX/remote"; then
     REMOTE_STATUS=pass
   else
     REMOTE_STATUS=fail

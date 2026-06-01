@@ -50,11 +50,22 @@ s3_gateway:
   require_sigv4: true
   allow_path_style: true
   allow_virtual_hosted_style: true
+  synthetic_local_request_cost_usd:
+    list: "0.00000001"
+    head: "0.00000001"
+    get: "0.00000001"
+    put: "0.00000001"
+    delete: "0.00000001"
+    copy: "0.00000001"
+    downloaded_gb: "0.00000000"
+    uploaded_gb: "0.00000000"
 ```
 
 See [S3 Gateway](/admin/s3-gateway) before enabling it on a network interface.
 
 `require_sigv4` should stay enabled outside development. When it is disabled, the gateway accepts a development-only auth context only if `dev.enabled` is true or the configured host is loopback. Production listeners should use real gateway credentials with explicit scope and normal Vaulthalla RBAC.
+
+`synthetic_local_request_cost_usd` is used only for S3 gateway credentials with local/cache budget enforcement enabled. It gives pure local buckets, metadata hits, cache hits, and sync-deferred gateway writes/deletes a nominal gateway-local cost for `gateway_credential` budgets without touching provider/vault/global upstream budgets.
 
 ## Database
 

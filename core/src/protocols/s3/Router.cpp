@@ -12,6 +12,7 @@
 #include "storage/s3/pricing/PriceBudget.hpp"
 #include "storage/s3/pricing/PriceEstimate.hpp"
 
+#include <boost/multiprecision/cpp_dec_float.hpp>
 #include <boost/uuid/random_generator.hpp>
 #include <boost/uuid/uuid_io.hpp>
 #include <pugixml.hpp>
@@ -21,6 +22,7 @@
 #include <cstdlib>
 #include <functional>
 #include <fstream>
+#include <iomanip>
 #include <limits>
 #include <map>
 #include <openssl/evp.h>
@@ -31,6 +33,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <type_traits>
 #include <vector>
 #include <zlib.h>
@@ -39,6 +42,7 @@ namespace vh::protocols::s3 {
 
 namespace {
 using Action = rbac::permission::vault::FilesystemAction;
+using Decimal = boost::multiprecision::cpp_dec_float_50;
 
 std::string requestId() {
     return boost::uuids::to_string(boost::uuids::random_generator()());
@@ -530,6 +534,64 @@ vh::sync::model::S3CostEstimate s3CostEstimateFromUsage(const GatewayUsage& usag
     return estimate;
 }
 
+Decimal syntheticCostDecimal(const std::string& value) {
+    return Decimal(value.empty() ? "0" : value);
+}
+
+std::string formatSyntheticCost(const Decimal& value) {
+    std::ostringstream out;
+    out << std::fixed << std::setprecision(8) << (value == Decimal("0") ? Decimal("0") : value);
+    auto text = out.str();
+    if (text == "-0.00000000") return "0.00000000";
+    return text;
+}
+
+Decimal requestCost(const uint64_t count, const std::string& unitCost) {
+    return Decimal(count) * syntheticCostDecimal(unitCost);
+}
+
+Decimal byteGbCost(const uint64_t bytes, const std::string& gbCost) {
+    if (bytes == 0) return Decimal("0");
+    constexpr uint64_t gib = 1024ull * 1024ull * 1024ull;
+    return (Decimal(bytes) / Decimal(gib)) * syntheticCostDecimal(gbCost);
+}
+
+storage::s3::pricing::PriceEstimateReport estimateSyntheticLocalGatewayUsage(const GatewayUsage& usage) {
+    const auto& cfg = config::Registry::get().s3_gateway.synthetic_local_request_cost_usd;
+
+    Decimal total{"0"};
+    total += requestCost(usage.list_requests, cfg.list);
+    total += requestCost(usage.head_requests, cfg.head);
+    total += requestCost(usage.get_requests, cfg.get);
+    total += requestCost(usage.put_requests, cfg.put);
+    total += requestCost(usage.delete_requests, cfg.delete_);
+    total += requestCost(usage.copy_requests, cfg.copy);
+    total += byteGbCost(usage.downloaded_bytes, cfg.downloaded_gb);
+    total += byteGbCost(usage.uploaded_bytes, cfg.uploaded_gb);
+
+    storage::s3::pricing::PriceEstimateReport report;
+    report.available = true;
+    report.supported = true;
+    report.stale = false;
+    report.target = {
+        .provider = "gateway-local",
+        .region = "local",
+        .storage_class = "synthetic"
+    };
+    report.estimated_cost = formatSyntheticCost(total);
+    report.currency = "USD";
+    report.price_profile_id = "gateway-local/local/synthetic";
+    report.catalog_version = "configured";
+    report.catalog_source = "s3_gateway.synthetic_local_request_cost_usd";
+    report.catalog_verified = true;
+    report.catalog_age_seconds = 0;
+    report.confidence_level = "configured";
+    report.estimate_mode = "budget_conservative";
+    report.free_tier_policy = "ignore_account_wide_free_tiers";
+    report.free_tiers_applied = false;
+    return report;
+}
+
 storage::s3::pricing::PriceEstimateReport estimateGatewayUsage(
     const storage::CloudEngine& cloud,
     const GatewayUsage& usage,
@@ -588,14 +650,24 @@ std::optional<GatewayBudgetReservation> preflightGatewayBudget(
     const bool gatewayScopesOnly = false,
     const std::optional<std::string>& storageClass = std::nullopt,
     const std::optional<std::string>& objectKey = std::nullopt) {
-    if (!ObjectStore::isRemoteBacked(bucket)) return std::nullopt;
     if (!usageHasBudgetImpact(usage)) return std::nullopt;
 
-    const auto cloud = ObjectStore::cloudEngine(bucket);
-    if (!cloud) throw invalidArgument("Bucket is not backed by a CloudEngine", bucket.bucket_name);
+    std::string providerKey;
+    bool providerSupported = false;
+    storage::s3::pricing::PriceEstimateReport estimate;
+    if (gatewayScopesOnly && usage.synthetic) {
+        providerKey = "gateway-local";
+        providerSupported = true;
+        estimate = estimateSyntheticLocalGatewayUsage(usage);
+    } else if (ObjectStore::isRemoteBacked(bucket)) {
+        const auto cloud = ObjectStore::cloudEngine(bucket);
+        if (!cloud) throw invalidArgument("Bucket is not backed by a CloudEngine", bucket.bucket_name);
 
-    const auto [providerKey, providerSupported] = providerBudgetIdentity(cloud);
-    auto estimate = estimateGatewayUsage(*cloud, usage, storageClass);
+        std::tie(providerKey, providerSupported) = providerBudgetIdentity(cloud);
+        estimate = estimateGatewayUsage(*cloud, usage, storageClass);
+    } else {
+        return std::nullopt;
+    }
 
     storage::s3::pricing::PriceBudgetPreflightRequest budgetRequest{
         .vault_id = bucket.vault_id,

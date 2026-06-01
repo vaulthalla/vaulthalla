@@ -182,7 +182,17 @@ std::shared_ptr<CommandUsage> bucket(const std::weak_ptr<CommandUsage>& parent) 
          "Create an API-exclusive smart-cache gateway bucket backed by an upstream S3/R2 bucket."}
     };
 
-    cmd->subcommands = {list, bind, unbind, createLocal, createRemoteCache};
+    auto backfill = build(cmd->weak_from_this());
+    backfill->aliases = {"backfill"};
+    backfill->positionals = {Positional::Alias("bucket", "Gateway bucket name", "bucket")};
+    backfill->optional_flags = {
+        Flag::WithAliases("calculate_etags", "Read local object bodies to calculate plaintext MD5 ETags", {"calculate-etags"})
+    };
+    backfill->examples = {
+        {"vh s3-gateway bucket backfill photos", "Backfill gateway object metadata from local files or the remote index."}
+    };
+
+    cmd->subcommands = {list, bind, unbind, createLocal, createRemoteCache, backfill};
     return cmd;
 }
 
@@ -199,6 +209,10 @@ std::shared_ptr<CommandUsage> budget(const std::weak_ptr<CommandUsage>& parent) 
         Optional::ManyToOne("mode", "Budget mode: report, warn, or enforce", {"mode"}, "mode"),
         Optional::ManyToOne("currency", "Currency code", {"currency"}, "currency")
     };
+    setKey->optional_flags = {
+        Flag::WithAliases("no_require_verified_catalog", "Allow unverified provider pricing catalogs", {"no-require-verified-catalog"}),
+        Flag::WithAliases("allow_stale_catalog", "Allow stale provider pricing catalogs", {"allow-stale-catalog"})
+    };
     setKey->examples = {{"vh s3-gateway budget set-key backup --monthly 5 --mode enforce", "Set an admin-managed monthly cap for one key."}};
 
     auto setKeyVault = build(cmd->weak_from_this());
@@ -211,6 +225,10 @@ std::shared_ptr<CommandUsage> budget(const std::weak_ptr<CommandUsage>& parent) 
     setKeyVault->optional = {
         Optional::ManyToOne("mode", "Budget mode: report, warn, or enforce", {"mode"}, "mode"),
         Optional::ManyToOne("currency", "Currency code", {"currency"}, "currency")
+    };
+    setKeyVault->optional_flags = {
+        Flag::WithAliases("no_require_verified_catalog", "Allow unverified provider pricing catalogs", {"no-require-verified-catalog"}),
+        Flag::WithAliases("allow_stale_catalog", "Allow stale provider pricing catalogs", {"allow-stale-catalog"})
     };
     setKeyVault->examples = {
         {"vh s3-gateway budget set-key-vault backup --vault photos --monthly 2 --mode enforce",

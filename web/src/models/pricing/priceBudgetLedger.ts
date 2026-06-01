@@ -1,5 +1,6 @@
 import {
   asDateValue,
+  asBoolean,
   asDecimalString,
   asNullableDecimalString,
   asNullableNumber,
@@ -29,6 +30,8 @@ export class PriceBudgetLedgerEntry {
   reserved_cost = '0'
   committed_cost: string | null = null
   estimated_cost: string | null = null
+  usage_source: string | null = null
+  synthetic = false
   status = ''
   created_at: number | string | null = null
 
@@ -54,6 +57,8 @@ export class PriceBudgetLedgerEntry {
     this.reserved_cost = asDecimalString(data.reserved_cost)
     this.committed_cost = asNullableDecimalString(data.committed_cost)
     this.estimated_cost = asNullableDecimalString(data.estimated_cost)
+    this.usage_source = asNullableString(data.usage_source)
+    this.synthetic = asBoolean(data.synthetic)
     this.status = asString(data.status)
     this.created_at = asDateValue(data.created_at)
   }

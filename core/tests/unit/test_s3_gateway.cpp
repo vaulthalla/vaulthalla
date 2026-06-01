@@ -226,6 +226,14 @@ TEST(S3GatewayConfigTest, DefaultsToDisabledFiveGiBBodyLimit) {
     EXPECT_TRUE(cfg.default_api_exclusive);
     EXPECT_EQ(cfg.default_remote_sync_strategy, "cache");
     EXPECT_EQ(cfg.default_remote_conflict_policy, "keep_local");
+    EXPECT_EQ(cfg.synthetic_local_request_cost_usd.list, "0.00000001");
+    EXPECT_EQ(cfg.synthetic_local_request_cost_usd.head, "0.00000001");
+    EXPECT_EQ(cfg.synthetic_local_request_cost_usd.get, "0.00000001");
+    EXPECT_EQ(cfg.synthetic_local_request_cost_usd.put, "0.00000001");
+    EXPECT_EQ(cfg.synthetic_local_request_cost_usd.delete_, "0.00000001");
+    EXPECT_EQ(cfg.synthetic_local_request_cost_usd.copy, "0.00000001");
+    EXPECT_EQ(cfg.synthetic_local_request_cost_usd.downloaded_gb, "0.00000000");
+    EXPECT_EQ(cfg.synthetic_local_request_cost_usd.uploaded_gb, "0.00000000");
 }
 
 TEST(S3GatewayConfigTest, YamlMapsBodyLimitMbAndClampsMultipartValues) {
@@ -241,6 +249,15 @@ multipart:
   part_dir: /tmp/vh-s3-parts
   min_part_size_mb: 1
   abort_after_days: 0
+synthetic_local_request_cost_usd:
+  list: "0.00000002"
+  head: "0.00000003"
+  get: "0.00000004"
+  put: "0.00000005"
+  delete: "0.00000006"
+  copy: "0.00000007"
+  downloaded_gb: "0.00000008"
+  uploaded_gb: "0.00000009"
 )yaml");
 
     const auto cfg = node.as<vh::config::S3GatewayConfig>();
@@ -255,6 +272,14 @@ multipart:
     EXPECT_EQ(cfg.multipart.part_dir, "/tmp/vh-s3-parts");
     EXPECT_EQ(cfg.multipart.min_part_size_mb, 5u);
     EXPECT_EQ(cfg.multipart.abort_after_days, 1u);
+    EXPECT_EQ(cfg.synthetic_local_request_cost_usd.list, "0.00000002");
+    EXPECT_EQ(cfg.synthetic_local_request_cost_usd.head, "0.00000003");
+    EXPECT_EQ(cfg.synthetic_local_request_cost_usd.get, "0.00000004");
+    EXPECT_EQ(cfg.synthetic_local_request_cost_usd.put, "0.00000005");
+    EXPECT_EQ(cfg.synthetic_local_request_cost_usd.delete_, "0.00000006");
+    EXPECT_EQ(cfg.synthetic_local_request_cost_usd.copy, "0.00000007");
+    EXPECT_EQ(cfg.synthetic_local_request_cost_usd.downloaded_gb, "0.00000008");
+    EXPECT_EQ(cfg.synthetic_local_request_cost_usd.uploaded_gb, "0.00000009");
 }
 
 TEST(S3GatewayConfigTest, JsonAndYamlPreferExplicitBytesOverMegabytes) {

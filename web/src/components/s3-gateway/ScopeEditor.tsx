@@ -97,7 +97,7 @@ export function ScopeEditor({
               Description
               <input className={fieldClass} value={editDescription} onChange={event => setEditDescription(event.target.value)} />
             </label>
-            <button className={`${primaryButtonClass} self-end`} type="button" disabled={saving} onClick={() => void saveScope()}>
+            <button className={`${primaryButtonClass} self-end`} data-testid="s3-gateway-scope-save" type="button" disabled={saving} onClick={() => void saveScope()}>
               <SaveIcon className="h-4 w-4" />
               Save
             </button>
@@ -106,6 +106,7 @@ export function ScopeEditor({
           <label className="flex items-start gap-3 rounded border border-white/10 bg-white/[0.03] p-3 text-sm text-white/75">
             <input
               className="mt-1 h-4 w-4 accent-cyan-400"
+              data-testid="s3-gateway-scope-enforce-local-budget"
               type="checkbox"
               checked={editEnforceLocalBudget}
               onChange={event => setEditEnforceLocalBudget(event.target.checked)}

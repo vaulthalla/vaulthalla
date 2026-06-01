@@ -79,6 +79,35 @@ struct convert<S3GatewayMultipartConfig> {
 };
 
 template<>
+struct convert<S3GatewaySyntheticLocalRequestCostConfig> {
+    static Node encode(const S3GatewaySyntheticLocalRequestCostConfig& rhs) {
+        Node node;
+        node["list"] = rhs.list;
+        node["head"] = rhs.head;
+        node["get"] = rhs.get;
+        node["put"] = rhs.put;
+        node["delete"] = rhs.delete_;
+        node["copy"] = rhs.copy;
+        node["downloaded_gb"] = rhs.downloaded_gb;
+        node["uploaded_gb"] = rhs.uploaded_gb;
+        return node;
+    }
+
+    static bool decode(const Node& node, S3GatewaySyntheticLocalRequestCostConfig& rhs) {
+        if (!node.IsMap()) return false;
+        rhs.list = node["list"].as<std::string>(rhs.list);
+        rhs.head = node["head"].as<std::string>(rhs.head);
+        rhs.get = node["get"].as<std::string>(rhs.get);
+        rhs.put = node["put"].as<std::string>(rhs.put);
+        rhs.delete_ = node["delete"].as<std::string>(rhs.delete_);
+        rhs.copy = node["copy"].as<std::string>(rhs.copy);
+        rhs.downloaded_gb = node["downloaded_gb"].as<std::string>(rhs.downloaded_gb);
+        rhs.uploaded_gb = node["uploaded_gb"].as<std::string>(rhs.uploaded_gb);
+        return true;
+    }
+};
+
+template<>
 struct convert<S3GatewayConfig> {
     static Node encode(const S3GatewayConfig& rhs) {
         Node node;
@@ -95,6 +124,7 @@ struct convert<S3GatewayConfig> {
         node["default_remote_sync_strategy"] = rhs.default_remote_sync_strategy;
         node["default_remote_conflict_policy"] = rhs.default_remote_conflict_policy;
         node["multipart"] = rhs.multipart;
+        node["synthetic_local_request_cost_usd"] = rhs.synthetic_local_request_cost_usd;
         return node;
     }
 
@@ -114,6 +144,8 @@ struct convert<S3GatewayConfig> {
         rhs.default_remote_sync_strategy = node["default_remote_sync_strategy"].as<std::string>("cache");
         rhs.default_remote_conflict_policy = node["default_remote_conflict_policy"].as<std::string>("keep_local");
         if (node["multipart"]) rhs.multipart = node["multipart"].as<S3GatewayMultipartConfig>();
+        if (node["synthetic_local_request_cost_usd"])
+            rhs.synthetic_local_request_cost_usd = node["synthetic_local_request_cost_usd"].as<S3GatewaySyntheticLocalRequestCostConfig>();
         return true;
     }
 };

@@ -47,6 +47,15 @@ s3_gateway:
     part_dir:
     min_part_size_mb: 5
     abort_after_days: 7
+  synthetic_local_request_cost_usd:
+    list: "0.00000001"
+    head: "0.00000001"
+    get: "0.00000001"
+    put: "0.00000001"
+    delete: "0.00000001"
+    copy: "0.00000001"
+    downloaded_gb: "0.00000000"
+    uploaded_gb: "0.00000000"
 
 
 # === 🗄️ DATABASE SETTINGS ===

@@ -2,6 +2,7 @@
 
 #include <nlohmann/json.hpp>
 #include <pqxx/row>
+#include <optional>
 #include <utility>
 
 namespace vh::vault::model {
@@ -16,10 +17,10 @@ S3Vault::S3Vault(const std::string& name, const unsigned int apiKeyID, std::stri
 
 S3Vault::S3Vault(const pqxx::row& row)
     : Vault(row),
-      api_key_id(row["api_key_id"].as<unsigned int>()),
-      bucket(row["bucket"].as<std::string>()),
+      api_key_id(row["api_key_id"].as<std::optional<unsigned int>>().value_or(0)),
+      bucket(row["bucket"].as<std::optional<std::string>>().value_or("")),
       storage_tier_id(row["storage_tier_id"].as<std::optional<std::string>>()),
-      encrypt_upstream(row["encrypt_upstream"].as<bool>()) {}
+      encrypt_upstream(row["encrypt_upstream"].as<std::optional<bool>>().value_or(true)) {}
 
 void to_json(nlohmann::json& j, const S3Vault& v) {
     to_json(j, static_cast<const Vault&>(v));

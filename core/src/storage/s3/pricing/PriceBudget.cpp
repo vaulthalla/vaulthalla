@@ -435,6 +435,11 @@ bool isLimitExceededReason(const std::string& reason) {
     return reason.rfind("S3 price budget exceeded", 0) == 0;
 }
 
+bool isGatewayCredentialScope(const PriceBudgetScope scope) {
+    return scope == PriceBudgetScope::GatewayCredential ||
+        scope == PriceBudgetScope::GatewayCredentialVault;
+}
+
 int windowPriority(const PriceBudgetWindow window) {
     switch (window) {
     case PriceBudgetWindow::Monthly:
@@ -977,7 +982,8 @@ PriceBudgetDecision PriceBudgetService::preflight(const PriceBudgetPreflightRequ
             if (mode == PriceBudgetMode::Off) continue;
 
             auto policyIssue = std::optional<std::string>{};
-            if (!request.provider_supported && policy.scope != PriceBudgetScope::Global)
+            if (!request.provider_supported && policy.scope != PriceBudgetScope::Global &&
+                !(request.synthetic && isGatewayCredentialScope(policy.scope)))
                 policyIssue = "price budget cannot be evaluated: provider is unsupported for local S3 pricing";
             else if (!request.estimate.supported)
                 policyIssue = "price budget cannot be evaluated: " + request.estimate.unavailable_reason;

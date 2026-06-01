@@ -11,10 +11,13 @@ source "$REPO_ROOT/tools/e2e/load_env.sh"
 RESULT_DIR="${VAULTHALLA_E2E_RESULT_DIR:-$REPO_ROOT/test-results/s3-gateway-e2e}"
 PRIVATE_ENV_FILE="${VAULTHALLA_E2E_ENV_FILE:-$RESULT_DIR/e2e.env}"
 E2E_USER_DEFAULT="e2e_s3_gateway_admin"
-E2E_USER="${VAULTHALLA_E2E_USER:-$E2E_USER_DEFAULT}"
-E2E_EMAIL="${VAULTHALLA_E2E_EMAIL:-$E2E_USER@localhost.invalid}"
+E2E_USER_FROM_ENV="${VAULTHALLA_E2E_USER:-}"
+E2E_USER="${E2E_USER_FROM_ENV:-$E2E_USER_DEFAULT}"
+E2E_EMAIL="${VAULTHALLA_E2E_EMAIL:-}"
 VH_BIN="${VH_BIN:-vh}"
 PRINT_EXPORTS=0
+FORCE_PROVISION="${VAULTHALLA_E2E_FORCE_PROVISION:-0}"
+FRESH_USER="${VAULTHALLA_E2E_FRESH_USER:-0}"
 SETUP_COMMAND_RUN="not-run"
 TMP_FILES=()
 LOCAL_DEV_DB_NAME=""
@@ -35,6 +38,8 @@ usage() {
 Usage: tools/e2e/provision_e2e_user.sh [options]
 
 Options:
+  --force          Seed a fresh E2E password even if credentials already exist.
+  --fresh-user     Generate a new E2E username, ignoring configured E2E credentials.
   --print-exports  Print shell exports for wrapper eval.
   -h, --help       Show this help.
 USAGE
@@ -42,6 +47,15 @@ USAGE
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --force)
+      FORCE_PROVISION=1
+      shift
+      ;;
+    --fresh-user)
+      FORCE_PROVISION=1
+      FRESH_USER=1
+      shift
+      ;;
     --print-exports)
       PRINT_EXPORTS=1
       shift
@@ -57,6 +71,17 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ "$FRESH_USER" == "1" ]]; then
+  E2E_USER_FROM_ENV=""
+  E2E_USER="e2e_s3gw_$(date -u +%Y%m%d%H%M%S)_$$"
+  E2E_EMAIL=""
+elif [[ "$FORCE_PROVISION" == "1" && -z "$E2E_USER_FROM_ENV" ]]; then
+  E2E_USER="e2e_s3gw_$(date -u +%Y%m%d%H%M%S)_$$"
+fi
+if [[ -z "$E2E_EMAIL" ]]; then
+  E2E_EMAIL="$E2E_USER@localhost.invalid"
+fi
 
 shell_export() {
   local key="$1"
@@ -328,23 +353,8 @@ provision_with_cli() {
   return 1
 }
 
-provision_with_test_db() {
-  ensure_test_db_env
-  guard_test_db_target
-  command -v psql >/dev/null 2>&1 || {
-    echo "psql is required for direct test DB E2E user provisioning." >&2
-    return 1
-  }
-
-  local password password_file password_hash sql_file
-  password="$(openssl rand -base64 48 | tr -d '\n')"
-  password_file="$(mktemp "$RESULT_DIR/e2e.password.XXXXXX")"
-  sql_file="$(mktemp "$RESULT_DIR/e2e.seed.XXXXXX.sql")"
-  TMP_FILES+=("$password_file" "$sql_file")
-  chmod 0600 "$password_file" "$sql_file"
-  printf '%s' "$password" >"$password_file"
-  password_hash="$(hash_password_with_existing_format "$password_file")"
-
+write_seed_sql() {
+  local sql_file="$1"
   cat >"$sql_file" <<'SQL'
 WITH admin_role_row AS (
   SELECT id
@@ -369,6 +379,69 @@ ON CONFLICT (user_id) DO UPDATE SET
   role_id = EXCLUDED.role_id,
   assigned_at = CURRENT_TIMESTAMP;
 SQL
+}
+
+new_e2e_password_hash() {
+  local password_file="$1"
+  local password password_hash
+  password="$(openssl rand -base64 48 | tr -d '\n')"
+  chmod 0600 "$password_file"
+  printf '%s' "$password" >"$password_file"
+  password_hash="$(hash_password_with_existing_format "$password_file")"
+  printf '%s\n' "$password"
+  printf '%s\n' "$password_hash"
+}
+
+provision_with_local_dev_db() {
+  local_dev_db_seed_allowed || return 1
+  command -v sudo >/dev/null 2>&1 || return 1
+  command -v psql >/dev/null 2>&1 || return 1
+  if ! sudo -n -u postgres psql --dbname "$LOCAL_DEV_DB_NAME" --tuples-only --no-align --command "SELECT 1" >/dev/null 2>&1; then
+    return 1
+  fi
+
+  local password password_file password_hash sql_file
+  local generated=()
+  password_file="$(mktemp "$RESULT_DIR/e2e.password.XXXXXX")"
+  sql_file="$(mktemp "$RESULT_DIR/e2e.seed.XXXXXX.sql")"
+  TMP_FILES+=("$password_file" "$sql_file")
+  chmod 0600 "$password_file" "$sql_file"
+  mapfile -t generated < <(new_e2e_password_hash "$password_file")
+  password="${generated[0]}"
+  password_hash="${generated[1]}"
+  write_seed_sql "$sql_file"
+
+  psql_local_dev_db \
+    --quiet \
+    --variable "e2e_user=$E2E_USER" \
+    --variable "e2e_email=$E2E_EMAIL" \
+    --variable "password_hash=$password_hash" \
+    <"$sql_file" >/dev/null
+
+  export VAULTHALLA_E2E_USER="$E2E_USER"
+  export VAULTHALLA_E2E_PASSWORD="$password"
+  write_private_env
+  echo "Provisioned E2E admin user in local dev DB '$LOCAL_DEV_DB_NAME'; password stored in $PRIVATE_ENV_FILE (0600)." >&2
+}
+
+provision_with_test_db() {
+  ensure_test_db_env
+  guard_test_db_target
+  command -v psql >/dev/null 2>&1 || {
+    echo "psql is required for direct test DB E2E user provisioning." >&2
+    return 1
+  }
+
+  local password password_file password_hash sql_file
+  local generated=()
+  password_file="$(mktemp "$RESULT_DIR/e2e.password.XXXXXX")"
+  sql_file="$(mktemp "$RESULT_DIR/e2e.seed.XXXXXX.sql")"
+  TMP_FILES+=("$password_file" "$sql_file")
+  chmod 0600 "$password_file" "$sql_file"
+  mapfile -t generated < <(new_e2e_password_hash "$password_file")
+  password="${generated[0]}"
+  password_hash="${generated[1]}"
+  write_seed_sql "$sql_file"
 
   psql_test_db \
     --quiet \
@@ -385,20 +458,27 @@ SQL
 
 install -d -m 0700 "$RESULT_DIR"
 
-if [[ -n "${VAULTHALLA_E2E_USER:-}" && -n "${VAULTHALLA_E2E_PASSWORD:-}" ]]; then
+if [[ "$FORCE_PROVISION" != "1" && -n "${VAULTHALLA_E2E_USER:-}" && -n "${VAULTHALLA_E2E_PASSWORD:-}" ]]; then
   ensure_required_admin_permissions
   finish_with_existing_credentials
   exit 0
 fi
 
-if load_private_env_if_present; then
+if [[ "$FORCE_PROVISION" != "1" ]] && load_private_env_if_present; then
   ensure_required_admin_permissions
+  finish_with_existing_credentials
+  exit 0
+fi
+
+if [[ "$FORCE_PROVISION" == "1" ]] && provision_with_local_dev_db; then
   finish_with_existing_credentials
   exit 0
 fi
 
 if ! provision_with_cli; then
-  provision_with_test_db
+  if ! provision_with_local_dev_db; then
+    provision_with_test_db
+  fi
 fi
 
 finish_with_existing_credentials
