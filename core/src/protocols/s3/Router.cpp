@@ -4,6 +4,7 @@
 #include "identities/User.hpp"
 #include "log/Registry.hpp"
 #include "protocols/s3/Xml.hpp"
+#include "sync/model/RemotePolicy.hpp"
 #include "storage/s3/pricing/GatewayPriceEstimate.hpp"
 #include "storage/s3/pricing/PriceBudget.hpp"
 
@@ -446,6 +447,115 @@ std::pair<std::string, bool> providerBudgetIdentity(const std::shared_ptr<storag
     };
 }
 
+bool gatewayOperationHasRemoteCost(const storage::s3::pricing::S3GatewayOperation operation) {
+    switch (operation) {
+    case storage::s3::pricing::S3GatewayOperation::GetObject:
+    case storage::s3::pricing::S3GatewayOperation::PutObject:
+    case storage::s3::pricing::S3GatewayOperation::DeleteObject:
+    case storage::s3::pricing::S3GatewayOperation::DeleteObjects:
+    case storage::s3::pricing::S3GatewayOperation::CopyObject:
+    case storage::s3::pricing::S3GatewayOperation::CreateMultipartUpload:
+    case storage::s3::pricing::S3GatewayOperation::UploadPart:
+    case storage::s3::pricing::S3GatewayOperation::CompleteMultipartUpload:
+    case storage::s3::pricing::S3GatewayOperation::AbortMultipartUpload:
+        return true;
+    case storage::s3::pricing::S3GatewayOperation::ListBuckets:
+    case storage::s3::pricing::S3GatewayOperation::HeadBucket:
+    case storage::s3::pricing::S3GatewayOperation::CreateBucket:
+    case storage::s3::pricing::S3GatewayOperation::DeleteBucket:
+    case storage::s3::pricing::S3GatewayOperation::ListObjectsV2:
+    case storage::s3::pricing::S3GatewayOperation::HeadObject:
+    case storage::s3::pricing::S3GatewayOperation::ListMultipartUploads:
+    case storage::s3::pricing::S3GatewayOperation::ListParts:
+        return false;
+    }
+    return false;
+}
+
+std::string formatGatewayRequestBudgetDenialForS3(
+    const std::string& kind,
+    const ResolvedBucket& bucket,
+    const AuthContext& auth,
+    const std::string& rid,
+    const storage::s3::pricing::S3GatewayOperation operation,
+    const std::string& providerKey) {
+    std::ostringstream out;
+    out << "S3 gateway request budget exceeded: "
+        << "kind=" << kind
+        << ", vault_id=" << bucket.vault_id
+        << ", provider_key=" << providerKey
+        << ", gateway_credential_id=" << (auth.credential_id == 0 ? std::string{"none"} : std::to_string(auth.credential_id))
+        << ", operation=" << storage::s3::pricing::toString(operation)
+        << ", request_uuid=" << rid;
+    return out.str();
+}
+
+void enforceGatewayRequestBudget(
+    const ResolvedBucket& bucket,
+    const AuthContext& auth,
+    const std::string& rid,
+    const storage::s3::pricing::S3GatewayOperation operation,
+    const uint64_t uploadBytes,
+    const uint64_t downloadBytes,
+    const uint64_t objectCount,
+    const std::string& providerKey) {
+    if (!ObjectStore::isRemoteBacked(bucket)) return;
+
+    const auto cloud = ObjectStore::cloudEngine(bucket);
+    if (!cloud) return;
+    const auto policy = cloud->remote_policy();
+    if (!policy) return;
+    const auto& budget = policy->s3_request_budget;
+    const auto metrics = cloud->s3RequestMetrics();
+
+    const auto deny = [&](const std::string& kind) {
+        throw S3Error{
+            "SlowDown",
+            formatGatewayRequestBudgetDenialForS3(kind, bucket, auth, rid, operation, providerKey),
+            http::status::service_unavailable,
+            bucket.bucket_name};
+    };
+    const auto checkCount = [&](
+        const std::optional<uint64_t>& limit,
+        const uint64_t current,
+        const uint64_t requested,
+        const std::string& kind) {
+        if (limit && current + requested > *limit) deny(kind);
+    };
+
+    switch (operation) {
+    case storage::s3::pricing::S3GatewayOperation::GetObject:
+        checkCount(budget.max_get_requests, metrics.get_requests, 1, "GET");
+        checkCount(budget.max_downloaded_bytes, metrics.downloaded_bytes, downloadBytes, "downloaded bytes");
+        break;
+    case storage::s3::pricing::S3GatewayOperation::PutObject:
+    case storage::s3::pricing::S3GatewayOperation::CreateMultipartUpload:
+    case storage::s3::pricing::S3GatewayOperation::UploadPart:
+    case storage::s3::pricing::S3GatewayOperation::CompleteMultipartUpload:
+        (void)uploadBytes;
+        checkCount(budget.max_put_requests, metrics.put_requests, 1, "PUT");
+        break;
+    case storage::s3::pricing::S3GatewayOperation::CopyObject:
+        checkCount(budget.max_copy_requests, metrics.copy_requests, 1, "COPY");
+        if (downloadBytes > 0) checkCount(budget.max_downloaded_bytes, metrics.downloaded_bytes, downloadBytes, "downloaded bytes");
+        break;
+    case storage::s3::pricing::S3GatewayOperation::DeleteObject:
+    case storage::s3::pricing::S3GatewayOperation::DeleteObjects:
+    case storage::s3::pricing::S3GatewayOperation::DeleteBucket:
+    case storage::s3::pricing::S3GatewayOperation::AbortMultipartUpload:
+        checkCount(budget.max_delete_requests, metrics.delete_requests, std::max<uint64_t>(1, objectCount), "DELETE");
+        break;
+    case storage::s3::pricing::S3GatewayOperation::HeadBucket:
+    case storage::s3::pricing::S3GatewayOperation::HeadObject:
+    case storage::s3::pricing::S3GatewayOperation::ListBuckets:
+    case storage::s3::pricing::S3GatewayOperation::CreateBucket:
+    case storage::s3::pricing::S3GatewayOperation::ListObjectsV2:
+    case storage::s3::pricing::S3GatewayOperation::ListMultipartUploads:
+    case storage::s3::pricing::S3GatewayOperation::ListParts:
+        break;
+    }
+}
+
 std::optional<GatewayBudgetReservation> preflightGatewayBudget(
     const ResolvedBucket& bucket,
     const AuthContext& auth,
@@ -457,11 +567,21 @@ std::optional<GatewayBudgetReservation> preflightGatewayBudget(
     const std::optional<std::string>& storageClass = std::nullopt,
     const std::optional<std::string>& objectKey = std::nullopt) {
     if (!ObjectStore::isRemoteBacked(bucket)) return std::nullopt;
+    if (!gatewayOperationHasRemoteCost(operation)) return std::nullopt;
 
     const auto cloud = ObjectStore::cloudEngine(bucket);
     if (!cloud) throw invalidArgument("Bucket is not backed by a CloudEngine", bucket.bucket_name);
 
     const auto [providerKey, providerSupported] = providerBudgetIdentity(cloud);
+    enforceGatewayRequestBudget(
+        bucket,
+        auth,
+        rid,
+        operation,
+        uploadBytes,
+        downloadBytes,
+        objectCount,
+        providerKey);
     storage::s3::pricing::S3GatewayPriceEstimateRequest estimateRequest{
         .vault_id = bucket.vault_id,
         .gateway_credential_id = auth.credential_id == 0 ? std::optional<uint32_t>{} : std::make_optional(auth.credential_id),
@@ -496,8 +616,7 @@ std::optional<GatewayBudgetReservation> preflightGatewayBudget(
     if (!decision.allowed) {
         throw S3Error{
             "AccessDenied",
-            "S3 gateway price budget would be exceeded: " +
-                (decision.reason.empty() ? std::string{"request denied by price budget policy"} : decision.reason),
+            storage::s3::pricing::formatGatewayBudgetDenialForS3(decision, budgetRequest),
             http::status::forbidden,
             bucket.bucket_name};
     }

@@ -1,6 +1,7 @@
 #include "protocols/s3/ObjectStore.hpp"
 
 #include "config/Registry.hpp"
+#include "db/Transactions.hpp"
 #include "db/query/fs/File.hpp"
 #include "db/query/identities/User.hpp"
 #include "db/query/sync/RemoteObjectIndex.hpp"
@@ -89,6 +90,19 @@ std::vector<uint8_t> readPlaintext(const std::shared_ptr<storage::Engine>& engin
     if (file->encryption_iv.empty() || file->encrypted_with_key_version == 0)
         return readFileBytes(file->backing_path);
     return engine->decrypt(file);
+}
+
+std::string metadataEtagForFile(const std::shared_ptr<fs::model::File>& file) {
+    if (!file) return quoted("vh-meta-missing");
+    std::ostringstream input;
+    input << file->vault_id.value_or(0) << ':'
+          << file->path.generic_string() << ':'
+          << file->size_bytes << ':'
+          << file->updated_at << ':'
+          << file->content_hash.value_or("");
+    const auto text = input.str();
+    const std::vector<uint8_t> bytes(text.begin(), text.end());
+    return quoted("vh-meta-" + toHex(md5Raw(bytes).data(), MD5_DIGEST_LENGTH));
 }
 
 void removeIfExists(const std::filesystem::path& path) {
@@ -304,14 +318,8 @@ void ObjectStore::deleteBucket(const std::string& bucket, const AuthContext& aut
     auto resolved = resolveBucket(bucket, auth);
     requireRbacPermission(resolved, "/", Action::Delete);
     if (!credentialAllowsAdmin(resolved)) throw accessDenied(bucket);
-    const auto objects = db::query::s3::Gateway::listObjectStates(resolved.vault_id, {
-        .prefix = {},
-        .delimiter = std::nullopt,
-        .start_after = std::nullopt,
-        .continuation_token = std::nullopt,
-        .max_keys = 1
-    });
-    if (!objects.objects.empty() || !objects.common_prefixes.empty())
+    const auto empty = bucketIsEmpty(resolved);
+    if (!empty.empty)
         throw S3Error{"BucketNotEmpty", "The bucket you tried to delete is not empty", http::status::conflict, bucket};
     db::query::s3::Gateway::unbindBucket(bucket);
     if (resolved.api_exclusive)
@@ -321,14 +329,8 @@ void ObjectStore::deleteBucket(const std::string& bucket, const AuthContext& aut
 void ObjectStore::deleteBucket(const std::string& bucket, const std::shared_ptr<identities::User>& actor) const {
     auto resolved = resolveBucket(bucket, actor);
     requirePermission(resolved, "/", Action::Delete);
-    const auto objects = db::query::s3::Gateway::listObjectStates(resolved.vault_id, {
-        .prefix = {},
-        .delimiter = std::nullopt,
-        .start_after = std::nullopt,
-        .continuation_token = std::nullopt,
-        .max_keys = 1
-    });
-    if (!objects.objects.empty() || !objects.common_prefixes.empty())
+    const auto empty = bucketIsEmpty(resolved);
+    if (!empty.empty)
         throw S3Error{"BucketNotEmpty", "The bucket you tried to delete is not empty", http::status::conflict, bucket};
     db::query::s3::Gateway::unbindBucket(bucket);
     if (resolved.api_exclusive)
@@ -338,12 +340,49 @@ void ObjectStore::deleteBucket(const std::string& bucket, const std::shared_ptr<
 db::query::s3::ObjectListResult ObjectStore::listObjects(
     const ResolvedBucket& bucket,
     const db::query::s3::ObjectListParams& params) const {
+    return listObjectsFromVaulthallaMetadata(bucket, params);
+}
+
+db::query::s3::ObjectListResult ObjectStore::listObjectsFromVaulthallaMetadata(
+    const ResolvedBucket& bucket,
+    const db::query::s3::ObjectListParams& params) const {
     requirePermission(bucket, "/", Action::List);
     if (isRemoteBacked(bucket))
-        db::query::s3::Gateway::backfillObjectStateFromRemoteIndex(bucket.vault_id);
+        backfillRemoteObjectState(bucket);
     else
         backfillLocalObjectState(bucket);
     return db::query::s3::Gateway::listObjectStates(bucket.vault_id, params);
+}
+
+BucketEmptyResult ObjectStore::bucketIsEmpty(const ResolvedBucket& bucket) const {
+    db::query::s3::ObjectListParams params;
+    params.max_keys = 1;
+    const auto objects = listObjectsFromVaulthallaMetadata(bucket, params);
+
+    auto result = db::Transactions::exec("S3Gateway::bucketIsEmpty", [&](pqxx::work& txn) {
+        BucketEmptyResult out;
+        out.gateway_objects = txn.exec(
+            "SELECT COUNT(*) FROM s3_gateway_object WHERE vault_id = $1",
+            pqxx::params{bucket.vault_id}).one_field().as<uint64_t>();
+        out.fs_entries = txn.exec(
+            "SELECT COUNT(*) FROM fs_entry e JOIN files f ON f.fs_entry_id = e.id "
+            "WHERE e.vault_id = $1 AND e.path <> '/'",
+            pqxx::params{bucket.vault_id}).one_field().as<uint64_t>();
+        out.remote_index_objects = txn.exec(
+            "SELECT COUNT(*) FROM remote_object_index WHERE vault_id = $1",
+            pqxx::params{bucket.vault_id}).one_field().as<uint64_t>();
+        out.active_tombstones = txn.exec(
+            "SELECT COUNT(*) FROM files_trashed WHERE vault_id = $1 AND deleted_at IS NULL",
+            pqxx::params{bucket.vault_id}).one_field().as<uint64_t>();
+        return out;
+    });
+
+    result.empty = objects.objects.empty() && objects.common_prefixes.empty();
+    if (!result.empty) result.reasons.push_back("live gateway-visible objects exist");
+    if (result.fs_entries > 0) result.reasons.push_back("live Vaulthalla filesystem entries exist");
+    if (isRemoteBacked(bucket) && result.remote_index_objects > result.active_tombstones)
+        result.reasons.push_back("remote object index contains live objects");
+    return result;
 }
 
 bool ObjectStore::remoteIndexStale(const ResolvedBucket& bucket) const {
@@ -374,7 +413,7 @@ db::query::s3::ObjectState ObjectStore::headObject(const ResolvedBucket& bucket,
         return *state;
 
     if (isRemoteBacked(bucket)) {
-        db::query::s3::Gateway::backfillObjectStateFromRemoteIndex(bucket.vault_id);
+        backfillRemoteObjectState(bucket);
         if (auto state = db::query::s3::Gateway::getObjectState(bucket.vault_id, vaultPathToKey(vaultPath)))
             return *state;
     }
@@ -475,30 +514,7 @@ db::query::s3::ObjectState ObjectStore::putObject(
             .user = bucket.actor,
             .overwrite = true
         });
-
-        if (isRemoteBacked(bucket)) {
-            const auto cloud = cloudEngine(bucket);
-            if (!cloud) throw invalidArgument("Bucket is not backed by a CloudEngine", bucket.bucket_name);
-            cloud->upload(file);
-            cloud->applyRemoteIndexMutation({
-                sync::model::Action{
-                    .type = sync::model::ActionType::Upload,
-                    .key = {},
-                    .local = file
-                }
-            });
-        }
-    } else if (isRemoteBacked(bucket)) {
-        const auto cloud = cloudEngine(bucket);
-        if (!cloud) throw invalidArgument("Bucket is not backed by a CloudEngine", bucket.bucket_name);
-        const auto remoteFile = cloud->uploadBufferObject(vaultPath, {}, std::nullopt);
-        cloud->applyRemoteIndexMutation({
-            sync::model::Action{
-                .type = sync::model::ActionType::Upload,
-                .key = {},
-                .local = remoteFile
-            }
-        });
+        (void)file;
     }
 
     db::query::s3::ObjectState state{
@@ -550,30 +566,7 @@ db::query::s3::ObjectState ObjectStore::putObjectFromFile(
             .user = bucket.actor,
             .overwrite = true
         });
-
-        if (isRemoteBacked(bucket)) {
-            const auto cloud = cloudEngine(bucket);
-            if (!cloud) throw invalidArgument("Bucket is not backed by a CloudEngine", bucket.bucket_name);
-            cloud->upload(file);
-            cloud->applyRemoteIndexMutation({
-                sync::model::Action{
-                    .type = sync::model::ActionType::Upload,
-                    .key = {},
-                    .local = file
-                }
-            });
-        }
-    } else if (isRemoteBacked(bucket)) {
-        const auto cloud = cloudEngine(bucket);
-        if (!cloud) throw invalidArgument("Bucket is not backed by a CloudEngine", bucket.bucket_name);
-        const auto remoteFile = cloud->uploadBufferObject(vaultPath, {}, std::nullopt);
-        cloud->applyRemoteIndexMutation({
-            sync::model::Action{
-                .type = sync::model::ActionType::Upload,
-                .key = {},
-                .local = remoteFile
-            }
-        });
+        (void)file;
     }
 
     db::query::s3::ObjectState state{
@@ -617,37 +610,32 @@ void ObjectStore::deleteObject(const ResolvedBucket& bucket, const std::string& 
     requirePermission(bucket, vaultPath, Action::Delete);
     const auto objectKey = vaultPathToKey(vaultPath);
 
-    if (isRemoteBacked(bucket)) {
-        const auto cloud = cloudEngine(bucket);
-        if (!cloud) throw invalidArgument("Bucket is not backed by a CloudEngine", bucket.bucket_name);
-
-        try {
-            cloud->removeRemotely(vaultPath, true);
-        } catch (const storage::s3::ObjectNotFound& e) {
-            log::Registry::cloud()->warn(
-                "[S3Gateway] Upstream object was already absent for vault {} key {}; continuing unversioned delete cleanup: {}",
-                bucket.vault_id,
-                objectKey,
-                e.what());
-        }
-
-        try {
-            db::query::s3::Gateway::deleteObjectStateAndRemoteIndex(bucket.vault_id, objectKey);
-            purgeLocalObjectState(bucket.engine, vaultPath, bucket.actor->id);
-            cloud->publishRemoteIndexManifestWithRetry();
-        } catch (const std::exception& e) {
-            log::Registry::cloud()->error(
-                "[S3Gateway] Upstream delete succeeded but local cleanup failed for vault {} key {}: {}",
-                bucket.vault_id,
-                objectKey,
-                e.what());
-            throw;
-        }
-        return;
+    if (isRemoteBacked(bucket)) backfillRemoteObjectState(bucket);
+    const auto knownState = db::query::s3::Gateway::getObjectState(bucket.vault_id, objectKey);
+    const auto file = db::query::fs::File::getFileByPath(bucket.vault_id, vaultPath);
+    std::optional<ino_t> oldInode;
+    uint32_t oldId = 0;
+    if (file) {
+        oldInode = file->inode;
+        oldId = file->id;
+        bucket.engine->remove(vaultPath, bucket.actor->id);
+    } else if (isRemoteBacked(bucket) && knownState) {
+        db::query::fs::File::markRemoteFileAsTrashed(
+            bucket.actor->id,
+            bucket.vault_id,
+            vaultPath,
+            knownState->size_bytes);
     }
 
-    db::query::s3::Gateway::deleteObjectStateAndRemoteIndex(bucket.vault_id, objectKey);
-    purgeLocalObjectState(bucket.engine, vaultPath, bucket.actor->id);
+    db::query::s3::Gateway::deleteObjectMetadata(bucket.vault_id, objectKey);
+    db::query::s3::Gateway::deleteObjectState(bucket.vault_id, objectKey);
+
+    if (const auto& cache = runtime::Deps::get().fsCache) {
+        const auto fusePath = bucket.engine->vaultPathToFusePath(vaultPath);
+        cache->evictPath(fusePath);
+        if (oldInode) cache->evictIno(*oldInode);
+        if (oldId) cache->evictId(oldId);
+    }
 }
 
 std::vector<std::pair<std::string, std::optional<std::string>>> ObjectStore::deleteObjects(
@@ -883,25 +871,11 @@ void ObjectStore::ensureParentDirectories(const ResolvedBucket& bucket, const st
 }
 
 void ObjectStore::backfillLocalObjectState(const ResolvedBucket& bucket) const {
-    for (const auto& file : db::query::fs::File::listFilesInDir(bucket.vault_id, "/", true)) {
-        if (!file) continue;
-        const auto objectKey = vaultPathToKey(file->path);
-        if (objectKey.empty()) continue;
-        if (db::query::s3::Gateway::getObjectState(bucket.vault_id, objectKey)) continue;
+    db::query::s3::Gateway::backfillObjectStateFromFs(bucket.vault_id);
+}
 
-        const auto plaintext = readPlaintext(bucket.engine, file);
-        db::query::s3::Gateway::upsertObject({
-            .vault_id = bucket.vault_id,
-            .object_key = objectKey,
-            .etag = quoted(md5Hex(plaintext)),
-            .size_bytes = file->size_bytes,
-            .content_type = file->mime_type,
-            .storage_class = file->remote_storage_class,
-            .last_modified = file->updated_at,
-            .multipart = false,
-            .part_count = std::nullopt
-        });
-    }
+void ObjectStore::backfillRemoteObjectState(const ResolvedBucket& bucket) const {
+    db::query::s3::Gateway::backfillObjectStateFromRemoteIndex(bucket.vault_id);
 }
 
 std::optional<db::query::s3::ObjectState> ObjectStore::stateFromLocalFile(
@@ -909,11 +883,10 @@ std::optional<db::query::s3::ObjectState> ObjectStore::stateFromLocalFile(
     const std::filesystem::path& vaultPath) const {
     const auto file = db::query::fs::File::getFileByPath(bucket.vault_id, vaultPath);
     if (!file) return std::nullopt;
-    const auto plaintext = readPlaintext(bucket.engine, file);
     return db::query::s3::ObjectState{
         .vault_id = bucket.vault_id,
         .object_key = vaultPathToKey(vaultPath),
-        .etag = quoted(md5Hex(plaintext)),
+        .etag = metadataEtagForFile(file),
         .size_bytes = file->size_bytes,
         .content_type = file->mime_type,
         .storage_class = file->remote_storage_class,

@@ -423,6 +423,89 @@ bool isLimitExceededReason(const std::string& reason) {
     return reason.rfind("S3 price budget exceeded", 0) == 0;
 }
 
+int windowPriority(const PriceBudgetWindow window) {
+    switch (window) {
+    case PriceBudgetWindow::Monthly:
+        return 0;
+    case PriceBudgetWindow::Daily:
+        return 1;
+    case PriceBudgetWindow::PerRun:
+        return 2;
+    }
+    return 3;
+}
+
+Decimal remainingForSort(const PriceBudgetWindowCheck& check) {
+    if (check.remaining_before.empty()) return Decimal("0");
+    return budgetDecimalFromString(check.remaining_before);
+}
+
+bool isGatewaySpecificScope(const PriceBudgetScope scope) {
+    return scope == PriceBudgetScope::GatewayCredential ||
+           scope == PriceBudgetScope::GatewayCredentialVault;
+}
+
+bool primaryBlockingLess(
+    const PriceBudgetWindowCheck& a,
+    const PriceBudgetWindowCheck& b,
+    const bool preferGatewayCredentialVault) {
+    const auto aWindow = windowPriority(a.window);
+    const auto bWindow = windowPriority(b.window);
+    if (aWindow != bWindow) return aWindow < bWindow;
+
+    if (preferGatewayCredentialVault &&
+        isGatewaySpecificScope(a.scope) &&
+        isGatewaySpecificScope(b.scope) &&
+        a.scope != b.scope) {
+        return a.scope == PriceBudgetScope::GatewayCredentialVault;
+    }
+
+    const auto aRemaining = remainingForSort(a);
+    const auto bRemaining = remainingForSort(b);
+    if (aRemaining != bRemaining) return aRemaining < bRemaining;
+
+    return a.policy_id < b.policy_id;
+}
+
+void finalizeBlockingDecision(PriceBudgetDecision& decision) {
+    if (decision.blocking_checks.empty()) return;
+
+    std::set<std::uint32_t> policyIds;
+    bool hasGatewayCredential = false;
+    bool hasGatewayCredentialVault = false;
+    for (const auto& check : decision.blocking_checks) {
+        policyIds.insert(check.policy_id);
+        if (check.scope == PriceBudgetScope::GatewayCredential) hasGatewayCredential = true;
+        if (check.scope == PriceBudgetScope::GatewayCredentialVault) hasGatewayCredentialVault = true;
+    }
+    decision.blocking_policy_ids = {policyIds.begin(), policyIds.end()};
+
+    const bool preferGatewayCredentialVault = hasGatewayCredentialVault && !hasGatewayCredential;
+    const auto primary = std::min_element(
+        decision.blocking_checks.begin(),
+        decision.blocking_checks.end(),
+        [&](const auto& a, const auto& b) {
+            return primaryBlockingLess(a, b, preferGatewayCredentialVault);
+        });
+    if (primary == decision.blocking_checks.end()) return;
+
+    decision.primary_blocking_check = *primary;
+    decision.primary_blocking_scope = toString(primary->scope);
+    decision.primary_blocking_window = toString(primary->window);
+    decision.allowed = false;
+    decision.stalled = true;
+    decision.exceeded_policy_id = primary->policy_id;
+    decision.exceeded_scope = decision.primary_blocking_scope;
+    decision.limit = primary->limit.value_or("");
+    decision.used_before = primary->used_before;
+    decision.remaining_before = primary->remaining_before;
+    decision.requested = primary->requested;
+    decision.currency = primary->currency;
+    decision.reason = "S3 price budget exceeded for " + decision.primary_blocking_window +
+        " " + decision.primary_blocking_scope +
+        " policy " + std::to_string(primary->policy_id);
+}
+
 struct VaultBudgetContext {
     bool is_s3{false};
     std::string provider_key{"unknown"};
@@ -613,6 +696,13 @@ nlohmann::json preflightMetadata(const PriceBudgetPreflightRequest& request, con
         {"reason", decision.reason}
     };
     metadata["checks"] = decision.checks;
+    metadata["blocking_checks"] = decision.blocking_checks;
+    metadata["blocking_policy_ids"] = decision.blocking_policy_ids;
+    metadata["primary_blocking_scope"] = decision.primary_blocking_scope;
+    metadata["primary_blocking_window"] = decision.primary_blocking_window;
+    metadata["primary_blocking_check"] = decision.primary_blocking_check
+        ? nlohmann::json(*decision.primary_blocking_check)
+        : nlohmann::json(nullptr);
     return metadata;
 }
 
@@ -791,6 +881,53 @@ std::string formatPriceBudgetDecisionForDryRun(const PriceBudgetDecision& decisi
     return out.str();
 }
 
+std::string formatGatewayBudgetDenialForS3(
+    const PriceBudgetDecision& decision,
+    const PriceBudgetPreflightRequest& request) {
+    const auto check = decision.primary_blocking_check;
+    const auto scope = !decision.primary_blocking_scope.empty()
+        ? decision.primary_blocking_scope
+        : (!decision.exceeded_scope.empty() ? decision.exceeded_scope : std::string{"unknown"});
+    const auto policyId = check
+        ? check->policy_id
+        : decision.exceeded_policy_id.value_or(0);
+    const auto window = check
+        ? toString(check->window)
+        : (!decision.primary_blocking_window.empty() ? decision.primary_blocking_window : std::string{"unknown"});
+    const auto limit = check
+        ? check->limit.value_or("")
+        : decision.limit;
+    const auto usedBefore = check
+        ? check->used_before
+        : decision.used_before;
+    const auto remaining = check
+        ? check->remaining_before
+        : decision.remaining_before;
+    const auto requested = check
+        ? check->requested
+        : decision.requested;
+    const auto currency = check
+        ? check->currency
+        : decision.currency;
+
+    std::ostringstream out;
+    out << "S3 gateway price budget exceeded: "
+        << "scope=" << scope
+        << ", policy_id=" << policyId
+        << ", window=" << window
+        << ", limit=" << limit
+        << ", used_before=" << usedBefore
+        << ", remaining=" << remaining
+        << ", requested=" << requested
+        << ", currency=" << currency
+        << ", provider_key=" << request.provider_key
+        << ", vault_id=" << request.vault_id
+        << ", gateway_credential_id=" << (request.gateway_credential_id ? std::to_string(*request.gateway_credential_id) : std::string{"none"})
+        << ", operation=" << request.operation
+        << ", request_uuid=" << request.request_uuid;
+    return out.str();
+}
+
 PriceBudgetDecision PriceBudgetService::preflight(const PriceBudgetPreflightRequest& request) const {
     return db::Transactions::exec("PriceBudgetService::preflight", [&](pqxx::work& txn) {
         PriceBudgetDecision decision;
@@ -890,12 +1027,7 @@ PriceBudgetDecision PriceBudgetService::preflight(const PriceBudgetPreflightRequ
                                 " was allowed by an approved single-run override");
                         continue;
                     }
-                    setBlocked(
-                        decision,
-                        policy,
-                        "S3 price budget exceeded for " + toString(window) +
-                            " " + scopeLabel(policy),
-                        check);
+                    decision.blocking_checks.push_back(check);
                 } else if (mode == PriceBudgetMode::Warn) {
                     appendWarning(
                         decision,
@@ -907,6 +1039,7 @@ PriceBudgetDecision PriceBudgetService::preflight(const PriceBudgetPreflightRequ
             }
         }
 
+        finalizeBlockingDecision(decision);
         if (decision.stalled || request.dry_run || !canReserve) return decision;
 
         for (const auto& policy : decision.policies) {
@@ -958,6 +1091,7 @@ bool PriceBudgetService::isLimitOverrideEligible(const PriceBudgetDecision& deci
 }
 
 std::vector<std::uint32_t> PriceBudgetService::exceededEnforcePolicyIds(const PriceBudgetDecision& decision) const {
+    if (!decision.blocking_policy_ids.empty()) return decision.blocking_policy_ids;
     std::set<std::uint32_t> ids;
     for (const auto& check : decision.checks) {
         if (check.exceeded && check.mode == PriceBudgetMode::Enforce)
@@ -1740,12 +1874,18 @@ void to_json(nlohmann::json& j, const PriceBudgetDecision& decision) {
         {"exceeded_policy_id", decision.exceeded_policy_id ? nlohmann::json(*decision.exceeded_policy_id) : nlohmann::json(nullptr)},
         {"exceeded_scope", decision.exceeded_scope},
         {"limit", decision.limit},
+        {"used_before", decision.used_before},
         {"remaining_before", decision.remaining_before},
         {"requested", decision.requested},
         {"currency", decision.currency},
         {"reason", decision.reason},
         {"policies", decision.policies},
-        {"checks", decision.checks}
+        {"checks", decision.checks},
+        {"blocking_checks", decision.blocking_checks},
+        {"blocking_policy_ids", decision.blocking_policy_ids},
+        {"primary_blocking_check", decision.primary_blocking_check ? nlohmann::json(*decision.primary_blocking_check) : nlohmann::json(nullptr)},
+        {"primary_blocking_scope", decision.primary_blocking_scope},
+        {"primary_blocking_window", decision.primary_blocking_window}
     };
 }
 

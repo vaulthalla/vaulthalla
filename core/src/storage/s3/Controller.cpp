@@ -55,7 +55,7 @@ namespace vh::storage::s3 {
             if (limit && current + amount > *limit) {
                 metrics_.budget_exceeded = true;
                 metrics_.budget_exceeded_reason = fmt::format("S3 request budget exceeded for {}", label);
-                throw RequestBudgetExceeded(metrics_.budget_exceeded_reason);
+                throw RequestBudgetExceeded(metrics_.budget_exceeded_reason, label);
             }
             current += amount;
         };

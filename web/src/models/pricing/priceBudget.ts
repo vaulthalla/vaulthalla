@@ -150,12 +150,18 @@ export class PriceBudgetDecision {
   exceeded_policy_id: number | null = null
   exceeded_scope: string | null = null
   limit: string | null = null
+  used_before: string | null = null
   remaining_before: string | null = null
   requested: string | null = null
   currency = 'USD'
   reason: string | null = null
   policies: PriceBudgetPolicy[] = []
   checks: PriceBudgetWindowCheck[] = []
+  blocking_checks: PriceBudgetWindowCheck[] = []
+  blocking_policy_ids: number[] = []
+  primary_blocking_check: PriceBudgetWindowCheck | null = null
+  primary_blocking_scope: string | null = null
+  primary_blocking_window: string | null = null
 
   constructor(input: unknown = {}) {
     const data = isRecord(input) ? input : {}
@@ -165,12 +171,20 @@ export class PriceBudgetDecision {
     this.exceeded_policy_id = asNullableNumber(data.exceeded_policy_id)
     this.exceeded_scope = asNullableString(data.exceeded_scope)
     this.limit = asNullableDecimalString(data.limit)
+    this.used_before = asNullableDecimalString(data.used_before)
     this.remaining_before = asNullableDecimalString(data.remaining_before)
     this.requested = asNullableDecimalString(data.requested)
     this.currency = asString(data.currency, 'USD')
     this.reason = asNullableString(data.reason)
     this.policies = Array.isArray(data.policies) ? data.policies.map(PriceBudgetPolicy.from) : []
     this.checks = Array.isArray(data.checks) ? data.checks.map(PriceBudgetWindowCheck.from) : []
+    this.blocking_checks = Array.isArray(data.blocking_checks) ? data.blocking_checks.map(PriceBudgetWindowCheck.from) : []
+    this.blocking_policy_ids = Array.isArray(data.blocking_policy_ids)
+      ? data.blocking_policy_ids.map(asNumber).filter(id => id > 0)
+      : []
+    this.primary_blocking_check = isRecord(data.primary_blocking_check) ? PriceBudgetWindowCheck.from(data.primary_blocking_check) : null
+    this.primary_blocking_scope = asNullableString(data.primary_blocking_scope)
+    this.primary_blocking_window = asNullableString(data.primary_blocking_window)
   }
 
   static from(input: unknown): PriceBudgetDecision {

@@ -5,7 +5,7 @@ Vaulthalla can expose vaults through an S3-compatible gateway. The gateway is a 
 The gateway has two primary modes:
 
 - `local`: a MinIO-like encrypted local object store backed by Vaulthalla local vaults.
-- `remote_cache` / `remote_proxy`: S3/R2-backed buckets that use Vaulthalla S3 vault engines, remote object indexes, request budgets, remote manifests, and upstream encryption metadata.
+- `remote_cache` / `remote_proxy`: S3/R2-backed buckets that use Vaulthalla S3 vault engines, local metadata, remote object indexes, request budgets, remote manifests, and upstream encryption metadata.
 
 ## Configuration
 
@@ -155,7 +155,11 @@ vh s3-gateway budget status --key backup
 vh s3-gateway budget ledger --key backup --limit 50
 ```
 
-When a remote-backed operation is denied, clients receive a normal S3-compatible error response with code `AccessDenied` and a message beginning `S3 gateway price budget would be exceeded`.
+When a remote-backed operation is denied by price budget, clients receive a normal S3-compatible error response with code `AccessDenied` and a message beginning `S3 gateway price budget exceeded`. The message includes the blocking scope, policy id, window, limit, used-before amount, remaining-before amount, requested cost, currency, provider key, vault id, gateway credential id, operation, and request UUID.
+
+All exceeded enforce checks are retained in budget decision metadata for CLI/web status, notifications, and logs. The top-level message uses a deterministic primary blocker instead of whichever policy row happened to be read first.
+
+Remote-backed gateway operations also honor the S3/R2 request budgets configured on the Vaulthalla remote policy. Request-budget failures are distinct from price-budget failures and return S3 XML with code `SlowDown` and a message beginning `S3 gateway request budget exceeded`. The message identifies the request budget kind, such as `GET`, `PUT`, `DELETE`, `COPY`, or downloaded bytes.
 
 ## Web Console
 
@@ -189,9 +193,25 @@ mc rm vh/archive/file.txt
 
 The gateway currently behaves like unversioned S3. There is no S3 object versioning, object lock, legal hold, MFA delete, or Vaulthalla undo-delete integration for gateway deletes.
 
-For remote-backed buckets, S3 DELETE operations delete upstream first. Only after the upstream S3/R2 delete succeeds does the gateway remove Vaulthalla state: gateway object metadata, remote object index rows, remote manifests, local backing or cache files, and fs cache path/inode/id mappings. If upstream delete fails, local state is retained unless the provider confirms the object is already gone.
+For remote-backed buckets, S3 DELETE operations mutate Vaulthalla local state first. The gateway removes or tombstones the Vaulthalla object path, clears gateway object metadata, evicts stale fs-cache path/inode/id entries, and immediately hides the object from S3 LIST/HEAD/GET according to Vaulthalla local state.
 
-This means gateway deletes are destructive for remote-backed buckets today. Plan recovery around upstream bucket versioning or backups until Vaulthalla gateway versioning is implemented.
+The gateway does not perform a direct upstream S3/R2 delete as its primary behavior. Existing sync planning and tasks observe the local delete/tombstone and own the eventual upstream purge. A successful S3 DELETE response means Vaulthalla accepted the local deletion state; it does not mean upstream deletion has completed.
+
+This means gateway deletes are unversioned from the S3 client perspective, while upstream cleanup remains sync-owned and eventually consistent. Plan recovery around Vaulthalla backups and upstream bucket versioning until Vaulthalla gateway versioning is implemented.
+
+## LIST Semantics
+
+S3 gateway LIST is metadata-only. It uses gateway object metadata, Vaulthalla filesystem metadata, and sync-maintained remote object indexes. LIST does not decrypt object bodies, read plaintext to compute ETags, refresh manifests, or call upstream S3/R2 LIST/HEAD/GET APIs.
+
+Gateway-created objects keep their exact S3 ETag in `s3_gateway_object`. Existing Vaulthalla files that do not have gateway ETags use metadata-derived fallback ETags. Body-reading ETag import is intentionally separate from LIST and should be invoked only through explicit backfill tooling:
+
+```bash
+# Metadata only: no body reads, no decrypt, no upstream calls.
+vh s3-gateway bucket backfill archive
+
+# Intentional local body read/decrypt to calculate plaintext MD5 ETags.
+vh s3-gateway bucket backfill archive --calculate-etags
+```
 
 ## Limitations
 
@@ -201,5 +221,5 @@ This means gateway deletes are destructive for remote-backed buckets today. Plan
 - No lifecycle rules.
 - No object lock, legal hold, or MFA delete.
 - Large PUT and multipart bodies are accepted by the gateway path, but operators should still size `max_body_size_mb`, multipart part directories, and request budgets for the workload.
-- Remote-backed listing uses Vaulthalla known state and remote indexes; it does not perform unbounded upstream listing on every request.
+- Remote-backed listing uses Vaulthalla known state and remote indexes; it does not perform upstream listing on gateway LIST requests.
 - Gateway price estimates use the configured provider pricing catalog. They are conservative estimates for preflight/ledger control, not a provider invoice reconciliation system.

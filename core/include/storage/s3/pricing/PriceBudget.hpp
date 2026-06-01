@@ -75,12 +75,18 @@ struct PriceBudgetDecision {
     std::optional<std::uint32_t> exceeded_policy_id;
     std::string exceeded_scope;
     std::string limit;
+    std::string used_before;
     std::string remaining_before;
     std::string requested;
     std::string currency;
     std::string reason;
     std::vector<PriceBudgetPolicy> policies;
     std::vector<PriceBudgetWindowCheck> checks;
+    std::vector<PriceBudgetWindowCheck> blocking_checks;
+    std::vector<std::uint32_t> blocking_policy_ids;
+    std::optional<PriceBudgetWindowCheck> primary_blocking_check;
+    std::string primary_blocking_scope;
+    std::string primary_blocking_window;
     std::vector<PriceBudgetReservation> reservations;
 };
 
@@ -218,6 +224,9 @@ struct PriceBudgetDashboardStats {
 [[nodiscard]] bool isValidPriceBudgetCurrency(std::string_view value);
 [[nodiscard]] std::string normalizePriceBudgetCurrency(std::string value);
 [[nodiscard]] std::string formatPriceBudgetDecisionForDryRun(const PriceBudgetDecision& decision);
+[[nodiscard]] std::string formatGatewayBudgetDenialForS3(
+    const PriceBudgetDecision& decision,
+    const PriceBudgetPreflightRequest& request);
 
 class PriceBudgetService {
 public:

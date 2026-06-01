@@ -8,6 +8,7 @@
 #include "runtime/Deps.hpp"
 #include "fs/cache/Registry.hpp"
 #include "fs/model/stats/Extension.hpp"
+#include "crypto/id/Generator.hpp"
 
 #include <optional>
 #include <stdexcept>
@@ -282,6 +283,31 @@ void File::markFileAsTrashed(const unsigned int userId, const unsigned int fsId,
         txn.exec(pqxx::prepped{"mark_file_trashed_by_id"}, p);
 
         updateParentStatsAndCleanEmptyDirs(txn, parentId, sizeBytes, isFuseCall);
+    });
+}
+
+void File::markRemoteFileAsTrashed(
+    const unsigned int userId,
+    const unsigned int vaultId,
+    const std::filesystem::path& relPath,
+    const std::uint64_t sizeBytes) {
+    auto normalized = vh::fs::model::makeAbsolute(relPath);
+    const auto path = to_utf8_string(normalized.u8string());
+    const auto base32Alias = vh::crypto::id::Generator({.namespace_token = path + ":" + std::to_string(std::time(nullptr))}).generate();
+
+    Transactions::exec("File::markRemoteFileAsTrashed", [&](pqxx::work& txn) {
+        txn.exec(
+            R"SQL(
+                INSERT INTO files_trashed
+                    (vault_id, path, backing_path, base32_alias, size_bytes, trashed_at, trashed_by)
+                SELECT $1, $2, '', $3, $4, NOW(), $5
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM files_trashed
+                    WHERE vault_id = $1 AND path = $2 AND deleted_at IS NULL
+                )
+            )SQL",
+            pqxx::params{vaultId, path, base32Alias, sizeBytes, userId});
     });
 }
 

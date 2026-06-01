@@ -64,6 +64,15 @@ struct ObjectBody {
     std::optional<std::pair<uint64_t, uint64_t>> content_range;
 };
 
+struct BucketEmptyResult {
+    bool empty{true};
+    uint64_t gateway_objects{};
+    uint64_t fs_entries{};
+    uint64_t remote_index_objects{};
+    uint64_t active_tombstones{};
+    std::vector<std::string> reasons;
+};
+
 class ObjectStore {
 public:
     std::vector<db::query::s3::BucketBinding> listBuckets(const AuthContext& auth) const;
@@ -83,6 +92,10 @@ public:
 
     db::query::s3::ObjectListResult listObjects(const ResolvedBucket& bucket,
                                                 const db::query::s3::ObjectListParams& params) const;
+    db::query::s3::ObjectListResult listObjectsFromVaulthallaMetadata(
+        const ResolvedBucket& bucket,
+        const db::query::s3::ObjectListParams& params) const;
+    BucketEmptyResult bucketIsEmpty(const ResolvedBucket& bucket) const;
     bool remoteIndexStale(const ResolvedBucket& bucket) const;
     db::query::s3::ObjectState headObject(const ResolvedBucket& bucket, const std::string& key) const;
     ObjectBody getObject(const ResolvedBucket& bucket, const std::string& key,
@@ -138,6 +151,7 @@ private:
     static std::map<std::string, std::string> lowerMetadata(const std::map<std::string, std::string>& metadata);
     void ensureParentDirectories(const ResolvedBucket& bucket, const std::filesystem::path& vaultPath) const;
     void backfillLocalObjectState(const ResolvedBucket& bucket) const;
+    void backfillRemoteObjectState(const ResolvedBucket& bucket) const;
     std::optional<db::query::s3::ObjectState> stateFromLocalFile(const ResolvedBucket& bucket,
                                                                  const std::filesystem::path& vaultPath) const;
 };

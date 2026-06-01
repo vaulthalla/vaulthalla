@@ -9,6 +9,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 #include <curl/curl.h>
 #include <unordered_map>
@@ -54,7 +55,13 @@ namespace vh::storage::s3 {
 
     class RequestBudgetExceeded final : public std::runtime_error {
     public:
-        explicit RequestBudgetExceeded(const std::string& message) : std::runtime_error(message) {}
+        explicit RequestBudgetExceeded(const std::string& message, std::string kind = {})
+            : std::runtime_error(message), kind_(std::move(kind)) {}
+
+        [[nodiscard]] const std::string& kind() const noexcept { return kind_; }
+
+    private:
+        std::string kind_;
     };
 
     class ConditionalRequestFailed final : public std::runtime_error {

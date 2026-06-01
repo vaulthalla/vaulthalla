@@ -1,6 +1,7 @@
 #include "protocols/shell/commands/all.hpp"
 
 #include "config/Registry.hpp"
+#include "db/query/fs/File.hpp"
 #include "db/query/s3/Gateway.hpp"
 #include "db/query/vault/APIKey.hpp"
 #include "db/query/vault/Vault.hpp"
@@ -14,22 +15,29 @@
 #include "protocols/shell/util/argsHelpers.hpp"
 #include "runtime/Deps.hpp"
 #include "runtime/Manager.hpp"
+#include "storage/Engine.hpp"
 #include "storage/Manager.hpp"
 #include "storage/s3/pricing/PriceBudget.hpp"
 #include "sync/model/RemotePolicy.hpp"
 #include "vault/model/APIKey.hpp"
 #include "vault/model/S3Vault.hpp"
 #include "usage/include/UsageManager.hpp"
+#include "fs/model/File.hpp"
 #include "vault/model/Vault.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <ctime>
+#include <fstream>
+#include <iomanip>
+#include <iterator>
 #include <nlohmann/json.hpp>
+#include <openssl/md5.h>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace vh::protocols::shell::commands {
 
@@ -255,6 +263,41 @@ void validateBucketModeForVault(
         throw std::runtime_error("s3-gateway " + action + ": S3/R2 vaults must use remote_cache or remote_proxy mode");
     if (!s3Backed && mode != "local")
         throw std::runtime_error("s3-gateway " + action + ": local vaults can only use local mode");
+}
+
+std::string gatewayObjectKeyFromPath(const std::filesystem::path& path) {
+    auto key = path.lexically_normal().generic_string();
+    while (!key.empty() && key.front() == '/') key.erase(key.begin());
+    return key;
+}
+
+std::string hexDigest(const unsigned char* digest, const std::size_t size) {
+    std::ostringstream out;
+    out << std::hex << std::setfill('0');
+    for (std::size_t i = 0; i < size; ++i)
+        out << std::setw(2) << static_cast<unsigned int>(digest[i]);
+    return out.str();
+}
+
+std::vector<uint8_t> readFileBytesForGatewayBackfill(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) throw std::runtime_error("unable to read backing file for ETag backfill: " + path.string());
+    return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
+
+std::string md5EtagForGatewayBackfill(const std::vector<uint8_t>& bytes) {
+    unsigned char digest[MD5_DIGEST_LENGTH];
+    MD5(bytes.data(), bytes.size(), digest);
+    return "\"" + hexDigest(digest, MD5_DIGEST_LENGTH) + "\"";
+}
+
+std::vector<uint8_t> plaintextForGatewayBackfill(
+    const std::shared_ptr<storage::Engine>& engine,
+    const std::shared_ptr<::vh::fs::model::File>& file) {
+    if (!file || file->size_bytes == 0) return {};
+    if (file->encryption_iv.empty() || file->encrypted_with_key_version == 0)
+        return readFileBytesForGatewayBackfill(file->backing_path);
+    return engine->decrypt(file);
 }
 
 CommandResult saveConfigAndRestart(config::Config cfg, const std::string& message) {
@@ -685,6 +728,59 @@ CommandResult handleBucketCreateRemoteCache(const CommandCall& call) {
     }
 }
 
+CommandResult handleBucketBackfill(const CommandCall& call) {
+    if (call.positionals.empty()) return usage(call.constructFullArgs());
+    const auto bucketName = call.positionals[0];
+    const auto binding = db::query::s3::Gateway::resolveBucket(bucketName);
+    if (!binding) return invalid("s3-gateway bucket backfill: bucket binding not found");
+    const auto vault = db::query::vault::Vault::getVault(binding->vault_id);
+    requireVaultOwnerOrAdmin(call, vault);
+
+    const bool calculateEtags = hasFlag(call, "calculate-etags");
+    std::uint64_t calculated = 0;
+    if (binding->mode == "remote_cache" || binding->mode == "remote_proxy") {
+        db::query::s3::Gateway::backfillObjectStateFromRemoteIndex(binding->vault_id);
+    } else {
+        db::query::s3::Gateway::backfillObjectStateFromFs(binding->vault_id);
+    }
+
+    if (calculateEtags) {
+        if (binding->mode != "local")
+            return invalid("s3-gateway bucket backfill: --calculate-etags is only supported for local Vaulthalla files");
+        auto engine = runtime::Deps::get().storageManager->getEngine(binding->vault_id);
+        if (!engine) return invalid("s3-gateway bucket backfill: storage engine not available");
+        const auto files = db::query::fs::File::listFilesInDir(binding->vault_id, "/", true);
+        for (const auto& file : files) {
+            if (!file) continue;
+            const auto objectKey = gatewayObjectKeyFromPath(file->path);
+            if (objectKey.empty()) continue;
+            const auto plaintext = plaintextForGatewayBackfill(engine, file);
+            db::query::s3::Gateway::upsertObject({
+                .vault_id = binding->vault_id,
+                .object_key = objectKey,
+                .etag = md5EtagForGatewayBackfill(plaintext),
+                .size_bytes = file->size_bytes,
+                .content_type = file->mime_type,
+                .storage_class = file->remote_storage_class,
+                .last_modified = file->updated_at,
+                .multipart = false,
+                .part_count = std::nullopt
+            });
+            ++calculated;
+        }
+    }
+
+    std::ostringstream out;
+    out << "Backfilled S3 gateway metadata for bucket " << bucketName << ".\n";
+    if (calculateEtags) {
+        out << "WARNING: --calculate-etags read/decrypted local object bodies intentionally.\n";
+        out << "Calculated plaintext MD5 ETags for " << calculated << " objects.\n";
+    } else {
+        out << "Metadata-only backfill completed; no object bodies were read or decrypted.\n";
+    }
+    return ok(out.str());
+}
+
 CommandResult handleBucket(const CommandCall& call) {
     if (call.positionals.empty() || hasKey(call, "help") || hasKey(call, "h"))
         return usage(call.constructFullArgs());
@@ -695,6 +791,7 @@ CommandResult handleBucket(const CommandCall& call) {
     if (isCommandMatch({"s3-gateway", "bucket", "unbind"}, sub)) return handleBucketUnbind(subcall);
     if (isCommandMatch({"s3-gateway", "bucket", "create-local"}, sub)) return handleBucketCreateLocal(subcall);
     if (isCommandMatch({"s3-gateway", "bucket", "create-remote-cache"}, sub)) return handleBucketCreateRemoteCache(subcall);
+    if (isCommandMatch({"s3-gateway", "bucket", "backfill"}, sub)) return handleBucketBackfill(subcall);
     return invalid(call.constructFullArgs(), "Unknown s3-gateway bucket subcommand: '" + std::string(sub) + "'");
 }
 

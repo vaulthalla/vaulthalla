@@ -134,6 +134,23 @@ std::string makeMetadataJson(const std::map<std::string, std::string>& metadata)
     for (const auto& [key, value] : metadata) out[key] = value;
     return out.dump();
 }
+
+std::string notHiddenByActiveTrashSql(const std::string& vaultIdExpr, const std::string& objectKeyExpr) {
+    return
+        "NOT EXISTS ("
+        "  SELECT 1 "
+        "  FROM files_trashed ft "
+        "  WHERE ft.vault_id = " + vaultIdExpr + " "
+        "    AND ft.path = ('/' || " + objectKeyExpr + ") "
+        "    AND ft.deleted_at IS NULL "
+        "    AND NOT EXISTS ("
+        "      SELECT 1 "
+        "      FROM fs_entry live "
+        "      JOIN files live_file ON live_file.fs_entry_id = live.id "
+        "      WHERE live.vault_id = ft.vault_id AND live.path = ft.path"
+        "    )"
+        ")";
+}
 }
 
 uint32_t Gateway::createCredential(const GatewayCredential& credential) {
@@ -405,7 +422,9 @@ void Gateway::upsertObject(const ObjectState& state) {
 std::optional<ObjectState> Gateway::getObjectState(const uint32_t vaultId, const std::string& objectKey) {
     return Transactions::exec("S3Gateway::getObjectState", [&](pqxx::work& txn) -> std::optional<ObjectState> {
         const auto res = txn.exec(
-            "SELECT * FROM s3_gateway_object WHERE vault_id = $1 AND object_key = $2",
+            "SELECT * FROM s3_gateway_object "
+            "WHERE vault_id = $1 AND object_key = $2 "
+            "AND " + notHiddenByActiveTrashSql("s3_gateway_object.vault_id", "object_key"),
             pqxx::params{vaultId, normalizeKey(objectKey)});
         if (res.empty()) return std::nullopt;
         return objectFromRow(res.one_row());
@@ -453,6 +472,7 @@ ObjectListResult Gateway::listObjectStates(const uint32_t vaultId, const ObjectL
                         FROM s3_gateway_object
                         WHERE vault_id = $1
                           AND LEFT(object_key, CHAR_LENGTH($2)) = $2
+                          AND )SQL" + notHiddenByActiveTrashSql("s3_gateway_object.vault_id", "object_key") + R"SQL(
                     ),
                     items AS (
                         SELECT DISTINCT
@@ -517,11 +537,12 @@ ObjectListResult Gateway::listObjectStates(const uint32_t vaultId, const ObjectL
         }
 
         const auto res = txn.exec(
-            R"SQL(
+                R"SQL(
                 SELECT * FROM s3_gateway_object
                 WHERE vault_id = $1
                   AND LEFT(object_key, CHAR_LENGTH($2)) = $2
                   AND object_key > $3
+                  AND )SQL" + notHiddenByActiveTrashSql("s3_gateway_object.vault_id", "object_key") + R"SQL(
                 ORDER BY object_key
                 LIMIT $4
             )SQL",
@@ -722,7 +743,7 @@ void Gateway::backfillObjectStateFromFs(const uint32_t vaultId) {
                 SELECT
                     e.vault_id,
                     ltrim(e.path, '/') AS object_key,
-                    '""' AS etag,
+                    ('"vh-meta-' || md5(e.vault_id::text || ':' || e.path || ':' || f.size_bytes::text || ':' || e.updated_at::text || ':' || COALESCE(f.content_hash, '')) || '"') AS etag,
                     f.size_bytes,
                     f.mime_type,
                     e.updated_at
@@ -747,6 +768,7 @@ void Gateway::backfillObjectStateFromRemoteIndex(const uint32_t vaultId) {
                 SELECT vault_id, object_key, COALESCE(etag, '""'), size_bytes, storage_class, last_modified
                 FROM remote_object_index
                 WHERE vault_id = $1
+                  AND )SQL" + notHiddenByActiveTrashSql("remote_object_index.vault_id", "object_key") + R"SQL(
                 ON CONFLICT (vault_id, object_key) DO NOTHING
             )SQL",
             pqxx::params{vaultId});

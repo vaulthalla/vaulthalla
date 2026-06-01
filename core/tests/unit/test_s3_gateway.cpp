@@ -842,6 +842,22 @@ protected:
             .part_count = std::nullopt
         });
     }
+
+    static uint32_t createLocalVault(const std::string& label, const uint32_t ownerId) {
+        const auto newVaultId = vh::db::Transactions::exec("S3GatewayDbTest::createLocalVault", [&](pqxx::work& txn) {
+            const auto seededVaultId = txn.exec(
+                "INSERT INTO vault (type, name, owner_id, mount_point, description) VALUES ($1, $2, $3, $4, $5) RETURNING id",
+                pqxx::params{"local", "S3 Gateway " + label, ownerId, uniqueSuffix(label + "_mount"), ""}
+            ).one_field().as<uint32_t>();
+            txn.exec(
+                "WITH ins AS (INSERT INTO sync (vault_id, interval) VALUES ($1, 300) RETURNING id) "
+                "INSERT INTO fsync (sync_id, conflict_policy) SELECT id, 'keep_both' FROM ins",
+                pqxx::params{seededVaultId});
+            return seededVaultId;
+        });
+        vh::runtime::Deps::get().storageManager->initStorageEngines();
+        return newVaultId;
+    }
 };
 
 TEST_F(S3GatewayDbTest, ListObjectsContinuationTokenDoesNotSkipFirstObjectOnNextPage) {
@@ -1521,4 +1537,167 @@ TEST_F(S3GatewayDbTest, ListObjectsDelimiterPaginatesCommonPrefixesOnce) {
     ASSERT_TRUE(second.objects.empty());
     ASSERT_EQ(second.common_prefixes.size(), 1u);
     EXPECT_EQ(second.common_prefixes[0], "b/");
+}
+
+TEST_F(S3GatewayDbTest, ObjectStoreLocalListUsesMetadataEtagsForFilesystemEntries) {
+    const auto admin = vh::db::query::identities::User::getUserByName("admin");
+    ASSERT_TRUE(admin);
+    ASSERT_TRUE(admin->isSuperAdmin());
+
+    const auto localVaultId = createLocalVault(uniqueSuffix("metadata_list_local"), admin->id);
+    const auto engine = vh::runtime::Deps::get().storageManager->getEngine(localVaultId);
+    ASSERT_TRUE(engine);
+    const std::filesystem::path vaultPath = "/metadata-only-list.txt";
+    auto created = vh::fs::Filesystem::createFile({
+        .path = vaultPath,
+        .fuse_path = engine->vaultPathToFusePath(vaultPath),
+        .buffer = {'p', 'l', 'a', 'i', 'n', 't', 'e', 'x', 't'},
+        .engine = engine,
+        .user = admin,
+        .overwrite = true
+    });
+    ASSERT_TRUE(created);
+
+    const auto bucketName = "metadata-list-" + std::to_string(localVaultId);
+    vh::db::query::s3::Gateway::bindBucket({
+        .vault_id = localVaultId,
+        .bucket_name = bucketName,
+        .api_exclusive = false,
+        .mode = "local",
+        .created_by = admin->id
+    });
+
+    const vh::protocols::s3::ObjectStore store;
+    const auto bucket = store.resolveBucket(bucketName, admin);
+    const auto listed = store.listObjects(bucket, {});
+
+    ASSERT_EQ(1u, listed.objects.size());
+    EXPECT_EQ("metadata-only-list.txt", listed.objects.front().object_key);
+    EXPECT_TRUE(listed.objects.front().etag.starts_with("\"vh-meta-"));
+    EXPECT_NE("\"66a7fb99f149162da3d8c6c15c225d0f\"", listed.objects.front().etag);
+}
+
+TEST_F(S3GatewayDbTest, ObjectStoreRemoteListUsesRemoteIndexWithoutGatewayRows) {
+    const auto admin = vh::db::query::identities::User::getUserByName("admin");
+    ASSERT_TRUE(admin);
+    ASSERT_TRUE(admin->isSuperAdmin());
+
+    const auto remoteVaultId = createLocalVault(uniqueSuffix("metadata_list_remote"), admin->id);
+    const auto bucketName = "remote-index-list-" + std::to_string(remoteVaultId);
+    vh::db::query::s3::Gateway::bindBucket({
+        .vault_id = remoteVaultId,
+        .bucket_name = bucketName,
+        .api_exclusive = false,
+        .mode = "remote_cache",
+        .created_by = admin->id
+    });
+    vh::db::Transactions::exec("S3GatewayDbTest::insertRemoteIndexListObject", [&](pqxx::work& txn) {
+        txn.exec(
+            R"SQL(
+                INSERT INTO remote_object_index (vault_id, object_key, size_bytes, etag, storage_class, source)
+                VALUES ($1, $2, $3, $4, $5, $6)
+            )SQL",
+            pqxx::params{remoteVaultId, "indexed/only.txt", 12, "\"remote-index-etag\"", "STANDARD", "manifest"});
+    });
+
+    const vh::protocols::s3::ObjectStore store;
+    const auto bucket = store.resolveBucket(bucketName, admin);
+    const auto listed = store.listObjects(bucket, {});
+
+    ASSERT_EQ(1u, listed.objects.size());
+    EXPECT_EQ("indexed/only.txt", listed.objects.front().object_key);
+    EXPECT_EQ("\"remote-index-etag\"", listed.objects.front().etag);
+    EXPECT_EQ(12u, listed.objects.front().size_bytes);
+    ASSERT_TRUE(listed.objects.front().storage_class);
+    EXPECT_EQ("STANDARD", *listed.objects.front().storage_class);
+}
+
+TEST_F(S3GatewayDbTest, DeleteBucketRejectsLocalFilesystemEntriesWithoutGatewayRows) {
+    const auto admin = vh::db::query::identities::User::getUserByName("admin");
+    ASSERT_TRUE(admin);
+    ASSERT_TRUE(admin->isSuperAdmin());
+
+    const auto localVaultId = createLocalVault(uniqueSuffix("delete_bucket_local"), admin->id);
+    const auto engine = vh::runtime::Deps::get().storageManager->getEngine(localVaultId);
+    ASSERT_TRUE(engine);
+    const std::filesystem::path vaultPath = "/only-in-fs.txt";
+    ASSERT_TRUE(vh::fs::Filesystem::createFile({
+        .path = vaultPath,
+        .fuse_path = engine->vaultPathToFusePath(vaultPath),
+        .buffer = {'l', 'o', 'c', 'a', 'l'},
+        .engine = engine,
+        .user = admin,
+        .overwrite = true
+    }));
+
+    const auto bucketName = "delete-local-non-empty-" + std::to_string(localVaultId);
+    vh::db::query::s3::Gateway::bindBucket({
+        .vault_id = localVaultId,
+        .bucket_name = bucketName,
+        .api_exclusive = false,
+        .mode = "local",
+        .created_by = admin->id
+    });
+
+    const vh::protocols::s3::ObjectStore store;
+    try {
+        store.deleteBucket(bucketName, admin);
+        FAIL() << "expected BucketNotEmpty";
+    } catch (const vh::protocols::s3::S3Error& error) {
+        EXPECT_EQ("BucketNotEmpty", error.code);
+    }
+    EXPECT_TRUE(vh::db::query::s3::Gateway::resolveBucket(bucketName));
+}
+
+TEST_F(S3GatewayDbTest, DeleteBucketRejectsRemoteIndexLiveObjects) {
+    const auto admin = vh::db::query::identities::User::getUserByName("admin");
+    ASSERT_TRUE(admin);
+    ASSERT_TRUE(admin->isSuperAdmin());
+
+    const auto remoteVaultId = createLocalVault(uniqueSuffix("delete_bucket_remote"), admin->id);
+    const auto bucketName = "delete-remote-non-empty-" + std::to_string(remoteVaultId);
+    vh::db::query::s3::Gateway::bindBucket({
+        .vault_id = remoteVaultId,
+        .bucket_name = bucketName,
+        .api_exclusive = false,
+        .mode = "remote_cache",
+        .created_by = admin->id
+    });
+    vh::db::Transactions::exec("S3GatewayDbTest::insertRemoteIndexBucketDeleteObject", [&](pqxx::work& txn) {
+        txn.exec(
+            R"SQL(
+                INSERT INTO remote_object_index (vault_id, object_key, size_bytes, etag, source)
+                VALUES ($1, $2, $3, $4, $5)
+            )SQL",
+            pqxx::params{remoteVaultId, "live-remote.txt", 7, "\"live-remote\"", "manifest"});
+    });
+
+    const vh::protocols::s3::ObjectStore store;
+    try {
+        store.deleteBucket(bucketName, admin);
+        FAIL() << "expected BucketNotEmpty";
+    } catch (const vh::protocols::s3::S3Error& error) {
+        EXPECT_EQ("BucketNotEmpty", error.code);
+    }
+    EXPECT_TRUE(vh::db::query::s3::Gateway::resolveBucket(bucketName));
+}
+
+TEST_F(S3GatewayDbTest, DeleteBucketAllowsTrulyEmptyApiExclusiveBucket) {
+    const auto admin = vh::db::query::identities::User::getUserByName("admin");
+    ASSERT_TRUE(admin);
+    ASSERT_TRUE(admin->isSuperAdmin());
+
+    const auto emptyVaultId = createLocalVault(uniqueSuffix("delete_bucket_empty"), admin->id);
+    const auto bucketName = "delete-empty-" + std::to_string(emptyVaultId);
+    vh::db::query::s3::Gateway::bindBucket({
+        .vault_id = emptyVaultId,
+        .bucket_name = bucketName,
+        .api_exclusive = true,
+        .mode = "local",
+        .created_by = admin->id
+    });
+
+    const vh::protocols::s3::ObjectStore store;
+    EXPECT_NO_THROW(store.deleteBucket(bucketName, admin));
+    EXPECT_FALSE(vh::db::query::s3::Gateway::resolveBucket(bucketName));
 }
