@@ -554,14 +554,25 @@ void deleteIncompleteS3CostVaultFixturesForDbTest() {
     });
 }
 
+void clearS3PriceBudgetStateForDbTest() {
+    vh::db::Transactions::exec("S3CostSafetyTest::clearPriceBudgetState", [](pqxx::work& txn) {
+        txn.exec("DELETE FROM s3_price_budget_alert_state");
+        txn.exec("DELETE FROM s3_price_budget_override");
+        txn.exec("DELETE FROM operator_notification WHERE type LIKE 'budget.%' OR type LIKE 's3.%'");
+        txn.exec("DELETE FROM s3_price_budget_ledger");
+        txn.exec("DELETE FROM s3_price_budget_policy");
+    });
+}
+
 void ensureDbReady() {
     static bool initialized = false;
-    if (initialized) return;
-
-    vh::db::Transactions::init();
-    vh::db::seed::nuke_and_recreate_schema_public();
-    vh::db::Transactions::dbPool_->initPreparedStatements();
-    initialized = true;
+    if (!initialized) {
+        vh::db::Transactions::init();
+        vh::db::seed::nuke_and_recreate_schema_public();
+        vh::db::Transactions::dbPool_->initPreparedStatements();
+        initialized = true;
+    }
+    clearS3PriceBudgetStateForDbTest();
 }
 
 void ensureWritableTestPathRoots() {
@@ -1188,7 +1199,9 @@ void expectGatewayLedgerAbsent(
         fixture.secret.credential.id);
     const auto it = std::ranges::find_if(ledger, [&](const auto& entry) {
         return entry.operation && *entry.operation == operation &&
-            entry.object_key && *entry.object_key == objectKey;
+            entry.object_key && *entry.object_key == objectKey &&
+            entry.status != "released" &&
+            entry.status != "expired";
     });
     EXPECT_EQ(it, ledger.end());
 }
@@ -3949,6 +3962,7 @@ TEST(S3CostSafetyTest, GatewayRemoteGetDownloadedBytesBudgetDeniedDuringRemoteDo
         budget.max_downloaded_bytes = 4;
     });
     constexpr std::string_view objectKey = "request-budget-bytes.txt";
+    fixture.controller->download_payload.assign(5, static_cast<uint8_t>('x'));
     vh::db::query::s3::Gateway::upsertObject({
         .vault_id = fixture.vault_id,
         .object_key = std::string(objectKey),

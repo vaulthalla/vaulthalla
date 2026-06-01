@@ -36,23 +36,31 @@ std::optional<unsigned int> parsePositiveUint(const std::string& s, const char* 
 }
 
 std::shared_ptr<identities::User> resolveOwner(const CommandCall& call, const std::shared_ptr<CommandUsage>& usage) {
-    if (const auto ownerOpt = optVal(call, usage->resolveOptional("owner")->option_tokens)) {
-        if (const auto idOpt = parseUInt(*ownerOpt)) {
-            if (*idOpt <= 0) throw std::runtime_error("owner must be a positive integer");
-            const auto user = db::query::identities::User::getUserById(*idOpt);
-            if (!user) throw std::runtime_error("owner id not found: " + *ownerOpt);
+    const auto ownerUsage = usage ? usage->resolveOptional("owner") : nullptr;
+    if (ownerUsage) {
+        if (const auto ownerOpt = optVal(call, ownerUsage->option_tokens)) {
+            if (const auto idOpt = parseUInt(*ownerOpt)) {
+                if (*idOpt <= 0) throw std::runtime_error("owner must be a positive integer");
+                const auto user = db::query::identities::User::getUserById(*idOpt);
+                if (!user) throw std::runtime_error("owner id not found: " + *ownerOpt);
+                return user;
+            }
+            const auto user = db::query::identities::User::getUserByName(*ownerOpt);
+            if (!user) throw std::runtime_error("owner not found: " + *ownerOpt);
             return user;
         }
-        const auto user = db::query::identities::User::getUserByName(*ownerOpt);
-        if (!user) throw std::runtime_error("owner not found: " + *ownerOpt);
-        return user;
     }
     return call.user;
 }
 
 Lookup<identities::User> resolveOwnerRequired(const CommandCall& call, const std::shared_ptr<CommandUsage>& usage, const std::string& errPrefix) {
     Lookup<identities::User> out;
-    const auto ownerOpt = optVal(call, usage->resolveOptional("owner")->option_tokens);
+    const auto ownerUsage = usage ? usage->resolveOptional("owner") : nullptr;
+    if (!ownerUsage) {
+        out.error = errPrefix + ": --owner is not supported by this command";
+        return out;
+    }
+    const auto ownerOpt = optVal(call, ownerUsage->option_tokens);
     if (!ownerOpt || ownerOpt->empty()) {
         out.error = errPrefix + ": when using a vault name, you must specify --owner <id|name>";
         return out;

@@ -930,7 +930,6 @@ Router::Response Router::routeAuthenticated(
         }
         if (request.method() == http::verb::delete_) {
             auto bucket = objects_.resolveBucket(parsed.bucket, auth);
-            objects_.requireBucketRbacPermission(bucket, Action::Delete);
             if (!ObjectStore::credentialAllowsAdmin(bucket)) throw accessDenied(parsed.bucket);
             auto budget = preflightSyntheticGatewayBudget(
                 bucket,

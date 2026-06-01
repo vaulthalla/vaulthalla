@@ -317,8 +317,14 @@ ResolvedBucket ObjectStore::createBucket(
 
 void ObjectStore::deleteBucket(const std::string& bucket, const AuthContext& auth) const {
     auto resolved = resolveBucket(bucket, auth);
-    requireRbacPermission(resolved, "/", Action::Delete);
-    if (!credentialAllowsAdmin(resolved)) throw accessDenied(bucket);
+    const auto hasGatewayAdminAccess =
+        resolved.gateway_access &&
+        resolved.gateway_access->credential_id != 0 &&
+        credentialAllowsAdmin(resolved);
+    if (!hasGatewayAdminAccess) {
+        requireRbacPermission(resolved, "/", Action::Delete);
+        if (!credentialAllowsAdmin(resolved)) throw accessDenied(bucket);
+    }
     const auto empty = bucketIsEmpty(resolved);
     if (!empty.empty)
         throw S3Error{"BucketNotEmpty", "The bucket you tried to delete is not empty", http::status::conflict, bucket};
@@ -358,7 +364,11 @@ db::query::s3::ObjectListResult ObjectStore::listObjectsFromVaulthallaMetadata(
 BucketEmptyResult ObjectStore::bucketIsEmpty(const ResolvedBucket& bucket) const {
     db::query::s3::ObjectListParams params;
     params.max_keys = 1;
-    const auto objects = listObjectsFromVaulthallaMetadata(bucket, params);
+    if (isRemoteBacked(bucket))
+        backfillRemoteObjectState(bucket);
+    else
+        backfillLocalObjectState(bucket);
+    const auto objects = db::query::s3::Gateway::listObjectStates(bucket.vault_id, params);
 
     auto result = db::Transactions::exec("S3Gateway::bucketIsEmpty", [&](pqxx::work& txn) {
         BucketEmptyResult out;

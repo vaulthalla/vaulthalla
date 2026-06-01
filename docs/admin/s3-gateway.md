@@ -179,6 +179,24 @@ If `enforce_budget_for_local_requests` is enabled on a gateway credential, local
 
 The web console includes an `S3 Gateway` admin page. It shows service readiness, request counters, credentials, scope rows, bucket bindings, per-key budgets, per-key/vault budgets, recent ledger rows, and AWS CLI / MinIO client setup snippets. The secret key is shown only immediately after credential creation.
 
+## Operational Validation
+
+For local/dev validation, use the self-provisioning E2E wrapper from the repo root:
+
+```bash
+tools/smoke/s3_gateway_e2e.sh --local-only
+```
+
+The wrapper sources the known local env files, starts the web dev server when needed, attempts to enable/start the S3 gateway before failing reachability, provisions an E2E admin login when `VAULTHALLA_E2E_USER` and `VAULTHALLA_E2E_PASSWORD` are absent, runs the Playwright S3 Gateway suite, and then runs local S3 smoke.
+
+Remote R2/S3 smoke runs when remote env is present or required explicitly:
+
+```bash
+tools/smoke/s3_gateway_e2e.sh --require-remote --prefix s3-gateway-e2e/manual-$(date -u +%Y%m%dT%H%M%SZ)
+```
+
+The remote smoke deletes only the supplied unique prefix. If cleanup fails, it reports the prefix and exits non-zero.
+
 ## Client Examples
 
 AWS CLI:

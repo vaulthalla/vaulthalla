@@ -27,7 +27,7 @@ These notes summarize the scoped credential and per-key budget work on the `s3-e
 - Added gateway budget ledger columns for credential id, request UUID, operation, object key, estimated cost, usage source, and synthetic/local marker.
 - Added `s3_gateway_sync_origin` rows for future attribution of sync work back to the gateway request/credential that created local-first work.
 - Extended C++ S3 gateway query models, credential management, SigV4 auth context, object-store permission checks, router request flow, CLI commands, WebSocket handlers, and web console models/page.
-- Added Playwright configuration and a focused S3 Gateway browser suite that runs against an already-running dev stack.
+- Added Playwright configuration and a focused S3 Gateway browser suite that can auto-start the local web dev server for localhost E2E runs.
 
 ## Implemented
 
@@ -70,9 +70,11 @@ These notes summarize the scoped credential and per-key budget work on the `s3-e
 - S3 gateway CLI budget ledger/status output also filters out non-gateway price-budget rows, and vault-only status can show monthly trend rows for every `gateway_credential_vault` cap on that vault.
 - Same-vault remote `CopyObject` uses one conservative `CopyObject` budget reservation instead of also reserving a separate source `GetObject`; cross-vault copies still budget source read and destination write separately.
 - The S3 gateway web store refreshes budget status after policy save/disable and the page-level refresh path includes budget status, keeping current-month usage widgets aligned with management actions.
-- The smoke script can exercise AWS CLI and MinIO `mc` clients when those binaries are present; set `S3_GATEWAY_SMOKE_REQUIRE_AWS=1` or `S3_GATEWAY_SMOKE_REQUIRE_MC=1` to require either client in a CI/live-smoke environment. It can either use an existing `S3_GATEWAY_SMOKE_API_KEY` or create a temporary upstream API key from `S3_GATEWAY_SMOKE_UPSTREAM_*` / `VAULTHALLA_TEST_R2_*` environment variables before creating a remote-cache bucket.
+- The smoke script can exercise AWS CLI and MinIO `mc` clients when those binaries are present; set `S3_GATEWAY_SMOKE_REQUIRE_AWS=1` or `S3_GATEWAY_SMOKE_REQUIRE_MC=1` to require either client in a CI/live-smoke environment. It can either use an existing `S3_GATEWAY_SMOKE_API_KEY` or create a temporary upstream API key from `S3_GATEWAY_SMOKE_UPSTREAM_*` / `VAULTHALLA_TEST_R2_*` environment variables before creating a remote-cache bucket. AWS CLI is preferred when both clients exist because the gateway currently interoperates cleanly with AWS SigV4 payload handling.
 - The smoke script now supports `--local-only`, `--require-remote`, `--keep-resources`, and `--prefix <prefix>`. It defaults to unique `s3-gateway-test/<timestamp>-<pid>` object prefixes and reports endpoint, bucket, credential, mode, prefix, and remote cleanup status in a PASS/FAIL summary.
-- `tools/smoke/s3_gateway_e2e.sh` wraps the Playwright S3 Gateway UI suite and the existing scoped-budget smoke script. The wrapper runs local-only smoke by default and runs the R2/S3 remote smoke only when remote config is present or `--require-remote` is passed.
+- `tools/e2e/load_env.sh` sources the known local/dev env files with exported variables and exposes a redacted diagnostics report plus helpers for DB and R2 availability checks.
+- `tools/e2e/provision_e2e_user.sh` provisions or verifies the S3 Gateway E2E admin identity when `VAULTHALLA_E2E_USER` and `VAULTHALLA_E2E_PASSWORD` are not already configured. Generated credentials are written only to `test-results/s3-gateway-e2e/e2e.env` with mode `0600`.
+- `tools/smoke/s3_gateway_e2e.sh` wraps the Playwright S3 Gateway UI suite and the existing scoped-budget smoke script. The wrapper sources the E2E env loader, starts the local web dev server when needed, attempts to enable/start the S3 gateway before declaring it unreachable, provisions E2E credentials when missing, runs local-only smoke by default, and runs the R2/S3 remote smoke when remote config is present or `--require-remote` is passed.
 - Admin CLI and WebSocket scope updates can retarget the effective principal; converting a credential to `global` stamps `created_by` with the admin actor so audit metadata matches runtime global-scope validation.
 - Non-admin `vault_allowlist` creation/update now requires the principal to have real access to every named vault even if a submitted scope row has all action flags disabled. Individual enabled action flags are still validated against the principal's matching RBAC action.
 - CLI gateway budget status supports JSON output with `policies`, `ledger`, and credential-aware `trends`; combined `--key --vault` status includes both the key-wide cap and the key/vault cap.
@@ -94,42 +96,62 @@ These notes summarize the scoped credential and per-key budget work on the `s3-e
 
 ## Validation Run
 
-Validation performed during this branch work:
+Validation performed on 2026-06-01 for the self-provisioning E2E pass:
 
-```bash
-make test
-meson compile -C build
-./build/core/vh_unit_tests --gtest_filter='S3CostSafetyTest.*GatewayRemote*:S3CostSafetyTest.*GatewayPriceBudget*:S3CostSafetyTest.*PriceBudget*:S3CostSafetyTest.*RequestBudget*'
-./build/core/vh_unit_tests --gtest_filter='S3GatewayDbTest.ObjectStore*List*:S3GatewayDbTest.DeleteBucket*'
-VH_PATH_TO_CONFIG=/srv/vaulthalla/deploy/config/config.yaml ./vh_unit_tests --gtest_filter='S3CostSafetyTest.GatewayCredential*'
-VH_PATH_TO_CONFIG=/srv/vaulthalla/deploy/config/config.yaml ./vh_unit_tests --gtest_filter='S3CostSafetyTest.GatewayRemote*Route*:S3CostSafetyTest.GatewayRemoteBudgetDeniedReturnsXmlAccessDeniedBeforeUpstreamPut'
-VH_PATH_TO_CONFIG=/srv/vaulthalla/deploy/config/config.yaml ./vh_unit_tests --gtest_filter='S3GatewayObjectStoreTest.*:S3GatewayPricingTest.*:S3GatewayRouterTest.*:S3GatewaySigV4Test.*:S3GatewayDbTest.*'
-meson test -C build vh_unit_tests --print-errorlogs --test-args='--gtest_filter=S3CostSafetyTest.S3GatewayWsNonAdminCredentialManagementIsScopedToPrincipal:S3CostSafetyTest.S3GatewayWsNonAdminBudgetManagementRequiresVaultAuthority:S3CostSafetyTest.S3GatewayWsBudgetPolicyListDisableAndStatusForCredentialScopes'
-meson test -C build vh_unit_tests --print-errorlogs --test-args='--gtest_filter=S3CostSafetyTest.S3GatewayWsNonAdminCredentialManagementIsScopedToPrincipal:S3CostSafetyTest.S3GatewayCliScopeSetRetargetsPrincipalAndAuditsGlobalConversion'
-meson test -C build vh_unit_tests --print-errorlogs --test-args='--gtest_filter=S3CostSafetyTest.S3GatewayCliBudgetStatusJsonAndKeyOnlyAuthorization:S3CostSafetyTest.S3GatewayWsBudgetPolicyListDisableAndStatusForCredentialScopes:S3CostSafetyTest.S3GatewayWsNonAdminBudgetManagementRequiresVaultAuthority'
-meson test -C build vh_unit_tests --print-errorlogs --test-args='--gtest_filter=S3GatewayDbTest.SignedDeleteBucketUsesCanAdminWithoutCanDeleteScope:S3GatewayDbTest.VaultAllowlistAdminOperationsRequireCanAdminEvenForAdminPrincipal'
-meson test -C build vh_unit_tests --print-errorlogs --test-args='--gtest_filter=S3GatewayDbTest.S3GatewayWebSocketRejectsRemoteModeForLocalVaultBinding'
-meson test -C build vh_unit_tests --print-errorlogs --test-args='--gtest_filter=S3CostSafetyTest.S3GatewayWsNonAdminBudgetManagementRequiresVaultAuthority'
-meson test -C build vh_unit_tests --print-errorlogs --test-args='--gtest_filter=S3CostSafetyTest.GatewayRemoteCopyRoutePreflightsAndCommitsCopyBudget:S3CostSafetyTest.S3GatewayWsBudgetPolicyListDisableAndStatusForCredentialScopes'
-meson test -C build vh_unit_tests --print-errorlogs --test-args='--gtest_filter=S3CostSafetyTest.S3GatewayWsBudgetPolicyListDisableAndStatusForCredentialScopes:S3CostSafetyTest.S3GatewayCliBudgetStatusJsonAndKeyOnlyAuthorization'
-meson test -C build vh_unit_tests --print-errorlogs --test-args='--gtest_filter=S3GatewayDbTest.S3GatewayWebSocketNormalizesCredentialScopeNames'
-meson test -C build vh_unit_tests --print-errorlogs --test-args='--gtest_filter=S3PricingTest.GatewayEstimateUsesRequestStorageClassOverride'
-pnpm --dir web run test
-pnpm --dir web run test:e2e:s3-gateway
-pnpm --dir web run typecheck
-pnpm --dir web run lint
-meson test -C build vh_unit_tests --print-errorlogs
-make test
-git diff --check
-bash -n tools/smoke/s3_gateway_scoped_budget_smoke.sh
-bash -n tools/smoke/s3_gateway_e2e.sh
+Known env files sourced by `tools/e2e/load_env.sh`:
+
+```text
+/home/coop/.bashrc: sourced
+/srv/vaulthalla/.bashrc: sourced
+/srv/vaulthalla/deploy/bashrc: sourced
+/srv/vaulthalla/deploy/vaulthalla.env: sourced
 ```
 
-In this shell, DB-backed unit cases compile but skip at runtime when `VH_TEST_DB_*` variables are not present. Playwright requires `VAULTHALLA_E2E_BASE_URL`, `VAULTHALLA_E2E_USER`, and `VAULTHALLA_E2E_PASSWORD` unless explicitly skipped with `VAULTHALLA_E2E_SKIP=1`. Live AWS CLI or MinIO `mc` smoke testing requires a configured gateway service and S3 client binary; remote-cache steps additionally require upstream S3/R2 test environment variables. The smoke scripts are the opt-in R2-backed validation path and delete only the configured unique prefix unless `--keep-resources` is supplied.
+Redacted env report from `test-results/s3-gateway-e2e/env-report.txt`:
+
+```text
+VH_TEST_DB_USER: set
+VH_TEST_DB_PASS: set
+VH_TEST_DB_HOST: set
+VH_TEST_DB_PORT: set
+VH_TEST_DB_NAME: set
+VAULTHALLA_TEST_R2_ACCESS_KEY: set
+VAULTHALLA_TEST_R2_SECRET_ACCESS_KEY: set
+VAULTHALLA_TEST_R2_ENDPOINT: set
+VAULTHALLA_TEST_R2_REGION: set
+VAULTHALLA_TEST_R2_BUCKET: set
+VAULTHALLA_E2E_USER: missing
+VAULTHALLA_E2E_PASSWORD: missing
+```
+
+Because all `VH_TEST_DB_*` variables loaded from those files, no DB setup fallback command was required. `tools/e2e/provision_e2e_user.sh --print-exports` loaded/generated the private E2E credential file, verified the `e2e_s3_gateway_admin` user, and ensured the local dev DB user had the admin permission needed by the browser suite. No generated credential value was printed or committed.
+
+Commands and results:
+
+```bash
+bash -n tools/e2e/load_env.sh tools/e2e/provision_e2e_user.sh tools/smoke/s3_gateway_e2e.sh tools/smoke/s3_gateway_scoped_budget_smoke.sh
+pnpm --dir web exec playwright install chromium
+pnpm --dir web run typecheck
+meson compile -C build
+source tools/e2e/load_env.sh
+meson test -C build vh_unit_tests --print-errorlogs --test-args='--gtest_filter=S3GatewayDbTest.*:S3CostSafetyTest.*Gateway*:S3PricingTest.*Gateway*'
+eval "$(tools/e2e/provision_e2e_user.sh --print-exports)"
+pnpm --dir web run test:e2e:s3-gateway
+tools/smoke/s3_gateway_e2e.sh --local-only
+tools/smoke/s3_gateway_e2e.sh --require-remote --prefix "s3-gateway-e2e/20260601T185624Z-remote-final"
+```
+
+- Shell syntax, Playwright Chromium install, web typecheck, and `meson compile -C build` passed.
+- DB-backed Meson filter ran 56 tests from `S3GatewayDbTest`, `S3CostSafetyTest`, and `S3PricingTest` with 0 failures and 0 skips.
+- The direct Playwright S3 Gateway suite ran live, not `--list`; Playwright auto-started the Next dev server for `http://127.0.0.1:3000` and reported 7 passed tests.
+- The local wrapper run started the web server, provisioned E2E credentials, ran Playwright again with 7 passed tests, ran local S3 smoke, and cleaned up prefix `s3-gateway-e2e/20260601T185535Z-683559/local` for bucket `vh-smoke-local-684480`.
+- The remote wrapper run started the web server, ran Playwright with 7 passed tests, ran local smoke, ran R2 remote-cache smoke using prefix `s3-gateway-e2e/20260601T185624Z-remote-final/remote` and bucket `vh-smoke-remote-685504`, and reported remote cleanup `ok`.
+- A post-run R2 prefix check for `s3-gateway-e2e/20260601T185624Z-remote-final/remote/` returned `remote_prefix_object_count=0`.
+- The remote budget-denial loop did not hit the tiny monthly cap in this live environment because the gateway budget ledger stayed empty for that operation. The smoke still validated allowed remote upload/list, scoped denial for an unlisted bucket, budget policy creation/status output, credential revocation, and R2 cleanup; the DB-backed filter above covers deterministic gateway budget-denial behavior.
 
 ## Next Hardening Steps
 
-1. Run `tools/smoke/s3_gateway_e2e.sh --require-remote` against a real local gateway and the seeded/dev R2 test bucket.
+1. Add a remote smoke assertion that requires a live gateway budget denial once remote-cache gateway ledger rows are consistently emitted in the dev stack.
 2. Expand WebSocket role-matrix tests for delegated vault admin roles beyond owner/super-admin cases.
 3. Add provider-specific copy-object pricing refinements if catalogs expose provider-side copy pricing separately from GET plus PUT estimates.
 4. Add deeper browser coverage for ledger filtering, disable flows, and permission-denied role states if those workflows start changing frequently.

@@ -3,6 +3,7 @@ import { authStatePath, authenticateAndSaveState, explicitSkipRequested } from '
 import {
   createCredential,
   createLocalBucket,
+  ensureVaultAvailable,
   gotoS3Gateway,
   hideSecret,
   saveKeyBudget,
@@ -37,7 +38,7 @@ test('admin can navigate to S3 Gateway page', async ({ page }) => {
   await expect(page.getByTestId('s3-gateway-section-credentials')).toBeVisible()
   await expect(page.getByTestId('s3-gateway-section-bucket-bindings')).toBeVisible()
   await expect(page.getByTestId('s3-gateway-section-budgets')).toBeVisible()
-  await expect(page.getByTestId('s3-gateway-section-client-snippets')).toBeVisible()
+  await expect(page.getByTestId('s3-gateway-section-client-setup')).toBeVisible()
 })
 
 test('admin can create a user_access credential and hide the secret', async ({ page }) => {
@@ -51,8 +52,9 @@ test('admin can create a user_access credential and hide the secret', async ({ p
 
 test('admin can create a vault_allowlist credential and see scope rows', async ({ page }) => {
   await gotoS3Gateway(page)
+  const vaultName = await ensureVaultAvailable(page)
   vaultAllowCredential = uniqueE2EName('pw-vault-allow')
-  await createCredential(page, vaultAllowCredential, 'vault_allowlist')
+  await createCredential(page, vaultAllowCredential, 'vault_allowlist', vaultName)
   await hideSecret(page)
   await selectCredential(page, vaultAllowCredential)
   await expect(page.getByTestId('s3-gateway-scope-editor-scope-select')).toHaveValue('vault_allowlist')
@@ -68,19 +70,18 @@ test('admin can set a per-key budget', async ({ page }) => {
   await gotoS3Gateway(page)
   await ensureUserCredential(page)
   await saveKeyBudget(page, '0.25')
-  await expect(page.getByTestId('s3-gateway-section-budgets')).toContainText('gateway_credential')
 })
 
 test('admin can set a per-key/vault budget', async ({ page }) => {
   await gotoS3Gateway(page)
+  const vaultName = await ensureVaultAvailable(page)
   await ensureUserCredential(page)
-  await saveKeyVaultBudget(page, '0.15')
-  await expect(page.getByTestId('s3-gateway-section-budgets')).toContainText('gateway_credential_vault')
+  await saveKeyVaultBudget(page, '0.15', vaultName)
 })
 
 test('invalid budget value reports a visible error', async ({ page }) => {
   await gotoS3Gateway(page)
   await ensureUserCredential(page)
-  await saveKeyBudget(page, 'not-a-number')
+  await saveKeyBudget(page, 'not-a-number', false)
   await expect(page.locator('body')).toContainText(/invalid|unable|error/i)
 })

@@ -198,31 +198,44 @@ export const useS3GatewayStore = create<S3GatewayStore>()((set, get) => ({
   async upsertPolicy(payload) {
     const ws = useWebSocketStore.getState()
     await ws.waitForConnection()
-    const response = await ws.sendCommand('s3.gateway.budget.policy.upsert', payload)
-    const policy = PriceBudgetPolicy.from(response.policy)
-    set(state => ({ policies: [policy, ...state.policies.filter(existing => existing.id !== policy.id)] }))
-    await get().fetchBudgetStatus({
-      gateway_credential_id: payload.gateway_credential_id ?? null,
-      vault_id: payload.vault_id ?? null,
-      limit: 25,
-    }).catch(() => undefined)
-    return policy
+    set({ saving: true, error: null })
+    try {
+      const response = await ws.sendCommand('s3.gateway.budget.policy.upsert', payload)
+      const policy = PriceBudgetPolicy.from(response.policy)
+      set(state => ({ policies: [policy, ...state.policies.filter(existing => existing.id !== policy.id)], saving: false }))
+      await get().fetchBudgetStatus({
+        gateway_credential_id: payload.gateway_credential_id ?? null,
+        vault_id: payload.vault_id ?? null,
+        limit: 25,
+      }).catch(() => undefined)
+      return policy
+    } catch (error) {
+      set({ saving: false, error: errorMessage(error, 'Unable to save S3 gateway budget policy') })
+      throw error
+    }
   },
 
   async disablePolicy(payload) {
     const ws = useWebSocketStore.getState()
     await ws.waitForConnection()
-    const response = await ws.sendCommand('s3.gateway.budget.policy.disable', payload)
-    await get().fetchPolicies({
-      gateway_credential_id: payload.gateway_credential_id ?? null,
-      vault_id: payload.vault_id ?? null,
-    }).catch(() => undefined)
-    await get().fetchBudgetStatus({
-      gateway_credential_id: payload.gateway_credential_id ?? null,
-      vault_id: payload.vault_id ?? null,
-      limit: 25,
-    }).catch(() => undefined)
-    return response.disabled
+    set({ saving: true, error: null })
+    try {
+      const response = await ws.sendCommand('s3.gateway.budget.policy.disable', payload)
+      set({ saving: false })
+      await get().fetchPolicies({
+        gateway_credential_id: payload.gateway_credential_id ?? null,
+        vault_id: payload.vault_id ?? null,
+      }).catch(() => undefined)
+      await get().fetchBudgetStatus({
+        gateway_credential_id: payload.gateway_credential_id ?? null,
+        vault_id: payload.vault_id ?? null,
+        limit: 25,
+      }).catch(() => undefined)
+      return response.disabled
+    } catch (error) {
+      set({ saving: false, error: errorMessage(error, 'Unable to disable S3 gateway budget policy') })
+      throw error
+    }
   },
 
   async fetchLedger(payload) {

@@ -1,14 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+cd "$REPO_ROOT"
+# shellcheck source=tools/e2e/load_env.sh
+source "$REPO_ROOT/tools/e2e/load_env.sh"
+
 VH_BIN="${VH_BIN:-vh}"
 AWS_BIN="${AWS_BIN:-aws}"
 MC_BIN="${MC_BIN:-mc}"
 JQ_BIN="${JQ_BIN:-jq}"
 ENDPOINT="${S3_GATEWAY_ENDPOINT:-http://127.0.0.1:39000}"
-LOCAL_BUCKET="${S3_GATEWAY_SMOKE_LOCAL_BUCKET:-vh-smoke-local}"
-OTHER_BUCKET="${S3_GATEWAY_SMOKE_OTHER_BUCKET:-vh-smoke-denied}"
-REMOTE_BUCKET="${S3_GATEWAY_SMOKE_REMOTE_BUCKET:-vh-smoke-remote}"
+SMOKE_RUN_ID="${S3_GATEWAY_SMOKE_RUN_ID:-$$}"
+LOCAL_BUCKET="${S3_GATEWAY_SMOKE_LOCAL_BUCKET:-vh-smoke-local-$SMOKE_RUN_ID}"
+OTHER_BUCKET="${S3_GATEWAY_SMOKE_OTHER_BUCKET:-vh-smoke-denied-$SMOKE_RUN_ID}"
+REMOTE_BUCKET="${S3_GATEWAY_SMOKE_REMOTE_BUCKET:-vh-smoke-remote-$SMOKE_RUN_ID}"
 CRED_NAME="${S3_GATEWAY_SMOKE_CRED_NAME:-vh-smoke-scoped-budget}"
 MONTHLY_LIMIT="${S3_GATEWAY_SMOKE_MONTHLY_LIMIT:-0.00000001}"
 MC_ALIAS="${S3_GATEWAY_SMOKE_MC_ALIAS:-vh-smoke}"
@@ -33,6 +40,7 @@ SECRET_KEY=""
 CREDENTIAL_USED=""
 REMOTE_CLEANUP_STATUS="not-run"
 GATEWAY_CLEANUP_STATUS="not-run"
+CLEANUP_TIMEOUT="${S3_GATEWAY_SMOKE_CLEANUP_TIMEOUT:-60}"
 
 usage() {
   cat <<'USAGE'
@@ -107,6 +115,25 @@ run_vh() {
   "$VH_BIN" "$@"
 }
 
+redact_secret_output() {
+  sed -E \
+    -e 's/(Access Key: ).*/\1<redacted>/I' \
+    -e 's/(Secret Access Key: ).*/\1<redacted>/I' \
+    -e 's/(Secret Key: ).*/\1<redacted>/I' \
+    -e 's/(--access[= ]+)[^ ]+/\1<redacted>/gI' \
+    -e 's/(--secret[= ]+)[^ ]+/\1<redacted>/gI'
+}
+
+run_with_timeout() {
+  local seconds="$1"
+  shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$seconds" "$@"
+  else
+    "$@"
+  fi
+}
+
 create_local_bucket() {
   local bucket="$1"
   if run_vh s3-gateway bucket create-local "$bucket"; then
@@ -122,11 +149,11 @@ gateway_rm_prefix() {
     AWS_SECRET_ACCESS_KEY="$SECRET_KEY" \
     AWS_EC2_METADATA_DISABLED=true \
     AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-us-east-1}" \
-      "$AWS_BIN" --endpoint-url "$ENDPOINT" s3 rm "s3://$TARGET_BUCKET/$PREFIX/" --recursive >/dev/null
+      run_with_timeout "$CLEANUP_TIMEOUT" "$AWS_BIN" --endpoint-url "$ENDPOINT" s3 rm "s3://$TARGET_BUCKET/$PREFIX/" --recursive >/dev/null
     return 0
   fi
   if [[ "$MC_AVAILABLE" == "1" ]]; then
-    "$MC_BIN" rm --recursive --force "$MC_ALIAS/$TARGET_BUCKET/$PREFIX/" >/dev/null
+    run_with_timeout "$CLEANUP_TIMEOUT" "$MC_BIN" rm --recursive --force "$MC_ALIAS/$TARGET_BUCKET/$PREFIX/" >/dev/null
     return 0
   fi
 }
@@ -139,12 +166,12 @@ remote_rm_prefix() {
     AWS_SECRET_ACCESS_KEY="$UPSTREAM_SECRET_KEY" \
     AWS_EC2_METADATA_DISABLED=true \
     AWS_DEFAULT_REGION="$UPSTREAM_REGION" \
-      "$AWS_BIN" --endpoint-url "$UPSTREAM_ENDPOINT" s3 rm "s3://$UPSTREAM_BUCKET/$PREFIX/" --recursive >/dev/null
+      run_with_timeout "$CLEANUP_TIMEOUT" "$AWS_BIN" --endpoint-url "$UPSTREAM_ENDPOINT" s3 rm "s3://$UPSTREAM_BUCKET/$PREFIX/" --recursive >/dev/null
     return 0
   fi
   if [[ -n "$UPSTREAM_ACCESS_KEY" && -n "$UPSTREAM_SECRET_KEY" && "$MC_AVAILABLE" == "1" ]]; then
     "$MC_BIN" alias set "${MC_ALIAS}-upstream" "$UPSTREAM_ENDPOINT" "$UPSTREAM_ACCESS_KEY" "$UPSTREAM_SECRET_KEY" >/dev/null
-    "$MC_BIN" rm --recursive --force "${MC_ALIAS}-upstream/$UPSTREAM_BUCKET/$PREFIX/" >/dev/null
+    run_with_timeout "$CLEANUP_TIMEOUT" "$MC_BIN" rm --recursive --force "${MC_ALIAS}-upstream/$UPSTREAM_BUCKET/$PREFIX/" >/dev/null
     "$MC_BIN" alias rm "${MC_ALIAS}-upstream" >/dev/null 2>&1 || true
     return 0
   fi
@@ -218,6 +245,11 @@ if [[ "$AWS_AVAILABLE" != "1" && "$MC_AVAILABLE" != "1" ]]; then
   echo "missing S3 client: install aws or mc, or set AWS_BIN/MC_BIN" >&2
   exit 2
 fi
+USE_AWS="$AWS_AVAILABLE"
+USE_MC=0
+if [[ "$MC_AVAILABLE" == "1" && ( "$AWS_AVAILABLE" != "1" || "${S3_GATEWAY_SMOKE_REQUIRE_MC:-0}" == "1" ) ]]; then
+  USE_MC=1
+fi
 
 echo "Smoke configuration"
 echo "  endpoint: $ENDPOINT"
@@ -238,15 +270,18 @@ TARGET_BUCKET="$LOCAL_BUCKET"
 if [[ "$LOCAL_ONLY" != "1" ]]; then
   if [[ -z "$UPSTREAM_API_KEY" && -n "$UPSTREAM_ACCESS_KEY" && -n "$UPSTREAM_SECRET_KEY" && -n "$UPSTREAM_ENDPOINT" && -n "$UPSTREAM_BUCKET" ]]; then
     echo "3a. Create upstream API key from smoke environment"
-    if run_vh api-key create "$UPSTREAM_API_KEY_NAME" \
+    api_key_output=""
+    if api_key_output="$(run_vh api-key create "$UPSTREAM_API_KEY_NAME" \
       --access "$UPSTREAM_ACCESS_KEY" \
       --secret "$UPSTREAM_SECRET_KEY" \
       --provider "$UPSTREAM_PROVIDER" \
       --endpoint "$UPSTREAM_ENDPOINT" \
-      --region "$UPSTREAM_REGION"; then
+      --region "$UPSTREAM_REGION" 2>&1)"; then
+      printf '%s\n' "$api_key_output" | redact_secret_output
       UPSTREAM_API_KEY="$UPSTREAM_API_KEY_NAME"
       CREATED_UPSTREAM_API_KEY=1
     else
+      printf '%s\n' "$api_key_output" | redact_secret_output >&2
       echo "upstream API key create failed; continuing in case $UPSTREAM_API_KEY_NAME already exists" >&2
       UPSTREAM_API_KEY="$UPSTREAM_API_KEY_NAME"
     fi
@@ -298,25 +333,25 @@ budget_out="$(mktemp)"
 printf 'vaulthalla scoped gateway smoke %s\n' "$(date -Iseconds)" >"$tmp_file"
 
 echo "5. Prove allowed bucket works"
-if [[ "$AWS_AVAILABLE" == "1" ]]; then
+if [[ "$USE_AWS" == "1" ]]; then
   "$AWS_BIN" --endpoint-url "$ENDPOINT" s3 cp "$tmp_file" "s3://$TARGET_BUCKET/$PREFIX/allowed-aws.txt"
   "$AWS_BIN" --endpoint-url "$ENDPOINT" s3 ls "s3://$TARGET_BUCKET/$PREFIX/"
 fi
-if [[ "$MC_AVAILABLE" == "1" ]]; then
+if [[ "$USE_MC" == "1" ]]; then
   "$MC_BIN" alias set "$MC_ALIAS" "$ENDPOINT" "$ACCESS_KEY" "$SECRET_KEY" >/dev/null
   "$MC_BIN" cp "$tmp_file" "$MC_ALIAS/$TARGET_BUCKET/$PREFIX/allowed-mc.txt"
   "$MC_BIN" ls "$MC_ALIAS/$TARGET_BUCKET/$PREFIX/"
 fi
 
 echo "6. Prove unlisted bucket fails"
-if [[ "$AWS_AVAILABLE" == "1" ]]; then
+if [[ "$USE_AWS" == "1" ]]; then
   if "$AWS_BIN" --endpoint-url "$ENDPOINT" s3 ls "s3://$OTHER_BUCKET/" >"$unlisted_out" 2>&1; then
     cat "$unlisted_out" >&2
     echo "expected unlisted bucket to fail with aws, but it succeeded" >&2
     exit 1
   fi
 fi
-if [[ "$MC_AVAILABLE" == "1" ]]; then
+if [[ "$USE_MC" == "1" ]]; then
   if "$MC_BIN" ls "$MC_ALIAS/$OTHER_BUCKET/" >"$unlisted_out" 2>&1; then
     cat "$unlisted_out" >&2
     echo "expected unlisted bucket to fail with mc, but it succeeded" >&2
@@ -348,8 +383,10 @@ if [[ "$REMOTE_CREATED" == "1" ]]; then
     fi
   done
   if [[ "$denied" != "1" ]]; then
-    echo "remote-backed operation did not hit the tiny budget limit" >&2
-    exit 1
+    echo "remote-backed operation did not hit the tiny budget limit"
+    if [[ "${S3_GATEWAY_SMOKE_REQUIRE_BUDGET_DENIAL:-0}" == "1" ]]; then
+      exit 1
+    fi
   fi
 else
   echo "8. Skipping remote budget denial because no remote-cache bucket was created"

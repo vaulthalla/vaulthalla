@@ -313,8 +313,11 @@ json S3Gateway::status(const json&, const std::shared_ptr<Session>& session) {
 }
 
 json S3Gateway::credentialsCreate(const json& payload, const std::shared_ptr<Session>& session) {
-    auto principalId = payload.value("principal_user_id", session->user->id);
-    if (payload.contains("user_id")) principalId = payload.at("user_id").get<std::uint32_t>();
+    auto principalId = session->user->id;
+    if (const auto payloadPrincipalId = optionalUInt(payload, "principal_user_id"))
+        principalId = *payloadPrincipalId;
+    if (const auto payloadUserId = optionalUInt(payload, "user_id"))
+        principalId = *payloadUserId;
     if (!session->user->isAdmin() && principalId != session->user->id)
         throw std::runtime_error("Only admins may create S3 gateway credentials for another user.");
 
@@ -368,7 +371,9 @@ json S3Gateway::credentialsScopeUpdate(const json& payload, const std::shared_pt
     if (!credential) throw std::runtime_error("S3 gateway credential not found");
     if (!session->user->isAdmin() && credential->principal_user_id != session->user->id)
         throw std::runtime_error("You do not have permission to update this S3 gateway credential.");
-    const auto principalId = payload.value("principal_user_id", credential->principal_user_id);
+    auto principalId = credential->principal_user_id;
+    if (const auto payloadPrincipalId = optionalUInt(payload, "principal_user_id"))
+        principalId = *payloadPrincipalId;
     if (!session->user->isAdmin() && principalId != session->user->id)
         throw std::runtime_error("Only admins may retarget S3 gateway credentials.");
     const auto scopeMode = normalizeScopeMode(payload.value("scope_mode", credential->scope_mode));

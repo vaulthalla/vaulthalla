@@ -14,7 +14,7 @@ export function e2eCredentials() {
   const password = process.env.VAULTHALLA_E2E_PASSWORD
   if (!user || !password) {
     throw new Error(
-      'Missing E2E credentials. Set VAULTHALLA_E2E_USER and VAULTHALLA_E2E_PASSWORD, or set VAULTHALLA_E2E_SKIP=1 to skip explicitly.',
+      'Missing E2E credentials. Run tools/e2e/provision_e2e_user.sh or set VAULTHALLA_E2E_USER and VAULTHALLA_E2E_PASSWORD. Set VAULTHALLA_E2E_SKIP=1 only to skip explicitly.',
     )
   }
   return { user, password }
@@ -35,11 +35,12 @@ export async function loginThroughUi(page: Page) {
 
 export async function authenticateAndSaveState(browser: Browser, storageStatePath = authStatePath) {
   await mkdir(dirname(storageStatePath), { recursive: true })
-  const page = await browser.newPage()
+  const context = await browser.newContext({ storageState: undefined })
+  const page = await context.newPage()
   try {
     await loginThroughUi(page)
-    await page.context().storageState({ path: storageStatePath })
+    await context.storageState({ path: storageStatePath })
   } finally {
-    await page.close()
+    await context.close()
   }
 }

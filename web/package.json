@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
+    "dev:e2e": "NEXT_PUBLIC_VAULTHALLA_WS_ORIGIN=${NEXT_PUBLIC_VAULTHALLA_WS_ORIGIN:-ws://127.0.0.1:36969} VAULTHALLA_AUTH_ORIGIN=${VAULTHALLA_AUTH_ORIGIN:-http://127.0.0.1:36970} VAULTHALLA_PREVIEW_ORIGIN=${VAULTHALLA_PREVIEW_ORIGIN:-http://127.0.0.1:36970} NEXT_PUBLIC_VAULTHALLA_DEV_MODE=${NEXT_PUBLIC_VAULTHALLA_DEV_MODE:-true} next dev --turbopack --hostname ${VAULTHALLA_E2E_WEB_HOST:-127.0.0.1} --port ${VAULTHALLA_E2E_WEB_PORT:-3000}",
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",

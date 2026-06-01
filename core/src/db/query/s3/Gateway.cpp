@@ -787,7 +787,12 @@ void Gateway::backfillObjectStateFromRemoteIndex(const uint32_t vaultId) {
         txn.exec(
             R"SQL(
                 INSERT INTO s3_gateway_object (vault_id, object_key, etag, size_bytes, storage_class, last_modified)
-                SELECT vault_id, object_key, COALESCE(etag, '""'), size_bytes, storage_class, last_modified
+                SELECT vault_id,
+                       object_key,
+                       COALESCE(etag, '""'),
+                       size_bytes,
+                       storage_class,
+                       COALESCE(last_modified, indexed_at, CURRENT_TIMESTAMP)
                 FROM remote_object_index
                 WHERE vault_id = $1
                   AND )SQL" + notHiddenByActiveTrashSql("remote_object_index.vault_id", "object_key") + R"SQL(

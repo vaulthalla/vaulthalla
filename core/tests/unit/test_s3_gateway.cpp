@@ -845,9 +845,10 @@ protected:
 
     static uint32_t createLocalVault(const std::string& label, const uint32_t ownerId) {
         const auto newVaultId = vh::db::Transactions::exec("S3GatewayDbTest::createLocalVault", [&](pqxx::work& txn) {
+            const auto mountPoint = uniqueSuffix("s3gw");
             const auto seededVaultId = txn.exec(
                 "INSERT INTO vault (type, name, owner_id, mount_point, description) VALUES ($1, $2, $3, $4, $5) RETURNING id",
-                pqxx::params{"local", "S3 Gateway " + label, ownerId, uniqueSuffix(label + "_mount"), ""}
+                pqxx::params{"local", "S3 Gateway " + label, ownerId, mountPoint.substr(0, 33), ""}
             ).one_field().as<uint32_t>();
             txn.exec(
                 "WITH ins AS (INSERT INTO sync (vault_id, interval) VALUES ($1, 300) RETURNING id) "

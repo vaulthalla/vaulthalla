@@ -11,6 +11,7 @@ import { ScopeEditor } from '@/components/s3-gateway/ScopeEditor'
 import { ServiceCard } from '@/components/s3-gateway/ServiceCard'
 import { buttonClass } from '@/components/s3-gateway/shared'
 import RefreshIcon from '@/fa-duotone/arrows-rotate.svg'
+import { Vault } from '@/models/vaults'
 import { useS3GatewayStore } from '@/stores/s3GatewayStore'
 import { useVaultStore } from '@/stores/vaultStore'
 
@@ -57,6 +58,20 @@ export default function S3GatewayPage() {
     () => (selectedCredential ? scopesByCredentialId[selectedCredential.id] ?? [] : []),
     [scopesByCredentialId, selectedCredential],
   )
+  const gatewayVaults = useMemo(() => {
+    const byId = new Map<number, Vault>()
+    for (const vault of vaults) byId.set(vault.id, vault)
+    for (const bucket of buckets) {
+      if (byId.has(bucket.vault_id)) continue
+      byId.set(bucket.vault_id, new Vault({
+        id: bucket.vault_id,
+        name: bucket.bucket_name,
+        type: bucket.mode === 'remote_cache' || bucket.mode === 'remote_proxy' ? 's3' : 'local',
+        is_active: true,
+      }))
+    }
+    return [...byId.values()]
+  }, [buckets, vaults])
   const endpoint = status?.endpoint || '127.0.0.1:9000'
   const snippetAccessKey = createdSecret?.credential.access_key || selectedCredential?.access_key || 'VH_ACCESS_KEY'
   const snippetSecret = createdSecret?.secret_access_key || 'VH_SECRET_ACCESS_KEY'
@@ -89,6 +104,7 @@ export default function S3GatewayPage() {
       fetchPolicies(selectedCredential ? { gateway_credential_id: selectedCredential.id, include_inactive: true } : { include_inactive: true }),
       fetchLedger(selectedCredential ? { gateway_credential_id: selectedCredential.id, limit: 25 } : { limit: 25 }),
       fetchBudgetStatus(selectedCredential ? { gateway_credential_id: selectedCredential.id, limit: 25 } : { limit: 25 }),
+      fetchVaults(),
     ])
   }
 
@@ -122,7 +138,7 @@ export default function S3GatewayPage() {
         <CredentialCreateModal
           open={createOpen}
           saving={saving}
-          vaults={vaults}
+          vaults={gatewayVaults}
           onClose={() => setCreateOpen(false)}
           onCreate={createCredential}
           onCreated={setSelectedCredentialId}
@@ -130,24 +146,32 @@ export default function S3GatewayPage() {
         <ScopeEditor
           selectedCredential={selectedCredential}
           selectedScopes={selectedScopes}
-          vaults={vaults}
+          vaults={gatewayVaults}
           saving={saving}
           onSave={updateCredentialScope}
         />
         <BucketsSection
           buckets={buckets}
-          vaults={vaults}
+          vaults={gatewayVaults}
           onBindBucket={bindBucket}
           onUnbindBucket={unbindBucket}
-          onCreateLocalBucket={createLocalBucket}
-          onCreateRemoteCacheBucket={createRemoteCacheBucket}
+          onCreateLocalBucket={async payload => {
+            const bucket = await createLocalBucket(payload)
+            await fetchVaults().catch(() => undefined)
+            return bucket
+          }}
+          onCreateRemoteCacheBucket={async payload => {
+            const bucket = await createRemoteCacheBucket(payload)
+            await fetchVaults().catch(() => undefined)
+            return bucket
+          }}
         />
         <BudgetSection
           selectedCredential={selectedCredential}
           policies={policies}
           ledger={ledger}
           budgetStatus={budgetStatus}
-          vaults={vaults}
+          vaults={gatewayVaults}
           saving={saving}
           onUpsertPolicy={upsertPolicy}
           onDisablePolicy={disablePolicy}
