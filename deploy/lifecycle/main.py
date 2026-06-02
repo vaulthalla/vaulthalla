@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import filecmp
 import os
 import pwd
@@ -27,6 +28,8 @@ NGINX_SITE_AVAILABLE = Path("/etc/nginx/sites-available/vaulthalla")
 NGINX_SITE_ENABLED = Path("/etc/nginx/sites-enabled/vaulthalla")
 NGINX_MANAGED_MARKER = Path("/var/lib/vaulthalla/nginx_site_managed")
 NGINX_RENEWAL_DEPLOY_HOOK = Path("/etc/letsencrypt/renewal-hooks/deploy/vaulthalla-nginx-reload.sh")
+LETSENCRYPT_LIVE_DIR = Path("/etc/letsencrypt/live")
+CERTBOT_RENEWAL_WINDOW_SECONDS = 30 * 24 * 60 * 60
 
 WEB_UPSTREAM_HOST = "127.0.0.1"
 WEB_UPSTREAM_PORT = 36968
@@ -34,6 +37,13 @@ WEB_UPSTREAM_PORT = 36968
 
 class LifecycleError(RuntimeError):
     pass
+
+
+@dataclass
+class CertificateState:
+    exists: bool
+    domains: set[str]
+    renewal_due: bool
 
 
 def eprint(msg: str) -> None:
@@ -669,9 +679,88 @@ def is_managed_site_symlink_target(path: Path) -> bool:
     return target in (str(NGINX_SITE_AVAILABLE), "../sites-available/vaulthalla")
 
 
+def requested_certificate_domains(domain: str, s3_domain: str | None) -> list[str]:
+    domains: list[str] = []
+    for candidate in (domain, s3_domain):
+        if candidate and candidate not in domains:
+            domains.append(candidate)
+    return domains
+
+
+def live_cert_dir(cert_name: str) -> Path:
+    return LETSENCRYPT_LIVE_DIR / cert_name
+
+
 def has_cert_for_domain(domain: str) -> bool:
-    live = Path("/etc/letsencrypt/live") / domain
+    live = live_cert_dir(domain)
     return (live / "fullchain.pem").exists() and (live / "privkey.pem").exists()
+
+
+def parse_certificate_dns_names(text: str) -> set[str]:
+    return {trim(match).lower() for match in re.findall(r"DNS:([^,\s]+)", text) if trim(match)}
+
+
+def parse_certificate_common_name(text: str) -> str | None:
+    match = re.search(r"(?:^|subject=\s*|[,/])\s*CN\s*=\s*([^,/]+)", text)
+    if not match:
+        return None
+    value = trim(match.group(1)).lower()
+    return value or None
+
+
+def certificate_dns_names(fullchain: Path) -> set[str]:
+    if not command_exists("openssl"):
+        return set()
+
+    names: set[str] = set()
+    san = run_capture(["openssl", "x509", "-in", str(fullchain), "-noout", "-ext", "subjectAltName"])
+    if san.returncode == 0:
+        names.update(parse_certificate_dns_names(combined_output(san)))
+
+    if names:
+        return names
+
+    subject = run_capture(["openssl", "x509", "-in", str(fullchain), "-noout", "-subject"])
+    if subject.returncode == 0:
+        common_name = parse_certificate_common_name(combined_output(subject))
+        if common_name:
+            names.add(common_name)
+    return names
+
+
+def certificate_needs_renewal(fullchain: Path) -> bool:
+    if not command_exists("openssl"):
+        return True
+    check = run_capture([
+        "openssl",
+        "x509",
+        "-checkend",
+        str(CERTBOT_RENEWAL_WINDOW_SECONDS),
+        "-noout",
+        "-in",
+        str(fullchain),
+    ])
+    return check.returncode != 0
+
+
+def certificate_state(cert_name: str) -> CertificateState:
+    live = live_cert_dir(cert_name)
+    fullchain = live / "fullchain.pem"
+    privkey = live / "privkey.pem"
+    if not fullchain.exists() or not privkey.exists():
+        return CertificateState(exists=False, domains=set(), renewal_due=False)
+    return CertificateState(
+        exists=True,
+        domains=certificate_dns_names(fullchain),
+        renewal_due=certificate_needs_renewal(fullchain),
+    )
+
+
+def certificate_covers_domains(cert_domains: set[str], requested_domains: list[str]) -> bool:
+    return all(
+        any(server_name_matches_domain(cert_domain, requested) for cert_domain in cert_domains)
+        for requested in requested_domains
+    )
 
 
 def managed_nginx_has_https_block(path: Path = NGINX_SITE_AVAILABLE) -> bool:
@@ -740,10 +829,21 @@ def validate_cloudflare_credentials_file(path: str | None) -> Path:
 
 
 def request_dns_cloudflare_certificate(domain: str, s3_domain: str | None, credentials: Path) -> str:
-    domains: list[str] = []
-    for candidate in (domain, s3_domain):
-        if candidate and candidate not in domains:
-            domains.append(candidate)
+    domains = requested_certificate_domains(domain, s3_domain)
+    state = certificate_state(domain)
+
+    if state.exists and certificate_covers_domains(state.domains, domains):
+        if not state.renewal_due:
+            return "existing dns-cloudflare certificate is current (certbot renewal timer will manage renewal)"
+
+        renew = run_capture(["certbot", "renew", "--cert-name", domain, "--non-interactive"])
+        if renew.returncode != 0:
+            raise LifecycleError(format_failure(f"certbot renew --cert-name {domain}", renew))
+        return "existing dns-cloudflare certificate renewed by certbot"
+
+    issue_reason = "fresh issuance"
+    if state.exists:
+        issue_reason = "domain expansion"
 
     args = [
         "certbot",
@@ -765,7 +865,7 @@ def request_dns_cloudflare_certificate(domain: str, s3_domain: str | None, crede
     result = run_capture(args)
     if result.returncode != 0:
         raise LifecycleError(format_failure("certbot dns-cloudflare certificate request", result))
-    return "dns-cloudflare certificate request completed"
+    return f"dns-cloudflare certificate request completed ({issue_reason})"
 
 
 def install_nginx_renewal_deploy_hook() -> None:

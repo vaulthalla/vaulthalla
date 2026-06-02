@@ -1,6 +1,6 @@
-import unittest
 import subprocess
 import tempfile
+import unittest
 from pathlib import Path
 from unittest import mock
 
@@ -49,7 +49,13 @@ database:
             "websocket_server": {"enabled": True, "host": "127.0.0.1", "port": 36969},
             "http_preview_server": {"enabled": True, "host": "::", "port": 36970},
             "s3_gateway": {"enabled": False, "host": "0.0.0.0", "port": 39000},
-            "database": {"host": "localhost", "port": 5432, "name": "vaulthalla", "user": "vaulthalla", "pool_size": 10},
+            "database": {
+                "host": "localhost",
+                "port": 5432,
+                "name": "vaulthalla",
+                "user": "vaulthalla",
+                "pool_size": 10,
+            },
         }
         rendered = main.render_managed_nginx_config(
             projection,
@@ -76,7 +82,13 @@ database:
             "websocket_server": {"enabled": False, "host": "127.0.0.1", "port": 36969},
             "http_preview_server": {"enabled": False, "host": "127.0.0.1", "port": 36970},
             "s3_gateway": {"enabled": False, "host": "::", "port": 39123},
-            "database": {"host": "localhost", "port": 5432, "name": "vaulthalla", "user": "vaulthalla", "pool_size": 10},
+            "database": {
+                "host": "localhost",
+                "port": 5432,
+                "name": "vaulthalla",
+                "user": "vaulthalla",
+                "pool_size": 10,
+            },
         }
         rendered = main.render_managed_nginx_config(
             projection,
@@ -91,7 +103,13 @@ database:
             "websocket_server": {"enabled": False, "host": "127.0.0.1", "port": 36969},
             "http_preview_server": {"enabled": False, "host": "127.0.0.1", "port": 36970},
             "s3_gateway": {"enabled": False, "host": "0.0.0.0", "port": 39000},
-            "database": {"host": "localhost", "port": 5432, "name": "vaulthalla", "user": "vaulthalla", "pool_size": 10},
+            "database": {
+                "host": "localhost",
+                "port": 5432,
+                "name": "vaulthalla",
+                "user": "vaulthalla",
+                "pool_size": 10,
+            },
         }
         rendered = main.render_managed_nginx_config(projection, "vaulthalla.dev", "s3.vaulthalla.dev")
 
@@ -113,14 +131,16 @@ database:
 
     def test_request_dns_cloudflare_certificate_builds_multi_domain_command(self) -> None:
         cp = subprocess.CompletedProcess(["certbot"], 0, stdout="", stderr="")
-        with mock.patch.object(main, "run_capture", return_value=cp) as run:
-            mode = main.request_dns_cloudflare_certificate(
-                "vaulthalla.dev",
-                "s3.vaulthalla.dev",
-                Path("/etc/vaulthalla/certbot/cloudflare.ini"),
-            )
+        state = main.CertificateState(exists=False, domains=set(), renewal_due=False)
+        with mock.patch.object(main, "certificate_state", return_value=state):
+            with mock.patch.object(main, "run_capture", return_value=cp) as run:
+                mode = main.request_dns_cloudflare_certificate(
+                    "vaulthalla.dev",
+                    "s3.vaulthalla.dev",
+                    Path("/etc/vaulthalla/certbot/cloudflare.ini"),
+                )
 
-        self.assertEqual(mode, "dns-cloudflare certificate request completed")
+        self.assertEqual(mode, "dns-cloudflare certificate request completed (fresh issuance)")
         command = run.call_args.args[0]
         self.assertEqual(command[0:2], ["certbot", "certonly"])
         self.assertIn("--dns-cloudflare", command)
@@ -128,6 +148,73 @@ database:
         self.assertIn("--cert-name", command)
         self.assertIn("vaulthalla.dev", command)
         self.assertIn("s3.vaulthalla.dev", command)
+
+    def test_request_dns_cloudflare_certificate_reuses_complete_current_cert(self) -> None:
+        state = main.CertificateState(
+            exists=True,
+            domains={"vaulthalla.dev", "s3.vaulthalla.dev"},
+            renewal_due=False,
+        )
+        with mock.patch.object(main, "certificate_state", return_value=state):
+            with mock.patch.object(main, "run_capture") as run:
+                mode = main.request_dns_cloudflare_certificate(
+                    "vaulthalla.dev",
+                    "s3.vaulthalla.dev",
+                    Path("/etc/vaulthalla/certbot/cloudflare.ini"),
+                )
+
+        self.assertEqual(
+            mode,
+            "existing dns-cloudflare certificate is current (certbot renewal timer will manage renewal)",
+        )
+        run.assert_not_called()
+
+    def test_request_dns_cloudflare_certificate_renews_complete_due_cert(self) -> None:
+        cp = subprocess.CompletedProcess(["certbot"], 0, stdout="", stderr="")
+        state = main.CertificateState(
+            exists=True,
+            domains={"vaulthalla.dev", "s3.vaulthalla.dev"},
+            renewal_due=True,
+        )
+        with mock.patch.object(main, "certificate_state", return_value=state):
+            with mock.patch.object(main, "run_capture", return_value=cp) as run:
+                mode = main.request_dns_cloudflare_certificate(
+                    "vaulthalla.dev",
+                    "s3.vaulthalla.dev",
+                    Path("/etc/vaulthalla/certbot/cloudflare.ini"),
+                )
+
+        self.assertEqual(mode, "existing dns-cloudflare certificate renewed by certbot")
+        self.assertEqual(
+            run.call_args.args[0],
+            ["certbot", "renew", "--cert-name", "vaulthalla.dev", "--non-interactive"],
+        )
+
+    def test_request_dns_cloudflare_certificate_expands_missing_s3_domain(self) -> None:
+        cp = subprocess.CompletedProcess(["certbot"], 0, stdout="", stderr="")
+        state = main.CertificateState(exists=True, domains={"vaulthalla.dev"}, renewal_due=False)
+        with mock.patch.object(main, "certificate_state", return_value=state):
+            with mock.patch.object(main, "run_capture", return_value=cp) as run:
+                mode = main.request_dns_cloudflare_certificate(
+                    "vaulthalla.dev",
+                    "s3.vaulthalla.dev",
+                    Path("/etc/vaulthalla/certbot/cloudflare.ini"),
+                )
+
+        self.assertEqual(mode, "dns-cloudflare certificate request completed (domain expansion)")
+        command = run.call_args.args[0]
+        self.assertEqual(command[0:2], ["certbot", "certonly"])
+        self.assertIn("--expand", command)
+        self.assertIn("s3.vaulthalla.dev", command)
+
+    def test_certificate_name_parsing_reads_sans_and_subject_cn(self) -> None:
+        san_text = "X509v3 Subject Alternative Name:\n    DNS:vaulthalla.dev, DNS:s3.vaulthalla.dev"
+        self.assertEqual(main.parse_certificate_dns_names(san_text), {"vaulthalla.dev", "s3.vaulthalla.dev"})
+        self.assertEqual(main.parse_certificate_common_name("subject=CN = vaulthalla.dev"), "vaulthalla.dev")
+
+    def test_certificate_covers_domains_accepts_wildcard_san(self) -> None:
+        self.assertTrue(main.certificate_covers_domains({"*.vaulthalla.dev"}, ["s3.vaulthalla.dev"]))
+        self.assertFalse(main.certificate_covers_domains({"*.vaulthalla.dev"}, ["vaulthalla.dev"]))
 
     def test_update_database_block_rewrites_existing_keys(self) -> None:
         text = """

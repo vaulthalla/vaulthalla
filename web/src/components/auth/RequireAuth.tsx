@@ -8,6 +8,17 @@ import { useAuthStore } from '@/stores/authStore'
 const PUBLIC_ROUTES = new Set<string>(['/login'])
 const CHANGE_PASSWORD_ROUTE = '/users/admin/change-password'
 
+const fetchRuntimeDevMode = async () => {
+  try {
+    const response = await fetch('/api/runtime/config', { cache: 'no-store' })
+    if (!response.ok) return false
+    const body = await response.json() as { devMode?: boolean }
+    return body.devMode === true
+  } catch {
+    return false
+  }
+}
+
 export default function RequireAuth({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
@@ -50,12 +61,15 @@ export default function RequireAuth({ children }: { children: React.ReactNode })
         }
 
         const cached = useAuthStore.getState().adminPasswordIsDefault
-        const adminPasswordIsDefault = await useAuthStore.getState().fetchAdminPasswordIsDefault(cached === true)
+        const [adminPasswordIsDefault, devMode] = await Promise.all([
+          useAuthStore.getState().fetchAdminPasswordIsDefault(cached === true),
+          fetchRuntimeDevMode(),
+        ])
 
         if (disposed || id !== requestId.current) return
 
         if (
-          (!process.env.NEXT_PUBLIC_VAULTHALLA_DEV_MODE || process.env.NEXT_PUBLIC_VAULTHALLA_DEV_MODE == 'false')
+          !devMode
           && adminPasswordIsDefault
           && pathname !== CHANGE_PASSWORD_ROUTE
         ) {
