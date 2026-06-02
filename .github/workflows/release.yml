@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   release:
@@ -150,6 +151,43 @@ jobs:
 
       - name: Run web checks
         uses: ./.github/actions/test_web
+
+      - name: Install pmdocs
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v apt-get >/dev/null 2>&1; then
+            echo "::error::Expected apt-based runner for pmdocs provisioning."
+            exit 1
+          fi
+          APT_PREFIX=""
+          if command -v sudo >/dev/null 2>&1; then
+            APT_PREFIX="sudo"
+          fi
+          ${APT_PREFIX} apt-get update
+          ${APT_PREFIX} apt-get install -y ca-certificates curl
+          ${APT_PREFIX} install -d -m 0755 /etc/apt/keyrings
+          ${APT_PREFIX} curl -fsSL https://apt.valkyrianlabs.com/pubkey.gpg \
+            -o /etc/apt/keyrings/valkyrianlabs.gpg
+          ${APT_PREFIX} chmod 0644 /etc/apt/keyrings/valkyrianlabs.gpg
+          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/valkyrianlabs.gpg] https://apt.valkyrianlabs.com stable main" \
+            | ${APT_PREFIX} tee /etc/apt/sources.list.d/valkyrianlabs.list > /dev/null
+          ${APT_PREFIX} apt-get update
+          ${APT_PREFIX} apt-get install -y pmdocs
+          pmdocs --version
+
+      - name: Validate documentation package
+        shell: bash
+        run: pmdocs validate --source main-docs
+
+      - name: Sync documentation package
+        shell: bash
+        run: |
+          set -euo pipefail
+          pmdocs push \
+            --endpoint "https://vaulthalla.io/api/documentation/sync" \
+            --source main-docs \
+            --github-oidc
 
       - name: Build release artifacts (Debian + web deployable)
         id: package
