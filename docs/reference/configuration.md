@@ -64,7 +64,7 @@ s3_gateway:
     uploaded_gb: "0.00000000"
 ```
 
-See [S3 Gateway](/admin/s3-gateway) before enabling it on a network interface.
+See [S3 Gateway Setup](/s3-gateway/setup) before enabling it on a network interface.
 
 `require_sigv4` should stay enabled outside development. When it is disabled, the gateway accepts a development-only auth context only if `dev.enabled` is true or the configured host is loopback. Production listeners should use real gateway credentials with explicit scope and normal Vaulthalla RBAC.
 

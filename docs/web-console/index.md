@@ -29,6 +29,7 @@ The Vaulthalla web console is the browser-based control surface for most operato
 | Manage roles | Admin Roles and Vault Roles pages | `vh role ...`, `vh vault role ...` |
 | Manage shares | Shares page and filesystem share action | Web-first workflow |
 | Manage price budgets | Cost Control page | `vh pricing budget ...` |
+| Manage S3 Gateway | Admin -> S3 Gateway | `vh s3-gateway ...` |
 | Configure operator email | Operator Email page | `vh email ...` |
 
 Use the CLI for lifecycle commands, recovery exports, automation, and host-local troubleshooting. Use the web console for interactive administration, filesystem browsing, dashboards, shares, and policy editing.
@@ -85,6 +86,12 @@ vh pricing budget status
 vh pricing budget ledger --limit 100
 vh vault sync dry-run <vault>
 ```
+
+## S3 Gateway
+
+Admin -> S3 Gateway manages the downstream S3-compatible protocol surface. Use it to check service readiness, create gateway credentials, bind gateway buckets, set gateway key and key/vault budgets, review ledger/status details, and copy client snippets.
+
+See [S3 Gateway](/s3-gateway) for endpoint setup, downstream client examples, credential scopes, bucket modes, budget behavior, and S3 operation semantics.
 
 ## Shares
 
