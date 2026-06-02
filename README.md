@@ -140,6 +140,12 @@ Configure Nginx with Certbot:
 sudo vh setup nginx --domain <domain> --certbot
 ```
 
+Configure Nginx with a dedicated S3 host and Cloudflare DNS-01 certificates:
+
+```bash
+sudo vh setup nginx --domain vaulthalla.dev --s3-domain s3.vaulthalla.dev --certbot-dns-cloudflare --cloudflare-credentials /etc/vaulthalla/certbot/cloudflare.ini
+```
+
 Remove only Vaulthalla-managed Nginx integration:
 
 ```bash
@@ -217,7 +223,7 @@ Files can be mounted, traversed, opened, copied, deleted, shared, and synchroniz
 
 ### CLI First
 
-The CLI is the operator control plane.
+The CLI is the control plane.
 
 Admin ownership, DB setup, Nginx integration, teardown, status checks, and privileged host mutations live behind explicit commands instead of hidden web-side magic.
 

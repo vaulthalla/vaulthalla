@@ -51,14 +51,24 @@ The direct listener remains available on the configured gateway host and port:
 aws --endpoint-url http://127.0.0.1:39000 s3api list-buckets
 ```
 
-Managed Nginx exposes the public path endpoint at `/api/s3`:
+Managed Nginx exposes the public S3 endpoint on a dedicated hostname:
 
 ```bash
 aws configure set s3.addressing_style path
-aws --endpoint-url https://vaulthalla.example.com/api/s3 s3api list-buckets
+aws --endpoint-url https://s3.vaulthalla.example.com s3api list-buckets
 ```
 
-The `/api/s3` endpoint is path-style reverse-proxy mode. SigV4 clients sign the URI they send, including `/api/s3/...`; Nginx preserves that URI and the S3 router strips the prefix only after authentication for internal bucket/key routing. Virtual-hosted bucket inference is disabled for prefixed requests so a public host such as `vaulthalla.example.com` is not interpreted as a bucket name.
+The public S3 hostname is path-style reverse-proxy mode. SigV4 clients sign ordinary S3 paths such as `/bucket/key`; Nginx preserves the URI and marks the request as path-style-only so the router does not interpret `s3.vaulthalla.example.com` as a virtual-hosted bucket.
+
+For a local dev host using Cloudflare DNS-01 certificates:
+
+```bash
+sudo vh setup nginx \
+  --domain vaulthalla.dev \
+  --s3-domain s3.vaulthalla.dev \
+  --certbot-dns-cloudflare \
+  --cloudflare-credentials /etc/vaulthalla/certbot/cloudflare.ini
+```
 
 ## Credentials
 
@@ -254,9 +264,23 @@ aws --endpoint-url http://127.0.0.1:39000 s3 cp ./file.txt s3://archive/file.txt
 aws --endpoint-url http://127.0.0.1:39000 s3 rm s3://archive/file.txt
 
 aws configure set s3.addressing_style path
-aws --endpoint-url https://vaulthalla.example.com/api/s3 s3api list-buckets
-aws --endpoint-url https://vaulthalla.example.com/api/s3 s3 cp ./file.txt s3://archive/file.txt
-aws --endpoint-url https://vaulthalla.example.com/api/s3 s3 rm s3://archive/file.txt
+aws --endpoint-url https://s3.vaulthalla.example.com s3api list-buckets
+aws --endpoint-url https://s3.vaulthalla.example.com s3 cp ./file.txt s3://archive/file.txt
+aws --endpoint-url https://s3.vaulthalla.example.com s3 rm s3://archive/file.txt
+```
+
+rclone:
+
+```ini
+[vh-public]
+type = s3
+provider = Other
+access_key_id = VH...
+secret_access_key = ...
+endpoint = https://s3.vaulthalla.example.com
+force_path_style = true
+region = us-east-1
+acl = private
 ```
 
 MinIO client:

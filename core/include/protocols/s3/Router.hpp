@@ -26,7 +26,6 @@ public:
         std::string bucket;
         std::string key;
         std::map<std::string, std::string> query;
-        bool proxy_prefixed{};
     };
 
     struct ParsedCopySource {

@@ -32,6 +32,7 @@ sudo vh setup db
 sudo vh setup remote-db --host <host> --port 5432 --user <user> --database <name> --password-file <path>
 sudo vh setup nginx --domain vault.example.com
 sudo vh setup nginx --domain vault.example.com --certbot
+sudo vh setup nginx --domain vaulthalla.dev --s3-domain s3.vaulthalla.dev --certbot-dns-cloudflare --cloudflare-credentials /etc/vaulthalla/certbot/cloudflare.ini
 sudo vh teardown nginx
 sudo vh teardown db
 ```

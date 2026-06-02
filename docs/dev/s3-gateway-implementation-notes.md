@@ -28,7 +28,8 @@ These notes summarize the scoped credential and per-key budget work on the `s3-e
 - Added gateway budget ledger columns for credential id, request UUID, operation, object key, estimated cost, usage source, and synthetic/local marker.
 - Added `s3_gateway_sync_origin` rows for future attribution of sync work back to the gateway request/credential that created local-first work.
 - Extended C++ S3 gateway query models, credential management, SigV4 auth context, object-store permission checks, router request flow, CLI commands, WebSocket handlers, and web console models/page.
-- Added public Nginx `/api/s3` routing to the direct S3 gateway listener. Nginx keeps the original URI for SigV4, and the router strips `/api/s3` only after authentication when a proxy marker header is present.
+- Added dedicated public S3 host routing for managed Nginx. The S3 host proxies ordinary path-style S3 requests to the direct gateway listener, preserves the signed URI, and marks requests as path-style-only so the public host is not inferred as a virtual-hosted bucket.
+- Added Cloudflare DNS-01 Certbot support for managed Nginx so local/dev `vaulthalla.dev` and `s3.vaulthalla.dev` certificates can be issued without an inbound HTTP challenge endpoint.
 - Removed configurable `s3_gateway.multipart.part_dir`. Multipart parts now live under a generated Vaulthalla hidden backing path with per-upload opaque `parts_dir_id` directories.
 - Added Playwright configuration and a focused S3 Gateway browser suite that can auto-start the local web dev server for localhost E2E runs.
 
@@ -102,7 +103,7 @@ These notes summarize the scoped credential and per-key budget work on the `s3-e
 
 ## Validation Run
 
-Validation performed on 2026-06-02 for the `/api/s3` endpoint and multipart part-directory hardening pass:
+Validation performed on 2026-06-02 for the dedicated S3 host endpoint, Cloudflare DNS-01 lifecycle support, and multipart part-directory hardening pass:
 
 Commands and results:
 
@@ -117,26 +118,33 @@ git diff --check
 
 - `meson compile -C build` passed.
 - The focused S3 gateway Meson filter passed.
-- `python3 -m unittest deploy.lifecycle.tests.test_main` ran 10 tests and passed.
+- `python3 -m unittest deploy.lifecycle.tests.test_main` ran 13 tests and passed.
+- `python3 -m unittest tools.release.tests.packaging.test_debian_install_flow_contract tools.release.tests.packaging.test_debian_rules_contract` ran 20 tests and passed.
 - `pnpm --dir web run test` passed typecheck and lint.
-- `tools/smoke/s3_gateway_merge_ready.sh` passed all stages on rerun: shell syntax, Meson compile, DB-backed gateway/cost/pricing tests, web tests, Playwright S3 Gateway, local smoke, remote smoke, and `git diff --check`. Report: `test-results/s3-gateway-e2e/merge-ready-report.txt`.
+- `tools/smoke/s3_gateway_merge_ready.sh` passed shell syntax, Meson compile, DB-backed gateway/cost/pricing tests, web tests, Playwright S3 Gateway, local smoke, and remote smoke. The remote smoke log reported gateway cleanup and remote cleanup as `ok`.
+- The merge-ready wrapper did not reach its final report/diff-check stage because the build runtime hung during FUSE shutdown after the remote smoke completed; the stuck validation runtime was terminated.
 - `git diff --check` passed as a standalone command.
 
-Exact Nginx endpoint coverage added and run:
+Exact Nginx endpoint coverage added:
 
-- Static Nginx template contains `location = /api/s3` and `location /api/s3/` before `location /`, both using `proxy_pass http://127.0.0.1:39000;` without a URI suffix.
-- `ConfigProjectionTests.test_render_managed_nginx_config_includes_s3_gateway_path_proxy`
+- Static Nginx template no longer exposes an S3 path endpoint.
+- Managed lifecycle rendering emits HTTPS `vaulthalla.dev` and `s3.vaulthalla.dev` server blocks when Cloudflare DNS-01 certificate setup is used.
+- The dedicated S3 server uses `proxy_pass http://127.0.0.1:39000;` without a URI suffix and sets `X-Vaulthalla-S3-Path-Style-Only: true`.
+- `ConfigProjectionTests.test_render_managed_nginx_config_includes_dedicated_https_s3_host`
 - `ConfigProjectionTests.test_render_managed_nginx_config_uses_configured_s3_loopback_safe_host`
+- `ConfigProjectionTests.test_render_managed_nginx_config_without_cert_does_not_emit_s3_route`
+- `ConfigProjectionTests.test_cloudflare_credentials_file_requires_private_mode`
+- `ConfigProjectionTests.test_request_dns_cloudflare_certificate_builds_multi_domain_command`
 - `ConfigProjectionTests.test_parse_projection_uses_s3_defaults_when_section_missing`
 
-Exact SigV4/prefix coverage added and run:
+Exact SigV4/dedicated-host coverage added:
 
-- `S3GatewayRouterTest.StripsApiS3PrefixOnlyWhenProxyMarkerIsPresent`
-- `S3GatewayRouterTest.DirectListenerDoesNotStripApiS3WithoutProxyMarker`
-- `S3GatewayRouterTest.PublicHostDoesNotTriggerVirtualHostedBucketWhenPrefixed`
-- `S3GatewayRouterTest.RejectsMalformedOrMismatchedPrefixHeader`
-- `S3GatewayDbTest.SignedPrefixedRootListsBuckets`
-- `S3GatewayDbTest.SignedPrefixedPutAndGetAuthenticateAndRoutePathStyle`
+- `S3GatewayRouterTest.DedicatedS3HostUsesPathStyleWhenProxyMarkerIsPresent`
+- `S3GatewayRouterTest.ApiS3IsOrdinaryPathStyleWithoutPrefixRouting`
+- `S3GatewayRouterTest.PublicHostStillTriggersVirtualHostedBucketWithoutProxyMarker`
+- `S3GatewayRouterTest.FalsePathStyleOnlyMarkerLeavesVirtualHostedBucketEnabled`
+- `S3GatewayDbTest.SignedDedicatedHostRootListsBuckets`
+- `S3GatewayDbTest.SignedDedicatedHostPutAndGetAuthenticateAndRoutePathStyle`
 
 Exact multipart path coverage added and run:
 
@@ -146,7 +154,7 @@ Exact multipart path coverage added and run:
 - `S3GatewayDbTest.AbortMultipartUploadRemovesOpaquePartDirAndKeepsRoot`
 - `S3GatewayDbTest.AbortExpiredMultipartUploadsUsesConfiguredRetention`
 
-Live `/api/s3` AWS CLI smoke did not run. AWS CLI, Nginx, and a listener on port 80 were present, but `curl -i http://127.0.0.1/api/s3` returned a plain Nginx `404 Not Found`, showing the active local Nginx config had not installed this branch's new `/api/s3` route. The AWS CLI commands would not validate this branch until the updated Nginx config is installed and reloaded.
+Live dedicated-host AWS CLI smoke requires local DNS for `vaulthalla.dev` and `s3.vaulthalla.dev` plus a Cloudflare DNS-01 credentials file at `/etc/vaulthalla/certbot/cloudflare.ini`. Record whether the live smoke passed when those host prerequisites are present.
 
 Validation performed on 2026-06-01 for the self-provisioning E2E pass:
 

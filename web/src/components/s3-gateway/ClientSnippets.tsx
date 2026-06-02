@@ -29,7 +29,7 @@ export function ClientSnippets({
     },
     {
       title: 'AWS CLI Public',
-      text: `aws configure set s3.addressing_style path\naws --endpoint-url https://vaulthalla.example.com/api/s3 s3 ls\naws --endpoint-url https://vaulthalla.example.com/api/s3 s3 cp ./backup.tar s3://${buckets[0]?.bucket_name ?? 'bucket'}/backup.tar`,
+      text: `aws configure set s3.addressing_style path\naws --endpoint-url https://s3.vaulthalla.dev s3 ls\naws --endpoint-url https://s3.vaulthalla.dev s3 cp ./backup.tar s3://${buckets[0]?.bucket_name ?? 'bucket'}/backup.tar`,
     },
     {
       title: 'MinIO Client',

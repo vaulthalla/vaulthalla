@@ -140,9 +140,10 @@ Package setup can configure Nginx when the host has Nginx active and the lifecyc
 ```bash
 sudo vh setup nginx --domain vault.example.com
 sudo vh setup nginx --domain vault.example.com --certbot
+sudo vh setup nginx --domain vaulthalla.dev --s3-domain s3.vaulthalla.dev --certbot-dns-cloudflare --cloudflare-credentials /etc/vaulthalla/certbot/cloudflare.ini
 ```
 
-The Certbot option validates prerequisites and uses rollback behavior if certificate setup fails.
+The Certbot option validates prerequisites and uses rollback behavior if certificate setup fails. The Cloudflare DNS-01 option issues a certificate without requiring an inbound HTTP challenge endpoint and renders a dedicated HTTPS S3 host.
 
 ## Verify The Install
 

@@ -16,12 +16,12 @@ Local gateway buckets use Vaulthalla local vault encryption. Clients can use sta
 vh s3-gateway bucket create-local archive
 aws --endpoint-url http://127.0.0.1:39000 s3 cp ./report.pdf s3://archive/reports/report.pdf
 aws configure set s3.addressing_style path
-aws --endpoint-url https://vaulthalla.example.com/api/s3 s3 cp ./report.pdf s3://archive/reports/report.pdf
+aws --endpoint-url https://s3.vaulthalla.example.com s3 cp ./report.pdf s3://archive/reports/report.pdf
 ```
 
 Nested object keys create Vaulthalla parent directories as needed. Directory marker objects are accepted as zero-byte keys ending in `/`, but they are kept distinct from normal Vaulthalla directories.
 
-Use `http://127.0.0.1:39000` for the direct listener. Use `https://vaulthalla.example.com/api/s3` for the public Nginx path endpoint, and keep AWS CLI path-style addressing enabled for that public endpoint. SigV4 signs `/api/s3/...` on the public endpoint; Vaulthalla authenticates that original URI before stripping the prefix for bucket/key routing.
+Use `http://127.0.0.1:39000` for the direct listener. Use a dedicated public S3 hostname such as `https://s3.vaulthalla.example.com` through managed Nginx, and keep AWS CLI path-style addressing enabled for that public endpoint. SigV4 signs ordinary S3 paths such as `/archive/reports/report.pdf`; Nginx preserves that URI and marks requests as path-style-only so the public hostname is not treated as a bucket name.
 
 ## Remote-Backed Buckets
 

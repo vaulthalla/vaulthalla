@@ -506,79 +506,51 @@ TEST(S3GatewayRouterTest, ParsesVirtualHostedBucket) {
     EXPECT_TRUE(parsed.query.contains("uploads"));
 }
 
-TEST(S3GatewayRouterTest, StripsApiS3PrefixOnlyWhenProxyMarkerIsPresent) {
+TEST(S3GatewayRouterTest, DedicatedS3HostUsesPathStyleWhenProxyMarkerIsPresent) {
     using vh::protocols::s3::Router;
 
-    Router::Request root{boost::beast::http::verb::get, "/api/s3?list-type=2", 11};
-    root.set(boost::beast::http::field::host, "vaulthalla.example.test");
-    root.set("X-Vaulthalla-S3-Base-Prefix", "/api/s3");
-    auto parsed = Router::parseRequestTarget(root);
-    EXPECT_TRUE(parsed.proxy_prefixed);
-    EXPECT_TRUE(parsed.bucket.empty());
-    ASSERT_TRUE(parsed.query.contains("list-type"));
-    EXPECT_EQ(parsed.query.at("list-type"), "2");
-
-    Router::Request slashRoot{boost::beast::http::verb::get, "/api/s3/", 11};
-    slashRoot.set(boost::beast::http::field::host, "vaulthalla.example.test");
-    slashRoot.set("X-Forwarded-Prefix", "/api/s3");
-    parsed = Router::parseRequestTarget(slashRoot);
-    EXPECT_TRUE(parsed.proxy_prefixed);
-    EXPECT_TRUE(parsed.bucket.empty());
-
-    Router::Request object{boost::beast::http::verb::get, "/api/s3/bucket/a%2Fb.txt?uploadId=1", 11};
-    object.set(boost::beast::http::field::host, "vaulthalla.example.test");
-    object.set("X-Vaulthalla-S3-Base-Prefix", "/api/s3");
-    parsed = Router::parseRequestTarget(object);
-    EXPECT_TRUE(parsed.proxy_prefixed);
+    Router::Request object{boost::beast::http::verb::get, "/bucket/a%2Fb.txt?uploadId=1", 11};
+    object.set(boost::beast::http::field::host, "s3.vaulthalla.dev");
+    object.set("X-Vaulthalla-S3-Path-Style-Only", "true");
+    const auto parsed = Router::parseRequestTarget(object);
     EXPECT_EQ(parsed.bucket, "bucket");
     EXPECT_EQ(parsed.key, "a/b.txt");
     ASSERT_TRUE(parsed.query.contains("uploadId"));
     EXPECT_EQ(parsed.query.at("uploadId"), "1");
 }
 
-TEST(S3GatewayRouterTest, DirectListenerDoesNotStripApiS3WithoutProxyMarker) {
+TEST(S3GatewayRouterTest, ApiS3IsOrdinaryPathStyleWithoutPrefixRouting) {
     using vh::protocols::s3::Router;
 
     Router::Request request{boost::beast::http::verb::get, "/api/s3/bucket/key.txt", 11};
     request.set(boost::beast::http::field::host, "127.0.0.1:39000");
 
     const auto parsed = Router::parseRequestTarget(request);
-    EXPECT_FALSE(parsed.proxy_prefixed);
     EXPECT_EQ(parsed.bucket, "api");
     EXPECT_EQ(parsed.key, "s3/bucket/key.txt");
 }
 
-TEST(S3GatewayRouterTest, PublicHostDoesNotTriggerVirtualHostedBucketWhenPrefixed) {
+TEST(S3GatewayRouterTest, PublicHostStillTriggersVirtualHostedBucketWithoutProxyMarker) {
     using vh::protocols::s3::Router;
 
-    Router::Request request{boost::beast::http::verb::get, "/api/s3/path-bucket/object.txt", 11};
+    Router::Request request{boost::beast::http::verb::get, "/path-bucket/object.txt", 11};
     request.set(boost::beast::http::field::host, "photos.example.test:39000");
-    request.set("X-Vaulthalla-S3-Base-Prefix", "/api/s3");
 
     const auto parsed = Router::parseRequestTarget(request);
-    EXPECT_TRUE(parsed.proxy_prefixed);
-    EXPECT_EQ(parsed.bucket, "path-bucket");
-    EXPECT_EQ(parsed.key, "object.txt");
+    EXPECT_EQ(parsed.bucket, "photos");
+    EXPECT_EQ(parsed.key, "path-bucket/object.txt");
 }
 
-TEST(S3GatewayRouterTest, RejectsMalformedOrMismatchedPrefixHeader) {
+TEST(S3GatewayRouterTest, FalsePathStyleOnlyMarkerLeavesVirtualHostedBucketEnabled) {
     using vh::protocols::s3::Router;
 
-    Router::Request invalidPrefix{boost::beast::http::verb::get, "/api/s3/bucket/key.txt", 11};
-    invalidPrefix.set(boost::beast::http::field::host, "vaulthalla.example.test");
-    invalidPrefix.set("X-Vaulthalla-S3-Base-Prefix", "/bad");
-    EXPECT_THROW((void)Router::parseRequestTarget(invalidPrefix), vh::protocols::s3::S3Error);
+    Router::Request request{boost::beast::http::verb::get, "/path-bucket/object.txt", 11};
+    request.set(boost::beast::http::field::host, "photos.example.test:39000");
+    request.set("X-Vaulthalla-S3-Path-Style-Only", "false");
 
-    Router::Request mismatch{boost::beast::http::verb::get, "/bucket/key.txt", 11};
-    mismatch.set(boost::beast::http::field::host, "vaulthalla.example.test");
-    mismatch.set("X-Vaulthalla-S3-Base-Prefix", "/api/s3");
-    EXPECT_THROW((void)Router::parseRequestTarget(mismatch), vh::protocols::s3::S3Error);
-
-    Router::Request conflicting{boost::beast::http::verb::get, "/api/s3/bucket/key.txt", 11};
-    conflicting.set(boost::beast::http::field::host, "vaulthalla.example.test");
-    conflicting.set("X-Vaulthalla-S3-Base-Prefix", "/api/s3");
-    conflicting.set("X-Forwarded-Prefix", "/different");
-    EXPECT_THROW((void)Router::parseRequestTarget(conflicting), vh::protocols::s3::S3Error);
+    const auto parsed = Router::parseRequestTarget(request);
+    EXPECT_EQ(parsed.bucket, "photos");
+    EXPECT_EQ(parsed.key, "path-bucket/object.txt");
 }
 
 TEST(S3GatewayRouterTest, RejectsPathStyleWhenDisabled) {
@@ -1160,7 +1132,7 @@ TEST_F(S3GatewayDbTest, SignedDeleteBucketUsesCanAdminWithoutCanDeleteScope) {
     EXPECT_FALSE(vh::db::query::s3::Gateway::resolveBucket(bucketName));
 }
 
-TEST_F(S3GatewayDbTest, SignedPrefixedRootListsBuckets) {
+TEST_F(S3GatewayDbTest, SignedDedicatedHostRootListsBuckets) {
     ConfigRestore restoreConfig(vh::config::Registry::get());
 
     auto cfg = vh::config::Registry::get();
@@ -1176,29 +1148,26 @@ TEST_F(S3GatewayDbTest, SignedPrefixedRootListsBuckets) {
     auto secret = manager.createCredential({
         .created_by = admin->id,
         .principal_user_id = admin->id,
-        .name = "prefixed-root-" + uniqueSuffix("credential"),
+        .name = "dedicated-root-" + uniqueSuffix("credential"),
         .scope_mode = "user_access",
         .description = std::nullopt,
         .expires_at = std::nullopt,
         .vault_scopes = {}
     });
 
-    for (const std::string target : {"/api/s3", "/api/s3/"}) {
-        vh::protocols::s3::Router::Request request{http::verb::get, target, 11};
-        request.set(http::field::host, "vaulthalla.example.test");
-        request.set("X-Vaulthalla-S3-Base-Prefix", "/api/s3");
-        request.set("X-Forwarded-Prefix", "/api/s3");
-        signS3GatewayRequest(request, secret.credential.access_key, secret.secret_access_key);
+    vh::protocols::s3::Router::Request request{http::verb::get, "/", 11};
+    request.set(http::field::host, "s3.vaulthalla.dev");
+    request.set("X-Vaulthalla-S3-Path-Style-Only", "true");
+    signS3GatewayRequest(request, secret.credential.access_key, secret.secret_access_key);
 
-        const vh::protocols::s3::Router router;
-        const auto response = router.route(std::move(request));
+    const vh::protocols::s3::Router router;
+    const auto response = router.route(std::move(request));
 
-        EXPECT_EQ(response.result(), http::status::ok) << response.body();
-        EXPECT_NE(response.body().find("<ListAllMyBucketsResult"), std::string::npos);
-    }
+    EXPECT_EQ(response.result(), http::status::ok) << response.body();
+    EXPECT_NE(response.body().find("<ListAllMyBucketsResult"), std::string::npos);
 }
 
-TEST_F(S3GatewayDbTest, SignedPrefixedPutAndGetAuthenticateAndRoutePathStyle) {
+TEST_F(S3GatewayDbTest, SignedDedicatedHostPutAndGetAuthenticateAndRoutePathStyle) {
     ConfigRestore restoreConfig(vh::config::Registry::get());
 
     auto cfg = vh::config::Registry::get();
@@ -1211,7 +1180,7 @@ TEST_F(S3GatewayDbTest, SignedPrefixedPutAndGetAuthenticateAndRoutePathStyle) {
     ASSERT_TRUE(admin);
     ASSERT_TRUE(admin->isSuperAdmin());
 
-    const std::string bucketName = "prefixed-route-" + std::to_string(vaultId);
+    const std::string bucketName = "dedicated-route-" + std::to_string(vaultId);
     vh::db::query::s3::Gateway::bindBucket({
         .vault_id = vaultId,
         .bucket_name = bucketName,
@@ -1224,23 +1193,22 @@ TEST_F(S3GatewayDbTest, SignedPrefixedPutAndGetAuthenticateAndRoutePathStyle) {
     auto secret = manager.createCredential({
         .created_by = admin->id,
         .principal_user_id = admin->id,
-        .name = "prefixed-object-" + uniqueSuffix("credential"),
+        .name = "dedicated-object-" + uniqueSuffix("credential"),
         .scope_mode = "user_access",
         .description = std::nullopt,
         .expires_at = std::nullopt,
         .vault_scopes = {}
     });
 
-    const auto addPrefixHeaders = [](vh::protocols::s3::Router::Request& request) {
-        request.set(http::field::host, "vaulthalla.example.test");
-        request.set("X-Vaulthalla-S3-Base-Prefix", "/api/s3");
-        request.set("X-Forwarded-Prefix", "/api/s3");
+    const auto addDedicatedHostHeaders = [](vh::protocols::s3::Router::Request& request) {
+        request.set(http::field::host, "s3.vaulthalla.dev");
+        request.set("X-Vaulthalla-S3-Path-Style-Only", "true");
     };
 
-    vh::protocols::s3::Router::Request put{http::verb::put, "/api/s3/" + bucketName + "/key.txt", 11};
-    put.body() = "prefixed body";
+    vh::protocols::s3::Router::Request put{http::verb::put, "/" + bucketName + "/key.txt", 11};
+    put.body() = "dedicated host body";
     put.prepare_payload();
-    addPrefixHeaders(put);
+    addDedicatedHostHeaders(put);
     signS3GatewayRequest(put, secret.credential.access_key, secret.secret_access_key);
 
     const vh::protocols::s3::Router router;
@@ -1248,13 +1216,13 @@ TEST_F(S3GatewayDbTest, SignedPrefixedPutAndGetAuthenticateAndRoutePathStyle) {
     EXPECT_EQ(response.result(), http::status::ok) << response.body();
     EXPECT_TRUE(vh::db::query::s3::Gateway::getObjectState(vaultId, "key.txt"));
 
-    vh::protocols::s3::Router::Request get{http::verb::get, "/api/s3/" + bucketName + "/key.txt", 11};
-    addPrefixHeaders(get);
+    vh::protocols::s3::Router::Request get{http::verb::get, "/" + bucketName + "/key.txt", 11};
+    addDedicatedHostHeaders(get);
     signS3GatewayRequest(get, secret.credential.access_key, secret.secret_access_key);
     response = router.route(std::move(get));
 
     EXPECT_EQ(response.result(), http::status::ok) << response.body();
-    EXPECT_EQ(response.body(), "prefixed body");
+    EXPECT_EQ(response.body(), "dedicated host body");
 }
 
 TEST_F(S3GatewayDbTest, NonAdminScopeMutationCannotGrantGatewayAdminScope) {

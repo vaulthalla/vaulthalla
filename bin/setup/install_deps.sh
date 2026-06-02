@@ -42,6 +42,10 @@ check_pkg libpqxx-dev "libpqxx-dev"
 
 # -- Libraries --
 check_pkg postgresql "postgresql"
+check_pkg nginx "nginx"
+check_pkg certbot "certbot"
+check_pkg python3-certbot-nginx "python3-certbot-nginx"
+check_pkg python3-certbot-dns-cloudflare "python3-certbot-dns-cloudflare"
 check_pkg pkg-config "pkg-config"
 check_pkg libturbojpeg0-dev "libturbojpeg0-dev"
 check_pkg libmagic1 "libmagic1"
