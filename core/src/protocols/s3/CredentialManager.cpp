@@ -4,7 +4,9 @@
 #include "crypto/util/encrypt.hpp"
 #include "db/query/identities/User.hpp"
 #include "db/query/s3/Gateway.hpp"
+#include "rbac/permission/admin/S3Gateway.hpp"
 #include "rbac/permission/vault/Filesystem.hpp"
+#include "rbac/resolver/admin/all.hpp"
 #include "rbac/resolver/vault/all.hpp"
 
 #include <algorithm>
@@ -44,6 +46,16 @@ bool actionAllowedByPrincipal(
         .permission = action,
         .vault_id = vaultId,
         .path = "/"
+    });
+}
+
+bool canAssignGatewayPrincipal(const std::shared_ptr<identities::User>& actor) {
+    if (!actor) return false;
+    if (actor->isSuperAdmin()) return true;
+    using Perm = rbac::permission::admin::S3GatewayPermissions;
+    return rbac::resolver::Admin::has<Perm>({
+        .user = actor,
+        .permission = Perm::AssignPrincipal
     });
 }
 
@@ -156,8 +168,8 @@ void CredentialManager::validateScopeMutation(
     if (!principal || !principal->meta.is_active) throw std::invalid_argument("credential principal is not active");
 
     const bool actorAdmin = actor->isAdmin();
-    if (!actorAdmin && principalUserId != actorUserId)
-        throw std::invalid_argument("non-admin users can only manage S3 gateway credentials for themselves");
+    if (principalUserId != actorUserId && !canAssignGatewayPrincipal(actor))
+        throw std::invalid_argument("assigning an S3 gateway credential to another principal requires admin.s3_gateway.assign_principal");
     if (!actorAdmin && scopeMode == "global")
         throw std::invalid_argument("global S3 gateway credentials require admin permission");
     if (scopeMode == "global" && !principal->isAdmin())

@@ -97,6 +97,21 @@ void requireVaultEdit(const std::shared_ptr<Session>& session, const std::uint32
         throw std::runtime_error("You do not have permission to manage this S3 gateway bucket.");
 }
 
+bool canCreateVaultForOwner(const std::shared_ptr<Session>& session, const std::uint32_t ownerId) {
+    if (!session || !session->user) return false;
+    using Perm = vh::rbac::permission::admin::VaultPermissions;
+    return vh::rbac::resolver::Admin::has<Perm>({
+        .user = session->user,
+        .permission = Perm::Create,
+        .target_user_id = ownerId
+    });
+}
+
+void requireVaultCreateForOwner(const std::shared_ptr<Session>& session, const std::uint32_t ownerId) {
+    if (!canCreateVaultForOwner(session, ownerId))
+        throw std::runtime_error("You do not have permission to create a gateway bucket for this owner.");
+}
+
 bool ownsCredential(const std::shared_ptr<Session>& session, const std::uint32_t credentialId) {
     const auto owned = db::query::s3::Gateway::listCredentialsForPrincipal(session->user->id);
     return std::ranges::any_of(owned, [&](const auto& credential) {
@@ -105,10 +120,20 @@ bool ownsCredential(const std::shared_ptr<Session>& session, const std::uint32_t
 }
 
 json credentialJson(const db::query::s3::GatewayCredential& credential) {
+    json principalJson = nullptr;
+    if (const auto principal = db::query::identities::User::getUserById(credential.principal_user_id)) {
+        principalJson = {
+            {"id", principal->id},
+            {"name", principal->name},
+            {"email", principal->email ? json(*principal->email) : json(nullptr)}
+        };
+    }
+
     return {
         {"id", credential.id},
         {"user_id", credential.user_id},
         {"principal_user_id", credential.principal_user_id},
+        {"principal_user", principalJson},
         {"created_by", credential.created_by ? json(*credential.created_by) : json(nullptr)},
         {"name", credential.name},
         {"access_key", credential.access_key},
@@ -123,6 +148,15 @@ json credentialJson(const db::query::s3::GatewayCredential& credential) {
 }
 
 json scopeJson(const db::query::s3::CredentialVaultScope& scope) {
+    json roleJson = nullptr;
+    if (const auto role = db::query::s3::Gateway::getCredentialVaultRoleForVault(scope.credential_id, scope.vault_id)) {
+        roleJson = {
+            {"id", role->id},
+            {"name", role->name},
+            {"description", role->description}
+        };
+    }
+
     return {
         {"credential_id", scope.credential_id},
         {"vault_id", scope.vault_id},
@@ -130,7 +164,8 @@ json scopeJson(const db::query::s3::CredentialVaultScope& scope) {
         {"can_read", scope.can_read},
         {"can_write", scope.can_write},
         {"can_delete", scope.can_delete},
-        {"can_admin", scope.can_admin}
+        {"can_admin", scope.can_admin},
+        {"role", roleJson}
     };
 }
 
@@ -469,7 +504,8 @@ json S3Gateway::bucketsCreateLocal(const json& payload, const std::shared_ptr<Se
     if (!owner) throw std::runtime_error("Owner user not found.");
     const auto bucket = protocols::s3::ObjectStore{}.createBucket(
         payload.at("bucket_name").get<std::string>(),
-        owner,
+        session->user,
+        owner->id,
         "local",
         payload.value("quota_bytes", static_cast<uintmax_t>(0)));
     return {{"bucket", bucketJson(*db::query::s3::Gateway::resolveBucket(bucket.bucket_name))}};
@@ -479,11 +515,13 @@ json S3Gateway::bucketsCreateRemoteCache(const json& payload, const std::shared_
     requireAdmin(session, "Admin permission is required to create remote-cache S3 gateway buckets.");
     const auto apiKey = resolveApiKey(payload);
     if (!apiKey) throw std::runtime_error("Upstream API key not found.");
+    const auto ownerId = payload.value("owner_id", session->user->id);
+    requireVaultCreateForOwner(session, ownerId);
 
     auto vault = std::make_shared<::vh::vault::model::S3Vault>();
     vault->name = payload.at("bucket_name").get<std::string>();
     vault->description = payload.value("description", "S3 gateway remote-cache bucket " + vault->name);
-    vault->owner_id = payload.value("owner_id", session->user->id);
+    vault->owner_id = ownerId;
     vault->type = ::vh::vault::model::VaultType::S3;
     vault->is_active = true;
     vault->api_key_id = apiKey->id;

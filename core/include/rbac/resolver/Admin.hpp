@@ -87,7 +87,8 @@ namespace vh::rbac::resolver {
             else if constexpr (AdminResolverTraits<EnumT>::domain == Domain::Vault) {
                 const auto &perms = user->vaultsPerms();
 
-                if (!resolved.vault || !resolved.owner) return false;
+                if (!resolved.owner) return false;
+                if (!resolved.vault && permission != vh::rbac::permission::admin::VaultPermissions::Create) return false;
 
                 if (resolved.owner->id == user->id)
                     allowed = AdminResolverTraits<EnumT>::self(perms.self).has(permission);
@@ -95,6 +96,10 @@ namespace vh::rbac::resolver {
                     allowed = AdminResolverTraits<EnumT>::admin(perms.admin).has(permission);
                 else
                     allowed = AdminResolverTraits<EnumT>::user(perms.user).has(permission);
+            }
+            else if constexpr (AdminResolverTraits<EnumT>::domain == Domain::Global) {
+                if (!user->roles.admin) return false;
+                allowed = AdminResolverTraits<EnumT>::direct(*user->roles.admin).has(permission);
             }
             else {
                 static_assert([] { return false; }(), "Unhandled AdminResolverTraits domain");
@@ -156,6 +161,12 @@ namespace vh::rbac::resolver {
 
                 if (resolved.vault)
                     resolved.owner = db::query::identities::User::getUserById(resolved.vault->owner_id);
+
+                if (ctx.target_user_id && !resolved.owner)
+                    resolved.owner = db::query::identities::User::getUserById(*ctx.target_user_id);
+            }
+            else if constexpr (AdminResolverTraits<EnumT>::domain == Domain::Global) {
+                resolved.owner = ctx.user;
             }
 
             return resolved;

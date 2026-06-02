@@ -26,13 +26,15 @@ Operators can use the page to:
 - Create gateway credentials for downstream S3 clients.
 - Copy the secret access key immediately after creation; it is shown only once.
 - Choose `user_access`, `vault_allowlist`, or `global` scope.
-- Edit credential scope, expiry, description, local/cache budget enforcement, and vault allowlist entries.
+- Edit credential scope, expiry, description, local/cache budget enforcement, and gateway credential vault-role assignments.
 - Create local gateway buckets and bind existing local or S3/R2 vaults.
 - Save, disable, inspect, and troubleshoot gateway key and key/vault budgets.
 - Review recent budget ledger rows and budget status.
 - Copy client snippets for AWS CLI and MinIO mc.
 
 Use [Credentials And Scopes](/s3-gateway/credentials-and-scopes), [Buckets](/s3-gateway/buckets), and [Cost Controls](/s3-gateway/cost-controls) for the full model behind these controls.
+
+Assigning a gateway credential to a principal other than the actor requires `admin.s3_gateway.assign_principal`. Local gateway bucket creation requires the same vault-create permission used by ordinary Vaulthalla vault creation for the target owner.
 
 ## CLI Equivalents
 
@@ -54,6 +56,9 @@ vh s3-gateway creds scope backup show
 vh s3-gateway creds scope backup set --scope vault-allowlist
 vh s3-gateway creds scope backup allow-vault archive --list --read --write
 vh s3-gateway creds scope backup revoke-vault archive
+vh s3-gateway creds role assign backup --vault archive --role reader
+vh s3-gateway creds role override add backup --vault archive --pattern "/private/*" --permission download --effect deny
+vh s3-gateway creds role override list backup --vault archive
 ```
 
 Buckets:

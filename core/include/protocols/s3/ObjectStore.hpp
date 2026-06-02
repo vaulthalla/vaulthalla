@@ -88,6 +88,10 @@ public:
     ResolvedBucket createBucket(const std::string& bucket, const std::shared_ptr<identities::User>& actor,
                                 const std::string& mode = "local",
                                 uintmax_t quotaBytes = 0) const;
+    ResolvedBucket createBucket(const std::string& bucket, const std::shared_ptr<identities::User>& actor,
+                                uint32_t ownerUserId,
+                                const std::string& mode = "local",
+                                uintmax_t quotaBytes = 0) const;
     void deleteBucket(const std::string& bucket, const AuthContext& auth) const;
     void deleteBucket(const std::string& bucket, const std::shared_ptr<identities::User>& actor) const;
 

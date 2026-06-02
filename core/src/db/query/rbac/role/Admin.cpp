@@ -28,7 +28,8 @@ unsigned int Admin::upsert(const AdminRolePtr& role) {
                     role->settings.toBitString(),
                     role->roles.toBitString(),
                     role->vaults.toBitString(),
-                    role->keys.toBitString()
+                    role->keys.toBitString(),
+                    role->s3Gateway.toBitString()
                 }
             );
 
@@ -46,7 +47,8 @@ unsigned int Admin::upsert(const AdminRolePtr& role) {
                 role->settings.toBitString(),
                 role->roles.toBitString(),
                 role->vaults.toBitString(),
-                role->keys.toBitString()
+                role->keys.toBitString(),
+                role->s3Gateway.toBitString()
             }
         );
 

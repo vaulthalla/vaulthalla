@@ -124,7 +124,7 @@ Use the browser workflow for interactive setup:
 3. Create a gateway credential.
 4. Copy the secret immediately; the secret access key is shown only once.
 5. Choose `user_access`, `vault_allowlist`, or `global` scope.
-6. Add vault allowlist rows and per-vault action flags when using `vault_allowlist`.
+6. Add vault role assignments when using `vault_allowlist`.
 7. Create or bind a gateway bucket.
 8. Set gateway key or key/vault budgets.
 9. Copy AWS CLI or MinIO client snippets.

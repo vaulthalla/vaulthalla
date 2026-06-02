@@ -167,9 +167,10 @@ uint32_t ensureS3GatewayUnprivilegedAdminRole(pqxx::work& txn) {
                 settings_permissions,
                 roles_permissions,
                 vaults_permissions,
-                keys_permissions
+                keys_permissions,
+                s3_gateway_permissions
             )
-            VALUES ($1, $2, $3::bit(32), $4::bit(8), $5::bit(64), $6::bit(16), $7::bit(32), $8::bit(32))
+            VALUES ($1, $2, $3::bit(32), $4::bit(8), $5::bit(64), $6::bit(16), $7::bit(32), $8::bit(32), $9::bit(8))
             ON CONFLICT (name) DO UPDATE SET
                 description = EXCLUDED.description,
                 identity_permissions = EXCLUDED.identity_permissions,
@@ -177,7 +178,8 @@ uint32_t ensureS3GatewayUnprivilegedAdminRole(pqxx::work& txn) {
                 settings_permissions = EXCLUDED.settings_permissions,
                 roles_permissions = EXCLUDED.roles_permissions,
                 vaults_permissions = EXCLUDED.vaults_permissions,
-                keys_permissions = EXCLUDED.keys_permissions
+                keys_permissions = EXCLUDED.keys_permissions,
+                s3_gateway_permissions = EXCLUDED.s3_gateway_permissions
             RETURNING id
         )SQL",
         pqxx::params{
@@ -188,7 +190,8 @@ uint32_t ensureS3GatewayUnprivilegedAdminRole(pqxx::work& txn) {
             role.settings.toBitString(),
             role.roles.toBitString(),
             role.vaults.toBitString(),
-            role.keys.toBitString()
+            role.keys.toBitString(),
+            role.s3Gateway.toBitString()
         }).one_field().as<uint32_t>();
 }
 
@@ -415,7 +418,7 @@ TEST(S3GatewayObjectStoreTest, PreservesDirectoryMarkerTrailingSlash) {
     EXPECT_EQ(ObjectStore::vaultPathToKey(vaultPath), "folder/");
 }
 
-TEST(S3GatewayObjectStoreTest, CredentialScopeFastPathsDoNotNeedDatabase) {
+TEST(S3GatewayObjectStoreTest, OnlyDevCredentialFastPathBypassesDatabase) {
     using vh::protocols::s3::AuthContext;
     using vh::protocols::s3::ObjectStore;
     using Action = vh::rbac::permission::vault::FilesystemAction;
@@ -429,7 +432,7 @@ TEST(S3GatewayObjectStoreTest, CredentialScopeFastPathsDoNotNeedDatabase) {
     AuthContext userAccess;
     userAccess.credential_id = 123;
     userAccess.scope_mode = "user_access";
-    EXPECT_TRUE(ObjectStore::credentialAllows(userAccess, 55, Action::Read));
+    EXPECT_FALSE(ObjectStore::credentialAllows(userAccess, 55, Action::Read));
 
     AuthContext unknownScope;
     unknownScope.credential_id = 123;
@@ -437,7 +440,7 @@ TEST(S3GatewayObjectStoreTest, CredentialScopeFastPathsDoNotNeedDatabase) {
     EXPECT_FALSE(ObjectStore::credentialAllows(unknownScope, 55, Action::Read));
 }
 
-TEST(S3GatewayObjectStoreTest, UserAccessCredentialDoesNotAuthorizeBucketAdminForNonAdminPrincipal) {
+TEST(S3GatewayObjectStoreTest, UserAccessCredentialDoesNotAuthorizeBucketAdminWithoutGatewayRole) {
     using vh::protocols::s3::GatewayAccessContext;
     using vh::protocols::s3::ObjectStore;
     using vh::protocols::s3::ResolvedBucket;
@@ -468,7 +471,7 @@ TEST(S3GatewayObjectStoreTest, UserAccessCredentialDoesNotAuthorizeBucketAdminFo
 
     user->roles.admin = std::make_shared<vh::rbac::role::Admin>(
         vh::rbac::role::Admin::SuperAdmin(user->id));
-    EXPECT_TRUE(ObjectStore::credentialAllowsAdmin(bucket));
+    EXPECT_FALSE(ObjectStore::credentialAllowsAdmin(bucket));
 }
 
 TEST(S3GatewayPricingTest, OperationNamesMatchBudgetLedgerValues) {
@@ -1022,7 +1025,7 @@ TEST_F(S3GatewayDbTest, ListObjectsTreatsPrefixWildcardCharactersLiterally) {
     EXPECT_EQ(underscore.objects[0].object_key, "a_literal.txt");
 }
 
-TEST_F(S3GatewayDbTest, VaultAllowlistAdminOperationsRequireCanAdminEvenForAdminPrincipal) {
+TEST_F(S3GatewayDbTest, VaultAllowlistScopesMirrorToGatewayVaultRoles) {
     auto admin = std::make_shared<vh::identities::User>();
     admin->id = userId;
     admin->name = "admin-principal";
@@ -1051,34 +1054,42 @@ TEST_F(S3GatewayDbTest, VaultAllowlistAdminOperationsRequireCanAdminEvenForAdmin
         .can_admin = false
     }});
 
-    const vh::protocols::s3::ResolvedBucket deniedBucket{
-        .bucket_name = "scoped-admin-denied",
-        .vault_id = vaultId,
-        .mode = "local",
-        .api_exclusive = true,
-        .engine = nullptr,
-        .actor = admin,
-        .gateway_access = vh::protocols::s3::GatewayAccessContext{
-            .credential_id = credential.id,
-            .access_key = credential.access_key,
-            .scope_mode = credential.scope_mode,
-            .credential = credential,
-            .dev_context = false
-        }
-    };
-    EXPECT_FALSE(vh::protocols::s3::ObjectStore::credentialAllowsAdmin(deniedBucket));
+    auto assignments = vh::db::query::s3::Gateway::listCredentialVaultRoleAssignments(credential.id);
+    ASSERT_EQ(assignments.size(), 1u);
+    EXPECT_EQ(assignments.front().vault_id, vaultId);
+    auto role = vh::db::query::s3::Gateway::getCredentialVaultRoleForVault(credential.id, vaultId);
+    ASSERT_TRUE(role);
+    EXPECT_EQ(role->name, "manager");
 
     vh::db::query::s3::Gateway::replaceCredentialScopes(credential.id, {{
         .credential_id = credential.id,
         .vault_id = vaultId,
         .can_list = true,
         .can_read = true,
-        .can_write = true,
+        .can_write = false,
         .can_delete = true,
-        .can_admin = true
+        .can_admin = false
     }});
 
-    EXPECT_TRUE(vh::protocols::s3::ObjectStore::credentialAllowsAdmin(deniedBucket));
+    assignments = vh::db::query::s3::Gateway::listCredentialVaultRoleAssignments(credential.id);
+    ASSERT_EQ(assignments.size(), 1u);
+    role = vh::db::query::s3::Gateway::getCredentialVaultRoleForVault(credential.id, vaultId);
+    ASSERT_TRUE(role);
+    EXPECT_EQ(role->name, "manager");
+
+    vh::db::query::s3::Gateway::replaceCredentialScopes(credential.id, {{
+        .credential_id = credential.id,
+        .vault_id = vaultId,
+        .can_list = true,
+        .can_read = true,
+        .can_write = false,
+        .can_delete = false,
+        .can_admin = false
+    }});
+
+    role = vh::db::query::s3::Gateway::getCredentialVaultRoleForVault(credential.id, vaultId);
+    ASSERT_TRUE(role);
+    EXPECT_EQ(role->name, "reader");
 }
 
 TEST_F(S3GatewayDbTest, SignedDeleteBucketUsesCanAdminWithoutCanDeleteScope) {
@@ -1194,10 +1205,18 @@ TEST_F(S3GatewayDbTest, SignedDedicatedHostPutAndGetAuthenticateAndRoutePathStyl
         .created_by = admin->id,
         .principal_user_id = admin->id,
         .name = "dedicated-object-" + uniqueSuffix("credential"),
-        .scope_mode = "user_access",
+        .scope_mode = "vault_allowlist",
         .description = std::nullopt,
         .expires_at = std::nullopt,
-        .vault_scopes = {}
+        .vault_scopes = {{
+            .credential_id = 0,
+            .vault_id = vaultId,
+            .can_list = true,
+            .can_read = true,
+            .can_write = true,
+            .can_delete = false,
+            .can_admin = false
+        }}
     });
 
     const auto addDedicatedHostHeaders = [](vh::protocols::s3::Router::Request& request) {
@@ -1471,6 +1490,23 @@ TEST_F(S3GatewayDbTest, CredentialVaultScopeRowsReplaceLookupAndGateActions) {
     ASSERT_EQ(scopes.size(), 1u);
     EXPECT_EQ(scopes.front().vault_id, secondVaultId);
     EXPECT_FALSE(vh::db::query::s3::Gateway::getCredentialScopeForVault(credential.id, vaultId));
+    const auto assignments = vh::db::query::s3::Gateway::listCredentialVaultRoleAssignments(credential.id);
+    ASSERT_EQ(assignments.size(), 1u);
+    EXPECT_EQ(assignments.front().vault_id, secondVaultId);
+    const auto credentialRole = vh::db::query::s3::Gateway::getCredentialVaultRoleForVault(credential.id, secondVaultId);
+    ASSERT_TRUE(credentialRole);
+    EXPECT_EQ(credentialRole->name, "contributor");
+
+    vh::db::Transactions::exec("S3GatewayDbTest::assignPrincipalGatewayScopeVaultRole", [&](pqxx::work& txn) {
+        const auto roleId = txn.exec(
+            "SELECT id FROM vault_role WHERE name = 'manager' LIMIT 1"
+        ).one_field().as<uint32_t>();
+        txn.exec(
+            "INSERT INTO vault_role_assignments (vault_id, subject_type, subject_id, role_id) "
+            "VALUES ($1, 'user', $2, $3) "
+            "ON CONFLICT (vault_id, subject_type, subject_id) DO UPDATE SET role_id = EXCLUDED.role_id",
+            pqxx::params{secondVaultId, userId, roleId});
+    });
 
     auto user = vh::db::query::identities::User::getUserById(userId);
     ASSERT_TRUE(user);

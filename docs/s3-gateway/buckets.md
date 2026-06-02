@@ -35,6 +35,8 @@ Create a new encrypted local vault and bind it as a gateway bucket:
 vh s3-gateway bucket create-local archive --quota 500G
 ```
 
+Creating a local gateway bucket creates a normal Vaulthalla local vault. The actor must have normal vault-create permission for the target owner. Creating a bucket for another owner follows the same target-user vault-create rules as ordinary vault creation and does not bypass Vaulthalla RBAC.
+
 Bind an existing local vault:
 
 ```bash
@@ -55,6 +57,8 @@ vh s3-gateway bucket bind archive-edge --vault archive --mode remote_cache
 vh s3-gateway bucket bind archive-proxy --vault archive --mode remote_proxy
 ```
 
+Binding an existing vault requires authority to manage that vault and S3 Gateway bucket-management authority. Binding does not grant object access to gateway credentials; each credential still needs its own gateway vault-role assignment.
+
 Create a new remote-cache gateway bucket and its backing S3/R2 vault:
 
 ```bash
@@ -65,6 +69,8 @@ vh s3-gateway bucket create-remote-cache edge \
 ```
 
 `--api-key` names the upstream provider credential created with `vh api-key`. `--upstream-bucket` names the external AWS S3, Cloudflare R2, or compatible bucket used as the vault backend.
+
+Creating a remote-cache bucket also creates a normal S3/R2 vault, so it requires vault-create permission for the owner and permission to use the upstream provider credential.
 
 ## API-Exclusive Buckets
 

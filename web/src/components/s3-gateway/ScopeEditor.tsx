@@ -5,6 +5,7 @@ import SaveIcon from '@/fa-duotone/floppy-disk.svg'
 import PlusIcon from '@/fa-duotone/plus.svg'
 import ShieldIcon from '@/fa-duotone/shield-check.svg'
 import TrashIcon from '@/fa-duotone/trash.svg'
+import type { VaultRole } from '@/models/role'
 import {
   S3GatewayCredential,
   S3GatewayCredentialScopeMode,
@@ -17,23 +18,27 @@ import {
   buttonClass,
   dangerButtonClass,
   fieldClass,
-  PermissionCheckbox,
-  permissionKeys,
   primaryButtonClass,
   scopeLabel,
   scopeModes,
+  scopePayloadForRole,
+  scopeRoleName,
   Section,
 } from './shared'
+
+type ScopeDraftRow = S3GatewayCredentialVaultScopePayload & { role_name?: string }
 
 export function ScopeEditor({
   selectedCredential,
   selectedScopes,
+  vaultRoles,
   vaults,
   saving,
   onSave,
 }: {
   selectedCredential: S3GatewayCredential | null
   selectedScopes: S3GatewayCredentialVaultScope[]
+  vaultRoles: VaultRole[]
   vaults: Vault[]
   saving: boolean
   onSave: (payload: S3GatewayCredentialScopeUpdatePayload) => Promise<S3GatewayCredential | null>
@@ -41,7 +46,7 @@ export function ScopeEditor({
   const [editScopeMode, setEditScopeMode] = useState<S3GatewayCredentialScopeMode>('user_access')
   const [editDescription, setEditDescription] = useState('')
   const [editEnforceLocalBudget, setEditEnforceLocalBudget] = useState(false)
-  const [scopeDraft, setScopeDraft] = useState<S3GatewayCredentialVaultScopePayload[]>([])
+  const [scopeDraft, setScopeDraft] = useState<ScopeDraftRow[]>([])
   const vaultById = useMemo(() => new Map(vaults.map(vault => [vault.id, vault])), [vaults])
 
   useEffect(() => {
@@ -59,16 +64,19 @@ export function ScopeEditor({
       can_write: scope.can_write,
       can_delete: scope.can_delete,
       can_admin: scope.can_admin,
+      role_name: scope.role?.name ?? scopeRoleName(scope),
     })))
   }, [selectedScopes])
 
-  const updateScopeDraft = (vaultId: number, key: keyof Omit<S3GatewayCredentialVaultScopePayload, 'vault_id'>, value: boolean) => {
-    setScopeDraft(rows => rows.map(row => (row.vault_id === vaultId ? { ...row, [key]: value } : row)))
+  const updateScopeDraftRole = (vaultId: number, roleName: string) => {
+    const role = vaultRoles.find(item => item.name === roleName)
+    setScopeDraft(rows => rows.map(row => (row.vault_id === vaultId ? { ...row, ...scopePayloadForRole(role, row), role_name: roleName } : row)))
   }
 
   const addScopeVault = (vaultId: number) => {
     if (scopeDraft.some(row => row.vault_id === vaultId)) return
-    setScopeDraft(rows => [...rows, { vault_id: vaultId, can_list: true, can_read: true, can_write: false, can_delete: false, can_admin: false }])
+    const role = vaultRoles.find(item => item.name === 'reader') ?? vaultRoles[0]
+    setScopeDraft(rows => [...rows, { vault_id: vaultId, ...scopePayloadForRole(role), role_name: role?.name ?? 'reader' }])
   }
 
   const saveScope = async () => {
@@ -78,7 +86,14 @@ export function ScopeEditor({
       scope_mode: editScopeMode,
       description: editDescription.trim() || null,
       enforce_budget_for_local_requests: editEnforceLocalBudget,
-      vault_scopes: scopeDraft,
+      vault_scopes: scopeDraft.map(row => ({
+        vault_id: row.vault_id,
+        can_list: row.can_list,
+        can_read: row.can_read,
+        can_write: row.can_write,
+        can_delete: row.can_delete,
+        can_admin: row.can_admin,
+      })),
     })
   }
 
@@ -126,15 +141,10 @@ export function ScopeEditor({
                   <div className="font-medium text-white">{vaultById.get(row.vault_id)?.name ?? `Vault ${row.vault_id}`}</div>
                   <div className="text-xs text-white/45">#{row.vault_id}</div>
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  {permissionKeys.map(key => (
-                    <PermissionCheckbox
-                      key={key}
-                      label={key.replace('can_', '')}
-                      checked={!!row[key]}
-                      onChange={checked => updateScopeDraft(row.vault_id, key, checked)}
-                    />
-                  ))}
+                <div className="flex flex-wrap items-center gap-2">
+                  <select className={fieldClass} data-testid="s3-gateway-scope-role-select" value={row.role_name ?? scopeRoleName(row)} onChange={event => updateScopeDraftRole(row.vault_id, event.target.value)}>
+                    {vaultRoles.length ? vaultRoles.map(role => <option key={role.id} value={role.name}>{role.name}</option>) : <option value="reader">reader</option>}
+                  </select>
                   <button className={dangerButtonClass} type="button" onClick={() => setScopeDraft(rows => rows.filter(item => item.vault_id !== row.vault_id))}>
                     <TrashIcon className="h-4 w-4" />
                     Remove

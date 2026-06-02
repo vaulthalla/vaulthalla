@@ -58,6 +58,7 @@ export class S3GatewayCredentialVaultScope {
   can_write = false
   can_delete = false
   can_admin = false
+  role: { id: number; name: string; description: string } | null = null
 
   constructor(input: unknown = {}) {
     const data = isRecord(input) ? input : {}
@@ -68,6 +69,11 @@ export class S3GatewayCredentialVaultScope {
     this.can_write = asBoolean(data.can_write)
     this.can_delete = asBoolean(data.can_delete)
     this.can_admin = asBoolean(data.can_admin)
+    this.role = isRecord(data.role) ? {
+      id: asNumber(data.role.id),
+      name: asString(data.role.name),
+      description: asString(data.role.description),
+    } : null
   }
 
   static from(input: unknown): S3GatewayCredentialVaultScope {
@@ -79,6 +85,7 @@ export class S3GatewayCredential {
   id = 0
   user_id = 0
   principal_user_id = 0
+  principal_user: { id: number; name: string; email: string | null } | null = null
   created_by: number | null = null
   name = ''
   access_key = ''
@@ -95,6 +102,11 @@ export class S3GatewayCredential {
     this.id = asNumber(data.id)
     this.user_id = asNumber(data.user_id)
     this.principal_user_id = asNumber(data.principal_user_id)
+    this.principal_user = isRecord(data.principal_user) ? {
+      id: asNumber(data.principal_user.id),
+      name: asString(data.principal_user.name),
+      email: asNullableString(data.principal_user.email),
+    } : null
     this.created_by = asNullableNumber(data.created_by)
     this.name = asString(data.name)
     this.access_key = asString(data.access_key)

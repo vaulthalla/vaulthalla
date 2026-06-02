@@ -28,6 +28,7 @@ namespace vh::rbac {
             struct Identities;
             struct Audits;
             struct Settings;
+            struct S3Gateway;
             struct Vaults;
             struct VaultGlobals;
 
@@ -140,6 +141,8 @@ namespace vh::identities {
         [[nodiscard]] rbac::permission::admin::keys::APIKeys &apiKeysPerms() const;
 
         [[nodiscard]] rbac::permission::admin::keys::EncryptionKey &encryptionKeysPerms() const;
+
+        [[nodiscard]] rbac::permission::admin::S3Gateway &s3GatewayPerms() const;
     };
 
     void to_json(nlohmann::json &j, const User &u);

@@ -426,8 +426,7 @@ void signGatewayRouteRequest(
         "SignedHeaders=" + auth.signed_headers + ", Signature=" + auth.signature);
 }
 
-uint32_t ensureS3CostUnprivilegedAdminRole(pqxx::work& txn) {
-    const auto role = vh::rbac::role::Admin::None();
+uint32_t ensureS3CostAdminRole(pqxx::work& txn, const vh::rbac::role::Admin& role) {
     return txn.exec(
         R"SQL(
             INSERT INTO admin_role (
@@ -438,9 +437,10 @@ uint32_t ensureS3CostUnprivilegedAdminRole(pqxx::work& txn) {
                 settings_permissions,
                 roles_permissions,
                 vaults_permissions,
-                keys_permissions
+                keys_permissions,
+                s3_gateway_permissions
             )
-            VALUES ($1, $2, $3::bit(32), $4::bit(8), $5::bit(64), $6::bit(16), $7::bit(32), $8::bit(32))
+            VALUES ($1, $2, $3::bit(32), $4::bit(8), $5::bit(64), $6::bit(16), $7::bit(32), $8::bit(32), $9::bit(8))
             ON CONFLICT (name) DO UPDATE SET
                 description = EXCLUDED.description,
                 identity_permissions = EXCLUDED.identity_permissions,
@@ -448,7 +448,8 @@ uint32_t ensureS3CostUnprivilegedAdminRole(pqxx::work& txn) {
                 settings_permissions = EXCLUDED.settings_permissions,
                 roles_permissions = EXCLUDED.roles_permissions,
                 vaults_permissions = EXCLUDED.vaults_permissions,
-                keys_permissions = EXCLUDED.keys_permissions
+                keys_permissions = EXCLUDED.keys_permissions,
+                s3_gateway_permissions = EXCLUDED.s3_gateway_permissions
             RETURNING id
         )SQL",
         pqxx::params{
@@ -459,45 +460,21 @@ uint32_t ensureS3CostUnprivilegedAdminRole(pqxx::work& txn) {
             role.settings.toBitString(),
             role.roles.toBitString(),
             role.vaults.toBitString(),
-            role.keys.toBitString()
+            role.keys.toBitString(),
+            role.s3Gateway.toBitString()
         }).one_field().as<uint32_t>();
 }
 
+uint32_t ensureS3CostUnprivilegedAdminRole(pqxx::work& txn) {
+    return ensureS3CostAdminRole(txn, vh::rbac::role::Admin::None());
+}
+
 uint32_t ensureS3CostSuperAdminRole(pqxx::work& txn) {
-    const auto role = vh::rbac::role::Admin::SuperAdmin();
-    return txn.exec(
-        R"SQL(
-            INSERT INTO admin_role (
-                name,
-                description,
-                identity_permissions,
-                audit_permissions,
-                settings_permissions,
-                roles_permissions,
-                vaults_permissions,
-                keys_permissions
-            )
-            VALUES ($1, $2, $3::bit(32), $4::bit(8), $5::bit(64), $6::bit(16), $7::bit(32), $8::bit(32))
-            ON CONFLICT (name) DO UPDATE SET
-                description = EXCLUDED.description,
-                identity_permissions = EXCLUDED.identity_permissions,
-                audit_permissions = EXCLUDED.audit_permissions,
-                settings_permissions = EXCLUDED.settings_permissions,
-                roles_permissions = EXCLUDED.roles_permissions,
-                vaults_permissions = EXCLUDED.vaults_permissions,
-                keys_permissions = EXCLUDED.keys_permissions
-            RETURNING id
-        )SQL",
-        pqxx::params{
-            role.name,
-            role.description,
-            role.identities.toBitString(),
-            role.audits.toBitString(),
-            role.settings.toBitString(),
-            role.roles.toBitString(),
-            role.vaults.toBitString(),
-            role.keys.toBitString()
-        }).one_field().as<uint32_t>();
+    return ensureS3CostAdminRole(txn, vh::rbac::role::Admin::SuperAdmin());
+}
+
+uint32_t ensureS3CostVaultAdminRole(pqxx::work& txn) {
+    return ensureS3CostAdminRole(txn, vh::rbac::role::Admin::VaultAdmin());
 }
 
 uint32_t insertS3CostHydratableTestUser(pqxx::work& txn, const std::string& name, const std::string& email) {
@@ -531,6 +508,23 @@ uint32_t seedS3CostSuperAdminUserForDbTest(const std::string& suffix, const std:
                 "hash"
             }).one_field().as<uint32_t>();
         const auto roleId = ensureS3CostSuperAdminRole(txn);
+        txn.exec(
+            "INSERT INTO admin_role_assignments (user_id, role_id) VALUES ($1, $2)",
+            pqxx::params{userId, roleId});
+        return userId;
+    });
+}
+
+uint32_t seedS3CostVaultAdminUserForDbTest(const std::string& suffix, const std::string& label) {
+    return vh::db::Transactions::exec("S3CostSafetyTest::seedVaultAdminUser", [&](pqxx::work& txn) {
+        const auto userId = txn.exec(
+            "INSERT INTO users (name, email, password_hash) VALUES ($1, $2, $3) RETURNING id",
+            pqxx::params{
+                "s3_cost_safety_vault_admin_" + label + "_" + suffix,
+                "s3-cost-safety-vault-admin-" + label + "-" + suffix + "@vaulthalla.test",
+                "hash"
+            }).one_field().as<uint32_t>();
+        const auto roleId = ensureS3CostVaultAdminRole(txn);
         txn.exec(
             "INSERT INTO admin_role_assignments (user_id, role_id) VALUES ($1, $2)",
             pqxx::params{userId, roleId});
@@ -3293,6 +3287,16 @@ TEST(S3CostSafetyTest, S3GatewayWsNonAdminCredentialManagementIsScopedToPrincipa
         {"scope_mode", "global"}
     }, actorSession), std::exception);
 
+    const auto noAssignAdminUserId = seedS3CostVaultAdminUserForDbTest(suffix, "no_assign");
+    const auto noAssignAdminSession = wsSessionForUser(
+        noAssignAdminUserId,
+        vh::rbac::role::Admin::VaultAdmin(noAssignAdminUserId));
+    EXPECT_THROW(vh::protocols::ws::handler::S3Gateway::credentialsCreate({
+        {"name", "cross-user-admin-no-assign-" + suffix},
+        {"principal_user_id", otherUserId},
+        {"scope_mode", "user_access"}
+    }, noAssignAdminSession), std::exception);
+
     const auto otherCredentialId = seedGatewayCredentialForDbTest(otherUserId, "other_" + suffix);
     const auto otherCredentialSelector = std::to_string(otherCredentialId);
     EXPECT_THROW(vh::protocols::ws::handler::S3Gateway::credentialsScopeUpdate({
@@ -3324,7 +3328,7 @@ TEST(S3CostSafetyTest, S3GatewayWsNonAdminCredentialManagementIsScopedToPrincipa
     EXPECT_EQ(adminSession->user->id, globalCredential->principal_user_id);
     ASSERT_TRUE(globalCredential->created_by);
     EXPECT_EQ(adminSession->user->id, *globalCredential->created_by);
-    EXPECT_TRUE(vh::protocols::s3::ObjectStore::credentialAllows(
+    EXPECT_FALSE(vh::protocols::s3::ObjectStore::credentialAllows(
         vh::protocols::s3::AuthContext{
             .user = adminSession->user,
             .credential = *globalCredential,
@@ -3594,6 +3598,14 @@ TEST(S3CostSafetyTest, S3GatewayCliScopeSetRetargetsPrincipalAndAuditsGlobalConv
     const auto ownerId = seedS3CostUserForDbTest(suffix, "owner");
     const auto credentialId = seedGatewayCredentialForDbTest(ownerId, suffix + "_owned");
     const auto router = s3GatewayShellRouterForDbTest();
+    const auto noAssignAdminUserId = seedS3CostVaultAdminUserForDbTest(suffix, "cli_no_assign");
+    const auto noAssignAdmin = dryRunActor(noAssignAdminUserId, vh::rbac::role::Admin::VaultAdmin(noAssignAdminUserId));
+    const auto denied = router->executeLine(
+        "s3-gateway creds create cli-no-assign-" + suffix + " --user " + std::to_string(ownerId),
+        noAssignAdmin);
+    EXPECT_NE(0, denied.exit_code);
+    EXPECT_NE(std::string::npos, denied.stderr_text.find("admin.s3_gateway.assign_principal"));
+
     const auto adminUserId = seedS3CostSuperAdminUserForDbTest(suffix, "scope_admin");
     const auto admin = dryRunActor(adminUserId, vh::rbac::role::Admin::SuperAdmin(adminUserId));
     const auto credentialArg = std::to_string(credentialId);
@@ -3609,7 +3621,7 @@ TEST(S3CostSafetyTest, S3GatewayCliScopeSetRetargetsPrincipalAndAuditsGlobalConv
     EXPECT_EQ(admin->id, updated->principal_user_id);
     ASSERT_TRUE(updated->created_by);
     EXPECT_EQ(admin->id, *updated->created_by);
-    EXPECT_TRUE(vh::protocols::s3::ObjectStore::credentialAllows(
+    EXPECT_FALSE(vh::protocols::s3::ObjectStore::credentialAllows(
         vh::protocols::s3::AuthContext{
             .user = admin,
             .credential = *updated,

@@ -3,6 +3,8 @@
 #include "db/Transactions.hpp"
 #include "db/encoding/bytea.hpp"
 #include "db/encoding/timestamp.hpp"
+#include "rbac/permission/Override.hpp"
+#include "rbac/role/Vault.hpp"
 
 #include <algorithm>
 #include <ctime>
@@ -61,6 +63,73 @@ CredentialVaultScope scopeFromRow(const pqxx::row& row) {
         .can_delete = row["can_delete"].as<bool>(),
         .can_admin = row["can_admin"].as<bool>()
     };
+}
+
+CredentialVaultRoleAssignment roleAssignmentFromRow(const pqxx::row& row) {
+    return {
+        .id = row["id"].as<uint32_t>(),
+        .credential_id = row["credential_id"].as<uint32_t>(),
+        .vault_id = row["vault_id"].as<uint32_t>(),
+        .vault_role_id = row["vault_role_id"].as<uint32_t>(),
+        .enabled = row["enabled"].as<bool>(),
+        .created_by = row["created_by"].as<std::optional<uint32_t>>(),
+        .created_at = ts(row, "created_at"),
+        .updated_at = ts(row, "updated_at")
+    };
+}
+
+uint32_t permissionIdForOverride(pqxx::work& txn, const ::vh::rbac::permission::Override& overrideRule) {
+    if (overrideRule.permission.id != 0) return overrideRule.permission.id;
+    if (overrideRule.permission.qualified_name.empty())
+        throw std::runtime_error("S3 gateway credential role override permission id is required");
+    const auto res = txn.exec(
+        "SELECT id FROM permission WHERE name = $1 LIMIT 1",
+        pqxx::params{overrideRule.permission.qualified_name});
+    if (res.empty())
+        throw std::runtime_error("S3 gateway credential role override permission is not registered: " +
+                                 overrideRule.permission.qualified_name);
+    return res.one_field().as<uint32_t>();
+}
+
+uint32_t credentialRoleAssignmentId(pqxx::work& txn, const uint32_t credentialId, const uint32_t vaultId) {
+    const auto res = txn.exec(
+        R"SQL(
+            SELECT id
+            FROM s3_gateway_credential_vault_role_assignment
+            WHERE credential_id = $1
+              AND vault_id = $2
+              AND enabled = TRUE
+        )SQL",
+        pqxx::params{credentialId, vaultId});
+    if (res.empty())
+        throw std::runtime_error("S3 gateway credential vault role assignment not found");
+    return res.one_field().as<uint32_t>();
+}
+
+pqxx::result credentialRoleOverrides(pqxx::work& txn, const uint32_t assignmentId) {
+    return txn.exec(
+        R"SQL(
+            SELECT
+                o.id                                      AS override_id,
+                o.gateway_credential_vault_role_id        AS assignment_id,
+                o.permission_id                           AS permission_id,
+                o.glob_path                               AS glob_path,
+                o.enabled                                 AS enabled,
+                o.effect                                  AS effect,
+                o.created_at                              AS created_at,
+                o.updated_at                              AS updated_at,
+
+                p.name                                    AS name,
+                p.description                             AS description,
+                p.category                                AS category,
+                p.bit_position                            AS bit_position
+            FROM s3_gateway_credential_vault_role_override o
+            INNER JOIN permission p
+                ON p.id = o.permission_id
+            WHERE o.gateway_credential_vault_role_id = $1
+            ORDER BY p.bit_position, o.glob_path
+        )SQL",
+        pqxx::params{assignmentId});
 }
 
 BucketBinding bucketFromRow(const pqxx::row& row) {
@@ -152,6 +221,15 @@ std::string notHiddenByActiveTrashSql(const std::string& vaultIdExpr, const std:
         "      WHERE live.vault_id = ft.vault_id AND live.path = ft.path"
         "    )"
         ")";
+}
+
+std::string roleNameForLegacyScope(const CredentialVaultScope& scope) {
+    if (scope.can_admin) return "manager";
+    if (scope.can_delete) return "manager";
+    if (scope.can_write) return "contributor";
+    if (scope.can_read) return "reader";
+    if (scope.can_list) return "guest";
+    return "implicit_deny";
 }
 }
 
@@ -273,12 +351,55 @@ std::vector<CredentialVaultScope> Gateway::listCredentialScopes(const uint32_t c
     });
 }
 
+void Gateway::upsertCredentialScope(const CredentialVaultScope& scope) {
+    if (scope.credential_id == 0) throw std::invalid_argument("S3 gateway credential scope requires credential_id");
+    if (scope.vault_id == 0) throw std::invalid_argument("S3 gateway credential scope requires vault_id");
+
+    Transactions::exec("S3Gateway::upsertCredentialScope", [&](pqxx::work& txn) {
+        txn.exec(
+            R"SQL(
+                INSERT INTO s3_gateway_credential_vault_scope
+                    (credential_id, vault_id, can_list, can_read, can_write, can_delete, can_admin)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                ON CONFLICT (credential_id, vault_id) DO UPDATE SET
+                    can_list = EXCLUDED.can_list,
+                    can_read = EXCLUDED.can_read,
+                    can_write = EXCLUDED.can_write,
+                    can_delete = EXCLUDED.can_delete,
+                    can_admin = EXCLUDED.can_admin
+            )SQL",
+            pqxx::params{
+                scope.credential_id,
+                scope.vault_id,
+                scope.can_list,
+                scope.can_read,
+                scope.can_write,
+                scope.can_delete,
+                scope.can_admin
+            });
+    });
+}
+
+bool Gateway::deleteCredentialScope(const uint32_t credentialId, const uint32_t vaultId) {
+    return Transactions::exec("S3Gateway::deleteCredentialScope", [&](pqxx::work& txn) {
+        return txn.exec(
+            R"SQL(
+                DELETE FROM s3_gateway_credential_vault_scope
+                WHERE credential_id = $1 AND vault_id = $2
+            )SQL",
+            pqxx::params{credentialId, vaultId}).affected_rows() > 0;
+    });
+}
+
 void Gateway::replaceCredentialScopes(
     const uint32_t credentialId,
     const std::vector<CredentialVaultScope>& scopes) {
     Transactions::exec("S3Gateway::replaceCredentialScopes", [&](pqxx::work& txn) {
         txn.exec(
             "DELETE FROM s3_gateway_credential_vault_scope WHERE credential_id = $1",
+            pqxx::params{credentialId});
+        txn.exec(
+            "DELETE FROM s3_gateway_credential_vault_role_assignment WHERE credential_id = $1",
             pqxx::params{credentialId});
         for (const auto& scope : scopes) {
             txn.exec(
@@ -302,6 +423,27 @@ void Gateway::replaceCredentialScopes(
                     scope.can_delete,
                     scope.can_admin
                 });
+            const auto roleName = roleNameForLegacyScope(scope);
+            const auto roleRes = txn.exec(
+                "SELECT id FROM vault_role WHERE name = $1 LIMIT 1",
+                pqxx::params{roleName});
+            if (roleRes.empty())
+                throw std::runtime_error("S3 gateway legacy scope role is not seeded: " + roleName);
+            txn.exec(
+                R"SQL(
+                    INSERT INTO s3_gateway_credential_vault_role_assignment
+                        (credential_id, vault_id, vault_role_id, enabled)
+                    VALUES ($1, $2, $3, TRUE)
+                    ON CONFLICT (credential_id, vault_id) DO UPDATE SET
+                        vault_role_id = EXCLUDED.vault_role_id,
+                        enabled = TRUE,
+                        updated_at = CURRENT_TIMESTAMP
+                )SQL",
+                pqxx::params{
+                    credentialId,
+                    scope.vault_id,
+                    roleRes.one_field().as<uint32_t>()
+                });
         }
     });
 }
@@ -315,6 +457,181 @@ std::optional<CredentialVaultScope> Gateway::getCredentialScopeForVault(
             pqxx::params{credentialId, vaultId});
         if (res.empty()) return std::nullopt;
         return scopeFromRow(res.one_row());
+    });
+}
+
+std::vector<CredentialVaultRoleAssignment> Gateway::listCredentialVaultRoleAssignments(const uint32_t credentialId) {
+    return Transactions::exec("S3Gateway::listCredentialVaultRoleAssignments", [&](pqxx::work& txn) {
+        const auto res = txn.exec(
+            R"SQL(
+                SELECT *
+                FROM s3_gateway_credential_vault_role_assignment
+                WHERE credential_id = $1
+                ORDER BY vault_id
+            )SQL",
+            pqxx::params{credentialId});
+        std::vector<CredentialVaultRoleAssignment> out;
+        out.reserve(res.size());
+        for (const auto& row : res) out.push_back(roleAssignmentFromRow(row));
+        return out;
+    });
+}
+
+uint32_t Gateway::upsertCredentialVaultRoleAssignment(const CredentialVaultRoleAssignmentInput& input) {
+    if (input.credential_id == 0) throw std::invalid_argument("S3 gateway credential role assignment requires credential_id");
+    if (input.vault_id == 0) throw std::invalid_argument("S3 gateway credential role assignment requires vault_id");
+    if (input.vault_role_id == 0) throw std::invalid_argument("S3 gateway credential role assignment requires vault_role_id");
+
+    return Transactions::exec("S3Gateway::upsertCredentialVaultRoleAssignment", [&](pqxx::work& txn) {
+        const auto res = txn.exec(
+            R"SQL(
+                INSERT INTO s3_gateway_credential_vault_role_assignment
+                    (credential_id, vault_id, vault_role_id, enabled, created_by)
+                VALUES ($1, $2, $3, $4, $5)
+                ON CONFLICT (credential_id, vault_id) DO UPDATE SET
+                    vault_role_id = EXCLUDED.vault_role_id,
+                    enabled = EXCLUDED.enabled,
+                    created_by = COALESCE(EXCLUDED.created_by, s3_gateway_credential_vault_role_assignment.created_by),
+                    updated_at = CURRENT_TIMESTAMP
+                RETURNING id
+            )SQL",
+            pqxx::params{
+                input.credential_id,
+                input.vault_id,
+                input.vault_role_id,
+                input.enabled,
+                input.created_by
+            });
+        const auto assignmentId = res.one_field().as<uint32_t>();
+        txn.exec(
+            "DELETE FROM s3_gateway_credential_vault_role_override WHERE gateway_credential_vault_role_id = $1",
+            pqxx::params{assignmentId});
+        for (const auto& overrideRule : input.overrides) {
+            txn.exec(
+                R"SQL(
+                    INSERT INTO s3_gateway_credential_vault_role_override
+                        (gateway_credential_vault_role_id, permission_id, glob_path, enabled, effect)
+                    VALUES ($1, $2, $3, $4, $5)
+                    ON CONFLICT (gateway_credential_vault_role_id, permission_id, glob_path)
+                    DO UPDATE SET
+                        enabled = EXCLUDED.enabled,
+                        effect = EXCLUDED.effect,
+                        updated_at = CURRENT_TIMESTAMP
+                )SQL",
+                pqxx::params{
+                    assignmentId,
+                    permissionIdForOverride(txn, overrideRule),
+                    overrideRule.glob_path(),
+                    overrideRule.enabled,
+                    ::vh::rbac::permission::to_string(overrideRule.effect)
+                });
+        }
+        return assignmentId;
+    });
+}
+
+bool Gateway::deleteCredentialVaultRoleAssignment(const uint32_t credentialId, const uint32_t vaultId) {
+    return Transactions::exec("S3Gateway::deleteCredentialVaultRoleAssignment", [&](pqxx::work& txn) {
+        return txn.exec(
+            R"SQL(
+                DELETE FROM s3_gateway_credential_vault_role_assignment
+                WHERE credential_id = $1 AND vault_id = $2
+            )SQL",
+            pqxx::params{credentialId, vaultId}).affected_rows() > 0;
+    });
+}
+
+std::vector<::vh::rbac::permission::Override> Gateway::listCredentialVaultRoleOverrides(
+    const uint32_t credentialId,
+    const uint32_t vaultId) {
+    return Transactions::exec("S3Gateway::listCredentialVaultRoleOverrides", [&](pqxx::work& txn) {
+        const auto assignmentId = credentialRoleAssignmentId(txn, credentialId, vaultId);
+        return ::vh::rbac::permission::permissionOverridesFromPqRes(credentialRoleOverrides(txn, assignmentId));
+    });
+}
+
+uint32_t Gateway::upsertCredentialVaultRoleOverride(
+    const uint32_t credentialId,
+    const uint32_t vaultId,
+    const ::vh::rbac::permission::Override& overrideRule) {
+    if (credentialId == 0) throw std::invalid_argument("S3 gateway credential role override requires credential_id");
+    if (vaultId == 0) throw std::invalid_argument("S3 gateway credential role override requires vault_id");
+
+    return Transactions::exec("S3Gateway::upsertCredentialVaultRoleOverride", [&](pqxx::work& txn) {
+        const auto assignmentId = credentialRoleAssignmentId(txn, credentialId, vaultId);
+        const auto permissionId = permissionIdForOverride(txn, overrideRule);
+        const auto res = txn.exec(
+            R"SQL(
+                INSERT INTO s3_gateway_credential_vault_role_override
+                    (gateway_credential_vault_role_id, permission_id, glob_path, enabled, effect)
+                VALUES ($1, $2, $3, $4, $5)
+                ON CONFLICT (gateway_credential_vault_role_id, permission_id, glob_path)
+                DO UPDATE SET
+                    enabled = EXCLUDED.enabled,
+                    effect = EXCLUDED.effect,
+                    updated_at = CURRENT_TIMESTAMP
+                RETURNING id
+            )SQL",
+            pqxx::params{
+                assignmentId,
+                permissionId,
+                overrideRule.glob_path(),
+                overrideRule.enabled,
+                ::vh::rbac::permission::to_string(overrideRule.effect)
+            });
+        return res.one_field().as<uint32_t>();
+    });
+}
+
+bool Gateway::deleteCredentialVaultRoleOverride(
+    const uint32_t credentialId,
+    const uint32_t vaultId,
+    const uint32_t overrideId) {
+    return Transactions::exec("S3Gateway::deleteCredentialVaultRoleOverride", [&](pqxx::work& txn) {
+        const auto assignmentId = credentialRoleAssignmentId(txn, credentialId, vaultId);
+        return txn.exec(
+            R"SQL(
+                DELETE FROM s3_gateway_credential_vault_role_override
+                WHERE id = $1
+                  AND gateway_credential_vault_role_id = $2
+            )SQL",
+            pqxx::params{overrideId, assignmentId}).affected_rows() > 0;
+    });
+}
+
+std::shared_ptr<::vh::rbac::role::Vault> Gateway::getCredentialVaultRoleForVault(
+    const uint32_t credentialId,
+    const uint32_t vaultId) {
+    return Transactions::exec("S3Gateway::getCredentialVaultRoleForVault", [&](pqxx::work& txn) -> std::shared_ptr<::vh::rbac::role::Vault> {
+        const auto res = txn.exec(
+            R"SQL(
+                SELECT
+                    a.id                              AS assignment_id,
+                    a.vault_id                        AS vault_id,
+                    'gateway_credential'              AS subject_type,
+                    a.credential_id                   AS subject_id,
+                    a.vault_role_id                   AS vault_role_id,
+                    a.created_at                      AS assigned_at,
+
+                    vr.name                           AS role_name,
+                    vr.description                    AS role_description,
+                    vr.created_at                     AS role_created_at,
+                    vr.updated_at                     AS role_updated_at,
+                    vr.files_permissions::bigint       AS files_permissions,
+                    vr.directories_permissions::bigint AS directories_permissions,
+                    vr.sync_permissions::bigint        AS sync_permissions,
+                    vr.roles_permissions::bigint       AS roles_permissions
+                FROM s3_gateway_credential_vault_role_assignment a
+                INNER JOIN vault_role vr
+                    ON vr.id = a.vault_role_id
+                WHERE a.credential_id = $1
+                  AND a.vault_id = $2
+                  AND a.enabled = TRUE
+            )SQL",
+            pqxx::params{credentialId, vaultId});
+        if (res.empty()) return nullptr;
+        const auto assignmentId = res.one_row()["assignment_id"].as<uint32_t>();
+        return std::make_shared<::vh::rbac::role::Vault>(res.one_row(), credentialRoleOverrides(txn, assignmentId));
     });
 }
 

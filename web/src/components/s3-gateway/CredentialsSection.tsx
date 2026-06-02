@@ -78,7 +78,10 @@ export function CredentialsSection({
               <tr key={credential.id} className={selectedCredential?.id === credential.id ? 'bg-cyan-400/10' : ''}>
                 <td className="px-3 py-2 font-medium text-white" data-testid="s3-gateway-credential-name">{credential.name}</td>
                 <td className="px-3 py-2 font-mono text-xs text-white/70">{credential.access_key}</td>
-                <td className="px-3 py-2 text-white/70">{credential.principal_user_id}</td>
+                <td className="px-3 py-2 text-white/70">
+                  {credential.principal_user?.name ?? credential.principal_user_id}
+                  {credential.principal_user?.email && <div className="text-xs text-white/40">{credential.principal_user.email}</div>}
+                </td>
                 <td className="px-3 py-2 text-white/70">{scopeLabel(credential.scope_mode)}</td>
                 <td className="px-3 py-2">{credential.enforce_budget_for_local_requests ? <CheckIcon className="h-4 w-4 text-emerald-300" /> : <XIcon className="h-4 w-4 text-white/30" />}</td>
                 <td className="px-3 py-2">{credential.enabled ? <CheckIcon className="h-4 w-4 text-emerald-300" /> : <XIcon className="h-4 w-4 text-red-300" />}</td>

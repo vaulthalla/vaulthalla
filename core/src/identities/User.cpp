@@ -139,6 +139,7 @@ namespace vh::identities {
     rbac::permission::admin::VaultGlobals &User::vaultGlobals() const { return roles.admin->vGlobals; }
     rbac::permission::admin::Vaults &User::vaultsPerms() const { return roles.admin->vaults; }
     rbac::permission::admin::keys::APIKeys &User::apiKeysPerms() const { return roles.admin->keys.apiKeys; }
+    rbac::permission::admin::S3Gateway &User::s3GatewayPerms() const { return roles.admin->s3Gateway; }
 
     rbac::permission::admin::keys::EncryptionKey &User::encryptionKeysPerms() const {
         return roles.admin->keys.encryptionKeys;

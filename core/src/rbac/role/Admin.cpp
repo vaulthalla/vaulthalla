@@ -26,6 +26,8 @@ namespace vh::rbac::role {
               row["roles_permissions"].as<uint64_t>())),
           keys(static_cast<typename decltype(keys)::Mask>(
               row["keys_permissions"].as<uint64_t>())),
+          s3Gateway(static_cast<typename decltype(s3Gateway)::Mask>(
+              try_get<uint64_t>(row, "s3_gateway_permissions").value_or(0))),
           vGlobals(globalVaultRoles) {
         if (const auto id = try_get<uint32_t>(row, "user_id")) user_id = *id;
     }
@@ -41,7 +43,9 @@ namespace vh::rbac::role {
           roles(static_cast<typename decltype(roles)::Mask>(
               row["roles_permissions"].as<uint64_t>())),
           keys(static_cast<typename decltype(keys)::Mask>(
-              row["keys_permissions"].as<uint64_t>())) {
+              row["keys_permissions"].as<uint64_t>())),
+          s3Gateway(static_cast<typename decltype(s3Gateway)::Mask>(
+              try_get<uint64_t>(row, "s3_gateway_permissions").value_or(0))) {
         if (const auto id = try_get<uint32_t>(row, "user_id")) user_id = *id;
     }
 
@@ -99,6 +103,7 @@ namespace vh::rbac::role {
         auto settingsFlags = settings.getFlags();
         auto rolesFlags = roles.getFlags();
         auto keysFlags = keys.getFlags();
+        auto s3GatewayFlags = s3Gateway.getFlags();
 
         std::vector<std::string> flags;
         flags.reserve(
@@ -107,7 +112,8 @@ namespace vh::rbac::role {
             auditsFlags.size() +
             settingsFlags.size() +
             rolesFlags.size() +
-            keysFlags.size()
+            keysFlags.size() +
+            s3GatewayFlags.size()
         );
 
         auto append = [&](auto &src) { std::move(src.begin(), src.end(), std::back_inserter(flags)); };
@@ -118,6 +124,7 @@ namespace vh::rbac::role {
         append(settingsFlags);
         append(rolesFlags);
         append(keysFlags);
+        append(s3GatewayFlags);
 
         return flags;
     }
@@ -129,6 +136,7 @@ namespace vh::rbac::role {
         auto settingsPerms = settings.exportPermissions();
         auto rolesPerms = roles.exportPermissions();
         auto keysPerms = keys.exportPermissions();
+        auto s3GatewayPerms = s3Gateway.exportPermissions();
 
         std::vector<permission::Permission> perms;
         perms.reserve(
@@ -137,7 +145,8 @@ namespace vh::rbac::role {
             auditsPerms.size() +
             settingsPerms.size() +
             rolesPerms.size() +
-            keysPerms.size()
+            keysPerms.size() +
+            s3GatewayPerms.size()
         );
 
         auto appendMoved = [&](auto &exportResult) {
@@ -151,6 +160,7 @@ namespace vh::rbac::role {
         appendMoved(settingsPerms);
         appendMoved(rolesPerms);
         appendMoved(keysPerms);
+        appendMoved(s3GatewayPerms);
 
         return perms;
     }
@@ -158,7 +168,7 @@ namespace vh::rbac::role {
     std::string Admin::toFlagsString() const {
         return identities.toFlagsString() + " " + vaults.toFlagsString() + " " + audits.toFlagsString() + " " + settings
                .toFlagsString() + " " +
-               roles.toFlagsString() + " " + keys.toFlagsString();
+               roles.toFlagsString() + " " + keys.toFlagsString() + " " + s3Gateway.toFlagsString();
     }
 
     Admin Admin::fromJson(const nlohmann::json &j) { return Admin(j); }
@@ -174,6 +184,7 @@ namespace vh::rbac::role {
         j = static_cast<const Meta &>(a);
         j["user_id"] = a.user_id;
         j["permissions"] = a.toPermissions();
+        j["s3_gateway"] = a.s3Gateway;
     }
 
     void from_json(const nlohmann::json &j, Admin &a) { a = Admin(j); }
@@ -200,7 +211,8 @@ namespace vh::rbac::role {
                 << audits.toString(i)
                 << settings.toString(i)
                 << roles.toString(i)
-                << keys.toString(i);
+                << keys.toString(i)
+                << s3Gateway.toString(i);
         return oss.str();
     }
 

@@ -1,6 +1,6 @@
 ---
 title: S3 Gateway Credentials And Scopes
-description: Manage inbound gateway credentials, scope modes, vault allowlists, and per-vault action flags for downstream S3 clients.
+description: Manage inbound gateway credentials, effective principals, vault roles, and path overrides for downstream S3 clients.
 order: 30
 status: published
 tags:
@@ -28,33 +28,40 @@ The gateway secret access key is shown only when created. It is encrypted at res
 
 ## Scope Modes
 
-Gateway credentials authenticate as an effective Vaulthalla principal user. The principal's normal RBAC must allow the action, and the credential scope must also allow it.
+Gateway credentials authenticate as an effective Vaulthalla principal user. The principal's normal RBAC must allow the action, and the gateway credential's own vault role assignment must also allow it.
 
 ```text
 allowed = principal RBAC allows the action
-          and credential scope allows the bucket/vault/action
+          and credential vault role allows the bucket/vault/path/action
           and gateway budget preflight allows estimated cost
 ```
 
 | Scope | Behavior |
 | --- | --- |
-| `user_access` | The key can access gateway buckets that the principal user can already access through normal Vaulthalla RBAC. |
-| `vault_allowlist` | The key can access only listed vaults, with independent per-vault action flags. |
+| `user_access` | The key defaults to no gateway vault-role assignments. Grant explicit credential roles before using it for bucket/object access. |
+| `vault_allowlist` | The key can access only listed vaults with gateway credential vault-role assignments and optional path overrides. Legacy `--list --read --write --delete --admin` shorthands are converted into role assignments. |
 | `global` | Admin-created service credential for all gateway bucket bindings, still audited and tied to an admin principal. |
 
-## Per-Vault Flags
+:::callout[Secure default]{theme="warning"}
+Existing boolean scope rows are migrated into gateway credential vault-role assignments where possible. Credentials without a migrated or explicit role assignment are denied by default, even when the principal user has normal vault access.
+:::
 
-`vault_allowlist` rows can grant these gateway actions per vault:
+## Vault Roles And Overrides
 
-| Flag | S3 Gateway operations |
+Each gateway credential can have one enabled vault-role assignment per vault. The assigned vault role uses the same filesystem permission model as ordinary Vaulthalla vault roles, and optional path/glob overrides can allow or deny individual filesystem permissions.
+
+| S3 action | RBAC-style permission gate |
 | --- | --- |
-| `list` | List buckets and objects. |
-| `read` | HEAD, GET, and metadata reads. |
-| `write` | PUT, COPY destination writes, and multipart upload writes. |
-| `delete` | Object delete and multi-delete. |
-| `admin` | Bucket bind, unbind, create, delete, and administration paths. |
+| List buckets, head bucket, list objects | Vault list permission on the bucket root or requested prefix. |
+| HEAD/GET object and copy source | Vault read permission on the object path. |
+| PUT, copy destination, multipart write/complete | Vault write or overwrite permission on the object path. |
+| Delete object and multi-delete | Vault delete permission on each object path. |
 
-Scope flags never replace RBAC. A key that lists a vault still cannot access that vault unless the principal user has matching Vaulthalla permissions.
+Deny overrides win over role grants. The principal user's normal RBAC is always evaluated separately, so a gateway key role cannot widen the user's own Vaulthalla authority.
+
+## Principal Assignment
+
+Non-admin users can create gateway credentials only for themselves. Creating or updating a credential whose principal differs from the actor requires the explicit `admin.s3_gateway.assign_principal` permission; super-admins have it through the built-in full S3 Gateway permission set.
 
 ## CLI Examples
 
@@ -94,6 +101,25 @@ vh s3-gateway creds scope backup revoke-vault archive
 vh s3-gateway creds revoke VH...
 ```
 
+The `allow-vault` shorthand is a compatibility path. At save time, Vaulthalla converts it into a gateway credential vault-role assignment such as `reader`, `contributor`, or `manager`.
+
+Assign explicit gateway credential vault roles and path overrides:
+
+```bash
+vh s3-gateway creds role assign backup --vault archive --role reader
+vh s3-gateway creds role list backup
+vh s3-gateway creds role override add backup \
+  --vault archive \
+  --pattern "/exports/private/*" \
+  --permission download \
+  --effect deny
+vh s3-gateway creds role override list backup --vault archive
+vh s3-gateway creds role override remove backup --vault archive 42
+vh s3-gateway creds role revoke backup --vault archive
+```
+
+The role commands write `s3_gateway_credential_vault_role_assignment` and `s3_gateway_credential_vault_role_override` rows directly. They also keep the deprecated boolean scope row aligned for older scope display commands, but request authorization uses the role assignment and override tables.
+
 Local/cache budget accounting is off by default. Enable it only when a gateway credential should consume key budgets for pure local buckets, metadata-only requests, cache hits, and sync-deferred local-first writes/deletes:
 
 ```bash
@@ -107,9 +133,9 @@ vh s3-gateway creds scope backup set --no-enforce-budget-for-local-requests
 In Admin -> S3 Gateway:
 
 1. Open the credentials section.
-2. Create a credential and choose the effective user, description, expiry, and scope mode.
+2. Create a credential and choose the effective principal, description, expiry, and scope mode.
 3. Copy the secret access key immediately; it is revealed only once.
-4. For `vault_allowlist`, select vaults and action flags.
+4. For `vault_allowlist`, select vaults and vault roles.
 5. Save scope edits after changing mode, user, expiry, description, or local budget enforcement.
 6. Revoke keys that should no longer authenticate downstream S3 clients.
 

@@ -1,12 +1,17 @@
 #pragma once
 
+#include "rbac/permission/Override.hpp"
+
 #include <cstdint>
 #include <ctime>
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
+
+namespace vh::rbac::role { struct Vault; }
 
 namespace vh::db::query::s3 {
 
@@ -36,6 +41,26 @@ struct CredentialVaultScope {
     bool can_write{false};
     bool can_delete{false};
     bool can_admin{false};
+};
+
+struct CredentialVaultRoleAssignment {
+    uint32_t id{};
+    uint32_t credential_id{};
+    uint32_t vault_id{};
+    uint32_t vault_role_id{};
+    bool enabled{true};
+    std::optional<uint32_t> created_by;
+    std::time_t created_at{};
+    std::time_t updated_at{};
+};
+
+struct CredentialVaultRoleAssignmentInput {
+    uint32_t credential_id{};
+    uint32_t vault_id{};
+    uint32_t vault_role_id{};
+    bool enabled{true};
+    std::optional<uint32_t> created_by;
+    std::vector<::vh::rbac::permission::Override> overrides{};
 };
 
 struct BucketBinding {
@@ -110,8 +135,17 @@ public:
     static bool deleteCredentialByName(uint32_t userId, const std::string& name);
     static void updateCredentialLastUsed(uint32_t id);
     static std::vector<CredentialVaultScope> listCredentialScopes(uint32_t credentialId);
+    static void upsertCredentialScope(const CredentialVaultScope& scope);
+    static bool deleteCredentialScope(uint32_t credentialId, uint32_t vaultId);
     static void replaceCredentialScopes(uint32_t credentialId, const std::vector<CredentialVaultScope>& scopes);
     static std::optional<CredentialVaultScope> getCredentialScopeForVault(uint32_t credentialId, uint32_t vaultId);
+    static std::vector<CredentialVaultRoleAssignment> listCredentialVaultRoleAssignments(uint32_t credentialId);
+    static uint32_t upsertCredentialVaultRoleAssignment(const CredentialVaultRoleAssignmentInput& input);
+    static bool deleteCredentialVaultRoleAssignment(uint32_t credentialId, uint32_t vaultId);
+    static std::vector<::vh::rbac::permission::Override> listCredentialVaultRoleOverrides(uint32_t credentialId, uint32_t vaultId);
+    static uint32_t upsertCredentialVaultRoleOverride(uint32_t credentialId, uint32_t vaultId, const ::vh::rbac::permission::Override& overrideRule);
+    static bool deleteCredentialVaultRoleOverride(uint32_t credentialId, uint32_t vaultId, uint32_t overrideId);
+    static std::shared_ptr<::vh::rbac::role::Vault> getCredentialVaultRoleForVault(uint32_t credentialId, uint32_t vaultId);
     static void updateCredentialScopeMode(
         uint32_t credentialId,
         const std::string& scopeMode,

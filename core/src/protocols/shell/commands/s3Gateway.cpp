@@ -2,6 +2,8 @@
 
 #include "config/Registry.hpp"
 #include "db/query/fs/File.hpp"
+#include "db/query/rbac/Permission.hpp"
+#include "db/query/rbac/role/Vault.hpp"
 #include "db/query/s3/Gateway.hpp"
 #include "db/query/vault/APIKey.hpp"
 #include "db/query/vault/Vault.hpp"
@@ -12,7 +14,12 @@
 #include "protocols/shell/Router.hpp"
 #include "protocols/shell/Table.hpp"
 #include "protocols/shell/commands/helpers.hpp"
+#include "protocols/shell/commands/vault.hpp"
 #include "protocols/shell/util/argsHelpers.hpp"
+#include "rbac/permission/admin/Vaults.hpp"
+#include "rbac/permission/vault/Roles.hpp"
+#include "rbac/resolver/admin/all.hpp"
+#include "rbac/resolver/vault/all.hpp"
 #include "runtime/Deps.hpp"
 #include "runtime/Manager.hpp"
 #include "storage/Engine.hpp"
@@ -131,6 +138,93 @@ std::vector<db::query::s3::CredentialVaultScope> scopesFromVaultOptions(const Co
         });
     }
     return scopes;
+}
+
+db::query::s3::CredentialVaultScope scopeFromVaultRole(
+    const uint32_t credentialId,
+    const uint32_t vaultId,
+    const std::shared_ptr<::vh::rbac::role::Vault>& role) {
+    if (!role) throw std::runtime_error("s3-gateway creds role: role not found");
+    return {
+        .credential_id = credentialId,
+        .vault_id = vaultId,
+        .can_list = role->directories().canList(),
+        .can_read = role->files().canDownload() || role->directories().canDownload(),
+        .can_write = role->files().canUpload() || role->files().canOverwrite() ||
+                     role->directories().canUpload() || role->directories().canTouch(),
+        .can_delete = role->files().canDelete() || role->directories().canDelete(),
+        .can_admin = role->rolesPerms().canAssign() || role->rolesPerms().canModify() ||
+                     role->rolesPerms().canRevoke()
+    };
+}
+
+std::optional<CommandResult> validateGatewayCredentialRoleMutation(
+    const CommandCall& call,
+    const db::query::s3::GatewayCredential& credential,
+    const db::query::s3::CredentialVaultScope& scope) {
+    try {
+        protocols::s3::CredentialManager::validateScopeMutation(
+            call.user->id,
+            credential.principal_user_id,
+            "vault_allowlist",
+            {scope});
+    } catch (const std::exception& e) {
+        return invalid(e.what());
+    }
+    return std::nullopt;
+}
+
+std::optional<CommandResult> requireGatewayCredentialVaultRolePermission(
+    const CommandCall& call,
+    const db::query::s3::GatewayCredential& credential,
+    const uint32_t vaultId,
+    const ::vh::rbac::permission::vault::RolePermissions permission,
+    const std::string& action) {
+    if (!::vh::rbac::resolver::Vault::has<::vh::rbac::permission::vault::RolePermissions>({
+        .user = call.user,
+        .permission = permission,
+        .target_subject_type = std::string("user"),
+        .target_subject_id = credential.principal_user_id,
+        .vault_id = vaultId
+    }))
+        return invalid("s3-gateway creds role " + action + ": you do not have vault role permission for this principal and vault");
+    return std::nullopt;
+}
+
+std::shared_ptr<::vh::rbac::permission::Permission> resolveGatewayOverridePermission(
+    const CommandCall& call,
+    const std::string& errPrefix) {
+    auto value = optVal(call, "permission");
+    if (!value || value->empty()) value = optVal(call, "perm");
+    if (!value || value->empty()) throw std::runtime_error(errPrefix + ": --permission is required");
+
+    if (const auto id = parseUInt(*value))
+        return db::query::rbac::Permission::getPermission(*id);
+
+    const auto direct = *value;
+    std::vector<std::string> candidates{direct};
+    if (direct.find('.') == std::string::npos) {
+        candidates.push_back("vault.fs.files." + direct);
+        candidates.push_back("vault.fs.directories." + direct);
+    }
+    for (const auto& candidate : candidates) {
+        try {
+            return db::query::rbac::Permission::getPermissionByName(candidate);
+        } catch (const std::exception&) {
+        }
+    }
+    throw std::runtime_error(errPrefix + ": permission not found '" + direct + "'");
+}
+
+::vh::rbac::permission::OverrideOpt resolveGatewayOverrideEffect(const CommandCall& call, const std::string& errPrefix) {
+    const auto parsed = ::vh::protocols::shell::commands::vault::parseEffectChangeOpt(call, errPrefix);
+    if (!parsed.ok) throw std::runtime_error(parsed.error);
+    if (parsed.value) return *parsed.value;
+
+    if (const auto value = optVal(call, "effect"); value && !value->empty())
+        return ::vh::rbac::permission::overrideOptFromString(*value);
+
+    throw std::runtime_error(errPrefix + ": --effect allow|deny is required");
 }
 
 std::string gwValueOrDash(const std::optional<std::string>& value) {
@@ -315,6 +409,16 @@ std::optional<CommandResult> requireAdminCommand(const CommandCall& call, const 
     if (!call.user || !call.user->isAdmin())
         return invalid("s3-gateway " + action + ": admin permission is required");
     return std::nullopt;
+}
+
+bool canCreateVaultForOwner(const CommandCall& call, const std::uint32_t ownerId) {
+    if (!call.user) return false;
+    using Perm = vh::rbac::permission::admin::VaultPermissions;
+    return vh::rbac::resolver::Admin::has<Perm>({
+        .user = call.user,
+        .permission = Perm::Create,
+        .target_user_id = ownerId
+    });
 }
 
 CommandResult handleS3GatewayStatus(const CommandCall& call) {
@@ -614,6 +718,313 @@ CommandResult handleCredsScope(const CommandCall& call) {
     return invalid(call.constructFullArgs(), "Unknown s3-gateway creds scope action: '" + action + "'");
 }
 
+std::string renderCredentialRoleAssignments(const db::query::s3::GatewayCredential& credential) {
+    std::ostringstream out;
+    out << "S3 gateway credential vault roles\n";
+    out << "  name: " << credential.name << "\n";
+    out << "  access key: " << credential.access_key << "\n";
+    out << "  principal: " << credential.principal_user_id << "\n";
+    const auto assignments = db::query::s3::Gateway::listCredentialVaultRoleAssignments(credential.id);
+    if (assignments.empty()) {
+        out << "  roles: none\n";
+        return out.str();
+    }
+
+    Table table({
+        {"Vault", Align::Right, 2, 8, false, false},
+        {"Vault Name", Align::Left, 6, 24, false, false},
+        {"Role", Align::Right, 2, 8, false, false},
+        {"Role Name", Align::Left, 6, 24, false, false},
+        {"Enabled", Align::Left, 3, 7, false, false},
+        {"Overrides", Align::Right, 1, 9, false, false}
+    });
+    for (const auto& assignment : assignments) {
+        const auto vault = db::query::vault::Vault::getVault(assignment.vault_id);
+        const auto role = db::query::rbac::role::Vault::get(assignment.vault_role_id);
+        std::size_t overrideCount = 0;
+        try {
+            overrideCount = db::query::s3::Gateway::listCredentialVaultRoleOverrides(
+                credential.id,
+                assignment.vault_id).size();
+        } catch (const std::exception&) {
+        }
+        table.add_row({
+            std::to_string(assignment.vault_id),
+            vault ? vault->name : "-",
+            std::to_string(assignment.vault_role_id),
+            role ? role->name : "-",
+            yesNo(assignment.enabled),
+            std::to_string(overrideCount)
+        });
+    }
+    out << table.render();
+    return out.str();
+}
+
+CommandResult handleCredsRoleList(const CommandCall& call) {
+    if (call.positionals.empty()) return usage(call.constructFullArgs());
+    const auto credential = resolveCredentialForCaller(call, call.positionals[0]);
+    if (!credential) return invalid("s3-gateway creds role list: credential not found");
+    if (!call.user->isAdmin() && credential->principal_user_id != call.user->id)
+        return invalid("s3-gateway creds role list: permission denied");
+
+    const auto assignments = db::query::s3::Gateway::listCredentialVaultRoleAssignments(credential->id);
+    if (hasFlag(call, "json")) {
+        nlohmann::json rows = nlohmann::json::array();
+        for (const auto& assignment : assignments) {
+            const auto vault = db::query::vault::Vault::getVault(assignment.vault_id);
+            const auto role = db::query::rbac::role::Vault::get(assignment.vault_role_id);
+            rows.push_back({
+                {"id", assignment.id},
+                {"credential_id", assignment.credential_id},
+                {"vault_id", assignment.vault_id},
+                {"vault", vault ? nlohmann::json{{"id", vault->id}, {"name", vault->name}} : nlohmann::json(nullptr)},
+                {"vault_role_id", assignment.vault_role_id},
+                {"role", role ? nlohmann::json{{"id", role->id}, {"name", role->name}, {"description", role->description}} : nlohmann::json(nullptr)},
+                {"enabled", assignment.enabled},
+                {"created_by", assignment.created_by ? nlohmann::json(*assignment.created_by) : nlohmann::json(nullptr)},
+                {"created_at", assignment.created_at},
+                {"updated_at", assignment.updated_at}
+            });
+        }
+        return ok(nlohmann::json{
+            {"credential_id", credential->id},
+            {"roles", rows}
+        }.dump(4) + "\n");
+    }
+    return ok(renderCredentialRoleAssignments(*credential));
+}
+
+CommandResult handleCredsRoleAssign(const CommandCall& call) {
+    if (call.positionals.empty()) return usage(call.constructFullArgs());
+    const auto credential = resolveCredentialForCaller(call, call.positionals[0]);
+    if (!credential) return invalid("s3-gateway creds role assign: credential not found");
+    if (!call.user->isAdmin() && credential->principal_user_id != call.user->id)
+        return invalid("s3-gateway creds role assign: permission denied");
+
+    const auto vaultValue = optVal(call, "vault").value_or("");
+    const auto roleValue = optVal(call, "role").value_or("");
+    if (vaultValue.empty()) return invalid("s3-gateway creds role assign: --vault is required");
+    if (roleValue.empty()) return invalid("s3-gateway creds role assign: --role is required");
+
+    const auto vault = resolveVaultArg(call, vaultValue);
+    const auto role = resolveVaultRole(roleValue, "s3-gateway creds role assign");
+    if (!role) return invalid(role.error);
+
+    const auto scope = scopeFromVaultRole(credential->id, vault->id, role.ptr);
+    if (const auto err = validateGatewayCredentialRoleMutation(call, *credential, scope)) return *err;
+    if (const auto err = requireGatewayCredentialVaultRolePermission(
+            call,
+            *credential,
+            vault->id,
+            ::vh::rbac::permission::vault::RolePermissions::Assign,
+            "assign")) return *err;
+
+    db::query::s3::Gateway::updateCredentialScopeMode(
+        credential->id,
+        "vault_allowlist",
+        credential->principal_user_id,
+        credential->created_by,
+        credential->description,
+        credential->expires_at);
+    const auto assignmentId = db::query::s3::Gateway::upsertCredentialVaultRoleAssignment({
+        .credential_id = credential->id,
+        .vault_id = vault->id,
+        .vault_role_id = role.ptr->id,
+        .enabled = true,
+        .created_by = call.user->id
+    });
+    db::query::s3::Gateway::upsertCredentialScope(scope);
+
+    if (hasFlag(call, "json")) {
+        return ok(nlohmann::json{
+            {"id", assignmentId},
+            {"credential_id", credential->id},
+            {"vault_id", vault->id},
+            {"vault_role_id", role.ptr->id},
+            {"role", {{"id", role.ptr->id}, {"name", role.ptr->name}}},
+            {"vault", {{"id", vault->id}, {"name", vault->name}}}
+        }.dump(4) + "\n");
+    }
+    return ok("Assigned role '" + role.ptr->name + "' to S3 gateway credential '" + credential->name +
+              "' for vault '" + vault->name + "'.\n");
+}
+
+CommandResult handleCredsRoleRevoke(const CommandCall& call) {
+    if (call.positionals.empty()) return usage(call.constructFullArgs());
+    const auto credential = resolveCredentialForCaller(call, call.positionals[0]);
+    if (!credential) return invalid("s3-gateway creds role revoke: credential not found");
+    if (!call.user->isAdmin() && credential->principal_user_id != call.user->id)
+        return invalid("s3-gateway creds role revoke: permission denied");
+
+    const auto vaultValue = optVal(call, "vault").value_or("");
+    if (vaultValue.empty()) return invalid("s3-gateway creds role revoke: --vault is required");
+    const auto vault = resolveVaultArg(call, vaultValue);
+
+    try {
+        protocols::s3::CredentialManager::validateScopeMutation(
+            call.user->id,
+            credential->principal_user_id,
+            "vault_allowlist",
+            {});
+    } catch (const std::exception& e) {
+        return invalid(e.what());
+    }
+    if (const auto err = requireGatewayCredentialVaultRolePermission(
+            call,
+            *credential,
+            vault->id,
+            ::vh::rbac::permission::vault::RolePermissions::Revoke,
+            "revoke")) return *err;
+
+    const auto removedRole = db::query::s3::Gateway::deleteCredentialVaultRoleAssignment(credential->id, vault->id);
+    db::query::s3::Gateway::deleteCredentialScope(credential->id, vault->id);
+    if (!removedRole) return invalid("s3-gateway creds role revoke: assignment not found");
+    return ok("Revoked S3 gateway credential role for vault '" + vault->name + "'.\n");
+}
+
+CommandResult handleCredsRoleOverrideList(const CommandCall& call) {
+    if (call.positionals.empty()) return usage(call.constructFullArgs());
+    const auto credential = resolveCredentialForCaller(call, call.positionals[0]);
+    if (!credential) return invalid("s3-gateway creds role override list: credential not found");
+    if (!call.user->isAdmin() && credential->principal_user_id != call.user->id)
+        return invalid("s3-gateway creds role override list: permission denied");
+
+    const auto vaultValue = optVal(call, "vault").value_or("");
+    if (vaultValue.empty()) return invalid("s3-gateway creds role override list: --vault is required");
+    const auto vault = resolveVaultArg(call, vaultValue);
+    if (const auto err = requireGatewayCredentialVaultRolePermission(
+            call,
+            *credential,
+            vault->id,
+            ::vh::rbac::permission::vault::RolePermissions::ViewOverride,
+            "override list")) return *err;
+
+    const auto overrides = db::query::s3::Gateway::listCredentialVaultRoleOverrides(credential->id, vault->id);
+    if (hasFlag(call, "json")) {
+        nlohmann::json rows = overrides;
+        return ok(nlohmann::json{
+            {"credential_id", credential->id},
+            {"vault_id", vault->id},
+            {"overrides", rows}
+        }.dump(4) + "\n");
+    }
+    return ok(::vh::rbac::permission::to_string(overrides) + "\n");
+}
+
+CommandResult handleCredsRoleOverrideAdd(const CommandCall& call) {
+    if (call.positionals.empty()) return usage(call.constructFullArgs());
+    const auto credential = resolveCredentialForCaller(call, call.positionals[0]);
+    if (!credential) return invalid("s3-gateway creds role override add: credential not found");
+    if (!call.user->isAdmin() && credential->principal_user_id != call.user->id)
+        return invalid("s3-gateway creds role override add: permission denied");
+
+    const auto vaultValue = optVal(call, "vault").value_or("");
+    if (vaultValue.empty()) return invalid("s3-gateway creds role override add: --vault is required");
+    const auto vault = resolveVaultArg(call, vaultValue);
+
+    if (const auto err = requireGatewayCredentialVaultRolePermission(
+            call,
+            *credential,
+            vault->id,
+            ::vh::rbac::permission::vault::RolePermissions::AssignOverride,
+            "override add")) return *err;
+
+    const auto pattern = ::vh::protocols::shell::commands::vault::parseGlobPatternOpt(
+        call,
+        true,
+        "s3-gateway creds role override add");
+    if (!pattern.ok) return invalid(pattern.error);
+    const auto enabled = ::vh::protocols::shell::commands::vault::parseEnableDisableOpt(
+        call,
+        "s3-gateway creds role override add");
+    if (!enabled.ok) return invalid(enabled.error);
+
+    ::vh::rbac::permission::Override overrideRule;
+    try {
+        overrideRule.permission = *resolveGatewayOverridePermission(call, "s3-gateway creds role override add");
+        overrideRule.effect = resolveGatewayOverrideEffect(call, "s3-gateway creds role override add");
+    } catch (const std::exception& e) {
+        return invalid(e.what());
+    }
+    overrideRule.enabled = enabled.value.value_or(true);
+    overrideRule.pattern = *pattern.pattern;
+
+    const auto id = db::query::s3::Gateway::upsertCredentialVaultRoleOverride(
+        credential->id,
+        vault->id,
+        overrideRule);
+    if (hasFlag(call, "json")) {
+        return ok(nlohmann::json{
+            {"id", id},
+            {"credential_id", credential->id},
+            {"vault_id", vault->id},
+            {"permission", overrideRule.permission.qualified_name},
+            {"pattern", overrideRule.glob_path()},
+            {"effect", ::vh::rbac::permission::to_string(overrideRule.effect)},
+            {"enabled", overrideRule.enabled}
+        }.dump(4) + "\n");
+    }
+    return ok("Added S3 gateway credential role override " + std::to_string(id) + ".\n");
+}
+
+CommandResult handleCredsRoleOverrideRemove(const CommandCall& call) {
+    if (call.positionals.empty()) return usage(call.constructFullArgs());
+    const auto credential = resolveCredentialForCaller(call, call.positionals[0]);
+    if (!credential) return invalid("s3-gateway creds role override remove: credential not found");
+    if (!call.user->isAdmin() && credential->principal_user_id != call.user->id)
+        return invalid("s3-gateway creds role override remove: permission denied");
+
+    const auto vaultValue = optVal(call, "vault").value_or("");
+    const auto overrideValue = optVal(call, "id").value_or(call.positionals.size() >= 2 ? call.positionals[1] : "");
+    if (vaultValue.empty()) return invalid("s3-gateway creds role override remove: --vault is required");
+    if (overrideValue.empty()) return invalid("s3-gateway creds role override remove: override id is required");
+    const auto overrideId = parseUInt(overrideValue);
+    if (!overrideId) return invalid("s3-gateway creds role override remove: override id must be a positive integer");
+
+    const auto vault = resolveVaultArg(call, vaultValue);
+    if (const auto err = requireGatewayCredentialVaultRolePermission(
+            call,
+            *credential,
+            vault->id,
+            ::vh::rbac::permission::vault::RolePermissions::RevokeOverride,
+            "override remove")) return *err;
+
+    if (!db::query::s3::Gateway::deleteCredentialVaultRoleOverride(credential->id, vault->id, *overrideId))
+        return invalid("s3-gateway creds role override remove: override not found");
+    return ok("Removed S3 gateway credential role override " + std::to_string(*overrideId) + ".\n");
+}
+
+CommandResult handleCredsRoleOverride(const CommandCall& call) {
+    if (call.positionals.empty() || hasKey(call, "help") || hasKey(call, "h"))
+        return usage(call.constructFullArgs());
+
+    const auto [sub, subcall] = descend(call);
+    if (isCommandMatch({"s3-gateway", "creds", "role", "override", "add"}, sub) || sub == "add")
+        return handleCredsRoleOverrideAdd(subcall);
+    if (isCommandMatch({"s3-gateway", "creds", "role", "override", "list"}, sub) || sub == "list")
+        return handleCredsRoleOverrideList(subcall);
+    if (isCommandMatch({"s3-gateway", "creds", "role", "override", "remove"}, sub) || sub == "remove")
+        return handleCredsRoleOverrideRemove(subcall);
+    return invalid(call.constructFullArgs(), "Unknown s3-gateway creds role override action: '" + std::string(sub) + "'");
+}
+
+CommandResult handleCredsRole(const CommandCall& call) {
+    if (call.positionals.empty() || hasKey(call, "help") || hasKey(call, "h"))
+        return usage(call.constructFullArgs());
+
+    const auto [sub, subcall] = descend(call);
+    if (isCommandMatch({"s3-gateway", "creds", "role", "assign"}, sub) || sub == "assign")
+        return handleCredsRoleAssign(subcall);
+    if (isCommandMatch({"s3-gateway", "creds", "role", "revoke"}, sub) || sub == "revoke")
+        return handleCredsRoleRevoke(subcall);
+    if (isCommandMatch({"s3-gateway", "creds", "role", "list"}, sub) || sub == "list")
+        return handleCredsRoleList(subcall);
+    if (isCommandMatch({"s3-gateway", "creds", "role", "override"}, sub) || sub == "override")
+        return handleCredsRoleOverride(subcall);
+    return invalid(call.constructFullArgs(), "Unknown s3-gateway creds role subcommand: '" + std::string(sub) + "'");
+}
+
 CommandResult handleCreds(const CommandCall& call) {
     if (call.positionals.empty() || hasKey(call, "help") || hasKey(call, "h"))
         return usage(call.constructFullArgs());
@@ -623,6 +1034,7 @@ CommandResult handleCreds(const CommandCall& call) {
     if (isCommandMatch({"s3-gateway", "creds", "list"}, sub)) return handleCredsList(subcall);
     if (isCommandMatch({"s3-gateway", "creds", "revoke"}, sub)) return handleCredsRevoke(subcall);
     if (isCommandMatch({"s3-gateway", "creds", "scope"}, sub) || sub == "scope") return handleCredsScope(subcall);
+    if (isCommandMatch({"s3-gateway", "creds", "role"}, sub) || sub == "role") return handleCredsRole(subcall);
     return invalid(call.constructFullArgs(), "Unknown s3-gateway creds subcommand: '" + std::string(sub) + "'");
 }
 
@@ -695,7 +1107,7 @@ CommandResult handleBucketCreateLocal(const CommandCall& call) {
         quota = quotaParser.quota;
     }
     protocols::s3::ObjectStore store;
-    const auto bucket = store.createBucket(call.positionals[0], owner, "local", quota);
+    const auto bucket = store.createBucket(call.positionals[0], call.user, owner->id, "local", quota);
     return ok("Created local S3 gateway bucket " + bucket.bucket_name + " on vault " + std::to_string(bucket.vault_id) + ".\n");
 }
 
@@ -703,6 +1115,8 @@ CommandResult handleBucketCreateRemoteCache(const CommandCall& call) {
     if (call.positionals.empty()) return usage(call.constructFullArgs());
     if (!call.user->isAdmin())
         return invalid("s3-gateway bucket create-remote-cache: admin permission is required");
+    if (!canCreateVaultForOwner(call, call.user->id))
+        return invalid("s3-gateway bucket create-remote-cache: vault create permission is required");
 
     const auto apiKeyOpt = optVal(call, "api-key");
     const auto upstreamBucketOpt = optVal(call, "upstream-bucket");

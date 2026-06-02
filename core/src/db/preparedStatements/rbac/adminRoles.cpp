@@ -13,7 +13,8 @@ void vh::db::Connection::initPreparedAdminRoles() const {
                 settings_permissions,
                 roles_permissions,
                 vaults_permissions,
-                keys_permissions
+                keys_permissions,
+                s3_gateway_permissions
             )
             VALUES (
                 $1,
@@ -24,7 +25,8 @@ void vh::db::Connection::initPreparedAdminRoles() const {
                 $6::bit(64),
                 $7::bit(16),
                 $8::bit(32),
-                $9::bit(32)
+                $9::bit(32),
+                $10::bit(8)
             )
             ON CONFLICT (id) DO UPDATE SET
                 name                 = EXCLUDED.name,
@@ -34,7 +36,8 @@ void vh::db::Connection::initPreparedAdminRoles() const {
                 settings_permissions = EXCLUDED.settings_permissions,
                 roles_permissions    = EXCLUDED.roles_permissions,
                 vaults_permissions   = EXCLUDED.vaults_permissions,
-                keys_permissions     = EXCLUDED.keys_permissions
+                keys_permissions     = EXCLUDED.keys_permissions,
+                s3_gateway_permissions = EXCLUDED.s3_gateway_permissions
         )SQL"
     );
 
@@ -49,7 +52,8 @@ void vh::db::Connection::initPreparedAdminRoles() const {
                 settings_permissions,
                 roles_permissions,
                 vaults_permissions,
-                keys_permissions
+                keys_permissions,
+                s3_gateway_permissions
             )
             VALUES (
                 $1,
@@ -59,7 +63,8 @@ void vh::db::Connection::initPreparedAdminRoles() const {
                 $5::bit(64),
                 $6::bit(16),
                 $7::bit(32),
-                $8::bit(32)
+                $8::bit(32),
+                $9::bit(8)
             )
             RETURNING
                 id,
@@ -72,7 +77,8 @@ void vh::db::Connection::initPreparedAdminRoles() const {
                 settings_permissions::bigint AS settings_permissions,
                 roles_permissions::bigint    AS roles_permissions,
                 vaults_permissions::bigint   AS vaults_permissions,
-                keys_permissions::bigint     AS keys_permissions
+                keys_permissions::bigint     AS keys_permissions,
+                s3_gateway_permissions::bigint AS s3_gateway_permissions
         )SQL"
     );
 
@@ -87,7 +93,8 @@ void vh::db::Connection::initPreparedAdminRoles() const {
                 settings_permissions,
                 roles_permissions,
                 vaults_permissions,
-                keys_permissions
+                keys_permissions,
+                s3_gateway_permissions
             )
             VALUES (
                 $1,
@@ -97,7 +104,8 @@ void vh::db::Connection::initPreparedAdminRoles() const {
                 $5::bit(64),
                 $6::bit(16),
                 $7::bit(32),
-                $8::bit(32)
+                $8::bit(32),
+                $9::bit(8)
             )
             ON CONFLICT (name) DO UPDATE SET
                 description          = EXCLUDED.description,
@@ -106,7 +114,8 @@ void vh::db::Connection::initPreparedAdminRoles() const {
                 settings_permissions = EXCLUDED.settings_permissions,
                 roles_permissions    = EXCLUDED.roles_permissions,
                 vaults_permissions   = EXCLUDED.vaults_permissions,
-                keys_permissions     = EXCLUDED.keys_permissions
+                keys_permissions     = EXCLUDED.keys_permissions,
+                s3_gateway_permissions = EXCLUDED.s3_gateway_permissions
             RETURNING
                 id,
                 name,
@@ -118,7 +127,8 @@ void vh::db::Connection::initPreparedAdminRoles() const {
                 settings_permissions::bigint AS settings_permissions,
                 roles_permissions::bigint    AS roles_permissions,
                 vaults_permissions::bigint   AS vaults_permissions,
-                keys_permissions::bigint     AS keys_permissions
+                keys_permissions::bigint     AS keys_permissions,
+                s3_gateway_permissions::bigint AS s3_gateway_permissions
         )SQL"
     );
 
@@ -136,7 +146,8 @@ void vh::db::Connection::initPreparedAdminRoles() const {
                 settings_permissions::bigint AS settings_permissions,
                 roles_permissions::bigint    AS roles_permissions,
                 vaults_permissions::bigint   AS vaults_permissions,
-                keys_permissions::bigint     AS keys_permissions
+                keys_permissions::bigint     AS keys_permissions,
+                s3_gateway_permissions::bigint AS s3_gateway_permissions
             FROM admin_role
             WHERE id = $1
         )SQL"
@@ -156,7 +167,8 @@ void vh::db::Connection::initPreparedAdminRoles() const {
                 settings_permissions::bigint AS settings_permissions,
                 roles_permissions::bigint    AS roles_permissions,
                 vaults_permissions::bigint   AS vaults_permissions,
-                keys_permissions::bigint     AS keys_permissions
+                keys_permissions::bigint     AS keys_permissions,
+                s3_gateway_permissions::bigint AS s3_gateway_permissions
             FROM admin_role
             WHERE name = $1
         )SQL"
@@ -174,7 +186,8 @@ void vh::db::Connection::initPreparedAdminRoles() const {
                 settings_permissions = $6::bit(16),
                 roles_permissions    = $7::bit(16),
                 vaults_permissions   = $8::bit(32),
-                keys_permissions     = $9::bit(32)
+                keys_permissions     = $9::bit(32),
+                s3_gateway_permissions = $10::bit(8)
             WHERE id = $1
         )SQL"
     );
@@ -223,7 +236,8 @@ void vh::db::Connection::initPreparedAdminRoles() const {
                 settings_permissions::bigint AS settings_permissions,
                 roles_permissions::bigint    AS roles_permissions,
                 vaults_permissions::bigint   AS vaults_permissions,
-                keys_permissions::bigint     AS keys_permissions
+                keys_permissions::bigint     AS keys_permissions,
+                s3_gateway_permissions::bigint AS s3_gateway_permissions
             FROM admin_role
             ORDER BY name
         )SQL"

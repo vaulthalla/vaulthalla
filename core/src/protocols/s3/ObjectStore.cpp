@@ -12,7 +12,11 @@
 #include "identities/User.hpp"
 #include "log/Registry.hpp"
 #include "protocols/s3/Error.hpp"
+#include "rbac/permission/admin/S3Gateway.hpp"
+#include "rbac/permission/admin/Vaults.hpp"
+#include "rbac/resolver/admin/all.hpp"
 #include "rbac/resolver/vault/all.hpp"
+#include "rbac/s3/policy/Evaluator.hpp"
 #include "runtime/Deps.hpp"
 #include "storage/CloudEngine.hpp"
 #include "storage/Manager.hpp"
@@ -38,6 +42,7 @@ namespace vh::protocols::s3 {
 
 namespace {
 using Action = rbac::permission::vault::FilesystemAction;
+using S3Action = rbac::s3::policy::S3Action;
 using vh::fs::model::PathType;
 using vh::fs::model::makeAbsolute;
 using vh::fs::model::resolveParent;
@@ -158,6 +163,63 @@ ResolvedBucket resolvedFromBinding(
         .gateway_access = std::move(access)
     };
 }
+
+void requireCanCreateGatewayBucketForOwner(
+    const std::shared_ptr<identities::User>& actor,
+    const uint32_t ownerUserId,
+    const std::string& bucket) {
+    if (!actor) throw accessDenied(bucket);
+    using Perm = rbac::permission::admin::VaultPermissions;
+    if (!rbac::resolver::Admin::has<Perm>({
+            .user = actor,
+            .permission = Perm::Create,
+            .target_user_id = ownerUserId
+        }))
+        throw accessDenied(bucket);
+}
+
+bool hasGatewayBucketManagement(const std::shared_ptr<identities::User>& actor) {
+    if (!actor) return false;
+    if (actor->isSuperAdmin()) return true;
+    using Perm = rbac::permission::admin::S3GatewayPermissions;
+    return rbac::resolver::Admin::has<Perm>({
+        .user = actor,
+        .permission = Perm::ManageBuckets
+    });
+}
+
+S3Action s3ActionForFilesystemAction(const Action action) {
+    switch (action) {
+    case Action::List:
+        return S3Action::ListObjects;
+    case Action::Read:
+    case Action::Lookup:
+    case Action::Preview:
+        return S3Action::GetObject;
+    case Action::Delete:
+        return S3Action::DeleteObject;
+    case Action::Write:
+    case Action::Touch:
+    case Action::Overwrite:
+    case Action::Rename:
+    case Action::Move:
+    case Action::Copy:
+    case Action::Link:
+        return S3Action::PutObject;
+    case Action::ShareInternal:
+    case Action::SharePublic:
+    case Action::SharePublicValidated:
+        return S3Action::GetObject;
+    }
+    return S3Action::GetObject;
+}
+
+bool objectExistsInBucket(const ResolvedBucket& bucket, const std::filesystem::path& vaultPath) {
+    if (vaultPath == std::filesystem::path{"/"}) return true;
+    const auto objectKey = ObjectStore::vaultPathToKey(vaultPath);
+    return db::query::s3::Gateway::getObjectState(bucket.vault_id, objectKey).has_value() ||
+        db::query::fs::File::getFileByPath(bucket.vault_id, vaultPath) != nullptr;
+}
 }
 
 std::vector<db::query::s3::BucketBinding> ObjectStore::listBuckets(const AuthContext& auth) const {
@@ -275,14 +337,24 @@ ResolvedBucket ObjectStore::createBucket(
         throw accessDenied(bucket);
     if (access && access->scope_mode == "vault_allowlist")
         throw accessDenied(bucket);
-    if (access && access->scope_mode == "global" && !credentialAllows(*access, auth.user, 0, Action::Write))
+    if (access && access->credential_id != 0 && !hasGatewayBucketManagement(auth.user))
         throw accessDenied(bucket);
-    return createBucket(bucket, auth.user, mode, quotaBytes);
+    return createBucket(bucket, auth.user, auth.user->id, mode, quotaBytes);
 }
 
 ResolvedBucket ObjectStore::createBucket(
     const std::string& bucket,
     const std::shared_ptr<identities::User>& actor,
+    const std::string& mode,
+    const uintmax_t quotaBytes) const {
+    if (!actor) throw accessDenied(bucket);
+    return createBucket(bucket, actor, actor->id, mode, quotaBytes);
+}
+
+ResolvedBucket ObjectStore::createBucket(
+    const std::string& bucket,
+    const std::shared_ptr<identities::User>& actor,
+    const uint32_t ownerUserId,
     const std::string& mode,
     const uintmax_t quotaBytes) const {
     requireBucketName(bucket);
@@ -293,10 +365,12 @@ ResolvedBucket ObjectStore::createBucket(
     if (mode != "local")
         throw invalidArgument("Remote-backed buckets must be created with vh s3-gateway bucket create-remote-cache", bucket);
 
+    requireCanCreateGatewayBucketForOwner(actor, ownerUserId, bucket);
+
     auto vault = std::make_shared<vault::model::Vault>();
     vault->name = bucket;
     vault->description = "S3 gateway bucket " + bucket;
-    vault->owner_id = actor->id;
+    vault->owner_id = ownerUserId;
     vault->type = vault::model::VaultType::Local;
     vault->quota = quotaBytes;
     vault->is_active = true;
@@ -312,7 +386,7 @@ ResolvedBucket ObjectStore::createBucket(
         .mode = "local",
         .created_by = actor->id
     });
-    return headBucket(bucket, actor);
+    return resolveBucket(bucket, actor);
 }
 
 void ObjectStore::deleteBucket(const std::string& bucket, const AuthContext& auth) const {
@@ -781,10 +855,26 @@ void ObjectStore::requirePermission(
     const ResolvedBucket& bucket,
     const std::filesystem::path& vaultPath,
     const rbac::permission::vault::FilesystemAction action) {
-    requireRbacPermission(bucket, vaultPath, action);
     const auto fusePath = bucket.engine->vaultPathToFusePath(makeAbsolute(vaultPath));
-    if (bucket.gateway_access && !credentialAllows(*bucket.gateway_access, bucket.actor, bucket.vault_id, action))
-        throw accessDenied(fusePath.string());
+    if (!bucket.gateway_access) {
+        requireRbacPermission(bucket, vaultPath, action);
+        return;
+    }
+
+    const auto absoluteVaultPath = makeAbsolute(vaultPath);
+    const auto decision = rbac::s3::policy::Evaluator::evaluate({
+        .principal = bucket.actor,
+        .credential_id = bucket.gateway_access->dev_context ? 0u : bucket.gateway_access->credential_id,
+        .scope_mode = bucket.gateway_access->scope_mode,
+        .vault_id = bucket.vault_id,
+        .vault_path = absoluteVaultPath,
+        .fuse_path = fusePath,
+        .action = s3ActionForFilesystemAction(action),
+        .object_exists = objectExistsInBucket(bucket, absoluteVaultPath),
+        .is_directory_marker = absoluteVaultPath == std::filesystem::path{"/"},
+        .target_user_id = std::nullopt
+    });
+    if (!decision.allowed) throw accessDenied(fusePath.string());
 }
 
 bool ObjectStore::credentialAllows(
@@ -801,47 +891,41 @@ bool ObjectStore::credentialAllows(
     const uint32_t vaultId,
     const rbac::permission::vault::FilesystemAction action) {
     if (access.dev_context || access.credential_id == 0) return true;
-    if (access.scope_mode == "user_access") return true;
-    if (access.scope_mode == "global") {
-        if (!principal || !principal->isAdmin()) return false;
-        if (!access.credential.created_by) return false;
-        const auto creator = db::query::identities::User::getUserById(*access.credential.created_by);
-        return creator && creator->isAdmin();
-    }
-    if (access.scope_mode != "vault_allowlist") return false;
-
-    const auto scope = db::query::s3::Gateway::getCredentialScopeForVault(access.credential_id, vaultId);
-    if (!scope) return false;
-    switch (action) {
-    case Action::List:
-        return scope->can_list;
-    case Action::Read:
-        return scope->can_read;
-    case Action::Delete:
-        return scope->can_delete;
-    case Action::Write:
-    case Action::Touch:
-    case Action::Overwrite:
-    case Action::Rename:
-    case Action::Move:
-    case Action::Copy:
-    case Action::Link:
-        return scope->can_write;
-    default:
-        return scope->can_read;
-    }
+    if (!principal || vaultId == 0) return false;
+    const auto decision = rbac::s3::policy::Evaluator::evaluate({
+        .principal = principal,
+        .credential_id = access.credential_id,
+        .scope_mode = access.scope_mode,
+        .vault_id = vaultId,
+        .vault_path = std::filesystem::path{"/"},
+        .fuse_path = std::filesystem::path{"/"},
+        .action = s3ActionForFilesystemAction(action),
+        .object_exists = true,
+        .is_directory_marker = true,
+        .target_user_id = std::nullopt
+    });
+    return decision.allowed;
 }
 
 bool ObjectStore::credentialAllowsAdmin(const ResolvedBucket& bucket) {
     if (!bucket.gateway_access) return true;
     const auto& access = *bucket.gateway_access;
     if (access.dev_context || access.credential_id == 0) return true;
-    if (access.scope_mode == "user_access") return bucket.actor && bucket.actor->isAdmin();
-    if (access.scope_mode == "global")
-        return credentialAllows(access, bucket.actor, bucket.vault_id, Action::Write);
-    if (access.scope_mode != "vault_allowlist") return false;
-    const auto scope = db::query::s3::Gateway::getCredentialScopeForVault(access.credential_id, bucket.vault_id);
-    return scope && scope->can_admin;
+    if (!bucket.engine) return false;
+    const auto fusePath = bucket.engine->vaultPathToFusePath(std::filesystem::path{"/"});
+    const auto decision = rbac::s3::policy::Evaluator::evaluate({
+        .principal = bucket.actor,
+        .credential_id = access.credential_id,
+        .scope_mode = access.scope_mode,
+        .vault_id = bucket.vault_id,
+        .vault_path = std::filesystem::path{"/"},
+        .fuse_path = fusePath,
+        .action = S3Action::DeleteObject,
+        .object_exists = true,
+        .is_directory_marker = true,
+        .target_user_id = std::nullopt
+    });
+    return decision.allowed;
 }
 
 bool ObjectStore::isRemoteBacked(const ResolvedBucket& bucket) {
