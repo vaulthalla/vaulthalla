@@ -24,8 +24,12 @@ export function ClientSnippets({
       text: `export AWS_ACCESS_KEY_ID=${accessKey}\nexport AWS_SECRET_ACCESS_KEY=${secretKey}\nexport AWS_EC2_METADATA_DISABLED=true`,
     },
     {
-      title: 'AWS CLI',
+      title: 'AWS CLI Direct',
       text: `aws --endpoint-url http://${endpoint} s3 ls\naws --endpoint-url http://${endpoint} s3 cp ./backup.tar s3://${buckets[0]?.bucket_name ?? 'bucket'}/backup.tar`,
+    },
+    {
+      title: 'AWS CLI Public',
+      text: `aws configure set s3.addressing_style path\naws --endpoint-url https://vaulthalla.example.com/api/s3 s3 ls\naws --endpoint-url https://vaulthalla.example.com/api/s3 s3 cp ./backup.tar s3://${buckets[0]?.bucket_name ?? 'bucket'}/backup.tar`,
     },
     {
       title: 'MinIO Client',

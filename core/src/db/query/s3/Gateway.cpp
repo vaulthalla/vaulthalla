@@ -101,6 +101,7 @@ std::map<std::string, std::string> metadataFromJson(const std::string& raw) {
 MultipartUpload uploadFromRow(const pqxx::row& row) {
     return {
         .upload_id = row["upload_id"].as<std::string>(),
+        .parts_dir_id = row["parts_dir_id"].as<std::string>(),
         .vault_id = row["vault_id"].as<uint32_t>(),
         .object_key = row["object_key"].as<std::string>(),
         .initiated_by = row["initiated_by"].as<uint32_t>(),
@@ -630,14 +631,16 @@ void Gateway::deleteObjectMetadata(const uint32_t vaultId, const std::string& ob
 
 void Gateway::createMultipartUpload(const MultipartUpload& upload) {
     Transactions::exec("S3Gateway::createMultipartUpload", [&](pqxx::work& txn) {
+        const auto partsDirId = upload.parts_dir_id.empty() ? upload.upload_id : upload.parts_dir_id;
         txn.exec(
             R"SQL(
                 INSERT INTO s3_gateway_multipart_upload
-                    (upload_id, vault_id, object_key, initiated_by, content_type, metadata, storage_class)
-                VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
+                    (upload_id, parts_dir_id, vault_id, object_key, initiated_by, content_type, metadata, storage_class)
+                VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
             )SQL",
             pqxx::params{
                 upload.upload_id,
+                partsDirId,
                 upload.vault_id,
                 normalizeKey(upload.object_key),
                 upload.initiated_by,

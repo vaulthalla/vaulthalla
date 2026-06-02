@@ -20,6 +20,7 @@ These notes summarize the scoped credential and per-key budget work on the `s3-e
 
 - Added migration `096_s3_gateway_credential_scope_and_budget.sql`.
 - Added migration `097_s3_gateway_actual_usage_accounting.sql`.
+- Added migration `098_s3_gateway_multipart_part_dirs.sql`.
 - Extended `s3_gateway_credentials` with creator, effective principal, scope mode, description, and expiry fields.
 - Added `enforce_budget_for_local_requests` to gateway credentials.
 - Added `s3_gateway_credential_vault_scope` for per-vault list/read/write/delete/admin flags.
@@ -27,6 +28,8 @@ These notes summarize the scoped credential and per-key budget work on the `s3-e
 - Added gateway budget ledger columns for credential id, request UUID, operation, object key, estimated cost, usage source, and synthetic/local marker.
 - Added `s3_gateway_sync_origin` rows for future attribution of sync work back to the gateway request/credential that created local-first work.
 - Extended C++ S3 gateway query models, credential management, SigV4 auth context, object-store permission checks, router request flow, CLI commands, WebSocket handlers, and web console models/page.
+- Added public Nginx `/api/s3` routing to the direct S3 gateway listener. Nginx keeps the original URI for SigV4, and the router strips `/api/s3` only after authentication when a proxy marker header is present.
+- Removed configurable `s3_gateway.multipart.part_dir`. Multipart parts now live under a generated Vaulthalla hidden backing path with per-upload opaque `parts_dir_id` directories.
 - Added Playwright configuration and a focused S3 Gateway browser suite that can auto-start the local web dev server for localhost E2E runs.
 
 ## Implemented
@@ -98,6 +101,52 @@ These notes summarize the scoped credential and per-key budget work on the `s3-e
 - The management page exposes the core workflows but does not yet include advanced filtering, pagination, or notification drill-down.
 
 ## Validation Run
+
+Validation performed on 2026-06-02 for the `/api/s3` endpoint and multipart part-directory hardening pass:
+
+Commands and results:
+
+```bash
+meson compile -C build
+meson test -C build vh_unit_tests --print-errorlogs --test-args='--gtest_filter=S3Gateway*:S3GatewayDbTest.*Multipart*:S3GatewayRouterTest.*:S3GatewaySigV4Test.*'
+python3 -m unittest deploy.lifecycle.tests.test_main
+pnpm --dir web run test
+tools/smoke/s3_gateway_merge_ready.sh
+git diff --check
+```
+
+- `meson compile -C build` passed.
+- The focused S3 gateway Meson filter passed.
+- `python3 -m unittest deploy.lifecycle.tests.test_main` ran 10 tests and passed.
+- `pnpm --dir web run test` passed typecheck and lint.
+- `tools/smoke/s3_gateway_merge_ready.sh` passed all stages on rerun: shell syntax, Meson compile, DB-backed gateway/cost/pricing tests, web tests, Playwright S3 Gateway, local smoke, remote smoke, and `git diff --check`. Report: `test-results/s3-gateway-e2e/merge-ready-report.txt`.
+- `git diff --check` passed as a standalone command.
+
+Exact Nginx endpoint coverage added and run:
+
+- Static Nginx template contains `location = /api/s3` and `location /api/s3/` before `location /`, both using `proxy_pass http://127.0.0.1:39000;` without a URI suffix.
+- `ConfigProjectionTests.test_render_managed_nginx_config_includes_s3_gateway_path_proxy`
+- `ConfigProjectionTests.test_render_managed_nginx_config_uses_configured_s3_loopback_safe_host`
+- `ConfigProjectionTests.test_parse_projection_uses_s3_defaults_when_section_missing`
+
+Exact SigV4/prefix coverage added and run:
+
+- `S3GatewayRouterTest.StripsApiS3PrefixOnlyWhenProxyMarkerIsPresent`
+- `S3GatewayRouterTest.DirectListenerDoesNotStripApiS3WithoutProxyMarker`
+- `S3GatewayRouterTest.PublicHostDoesNotTriggerVirtualHostedBucketWhenPrefixed`
+- `S3GatewayRouterTest.RejectsMalformedOrMismatchedPrefixHeader`
+- `S3GatewayDbTest.SignedPrefixedRootListsBuckets`
+- `S3GatewayDbTest.SignedPrefixedPutAndGetAuthenticateAndRoutePathStyle`
+
+Exact multipart path coverage added and run:
+
+- `S3GatewayMultipartTest.PartRootUsesGeneratedHiddenBackingPath`
+- `S3GatewayConfigTest.MultipartPartDirIsNotEmittedAndLegacyPartDirIsIgnored`
+- `S3GatewayDbTest.MultipartUploadUsesOpaquePartDirAndCompleteKeepsRoot`
+- `S3GatewayDbTest.AbortMultipartUploadRemovesOpaquePartDirAndKeepsRoot`
+- `S3GatewayDbTest.AbortExpiredMultipartUploadsUsesConfiguredRetention`
+
+Live `/api/s3` AWS CLI smoke did not run. AWS CLI, Nginx, and a listener on port 80 were present, but `curl -i http://127.0.0.1/api/s3` returned a plain Nginx `404 Not Found`, showing the active local Nginx config had not installed this branch's new `/api/s3` route. The AWS CLI commands would not validate this branch until the updated Nginx config is installed and reloaded.
 
 Validation performed on 2026-06-01 for the self-provisioning E2E pass:
 

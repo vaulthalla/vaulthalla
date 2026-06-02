@@ -77,6 +77,7 @@ struct ObjectListResult {
 
 struct MultipartUpload {
     std::string upload_id;
+    std::string parts_dir_id;
     uint32_t vault_id{};
     std::string object_key;
     uint32_t initiated_by{};

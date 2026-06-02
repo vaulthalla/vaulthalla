@@ -33,7 +33,6 @@ struct HttpPreviewConfig {
 };
 
 struct S3GatewayMultipartConfig {
-    std::filesystem::path part_dir;
     uint32_t min_part_size_mb = 5;
     uint32_t abort_after_days = 7;
 };

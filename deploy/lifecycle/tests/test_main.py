@@ -16,6 +16,10 @@ http_preview_server:
   enabled: true
   host: ::1
   port: 36970
+s3_gateway:
+  enabled: true
+  host: 0.0.0.0
+  port: 39000
 database:
   host: db.example.net
   port: 5433
@@ -28,8 +32,44 @@ database:
         self.assertEqual(projection["websocket_server"]["host"], "127.0.0.1")
         self.assertEqual(projection["websocket_server"]["port"], 36969)
         self.assertEqual(projection["http_preview_server"]["host"], "::1")
+        self.assertEqual(projection["s3_gateway"]["enabled"], True)
+        self.assertEqual(projection["s3_gateway"]["host"], "0.0.0.0")
+        self.assertEqual(projection["s3_gateway"]["port"], 39000)
         self.assertEqual(projection["database"]["host"], "db.example.net")
         self.assertEqual(projection["database"]["pool_size"], 42)
+
+    def test_parse_projection_uses_s3_defaults_when_section_missing(self) -> None:
+        projection = main.parse_config_projection_from_text("database:\n  host: localhost\n")
+        self.assertEqual(projection["s3_gateway"], {"enabled": False, "host": "0.0.0.0", "port": 39000})
+
+    def test_render_managed_nginx_config_includes_s3_gateway_path_proxy(self) -> None:
+        projection = {
+            "websocket_server": {"enabled": True, "host": "127.0.0.1", "port": 36969},
+            "http_preview_server": {"enabled": True, "host": "::", "port": 36970},
+            "s3_gateway": {"enabled": False, "host": "0.0.0.0", "port": 39000},
+            "database": {"host": "localhost", "port": 5432, "name": "vaulthalla", "user": "vaulthalla", "pool_size": 10},
+        }
+        rendered = main.render_managed_nginx_config(projection, "vaulthalla.example.test")
+
+        self.assertIn("    location = /api/s3 {\n", rendered)
+        self.assertIn("    location /api/s3/ {\n", rendered)
+        self.assertIn("        proxy_pass http://127.0.0.1:39000;\n", rendered)
+        self.assertNotIn("proxy_pass http://127.0.0.1:39000/;", rendered)
+        self.assertIn("        proxy_request_buffering off;\n", rendered)
+        self.assertIn("        proxy_set_header Host $http_host;\n", rendered)
+        self.assertIn("        proxy_set_header X-Forwarded-Prefix /api/s3;\n", rendered)
+        self.assertIn("        proxy_set_header X-Vaulthalla-S3-Base-Prefix /api/s3;\n", rendered)
+        self.assertLess(rendered.index("location /api/s3/"), rendered.index("location / {"))
+
+    def test_render_managed_nginx_config_uses_configured_s3_loopback_safe_host(self) -> None:
+        projection = {
+            "websocket_server": {"enabled": False, "host": "127.0.0.1", "port": 36969},
+            "http_preview_server": {"enabled": False, "host": "127.0.0.1", "port": 36970},
+            "s3_gateway": {"enabled": False, "host": "::", "port": 39123},
+            "database": {"host": "localhost", "port": 5432, "name": "vaulthalla", "user": "vaulthalla", "pool_size": 10},
+        }
+        rendered = main.render_managed_nginx_config(projection, None)
+        self.assertIn("        proxy_pass http://127.0.0.1:39123;\n", rendered)
 
     def test_update_database_block_rewrites_existing_keys(self) -> None:
         text = """

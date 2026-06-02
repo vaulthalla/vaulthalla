@@ -15,9 +15,13 @@ Local gateway buckets use Vaulthalla local vault encryption. Clients can use sta
 ```bash
 vh s3-gateway bucket create-local archive
 aws --endpoint-url http://127.0.0.1:39000 s3 cp ./report.pdf s3://archive/reports/report.pdf
+aws configure set s3.addressing_style path
+aws --endpoint-url https://vaulthalla.example.com/api/s3 s3 cp ./report.pdf s3://archive/reports/report.pdf
 ```
 
 Nested object keys create Vaulthalla parent directories as needed. Directory marker objects are accepted as zero-byte keys ending in `/`, but they are kept distinct from normal Vaulthalla directories.
+
+Use `http://127.0.0.1:39000` for the direct listener. Use `https://vaulthalla.example.com/api/s3` for the public Nginx path endpoint, and keep AWS CLI path-style addressing enabled for that public endpoint. SigV4 signs `/api/s3/...` on the public endpoint; Vaulthalla authenticates that original URI before stripping the prefix for bucket/key routing.
 
 ## Remote-Backed Buckets
 
@@ -100,6 +104,7 @@ S3 ETags are client-visible gateway metadata. They are not the same thing as Vau
 - `x-amz-meta-*` headers are preserved as gateway object metadata.
 - `Content-Type` is preserved when provided and falls back to `application/octet-stream`.
 - Existing Vaulthalla files without gateway ETags use metadata-derived fallback ETags during LIST/HEAD. LIST never decrypts or reads plaintext just to calculate an ETag.
+- Multipart upload part files are stored under a Vaulthalla-owned hidden backing path with opaque per-upload directories, not under bucket or object-key paths.
 
 Use explicit backfill when importing existing Vaulthalla metadata into gateway object state:
 

@@ -60,7 +60,6 @@ template<>
 struct convert<S3GatewayMultipartConfig> {
     static Node encode(const S3GatewayMultipartConfig& rhs) {
         Node node;
-        node["part_dir"] = rhs.part_dir.empty() ? Node(NodeType::Null) : Node(rhs.part_dir.string());
         node["min_part_size_mb"] = rhs.min_part_size_mb;
         node["abort_after_days"] = rhs.abort_after_days;
         return node;
@@ -68,10 +67,6 @@ struct convert<S3GatewayMultipartConfig> {
 
     static bool decode(const Node& node, S3GatewayMultipartConfig& rhs) {
         if (!node.IsMap()) return false;
-        if (node["part_dir"] && !node["part_dir"].IsNull())
-            rhs.part_dir = node["part_dir"].as<std::filesystem::path>();
-        else
-            rhs.part_dir.clear();
         rhs.min_part_size_mb = std::max(static_cast<uint32_t>(5), node["min_part_size_mb"].as<uint32_t>(5));
         rhs.abort_after_days = std::max(static_cast<uint32_t>(1), node["abort_after_days"].as<uint32_t>(7));
         return true;

@@ -44,7 +44,6 @@ s3_gateway:
   default_remote_sync_strategy: cache
   default_remote_conflict_policy: keep_local
   multipart:
-    part_dir:
     min_part_size_mb: 5
     abort_after_days: 7
   synthetic_local_request_cost_usd:

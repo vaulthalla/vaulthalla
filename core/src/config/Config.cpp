@@ -186,17 +186,12 @@ namespace vh::config {
 
     void to_json(nlohmann::json &j, const S3GatewayMultipartConfig &c) {
         j = {
-            {"part_dir", c.part_dir.empty() ? nlohmann::json(nullptr) : nlohmann::json(c.part_dir.string())},
             {"min_part_size_mb", c.min_part_size_mb},
             {"abort_after_days", c.abort_after_days}
         };
     }
 
     void from_json(const nlohmann::json &j, S3GatewayMultipartConfig &c) {
-        if (j.contains("part_dir") && !j.at("part_dir").is_null())
-            c.part_dir = std::filesystem::path(j.at("part_dir").get<std::string>());
-        else
-            c.part_dir.clear();
         c.min_part_size_mb = std::max(5u, j.value("min_part_size_mb", 5u));
         c.abort_after_days = std::max(1u, j.value("abort_after_days", 7u));
     }

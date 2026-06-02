@@ -20,9 +20,11 @@
 namespace vh::protocols::s3 {
 
 namespace {
+constexpr auto privateDirPerms = std::filesystem::perms::owner_all;
+
 void writeFile(const std::filesystem::path& path, const std::vector<uint8_t>& bytes) {
-    std::filesystem::create_directories(path.parent_path());
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out) throw invalidArgument("Unable to write multipart part file", path.string());
     out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
 }
 
@@ -89,12 +91,31 @@ db::query::s3::MultipartUpload requireUploadFor(
         throw noSuchUpload(uploadId);
     return *upload;
 }
+
+void ensurePrivateDir(const std::filesystem::path& path) {
+    std::error_code ec;
+    std::filesystem::create_directories(path, ec);
+    if (ec) throw invalidArgument("Unable to create multipart part directory", path.string());
+    std::filesystem::permissions(path, privateDirPerms, std::filesystem::perm_options::replace, ec);
+    if (ec) throw invalidArgument("Unable to secure multipart part directory", path.string());
+}
+
+std::filesystem::path uploadDirFor(const db::query::s3::MultipartUpload& upload) {
+    if (upload.parts_dir_id.empty()) throw noSuchUpload(upload.upload_id);
+    return MultipartStore::partRoot() / upload.parts_dir_id;
+}
+
+std::filesystem::path ensureUploadDirFor(const db::query::s3::MultipartUpload& upload) {
+    const auto root = MultipartStore::partRoot();
+    ensurePrivateDir(root);
+    const auto dir = root / upload.parts_dir_id;
+    ensurePrivateDir(dir);
+    return dir;
+}
 }
 
 std::filesystem::path MultipartStore::partRoot() {
-    const auto& configured = config::Registry::get().s3_gateway.multipart.part_dir;
-    if (!configured.empty()) return configured;
-    return paths::getBackingPath() / "s3-multipart";
+    return paths::getS3GatewayMultipartPartsPath();
 }
 
 std::string MultipartStore::createUpload(
@@ -104,8 +125,10 @@ std::string MultipartStore::createUpload(
     (void)abortExpiredUploads();
 
     const auto uploadId = boost::uuids::to_string(boost::uuids::random_generator()());
+    const auto partsDirId = boost::uuids::to_string(boost::uuids::random_generator()());
     db::query::s3::Gateway::createMultipartUpload({
         .upload_id = uploadId,
+        .parts_dir_id = partsDirId,
         .vault_id = bucket.vault_id,
         .object_key = ObjectStore::vaultPathToKey(ObjectStore::keyToVaultPath(key)),
         .initiated_by = bucket.actor ? bucket.actor->id : 0,
@@ -124,10 +147,10 @@ db::query::s3::MultipartPart MultipartStore::uploadPart(
     const std::vector<uint8_t>& body) const {
     if (partNumber == 0 || partNumber > 10000)
         throw invalidArgument("Part number must be between 1 and 10000");
-    (void)requireUploadFor(bucket, key, uploadId);
+    const auto upload = requireUploadFor(bucket, key, uploadId);
 
     const auto md5Hex = ObjectStore::md5Hex(body);
-    const auto path = partRoot() / uploadId / std::to_string(partNumber);
+    const auto path = ensureUploadDirFor(upload) / std::to_string(partNumber);
     writeFile(path, body);
 
     db::query::s3::MultipartPart part{
@@ -152,11 +175,10 @@ db::query::s3::MultipartPart MultipartStore::uploadPartFromFile(
     const uint64_t sizeBytes) const {
     if (partNumber == 0 || partNumber > 10000)
         throw invalidArgument("Part number must be between 1 and 10000");
-    (void)requireUploadFor(bucket, key, uploadId);
+    const auto upload = requireUploadFor(bucket, key, uploadId);
 
     const auto md5Hex = md5FileHex(sourcePath);
-    const auto path = partRoot() / uploadId / std::to_string(partNumber);
-    std::filesystem::create_directories(path.parent_path());
+    const auto path = ensureUploadDirFor(upload) / std::to_string(partNumber);
     std::error_code ec;
     std::filesystem::rename(sourcePath, path, ec);
     if (ec) {
@@ -215,8 +237,8 @@ db::query::s3::ObjectState MultipartStore::completeUpload(
                           http::status::bad_request, key};
     }
 
-    const auto completePath = partRoot() / uploadId / ".complete-object";
-    std::filesystem::create_directories(completePath.parent_path());
+    const auto uploadDir = ensureUploadDirFor(upload);
+    const auto completePath = uploadDir / ".complete-object";
     std::ofstream complete(completePath, std::ios::binary | std::ios::trunc);
     if (!complete) throw invalidArgument("Unable to create completed multipart temp file", key);
 
@@ -240,17 +262,17 @@ db::query::s3::ObjectState MultipartStore::completeUpload(
     db::query::s3::Gateway::markMultipartUploadCompleted(uploadId);
     for (const auto& part : parts) std::filesystem::remove(part.path);
     db::query::s3::Gateway::deleteMultipartParts(uploadId);
-    std::filesystem::remove_all(partRoot() / uploadId);
+    std::filesystem::remove_all(uploadDir);
     return state;
 }
 
 void MultipartStore::abortUpload(const ResolvedBucket& bucket, const std::string& key, const std::string& uploadId) const {
-    (void)requireUploadFor(bucket, key, uploadId);
+    const auto upload = requireUploadFor(bucket, key, uploadId);
     const auto parts = db::query::s3::Gateway::listMultipartParts(uploadId);
     for (const auto& part : parts) std::filesystem::remove(part.path);
     db::query::s3::Gateway::deleteMultipartParts(uploadId);
     db::query::s3::Gateway::abortMultipartUpload(uploadId);
-    std::filesystem::remove_all(partRoot() / uploadId);
+    std::filesystem::remove_all(uploadDirFor(upload));
 }
 
 std::size_t MultipartStore::abortExpiredUploads() const {
@@ -264,7 +286,7 @@ std::size_t MultipartStore::abortExpiredUploads() const {
         for (const auto& part : parts) std::filesystem::remove(part.path);
         db::query::s3::Gateway::deleteMultipartParts(upload.upload_id);
         db::query::s3::Gateway::abortMultipartUpload(upload.upload_id);
-        std::filesystem::remove_all(partRoot() / upload.upload_id);
+        std::filesystem::remove_all(uploadDirFor(upload));
         ++aborted;
     }
     return aborted;

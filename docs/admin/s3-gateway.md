@@ -26,7 +26,6 @@ s3_gateway:
   default_remote_sync_strategy: cache
   default_remote_conflict_policy: keep_local
   multipart:
-    part_dir: ""
     min_part_size_mb: 5
     abort_after_days: 7
   synthetic_local_request_cost_usd:
@@ -43,6 +42,23 @@ s3_gateway:
 Use `vh s3-gateway enable` or `vh s3-gateway disable` to update config and restart only `S3GatewayService`.
 
 `synthetic_local_request_cost_usd` controls the nominal cost used only when `enforce_budget_for_local_requests` is enabled on a gateway credential and the request is served locally or deferred to sync. The default is intentionally tiny but nonzero per request so gateway credential budgets can throttle pure local buckets and cache hits. These synthetic charges are scoped only to `gateway_credential` and `gateway_credential_vault` policies.
+
+## Endpoints
+
+The direct listener remains available on the configured gateway host and port:
+
+```bash
+aws --endpoint-url http://127.0.0.1:39000 s3api list-buckets
+```
+
+Managed Nginx exposes the public path endpoint at `/api/s3`:
+
+```bash
+aws configure set s3.addressing_style path
+aws --endpoint-url https://vaulthalla.example.com/api/s3 s3api list-buckets
+```
+
+The `/api/s3` endpoint is path-style reverse-proxy mode. SigV4 clients sign the URI they send, including `/api/s3/...`; Nginx preserves that URI and the S3 router strips the prefix only after authentication for internal bucket/key routing. Virtual-hosted bucket inference is disabled for prefixed requests so a public host such as `vaulthalla.example.com` is not interpreted as a bucket name.
 
 ## Credentials
 
@@ -236,6 +252,11 @@ aws configure set default.region us-east-1
 aws --endpoint-url http://127.0.0.1:39000 s3api list-buckets
 aws --endpoint-url http://127.0.0.1:39000 s3 cp ./file.txt s3://archive/file.txt
 aws --endpoint-url http://127.0.0.1:39000 s3 rm s3://archive/file.txt
+
+aws configure set s3.addressing_style path
+aws --endpoint-url https://vaulthalla.example.com/api/s3 s3api list-buckets
+aws --endpoint-url https://vaulthalla.example.com/api/s3 s3 cp ./file.txt s3://archive/file.txt
+aws --endpoint-url https://vaulthalla.example.com/api/s3 s3 rm s3://archive/file.txt
 ```
 
 MinIO client:
@@ -279,6 +300,7 @@ vh s3-gateway bucket backfill archive --calculate-etags
 - No object versioning or undo delete.
 - No lifecycle rules.
 - No object lock, legal hold, or MFA delete.
-- Large PUT and multipart bodies are accepted by the gateway path, but operators should still size `max_body_size_mb`, multipart part directories, and request budgets for the workload.
+- Large PUT and multipart bodies are accepted by the gateway path, but operators should still size `max_body_size_mb` and request budgets for the workload.
+- Multipart upload parts live under a Vaulthalla-owned hidden backing path with per-upload opaque directories. `s3_gateway.multipart.part_dir` no longer exists; legacy config files containing it are ignored.
 - Remote-backed listing uses Vaulthalla known state and remote indexes; it does not perform upstream listing on gateway LIST requests.
 - Gateway price estimates use the configured provider pricing catalog. They are conservative estimates for preflight/ledger control, not a provider invoice reconciliation system.

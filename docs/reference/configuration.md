@@ -50,6 +50,9 @@ s3_gateway:
   require_sigv4: true
   allow_path_style: true
   allow_virtual_hosted_style: true
+  multipart:
+    min_part_size_mb: 5
+    abort_after_days: 7
   synthetic_local_request_cost_usd:
     list: "0.00000001"
     head: "0.00000001"
@@ -64,6 +67,16 @@ s3_gateway:
 See [S3 Gateway](/admin/s3-gateway) before enabling it on a network interface.
 
 `require_sigv4` should stay enabled outside development. When it is disabled, the gateway accepts a development-only auth context only if `dev.enabled` is true or the configured host is loopback. Production listeners should use real gateway credentials with explicit scope and normal Vaulthalla RBAC.
+
+Clients can use the direct listener, or the managed Nginx path endpoint:
+
+```bash
+aws --endpoint-url http://127.0.0.1:39000 s3api list-buckets
+aws configure set s3.addressing_style path
+aws --endpoint-url https://vaulthalla.example.com/api/s3 s3api list-buckets
+```
+
+The `/api/s3` endpoint is path-style reverse-proxy mode. SigV4 signs `/api/s3/...`; Nginx preserves the signed URI, and the gateway strips the prefix only after authentication. `s3_gateway.multipart.part_dir` is no longer a valid setting; multipart parts use a Vaulthalla-owned hidden backing path with opaque per-upload directories.
 
 `synthetic_local_request_cost_usd` is used only for S3 gateway credentials with local/cache budget enforcement enabled. It gives pure local buckets, metadata hits, cache hits, and sync-deferred gateway writes/deletes a nominal gateway-local cost for `gateway_credential` budgets without touching provider/vault/global upstream budgets.
 

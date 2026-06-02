@@ -127,6 +127,34 @@ std::optional<std::string> virtualHostedBucket(const Router::Request& request) {
     return host.substr(0, dot);
 }
 
+std::optional<std::string> proxyBasePrefix(const Router::Request& request) {
+    const auto vaulthalla = request.find("X-Vaulthalla-S3-Base-Prefix");
+    const auto forwarded = request.find("X-Forwarded-Prefix");
+    const bool hasVaulthalla = vaulthalla != request.end();
+    const bool hasForwarded = forwarded != request.end();
+    if (!hasVaulthalla && !hasForwarded) return std::nullopt;
+
+    const auto primary = hasVaulthalla ? std::string(vaulthalla->value()) : std::string(forwarded->value());
+    if (hasVaulthalla && hasForwarded) {
+        const auto secondary = std::string(forwarded->value());
+        if (!secondary.empty() && primary != secondary)
+            throw invalidArgument("Conflicting S3 gateway base prefix headers", std::string(request.target()));
+    }
+    if (primary != "/api/s3")
+        throw invalidArgument("Invalid S3 gateway base prefix", std::string(request.target()));
+    return primary;
+}
+
+std::string routingPathFor(const Router::Request& request) {
+    const auto path = targetPath(std::string(request.target()));
+    const auto prefix = proxyBasePrefix(request);
+    if (!prefix) return path;
+
+    if (path == *prefix || path == *prefix + "/") return "/";
+    if (path.starts_with(*prefix + "/")) return path.substr(prefix->size());
+    throw invalidArgument("S3 gateway base prefix does not match request path", path);
+}
+
 Router::Response makeResponse(
     const Router::Request& request,
     const http::status status,
@@ -876,17 +904,20 @@ std::string Router::checksumCrc32Base64(const std::vector<uint8_t>& bytes) {
 }
 
 Router::ParsedTarget Router::parseRequestTarget(const Request& request) {
-    const auto path = targetPath(std::string(request.target()));
+    const auto path = routingPathFor(request);
     const auto query = parseQuery(targetQuery(std::string(request.target())));
     std::string decoded = pctDecode(path);
     while (!decoded.empty() && decoded.front() == '/') decoded.erase(decoded.begin());
 
     ParsedTarget out;
     out.query = query;
-    if (const auto virtualBucket = virtualHostedBucket(request)) {
-        out.bucket = *virtualBucket;
-        out.key = decoded;
-        return out;
+    out.proxy_prefixed = proxyBasePrefix(request).has_value();
+    if (!out.proxy_prefixed) {
+        if (const auto virtualBucket = virtualHostedBucket(request)) {
+            out.bucket = *virtualBucket;
+            out.key = decoded;
+            return out;
+        }
     }
 
     if (!config::Registry::get().s3_gateway.allow_path_style)

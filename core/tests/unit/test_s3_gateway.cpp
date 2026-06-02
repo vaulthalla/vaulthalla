@@ -269,7 +269,6 @@ synthetic_local_request_cost_usd:
     EXPECT_FALSE(cfg.require_sigv4);
     EXPECT_FALSE(cfg.allow_path_style);
     EXPECT_TRUE(cfg.allow_virtual_hosted_style);
-    EXPECT_EQ(cfg.multipart.part_dir, "/tmp/vh-s3-parts");
     EXPECT_EQ(cfg.multipart.min_part_size_mb, 5u);
     EXPECT_EQ(cfg.multipart.abort_after_days, 1u);
     EXPECT_EQ(cfg.synthetic_local_request_cost_usd.list, "0.00000002");
@@ -297,14 +296,47 @@ max_body_size_mb: 64
     EXPECT_EQ(yamlCfg.max_body_size_bytes, 54321u);
 }
 
-TEST(S3GatewayMultipartTest, PartRootUsesConfiguredDirectory) {
-    ConfigRestore restoreConfig(vh::config::Registry::get());
+TEST(S3GatewayConfigTest, MultipartPartDirIsNotEmittedAndLegacyPartDirIsIgnored) {
+    const auto yamlCfg = YAML::Load(R"yaml(
+multipart:
+  part_dir: /tmp/legacy-vh-s3-parts
+  min_part_size_mb: 8
+  abort_after_days: 3
+)yaml").as<vh::config::S3GatewayConfig>();
+    EXPECT_EQ(yamlCfg.multipart.min_part_size_mb, 8u);
+    EXPECT_EQ(yamlCfg.multipart.abort_after_days, 3u);
 
-    auto cfg = vh::config::Registry::get();
-    cfg.s3_gateway.multipart.part_dir = "/tmp/vh-configured-s3-parts";
-    vh::config::Registry::set(cfg);
+    const auto yamlNode = YAML::convert<vh::config::S3GatewayMultipartConfig>::encode(yamlCfg.multipart);
+    EXPECT_FALSE(static_cast<bool>(yamlNode["part_dir"]));
 
-    EXPECT_EQ(vh::protocols::s3::MultipartStore::partRoot(), "/tmp/vh-configured-s3-parts");
+    nlohmann::json jsonCfg = yamlCfg.multipart;
+    EXPECT_FALSE(jsonCfg.contains("part_dir"));
+
+    const auto fromJson = nlohmann::json{
+        {"part_dir", "/tmp/legacy-json-vh-s3-parts"},
+        {"min_part_size_mb", 9},
+        {"abort_after_days", 4}
+    }.get<vh::config::S3GatewayMultipartConfig>();
+    EXPECT_EQ(fromJson.min_part_size_mb, 9u);
+    EXPECT_EQ(fromJson.abort_after_days, 4u);
+}
+
+TEST(S3GatewayMultipartTest, PartRootUsesGeneratedHiddenBackingPath) {
+    const auto oldBackingPath = vh::paths::backingPath;
+    const auto tempBacking = std::filesystem::temp_directory_path() / uniqueSuffix("vh_s3_gateway_parts_root");
+    vh::paths::backingPath = tempBacking;
+
+    EXPECT_EQ(vh::protocols::s3::MultipartStore::partRoot(),
+              vh::paths::getS3GatewayMultipartPartsPath());
+    EXPECT_EQ(vh::protocols::s3::MultipartStore::partRoot().filename().string(),
+              std::string(VH_S3_GATEWAY_MULTIPART_PARTS_DIRNAME));
+
+    vh::paths::backingPath = tempBacking / "changed";
+    EXPECT_EQ(vh::protocols::s3::MultipartStore::partRoot(),
+              vh::paths::getS3GatewayMultipartPartsPath());
+
+    vh::paths::backingPath = oldBackingPath;
+    std::filesystem::remove_all(tempBacking);
 }
 
 TEST(S3GatewayXmlTest, EscapesXmlReservedCharacters) {
@@ -472,6 +504,81 @@ TEST(S3GatewayRouterTest, ParsesVirtualHostedBucket) {
     EXPECT_EQ(parsed.bucket, "photos");
     EXPECT_EQ(parsed.key, "folder/a b+plus.txt");
     EXPECT_TRUE(parsed.query.contains("uploads"));
+}
+
+TEST(S3GatewayRouterTest, StripsApiS3PrefixOnlyWhenProxyMarkerIsPresent) {
+    using vh::protocols::s3::Router;
+
+    Router::Request root{boost::beast::http::verb::get, "/api/s3?list-type=2", 11};
+    root.set(boost::beast::http::field::host, "vaulthalla.example.test");
+    root.set("X-Vaulthalla-S3-Base-Prefix", "/api/s3");
+    auto parsed = Router::parseRequestTarget(root);
+    EXPECT_TRUE(parsed.proxy_prefixed);
+    EXPECT_TRUE(parsed.bucket.empty());
+    ASSERT_TRUE(parsed.query.contains("list-type"));
+    EXPECT_EQ(parsed.query.at("list-type"), "2");
+
+    Router::Request slashRoot{boost::beast::http::verb::get, "/api/s3/", 11};
+    slashRoot.set(boost::beast::http::field::host, "vaulthalla.example.test");
+    slashRoot.set("X-Forwarded-Prefix", "/api/s3");
+    parsed = Router::parseRequestTarget(slashRoot);
+    EXPECT_TRUE(parsed.proxy_prefixed);
+    EXPECT_TRUE(parsed.bucket.empty());
+
+    Router::Request object{boost::beast::http::verb::get, "/api/s3/bucket/a%2Fb.txt?uploadId=1", 11};
+    object.set(boost::beast::http::field::host, "vaulthalla.example.test");
+    object.set("X-Vaulthalla-S3-Base-Prefix", "/api/s3");
+    parsed = Router::parseRequestTarget(object);
+    EXPECT_TRUE(parsed.proxy_prefixed);
+    EXPECT_EQ(parsed.bucket, "bucket");
+    EXPECT_EQ(parsed.key, "a/b.txt");
+    ASSERT_TRUE(parsed.query.contains("uploadId"));
+    EXPECT_EQ(parsed.query.at("uploadId"), "1");
+}
+
+TEST(S3GatewayRouterTest, DirectListenerDoesNotStripApiS3WithoutProxyMarker) {
+    using vh::protocols::s3::Router;
+
+    Router::Request request{boost::beast::http::verb::get, "/api/s3/bucket/key.txt", 11};
+    request.set(boost::beast::http::field::host, "127.0.0.1:39000");
+
+    const auto parsed = Router::parseRequestTarget(request);
+    EXPECT_FALSE(parsed.proxy_prefixed);
+    EXPECT_EQ(parsed.bucket, "api");
+    EXPECT_EQ(parsed.key, "s3/bucket/key.txt");
+}
+
+TEST(S3GatewayRouterTest, PublicHostDoesNotTriggerVirtualHostedBucketWhenPrefixed) {
+    using vh::protocols::s3::Router;
+
+    Router::Request request{boost::beast::http::verb::get, "/api/s3/path-bucket/object.txt", 11};
+    request.set(boost::beast::http::field::host, "photos.example.test:39000");
+    request.set("X-Vaulthalla-S3-Base-Prefix", "/api/s3");
+
+    const auto parsed = Router::parseRequestTarget(request);
+    EXPECT_TRUE(parsed.proxy_prefixed);
+    EXPECT_EQ(parsed.bucket, "path-bucket");
+    EXPECT_EQ(parsed.key, "object.txt");
+}
+
+TEST(S3GatewayRouterTest, RejectsMalformedOrMismatchedPrefixHeader) {
+    using vh::protocols::s3::Router;
+
+    Router::Request invalidPrefix{boost::beast::http::verb::get, "/api/s3/bucket/key.txt", 11};
+    invalidPrefix.set(boost::beast::http::field::host, "vaulthalla.example.test");
+    invalidPrefix.set("X-Vaulthalla-S3-Base-Prefix", "/bad");
+    EXPECT_THROW((void)Router::parseRequestTarget(invalidPrefix), vh::protocols::s3::S3Error);
+
+    Router::Request mismatch{boost::beast::http::verb::get, "/bucket/key.txt", 11};
+    mismatch.set(boost::beast::http::field::host, "vaulthalla.example.test");
+    mismatch.set("X-Vaulthalla-S3-Base-Prefix", "/api/s3");
+    EXPECT_THROW((void)Router::parseRequestTarget(mismatch), vh::protocols::s3::S3Error);
+
+    Router::Request conflicting{boost::beast::http::verb::get, "/api/s3/bucket/key.txt", 11};
+    conflicting.set(boost::beast::http::field::host, "vaulthalla.example.test");
+    conflicting.set("X-Vaulthalla-S3-Base-Prefix", "/api/s3");
+    conflicting.set("X-Forwarded-Prefix", "/different");
+    EXPECT_THROW((void)Router::parseRequestTarget(conflicting), vh::protocols::s3::S3Error);
 }
 
 TEST(S3GatewayRouterTest, RejectsPathStyleWhenDisabled) {
@@ -1053,6 +1160,103 @@ TEST_F(S3GatewayDbTest, SignedDeleteBucketUsesCanAdminWithoutCanDeleteScope) {
     EXPECT_FALSE(vh::db::query::s3::Gateway::resolveBucket(bucketName));
 }
 
+TEST_F(S3GatewayDbTest, SignedPrefixedRootListsBuckets) {
+    ConfigRestore restoreConfig(vh::config::Registry::get());
+
+    auto cfg = vh::config::Registry::get();
+    cfg.s3_gateway.require_sigv4 = true;
+    cfg.s3_gateway.allow_path_style = true;
+    cfg.s3_gateway.allow_virtual_hosted_style = true;
+    vh::config::Registry::set(cfg);
+
+    const auto admin = vh::db::query::identities::User::getUserByName("admin");
+    ASSERT_TRUE(admin);
+
+    const vh::protocols::s3::CredentialManager manager;
+    auto secret = manager.createCredential({
+        .created_by = admin->id,
+        .principal_user_id = admin->id,
+        .name = "prefixed-root-" + uniqueSuffix("credential"),
+        .scope_mode = "user_access",
+        .description = std::nullopt,
+        .expires_at = std::nullopt,
+        .vault_scopes = {}
+    });
+
+    for (const std::string target : {"/api/s3", "/api/s3/"}) {
+        vh::protocols::s3::Router::Request request{http::verb::get, target, 11};
+        request.set(http::field::host, "vaulthalla.example.test");
+        request.set("X-Vaulthalla-S3-Base-Prefix", "/api/s3");
+        request.set("X-Forwarded-Prefix", "/api/s3");
+        signS3GatewayRequest(request, secret.credential.access_key, secret.secret_access_key);
+
+        const vh::protocols::s3::Router router;
+        const auto response = router.route(std::move(request));
+
+        EXPECT_EQ(response.result(), http::status::ok) << response.body();
+        EXPECT_NE(response.body().find("<ListAllMyBucketsResult"), std::string::npos);
+    }
+}
+
+TEST_F(S3GatewayDbTest, SignedPrefixedPutAndGetAuthenticateAndRoutePathStyle) {
+    ConfigRestore restoreConfig(vh::config::Registry::get());
+
+    auto cfg = vh::config::Registry::get();
+    cfg.s3_gateway.require_sigv4 = true;
+    cfg.s3_gateway.allow_path_style = true;
+    cfg.s3_gateway.allow_virtual_hosted_style = true;
+    vh::config::Registry::set(cfg);
+
+    const auto admin = vh::db::query::identities::User::getUserByName("admin");
+    ASSERT_TRUE(admin);
+    ASSERT_TRUE(admin->isSuperAdmin());
+
+    const std::string bucketName = "prefixed-route-" + std::to_string(vaultId);
+    vh::db::query::s3::Gateway::bindBucket({
+        .vault_id = vaultId,
+        .bucket_name = bucketName,
+        .api_exclusive = true,
+        .mode = "local",
+        .created_by = admin->id
+    });
+
+    const vh::protocols::s3::CredentialManager manager;
+    auto secret = manager.createCredential({
+        .created_by = admin->id,
+        .principal_user_id = admin->id,
+        .name = "prefixed-object-" + uniqueSuffix("credential"),
+        .scope_mode = "user_access",
+        .description = std::nullopt,
+        .expires_at = std::nullopt,
+        .vault_scopes = {}
+    });
+
+    const auto addPrefixHeaders = [](vh::protocols::s3::Router::Request& request) {
+        request.set(http::field::host, "vaulthalla.example.test");
+        request.set("X-Vaulthalla-S3-Base-Prefix", "/api/s3");
+        request.set("X-Forwarded-Prefix", "/api/s3");
+    };
+
+    vh::protocols::s3::Router::Request put{http::verb::put, "/api/s3/" + bucketName + "/key.txt", 11};
+    put.body() = "prefixed body";
+    put.prepare_payload();
+    addPrefixHeaders(put);
+    signS3GatewayRequest(put, secret.credential.access_key, secret.secret_access_key);
+
+    const vh::protocols::s3::Router router;
+    auto response = router.route(std::move(put));
+    EXPECT_EQ(response.result(), http::status::ok) << response.body();
+    EXPECT_TRUE(vh::db::query::s3::Gateway::getObjectState(vaultId, "key.txt"));
+
+    vh::protocols::s3::Router::Request get{http::verb::get, "/api/s3/" + bucketName + "/key.txt", 11};
+    addPrefixHeaders(get);
+    signS3GatewayRequest(get, secret.credential.access_key, secret.secret_access_key);
+    response = router.route(std::move(get));
+
+    EXPECT_EQ(response.result(), http::status::ok) << response.body();
+    EXPECT_EQ(response.body(), "prefixed body");
+}
+
 TEST_F(S3GatewayDbTest, NonAdminScopeMutationCannotGrantGatewayAdminScope) {
     EXPECT_THROW(
         vh::protocols::s3::CredentialManager::validateScopeMutation(
@@ -1360,22 +1564,104 @@ TEST_F(S3GatewayDbTest, SignedRouteScopeDeniedReturnsS3XmlAccessDenied) {
     EXPECT_NE(response.body().find("<RequestId>"), std::string::npos);
 }
 
+TEST_F(S3GatewayDbTest, MultipartUploadUsesOpaquePartDirAndCompleteKeepsRoot) {
+    std::filesystem::remove_all(vh::protocols::s3::MultipartStore::partRoot());
+
+    const auto admin = vh::db::query::identities::User::getUserByName("admin");
+    ASSERT_TRUE(admin);
+
+    const std::string bucketName = "multipart-complete-" + std::to_string(vaultId);
+    vh::db::query::s3::Gateway::bindBucket({
+        .vault_id = vaultId,
+        .bucket_name = bucketName,
+        .api_exclusive = true,
+        .mode = "local",
+        .created_by = admin->id
+    });
+    const vh::protocols::s3::ObjectStore objects;
+    const auto bucket = objects.resolveBucket(bucketName, admin);
+
+    const vh::protocols::s3::MultipartStore store;
+    const std::string key = "very-secret-object.txt";
+    const auto uploadId = store.createUpload(bucket, key, {});
+    const auto upload = vh::db::query::s3::Gateway::getMultipartUpload(uploadId);
+    ASSERT_TRUE(upload);
+    EXPECT_FALSE(upload->parts_dir_id.empty());
+    EXPECT_NE(upload->parts_dir_id, upload->upload_id);
+
+    const auto part = store.uploadPart(bucket, key, uploadId, 1, {'p', 'a', 'r', 't'});
+    const auto partDir = vh::protocols::s3::MultipartStore::partRoot() / upload->parts_dir_id;
+    EXPECT_EQ(part.path, partDir / "1");
+    EXPECT_TRUE(std::filesystem::exists(part.path));
+    EXPECT_EQ(part.path.string().find(bucketName), std::string::npos);
+    EXPECT_EQ(part.path.string().find(key), std::string::npos);
+    EXPECT_TRUE(std::filesystem::exists(vh::protocols::s3::MultipartStore::partRoot()));
+
+    const auto dirPerms = std::filesystem::status(partDir).permissions() &
+        (std::filesystem::perms::owner_all | std::filesystem::perms::group_all | std::filesystem::perms::others_all);
+    EXPECT_EQ(dirPerms, std::filesystem::perms::owner_all);
+
+    const auto state = store.completeUpload(bucket, key, uploadId, {{1, part.etag}});
+    EXPECT_TRUE(state.multipart);
+    EXPECT_FALSE(std::filesystem::exists(partDir));
+    EXPECT_TRUE(std::filesystem::exists(vh::protocols::s3::MultipartStore::partRoot()));
+
+    std::filesystem::remove_all(vh::protocols::s3::MultipartStore::partRoot());
+}
+
+TEST_F(S3GatewayDbTest, AbortMultipartUploadRemovesOpaquePartDirAndKeepsRoot) {
+    std::filesystem::remove_all(vh::protocols::s3::MultipartStore::partRoot());
+
+    const auto admin = vh::db::query::identities::User::getUserByName("admin");
+    ASSERT_TRUE(admin);
+
+    const std::string bucketName = "multipart-abort-" + std::to_string(vaultId);
+    vh::db::query::s3::Gateway::bindBucket({
+        .vault_id = vaultId,
+        .bucket_name = bucketName,
+        .api_exclusive = true,
+        .mode = "local",
+        .created_by = admin->id
+    });
+    const vh::protocols::s3::ObjectStore objects;
+    const auto bucket = objects.resolveBucket(bucketName, admin);
+
+    const vh::protocols::s3::MultipartStore store;
+    const std::string key = "abort-secret-object.txt";
+    const auto uploadId = store.createUpload(bucket, key, {});
+    const auto upload = vh::db::query::s3::Gateway::getMultipartUpload(uploadId);
+    ASSERT_TRUE(upload);
+
+    const auto part = store.uploadPart(bucket, key, uploadId, 1, {'p', 'a', 'r', 't'});
+    const auto partDir = vh::protocols::s3::MultipartStore::partRoot() / upload->parts_dir_id;
+    ASSERT_TRUE(std::filesystem::exists(part.path));
+
+    store.abortUpload(bucket, key, uploadId);
+
+    EXPECT_FALSE(vh::db::query::s3::Gateway::getMultipartUpload(uploadId));
+    EXPECT_TRUE(vh::db::query::s3::Gateway::listMultipartParts(uploadId).empty());
+    EXPECT_FALSE(std::filesystem::exists(partDir));
+    EXPECT_TRUE(std::filesystem::exists(vh::protocols::s3::MultipartStore::partRoot()));
+
+    std::filesystem::remove_all(vh::protocols::s3::MultipartStore::partRoot());
+}
+
 TEST_F(S3GatewayDbTest, AbortExpiredMultipartUploadsUsesConfiguredRetention) {
     ConfigRestore restoreConfig(vh::config::Registry::get());
 
-    const auto partDir = std::filesystem::temp_directory_path() /
-                         ("vh_s3_gateway_expired_parts_" + std::to_string(vaultId));
-    std::filesystem::remove_all(partDir);
+    std::filesystem::remove_all(vh::protocols::s3::MultipartStore::partRoot());
 
     auto cfg = vh::config::Registry::get();
-    cfg.s3_gateway.multipart.part_dir = partDir;
     cfg.s3_gateway.multipart.abort_after_days = 1;
     vh::config::Registry::set(cfg);
 
     const std::string oldUpload = "old-upload-" + std::to_string(vaultId);
     const std::string freshUpload = "fresh-upload-" + std::to_string(vaultId);
+    const std::string oldPartsDirId = "old-parts-" + std::to_string(vaultId);
+    const std::string freshPartsDirId = "fresh-parts-" + std::to_string(vaultId);
     vh::db::query::s3::Gateway::createMultipartUpload({
         .upload_id = oldUpload,
+        .parts_dir_id = oldPartsDirId,
         .vault_id = vaultId,
         .object_key = "old.txt",
         .initiated_by = userId,
@@ -1385,6 +1671,7 @@ TEST_F(S3GatewayDbTest, AbortExpiredMultipartUploadsUsesConfiguredRetention) {
     });
     vh::db::query::s3::Gateway::createMultipartUpload({
         .upload_id = freshUpload,
+        .parts_dir_id = freshPartsDirId,
         .vault_id = vaultId,
         .object_key = "fresh.txt",
         .initiated_by = userId,
@@ -1393,7 +1680,8 @@ TEST_F(S3GatewayDbTest, AbortExpiredMultipartUploadsUsesConfiguredRetention) {
         .storage_class = std::nullopt
     });
 
-    const auto oldPartPath = vh::protocols::s3::MultipartStore::partRoot() / oldUpload / "1";
+    const auto oldPartDir = vh::protocols::s3::MultipartStore::partRoot() / oldPartsDirId;
+    const auto oldPartPath = oldPartDir / "1";
     std::filesystem::create_directories(oldPartPath.parent_path());
     std::ofstream(oldPartPath, std::ios::binary) << "old part";
     vh::db::query::s3::Gateway::upsertMultipartPart({
@@ -1419,9 +1707,11 @@ TEST_F(S3GatewayDbTest, AbortExpiredMultipartUploadsUsesConfiguredRetention) {
     EXPECT_FALSE(vh::db::query::s3::Gateway::getMultipartUpload(oldUpload));
     EXPECT_TRUE(vh::db::query::s3::Gateway::listMultipartParts(oldUpload).empty());
     EXPECT_FALSE(std::filesystem::exists(oldPartPath));
+    EXPECT_FALSE(std::filesystem::exists(oldPartDir));
+    EXPECT_TRUE(std::filesystem::exists(vh::protocols::s3::MultipartStore::partRoot()));
     EXPECT_TRUE(vh::db::query::s3::Gateway::getMultipartUpload(freshUpload));
 
-    std::filesystem::remove_all(partDir);
+    std::filesystem::remove_all(vh::protocols::s3::MultipartStore::partRoot());
 }
 
 TEST_F(S3GatewayDbTest, DeleteObjectStateAndRemoteIndexRemovesGatewayAndRemoteRows) {
