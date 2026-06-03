@@ -66,37 +66,6 @@ export class S3GatewayStatus {
   }
 }
 
-export class S3GatewayCredentialVaultScope {
-  credential_id = 0
-  vault_id = 0
-  can_list = true
-  can_read = true
-  can_write = false
-  can_delete = false
-  can_admin = false
-  role: { id: number; name: string; description: string } | null = null
-
-  constructor(input: unknown = {}) {
-    const data = isRecord(input) ? input : {}
-    this.credential_id = asNumber(data.credential_id)
-    this.vault_id = asNumber(data.vault_id)
-    this.can_list = asBoolean(data.can_list, true)
-    this.can_read = asBoolean(data.can_read, true)
-    this.can_write = asBoolean(data.can_write)
-    this.can_delete = asBoolean(data.can_delete)
-    this.can_admin = asBoolean(data.can_admin)
-    this.role = isRecord(data.role) ? {
-      id: asNumber(data.role.id),
-      name: asString(data.role.name),
-      description: asString(data.role.description),
-    } : null
-  }
-
-  static from(input: unknown): S3GatewayCredentialVaultScope {
-    return new S3GatewayCredentialVaultScope(input)
-  }
-}
-
 const asVaultRef = (input: unknown): S3GatewayVaultRef | null => {
   if (!isRecord(input)) return null
   return {
@@ -335,11 +304,11 @@ export interface S3GatewayCredentialCreatePayload {
   expires_at?: number | null
   default_vault_role_id?: number | null
   selected_vault_ids?: number[]
-  vault_scopes?: S3GatewayCredentialVaultScopePayload[]
+  vault_scopes?: S3GatewayCredentialVaultAccessShorthandPayload[]
   enforce_budget_for_local_requests?: boolean
 }
 
-export interface S3GatewayCredentialVaultScopePayload {
+export interface S3GatewayCredentialVaultAccessShorthandPayload {
   vault_id: number
   can_list?: boolean
   can_read?: boolean
@@ -357,7 +326,7 @@ export interface S3GatewayCredentialScopeUpdatePayload {
   expires_at?: number | null
   default_vault_role_id?: number | null
   selected_vault_ids?: number[]
-  vault_scopes?: S3GatewayCredentialVaultScopePayload[]
+  vault_scopes?: S3GatewayCredentialVaultAccessShorthandPayload[]
   enforce_budget_for_local_requests?: boolean
 }
 

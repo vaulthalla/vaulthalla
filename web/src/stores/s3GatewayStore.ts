@@ -19,7 +19,6 @@ import {
   S3GatewayCredentialVaultRoleAssignmentPayload,
   S3GatewayCredentialVaultRoleOverride,
   S3GatewayCredentialVaultRoleOverridePayload,
-  S3GatewayCredentialVaultScope,
   S3GatewayStatus,
 } from '@/models/s3Gateway'
 import { useWebSocketStore } from '@/stores/useWebSocket'
@@ -30,7 +29,6 @@ const credentialVaultKey = (credentialId: number, vaultId: number) => `${credent
 interface S3GatewayStore {
   status: S3GatewayStatus | null
   credentials: S3GatewayCredential[]
-  scopesByCredentialId: Record<number, S3GatewayCredentialVaultScope[]>
   defaultRoleByCredentialId: Record<number, S3GatewayCredentialDefaultVaultRole | null>
   selectedVaultsByCredentialId: Record<number, S3GatewayCredentialSelectedVault[]>
   defaultRoleOverridesByCredentialId: Record<number, S3GatewayCredentialDefaultVaultRoleOverride[]>
@@ -50,7 +48,6 @@ interface S3GatewayStore {
   createCredential: (payload: S3GatewayCredentialCreatePayload) => Promise<{ credential: S3GatewayCredential; secret_access_key: string }>
   revokeCredential: (payload: { access_key?: string; name?: string }) => Promise<boolean>
   updateCredentialScope: (payload: S3GatewayCredentialScopeUpdatePayload) => Promise<S3GatewayCredential | null>
-  fetchCredentialScopes: (payload: { access_key?: string; name?: string }) => Promise<S3GatewayCredentialVaultScope[]>
   fetchCredentialDefaultRole: (payload: { credential_id?: number; access_key?: string; name?: string; credential_name?: string }) => Promise<S3GatewayCredentialDefaultVaultRole | null>
   setCredentialDefaultRole: (payload: S3GatewayCredentialDefaultVaultRolePayload) => Promise<S3GatewayCredentialDefaultVaultRole | null>
   clearCredentialDefaultRole: (payload: { credential_id?: number; access_key?: string; name?: string; credential_name?: string }) => Promise<boolean>
@@ -83,7 +80,6 @@ interface S3GatewayStore {
 export const useS3GatewayStore = create<S3GatewayStore>()((set, get) => ({
   status: null,
   credentials: [],
-  scopesByCredentialId: {},
   defaultRoleByCredentialId: {},
   selectedVaultsByCredentialId: {},
   defaultRoleOverridesByCredentialId: {},
@@ -159,32 +155,32 @@ export const useS3GatewayStore = create<S3GatewayStore>()((set, get) => ({
       const credential = response.credential ? S3GatewayCredential.from(response.credential) : null
       set(state => ({
         credentials: credential ? state.credentials.map(existing => (existing.id === credential.id ? credential : existing)) : state.credentials,
+        defaultRoleByCredentialId: credential?.scope_mode === 'user_access'
+          ? { ...state.defaultRoleByCredentialId, [credential.id]: null }
+          : state.defaultRoleByCredentialId,
+        selectedVaultsByCredentialId: credential?.scope_mode === 'user_access'
+          ? { ...state.selectedVaultsByCredentialId, [credential.id]: [] }
+          : state.selectedVaultsByCredentialId,
+        defaultRoleOverridesByCredentialId: credential?.scope_mode === 'user_access'
+          ? { ...state.defaultRoleOverridesByCredentialId, [credential.id]: [] }
+          : state.defaultRoleOverridesByCredentialId,
+        roleAssignmentsByCredentialId: credential?.scope_mode === 'user_access'
+          ? { ...state.roleAssignmentsByCredentialId, [credential.id]: [] }
+          : state.roleAssignmentsByCredentialId,
         saving: false,
       }))
-      if (payload.vault_scopes && credential) {
-        await get().fetchCredentialScopes({ access_key: credential.access_key }).catch(() => undefined)
-      }
       if (payload.default_vault_role_id !== undefined && credential) {
         await get().fetchCredentialDefaultRole({ access_key: credential.access_key }).catch(() => undefined)
       }
-      if (payload.selected_vault_ids && credential) {
+      if ((payload.selected_vault_ids || payload.vault_scopes) && credential) {
         await get().fetchCredentialSelectedVaults({ access_key: credential.access_key }).catch(() => undefined)
+        await get().fetchCredentialRoleAssignments({ access_key: credential.access_key }).catch(() => undefined)
       }
       return credential
     } catch (error) {
       set({ saving: false, error: errorMessage(error, 'Unable to update S3 gateway credential scope') })
       throw error
     }
-  },
-
-  async fetchCredentialScopes(payload) {
-    const ws = useWebSocketStore.getState()
-    await ws.waitForConnection()
-    const response = await ws.sendCommand('s3.gateway.credentials.scope.list', payload)
-    const credential = S3GatewayCredential.from(response.credential)
-    const scopes = response.scopes.map(S3GatewayCredentialVaultScope.from)
-    set(state => ({ scopesByCredentialId: { ...state.scopesByCredentialId, [credential.id]: scopes } }))
-    return scopes
   },
 
   async fetchCredentialDefaultRole(payload) {

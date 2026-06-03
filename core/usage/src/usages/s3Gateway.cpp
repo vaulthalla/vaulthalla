@@ -81,12 +81,12 @@ std::shared_ptr<CommandUsage> creds(const std::weak_ptr<CommandUsage>& parent) {
     auto scope = build(cmd->weak_from_this());
     scope->aliases = {"scope"};
     scope->positionals = {Positional::Alias("access_key_or_name", "Access key ID or credential name", "access-key-or-name")};
-    scope->description = "View or change S3 gateway credential vault scope.";
+    scope->description = "View or change S3 gateway credential policy.";
 
     auto scopeShow = build(scope->weak_from_this());
     scopeShow->aliases = {"show"};
     scopeShow->optional_flags = {jsonFlag};
-    scopeShow->examples = {{"vh s3-gateway creds scope backup show", "Show scope rows for a credential."}};
+    scopeShow->examples = {{"vh s3-gateway creds scope backup show", "Show final credential policy for a credential."}};
 
     auto scopeSet = build(scope->weak_from_this());
     scopeSet->aliases = {"set"};

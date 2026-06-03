@@ -54,18 +54,6 @@ GatewayCredential credentialFromRow(const pqxx::row& row) {
     };
 }
 
-CredentialVaultScope scopeFromRow(const pqxx::row& row) {
-    return {
-        .credential_id = row["credential_id"].as<uint32_t>(),
-        .vault_id = row["vault_id"].as<uint32_t>(),
-        .can_list = row["can_list"].as<bool>(),
-        .can_read = row["can_read"].as<bool>(),
-        .can_write = row["can_write"].as<bool>(),
-        .can_delete = row["can_delete"].as<bool>(),
-        .can_admin = row["can_admin"].as<bool>()
-    };
-}
-
 CredentialVaultRoleAssignment roleAssignmentFromRow(const pqxx::row& row) {
     return {
         .id = row["id"].as<uint32_t>(),
@@ -366,7 +354,7 @@ std::string notHiddenByActiveTrashSql(const std::string& vaultIdExpr, const std:
         ")";
 }
 
-std::string roleNameForLegacyScope(const CredentialVaultScope& scope) {
+std::string roleNameForScopeShorthand(const CredentialVaultAccessShorthand& scope) {
     if (scope.can_admin) return "manager";
     if (scope.can_delete) return "manager";
     if (scope.can_write) return "contributor";
@@ -510,65 +498,10 @@ void Gateway::updateCredentialLastUsed(const uint32_t id) {
     });
 }
 
-std::vector<CredentialVaultScope> Gateway::listCredentialScopes(const uint32_t credentialId) {
-    return Transactions::exec("S3Gateway::listCredentialScopes", [&](pqxx::work& txn) {
-        const auto res = txn.exec(
-            "SELECT * FROM s3_gateway_credential_vault_scope WHERE credential_id = $1 ORDER BY vault_id",
-            pqxx::params{credentialId});
-        std::vector<CredentialVaultScope> out;
-        out.reserve(res.size());
-        for (const auto& row : res) out.push_back(scopeFromRow(row));
-        return out;
-    });
-}
-
-void Gateway::upsertCredentialScope(const CredentialVaultScope& scope) {
-    if (scope.credential_id == 0) throw std::invalid_argument("S3 gateway credential scope requires credential_id");
-    if (scope.vault_id == 0) throw std::invalid_argument("S3 gateway credential scope requires vault_id");
-
-    Transactions::exec("S3Gateway::upsertCredentialScope", [&](pqxx::work& txn) {
-        txn.exec(
-            R"SQL(
-                INSERT INTO s3_gateway_credential_vault_scope
-                    (credential_id, vault_id, can_list, can_read, can_write, can_delete, can_admin)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
-                ON CONFLICT (credential_id, vault_id) DO UPDATE SET
-                    can_list = EXCLUDED.can_list,
-                    can_read = EXCLUDED.can_read,
-                    can_write = EXCLUDED.can_write,
-                    can_delete = EXCLUDED.can_delete,
-                    can_admin = EXCLUDED.can_admin
-            )SQL",
-            pqxx::params{
-                scope.credential_id,
-                scope.vault_id,
-                scope.can_list,
-                scope.can_read,
-                scope.can_write,
-                scope.can_delete,
-                scope.can_admin
-            });
-    });
-}
-
-bool Gateway::deleteCredentialScope(const uint32_t credentialId, const uint32_t vaultId) {
-    return Transactions::exec("S3Gateway::deleteCredentialScope", [&](pqxx::work& txn) {
-        return txn.exec(
-            R"SQL(
-                DELETE FROM s3_gateway_credential_vault_scope
-                WHERE credential_id = $1 AND vault_id = $2
-            )SQL",
-            pqxx::params{credentialId, vaultId}).affected_rows() > 0;
-    });
-}
-
-void Gateway::replaceCredentialScopes(
+void Gateway::replaceCredentialScopeShorthand(
     const uint32_t credentialId,
-    const std::vector<CredentialVaultScope>& scopes) {
-    Transactions::exec("S3Gateway::replaceCredentialScopes", [&](pqxx::work& txn) {
-        txn.exec(
-            "DELETE FROM s3_gateway_credential_vault_scope WHERE credential_id = $1",
-            pqxx::params{credentialId});
+    const std::vector<CredentialVaultAccessShorthand>& scopes) {
+    Transactions::exec("S3Gateway::replaceCredentialScopeShorthand", [&](pqxx::work& txn) {
         txn.exec(
             "DELETE FROM s3_gateway_credential_selected_vault WHERE credential_id = $1",
             pqxx::params{credentialId});
@@ -576,32 +509,11 @@ void Gateway::replaceCredentialScopes(
             "DELETE FROM s3_gateway_credential_vault_role_assignment WHERE credential_id = $1",
             pqxx::params{credentialId});
 
-        std::vector<std::pair<CredentialVaultScope, uint32_t>> resolvedScopes;
+        std::vector<std::pair<CredentialVaultAccessShorthand, uint32_t>> resolvedScopes;
         resolvedScopes.reserve(scopes.size());
         for (const auto& scope : scopes) {
-            const auto roleName = roleNameForLegacyScope(scope);
+            const auto roleName = roleNameForScopeShorthand(scope);
             resolvedScopes.emplace_back(scope, requireVaultRoleIdByName(txn, roleName));
-            txn.exec(
-                R"SQL(
-                    INSERT INTO s3_gateway_credential_vault_scope
-                        (credential_id, vault_id, can_list, can_read, can_write, can_delete, can_admin)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7)
-                    ON CONFLICT (credential_id, vault_id) DO UPDATE SET
-                        can_list = EXCLUDED.can_list,
-                        can_read = EXCLUDED.can_read,
-                        can_write = EXCLUDED.can_write,
-                        can_delete = EXCLUDED.can_delete,
-                        can_admin = EXCLUDED.can_admin
-                )SQL",
-                pqxx::params{
-                    credentialId,
-                    scope.vault_id,
-                    scope.can_list,
-                    scope.can_read,
-                    scope.can_write,
-                    scope.can_delete,
-                    scope.can_admin
-                });
             txn.exec(
                 R"SQL(
                     INSERT INTO s3_gateway_credential_selected_vault
@@ -636,8 +548,8 @@ void Gateway::replaceCredentialScopes(
             } else {
                 auto best = resolvedScopes.front();
                 for (const auto& item : resolvedScopes) {
-                    const auto itemRoleName = roleNameForLegacyScope(item.first);
-                    const auto bestRoleName = roleNameForLegacyScope(best.first);
+                    const auto itemRoleName = roleNameForScopeShorthand(item.first);
+                    const auto bestRoleName = roleNameForScopeShorthand(best.first);
                     if (roleRank(itemRoleName) < roleRank(bestRoleName) ||
                         (roleRank(itemRoleName) == roleRank(bestRoleName) && item.second < best.second))
                         best = item;
@@ -672,18 +584,6 @@ void Gateway::replaceCredentialScopes(
                 )SQL",
                 pqxx::params{credentialId, scope.vault_id, roleId});
         }
-    });
-}
-
-std::optional<CredentialVaultScope> Gateway::getCredentialScopeForVault(
-    const uint32_t credentialId,
-    const uint32_t vaultId) {
-    return Transactions::exec("S3Gateway::getCredentialScopeForVault", [&](pqxx::work& txn) -> std::optional<CredentialVaultScope> {
-        const auto res = txn.exec(
-            "SELECT * FROM s3_gateway_credential_vault_scope WHERE credential_id = $1 AND vault_id = $2",
-            pqxx::params{credentialId, vaultId});
-        if (res.empty()) return std::nullopt;
-        return scopeFromRow(res.one_row());
     });
 }
 

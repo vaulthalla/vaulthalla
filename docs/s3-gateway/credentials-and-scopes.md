@@ -120,7 +120,7 @@ vh s3-gateway creds role override remove backup --vault archive 42
 vh s3-gateway creds role revoke backup --vault archive
 ```
 
-The role commands write `s3_gateway_credential_vault_role_assignment` and `s3_gateway_credential_vault_role_override` rows directly. They are exception tools, not the primary selected-vault list. The deprecated boolean scope row remains compatibility output only.
+The role commands write `s3_gateway_credential_vault_role_assignment` and `s3_gateway_credential_vault_role_override` rows directly. They are exception tools, not the primary selected-vault list. Boolean create flags and `creds scope allow-vault` are CLI/API shorthand that writes the selected-vault, default-role, and per-vault exception tables.
 
 Local/cache budget accounting is off by default. Enable it only when a gateway credential should consume key budgets for pure local buckets, metadata-only requests, cache hits, and sync-deferred local-first writes/deletes:
 

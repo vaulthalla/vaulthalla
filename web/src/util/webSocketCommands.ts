@@ -86,7 +86,6 @@ import {
   S3GatewayCredentialVaultRoleAssignmentPayload,
   S3GatewayCredentialVaultRoleOverride,
   S3GatewayCredentialVaultRoleOverridePayload,
-  S3GatewayCredentialVaultScope,
   S3GatewayStatus,
 } from '@/models/s3Gateway'
 
@@ -282,11 +281,6 @@ export interface WebSocketCommandMap {
   's3.gateway.credentials.scope.update': {
     payload: S3GatewayCredentialScopeUpdatePayload
     response: { credential: S3GatewayCredential | null }
-  }
-
-  's3.gateway.credentials.scope.list': {
-    payload: { access_key?: string; name?: string }
-    response: { credential: S3GatewayCredential; scopes: S3GatewayCredentialVaultScope[] }
   }
 
   's3.gateway.credentials.defaultRole.get': {

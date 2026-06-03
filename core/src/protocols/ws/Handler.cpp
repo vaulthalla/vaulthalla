@@ -156,7 +156,6 @@ void Handler::registerS3GatewayHandlers(const std::shared_ptr<Router>& r) {
     r->registerPayload("s3.gateway.credentials.list", &handler::S3Gateway::credentialsList);
     r->registerPayload("s3.gateway.credentials.revoke", &handler::S3Gateway::credentialsRevoke);
     r->registerPayload("s3.gateway.credentials.scope.update", &handler::S3Gateway::credentialsScopeUpdate);
-    r->registerPayload("s3.gateway.credentials.scope.list", &handler::S3Gateway::credentialsScopeList);
     r->registerPayload("s3.gateway.credentials.defaultRole.get", &handler::S3Gateway::credentialsDefaultRoleGet);
     r->registerPayload("s3.gateway.credentials.defaultRole.set", &handler::S3Gateway::credentialsDefaultRoleSet);
     r->registerPayload("s3.gateway.credentials.defaultRole.clear", &handler::S3Gateway::credentialsDefaultRoleClear);

@@ -330,28 +330,6 @@ json defaultOverrideJson(
     return out;
 }
 
-json scopeJson(const db::query::s3::CredentialVaultScope& scope) {
-    json roleJson = nullptr;
-    if (const auto role = db::query::s3::Gateway::getCredentialVaultRoleForVault(scope.credential_id, scope.vault_id)) {
-        roleJson = {
-            {"id", role->id},
-            {"name", role->name},
-            {"description", role->description}
-        };
-    }
-
-    return {
-        {"credential_id", scope.credential_id},
-        {"vault_id", scope.vault_id},
-        {"can_list", scope.can_list},
-        {"can_read", scope.can_read},
-        {"can_write", scope.can_write},
-        {"can_delete", scope.can_delete},
-        {"can_admin", scope.can_admin},
-        {"role", roleJson}
-    };
-}
-
 json bucketJson(const db::query::s3::BucketBinding& bucket) {
     return {
         {"bucket_name", bucket.bucket_name},
@@ -419,11 +397,11 @@ db::query::s3::GatewayCredential requireCredentialFromPayload(
     return *credential;
 }
 
-std::vector<db::query::s3::CredentialVaultScope> scopesFromPayload(const json& payload, const uint32_t credentialId) {
-    std::vector<db::query::s3::CredentialVaultScope> scopes;
+std::vector<db::query::s3::CredentialVaultAccessShorthand> scopesFromPayload(const json& payload, const uint32_t credentialId) {
+    std::vector<db::query::s3::CredentialVaultAccessShorthand> scopes;
     if (!payload.contains("vault_scopes") || !payload.at("vault_scopes").is_array()) return scopes;
     for (const auto& item : payload.at("vault_scopes")) {
-        db::query::s3::CredentialVaultScope scope;
+        db::query::s3::CredentialVaultAccessShorthand scope;
         scope.credential_id = credentialId;
         scope.vault_id = item.at("vault_id").get<std::uint32_t>();
         scope.can_list = item.value("can_list", true);
@@ -879,9 +857,7 @@ json S3Gateway::credentialsScopeUpdate(const json& payload, const std::shared_pt
 
     const auto requestedScopes = payload.contains("vault_scopes")
         ? scopesFromPayload(payload, credential->id)
-        : (scopeMode == "vault_allowlist"
-            ? db::query::s3::Gateway::listCredentialScopes(credential->id)
-            : std::vector<db::query::s3::CredentialVaultScope>{});
+        : std::vector<db::query::s3::CredentialVaultAccessShorthand>{};
     const auto payloadDefaultRoleId = defaultVaultRoleIdFromPayload(payload);
     const auto existingDefaultRole = db::query::s3::Gateway::getCredentialDefaultVaultRole(credential->id);
     const auto effectiveDefaultRoleId = payloadDefaultRoleId
@@ -911,10 +887,10 @@ json S3Gateway::credentialsScopeUpdate(const json& payload, const std::shared_pt
         expiresAt,
         enforceLocalBudget);
     if (scopeMode == "user_access")
-        db::query::s3::Gateway::replaceCredentialScopes(credential->id, {});
+        db::query::s3::Gateway::replaceCredentialScopeShorthand(credential->id, {});
     else {
         if (payload.contains("vault_scopes"))
-            db::query::s3::Gateway::replaceCredentialScopes(credential->id, requestedScopes);
+            db::query::s3::Gateway::replaceCredentialScopeShorthand(credential->id, requestedScopes);
         else {
             if (payloadDefaultRoleId)
                 db::query::s3::Gateway::upsertCredentialDefaultVaultRole(
@@ -932,16 +908,6 @@ json S3Gateway::credentialsScopeUpdate(const json& payload, const std::shared_pt
 
     auto updated = db::query::s3::Gateway::getCredentialByAccessKey(credential->access_key);
     return {{"credential", updated ? credentialJson(*updated) : json(nullptr)}};
-}
-
-json S3Gateway::credentialsScopeList(const json& payload, const std::shared_ptr<Session>& session) {
-    const auto credential = findCredential(session, payload);
-    if (!credential) throw std::runtime_error("S3 gateway credential not found");
-    requireViewCredential(session, *credential);
-    json rows = json::array();
-    for (const auto& scope : db::query::s3::Gateway::listCredentialScopes(credential->id))
-        rows.push_back(scopeJson(scope));
-    return {{"credential", credentialJson(*credential)}, {"scopes", rows}};
 }
 
 json S3Gateway::credentialsDefaultRoleGet(const json& payload, const std::shared_ptr<Session>& session) {

@@ -129,13 +129,13 @@ GatewaySecret CredentialManager::createCredential(const CredentialCreateOptions&
     out.credential.id = db::query::s3::Gateway::createCredential(out.credential);
 
     if (out.credential.scope_mode == "user_access") {
-        db::query::s3::Gateway::replaceCredentialScopes(out.credential.id, {});
+        db::query::s3::Gateway::replaceCredentialScopeShorthand(out.credential.id, {});
     } else if (out.credential.scope_mode == "vault_allowlist" && !options.vault_scopes.empty()) {
         auto scopes = options.vault_scopes;
         for (auto& scope : scopes) scope.credential_id = out.credential.id;
-        db::query::s3::Gateway::replaceCredentialScopes(out.credential.id, scopes);
+        db::query::s3::Gateway::replaceCredentialScopeShorthand(out.credential.id, scopes);
     } else {
-        db::query::s3::Gateway::replaceCredentialScopes(out.credential.id, {});
+        db::query::s3::Gateway::replaceCredentialScopeShorthand(out.credential.id, {});
         if (options.default_vault_role_id)
             db::query::s3::Gateway::upsertCredentialDefaultVaultRole(
                 out.credential.id,
@@ -193,7 +193,7 @@ void CredentialManager::validateScopeMutation(
     const uint32_t actorUserId,
     const uint32_t principalUserId,
     const std::string& scopeMode,
-    const std::vector<CredentialVaultScope>& vaultScopes,
+    const std::vector<CredentialVaultAccessShorthand>& vaultScopes,
     const std::vector<uint32_t>& selectedVaultIds,
     const std::optional<uint32_t> defaultVaultRoleId) {
     if (actorUserId == 0) throw std::invalid_argument("S3 gateway credential scope update requires an actor user");

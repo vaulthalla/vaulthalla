@@ -933,7 +933,6 @@ protected:
         if (skipTests) GTEST_SKIP() << "Skipping db tests due to missing environment variables.";
         vh::db::Transactions::exec("S3GatewayDbTest::clearObjects", [](pqxx::work& txn) {
             txn.exec("DELETE FROM s3_gateway_bucket");
-            txn.exec("DELETE FROM s3_gateway_credential_vault_scope");
             txn.exec("DELETE FROM s3_gateway_credentials");
             txn.exec("DELETE FROM s3_gateway_multipart_upload");
             txn.exec("DELETE FROM s3_gateway_object");
@@ -1549,7 +1548,7 @@ TEST_F(S3GatewayDbTest, VaultAllowlistScopesMirrorToGatewayVaultRoles) {
     credential.scope_mode = "vault_allowlist";
     credential.id = vh::db::query::s3::Gateway::createCredential(credential);
 
-    vh::db::query::s3::Gateway::replaceCredentialScopes(credential.id, {{
+    vh::db::query::s3::Gateway::replaceCredentialScopeShorthand(credential.id, {{
         .credential_id = credential.id,
         .vault_id = vaultId,
         .can_list = true,
@@ -1573,7 +1572,7 @@ TEST_F(S3GatewayDbTest, VaultAllowlistScopesMirrorToGatewayVaultRoles) {
     ASSERT_TRUE(effectiveRole);
     EXPECT_EQ(effectiveRole->name, "manager");
 
-    vh::db::query::s3::Gateway::replaceCredentialScopes(credential.id, {{
+    vh::db::query::s3::Gateway::replaceCredentialScopeShorthand(credential.id, {{
         .credential_id = credential.id,
         .vault_id = vaultId,
         .can_list = true,
@@ -1594,7 +1593,7 @@ TEST_F(S3GatewayDbTest, VaultAllowlistScopesMirrorToGatewayVaultRoles) {
     ASSERT_TRUE(effectiveRole);
     EXPECT_EQ(effectiveRole->name, "manager");
 
-    vh::db::query::s3::Gateway::replaceCredentialScopes(credential.id, {{
+    vh::db::query::s3::Gateway::replaceCredentialScopeShorthand(credential.id, {{
         .credential_id = credential.id,
         .vault_id = vaultId,
         .can_list = true,
@@ -1881,7 +1880,8 @@ TEST_F(S3GatewayDbTest, S3GatewayWebSocketNormalizesCredentialScopeNames) {
     const auto credential = vh::db::query::s3::Gateway::getCredentialByAccessKey(accessKey);
     ASSERT_TRUE(credential);
     EXPECT_EQ("vault_allowlist", credential->scope_mode);
-    EXPECT_EQ(1u, vh::db::query::s3::Gateway::listCredentialScopes(credential->id).size());
+    EXPECT_EQ(1u, vh::db::query::s3::Gateway::listCredentialSelectedVaults(credential->id).size());
+    EXPECT_TRUE(vh::db::query::s3::Gateway::getCredentialDefaultVaultRole(credential->id));
 
     const auto updated = vh::protocols::ws::handler::S3Gateway::credentialsScopeUpdate({
         {"access_key", accessKey},
@@ -1889,7 +1889,8 @@ TEST_F(S3GatewayDbTest, S3GatewayWebSocketNormalizesCredentialScopeNames) {
     }, session);
     ASSERT_TRUE(updated.contains("credential"));
     EXPECT_EQ("user_access", updated.at("credential").at("scope_mode").get<std::string>());
-    EXPECT_TRUE(vh::db::query::s3::Gateway::listCredentialScopes(credential->id).empty());
+    EXPECT_TRUE(vh::db::query::s3::Gateway::listCredentialSelectedVaults(credential->id).empty());
+    EXPECT_FALSE(vh::db::query::s3::Gateway::getCredentialDefaultVaultRole(credential->id));
 }
 
 TEST_F(S3GatewayDbTest, S3GatewayWebSocketRoleAssignmentAndOverrideEndpointsWork) {
@@ -2208,7 +2209,7 @@ TEST_F(S3GatewayDbTest, DisabledAndExpiredCredentialsDoNotAuthenticate) {
     EXPECT_FALSE(manager.findEnabledSecret(expired.credential.access_key));
 }
 
-TEST_F(S3GatewayDbTest, CredentialVaultScopeRowsReplaceLookupAndGateActions) {
+TEST_F(S3GatewayDbTest, CredentialScopeShorthandWritesFinalRbacTablesAndGatesActions) {
     const auto secondVaultId = createLocalVault(uniqueSuffix("scope"), userId);
 
     vh::db::query::s3::GatewayCredential credential;
@@ -2223,7 +2224,7 @@ TEST_F(S3GatewayDbTest, CredentialVaultScopeRowsReplaceLookupAndGateActions) {
     credential.scope_mode = "vault_allowlist";
     credential.id = vh::db::query::s3::Gateway::createCredential(credential);
 
-    vh::db::query::s3::Gateway::replaceCredentialScopes(credential.id, {
+    vh::db::query::s3::Gateway::replaceCredentialScopeShorthand(credential.id, {
         {
             .credential_id = credential.id,
             .vault_id = vaultId,
@@ -2244,14 +2245,15 @@ TEST_F(S3GatewayDbTest, CredentialVaultScopeRowsReplaceLookupAndGateActions) {
         }
     });
 
-    auto scopes = vh::db::query::s3::Gateway::listCredentialScopes(credential.id);
-    ASSERT_EQ(scopes.size(), 2u);
-    auto first = vh::db::query::s3::Gateway::getCredentialScopeForVault(credential.id, vaultId);
-    ASSERT_TRUE(first);
-    EXPECT_TRUE(first->can_read);
-    EXPECT_FALSE(first->can_write);
+    auto selectedVaults = vh::db::query::s3::Gateway::listCredentialSelectedVaults(credential.id);
+    ASSERT_EQ(selectedVaults.size(), 2u);
+    auto defaultRole = vh::db::query::s3::Gateway::getCredentialDefaultVaultRole(credential.id);
+    ASSERT_TRUE(defaultRole);
+    EXPECT_EQ(defaultRole->vault_role_id, roleIdByName("implicit_deny"));
+    auto assignments = vh::db::query::s3::Gateway::listCredentialVaultRoleAssignments(credential.id);
+    ASSERT_EQ(assignments.size(), 2u);
 
-    vh::db::query::s3::Gateway::replaceCredentialScopes(credential.id, {{
+    vh::db::query::s3::Gateway::replaceCredentialScopeShorthand(credential.id, {{
         .credential_id = credential.id,
         .vault_id = secondVaultId,
         .can_list = true,
@@ -2260,13 +2262,12 @@ TEST_F(S3GatewayDbTest, CredentialVaultScopeRowsReplaceLookupAndGateActions) {
         .can_delete = false,
         .can_admin = false
     }});
-    scopes = vh::db::query::s3::Gateway::listCredentialScopes(credential.id);
-    ASSERT_EQ(scopes.size(), 1u);
-    EXPECT_EQ(scopes.front().vault_id, secondVaultId);
-    EXPECT_FALSE(vh::db::query::s3::Gateway::getCredentialScopeForVault(credential.id, vaultId));
-    const auto assignments = vh::db::query::s3::Gateway::listCredentialVaultRoleAssignments(credential.id);
+    selectedVaults = vh::db::query::s3::Gateway::listCredentialSelectedVaults(credential.id);
+    ASSERT_EQ(selectedVaults.size(), 1u);
+    EXPECT_EQ(selectedVaults.front().vault_id, secondVaultId);
+    assignments = vh::db::query::s3::Gateway::listCredentialVaultRoleAssignments(credential.id);
     EXPECT_TRUE(assignments.empty());
-    const auto defaultRole = vh::db::query::s3::Gateway::getCredentialDefaultVaultRole(credential.id);
+    defaultRole = vh::db::query::s3::Gateway::getCredentialDefaultVaultRole(credential.id);
     ASSERT_TRUE(defaultRole);
     EXPECT_EQ(defaultRole->vault_role_id, roleIdByName("contributor"));
     const auto credentialRole = vh::db::query::s3::Gateway::getCredentialVaultRoleForVault(credential.id, secondVaultId);

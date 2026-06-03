@@ -82,7 +82,7 @@ The Cost Control page manages price budgets. Use it to set global, provider-leve
 
 Admin -> S3 Gateway manages downstream S3-compatible access. Credential creation chooses the effective principal from a relational user selector when the actor has `admin.s3_gateway.assign_principal`; users without that permission see their own principal only.
 
-Gateway authorization is RBAC-native. `user_access` credentials inherit the principal user's Vaulthalla RBAC without gateway role rows. `vault_allowlist` credentials are managed through vault role assignments and path overrides in the credential role editor. Legacy boolean scopes are compatibility shorthand only and are not the primary web-console workflow.
+Gateway authorization is RBAC-native. `user_access` credentials inherit the principal user's Vaulthalla RBAC without gateway role rows. `vault_allowlist` credentials are managed through selected vaults, default vault roles, role exceptions, and path overrides in the credential role editor. Boolean scope flags are CLI/API shorthand only and are not the web-console policy model.
 
 ## Operator Email Page
 

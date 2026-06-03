@@ -33,7 +33,7 @@ struct GatewayCredential {
     std::optional<std::time_t> expires_at;
 };
 
-struct CredentialVaultScope {
+struct CredentialVaultAccessShorthand {
     uint32_t credential_id{};
     uint32_t vault_id{};
     bool can_list{true};
@@ -162,11 +162,7 @@ public:
     static bool deleteCredentialByAccessKey(const std::string& accessKey);
     static bool deleteCredentialByName(uint32_t userId, const std::string& name);
     static void updateCredentialLastUsed(uint32_t id);
-    static std::vector<CredentialVaultScope> listCredentialScopes(uint32_t credentialId);
-    static void upsertCredentialScope(const CredentialVaultScope& scope);
-    static bool deleteCredentialScope(uint32_t credentialId, uint32_t vaultId);
-    static void replaceCredentialScopes(uint32_t credentialId, const std::vector<CredentialVaultScope>& scopes);
-    static std::optional<CredentialVaultScope> getCredentialScopeForVault(uint32_t credentialId, uint32_t vaultId);
+    static void replaceCredentialScopeShorthand(uint32_t credentialId, const std::vector<CredentialVaultAccessShorthand>& scopes);
     static std::vector<CredentialVaultRoleAssignment> listCredentialVaultRoleAssignments(uint32_t credentialId);
     static uint32_t upsertCredentialVaultRoleAssignment(const CredentialVaultRoleAssignmentInput& input);
     static bool deleteCredentialVaultRoleAssignment(uint32_t credentialId, uint32_t vaultId);

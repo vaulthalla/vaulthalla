@@ -18,13 +18,9 @@ These notes summarize the scoped credential and per-key budget work on the `s3-e
 
 ## What Changed
 
-- Added migration `096_s3_gateway_credential_scope_and_budget.sql`.
-- Added migration `097_s3_gateway_actual_usage_accounting.sql`.
-- Added migration `098_s3_gateway_multipart_part_dirs.sql`.
-- Added migration `100_s3_gateway_key_default_vault_roles.sql`.
+- Consolidated final S3 Gateway schema into `095_s3_gateway.sql`.
 - Extended `s3_gateway_credentials` with creator, effective principal, scope mode, description, and expiry fields.
 - Added `enforce_budget_for_local_requests` to gateway credentials.
-- Added `s3_gateway_credential_vault_scope` for per-vault list/read/write/delete/admin flags. This table is deprecated compatibility state.
 - Added S3 gateway credential default vault roles, default/key-level role overrides, and selected-vault rows.
 - Added gateway credential and gateway credential/vault price-budget scopes.
 - Added gateway budget ledger columns for credential id, request UUID, operation, object key, estimated cost, usage source, and synthetic/local marker.
@@ -43,7 +39,7 @@ These notes summarize the scoped credential and per-key budget work on the `s3-e
 - `user_access` checks use the principal user's normal Vaulthalla RBAC without requiring gateway credential vault-role assignments.
 - `vault_allowlist` checks require normal Vaulthalla RBAC, an enabled selected-vault row, and an enabled key-level default vault role. Optional per-vault role assignments override the default for one selected vault. Default overrides apply broadly; per-vault overrides apply after them.
 - `global` credentials use principal RBAC across gateway bucket bindings, require an admin principal, and require an enabled key-level default vault role. Optional per-vault role assignments/overrides are exceptions, not the primary policy.
-- Bucket-admin gateway operations keep RBAC validation separate from object scope. Gateway credentials now resolve per-vault access through gateway credential vault-role assignments rather than treating `can_admin` as the primary authorization source.
+- Bucket-admin gateway operations keep RBAC validation separate from object scope. Gateway credentials resolve per-vault access through selected vaults, default roles, and optional per-vault role exceptions.
 - Bucket binding mode validation rejects local vaults bound as `remote_cache`/`remote_proxy` and S3/R2 vaults bound as `local`, preventing management UI or CLI actions from creating bindings that route pricing/budget checks to the wrong engine type.
 - Remote-backed gateway operations estimate provider cost and evaluate existing global/provider/vault policies plus new per-key and per-key/vault policies only for actual upstream work performed inside the gateway request.
 - Remote-backed gateway operations check the vault remote policy's existing S3/R2 request budgets through request-scoped upstream usage capture, so request-budget failures are distinguishable and do not leave committed price ledger rows.
@@ -62,11 +58,11 @@ These notes summarize the scoped credential and per-key budget work on the `s3-e
 - Gateway PUT/COPY/multipart completion writes Vaulthalla local state and gateway metadata first for remote-backed buckets. Sync owns eventual upstream upload/index/manifest side effects and the provider/vault/global upstream price-budget ledger rows for that work.
 - Gateway DELETE now removes or tombstones Vaulthalla local state and clears gateway metadata without direct upstream delete calls from the S3 Router/ObjectStore layer. Sync owns upstream purge.
 - Bucket delete emptiness checks use Vaulthalla metadata, filesystem rows, gateway metadata, and remote index state instead of only `s3_gateway_object`.
-- CLI management exists under `vh s3-gateway creds scope ...` for scope/default role/selected vault compatibility, `vh s3-gateway creds role ...` for per-vault exceptions, and `vh s3-gateway budget ...`.
-- WebSocket management endpoints exist for service status, credentials, compatibility scopes, credential default role get/set/clear, selected vault list/add/remove/replace, default role overrides, per-vault role assignments, per-vault path overrides, buckets, budget policy upsert/list/disable, ledger, and status.
+- CLI management exists under `vh s3-gateway creds scope ...` for scope/default role/selected vault policy, `vh s3-gateway creds role ...` for per-vault exceptions, and `vh s3-gateway budget ...`.
+- WebSocket management endpoints exist for service status, credentials, credential scope updates, credential default role get/set/clear, selected vault list/add/remove/replace, default role overrides, per-vault role assignments, per-vault path overrides, buckets, budget policy upsert/list/disable, ledger, and status.
 - WebSocket credential create/update normalizes `user-access`, `vault-allowlist`, and their underscore forms to the canonical DB scope values, matching CLI behavior.
 - Web console route `/s3-gateway` exists with service, credential, role-native credential access, bucket, budget, ledger, and client setup sections. The page has been split into `web/src/components/s3-gateway/*` components so browser tests can target stable sections.
-- DB-backed coverage includes disabled/expired credential rejection, scope row replacement/lookup, scoped action denial, and a signed S3 route returning XML `AccessDenied` when credential scope denies access after RBAC passes.
+- DB-backed coverage includes disabled/expired credential rejection, shorthand-to-RBAC table writes, scoped action denial, and a signed S3 route returning XML `AccessDenied` when credential policy denies access after RBAC passes.
 - DB-backed route coverage now distinguishes actual upstream use from local-first gateway work: remote-only GET commits actual upstream gateway ledger rows with `synthetic=false` and `usage_source=remote_download`, remote-only GET can be denied by upstream request budget with `SlowDown` or price budget with `AccessDenied`, LIST/local GET/local-first PUT/DELETE/multipart do not commit gateway ledger rows by default, synthetic local accounting can be enabled per credential, pure local buckets can consume synthetic key usage, and request-budget `SlowDown` remains distinct from price-budget `AccessDenied`.
 - DB-backed object-store coverage includes metadata-only local/remote LIST behavior, local-first remote delete with tombstones, no direct upstream delete from gateway DELETE, bucket-delete rejection from filesystem rows without gateway rows, bucket-delete rejection from remote index rows, and truly empty API-exclusive bucket deletion.
 - DB-backed WebSocket coverage includes gateway budget policy upsert/list/disable/status for `gateway_credential` and `gateway_credential_vault` scopes.
@@ -86,7 +82,7 @@ These notes summarize the scoped credential and per-key budget work on the `s3-e
 - `tools/smoke/s3_gateway_e2e.sh` wraps the Playwright S3 Gateway UI suite and the existing scoped-budget smoke script. The wrapper sources the E2E env loader, starts the local web dev server when needed, attempts to enable/start the S3 gateway before declaring it unreachable, relies on Playwright global setup for browser credential seeding, runs synthetic local-only smoke by default, and runs both synthetic and actual-upstream R2/S3 smoke when remote config is present or `--require-remote` is passed.
 - `tools/smoke/s3_gateway_merge_ready.sh` runs the final merge-readiness sequence and writes `test-results/s3-gateway-e2e/merge-ready-report.txt` with stage statuses, exact commands, env-source status, credential provisioning status, local/remote prefixes, and R2 cleanup result.
 - Admin CLI and WebSocket scope updates can retarget the effective principal; converting a credential to `global` stamps `created_by` with the admin actor so audit metadata matches runtime global-scope validation.
-- Non-admin compatibility `vault_allowlist` creation/update now requires the principal to have real access to every named vault. Legacy shorthand scope rows are mirrored into gateway credential vault-role assignments, and request authorization still requires the principal's matching RBAC action.
+- Non-admin `vault_allowlist` creation/update now requires the principal to have real access to every named vault. Boolean shorthand writes final selected-vault/default-role/per-vault role tables, and request authorization still requires the principal's matching RBAC action.
 - CLI gateway budget status supports JSON output with `policies`, `ledger`, and credential-aware `trends`; combined `--key --vault` status includes both the key-wide cap and the key/vault cap.
 - CLI key-only budget cap creation/disable now requires admin permission; non-admin budget management is limited to key/vault caps where the caller owns or can manage the vault. This matches the WebSocket path and lets vault managers cap another principal's gateway key on their vault without seeing that key's key-wide budget cap.
 - The generic pricing WebSocket policy handler also rejects non-admin key-wide `gateway_credential` mutations so callers cannot bypass the S3 gateway management endpoint's admin-only key cap rule.
@@ -216,3 +212,8 @@ tools/smoke/s3_gateway_e2e.sh --require-remote --prefix "s3-gateway-e2e/20260601
 1. Expand WebSocket role-matrix tests for delegated vault admin roles beyond owner/super-admin cases.
 2. Add provider-specific copy-object pricing refinements if catalogs expose provider-side copy pricing separately from GET plus PUT estimates.
 3. Add deeper browser coverage for permission-denied role states if those workflows start changing frequently.
+
+## Deferred Cleanup Notes
+
+- Consider a future v1.6 fresh-install schema baseline cleanup after S3 Gateway ships and the migration boundary is stable.
+- Keep vault slug/display-name cleanup deferred to a separate pass; this release cleanup does not add slug columns or change vault display-name behavior.

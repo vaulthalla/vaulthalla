@@ -17,7 +17,7 @@ struct GatewaySecret {
     std::string secret_access_key;
 };
 
-using CredentialVaultScope = db::query::s3::CredentialVaultScope;
+using CredentialVaultAccessShorthand = db::query::s3::CredentialVaultAccessShorthand;
 
 struct CredentialCreateOptions {
     uint32_t created_by{};
@@ -29,7 +29,7 @@ struct CredentialCreateOptions {
     std::optional<uint32_t> default_vault_role_id;
     std::vector<uint32_t> selected_vault_ids;
     std::vector<vh::rbac::permission::Override> default_role_overrides;
-    std::vector<CredentialVaultScope> vault_scopes;
+    std::vector<CredentialVaultAccessShorthand> vault_scopes;
     bool enforce_budget_for_local_requests{false};
 };
 
@@ -50,7 +50,7 @@ public:
     static void validateScopeMutation(uint32_t actorUserId,
                                       uint32_t principalUserId,
                                       const std::string& scopeMode,
-                                      const std::vector<CredentialVaultScope>& vaultScopes,
+                                      const std::vector<CredentialVaultAccessShorthand>& vaultScopes,
                                       const std::vector<uint32_t>& selectedVaultIds = {},
                                       std::optional<uint32_t> defaultVaultRoleId = std::nullopt);
 

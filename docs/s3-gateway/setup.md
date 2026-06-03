@@ -155,7 +155,7 @@ vh s3-gateway creds role override list backup --vault archive
 vh s3-gateway creds role revoke backup --vault archive
 ```
 
-Legacy boolean scope flags and `creds scope allow-vault` are compatibility shorthand. Gateway authorization uses vault roles and path overrides.
+Boolean scope flags and `creds scope allow-vault` are CLI/API shorthand. Gateway authorization uses selected vaults, default vault roles, role exceptions, and path overrides.
 
 Buckets:
 
