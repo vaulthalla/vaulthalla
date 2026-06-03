@@ -178,7 +178,7 @@ jobs:
 
       - name: Validate documentation package
         shell: bash
-        run: pmdocs validate --source main-docs
+        run: pmdocs validate --source docs
 
       - name: Sync documentation package
         shell: bash
@@ -186,7 +186,7 @@ jobs:
           set -euo pipefail
           pmdocs push \
             --endpoint "https://vaulthalla.io/api/documentation/sync" \
-            --source main-docs \
+            --source docs \
             --github-oidc
 
       - name: Build release artifacts (Debian + web deployable)
