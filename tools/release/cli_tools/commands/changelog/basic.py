@@ -13,7 +13,12 @@ from tools.release.cli_tools.changelog.print import log_release_ai_preflight
 
 def cmd_changelog_draft(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo_root).resolve()
-    context = build_changelog_context(repo_root, args.since_tag)
+    context = build_changelog_context(
+        repo_root,
+        args.since_tag,
+        release_notes_base=getattr(args, "release_notes_base", None),
+        release_notes_base_resolution=getattr(args, "release_notes_base_resolution", None),
+    )
 
     if args.format == "json":
         rendered = f"{render_debug_json(context)}\n"
@@ -28,7 +33,12 @@ def cmd_changelog_draft(args: argparse.Namespace) -> int:
 
 def cmd_changelog_payload(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo_root).resolve()
-    context = build_changelog_context(repo_root, args.since_tag)
+    context = build_changelog_context(
+        repo_root,
+        args.since_tag,
+        release_notes_base=getattr(args, "release_notes_base", None),
+        release_notes_base_resolution=getattr(args, "release_notes_base_resolution", None),
+    )
     payload = build_ai_payload(context)
     rendered = render_ai_payload_json(payload)
 

@@ -69,6 +69,49 @@ class CliBuildDebParsingTests(unittest.TestCase):
         self.assertTrue(parsed.require_enabled)
         self.assertTrue(callable(parsed.func))
 
+    def test_release_success_parser_flags(self) -> None:
+        parser = cli.build_parser()
+        parsed_base = parser.parse_args(
+            [
+                "resolve-release-notes-base",
+                "--version",
+                "1.6.1",
+                "--release-notes-base",
+                "v1.5.1",
+                "--output",
+                "/tmp/base.json",
+            ]
+        )
+        self.assertEqual(parsed_base.command, "resolve-release-notes-base")
+        self.assertEqual(parsed_base.version, "1.6.1")
+        self.assertEqual(parsed_base.release_notes_base, "v1.5.1")
+        self.assertEqual(parsed_base.output, "/tmp/base.json")
+
+        parsed_record = parser.parse_args(
+            [
+                "record-release-success",
+                "--output-dir",
+                "/tmp/release",
+                "--output",
+                "/tmp/ledger.json",
+                "--version",
+                "1.6.1",
+                "--tag",
+                "v1.6.1",
+                "--publication-mode",
+                "nexus",
+                "--target-url",
+                "https://apt.example/repository/vaulthalla",
+                "--workflow-run-id",
+                "123",
+            ]
+        )
+        self.assertEqual(parsed_record.command, "record-release-success")
+        self.assertEqual(parsed_record.output_dir, "/tmp/release")
+        self.assertEqual(parsed_record.output, "/tmp/ledger.json")
+        self.assertEqual(parsed_record.tag, "v1.6.1")
+        self.assertEqual(parsed_record.workflow_run_id, "123")
+
 
 class CliBuildDebCommandTests(unittest.TestCase):
     @staticmethod

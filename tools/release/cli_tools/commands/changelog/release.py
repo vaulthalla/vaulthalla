@@ -19,6 +19,8 @@ def cmd_changelog_ai_release(args: argparse.Namespace) -> int:
         repo_root=args.repo_root,
         changelog_command="ai-release",
         since_tag=args.since_tag,
+        release_notes_base=getattr(args, "release_notes_base", None),
+        release_notes_base_resolution=getattr(args, "release_notes_base_resolution", None),
         output=draft_output,
         save_json=args.save_json,
         model=args.model,
@@ -39,6 +41,8 @@ def cmd_changelog_ai_release(args: argparse.Namespace) -> int:
     release_args = argparse.Namespace(
         repo_root=args.repo_root,
         since_tag=args.since_tag,
+        release_notes_base=getattr(args, "release_notes_base", None),
+        release_notes_base_resolution=getattr(args, "release_notes_base_resolution", None),
         output=args.output,
         raw_output=args.raw_output,
         payload_output=args.payload_output,

@@ -37,7 +37,12 @@ def run_changelog_release_with_settings(
 ) -> int:
     try:
         print_status("Changelog release stage: build deterministic context + payload")
-        context = build_changelog_context(repo_root, args.since_tag)
+        context = build_changelog_context(
+            repo_root,
+            args.since_tag,
+            release_notes_base=getattr(args, "release_notes_base", None),
+            release_notes_base_resolution=getattr(args, "release_notes_base_resolution", None),
+        )
         payload = build_ai_payload(context)
         semantic_payload = build_semantic_ai_payload(context)
         raw_markdown = render_release_changelog(context)
@@ -49,10 +54,16 @@ def run_changelog_release_with_settings(
             "Changelog context: "
             f"previous_tag={getattr(context, 'previous_tag', None) or 'none'}, "
             f"latest_tag={getattr(context, 'latest_tag', None) or 'none'}, "
+            f"success_source={getattr(context, 'release_success_source', None) or 'unspecified'}, "
+            f"commit_range={getattr(context, 'commit_range', None) or 'HEAD'}, "
             f"commits={getattr(context, 'commit_count', None)}, "
             f"semantic_categories={context_metadata['semantic_category_count']}, "
             f"semantic_hunks={context_metadata['semantic_hunk_count']}"
         )
+        skipped_release_tags = list(getattr(context, "skipped_release_tags", []) or [])
+        skip_reasons = dict(getattr(context, "skip_reasons", {}) or {})
+        for tag in skipped_release_tags:
+            print_status(f"Changelog skipped release tag: {tag} ({skip_reasons.get(tag, 'no reason recorded')})")
         for note in getattr(context, "cross_cutting_notes", []) or []:
             print_status(f"Changelog context note: {note}")
     except Exception as exc:

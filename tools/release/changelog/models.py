@@ -60,6 +60,11 @@ class ReleaseContext:
     latest_tag: str | None = None
     skipped_current_release_tag: bool = False
     explicit_previous_tag: bool = False
+    last_successful_release_tag: str | None = None
+    release_success_source: str | None = None
+    skipped_release_tags: list[str] = field(default_factory=list)
+    skip_reasons: dict[str, str] = field(default_factory=dict)
+    commit_range: str | None = None
 
 
 @dataclass(frozen=True)

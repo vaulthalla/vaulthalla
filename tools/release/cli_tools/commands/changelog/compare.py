@@ -36,6 +36,8 @@ def cmd_changelog_ai_compare(args: argparse.Namespace) -> int:
                 repo_root=str(repo_root),
                 changelog_command="ai-compare",
                 since_tag=args.since_tag,
+                release_notes_base=getattr(args, "release_notes_base", None),
+                release_notes_base_resolution=getattr(args, "release_notes_base_resolution", None),
                 output=str(temp_root / f"{profile}.draft.md"),
                 save_json=None,
                 ai_profile=profile,

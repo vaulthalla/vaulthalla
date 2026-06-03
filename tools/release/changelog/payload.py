@@ -224,14 +224,24 @@ def build_ai_payload(
     if not categories_payload:
         notes.append("No categories selected for payload after filters/limits.")
 
+    metadata = {
+        "version": context.version,
+        "previous_tag": context.previous_tag,
+        "head_sha": context.head_sha,
+        "commit_count": context.commit_count,
+    }
+    if context.last_successful_release_tag is not None:
+        metadata["last_successful_release_tag"] = context.last_successful_release_tag
+    if context.release_success_source is not None:
+        metadata["release_success_source"] = context.release_success_source
+    if context.skipped_release_tags:
+        metadata["skipped_release_tags"] = context.skipped_release_tags
+    if context.commit_range is not None:
+        metadata["commit_range"] = context.commit_range
+
     return {
         "schema_version": AI_PAYLOAD_SCHEMA_VERSION,
-        "metadata": {
-            "version": context.version,
-            "previous_tag": context.previous_tag,
-            "head_sha": context.head_sha,
-            "commit_count": context.commit_count,
-        },
+        "metadata": metadata,
         "generation": {
             "category_order_used": category_order_used,
             "selected_category_order": [item["name"] for item in categories_payload],
@@ -290,7 +300,16 @@ def build_semantic_ai_payload(
         all_commits=all_commits,
         notes=notes,
     )
-    return asdict(semantic)
+    rendered = asdict(semantic)
+    if context.last_successful_release_tag is not None:
+        rendered["last_successful_release_tag"] = context.last_successful_release_tag
+    if context.release_success_source is not None:
+        rendered["release_success_source"] = context.release_success_source
+    if context.skipped_release_tags:
+        rendered["skipped_release_tags"] = context.skipped_release_tags
+    if context.commit_range is not None:
+        rendered["commit_range"] = context.commit_range
+    return rendered
 
 
 def render_semantic_ai_payload_json(payload: dict[str, Any]) -> str:

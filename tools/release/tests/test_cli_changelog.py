@@ -110,10 +110,25 @@ class CliChangelogDraftTests(unittest.TestCase):
         self.assertEqual(parsed.format, "raw")
 
         parsed_json = parser.parse_args(
-            ["changelog", "draft", "--format", "json", "--since-tag", "v0.1.0", "--output", "/tmp/x.md"]
+            [
+                "changelog",
+                "draft",
+                "--format",
+                "json",
+                "--since-tag",
+                "v0.1.0",
+                "--release-notes-base",
+                "v0.1.0",
+                "--release-notes-base-resolution",
+                "/tmp/base.json",
+                "--output",
+                "/tmp/x.md",
+            ]
         )
         self.assertEqual(parsed_json.format, "json")
         self.assertEqual(parsed_json.since_tag, "v0.1.0")
+        self.assertEqual(parsed_json.release_notes_base, "v0.1.0")
+        self.assertEqual(parsed_json.release_notes_base_resolution, "/tmp/base.json")
         self.assertEqual(parsed_json.output, "/tmp/x.md")
 
         parsed_payload = parser.parse_args(
@@ -129,6 +144,8 @@ class CliChangelogDraftTests(unittest.TestCase):
                 "changelog",
                 "release",
                 "--since-tag",
+                "v0.1.0",
+                "--release-notes-base",
                 "v0.1.0",
                 "--output",
                 "/tmp/release.md",
@@ -147,6 +164,7 @@ class CliChangelogDraftTests(unittest.TestCase):
         self.assertEqual(parsed_release.command, "changelog")
         self.assertEqual(parsed_release.changelog_command, "release")
         self.assertEqual(parsed_release.since_tag, "v0.1.0")
+        self.assertEqual(parsed_release.release_notes_base, "v0.1.0")
         self.assertEqual(parsed_release.output, "/tmp/release.md")
         self.assertEqual(parsed_release.raw_output, "/tmp/raw.md")
         self.assertEqual(parsed_release.payload_output, "/tmp/release-payload.json")

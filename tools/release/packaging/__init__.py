@@ -8,6 +8,7 @@ from tools.release.packaging.publication import (
     DebianPublicationResult,
     DebianPublicationSettings,
     publish_debian_artifacts,
+    redact_url,
     resolve_debian_publication_settings,
     select_debian_publication_artifacts,
 )
@@ -19,6 +20,7 @@ __all__ = [
     "ReleaseArtifactValidationResult",
     "build_debian_package",
     "publish_debian_artifacts",
+    "redact_url",
     "resolve_debian_publication_settings",
     "select_debian_publication_artifacts",
     "validate_release_artifacts",

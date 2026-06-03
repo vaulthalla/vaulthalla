@@ -28,11 +28,41 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         self.assertIn("uses: actions/checkout@v4", workflow)
         self.assertIn("fetch-depth: 0", workflow)
 
+    def test_release_workflow_is_parallel_ready_dag(self) -> None:
+        workflow = self._workflow()
+        self.assertIn("concurrency:", workflow)
+        self.assertIn("cancel-in-progress: false", workflow)
+        for job in (
+            "validate-release-state:",
+            "core-verify:",
+            "release-tooling-verify:",
+            "web-verify:",
+            "docs-validate:",
+            "release-artifacts:",
+            "publish-debian:",
+            "github-release:",
+            "docs-publish:",
+            "record-release-success:",
+        ):
+            self.assertIn(job, workflow)
+        self.assertIn("needs:\n      - validate-release-state", workflow)
+        self.assertIn("needs:\n      - validate-release-state\n      - release-artifacts", workflow)
+
+    def test_release_success_is_recorded_only_after_publication_gates(self) -> None:
+        workflow = self._workflow()
+        record_job = workflow.split("record-release-success:", 1)[1]
+        self.assertIn("needs:", record_job)
+        self.assertIn("- publish-debian", record_job)
+        self.assertIn("- github-release", record_job)
+        self.assertIn("- docs-publish", record_job)
+        self.assertIn("record-release-success", record_job)
+        self.assertNotIn("always()", record_job)
+
     def test_github_release_assets_are_prepared_via_deduped_manifest_step(self) -> None:
         workflow = self._workflow()
         self.assertIn("Prepare GitHub release asset list (deduped)", workflow)
         self.assertIn("id: gh_release_assets", workflow)
-        self.assertIn("find \"$artifact_dir\" -type f | LC_ALL=C sort -u", workflow)
+        self.assertIn("find release -type f | LC_ALL=C sort -u", workflow)
 
     def test_github_release_action_uses_manifest_output_not_duplicate_globs(self) -> None:
         workflow = self._workflow()
@@ -63,6 +93,13 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         self.assertIn("changelog.context.json", action)
         self.assertIn("--semantic-payload-output", action)
         self.assertIn("changelog.semantic_payload.json", action)
+
+    def test_package_action_resolves_and_passes_release_notes_base(self) -> None:
+        action = self._package_action()
+        self.assertIn("resolve-release-notes-base", action)
+        self.assertIn("--release-notes-base", action)
+        self.assertIn("--release-notes-base-resolution", action)
+        self.assertIn("release_notes_base.resolution.json", action)
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 DEFAULT_PUBLICATION_MODE = "disabled"
 SUPPORTED_PUBLICATION_MODES: tuple[str, ...] = ("disabled", "nexus")
@@ -145,6 +145,21 @@ def _validate_nexus_repo_url(repo_url: str) -> None:
             "NEXUS_REPO_URL must be an absolute http(s) URL, "
             f"received `{repo_url}`."
         )
+
+
+def redact_url(url: str | None) -> str | None:
+    if url is None:
+        return None
+    parsed = urlparse(url)
+    if not parsed.username and not parsed.password:
+        return url
+    hostname = parsed.hostname or ""
+    netloc = hostname
+    if parsed.port is not None:
+        netloc = f"{netloc}:{parsed.port}"
+    if parsed.username or parsed.password:
+        netloc = f"<redacted>@{netloc}"
+    return urlunparse((parsed.scheme, netloc, parsed.path, parsed.params, parsed.query, parsed.fragment))
 
 
 def _find_debian_publication_artifacts(destination: Path) -> tuple[Path, ...]:

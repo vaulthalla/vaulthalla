@@ -10,6 +10,7 @@ from tools.release.packaging.publication import (
     DebianPublicationSettings,
     _upload_file_to_nexus_with_curl,
     publish_debian_artifacts,
+    redact_url,
     resolve_debian_publication_settings,
     select_debian_publication_artifacts,
 )
@@ -55,6 +56,12 @@ class DebianPublicationSettingsTests(unittest.TestCase):
                     "NEXUS_PASS": "secret",
                 },
             )
+
+    def test_redact_url_hides_embedded_credentials(self) -> None:
+        self.assertEqual(
+            redact_url("https://ci-user:secret@nexus.example/repository/vaulthalla"),
+            "https://<redacted>@nexus.example/repository/vaulthalla",
+        )
 
 
 class DebianPublicationTests(unittest.TestCase):

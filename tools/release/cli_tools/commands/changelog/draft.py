@@ -39,7 +39,12 @@ from tools.release.version.adapters import read_version_file
 
 def cmd_changelog_ai_draft(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo_root).resolve()
-    context = build_changelog_context(repo_root, args.since_tag)
+    context = build_changelog_context(
+        repo_root,
+        args.since_tag,
+        release_notes_base=getattr(args, "release_notes_base", None),
+        release_notes_base_resolution=getattr(args, "release_notes_base_resolution", None),
+    )
     payload = build_ai_payload(context)
     pipeline_config = build_ai_pipeline_config_from_args(args, repo_root=repo_root)
     run_triage = bool(args.use_triage) or pipeline_config.is_stage_enabled("triage")

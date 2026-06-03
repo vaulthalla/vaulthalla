@@ -124,6 +124,7 @@ def build_release_context_fingerprint(context: ReleaseContext) -> dict[str, Any]
         "previous_tag": getattr(context, "previous_tag", None),
         "head_sha": getattr(context, "head_sha", None),
         "commit_count": getattr(context, "commit_count", None),
+        "commit_range": getattr(context, "commit_range", None),
     }
 
 
@@ -172,6 +173,11 @@ def build_release_context_metadata(
         "latest_tag": getattr(context, "latest_tag", None),
         "skipped_current_release_tag": bool(getattr(context, "skipped_current_release_tag", False)),
         "explicit_previous_tag": bool(getattr(context, "explicit_previous_tag", False)),
+        "last_successful_release_tag": getattr(context, "last_successful_release_tag", None),
+        "release_success_source": getattr(context, "release_success_source", None),
+        "skipped_release_tags": list(getattr(context, "skipped_release_tags", []) or []),
+        "skip_reasons": dict(getattr(context, "skip_reasons", {}) or {}),
+        "commit_range": getattr(context, "commit_range", None),
         "semantic_category_count": len([item for item in semantic_categories if isinstance(item, dict)]),
         "semantic_hunk_count": semantic_hunk_count,
         "categories": categories,

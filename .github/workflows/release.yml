@@ -2,6 +2,23 @@ name: Release Pipeline
 
 on:
   workflow_dispatch:
+    inputs:
+      ref:
+        description: Optional branch, tag, or SHA to release-check.
+        required: false
+        type: string
+      publish:
+        description: Run protected publication steps.
+        required: true
+        default: dry-run
+        type: choice
+        options:
+          - dry-run
+          - publish
+      release_notes_base:
+        description: Optional explicit successful release tag for changelog/release-notes generation.
+        required: false
+        type: string
   push:
     tags:
       - "v*"
@@ -10,110 +27,194 @@ permissions:
   contents: write
   id-token: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_AI_MODE: ${{ vars.RELEASE_AI_MODE || 'auto' }}
+  RELEASE_AI_PROFILE_OPENAI: ${{ vars.RELEASE_AI_PROFILE_OPENAI || 'openai-balanced' }}
+  RELEASE_LOCAL_LLM_ENABLED: ${{ vars.RELEASE_LOCAL_LLM_ENABLED || 'false' }}
+  RELEASE_LOCAL_LLM_PROFILE: ${{ vars.RELEASE_LOCAL_LLM_PROFILE || '' }}
+  RELEASE_LOCAL_LLM_BASE_URL: ${{ vars.RELEASE_LOCAL_LLM_BASE_URL || '' }}
+  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || '' }}
+  RELEASE_LOCAL_LLM_API_KEY: ${{ secrets.RELEASE_LOCAL_LLM_API_KEY || '' }}
+  RELEASE_DEBIAN_DISTRIBUTION: ${{ vars.RELEASE_DEBIAN_DISTRIBUTION || '' }}
+  RELEASE_DEBIAN_URGENCY: ${{ vars.RELEASE_DEBIAN_URGENCY || '' }}
+  RELEASE_PUBLISH_MODE: ${{ vars.RELEASE_PUBLISH_MODE || 'disabled' }}
+  RELEASE_PUBLISH_REQUIRED: ${{ vars.RELEASE_PUBLISH_REQUIRED || 'auto' }}
+  RELEASE_APT_REPOSITORY_URL: ${{ vars.RELEASE_APT_REPOSITORY_URL || '' }}
+  RELEASE_APT_SUITE: ${{ vars.RELEASE_APT_SUITE || 'stable' }}
+  RELEASE_APT_COMPONENTS: ${{ vars.RELEASE_APT_COMPONENTS || 'main' }}
+  RELEASE_APT_ARCHITECTURES: ${{ vars.RELEASE_APT_ARCHITECTURES || 'amd64' }}
+  RELEASE_EXPECTED_DEBIAN_PACKAGES: ${{ vars.RELEASE_EXPECTED_DEBIAN_PACKAGES || '' }}
+  DOCS_SYNC_ENDPOINT: ${{ vars.DOCS_SYNC_ENDPOINT || 'https://vaulthalla.io/api/documentation/sync' }}
+  NEXUS_REPO_URL: ${{ vars.NEXUS_REPO_URL || '' }}
+  NEXUS_USER: ${{ secrets.NEXUS_USER || '' }}
+  NEXUS_PASS: ${{ secrets.NEXUS_PASS || '' }}
+  GITHUB_TOKEN: ${{ github.token }}
+
 jobs:
-  release:
-    name: Validate, Package, and Publish Artifacts
+  validate-release-state:
+    name: Validate release state
     runs-on:
       - self-hosted
       - Linux
       - X64
       - ubuntu-latest-lts
-    environment: Production
-    env:
-      RELEASE_AI_MODE: ${{ vars.RELEASE_AI_MODE || 'auto' }}
-      RELEASE_AI_PROFILE_OPENAI: ${{ vars.RELEASE_AI_PROFILE_OPENAI || 'openai-balanced' }}
-      RELEASE_LOCAL_LLM_ENABLED: ${{ vars.RELEASE_LOCAL_LLM_ENABLED || 'false' }}
-      RELEASE_LOCAL_LLM_PROFILE: ${{ vars.RELEASE_LOCAL_LLM_PROFILE || '' }}
-      RELEASE_LOCAL_LLM_BASE_URL: ${{ vars.RELEASE_LOCAL_LLM_BASE_URL || '' }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || '' }}
-      RELEASE_LOCAL_LLM_API_KEY: ${{ secrets.RELEASE_LOCAL_LLM_API_KEY || '' }}
-      RELEASE_DEBIAN_DISTRIBUTION: ${{ vars.RELEASE_DEBIAN_DISTRIBUTION || '' }}
-      RELEASE_DEBIAN_URGENCY: ${{ vars.RELEASE_DEBIAN_URGENCY || '' }}
-      RELEASE_PUBLISH_MODE: ${{ vars.RELEASE_PUBLISH_MODE || 'disabled' }}
-      RELEASE_PUBLISH_REQUIRED: ${{ vars.RELEASE_PUBLISH_REQUIRED || 'auto' }}
-      NEXUS_REPO_URL: ${{ vars.NEXUS_REPO_URL || '' }}
-      NEXUS_USER: ${{ secrets.NEXUS_USER || '' }}
-      NEXUS_PASS: ${{ secrets.NEXUS_PASS || '' }}
-
+    outputs:
+      version: ${{ steps.state.outputs.version }}
+      release_tag: ${{ steps.state.outputs.release_tag }}
+      publish_required: ${{ steps.state.outputs.publish_required }}
+      release_notes_base: ${{ steps.release_base.outputs.release_notes_base }}
+      release_notes_base_source: ${{ steps.release_base.outputs.release_notes_base_source }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
           fetch-depth: 0
-
-      - name: Install OS packages required for Python venv
-        shell: bash
-        run: |
-          set -euo pipefail
-          if ! command -v apt-get >/dev/null 2>&1; then
-            echo "::error::Expected apt-based runner for venv provisioning."
-            exit 1
-          fi
-          APT_PREFIX=""
-          if command -v sudo >/dev/null 2>&1; then
-            APT_PREFIX="sudo"
-          fi
-          ${APT_PREFIX} apt-get update
-          if apt-cache show python3.12-venv >/dev/null 2>&1; then
-            ${APT_PREFIX} apt-get install -y python3.12-venv
-            echo "RELEASE_VENV_OS_PACKAGE=python3.12-venv" >> "$GITHUB_ENV"
-          elif apt-cache show python3-venv >/dev/null 2>&1; then
-            ${APT_PREFIX} apt-get install -y python3-venv
-            echo "RELEASE_VENV_OS_PACKAGE=python3-venv" >> "$GITHUB_ENV"
-          else
-            echo "::error::Could not find python3.12-venv or python3-venv packages."
-            exit 1
-          fi
 
       - name: Setup Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Create release-tooling venv and install dependencies
+      - name: Install release-tooling dependencies
         shell: bash
         run: |
           set -euo pipefail
-          python -m venv --copies .venv
-          if [ ! -x ".venv/bin/python" ]; then
-            echo "::error::Venv creation failed; missing executable: ${GITHUB_WORKSPACE}/.venv/bin/python"
-            ls -la .venv || true
-            ls -la .venv/bin || true
-            exit 1
-          fi
-          .venv/bin/python --version
-          .venv/bin/python -m pip install --upgrade pip
-          .venv/bin/python -m pip install -r requirements.txt
-          RELEASE_PYTHON_PATH="${GITHUB_WORKSPACE}/.venv/bin/python"
-          if [ ! -x "${RELEASE_PYTHON_PATH}" ]; then
-            echo "::error::Resolved RELEASE_PYTHON path is not executable: ${RELEASE_PYTHON_PATH}"
-            exit 1
-          fi
-          echo "RELEASE_PYTHON=${RELEASE_PYTHON_PATH}" >> "$GITHUB_ENV"
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
 
-      - name: Verify release-tooling interpreter and SDK imports
+      - name: Validate versions and publication policy
+        id: state
         shell: bash
+        env:
+          DISPATCH_REF: ${{ github.event.inputs.ref || '' }}
+          DISPATCH_PUBLISH: ${{ github.event.inputs.publish || 'dry-run' }}
         run: |
           set -euo pipefail
-          echo "Using OS venv package: ${RELEASE_VENV_OS_PACKAGE:-<unset>}"
-          if [ -z "${RELEASE_PYTHON:-}" ]; then
-            echo "::error::RELEASE_PYTHON is empty."
-            exit 1
-          fi
-          if [ ! -x "${RELEASE_PYTHON}" ]; then
-            echo "::error::RELEASE_PYTHON does not exist or is not executable: ${RELEASE_PYTHON}"
-            ls -la "${GITHUB_WORKSPACE}/.venv" || true
-            ls -la "${GITHUB_WORKSPACE}/.venv/bin" || true
-            exit 1
-          fi
-          "${RELEASE_PYTHON}" --version
-          "${RELEASE_PYTHON}" -m pip --version
-          "${RELEASE_PYTHON}" -c "import openai"
+          python -m tools.release check
 
-      - name: Validate release state
+          version="$(tr -d '[:space:]' < VERSION)"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::VERSION must be a plain semantic version, got '${version}'."
+            exit 1
+          fi
+
+          release_tag=""
+          if [[ "${GITHUB_REF:-}" == refs/tags/* ]]; then
+            release_tag="${GITHUB_REF_NAME}"
+          elif [[ "$DISPATCH_REF" == refs/tags/* ]]; then
+            release_tag="${DISPATCH_REF#refs/tags/}"
+          elif [[ "$DISPATCH_REF" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            release_tag="$DISPATCH_REF"
+          fi
+
+          raw_required="${RELEASE_PUBLISH_REQUIRED:-auto}"
+          case "$raw_required" in
+            auto)
+              if [[ "${GITHUB_REF:-}" == refs/tags/* ]] || [ "$DISPATCH_PUBLISH" = "publish" ]; then
+                publish_required="true"
+              else
+                publish_required="false"
+              fi
+              ;;
+            true|false)
+              publish_required="$raw_required"
+              ;;
+            *)
+              echo "::error::Invalid RELEASE_PUBLISH_REQUIRED value: ${raw_required}. Expected auto|true|false."
+              exit 1
+              ;;
+          esac
+
+          if [ "$DISPATCH_PUBLISH" = "publish" ]; then
+            publish_required="true"
+          fi
+
+          if [ -n "$release_tag" ]; then
+            if [ "$release_tag" != "v${version}" ] && [ "$release_tag" != "$version" ]; then
+              echo "::error::Release tag '${release_tag}' does not match VERSION '${version}'."
+              echo "::error::Expected 'v${version}' or '${version}'."
+              exit 1
+            fi
+          fi
+
+          if [ "$publish_required" = "true" ]; then
+            if [ -z "$release_tag" ]; then
+              echo "::error::Publication requires a release tag."
+              exit 1
+            fi
+            if [ "$release_tag" != "v${version}" ]; then
+              echo "::error::Publication requires the canonical tag 'v${version}'."
+              exit 1
+            fi
+          fi
+
+          {
+            echo "version=${version}"
+            echo "release_tag=${release_tag}"
+            echo "publish_required=${publish_required}"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "VERSION=${version}"
+          echo "release_tag=${release_tag:-<none>}"
+          echo "publish_required=${publish_required}"
+
+      - name: Resolve successful release notes base
+        id: release_base
         shell: bash
+        env:
+          INPUT_RELEASE_NOTES_BASE: ${{ github.event.inputs.release_notes_base || '' }}
         run: |
-          "${RELEASE_PYTHON}" -m tools.release check
+          set -euo pipefail
+          mkdir -p .release-base
+          resolve_args=(--output .release-base/release_notes_base.resolution.json)
+          if [ -n "$INPUT_RELEASE_NOTES_BASE" ]; then
+            resolve_args+=(--release-notes-base "$INPUT_RELEASE_NOTES_BASE")
+          fi
+          python -m tools.release resolve-release-notes-base "${resolve_args[@]}"
+          release_notes_base="$(python - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path(".release-base/release_notes_base.resolution.json").read_text(encoding="utf-8"))
+          print(data["last_successful_release_tag"])
+          PY
+          )"
+          release_notes_base_source="$(python - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path(".release-base/release_notes_base.resolution.json").read_text(encoding="utf-8"))
+          print(data["source"])
+          PY
+          )"
+          {
+            echo "release_notes_base=${release_notes_base}"
+            echo "release_notes_base_source=${release_notes_base_source}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload release base resolution
+        uses: actions/upload-artifact@v4
+        with:
+          name: vaulthalla-release-base-${{ steps.state.outputs.version }}
+          path: .release-base/release_notes_base.resolution.json
+          if-no-files-found: error
+
+  core-verify:
+    name: Core build and tests
+    runs-on:
+      - self-hosted
+      - Linux
+      - X64
+      - ubuntu-latest-lts
+    needs: validate-release-state
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
 
       - name: Build core
         uses: ./.github/actions/build
@@ -121,36 +222,71 @@ jobs:
       - name: Run core tests
         uses: ./.github/actions/test
 
-      - name: Verify release-tooling interpreter path before release stages
+  release-tooling-verify:
+    name: Release tooling tests
+    runs-on:
+      - self-hosted
+      - Linux
+      - X64
+      - ubuntu-latest-lts
+    needs: validate-release-state
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install release-tooling dependencies
         shell: bash
         run: |
           set -euo pipefail
-          if [ -z "${RELEASE_PYTHON:-}" ]; then
-            echo "::error::RELEASE_PYTHON is empty before release-tooling tests."
-            exit 1
-          fi
-          if [ ! -x "${RELEASE_PYTHON}" ]; then
-            echo "::error::RELEASE_PYTHON became invalid before release-tooling tests: ${RELEASE_PYTHON}"
-            ls -la "${GITHUB_WORKSPACE}/.venv" || true
-            ls -la "${GITHUB_WORKSPACE}/.venv/bin" || true
-            exit 1
-          fi
-          "${RELEASE_PYTHON}" --version
-          "${RELEASE_PYTHON}" -m pip --version
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
 
       - name: Run release tooling tests
-        shell: bash
-        run: |
-          "${RELEASE_PYTHON}" -m unittest discover -s tools/release/tests -p 'test_*.py'
+        run: python -m unittest discover -s tools/release/tests -p 'test_*.py'
+
+  web-verify:
+    name: Web build and checks
+    runs-on:
+      - self-hosted
+      - Linux
+      - X64
+      - ubuntu-latest-lts
+    needs: validate-release-state
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
 
       - name: Setup web toolchain
         uses: ./.github/actions/setup_web
 
-      - name: Build web (includes private icon sync)
+      - name: Build web
         uses: ./.github/actions/build_web
 
       - name: Run web checks
         uses: ./.github/actions/test_web
+
+  docs-validate:
+    name: Documentation validation
+    runs-on:
+      - self-hosted
+      - Linux
+      - X64
+      - ubuntu-latest-lts
+    needs: validate-release-state
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
 
       - name: Install pmdocs
         shell: bash
@@ -177,17 +313,49 @@ jobs:
           pmdocs --version
 
       - name: Validate documentation package
-        shell: bash
         run: pmdocs validate --source docs
 
-      - name: Sync documentation package
+  release-artifacts:
+    name: Build release artifacts
+    runs-on:
+      - self-hosted
+      - Linux
+      - X64
+      - ubuntu-latest-lts
+    needs:
+      - validate-release-state
+      - core-verify
+      - release-tooling-verify
+      - web-verify
+      - docs-validate
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install release-tooling dependencies
         shell: bash
         run: |
           set -euo pipefail
-          pmdocs push \
-            --endpoint "https://vaulthalla.io/api/documentation/sync" \
-            --source docs \
-            --github-oidc
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          echo "RELEASE_PYTHON=$(command -v python)" >> "$GITHUB_ENV"
+
+      - name: Setup web toolchain
+        uses: ./.github/actions/setup_web
+
+      - name: Download release base resolution
+        uses: actions/download-artifact@v4
+        with:
+          name: vaulthalla-release-base-${{ needs.validate-release-state.outputs.version }}
+          path: .release-base
 
       - name: Build release artifacts (Debian + web deployable)
         id: package
@@ -195,6 +363,7 @@ jobs:
         with:
           output_dir: release
           python_executable: ${{ env.RELEASE_PYTHON }}
+          release_notes_base_resolution: .release-base/release_notes_base.resolution.json
 
       - name: Verify release artifact directory before upload
         shell: bash
@@ -213,113 +382,139 @@ jobs:
           echo "Staged files:"
           find "$artifact_dir" -maxdepth 2 -type f | sort
 
-      - name: Upload workflow artifacts
+      - name: Upload combined release artifact
         uses: actions/upload-artifact@v4
         with:
-          name: vaulthalla-release-${{ github.ref_name }}
+          name: vaulthalla-release-${{ needs.validate-release-state.outputs.version }}
           path: ${{ steps.package.outputs.artifact_dir }}
           if-no-files-found: error
 
-      - name: Resolve publication policy (optional vs required)
-        id: publish_policy
+  publish-debian:
+    name: Publish Debian packages
+    runs-on:
+      - self-hosted
+      - Linux
+      - X64
+      - ubuntu-latest-lts
+    needs:
+      - validate-release-state
+      - release-artifacts
+    environment: Production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install release-tooling dependencies
         shell: bash
         run: |
           set -euo pipefail
-          ref="${GITHUB_REF:-}"
-          is_tag="false"
-          if [[ "$ref" == refs/tags/* ]]; then
-            is_tag="true"
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Download combined release artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: vaulthalla-release-${{ needs.validate-release-state.outputs.version }}
+          path: release
+
+      - name: Publish or dry-run Debian packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ needs.validate-release-state.outputs.publish_required }}" = "true" ]; then
+            python -m tools.release publish-deb --output-dir release --require-enabled
+          else
+            python -m tools.release publish-deb --output-dir release --mode disabled --dry-run
           fi
 
-          raw_required="${RELEASE_PUBLISH_REQUIRED:-auto}"
-          case "$raw_required" in
-            auto)
-              if [ "$is_tag" = "true" ]; then
-                required="true"
-              else
-                required="false"
+      - name: Verify published APT package metadata
+        if: needs.validate-release-state.outputs.publish_required == 'true'
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.validate-release-state.outputs.version }}
+          RELEASE_TAG: ${{ needs.validate-release-state.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          next_patch="$(python - <<'PY'
+          import os
+          major, minor, patch = (int(part) for part in os.environ["RELEASE_VERSION"].split("."))
+          print(f"{major}.{minor}.{patch + 1}")
+          PY
+          )"
+          for attempt in 1 2 3 4 5; do
+            if python -m tools.release resolve-release-notes-base \
+              --version "$next_patch" \
+              --output release/current_publication.resolution.json; then
+              resolved="$(python - <<'PY'
+              import json
+              from pathlib import Path
+              data = json.loads(Path("release/current_publication.resolution.json").read_text(encoding="utf-8"))
+              print(data["last_successful_release_tag"])
+              PY
+              )"
+              if [ "$resolved" = "$RELEASE_TAG" ]; then
+                echo "[publish] verified APT metadata for ${RELEASE_TAG}"
+                exit 0
               fi
-              ;;
-            true|false)
-              required="$raw_required"
-              ;;
-            *)
-              echo "::error::Invalid RELEASE_PUBLISH_REQUIRED value: ${raw_required}. Expected auto|true|false."
-              exit 1
-              ;;
-          esac
+              echo "[publish] APT metadata resolved ${resolved}, expected ${RELEASE_TAG}"
+            fi
+            echo "[publish] APT metadata verification attempt ${attempt}/5 did not confirm ${RELEASE_TAG}; waiting."
+            sleep 15
+          done
+          echo "::error::Published APT metadata did not confirm ${RELEASE_TAG}."
+          exit 1
 
-          echo "[publish-policy] github.ref=${ref}"
-          echo "[publish-policy] is_tag_release=${is_tag}"
-          echo "[publish-policy] RELEASE_PUBLISH_REQUIRED=${raw_required}"
-          if [ "$required" = "true" ]; then
-            echo "[publish-policy] publication requirement: MANDATORY for this run"
-          else
-            echo "[publish-policy] publication requirement: OPTIONAL for this run"
-          fi
+  github-release:
+    name: Update GitHub Release
+    runs-on:
+      - self-hosted
+      - Linux
+      - X64
+      - ubuntu-latest-lts
+    needs:
+      - validate-release-state
+      - release-artifacts
+      - publish-debian
+    if: >
+      needs.validate-release-state.outputs.publish_required == 'true' &&
+      needs.validate-release-state.outputs.release_tag != ''
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
 
-          echo "required=${required}" >> "$GITHUB_OUTPUT"
+      - name: Download combined release artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: vaulthalla-release-${{ needs.validate-release-state.outputs.version }}
+          path: release
 
-      - name: Publish Debian packages to Nexus
-        shell: bash
-        run: |
-          set -euo pipefail
-          artifact_dir="${{ steps.package.outputs.artifact_dir }}"
-          required="${{ steps.publish_policy.outputs.required }}"
-          if [ "$required" = "true" ]; then
-            echo "[publish] publication requirement: MANDATORY"
-          else
-            echo "[publish] publication requirement: OPTIONAL"
-          fi
-          echo "[publish] RELEASE_PUBLISH_MODE=${RELEASE_PUBLISH_MODE:-disabled}"
-          if [ -n "${NEXUS_REPO_URL:-}" ]; then
-            echo "[publish] NEXUS_REPO_URL configured: ${NEXUS_REPO_URL}"
-          else
-            echo "[publish] NEXUS_REPO_URL configured: no"
-          fi
-          if [ -n "${NEXUS_USER:-}" ]; then
-            echo "[publish] NEXUS_USER configured: yes"
-          else
-            echo "[publish] NEXUS_USER configured: no"
-          fi
-          if [ -n "${NEXUS_PASS:-}" ]; then
-            echo "[publish] NEXUS_PASS configured: yes"
-          else
-            echo "[publish] NEXUS_PASS configured: no"
-          fi
-
-          publish_args=(--output-dir "$artifact_dir")
-          if [ "$required" = "true" ]; then
-            publish_args+=(--require-enabled)
-          fi
-
-          if ! "${RELEASE_PYTHON}" -m tools.release publish-deb "${publish_args[@]}"; then
-            echo "::error::Debian publication stage failed. Review publication logs for configuration, artifact selection, and upload diagnostics."
-            exit 1
-          fi
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
       - name: Prepare GitHub release asset list (deduped)
-        if: startsWith(github.ref, 'refs/tags/')
         id: gh_release_assets
         shell: bash
         run: |
           set -euo pipefail
-          artifact_dir="${{ steps.package.outputs.artifact_dir }}"
-          if [ -z "$artifact_dir" ] || [ ! -d "$artifact_dir" ]; then
-            echo "::error::Cannot prepare GitHub release assets; artifact_dir is missing: $artifact_dir"
-            exit 1
-          fi
-
-          mapfile -t release_assets < <(find "$artifact_dir" -type f | LC_ALL=C sort -u)
+          mapfile -t release_assets < <(find release -type f | LC_ALL=C sort -u)
           if [ "${#release_assets[@]}" -eq 0 ]; then
-            echo "::error::No files found for GitHub release asset attachment under $artifact_dir"
+            echo "::error::No files found for GitHub release asset attachment under release."
             exit 1
           fi
-
           echo "[gh-release] deduped asset count: ${#release_assets[@]}"
-          echo "[gh-release] assets:"
           printf '%s\n' "${release_assets[@]}"
-
           {
             echo "assets<<EOF"
             printf '%s\n' "${release_assets[@]}"
@@ -327,22 +522,19 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Resolve GitHub Release notes sync mode
-        if: startsWith(github.ref, 'refs/tags/')
         id: release_notes_sync
         shell: bash
-        env:
-          ARTIFACT_DIR: ${{ steps.package.outputs.artifact_dir }}
         run: |
           set -euo pipefail
-          selection_path="${ARTIFACT_DIR}/changelog.selection.json"
-          release_notes_path="${ARTIFACT_DIR}/release_notes.md"
+          selection_path="release/changelog.selection.json"
+          release_notes_path="release/release_notes.md"
           if [ ! -f "${selection_path}" ]; then
             echo "::error::Missing changelog selection metadata: ${selection_path}"
             exit 1
           fi
           export SELECTION_PATH="${selection_path}"
           export RELEASE_NOTES_PATH="${release_notes_path}"
-          "${RELEASE_PYTHON}" - <<'PY'
+          python - <<'PY'
           import json
           import os
           import sys
@@ -369,9 +561,7 @@ jobs:
               reason = "release_notes_missing_or_empty"
 
           if notes_generated and not notes_nonempty:
-              print(
-                  f"::error::Selection metadata reports generated release notes, but file is missing/empty: {notes_path}"
-              )
+              print(f"::error::Selection metadata reports generated release notes, but file is missing/empty: {notes_path}")
               sys.exit(1)
 
           with out_path.open("a", encoding="utf-8") as fh:
@@ -387,7 +577,6 @@ jobs:
           PY
 
       - name: Log release path decision
-        if: startsWith(github.ref, 'refs/tags/')
         shell: bash
         run: |
           set -euo pipefail
@@ -401,28 +590,28 @@ jobs:
           echo "[release-path] should_sync=${{ steps.release_notes_sync.outputs.should_sync }}"
           echo "[release-path] reason=${{ steps.release_notes_sync.outputs.reason }}"
 
-      - name: Attach artifacts to GitHub Release (tag only)
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Attach artifacts to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.validate-release-state.outputs.release_tag }}
           files: ${{ steps.gh_release_assets.outputs.assets }}
           fail_on_unmatched_files: true
           overwrite_files: true
 
       - name: Skip GitHub Release body sync
-        if: startsWith(github.ref, 'refs/tags/') && steps.release_notes_sync.outputs.should_sync != 'true'
+        if: steps.release_notes_sync.outputs.should_sync != 'true'
         shell: bash
         run: |
           set -euo pipefail
           echo "[gh-release-sync] skipped: ${{ steps.release_notes_sync.outputs.reason }}"
 
       - name: Sync GitHub Release body from generated release_notes.md
-        if: startsWith(github.ref, 'refs/tags/') && steps.release_notes_sync.outputs.should_sync == 'true'
+        if: steps.release_notes_sync.outputs.should_sync == 'true'
         uses: actions/github-script@v7
         env:
-          RELEASE_NOTES_PATH: ${{ steps.package.outputs.artifact_dir }}/release_notes.md
+          RELEASE_NOTES_PATH: release/release_notes.md
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ github.token }}
           script: |
             const child_process = require('node:child_process');
             const fs = require('node:fs');
@@ -430,27 +619,17 @@ jobs:
             const path = require('node:path');
 
             const notesPath = process.env.RELEASE_NOTES_PATH;
-            if (!notesPath) {
-              core.setFailed('RELEASE_NOTES_PATH is empty; package artifact_dir output was not resolved.');
-              return;
-            }
-            if (!fs.existsSync(notesPath)) {
+            if (!notesPath || !fs.existsSync(notesPath)) {
               core.setFailed(`Generated release notes artifact is missing: ${notesPath}`);
               return;
             }
-
             const generatedBody = fs.readFileSync(notesPath, 'utf8');
             if (!generatedBody.trim()) {
               core.setFailed(`Generated release notes artifact is empty: ${notesPath}`);
               return;
             }
 
-            const tag = context.ref.replace('refs/tags/', '');
-            if (!tag || tag === context.ref) {
-              core.setFailed(`Unable to resolve tag from ref: ${context.ref}`);
-              return;
-            }
-
+            const tag = '${{ needs.validate-release-state.outputs.release_tag }}';
             let release;
             try {
               release = await github.rest.repos.getReleaseByTag({
@@ -468,9 +647,8 @@ jobs:
             const mergedBodyPath = path.join(tempDir, 'merged_release_body.md');
             fs.writeFileSync(existingBodyPath, release.data.body || '', 'utf8');
 
-            const releasePython = process.env.RELEASE_PYTHON || 'python3';
             child_process.execFileSync(
-              releasePython,
+              'python',
               [
                 '-c',
                 [
@@ -511,3 +689,122 @@ jobs:
             });
 
             core.info(`Merged generated notes into GitHub Release ${release.data.id} for tag ${tag} from ${notesPath}.`);
+
+  docs-publish:
+    name: Publish docs
+    runs-on:
+      - self-hosted
+      - Linux
+      - X64
+      - ubuntu-latest-lts
+    needs:
+      - validate-release-state
+      - docs-validate
+      - publish-debian
+      - github-release
+    if: >
+      needs.validate-release-state.outputs.publish_required == 'true' &&
+      needs.docs-validate.result == 'success' &&
+      needs.publish-debian.result == 'success' &&
+      needs.github-release.result == 'success'
+    environment: Production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Install pmdocs
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ca-certificates curl
+          sudo install -d -m 0755 /etc/apt/keyrings
+          curl -fsSL https://apt.valkyrianlabs.com/pubkey.gpg -o valkyrianlabs.gpg
+          sudo install -m 0644 valkyrianlabs.gpg /etc/apt/keyrings/valkyrianlabs.gpg
+          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/valkyrianlabs.gpg] https://apt.valkyrianlabs.com stable main" \
+            | sudo tee /etc/apt/sources.list.d/valkyrianlabs.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y pmdocs
+          pmdocs --version
+
+      - name: Validate and push docs
+        shell: bash
+        run: |
+          set -euo pipefail
+          pmdocs validate --source docs
+          pmdocs push \
+            --endpoint "${DOCS_SYNC_ENDPOINT}" \
+            --source docs \
+            --github-oidc \
+            --publish
+
+  record-release-success:
+    name: Record release success
+    runs-on:
+      - self-hosted
+      - Linux
+      - X64
+      - ubuntu-latest-lts
+    needs:
+      - validate-release-state
+      - publish-debian
+      - github-release
+      - docs-publish
+    if: >
+      needs.validate-release-state.outputs.publish_required == 'true' &&
+      needs.publish-debian.result == 'success' &&
+      needs.github-release.result == 'success' &&
+      needs.docs-publish.result == 'success'
+    environment: Production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install release-tooling dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Download combined release artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: vaulthalla-release-${{ needs.validate-release-state.outputs.version }}
+          path: release
+
+      - name: Write release success ledger
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m tools.release record-release-success \
+            --output-dir release \
+            --tag "${{ needs.validate-release-state.outputs.release_tag }}" \
+            --version "${{ needs.validate-release-state.outputs.version }}" \
+            --publication-mode "${RELEASE_PUBLISH_MODE:-disabled}" \
+            --target-url "${RELEASE_APT_REPOSITORY_URL:-${NEXUS_REPO_URL:-}}" \
+            --workflow-run-id "${GITHUB_RUN_ID}"
+
+      - name: Upload release success ledger artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vaulthalla-release-success-${{ needs.validate-release-state.outputs.version }}
+          path: release/vaulthalla-release-success.json
+          if-no-files-found: error
+
+      - name: Attach release success ledger to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.validate-release-state.outputs.release_tag }}
+          files: release/vaulthalla-release-success.json
+          fail_on_unmatched_files: true
+          overwrite_files: true

@@ -135,6 +135,13 @@ def _render_metadata(context: ReleaseContext) -> list[str]:
         f"- Commits in range: {context.commit_count}",
         f"- Release-note entries: {_release_note_entry_count(context)}",
     ]
+    if context.commit_range:
+        lines.append(f"- Commit range: `{context.commit_range}`")
+    if context.release_success_source:
+        lines.append(f"- Release success source: `{context.release_success_source}`")
+    if context.skipped_release_tags:
+        skipped = ", ".join(f"`{tag}`" for tag in context.skipped_release_tags)
+        lines.append(f"- Skipped release tags: {skipped}")
 
     if context.commit_count > 0 and _release_note_entry_count(context) == 0:
         lines.append(

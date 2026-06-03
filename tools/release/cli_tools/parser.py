@@ -17,6 +17,10 @@ from tools.release.cli_tools.commands.debian import (
     cmd_validate_release_artifacts,
     cmd_publish_deb,
 )
+from tools.release.cli_tools.commands.release_success import (
+    cmd_record_release_success,
+    cmd_resolve_release_notes_base,
+)
 from tools.release.cli_tools.commands.version import (
     cmd_check,
     cmd_sync,
@@ -47,6 +51,20 @@ COMMON_ARGS = {
         "kwargs": {
             "default": None,
             "help": "Optional tag to use as lower bound (overrides latest-tag auto-detection).",
+        },
+    },
+    "release_notes_base": {
+        "flags": ["--release-notes-base"],
+        "kwargs": {
+            "default": None,
+            "help": "Successful shipped release tag to use as the changelog/release-notes lower bound.",
+        },
+    },
+    "release_notes_base_resolution": {
+        "flags": ["--release-notes-base-resolution"],
+        "kwargs": {
+            "default": None,
+            "help": "Optional JSON metadata from resolve-release-notes-base for provenance/skipped-tag context.",
         },
     },
     "output_optional": {
@@ -378,6 +396,78 @@ COMMANDS = {
         ],
     },
 
+    "resolve-release-notes-base": {
+        "help": "Resolve the last successful shipped release tag for changelog/release-notes generation.",
+        "func": cmd_resolve_release_notes_base,
+        "args": [
+            {
+                "flags": ["--version"],
+                "kwargs": {
+                    "default": None,
+                    "help": "Requested release version. Defaults to VERSION.",
+                },
+            },
+            "release_notes_base",
+            {
+                "flags": ["--output"],
+                "kwargs": {
+                    "default": None,
+                    "help": "Optional path to write JSON resolution metadata.",
+                },
+            },
+        ],
+    },
+
+    "record-release-success": {
+        "help": "Record a release success ledger after all required publication gates pass.",
+        "func": cmd_record_release_success,
+        "args": [
+            "output_dir_release",
+            {
+                "flags": ["--output"],
+                "kwargs": {
+                    "default": None,
+                    "help": "Optional ledger path. Defaults to <output-dir>/vaulthalla-release-success.json.",
+                },
+            },
+            {
+                "flags": ["--version"],
+                "kwargs": {
+                    "default": None,
+                    "help": "Released version. Defaults to VERSION.",
+                },
+            },
+            {
+                "flags": ["--tag"],
+                "kwargs": {
+                    "default": None,
+                    "help": "Release tag. Defaults to v<VERSION>.",
+                },
+            },
+            {
+                "flags": ["--publication-mode"],
+                "kwargs": {
+                    "default": None,
+                    "help": "Publication mode to record. Defaults to RELEASE_PUBLISH_MODE.",
+                },
+            },
+            {
+                "flags": ["--target-url"],
+                "kwargs": {
+                    "default": None,
+                    "help": "Publication target URL to record with credentials redacted.",
+                },
+            },
+            {
+                "flags": ["--workflow-run-id"],
+                "kwargs": {
+                    "default": None,
+                    "help": "Workflow run id to record. Defaults to GITHUB_RUN_ID.",
+                },
+            },
+        ],
+    },
+
     "changelog": {
         "help": "Generate changelog artifacts from git history.",
         "subcommands": {
@@ -394,6 +484,8 @@ COMMANDS = {
                         },
                     },
                     "since_tag",
+                    "release_notes_base",
+                    "release_notes_base_resolution",
                     "output_optional",
                 ],
             },
@@ -403,6 +495,8 @@ COMMANDS = {
                 "func": cmd_changelog_payload,
                 "args": [
                     "since_tag",
+                    "release_notes_base",
+                    "release_notes_base_resolution",
                     "output_optional",
                 ],
             },
@@ -412,6 +506,8 @@ COMMANDS = {
                 "func": cmd_changelog_release,
                 "args": [
                     "since_tag",
+                    "release_notes_base",
+                    "release_notes_base_resolution",
                     {
                         "flags": ["--output"],
                         "kwargs": {
@@ -469,6 +565,8 @@ COMMANDS = {
                 "func": cmd_changelog_ai_draft,
                 "args": [
                     "since_tag",
+                    "release_notes_base",
+                    "release_notes_base_resolution",
                     {
                         "flags": ["--output"],
                         "kwargs": {
@@ -491,6 +589,8 @@ COMMANDS = {
                 "func": cmd_changelog_ai_release,
                 "args": [
                     "since_tag",
+                    "release_notes_base",
+                    "release_notes_base_resolution",
                     {
                         "flags": ["--draft-output"],
                         "kwargs": {
@@ -522,6 +622,8 @@ COMMANDS = {
                 "func": cmd_changelog_ai_compare,
                 "args": [
                     "since_tag",
+                    "release_notes_base",
+                    "release_notes_base_resolution",
                     {
                         "flags": ["--ai-profiles"],
                         "kwargs": {

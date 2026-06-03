@@ -35,6 +35,9 @@ def build_release_context(
     version: str,
     repo_root: Path | str = ".",
     previous_tag: str | None = None,
+    release_success_source: str | None = None,
+    skipped_release_tags: list[str] | None = None,
+    skip_reasons: dict[str, str] | None = None,
 ) -> ReleaseContext:
     repo_root = Path(repo_root).resolve()
     explicit_previous_tag = previous_tag is not None
@@ -120,6 +123,11 @@ def build_release_context(
         latest_tag=latest_tag,
         skipped_current_release_tag=skipped_current_release_tag,
         explicit_previous_tag=explicit_previous_tag,
+        last_successful_release_tag=previous_tag,
+        release_success_source=release_success_source,
+        skipped_release_tags=list(skipped_release_tags or []),
+        skip_reasons=dict(skip_reasons or {}),
+        commit_range=_build_commit_range_label(previous_tag),
     )
 
 
@@ -149,6 +157,10 @@ def _is_current_release_tag(tag: str | None, version: Version) -> bool:
     if normalized.startswith("v"):
         normalized = normalized[1:]
     return normalized == str(version)
+
+
+def _build_commit_range_label(previous_tag: str | None) -> str:
+    return f"{previous_tag}..HEAD" if previous_tag else "HEAD"
 
 
 def get_file_commit_counts(commits: list[CommitInfo]) -> dict[str, int]:
