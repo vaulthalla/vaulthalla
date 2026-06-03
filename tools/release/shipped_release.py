@@ -19,6 +19,10 @@ from tools.release.version.models import Version
 RELEASE_BASE_RESOLUTION_SCHEMA_VERSION = "vaulthalla.release.base_resolution.v1"
 RELEASE_SUCCESS_LEDGER_SCHEMA_VERSION = "vaulthalla.release.success_ledger.v1"
 DEFAULT_RELEASE_SUCCESS_LEDGER = "vaulthalla-release-success.json"
+DEFAULT_HTTP_HEADERS: dict[str, str] = {
+    "User-Agent": "VaulthallaReleaseTool/1.0 (+https://github.com/vaulthalla/vaulthalla)",
+    "Accept": "*/*",
+}
 
 HttpGet = Callable[[str, Mapping[str, str]], bytes]
 
@@ -597,7 +601,9 @@ def _github_headers(token: str) -> dict[str, str]:
 
 
 def _default_http_get(url: str, headers: Mapping[str, str]) -> bytes:
-    request = Request(url, headers=dict(headers))
+    request_headers = dict(DEFAULT_HTTP_HEADERS)
+    request_headers.update(dict(headers))
+    request = Request(url, headers=request_headers)
     try:
         with urlopen(request, timeout=20) as response:
             return response.read()

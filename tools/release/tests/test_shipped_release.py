@@ -5,8 +5,11 @@ import subprocess
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from tools.release.shipped_release import (
+    DEFAULT_HTTP_HEADERS,
+    _default_http_get,
     record_release_success,
     resolve_release_notes_base,
 )
@@ -55,6 +58,20 @@ def _tagged_release(repo: Path, version: str) -> None:
 def _packages_index(*versions: str, package: str = "vaulthalla") -> bytes:
     stanzas = [f"Package: {package}\nVersion: {version}-1\nArchitecture: amd64\n" for version in versions]
     return "\n".join(stanzas).encode("utf-8")
+
+
+class _FakeHttpResponse:
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, _exc_type, _exc, _traceback) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self._body
 
 
 class ShippedReleaseResolverTests(unittest.TestCase):
@@ -255,6 +272,43 @@ class ShippedReleaseResolverTests(unittest.TestCase):
         self.assertIn("v1.6.1", content)
         self.assertIn("<redacted>@apt.example", content)
         self.assertNotIn("secret", content)
+
+    def test_default_http_get_uses_release_client_headers_and_preserves_auth(self) -> None:
+        captured = {}
+
+        def fake_urlopen(request, *, timeout):
+            captured["request"] = request
+            captured["timeout"] = timeout
+            return _FakeHttpResponse(b"ok")
+
+        with patch("tools.release.shipped_release.urlopen", side_effect=fake_urlopen):
+            body = _default_http_get(
+                "https://apt.example/dists/stable/main/binary-amd64/Packages.gz",
+                {"Authorization": "Basic abc123"},
+            )
+
+        self.assertEqual(body, b"ok")
+        self.assertEqual(captured["timeout"], 20)
+        headers = {key.lower(): value for key, value in captured["request"].header_items()}
+        self.assertEqual(headers["user-agent"], DEFAULT_HTTP_HEADERS["User-Agent"])
+        self.assertEqual(headers["accept"], DEFAULT_HTTP_HEADERS["Accept"])
+        self.assertEqual(headers["authorization"], "Basic abc123")
+
+    def test_default_http_get_allows_caller_user_agent_override(self) -> None:
+        captured = {}
+
+        def fake_urlopen(request, *, timeout):
+            captured["request"] = request
+            return _FakeHttpResponse(b"ok")
+
+        with patch("tools.release.shipped_release.urlopen", side_effect=fake_urlopen):
+            _ = _default_http_get(
+                "https://apt.example/dists/stable/main/binary-amd64/Packages.gz",
+                {"User-Agent": "custom-client/1.0"},
+            )
+
+        headers = {key.lower(): value for key, value in captured["request"].header_items()}
+        self.assertEqual(headers["user-agent"], "custom-client/1.0")
 
 
 if __name__ == "__main__":
