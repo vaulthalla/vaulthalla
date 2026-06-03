@@ -23,6 +23,20 @@ using namespace vh::storage;
 using namespace vh::protocols::ws;
 
 namespace vh::auth {
+namespace {
+void validateNewPassword(const std::string& newPassword) {
+    if (!registration::Validator::isValidPassword(newPassword))
+        throw std::runtime_error("New password does not meet password policy");
+}
+
+std::string hashNewPassword(const std::string& newPassword) {
+    validateNewPassword(newPassword);
+
+    auto passwordHash = hash::password(newPassword);
+    if (passwordHash.empty()) throw std::runtime_error("Failed to hash new password");
+    return passwordHash;
+}
+}
 
 void Manager::registerUser(std::shared_ptr<User> user, const std::string& password) {
     if (!user) throw std::runtime_error("Failed to create user: " + user->name);
@@ -64,19 +78,40 @@ void Manager::updateUser(const std::shared_ptr<User>& user) {
     log::Registry::auth()->debug("[AuthManager] User updated: {}", user->name);
 }
 
-void Manager::changePassword(const std::string& name, const std::string& oldPassword,
-                             const std::string& newPassword) {
-    const auto user = getUser(name);
-    if (!user) throw std::runtime_error("User not found: " + name);
+std::shared_ptr<User> Manager::changePassword(const uint32_t userId, const std::string& oldPassword,
+                                              const std::string& newPassword) {
+    const auto user = getUser(userId);
+    if (!user) throw std::runtime_error("User not found: " + std::to_string(userId));
     if (user->systemOnly) throw std::runtime_error("System-only users cannot change passwords");
 
     if (!hash::verifyPassword(oldPassword, user->password_hash)) throw std::runtime_error(
-        "Invalid old password for user: " + name);
+        "Invalid old password for user: " + user->name);
 
-    user->setPasswordHash(hash::password(newPassword));
+    db::query::identities::User::updateUserPassword(user->id, hashNewPassword(newPassword));
+    const auto updatedUser = db::query::identities::User::getUserById(user->id);
+    if (!updatedUser) throw std::runtime_error("Failed to reload user after password change: " + user->name);
+    cacheUser(updatedUser);
 
     log::Registry::audit()->info("[AuthManager] User {} is changing password", user->name);
     log::Registry::auth()->info("[AuthManager] Changing password for user: {}", user->name);
+
+    return updatedUser;
+}
+
+std::shared_ptr<User> Manager::resetPassword(const uint32_t userId, const std::string& newPassword) {
+    const auto user = getUser(userId);
+    if (!user) throw std::runtime_error("User not found: " + std::to_string(userId));
+    if (user->systemOnly) throw std::runtime_error("System-only users cannot receive normal user passwords");
+
+    db::query::identities::User::updateUserPassword(user->id, hashNewPassword(newPassword));
+    const auto updatedUser = db::query::identities::User::getUserById(user->id);
+    if (!updatedUser) throw std::runtime_error("Failed to reload user after password reset: " + user->name);
+    cacheUser(updatedUser);
+
+    log::Registry::audit()->info("[AuthManager] Password reset for user {}", user->name);
+    log::Registry::auth()->info("[AuthManager] Reset password for user: {}", user->name);
+
+    return updatedUser;
 }
 
 std::shared_ptr<User> Manager::getUser(const std::string& name) {

@@ -68,6 +68,7 @@ public:
     [[nodiscard]] bool canAdd(const Type type) const noexcept;
     [[nodiscard]] bool canEdit(const Type type) const noexcept;
     [[nodiscard]] bool canDelete(const Type type) const noexcept;
+    [[nodiscard]] bool canResetPassword(const Type type) const noexcept;
     [[nodiscard]] bool canAddMember(const Type type) const noexcept;
     [[nodiscard]] bool canRemoveMember(const Type type) const noexcept;
 
@@ -132,6 +133,13 @@ public:
         i.users = identities::Users::Manager();
         i.admins = identities::Admins::Manager();
         i.groups = identities::Groups::Full();
+        return i;
+    }
+
+    static Identities PrivilegedIdentityManagerWithPasswordReset() {
+        Identities i = PrivilegedIdentityManager();
+        i.users.grant(identities::IdentityPermissions::ResetPassword);
+        i.admins.grant(identities::IdentityPermissions::ResetPassword);
         return i;
     }
 

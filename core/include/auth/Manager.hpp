@@ -26,7 +26,9 @@ public:
 
     void updateUser(const std::shared_ptr<identities::User>& user);
 
-    void changePassword(const std::string& name, const std::string& oldPassword, const std::string& newPassword);
+    std::shared_ptr<identities::User> changePassword(uint32_t userId, const std::string& oldPassword,
+                                                     const std::string& newPassword);
+    std::shared_ptr<identities::User> resetPassword(uint32_t userId, const std::string& newPassword);
 
     std::shared_ptr<identities::User> getUser(const std::string& name);
     std::shared_ptr<identities::User> getUser(uint32_t id);

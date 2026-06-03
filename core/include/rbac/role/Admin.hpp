@@ -169,7 +169,7 @@ namespace vh::rbac::role {
                 "admin",
                 "System administrator with broad organizational control across identities, vaults, settings, roles, and keys.",
                 userId,
-                permission::admin::Identities::PrivilegedIdentityManager(),
+                permission::admin::Identities::PrivilegedIdentityManagerWithPasswordReset(),
                 permission::admin::Vaults::Full(),
                 permission::admin::Audits::Full(),
                 permission::admin::Settings::Full(),

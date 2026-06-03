@@ -14,6 +14,19 @@ using namespace vh::auth;
 using namespace vh::identities;
 using namespace vh::rbac::permission::admin;
 
+namespace {
+Identities::Type identityTypeFor(const std::shared_ptr<User>& user) {
+    if (!user) throw std::runtime_error("User not found");
+    return user->isAdmin() ? Identities::Type::Admins : Identities::Type::Users;
+}
+
+std::string resetPermissionError(const Identities::Type type) {
+    if (type == Identities::Type::Admins)
+        return "Permission denied: password reset requires admin identity reset-password permission";
+    return "Permission denied: password reset requires user identity reset-password permission";
+}
+}
+
 json Auth::login(const json &payload, const std::shared_ptr<Session> &session) {
     const auto username = payload.at("name").get<std::string>();
     const auto password = payload.at("password").get<std::string>();
@@ -98,12 +111,31 @@ json Auth::updateUser(const json &payload, const std::shared_ptr<Session> &sessi
 }
 
 json Auth::changePassword(const json &payload, const std::shared_ptr<Session> &session) {
-    const auto oldPassword = payload.at("old_password").get<std::string>();
+    if (!session || !session->user) throw std::runtime_error("User not authenticated");
+
+    const auto userId = payload.at("id").get<unsigned int>();
     const auto newPassword = payload.at("new_password").get<std::string>();
 
-    runtime::Deps::get().authManager->changePassword(session->user->name, oldPassword, newPassword);
+    std::shared_ptr<User> updatedUser;
+    if (userId == session->user->id) {
+        if (!payload.contains("old_password") || payload.at("old_password").is_null())
+            throw std::runtime_error("Old password is required");
 
-    return {};
+        const auto oldPassword = payload.at("old_password").get<std::string>();
+        if (oldPassword.empty()) throw std::runtime_error("Old password is required");
+
+        updatedUser = runtime::Deps::get().authManager->changePassword(userId, oldPassword, newPassword);
+        session->user = updatedUser;
+    } else {
+        const auto targetUser = runtime::Deps::get().authManager->getUser(userId);
+        const auto identityType = identityTypeFor(targetUser);
+        if (!session->user->identities().canResetPassword(identityType))
+            throw std::runtime_error(resetPermissionError(identityType));
+
+        updatedUser = runtime::Deps::get().authManager->resetPassword(userId, newPassword);
+    }
+
+    return {{"user", *updatedUser}};
 }
 
 json Auth::getUser(const json &payload, const std::shared_ptr<Session> &session) {

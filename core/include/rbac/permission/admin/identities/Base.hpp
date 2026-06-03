@@ -15,7 +15,8 @@ namespace vh::rbac::permission {
             Add = 1 << 1,
             Edit = 1 << 2,
             Delete = 1 << 3,
-            All = View | Add | Edit | Delete
+            ResetPassword = 1 << 4,
+            All = View | Add | Edit | Delete | ResetPassword
         };
     }
 
@@ -29,6 +30,7 @@ namespace vh::rbac::permission {
             Entry{ P::Add, "add", "Allows adding new {}s"},
             Entry{ P::Edit, "edit", "Allows editing existing {}s"},
             Entry{ P::Delete, "delete", "Allows deleting existing {}s"},
+            Entry{ P::ResetPassword, "reset-password", "Allows resetting {} passwords"},
         };
     };
 
@@ -42,6 +44,7 @@ namespace vh::rbac::permission {
             [[nodiscard]] bool canAdd() const noexcept { return has(IdentityPermissions::Add); }
             [[nodiscard]] bool canEdit() const noexcept { return has(IdentityPermissions::Edit); }
             [[nodiscard]] bool canDelete() const noexcept { return has(IdentityPermissions::Delete); }
+            [[nodiscard]] bool canResetPassword() const noexcept { return has(IdentityPermissions::ResetPassword); }
         };
 
         void to_json(nlohmann::json& j, const Base& p);

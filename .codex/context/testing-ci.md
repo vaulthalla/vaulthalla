@@ -1,5 +1,20 @@
 # Testing + CI Map
 
+## Critical Local Test DB Rule
+
+- For DB-backed unit tests, run `make test` first. It prepares the local integration/test DB role and database, then rewrites the current generated `VH_TEST_DB_*` credentials into ignored env files.
+- After `make test`, source `./deploy/vaulthalla.env` for focused DB-backed unit tests:
+
+```bash
+set -a
+source ./deploy/vaulthalla.env
+set +a
+./build/core/vh_unit_tests --gtest_filter='<Filter>'
+```
+
+- `deploy/vaulthalla.env` and `deploy/bashrc` are ignored local secret files. Do not assume shell `.bashrc` has the current generated password, and do not report or commit secret values.
+- If DB auth, stale local secrets, service state, or port conflicts block the seeded test path, run `make uninstall` before `make test` to clear the local Vaulthalla test/dev environment, then source `./deploy/vaulthalla.env` again.
+
 ## GitHub Workflows
 
 - `.github/workflows/build_and_test.yml`

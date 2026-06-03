@@ -163,12 +163,14 @@ export const permissionIconMap: Record<string, React.FC<React.SVGProps<SVGSVGEle
   'admin.identities.users.add': UserPlus,
   'admin.identities.users.edit': UserPen,
   'admin.identities.users.delete': UserXmark,
+  'admin.identities.users.reset-password': UserLock,
 
   // Admin: identities.admins
   'admin.identities.admins.view': UserShield,
   'admin.identities.admins.add': UserPlus,
   'admin.identities.admins.edit': UserPen,
   'admin.identities.admins.delete': UserXmark,
+  'admin.identities.admins.reset-password': UserLock,
 
   // Admin: identities.groups
   'admin.identities.groups.view': UserGroup,

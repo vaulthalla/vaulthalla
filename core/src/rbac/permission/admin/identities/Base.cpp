@@ -13,6 +13,7 @@ std::string Base::toString(const uint8_t indent) const {
     oss << in << "Edit: " << bool_to_string(canEdit()) << "\n";
     oss << in << "Add: " << bool_to_string(canAdd()) << "\n";
     oss << in << "Delete: " << bool_to_string(canDelete()) << "\n";
+    oss << in << "Reset Password: " << bool_to_string(canResetPassword()) << "\n";
     return oss.str();
 }
 
@@ -21,7 +22,8 @@ void to_json(nlohmann::json& j, const Base& p) {
         {"view", p.canView()},
         {"edit", p.canEdit()},
         {"add", p.canAdd()},
-        {"delete", p.canDelete()}
+        {"delete", p.canDelete()},
+        {"reset_password", p.canResetPassword()}
     };
 }
 
@@ -31,6 +33,7 @@ void from_json(const nlohmann::json& j, Base& p) {
     if (j.at("edit").get<bool>()) p.permissions |= static_cast<Base::Mask>(IdentityPermissions::Edit);
     if (j.at("add").get<bool>()) p.permissions |= static_cast<Base::Mask>(IdentityPermissions::Add);
     if (j.at("delete").get<bool>()) p.permissions |= static_cast<Base::Mask>(IdentityPermissions::Delete);
+    if (j.value("reset_password", false)) p.permissions |= static_cast<Base::Mask>(IdentityPermissions::ResetPassword);
 }
 
 }
