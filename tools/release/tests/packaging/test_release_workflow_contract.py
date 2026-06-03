@@ -18,6 +18,16 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         action_path = repo_root / ".github" / "actions" / "package" / "action.yml"
         return action_path.read_text(encoding="utf-8")
 
+    def _build_action(self) -> str:
+        repo_root = self._repo_root()
+        action_path = repo_root / ".github" / "actions" / "build" / "action.yml"
+        return action_path.read_text(encoding="utf-8")
+
+    def _runner_action(self) -> str:
+        repo_root = self._repo_root()
+        action_path = repo_root / ".github" / "actions" / "runner" / "action.yml"
+        return action_path.read_text(encoding="utf-8")
+
     def test_release_workflow_exposes_debian_distribution_and_urgency_env(self) -> None:
         workflow = self._workflow()
         self.assertIn("RELEASE_DEBIAN_DISTRIBUTION", workflow)
@@ -63,6 +73,26 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         self.assertIn("Prepare GitHub release asset list (deduped)", workflow)
         self.assertIn("id: gh_release_assets", workflow)
         self.assertIn("find release -type f | LC_ALL=C sort -u", workflow)
+
+    def test_release_artifact_job_syncs_private_web_icons_before_packaging(self) -> None:
+        workflow = self._workflow()
+        artifact_job = workflow.split("release-artifacts:", 1)[1].split("publish-debian:", 1)[0]
+        setup_index = artifact_job.index("uses: ./.github/actions/setup_web")
+        icon_sync_index = artifact_job.index("uses: ./.github/actions/sync_web_icons")
+        package_index = artifact_job.index("uses: ./.github/actions/package")
+        self.assertLess(setup_index, icon_sync_index)
+        self.assertLess(icon_sync_index, package_index)
+
+    def test_cpp_build_actions_sync_private_web_icons_before_building(self) -> None:
+        build_action = self._build_action()
+        icon_sync_index = build_action.index("uses: ./.github/actions/sync_web_icons")
+        meson_index = build_action.index("meson setup build")
+        self.assertLess(icon_sync_index, meson_index)
+
+        runner_action = self._runner_action()
+        package_sync_index = runner_action.index("Sync private web icons for package")
+        package_index = runner_action.index("uses: ./.github/actions/package")
+        self.assertLess(package_sync_index, package_index)
 
     def test_github_release_action_uses_manifest_output_not_duplicate_globs(self) -> None:
         workflow = self._workflow()

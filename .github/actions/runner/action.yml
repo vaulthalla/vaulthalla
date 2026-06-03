@@ -41,7 +41,7 @@ runs:
       uses: ./.github/actions/test
 
     - name: Setup Web
-      if: ${{ inputs.build_web == 'true' || inputs.test_web == 'true' }}
+      if: ${{ inputs.build_web == 'true' || inputs.test_web == 'true' || inputs.package == 'true' || inputs.release == 'true' }}
       uses: ./.github/actions/setup_web
 
     - name: Build Web
@@ -51,6 +51,10 @@ runs:
     - name: Test Web
       if: ${{ inputs.test_web == 'true' }}
       uses: ./.github/actions/test_web
+
+    - name: Sync private web icons for package
+      if: ${{ inputs.package == 'true' || inputs.release == 'true' }}
+      uses: ./.github/actions/sync_web_icons
 
     - name: Package
       if: ${{ inputs.package == 'true' || inputs.release == 'true' }}

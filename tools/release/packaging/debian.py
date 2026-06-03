@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import tarfile
@@ -37,6 +38,14 @@ SUPPORTED_ARTIFACT_SUFFIXES: tuple[str, ...] = (
 WEB_DEPLOYABLE_SUFFIX = "_next-standalone.tar.gz"
 WEB_INSTALL_COMMAND: tuple[str, ...] = ("pnpm", "install", "--frozen-lockfile")
 WEB_BUILD_COMMAND: tuple[str, ...] = ("pnpm", "build")
+PRIVATE_ICON_SOURCE_DIR = "vaulthalla-web-icons"
+PRIVATE_ICON_ALIAS_DIRS: dict[str, str] = {
+    "fa-regular": "fa/regular",
+    "fa-light": "fa/light",
+    "fa-duotone": "fa/duotone",
+    "fa-duotone-regular": "fa/duotone-regular",
+    "fa-brands": "fa/brands",
+}
 REQUIRED_DEBIAN_PACKAGE_PATHS: tuple[str, ...] = (
     "usr/bin/vaulthalla-server",
     "usr/bin/vaulthalla-cli",
@@ -122,6 +131,7 @@ def build_debian_package(
     _require_build_tool(command[0])
     _require_build_tool("pnpm")
     _ensure_output_dir_writable(destination)
+    _sync_private_web_icons(root)
 
     web_install = _run_command(command=WEB_INSTALL_COMMAND, cwd=root / "web")
     if web_install.returncode != 0:
@@ -403,6 +413,81 @@ def _require_web_prerequisites(repo_root: Path) -> None:
     if missing:
         rendered = "\n".join(f"- {path}" for path in missing)
         raise ValueError(f"Web packaging prerequisites are missing:\n{rendered}")
+
+
+def _sync_private_web_icons(repo_root: Path) -> None:
+    web_src = repo_root / "web" / "src"
+    if not web_src.is_dir():
+        return
+
+    imports = _find_private_web_icon_imports(web_src)
+    if not imports:
+        return
+
+    icon_source_override = os.environ.get("VAULTHALLA_WEB_ICON_SRC")
+    icon_source = Path(icon_source_override).expanduser() if icon_source_override else Path.home() / PRIVATE_ICON_SOURCE_DIR
+    icon_destination = repo_root / "web" / "public" / "icons"
+    if not icon_source.is_dir():
+        raise ValueError(
+            "Private web icon source directory is missing before release packaging: "
+            f"{icon_source}"
+        )
+
+    for relative in PRIVATE_ICON_ALIAS_DIRS.values():
+        shutil.rmtree(icon_destination / relative, ignore_errors=True)
+        (icon_destination / relative).mkdir(parents=True, exist_ok=True)
+
+    missing: list[Path] = []
+    for import_path in imports:
+        alias, icon_name = import_path.split("/", 1)
+        source_relative = PRIVATE_ICON_ALIAS_DIRS.get(alias)
+        if source_relative is None:
+            missing.append(icon_source / import_path)
+            continue
+        source = icon_source / source_relative / icon_name
+        destination = icon_destination / source_relative / icon_name
+        if not source.is_file():
+            missing.append(source)
+            continue
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+
+    if missing:
+        rendered = "\n".join(f"- {path}" for path in missing)
+        raise ValueError(f"Private web icons required by packaging are missing:\n{rendered}")
+
+
+def _find_private_web_icon_imports(web_src: Path) -> tuple[str, ...]:
+    aliases = tuple(PRIVATE_ICON_ALIAS_DIRS)
+    imports: set[str] = set()
+    for path in web_src.rglob("*"):
+        if not path.is_file() or path.suffix not in {".js", ".jsx", ".ts", ".tsx"}:
+            continue
+        try:
+            content = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        for alias in aliases:
+            marker = f"@/{alias}/"
+            start = 0
+            while True:
+                index = content.find(marker, start)
+                if index < 0:
+                    break
+                quote_index = index - 1
+                if quote_index < 0 or content[quote_index] not in {"'", '"'}:
+                    start = index + len(marker)
+                    continue
+                quote = content[quote_index]
+                end = content.find(quote, index)
+                if end < 0:
+                    start = index + len(marker)
+                    continue
+                import_path = content[index + 2 : end]
+                if import_path.endswith(".svg"):
+                    imports.add(import_path)
+                start = end + 1
+    return tuple(sorted(imports))
 
 
 def _read_debian_changelog_identity(changelog_path: Path) -> tuple[str, str]:

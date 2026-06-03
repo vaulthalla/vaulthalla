@@ -14,6 +14,9 @@ runs:
       with:
         clean: false
 
+    - name: Sync private web icons
+      uses: ./.github/actions/sync_web_icons
+
     - name: Make clean
       shell: bash
       working-directory: ${{ github.workspace }}

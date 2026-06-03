@@ -69,6 +69,18 @@ class ShippedReleaseResolverTests(unittest.TestCase):
         _commit(repo, "release 1.6.1")
         return repo
 
+    def _repo_with_failed_1_6_0_and_1_6_1(self) -> Path:
+        temp_dir = TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        repo = _init_repo(Path(temp_dir.name))
+        _tagged_release(repo, "1.5.1")
+        _tagged_release(repo, "1.6.0")
+        _tagged_release(repo, "1.6.1")
+        _write(repo / "VERSION", "1.6.2\n")
+        _write(repo / "patch.txt", "1.6.2\n")
+        _commit(repo, "release 1.6.2")
+        return repo
+
     def test_failed_tagged_release_skips_to_last_published_apt_version(self) -> None:
         repo = self._repo_with_1_6_0()
 
@@ -98,6 +110,37 @@ class ShippedReleaseResolverTests(unittest.TestCase):
         subjects = [commit.subject for commit in context.commits]
         self.assertIn("release 1.6.0", subjects)
         self.assertIn("release 1.6.1", subjects)
+
+    def test_recovery_after_1_6_1_failure_uses_1_5_1_for_1_6_2(self) -> None:
+        repo = self._repo_with_failed_1_6_0_and_1_6_1()
+
+        def fake_get(_url, _headers):
+            return gzip.compress(_packages_index("1.5.1"))
+
+        result = resolve_release_notes_base(
+            repo_root=repo,
+            version="1.6.2",
+            env={
+                "RELEASE_PUBLISH_MODE": "nexus",
+                "RELEASE_APT_REPOSITORY_URL": "https://apt.example/repository/vaulthalla",
+            },
+            http_get=fake_get,
+        )
+
+        self.assertEqual(result.last_successful_release_tag, "v1.5.1")
+        self.assertEqual(result.source, "nexus-apt-metadata")
+        self.assertEqual(result.commit_range, "v1.5.1..HEAD")
+        self.assertEqual([item.tag for item in result.skipped_release_tags], ["v1.6.1", "v1.6.0"])
+
+        context = build_release_context(
+            version="1.6.2",
+            repo_root=repo,
+            previous_tag=result.last_successful_release_tag,
+        )
+        subjects = [commit.subject for commit in context.commits]
+        self.assertIn("release 1.6.0", subjects)
+        self.assertIn("release 1.6.1", subjects)
+        self.assertIn("release 1.6.2", subjects)
 
     def test_successful_apt_publication_uses_nearest_lower_tag(self) -> None:
         repo = self._repo_with_1_6_0()

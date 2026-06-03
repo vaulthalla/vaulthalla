@@ -351,6 +351,9 @@ jobs:
       - name: Setup web toolchain
         uses: ./.github/actions/setup_web
 
+      - name: Sync private web icons for release packaging
+        uses: ./.github/actions/sync_web_icons
+
       - name: Download release base resolution
         uses: actions/download-artifact@v4
         with:

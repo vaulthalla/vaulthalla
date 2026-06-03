@@ -177,6 +177,87 @@ class DebianPackagingTests(unittest.TestCase):
             self.assertTrue(result.build_log.is_file())
             self.assertIn("build ok", result.build_log.read_text(encoding="utf-8"))
 
+    def test_successful_build_syncs_private_web_icons_before_internal_web_build(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            parent = Path(temp_dir)
+            repo_root = parent / "repo"
+            icon_source = parent / "private-icons"
+            repo_root.mkdir()
+            _make_repo_layout(repo_root)
+            _make_web_build_outputs(repo_root)
+            _write(
+                repo_root / "web" / "src" / "components" / "Icon.tsx",
+                "import FileIcon from '@/fa-regular/file.svg';\nexport default FileIcon;\n",
+            )
+            _write(icon_source / "fa" / "regular" / "file.svg", "<svg />\n")
+            (parent / "vaulthalla_1.2.3-1_amd64.deb").write_text("artifact\n", encoding="utf-8")
+
+            web_install = subprocess.CompletedProcess(
+                args=["pnpm", "install", "--frozen-lockfile"],
+                returncode=0,
+                stdout="install ok\n",
+                stderr="",
+            )
+            web_build = subprocess.CompletedProcess(
+                args=["pnpm", "build"],
+                returncode=0,
+                stdout="build web ok\n",
+                stderr="",
+            )
+            deb_build = subprocess.CompletedProcess(
+                args=["dpkg-buildpackage", "-us", "-uc", "-b"],
+                returncode=0,
+                stdout="build ok\n",
+                stderr="",
+            )
+
+            with (
+                patch.dict(os.environ, {"VAULTHALLA_WEB_ICON_SRC": str(icon_source)}),
+                patch(
+                    "tools.release.packaging.debian.require_synced_release_state",
+                    return_value=_synced_state(repo_root),
+                ),
+                patch(
+                    "tools.release.packaging.debian.shutil.which",
+                    side_effect=lambda tool: f"/usr/bin/{tool}",
+                ),
+                patch(
+                    "tools.release.packaging.debian.subprocess.run",
+                    side_effect=[web_install, web_build, deb_build],
+                ),
+            ):
+                _ = build_debian_package(repo_root=repo_root)
+
+            self.assertTrue((repo_root / "web" / "public" / "icons" / "fa" / "regular" / "file.svg").is_file())
+
+    def test_missing_private_web_icons_fail_before_internal_web_build(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            parent = Path(temp_dir)
+            repo_root = parent / "repo"
+            repo_root.mkdir()
+            _make_repo_layout(repo_root)
+            _write(
+                repo_root / "web" / "src" / "components" / "Icon.tsx",
+                "import FileIcon from '@/fa-regular/file.svg';\nexport default FileIcon;\n",
+            )
+
+            with self.assertRaisesRegex(ValueError, "Private web icon source directory is missing"):
+                with (
+                    patch.dict(os.environ, {"VAULTHALLA_WEB_ICON_SRC": str(parent / "missing-icons")}),
+                    patch(
+                        "tools.release.packaging.debian.require_synced_release_state",
+                        return_value=_synced_state(repo_root),
+                    ),
+                    patch(
+                        "tools.release.packaging.debian.shutil.which",
+                        side_effect=lambda tool: f"/usr/bin/{tool}",
+                    ),
+                    patch("tools.release.packaging.debian.subprocess.run") as run_build,
+                ):
+                    _ = build_debian_package(repo_root=repo_root)
+
+            run_build.assert_not_called()
+
     def test_build_failure_raises_and_writes_log(self) -> None:
         with TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir) / "repo"
