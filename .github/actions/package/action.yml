@@ -154,13 +154,7 @@ runs:
             exit 1
           fi
         fi
-        release_notes_base="$("$PYTHON_BIN" - <<'PY'
-        import json
-        from pathlib import Path
-        data = json.loads(Path("${{ inputs.output_dir }}/release_notes_base.resolution.json").read_text(encoding="utf-8"))
-        print(data["last_successful_release_tag"])
-        PY
-        )"
+        release_notes_base="$("$PYTHON_BIN" -c 'import json; from pathlib import Path; print(json.loads(Path("${{ inputs.output_dir }}/release_notes_base.resolution.json").read_text(encoding="utf-8"))["last_successful_release_tag"])')"
         if [ -z "$release_notes_base" ]; then
           echo "::error::Resolved release notes base is empty."
           exit 1

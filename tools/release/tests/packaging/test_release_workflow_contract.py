@@ -131,6 +131,14 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         self.assertIn("--release-notes-base-resolution", action)
         self.assertIn("release_notes_base.resolution.json", action)
 
+    def test_release_shell_blocks_do_not_use_python_heredocs(self) -> None:
+        workflow = self._workflow()
+        action = self._package_action()
+        for content in (workflow, action):
+            self.assertNotIn("<<'PY'", content)
+            self.assertNotIn('<<"PY"', content)
+            self.assertNotIn("python - <<", content)
+
 
 if __name__ == "__main__":
     unittest.main()

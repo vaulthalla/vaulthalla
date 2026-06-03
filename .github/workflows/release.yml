@@ -176,20 +176,8 @@ jobs:
             resolve_args+=(--release-notes-base "$INPUT_RELEASE_NOTES_BASE")
           fi
           python -m tools.release resolve-release-notes-base "${resolve_args[@]}"
-          release_notes_base="$(python - <<'PY'
-          import json
-          from pathlib import Path
-          data = json.loads(Path(".release-base/release_notes_base.resolution.json").read_text(encoding="utf-8"))
-          print(data["last_successful_release_tag"])
-          PY
-          )"
-          release_notes_base_source="$(python - <<'PY'
-          import json
-          from pathlib import Path
-          data = json.loads(Path(".release-base/release_notes_base.resolution.json").read_text(encoding="utf-8"))
-          print(data["source"])
-          PY
-          )"
+          release_notes_base="$(python -c 'import json; from pathlib import Path; print(json.loads(Path(".release-base/release_notes_base.resolution.json").read_text(encoding="utf-8"))["last_successful_release_tag"])')"
+          release_notes_base_source="$(python -c 'import json; from pathlib import Path; print(json.loads(Path(".release-base/release_notes_base.resolution.json").read_text(encoding="utf-8"))["source"])')"
           {
             echo "release_notes_base=${release_notes_base}"
             echo "release_notes_base_source=${release_notes_base_source}"
@@ -446,23 +434,12 @@ jobs:
           RELEASE_TAG: ${{ needs.validate-release-state.outputs.release_tag }}
         run: |
           set -euo pipefail
-          next_patch="$(python - <<'PY'
-          import os
-          major, minor, patch = (int(part) for part in os.environ["RELEASE_VERSION"].split("."))
-          print(f"{major}.{minor}.{patch + 1}")
-          PY
-          )"
+          next_patch="$(python -c 'import os; major, minor, patch = (int(part) for part in os.environ["RELEASE_VERSION"].split(".")); print(f"{major}.{minor}.{patch + 1}")')"
           for attempt in 1 2 3 4 5; do
             if python -m tools.release resolve-release-notes-base \
               --version "$next_patch" \
               --output release/current_publication.resolution.json; then
-              resolved="$(python - <<'PY'
-              import json
-              from pathlib import Path
-              data = json.loads(Path("release/current_publication.resolution.json").read_text(encoding="utf-8"))
-              print(data["last_successful_release_tag"])
-              PY
-              )"
+              resolved="$(python -c 'import json; from pathlib import Path; print(json.loads(Path("release/current_publication.resolution.json").read_text(encoding="utf-8"))["last_successful_release_tag"])')"
               if [ "$resolved" = "$RELEASE_TAG" ]; then
                 echo "[publish] verified APT metadata for ${RELEASE_TAG}"
                 exit 0
@@ -537,7 +514,7 @@ jobs:
           fi
           export SELECTION_PATH="${selection_path}"
           export RELEASE_NOTES_PATH="${release_notes_path}"
-          python - <<'PY'
+          python -c '
           import json
           import os
           import sys
@@ -567,17 +544,20 @@ jobs:
               print(f"::error::Selection metadata reports generated release notes, but file is missing/empty: {notes_path}")
               sys.exit(1)
 
+          def bool_output(value):
+              return "true" if value else "false"
+
           with out_path.open("a", encoding="utf-8") as fh:
               fh.write(f"selected_path={selected_path}\n")
               fh.write(f"ai_mode={ai_mode}\n")
               fh.write(f"openai_profile={openai_profile}\n")
               fh.write(f"local_profile={local_profile}\n")
-              fh.write(f"release_notes_generated={'true' if notes_generated else 'false'}\n")
-              fh.write(f"release_notes_exists={'true' if notes_exists else 'false'}\n")
-              fh.write(f"release_notes_nonempty={'true' if notes_nonempty else 'false'}\n")
-              fh.write(f"should_sync={'true' if should_sync else 'false'}\n")
+              fh.write(f"release_notes_generated={bool_output(notes_generated)}\n")
+              fh.write(f"release_notes_exists={bool_output(notes_exists)}\n")
+              fh.write(f"release_notes_nonempty={bool_output(notes_nonempty)}\n")
+              fh.write(f"should_sync={bool_output(should_sync)}\n")
               fh.write(f"reason={reason}\n")
-          PY
+          '
 
       - name: Log release path decision
         shell: bash
