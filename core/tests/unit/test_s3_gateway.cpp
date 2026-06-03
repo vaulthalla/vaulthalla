@@ -1067,6 +1067,28 @@ protected:
         });
     }
 
+    static void setCredentialDefaultVaultRole(
+        const uint32_t credentialId,
+        const std::string& roleName,
+        const std::optional<uint32_t> createdBy = std::nullopt) {
+        vh::db::query::s3::Gateway::upsertCredentialDefaultVaultRole(
+            credentialId,
+            roleIdByName(roleName),
+            true,
+            createdBy);
+    }
+
+    static void selectCredentialVault(
+        const uint32_t credentialId,
+        const uint32_t targetVaultId,
+        const std::optional<uint32_t> createdBy = std::nullopt) {
+        vh::db::query::s3::Gateway::upsertCredentialSelectedVault(
+            credentialId,
+            targetVaultId,
+            true,
+            createdBy);
+    }
+
     static vh::rbac::permission::Override makeGatewayOverride(
         const std::string& permission,
         const std::string& pattern,
@@ -1177,12 +1199,21 @@ TEST_F(S3GatewayDbTest, UserAccessCredentialUsesPrincipalRbacWithoutGatewayRoleA
     EXPECT_TRUE(decision.credential_allowed);
     EXPECT_EQ(vh::rbac::s3::policy::Decision::Reason::Allowed, decision.reason);
     EXPECT_TRUE(vh::db::query::s3::Gateway::listCredentialVaultRoleAssignments(credential.id).empty());
+    EXPECT_FALSE(vh::db::query::s3::Gateway::getCredentialDefaultVaultRole(credential.id));
+    EXPECT_TRUE(vh::db::query::s3::Gateway::listCredentialSelectedVaults(credential.id).empty());
 }
 
 TEST_F(S3GatewayDbTest, UserAccessCredentialCannotExceedPrincipalRbac) {
     const auto admin = vh::db::query::identities::User::getUserByName("admin");
     ASSERT_TRUE(admin);
     const auto unownedVaultId = createLocalVault(uniqueSuffix("user_access_denied"), admin->id);
+    vh::db::query::s3::Gateway::bindBucket({
+        .vault_id = unownedVaultId,
+        .bucket_name = "binding-no-access-" + std::to_string(unownedVaultId),
+        .api_exclusive = true,
+        .mode = "local",
+        .created_by = admin->id
+    });
     const auto principal = vh::db::query::identities::User::getUserById(userId);
     ASSERT_TRUE(principal);
     ASSERT_FALSE(principal->isAdmin());
@@ -1200,31 +1231,46 @@ TEST_F(S3GatewayDbTest, UserAccessCredentialCannotExceedPrincipalRbac) {
     EXPECT_EQ(vh::rbac::s3::policy::Decision::Reason::PrincipalRbacDenied, decision.reason);
 }
 
-TEST_F(S3GatewayDbTest, VaultAllowlistCredentialRequiresGatewayVaultRoleAssignment) {
+TEST_F(S3GatewayDbTest, VaultAllowlistCredentialRequiresSelectedVaultAndDefaultRole) {
     const auto admin = vh::db::query::identities::User::getUserByName("admin");
     ASSERT_TRUE(admin);
     ASSERT_TRUE(admin->isSuperAdmin());
     const auto credential = createCredential(admin->id, "vault_allowlist");
 
-    const auto decision = evaluateS3(
+    const auto unselected = evaluateS3(
         admin,
         credential.id,
         credential.scope_mode,
         vaultId,
         vh::rbac::s3::policy::S3Action::GetObject);
 
-    EXPECT_FALSE(decision.allowed);
-    EXPECT_TRUE(decision.principal_allowed);
-    EXPECT_FALSE(decision.credential_allowed);
-    EXPECT_EQ(vh::rbac::s3::policy::Decision::Reason::CredentialRoleMissing, decision.reason);
+    EXPECT_FALSE(unselected.allowed);
+    EXPECT_TRUE(unselected.principal_allowed);
+    EXPECT_FALSE(unselected.credential_allowed);
+    EXPECT_EQ(vh::rbac::s3::policy::Decision::Reason::VaultNotSelected, unselected.reason);
+
+    selectCredentialVault(credential.id, vaultId, admin->id);
+
+    const auto missingDefault = evaluateS3(
+        admin,
+        credential.id,
+        credential.scope_mode,
+        vaultId,
+        vh::rbac::s3::policy::S3Action::GetObject);
+
+    EXPECT_FALSE(missingDefault.allowed);
+    EXPECT_TRUE(missingDefault.principal_allowed);
+    EXPECT_FALSE(missingDefault.credential_allowed);
+    EXPECT_EQ(vh::rbac::s3::policy::Decision::Reason::MissingDefaultRole, missingDefault.reason);
 }
 
-TEST_F(S3GatewayDbTest, VaultAllowlistCredentialRequiresPrincipalAndCredentialRole) {
+TEST_F(S3GatewayDbTest, VaultAllowlistDefaultRoleRequiresPrincipalAndCredentialAllow) {
     const auto admin = vh::db::query::identities::User::getUserByName("admin");
     ASSERT_TRUE(admin);
     ASSERT_TRUE(admin->isSuperAdmin());
     auto credential = createCredential(admin->id, "vault_allowlist");
-    assignCredentialVaultRole(credential.id, vaultId, "reader", admin->id);
+    setCredentialDefaultVaultRole(credential.id, "reader", admin->id);
+    selectCredentialVault(credential.id, vaultId, admin->id);
 
     auto read = evaluateS3(
         admin,
@@ -1233,6 +1279,7 @@ TEST_F(S3GatewayDbTest, VaultAllowlistCredentialRequiresPrincipalAndCredentialRo
         vaultId,
         vh::rbac::s3::policy::S3Action::GetObject);
     EXPECT_TRUE(read.allowed);
+    EXPECT_TRUE(vh::db::query::s3::Gateway::listCredentialVaultRoleAssignments(credential.id).empty());
 
     auto write = evaluateS3(
         admin,
@@ -1243,13 +1290,14 @@ TEST_F(S3GatewayDbTest, VaultAllowlistCredentialRequiresPrincipalAndCredentialRo
         "/new-object.txt",
         false);
     EXPECT_FALSE(write.allowed);
-    EXPECT_EQ(vh::rbac::s3::policy::Decision::Reason::CredentialRoleDenied, write.reason);
+    EXPECT_EQ(vh::rbac::s3::policy::Decision::Reason::EffectiveCredentialRoleDenied, write.reason);
 
     const auto adminOwnedVaultId = createLocalVault(uniqueSuffix("allowlist_principal_denied"), admin->id);
     const auto principal = vh::db::query::identities::User::getUserById(userId);
     ASSERT_TRUE(principal);
     credential = createCredential(principal->id, "vault_allowlist");
-    assignCredentialVaultRole(credential.id, adminOwnedVaultId, "reader", principal->id);
+    setCredentialDefaultVaultRole(credential.id, "manager", principal->id);
+    selectCredentialVault(credential.id, adminOwnedVaultId, principal->id);
 
     auto principalDenied = evaluateS3(
         principal,
@@ -1262,15 +1310,48 @@ TEST_F(S3GatewayDbTest, VaultAllowlistCredentialRequiresPrincipalAndCredentialRo
     EXPECT_EQ(vh::rbac::s3::policy::Decision::Reason::PrincipalRbacDenied, principalDenied.reason);
 }
 
+TEST_F(S3GatewayDbTest, VaultAllowlistPerVaultRoleOverridesDefaultRoleForOneVault) {
+    const auto admin = vh::db::query::identities::User::getUserByName("admin");
+    ASSERT_TRUE(admin);
+    ASSERT_TRUE(admin->isSuperAdmin());
+    const auto secondVaultId = createLocalVault(uniqueSuffix("allowlist_role_override"), admin->id);
+    const auto credential = createCredential(admin->id, "vault_allowlist");
+    setCredentialDefaultVaultRole(credential.id, "reader", admin->id);
+    selectCredentialVault(credential.id, vaultId, admin->id);
+    selectCredentialVault(credential.id, secondVaultId, admin->id);
+    assignCredentialVaultRole(credential.id, secondVaultId, "contributor", admin->id);
+
+    const auto firstWrite = evaluateS3(
+        admin,
+        credential.id,
+        credential.scope_mode,
+        vaultId,
+        vh::rbac::s3::policy::S3Action::PutObject,
+        "/first.txt",
+        false);
+    EXPECT_FALSE(firstWrite.allowed);
+    EXPECT_EQ(vh::rbac::s3::policy::Decision::Reason::EffectiveCredentialRoleDenied, firstWrite.reason);
+
+    const auto secondWrite = evaluateS3(
+        admin,
+        credential.id,
+        credential.scope_mode,
+        secondVaultId,
+        vh::rbac::s3::policy::S3Action::PutObject,
+        "/second.txt",
+        false);
+    EXPECT_TRUE(secondWrite.allowed);
+}
+
 TEST_F(S3GatewayDbTest, VaultAllowlistRoleOverridesApplyToCredentialAperture) {
     const auto admin = vh::db::query::identities::User::getUserByName("admin");
     ASSERT_TRUE(admin);
     ASSERT_TRUE(admin->isSuperAdmin());
     const auto credential = createCredential(admin->id, "vault_allowlist");
-    assignCredentialVaultRole(credential.id, vaultId, "reader", admin->id);
-    vh::db::query::s3::Gateway::upsertCredentialVaultRoleOverride(
+    setCredentialDefaultVaultRole(credential.id, "reader", admin->id);
+    selectCredentialVault(credential.id, vaultId, admin->id);
+    vh::db::query::s3::Gateway::upsertCredentialDefaultVaultRoleOverride(
         credential.id,
-        vaultId,
         makeGatewayOverride(
             "vault.fs.files.download",
             "/private/**",
@@ -1293,12 +1374,50 @@ TEST_F(S3GatewayDbTest, VaultAllowlistRoleOverridesApplyToCredentialAperture) {
         vh::rbac::s3::policy::S3Action::GetObject,
         "/private/report.txt");
     EXPECT_FALSE(privateRead.allowed);
-    EXPECT_EQ(vh::rbac::s3::policy::Decision::Reason::CredentialRoleDenied, privateRead.reason);
+    EXPECT_EQ(vh::rbac::s3::policy::Decision::Reason::EffectiveCredentialRoleDenied, privateRead.reason);
     ASSERT_TRUE(privateRead.credential_decision);
     EXPECT_EQ(vh::rbac::fs::policy::Decision::Reason::DeniedByOverride,
               privateRead.credential_decision->reason);
 
+    const auto secondVaultId = createLocalVault(uniqueSuffix("allowlist_override_narrow"), admin->id);
+    const auto perVaultCredential = createCredential(admin->id, "vault_allowlist");
+    setCredentialDefaultVaultRole(perVaultCredential.id, "reader", admin->id);
+    selectCredentialVault(perVaultCredential.id, vaultId, admin->id);
+    selectCredentialVault(perVaultCredential.id, secondVaultId, admin->id);
+    assignCredentialVaultRole(perVaultCredential.id, secondVaultId, "reader", admin->id);
+    vh::db::query::s3::Gateway::upsertCredentialVaultRoleOverride(
+        perVaultCredential.id,
+        secondVaultId,
+        makeGatewayOverride(
+            "vault.fs.files.download",
+            "/private/**",
+            vh::rbac::permission::OverrideOpt::DENY));
+
+    auto firstVaultPrivateRead = evaluateS3(
+        admin,
+        perVaultCredential.id,
+        perVaultCredential.scope_mode,
+        vaultId,
+        vh::rbac::s3::policy::S3Action::GetObject,
+        "/private/report.txt");
+    EXPECT_TRUE(firstVaultPrivateRead.allowed);
+
+    auto secondVaultPrivateRead = evaluateS3(
+        admin,
+        perVaultCredential.id,
+        perVaultCredential.scope_mode,
+        secondVaultId,
+        vh::rbac::s3::policy::S3Action::GetObject,
+        "/private/report.txt");
+    EXPECT_FALSE(secondVaultPrivateRead.allowed);
+    EXPECT_EQ(vh::rbac::s3::policy::Decision::Reason::EffectiveCredentialRoleDenied, secondVaultPrivateRead.reason);
+    ASSERT_TRUE(secondVaultPrivateRead.credential_decision);
+    EXPECT_EQ(vh::rbac::fs::policy::Decision::Reason::DeniedByOverride,
+              secondVaultPrivateRead.credential_decision->reason);
+
     const auto allowCredential = createCredential(admin->id, "vault_allowlist");
+    setCredentialDefaultVaultRole(allowCredential.id, "implicit_deny", admin->id);
+    selectCredentialVault(allowCredential.id, vaultId, admin->id);
     assignCredentialVaultRole(allowCredential.id, vaultId, "implicit_deny", admin->id);
     vh::db::query::s3::Gateway::upsertCredentialVaultRoleOverride(
         allowCredential.id,
@@ -1326,6 +1445,18 @@ TEST_F(S3GatewayDbTest, GlobalCredentialUsesPrincipalRbacAndRequiresAdminPrincip
     ASSERT_TRUE(admin);
     ASSERT_TRUE(admin->isSuperAdmin());
     const auto globalAdminCredential = createCredential(admin->id, "global");
+    const auto secondVaultId = createLocalVault(uniqueSuffix("global_default"), admin->id);
+
+    auto missingDefault = evaluateS3(
+        admin,
+        globalAdminCredential.id,
+        globalAdminCredential.scope_mode,
+        vaultId,
+        vh::rbac::s3::policy::S3Action::GetObject);
+    EXPECT_FALSE(missingDefault.allowed);
+    EXPECT_EQ(vh::rbac::s3::policy::Decision::Reason::MissingDefaultRole, missingDefault.reason);
+
+    setCredentialDefaultVaultRole(globalAdminCredential.id, "reader", admin->id);
 
     auto adminDecision = evaluateS3(
         admin,
@@ -1335,11 +1466,42 @@ TEST_F(S3GatewayDbTest, GlobalCredentialUsesPrincipalRbacAndRequiresAdminPrincip
         vh::rbac::s3::policy::S3Action::GetObject);
     EXPECT_TRUE(adminDecision.allowed);
 
+    auto secondVaultRead = evaluateS3(
+        admin,
+        globalAdminCredential.id,
+        globalAdminCredential.scope_mode,
+        secondVaultId,
+        vh::rbac::s3::policy::S3Action::GetObject);
+    EXPECT_TRUE(secondVaultRead.allowed);
+
+    auto adminWriteDenied = evaluateS3(
+        admin,
+        globalAdminCredential.id,
+        globalAdminCredential.scope_mode,
+        vaultId,
+        vh::rbac::s3::policy::S3Action::PutObject,
+        "/global-write.txt",
+        false);
+    EXPECT_FALSE(adminWriteDenied.allowed);
+    EXPECT_EQ(vh::rbac::s3::policy::Decision::Reason::EffectiveCredentialRoleDenied, adminWriteDenied.reason);
+
+    assignCredentialVaultRole(globalAdminCredential.id, vaultId, "manager", admin->id);
+    auto adminWriteAllowedByException = evaluateS3(
+        admin,
+        globalAdminCredential.id,
+        globalAdminCredential.scope_mode,
+        vaultId,
+        vh::rbac::s3::policy::S3Action::PutObject,
+        "/global-write.txt",
+        false);
+    EXPECT_TRUE(adminWriteAllowedByException.allowed);
+
     assignPrincipalVaultRole(vaultId, userId, "manager");
     const auto nonAdmin = vh::db::query::identities::User::getUserById(userId);
     ASSERT_TRUE(nonAdmin);
     ASSERT_FALSE(nonAdmin->isAdmin());
     const auto globalUserCredential = createCredential(nonAdmin->id, "global");
+    setCredentialDefaultVaultRole(globalUserCredential.id, "manager", nonAdmin->id);
 
     auto userDecision = evaluateS3(
         nonAdmin,
@@ -1398,11 +1560,18 @@ TEST_F(S3GatewayDbTest, VaultAllowlistScopesMirrorToGatewayVaultRoles) {
     }});
 
     auto assignments = vh::db::query::s3::Gateway::listCredentialVaultRoleAssignments(credential.id);
-    ASSERT_EQ(assignments.size(), 1u);
-    EXPECT_EQ(assignments.front().vault_id, vaultId);
+    EXPECT_TRUE(assignments.empty());
+    auto defaultRole = vh::db::query::s3::Gateway::getCredentialDefaultVaultRole(credential.id);
+    ASSERT_TRUE(defaultRole);
+    EXPECT_EQ(defaultRole->vault_role_id, roleIdByName("manager"));
+    auto selectedVaults = vh::db::query::s3::Gateway::listCredentialSelectedVaults(credential.id);
+    ASSERT_EQ(selectedVaults.size(), 1u);
+    EXPECT_EQ(selectedVaults.front().vault_id, vaultId);
     auto role = vh::db::query::s3::Gateway::getCredentialVaultRoleForVault(credential.id, vaultId);
-    ASSERT_TRUE(role);
-    EXPECT_EQ(role->name, "manager");
+    EXPECT_FALSE(role);
+    auto effectiveRole = vh::db::query::s3::Gateway::getEffectiveCredentialVaultRole(credential.id, vaultId, credential.scope_mode);
+    ASSERT_TRUE(effectiveRole);
+    EXPECT_EQ(effectiveRole->name, "manager");
 
     vh::db::query::s3::Gateway::replaceCredentialScopes(credential.id, {{
         .credential_id = credential.id,
@@ -1415,10 +1584,15 @@ TEST_F(S3GatewayDbTest, VaultAllowlistScopesMirrorToGatewayVaultRoles) {
     }});
 
     assignments = vh::db::query::s3::Gateway::listCredentialVaultRoleAssignments(credential.id);
-    ASSERT_EQ(assignments.size(), 1u);
+    EXPECT_TRUE(assignments.empty());
+    defaultRole = vh::db::query::s3::Gateway::getCredentialDefaultVaultRole(credential.id);
+    ASSERT_TRUE(defaultRole);
+    EXPECT_EQ(defaultRole->vault_role_id, roleIdByName("manager"));
     role = vh::db::query::s3::Gateway::getCredentialVaultRoleForVault(credential.id, vaultId);
-    ASSERT_TRUE(role);
-    EXPECT_EQ(role->name, "manager");
+    EXPECT_FALSE(role);
+    effectiveRole = vh::db::query::s3::Gateway::getEffectiveCredentialVaultRole(credential.id, vaultId, credential.scope_mode);
+    ASSERT_TRUE(effectiveRole);
+    EXPECT_EQ(effectiveRole->name, "manager");
 
     vh::db::query::s3::Gateway::replaceCredentialScopes(credential.id, {{
         .credential_id = credential.id,
@@ -1430,9 +1604,16 @@ TEST_F(S3GatewayDbTest, VaultAllowlistScopesMirrorToGatewayVaultRoles) {
         .can_admin = false
     }});
 
+    defaultRole = vh::db::query::s3::Gateway::getCredentialDefaultVaultRole(credential.id);
+    ASSERT_TRUE(defaultRole);
+    EXPECT_EQ(defaultRole->vault_role_id, roleIdByName("reader"));
+    assignments = vh::db::query::s3::Gateway::listCredentialVaultRoleAssignments(credential.id);
+    EXPECT_TRUE(assignments.empty());
     role = vh::db::query::s3::Gateway::getCredentialVaultRoleForVault(credential.id, vaultId);
-    ASSERT_TRUE(role);
-    EXPECT_EQ(role->name, "reader");
+    EXPECT_FALSE(role);
+    effectiveRole = vh::db::query::s3::Gateway::getEffectiveCredentialVaultRole(credential.id, vaultId, credential.scope_mode);
+    ASSERT_TRUE(effectiveRole);
+    EXPECT_EQ(effectiveRole->name, "reader");
 }
 
 TEST_F(S3GatewayDbTest, SignedDeleteBucketUsesCanAdminWithoutCanDeleteScope) {
@@ -1776,6 +1957,120 @@ TEST_F(S3GatewayDbTest, S3GatewayWebSocketRoleAssignmentAndOverrideEndpointsWork
     EXPECT_TRUE(vh::db::query::s3::Gateway::listCredentialVaultRoleAssignments(credential.id).empty());
 }
 
+TEST_F(S3GatewayDbTest, S3GatewayWebSocketDefaultRoleSelectedVaultAndDefaultOverrideEndpointsWork) {
+    const auto admin = vh::db::query::identities::User::getUserByName("admin");
+    ASSERT_TRUE(admin);
+    ASSERT_TRUE(admin->isSuperAdmin());
+    const auto session = wsSessionForUser(admin->id);
+    const auto secondVaultId = createLocalVault(uniqueSuffix("ws_selected"), admin->id);
+    const auto credential = createCredential(admin->id, "vault_allowlist");
+
+    const auto initialDefault = vh::protocols::ws::handler::S3Gateway::credentialsDefaultRoleGet({
+        {"credential_id", credential.id}
+    }, session);
+    ASSERT_TRUE(initialDefault.contains("default_role"));
+    EXPECT_TRUE(initialDefault.at("default_role").is_null());
+
+    const auto setDefault = vh::protocols::ws::handler::S3Gateway::credentialsDefaultRoleSet({
+        {"credential_id", credential.id},
+        {"vault_role_name", "reader"},
+        {"enabled", true}
+    }, session);
+    ASSERT_TRUE(setDefault.contains("default_role"));
+    EXPECT_EQ("reader", setDefault.at("default_role").at("role").at("name").get<std::string>());
+
+    const auto addedSelected = vh::protocols::ws::handler::S3Gateway::credentialsSelectedVaultsAdd({
+        {"credential_id", credential.id},
+        {"vault_id", vaultId},
+        {"enabled", true}
+    }, session);
+    ASSERT_TRUE(addedSelected.contains("selected_vault"));
+    EXPECT_EQ(vaultId, addedSelected.at("selected_vault").at("vault_id").get<uint32_t>());
+    EXPECT_TRUE(addedSelected.at("selected_vault").contains("vault"));
+
+    const auto replacedSelected = vh::protocols::ws::handler::S3Gateway::credentialsSelectedVaultsReplace({
+        {"credential_id", credential.id},
+        {"selected_vault_ids", {vaultId, secondVaultId}}
+    }, session);
+    ASSERT_TRUE(replacedSelected.contains("selected_vaults"));
+    EXPECT_EQ(2u, replacedSelected.at("selected_vaults").size());
+
+    const auto listedSelected = vh::protocols::ws::handler::S3Gateway::credentialsSelectedVaultsList({
+        {"credential_id", credential.id}
+    }, session);
+    ASSERT_TRUE(listedSelected.contains("selected_vaults"));
+    EXPECT_EQ(2u, listedSelected.at("selected_vaults").size());
+
+    const auto removedSelected = vh::protocols::ws::handler::S3Gateway::credentialsSelectedVaultsRemove({
+        {"credential_id", credential.id},
+        {"vault_id", secondVaultId}
+    }, session);
+    EXPECT_TRUE(removedSelected.at("removed").get<bool>());
+
+    const auto addedOverride = vh::protocols::ws::handler::S3Gateway::credentialsDefaultRoleOverridesAdd({
+        {"credential_id", credential.id},
+        {"permission_qualified", "vault.fs.files.download"},
+        {"glob_path", "/shared/**"},
+        {"effect", "deny"},
+        {"enabled", true}
+    }, session);
+    ASSERT_TRUE(addedOverride.contains("override"));
+    const auto overrideId = addedOverride.at("override").at("id").get<uint32_t>();
+    EXPECT_EQ("vault.fs.files.download", addedOverride.at("override").at("permission_qualified").get<std::string>());
+    EXPECT_EQ("/shared/**", addedOverride.at("override").at("glob_path").get<std::string>());
+
+    const auto listedOverrides = vh::protocols::ws::handler::S3Gateway::credentialsDefaultRoleOverridesList({
+        {"credential_id", credential.id}
+    }, session);
+    ASSERT_TRUE(listedOverrides.contains("overrides"));
+    ASSERT_EQ(1u, listedOverrides.at("overrides").size());
+    EXPECT_EQ(overrideId, listedOverrides.at("overrides").front().at("id").get<uint32_t>());
+
+    const auto removedOverride = vh::protocols::ws::handler::S3Gateway::credentialsDefaultRoleOverridesRemove({
+        {"credential_id", credential.id},
+        {"override_id", overrideId}
+    }, session);
+    EXPECT_TRUE(removedOverride.at("removed").get<bool>());
+
+    const auto clearedDefault = vh::protocols::ws::handler::S3Gateway::credentialsDefaultRoleClear({
+        {"credential_id", credential.id}
+    }, session);
+    EXPECT_TRUE(clearedDefault.at("cleared").get<bool>());
+    EXPECT_FALSE(vh::db::query::s3::Gateway::getCredentialDefaultVaultRole(credential.id));
+}
+
+TEST_F(S3GatewayDbTest, S3GatewayWebSocketDefaultPolicyMutationRequiresCredentialAndVaultAuthority) {
+    const auto admin = vh::db::query::identities::User::getUserByName("admin");
+    ASSERT_TRUE(admin);
+    ASSERT_TRUE(admin->isSuperAdmin());
+    const auto adminCredential = createCredential(admin->id, "vault_allowlist");
+    const auto actorSession = wsSessionForUser(userId);
+
+    EXPECT_THROW(
+        (void)vh::protocols::ws::handler::S3Gateway::credentialsDefaultRoleSet({
+            {"credential_id", adminCredential.id},
+            {"vault_role_name", "reader"}
+        }, actorSession),
+        std::exception);
+
+    const auto manageUserId = userWithAdminRole(
+        "selected_no_vault",
+        adminRoleWithS3("selected_no_vault", vh::rbac::permission::admin::S3Gateway::CredentialManager()));
+    const auto manageSession = wsSessionForUser(manageUserId);
+    const auto manageCredential = createCredential(manageUserId, "vault_allowlist");
+    (void)vh::protocols::ws::handler::S3Gateway::credentialsDefaultRoleSet({
+        {"credential_id", manageCredential.id},
+        {"vault_role_name", "reader"}
+    }, manageSession);
+
+    EXPECT_THROW(
+        (void)vh::protocols::ws::handler::S3Gateway::credentialsSelectedVaultsAdd({
+            {"credential_id", manageCredential.id},
+            {"vault_id", vaultId}
+        }, manageSession),
+        std::exception);
+}
+
 TEST_F(S3GatewayDbTest, S3GatewayWebSocketPermissionGatesUseGatewayAdminPermissions) {
     const auto admin = vh::db::query::identities::User::getUserByName("admin");
     ASSERT_TRUE(admin);
@@ -1970,11 +2265,15 @@ TEST_F(S3GatewayDbTest, CredentialVaultScopeRowsReplaceLookupAndGateActions) {
     EXPECT_EQ(scopes.front().vault_id, secondVaultId);
     EXPECT_FALSE(vh::db::query::s3::Gateway::getCredentialScopeForVault(credential.id, vaultId));
     const auto assignments = vh::db::query::s3::Gateway::listCredentialVaultRoleAssignments(credential.id);
-    ASSERT_EQ(assignments.size(), 1u);
-    EXPECT_EQ(assignments.front().vault_id, secondVaultId);
+    EXPECT_TRUE(assignments.empty());
+    const auto defaultRole = vh::db::query::s3::Gateway::getCredentialDefaultVaultRole(credential.id);
+    ASSERT_TRUE(defaultRole);
+    EXPECT_EQ(defaultRole->vault_role_id, roleIdByName("contributor"));
     const auto credentialRole = vh::db::query::s3::Gateway::getCredentialVaultRoleForVault(credential.id, secondVaultId);
-    ASSERT_TRUE(credentialRole);
-    EXPECT_EQ(credentialRole->name, "contributor");
+    EXPECT_FALSE(credentialRole);
+    const auto effectiveRole = vh::db::query::s3::Gateway::getEffectiveCredentialVaultRole(credential.id, secondVaultId, credential.scope_mode);
+    ASSERT_TRUE(effectiveRole);
+    EXPECT_EQ(effectiveRole->name, "contributor");
 
     vh::db::Transactions::exec("S3GatewayDbTest::assignPrincipalGatewayScopeVaultRole", [&](pqxx::work& txn) {
         const auto roleId = txn.exec(
@@ -2024,6 +2323,7 @@ TEST_F(S3GatewayDbTest, SignedRouteScopeDeniedReturnsS3XmlAccessDenied) {
         .created_by = admin->id
     });
 
+    const auto selectedOtherVaultId = createLocalVault(uniqueSuffix("scope_denied_selected"), admin->id);
     const vh::protocols::s3::CredentialManager manager;
     auto secret = manager.createCredential({
         .created_by = admin->id,
@@ -2032,6 +2332,8 @@ TEST_F(S3GatewayDbTest, SignedRouteScopeDeniedReturnsS3XmlAccessDenied) {
         .scope_mode = "vault_allowlist",
         .description = std::nullopt,
         .expires_at = std::nullopt,
+        .default_vault_role_id = roleIdByName("reader"),
+        .selected_vault_ids = {selectedOtherVaultId},
         .vault_scopes = {}
     });
 

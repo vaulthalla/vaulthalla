@@ -172,6 +172,62 @@ export class S3GatewayCredentialVaultRoleAssignment {
   }
 }
 
+export class S3GatewayCredentialDefaultVaultRole {
+  id = 0
+  default_role_id = 0
+  credential_id = 0
+  credential: S3GatewayCredential | null = null
+  vault_role_id = 0
+  role: S3GatewayVaultRoleRef | null = null
+  enabled = true
+  created_by: number | null = null
+  created_at: number | string | null = null
+  updated_at: number | string | null = null
+
+  constructor(input: unknown = {}) {
+    const data = isRecord(input) ? input : {}
+    this.id = asNumber(data.id, asNumber(data.default_role_id))
+    this.default_role_id = asNumber(data.default_role_id, this.id)
+    this.credential_id = asNumber(data.credential_id)
+    this.credential = isRecord(data.credential) ? S3GatewayCredential.from(data.credential) : null
+    this.vault_role_id = asNumber(data.vault_role_id)
+    this.role = asRoleRef(data.role)
+    this.enabled = asBoolean(data.enabled, true)
+    this.created_by = asNullableNumber(data.created_by)
+    this.created_at = asDateValue(data.created_at)
+    this.updated_at = asDateValue(data.updated_at)
+  }
+
+  static from(input: unknown): S3GatewayCredentialDefaultVaultRole {
+    return new S3GatewayCredentialDefaultVaultRole(input)
+  }
+}
+
+export class S3GatewayCredentialSelectedVault {
+  credential_id = 0
+  vault_id = 0
+  vault: S3GatewayVaultRef | null = null
+  enabled = true
+  created_by: number | null = null
+  created_at: number | string | null = null
+  updated_at: number | string | null = null
+
+  constructor(input: unknown = {}) {
+    const data = isRecord(input) ? input : {}
+    this.credential_id = asNumber(data.credential_id)
+    this.vault_id = asNumber(data.vault_id)
+    this.vault = asVaultRef(data.vault)
+    this.enabled = asBoolean(data.enabled, true)
+    this.created_by = asNullableNumber(data.created_by)
+    this.created_at = asDateValue(data.created_at)
+    this.updated_at = asDateValue(data.updated_at)
+  }
+
+  static from(input: unknown): S3GatewayCredentialSelectedVault {
+    return new S3GatewayCredentialSelectedVault(input)
+  }
+}
+
 export class S3GatewayCredentialVaultRoleOverride {
   id = 0
   override_id = 0
@@ -208,6 +264,22 @@ export class S3GatewayCredentialVaultRoleOverride {
 
   static from(input: unknown): S3GatewayCredentialVaultRoleOverride {
     return new S3GatewayCredentialVaultRoleOverride(input)
+  }
+}
+
+export class S3GatewayCredentialDefaultVaultRoleOverride extends S3GatewayCredentialVaultRoleOverride {
+  default_role_id = 0
+  gateway_credential_default_role_id = 0
+
+  constructor(input: unknown = {}) {
+    super(input)
+    const data = isRecord(input) ? input : {}
+    this.default_role_id = asNumber(data.default_role_id, this.assignment_id)
+    this.gateway_credential_default_role_id = asNumber(data.gateway_credential_default_role_id, this.default_role_id)
+  }
+
+  static from(input: unknown): S3GatewayCredentialDefaultVaultRoleOverride {
+    return new S3GatewayCredentialDefaultVaultRoleOverride(input)
   }
 }
 
@@ -261,6 +333,8 @@ export interface S3GatewayCredentialCreatePayload {
   scope_mode?: S3GatewayCredentialScopeMode
   description?: string | null
   expires_at?: number | null
+  default_vault_role_id?: number | null
+  selected_vault_ids?: number[]
   vault_scopes?: S3GatewayCredentialVaultScopePayload[]
   enforce_budget_for_local_requests?: boolean
 }
@@ -281,8 +355,54 @@ export interface S3GatewayCredentialScopeUpdatePayload {
   scope_mode?: S3GatewayCredentialScopeMode
   description?: string | null
   expires_at?: number | null
+  default_vault_role_id?: number | null
+  selected_vault_ids?: number[]
   vault_scopes?: S3GatewayCredentialVaultScopePayload[]
   enforce_budget_for_local_requests?: boolean
+}
+
+export interface S3GatewayCredentialDefaultVaultRolePayload {
+  credential_id?: number
+  access_key?: string
+  name?: string
+  credential_name?: string
+  default_vault_role_id?: number
+  vault_role_id?: number
+  role_id?: number
+  vault_role_name?: string
+  role_name?: string
+  role?: string
+  enabled?: boolean
+}
+
+export interface S3GatewayCredentialSelectedVaultPayload {
+  credential_id?: number
+  access_key?: string
+  name?: string
+  credential_name?: string
+  vault_id?: number
+  vault_name?: string
+  vault?: string
+  vault_ids?: number[]
+  selected_vault_ids?: number[]
+  enabled?: boolean
+}
+
+export interface S3GatewayCredentialDefaultVaultRoleOverridePayload {
+  credential_id?: number
+  access_key?: string
+  name?: string
+  credential_name?: string
+  override_id?: number
+  id?: number
+  permission_id?: number
+  permission_name?: string
+  permission_qualified?: string
+  permission?: string
+  glob_path?: string
+  path?: string
+  effect?: S3GatewayCredentialVaultRoleOverrideEffect
+  enabled?: boolean
 }
 
 export interface S3GatewayCredentialVaultRoleAssignmentPayload {

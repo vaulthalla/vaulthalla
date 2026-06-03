@@ -26,6 +26,9 @@ struct CredentialCreateOptions {
     std::string scope_mode{"user_access"};
     std::optional<std::string> description;
     std::optional<std::time_t> expires_at;
+    std::optional<uint32_t> default_vault_role_id;
+    std::vector<uint32_t> selected_vault_ids;
+    std::vector<vh::rbac::permission::Override> default_role_overrides;
     std::vector<CredentialVaultScope> vault_scopes;
     bool enforce_budget_for_local_requests{false};
 };
@@ -47,7 +50,9 @@ public:
     static void validateScopeMutation(uint32_t actorUserId,
                                       uint32_t principalUserId,
                                       const std::string& scopeMode,
-                                      const std::vector<CredentialVaultScope>& vaultScopes);
+                                      const std::vector<CredentialVaultScope>& vaultScopes,
+                                      const std::vector<uint32_t>& selectedVaultIds = {},
+                                      std::optional<uint32_t> defaultVaultRoleId = std::nullopt);
 
 private:
     std::unique_ptr<crypto::secrets::TPMKeyProvider> tpmKeyProvider_;

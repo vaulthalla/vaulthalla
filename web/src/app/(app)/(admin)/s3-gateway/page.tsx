@@ -23,6 +23,9 @@ export default function S3GatewayPage() {
   const {
     status,
     credentials,
+    defaultRoleByCredentialId,
+    selectedVaultsByCredentialId,
+    defaultRoleOverridesByCredentialId,
     roleAssignmentsByCredentialId,
     roleOverridesByCredentialVault,
     buckets,
@@ -38,6 +41,15 @@ export default function S3GatewayPage() {
     createCredential,
     revokeCredential,
     updateCredentialScope,
+    fetchCredentialDefaultRole,
+    setCredentialDefaultRole,
+    clearCredentialDefaultRole,
+    fetchCredentialSelectedVaults,
+    addCredentialSelectedVault,
+    removeCredentialSelectedVault,
+    fetchCredentialDefaultRoleOverrides,
+    addCredentialDefaultRoleOverride,
+    removeCredentialDefaultRoleOverride,
     fetchCredentialRoleAssignments,
     assignCredentialVaultRole,
     revokeCredentialVaultRole,
@@ -72,6 +84,9 @@ export default function S3GatewayPage() {
     () => (selectedCredential ? roleAssignmentsByCredentialId[selectedCredential.id] ?? [] : []),
     [roleAssignmentsByCredentialId, selectedCredential],
   )
+  const selectedDefaultRole = selectedCredential ? defaultRoleByCredentialId[selectedCredential.id] ?? null : null
+  const selectedVaults = selectedCredential ? selectedVaultsByCredentialId[selectedCredential.id] ?? [] : []
+  const selectedDefaultRoleOverrides = selectedCredential ? defaultRoleOverridesByCredentialId[selectedCredential.id] ?? [] : []
   const gatewayVaults = useMemo(() => {
     const byId = new Map<number, Vault>()
     for (const vault of vaults) byId.set(vault.id, vault)
@@ -110,11 +125,14 @@ export default function S3GatewayPage() {
 
   useEffect(() => {
     if (!selectedCredential) return
+    void fetchCredentialDefaultRole({ credential_id: selectedCredential.id }).catch(() => undefined)
+    void fetchCredentialSelectedVaults({ credential_id: selectedCredential.id }).catch(() => undefined)
+    void fetchCredentialDefaultRoleOverrides({ credential_id: selectedCredential.id }).catch(() => undefined)
     void fetchCredentialRoleAssignments({ credential_id: selectedCredential.id }).catch(() => undefined)
     void fetchPolicies({ gateway_credential_id: selectedCredential.id, include_inactive: true }).catch(() => undefined)
     void fetchLedger({ gateway_credential_id: selectedCredential.id, limit: 25 }).catch(() => undefined)
     void fetchBudgetStatus({ gateway_credential_id: selectedCredential.id, limit: 25 }).catch(() => undefined)
-  }, [selectedCredential, fetchBudgetStatus, fetchCredentialRoleAssignments, fetchLedger, fetchPolicies])
+  }, [selectedCredential, fetchBudgetStatus, fetchCredentialDefaultRole, fetchCredentialDefaultRoleOverrides, fetchCredentialRoleAssignments, fetchCredentialSelectedVaults, fetchLedger, fetchPolicies])
 
   useEffect(() => {
     if (!canAssignPrincipal) {
@@ -178,6 +196,8 @@ export default function S3GatewayPage() {
           saving={saving}
           users={assignableUsers}
           currentUser={currentUser}
+          vaultRoles={vaultRoles}
+          vaults={gatewayVaults}
           canAssignPrincipal={canAssignPrincipal}
           onClose={() => setCreateOpen(false)}
           onCreate={createCredential}
@@ -185,6 +205,9 @@ export default function S3GatewayPage() {
         />
         <ScopeEditor
           selectedCredential={selectedCredential}
+          defaultRole={selectedDefaultRole}
+          selectedVaults={selectedVaults}
+          defaultRoleOverrides={selectedDefaultRoleOverrides}
           roleAssignments={selectedRoleAssignments}
           roleOverridesByCredentialVault={roleOverridesByCredentialVault}
           vaultRoles={vaultRoles}
@@ -192,6 +215,13 @@ export default function S3GatewayPage() {
           permissions={permissions}
           saving={saving}
           onSave={updateCredentialScope}
+          onSetDefaultRole={setCredentialDefaultRole}
+          onClearDefaultRole={clearCredentialDefaultRole}
+          onAddSelectedVault={addCredentialSelectedVault}
+          onRemoveSelectedVault={removeCredentialSelectedVault}
+          onFetchDefaultOverrides={fetchCredentialDefaultRoleOverrides}
+          onAddDefaultOverride={addCredentialDefaultRoleOverride}
+          onRemoveDefaultOverride={removeCredentialDefaultRoleOverride}
           onAssignRole={assignCredentialVaultRole}
           onRevokeRole={revokeCredentialVaultRole}
           onFetchOverrides={fetchCredentialVaultRoleOverrides}

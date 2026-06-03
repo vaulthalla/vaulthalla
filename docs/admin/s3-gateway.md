@@ -26,7 +26,7 @@ Operators can use the page to:
 - Create gateway credentials for downstream S3 clients.
 - Copy the secret access key immediately after creation; it is shown only once.
 - Choose `user_access`, `vault_allowlist`, or `global` scope.
-- Edit credential scope, expiry, description, local/cache budget enforcement, gateway credential vault-role assignments, and path overrides.
+- Edit credential scope, expiry, description, local/cache budget enforcement, default gateway vault role, selected vaults, per-vault role exceptions, and path overrides.
 - Create local gateway buckets and bind existing local or S3/R2 vaults.
 - Save, disable, inspect, and troubleshoot gateway key and key/vault budgets.
 - Review recent budget ledger rows and budget status.
@@ -34,7 +34,7 @@ Operators can use the page to:
 
 Use [Credentials And Scopes](/s3-gateway/credentials-and-scopes), [Buckets](/s3-gateway/buckets), and [Cost Controls](/s3-gateway/cost-controls) for the full model behind these controls.
 
-Gateway authorization is RBAC-native: the principal user's Vaulthalla RBAC is always the ceiling, and `vault_allowlist` credentials use gateway credential vault roles and overrides as the aperture. Assigning a gateway credential to a principal other than the actor requires `admin.s3_gateway.assign_principal`. Local gateway bucket creation remains self-service for the actor when they have normal vault-create permission for themselves; creating for another owner requires S3 Gateway bucket-management authority plus vault-create authority for that owner.
+Gateway authorization is RBAC-native: the principal user's Vaulthalla RBAC is always the ceiling. `user_access` uses only that principal RBAC. `vault_allowlist` uses selected vaults plus a key-level default vault role, default overrides, and optional per-vault exceptions. `global` covers gateway bucket bindings but still requires a key-level default vault role. Assigning a gateway credential to a principal other than the actor requires `admin.s3_gateway.assign_principal`. Local gateway bucket creation remains self-service for the actor when they have normal vault-create permission for themselves; creating for another owner requires S3 Gateway bucket-management authority plus vault-create authority for that owner.
 
 ## CLI Equivalents
 
@@ -53,15 +53,15 @@ vh s3-gateway creds create laptop --json
 vh s3-gateway creds list
 vh s3-gateway creds revoke VH...
 vh s3-gateway creds scope backup show
-vh s3-gateway creds scope backup set --scope vault-allowlist
-vh s3-gateway creds role assign backup --vault archive --role reader
+vh s3-gateway creds scope backup set --scope vault-allowlist --default-role reader --selected-vault archive
+vh s3-gateway creds role assign backup --vault archive --role contributor
 vh s3-gateway creds role override add backup --vault archive --pattern "/private/*" --permission download --effect deny
 vh s3-gateway creds role override list backup --vault archive
 vh s3-gateway creds role override remove backup --vault archive 42
 vh s3-gateway creds role revoke backup --vault archive
 ```
 
-`vh s3-gateway creds scope allow-vault` and boolean create flags remain compatibility shorthand only. They are converted into gateway credential vault-role assignments; the role commands are the primary management model.
+`vh s3-gateway creds scope allow-vault` and boolean create flags remain compatibility shorthand only. They are converted into selected vaults, an inferred default role, and per-vault exceptions only when needed.
 
 Buckets:
 
@@ -72,6 +72,8 @@ vh s3-gateway bucket create-local archive
 vh s3-gateway bucket create-remote-cache edge --api-key r2-main --upstream-bucket origin --encrypt
 vh s3-gateway bucket backfill archive
 ```
+
+Bucket bindings are routing: downstream bucket name -> Vaulthalla vault. They do not grant access to gateway credentials.
 
 Budgets:
 

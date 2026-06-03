@@ -231,8 +231,9 @@ vh s3-gateway enable
 vh s3-gateway disable
 vh s3-gateway creds create laptop --scope user-access --json
 vh s3-gateway creds list
-vh s3-gateway creds scope backup set --scope vault-allowlist
-vh s3-gateway creds role assign backup --vault archive --role reader
+vh s3-gateway creds create backup --scope vault-allowlist --default-role reader --selected-vault archive --json
+vh s3-gateway creds scope backup set --scope vault-allowlist --default-role reader --selected-vault archive
+vh s3-gateway creds role assign backup --vault archive --role contributor
 vh s3-gateway creds role override add backup --vault archive --pattern "/private/*" --permission download --effect deny
 vh s3-gateway creds role override list backup --vault archive
 vh s3-gateway creds role override remove backup --vault archive 42
@@ -242,7 +243,7 @@ vh s3-gateway bucket bind archive --vault 12 --mode local
 vh s3-gateway budget set-key backup --monthly 5 --mode enforce --currency USD
 ```
 
-Gateway authorization is RBAC-native. `user_access` inherits the principal user's Vaulthalla RBAC, `vault_allowlist` uses gateway credential vault-role assignments and overrides, and `global` requires an admin principal. Boolean credential scope flags and `creds scope allow-vault` remain compatibility shorthand only; prefer `creds role assign` and `creds role override`.
+Gateway authorization is RBAC-native. `user_access` inherits the principal user's Vaulthalla RBAC. `vault_allowlist` uses selected vaults plus a key-level default vault role and optional per-vault exceptions. `global` requires an admin principal and a key-level default vault role. Boolean credential scope flags and `creds scope allow-vault` remain compatibility shorthand only.
 
 ## Pricing Budgets
 

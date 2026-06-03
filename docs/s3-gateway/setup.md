@@ -124,11 +124,12 @@ Use the browser workflow for interactive setup:
 3. Create a gateway credential.
 4. Copy the secret immediately; the secret access key is shown only once.
 5. Choose `user_access`, `vault_allowlist`, or `global` scope.
-6. Add vault role assignments and optional path overrides when using `vault_allowlist`.
-7. Create or bind a gateway bucket.
-8. Set gateway key or key/vault budgets.
-9. Copy AWS CLI or MinIO client snippets.
-10. Use budget status and ledger views to troubleshoot `AccessDenied` or `SlowDown` responses.
+6. For `vault_allowlist`, choose the key default vault role, select vaults, then add per-vault role or path overrides only for exceptions.
+7. For `global`, choose the key default vault role; gateway bucket bindings define the vault set.
+8. Create or bind a gateway bucket.
+9. Set gateway key or key/vault budgets.
+10. Copy AWS CLI or MinIO client snippets.
+11. Use budget status and ledger views to troubleshoot `AccessDenied` or `SlowDown` responses.
 
 ## CLI Workflow
 

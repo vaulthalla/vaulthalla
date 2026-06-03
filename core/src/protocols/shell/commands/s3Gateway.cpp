@@ -169,6 +169,25 @@ bool canViewGatewayBudgets(const CommandCall& call) {
 
 std::shared_ptr<::vh::vault::model::Vault> resolveVaultArg(const CommandCall& call, const std::string& value);
 
+std::optional<uint32_t> defaultRoleIdFromOptions(const CommandCall& call, const std::string& errPrefix) {
+    auto roleValue = optVal(call, "default-role");
+    if (!roleValue || roleValue->empty()) roleValue = optVal(call, "default-vault-role");
+    if (!roleValue || roleValue->empty()) roleValue = optVal(call, "role");
+    if (!roleValue || roleValue->empty()) return std::nullopt;
+    const auto role = resolveVaultRole(*roleValue, errPrefix);
+    if (!role) throw std::runtime_error(role.error);
+    return role.ptr->id;
+}
+
+std::vector<uint32_t> selectedVaultIdsFromOptions(const CommandCall& call) {
+    std::vector<uint32_t> vaultIds;
+    for (const auto& vaultValue : optVals(call, "selected-vault")) {
+        const auto vault = resolveVaultArg(call, vaultValue);
+        vaultIds.push_back(vault->id);
+    }
+    return vaultIds;
+}
+
 std::vector<db::query::s3::CredentialVaultScope> scopesFromVaultOptions(const CommandCall& call, const uint32_t credentialId = 0) {
     std::vector<db::query::s3::CredentialVaultScope> scopes;
     for (const auto& vaultValue : optVals(call, "vault")) {
@@ -524,9 +543,15 @@ CommandResult handleCredsCreate(const CommandCall& call) {
     options.scope_mode = normalizeScopeMode(optVal(call, "scope").value_or("user_access"));
     options.description = optVal(call, "description");
     options.expires_at = parseExpiresAt(call);
+    try {
+        options.default_vault_role_id = defaultRoleIdFromOptions(call, "s3-gateway creds create");
+        options.selected_vault_ids = selectedVaultIdsFromOptions(call);
+    } catch (const std::exception& e) {
+        return invalid(e.what());
+    }
     options.vault_scopes = scopesFromVaultOptions(call);
     options.enforce_budget_for_local_requests = hasFlag(call, "enforce-budget-for-local-requests");
-    if (!options.vault_scopes.empty() && options.scope_mode == "user_access")
+    if ((!options.vault_scopes.empty() || !options.selected_vault_ids.empty()) && options.scope_mode == "user_access")
         options.scope_mode = "vault_allowlist";
     if (options.scope_mode == "global" && !canManageGatewayCredentials(call))
         return invalid("s3-gateway creds create: admin.s3_gateway.manage_credentials is required for global credentials");
@@ -684,7 +709,11 @@ CommandResult handleCredsScope(const CommandCall& call) {
             !enforceLocalBudget &&
             !hasKey(call, "description") &&
             !hasKey(call, "expires") &&
-            !hasKey(call, "user"))
+            !hasKey(call, "user") &&
+            !hasKey(call, "default-role") &&
+            !hasKey(call, "default-vault-role") &&
+            !hasKey(call, "role") &&
+            optVals(call, "selected-vault").empty())
             return invalid("s3-gateway creds scope set: --scope or a setting flag is required");
         const auto scopeMode = scopeOpt && !scopeOpt->empty()
             ? normalizeScopeMode(*scopeOpt)
@@ -708,12 +737,35 @@ CommandResult handleCredsScope(const CommandCall& call) {
         const auto scopes = scopeMode == "vault_allowlist"
             ? db::query::s3::Gateway::listCredentialScopes(credential->id)
             : std::vector<db::query::s3::CredentialVaultScope>{};
+        std::optional<uint32_t> payloadDefaultRoleId;
+        std::vector<uint32_t> selectedVaultIds;
+        try {
+            payloadDefaultRoleId = defaultRoleIdFromOptions(call, "s3-gateway creds scope set");
+            selectedVaultIds = !optVals(call, "selected-vault").empty()
+                ? selectedVaultIdsFromOptions(call)
+                : [&]() {
+                    std::vector<uint32_t> ids;
+                    for (const auto& selectedVault : db::query::s3::Gateway::listCredentialSelectedVaults(credential->id))
+                        if (selectedVault.enabled) ids.push_back(selectedVault.vault_id);
+                    return ids;
+                }();
+        } catch (const std::exception& e) {
+            return invalid(e.what());
+        }
+        const auto existingDefaultRole = db::query::s3::Gateway::getCredentialDefaultVaultRole(credential->id);
+        const auto effectiveDefaultRoleId = payloadDefaultRoleId
+            ? payloadDefaultRoleId
+            : (existingDefaultRole && existingDefaultRole->enabled
+                ? std::make_optional(existingDefaultRole->vault_role_id)
+                : std::optional<uint32_t>{});
         try {
             protocols::s3::CredentialManager::validateScopeMutation(
                 call.user->id,
                 principalUserId,
                 scopeMode,
-                scopes);
+                scopes,
+                selectedVaultIds,
+                effectiveDefaultRoleId);
         } catch (const std::exception& e) {
             return invalid(e.what());
         }
@@ -728,8 +780,21 @@ CommandResult handleCredsScope(const CommandCall& call) {
             description,
             expiresAt,
             enforceLocalBudget);
-        if (scopeMode != "vault_allowlist")
+        if (scopeMode == "user_access")
             db::query::s3::Gateway::replaceCredentialScopes(credential->id, {});
+        else {
+            if (payloadDefaultRoleId)
+                db::query::s3::Gateway::upsertCredentialDefaultVaultRole(
+                    credential->id,
+                    *payloadDefaultRoleId,
+                    true,
+                    call.user->id);
+            if (!optVals(call, "selected-vault").empty())
+                db::query::s3::Gateway::replaceCredentialSelectedVaults(
+                    credential->id,
+                    selectedVaultIds,
+                    call.user->id);
+        }
         return ok("S3 gateway credential scope updated.\n");
     }
 
@@ -887,13 +952,30 @@ CommandResult handleCredsRoleAssign(const CommandCall& call) {
             ::vh::rbac::permission::vault::RolePermissions::Assign,
             "assign")) return *err;
 
+    if (credential->scope_mode == "global" && !canManageGatewayCredentials(call))
+        return invalid("s3-gateway creds role assign: admin.s3_gateway.manage_credentials is required for global credential exceptions");
+    const auto nextScopeMode = credential->scope_mode == "global" ? std::string{"global"} : std::string{"vault_allowlist"};
     db::query::s3::Gateway::updateCredentialScopeMode(
         credential->id,
-        "vault_allowlist",
+        nextScopeMode,
         credential->principal_user_id,
         credential->created_by,
         credential->description,
         credential->expires_at);
+    if (!db::query::s3::Gateway::getCredentialDefaultVaultRole(credential->id)) {
+        const auto implicitDeny = db::query::rbac::role::Vault::get("implicit_deny");
+        db::query::s3::Gateway::upsertCredentialDefaultVaultRole(
+            credential->id,
+            implicitDeny ? implicitDeny->id : role.ptr->id,
+            true,
+            call.user->id);
+    }
+    if (nextScopeMode == "vault_allowlist")
+        db::query::s3::Gateway::upsertCredentialSelectedVault(
+            credential->id,
+            vault->id,
+            true,
+            call.user->id);
     const auto assignmentId = db::query::s3::Gateway::upsertCredentialVaultRoleAssignment({
         .credential_id = credential->id,
         .vault_id = vault->id,
@@ -901,7 +983,6 @@ CommandResult handleCredsRoleAssign(const CommandCall& call) {
         .enabled = true,
         .created_by = call.user->id
     });
-    db::query::s3::Gateway::upsertCredentialScope(scope);
 
     if (hasFlag(call, "json")) {
         return ok(nlohmann::json{
@@ -928,15 +1009,6 @@ CommandResult handleCredsRoleRevoke(const CommandCall& call) {
     if (vaultValue.empty()) return invalid("s3-gateway creds role revoke: --vault is required");
     const auto vault = resolveVaultArg(call, vaultValue);
 
-    try {
-        protocols::s3::CredentialManager::validateScopeMutation(
-            call.user->id,
-            credential->principal_user_id,
-            "vault_allowlist",
-            {});
-    } catch (const std::exception& e) {
-        return invalid(e.what());
-    }
     if (const auto err = requireGatewayCredentialVaultRolePermission(
             call,
             *credential,
@@ -945,7 +1017,6 @@ CommandResult handleCredsRoleRevoke(const CommandCall& call) {
             "revoke")) return *err;
 
     const auto removedRole = db::query::s3::Gateway::deleteCredentialVaultRoleAssignment(credential->id, vault->id);
-    db::query::s3::Gateway::deleteCredentialScope(credential->id, vault->id);
     if (!removedRole) return invalid("s3-gateway creds role revoke: assignment not found");
     return ok("Revoked S3 gateway credential role for vault '" + vault->name + "'.\n");
 }
@@ -967,7 +1038,9 @@ CommandResult handleCredsRoleOverrideList(const CommandCall& call) {
             ::vh::rbac::permission::vault::RolePermissions::ViewOverride,
             "override list")) return *err;
 
-    const auto overrides = db::query::s3::Gateway::listCredentialVaultRoleOverrides(credential->id, vault->id);
+    const auto overrides = db::query::s3::Gateway::getCredentialVaultRoleForVault(credential->id, vault->id)
+        ? db::query::s3::Gateway::listCredentialVaultRoleOverrides(credential->id, vault->id)
+        : std::vector<::vh::rbac::permission::Override>{};
     if (hasFlag(call, "json")) {
         nlohmann::json rows = overrides;
         return ok(nlohmann::json{
@@ -996,6 +1069,25 @@ CommandResult handleCredsRoleOverrideAdd(const CommandCall& call) {
             vault->id,
             ::vh::rbac::permission::vault::RolePermissions::AssignOverride,
             "override add")) return *err;
+    if (credential->scope_mode == "vault_allowlist") {
+        const auto selectedVaults = db::query::s3::Gateway::listCredentialSelectedVaults(credential->id);
+        const auto selected = std::ranges::any_of(selectedVaults, [&](const auto& selectedVault) {
+            return selectedVault.vault_id == vault->id && selectedVault.enabled;
+        });
+        if (!selected) return invalid("s3-gateway creds role override add: vault is not selected for this credential");
+    }
+    if (!db::query::s3::Gateway::getCredentialVaultRoleForVault(credential->id, vault->id)) {
+        const auto defaultRole = db::query::s3::Gateway::getCredentialDefaultVaultRole(credential->id);
+        if (!defaultRole || !defaultRole->enabled)
+            return invalid("s3-gateway creds role override add: default vault role is required first");
+        db::query::s3::Gateway::upsertCredentialVaultRoleAssignment({
+            .credential_id = credential->id,
+            .vault_id = vault->id,
+            .vault_role_id = defaultRole->vault_role_id,
+            .enabled = true,
+            .created_by = call.user->id
+        });
+    }
 
     const auto pattern = ::vh::protocols::shell::commands::vault::parseGlobPatternOpt(
         call,
@@ -1057,7 +1149,8 @@ CommandResult handleCredsRoleOverrideRemove(const CommandCall& call) {
             ::vh::rbac::permission::vault::RolePermissions::RevokeOverride,
             "override remove")) return *err;
 
-    if (!db::query::s3::Gateway::deleteCredentialVaultRoleOverride(credential->id, vault->id, *overrideId))
+    if (!db::query::s3::Gateway::getCredentialVaultRoleForVault(credential->id, vault->id) ||
+        !db::query::s3::Gateway::deleteCredentialVaultRoleOverride(credential->id, vault->id, *overrideId))
         return invalid("s3-gateway creds role override remove: override not found");
     return ok("Removed S3 gateway credential role override " + std::to_string(*overrideId) + ".\n");
 }

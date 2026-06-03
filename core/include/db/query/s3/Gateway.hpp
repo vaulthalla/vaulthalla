@@ -63,6 +63,34 @@ struct CredentialVaultRoleAssignmentInput {
     std::vector<::vh::rbac::permission::Override> overrides{};
 };
 
+struct CredentialDefaultVaultRole {
+    uint32_t id{};
+    uint32_t credential_id{};
+    uint32_t vault_role_id{};
+    bool enabled{true};
+    std::optional<uint32_t> created_by;
+    std::time_t created_at{};
+    std::time_t updated_at{};
+};
+
+struct CredentialSelectedVault {
+    uint32_t credential_id{};
+    uint32_t vault_id{};
+    bool enabled{true};
+    std::optional<uint32_t> created_by;
+    std::time_t created_at{};
+    std::time_t updated_at{};
+};
+
+struct CredentialDefaultVaultRoleOverride {
+    uint32_t id{};
+    uint32_t credential_id{};
+    uint32_t gateway_credential_default_role_id{};
+    ::vh::rbac::permission::Override rule;
+    std::time_t created_at{};
+    std::time_t updated_at{};
+};
+
 struct BucketBinding {
     uint32_t vault_id{};
     std::string bucket_name;
@@ -146,6 +174,20 @@ public:
     static uint32_t upsertCredentialVaultRoleOverride(uint32_t credentialId, uint32_t vaultId, const ::vh::rbac::permission::Override& overrideRule);
     static bool deleteCredentialVaultRoleOverride(uint32_t credentialId, uint32_t vaultId, uint32_t overrideId);
     static std::shared_ptr<::vh::rbac::role::Vault> getCredentialVaultRoleForVault(uint32_t credentialId, uint32_t vaultId);
+    static std::optional<CredentialDefaultVaultRole> getCredentialDefaultVaultRole(uint32_t credentialId);
+    static uint32_t upsertCredentialDefaultVaultRole(uint32_t credentialId, uint32_t vaultRoleId, bool enabled, std::optional<uint32_t> createdBy);
+    static bool deleteCredentialDefaultVaultRole(uint32_t credentialId);
+    static std::vector<::vh::rbac::permission::Override> listCredentialDefaultVaultRoleOverrides(uint32_t credentialId);
+    static uint32_t upsertCredentialDefaultVaultRoleOverride(uint32_t credentialId, const ::vh::rbac::permission::Override& overrideRule);
+    static bool deleteCredentialDefaultVaultRoleOverride(uint32_t credentialId, uint32_t overrideId);
+    static std::vector<CredentialSelectedVault> listCredentialSelectedVaults(uint32_t credentialId);
+    static void replaceCredentialSelectedVaults(uint32_t credentialId, const std::vector<uint32_t>& vaultIds, std::optional<uint32_t> createdBy);
+    static CredentialSelectedVault upsertCredentialSelectedVault(uint32_t credentialId, uint32_t vaultId, bool enabled, std::optional<uint32_t> createdBy);
+    static bool deleteCredentialSelectedVault(uint32_t credentialId, uint32_t vaultId);
+    static std::shared_ptr<::vh::rbac::role::Vault> getEffectiveCredentialVaultRole(
+        uint32_t credentialId,
+        uint32_t vaultId,
+        const std::string& scopeMode);
     static void updateCredentialScopeMode(
         uint32_t credentialId,
         const std::string& scopeMode,

@@ -17,6 +17,16 @@ struct S3Gateway {
     static json credentialsRevoke(const json& payload, const std::shared_ptr<Session>& session);
     static json credentialsScopeUpdate(const json& payload, const std::shared_ptr<Session>& session);
     static json credentialsScopeList(const json& payload, const std::shared_ptr<Session>& session);
+    static json credentialsDefaultRoleGet(const json& payload, const std::shared_ptr<Session>& session);
+    static json credentialsDefaultRoleSet(const json& payload, const std::shared_ptr<Session>& session);
+    static json credentialsDefaultRoleClear(const json& payload, const std::shared_ptr<Session>& session);
+    static json credentialsSelectedVaultsList(const json& payload, const std::shared_ptr<Session>& session);
+    static json credentialsSelectedVaultsReplace(const json& payload, const std::shared_ptr<Session>& session);
+    static json credentialsSelectedVaultsAdd(const json& payload, const std::shared_ptr<Session>& session);
+    static json credentialsSelectedVaultsRemove(const json& payload, const std::shared_ptr<Session>& session);
+    static json credentialsDefaultRoleOverridesList(const json& payload, const std::shared_ptr<Session>& session);
+    static json credentialsDefaultRoleOverridesAdd(const json& payload, const std::shared_ptr<Session>& session);
+    static json credentialsDefaultRoleOverridesRemove(const json& payload, const std::shared_ptr<Session>& session);
     static json credentialsRolesList(const json& payload, const std::shared_ptr<Session>& session);
     static json credentialsRolesAssign(const json& payload, const std::shared_ptr<Session>& session);
     static json credentialsRolesRevoke(const json& payload, const std::shared_ptr<Session>& session);

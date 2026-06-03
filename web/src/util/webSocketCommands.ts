@@ -75,7 +75,13 @@ import {
   S3GatewayCreateRemoteCachePayload,
   S3GatewayCredential,
   S3GatewayCredentialCreatePayload,
+  S3GatewayCredentialDefaultVaultRole,
+  S3GatewayCredentialDefaultVaultRoleOverride,
+  S3GatewayCredentialDefaultVaultRoleOverridePayload,
+  S3GatewayCredentialDefaultVaultRolePayload,
   S3GatewayCredentialScopeUpdatePayload,
+  S3GatewayCredentialSelectedVault,
+  S3GatewayCredentialSelectedVaultPayload,
   S3GatewayCredentialVaultRoleAssignment,
   S3GatewayCredentialVaultRoleAssignmentPayload,
   S3GatewayCredentialVaultRoleOverride,
@@ -281,6 +287,56 @@ export interface WebSocketCommandMap {
   's3.gateway.credentials.scope.list': {
     payload: { access_key?: string; name?: string }
     response: { credential: S3GatewayCredential; scopes: S3GatewayCredentialVaultScope[] }
+  }
+
+  's3.gateway.credentials.defaultRole.get': {
+    payload: { credential_id?: number; access_key?: string; name?: string; credential_name?: string }
+    response: { credential: S3GatewayCredential; default_role: S3GatewayCredentialDefaultVaultRole | null }
+  }
+
+  's3.gateway.credentials.defaultRole.set': {
+    payload: S3GatewayCredentialDefaultVaultRolePayload
+    response: { credential: S3GatewayCredential; default_role: S3GatewayCredentialDefaultVaultRole | null }
+  }
+
+  's3.gateway.credentials.defaultRole.clear': {
+    payload: { credential_id?: number; access_key?: string; name?: string; credential_name?: string }
+    response: { cleared: boolean; credential: S3GatewayCredential }
+  }
+
+  's3.gateway.credentials.selectedVaults.list': {
+    payload: { credential_id?: number; access_key?: string; name?: string; credential_name?: string }
+    response: { credential: S3GatewayCredential; selected_vaults: S3GatewayCredentialSelectedVault[]; vaults?: S3GatewayCredentialSelectedVault[] }
+  }
+
+  's3.gateway.credentials.selectedVaults.replace': {
+    payload: S3GatewayCredentialSelectedVaultPayload
+    response: { credential: S3GatewayCredential; selected_vaults: S3GatewayCredentialSelectedVault[]; vaults?: S3GatewayCredentialSelectedVault[] }
+  }
+
+  's3.gateway.credentials.selectedVaults.add': {
+    payload: S3GatewayCredentialSelectedVaultPayload
+    response: { credential: S3GatewayCredential; selected_vault: S3GatewayCredentialSelectedVault }
+  }
+
+  's3.gateway.credentials.selectedVaults.remove': {
+    payload: S3GatewayCredentialSelectedVaultPayload
+    response: { removed: boolean; credential: S3GatewayCredential; vault?: { id: number; name: string } | null }
+  }
+
+  's3.gateway.credentials.defaultRole.overrides.list': {
+    payload: { credential_id?: number; access_key?: string; name?: string; credential_name?: string }
+    response: { credential: S3GatewayCredential; default_role: S3GatewayCredentialDefaultVaultRole | null; overrides: S3GatewayCredentialDefaultVaultRoleOverride[] }
+  }
+
+  's3.gateway.credentials.defaultRole.overrides.add': {
+    payload: S3GatewayCredentialDefaultVaultRoleOverridePayload
+    response: { override: S3GatewayCredentialDefaultVaultRoleOverride }
+  }
+
+  's3.gateway.credentials.defaultRole.overrides.remove': {
+    payload: S3GatewayCredentialDefaultVaultRoleOverridePayload
+    response: { removed: boolean; credential: S3GatewayCredential }
   }
 
   's3.gateway.credentials.roles.list': {

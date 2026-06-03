@@ -1,7 +1,9 @@
 import { expect, test } from '@playwright/test'
 import { authStatePath, authenticateAndSaveState, explicitSkipRequested } from './helpers/auth'
 import {
+  addDefaultCredentialOverride,
   addCredentialOverride,
+  addSelectedVault,
   assignVaultRole,
   createCredential,
   createLocalBucket,
@@ -13,6 +15,7 @@ import {
   saveKeyBudget,
   saveKeyVaultBudget,
   selectCredential,
+  setDefaultVaultRole,
   uniqueE2EName,
 } from './helpers/s3Gateway'
 
@@ -40,9 +43,10 @@ test('admin can navigate to S3 Gateway page', async ({ page }) => {
   await gotoS3Gateway(page)
   await expect(page.getByTestId('s3-gateway-section-service')).toBeVisible()
   await expect(page.getByTestId('s3-gateway-section-credentials')).toBeVisible()
-  await expect(page.getByTestId('s3-gateway-section-bucket-bindings')).toBeVisible()
+  await expect(page.getByTestId('s3-gateway-section-bucket-bindings-routing')).toBeVisible()
   await expect(page.getByTestId('s3-gateway-section-budgets')).toBeVisible()
   await expect(page.getByTestId('s3-gateway-section-client-setup')).toBeVisible()
+  await expect(page.getByTestId('s3-gateway-bucket-routing-note')).toContainText(/do not grant access/i)
 })
 
 test('admin can create a user_access credential and hide the secret', async ({ page }) => {
@@ -54,23 +58,54 @@ test('admin can create a user_access credential and hide the secret', async ({ p
   await expect(page.getByTestId('s3-gateway-credential-name').filter({ hasText: userAccessCredential })).toBeVisible()
 })
 
-test('admin manages vault_allowlist roles and overrides through role-native editor', async ({ page }) => {
+test('user_access hides gateway vault role policy controls', async ({ page }) => {
+  await gotoS3Gateway(page)
+  await ensureUserCredential(page)
+  await expect(page.getByTestId('s3-gateway-user-access-policy-note')).toBeVisible()
+  await expect(page.getByTestId('s3-gateway-default-role-select')).toHaveCount(0)
+  await expect(page.getByTestId('s3-gateway-selected-vaults-panel')).toHaveCount(0)
+  await expect(page.getByTestId('s3-gateway-role-assign-vault-select')).toHaveCount(0)
+})
+
+test('admin manages vault_allowlist default role, selected vaults, and overrides', async ({ page }) => {
   await gotoS3Gateway(page)
   const vaultName = await ensureVaultAvailable(page)
+  const extraVaultName = await ensureVaultAvailable(page)
   vaultAllowCredential = uniqueE2EName('pw-vault-allow')
-  await createCredential(page, vaultAllowCredential)
+  await createCredential(page, vaultAllowCredential, 'vault_allowlist', vaultName)
   await hideSecret(page)
   await selectCredential(page, vaultAllowCredential)
 
-  await page.getByTestId('s3-gateway-scope-editor-scope-select').selectOption('vault_allowlist')
-  await page.getByTestId('s3-gateway-scope-save').click()
   await expect(page.getByTestId('s3-gateway-scope-editor-scope-select')).toHaveValue('vault_allowlist')
-  await expect(page.getByTestId('s3-gateway-vault-allowlist-empty')).toContainText(/assign at least one vault role/i)
+  await expect(page.getByTestId('s3-gateway-default-role-select')).toBeVisible()
+  await expect(page.getByTestId('s3-gateway-selected-vaults-panel')).toBeVisible()
+  await expect(page.getByTestId('s3-gateway-selected-vaults-panel')).toContainText(vaultName)
+  await setDefaultVaultRole(page, 'reader')
+  await addSelectedVault(page, extraVaultName)
+  await page.getByTestId('s3-gateway-scope-save').click()
+  await expect(page.getByTestId('s3-gateway-scope-save-status')).toHaveText('Saved')
 
   await assignVaultRole(page, vaultName, 'reader')
+  await addDefaultCredentialOverride(page)
   await addCredentialOverride(page, vaultName)
   await removeCredentialOverride(page)
   await revokeVaultRole(page, vaultName)
+})
+
+test('global scope shows default role policy and hides selected vaults', async ({ page }) => {
+  await gotoS3Gateway(page)
+  await ensureVaultAvailable(page)
+  const credentialName = uniqueE2EName('pw-global')
+  await createCredential(page, credentialName, 'global')
+  await hideSecret(page)
+  await selectCredential(page, credentialName)
+
+  await expect(page.getByTestId('s3-gateway-scope-editor-scope-select')).toHaveValue('global')
+  await expect(page.getByTestId('s3-gateway-default-role-select')).toBeVisible()
+  await expect(page.getByTestId('s3-gateway-selected-vaults-panel')).toHaveCount(0)
+  await setDefaultVaultRole(page, 'reader')
+  await page.getByTestId('s3-gateway-scope-save').click()
+  await expect(page.getByTestId('s3-gateway-scope-save-status')).toHaveText('Saved')
 })
 
 test('credential create modal uses relational principal selector', async ({ page }) => {

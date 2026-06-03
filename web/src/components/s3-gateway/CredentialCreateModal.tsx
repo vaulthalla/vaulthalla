@@ -2,8 +2,10 @@
 
 import { useState } from 'react'
 import PlusIcon from '@/fa-duotone/plus.svg'
+import type { VaultRole } from '@/models/role'
 import { S3GatewayCredential, S3GatewayCredentialCreatePayload, S3GatewayCredentialScopeMode } from '@/models/s3Gateway'
 import type { User } from '@/models/user'
+import type { Vault } from '@/models/vaults'
 import {
   buttonClass,
   fieldClass,
@@ -17,6 +19,8 @@ export function CredentialCreateModal({
   saving,
   users,
   currentUser,
+  vaultRoles,
+  vaults,
   canAssignPrincipal,
   onClose,
   onCreate,
@@ -26,6 +30,8 @@ export function CredentialCreateModal({
   saving: boolean
   users: User[]
   currentUser: User | null
+  vaultRoles: VaultRole[]
+  vaults: Vault[]
   canAssignPrincipal: boolean
   onClose: () => void
   onCreate: (payload: S3GatewayCredentialCreatePayload) => Promise<{ credential: S3GatewayCredential; secret_access_key: string }>
@@ -36,6 +42,8 @@ export function CredentialCreateModal({
   const [newScopeMode, setNewScopeMode] = useState<S3GatewayCredentialScopeMode>('user_access')
   const [newDescription, setNewDescription] = useState('')
   const [newExpiresDays, setNewExpiresDays] = useState('')
+  const [newDefaultRoleId, setNewDefaultRoleId] = useState('')
+  const [newSelectedVaultId, setNewSelectedVaultId] = useState('')
   const [enforceLocalBudget, setEnforceLocalBudget] = useState(false)
 
   if (!open) return null
@@ -52,6 +60,8 @@ export function CredentialCreateModal({
       scope_mode: newScopeMode,
       description: newDescription.trim() || null,
       expires_at,
+      ...(newScopeMode !== 'user_access' && newDefaultRoleId ? { default_vault_role_id: Number(newDefaultRoleId) } : {}),
+      ...(newScopeMode === 'vault_allowlist' && newSelectedVaultId ? { selected_vault_ids: [Number(newSelectedVaultId)] } : {}),
       enforce_budget_for_local_requests: enforceLocalBudget,
     })
     onCreated(result.credential.id)
@@ -60,6 +70,8 @@ export function CredentialCreateModal({
     setNewPrincipalId('')
     setNewDescription('')
     setNewExpiresDays('')
+    setNewDefaultRoleId('')
+    setNewSelectedVaultId('')
     setEnforceLocalBudget(false)
   }
 
@@ -101,6 +113,24 @@ export function CredentialCreateModal({
               {scopeModes.map(mode => <option key={mode} value={mode}>{scopeLabel(mode)}</option>)}
             </select>
           </label>
+          {newScopeMode !== 'user_access' && (
+            <label className="flex flex-col gap-1 text-xs text-white/60">
+              Default vault role
+              <select className={fieldClass} data-testid="s3-gateway-create-default-role-select" value={newDefaultRoleId} onChange={event => setNewDefaultRoleId(event.target.value)}>
+                <option value="">Select default role</option>
+                {vaultRoles.map(role => <option key={role.id} value={role.id}>{role.name}</option>)}
+              </select>
+            </label>
+          )}
+          {newScopeMode === 'vault_allowlist' && (
+            <label className="flex flex-col gap-1 text-xs text-white/60">
+              Selected vault
+              <select className={fieldClass} data-testid="s3-gateway-create-selected-vault-select" value={newSelectedVaultId} onChange={event => setNewSelectedVaultId(event.target.value)}>
+                <option value="">Select vault</option>
+                {vaults.map(vault => <option key={vault.id} value={vault.id}>{vault.name} #{vault.id}</option>)}
+              </select>
+            </label>
+          )}
           <label className="flex flex-col gap-1 text-xs text-white/60">
             Expires in days
             <input className={fieldClass} inputMode="decimal" value={newExpiresDays} onChange={event => setNewExpiresDays(event.target.value)} />
@@ -126,15 +156,9 @@ export function CredentialCreateModal({
           </label>
         </div>
 
-        {newScopeMode === 'vault_allowlist' && (
-          <div className="mt-4 rounded border border-amber-300/20 bg-amber-400/10 p-3 text-sm text-amber-50">
-            Create the credential, then assign at least one vault role in the credential role editor.
-          </div>
-        )}
-
         <div className="mt-5 flex justify-end gap-2">
           <button className={buttonClass} type="button" onClick={onClose}>Cancel</button>
-          <button className={primaryButtonClass} data-testid="s3-gateway-submit-create-credential" type="button" disabled={!newName.trim() || saving} onClick={() => void submitCreate()}>
+          <button className={primaryButtonClass} data-testid="s3-gateway-submit-create-credential" type="button" disabled={!newName.trim() || (newScopeMode !== 'user_access' && !newDefaultRoleId) || (newScopeMode === 'vault_allowlist' && !newSelectedVaultId) || saving} onClick={() => void submitCreate()}>
             <PlusIcon className="h-4 w-4" />
             Create
           </button>

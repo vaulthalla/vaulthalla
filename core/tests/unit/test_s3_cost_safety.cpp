@@ -26,6 +26,7 @@
 #include "protocols/ws/Router.hpp"
 #include "protocols/ws/Session.hpp"
 #include "rbac/role/Admin.hpp"
+#include "rbac/role/Vault.hpp"
 #include "runtime/Deps.hpp"
 #include "seed/include/init_db_tables.hpp"
 #include "seed/include/seed_db.hpp"
@@ -799,6 +800,50 @@ uint32_t seedGatewayCredentialForDbTest(const uint32_t userId, const std::string
     credential.enabled = true;
     credential.scope_mode = "user_access";
     return vh::db::query::s3::Gateway::createCredential(credential);
+}
+
+uint32_t s3CostVaultRoleIdByName(const std::string& roleName) {
+    return vh::db::Transactions::exec("S3CostSafetyTest::vaultRoleIdByName", [&](pqxx::work& txn) {
+        const auto res = txn.exec(
+            "SELECT id FROM vault_role WHERE name = $1 LIMIT 1",
+            pqxx::params{roleName});
+        if (!res.empty()) return res.one_field().as<uint32_t>();
+
+        const auto role = [&]() {
+            if (roleName == "implicit_deny") return vh::rbac::role::Vault::ImplicitDeny();
+            if (roleName == "reader") return vh::rbac::role::Vault::Reader();
+            if (roleName == "contributor") return vh::rbac::role::Vault::Contributor();
+            if (roleName == "manager") return vh::rbac::role::Vault::Manager();
+            throw std::runtime_error("vault role not found: " + roleName);
+        }();
+        return txn.exec(
+            R"SQL(
+                INSERT INTO vault_role (
+                    name,
+                    description,
+                    files_permissions,
+                    directories_permissions,
+                    sync_permissions,
+                    roles_permissions
+                )
+                VALUES ($1, $2, $3::bit(32), $4::bit(32), $5::bit(32), $6::bit(16))
+                ON CONFLICT (name) DO UPDATE SET
+                    description = EXCLUDED.description,
+                    files_permissions = EXCLUDED.files_permissions,
+                    directories_permissions = EXCLUDED.directories_permissions,
+                    sync_permissions = EXCLUDED.sync_permissions,
+                    roles_permissions = EXCLUDED.roles_permissions
+                RETURNING id
+            )SQL",
+            pqxx::params{
+                role.name,
+                role.description,
+                role.fs.files.toBitString(),
+                role.fs.directories.toBitString(),
+                role.sync.toBitString(),
+                role.roles.toBitString()
+            }).one_field().as<uint32_t>();
+    });
 }
 
 std::optional<vh::db::query::s3::GatewayCredential> gatewayCredentialByIdForDbTest(const uint32_t credentialId) {
@@ -3334,7 +3379,8 @@ TEST(S3CostSafetyTest, S3GatewayWsNonAdminCredentialManagementIsScopedToPrincipa
     const auto globalUpdate = vh::protocols::ws::handler::S3Gateway::credentialsScopeUpdate({
         {"access_key", std::to_string(ownedCredentialId)},
         {"scope_mode", "global"},
-        {"principal_user_id", adminSession->user->id}
+        {"principal_user_id", adminSession->user->id},
+        {"default_vault_role_id", s3CostVaultRoleIdByName("reader")}
     }, adminSession);
     ASSERT_TRUE(globalUpdate.contains("credential"));
 
@@ -3651,8 +3697,9 @@ TEST(S3CostSafetyTest, S3GatewayCliScopeSetRetargetsPrincipalAndAuditsGlobalConv
     const auto admin = dryRunActor(adminUserId, vh::rbac::role::Admin::SuperAdmin(adminUserId));
     const auto credentialArg = std::to_string(credentialId);
 
+    (void)s3CostVaultRoleIdByName("reader");
     const auto result = router->executeLine(
-        "s3-gateway creds scope " + credentialArg + " set --scope global --user " + std::to_string(admin->id),
+        "s3-gateway creds scope " + credentialArg + " set --scope global --user " + std::to_string(admin->id) + " --role reader",
         admin);
     ASSERT_EQ(0, result.exit_code) << result.stderr_text;
 

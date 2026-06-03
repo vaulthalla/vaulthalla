@@ -6,6 +6,8 @@
 #include "rbac/resolver/vault/all.hpp"
 #include "rbac/role/Vault.hpp"
 
+#include <algorithm>
+
 namespace vh::rbac::s3::policy {
 namespace {
 using FsAction = permission::vault::FilesystemAction;
@@ -113,17 +115,36 @@ Decision Evaluator::evaluate(const S3PolicyRequest& request) {
                 .principal_allowed = true,
                 .credential_allowed = false
             };
-        return {
-            .allowed = true,
-            .reason = Decision::Reason::Allowed,
-            .principal_allowed = true,
-            .credential_allowed = true
-        };
     }
 
-    const auto credentialRole = db::query::s3::Gateway::getCredentialVaultRoleForVault(
+    if (request.scope_mode == "vault_allowlist") {
+        const auto selectedVaults = db::query::s3::Gateway::listCredentialSelectedVaults(request.credential_id);
+        const auto selected = std::ranges::any_of(selectedVaults, [&](const auto& selectedVault) {
+            return selectedVault.vault_id == request.vault_id && selectedVault.enabled;
+        });
+        if (!selected)
+            return {
+                .allowed = false,
+                .reason = Decision::Reason::VaultNotSelected,
+                .principal_allowed = true,
+                .credential_allowed = false
+            };
+    }
+
+    const auto defaultRole = db::query::s3::Gateway::getCredentialDefaultVaultRole(request.credential_id);
+    if ((request.scope_mode == "vault_allowlist" || request.scope_mode == "global") &&
+        (!defaultRole || !defaultRole->enabled))
+        return {
+            .allowed = false,
+            .reason = Decision::Reason::MissingDefaultRole,
+            .principal_allowed = true,
+            .credential_allowed = false
+        };
+
+    const auto credentialRole = db::query::s3::Gateway::getEffectiveCredentialVaultRole(
         request.credential_id,
-        request.vault_id);
+        request.vault_id,
+        request.scope_mode);
     if (!credentialRole)
         return {
             .allowed = false,
@@ -144,7 +165,7 @@ Decision Evaluator::evaluate(const S3PolicyRequest& request) {
     if (!credentialDecision.allowed)
         return {
             .allowed = false,
-            .reason = Decision::Reason::CredentialRoleDenied,
+            .reason = Decision::Reason::EffectiveCredentialRoleDenied,
             .principal_allowed = true,
             .credential_allowed = false,
             .credential_decision = credentialDecision

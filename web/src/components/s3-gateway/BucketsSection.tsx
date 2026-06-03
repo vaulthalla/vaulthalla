@@ -46,7 +46,10 @@ export function BucketsSection({
   }, [bindMode, bindModeOptions])
 
   return (
-    <Section title="Bucket Bindings" icon={VaultIcon}>
+    <Section title="Bucket Bindings / Routing" icon={VaultIcon}>
+      <div className="mb-4 rounded border border-white/10 bg-white/[0.03] p-3 text-sm leading-6 text-white/65" data-testid="s3-gateway-bucket-routing-note">
+        Bindings expose a Vaulthalla vault under a downstream S3 bucket name. They do not grant access. Gateway credentials still need user_access principal permissions or role-based credential policy.
+      </div>
       <div className="grid gap-3 lg:grid-cols-3">
         <div className="rounded border border-white/10 bg-white/[0.03] p-3">
           <div className="mb-3 text-sm font-medium text-white">Bind vault</div>

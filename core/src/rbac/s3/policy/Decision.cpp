@@ -12,6 +12,11 @@ std::string reasonToString(const Decision::Reason reason) {
     case Decision::Reason::NoFilesystemMapping: return "no_filesystem_mapping";
     case Decision::Reason::PrincipalRbacDenied: return "principal_rbac_denied";
     case Decision::Reason::GlobalPrincipalRequired: return "global_principal_required";
+    case Decision::Reason::MissingDefaultRole: return "missing_default_role";
+    case Decision::Reason::VaultNotSelected: return "vault_not_selected";
+    case Decision::Reason::EffectiveCredentialRoleDenied: return "effective_credential_role_denied";
+    case Decision::Reason::DefaultRoleDenied: return "default_role_denied";
+    case Decision::Reason::PerVaultOverrideDenied: return "per_vault_override_denied";
     case Decision::Reason::CredentialRoleMissing: return "credential_role_missing";
     case Decision::Reason::CredentialRoleDenied: return "credential_role_denied";
     }

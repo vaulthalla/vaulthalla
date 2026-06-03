@@ -14,6 +14,8 @@ tags:
 
 A gateway bucket is a downstream S3 bucket name exposed by Vaulthalla and bound to a Vaulthalla vault. It is the name downstream S3 clients use in commands such as `s3://archive/path/file.txt`.
 
+Bucket bindings are routing topology, not access policy. A binding maps `downstream bucket name -> Vaulthalla vault`. It does not grant any gateway credential access to that vault. Gateway credentials still need `user_access` principal permissions or role-based credential policy.
+
 :::toc[On this page]{depth="3" theme="compact"}
 :::
 
@@ -57,7 +59,7 @@ vh s3-gateway bucket bind archive-edge --vault archive --mode remote_cache
 vh s3-gateway bucket bind archive-proxy --vault archive --mode remote_proxy
 ```
 
-Binding an existing vault requires authority to manage that vault and S3 Gateway bucket-management authority. Binding does not grant object access to gateway credentials; each credential still needs its own gateway vault-role assignment.
+Binding an existing vault requires S3 Gateway bucket-management authority plus authority to manage the vault. Binding does not grant object access to gateway credentials; each credential still needs `user_access` principal permissions or a role-based credential policy with a default role and, for `vault_allowlist`, a selected vault row.
 
 Create a new remote-cache gateway bucket and its backing S3/R2 vault:
 

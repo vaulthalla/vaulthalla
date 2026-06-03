@@ -12,15 +12,14 @@ export async function gotoS3Gateway(page: Page) {
 export async function ensureVaultAvailable(page: Page) {
   const vaultName = uniqueE2EName('pw-vault-seed')
   await createLocalBucket(page, vaultName)
-  await page.reload()
-  await expect(page.getByTestId('s3-gateway-section-service')).toBeVisible()
+  await expect(page.getByTestId('s3-gateway-bucket-routing-note')).toBeVisible()
   return vaultName
 }
 
 export async function createCredential(
   page: Page,
   name: string,
-  scope: 'user_access' | 'vault_allowlist' = 'user_access',
+  scope: 'user_access' | 'vault_allowlist' | 'global' = 'user_access',
   vaultName?: string,
   enforceLocalBudget = false,
 ) {
@@ -28,6 +27,20 @@ export async function createCredential(
   await expect(page.getByTestId('s3-gateway-create-credential-modal')).toBeVisible()
   await page.getByTestId('s3-gateway-credential-name-input').fill(name)
   await page.getByTestId('s3-gateway-credential-scope-select').selectOption(scope)
+  if (scope !== 'user_access') {
+    const roleSelect = page.getByTestId('s3-gateway-create-default-role-select')
+    await roleSelect.selectOption({ label: 'reader' }).catch(async () => {
+      await selectFirstNonEmptyOption(roleSelect)
+    })
+  }
+  if (scope === 'vault_allowlist') {
+    const vaultSelect = page.getByTestId('s3-gateway-create-selected-vault-select')
+    if (vaultName) {
+      await vaultSelect.selectOption(await optionValueByText(vaultSelect, vaultName))
+    } else {
+      await selectFirstNonEmptyOption(vaultSelect)
+    }
+  }
   if (enforceLocalBudget) {
     await page.getByTestId('s3-gateway-create-enforce-local-budget').check()
   }
@@ -44,12 +57,47 @@ async function optionValueByText(select: ReturnType<Page['getByTestId']>, text: 
   return value
 }
 
+async function selectFirstNonEmptyOption(select: ReturnType<Page['getByTestId']>) {
+  const options = select.locator('option')
+  const count = await options.count()
+  for (let index = 0; index < count; index += 1) {
+    const value = await options.nth(index).getAttribute('value')
+    if (value) {
+      await select.selectOption(value)
+      return value
+    }
+  }
+  throw new Error('No selectable option found.')
+}
+
 export async function assignVaultRole(page: Page, vaultName: string, roleName = 'reader') {
   const vaultSelect = page.getByTestId('s3-gateway-role-assign-vault-select')
   await vaultSelect.selectOption(await optionValueByText(vaultSelect, vaultName))
   await page.getByTestId('s3-gateway-role-assign-role-select').selectOption({ label: roleName })
   await page.getByTestId('s3-gateway-role-assign-submit').click()
   await expect(page.getByTestId('s3-gateway-role-assignment-row').filter({ hasText: vaultName })).toBeVisible()
+}
+
+export async function setDefaultVaultRole(page: Page, roleName = 'reader') {
+  const roleSelect = page.getByTestId('s3-gateway-default-role-select')
+  await roleSelect.selectOption({ label: roleName })
+  await page.getByTestId('s3-gateway-default-role-save').click()
+  await expect(roleSelect).toHaveValue(/.+/)
+}
+
+export async function addSelectedVault(page: Page, vaultName: string) {
+  const vaultSelect = page.getByTestId('s3-gateway-selected-vault-add-select')
+  await vaultSelect.selectOption(await optionValueByText(vaultSelect, vaultName))
+  await page.getByTestId('s3-gateway-selected-vault-add-submit').click()
+  await expect(page.getByTestId('s3-gateway-selected-vaults-panel')).toContainText(vaultName)
+}
+
+export async function addDefaultCredentialOverride(page: Page, glob = '/shared/**') {
+  await page.getByTestId('s3-gateway-default-override-permission-select').selectOption('vault.fs.files.download')
+  await page.getByTestId('s3-gateway-default-override-glob-input').fill(glob)
+  await page.getByTestId('s3-gateway-default-override-effect-select').selectOption('deny')
+  await page.getByTestId('s3-gateway-default-override-add-submit').click()
+  await expect(page.getByTestId('s3-gateway-section-credential-roles')).toContainText(glob)
 }
 
 export async function addCredentialOverride(page: Page, vaultName: string, glob = '/private/**') {

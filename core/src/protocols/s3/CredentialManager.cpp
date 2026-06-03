@@ -6,6 +6,7 @@
 #include "db/query/s3/Gateway.hpp"
 #include "rbac/permission/admin/S3Gateway.hpp"
 #include "rbac/permission/vault/Filesystem.hpp"
+#include "rbac/permission/vault/Roles.hpp"
 #include "rbac/resolver/admin/all.hpp"
 #include "rbac/resolver/vault/all.hpp"
 
@@ -13,6 +14,7 @@
 #include <array>
 #include <paths.h>
 #include <sodium.h>
+#include <set>
 #include <stdexcept>
 
 namespace vh::protocols::s3 {
@@ -77,7 +79,9 @@ void validateScopeRequest(const CredentialCreateOptions& options) {
         options.created_by,
         options.principal_user_id,
         options.scope_mode,
-        options.vault_scopes);
+        options.vault_scopes,
+        options.selected_vault_ids,
+        options.default_vault_role_id);
 }
 }
 
@@ -95,6 +99,9 @@ GatewaySecret CredentialManager::createCredential(const uint32_t userId, const s
         .scope_mode = "user_access",
         .description = std::nullopt,
         .expires_at = std::nullopt,
+        .default_vault_role_id = std::nullopt,
+        .selected_vault_ids = {},
+        .default_role_overrides = {},
         .vault_scopes = {},
         .enforce_budget_for_local_requests = false
     });
@@ -120,12 +127,31 @@ GatewaySecret CredentialManager::createCredential(const CredentialCreateOptions&
     out.credential.description = options.description;
     out.credential.expires_at = options.expires_at;
     out.credential.id = db::query::s3::Gateway::createCredential(out.credential);
-    if (out.credential.scope_mode == "vault_allowlist") {
+
+    if (out.credential.scope_mode == "user_access") {
+        db::query::s3::Gateway::replaceCredentialScopes(out.credential.id, {});
+    } else if (out.credential.scope_mode == "vault_allowlist" && !options.vault_scopes.empty()) {
         auto scopes = options.vault_scopes;
         for (auto& scope : scopes) scope.credential_id = out.credential.id;
         db::query::s3::Gateway::replaceCredentialScopes(out.credential.id, scopes);
     } else {
         db::query::s3::Gateway::replaceCredentialScopes(out.credential.id, {});
+        if (options.default_vault_role_id)
+            db::query::s3::Gateway::upsertCredentialDefaultVaultRole(
+                out.credential.id,
+                *options.default_vault_role_id,
+                true,
+                options.created_by);
+        if (out.credential.scope_mode == "vault_allowlist")
+            db::query::s3::Gateway::replaceCredentialSelectedVaults(
+                out.credential.id,
+                options.selected_vault_ids,
+                options.created_by);
+    }
+
+    if (out.credential.scope_mode != "user_access") {
+        for (const auto& overrideRule : options.default_role_overrides)
+            db::query::s3::Gateway::upsertCredentialDefaultVaultRoleOverride(out.credential.id, overrideRule);
     }
     return out;
 }
@@ -167,7 +193,9 @@ void CredentialManager::validateScopeMutation(
     const uint32_t actorUserId,
     const uint32_t principalUserId,
     const std::string& scopeMode,
-    const std::vector<CredentialVaultScope>& vaultScopes) {
+    const std::vector<CredentialVaultScope>& vaultScopes,
+    const std::vector<uint32_t>& selectedVaultIds,
+    const std::optional<uint32_t> defaultVaultRoleId) {
     if (actorUserId == 0) throw std::invalid_argument("S3 gateway credential scope update requires an actor user");
     if (principalUserId == 0) throw std::invalid_argument("S3 gateway credential scope update requires a principal user");
     if (!validScopeMode(scopeMode)) throw std::invalid_argument("invalid S3 gateway credential scope mode: " + scopeMode);
@@ -184,7 +212,45 @@ void CredentialManager::validateScopeMutation(
         throw std::invalid_argument("global S3 gateway credentials require admin.s3_gateway.manage_credentials");
     if (scopeMode == "global" && !principal->isAdmin())
         throw std::invalid_argument("global S3 gateway credentials require an admin principal");
-    if (scopeMode != "vault_allowlist") return;
+    if (scopeMode == "global") {
+        if (!defaultVaultRoleId)
+            throw std::invalid_argument("global S3 gateway credentials require a default vault role");
+        return;
+    }
+    if (scopeMode == "user_access") return;
+
+    std::set<uint32_t> requestedVaultIds(selectedVaultIds.begin(), selectedVaultIds.end());
+    for (const auto& scope : vaultScopes)
+        if (scope.vault_id != 0) requestedVaultIds.insert(scope.vault_id);
+
+    if (!defaultVaultRoleId && vaultScopes.empty())
+        throw std::invalid_argument("vault_allowlist S3 gateway credentials require a default vault role");
+    if (requestedVaultIds.empty())
+        throw std::invalid_argument("vault_allowlist S3 gateway credentials require at least one selected vault");
+
+    auto actorCanGrantVault = [&](const uint32_t vaultId) {
+        if (actor->isSuperAdmin()) return true;
+        using Perm = rbac::permission::vault::RolePermissions;
+        return rbac::resolver::Vault::has<Perm>({
+            .user = actor,
+            .permission = Perm::Assign,
+            .target_subject_type = std::string{"user"},
+            .target_subject_id = principalUserId,
+            .vault_id = vaultId
+        });
+    };
+
+    for (const auto vaultId : requestedVaultIds) {
+        if (!actorCanGrantVault(vaultId))
+            throw std::invalid_argument("actor cannot grant S3 gateway vault access for vault " + std::to_string(vaultId));
+        const auto hasAnyVaultAccess =
+            actionAllowedByPrincipal(principal, vaultId, rbac::permission::vault::FilesystemAction::List) ||
+            actionAllowedByPrincipal(principal, vaultId, rbac::permission::vault::FilesystemAction::Read) ||
+            actionAllowedByPrincipal(principal, vaultId, rbac::permission::vault::FilesystemAction::Write) ||
+            actionAllowedByPrincipal(principal, vaultId, rbac::permission::vault::FilesystemAction::Delete);
+        if (!hasAnyVaultAccess)
+            throw std::invalid_argument("principal cannot access vault " + std::to_string(vaultId));
+    }
 
     if (!actorAdmin) {
         for (const auto& scope : vaultScopes) {

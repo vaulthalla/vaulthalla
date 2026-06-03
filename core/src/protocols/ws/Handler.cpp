@@ -157,6 +157,16 @@ void Handler::registerS3GatewayHandlers(const std::shared_ptr<Router>& r) {
     r->registerPayload("s3.gateway.credentials.revoke", &handler::S3Gateway::credentialsRevoke);
     r->registerPayload("s3.gateway.credentials.scope.update", &handler::S3Gateway::credentialsScopeUpdate);
     r->registerPayload("s3.gateway.credentials.scope.list", &handler::S3Gateway::credentialsScopeList);
+    r->registerPayload("s3.gateway.credentials.defaultRole.get", &handler::S3Gateway::credentialsDefaultRoleGet);
+    r->registerPayload("s3.gateway.credentials.defaultRole.set", &handler::S3Gateway::credentialsDefaultRoleSet);
+    r->registerPayload("s3.gateway.credentials.defaultRole.clear", &handler::S3Gateway::credentialsDefaultRoleClear);
+    r->registerPayload("s3.gateway.credentials.selectedVaults.list", &handler::S3Gateway::credentialsSelectedVaultsList);
+    r->registerPayload("s3.gateway.credentials.selectedVaults.replace", &handler::S3Gateway::credentialsSelectedVaultsReplace);
+    r->registerPayload("s3.gateway.credentials.selectedVaults.add", &handler::S3Gateway::credentialsSelectedVaultsAdd);
+    r->registerPayload("s3.gateway.credentials.selectedVaults.remove", &handler::S3Gateway::credentialsSelectedVaultsRemove);
+    r->registerPayload("s3.gateway.credentials.defaultRole.overrides.list", &handler::S3Gateway::credentialsDefaultRoleOverridesList);
+    r->registerPayload("s3.gateway.credentials.defaultRole.overrides.add", &handler::S3Gateway::credentialsDefaultRoleOverridesAdd);
+    r->registerPayload("s3.gateway.credentials.defaultRole.overrides.remove", &handler::S3Gateway::credentialsDefaultRoleOverridesRemove);
     r->registerPayload("s3.gateway.credentials.roles.list", &handler::S3Gateway::credentialsRolesList);
     r->registerPayload("s3.gateway.credentials.roles.assign", &handler::S3Gateway::credentialsRolesAssign);
     r->registerPayload("s3.gateway.credentials.roles.revoke", &handler::S3Gateway::credentialsRolesRevoke);

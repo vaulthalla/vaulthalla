@@ -17,7 +17,7 @@ S3 Gateway is Vaulthalla's S3-compatible protocol surface. It is not a vault typ
 
 Downstream S3 clients such as AWS CLI, rclone, MinIO mc, SDKs, and backup applications connect to Vaulthalla's gateway endpoint with a gateway credential. Those inbound credentials are separate from upstream provider credentials created with `vh api-key` for Vaulthalla to access AWS S3, Cloudflare R2, or another compatible provider.
 
-Gateway credentials are RBAC-native. A request is allowed only when the effective principal's normal Vaulthalla RBAC and the gateway credential's vault-role assignment both allow the action.
+Gateway credentials are RBAC-native. A request is allowed only when the effective principal's normal Vaulthalla RBAC allows the action and the credential scope permits it. `user_access` uses principal RBAC only. `vault_allowlist` uses selected vaults plus a key-level default vault role, with optional per-vault exceptions. `global` covers gateway bucket bindings but still requires a key-level default vault role.
 
 :::toc[On this page]{depth="3" theme="compact"}
 :::

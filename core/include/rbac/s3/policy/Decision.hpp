@@ -16,6 +16,11 @@ struct Decision {
         NoFilesystemMapping,
         PrincipalRbacDenied,
         GlobalPrincipalRequired,
+        MissingDefaultRole,
+        VaultNotSelected,
+        EffectiveCredentialRoleDenied,
+        DefaultRoleDenied,
+        PerVaultOverrideDenied,
         CredentialRoleMissing,
         CredentialRoleDenied
     };
