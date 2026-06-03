@@ -495,6 +495,78 @@ void Registry::evictIno(fuse_ino_t ino) {
     stats_->record_eviction();
 }
 
+void Registry::evictId(const unsigned int id) {
+    std::unique_lock lock(mutex_);
+
+    auto entryIt = idToEntry_.find(id);
+    std::shared_ptr<Entry> entry = entryIt == idToEntry_.end() ? nullptr : entryIt->second;
+    std::optional<fuse_ino_t> ino;
+
+    if (entry && entry->inode)
+        ino = *entry->inode;
+
+    if (!ino) {
+        for (const auto& [candidateIno, candidateId] : inodeToId_) {
+            if (candidateId == id) {
+                ino = candidateIno;
+                break;
+            }
+        }
+    }
+
+    if (!entry && !ino) {
+        log::Registry::fs()->debug("[FSCache] Attempted to evict non-existent entry ID: {}", id);
+        return;
+    }
+
+    uint64_t removedSize = safeSizeBytes(entry);
+    if (removedSize == 0 && ino) {
+        if (const auto inodeEntry = inodeToEntry_.find(*ino); inodeEntry != inodeToEntry_.end())
+            removedSize = safeSizeBytes(inodeEntry->second);
+    }
+
+    if (ino) {
+        for (auto it = pathToInode_.begin(); it != pathToInode_.end();) {
+            if (it->second == *ino) {
+                pathToEntry_.erase(it->first);
+                it = pathToInode_.erase(it);
+            } else ++it;
+        }
+
+        inodeToPath_.erase(*ino);
+        inodeToEntry_.erase(*ino);
+        inodeToId_.erase(*ino);
+    }
+
+    if (entry) {
+        pathToInode_.erase(entry->fuse_path);
+        pathToEntry_.erase(entry->fuse_path);
+    }
+
+    for (auto it = pathToEntry_.begin(); it != pathToEntry_.end();) {
+        const auto& cached = it->second;
+        if (cached && cached->id == id) {
+            pathToInode_.erase(it->first);
+            it = pathToEntry_.erase(it);
+        } else ++it;
+    }
+
+    for (auto it = inodeToId_.begin(); it != inodeToId_.end();) {
+        if (it->second == id) {
+            inodeToPath_.erase(it->first);
+            inodeToEntry_.erase(it->first);
+            it = inodeToId_.erase(it);
+        } else ++it;
+    }
+
+    idToEntry_.erase(id);
+    childToParent_.erase(id);
+
+    const uint64_t curUsed = stats_->snapshot().used_bytes;
+    stats_->set_used(subClamp(curUsed, removedSize));
+    stats_->record_eviction();
+}
+
 void Registry::evictPath(const std::filesystem::path& path) {
     fuse_ino_t ino;
 

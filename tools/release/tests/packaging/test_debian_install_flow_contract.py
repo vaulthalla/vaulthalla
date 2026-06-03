@@ -195,7 +195,10 @@ class DebianInstallFlowContractTests(unittest.TestCase):
     def test_control_uses_recommends_for_postgresql_and_nginx(self) -> None:
         control = (self._repo_root() / "debian" / "control").read_text(encoding="utf-8")
         self.assertIn("Depends:\n adduser,\n nodejs,\n openssl,", control)
-        self.assertIn("Recommends:\n postgresql,\n nginx", control)
+        self.assertIn(
+            "Recommends:\n postgresql,\n nginx,\n certbot,\n python3-certbot-nginx,\n python3-certbot-dns-cloudflare",
+            control,
+        )
         self.assertIn("swtpm,", control)
         self.assertIn("swtpm-tools", control)
         self.assertNotIn("Depends:\n adduser,\n nodejs,\n postgresql,", control)

@@ -175,6 +175,7 @@ If Certbot was requested:
 
 ```bash
 sudo vh setup nginx --domain vault.example.com --certbot
+sudo vh setup nginx --domain vaulthalla.dev --s3-domain s3.vaulthalla.dev --certbot-dns-cloudflare --cloudflare-credentials /etc/vaulthalla/certbot/cloudflare.ini
 ```
 
 Check for conflicting sites before rerunning. The lifecycle command manages the Vaulthalla site and should roll back failed low-risk changes.

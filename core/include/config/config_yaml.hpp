@@ -56,6 +56,95 @@ struct convert<HttpPreviewConfig> {
     }
 };
 
+template<>
+struct convert<S3GatewayMultipartConfig> {
+    static Node encode(const S3GatewayMultipartConfig& rhs) {
+        Node node;
+        node["min_part_size_mb"] = rhs.min_part_size_mb;
+        node["abort_after_days"] = rhs.abort_after_days;
+        return node;
+    }
+
+    static bool decode(const Node& node, S3GatewayMultipartConfig& rhs) {
+        if (!node.IsMap()) return false;
+        rhs.min_part_size_mb = std::max(static_cast<uint32_t>(5), node["min_part_size_mb"].as<uint32_t>(5));
+        rhs.abort_after_days = std::max(static_cast<uint32_t>(1), node["abort_after_days"].as<uint32_t>(7));
+        return true;
+    }
+};
+
+template<>
+struct convert<S3GatewaySyntheticLocalRequestCostConfig> {
+    static Node encode(const S3GatewaySyntheticLocalRequestCostConfig& rhs) {
+        Node node;
+        node["list"] = rhs.list;
+        node["head"] = rhs.head;
+        node["get"] = rhs.get;
+        node["put"] = rhs.put;
+        node["delete"] = rhs.delete_;
+        node["copy"] = rhs.copy;
+        node["downloaded_gb"] = rhs.downloaded_gb;
+        node["uploaded_gb"] = rhs.uploaded_gb;
+        return node;
+    }
+
+    static bool decode(const Node& node, S3GatewaySyntheticLocalRequestCostConfig& rhs) {
+        if (!node.IsMap()) return false;
+        rhs.list = node["list"].as<std::string>(rhs.list);
+        rhs.head = node["head"].as<std::string>(rhs.head);
+        rhs.get = node["get"].as<std::string>(rhs.get);
+        rhs.put = node["put"].as<std::string>(rhs.put);
+        rhs.delete_ = node["delete"].as<std::string>(rhs.delete_);
+        rhs.copy = node["copy"].as<std::string>(rhs.copy);
+        rhs.downloaded_gb = node["downloaded_gb"].as<std::string>(rhs.downloaded_gb);
+        rhs.uploaded_gb = node["uploaded_gb"].as<std::string>(rhs.uploaded_gb);
+        return true;
+    }
+};
+
+template<>
+struct convert<S3GatewayConfig> {
+    static Node encode(const S3GatewayConfig& rhs) {
+        Node node;
+        node["enabled"] = rhs.enabled;
+        node["host"] = rhs.host;
+        node["port"] = rhs.port;
+        node["max_connections"] = rhs.max_connections;
+        node["max_body_size_mb"] = rhs.max_body_size_bytes / (1024 * 1024);
+        node["require_sigv4"] = rhs.require_sigv4;
+        node["allow_path_style"] = rhs.allow_path_style;
+        node["allow_virtual_hosted_style"] = rhs.allow_virtual_hosted_style;
+        node["default_bucket_mode"] = rhs.default_bucket_mode;
+        node["default_api_exclusive"] = rhs.default_api_exclusive;
+        node["default_remote_sync_strategy"] = rhs.default_remote_sync_strategy;
+        node["default_remote_conflict_policy"] = rhs.default_remote_conflict_policy;
+        node["multipart"] = rhs.multipart;
+        node["synthetic_local_request_cost_usd"] = rhs.synthetic_local_request_cost_usd;
+        return node;
+    }
+
+    static bool decode(const Node& node, S3GatewayConfig& rhs) {
+        if (!node.IsMap()) return false;
+        rhs.enabled = node["enabled"].as<bool>(false);
+        rhs.host = node["host"].as<std::string>("0.0.0.0");
+        rhs.port = node["port"].as<uint16_t>(39000);
+        rhs.max_connections = node["max_connections"].as<unsigned int>(1024);
+        if (node["max_body_size_bytes"]) rhs.max_body_size_bytes = node["max_body_size_bytes"].as<uintmax_t>();
+        else rhs.max_body_size_bytes = node["max_body_size_mb"].as<uintmax_t>(5120) * 1024ull * 1024ull;
+        rhs.require_sigv4 = node["require_sigv4"].as<bool>(true);
+        rhs.allow_path_style = node["allow_path_style"].as<bool>(true);
+        rhs.allow_virtual_hosted_style = node["allow_virtual_hosted_style"].as<bool>(true);
+        rhs.default_bucket_mode = node["default_bucket_mode"].as<std::string>("local");
+        rhs.default_api_exclusive = node["default_api_exclusive"].as<bool>(true);
+        rhs.default_remote_sync_strategy = node["default_remote_sync_strategy"].as<std::string>("cache");
+        rhs.default_remote_conflict_policy = node["default_remote_conflict_policy"].as<std::string>("keep_local");
+        if (node["multipart"]) rhs.multipart = node["multipart"].as<S3GatewayMultipartConfig>();
+        if (node["synthetic_local_request_cost_usd"])
+            rhs.synthetic_local_request_cost_usd = node["synthetic_local_request_cost_usd"].as<S3GatewaySyntheticLocalRequestCostConfig>();
+        return true;
+    }
+};
+
 static std::string to_std_string(const spdlog::string_view_t sv) { return {sv.data(), sv.size()}; }
 
 template<>

@@ -14,6 +14,7 @@ struct PermissionResolverEnumPack<std::shared_ptr<role::Admin>> {
             permission::admin::keys::APIPermissions,
             permission::admin::keys::EncryptionKeyPermissions,
             permission::admin::VaultPermissions,
+            permission::admin::S3GatewayPermissions,
             permission::admin::identities::IdentityPermissions,
             permission::admin::settings::SettingsPermissions,
             permission::admin::AuditPermissions,

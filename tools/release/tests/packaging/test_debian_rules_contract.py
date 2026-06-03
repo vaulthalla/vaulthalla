@@ -106,7 +106,10 @@ class DebianRulesContractTests(unittest.TestCase):
 
         self.assertIn("nodejs,", control)
         self.assertIn("openssl,", control)
-        self.assertIn("Recommends:\n postgresql,\n nginx", control)
+        self.assertIn(
+            "Recommends:\n postgresql,\n nginx,\n certbot,\n python3-certbot-nginx,\n python3-certbot-dns-cloudflare",
+            control,
+        )
         self.assertIn("swtpm,", control)
         self.assertIn("swtpm-tools", control)
         self.assertIn("Depends:\n adduser,\n nodejs,\n openssl,", control)

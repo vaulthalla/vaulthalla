@@ -27,6 +27,36 @@ http_preview_server:
   max_preview_size_mb: 512
 
 
+# === 🪣 S3-Compatible Gateway ===
+# Disabled by default. When enabled, exposes Vaulthalla vaults as S3-compatible
+# buckets on an independent Watchdog-supervised runtime service.
+s3_gateway:
+  enabled: false
+  host: 0.0.0.0
+  port: 39000
+  max_connections: 1024
+  max_body_size_mb: 5120
+  require_sigv4: true
+  allow_path_style: true
+  allow_virtual_hosted_style: true
+  default_bucket_mode: local          # local | remote_cache | remote_proxy
+  default_api_exclusive: true
+  default_remote_sync_strategy: cache
+  default_remote_conflict_policy: keep_local
+  multipart:
+    min_part_size_mb: 5
+    abort_after_days: 7
+  synthetic_local_request_cost_usd:
+    list: "0.00000001"
+    head: "0.00000001"
+    get: "0.00000001"
+    put: "0.00000001"
+    delete: "0.00000001"
+    copy: "0.00000001"
+    downloaded_gb: "0.00000000"
+    uploaded_gb: "0.00000000"
+
+
 # === 🗄️ DATABASE SETTINGS ===
 # 🔑 Password is TPM encrypted.
 # It is optionally auto-generated and set on first run.

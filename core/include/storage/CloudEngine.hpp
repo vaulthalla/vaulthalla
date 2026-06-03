@@ -72,6 +72,11 @@ namespace vh::storage {
         void upload(const std::shared_ptr<vh::fs::model::File> &f, const std::vector<uint8_t> &buffer,
                     bool isCiphertext = true) const;
 
+        std::shared_ptr<vh::fs::model::File> uploadBufferObject(
+            const std::filesystem::path &rel_path,
+            const std::vector<uint8_t> &plaintext,
+            std::optional<std::string> contentHash = std::nullopt) const;
+
         std::shared_ptr<vh::fs::model::File> downloadFile(const std::filesystem::path &rel_path);
         std::shared_ptr<vh::fs::model::File> downloadFile(const std::shared_ptr<vh::fs::model::File> &remoteFile);
 

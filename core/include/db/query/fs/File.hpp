@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -52,6 +53,12 @@ public:
     static void markFileAsTrashed(unsigned int userId, unsigned int vaultId, const std::filesystem::path& relPath, bool isFuseCall = false);
 
     static void markFileAsTrashed(unsigned int userId, unsigned int fsId, bool isFuseCall = false);
+
+    static void markRemoteFileAsTrashed(
+        unsigned int userId,
+        unsigned int vaultId,
+        const std::filesystem::path& relPath,
+        std::uint64_t sizeBytes = 0);
 
     static void updateParentStatsAndCleanEmptyDirs(pqxx::work& txn,
                                                std::optional<unsigned int> parentId,

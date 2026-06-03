@@ -92,6 +92,20 @@ std::optional<int32_t> userIdFor(const std::shared_ptr<vh::identities::User>& us
     return static_cast<int32_t>(user->id);
 }
 
+std::string mimeTypeFromSourceFile(
+    const std::filesystem::path& sourcePath,
+    const std::filesystem::path& fallbackPath) {
+    try {
+        return Magic::get_mime_type(sourcePath.string());
+    } catch (const std::exception& e) {
+        vh::log::Registry::fs()->warn(
+            "[Filesystem] Failed to detect MIME type from source file {}: {}",
+            sourcePath.string(),
+            e.what());
+        return inferMimeTypeFromPath(fallbackPath);
+    }
+}
+
 } // namespace
 
 static void updateFile(pqxx::work& txn, const std::shared_ptr<File>& file) {
@@ -661,13 +675,27 @@ std::shared_ptr<File> Filesystem::createFile(const NewFileContext& ctx) {
         const auto f = std::static_pointer_cast<File>(entry);
         std::filesystem::create_directories(entry->backing_path.parent_path());
 
-        if (!ctx.buffer.empty()) {
+        if (ctx.source_path) {
+            const auto plaintextSize = std::filesystem::file_size(*ctx.source_path);
+            if (plaintextSize == 0) {
+                std::ofstream(entry->backing_path, std::ios::binary | std::ios::trunc).close();
+                f->encryption_iv.clear();
+                f->encrypted_with_key_version = 0;
+            } else {
+                engine->encryptionManager->encryptFileToFile(*ctx.source_path, entry->backing_path, f);
+            }
+            f->size_bytes = plaintextSize;
+            f->mime_type = mimeTypeFromSourceFile(*ctx.source_path, ctx.path);
+        } else if (!ctx.buffer.empty()) {
             const auto ciphertext = engine->encryptionManager->encrypt(ctx.buffer, f);
             writeFile(entry->backing_path, ciphertext);
             f->size_bytes = ctx.buffer.size();
             f->mime_type = Magic::get_mime_type_from_buffer(ctx.buffer);
         } else {
-            f->size_bytes = std::filesystem::file_size(entry->backing_path);
+            std::ofstream(entry->backing_path, std::ios::binary | std::ios::trunc).close();
+            f->encryption_iv.clear();
+            f->encrypted_with_key_version = 0;
+            f->size_bytes = 0;
             f->mime_type = inferMimeTypeFromPath(ctx.path);
         }
 
@@ -703,11 +731,16 @@ std::shared_ptr<File> Filesystem::createFile(const NewFileContext& ctx) {
     f->created_by = f->last_modified_by = userIdFor(ctx.user);
     f->created_at = f->updated_at = std::time(nullptr);
     f->inode = std::make_optional(cache->getOrAssignInode(ctx.fuse_path));
-    f->mime_type = ctx.buffer.empty() ? inferMimeTypeFromPath(ctx.path) : Magic::get_mime_type_from_buffer(ctx.buffer);
-    f->size_bytes = ctx.buffer.size();
+    f->mime_type = ctx.source_path
+        ? mimeTypeFromSourceFile(*ctx.source_path, ctx.path)
+        : (ctx.buffer.empty() ? inferMimeTypeFromPath(ctx.path) : Magic::get_mime_type_from_buffer(ctx.buffer));
+    f->size_bytes = ctx.source_path ? std::filesystem::file_size(*ctx.source_path) : ctx.buffer.size();
 
     std::filesystem::create_directories(f->backing_path.parent_path());
-    if (ctx.buffer.empty()) std::ofstream(f->backing_path).close();
+    if (ctx.source_path) {
+        if (f->size_bytes == 0) std::ofstream(f->backing_path, std::ios::binary | std::ios::trunc).close();
+        else engine->encryptionManager->encryptFileToFile(*ctx.source_path, f->backing_path, f);
+    } else if (ctx.buffer.empty()) std::ofstream(f->backing_path).close();
     else {
         const auto ciphertext = engine->encryptionManager->encrypt(ctx.buffer, f);
         writeFile(f->backing_path, ciphertext);

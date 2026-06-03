@@ -24,6 +24,15 @@ namespace vh::rbac::resolver {
     };
 
     template<>
+    struct PermissionTargetTraits<permission::admin::S3GatewayPermissions> {
+        static constexpr auto domain = RoleDomain::Admin;
+        static constexpr bool canOverride = false;
+
+        static auto& target(role::Admin& role) { return role.s3Gateway; }
+        static const auto& target(const role::Admin& role) { return role.s3Gateway; }
+    };
+
+    template<>
     struct PermissionTargetTraits<permission::vault::RolePermissions> {
         static constexpr auto domain = RoleDomain::Vault;
         static constexpr bool canOverride = false;

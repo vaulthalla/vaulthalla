@@ -3,14 +3,17 @@
 #include "storage/s3/pricing/PriceEstimate.hpp"
 #include "storage/s3/pricing/PriceBotModels.hpp"
 #include "storage/s3/pricing/PriceBotUsage.hpp"
+#include "storage/s3/pricing/GatewayPriceEstimate.hpp"
 #include "storage/s3/pricing/LocalEstimator.hpp"
 #include "storage/s3/pricing/PriceCatalogStore.hpp"
 #include "storage/s3/curl/helpers.hpp"
 #include "storage/s3/pricing/PriceProfileResolver.hpp"
 #include "storage/s3/provider/Registry.hpp"
+#include "storage/CloudEngine.hpp"
 #include "sync/model/Action.hpp"
 #include "sync/model/Event.hpp"
 #include "vault/model/APIKey.hpp"
+#include "vault/model/S3Vault.hpp"
 
 #include <filesystem>
 #include <fstream>
@@ -28,6 +31,9 @@
 
 namespace {
 
+nlohmann::json r2StandardProfile();
+nlohmann::json r2InfrequentAccessProfile();
+
 class FakeTransport final : public vh::storage::s3::pricing::HttpTransport {
 public:
     std::queue<vh::storage::s3::pricing::HttpReply> replies;
@@ -41,6 +47,25 @@ public:
         auto reply = replies.front();
         replies.pop();
         return reply;
+    }
+};
+
+class RecordingCatalogStore final : public vh::storage::s3::pricing::IPriceCatalogStore {
+public:
+    std::vector<vh::storage::s3::pricing::PriceProfileTarget> targets;
+
+    vh::storage::s3::pricing::PriceCatalogProfileResult getProfile(
+        const vh::storage::s3::pricing::PriceProfileTarget& target,
+        bool) override {
+        targets.push_back(target);
+        vh::storage::s3::pricing::PriceCatalogProfileResult result;
+        result.ok = true;
+        result.source = "recording-catalog";
+        result.profile = vh::storage::s3::pricing::RatingProfile::parse(
+            target.storage_class == "infrequent-access"
+                ? r2InfrequentAccessProfile()
+                : r2StandardProfile());
+        return result;
     }
 };
 
@@ -380,6 +405,46 @@ TEST(S3PricingTest, ResolvesProviderTierAndRegionMappings) {
 
     const auto generic = vh::storage::s3::provider::resolve(S3Provider::Other);
     EXPECT_FALSE(resolvePriceProfileTarget(generic, priceKey(S3Provider::Other), std::nullopt));
+}
+
+TEST(S3PricingTest, GatewayEstimateUsesRequestStorageClassOverride) {
+    using namespace vh::storage::s3::pricing;
+
+    auto vault = std::make_shared<vh::vault::model::S3Vault>();
+    vault->id = 7;
+    vault->owner_id = 9;
+    vault->storage_tier_id.reset();
+
+    vh::storage::CloudEngine engine;
+    engine.vault = vault;
+    engine.setS3ProviderProfileForTesting(
+        vh::storage::s3::provider::resolve(vh::vault::model::S3Provider::CloudflareR2));
+
+    RecordingCatalogStore catalog;
+    const auto report = estimateGatewayS3Request(
+        engine,
+        {
+            .vault_id = vault->id,
+            .provider_key = "cloudflare-r2",
+            .provider_supported = true,
+            .operation = S3GatewayOperation::GetObject,
+            .request_count = 1,
+            .upload_bytes = 0,
+            .download_bytes = 1024 * 1024,
+            .object_count = 1,
+            .storage_class = "STANDARD_IA"
+        },
+        {.mode = PriceEstimateMode::BudgetConservative},
+        nullptr,
+        &catalog);
+
+    ASSERT_EQ(1u, catalog.targets.size());
+    EXPECT_EQ("cloudflare-r2", catalog.targets.front().provider);
+    EXPECT_EQ("global", catalog.targets.front().region);
+    EXPECT_EQ("infrequent-access", catalog.targets.front().storage_class);
+    EXPECT_TRUE(report.supported);
+    EXPECT_TRUE(report.available);
+    EXPECT_EQ("infrequent-access", report.as_price_estimate_report.target.storage_class);
 }
 
 TEST(S3PricingTest, ConvertsS3CostEstimateToUsageInput) {
@@ -960,6 +1025,60 @@ TEST(S3PricingTest, PriceBudgetValidationRejectsUnsafeInputs) {
     EXPECT_EQ("USD", normalizePriceBudgetCurrency("usd"));
     EXPECT_TRUE(isValidPriceBudgetCurrency("USD"));
     EXPECT_FALSE(isValidPriceBudgetCurrency("US"));
+}
+
+TEST(S3PricingTest, PriceBudgetGatewayScopeStringConversions) {
+    using namespace vh::storage::s3::pricing;
+
+    EXPECT_EQ("gateway_credential", toString(PriceBudgetScope::GatewayCredential));
+    EXPECT_EQ("gateway_credential_vault", toString(PriceBudgetScope::GatewayCredentialVault));
+    EXPECT_EQ(PriceBudgetScope::GatewayCredential, priceBudgetScopeFromString("gateway_credential"));
+    EXPECT_EQ(PriceBudgetScope::GatewayCredentialVault, priceBudgetScopeFromString("gateway_credential_vault"));
+    EXPECT_EQ(PriceBudgetScope::GatewayCredential, priceBudgetScopeFromString("gateway-credential"));
+    EXPECT_EQ(PriceBudgetScope::GatewayCredentialVault, priceBudgetScopeFromString("gateway-credential-vault"));
+}
+
+TEST(S3PricingTest, PriceBudgetGatewayPolicyAndLedgerSerializeForWeb) {
+    using namespace vh::storage::s3::pricing;
+
+    PriceBudgetPolicy policy;
+    policy.id = 44;
+    policy.scope = PriceBudgetScope::GatewayCredentialVault;
+    policy.gateway_credential_id = 12;
+    policy.vault_id = 34;
+    policy.mode = PriceBudgetMode::Enforce;
+    policy.currency = "USD";
+    policy.max_monthly_cost = "5.00000000";
+
+    const nlohmann::json policyJson = policy;
+    EXPECT_EQ("gateway_credential_vault", policyJson.at("scope"));
+    EXPECT_EQ(12, policyJson.at("gateway_credential_id"));
+    EXPECT_EQ(34, policyJson.at("vault_id"));
+    EXPECT_EQ("5.00000000", policyJson.at("max_monthly_cost"));
+
+    PriceBudgetLedgerEntry entry;
+    entry.id = 55;
+    entry.policy_id = 44;
+    entry.run_uuid = "run-1";
+    entry.vault_id = 34;
+    entry.gateway_credential_id = 12;
+    entry.request_uuid = "request-1";
+    entry.operation = "PutObject";
+    entry.object_key = "archive/report.bin";
+    entry.estimated_cost = "0.00001000";
+    entry.provider_key = "aws-s3";
+    entry.currency = "USD";
+    entry.window = PriceBudgetWindow::Monthly;
+    entry.reserved_cost = "0.00001000";
+    entry.status = "committed";
+
+    const nlohmann::json ledgerJson = entry;
+    EXPECT_EQ(12, ledgerJson.at("gateway_credential_id"));
+    EXPECT_EQ("request-1", ledgerJson.at("request_uuid"));
+    EXPECT_EQ("PutObject", ledgerJson.at("operation"));
+    EXPECT_EQ("archive/report.bin", ledgerJson.at("object_key"));
+    EXPECT_EQ("0.00001000", ledgerJson.at("estimated_cost"));
+    EXPECT_EQ("monthly", ledgerJson.at("window"));
 }
 
 TEST(S3PricingTest, PriceBudgetDryRunFormatShowsFailingEnforcementDecision) {

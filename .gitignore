@@ -11,6 +11,7 @@
 /config.yaml
 enable_dev_mode
 *__pycache__*
+cloudflare.ini
 
 # Deployment Artifacts
 /deploy/vaulthalla.env
@@ -75,6 +76,9 @@ yarn-error.log*
 
 # testing
 /web/coverage/
+/web/playwright-report/
+/web/test-results/
+/test-results/
 
 # env files (web-specific)
 /web/.env*

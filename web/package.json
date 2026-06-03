@@ -1,14 +1,18 @@
 {
   "name": "vaulthalla-web",
-  "version": "1.5.1",
+  "version": "1.6.0",
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
+    "dev:e2e": "NEXT_PUBLIC_VAULTHALLA_WS_ORIGIN=${NEXT_PUBLIC_VAULTHALLA_WS_ORIGIN:-ws://127.0.0.1:36969} VAULTHALLA_AUTH_ORIGIN=${VAULTHALLA_AUTH_ORIGIN:-http://127.0.0.1:36970} VAULTHALLA_PREVIEW_ORIGIN=${VAULTHALLA_PREVIEW_ORIGIN:-http://127.0.0.1:36970} VAULTHALLA_WEB_DEV_MODE=${VAULTHALLA_WEB_DEV_MODE:-true} next dev --turbopack --hostname ${VAULTHALLA_E2E_WEB_HOST:-127.0.0.1} --port ${VAULTHALLA_E2E_WEB_PORT:-3000}",
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts,.tsx,.js,.jsx",
-    "test": "pnpm run typecheck && pnpm run lint"
+    "test": "pnpm run typecheck && pnpm run lint",
+    "test:e2e": "playwright test",
+    "test:e2e:s3-gateway": "playwright test tests/e2e/s3-gateway.spec.ts",
+    "playwright:install": "playwright install"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
@@ -30,6 +34,7 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.5",
+    "@playwright/test": "^1.60.0",
     "@svgr/webpack": "^8.1.0",
     "@tailwindcss/postcss": "^4.2.4",
     "@types/node": "^25.6.0",

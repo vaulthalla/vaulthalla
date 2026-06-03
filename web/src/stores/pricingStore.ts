@@ -13,7 +13,7 @@ import { PriceOverride, PriceOverrideRequestPayload } from '@/models/pricing/pri
 import { PricingBudgetStats } from '@/models/stats/pricingBudgetStats'
 import { useWebSocketStore } from '@/stores/useWebSocket'
 
-type ScopedPayload = { vault_id?: number | null }
+type ScopedPayload = { vault_id?: number | null; gateway_credential_id?: number | null }
 
 interface PricingStore {
   policies: PriceBudgetPolicy[]
@@ -28,7 +28,12 @@ interface PricingStore {
 
   fetchPolicies: (payload?: ScopedPayload & { include_inactive?: boolean }) => Promise<PriceBudgetPolicy[]>
   upsertPolicy: (payload: PriceBudgetPolicyPayload) => Promise<PriceBudgetPolicy>
-  disablePolicy: (payload: { scope: PriceBudgetScope; provider_key?: string | null; vault_id?: number | null }) => Promise<boolean>
+  disablePolicy: (payload: {
+    scope: PriceBudgetScope
+    provider_key?: string | null
+    vault_id?: number | null
+    gateway_credential_id?: number | null
+  }) => Promise<boolean>
   fetchLedger: (payload?: ScopedPayload & { limit?: number }) => Promise<PriceBudgetLedgerEntry[]>
   fetchStatus: (payload?: ScopedPayload & { limit?: number; include_inactive?: boolean }) => Promise<PriceBudgetStatus>
   preflight: (payload: PriceBudgetPreflightPayload) => Promise<PriceBudgetPreflightResult>

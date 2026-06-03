@@ -21,6 +21,7 @@ namespace vh::rbac::role {
         permission::admin::Settings settings{};
         permission::admin::Roles roles{};
         permission::admin::Keys keys{};
+        permission::admin::S3Gateway s3Gateway{};
         permission::admin::VaultGlobals vGlobals{};
 
         Admin() = default;
@@ -62,6 +63,7 @@ namespace vh::rbac::role {
                 permission::admin::Settings::None(),
                 permission::admin::Roles::None(),
                 permission::admin::Keys::None(),
+                permission::admin::S3Gateway::None(),
                 permission::admin::VaultGlobals::NoneIfBound(userId)
             );
         }
@@ -77,6 +79,7 @@ namespace vh::rbac::role {
                 permission::admin::Settings::ViewOnly(),
                 permission::admin::Roles::ViewOnly(),
                 permission::admin::Keys::ViewOnly(),
+                permission::admin::S3Gateway::ViewOnly(),
                 permission::admin::VaultGlobals::ReaderIfBound(userId)
             );
         }
@@ -92,6 +95,7 @@ namespace vh::rbac::role {
                 permission::admin::Settings::Support(),
                 permission::admin::Roles::ViewOnly(),
                 permission::admin::Keys::ViewOnly(),
+                permission::admin::S3Gateway::ViewOnly(),
                 permission::admin::VaultGlobals::ReaderIfBound(userId)
             );
         }
@@ -107,6 +111,7 @@ namespace vh::rbac::role {
                 permission::admin::Settings::ViewOnly(),
                 permission::admin::Roles::LifecycleManager(),
                 permission::admin::Keys::ViewOnly(),
+                permission::admin::S3Gateway::ViewOnly(),
                 permission::admin::VaultGlobals::ManagerIfBound(userId)
             );
         }
@@ -122,6 +127,7 @@ namespace vh::rbac::role {
                 permission::admin::Settings::SecurityAdmin(),
                 permission::admin::Roles::AdminManager(),
                 permission::admin::Keys::SecurityAdmin(),
+                permission::admin::S3Gateway::PrincipalAssigner(),
                 permission::admin::VaultGlobals::ManagerIfBound(userId)
             );
         }
@@ -137,6 +143,7 @@ namespace vh::rbac::role {
                 permission::admin::Settings::OperationsAdmin(),
                 permission::admin::Roles::VaultManager(),
                 permission::admin::Keys::PlatformOperator(),
+                permission::admin::S3Gateway::Operator(),
                 permission::admin::VaultGlobals::PowerUserIfBound(userId)
             );
         }
@@ -152,6 +159,7 @@ namespace vh::rbac::role {
                 permission::admin::Settings::ViewOnly(),
                 permission::admin::Roles::VaultManager(),
                 permission::admin::Keys::APIKeyManager(),
+                permission::admin::S3Gateway::Operator(),
                 permission::admin::VaultGlobals::PowerUserIfBound(userId)
             );
         }
@@ -167,6 +175,7 @@ namespace vh::rbac::role {
                 permission::admin::Settings::Full(),
                 permission::admin::Roles::Full(),
                 permission::admin::Keys::SecurityAdmin(),
+                permission::admin::S3Gateway::Full(),
                 permission::admin::VaultGlobals::FullIfBound(userId)
             );
         }
@@ -182,6 +191,7 @@ namespace vh::rbac::role {
                 permission::admin::Settings::Full(),
                 permission::admin::Roles::Full(),
                 permission::admin::Keys::Full(),
+                permission::admin::S3Gateway::Full(),
                 permission::admin::VaultGlobals::FullIfBound(userId)
             );
         }
@@ -197,6 +207,7 @@ namespace vh::rbac::role {
                 permission::admin::Settings::SecurityAuditor(),
                 permission::admin::Roles::ViewOnly(),
                 permission::admin::Keys::KeyCustodian(),
+                permission::admin::S3Gateway::ViewOnly(),
                 permission::admin::VaultGlobals::ReaderIfBound(userId)
             );
         }
@@ -210,6 +221,7 @@ namespace vh::rbac::role {
             const permission::admin::Settings& settings,
             permission::admin::Roles roles,
             permission::admin::Keys keys,
+            permission::admin::S3Gateway s3Gateway,
             const std::optional<uint32_t> userId = std::nullopt,
             std::optional<permission::admin::VaultGlobals> vGlobals = std::nullopt
         ) {
@@ -223,6 +235,7 @@ namespace vh::rbac::role {
                 settings,
                 std::move(roles),
                 std::move(keys),
+                std::move(s3Gateway),
                 std::move(vGlobals).value_or(permission::admin::VaultGlobals::NoneIfBound(userId))
             );
         }
@@ -238,6 +251,7 @@ namespace vh::rbac::role {
             const permission::admin::Settings& settings,
             permission::admin::Roles roles,
             permission::admin::Keys keys,
+            permission::admin::S3Gateway s3Gateway,
             permission::admin::VaultGlobals vGlobals
         ) {
             Admin a;
@@ -251,6 +265,7 @@ namespace vh::rbac::role {
             a.settings = settings;
             a.roles = std::move(roles);
             a.keys = std::move(keys);
+            a.s3Gateway = std::move(s3Gateway);
             a.vGlobals = std::move(vGlobals);
 
             return a;

@@ -68,6 +68,26 @@ import { PriceBudgetLedgerEntry } from '@/models/pricing/priceBudgetLedger'
 import { PriceNotification } from '@/models/pricing/priceNotification'
 import { PriceOverride, PriceOverrideRequestPayload } from '@/models/pricing/priceOverride'
 import { PricingBudgetStats } from '@/models/stats/pricingBudgetStats'
+import {
+  S3GatewayBucketBinding,
+  S3GatewayBucketBindPayload,
+  S3GatewayCreateLocalBucketPayload,
+  S3GatewayCreateRemoteCachePayload,
+  S3GatewayCredential,
+  S3GatewayCredentialCreatePayload,
+  S3GatewayCredentialDefaultVaultRole,
+  S3GatewayCredentialDefaultVaultRoleOverride,
+  S3GatewayCredentialDefaultVaultRoleOverridePayload,
+  S3GatewayCredentialDefaultVaultRolePayload,
+  S3GatewayCredentialScopeUpdatePayload,
+  S3GatewayCredentialSelectedVault,
+  S3GatewayCredentialSelectedVaultPayload,
+  S3GatewayCredentialVaultRoleAssignment,
+  S3GatewayCredentialVaultRoleAssignmentPayload,
+  S3GatewayCredentialVaultRoleOverride,
+  S3GatewayCredentialVaultRoleOverridePayload,
+  S3GatewayStatus,
+} from '@/models/s3Gateway'
 
 export interface WebSocketCommandMap {
   // Auth
@@ -195,24 +215,24 @@ export interface WebSocketCommandMap {
 
   // S3 price budget command center
   'pricing.budget.policy.list': {
-    payload: { vault_id?: number | null; include_inactive?: boolean } | null
+    payload: { vault_id?: number | null; gateway_credential_id?: number | null; include_inactive?: boolean } | null
     response: { policies: PriceBudgetPolicy[] }
   }
 
   'pricing.budget.policy.upsert': { payload: PriceBudgetPolicyPayload; response: { policy: PriceBudgetPolicy } }
 
   'pricing.budget.policy.disable': {
-    payload: { scope: PriceBudgetScope; provider_key?: string | null; vault_id?: number | null }
+    payload: { scope: PriceBudgetScope; provider_key?: string | null; vault_id?: number | null; gateway_credential_id?: number | null }
     response: { disabled: boolean }
   }
 
   'pricing.budget.ledger.list': {
-    payload: { vault_id?: number | null; limit?: number } | null
+    payload: { vault_id?: number | null; gateway_credential_id?: number | null; limit?: number } | null
     response: { ledger: PriceBudgetLedgerEntry[] }
   }
 
   'pricing.budget.status': {
-    payload: { vault_id?: number | null; limit?: number; include_inactive?: boolean } | null
+    payload: { vault_id?: number | null; gateway_credential_id?: number | null; limit?: number; include_inactive?: boolean } | null
     response: PriceBudgetStatus
   }
 
@@ -237,6 +257,145 @@ export interface WebSocketCommandMap {
   'pricing.notifications.ack': {
     payload: { id: number; vault_id?: number | null }
     response: { notification: PriceNotification }
+  }
+
+  // S3 gateway management
+
+  's3.gateway.status': { payload: null; response: { status: S3GatewayStatus } }
+
+  's3.gateway.credentials.create': {
+    payload: S3GatewayCredentialCreatePayload
+    response: { credential: S3GatewayCredential; secret_access_key: string }
+  }
+
+  's3.gateway.credentials.list': {
+    payload: { include_disabled?: boolean } | null
+    response: { credentials: S3GatewayCredential[] }
+  }
+
+  's3.gateway.credentials.revoke': {
+    payload: { access_key?: string; name?: string }
+    response: { revoked: boolean }
+  }
+
+  's3.gateway.credentials.scope.update': {
+    payload: S3GatewayCredentialScopeUpdatePayload
+    response: { credential: S3GatewayCredential | null }
+  }
+
+  's3.gateway.credentials.defaultRole.get': {
+    payload: { credential_id?: number; access_key?: string; name?: string; credential_name?: string }
+    response: { credential: S3GatewayCredential; default_role: S3GatewayCredentialDefaultVaultRole | null }
+  }
+
+  's3.gateway.credentials.defaultRole.set': {
+    payload: S3GatewayCredentialDefaultVaultRolePayload
+    response: { credential: S3GatewayCredential; default_role: S3GatewayCredentialDefaultVaultRole | null }
+  }
+
+  's3.gateway.credentials.defaultRole.clear': {
+    payload: { credential_id?: number; access_key?: string; name?: string; credential_name?: string }
+    response: { cleared: boolean; credential: S3GatewayCredential }
+  }
+
+  's3.gateway.credentials.selectedVaults.list': {
+    payload: { credential_id?: number; access_key?: string; name?: string; credential_name?: string }
+    response: { credential: S3GatewayCredential; selected_vaults: S3GatewayCredentialSelectedVault[]; vaults?: S3GatewayCredentialSelectedVault[] }
+  }
+
+  's3.gateway.credentials.selectedVaults.replace': {
+    payload: S3GatewayCredentialSelectedVaultPayload
+    response: { credential: S3GatewayCredential; selected_vaults: S3GatewayCredentialSelectedVault[]; vaults?: S3GatewayCredentialSelectedVault[] }
+  }
+
+  's3.gateway.credentials.selectedVaults.add': {
+    payload: S3GatewayCredentialSelectedVaultPayload
+    response: { credential: S3GatewayCredential; selected_vault: S3GatewayCredentialSelectedVault }
+  }
+
+  's3.gateway.credentials.selectedVaults.remove': {
+    payload: S3GatewayCredentialSelectedVaultPayload
+    response: { removed: boolean; credential: S3GatewayCredential; vault?: { id: number; name: string } | null }
+  }
+
+  's3.gateway.credentials.defaultRole.overrides.list': {
+    payload: { credential_id?: number; access_key?: string; name?: string; credential_name?: string }
+    response: { credential: S3GatewayCredential; default_role: S3GatewayCredentialDefaultVaultRole | null; overrides: S3GatewayCredentialDefaultVaultRoleOverride[] }
+  }
+
+  's3.gateway.credentials.defaultRole.overrides.add': {
+    payload: S3GatewayCredentialDefaultVaultRoleOverridePayload
+    response: { override: S3GatewayCredentialDefaultVaultRoleOverride }
+  }
+
+  's3.gateway.credentials.defaultRole.overrides.remove': {
+    payload: S3GatewayCredentialDefaultVaultRoleOverridePayload
+    response: { removed: boolean; credential: S3GatewayCredential }
+  }
+
+  's3.gateway.credentials.roles.list': {
+    payload: { credential_id?: number; access_key?: string; name?: string; credential_name?: string }
+    response: { credential: S3GatewayCredential; roles: S3GatewayCredentialVaultRoleAssignment[]; assignments?: S3GatewayCredentialVaultRoleAssignment[] }
+  }
+
+  's3.gateway.credentials.roles.assign': {
+    payload: S3GatewayCredentialVaultRoleAssignmentPayload
+    response: { assignment: S3GatewayCredentialVaultRoleAssignment; role?: S3GatewayCredentialVaultRoleAssignment }
+  }
+
+  's3.gateway.credentials.roles.revoke': {
+    payload: S3GatewayCredentialVaultRoleAssignmentPayload
+    response: { revoked: boolean; credential: S3GatewayCredential; vault?: { id: number; name: string } | null }
+  }
+
+  's3.gateway.credentials.roles.overrides.list': {
+    payload: S3GatewayCredentialVaultRoleOverridePayload
+    response: { credential: S3GatewayCredential; vault?: { id: number; name: string } | null; overrides: S3GatewayCredentialVaultRoleOverride[] }
+  }
+
+  's3.gateway.credentials.roles.overrides.add': {
+    payload: S3GatewayCredentialVaultRoleOverridePayload
+    response: { override: S3GatewayCredentialVaultRoleOverride }
+  }
+
+  's3.gateway.credentials.roles.overrides.remove': {
+    payload: S3GatewayCredentialVaultRoleOverridePayload
+    response: { removed: boolean; credential: S3GatewayCredential; vault?: { id: number; name: string } | null }
+  }
+
+  's3.gateway.buckets.list': { payload: null; response: { buckets: S3GatewayBucketBinding[] } }
+
+  's3.gateway.buckets.bind': { payload: S3GatewayBucketBindPayload; response: { bound: boolean } }
+
+  's3.gateway.buckets.unbind': { payload: { bucket_name: string }; response: { unbound: boolean } }
+
+  's3.gateway.buckets.createLocal': {
+    payload: S3GatewayCreateLocalBucketPayload
+    response: { bucket: S3GatewayBucketBinding }
+  }
+
+  's3.gateway.buckets.createRemoteCache': {
+    payload: S3GatewayCreateRemoteCachePayload
+    response: { bucket: S3GatewayBucketBinding }
+  }
+
+  's3.gateway.budget.policy.list': {
+    payload: { gateway_credential_id?: number | null; vault_id?: number | null; include_inactive?: boolean } | null
+    response: { policies: PriceBudgetPolicy[] }
+  }
+
+  's3.gateway.budget.policy.upsert': { payload: PriceBudgetPolicyPayload; response: { policy: PriceBudgetPolicy } }
+
+  's3.gateway.budget.policy.disable': { payload: PriceBudgetPolicyPayload; response: { disabled: boolean } }
+
+  's3.gateway.budget.ledger.list': {
+    payload: { gateway_credential_id?: number | null; vault_id?: number | null; limit?: number } | null
+    response: { ledger: PriceBudgetLedgerEntry[] }
+  }
+
+  's3.gateway.budget.status': {
+    payload: { gateway_credential_id?: number | null; vault_id?: number | null; limit?: number } | null
+    response: PriceBudgetStatus
   }
 
   // Dashboard preferences

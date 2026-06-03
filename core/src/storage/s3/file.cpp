@@ -90,6 +90,7 @@ void Controller::uploadObjectWithMetadata(
     fin.seekg(0, std::ios::end);
     const curl_off_t sz = fin.tellg();
     fin.seekg(0);
+    if (sz > 0) recordUploadBytes(static_cast<uint64_t>(sz));
 
     const std::string fileContents = slurp(fin);
     const std::string payloadHash = sha256Hex(fileContents);
@@ -157,7 +158,8 @@ void Controller::downloadObject(const std::filesystem::path& key,
         std::ofstream* fout;
         uint64_t bytes{};
         std::string budgetError;
-    } writeCtx{this, &file, 0, {}};
+        std::string budgetKind;
+    } writeCtx{this, &file, 0, {}, {}};
 
     auto writeFn = +[](const char* ptr, const size_t size, const size_t nmemb, void* userdata) -> size_t {
         auto* ctx = static_cast<WriteCtx*>(userdata);
@@ -166,6 +168,7 @@ void Controller::downloadObject(const std::filesystem::path& key,
             ctx->controller->recordRequest(RequestKind::DownloadBytes, bytes);
         } catch (const RequestBudgetExceeded& e) {
             ctx->budgetError = e.what();
+            ctx->budgetKind = e.kind();
             return 0;
         }
         ctx->fout->write(ptr, bytes);
@@ -183,7 +186,7 @@ void Controller::downloadObject(const std::filesystem::path& key,
     curl_easy_cleanup(curl);
     file.close();
 
-    if (!writeCtx.budgetError.empty()) throw RequestBudgetExceeded(writeCtx.budgetError);
+    if (!writeCtx.budgetError.empty()) throw RequestBudgetExceeded(writeCtx.budgetError, writeCtx.budgetKind);
 
     if (res != CURLE_OK) throw std::runtime_error(
         fmt::format("Failed to download file from S3: CURL error {}", res));

@@ -6,6 +6,7 @@
 #define VH_BACKING_PATH @VH_BACKING_PATH@
 #define VH_RUNTIME_PATH @VH_RUNTIME_PATH@
 #define VH_CACHE_PATH @VH_CACHE_PATH@
+#define VH_S3_GATEWAY_MULTIPART_PARTS_DIRNAME @VH_S3_GATEWAY_MULTIPART_PARTS_DIRNAME@
 #define VH_PSQL_SCHEMAS_PATH @VH_PSQL_SCHEMAS_PATH@
 #define VH_PSQL_TEST_SCHEMAS_PATH @VH_PSQL_TEST_SCHEMAS_PATH@
 #define VH_TEST_ENV_PATH @VH_TEST_ENV_PATH@
@@ -67,6 +68,7 @@ inline std::filesystem::path getMountPath() { return mountPath; }
 inline std::filesystem::path getBackingPath() { return backingPath; }
 inline std::filesystem::path getRuntimePath() { return runtimePath; }
 inline std::filesystem::path getCachePath() { return VH_CACHE_PATH; }
+inline std::filesystem::path getS3GatewayMultipartPartsPath() { return getBackingPath() / VH_S3_GATEWAY_MULTIPART_PARTS_DIRNAME; }
 inline std::filesystem::path getPsqlSchemasPath() { return isTestMode() ? VH_PSQL_TEST_SCHEMAS_PATH : VH_PSQL_SCHEMAS_PATH; }
 inline std::filesystem::path getTestEnvPath() { return testEnvPath; }
 }

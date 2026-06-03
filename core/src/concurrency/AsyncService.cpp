@@ -20,6 +20,12 @@ AsyncService::Status AsyncService::status() const {
 
 void AsyncService::start() {
     if (isRunning()) return;
+    if (worker_.joinable()) {
+        if (std::this_thread::get_id() == worker_.get_id())
+            worker_.detach();
+        else
+            worker_.join();
+    }
 
     interruptFlag_.store(false, std::memory_order_release);
     running_.store(true, std::memory_order_release);

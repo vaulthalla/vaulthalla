@@ -16,7 +16,7 @@ CORE_ARGS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -d|--dev)
-      export VH_BUILD_MODE=debug
+      export VH_BUILD_MODE=dev
       shift
       ;;
     -m|--manpage)
@@ -41,6 +41,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+vh_assert_dev_mode_consistency
+
 "$BIN_DIR/setup/install_deps.sh"
 "$BIN_DIR/setup/install_users.sh"
 "$BIN_DIR/setup/install_dirs.sh"
@@ -48,3 +50,4 @@ done
 "$REPO_ROOT/web/bin/install_web.sh"
 "$BIN_DIR/setup/install_db.sh"
 "$BIN_DIR/setup/install_systemd.sh"
+"$BIN_DIR/setup/install_dev_nginx.sh"

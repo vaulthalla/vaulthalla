@@ -29,6 +29,7 @@ UsageManager::UsageManager() {
     registerBook(secrets::get(root_->weak_from_this()));
     registerBook(email::get(root_->weak_from_this()));
     registerBook(pricing::get(root_->weak_from_this()));
+    registerBook(s3gateway::get(root_->weak_from_this()));
     registerBook(aku::get(root_->weak_from_this()));
     registerBook(role::get(root_->weak_from_this()));
     registerBook(permissions::get(root_->weak_from_this()));

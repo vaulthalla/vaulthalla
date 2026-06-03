@@ -21,10 +21,12 @@ Vaulthalla supports two operator-facing vault types:
 
 | Type | Storage location | Best for |
 | --- | --- | --- |
-| Local | Vaulthalla-managed local state on the host | Low-latency local storage, simple deployments, controlled single-host workflows |
-| S3-compatible | AWS S3, Cloudflare R2, or another S3-compatible provider | Remote object storage, cloud-backed archives, cross-host access patterns, larger buckets |
+| Local vault | Vaulthalla-managed local state on the host | Low-latency local storage, simple deployments, controlled single-host workflows |
+| S3/R2 upstream vault | AWS S3, Cloudflare R2, or another upstream S3-compatible provider bucket | Remote object storage, cloud-backed archives, cross-host access patterns, larger buckets |
 
 Local vaults and S3/R2 vaults use the same high-level access-control model, but they differ in sync policy, request budgets, upstream object encryption, and recovery planning.
+
+S3 Gateway is a separate downstream protocol surface, not a third vault type. Use [S3 Gateway](/s3-gateway) when AWS CLI, rclone, MinIO mc, SDKs, or apps should talk to Vaulthalla through the S3 protocol.
 
 ## Metadata And File Bodies
 
@@ -33,7 +35,7 @@ Vaulthalla stores runtime metadata in PostgreSQL. That metadata includes users, 
 File bodies are stored according to the vault type:
 
 - Local vault file bodies live under Vaulthalla-managed local state.
-- S3/R2 vault file bodies live in the configured bucket, with optional local cache state depending on sync strategy.
+- S3/R2 vault file bodies live in the configured upstream provider bucket, with optional local cache state depending on sync strategy.
 
 This split matters for backup. A usable disaster recovery plan needs PostgreSQL data, Vaulthalla config/state, and exported recovery material. See [Backup And Recovery](/vaults/backup-and-recovery).
 
@@ -90,7 +92,7 @@ Local:
 vh vault create docs --local --desc "Team documents" --quota 50G
 ```
 
-S3/R2:
+Upstream-backed S3/R2:
 
 ```bash
 vh vault create archive \
@@ -101,4 +103,4 @@ vh vault create archive \
   --encrypt
 ```
 
-See [Local Vaults](/vaults/local-vaults) and [S3 And R2 Vaults](/vaults/s3-r2-vaults).
+See [Local Vaults](/vaults/local-vaults), [S3 And R2 Vaults](/vaults/s3-r2-vaults), and [Vaults Exposed Through S3 Gateway](/vaults/s3-gateway). S3 Gateway setup and client usage live under [S3 Gateway](/s3-gateway).

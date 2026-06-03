@@ -20,6 +20,9 @@ Package metadata policy
 - integration components are `Recommends`:
   - `postgresql`
   - `nginx`
+  - `certbot`
+  - `python3-certbot-nginx`
+  - `python3-certbot-dns-cloudflare`
   - `swtpm`
   - `swtpm-tools`
 
@@ -203,6 +206,7 @@ If package-time automation skipped optional integration steps, admins can run:
 - `vh setup remote-db --host <host> --user <user> --database <name> --password-file <path>`
 - `vh setup nginx`
 - `vh setup nginx --certbot --domain <fqdn>`
+- `vh setup nginx --domain <fqdn> --s3-domain <s3-fqdn> --certbot-dns-cloudflare --cloudflare-credentials <path>`
 - `vh teardown nginx`
 
 These commands are explicit integration actions and are intended for controlled
@@ -253,5 +257,16 @@ For explicit certbot-backed nginx handling, `vh setup nginx --certbot --domain <
   exists for the requested domain
 - uses deterministic managed config preparation + validation for fresh issuance
   and rolls back to prior managed config when preparation/issuance fails
+
+For a dedicated public S3 host without an inbound HTTP challenge endpoint, use
+Cloudflare DNS-01 certificate handling:
+
+```text
+vh setup nginx --domain vaulthalla.dev --s3-domain s3.vaulthalla.dev --certbot-dns-cloudflare --cloudflare-credentials /etc/vaulthalla/certbot/cloudflare.ini
+```
+
+The Cloudflare credentials file must be a regular file with mode `0600`.
+The generated managed site redirects HTTP to HTTPS and serves S3 only from the
+dedicated S3 hostname.
 
  -- Cooper Larson <cooper@valkyrianlabs.com>  Tue, 21 Apr 2026 00:00:00 +0000

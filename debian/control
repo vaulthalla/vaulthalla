@@ -36,6 +36,9 @@ Depends:
 Recommends:
  postgresql,
  nginx,
+ certbot,
+ python3-certbot-nginx,
+ python3-certbot-dns-cloudflare,
  swtpm,
  swtpm-tools
 Description: Self-hosted cloud platform with native FUSE and S3 sync

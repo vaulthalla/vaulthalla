@@ -165,7 +165,14 @@ void Cloud::sync() {
         .provider_supported = providerSupported,
         .estimate = budgetPriceEstimate,
         .dry_run = false,
-        .override_policy_ids = {}
+        .override_policy_ids = {},
+        .gateway_credential_id = {},
+        .request_uuid = {},
+        .operation = {},
+        .object_key = {},
+        .gateway_scopes_only = false,
+        .synthetic = false,
+        .usage_source = {}
     };
     auto budgetDecision = budgetService.preflight(budgetRequest);
     if (!budgetDecision.allowed && budgetService.isLimitOverrideEligible(budgetDecision)) {

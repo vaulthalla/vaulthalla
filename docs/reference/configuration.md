@@ -40,6 +40,46 @@ http_preview_server:
 
 The web service itself is managed by `vaulthalla-web.service` and normally listens on localhost for Nginx proxying.
 
+The S3-compatible gateway is a separate runtime service and is disabled by default:
+
+```yaml
+s3_gateway:
+  enabled: false
+  host: 0.0.0.0
+  port: 39000
+  require_sigv4: true
+  allow_path_style: true
+  allow_virtual_hosted_style: true
+  multipart:
+    min_part_size_mb: 5
+    abort_after_days: 7
+  synthetic_local_request_cost_usd:
+    list: "0.00000001"
+    head: "0.00000001"
+    get: "0.00000001"
+    put: "0.00000001"
+    delete: "0.00000001"
+    copy: "0.00000001"
+    downloaded_gb: "0.00000000"
+    uploaded_gb: "0.00000000"
+```
+
+See [S3 Gateway Setup](/s3-gateway/setup) before enabling it on a network interface.
+
+`require_sigv4` should stay enabled outside development. When it is disabled, the gateway accepts a development-only auth context only if `dev.enabled` is true or the configured host is loopback. Production listeners should use real gateway credentials with explicit scope and normal Vaulthalla RBAC.
+
+Clients can use the direct listener, or the managed Nginx dedicated S3 hostname:
+
+```bash
+aws --endpoint-url http://127.0.0.1:39000 s3api list-buckets
+aws configure set s3.addressing_style path
+aws --endpoint-url https://s3.vaulthalla.example.com s3api list-buckets
+```
+
+The public S3 hostname is path-style reverse-proxy mode. SigV4 signs ordinary S3 paths such as `/bucket/key`; Nginx preserves the signed URI and marks the request as path-style-only so the router does not infer a bucket from the public host. `s3_gateway.multipart.part_dir` is no longer a valid setting; multipart parts use a Vaulthalla-owned hidden backing path with opaque per-upload directories.
+
+`synthetic_local_request_cost_usd` is used only for S3 gateway credentials with local/cache budget enforcement enabled. It gives pure local buckets, metadata hits, cache hits, and sync-deferred gateway writes/deletes a nominal gateway-local cost for `gateway_credential` budgets without touching provider/vault/global upstream budgets.
+
 ## Database
 
 The database section controls PostgreSQL connection shape:
@@ -99,6 +139,8 @@ storage_rates_api:
 ```
 
 Remote refresh is opt-in. If you enforce price budgets, review catalog freshness policy and verification requirements in [Price Budgets](/cost-control/price-budgets).
+
+S3 gateway per-key budgets use the same price-budget service and pricing catalogs. Remote-backed gateway operations evaluate global, provider, vault, gateway credential, and gateway credential/vault policies before upstream-costing work. Local-only gateway buckets do not consume remote provider price budgets.
 
 ## Sync Audit Retention
 

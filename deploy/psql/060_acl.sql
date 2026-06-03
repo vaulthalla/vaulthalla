@@ -43,7 +43,8 @@ CREATE TABLE IF NOT EXISTS admin_role
     settings_permissions BIT(64) NOT NULL,
     roles_permissions    BIT(16) NOT NULL,
     vaults_permissions   BIT(32) NOT NULL,
-    keys_permissions     BIT(32) NOT NULL
+    keys_permissions     BIT(32) NOT NULL,
+    s3_gateway_permissions BIT(8) NOT NULL DEFAULT B'00000000'
 );
 
 DO $$

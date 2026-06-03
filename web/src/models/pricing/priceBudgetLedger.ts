@@ -1,5 +1,6 @@
 import {
   asDateValue,
+  asBoolean,
   asDecimalString,
   asNullableDecimalString,
   asNullableNumber,
@@ -16,6 +17,10 @@ export class PriceBudgetLedgerEntry {
   id: number | null = null
   policy_id: number | null = null
   run_uuid: string | null = null
+  gateway_credential_id: number | null = null
+  request_uuid: string | null = null
+  operation: string | null = null
+  object_key: string | null = null
   vault_id = 0
   provider_key = ''
   currency = 'USD'
@@ -24,6 +29,9 @@ export class PriceBudgetLedgerEntry {
   window_end: number | string | null = null
   reserved_cost = '0'
   committed_cost: string | null = null
+  estimated_cost: string | null = null
+  usage_source: string | null = null
+  synthetic = false
   status = ''
   created_at: number | string | null = null
 
@@ -32,6 +40,10 @@ export class PriceBudgetLedgerEntry {
     this.id = asNullableNumber(data.id)
     this.policy_id = asNullableNumber(data.policy_id)
     this.run_uuid = asNullableString(data.run_uuid)
+    this.gateway_credential_id = asNullableNumber(data.gateway_credential_id)
+    this.request_uuid = asNullableString(data.request_uuid)
+    this.operation = asNullableString(data.operation)
+    this.object_key = asNullableString(data.object_key)
     this.vault_id = asNumber(data.vault_id)
     this.provider_key = asString(data.provider_key)
     this.currency = asString(data.currency, 'USD')
@@ -44,6 +56,9 @@ export class PriceBudgetLedgerEntry {
     this.window_end = asDateValue(data.window_end)
     this.reserved_cost = asDecimalString(data.reserved_cost)
     this.committed_cost = asNullableDecimalString(data.committed_cost)
+    this.estimated_cost = asNullableDecimalString(data.estimated_cost)
+    this.usage_source = asNullableString(data.usage_source)
+    this.synthetic = asBoolean(data.synthetic)
     this.status = asString(data.status)
     this.created_at = asDateValue(data.created_at)
   }

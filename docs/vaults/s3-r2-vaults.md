@@ -1,24 +1,41 @@
 ---
 title: S3 And R2 Vaults
-description: Create and operate S3-compatible Vaulthalla vaults using AWS S3, Cloudflare R2, or compatible providers.
+description: Create and operate upstream-backed Vaulthalla vaults using AWS S3, Cloudflare R2, or compatible provider buckets.
 order: 220
 status: published
 tags:
   - vaults
   - s3
   - r2
+  - upstream-storage
 ---
 
 # S3 And R2 Vaults
 
-S3-compatible vaults store file bodies in a bucket and use Vaulthalla metadata, sync policy, remote indexes, request budgets, and optional upstream encryption to keep local and remote state coherent.
+S3/R2 vaults use an upstream S3/R2 bucket as Vaulthalla storage. Vaulthalla connects to the external provider bucket with an upstream provider credential, stores or indexes file bodies according to the vault sync policy, and keeps local metadata in PostgreSQL.
+
+:::callout{theme="info" title="Upstream storage, not downstream client access"}
+This page is about upstream S3/R2 storage: the external provider bucket Vaulthalla uses as a vault backend. If you want AWS CLI, rclone, MinIO mc, SDKs, or apps to talk to Vaulthalla using the S3 protocol, use [S3 Gateway](/s3-gateway) instead.
+:::
 
 :::toc[On this page]{depth="3" theme="compact"}
 :::
 
-## Provider Credentials
+## Upstream Versus Downstream S3
 
-Create an API key before creating the vault:
+| Concept | Upstream S3/R2 Vault | Downstream S3 Gateway |
+| --- | --- | --- |
+| Who connects? | Vaulthalla -> provider | S3 client -> Vaulthalla |
+| Credential type | `vh api-key` upstream provider credential | `vh s3-gateway creds` inbound gateway credential |
+| Bucket meaning | External AWS/R2 bucket | Vaulthalla gateway bucket bound to a vault |
+| Encryption | Upstream object encryption setting | Client-visible S3 protocol; Vaulthalla storage encryption still applies |
+| Sync | Controls provider side effects | Gateway mutates Vaulthalla; sync owns upstream side effects |
+
+Use an upstream S3/R2 vault when Vaulthalla should store vault data in AWS S3, Cloudflare R2, or another compatible provider. Use S3 Gateway when downstream clients should access Vaulthalla through the S3 protocol.
+
+## Upstream Provider Credentials
+
+Create an upstream provider credential before creating the vault:
 
 ```bash
 vh api-key create r2-main \
@@ -43,9 +60,9 @@ The endpoint is required. The default region is `auto`, which is suitable for Cl
 
 Vaulthalla validates credentials during API key creation. Some providers return `AccessDenied` for broad bucket-list checks even when the credentials are valid for the intended bucket, so bucket-specific permissions should still be tested with a vault dry-run.
 
-## Minimum Bucket Permissions
+## Minimum Upstream Bucket Permissions
 
-Grant only the bucket operations your sync policy needs. Typical S3/R2 vault operation may require:
+Grant only the upstream bucket operations your sync policy needs. Typical S3/R2 vault operation may require:
 
 - List bucket for reconcile and some remote-index refresh paths.
 - Head/Get object for remote metadata and downloads.
@@ -53,9 +70,9 @@ Grant only the bucket operations your sync policy needs. Typical S3/R2 vault ope
 - Delete object when deletes are part of the sync policy.
 - Copy object for provider-side copy paths where used.
 
-Use request budgets and dry-runs before enabling broad remote operations on large buckets.
+Use request budgets and dry-runs before enabling broad remote operations on large upstream buckets.
 
-## Create
+## Create An Upstream-Backed Vault
 
 ```bash
 vh vault create archive \
@@ -71,8 +88,8 @@ Useful options:
 
 | Option | Purpose |
 | --- | --- |
-| `--api-key` | API key name or id. |
-| `--bucket` | Bucket name. |
+| `--api-key` | Upstream provider credential name or id. |
+| `--bucket` | Upstream S3/R2 bucket name. |
 | `--storage-tier` or `--storage-class` | Provider storage class such as `standard`, `standard_ia`, or `infrequent_access`. |
 | `--sync-strategy` | `cache`, `sync`, or `mirror`. |
 | `--on-sync-conflict` | S3 conflict policy: `keep_local`, `keep_remote`, or `ask`. |
@@ -87,7 +104,7 @@ New S3/R2 vaults should normally use upstream encryption. With upstream encrypti
 
 With `--no-encrypt`, object payloads written upstream are plaintext from Vaulthalla's perspective. This can be useful for interoperability, but it changes the risk model. See [Encryption](/vaults/encryption) before disabling upstream encryption.
 
-When changing encryption behavior on an existing bucket, Vaulthalla may require explicit waivers:
+When changing encryption behavior on an existing upstream bucket, Vaulthalla may require explicit waivers:
 
 ```bash
 vh vault update archive --no-encrypt --accept-decryption-waiver
@@ -104,7 +121,7 @@ Read the prompt and understand whether existing objects will remain as-is, be ov
 | `sync` | Two-way synchronization between local and remote state. |
 | `mirror` | Local-to-remote mirror behavior. Remote changes are not treated as authoritative local changes. |
 
-See [Sync](/vaults/sync) before enabling a strategy on an existing bucket.
+See [Sync](/vaults/sync) before enabling a strategy on an existing upstream bucket.
 
 ## Storage Tiers
 
@@ -112,11 +129,11 @@ Use storage tier options to request a provider storage class for uploaded object
 
 Archive-tier objects may be indexed but skipped for body download until restored by the provider. Sync dry-run output reports archive-tier download skips when they are detected.
 
-## Web Console
+## Vault Web Console Settings
 
-The Vaults page exposes the same major S3/R2 settings:
+The Vaults page exposes the same major upstream S3/R2 settings:
 
-- API key and bucket.
+- Upstream provider API key and upstream bucket.
 - Storage tier.
 - Sync strategy and conflict policy.
 - Sync interval.
@@ -126,3 +143,13 @@ The Vaults page exposes the same major S3/R2 settings:
 - Sync enabled state.
 
 Use the web console for interactive setup and `vh vault sync info <vault>` for a scriptable view of the resulting policy.
+
+## Expose This Vault Through S3 Gateway
+
+To let downstream S3 clients access an S3/R2 vault through Vaulthalla, bind the vault as a remote-backed gateway bucket:
+
+```bash
+vh s3-gateway bucket bind archive --vault archive --mode remote_cache
+```
+
+See [S3 Gateway Buckets](/s3-gateway/buckets) for local and remote-backed gateway bucket setup.

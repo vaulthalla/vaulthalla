@@ -39,6 +39,7 @@ conf.set_quoted('VH_LOG_PATH', log_dir)
 conf.set_quoted('VH_BACKING_PATH', state_dir)
 conf.set_quoted('VH_RUNTIME_PATH', runtime_dir)
 conf.set_quoted('VH_CACHE_PATH', '/.cache')
+conf.set_quoted('VH_S3_GATEWAY_MULTIPART_PARTS_DIRNAME', '.8f3a9c1d6e2b4f70')
 conf.set_quoted('VH_PSQL_SCHEMAS_PATH', psql_dir)
 conf.set_quoted('VH_PSQL_TEST_SCHEMAS_PATH', join_paths(repo_root, 'deploy/psql'))
 conf.set_quoted('VH_TEST_ENV_PATH', join_paths(repo_root, 'deploy/vaulthalla.env'))
@@ -218,7 +219,7 @@ if get_option('build_unit_tests')
         install: false,
     )
 
-    test('vh_unit_tests', vh_unit_tests, env: unit_test_env, workdir: meson.current_build_dir())
+    test('vh_unit_tests', vh_unit_tests, env: unit_test_env, workdir: meson.current_build_dir(), timeout: 120)
 endif
 
 if get_option('integration_tests')

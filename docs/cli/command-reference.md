@@ -32,6 +32,7 @@ sudo vh setup db
 sudo vh setup remote-db --host <host> --port 5432 --user <user> --database <name> --password-file <path>
 sudo vh setup nginx --domain vault.example.com
 sudo vh setup nginx --domain vault.example.com --certbot
+sudo vh setup nginx --domain vaulthalla.dev --s3-domain s3.vaulthalla.dev --certbot-dns-cloudflare --cloudflare-credentials /etc/vaulthalla/certbot/cloudflare.ini
 sudo vh teardown nginx
 sudo vh teardown db
 ```
@@ -221,6 +222,28 @@ vh secret export all --recipient <gpg-fingerprint> --output vaulthalla-secrets.j
 ```
 
 `secret set` reads the secret value from the file path you pass.
+
+## S3 Gateway
+
+```bash
+vh s3-gateway status
+vh s3-gateway enable
+vh s3-gateway disable
+vh s3-gateway creds create laptop --scope user-access --json
+vh s3-gateway creds list
+vh s3-gateway creds create backup --scope vault-allowlist --default-role reader --selected-vault archive --json
+vh s3-gateway creds scope backup set --scope vault-allowlist --default-role reader --selected-vault archive
+vh s3-gateway creds role assign backup --vault archive --role contributor
+vh s3-gateway creds role override add backup --vault archive --pattern "/private/*" --permission download --effect deny
+vh s3-gateway creds role override list backup --vault archive
+vh s3-gateway creds role override remove backup --vault archive 42
+vh s3-gateway creds role revoke backup --vault archive
+vh s3-gateway bucket create-local archive
+vh s3-gateway bucket bind archive --vault 12 --mode local
+vh s3-gateway budget set-key backup --monthly 5 --mode enforce --currency USD
+```
+
+Gateway authorization is RBAC-native. `user_access` inherits the principal user's Vaulthalla RBAC. `vault_allowlist` uses selected vaults plus a key-level default vault role and optional per-vault exceptions. `global` requires an admin principal and a key-level default vault role. Boolean credential scope flags and `creds scope allow-vault` remain compatibility shorthand only.
 
 ## Pricing Budgets
 

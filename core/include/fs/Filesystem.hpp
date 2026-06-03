@@ -41,6 +41,7 @@ struct RenameContext {
 struct NewFileContext {
     std::filesystem::path path{}, fuse_path{};
     std::vector<uint8_t> buffer{};
+    std::optional<std::filesystem::path> source_path{};
     std::shared_ptr<storage::Engine> engine = nullptr;
     std::shared_ptr<identities::User> user = nullptr;
     std::shared_ptr<identities::Group> group = nullptr;

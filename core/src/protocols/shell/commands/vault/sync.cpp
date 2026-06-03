@@ -877,7 +877,14 @@ static CommandResult handle_vault_sync_dry_run(const CommandCall& call) {
             .provider_supported = providerSupported,
             .estimate = budgetPriceEstimate,
             .dry_run = true,
-            .override_policy_ids = {}
+            .override_policy_ids = {},
+            .gateway_credential_id = {},
+            .request_uuid = {},
+            .operation = {},
+            .object_key = {},
+            .gateway_scopes_only = false,
+            .synthetic = false,
+            .usage_source = {}
         });
 
         const auto metrics = s3Budget.metrics();

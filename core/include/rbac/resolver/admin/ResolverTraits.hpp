@@ -4,6 +4,7 @@
 
 #include "rbac/permission/admin/Identities.hpp"
 #include "rbac/permission/admin/Keys.hpp"
+#include "rbac/permission/admin/S3Gateway.hpp"
 #include "rbac/role/Admin.hpp"
 #include "identities/User.hpp"
 
@@ -38,6 +39,12 @@ namespace vh::rbac::resolver {
         static const auto& self(const decltype(std::declval<identities::User>().vaultsPerms().self)& perms) { return perms; }
         static const auto& admin(const decltype(std::declval<identities::User>().vaultsPerms().admin)& perms) { return perms; }
         static const auto& user(const decltype(std::declval<identities::User>().vaultsPerms().user)& perms) { return perms; }
+    };
+
+    template <>
+    struct AdminResolverTraits<permission::admin::S3GatewayPermissions> {
+        static constexpr auto domain = Domain::Global;
+        static const auto& direct(const role::Admin& role) { return role.s3Gateway; }
     };
 
 }

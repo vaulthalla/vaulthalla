@@ -1,5 +1,5 @@
 project('vaulthalla', 'cpp',
-        version: '1.5.1',
+        version: '1.6.0',
         license: 'AGPL-3.0-or-later',
         meson_version: '>=1.3.0',
         default_options: [
@@ -12,6 +12,8 @@ project('vaulthalla', 'cpp',
             'cpp_args=-D_GLIBCXX_USE_CXX11_ABI=1'
         ]
 )
+
+fs = import('fs')
 
 subdir('core')
 
@@ -28,8 +30,13 @@ if get_option('install_data')
     install_emptydir(state_dir)
     install_emptydir(log_dir)
 
+    install_config_file = 'deploy/config/config.yaml'
+    if fs.exists(meson.project_source_root() / 'config.yaml')
+        install_config_file = 'config.yaml'
+    endif
+
     install_data(
-        'deploy/config/config.yaml',
+        install_config_file,
         'deploy/config/config_template.yaml.in',
         install_dir: sysconf_dir,
     )

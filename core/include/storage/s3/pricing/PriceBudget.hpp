@@ -21,7 +21,9 @@ enum class PriceBudgetMode {
 enum class PriceBudgetScope {
     Global,
     Provider,
-    Vault
+    Vault,
+    GatewayCredential,
+    GatewayCredentialVault
 };
 
 enum class PriceBudgetWindow {
@@ -35,6 +37,7 @@ struct PriceBudgetPolicy {
     PriceBudgetScope scope{PriceBudgetScope::Vault};
     std::optional<std::string> provider_key;
     std::optional<std::uint32_t> vault_id;
+    std::optional<std::uint32_t> gateway_credential_id;
     PriceBudgetMode mode{PriceBudgetMode::Off};
     std::string currency{"USD"};
     std::optional<std::string> max_run_cost;
@@ -72,12 +75,18 @@ struct PriceBudgetDecision {
     std::optional<std::uint32_t> exceeded_policy_id;
     std::string exceeded_scope;
     std::string limit;
+    std::string used_before;
     std::string remaining_before;
     std::string requested;
     std::string currency;
     std::string reason;
     std::vector<PriceBudgetPolicy> policies;
     std::vector<PriceBudgetWindowCheck> checks;
+    std::vector<PriceBudgetWindowCheck> blocking_checks;
+    std::vector<std::uint32_t> blocking_policy_ids;
+    std::optional<PriceBudgetWindowCheck> primary_blocking_check;
+    std::string primary_blocking_scope;
+    std::string primary_blocking_window;
     std::vector<PriceBudgetReservation> reservations;
 };
 
@@ -89,6 +98,13 @@ struct PriceBudgetPreflightRequest {
     PriceEstimateReport estimate;
     bool dry_run{false};
     std::vector<std::uint32_t> override_policy_ids;
+    std::optional<std::uint32_t> gateway_credential_id;
+    std::string request_uuid;
+    std::string operation;
+    std::optional<std::string> object_key;
+    bool gateway_scopes_only{false};
+    bool synthetic{false};
+    std::optional<std::string> usage_source{};
 };
 
 struct PriceBudgetLedgerEntry {
@@ -96,6 +112,13 @@ struct PriceBudgetLedgerEntry {
     std::uint32_t policy_id{0};
     std::string run_uuid;
     std::uint32_t vault_id{0};
+    std::optional<std::uint32_t> gateway_credential_id;
+    std::optional<std::string> request_uuid;
+    std::optional<std::string> operation;
+    std::optional<std::string> object_key;
+    std::optional<std::string> estimated_cost;
+    std::optional<std::string> usage_source;
+    bool synthetic{false};
     std::string provider_key;
     std::string currency{"USD"};
     PriceBudgetWindow window{PriceBudgetWindow::PerRun};
@@ -158,6 +181,7 @@ struct PriceBudgetTrendStats {
     std::string scope;
     std::optional<std::string> provider_key;
     std::optional<std::uint32_t> vault_id;
+    std::optional<std::uint32_t> gateway_credential_id;
     std::uint32_t policy_id{0};
     std::string currency{"USD"};
     std::string window_type;
@@ -205,6 +229,9 @@ struct PriceBudgetDashboardStats {
 [[nodiscard]] bool isValidPriceBudgetCurrency(std::string_view value);
 [[nodiscard]] std::string normalizePriceBudgetCurrency(std::string value);
 [[nodiscard]] std::string formatPriceBudgetDecisionForDryRun(const PriceBudgetDecision& decision);
+[[nodiscard]] std::string formatGatewayBudgetDenialForS3(
+    const PriceBudgetDecision& decision,
+    const PriceBudgetPreflightRequest& request);
 
 class PriceBudgetService {
 public:
@@ -225,10 +252,15 @@ public:
 
     [[nodiscard]] std::vector<PriceBudgetPolicy> listPolicies(bool includeInactive = false) const;
     [[nodiscard]] PriceBudgetPolicy upsertPolicy(PriceBudgetPolicy policy) const;
-    bool disablePolicy(PriceBudgetScope scope, const std::optional<std::string>& providerKey, const std::optional<std::uint32_t>& vaultId) const;
+    bool disablePolicy(
+        PriceBudgetScope scope,
+        const std::optional<std::string>& providerKey,
+        const std::optional<std::uint32_t>& vaultId,
+        const std::optional<std::uint32_t>& gatewayCredentialId = std::nullopt) const;
     [[nodiscard]] std::vector<PriceBudgetLedgerEntry> listLedger(
         std::uint32_t limit = 50,
-        const std::optional<std::uint32_t>& vaultId = std::nullopt) const;
+        const std::optional<std::uint32_t>& vaultId = std::nullopt,
+        const std::optional<std::uint32_t>& gatewayCredentialId = std::nullopt) const;
 
     [[nodiscard]] PriceBudgetNotification createNotification(PriceBudgetNotification notification) const;
     [[nodiscard]] std::vector<PriceBudgetNotification> listNotifications(
@@ -247,7 +279,9 @@ public:
         const std::optional<std::uint32_t>& vaultId = std::nullopt,
         bool includeExpired = false) const;
 
-    [[nodiscard]] std::vector<PriceBudgetTrendStats> trendStats(const std::optional<std::uint32_t>& vaultId = std::nullopt) const;
+    [[nodiscard]] std::vector<PriceBudgetTrendStats> trendStats(
+        const std::optional<std::uint32_t>& vaultId = std::nullopt,
+        const std::optional<std::uint32_t>& gatewayCredentialId = std::nullopt) const;
     [[nodiscard]] PriceBudgetDashboardStats dashboardStats(const std::optional<std::uint32_t>& vaultId = std::nullopt) const;
 };
 

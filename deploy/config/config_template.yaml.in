@@ -9,6 +9,8 @@ websocket_server: {}
 
 http_preview_server: {}
 
+s3_gateway: {}
+
 
 # === 🐘 DATABASE SETTINGS ===
 database: {}

@@ -14,13 +14,21 @@ import {
   isRecord,
 } from '@/models/pricing/common'
 
-export type PriceBudgetScope = 'global' | 'provider' | 'vault'
+export type PriceBudgetScope = 'global' | 'provider' | 'vault' | 'gateway_credential' | 'gateway_credential_vault'
 export type PriceBudgetMode = 'off' | 'report' | 'warn' | 'enforce'
 export type PriceBudgetWindow = 'per_run' | 'daily' | 'monthly'
 export type PriceBudgetConfidence = 'none' | 'low' | 'medium' | 'high' | string
 
 function asScope(value: unknown): PriceBudgetScope {
-  return value === 'provider' || value === 'vault' ? value : 'global'
+  if (
+    value === 'provider'
+    || value === 'vault'
+    || value === 'gateway_credential'
+    || value === 'gateway_credential_vault'
+  ) {
+    return value
+  }
+  return 'global'
 }
 
 function asMode(value: unknown): PriceBudgetMode {
@@ -37,6 +45,7 @@ export interface PriceBudgetPolicyPayload {
   scope: PriceBudgetScope
   provider_key?: string | null
   vault_id?: number | null
+  gateway_credential_id?: number | null
   mode: PriceBudgetMode
   currency: string
   max_run_cost?: string | null
@@ -52,6 +61,7 @@ export class PriceBudgetPolicy implements PriceBudgetPolicyPayload {
   scope: PriceBudgetScope = 'global'
   provider_key: string | null = null
   vault_id: number | null = null
+  gateway_credential_id: number | null = null
   mode: PriceBudgetMode = 'report'
   currency = 'USD'
   max_run_cost: string | null = null
@@ -68,6 +78,7 @@ export class PriceBudgetPolicy implements PriceBudgetPolicyPayload {
     this.scope = asScope(data.scope)
     this.provider_key = asNullableString(data.provider_key)
     this.vault_id = asNullableNumber(data.vault_id)
+    this.gateway_credential_id = asNullableNumber(data.gateway_credential_id)
     this.mode = asMode(data.mode)
     this.currency = asString(data.currency, 'USD')
     this.max_run_cost = asNullableDecimalString(data.max_run_cost)
@@ -88,6 +99,7 @@ export class PriceBudgetPolicy implements PriceBudgetPolicyPayload {
       scope: this.scope,
       provider_key: this.provider_key,
       vault_id: this.vault_id,
+      gateway_credential_id: this.gateway_credential_id,
       mode: this.mode,
       currency: this.currency,
       max_run_cost: this.max_run_cost,
@@ -138,12 +150,18 @@ export class PriceBudgetDecision {
   exceeded_policy_id: number | null = null
   exceeded_scope: string | null = null
   limit: string | null = null
+  used_before: string | null = null
   remaining_before: string | null = null
   requested: string | null = null
   currency = 'USD'
   reason: string | null = null
   policies: PriceBudgetPolicy[] = []
   checks: PriceBudgetWindowCheck[] = []
+  blocking_checks: PriceBudgetWindowCheck[] = []
+  blocking_policy_ids: number[] = []
+  primary_blocking_check: PriceBudgetWindowCheck | null = null
+  primary_blocking_scope: string | null = null
+  primary_blocking_window: string | null = null
 
   constructor(input: unknown = {}) {
     const data = isRecord(input) ? input : {}
@@ -153,12 +171,20 @@ export class PriceBudgetDecision {
     this.exceeded_policy_id = asNullableNumber(data.exceeded_policy_id)
     this.exceeded_scope = asNullableString(data.exceeded_scope)
     this.limit = asNullableDecimalString(data.limit)
+    this.used_before = asNullableDecimalString(data.used_before)
     this.remaining_before = asNullableDecimalString(data.remaining_before)
     this.requested = asNullableDecimalString(data.requested)
     this.currency = asString(data.currency, 'USD')
     this.reason = asNullableString(data.reason)
     this.policies = Array.isArray(data.policies) ? data.policies.map(PriceBudgetPolicy.from) : []
     this.checks = Array.isArray(data.checks) ? data.checks.map(PriceBudgetWindowCheck.from) : []
+    this.blocking_checks = Array.isArray(data.blocking_checks) ? data.blocking_checks.map(PriceBudgetWindowCheck.from) : []
+    this.blocking_policy_ids = Array.isArray(data.blocking_policy_ids)
+      ? data.blocking_policy_ids.map(asNumber).filter(id => id > 0)
+      : []
+    this.primary_blocking_check = isRecord(data.primary_blocking_check) ? PriceBudgetWindowCheck.from(data.primary_blocking_check) : null
+    this.primary_blocking_scope = asNullableString(data.primary_blocking_scope)
+    this.primary_blocking_window = asNullableString(data.primary_blocking_window)
   }
 
   static from(input: unknown): PriceBudgetDecision {
@@ -215,6 +241,7 @@ export class PriceBudgetTrendStats {
   scope: PriceBudgetScope = 'global'
   provider_key: string | null = null
   vault_id: number | null = null
+  gateway_credential_id: number | null = null
   policy_id: number | null = null
   currency = 'USD'
   window_type: 'day' | 'month' | string = 'month'
@@ -240,6 +267,7 @@ export class PriceBudgetTrendStats {
     this.scope = asScope(data.scope)
     this.provider_key = asNullableString(data.provider_key)
     this.vault_id = asNullableNumber(data.vault_id)
+    this.gateway_credential_id = asNullableNumber(data.gateway_credential_id)
     this.policy_id = asNullableNumber(data.policy_id)
     this.currency = asString(data.currency, 'USD')
     this.window_type = asString(data.window_type, 'month')
@@ -269,6 +297,10 @@ export class PriceBudgetTrendStats {
 export interface PriceBudgetPreflightPayload {
   vault_id: number
   run_uuid?: string
+  gateway_credential_id?: number | null
+  request_uuid?: string | null
+  operation?: string | null
+  object_key?: string | null
 }
 
 export class PriceBudgetPreflightResult {

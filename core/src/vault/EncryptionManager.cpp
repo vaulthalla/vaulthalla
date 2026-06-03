@@ -6,6 +6,9 @@
 #include "fs/model/File.hpp"
 
 #include <sodium.h>
+#include <openssl/evp.h>
+#include <array>
+#include <fstream>
 #include <stdexcept>
 #include <paths.h>
 #include <format>
@@ -175,6 +178,72 @@ std::vector<uint8_t> EncryptionManager::encrypt(const std::vector<uint8_t>& plai
     return ciphertext;
 }
 
+void EncryptionManager::encryptFileToFile(
+    const std::filesystem::path& plaintextPath,
+    const std::filesystem::path& ciphertextPath,
+    const std::shared_ptr<File>& f) const {
+    if (!f) throw std::invalid_argument("Cannot encrypt file without file metadata");
+    if (key_.size() != AES_KEY_SIZE) {
+        log::Registry::crypto()->error("[VaultEncryptionManager] Invalid AES-256 key size: {} bytes", key_.size());
+        throw std::invalid_argument("Invalid AES-256 key size");
+    }
+
+    std::ifstream in(plaintextPath, std::ios::binary);
+    if (!in) throw std::runtime_error("Failed to open plaintext file for encryption: " + plaintextPath.string());
+
+    std::filesystem::create_directories(ciphertextPath.parent_path());
+    std::ofstream out(ciphertextPath, std::ios::binary | std::ios::trunc);
+    if (!out) throw std::runtime_error("Failed to open ciphertext file for encryption: " + ciphertextPath.string());
+
+    std::vector<uint8_t> iv(AES_IV_SIZE);
+    randombytes_buf(iv.data(), iv.size());
+
+    EVP_CIPHER_CTX* rawCtx = EVP_CIPHER_CTX_new();
+    if (!rawCtx) throw std::runtime_error("Failed to allocate AES-GCM context");
+
+    try {
+        if (EVP_EncryptInit_ex(rawCtx, EVP_aes_256_gcm(), nullptr, nullptr, nullptr) != 1)
+            throw std::runtime_error("AES-GCM initialization failed");
+        if (EVP_CIPHER_CTX_ctrl(rawCtx, EVP_CTRL_GCM_SET_IVLEN, static_cast<int>(iv.size()), nullptr) != 1)
+            throw std::runtime_error("AES-GCM IV length initialization failed");
+        if (EVP_EncryptInit_ex(rawCtx, nullptr, nullptr, key_.data(), iv.data()) != 1)
+            throw std::runtime_error("AES-GCM key initialization failed");
+
+        std::array<unsigned char, 64 * 1024> input{};
+        std::array<unsigned char, input.size() + AES_TAG_SIZE> output{};
+        while (in) {
+            in.read(reinterpret_cast<char*>(input.data()), static_cast<std::streamsize>(input.size()));
+            const auto read = in.gcount();
+            if (read <= 0) break;
+
+            int outLen = 0;
+            if (EVP_EncryptUpdate(rawCtx, output.data(), &outLen, input.data(), static_cast<int>(read)) != 1)
+                throw std::runtime_error("AES-GCM file encryption failed");
+            if (outLen > 0) out.write(reinterpret_cast<const char*>(output.data()), outLen);
+            if (!out) throw std::runtime_error("Failed writing ciphertext file: " + ciphertextPath.string());
+        }
+
+        int finalLen = 0;
+        if (EVP_EncryptFinal_ex(rawCtx, output.data(), &finalLen) != 1)
+            throw std::runtime_error("AES-GCM finalization failed");
+        if (finalLen > 0) out.write(reinterpret_cast<const char*>(output.data()), finalLen);
+
+        std::array<unsigned char, AES_TAG_SIZE> tag{};
+        if (EVP_CIPHER_CTX_ctrl(rawCtx, EVP_CTRL_GCM_GET_TAG, static_cast<int>(tag.size()), tag.data()) != 1)
+            throw std::runtime_error("AES-GCM tag extraction failed");
+        out.write(reinterpret_cast<const char*>(tag.data()), static_cast<std::streamsize>(tag.size()));
+        if (!out) throw std::runtime_error("Failed writing AES-GCM tag: " + ciphertextPath.string());
+
+        EVP_CIPHER_CTX_free(rawCtx);
+    } catch (...) {
+        EVP_CIPHER_CTX_free(rawCtx);
+        throw;
+    }
+
+    f->encryption_iv = b64_encode(iv);
+    f->encrypted_with_key_version = version_;
+}
+
 std::vector<uint8_t> EncryptionManager::decrypt(const std::vector<uint8_t>& ciphertext, const std::string& b64_iv, const unsigned int keyVersion) const {
     if (rotation_in_progress_.load()) {
         if (key_.empty() || old_key_.empty()) throw std::runtime_error("Key rotation in progress but keys are not set");
@@ -214,4 +283,3 @@ std::vector<uint8_t> EncryptionManager::get_key(const std::string& callingFuncti
 
     return key_;
 }
-

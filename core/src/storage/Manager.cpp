@@ -60,16 +60,30 @@ void Manager::initStorageEngines() {
 
     try {
         for (auto& vault : db::query::vault::Vault::listVaults()) {
-            log::Registry::storage()->debug("[StorageManager] Initializing StorageEngine for Vault {} (ID: {}, Type: {})",
-                                          vault->name, vault->id, to_string(vault->type));
-            std::shared_ptr<Engine> engine;
-            if (vault->type == VaultType::Local) engine = std::make_shared<Engine>(vault);
-            else if (vault->type == VaultType::S3) {
-                const auto s3Vault = std::static_pointer_cast<S3Vault>(vault);
-                engine = std::make_shared<CloudEngine>(s3Vault);
+            try {
+                log::Registry::storage()->debug("[StorageManager] Initializing StorageEngine for Vault {} (ID: {}, Type: {})",
+                                              vault->name, vault->id, to_string(vault->type));
+                std::shared_ptr<Engine> engine;
+                if (vault->type == VaultType::Local) engine = std::make_shared<Engine>(vault);
+                else if (vault->type == VaultType::S3) {
+                    const auto s3Vault = std::static_pointer_cast<S3Vault>(vault);
+                    if (s3Vault->api_key_id == 0 || s3Vault->bucket.empty()) {
+                        log::Registry::storage()->warn(
+                            "[StorageManager] Skipping S3 vault {} (ID: {}) because upstream API key or bucket metadata is missing",
+                            s3Vault->name, s3Vault->id);
+                        continue;
+                    }
+                    engine = std::make_shared<CloudEngine>(s3Vault);
+                }
+                if (!engine) continue;
+                engines_[enginePathKey(engine)] = engine;
+                vaultToEngine_[vault->id] = engine;
+            } catch (const std::exception& e) {
+                log::Registry::storage()->error("[StorageManager] Skipping vault {} (ID: {}) after engine initialization failed: {}",
+                                                vault ? vault->name : "<null>",
+                                                vault ? vault->id : 0,
+                                                e.what());
             }
-            engines_[enginePathKey(engine)] = engine;
-            vaultToEngine_[vault->id] = engine;
         }
     } catch (const std::exception& e) {
         log::Registry::storage()->error("[StorageManager] Error initializing storage engines: {}", e.what());

@@ -6,6 +6,7 @@
 #include <vector>
 #include <memory>
 #include <atomic>
+#include <filesystem>
 
 namespace vh::fs::model { struct File; }
 
@@ -27,6 +28,10 @@ public:
     // Encrypt data with vault key, returns ciphertext.
     // Populates out_b64_iv with base64-encoded IV.
     [[nodiscard]] std::vector<uint8_t> encrypt(const std::vector<uint8_t>& plaintext, const std::shared_ptr<fs::model::File>& f) const;
+
+    void encryptFileToFile(const std::filesystem::path& plaintextPath,
+                           const std::filesystem::path& ciphertextPath,
+                           const std::shared_ptr<fs::model::File>& f) const;
 
     // Decrypt using base64-encoded IV and ciphertext
     [[nodiscard]] std::vector<uint8_t> decrypt(const std::vector<uint8_t>& ciphertext,

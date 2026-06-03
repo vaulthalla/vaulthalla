@@ -100,6 +100,7 @@ void Controller::uploadBufferWithMetadataConditional(
     const std::optional<std::string>& ifNoneMatch) const
 {
     recordRequest(RequestKind::Put);
+    recordUploadBytes(buffer.size());
 
     log::Registry::cloud()->debug("[S3Provider] Uploading buffer to S3 key: {}, buffer_size: {}",
                                key.string(), buffer.size());
@@ -193,7 +194,8 @@ void Controller::downloadToBuffer(const std::filesystem::path& key, std::vector<
         const Controller* controller;
         std::vector<uint8_t>* data;
         std::string budgetError;
-    } writeCtx{this, &outBuffer, {}};
+        std::string budgetKind;
+    } writeCtx{this, &outBuffer, {}, {}};
 
     outBuffer.clear();
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
@@ -206,6 +208,7 @@ void Controller::downloadToBuffer(const std::filesystem::path& key, std::vector<
             ctx->controller->recordRequest(RequestKind::DownloadBytes, bytes);
         } catch (const RequestBudgetExceeded& e) {
             ctx->budgetError = e.what();
+            ctx->budgetKind = e.kind();
             return 0;
         }
         ctx->data->insert(ctx->data->end(), ptr, ptr + bytes);
@@ -216,7 +219,7 @@ void Controller::downloadToBuffer(const std::filesystem::path& key, std::vector<
     const CURLcode res = curl_easy_perform(curl);
     curl_easy_cleanup(curl);
 
-    if (!writeCtx.budgetError.empty()) throw RequestBudgetExceeded(writeCtx.budgetError);
+    if (!writeCtx.budgetError.empty()) throw RequestBudgetExceeded(writeCtx.budgetError, writeCtx.budgetKind);
 
     if (res != CURLE_OK)
         log::Registry::cloud()->error("[S3Provider] downloadToBuffer failed for {}: CURL={} Response:\n{}",

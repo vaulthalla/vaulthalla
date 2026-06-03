@@ -32,6 +32,39 @@ struct HttpPreviewConfig {
     uintmax_t max_preview_size_bytes = MAX_PREVIEW_SIZE_BYTES;
 };
 
+struct S3GatewayMultipartConfig {
+    uint32_t min_part_size_mb = 5;
+    uint32_t abort_after_days = 7;
+};
+
+struct S3GatewaySyntheticLocalRequestCostConfig {
+    std::string list = "0.00000001";
+    std::string head = "0.00000001";
+    std::string get = "0.00000001";
+    std::string put = "0.00000001";
+    std::string delete_ = "0.00000001";
+    std::string copy = "0.00000001";
+    std::string downloaded_gb = "0.00000000";
+    std::string uploaded_gb = "0.00000000";
+};
+
+struct S3GatewayConfig {
+    bool enabled = false;
+    std::string host = "0.0.0.0";
+    uint16_t port = 39000;
+    unsigned int max_connections = 1024;
+    uintmax_t max_body_size_bytes = 5ull * 1024ull * 1024ull * 1024ull;
+    bool require_sigv4 = true;
+    bool allow_path_style = true;
+    bool allow_virtual_hosted_style = true;
+    std::string default_bucket_mode = "local";
+    bool default_api_exclusive = true;
+    std::string default_remote_sync_strategy = "cache";
+    std::string default_remote_conflict_policy = "keep_local";
+    S3GatewayMultipartConfig multipart;
+    S3GatewaySyntheticLocalRequestCostConfig synthetic_local_request_cost_usd;
+};
+
 struct ThumbnailsConfig {
     std::vector<std::string> formats = {"jpg", "jpeg", "png", "webp", "pdf"};
     std::vector<unsigned int> sizes = {128, 256, 512};
@@ -227,6 +260,7 @@ struct LoggingConfig {
 struct Config {
     WebsocketConfig websocket;
     HttpPreviewConfig http_preview;
+    S3GatewayConfig s3_gateway;
     CachingConfig caching;
     DatabaseConfig database;
     AuthConfig auth;
@@ -254,6 +288,12 @@ void to_json(nlohmann::json& j, const WebsocketConfig& c);
 void from_json(const nlohmann::json& j, WebsocketConfig& c);
 void to_json(nlohmann::json& j, const HttpPreviewConfig& c);
 void from_json(const nlohmann::json& j, HttpPreviewConfig& c);
+void to_json(nlohmann::json& j, const S3GatewayMultipartConfig& c);
+void from_json(const nlohmann::json& j, S3GatewayMultipartConfig& c);
+void to_json(nlohmann::json& j, const S3GatewaySyntheticLocalRequestCostConfig& c);
+void from_json(const nlohmann::json& j, S3GatewaySyntheticLocalRequestCostConfig& c);
+void to_json(nlohmann::json& j, const S3GatewayConfig& c);
+void from_json(const nlohmann::json& j, S3GatewayConfig& c);
 void to_json(nlohmann::json& j, const LogLevelsConfig& c);
 void from_json(const nlohmann::json& j, LogLevelsConfig& c);
 void to_json(nlohmann::json& j, const SubsystemLogLevelsConfig& c);

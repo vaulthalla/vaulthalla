@@ -2,8 +2,10 @@
 
 #include "storage/s3/pricing/PriceBotClient.hpp"
 #include "storage/s3/pricing/PriceBotModels.hpp"
+#include "storage/s3/provider/StorageTier.hpp"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -18,6 +20,7 @@ struct PriceEstimateOptions {
     bool force_refresh{false};
     bool disabled{false};
     PriceEstimateMode mode{PriceEstimateMode::Reporting};
+    std::optional<provider::StorageTier> storage_tier_override{std::nullopt};
 };
 
 [[nodiscard]] PriceEstimateReport estimatePlannedS3Sync(

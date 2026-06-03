@@ -4,7 +4,8 @@ namespace vh::rbac::resolver {
     enum class Domain {
         APIKey,
         Identity,
-        Vault
+        Vault,
+        Global
     };
 
     template<typename EnumT>

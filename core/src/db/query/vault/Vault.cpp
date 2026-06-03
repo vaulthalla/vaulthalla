@@ -50,7 +50,28 @@ unsigned int Vault::upsertVault(const VaultPtr& vault,
             vault->is_active
         };
 
-        const auto vaultRes = txn.exec(pqxx::prepped{"upsert_vault"}, p);
+        pqxx::result vaultRes;
+        if (exists) {
+            p.append(vault->id);
+            vaultRes = txn.exec(
+                R"SQL(
+                    UPDATE vault
+                    SET
+                        name = $1,
+                        type = $2,
+                        description = $3,
+                        owner_id = $4,
+                        mount_point = $5,
+                        quota = $6,
+                        is_active = $7,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = $8
+                    RETURNING id
+                )SQL",
+                p);
+        } else {
+            vaultRes = txn.exec(pqxx::prepped{"upsert_vault"}, p);
+        }
         if (vaultRes.empty() || vaultRes.affected_rows() == 0)
             throw std::runtime_error("Failed to upsert vault: " + vault->name);
         const auto vaultId = vaultRes.one_field().as<unsigned int>();
