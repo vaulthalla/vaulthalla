@@ -124,7 +124,7 @@ Use the browser workflow for interactive setup:
 3. Create a gateway credential.
 4. Copy the secret immediately; the secret access key is shown only once.
 5. Choose `user_access`, `vault_allowlist`, or `global` scope.
-6. Add vault role assignments when using `vault_allowlist`.
+6. Add vault role assignments and optional path overrides when using `vault_allowlist`.
 7. Create or bind a gateway bucket.
 8. Set gateway key or key/vault budgets.
 9. Copy AWS CLI or MinIO client snippets.
@@ -148,9 +148,13 @@ vh s3-gateway creds list
 vh s3-gateway creds revoke VH...
 vh s3-gateway creds scope backup show
 vh s3-gateway creds scope backup set --scope vault-allowlist
-vh s3-gateway creds scope backup allow-vault archive --list --read --write
-vh s3-gateway creds scope backup revoke-vault archive
+vh s3-gateway creds role assign backup --vault archive --role contributor
+vh s3-gateway creds role override add backup --vault archive --pattern "/private/*" --permission download --effect deny
+vh s3-gateway creds role override list backup --vault archive
+vh s3-gateway creds role revoke backup --vault archive
 ```
+
+Legacy boolean scope flags and `creds scope allow-vault` are compatibility shorthand. Gateway authorization uses vault roles and path overrides.
 
 Buckets:
 

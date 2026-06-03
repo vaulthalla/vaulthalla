@@ -157,6 +157,12 @@ void Handler::registerS3GatewayHandlers(const std::shared_ptr<Router>& r) {
     r->registerPayload("s3.gateway.credentials.revoke", &handler::S3Gateway::credentialsRevoke);
     r->registerPayload("s3.gateway.credentials.scope.update", &handler::S3Gateway::credentialsScopeUpdate);
     r->registerPayload("s3.gateway.credentials.scope.list", &handler::S3Gateway::credentialsScopeList);
+    r->registerPayload("s3.gateway.credentials.roles.list", &handler::S3Gateway::credentialsRolesList);
+    r->registerPayload("s3.gateway.credentials.roles.assign", &handler::S3Gateway::credentialsRolesAssign);
+    r->registerPayload("s3.gateway.credentials.roles.revoke", &handler::S3Gateway::credentialsRolesRevoke);
+    r->registerPayload("s3.gateway.credentials.roles.overrides.list", &handler::S3Gateway::credentialsRoleOverridesList);
+    r->registerPayload("s3.gateway.credentials.roles.overrides.add", &handler::S3Gateway::credentialsRoleOverridesAdd);
+    r->registerPayload("s3.gateway.credentials.roles.overrides.remove", &handler::S3Gateway::credentialsRoleOverridesRemove);
     r->registerPayload("s3.gateway.buckets.list", &handler::S3Gateway::bucketsList);
     r->registerPayload("s3.gateway.buckets.bind", &handler::S3Gateway::bucketsBind);
     r->registerPayload("s3.gateway.buckets.unbind", &handler::S3Gateway::bucketsUnbind);

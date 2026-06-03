@@ -223,6 +223,27 @@ vh secret export all --recipient <gpg-fingerprint> --output vaulthalla-secrets.j
 
 `secret set` reads the secret value from the file path you pass.
 
+## S3 Gateway
+
+```bash
+vh s3-gateway status
+vh s3-gateway enable
+vh s3-gateway disable
+vh s3-gateway creds create laptop --scope user-access --json
+vh s3-gateway creds list
+vh s3-gateway creds scope backup set --scope vault-allowlist
+vh s3-gateway creds role assign backup --vault archive --role reader
+vh s3-gateway creds role override add backup --vault archive --pattern "/private/*" --permission download --effect deny
+vh s3-gateway creds role override list backup --vault archive
+vh s3-gateway creds role override remove backup --vault archive 42
+vh s3-gateway creds role revoke backup --vault archive
+vh s3-gateway bucket create-local archive
+vh s3-gateway bucket bind archive --vault 12 --mode local
+vh s3-gateway budget set-key backup --monthly 5 --mode enforce --currency USD
+```
+
+Gateway authorization is RBAC-native. `user_access` inherits the principal user's Vaulthalla RBAC, `vault_allowlist` uses gateway credential vault-role assignments and overrides, and `global` requires an admin principal. Boolean credential scope flags and `creds scope allow-vault` remain compatibility shorthand only; prefer `creds role assign` and `creds role override`.
+
 ## Pricing Budgets
 
 ```bash

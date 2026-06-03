@@ -41,7 +41,7 @@
 namespace vh::protocols::s3 {
 
 namespace {
-using Action = rbac::permission::vault::FilesystemAction;
+using S3Action = rbac::s3::policy::S3Action;
 using Decimal = boost::multiprecision::cpp_dec_float_50;
 
 std::string requestId() {
@@ -1034,6 +1034,7 @@ Router::Response Router::routeAuthenticated(
         auto bucket = objects_.headBucket(parsed.bucket, auth);
         if (request.method() == http::verb::get && hasQuery(parsed.query, "uploads"))
         {
+            objects_.requireS3Permission(bucket, auth, S3Action::ListMultipartUploads);
             auto budget = preflightSyntheticGatewayBudget(
                 bucket,
                 auth,
@@ -1094,7 +1095,7 @@ Router::Response Router::routeAuthenticated(
             bool quiet = false;
             const auto keys = parseDeleteObjects(request.body(), quiet);
             for (const auto& key : keys)
-                objects_.requireObjectPermission(bucket, key, Action::Delete);
+                objects_.requireS3Permission(bucket, auth, S3Action::DeleteObjects, key);
             auto budget = preflightSyntheticGatewayBudget(
                 bucket,
                 auth,
@@ -1132,7 +1133,7 @@ Router::Response Router::routeAuthenticated(
     auto bucket = objects_.resolveBucket(parsed.bucket, auth);
 
     if (request.method() == http::verb::post && hasQuery(parsed.query, "uploads")) {
-        objects_.requireObjectPermission(bucket, parsed.key, Action::Write);
+        objects_.requireS3Permission(bucket, auth, S3Action::CreateMultipartUpload, parsed.key);
         const auto options = putOptionsFromRequest(request);
         auto budget = preflightSyntheticGatewayBudget(
             bucket,
@@ -1156,7 +1157,7 @@ Router::Response Router::routeAuthenticated(
     }
 
     if (request.method() == http::verb::put && hasQuery(parsed.query, "partNumber") && hasQuery(parsed.query, "uploadId")) {
-        objects_.requireObjectPermission(bucket, parsed.key, Action::Write);
+        objects_.requireS3Permission(bucket, auth, S3Action::UploadPart, parsed.key);
         const auto partNumber = parsePartNumber(parsed.query);
         auto budget = preflightSyntheticGatewayBudget(
             bucket,
@@ -1193,7 +1194,7 @@ Router::Response Router::routeAuthenticated(
     }
 
     if (request.method() == http::verb::post && hasQuery(parsed.query, "uploadId")) {
-        objects_.requireObjectPermission(bucket, parsed.key, Action::Write);
+        objects_.requireS3Permission(bucket, auth, S3Action::CompleteMultipartUpload, parsed.key);
         uint64_t totalSize = 0;
         for (const auto& part : multipart_.listParts(bucket, parsed.key, parsed.query.at("uploadId")))
             totalSize += part.size_bytes;
@@ -1224,7 +1225,7 @@ Router::Response Router::routeAuthenticated(
     }
 
     if (request.method() == http::verb::delete_ && hasQuery(parsed.query, "uploadId")) {
-        objects_.requireObjectPermission(bucket, parsed.key, Action::Delete);
+        objects_.requireS3Permission(bucket, auth, S3Action::AbortMultipartUpload, parsed.key);
         auto budget = preflightSyntheticGatewayBudget(
             bucket,
             auth,
@@ -1247,7 +1248,7 @@ Router::Response Router::routeAuthenticated(
     }
 
     if (request.method() == http::verb::get && hasQuery(parsed.query, "uploadId")) {
-        objects_.requireObjectPermission(bucket, parsed.key, Action::Read);
+        objects_.requireS3Permission(bucket, auth, S3Action::ListParts, parsed.key);
         auto budget = preflightSyntheticGatewayBudget(
             bucket,
             auth,
@@ -1274,7 +1275,7 @@ Router::Response Router::routeAuthenticated(
     }
 
     if (request.method() == http::verb::head) {
-        objects_.requireObjectPermission(bucket, parsed.key, Action::Read);
+        objects_.requireS3Permission(bucket, auth, S3Action::HeadObject, parsed.key);
         auto budget = preflightSyntheticGatewayBudget(
             bucket,
             auth,
@@ -1414,7 +1415,7 @@ Router::Response Router::routeAuthenticated(
     }
 
     if (request.method() == http::verb::put) {
-        objects_.requireObjectPermission(bucket, parsed.key, Action::Write);
+        objects_.requireS3Permission(bucket, auth, S3Action::PutObject, parsed.key);
         const auto ifMatch = headerOr(request, http::field::if_match);
         const auto ifNoneMatch = headerOr(request, http::field::if_none_match);
         if (!ifMatch.empty()) {
@@ -1441,6 +1442,8 @@ Router::Response Router::routeAuthenticated(
             if (source.query.contains("versionId"))
                 throw notImplemented("Versioned CopyObject sources are not supported", copySource);
             const auto sourceBucket = objects_.resolveBucket(source.bucket, auth);
+            objects_.requireS3Permission(sourceBucket, auth, S3Action::CopyObjectSource, source.key);
+            objects_.requireS3Permission(bucket, auth, S3Action::CopyObjectDestination, parsed.key);
             const auto sourceState = objects_.headObject(sourceBucket, source.key);
             enforceCopySourcePreconditions(
                 request,
@@ -1583,7 +1586,7 @@ Router::Response Router::routeAuthenticated(
     }
 
     if (request.method() == http::verb::delete_) {
-        objects_.requireObjectPermission(bucket, parsed.key, Action::Delete);
+        objects_.requireS3Permission(bucket, auth, S3Action::DeleteObject, parsed.key);
         const auto ifMatch = headerOr(request, http::field::if_match);
         if (!ifMatch.empty()) {
             try {

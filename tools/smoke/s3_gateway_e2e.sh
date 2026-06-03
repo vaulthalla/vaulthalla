@@ -414,25 +414,25 @@ ensure_playwright_chromium() {
   return 1
 }
 
-if ! start_web_if_needed; then
-  WEB_STATUS=unreachable
-  FAILED=1
-else
-  if ! ensure_playwright_chromium; then
-    WEB_STATUS=browser-install-fail
-    FAILED=1
-  elif VAULTHALLA_E2E_BASE_URL="$WEB_URL" pnpm --dir web run test:e2e:s3-gateway; then
-    WEB_STATUS=pass
-  else
-    WEB_STATUS=fail
-    FAILED=1
-  fi
-fi
-
 if ! start_gateway_if_needed; then
   LOCAL_STATUS=unreachable
   FAILED=1
 else
+  if ! start_web_if_needed; then
+    WEB_STATUS=unreachable
+    FAILED=1
+  else
+    if ! ensure_playwright_chromium; then
+      WEB_STATUS=browser-install-fail
+      FAILED=1
+    elif VAULTHALLA_E2E_BASE_URL="$WEB_URL" pnpm --dir web run test:e2e:s3-gateway; then
+      WEB_STATUS=pass
+    else
+      WEB_STATUS=fail
+      FAILED=1
+    fi
+  fi
+
   if VH_BIN="$VH_BIN" tools/smoke/s3_gateway_scoped_budget_smoke.sh --local-only --budget-denial synthetic --prefix "$PREFIX/local"; then
     LOCAL_STATUS=pass
   else

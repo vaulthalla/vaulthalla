@@ -97,6 +97,30 @@ Decision Evaluator::evaluate(const S3PolicyRequest& request) {
             .credential_allowed = true
         };
 
+    if (request.scope_mode == "user_access")
+        return {
+            .allowed = true,
+            .reason = Decision::Reason::Allowed,
+            .principal_allowed = true,
+            .credential_allowed = true
+        };
+
+    if (request.scope_mode == "global") {
+        if (!request.principal->isAdmin())
+            return {
+                .allowed = false,
+                .reason = Decision::Reason::GlobalPrincipalRequired,
+                .principal_allowed = true,
+                .credential_allowed = false
+            };
+        return {
+            .allowed = true,
+            .reason = Decision::Reason::Allowed,
+            .principal_allowed = true,
+            .credential_allowed = true
+        };
+    }
+
     const auto credentialRole = db::query::s3::Gateway::getCredentialVaultRoleForVault(
         request.credential_id,
         request.vault_id);

@@ -1,9 +1,8 @@
 'use client'
 
 import React from 'react'
-import type { VaultRole } from '@/models/role'
 import { PriceBudgetMode, PriceBudgetPolicyPayload, PriceBudgetTrendStats } from '@/models/pricing/priceBudget'
-import { S3GatewayCredentialScopeMode, S3GatewayCredentialVaultScopePayload } from '@/models/s3Gateway'
+import { S3GatewayCredentialScopeMode } from '@/models/s3Gateway'
 
 export const cardClass = 'rounded border border-white/10 bg-zinc-950/65 text-white shadow-xl'
 export const fieldClass = 'min-h-10 rounded border border-white/10 bg-zinc-950 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400'
@@ -13,13 +12,6 @@ export const dangerButtonClass = 'inline-flex min-h-10 items-center justify-cent
 
 export const modes: PriceBudgetMode[] = ['report', 'warn', 'enforce']
 export const scopeModes: S3GatewayCredentialScopeMode[] = ['user_access', 'vault_allowlist', 'global']
-export const permissionKeys: (keyof Omit<S3GatewayCredentialVaultScopePayload, 'vault_id'>)[] = [
-  'can_list',
-  'can_read',
-  'can_write',
-  'can_delete',
-  'can_admin',
-]
 
 export const formatDate = (value: number | string | null | undefined) => {
   if (value == null) return '-'
@@ -35,38 +27,6 @@ export const money = (value: string | number | null | undefined, currency = 'USD
 
 export const percent = (value: number) => new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value * 100)
 export const scopeLabel = (scope: S3GatewayCredentialScopeMode) => scope.replace('_', '-')
-
-export const scopePayloadForRole = (
-  role: VaultRole | undefined,
-  fallback: Omit<S3GatewayCredentialVaultScopePayload, 'vault_id'> = { can_list: true, can_read: true, can_write: false, can_delete: false, can_admin: false },
-): Omit<S3GatewayCredentialVaultScopePayload, 'vault_id'> => {
-  if (!role) return fallback
-  const name = role.name.toLowerCase()
-  if (name === 'implicit_deny') return { can_list: false, can_read: false, can_write: false, can_delete: false, can_admin: false }
-  if (name === 'guest') return { can_list: true, can_read: false, can_write: false, can_delete: false, can_admin: false }
-  if (name === 'reader' || name.includes('download') || name.includes('browse')) return { can_list: true, can_read: true, can_write: false, can_delete: false, can_admin: false }
-  if (name === 'contributor' || name.includes('upload')) return { can_list: true, can_read: true, can_write: true, can_delete: false, can_admin: false }
-  if (name === 'editor') return { can_list: true, can_read: true, can_write: true, can_delete: true, can_admin: false }
-  if (name === 'manager' || name === 'power_user' || name === 'full') return { can_list: true, can_read: true, can_write: true, can_delete: true, can_admin: true }
-
-  const enabled = new Set(role.permissions.filter(permission => permission.value).map(permission => permission.qualified))
-  return {
-    can_list: enabled.has('vault.fs.directories.list') || enabled.has('vault.fs.files.view') || fallback.can_list,
-    can_read: enabled.has('vault.fs.files.read') || enabled.has('vault.fs.files.download') || fallback.can_read,
-    can_write: enabled.has('vault.fs.files.write') || enabled.has('vault.fs.files.upload') || enabled.has('vault.fs.files.create') || fallback.can_write,
-    can_delete: enabled.has('vault.fs.files.delete') || enabled.has('vault.fs.directories.delete') || fallback.can_delete,
-    can_admin: enabled.has('vault.roles.assign') || enabled.has('vault.roles.modify') || fallback.can_admin,
-  }
-}
-
-export const scopeRoleName = (scope: Omit<S3GatewayCredentialVaultScopePayload, 'vault_id'>) => {
-  if (scope.can_admin) return 'manager'
-  if (scope.can_delete) return 'editor'
-  if (scope.can_write) return 'contributor'
-  if (scope.can_read) return 'reader'
-  if (scope.can_list) return 'guest'
-  return 'implicit_deny'
-}
 
 export function Section({ title, icon: Icon, right, children }: {
   title: string

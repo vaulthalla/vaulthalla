@@ -9,17 +9,24 @@ import {
   S3GatewayCredential,
   S3GatewayCredentialCreatePayload,
   S3GatewayCredentialScopeUpdatePayload,
+  S3GatewayCredentialVaultRoleAssignment,
+  S3GatewayCredentialVaultRoleAssignmentPayload,
+  S3GatewayCredentialVaultRoleOverride,
+  S3GatewayCredentialVaultRoleOverridePayload,
   S3GatewayCredentialVaultScope,
   S3GatewayStatus,
 } from '@/models/s3Gateway'
 import { useWebSocketStore } from '@/stores/useWebSocket'
 
 const errorMessage = (error: unknown, fallback: string) => (error instanceof Error ? error.message : fallback)
+const credentialVaultKey = (credentialId: number, vaultId: number) => `${credentialId}:${vaultId}`
 
 interface S3GatewayStore {
   status: S3GatewayStatus | null
   credentials: S3GatewayCredential[]
   scopesByCredentialId: Record<number, S3GatewayCredentialVaultScope[]>
+  roleAssignmentsByCredentialId: Record<number, S3GatewayCredentialVaultRoleAssignment[]>
+  roleOverridesByCredentialVault: Record<string, S3GatewayCredentialVaultRoleOverride[]>
   buckets: S3GatewayBucketBinding[]
   policies: PriceBudgetPolicy[]
   ledger: PriceBudgetLedgerEntry[]
@@ -35,6 +42,12 @@ interface S3GatewayStore {
   revokeCredential: (payload: { access_key?: string; name?: string }) => Promise<boolean>
   updateCredentialScope: (payload: S3GatewayCredentialScopeUpdatePayload) => Promise<S3GatewayCredential | null>
   fetchCredentialScopes: (payload: { access_key?: string; name?: string }) => Promise<S3GatewayCredentialVaultScope[]>
+  fetchCredentialRoleAssignments: (payload: { credential_id?: number; access_key?: string; name?: string; credential_name?: string }) => Promise<S3GatewayCredentialVaultRoleAssignment[]>
+  assignCredentialVaultRole: (payload: S3GatewayCredentialVaultRoleAssignmentPayload) => Promise<S3GatewayCredentialVaultRoleAssignment>
+  revokeCredentialVaultRole: (payload: S3GatewayCredentialVaultRoleAssignmentPayload) => Promise<boolean>
+  fetchCredentialVaultRoleOverrides: (payload: S3GatewayCredentialVaultRoleOverridePayload) => Promise<S3GatewayCredentialVaultRoleOverride[]>
+  addCredentialVaultRoleOverride: (payload: S3GatewayCredentialVaultRoleOverridePayload) => Promise<S3GatewayCredentialVaultRoleOverride>
+  removeCredentialVaultRoleOverride: (payload: S3GatewayCredentialVaultRoleOverridePayload) => Promise<boolean>
   fetchBuckets: () => Promise<S3GatewayBucketBinding[]>
   bindBucket: (payload: S3GatewayBucketBindPayload) => Promise<void>
   unbindBucket: (payload: { bucket_name: string }) => Promise<boolean>
@@ -52,6 +65,8 @@ export const useS3GatewayStore = create<S3GatewayStore>()((set, get) => ({
   status: null,
   credentials: [],
   scopesByCredentialId: {},
+  roleAssignmentsByCredentialId: {},
+  roleOverridesByCredentialVault: {},
   buckets: [],
   policies: [],
   ledger: [],
@@ -142,6 +157,131 @@ export const useS3GatewayStore = create<S3GatewayStore>()((set, get) => ({
     const scopes = response.scopes.map(S3GatewayCredentialVaultScope.from)
     set(state => ({ scopesByCredentialId: { ...state.scopesByCredentialId, [credential.id]: scopes } }))
     return scopes
+  },
+
+  async fetchCredentialRoleAssignments(payload) {
+    const ws = useWebSocketStore.getState()
+    await ws.waitForConnection()
+    const response = await ws.sendCommand('s3.gateway.credentials.roles.list', payload)
+    const credential = S3GatewayCredential.from(response.credential)
+    const roles = (response.roles ?? response.assignments ?? []).map(S3GatewayCredentialVaultRoleAssignment.from)
+    set(state => ({ roleAssignmentsByCredentialId: { ...state.roleAssignmentsByCredentialId, [credential.id]: roles } }))
+    return roles
+  },
+
+  async assignCredentialVaultRole(payload) {
+    const ws = useWebSocketStore.getState()
+    await ws.waitForConnection()
+    set({ saving: true, error: null })
+    try {
+      const response = await ws.sendCommand('s3.gateway.credentials.roles.assign', payload)
+      const assignment = S3GatewayCredentialVaultRoleAssignment.from(response.assignment)
+      set(state => ({
+        roleAssignmentsByCredentialId: {
+          ...state.roleAssignmentsByCredentialId,
+          [assignment.credential_id]: [
+            assignment,
+            ...(state.roleAssignmentsByCredentialId[assignment.credential_id] ?? []).filter(existing => existing.vault_id !== assignment.vault_id),
+          ],
+        },
+        saving: false,
+      }))
+      return assignment
+    } catch (error) {
+      set({ saving: false, error: errorMessage(error, 'Unable to assign S3 gateway credential vault role') })
+      throw error
+    }
+  },
+
+  async revokeCredentialVaultRole(payload) {
+    const ws = useWebSocketStore.getState()
+    await ws.waitForConnection()
+    set({ saving: true, error: null })
+    try {
+      const response = await ws.sendCommand('s3.gateway.credentials.roles.revoke', payload)
+      const credential = S3GatewayCredential.from(response.credential)
+      const vaultId = payload.vault_id ?? response.vault?.id ?? 0
+      set(state => {
+        const nextAssignments = (state.roleAssignmentsByCredentialId[credential.id] ?? []).filter(assignment => assignment.vault_id !== vaultId)
+        const nextOverrides = { ...state.roleOverridesByCredentialVault }
+        if (vaultId) delete nextOverrides[credentialVaultKey(credential.id, vaultId)]
+        return {
+          roleAssignmentsByCredentialId: { ...state.roleAssignmentsByCredentialId, [credential.id]: nextAssignments },
+          roleOverridesByCredentialVault: nextOverrides,
+          saving: false,
+        }
+      })
+      return response.revoked
+    } catch (error) {
+      set({ saving: false, error: errorMessage(error, 'Unable to revoke S3 gateway credential vault role') })
+      throw error
+    }
+  },
+
+  async fetchCredentialVaultRoleOverrides(payload) {
+    const ws = useWebSocketStore.getState()
+    await ws.waitForConnection()
+    const response = await ws.sendCommand('s3.gateway.credentials.roles.overrides.list', payload)
+    const credential = S3GatewayCredential.from(response.credential)
+    const vaultId = payload.vault_id ?? response.vault?.id ?? 0
+    const overrides = response.overrides.map(S3GatewayCredentialVaultRoleOverride.from)
+    set(state => ({
+      roleOverridesByCredentialVault: {
+        ...state.roleOverridesByCredentialVault,
+        [credentialVaultKey(credential.id, vaultId)]: overrides,
+      },
+    }))
+    return overrides
+  },
+
+  async addCredentialVaultRoleOverride(payload) {
+    const ws = useWebSocketStore.getState()
+    await ws.waitForConnection()
+    set({ saving: true, error: null })
+    try {
+      const response = await ws.sendCommand('s3.gateway.credentials.roles.overrides.add', payload)
+      const override = S3GatewayCredentialVaultRoleOverride.from(response.override)
+      set(state => {
+        const key = credentialVaultKey(override.credential_id, override.vault_id)
+        return {
+          roleOverridesByCredentialVault: {
+            ...state.roleOverridesByCredentialVault,
+            [key]: [override, ...(state.roleOverridesByCredentialVault[key] ?? []).filter(existing => existing.id !== override.id)],
+          },
+          saving: false,
+        }
+      })
+      return override
+    } catch (error) {
+      set({ saving: false, error: errorMessage(error, 'Unable to add S3 gateway credential role override') })
+      throw error
+    }
+  },
+
+  async removeCredentialVaultRoleOverride(payload) {
+    const ws = useWebSocketStore.getState()
+    await ws.waitForConnection()
+    set({ saving: true, error: null })
+    try {
+      const response = await ws.sendCommand('s3.gateway.credentials.roles.overrides.remove', payload)
+      const credential = S3GatewayCredential.from(response.credential)
+      const vaultId = payload.vault_id ?? response.vault?.id ?? 0
+      const overrideId = payload.override_id ?? payload.id ?? 0
+      set(state => {
+        const key = credentialVaultKey(credential.id, vaultId)
+        return {
+          roleOverridesByCredentialVault: {
+            ...state.roleOverridesByCredentialVault,
+            [key]: (state.roleOverridesByCredentialVault[key] ?? []).filter(override => override.id !== overrideId),
+          },
+          saving: false,
+        }
+      })
+      return response.removed
+    } catch (error) {
+      set({ saving: false, error: errorMessage(error, 'Unable to remove S3 gateway credential role override') })
+      throw error
+    }
   },
 
   async fetchBuckets() {

@@ -15,6 +15,7 @@ import type { User } from '@/models/user'
 import { Vault } from '@/models/vaults'
 import { useAuthStore } from '@/stores/authStore'
 import { useS3GatewayStore } from '@/stores/s3GatewayStore'
+import { usePermStore } from '@/stores/usePermStore'
 import { useVaultStore } from '@/stores/vaultStore'
 import { useVaultRoleStore } from '@/stores/useVaultRoleStore'
 
@@ -22,7 +23,8 @@ export default function S3GatewayPage() {
   const {
     status,
     credentials,
-    scopesByCredentialId,
+    roleAssignmentsByCredentialId,
+    roleOverridesByCredentialVault,
     buckets,
     policies,
     ledger,
@@ -36,7 +38,12 @@ export default function S3GatewayPage() {
     createCredential,
     revokeCredential,
     updateCredentialScope,
-    fetchCredentialScopes,
+    fetchCredentialRoleAssignments,
+    assignCredentialVaultRole,
+    revokeCredentialVaultRole,
+    fetchCredentialVaultRoleOverrides,
+    addCredentialVaultRoleOverride,
+    removeCredentialVaultRoleOverride,
     fetchBuckets,
     bindBucket,
     unbindBucket,
@@ -51,6 +58,7 @@ export default function S3GatewayPage() {
   } = useS3GatewayStore()
   const { vaults, fetchVaults } = useVaultStore()
   const { vaultRoles, fetchVaultRoles } = useVaultRoleStore()
+  const { permissions, fetchPermissions } = usePermStore()
   const currentUser = useAuthStore(state => state.user)
   const [selectedCredentialId, setSelectedCredentialId] = useState<number | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
@@ -60,9 +68,9 @@ export default function S3GatewayPage() {
     () => credentials.find(item => item.id === selectedCredentialId) ?? credentials[0] ?? null,
     [credentials, selectedCredentialId],
   )
-  const selectedScopes = useMemo(
-    () => (selectedCredential ? scopesByCredentialId[selectedCredential.id] ?? [] : []),
-    [scopesByCredentialId, selectedCredential],
+  const selectedRoleAssignments = useMemo(
+    () => (selectedCredential ? roleAssignmentsByCredentialId[selectedCredential.id] ?? [] : []),
+    [roleAssignmentsByCredentialId, selectedCredential],
   )
   const gatewayVaults = useMemo(() => {
     const byId = new Map<number, Vault>()
@@ -96,16 +104,17 @@ export default function S3GatewayPage() {
       fetchBudgetStatus({ limit: 25 }),
       fetchVaults(),
       fetchVaultRoles(),
+      fetchPermissions(),
     ]).catch(() => undefined)
-  }, [fetchBuckets, fetchBudgetStatus, fetchCredentials, fetchLedger, fetchPolicies, fetchStatus, fetchVaultRoles, fetchVaults])
+  }, [fetchBuckets, fetchBudgetStatus, fetchCredentials, fetchLedger, fetchPermissions, fetchPolicies, fetchStatus, fetchVaultRoles, fetchVaults])
 
   useEffect(() => {
     if (!selectedCredential) return
-    void fetchCredentialScopes({ access_key: selectedCredential.access_key }).catch(() => undefined)
+    void fetchCredentialRoleAssignments({ credential_id: selectedCredential.id }).catch(() => undefined)
     void fetchPolicies({ gateway_credential_id: selectedCredential.id, include_inactive: true }).catch(() => undefined)
     void fetchLedger({ gateway_credential_id: selectedCredential.id, limit: 25 }).catch(() => undefined)
     void fetchBudgetStatus({ gateway_credential_id: selectedCredential.id, limit: 25 }).catch(() => undefined)
-  }, [selectedCredential, fetchBudgetStatus, fetchCredentialScopes, fetchLedger, fetchPolicies])
+  }, [selectedCredential, fetchBudgetStatus, fetchCredentialRoleAssignments, fetchLedger, fetchPolicies])
 
   useEffect(() => {
     if (!canAssignPrincipal) {
@@ -133,6 +142,7 @@ export default function S3GatewayPage() {
       fetchBudgetStatus(selectedCredential ? { gateway_credential_id: selectedCredential.id, limit: 25 } : { limit: 25 }),
       fetchVaults(),
       fetchVaultRoles(),
+      fetchPermissions(),
     ])
   }
 
@@ -169,19 +179,24 @@ export default function S3GatewayPage() {
           users={assignableUsers}
           currentUser={currentUser}
           canAssignPrincipal={canAssignPrincipal}
-          vaultRoles={vaultRoles}
-          vaults={gatewayVaults}
           onClose={() => setCreateOpen(false)}
           onCreate={createCredential}
           onCreated={setSelectedCredentialId}
         />
         <ScopeEditor
           selectedCredential={selectedCredential}
-          selectedScopes={selectedScopes}
+          roleAssignments={selectedRoleAssignments}
+          roleOverridesByCredentialVault={roleOverridesByCredentialVault}
           vaultRoles={vaultRoles}
           vaults={gatewayVaults}
+          permissions={permissions}
           saving={saving}
           onSave={updateCredentialScope}
+          onAssignRole={assignCredentialVaultRole}
+          onRevokeRole={revokeCredentialVaultRole}
+          onFetchOverrides={fetchCredentialVaultRoleOverrides}
+          onAddOverride={addCredentialVaultRoleOverride}
+          onRemoveOverride={removeCredentialVaultRoleOverride}
         />
         <BucketsSection
           buckets={buckets}

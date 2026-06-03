@@ -2,17 +2,14 @@
 
 import { useState } from 'react'
 import PlusIcon from '@/fa-duotone/plus.svg'
-import type { VaultRole } from '@/models/role'
 import { S3GatewayCredential, S3GatewayCredentialCreatePayload, S3GatewayCredentialScopeMode } from '@/models/s3Gateway'
 import type { User } from '@/models/user'
-import type { Vault } from '@/models/vaults'
 import {
   buttonClass,
   fieldClass,
   primaryButtonClass,
   scopeLabel,
   scopeModes,
-  scopePayloadForRole,
 } from './shared'
 
 export function CredentialCreateModal({
@@ -21,8 +18,6 @@ export function CredentialCreateModal({
   users,
   currentUser,
   canAssignPrincipal,
-  vaultRoles,
-  vaults,
   onClose,
   onCreate,
   onCreated,
@@ -32,8 +27,6 @@ export function CredentialCreateModal({
   users: User[]
   currentUser: User | null
   canAssignPrincipal: boolean
-  vaultRoles: VaultRole[]
-  vaults: Vault[]
   onClose: () => void
   onCreate: (payload: S3GatewayCredentialCreatePayload) => Promise<{ credential: S3GatewayCredential; secret_access_key: string }>
   onCreated: (credentialId: number) => void
@@ -43,17 +36,9 @@ export function CredentialCreateModal({
   const [newScopeMode, setNewScopeMode] = useState<S3GatewayCredentialScopeMode>('user_access')
   const [newDescription, setNewDescription] = useState('')
   const [newExpiresDays, setNewExpiresDays] = useState('')
-  const [newVaultIds, setNewVaultIds] = useState<number[]>([])
-  const [newRoleName, setNewRoleName] = useState('reader')
   const [enforceLocalBudget, setEnforceLocalBudget] = useState(false)
 
   if (!open) return null
-
-  const buildNewVaultScopes = () => (
-    newScopeMode === 'vault_allowlist'
-      ? newVaultIds.map(vault_id => ({ vault_id, ...scopePayloadForRole(vaultRoles.find(role => role.name === newRoleName)) }))
-      : []
-  )
 
   const submitCreate = async () => {
     const expires = Number(newExpiresDays)
@@ -67,7 +52,6 @@ export function CredentialCreateModal({
       scope_mode: newScopeMode,
       description: newDescription.trim() || null,
       expires_at,
-      vault_scopes: buildNewVaultScopes(),
       enforce_budget_for_local_requests: enforceLocalBudget,
     })
     onCreated(result.credential.id)
@@ -76,8 +60,6 @@ export function CredentialCreateModal({
     setNewPrincipalId('')
     setNewDescription('')
     setNewExpiresDays('')
-    setNewVaultIds([])
-    setNewRoleName('reader')
     setEnforceLocalBudget(false)
   }
 
@@ -145,29 +127,8 @@ export function CredentialCreateModal({
         </div>
 
         {newScopeMode === 'vault_allowlist' && (
-          <div className="mt-4 space-y-3">
-            <label className="flex max-w-sm flex-col gap-1 text-xs text-white/60">
-              Vault role
-              <select className={fieldClass} data-testid="s3-gateway-create-role-select" value={newRoleName} onChange={event => setNewRoleName(event.target.value)}>
-                {vaultRoles.length ? vaultRoles.map(role => <option key={role.id} value={role.name}>{role.name}</option>) : <option value="reader">reader</option>}
-              </select>
-            </label>
-            <div className="grid gap-2 md:grid-cols-3">
-              {vaults.map(vault => (
-                <label key={vault.id} className="flex min-h-10 items-center gap-2 rounded border border-white/10 bg-white/[0.03] px-3 text-sm text-white/75">
-                  <input
-                    className="h-4 w-4 accent-cyan-400"
-                    data-testid="s3-gateway-create-vault-checkbox"
-                    type="checkbox"
-                    checked={newVaultIds.includes(vault.id)}
-                    onChange={event => {
-                      setNewVaultIds(ids => event.target.checked ? [...ids, vault.id] : ids.filter(id => id !== vault.id))
-                    }}
-                  />
-                  {vault.name} <span className="text-white/35">#{vault.id}</span>
-                </label>
-              ))}
-            </div>
+          <div className="mt-4 rounded border border-amber-300/20 bg-amber-400/10 p-3 text-sm text-amber-50">
+            Create the credential, then assign at least one vault role in the credential role editor.
           </div>
         )}
 

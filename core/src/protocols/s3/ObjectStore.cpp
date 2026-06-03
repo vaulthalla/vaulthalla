@@ -238,7 +238,7 @@ std::vector<db::query::s3::BucketBinding> ObjectStore::listBuckets(const AuthCon
 
         auto bucket = resolvedFromBinding(binding, std::move(engine), auth.user, accessFromAuth(auth));
         try {
-            requirePermission(bucket, "/", Action::List);
+            requireS3Permission(bucket, "/", S3Action::ListBuckets);
             visible.push_back(binding);
         } catch (const S3Error& e) {
             if (e.code != "AccessDenied")
@@ -275,7 +275,7 @@ std::vector<db::query::s3::BucketBinding> ObjectStore::listBuckets(const std::sh
         auto bucket = resolvedFromBinding(binding, std::move(engine), actor, std::nullopt);
 
         try {
-            requirePermission(bucket, "/", Action::List);
+            requireS3Permission(bucket, "/", S3Action::ListBuckets);
             visible.push_back(binding);
         } catch (const S3Error& e) {
             if (e.code != "AccessDenied")
@@ -315,13 +315,13 @@ ResolvedBucket ObjectStore::resolveBucket(const std::string& bucket, const std::
 
 ResolvedBucket ObjectStore::headBucket(const std::string& bucket, const AuthContext& auth) const {
     auto out = resolveBucket(bucket, auth);
-    requirePermission(out, "/", Action::List);
+    requireS3Permission(out, "/", S3Action::HeadBucket);
     return out;
 }
 
 ResolvedBucket ObjectStore::headBucket(const std::string& bucket, const std::shared_ptr<identities::User>& actor) const {
     auto out = resolveBucket(bucket, actor);
-    requirePermission(out, "/", Action::List);
+    requireS3Permission(out, "/", S3Action::HeadBucket);
     return out;
 }
 
@@ -427,7 +427,7 @@ db::query::s3::ObjectListResult ObjectStore::listObjects(
 db::query::s3::ObjectListResult ObjectStore::listObjectsFromVaulthallaMetadata(
     const ResolvedBucket& bucket,
     const db::query::s3::ObjectListParams& params) const {
-    requirePermission(bucket, "/", Action::List);
+    requireS3Permission(bucket, "/", S3Action::ListObjects);
     if (isRemoteBacked(bucket))
         backfillRemoteObjectState(bucket);
     else
@@ -490,7 +490,7 @@ bool ObjectStore::remoteIndexStale(const ResolvedBucket& bucket) const {
 
 db::query::s3::ObjectState ObjectStore::headObject(const ResolvedBucket& bucket, const std::string& key) const {
     const auto vaultPath = keyToVaultPath(key);
-    requirePermission(bucket, vaultPath, Action::Read);
+    requireS3Permission(bucket, vaultPath, S3Action::HeadObject);
 
     if (auto state = db::query::s3::Gateway::getObjectState(bucket.vault_id, vaultPathToKey(vaultPath)))
         return *state;
@@ -511,6 +511,7 @@ ObjectBody ObjectStore::getObject(
     const std::string& key,
     const std::optional<ByteRange> range) const {
     const auto vaultPath = keyToVaultPath(key);
+    requireS3Permission(bucket, vaultPath, S3Action::GetObject);
     auto state = headObject(bucket, key);
     auto metadata = db::query::s3::Gateway::listObjectMetadata(bucket.vault_id, vaultPathToKey(vaultPath));
 
@@ -580,7 +581,7 @@ db::query::s3::ObjectState ObjectStore::putObject(
     const std::vector<uint8_t>& body,
     const PutObjectOptions& options) const {
     const auto vaultPath = keyToVaultPath(key);
-    requirePermission(bucket, vaultPath, Action::Write);
+    requireS3Permission(bucket, vaultPath, S3Action::PutObject);
 
     const auto etag = options.etag_override.value_or(quoted(md5Hex(body)));
     const auto objectKey = vaultPathToKey(vaultPath);
@@ -625,7 +626,7 @@ db::query::s3::ObjectState ObjectStore::putObjectFromFile(
     const uint64_t sourceSize,
     const PutObjectOptions& options) const {
     const auto vaultPath = keyToVaultPath(key);
-    requirePermission(bucket, vaultPath, Action::Write);
+    requireS3Permission(bucket, vaultPath, S3Action::PutObject);
 
     if (!std::filesystem::exists(sourcePath) || !std::filesystem::is_regular_file(sourcePath))
         throw invalidArgument("Object source file is unavailable", sourcePath.string());
@@ -692,7 +693,7 @@ db::query::s3::ObjectState ObjectStore::copyObject(
 
 void ObjectStore::deleteObject(const ResolvedBucket& bucket, const std::string& key) const {
     const auto vaultPath = keyToVaultPath(key);
-    requirePermission(bucket, vaultPath, Action::Delete);
+    requireS3Permission(bucket, vaultPath, S3Action::DeleteObject);
     const auto objectKey = vaultPathToKey(vaultPath);
 
     if (isRemoteBacked(bucket)) backfillRemoteObjectState(bucket);
@@ -816,6 +817,14 @@ void ObjectStore::requireObjectPermission(
     requirePermission(bucket, keyToVaultPath(key), action);
 }
 
+void ObjectStore::requireS3Permission(
+    const ResolvedBucket& bucket,
+    const AuthContext&,
+    const rbac::s3::policy::S3Action action,
+    const std::string& key) const {
+    requireS3Permission(bucket, key.empty() ? std::filesystem::path{"/"} : keyToVaultPath(key), action);
+}
+
 void ObjectStore::requireBucketPermission(
     const ResolvedBucket& bucket,
     const rbac::permission::vault::FilesystemAction action) const {
@@ -855,13 +864,25 @@ void ObjectStore::requirePermission(
     const ResolvedBucket& bucket,
     const std::filesystem::path& vaultPath,
     const rbac::permission::vault::FilesystemAction action) {
+    requireS3Permission(bucket, vaultPath, s3ActionForFilesystemAction(action));
+}
+
+void ObjectStore::requireS3Permission(
+    const ResolvedBucket& bucket,
+    const std::filesystem::path& vaultPath,
+    const rbac::s3::policy::S3Action action) {
     const auto fusePath = bucket.engine->vaultPathToFusePath(makeAbsolute(vaultPath));
+    const auto absoluteVaultPath = makeAbsolute(vaultPath);
+    const auto objectExists = objectExistsInBucket(bucket, absoluteVaultPath);
+    const auto isDirectory = absoluteVaultPath == std::filesystem::path{"/"} || isDirectoryMarker(vaultPath.generic_string());
+
     if (!bucket.gateway_access) {
-        requireRbacPermission(bucket, vaultPath, action);
+        const auto fsAction = rbac::s3::policy::Evaluator::filesystemActionFor(action, objectExists, isDirectory);
+        if (!fsAction) throw accessDenied(fusePath.string());
+        requireRbacPermission(bucket, vaultPath, *fsAction);
         return;
     }
 
-    const auto absoluteVaultPath = makeAbsolute(vaultPath);
     const auto decision = rbac::s3::policy::Evaluator::evaluate({
         .principal = bucket.actor,
         .credential_id = bucket.gateway_access->dev_context ? 0u : bucket.gateway_access->credential_id,
@@ -869,9 +890,9 @@ void ObjectStore::requirePermission(
         .vault_id = bucket.vault_id,
         .vault_path = absoluteVaultPath,
         .fuse_path = fusePath,
-        .action = s3ActionForFilesystemAction(action),
-        .object_exists = objectExistsInBucket(bucket, absoluteVaultPath),
-        .is_directory_marker = absoluteVaultPath == std::filesystem::path{"/"},
+        .action = action,
+        .object_exists = objectExists,
+        .is_directory_marker = isDirectory,
         .target_user_id = std::nullopt
     });
     if (!decision.allowed) throw accessDenied(fusePath.string());

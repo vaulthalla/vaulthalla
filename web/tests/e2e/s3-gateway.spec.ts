@@ -1,11 +1,15 @@
 import { expect, test } from '@playwright/test'
 import { authStatePath, authenticateAndSaveState, explicitSkipRequested } from './helpers/auth'
 import {
+  addCredentialOverride,
+  assignVaultRole,
   createCredential,
   createLocalBucket,
   ensureVaultAvailable,
   gotoS3Gateway,
   hideSecret,
+  removeCredentialOverride,
+  revokeVaultRole,
   saveKeyBudget,
   saveKeyVaultBudget,
   selectCredential,
@@ -50,15 +54,33 @@ test('admin can create a user_access credential and hide the secret', async ({ p
   await expect(page.getByTestId('s3-gateway-credential-name').filter({ hasText: userAccessCredential })).toBeVisible()
 })
 
-test('admin can create a vault_allowlist credential and see scope rows', async ({ page }) => {
+test('admin manages vault_allowlist roles and overrides through role-native editor', async ({ page }) => {
   await gotoS3Gateway(page)
   const vaultName = await ensureVaultAvailable(page)
   vaultAllowCredential = uniqueE2EName('pw-vault-allow')
-  await createCredential(page, vaultAllowCredential, 'vault_allowlist', vaultName)
+  await createCredential(page, vaultAllowCredential)
   await hideSecret(page)
   await selectCredential(page, vaultAllowCredential)
+
+  await page.getByTestId('s3-gateway-scope-editor-scope-select').selectOption('vault_allowlist')
+  await page.getByTestId('s3-gateway-scope-save').click()
   await expect(page.getByTestId('s3-gateway-scope-editor-scope-select')).toHaveValue('vault_allowlist')
-  await expect(page.getByTestId('s3-gateway-scope-row').first()).toBeVisible()
+  await expect(page.getByTestId('s3-gateway-vault-allowlist-empty')).toContainText(/assign at least one vault role/i)
+
+  await assignVaultRole(page, vaultName, 'reader')
+  await addCredentialOverride(page, vaultName)
+  await removeCredentialOverride(page)
+  await revokeVaultRole(page, vaultName)
+})
+
+test('credential create modal uses relational principal selector', async ({ page }) => {
+  await gotoS3Gateway(page)
+  await page.getByTestId('s3-gateway-open-create-credential').click()
+  await expect(page.getByTestId('s3-gateway-create-credential-modal')).toBeVisible()
+  const selector = page.getByTestId('s3-gateway-credential-principal-select')
+  await expect(selector).toBeVisible()
+  await expect(page.getByTestId('s3-gateway-create-credential-modal').locator('input[name="principal_user_id"]')).toHaveCount(0)
+  await page.getByRole('button', { name: /^close$/i }).click()
 })
 
 test('admin can create a local gateway bucket', async ({ page }) => {

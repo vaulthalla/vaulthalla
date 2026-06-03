@@ -17,6 +17,7 @@
 #include "protocols/shell/commands/vault.hpp"
 #include "protocols/shell/util/argsHelpers.hpp"
 #include "rbac/permission/admin/Vaults.hpp"
+#include "rbac/permission/admin/S3Gateway.hpp"
 #include "rbac/permission/vault/Roles.hpp"
 #include "rbac/resolver/admin/all.hpp"
 #include "rbac/resolver/vault/all.hpp"
@@ -91,7 +92,10 @@ std::optional<std::time_t> parseExpiresAt(const CommandCall& call) {
 std::optional<db::query::s3::GatewayCredential> resolveCredentialForCaller(
     const CommandCall& call,
     const std::string& value) {
-    const auto credentials = call.user->isAdmin()
+    const auto credentials = ::vh::rbac::resolver::Admin::has<::vh::rbac::permission::admin::S3GatewayPermissions>({
+            .user = call.user,
+            .permission = ::vh::rbac::permission::admin::S3GatewayPermissions::ManageCredentials
+        })
         ? db::query::s3::Gateway::listCredentialsAdmin(true)
         : db::query::s3::Gateway::listCredentialsForPrincipal(call.user->id);
     for (const auto& credential : credentials) {
@@ -119,6 +123,48 @@ bool callerOwnsCredential(const CommandCall& call, const std::uint32_t credentia
     return std::ranges::any_of(owned, [&](const auto& credential) {
         return credential.id == credentialId;
     });
+}
+
+bool hasGatewayPermission(
+    const CommandCall& call,
+    const ::vh::rbac::permission::admin::S3GatewayPermissions permission) {
+    if (!call.user) return false;
+    if (call.user->isSuperAdmin()) return true;
+    using Perm = ::vh::rbac::permission::admin::S3GatewayPermissions;
+    return ::vh::rbac::resolver::Admin::has<Perm>({
+        .user = call.user,
+        .permission = permission
+    });
+}
+
+std::optional<CommandResult> requireGatewayPermissionCommand(
+    const CommandCall& call,
+    const ::vh::rbac::permission::admin::S3GatewayPermissions permission,
+    const std::string& action) {
+    if (!hasGatewayPermission(call, permission))
+        return invalid("s3-gateway " + action + ": admin.s3_gateway permission is required");
+    return std::nullopt;
+}
+
+bool canManageGatewayCredentials(const CommandCall& call) {
+    return hasGatewayPermission(call, ::vh::rbac::permission::admin::S3GatewayPermissions::ManageCredentials);
+}
+
+bool canAssignGatewayPrincipal(const CommandCall& call) {
+    return hasGatewayPermission(call, ::vh::rbac::permission::admin::S3GatewayPermissions::AssignPrincipal);
+}
+
+bool canManageGatewayBuckets(const CommandCall& call) {
+    return hasGatewayPermission(call, ::vh::rbac::permission::admin::S3GatewayPermissions::ManageBuckets);
+}
+
+bool canManageGatewayBudgets(const CommandCall& call) {
+    return hasGatewayPermission(call, ::vh::rbac::permission::admin::S3GatewayPermissions::ManageBudgets);
+}
+
+bool canViewGatewayBudgets(const CommandCall& call) {
+    return canManageGatewayBudgets(call) ||
+        hasGatewayPermission(call, ::vh::rbac::permission::admin::S3GatewayPermissions::View);
 }
 
 std::shared_ptr<::vh::vault::model::Vault> resolveVaultArg(const CommandCall& call, const std::string& value);
@@ -180,6 +226,8 @@ std::optional<CommandResult> requireGatewayCredentialVaultRolePermission(
     const uint32_t vaultId,
     const ::vh::rbac::permission::vault::RolePermissions permission,
     const std::string& action) {
+    if (credential.principal_user_id != call.user->id && !canAssignGatewayPrincipal(call))
+        return invalid("s3-gateway creds role " + action + ": admin.s3_gateway.assign_principal is required for another principal");
     if (!::vh::rbac::resolver::Vault::has<::vh::rbac::permission::vault::RolePermissions>({
         .user = call.user,
         .permission = permission,
@@ -300,8 +348,6 @@ std::shared_ptr<identities::User> resolveTargetUser(const CommandCall& call) {
     if (!userOpt || userOpt->empty()) return call.user;
     auto target = resolveUser(*userOpt, "s3-gateway");
     if (!target) throw std::runtime_error(target.error);
-    if (!call.user->isAdmin() && target.ptr->id != call.user->id)
-        throw std::runtime_error("s3-gateway: only admins can target another user");
     return target.ptr;
 }
 
@@ -333,7 +379,13 @@ std::shared_ptr<::vh::vault::model::APIKey> resolveUpstreamApiKey(const std::str
 
 void requireVaultOwnerOrAdmin(const CommandCall& call, const std::shared_ptr<::vh::vault::model::Vault>& vault) {
     if (!vault) throw std::runtime_error("s3-gateway: vault not found");
-    if (!call.user->isAdmin() && vault->owner_id != call.user->id)
+    if (vault->owner_id == call.user->id) return;
+    using Perm = vh::rbac::permission::admin::VaultPermissions;
+    if (!vh::rbac::resolver::Admin::has<Perm>({
+            .user = call.user,
+            .permission = Perm::Edit,
+            .vault_id = vault->id
+        }))
         throw std::runtime_error("s3-gateway: you do not have permission to manage this vault binding");
 }
 
@@ -406,9 +458,10 @@ CommandResult saveConfigAndRestart(config::Config cfg, const std::string& messag
 }
 
 std::optional<CommandResult> requireAdminCommand(const CommandCall& call, const std::string& action) {
-    if (!call.user || !call.user->isAdmin())
-        return invalid("s3-gateway " + action + ": admin permission is required");
-    return std::nullopt;
+    return requireGatewayPermissionCommand(
+        call,
+        ::vh::rbac::permission::admin::S3GatewayPermissions::View,
+        action);
 }
 
 bool canCreateVaultForOwner(const CommandCall& call, const std::uint32_t ownerId) {
@@ -439,14 +492,20 @@ CommandResult handleS3GatewayStatus(const CommandCall& call) {
 }
 
 CommandResult handleEnable(const CommandCall& call) {
-    if (auto adminError = requireAdminCommand(call, "enable")) return *adminError;
+    if (auto adminError = requireGatewayPermissionCommand(
+            call,
+            ::vh::rbac::permission::admin::S3GatewayPermissions::ManageService,
+            "enable")) return *adminError;
     auto cfg = config::Registry::get();
     cfg.s3_gateway.enabled = true;
     return saveConfigAndRestart(cfg, "S3 gateway enabled.\n");
 }
 
 CommandResult handleDisable(const CommandCall& call) {
-    if (auto adminError = requireAdminCommand(call, "disable")) return *adminError;
+    if (auto adminError = requireGatewayPermissionCommand(
+            call,
+            ::vh::rbac::permission::admin::S3GatewayPermissions::ManageService,
+            "disable")) return *adminError;
     auto cfg = config::Registry::get();
     cfg.s3_gateway.enabled = false;
     return saveConfigAndRestart(cfg, "S3 gateway disabled.\n");
@@ -455,6 +514,8 @@ CommandResult handleDisable(const CommandCall& call) {
 CommandResult handleCredsCreate(const CommandCall& call) {
     if (call.positionals.empty()) return usage(call.constructFullArgs());
     const auto user = resolveTargetUser(call);
+    if (user->id != call.user->id && !canAssignGatewayPrincipal(call))
+        return invalid("s3-gateway creds create: admin.s3_gateway.assign_principal is required");
     const protocols::s3::CredentialManager manager;
     protocols::s3::CredentialCreateOptions options;
     options.created_by = call.user->id;
@@ -467,6 +528,8 @@ CommandResult handleCredsCreate(const CommandCall& call) {
     options.enforce_budget_for_local_requests = hasFlag(call, "enforce-budget-for-local-requests");
     if (!options.vault_scopes.empty() && options.scope_mode == "user_access")
         options.scope_mode = "vault_allowlist";
+    if (options.scope_mode == "global" && !canManageGatewayCredentials(call))
+        return invalid("s3-gateway creds create: admin.s3_gateway.manage_credentials is required for global credentials");
     const auto secret = manager.createCredential(options);
 
     if (hasFlag(call, "json")) {
@@ -492,12 +555,16 @@ CommandResult handleCredsCreate(const CommandCall& call) {
     out << "  count local/cache budget usage: " << yesNo(secret.credential.enforce_budget_for_local_requests) << "\n";
     out << "  access key: " << secret.credential.access_key << "\n";
     out << "  secret access key: " << secret.secret_access_key << "\n";
+    if (!options.vault_scopes.empty())
+        out << "  warning: Boolean scope flags are compatibility shorthand. Gateway authorization uses vault roles.\n";
     out << "store the secret now; it cannot be listed again.\n";
     return ok(out.str());
 }
 
 CommandResult handleCredsList(const CommandCall& call) {
     const auto user = resolveTargetUser(call);
+    if (user->id != call.user->id && !canManageGatewayCredentials(call))
+        return invalid("s3-gateway creds list: admin.s3_gateway.manage_credentials is required to list another principal's credentials");
     const auto creds = db::query::s3::Gateway::listCredentials(user->id);
 
     if (hasFlag(call, "json")) {
@@ -578,7 +645,7 @@ CommandResult handleCredsScope(const CommandCall& call) {
     if (call.positionals.size() < 2) return usage(call.constructFullArgs());
     const auto credential = resolveCredentialForCaller(call, call.positionals[0]);
     if (!credential) return invalid("s3-gateway creds scope: credential not found");
-    if (!call.user->isAdmin() && credential->principal_user_id != call.user->id)
+    if (credential->principal_user_id != call.user->id && !canManageGatewayCredentials(call))
         return invalid("s3-gateway creds scope: permission denied");
 
     const auto action = call.positionals[1];
@@ -622,14 +689,14 @@ CommandResult handleCredsScope(const CommandCall& call) {
         const auto scopeMode = scopeOpt && !scopeOpt->empty()
             ? normalizeScopeMode(*scopeOpt)
             : credential->scope_mode;
-        if (scopeMode == "global" && !call.user->isAdmin())
-            return invalid("s3-gateway creds scope set: global scope requires admin permission");
+        if (scopeMode == "global" && !canManageGatewayCredentials(call))
+            return invalid("s3-gateway creds scope set: admin.s3_gateway.manage_credentials is required for global scope");
         auto principalUserId = credential->principal_user_id;
         if (const auto userOpt = optVal(call, "user"); userOpt && !userOpt->empty()) {
             auto target = resolveUser(*userOpt, "s3-gateway creds scope set");
             if (!target) return invalid(target.error);
-            if (!call.user->isAdmin() && target.ptr->id != call.user->id)
-                return invalid("s3-gateway creds scope set: only admins can retarget another user");
+            if (target.ptr->id != call.user->id && !canAssignGatewayPrincipal(call))
+                return invalid("s3-gateway creds scope set: admin.s3_gateway.assign_principal is required");
             principalUserId = target.ptr->id;
         }
         const auto description = hasKey(call, "description")
@@ -681,7 +748,7 @@ CommandResult handleCredsScope(const CommandCall& call) {
             .can_read = hasFlag(call, "read") || (!hasFlag(call, "write") && !hasFlag(call, "delete") && !hasFlag(call, "admin")),
             .can_write = hasFlag(call, "write"),
             .can_delete = hasFlag(call, "delete"),
-            .can_admin = call.user->isAdmin() && hasFlag(call, "admin")
+            .can_admin = canManageGatewayCredentials(call) && hasFlag(call, "admin")
         });
         try {
             protocols::s3::CredentialManager::validateScopeMutation(
@@ -700,7 +767,7 @@ CommandResult handleCredsScope(const CommandCall& call) {
             credential->description,
             credential->expires_at);
         db::query::s3::Gateway::replaceCredentialScopes(credential->id, scopes);
-        return ok("S3 gateway credential vault scope added.\n");
+        return ok("S3 gateway credential vault scope added.\nBoolean scope flags are compatibility shorthand. Gateway authorization uses vault roles.\n");
     }
 
     if (action == "revoke-vault") {
@@ -765,7 +832,7 @@ CommandResult handleCredsRoleList(const CommandCall& call) {
     if (call.positionals.empty()) return usage(call.constructFullArgs());
     const auto credential = resolveCredentialForCaller(call, call.positionals[0]);
     if (!credential) return invalid("s3-gateway creds role list: credential not found");
-    if (!call.user->isAdmin() && credential->principal_user_id != call.user->id)
+    if (credential->principal_user_id != call.user->id && !canManageGatewayCredentials(call))
         return invalid("s3-gateway creds role list: permission denied");
 
     const auto assignments = db::query::s3::Gateway::listCredentialVaultRoleAssignments(credential->id);
@@ -799,7 +866,7 @@ CommandResult handleCredsRoleAssign(const CommandCall& call) {
     if (call.positionals.empty()) return usage(call.constructFullArgs());
     const auto credential = resolveCredentialForCaller(call, call.positionals[0]);
     if (!credential) return invalid("s3-gateway creds role assign: credential not found");
-    if (!call.user->isAdmin() && credential->principal_user_id != call.user->id)
+    if (credential->principal_user_id != call.user->id && !canManageGatewayCredentials(call))
         return invalid("s3-gateway creds role assign: permission denied");
 
     const auto vaultValue = optVal(call, "vault").value_or("");
@@ -854,7 +921,7 @@ CommandResult handleCredsRoleRevoke(const CommandCall& call) {
     if (call.positionals.empty()) return usage(call.constructFullArgs());
     const auto credential = resolveCredentialForCaller(call, call.positionals[0]);
     if (!credential) return invalid("s3-gateway creds role revoke: credential not found");
-    if (!call.user->isAdmin() && credential->principal_user_id != call.user->id)
+    if (credential->principal_user_id != call.user->id && !canManageGatewayCredentials(call))
         return invalid("s3-gateway creds role revoke: permission denied");
 
     const auto vaultValue = optVal(call, "vault").value_or("");
@@ -887,7 +954,7 @@ CommandResult handleCredsRoleOverrideList(const CommandCall& call) {
     if (call.positionals.empty()) return usage(call.constructFullArgs());
     const auto credential = resolveCredentialForCaller(call, call.positionals[0]);
     if (!credential) return invalid("s3-gateway creds role override list: credential not found");
-    if (!call.user->isAdmin() && credential->principal_user_id != call.user->id)
+    if (credential->principal_user_id != call.user->id && !canManageGatewayCredentials(call))
         return invalid("s3-gateway creds role override list: permission denied");
 
     const auto vaultValue = optVal(call, "vault").value_or("");
@@ -916,7 +983,7 @@ CommandResult handleCredsRoleOverrideAdd(const CommandCall& call) {
     if (call.positionals.empty()) return usage(call.constructFullArgs());
     const auto credential = resolveCredentialForCaller(call, call.positionals[0]);
     if (!credential) return invalid("s3-gateway creds role override add: credential not found");
-    if (!call.user->isAdmin() && credential->principal_user_id != call.user->id)
+    if (credential->principal_user_id != call.user->id && !canManageGatewayCredentials(call))
         return invalid("s3-gateway creds role override add: permission denied");
 
     const auto vaultValue = optVal(call, "vault").value_or("");
@@ -972,7 +1039,7 @@ CommandResult handleCredsRoleOverrideRemove(const CommandCall& call) {
     if (call.positionals.empty()) return usage(call.constructFullArgs());
     const auto credential = resolveCredentialForCaller(call, call.positionals[0]);
     if (!credential) return invalid("s3-gateway creds role override remove: credential not found");
-    if (!call.user->isAdmin() && credential->principal_user_id != call.user->id)
+    if (credential->principal_user_id != call.user->id && !canManageGatewayCredentials(call))
         return invalid("s3-gateway creds role override remove: permission denied");
 
     const auto vaultValue = optVal(call, "vault").value_or("");
@@ -1069,6 +1136,10 @@ CommandResult handleBucketList(const CommandCall& call) {
 
 CommandResult handleBucketBind(const CommandCall& call) {
     if (call.positionals.empty()) return usage(call.constructFullArgs());
+    if (auto err = requireGatewayPermissionCommand(
+            call,
+            ::vh::rbac::permission::admin::S3GatewayPermissions::ManageBuckets,
+            "bucket bind")) return *err;
     const auto vaultOpt = optVal(call, "vault");
     if (!vaultOpt || vaultOpt->empty()) return invalid("s3-gateway bucket bind: --vault is required");
 
@@ -1088,6 +1159,10 @@ CommandResult handleBucketBind(const CommandCall& call) {
 
 CommandResult handleBucketUnbind(const CommandCall& call) {
     if (call.positionals.empty()) return usage(call.constructFullArgs());
+    if (auto err = requireGatewayPermissionCommand(
+            call,
+            ::vh::rbac::permission::admin::S3GatewayPermissions::ManageBuckets,
+            "bucket unbind")) return *err;
     const auto binding = db::query::s3::Gateway::resolveBucket(call.positionals[0]);
     if (!binding) return invalid("s3-gateway bucket unbind: bucket binding not found");
     const auto vault = db::query::vault::Vault::getVault(binding->vault_id);
@@ -1100,6 +1175,8 @@ CommandResult handleBucketUnbind(const CommandCall& call) {
 CommandResult handleBucketCreateLocal(const CommandCall& call) {
     if (call.positionals.empty()) return usage(call.constructFullArgs());
     auto owner = resolveTargetUser(call);
+    if (owner->id != call.user->id && !canManageGatewayBuckets(call))
+        return invalid("s3-gateway bucket create-local: admin.s3_gateway.manage_buckets is required for another owner");
     uintmax_t quota = 0;
     if (const auto quotaOpt = optVal(call, "quota"); quotaOpt && !quotaOpt->empty()) {
         ::vh::vault::model::Vault quotaParser;
@@ -1113,8 +1190,8 @@ CommandResult handleBucketCreateLocal(const CommandCall& call) {
 
 CommandResult handleBucketCreateRemoteCache(const CommandCall& call) {
     if (call.positionals.empty()) return usage(call.constructFullArgs());
-    if (!call.user->isAdmin())
-        return invalid("s3-gateway bucket create-remote-cache: admin permission is required");
+    if (!canManageGatewayBuckets(call))
+        return invalid("s3-gateway bucket create-remote-cache: admin.s3_gateway.manage_buckets is required");
     if (!canCreateVaultForOwner(call, call.user->id))
         return invalid("s3-gateway bucket create-remote-cache: vault create permission is required");
 
@@ -1168,6 +1245,10 @@ CommandResult handleBucketCreateRemoteCache(const CommandCall& call) {
 
 CommandResult handleBucketBackfill(const CommandCall& call) {
     if (call.positionals.empty()) return usage(call.constructFullArgs());
+    if (auto err = requireGatewayPermissionCommand(
+            call,
+            ::vh::rbac::permission::admin::S3GatewayPermissions::ManageBuckets,
+            "bucket backfill")) return *err;
     const auto bucketName = call.positionals[0];
     const auto binding = db::query::s3::Gateway::resolveBucket(bucketName);
     if (!binding) return invalid("s3-gateway bucket backfill: bucket binding not found");
@@ -1254,7 +1335,7 @@ void requireCanViewBudgetFilters(
     const CommandCall& call,
     const std::optional<std::uint32_t>& credentialId,
     const std::optional<std::uint32_t>& vaultId) {
-    if (call.user->isAdmin()) return;
+    if (canViewGatewayBudgets(call)) return;
     if (vaultId) {
         auto vault = db::query::vault::Vault::getVault(*vaultId);
         requireVaultOwnerOrAdmin(call, vault);
@@ -1281,7 +1362,7 @@ std::vector<storage::s3::pricing::PriceBudgetPolicy> gatewayBudgetPoliciesForCal
             if (policy.scope == storage::s3::pricing::PriceBudgetScope::GatewayCredential && !credentialId)
                 return true;
         }
-        if (!call.user->isAdmin() && policy.gateway_credential_id) {
+        if (!canViewGatewayBudgets(call) && policy.gateway_credential_id) {
             const auto ownsCredential = callerOwnsCredential(call, *policy.gateway_credential_id);
             if (policy.scope == storage::s3::pricing::PriceBudgetScope::GatewayCredential && !ownsCredential)
                 return true;
@@ -1330,8 +1411,8 @@ storage::s3::pricing::PriceBudgetPolicy gatewayBudgetPolicyFromCall(
 }
 
 CommandResult handleBudgetSetKey(const CommandCall& call) {
-    if (!call.user->isAdmin())
-        return invalid("s3-gateway budget set-key: admin permission is required for key-only budgets");
+    if (!canManageGatewayBudgets(call))
+        return invalid("s3-gateway budget set-key: admin.s3_gateway.manage_budgets is required for key-only budgets");
     if (call.positionals.empty()) return usage(call.constructFullArgs());
     const auto credential = resolveCredentialForCaller(call, call.positionals[0]);
     if (!credential) return invalid("s3-gateway budget set-key: credential not found");
@@ -1346,6 +1427,8 @@ CommandResult handleBudgetSetKey(const CommandCall& call) {
 
 CommandResult handleBudgetSetKeyVault(const CommandCall& call) {
     if (call.positionals.empty()) return usage(call.constructFullArgs());
+    if (!canManageGatewayBudgets(call))
+        return invalid("s3-gateway budget set-key-vault: admin.s3_gateway.manage_budgets is required");
     const auto vaultOpt = optVal(call, "vault");
     if (!vaultOpt || vaultOpt->empty()) return invalid("s3-gateway budget set-key-vault: --vault is required");
     const auto vault = resolveVaultArg(call, *vaultOpt);
@@ -1363,11 +1446,11 @@ CommandResult handleBudgetSetKeyVault(const CommandCall& call) {
 
 CommandResult handleGatewayBudgetList(const CommandCall& call) {
     const auto vaultId = optionalVaultFilter(call);
-    if (!call.user->isAdmin() && vaultId) {
+    if (!canViewGatewayBudgets(call) && vaultId) {
         auto vault = db::query::vault::Vault::getVault(*vaultId);
         requireVaultOwnerOrAdmin(call, vault);
     }
-    const auto credentialId = optionalCredentialFilter(call, call.user->isAdmin() || vaultId.has_value());
+    const auto credentialId = optionalCredentialFilter(call, canViewGatewayBudgets(call) || vaultId.has_value());
     requireCanViewBudgetFilters(call, credentialId, vaultId);
     auto policies = gatewayBudgetPoliciesForCall(call, credentialId, vaultId);
     if (hasFlag(call, "json")) return ok(nlohmann::json(policies).dump(4) + "\n");
@@ -1375,8 +1458,8 @@ CommandResult handleGatewayBudgetList(const CommandCall& call) {
 }
 
 CommandResult handleBudgetDisableKey(const CommandCall& call) {
-    if (!call.user->isAdmin())
-        return invalid("s3-gateway budget disable-key: admin permission is required for key-only budgets");
+    if (!canManageGatewayBudgets(call))
+        return invalid("s3-gateway budget disable-key: admin.s3_gateway.manage_budgets is required for key-only budgets");
     if (call.positionals.empty()) return usage(call.constructFullArgs());
     const auto credential = resolveCredentialForCaller(call, call.positionals[0]);
     if (!credential) return invalid("s3-gateway budget disable-key: credential not found");
@@ -1390,6 +1473,8 @@ CommandResult handleBudgetDisableKey(const CommandCall& call) {
 
 CommandResult handleBudgetDisableKeyVault(const CommandCall& call) {
     if (call.positionals.empty()) return usage(call.constructFullArgs());
+    if (!canManageGatewayBudgets(call))
+        return invalid("s3-gateway budget disable-key-vault: admin.s3_gateway.manage_budgets is required");
     const auto vaultOpt = optVal(call, "vault");
     if (!vaultOpt || vaultOpt->empty()) return invalid("s3-gateway budget disable-key-vault: --vault is required");
     const auto vault = resolveVaultArg(call, *vaultOpt);
@@ -1412,12 +1497,12 @@ CommandResult handleBudgetLedger(const CommandCall& call) {
         limit = *parsed;
     }
     const auto vaultId = optionalVaultFilter(call);
-    if (!call.user->isAdmin() && vaultId) {
+    if (!canViewGatewayBudgets(call) && vaultId) {
         auto vault = db::query::vault::Vault::getVault(*vaultId);
         requireVaultOwnerOrAdmin(call, vault);
     }
-    const auto credentialId = optionalCredentialFilter(call, call.user->isAdmin() || vaultId.has_value());
-    if (!call.user->isAdmin() && !vaultId && !credentialId)
+    const auto credentialId = optionalCredentialFilter(call, canViewGatewayBudgets(call) || vaultId.has_value());
+    if (!canViewGatewayBudgets(call) && !vaultId && !credentialId)
         return invalid("s3-gateway budget ledger: non-admin users must pass --key or --vault");
     auto ledger = storage::s3::pricing::PriceBudgetService{}.listLedger(
         limit,
@@ -1454,11 +1539,11 @@ CommandResult handleBudgetStatus(const CommandCall& call) {
         limit = *parsed;
     }
     const auto vaultId = optionalVaultFilter(call);
-    if (!call.user->isAdmin() && vaultId) {
+    if (!canViewGatewayBudgets(call) && vaultId) {
         auto vault = db::query::vault::Vault::getVault(*vaultId);
         requireVaultOwnerOrAdmin(call, vault);
     }
-    const auto credentialId = optionalCredentialFilter(call, call.user->isAdmin() || vaultId.has_value());
+    const auto credentialId = optionalCredentialFilter(call, canViewGatewayBudgets(call) || vaultId.has_value());
     requireCanViewBudgetFilters(call, credentialId, vaultId);
 
     const auto policies = gatewayBudgetPoliciesForCall(call, credentialId, vaultId);

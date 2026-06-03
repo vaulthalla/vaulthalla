@@ -15,6 +15,9 @@
 #include "protocols/ws/handler/S3Gateway.hpp"
 #include "protocols/ws/Router.hpp"
 #include "protocols/ws/Session.hpp"
+#include "rbac/fs/glob/model/Pattern.hpp"
+#include "rbac/permission/admin/S3Gateway.hpp"
+#include "rbac/s3/policy/Evaluator.hpp"
 #include "rbac/role/Admin.hpp"
 #include "runtime/Deps.hpp"
 #include "seed/include/init_db_tables.hpp"
@@ -155,8 +158,7 @@ void signS3GatewayRequest(
         "SignedHeaders=" + auth.signed_headers + ", Signature=" + auth.signature);
 }
 
-uint32_t ensureS3GatewayUnprivilegedAdminRole(pqxx::work& txn) {
-    const auto role = vh::rbac::role::Admin::None();
+uint32_t ensureS3GatewayAdminRole(pqxx::work& txn, const vh::rbac::role::Admin& role) {
     return txn.exec(
         R"SQL(
             INSERT INTO admin_role (
@@ -195,12 +197,16 @@ uint32_t ensureS3GatewayUnprivilegedAdminRole(pqxx::work& txn) {
         }).one_field().as<uint32_t>();
 }
 
-uint32_t insertS3GatewayHydratableTestUser(pqxx::work& txn, const std::string& name, const std::string& email) {
+uint32_t insertS3GatewayHydratableTestUser(
+    pqxx::work& txn,
+    const std::string& name,
+    const std::string& email,
+    const vh::rbac::role::Admin& role = vh::rbac::role::Admin::None()) {
     const auto userId = txn.exec(
         "INSERT INTO users (name, email, password_hash) VALUES ($1, $2, $3) RETURNING id",
         pqxx::params{name, email, "hash"}
     ).one_field().as<uint32_t>();
-    const auto roleId = ensureS3GatewayUnprivilegedAdminRole(txn);
+    const auto roleId = ensureS3GatewayAdminRole(txn, role);
     txn.exec(
         "INSERT INTO admin_role_assignments (user_id, role_id) VALUES ($1, $2)",
         pqxx::params{userId, roleId});
@@ -966,6 +972,134 @@ protected:
         vh::runtime::Deps::get().storageManager->initStorageEngines();
         return newVaultId;
     }
+
+    static uint32_t roleIdByName(const std::string& roleName) {
+        return vh::db::Transactions::exec("S3GatewayDbTest::roleIdByName", [&](pqxx::work& txn) {
+            const auto res = txn.exec(
+                "SELECT id FROM vault_role WHERE name = $1 LIMIT 1",
+                pqxx::params{roleName});
+            if (res.empty()) throw std::runtime_error("vault role not found: " + roleName);
+            return res.one_field().as<uint32_t>();
+        });
+    }
+
+    static uint32_t userWithAdminRole(const std::string& label, const vh::rbac::role::Admin& role) {
+        return vh::db::Transactions::exec("S3GatewayDbTest::userWithAdminRole", [&](pqxx::work& txn) {
+            return insertS3GatewayHydratableTestUser(
+                txn,
+                "s3_gateway_" + label + "_" + uniqueSuffix("user"),
+                "s3-gateway-" + label + "-" + uniqueSuffix("email") + "@vaulthalla.test",
+                role);
+        });
+    }
+
+    static vh::rbac::role::Admin adminRoleWithS3(
+        const std::string& label,
+        vh::rbac::permission::admin::S3Gateway s3Gateway,
+        vh::rbac::permission::admin::Vaults vaults = vh::rbac::permission::admin::Vaults::None(),
+        vh::rbac::permission::admin::Roles roles = vh::rbac::permission::admin::Roles::None()) {
+        auto roleName = "s3gw_" + label;
+        if (roleName.size() > 45) roleName.resize(45);
+        return vh::rbac::role::Admin::Custom(
+            roleName,
+            "S3 gateway test role",
+            vh::rbac::permission::admin::Identities::None(),
+            std::move(vaults),
+            vh::rbac::permission::admin::Audits::None(),
+            vh::rbac::permission::admin::Settings::None(),
+            std::move(roles),
+            vh::rbac::permission::admin::Keys::None(),
+            std::move(s3Gateway));
+    }
+
+    static std::shared_ptr<vh::protocols::ws::Session> wsSessionForUser(const uint32_t targetUserId) {
+        auto session = std::make_shared<vh::protocols::ws::Session>(
+            std::make_shared<vh::protocols::ws::Router>());
+        session->user = vh::db::query::identities::User::getUserById(targetUserId);
+        if (!session->user) throw std::runtime_error("test user not found");
+        return session;
+    }
+
+    static void assignPrincipalVaultRole(
+        const uint32_t targetVaultId,
+        const uint32_t targetUserId,
+        const std::string& roleName) {
+        vh::db::Transactions::exec("S3GatewayDbTest::assignPrincipalVaultRole", [&](pqxx::work& txn) {
+            const auto roleId = txn.exec(
+                "SELECT id FROM vault_role WHERE name = $1 LIMIT 1",
+                pqxx::params{roleName}).one_field().as<uint32_t>();
+            txn.exec(
+                "INSERT INTO vault_role_assignments (vault_id, subject_type, subject_id, role_id) "
+                "VALUES ($1, 'user', $2, $3) "
+                "ON CONFLICT (vault_id, subject_type, subject_id) DO UPDATE SET role_id = EXCLUDED.role_id",
+                pqxx::params{targetVaultId, targetUserId, roleId});
+        });
+    }
+
+    static vh::db::query::s3::GatewayCredential createCredential(
+        const uint32_t principalUserId,
+        const std::string& scopeMode) {
+        vh::db::query::s3::GatewayCredential credential;
+        credential.user_id = principalUserId;
+        credential.principal_user_id = principalUserId;
+        credential.created_by = principalUserId;
+        credential.name = "s3gw-" + scopeMode + "-" + uniqueSuffix("credential");
+        credential.access_key = "VHTEST" + uniqueSuffix("ACCESS").substr(0, 24);
+        credential.encrypted_secret_access_key = {1, 2, 3};
+        credential.iv = {4, 5, 6};
+        credential.enabled = true;
+        credential.scope_mode = scopeMode;
+        credential.id = vh::db::query::s3::Gateway::createCredential(credential);
+        return credential;
+    }
+
+    static void assignCredentialVaultRole(
+        const uint32_t credentialId,
+        const uint32_t targetVaultId,
+        const std::string& roleName,
+        const std::optional<uint32_t> createdBy = std::nullopt) {
+        vh::db::query::s3::Gateway::upsertCredentialVaultRoleAssignment({
+            .credential_id = credentialId,
+            .vault_id = targetVaultId,
+            .vault_role_id = roleIdByName(roleName),
+            .enabled = true,
+            .created_by = createdBy
+        });
+    }
+
+    static vh::rbac::permission::Override makeGatewayOverride(
+        const std::string& permission,
+        const std::string& pattern,
+        const vh::rbac::permission::OverrideOpt effect) {
+        vh::rbac::permission::Override out;
+        out.permission.qualified_name = permission;
+        out.effect = effect;
+        out.enabled = true;
+        out.pattern = vh::rbac::fs::glob::model::Pattern::make(pattern);
+        return out;
+    }
+
+    static vh::rbac::s3::policy::Decision evaluateS3(
+        const std::shared_ptr<vh::identities::User>& principal,
+        const uint32_t credentialId,
+        const std::string& scopeMode,
+        const uint32_t targetVaultId,
+        const vh::rbac::s3::policy::S3Action action,
+        const std::filesystem::path& path = "/object.txt",
+        const bool objectExists = true) {
+        return vh::rbac::s3::policy::Evaluator::evaluate({
+            .principal = principal,
+            .credential_id = credentialId,
+            .scope_mode = scopeMode,
+            .vault_id = targetVaultId,
+            .vault_path = path,
+            .fuse_path = path,
+            .action = action,
+            .object_exists = objectExists,
+            .is_directory_marker = path == std::filesystem::path{"/"},
+            .target_user_id = std::nullopt
+        });
+    }
 };
 
 TEST_F(S3GatewayDbTest, ListObjectsContinuationTokenDoesNotSkipFirstObjectOnNextPage) {
@@ -1023,6 +1157,215 @@ TEST_F(S3GatewayDbTest, ListObjectsTreatsPrefixWildcardCharactersLiterally) {
 
     ASSERT_EQ(underscore.objects.size(), 1u);
     EXPECT_EQ(underscore.objects[0].object_key, "a_literal.txt");
+}
+
+TEST_F(S3GatewayDbTest, UserAccessCredentialUsesPrincipalRbacWithoutGatewayRoleAssignment) {
+    const auto admin = vh::db::query::identities::User::getUserByName("admin");
+    ASSERT_TRUE(admin);
+    ASSERT_TRUE(admin->isSuperAdmin());
+    const auto credential = createCredential(admin->id, "user_access");
+
+    const auto decision = evaluateS3(
+        admin,
+        credential.id,
+        credential.scope_mode,
+        vaultId,
+        vh::rbac::s3::policy::S3Action::GetObject);
+
+    EXPECT_TRUE(decision.allowed);
+    EXPECT_TRUE(decision.principal_allowed);
+    EXPECT_TRUE(decision.credential_allowed);
+    EXPECT_EQ(vh::rbac::s3::policy::Decision::Reason::Allowed, decision.reason);
+    EXPECT_TRUE(vh::db::query::s3::Gateway::listCredentialVaultRoleAssignments(credential.id).empty());
+}
+
+TEST_F(S3GatewayDbTest, UserAccessCredentialCannotExceedPrincipalRbac) {
+    const auto admin = vh::db::query::identities::User::getUserByName("admin");
+    ASSERT_TRUE(admin);
+    const auto unownedVaultId = createLocalVault(uniqueSuffix("user_access_denied"), admin->id);
+    const auto principal = vh::db::query::identities::User::getUserById(userId);
+    ASSERT_TRUE(principal);
+    ASSERT_FALSE(principal->isAdmin());
+    const auto credential = createCredential(principal->id, "user_access");
+
+    const auto decision = evaluateS3(
+        principal,
+        credential.id,
+        credential.scope_mode,
+        unownedVaultId,
+        vh::rbac::s3::policy::S3Action::GetObject);
+
+    EXPECT_FALSE(decision.allowed);
+    EXPECT_FALSE(decision.principal_allowed);
+    EXPECT_EQ(vh::rbac::s3::policy::Decision::Reason::PrincipalRbacDenied, decision.reason);
+}
+
+TEST_F(S3GatewayDbTest, VaultAllowlistCredentialRequiresGatewayVaultRoleAssignment) {
+    const auto admin = vh::db::query::identities::User::getUserByName("admin");
+    ASSERT_TRUE(admin);
+    ASSERT_TRUE(admin->isSuperAdmin());
+    const auto credential = createCredential(admin->id, "vault_allowlist");
+
+    const auto decision = evaluateS3(
+        admin,
+        credential.id,
+        credential.scope_mode,
+        vaultId,
+        vh::rbac::s3::policy::S3Action::GetObject);
+
+    EXPECT_FALSE(decision.allowed);
+    EXPECT_TRUE(decision.principal_allowed);
+    EXPECT_FALSE(decision.credential_allowed);
+    EXPECT_EQ(vh::rbac::s3::policy::Decision::Reason::CredentialRoleMissing, decision.reason);
+}
+
+TEST_F(S3GatewayDbTest, VaultAllowlistCredentialRequiresPrincipalAndCredentialRole) {
+    const auto admin = vh::db::query::identities::User::getUserByName("admin");
+    ASSERT_TRUE(admin);
+    ASSERT_TRUE(admin->isSuperAdmin());
+    auto credential = createCredential(admin->id, "vault_allowlist");
+    assignCredentialVaultRole(credential.id, vaultId, "reader", admin->id);
+
+    auto read = evaluateS3(
+        admin,
+        credential.id,
+        credential.scope_mode,
+        vaultId,
+        vh::rbac::s3::policy::S3Action::GetObject);
+    EXPECT_TRUE(read.allowed);
+
+    auto write = evaluateS3(
+        admin,
+        credential.id,
+        credential.scope_mode,
+        vaultId,
+        vh::rbac::s3::policy::S3Action::PutObject,
+        "/new-object.txt",
+        false);
+    EXPECT_FALSE(write.allowed);
+    EXPECT_EQ(vh::rbac::s3::policy::Decision::Reason::CredentialRoleDenied, write.reason);
+
+    const auto adminOwnedVaultId = createLocalVault(uniqueSuffix("allowlist_principal_denied"), admin->id);
+    const auto principal = vh::db::query::identities::User::getUserById(userId);
+    ASSERT_TRUE(principal);
+    credential = createCredential(principal->id, "vault_allowlist");
+    assignCredentialVaultRole(credential.id, adminOwnedVaultId, "reader", principal->id);
+
+    auto principalDenied = evaluateS3(
+        principal,
+        credential.id,
+        credential.scope_mode,
+        adminOwnedVaultId,
+        vh::rbac::s3::policy::S3Action::GetObject);
+    EXPECT_FALSE(principalDenied.allowed);
+    EXPECT_FALSE(principalDenied.principal_allowed);
+    EXPECT_EQ(vh::rbac::s3::policy::Decision::Reason::PrincipalRbacDenied, principalDenied.reason);
+}
+
+TEST_F(S3GatewayDbTest, VaultAllowlistRoleOverridesApplyToCredentialAperture) {
+    const auto admin = vh::db::query::identities::User::getUserByName("admin");
+    ASSERT_TRUE(admin);
+    ASSERT_TRUE(admin->isSuperAdmin());
+    const auto credential = createCredential(admin->id, "vault_allowlist");
+    assignCredentialVaultRole(credential.id, vaultId, "reader", admin->id);
+    vh::db::query::s3::Gateway::upsertCredentialVaultRoleOverride(
+        credential.id,
+        vaultId,
+        makeGatewayOverride(
+            "vault.fs.files.download",
+            "/private/**",
+            vh::rbac::permission::OverrideOpt::DENY));
+
+    auto publicRead = evaluateS3(
+        admin,
+        credential.id,
+        credential.scope_mode,
+        vaultId,
+        vh::rbac::s3::policy::S3Action::GetObject,
+        "/public/report.txt");
+    EXPECT_TRUE(publicRead.allowed);
+
+    auto privateRead = evaluateS3(
+        admin,
+        credential.id,
+        credential.scope_mode,
+        vaultId,
+        vh::rbac::s3::policy::S3Action::GetObject,
+        "/private/report.txt");
+    EXPECT_FALSE(privateRead.allowed);
+    EXPECT_EQ(vh::rbac::s3::policy::Decision::Reason::CredentialRoleDenied, privateRead.reason);
+    ASSERT_TRUE(privateRead.credential_decision);
+    EXPECT_EQ(vh::rbac::fs::policy::Decision::Reason::DeniedByOverride,
+              privateRead.credential_decision->reason);
+
+    const auto allowCredential = createCredential(admin->id, "vault_allowlist");
+    assignCredentialVaultRole(allowCredential.id, vaultId, "implicit_deny", admin->id);
+    vh::db::query::s3::Gateway::upsertCredentialVaultRoleOverride(
+        allowCredential.id,
+        vaultId,
+        makeGatewayOverride(
+            "vault.fs.files.download",
+            "/allowed/**",
+            vh::rbac::permission::OverrideOpt::ALLOW));
+
+    auto allowedByOverride = evaluateS3(
+        admin,
+        allowCredential.id,
+        allowCredential.scope_mode,
+        vaultId,
+        vh::rbac::s3::policy::S3Action::GetObject,
+        "/allowed/report.txt");
+    EXPECT_TRUE(allowedByOverride.allowed);
+    ASSERT_TRUE(allowedByOverride.credential_decision);
+    EXPECT_EQ(vh::rbac::fs::policy::Decision::Reason::AllowedByOverride,
+              allowedByOverride.credential_decision->reason);
+}
+
+TEST_F(S3GatewayDbTest, GlobalCredentialUsesPrincipalRbacAndRequiresAdminPrincipal) {
+    const auto admin = vh::db::query::identities::User::getUserByName("admin");
+    ASSERT_TRUE(admin);
+    ASSERT_TRUE(admin->isSuperAdmin());
+    const auto globalAdminCredential = createCredential(admin->id, "global");
+
+    auto adminDecision = evaluateS3(
+        admin,
+        globalAdminCredential.id,
+        globalAdminCredential.scope_mode,
+        vaultId,
+        vh::rbac::s3::policy::S3Action::GetObject);
+    EXPECT_TRUE(adminDecision.allowed);
+
+    assignPrincipalVaultRole(vaultId, userId, "manager");
+    const auto nonAdmin = vh::db::query::identities::User::getUserById(userId);
+    ASSERT_TRUE(nonAdmin);
+    ASSERT_FALSE(nonAdmin->isAdmin());
+    const auto globalUserCredential = createCredential(nonAdmin->id, "global");
+
+    auto userDecision = evaluateS3(
+        nonAdmin,
+        globalUserCredential.id,
+        globalUserCredential.scope_mode,
+        vaultId,
+        vh::rbac::s3::policy::S3Action::PutObject,
+        "/new-global-object.txt",
+        false);
+    EXPECT_FALSE(userDecision.allowed);
+    EXPECT_TRUE(userDecision.principal_allowed);
+    EXPECT_EQ(vh::rbac::s3::policy::Decision::Reason::GlobalPrincipalRequired, userDecision.reason);
+}
+
+TEST_F(S3GatewayDbTest, ManagementS3ActionsRequireExplicitManagementGates) {
+    const auto admin = vh::db::query::identities::User::getUserByName("admin");
+    ASSERT_TRUE(admin);
+    const auto decision = evaluateS3(
+        admin,
+        0,
+        "user_access",
+        vaultId,
+        vh::rbac::s3::policy::S3Action::ManageCredential);
+
+    EXPECT_FALSE(decision.allowed);
+    EXPECT_EQ(vh::rbac::s3::policy::Decision::Reason::NoFilesystemMapping, decision.reason);
 }
 
 TEST_F(S3GatewayDbTest, VaultAllowlistScopesMirrorToGatewayVaultRoles) {
@@ -1368,11 +1711,157 @@ TEST_F(S3GatewayDbTest, S3GatewayWebSocketNormalizesCredentialScopeNames) {
     EXPECT_TRUE(vh::db::query::s3::Gateway::listCredentialScopes(credential->id).empty());
 }
 
+TEST_F(S3GatewayDbTest, S3GatewayWebSocketRoleAssignmentAndOverrideEndpointsWork) {
+    const auto admin = vh::db::query::identities::User::getUserByName("admin");
+    ASSERT_TRUE(admin);
+    ASSERT_TRUE(admin->isSuperAdmin());
+    const auto session = wsSessionForUser(admin->id);
+    const auto credential = createCredential(admin->id, "user_access");
+
+    const auto assigned = vh::protocols::ws::handler::S3Gateway::credentialsRolesAssign({
+        {"credential_id", credential.id},
+        {"vault_id", vaultId},
+        {"vault_role_name", "reader"},
+        {"enabled", true}
+    }, session);
+    ASSERT_TRUE(assigned.contains("assignment"));
+    EXPECT_EQ(credential.id, assigned.at("assignment").at("credential_id").get<uint32_t>());
+    EXPECT_EQ(vaultId, assigned.at("assignment").at("vault_id").get<uint32_t>());
+    EXPECT_EQ("reader", assigned.at("assignment").at("role").at("name").get<std::string>());
+
+    const auto updatedCredential = vh::db::query::s3::Gateway::getCredentialByAccessKey(credential.access_key);
+    ASSERT_TRUE(updatedCredential);
+    EXPECT_EQ("vault_allowlist", updatedCredential->scope_mode);
+
+    const auto listed = vh::protocols::ws::handler::S3Gateway::credentialsRolesList({
+        {"credential_id", credential.id}
+    }, session);
+    ASSERT_TRUE(listed.contains("roles"));
+    ASSERT_EQ(1u, listed.at("roles").size());
+    EXPECT_TRUE(listed.at("roles").front().contains("vault"));
+
+    const auto addedOverride = vh::protocols::ws::handler::S3Gateway::credentialsRoleOverridesAdd({
+        {"credential_id", credential.id},
+        {"vault_name", "S3 Gateway Test Vault"},
+        {"permission_qualified", "vault.fs.files.download"},
+        {"glob_path", "/private/**"},
+        {"effect", "deny"},
+        {"enabled", true}
+    }, session);
+    ASSERT_TRUE(addedOverride.contains("override"));
+    const auto overrideId = addedOverride.at("override").at("id").get<uint32_t>();
+    EXPECT_EQ("vault.fs.files.download", addedOverride.at("override").at("permission_qualified").get<std::string>());
+    EXPECT_EQ("/private/**", addedOverride.at("override").at("glob_path").get<std::string>());
+
+    const auto overrides = vh::protocols::ws::handler::S3Gateway::credentialsRoleOverridesList({
+        {"credential_id", credential.id},
+        {"vault_id", vaultId}
+    }, session);
+    ASSERT_TRUE(overrides.contains("overrides"));
+    ASSERT_EQ(1u, overrides.at("overrides").size());
+    EXPECT_EQ(overrideId, overrides.at("overrides").front().at("id").get<uint32_t>());
+
+    const auto removedOverride = vh::protocols::ws::handler::S3Gateway::credentialsRoleOverridesRemove({
+        {"credential_id", credential.id},
+        {"vault_id", vaultId},
+        {"override_id", overrideId}
+    }, session);
+    EXPECT_TRUE(removedOverride.at("removed").get<bool>());
+
+    const auto revoked = vh::protocols::ws::handler::S3Gateway::credentialsRolesRevoke({
+        {"credential_id", credential.id},
+        {"vault_id", vaultId}
+    }, session);
+    EXPECT_TRUE(revoked.at("revoked").get<bool>());
+    EXPECT_TRUE(vh::db::query::s3::Gateway::listCredentialVaultRoleAssignments(credential.id).empty());
+}
+
+TEST_F(S3GatewayDbTest, S3GatewayWebSocketPermissionGatesUseGatewayAdminPermissions) {
+    const auto admin = vh::db::query::identities::User::getUserByName("admin");
+    ASSERT_TRUE(admin);
+    const auto adminCredential = createCredential(admin->id, "user_access");
+
+    const auto noGatewayUserId = userWithAdminRole(
+        "no_gateway",
+        adminRoleWithS3("none", vh::rbac::permission::admin::S3Gateway::None()));
+    const auto noGatewaySession = wsSessionForUser(noGatewayUserId);
+    EXPECT_THROW(
+        (void)vh::protocols::ws::handler::S3Gateway::status(nlohmann::json(nullptr), noGatewaySession),
+        std::exception);
+
+    const auto viewUserId = userWithAdminRole(
+        "view",
+        adminRoleWithS3("view", vh::rbac::permission::admin::S3Gateway::ViewOnly()));
+    const auto viewSession = wsSessionForUser(viewUserId);
+    EXPECT_NO_THROW((void)vh::protocols::ws::handler::S3Gateway::status(nlohmann::json(nullptr), viewSession));
+    EXPECT_THROW(
+        (void)vh::protocols::ws::handler::S3Gateway::credentialsRevoke({
+            {"access_key", adminCredential.access_key}
+        }, viewSession),
+        std::exception);
+
+    const auto manageUserId = userWithAdminRole(
+        "manage_credentials",
+        adminRoleWithS3("manage_credentials", vh::rbac::permission::admin::S3Gateway::CredentialManager()));
+    const auto manageSession = wsSessionForUser(manageUserId);
+    const auto manageCredential = createCredential(manageUserId, "user_access");
+    EXPECT_THROW(
+        (void)vh::protocols::ws::handler::S3Gateway::credentialsScopeUpdate({
+            {"credential_id", manageCredential.id},
+            {"scope_mode", "user_access"},
+            {"principal_user_id", userId}
+        }, manageSession),
+        std::exception);
+
+    EXPECT_THROW(
+        (void)vh::protocols::ws::handler::S3Gateway::bucketsBind({
+            {"bucket_name", "gate-bind-" + std::to_string(vaultId)},
+            {"vault_id", vaultId}
+        }, manageSession),
+        std::exception);
+
+    EXPECT_THROW(
+        (void)vh::protocols::ws::handler::S3Gateway::budgetPolicyUpsert({
+            {"scope", "gateway_credential"},
+            {"gateway_credential_id", manageCredential.id},
+            {"mode", "enforce"},
+            {"max_daily_cost", "1.00"},
+            {"currency", "USD"}
+        }, manageSession),
+        std::exception);
+
+    EXPECT_THROW(
+        (void)vh::protocols::ws::handler::S3Gateway::credentialsRolesAssign({
+            {"credential_id", manageCredential.id},
+            {"vault_id", vaultId},
+            {"vault_role_name", "reader"}
+        }, manageSession),
+        std::exception);
+}
+
+TEST_F(S3GatewayDbTest, S3GatewayWebSocketAssignPrincipalPermissionAllowsRetargeting) {
+    const auto assignerUserId = userWithAdminRole(
+        "assigner",
+        adminRoleWithS3("assigner", vh::rbac::permission::admin::S3Gateway::PrincipalAssigner()));
+    const auto assignerSession = wsSessionForUser(assignerUserId);
+    const auto credential = createCredential(assignerUserId, "user_access");
+
+    const auto updated = vh::protocols::ws::handler::S3Gateway::credentialsScopeUpdate({
+        {"credential_id", credential.id},
+        {"scope_mode", "user_access"},
+        {"principal_user_id", userId}
+    }, assignerSession);
+
+    ASSERT_TRUE(updated.contains("credential"));
+    EXPECT_EQ(userId, updated.at("credential").at("principal_user_id").get<uint32_t>());
+}
+
 TEST_F(S3GatewayDbTest, S3GatewayWebSocketRejectsRemoteModeForLocalVaultBinding) {
     auto session = std::make_shared<vh::protocols::ws::Session>(
         std::make_shared<vh::protocols::ws::Router>());
-    session->user = vh::db::query::identities::User::getUserById(userId);
+    session->user = vh::db::query::identities::User::getUserByName("admin");
     ASSERT_TRUE(session->user);
+    ASSERT_TRUE(session->user->isSuperAdmin());
 
     EXPECT_THROW(
         vh::protocols::ws::handler::S3Gateway::bucketsBind({
@@ -1425,17 +1914,7 @@ TEST_F(S3GatewayDbTest, DisabledAndExpiredCredentialsDoNotAuthenticate) {
 }
 
 TEST_F(S3GatewayDbTest, CredentialVaultScopeRowsReplaceLookupAndGateActions) {
-    const auto secondVaultId = vh::db::Transactions::exec("S3GatewayDbTest::secondScopeVault", [](pqxx::work& txn) {
-        const auto seededVaultId = txn.exec(
-            "INSERT INTO vault (type, name, owner_id, mount_point, description) VALUES ($1, $2, $3, $4, $5) RETURNING id",
-            pqxx::params{"local", "S3 Gateway Scope Vault " + uniqueSuffix("scope"), userId, uniqueSuffix("scope_mount"), ""}
-        ).one_field().as<uint32_t>();
-        txn.exec(
-            "WITH ins AS (INSERT INTO sync (vault_id, interval) VALUES ($1, 300) RETURNING id) "
-            "INSERT INTO fsync (sync_id, conflict_policy) SELECT id, 'keep_both' FROM ins",
-            pqxx::params{seededVaultId});
-        return seededVaultId;
-    });
+    const auto secondVaultId = createLocalVault(uniqueSuffix("scope"), userId);
 
     vh::db::query::s3::GatewayCredential credential;
     credential.user_id = userId;

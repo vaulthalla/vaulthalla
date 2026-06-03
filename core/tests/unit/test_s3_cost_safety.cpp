@@ -477,6 +477,22 @@ uint32_t ensureS3CostVaultAdminRole(pqxx::work& txn) {
     return ensureS3CostAdminRole(txn, vh::rbac::role::Admin::VaultAdmin());
 }
 
+vh::rbac::role::Admin s3GatewayBudgetManagerRole(const std::optional<std::uint32_t> userId = std::nullopt) {
+    auto s3Gateway = vh::rbac::permission::admin::S3Gateway::None();
+    s3Gateway.grant(vh::rbac::permission::admin::S3GatewayPermissions::ManageBudgets);
+    return vh::rbac::role::Admin::Custom(
+        "s3_gateway_budget_manager",
+        "Test role that may manage S3 gateway budgets only.",
+        vh::rbac::permission::admin::Identities::None(),
+        vh::rbac::permission::admin::Vaults::None(),
+        vh::rbac::permission::admin::Audits::None(),
+        vh::rbac::permission::admin::Settings::None(),
+        vh::rbac::permission::admin::Roles::None(),
+        vh::rbac::permission::admin::Keys::None(),
+        s3Gateway,
+        userId);
+}
+
 uint32_t insertS3CostHydratableTestUser(pqxx::work& txn, const std::string& name, const std::string& email) {
     const auto userId = txn.exec(
         "INSERT INTO users (name, email, password_hash) VALUES ($1, $2, $3) RETURNING id",
@@ -3351,6 +3367,7 @@ TEST(S3CostSafetyTest, S3GatewayWsNonAdminBudgetManagementRequiresVaultAuthority
     const auto outsiderId = seedS3CostUserForDbTest(suffix, "outsider");
     const auto ownerCredentialId = seedGatewayCredentialForDbTest(ownerId, suffix + "_owner");
     const auto ownerSession = wsSessionForUser(ownerId);
+    const auto budgetOwnerSession = wsSessionForUser(ownerId, s3GatewayBudgetManagerRole(ownerId));
     const auto outsiderSession = wsSessionForUser(outsiderId);
     const auto adminSession = superAdminWsSession();
 
@@ -3373,6 +3390,22 @@ TEST(S3CostSafetyTest, S3GatewayWsNonAdminBudgetManagementRequiresVaultAuthority
     EXPECT_THROW(vh::protocols::ws::handler::Pricing::policyDisable({
         {"scope", "gateway_credential"},
         {"gateway_credential_id", ownerCredentialId}
+    }, ownerSession), std::exception);
+
+    EXPECT_THROW(vh::protocols::ws::handler::S3Gateway::budgetPolicyUpsert({
+        {"scope", "gateway_credential_vault"},
+        {"gateway_credential_id", ownerCredentialId},
+        {"vault_id", vaultId},
+        {"mode", "enforce"},
+        {"currency", "USD"},
+        {"max_monthly_cost", "1.00000000"},
+        {"require_verified_catalog", false}
+    }, ownerSession), std::exception);
+
+    EXPECT_THROW(vh::protocols::ws::handler::S3Gateway::budgetPolicyDisable({
+        {"scope", "gateway_credential_vault"},
+        {"gateway_credential_id", ownerCredentialId},
+        {"vault_id", vaultId}
     }, ownerSession), std::exception);
 
     EXPECT_THROW(vh::protocols::ws::handler::S3Gateway::budgetPolicyUpsert({
@@ -3408,7 +3441,7 @@ TEST(S3CostSafetyTest, S3GatewayWsNonAdminBudgetManagementRequiresVaultAuthority
         {"currency", "USD"},
         {"max_monthly_cost", "0.50000000"},
         {"require_verified_catalog", false}
-    }, ownerSession);
+    }, budgetOwnerSession);
     ASSERT_TRUE(keyVaultPolicyResponse.contains("policy"));
     EXPECT_EQ("gateway_credential_vault", keyVaultPolicyResponse["policy"]["scope"].get<std::string>());
     EXPECT_EQ(vaultId, keyVaultPolicyResponse["policy"]["vault_id"].get<std::uint32_t>());
@@ -3417,7 +3450,7 @@ TEST(S3CostSafetyTest, S3GatewayWsNonAdminBudgetManagementRequiresVaultAuthority
         {"scope", "gateway_credential_vault"},
         {"gateway_credential_id", ownerCredentialId},
         {"vault_id", vaultId}
-    }, ownerSession);
+    }, budgetOwnerSession);
     EXPECT_TRUE(disabled.at("disabled").get<bool>());
 }
 
@@ -3434,6 +3467,7 @@ TEST(S3CostSafetyTest, S3GatewayCliBudgetStatusJsonAndKeyOnlyAuthorization) {
     const auto otherCredentialId = seedGatewayCredentialForDbTest(otherUserId, suffix + "_other");
     const auto router = s3GatewayShellRouterForDbTest();
     const auto owner = dryRunActor(ownerId, vh::rbac::role::Admin::None(ownerId));
+    const auto budgetOwner = dryRunActor(ownerId, s3GatewayBudgetManagerRole(ownerId));
     const auto admin = superAdminWsSession()->user;
     const auto credentialArg = std::to_string(credentialId);
     const auto vaultArg = std::to_string(vaultId);
@@ -3442,24 +3476,31 @@ TEST(S3CostSafetyTest, S3GatewayCliBudgetStatusJsonAndKeyOnlyAuthorization) {
         "s3-gateway budget set-key " + credentialArg + " --monthly 2.00000000 --mode enforce",
         owner);
     EXPECT_NE(0, deniedSetKey.exit_code);
-    EXPECT_NE(std::string::npos, deniedSetKey.stderr_text.find("admin permission"));
+    EXPECT_NE(std::string::npos, deniedSetKey.stderr_text.find("admin.s3_gateway.manage_budgets"));
 
     const auto adminSetKey = router->executeLine(
         "s3-gateway budget set-key " + credentialArg + " --monthly 2.00000000 --mode enforce --currency USD",
         admin);
     ASSERT_EQ(0, adminSetKey.exit_code) << adminSetKey.stderr_text;
 
-    const auto ownerSetKeyVault = router->executeLine(
+    const auto ownerSetKeyVaultDenied = router->executeLine(
         "s3-gateway budget set-key-vault " + credentialArg + " --vault " + vaultArg +
             " --monthly 1.00000000 --mode warn --currency USD",
         owner);
-    ASSERT_EQ(0, ownerSetKeyVault.exit_code) << ownerSetKeyVault.stderr_text;
+    EXPECT_NE(0, ownerSetKeyVaultDenied.exit_code);
+    EXPECT_NE(std::string::npos, ownerSetKeyVaultDenied.stderr_text.find("admin.s3_gateway.manage_budgets"));
 
-    const auto ownerSetOtherKeyVault = router->executeLine(
+    const auto budgetOwnerSetKeyVault = router->executeLine(
+        "s3-gateway budget set-key-vault " + credentialArg + " --vault " + vaultArg +
+            " --monthly 1.00000000 --mode warn --currency USD",
+        budgetOwner);
+    ASSERT_EQ(0, budgetOwnerSetKeyVault.exit_code) << budgetOwnerSetKeyVault.stderr_text;
+
+    const auto budgetOwnerSetOtherKeyVault = router->executeLine(
         "s3-gateway budget set-key-vault " + std::to_string(otherCredentialId) + " --vault " + vaultArg +
             " --monthly 0.50000000 --mode enforce --currency USD",
-        owner);
-    ASSERT_EQ(0, ownerSetOtherKeyVault.exit_code) << ownerSetOtherKeyVault.stderr_text;
+        budgetOwner);
+    ASSERT_EQ(0, budgetOwnerSetOtherKeyVault.exit_code) << budgetOwnerSetOtherKeyVault.stderr_text;
 
     const auto ownerOtherStatus = router->executeLine(
         "s3-gateway budget status --key " + std::to_string(otherCredentialId) + " --vault " + vaultArg + " --json",
@@ -3478,7 +3519,7 @@ TEST(S3CostSafetyTest, S3GatewayCliBudgetStatusJsonAndKeyOnlyAuthorization) {
 
     const auto ownerDisableOtherKeyVault = router->executeLine(
         "s3-gateway budget disable-key-vault " + std::to_string(otherCredentialId) + " --vault " + vaultArg,
-        owner);
+        budgetOwner);
     ASSERT_EQ(0, ownerDisableOtherKeyVault.exit_code) << ownerDisableOtherKeyVault.stderr_text;
 
     auto decision = vh::storage::s3::pricing::PriceBudgetService{}.preflight({
@@ -3587,7 +3628,7 @@ TEST(S3CostSafetyTest, S3GatewayCliBudgetStatusJsonAndKeyOnlyAuthorization) {
         "s3-gateway budget disable-key " + credentialArg,
         owner);
     EXPECT_NE(0, ownerDisableKey.exit_code);
-    EXPECT_NE(std::string::npos, ownerDisableKey.stderr_text.find("admin permission"));
+    EXPECT_NE(std::string::npos, ownerDisableKey.stderr_text.find("admin.s3_gateway.manage_budgets"));
 }
 
 TEST(S3CostSafetyTest, S3GatewayCliScopeSetRetargetsPrincipalAndAuditsGlobalConversion) {

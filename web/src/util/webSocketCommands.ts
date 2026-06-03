@@ -76,6 +76,10 @@ import {
   S3GatewayCredential,
   S3GatewayCredentialCreatePayload,
   S3GatewayCredentialScopeUpdatePayload,
+  S3GatewayCredentialVaultRoleAssignment,
+  S3GatewayCredentialVaultRoleAssignmentPayload,
+  S3GatewayCredentialVaultRoleOverride,
+  S3GatewayCredentialVaultRoleOverridePayload,
   S3GatewayCredentialVaultScope,
   S3GatewayStatus,
 } from '@/models/s3Gateway'
@@ -277,6 +281,36 @@ export interface WebSocketCommandMap {
   's3.gateway.credentials.scope.list': {
     payload: { access_key?: string; name?: string }
     response: { credential: S3GatewayCredential; scopes: S3GatewayCredentialVaultScope[] }
+  }
+
+  's3.gateway.credentials.roles.list': {
+    payload: { credential_id?: number; access_key?: string; name?: string; credential_name?: string }
+    response: { credential: S3GatewayCredential; roles: S3GatewayCredentialVaultRoleAssignment[]; assignments?: S3GatewayCredentialVaultRoleAssignment[] }
+  }
+
+  's3.gateway.credentials.roles.assign': {
+    payload: S3GatewayCredentialVaultRoleAssignmentPayload
+    response: { assignment: S3GatewayCredentialVaultRoleAssignment; role?: S3GatewayCredentialVaultRoleAssignment }
+  }
+
+  's3.gateway.credentials.roles.revoke': {
+    payload: S3GatewayCredentialVaultRoleAssignmentPayload
+    response: { revoked: boolean; credential: S3GatewayCredential; vault?: { id: number; name: string } | null }
+  }
+
+  's3.gateway.credentials.roles.overrides.list': {
+    payload: S3GatewayCredentialVaultRoleOverridePayload
+    response: { credential: S3GatewayCredential; vault?: { id: number; name: string } | null; overrides: S3GatewayCredentialVaultRoleOverride[] }
+  }
+
+  's3.gateway.credentials.roles.overrides.add': {
+    payload: S3GatewayCredentialVaultRoleOverridePayload
+    response: { override: S3GatewayCredentialVaultRoleOverride }
+  }
+
+  's3.gateway.credentials.roles.overrides.remove': {
+    payload: S3GatewayCredentialVaultRoleOverridePayload
+    response: { removed: boolean; credential: S3GatewayCredential; vault?: { id: number; name: string } | null }
   }
 
   's3.gateway.buckets.list': { payload: null; response: { buckets: S3GatewayBucketBinding[] } }

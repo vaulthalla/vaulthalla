@@ -51,6 +51,51 @@ run_stage() {
   fi
 }
 
+run_playwright_with_build_runtime_stage() {
+  local name="playwright-s3-gateway"
+  local log="$RESULT_DIR/merge-ready-${name//[^A-Za-z0-9_.-]/-}.log"
+  local command="pnpm --dir web run test:e2e:s3-gateway (branch build runtime)"
+  echo
+  echo "== $name =="
+  echo "$command"
+  if bash -lc '
+      set -euo pipefail
+      server="'"$REPO_ROOT"'/build/core/vaulthalla-server"
+      [[ -x "$server" ]]
+      runtime_pid=""
+      cleanup() {
+        if [[ -n "$runtime_pid" ]] && kill -0 "$runtime_pid" >/dev/null 2>&1; then
+          sudo -n kill "$runtime_pid" >/dev/null 2>&1 || true
+          wait "$runtime_pid" >/dev/null 2>&1 || true
+        fi
+        sudo -n systemctl start vaulthalla.service >/dev/null 2>&1 || true
+      }
+      trap cleanup EXIT
+      sudo -n systemctl stop vaulthalla.service >/dev/null 2>&1 || true
+      sudo -n -u vaulthalla bash -lc '"'"'set -a; source /etc/vaulthalla/vaulthalla.env; set +a; cd /var/lib/vaulthalla; exec "$1"'"'"' _ "$server" &
+      runtime_pid=$!
+      for _ in $(seq 1 60); do
+        if curl --connect-timeout 2 --max-time 4 -sS -o /dev/null http://127.0.0.1:36970; then
+          pnpm --dir web run test:e2e:s3-gateway
+          exit 0
+        fi
+        if ! kill -0 "$runtime_pid" >/dev/null 2>&1; then
+          wait "$runtime_pid"
+        fi
+        sleep 2
+      done
+      echo "branch-built runtime did not become reachable on http://127.0.0.1:36970" >&2
+      exit 1
+    ' >"$log" 2>&1; then
+    echo "PASS $name"
+    record_stage "$name" "PASS" "$command" "$log"
+  else
+    echo "FAIL $name"
+    tail -n 80 "$log" || true
+    record_stage "$name" "FAIL" "$command" "$log"
+  fi
+}
+
 write_report() {
   {
     echo "S3 Gateway merge readiness report"
@@ -86,7 +131,7 @@ run_stage "meson-compile" "meson compile -C build"
 run_stage "db-backed-s3-gateway-cost-pricing-tests" \
   "meson test -C build vh_unit_tests --print-errorlogs --test-args='--gtest_filter=S3GatewayDbTest.*:S3CostSafetyTest.*Gateway*:S3PricingTest.*Gateway*'"
 run_stage "web-unit-tests" "pnpm --dir web run test"
-run_stage "playwright-s3-gateway" "pnpm --dir web run test:e2e:s3-gateway"
+run_playwright_with_build_runtime_stage
 run_stage "local-smoke" "tools/smoke/s3_gateway_e2e.sh --use-build-runtime --local-only --prefix '$LOCAL_PREFIX'"
 
 if vh_e2e_has_r2_env; then

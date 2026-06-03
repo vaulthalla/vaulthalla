@@ -14,12 +14,6 @@ export async function ensureVaultAvailable(page: Page) {
   await createLocalBucket(page, vaultName)
   await page.reload()
   await expect(page.getByTestId('s3-gateway-section-service')).toBeVisible()
-  await page.getByTestId('s3-gateway-open-create-credential').click()
-  await expect(page.getByTestId('s3-gateway-create-credential-modal')).toBeVisible()
-  await page.getByTestId('s3-gateway-credential-scope-select').selectOption('vault_allowlist')
-  await expect(page.locator('label').filter({ hasText: vaultName }).getByTestId('s3-gateway-create-vault-checkbox')).toBeVisible()
-  await page.getByRole('button', { name: /^close$/i }).click()
-  await expect(page.getByTestId('s3-gateway-create-credential-modal')).toBeHidden()
   return vaultName
 }
 
@@ -34,20 +28,52 @@ export async function createCredential(
   await expect(page.getByTestId('s3-gateway-create-credential-modal')).toBeVisible()
   await page.getByTestId('s3-gateway-credential-name-input').fill(name)
   await page.getByTestId('s3-gateway-credential-scope-select').selectOption(scope)
-  if (scope === 'vault_allowlist') {
-    const vaultCheckboxes = vaultName
-      ? page.locator('label').filter({ hasText: vaultName }).getByTestId('s3-gateway-create-vault-checkbox')
-      : page.getByTestId('s3-gateway-create-vault-checkbox')
-    const count = await vaultCheckboxes.count()
-    if (count === 0) throw new Error('S3 Gateway E2E requires at least one vault for vault_allowlist scope tests.')
-    await vaultCheckboxes.first().check()
-  }
   if (enforceLocalBudget) {
     await page.getByTestId('s3-gateway-create-enforce-local-budget').check()
   }
   await page.getByTestId('s3-gateway-submit-create-credential').click()
   await expect(page.getByTestId('s3-gateway-secret-panel')).toBeVisible()
   await expect(page.getByTestId('s3-gateway-credential-name').filter({ hasText: name })).toBeVisible()
+}
+
+async function optionValueByText(select: ReturnType<Page['getByTestId']>, text: string) {
+  const option = select.locator('option').filter({ hasText: text }).first()
+  await expect(option).toHaveCount(1)
+  const value = await option.getAttribute('value')
+  if (!value) throw new Error(`No selectable option found for ${text}`)
+  return value
+}
+
+export async function assignVaultRole(page: Page, vaultName: string, roleName = 'reader') {
+  const vaultSelect = page.getByTestId('s3-gateway-role-assign-vault-select')
+  await vaultSelect.selectOption(await optionValueByText(vaultSelect, vaultName))
+  await page.getByTestId('s3-gateway-role-assign-role-select').selectOption({ label: roleName })
+  await page.getByTestId('s3-gateway-role-assign-submit').click()
+  await expect(page.getByTestId('s3-gateway-role-assignment-row').filter({ hasText: vaultName })).toBeVisible()
+}
+
+export async function addCredentialOverride(page: Page, vaultName: string, glob = '/private/**') {
+  const vaultSelect = page.getByTestId('s3-gateway-override-vault-select')
+  await vaultSelect.selectOption(await optionValueByText(vaultSelect, vaultName))
+  await page.getByTestId('s3-gateway-override-permission-select').selectOption('vault.fs.files.download')
+  await page.getByTestId('s3-gateway-override-glob-input').fill(glob)
+  await page.getByTestId('s3-gateway-override-effect-select').selectOption('deny')
+  await page.getByTestId('s3-gateway-override-add-submit').click()
+  await expect(page.getByTestId('s3-gateway-section-credential-roles')).toContainText(glob)
+}
+
+export async function removeCredentialOverride(page: Page, glob = '/private/**') {
+  const row = page.locator('tbody tr').filter({ hasText: glob }).first()
+  await expect(row).toBeVisible()
+  await row.getByRole('button', { name: /remove/i }).click()
+  await expect(row).toBeHidden()
+}
+
+export async function revokeVaultRole(page: Page, vaultName: string) {
+  const row = page.getByTestId('s3-gateway-role-assignment-row').filter({ hasText: vaultName }).first()
+  await expect(row).toBeVisible()
+  await row.getByRole('button', { name: /revoke/i }).click()
+  await expect(row).toBeHidden()
 }
 
 export async function hideSecret(page: Page) {

@@ -1,5 +1,7 @@
 import { PriceBudgetPolicy, PriceBudgetPolicyPayload, PriceBudgetStatus } from '@/models/pricing/priceBudget'
 import { PriceBudgetLedgerEntry } from '@/models/pricing/priceBudgetLedger'
+import { Permission } from '@/models/role'
+import type { PermissionDTO } from '@/models/permission'
 import {
   asBoolean,
   asDateValue,
@@ -12,6 +14,20 @@ import {
 
 export type S3GatewayCredentialScopeMode = 'user_access' | 'global' | 'vault_allowlist'
 export type S3GatewayBucketMode = 'local' | 'remote_cache' | 'remote_proxy' | string
+export type S3GatewayCredentialVaultRoleOverrideEffect = 'allow' | 'deny'
+
+export interface S3GatewayVaultRef {
+  id: number
+  name: string
+  owner_id?: number | null
+}
+
+export interface S3GatewayVaultRoleRef {
+  id: number
+  name: string
+  description: string
+  permissions?: Permission[]
+}
 
 export function asGatewayScopeMode(value: unknown): S3GatewayCredentialScopeMode {
   if (typeof value === 'string') {
@@ -78,6 +94,120 @@ export class S3GatewayCredentialVaultScope {
 
   static from(input: unknown): S3GatewayCredentialVaultScope {
     return new S3GatewayCredentialVaultScope(input)
+  }
+}
+
+const asVaultRef = (input: unknown): S3GatewayVaultRef | null => {
+  if (!isRecord(input)) return null
+  return {
+    id: asNumber(input.id),
+    name: asString(input.name),
+    owner_id: asNullableNumber(input.owner_id),
+  }
+}
+
+const asRoleRef = (input: unknown): S3GatewayVaultRoleRef | null => {
+  if (!isRecord(input)) return null
+  return {
+    id: asNumber(input.id),
+    name: asString(input.name),
+    description: asString(input.description),
+    permissions: Array.isArray(input.permissions)
+      ? input.permissions.map(item => Permission.fromData({
+        id: isRecord(item) ? asNumber(item.id) : undefined,
+        bit_position: isRecord(item) ? asNumber(item.bit_position) : 0,
+        qualified: isRecord(item) ? asString(item.qualified, asString(item.name)) : '',
+        slug: isRecord(item) ? asString(item.slug) : '',
+        description: isRecord(item) ? asString(item.description) : '',
+        value: isRecord(item) ? asBoolean(item.value) : false,
+      } as PermissionDTO))
+      : [],
+  }
+}
+
+const asPermission = (input: unknown): Permission | null => {
+  if (!isRecord(input)) return null
+  return Permission.fromData({
+    id: asNumber(input.id),
+    bit_position: asNumber(input.bit_position),
+    qualified: asString(input.qualified, asString(input.name)),
+    slug: asString(input.slug),
+    description: asString(input.description),
+    value: asBoolean(input.value),
+  })
+}
+
+export class S3GatewayCredentialVaultRoleAssignment {
+  id = 0
+  assignment_id = 0
+  credential_id = 0
+  credential: S3GatewayCredential | null = null
+  vault_id = 0
+  vault: S3GatewayVaultRef | null = null
+  vault_role_id = 0
+  role: S3GatewayVaultRoleRef | null = null
+  enabled = true
+  created_by: number | null = null
+  created_at: number | string | null = null
+  updated_at: number | string | null = null
+
+  constructor(input: unknown = {}) {
+    const data = isRecord(input) ? input : {}
+    this.id = asNumber(data.id, asNumber(data.assignment_id))
+    this.assignment_id = asNumber(data.assignment_id, this.id)
+    this.credential_id = asNumber(data.credential_id)
+    this.credential = isRecord(data.credential) ? S3GatewayCredential.from(data.credential) : null
+    this.vault_id = asNumber(data.vault_id)
+    this.vault = asVaultRef(data.vault)
+    this.vault_role_id = asNumber(data.vault_role_id)
+    this.role = asRoleRef(data.role)
+    this.enabled = asBoolean(data.enabled, true)
+    this.created_by = asNullableNumber(data.created_by)
+    this.created_at = asDateValue(data.created_at)
+    this.updated_at = asDateValue(data.updated_at)
+  }
+
+  static from(input: unknown): S3GatewayCredentialVaultRoleAssignment {
+    return new S3GatewayCredentialVaultRoleAssignment(input)
+  }
+}
+
+export class S3GatewayCredentialVaultRoleOverride {
+  id = 0
+  override_id = 0
+  assignment_id = 0
+  credential_id = 0
+  credential: S3GatewayCredential | null = null
+  vault_id = 0
+  vault: S3GatewayVaultRef | null = null
+  permission_id = 0
+  permission_name = ''
+  permission_qualified = ''
+  permission: Permission | null = null
+  glob_path = ''
+  effect: S3GatewayCredentialVaultRoleOverrideEffect = 'allow'
+  enabled = true
+
+  constructor(input: unknown = {}) {
+    const data = isRecord(input) ? input : {}
+    this.id = asNumber(data.id, asNumber(data.override_id))
+    this.override_id = asNumber(data.override_id, this.id)
+    this.assignment_id = asNumber(data.assignment_id)
+    this.credential_id = asNumber(data.credential_id)
+    this.credential = isRecord(data.credential) ? S3GatewayCredential.from(data.credential) : null
+    this.vault_id = asNumber(data.vault_id)
+    this.vault = asVaultRef(data.vault)
+    this.permission_id = asNumber(data.permission_id)
+    this.permission_name = asString(data.permission_name)
+    this.permission_qualified = asString(data.permission_qualified, this.permission_name)
+    this.permission = asPermission(data.permission)
+    this.glob_path = asString(data.glob_path)
+    this.effect = asString(data.effect) === 'deny' ? 'deny' : 'allow'
+    this.enabled = asBoolean(data.enabled, true)
+  }
+
+  static from(input: unknown): S3GatewayCredentialVaultRoleOverride {
+    return new S3GatewayCredentialVaultRoleOverride(input)
   }
 }
 
@@ -153,6 +283,42 @@ export interface S3GatewayCredentialScopeUpdatePayload {
   expires_at?: number | null
   vault_scopes?: S3GatewayCredentialVaultScopePayload[]
   enforce_budget_for_local_requests?: boolean
+}
+
+export interface S3GatewayCredentialVaultRoleAssignmentPayload {
+  credential_id?: number
+  access_key?: string
+  name?: string
+  credential_name?: string
+  vault_id?: number
+  vault_name?: string
+  vault?: string
+  vault_role_id?: number
+  vault_role_name?: string
+  role_id?: number
+  role_name?: string
+  role?: string
+  enabled?: boolean
+}
+
+export interface S3GatewayCredentialVaultRoleOverridePayload {
+  credential_id?: number
+  access_key?: string
+  name?: string
+  credential_name?: string
+  vault_id?: number
+  vault_name?: string
+  vault?: string
+  override_id?: number
+  id?: number
+  permission_id?: number
+  permission_name?: string
+  permission_qualified?: string
+  permission?: string
+  glob_path?: string
+  path?: string
+  effect?: S3GatewayCredentialVaultRoleOverrideEffect
+  enabled?: boolean
 }
 
 export class S3GatewayBucketBinding {

@@ -2,6 +2,8 @@
 
 #include "config/Registry.hpp"
 #include "db/query/identities/User.hpp"
+#include "db/query/rbac/Permission.hpp"
+#include "db/query/rbac/role/Vault.hpp"
 #include "db/query/s3/Gateway.hpp"
 #include "db/query/vault/APIKey.hpp"
 #include "db/query/vault/Vault.hpp"
@@ -10,8 +12,14 @@
 #include "protocols/s3/GatewayService.hpp"
 #include "protocols/s3/ObjectStore.hpp"
 #include "protocols/ws/Session.hpp"
+#include "rbac/fs/glob/model/Pattern.hpp"
 #include "rbac/permission/admin/Vaults.hpp"
+#include "rbac/permission/admin/S3Gateway.hpp"
+#include "rbac/permission/vault/Roles.hpp"
+#include "rbac/permission/Override.hpp"
 #include "rbac/resolver/admin/all.hpp"
+#include "rbac/resolver/vault/all.hpp"
+#include "rbac/role/Vault.hpp"
 #include "runtime/Deps.hpp"
 #include "runtime/Manager.hpp"
 #include "storage/Manager.hpp"
@@ -54,8 +62,35 @@ std::uint32_t gwLimitFromPayload(const json& payload, const std::uint32_t fallba
     return std::clamp<std::uint32_t>(payload.value("limit", fallback), 1, 500);
 }
 
-void requireAdmin(const std::shared_ptr<Session>& session, const char* message) {
-    if (!session || !session->user || !session->user->isAdmin()) throw std::runtime_error(message);
+bool hasGatewayPermission(
+    const std::shared_ptr<Session>& session,
+    const vh::rbac::permission::admin::S3GatewayPermissions permission) {
+    if (!session || !session->user) return false;
+    if (session->user->isSuperAdmin()) return true;
+    using Perm = vh::rbac::permission::admin::S3GatewayPermissions;
+    return vh::rbac::resolver::Admin::has<Perm>({
+        .user = session->user,
+        .permission = permission
+    });
+}
+
+void requireGatewayPermission(
+    const std::shared_ptr<Session>& session,
+    const vh::rbac::permission::admin::S3GatewayPermissions permission,
+    const char* message) {
+    if (!hasGatewayPermission(session, permission)) throw std::runtime_error(message);
+}
+
+bool canManageGatewayCredentials(const std::shared_ptr<Session>& session) {
+    return hasGatewayPermission(
+        session,
+        vh::rbac::permission::admin::S3GatewayPermissions::ManageCredentials);
+}
+
+bool canAssignGatewayPrincipal(const std::shared_ptr<Session>& session) {
+    return hasGatewayPermission(
+        session,
+        vh::rbac::permission::admin::S3GatewayPermissions::AssignPrincipal);
 }
 
 bool canEditVault(const std::shared_ptr<Session>& session, const std::uint32_t vaultId) {
@@ -119,6 +154,41 @@ bool ownsCredential(const std::shared_ptr<Session>& session, const std::uint32_t
     });
 }
 
+bool canViewCredential(
+    const std::shared_ptr<Session>& session,
+    const db::query::s3::GatewayCredential& credential) {
+    if (!session || !session->user) return false;
+    return credential.principal_user_id == session->user->id || canManageGatewayCredentials(session);
+}
+
+bool canManageCredential(
+    const std::shared_ptr<Session>& session,
+    const db::query::s3::GatewayCredential& credential) {
+    return canViewCredential(session, credential);
+}
+
+void requireViewCredential(
+    const std::shared_ptr<Session>& session,
+    const db::query::s3::GatewayCredential& credential) {
+    if (!canViewCredential(session, credential))
+        throw std::runtime_error("You do not have permission to view this S3 gateway credential.");
+}
+
+void requireManageCredential(
+    const std::shared_ptr<Session>& session,
+    const db::query::s3::GatewayCredential& credential) {
+    if (!canManageCredential(session, credential))
+        throw std::runtime_error("You do not have permission to manage this S3 gateway credential.");
+}
+
+void requireCredentialPrincipalMutable(
+    const std::shared_ptr<Session>& session,
+    const std::uint32_t principalUserId) {
+    if (!session || !session->user) throw std::runtime_error("S3 gateway credential principal update requires a user.");
+    if (principalUserId != session->user->id && !canAssignGatewayPrincipal(session))
+        throw std::runtime_error("admin.s3_gateway.assign_principal is required to assign another S3 gateway principal.");
+}
+
 json credentialJson(const db::query::s3::GatewayCredential& credential) {
     json principalJson = nullptr;
     if (const auto principal = db::query::identities::User::getUserById(credential.principal_user_id)) {
@@ -144,6 +214,70 @@ json credentialJson(const db::query::s3::GatewayCredential& credential) {
         {"created_at", credential.created_at},
         {"last_used_at", credential.last_used_at ? json(*credential.last_used_at) : json(nullptr)},
         {"expires_at", credential.expires_at ? json(*credential.expires_at) : json(nullptr)}
+    };
+}
+
+json vaultJson(const std::shared_ptr<::vh::vault::model::Vault>& vault) {
+    if (!vault) return nullptr;
+    return {
+        {"id", vault->id},
+        {"name", vault->name},
+        {"owner_id", vault->owner_id}
+    };
+}
+
+json roleJson(const std::shared_ptr<::vh::rbac::role::Vault>& role) {
+    if (!role) return nullptr;
+    json out = *role;
+    return out;
+}
+
+json assignmentJson(const db::query::s3::CredentialVaultRoleAssignment& assignment) {
+    const auto credential = db::query::s3::Gateway::listCredentialsAdmin(true);
+    json credentialOut = nullptr;
+    for (const auto& item : credential) {
+        if (item.id == assignment.credential_id) {
+            credentialOut = credentialJson(item);
+            break;
+        }
+    }
+    const auto vault = db::query::vault::Vault::getVault(assignment.vault_id);
+    const auto role = db::query::rbac::role::Vault::get(assignment.vault_role_id);
+    return {
+        {"id", assignment.id},
+        {"assignment_id", assignment.id},
+        {"credential_id", assignment.credential_id},
+        {"credential", credentialOut},
+        {"vault_id", assignment.vault_id},
+        {"vault", vaultJson(vault)},
+        {"vault_role_id", assignment.vault_role_id},
+        {"role", roleJson(role)},
+        {"enabled", assignment.enabled},
+        {"created_by", assignment.created_by ? json(*assignment.created_by) : json(nullptr)},
+        {"created_at", assignment.created_at},
+        {"updated_at", assignment.updated_at}
+    };
+}
+
+json overrideJson(
+    const db::query::s3::GatewayCredential& credential,
+    const std::shared_ptr<::vh::vault::model::Vault>& vault,
+    const ::vh::rbac::permission::Override& overrideRule) {
+    return {
+        {"id", overrideRule.id},
+        {"override_id", overrideRule.id},
+        {"assignment_id", overrideRule.assignment_id},
+        {"credential_id", credential.id},
+        {"credential", credentialJson(credential)},
+        {"vault_id", vault ? json(vault->id) : json(nullptr)},
+        {"vault", vaultJson(vault)},
+        {"permission_id", overrideRule.permission.id},
+        {"permission_name", overrideRule.permission.qualified_name},
+        {"permission_qualified", overrideRule.permission.qualified_name},
+        {"permission", overrideRule.permission},
+        {"glob_path", overrideRule.glob_path()},
+        {"effect", ::vh::rbac::permission::to_string(overrideRule.effect)},
+        {"enabled", overrideRule.enabled}
     };
 }
 
@@ -186,7 +320,7 @@ std::optional<db::query::s3::GatewayCredential> findCredential(
     const std::shared_ptr<Session>& session,
     const std::string& accessKeyOrName,
     const bool includeDisabled = true) {
-    auto credentials = session->user->isAdmin()
+    auto credentials = canManageGatewayCredentials(session)
         ? db::query::s3::Gateway::listCredentialsAdmin(true)
         : db::query::s3::Gateway::listCredentialsForPrincipal(session->user->id);
     for (const auto& credential : credentials) {
@@ -195,6 +329,45 @@ std::optional<db::query::s3::GatewayCredential> findCredential(
             return credential;
     }
     return std::nullopt;
+}
+
+std::optional<db::query::s3::GatewayCredential> findCredential(
+    const std::shared_ptr<Session>& session,
+    const json& payload,
+    const bool includeDisabled = true) {
+    if (const auto credentialId = optionalUInt(payload, "credential_id")) {
+        const auto credentials = canManageGatewayCredentials(session)
+            ? db::query::s3::Gateway::listCredentialsAdmin(true)
+            : db::query::s3::Gateway::listCredentialsForPrincipal(session->user->id);
+        for (const auto& credential : credentials) {
+            if (!includeDisabled && !credential.enabled) continue;
+            if (credential.id == *credentialId) return credential;
+        }
+        return std::nullopt;
+    }
+    if (const auto id = optionalUInt(payload, "id")) {
+        const auto credentials = canManageGatewayCredentials(session)
+            ? db::query::s3::Gateway::listCredentialsAdmin(true)
+            : db::query::s3::Gateway::listCredentialsForPrincipal(session->user->id);
+        for (const auto& credential : credentials) {
+            if (!includeDisabled && !credential.enabled) continue;
+            if (credential.id == *id) return credential;
+        }
+        return std::nullopt;
+    }
+    auto value = payload.value("access_key", payload.value("credential_access_key", std::string{}));
+    if (value.empty()) value = payload.value("name", payload.value("credential_name", std::string{}));
+    if (value.empty()) value = payload.value("credential", std::string{});
+    if (value.empty()) return std::nullopt;
+    return findCredential(session, value, includeDisabled);
+}
+
+db::query::s3::GatewayCredential requireCredentialFromPayload(
+    const std::shared_ptr<Session>& session,
+    const json& payload) {
+    const auto credential = findCredential(session, payload);
+    if (!credential) throw std::runtime_error("S3 gateway credential not found");
+    return *credential;
 }
 
 std::vector<db::query::s3::CredentialVaultScope> scopesFromPayload(const json& payload, const uint32_t credentialId) {
@@ -246,15 +419,18 @@ void requireGatewayBudgetScope(const PriceBudgetScope scope) {
 
 void requireCanManagePolicy(const std::shared_ptr<Session>& session, const PriceBudgetPolicy& policy) {
     requireGatewayBudgetScope(policy.scope);
-    if (session->user->isAdmin()) return;
+    requireGatewayPermission(
+        session,
+        vh::rbac::permission::admin::S3GatewayPermissions::ManageBudgets,
+        "admin.s3_gateway.manage_budgets is required to manage S3 gateway budget policies.");
     if (policy.scope == PriceBudgetScope::GatewayCredentialVault) {
         if (policy.vault_id && canEditVault(session, *policy.vault_id)) return;
+        throw std::runtime_error("You do not have permission to manage this S3 gateway key/vault budget policy.");
     }
-    throw std::runtime_error("You do not have permission to manage this S3 gateway budget policy.");
 }
 
 bool canViewPolicy(const std::shared_ptr<Session>& session, const PriceBudgetPolicy& policy) {
-    if (session->user->isAdmin()) return true;
+    if (hasGatewayPermission(session, vh::rbac::permission::admin::S3GatewayPermissions::View)) return true;
     if (policy.scope == PriceBudgetScope::Global || policy.scope == PriceBudgetScope::Provider)
         return false;
     const auto credentialVisible = policy.gateway_credential_id && ownsCredential(session, *policy.gateway_credential_id);
@@ -279,7 +455,7 @@ void requireBudgetVisibility(
     const std::shared_ptr<Session>& session,
     const std::optional<std::uint32_t>& vaultId,
     const std::optional<std::uint32_t>& credentialId) {
-    if (session->user->isAdmin()) return;
+    if (hasGatewayPermission(session, vh::rbac::permission::admin::S3GatewayPermissions::View)) return;
     if (vaultId && canViewVault(session, *vaultId)) return;
     if (credentialId && ownsCredential(session, *credentialId)) return;
     throw std::runtime_error("S3 gateway budget views must be scoped to a vault you can view or a credential you own.");
@@ -287,10 +463,61 @@ void requireBudgetVisibility(
 
 std::shared_ptr<::vh::vault::model::Vault> resolveVault(const json& payload) {
     const auto vaultId = optionalUInt(payload, "vault_id");
-    if (!vaultId) throw std::runtime_error("vault_id is required");
-    auto vault = db::query::vault::Vault::getVault(*vaultId);
+    if (vaultId) {
+        auto vault = db::query::vault::Vault::getVault(*vaultId);
+        if (!vault) throw std::runtime_error("vault not found");
+        return vault;
+    }
+    auto vaultName = optionalString(payload, "vault_name");
+    if (!vaultName) vaultName = optionalString(payload, "vault");
+    if (!vaultName) throw std::runtime_error("vault_id or vault_name is required");
+    auto vaults = db::query::vault::Vault::listVaults();
+    auto it = std::ranges::find_if(vaults, [&](const auto& vault) {
+        return vault && vault->name == *vaultName;
+    });
+    auto vault = it == vaults.end() ? nullptr : *it;
     if (!vault) throw std::runtime_error("vault not found");
     return vault;
+}
+
+std::shared_ptr<::vh::rbac::role::Vault> resolveVaultRole(const json& payload) {
+    auto roleId = optionalUInt(payload, "vault_role_id");
+    if (!roleId) roleId = optionalUInt(payload, "role_id");
+    if (roleId) {
+        auto role = db::query::rbac::role::Vault::get(*roleId);
+        if (!role) throw std::runtime_error("vault role not found");
+        return role;
+    }
+    auto roleName = optionalString(payload, "vault_role_name");
+    if (!roleName) roleName = optionalString(payload, "role_name");
+    if (!roleName) roleName = optionalString(payload, "role");
+    if (!roleName) throw std::runtime_error("vault_role_id or vault_role_name is required");
+    auto role = db::query::rbac::role::Vault::get(*roleName);
+    if (!role) throw std::runtime_error("vault role not found");
+    return role;
+}
+
+std::shared_ptr<::vh::rbac::permission::Permission> resolvePermission(const json& payload) {
+    auto permissionId = optionalUInt(payload, "permission_id");
+    if (!permissionId) permissionId = optionalUInt(payload, "id");
+    if (permissionId) return db::query::rbac::Permission::getPermission(*permissionId);
+
+    auto permissionName = optionalString(payload, "permission_qualified");
+    if (!permissionName) permissionName = optionalString(payload, "permission_name");
+    if (!permissionName) permissionName = optionalString(payload, "permission");
+    if (!permissionName) throw std::runtime_error("permission_id or permission name is required");
+    std::vector<std::string> candidates{*permissionName};
+    if (permissionName->find('.') == std::string::npos) {
+        candidates.push_back("vault.fs.files." + *permissionName);
+        candidates.push_back("vault.fs.directories." + *permissionName);
+    }
+    for (const auto& candidate : candidates) {
+        try {
+            return db::query::rbac::Permission::getPermissionByName(candidate);
+        } catch (const std::exception&) {
+        }
+    }
+    throw std::runtime_error("permission not found: " + *permissionName);
 }
 
 std::shared_ptr<::vh::vault::model::APIKey> resolveApiKey(const json& payload) {
@@ -328,10 +555,50 @@ std::string bucketModeForVault(const json& payload, const std::shared_ptr<::vh::
     return mode;
 }
 
+void requireCredentialVaultRolePermission(
+    const std::shared_ptr<Session>& session,
+    const db::query::s3::GatewayCredential& credential,
+    const std::uint32_t vaultId,
+    const vh::rbac::permission::vault::RolePermissions permission,
+    const char* message) {
+    if (credential.principal_user_id != session->user->id && !canAssignGatewayPrincipal(session))
+        throw std::runtime_error("admin.s3_gateway.assign_principal is required to manage roles for another principal.");
+    using Perm = vh::rbac::permission::vault::RolePermissions;
+    if (!vh::rbac::resolver::Vault::has<Perm>({
+            .user = session->user,
+            .permission = permission,
+            .target_subject_type = std::string{"user"},
+            .target_subject_id = credential.principal_user_id,
+            .vault_id = vaultId
+        }))
+        throw std::runtime_error(message);
+}
+
+std::vector<db::query::s3::CredentialVaultRoleAssignment> visibleAssignmentsFor(
+    const std::shared_ptr<Session>& session,
+    const db::query::s3::GatewayCredential& credential) {
+    requireViewCredential(session, credential);
+    auto assignments = db::query::s3::Gateway::listCredentialVaultRoleAssignments(credential.id);
+    std::erase_if(assignments, [&](const auto& assignment) {
+        using Perm = vh::rbac::permission::vault::RolePermissions;
+        return !vh::rbac::resolver::Vault::has<Perm>({
+            .user = session->user,
+            .permission = Perm::View,
+            .target_subject_type = std::string{"user"},
+            .target_subject_id = credential.principal_user_id,
+            .vault_id = assignment.vault_id
+        });
+    });
+    return assignments;
+}
+
 } // namespace
 
 json S3Gateway::status(const json&, const std::shared_ptr<Session>& session) {
-    requireAdmin(session, "Admin permission is required to view S3 gateway status.");
+    requireGatewayPermission(
+        session,
+        vh::rbac::permission::admin::S3GatewayPermissions::View,
+        "admin.s3_gateway.view is required to view S3 gateway status.");
     const auto service = runtime::Manager::instance().getS3GatewayService();
     const auto status = service ? service->gatewayStatus() : protocols::s3::GatewayService::RuntimeStatus{};
     return {{"status", {
@@ -353,8 +620,8 @@ json S3Gateway::credentialsCreate(const json& payload, const std::shared_ptr<Ses
         principalId = *payloadPrincipalId;
     if (const auto payloadUserId = optionalUInt(payload, "user_id"))
         principalId = *payloadUserId;
-    if (!session->user->isAdmin() && principalId != session->user->id)
-        throw std::runtime_error("Only admins may create S3 gateway credentials for another user.");
+    if (principalId != session->user->id)
+        requireCredentialPrincipalMutable(session, principalId);
 
     protocols::s3::CredentialCreateOptions options;
     options.created_by = session->user->id;
@@ -366,6 +633,11 @@ json S3Gateway::credentialsCreate(const json& payload, const std::shared_ptr<Ses
         options.expires_at = static_cast<std::time_t>(*expiresAt);
     options.vault_scopes = scopesFromPayload(payload, 0);
     options.enforce_budget_for_local_requests = payload.value("enforce_budget_for_local_requests", false);
+    if (options.scope_mode == "global")
+        requireGatewayPermission(
+            session,
+            vh::rbac::permission::admin::S3GatewayPermissions::ManageCredentials,
+            "admin.s3_gateway.manage_credentials is required to create global S3 gateway credentials.");
 
     const protocols::s3::CredentialManager manager;
     auto secret = manager.createCredential(options);
@@ -379,7 +651,7 @@ json S3Gateway::credentialsList(const json& payload, const std::shared_ptr<Sessi
     const auto includeDisabled = payload.is_object()
         ? payload.value("include_disabled", true)
         : true;
-    const auto credentials = session->user->isAdmin()
+    const auto credentials = canManageGatewayCredentials(session)
         ? db::query::s3::Gateway::listCredentialsAdmin(includeDisabled)
         : db::query::s3::Gateway::listCredentialsForPrincipal(session->user->id);
     json rows = json::array();
@@ -395,25 +667,24 @@ json S3Gateway::credentialsRevoke(const json& payload, const std::shared_ptr<Ses
     if (value.empty()) throw std::runtime_error("access_key or name is required");
     const auto credential = findCredential(session, value);
     if (!credential) throw std::runtime_error("S3 gateway credential not found");
-    if (!session->user->isAdmin() && credential->principal_user_id != session->user->id)
-        throw std::runtime_error("You do not have permission to revoke this S3 gateway credential.");
+    requireManageCredential(session, *credential);
     return {{"revoked", db::query::s3::Gateway::deleteCredentialByAccessKey(credential->access_key)}};
 }
 
 json S3Gateway::credentialsScopeUpdate(const json& payload, const std::shared_ptr<Session>& session) {
-    const auto value = payload.value("access_key", payload.value("name", std::string{}));
-    const auto credential = findCredential(session, value);
+    const auto credential = findCredential(session, payload);
     if (!credential) throw std::runtime_error("S3 gateway credential not found");
-    if (!session->user->isAdmin() && credential->principal_user_id != session->user->id)
-        throw std::runtime_error("You do not have permission to update this S3 gateway credential.");
+    requireManageCredential(session, *credential);
     auto principalId = credential->principal_user_id;
     if (const auto payloadPrincipalId = optionalUInt(payload, "principal_user_id"))
         principalId = *payloadPrincipalId;
-    if (!session->user->isAdmin() && principalId != session->user->id)
-        throw std::runtime_error("Only admins may retarget S3 gateway credentials.");
+    requireCredentialPrincipalMutable(session, principalId);
     const auto scopeMode = normalizeScopeMode(payload.value("scope_mode", credential->scope_mode));
-    if (scopeMode == "global" && !session->user->isAdmin())
-        throw std::runtime_error("Global S3 gateway credentials require admin permission.");
+    if (scopeMode == "global")
+        requireGatewayPermission(
+            session,
+            vh::rbac::permission::admin::S3GatewayPermissions::ManageCredentials,
+            "admin.s3_gateway.manage_credentials is required to retarget global S3 gateway credentials.");
     const auto description = payload.contains("description")
         ? optionalString(payload, "description")
         : credential->description;
@@ -457,15 +728,131 @@ json S3Gateway::credentialsScopeUpdate(const json& payload, const std::shared_pt
 }
 
 json S3Gateway::credentialsScopeList(const json& payload, const std::shared_ptr<Session>& session) {
-    const auto value = payload.value("access_key", payload.value("name", std::string{}));
-    const auto credential = findCredential(session, value);
+    const auto credential = findCredential(session, payload);
     if (!credential) throw std::runtime_error("S3 gateway credential not found");
-    if (!session->user->isAdmin() && credential->principal_user_id != session->user->id)
-        throw std::runtime_error("You do not have permission to view this S3 gateway credential.");
+    requireViewCredential(session, *credential);
     json rows = json::array();
     for (const auto& scope : db::query::s3::Gateway::listCredentialScopes(credential->id))
         rows.push_back(scopeJson(scope));
     return {{"credential", credentialJson(*credential)}, {"scopes", rows}};
+}
+
+json S3Gateway::credentialsRolesList(const json& payload, const std::shared_ptr<Session>& session) {
+    const auto credential = requireCredentialFromPayload(session, payload);
+    json rows = json::array();
+    for (const auto& assignment : visibleAssignmentsFor(session, credential))
+        rows.push_back(assignmentJson(assignment));
+    return {{"credential", credentialJson(credential)}, {"roles", rows}, {"assignments", rows}};
+}
+
+json S3Gateway::credentialsRolesAssign(const json& payload, const std::shared_ptr<Session>& session) {
+    const auto credential = requireCredentialFromPayload(session, payload);
+    requireManageCredential(session, credential);
+    const auto vault = resolveVault(payload);
+    const auto role = resolveVaultRole(payload);
+    requireCredentialVaultRolePermission(
+        session,
+        credential,
+        vault->id,
+        vh::rbac::permission::vault::RolePermissions::Assign,
+        "You do not have permission to assign gateway credential vault roles for this principal and vault.");
+
+    db::query::s3::Gateway::updateCredentialScopeMode(
+        credential.id,
+        "vault_allowlist",
+        credential.principal_user_id,
+        credential.created_by,
+        credential.description,
+        credential.expires_at);
+    const auto assignmentId = db::query::s3::Gateway::upsertCredentialVaultRoleAssignment({
+        .credential_id = credential.id,
+        .vault_id = vault->id,
+        .vault_role_id = role->id,
+        .enabled = payload.value("enabled", true),
+        .created_by = session->user->id
+    });
+    auto assignments = db::query::s3::Gateway::listCredentialVaultRoleAssignments(credential.id);
+    auto it = std::ranges::find_if(assignments, [&](const auto& assignment) {
+        return assignment.id == assignmentId;
+    });
+    if (it == assignments.end()) throw std::runtime_error("S3 gateway credential role assignment was not created.");
+    return {{"assignment", assignmentJson(*it)}, {"role", assignmentJson(*it)}};
+}
+
+json S3Gateway::credentialsRolesRevoke(const json& payload, const std::shared_ptr<Session>& session) {
+    const auto credential = requireCredentialFromPayload(session, payload);
+    requireManageCredential(session, credential);
+    const auto vault = resolveVault(payload);
+    requireCredentialVaultRolePermission(
+        session,
+        credential,
+        vault->id,
+        vh::rbac::permission::vault::RolePermissions::Revoke,
+        "You do not have permission to revoke gateway credential vault roles for this principal and vault.");
+    const auto removed = db::query::s3::Gateway::deleteCredentialVaultRoleAssignment(credential.id, vault->id);
+    db::query::s3::Gateway::deleteCredentialScope(credential.id, vault->id);
+    return {{"revoked", removed}, {"credential", credentialJson(credential)}, {"vault", vaultJson(vault)}};
+}
+
+json S3Gateway::credentialsRoleOverridesList(const json& payload, const std::shared_ptr<Session>& session) {
+    const auto credential = requireCredentialFromPayload(session, payload);
+    requireViewCredential(session, credential);
+    const auto vault = resolveVault(payload);
+    requireCredentialVaultRolePermission(
+        session,
+        credential,
+        vault->id,
+        vh::rbac::permission::vault::RolePermissions::ViewOverride,
+        "You do not have permission to view gateway credential vault role overrides for this principal and vault.");
+    json rows = json::array();
+    for (const auto& overrideRule : db::query::s3::Gateway::listCredentialVaultRoleOverrides(credential.id, vault->id))
+        rows.push_back(overrideJson(credential, vault, overrideRule));
+    return {{"credential", credentialJson(credential)}, {"vault", vaultJson(vault)}, {"overrides", rows}};
+}
+
+json S3Gateway::credentialsRoleOverridesAdd(const json& payload, const std::shared_ptr<Session>& session) {
+    const auto credential = requireCredentialFromPayload(session, payload);
+    requireManageCredential(session, credential);
+    const auto vault = resolveVault(payload);
+    requireCredentialVaultRolePermission(
+        session,
+        credential,
+        vault->id,
+        vh::rbac::permission::vault::RolePermissions::AssignOverride,
+        "You do not have permission to add gateway credential vault role overrides for this principal and vault.");
+    auto permission = resolvePermission(payload);
+    if (!permission) throw std::runtime_error("permission not found");
+    ::vh::rbac::permission::Override overrideRule;
+    overrideRule.permission = *permission;
+    overrideRule.effect = ::vh::rbac::permission::overrideOptFromString(payload.value("effect", std::string{"allow"}));
+    overrideRule.enabled = payload.value("enabled", true);
+    overrideRule.pattern = ::vh::rbac::fs::glob::model::Pattern(payload.value("glob_path", payload.value("path", std::string{"**"})));
+    const auto id = db::query::s3::Gateway::upsertCredentialVaultRoleOverride(credential.id, vault->id, overrideRule);
+    for (const auto& saved : db::query::s3::Gateway::listCredentialVaultRoleOverrides(credential.id, vault->id)) {
+        if (saved.id == id)
+            return {{"override", overrideJson(credential, vault, saved)}};
+    }
+    throw std::runtime_error("S3 gateway credential vault role override was not created.");
+}
+
+json S3Gateway::credentialsRoleOverridesRemove(const json& payload, const std::shared_ptr<Session>& session) {
+    const auto credential = requireCredentialFromPayload(session, payload);
+    requireManageCredential(session, credential);
+    const auto vault = resolveVault(payload);
+    requireCredentialVaultRolePermission(
+        session,
+        credential,
+        vault->id,
+        vh::rbac::permission::vault::RolePermissions::RevokeOverride,
+        "You do not have permission to remove gateway credential vault role overrides for this principal and vault.");
+    auto overrideId = optionalUInt(payload, "override_id");
+    if (!overrideId) overrideId = optionalUInt(payload, "id");
+    if (!overrideId) throw std::runtime_error("override_id is required");
+    return {
+        {"removed", db::query::s3::Gateway::deleteCredentialVaultRoleOverride(credential.id, vault->id, *overrideId)},
+        {"credential", credentialJson(credential)},
+        {"vault", vaultJson(vault)}
+    };
 }
 
 json S3Gateway::bucketsList(const json&, const std::shared_ptr<Session>& session) {
@@ -477,6 +864,10 @@ json S3Gateway::bucketsList(const json&, const std::shared_ptr<Session>& session
 
 json S3Gateway::bucketsBind(const json& payload, const std::shared_ptr<Session>& session) {
     const auto vault = resolveVault(payload);
+    requireGatewayPermission(
+        session,
+        vh::rbac::permission::admin::S3GatewayPermissions::ManageBuckets,
+        "admin.s3_gateway.manage_buckets is required to bind S3 gateway buckets.");
     requireVaultEdit(session, vault->id);
     db::query::s3::Gateway::bindBucket({
         .vault_id = vault->id,
@@ -492,14 +883,22 @@ json S3Gateway::bucketsUnbind(const json& payload, const std::shared_ptr<Session
     const auto bucketName = payload.at("bucket_name").get<std::string>();
     const auto binding = db::query::s3::Gateway::resolveBucket(bucketName);
     if (!binding) return {{"unbound", false}};
+    requireGatewayPermission(
+        session,
+        vh::rbac::permission::admin::S3GatewayPermissions::ManageBuckets,
+        "admin.s3_gateway.manage_buckets is required to unbind S3 gateway buckets.");
     requireVaultEdit(session, binding->vault_id);
     return {{"unbound", db::query::s3::Gateway::unbindBucket(bucketName)}};
 }
 
 json S3Gateway::bucketsCreateLocal(const json& payload, const std::shared_ptr<Session>& session) {
     const auto ownerId = payload.value("owner_id", session->user->id);
-    if (!session->user->isAdmin() && ownerId != session->user->id)
-        throw std::runtime_error("Only admins may create local gateway buckets for another user.");
+    if (ownerId != session->user->id)
+        requireGatewayPermission(
+            session,
+            vh::rbac::permission::admin::S3GatewayPermissions::ManageBuckets,
+            "admin.s3_gateway.manage_buckets is required to create local gateway buckets for another owner.");
+    requireVaultCreateForOwner(session, ownerId);
     auto owner = db::query::identities::User::getUserById(ownerId);
     if (!owner) throw std::runtime_error("Owner user not found.");
     const auto bucket = protocols::s3::ObjectStore{}.createBucket(
@@ -512,7 +911,10 @@ json S3Gateway::bucketsCreateLocal(const json& payload, const std::shared_ptr<Se
 }
 
 json S3Gateway::bucketsCreateRemoteCache(const json& payload, const std::shared_ptr<Session>& session) {
-    requireAdmin(session, "Admin permission is required to create remote-cache S3 gateway buckets.");
+    requireGatewayPermission(
+        session,
+        vh::rbac::permission::admin::S3GatewayPermissions::ManageBuckets,
+        "admin.s3_gateway.manage_buckets is required to create remote-cache S3 gateway buckets.");
     const auto apiKey = resolveApiKey(payload);
     if (!apiKey) throw std::runtime_error("Upstream API key not found.");
     const auto ownerId = payload.value("owner_id", session->user->id);

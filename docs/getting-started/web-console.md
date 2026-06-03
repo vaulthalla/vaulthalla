@@ -78,6 +78,12 @@ The web form defaults new S3 vaults toward bounded behavior: cache-style sync, u
 
 The Cost Control page manages price budgets. Use it to set global, provider-level, or vault-level policies; review status and ledger entries; and handle approved overrides. Request budgets for a specific S3/R2 vault are configured on the vault sync policy and are covered in [Request Budgets](/cost-control/request-budgets).
 
+## S3 Gateway Page
+
+Admin -> S3 Gateway manages downstream S3-compatible access. Credential creation chooses the effective principal from a relational user selector when the actor has `admin.s3_gateway.assign_principal`; users without that permission see their own principal only.
+
+Gateway authorization is RBAC-native. `user_access` credentials inherit the principal user's Vaulthalla RBAC without gateway role rows. `vault_allowlist` credentials are managed through vault role assignments and path overrides in the credential role editor. Legacy boolean scopes are compatibility shorthand only and are not the primary web-console workflow.
+
 ## Operator Email Page
 
 Use Operator Email to configure provider credentials, run dry-run and send tests, inspect delivery history, and confirm notification routing. See [Operator Emails](/admin/operator-emails).

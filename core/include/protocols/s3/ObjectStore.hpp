@@ -3,6 +3,7 @@
 #include "protocols/s3/Auth.hpp"
 #include "db/query/s3/Gateway.hpp"
 #include "rbac/permission/vault/Filesystem.hpp"
+#include "rbac/s3/policy/Request.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -131,6 +132,10 @@ public:
     void requireObjectPermission(const ResolvedBucket& bucket,
                                  const std::string& key,
                                  rbac::permission::vault::FilesystemAction action) const;
+    void requireS3Permission(const ResolvedBucket& bucket,
+                             const AuthContext& auth,
+                             rbac::s3::policy::S3Action action,
+                             const std::string& key = {}) const;
     void requireBucketPermission(const ResolvedBucket& bucket,
                                  rbac::permission::vault::FilesystemAction action) const;
     void requireBucketRbacPermission(const ResolvedBucket& bucket,
@@ -148,6 +153,8 @@ private:
                                       rbac::permission::vault::FilesystemAction action);
     static void requirePermission(const ResolvedBucket& bucket, const std::filesystem::path& vaultPath,
                                   rbac::permission::vault::FilesystemAction action);
+    static void requireS3Permission(const ResolvedBucket& bucket, const std::filesystem::path& vaultPath,
+                                    rbac::s3::policy::S3Action action);
     static bool isDirectoryMarker(const std::string& key);
     static bool credentialAllows(const GatewayAccessContext& access,
                                  const std::shared_ptr<identities::User>& principal,

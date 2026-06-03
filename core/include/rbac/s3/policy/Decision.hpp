@@ -15,6 +15,7 @@ struct Decision {
         MissingVault,
         NoFilesystemMapping,
         PrincipalRbacDenied,
+        GlobalPrincipalRequired,
         CredentialRoleMissing,
         CredentialRoleDenied
     };

@@ -59,6 +59,16 @@ bool canAssignGatewayPrincipal(const std::shared_ptr<identities::User>& actor) {
     });
 }
 
+bool canManageGatewayCredentials(const std::shared_ptr<identities::User>& actor) {
+    if (!actor) return false;
+    if (actor->isSuperAdmin()) return true;
+    using Perm = rbac::permission::admin::S3GatewayPermissions;
+    return rbac::resolver::Admin::has<Perm>({
+        .user = actor,
+        .permission = Perm::ManageCredentials
+    });
+}
+
 void validateScopeRequest(const CredentialCreateOptions& options) {
     if (options.created_by == 0) throw std::invalid_argument("credential creation requires created_by");
     if (options.principal_user_id == 0) throw std::invalid_argument("credential creation requires principal_user_id");
@@ -170,8 +180,8 @@ void CredentialManager::validateScopeMutation(
     const bool actorAdmin = actor->isAdmin();
     if (principalUserId != actorUserId && !canAssignGatewayPrincipal(actor))
         throw std::invalid_argument("assigning an S3 gateway credential to another principal requires admin.s3_gateway.assign_principal");
-    if (!actorAdmin && scopeMode == "global")
-        throw std::invalid_argument("global S3 gateway credentials require admin permission");
+    if (scopeMode == "global" && !canManageGatewayCredentials(actor))
+        throw std::invalid_argument("global S3 gateway credentials require admin.s3_gateway.manage_credentials");
     if (scopeMode == "global" && !principal->isAdmin())
         throw std::invalid_argument("global S3 gateway credentials require an admin principal");
     if (scopeMode != "vault_allowlist") return;
