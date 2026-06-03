@@ -8,6 +8,7 @@ var/lib/vaulthalla
 var/log/vaulthalla
 etc/vaulthalla/config.yaml
 etc/vaulthalla/config_template.yaml.in
+debian/needrestart/50-vaulthalla.conf etc/needrestart/conf.d/
 lib/systemd/system/vaulthalla.service
 lib/systemd/system/vaulthalla-cli.service
 lib/systemd/system/vaulthalla-cli.socket
