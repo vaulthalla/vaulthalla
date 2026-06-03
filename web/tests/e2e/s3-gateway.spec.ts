@@ -111,6 +111,7 @@ test('admin can create and update local budget enforcement on a credential', asy
 
   await page.getByTestId('s3-gateway-scope-enforce-local-budget').uncheck()
   await page.getByTestId('s3-gateway-scope-save').click()
+  await expect(page.getByTestId('s3-gateway-scope-save-status')).toHaveText('Saved')
   await page.reload()
   await expect(page.getByTestId('s3-gateway-section-service')).toBeVisible()
   await selectCredential(page, credentialName)

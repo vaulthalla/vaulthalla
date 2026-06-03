@@ -65,9 +65,19 @@ run_playwright_with_build_runtime_stage() {
       runtime_pid=""
       cleanup() {
         if [[ -n "$runtime_pid" ]] && kill -0 "$runtime_pid" >/dev/null 2>&1; then
+          pkill -TERM -P "$runtime_pid" >/dev/null 2>&1 || true
           sudo -n kill "$runtime_pid" >/dev/null 2>&1 || true
+          for _ in $(seq 1 20); do
+            kill -0 "$runtime_pid" >/dev/null 2>&1 || break
+            sleep 0.5
+          done
+          if kill -0 "$runtime_pid" >/dev/null 2>&1; then
+            pkill -KILL -P "$runtime_pid" >/dev/null 2>&1 || true
+            sudo -n kill -KILL "$runtime_pid" >/dev/null 2>&1 || true
+          fi
           wait "$runtime_pid" >/dev/null 2>&1 || true
         fi
+        pkill -KILL -u vaulthalla -f "^$server( |$)" >/dev/null 2>&1 || true
         sudo -n systemctl start vaulthalla.service >/dev/null 2>&1 || true
       }
       trap cleanup EXIT

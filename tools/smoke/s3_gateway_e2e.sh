@@ -125,8 +125,20 @@ cleanup() {
     wait "$WEB_PID" >/dev/null 2>&1 || true
   fi
   if [[ -n "$RUNTIME_PID" ]] && kill -0 "$RUNTIME_PID" >/dev/null 2>&1; then
+    pkill -TERM -P "$RUNTIME_PID" >/dev/null 2>&1 || true
     kill "$RUNTIME_PID" >/dev/null 2>&1 || true
+    for _ in $(seq 1 20); do
+      kill -0 "$RUNTIME_PID" >/dev/null 2>&1 || break
+      sleep 0.5
+    done
+    if kill -0 "$RUNTIME_PID" >/dev/null 2>&1; then
+      pkill -KILL -P "$RUNTIME_PID" >/dev/null 2>&1 || true
+      kill -KILL "$RUNTIME_PID" >/dev/null 2>&1 || true
+    fi
     wait "$RUNTIME_PID" >/dev/null 2>&1 || true
+  fi
+  if [[ "$USE_BUILD_RUNTIME" == "1" ]]; then
+    pkill -KILL -u vaulthalla -f "^$REPO_ROOT/build/core/vaulthalla-server( |$)" >/dev/null 2>&1 || true
   fi
   if [[ "$STOPPED_SYSTEMD_GATEWAY" == "1" ]]; then
     run_root systemctl start vaulthalla.service >/dev/null 2>&1 || true

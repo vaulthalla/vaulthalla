@@ -282,22 +282,17 @@ void Session::close() {
         return;
     }
 
-    asio::post(strand_, [self, ws]() mutable {
-        boost::system::error_code ec;
-        if (ws->is_open())
-            ws->close(websocket::close_code::normal, ec);
-
-        if (ec)
-            log::Registry::ws()->debug("[ws::Session] ws close error: {}", ec.message());
-
-        self->ws_.reset();
-        self->buffer_.consume(self->buffer_.size());
-
-        log::Registry::ws()->debug("[ws::Session] Closed session for IP: {}", self->ipAddress);
+    asio::post(strand_, [self]() mutable {
+        self->closeAfterWrite_ = true;
+        if (self->writing_) return;
+        self->writeQueue_.clear();
+        self->closeOnStrand();
     });
 }
 
 void Session::send(json message) {
+    if (closing_.load(std::memory_order_acquire)) return;
+
     if (sendAccessToken_) {
         if (!tokens || !tokens->accessToken) {
             log::Registry::ws()->debug("[ws::Session] Attempted to send access token, but no access token is available in session");
@@ -312,9 +307,30 @@ void Session::send(json message) {
     auto self = shared_from_this();
 
     asio::post(strand_, [self, payload = std::move(payload)]() mutable {
+        if (self->closing_.load(std::memory_order_acquire) || !self->ws_) return;
         self->writeQueue_.push_back(std::move(payload));
         self->maybeStartWrite();
     });
+}
+
+void Session::closeOnStrand() {
+    auto ws = ws_;
+    if (!ws) {
+        buffer_.consume(buffer_.size());
+        return;
+    }
+
+    boost::system::error_code ec;
+    if (ws->is_open())
+        ws->close(websocket::close_code::normal, ec);
+
+    if (ec)
+        log::Registry::ws()->debug("[ws::Session] ws close error: {}", ec.message());
+
+    ws_.reset();
+    buffer_.consume(buffer_.size());
+
+    log::Registry::ws()->debug("[ws::Session] Closed session for IP: {}", ipAddress);
 }
 
 void Session::maybeStartWrite() {
@@ -343,10 +359,19 @@ void Session::onWrite(const beast::error_code& ec, std::size_t) {
     if (ec) {
         logFail("Write error", ec);
         writing_ = false;
+        writeQueue_.clear();
+        if (closeAfterWrite_) closeOnStrand();
         return;
     }
 
-    writeQueue_.pop_front();
+    if (!writeQueue_.empty()) writeQueue_.pop_front();
+    if (closeAfterWrite_) {
+        writing_ = false;
+        writeQueue_.clear();
+        closeOnStrand();
+        return;
+    }
+
     if (writeQueue_.empty()) {
         writing_ = false;
         return;

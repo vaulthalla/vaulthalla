@@ -66,6 +66,7 @@ export function ScopeEditor({
   const [overrideGlob, setOverrideGlob] = useState('**')
   const [overrideEffect, setOverrideEffect] = useState<'allow' | 'deny'>('deny')
   const [overrideEnabled, setOverrideEnabled] = useState(true)
+  const [scopeSaveState, setScopeSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
 
   const vaultById = useMemo(() => new Map(vaults.map(vault => [vault.id, vault])), [vaults])
   const assignedVaultIds = useMemo(() => new Set(roleAssignments.map(assignment => assignment.vault_id)), [roleAssignments])
@@ -84,6 +85,7 @@ export function ScopeEditor({
     setEditScopeMode(selectedCredential.scope_mode)
     setEditDescription(selectedCredential.description ?? '')
     setEditEnforceLocalBudget(selectedCredential.enforce_budget_for_local_requests)
+    setScopeSaveState('idle')
   }, [selectedCredential])
 
   useEffect(() => {
@@ -110,12 +112,19 @@ export function ScopeEditor({
 
   const saveScope = async () => {
     if (!selectedCredential) return
-    await onSave({
-      access_key: selectedCredential.access_key,
-      scope_mode: editScopeMode,
-      description: editDescription.trim() || null,
-      enforce_budget_for_local_requests: editEnforceLocalBudget,
-    })
+    setScopeSaveState('saving')
+    try {
+      await onSave({
+        access_key: selectedCredential.access_key,
+        scope_mode: editScopeMode,
+        description: editDescription.trim() || null,
+        enforce_budget_for_local_requests: editEnforceLocalBudget,
+      })
+      setScopeSaveState('saved')
+    } catch (error) {
+      setScopeSaveState('error')
+      throw error
+    }
   }
 
   const assignRole = async () => {
@@ -160,6 +169,9 @@ export function ScopeEditor({
               <SaveIcon className="h-4 w-4" />
               Save
             </button>
+          </div>
+          <div className="min-h-5 text-xs text-white/45" data-testid="s3-gateway-scope-save-status" aria-live="polite">
+            {scopeSaveState === 'saving' ? 'Saving' : scopeSaveState === 'saved' ? 'Saved' : scopeSaveState === 'error' ? 'Save failed' : ''}
           </div>
 
           <label className="flex items-start gap-3 rounded border border-white/10 bg-white/[0.03] p-3 text-sm text-white/75">

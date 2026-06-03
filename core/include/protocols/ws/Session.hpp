@@ -85,6 +85,7 @@ private:
     void maybeStartWrite();
     void doWrite();
     void onWrite(const beast::error_code& ec, std::size_t bytesWritten);
+    void closeOnStrand();
 
     // ---- handshake helpers
     void onHeadersRead(const std::shared_ptr<RequestType>& req, const beast::error_code& ec, std::size_t bytesRead);
@@ -118,6 +119,7 @@ private:
 
     bool writing_ = false;                 // only touched on strand
     std::deque<std::string> writeQueue_;   // only touched on strand
+    bool closeAfterWrite_ = false;         // only touched on strand
 
     bool sendAccessToken_{false};
 };
