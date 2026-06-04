@@ -86,6 +86,25 @@ jobs:
           set -euo pipefail
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
+          if ! command -v apt-get >/dev/null 2>&1; then
+            echo "::error::Expected apt-based runner for pmdocs provisioning."
+            exit 1
+          fi
+          APT_PREFIX=""
+          if command -v sudo >/dev/null 2>&1; then
+            APT_PREFIX="sudo"
+          fi
+          ${APT_PREFIX} apt-get update
+          ${APT_PREFIX} apt-get install -y ca-certificates curl
+          ${APT_PREFIX} install -d -m 0755 /etc/apt/keyrings
+          ${APT_PREFIX} curl -fsSL https://apt.valkyrianlabs.com/pubkey.gpg \
+            -o /etc/apt/keyrings/valkyrianlabs.gpg
+          ${APT_PREFIX} chmod 0644 /etc/apt/keyrings/valkyrianlabs.gpg
+          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/valkyrianlabs.gpg] https://apt.valkyrianlabs.com stable main" \
+            | ${APT_PREFIX} tee /etc/apt/sources.list.d/valkyrianlabs.list > /dev/null
+          ${APT_PREFIX} apt-get update
+          ${APT_PREFIX} apt-get install -y pmdocs
+          pmdocs --version
 
       - name: Validate versions and publication policy
         id: state
@@ -697,19 +716,14 @@ jobs:
         with:
           ref: ${{ github.event.inputs.ref || github.ref }}
 
-      - name: Install pmdocs
+      - name: Verify pmdocs
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y ca-certificates curl
-          sudo install -d -m 0755 /etc/apt/keyrings
-          curl -fsSL https://apt.valkyrianlabs.com/pubkey.gpg -o valkyrianlabs.gpg
-          sudo install -m 0644 valkyrianlabs.gpg /etc/apt/keyrings/valkyrianlabs.gpg
-          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/valkyrianlabs.gpg] https://apt.valkyrianlabs.com stable main" \
-            | sudo tee /etc/apt/sources.list.d/valkyrianlabs.list > /dev/null
-          sudo apt-get update
-          sudo apt-get install -y pmdocs
+          if ! command -v pmdocs >/dev/null 2>&1; then
+            echo "::error::pmdocs is missing. docs-publish intentionally avoids apt refreshes; ensure docs-validate or runner provisioning installs pmdocs before publish."
+            exit 1
+          fi
           pmdocs --version
 
       - name: Validate and push docs

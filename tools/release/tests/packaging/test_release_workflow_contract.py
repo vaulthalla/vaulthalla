@@ -68,6 +68,26 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         self.assertIn("record-release-success", record_job)
         self.assertNotIn("always()", record_job)
 
+    def test_release_state_installs_pmdocs_before_downstream_jobs(self) -> None:
+        workflow = self._workflow()
+        validate_job = workflow.split("validate-release-state:", 1)[1].split("core-verify:", 1)[0]
+        install_step = validate_job.split("Install release-tooling dependencies", 1)[1].split("Validate versions", 1)[0]
+        self.assertIn("apt-get update", install_step)
+        self.assertIn("apt.valkyrianlabs.com", install_step)
+        self.assertIn("apt-get install -y pmdocs", install_step)
+        self.assertIn("pmdocs --version", install_step)
+
+    def test_docs_publish_does_not_refresh_apt_metadata(self) -> None:
+        workflow = self._workflow()
+        docs_publish_job = workflow.split("docs-publish:", 1)[1].split("record-release-success:", 1)[0]
+        self.assertIn("Verify pmdocs", docs_publish_job)
+        self.assertIn("command -v pmdocs", docs_publish_job)
+        self.assertIn("pmdocs --version", docs_publish_job)
+        self.assertNotIn("apt-get update", docs_publish_job)
+        self.assertNotIn("apt update", docs_publish_job)
+        self.assertIn("pmdocs validate --source docs", docs_publish_job)
+        self.assertIn("pmdocs push", docs_publish_job)
+
     def test_github_release_assets_are_prepared_via_deduped_manifest_step(self) -> None:
         workflow = self._workflow()
         self.assertIn("Prepare GitHub release asset list (deduped)", workflow)
