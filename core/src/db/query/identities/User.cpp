@@ -216,15 +216,18 @@ namespace vh::db::query::identities {
         });
     }
 
-    void User::updateUserPassword(const unsigned int userId, const std::string &newPassword) {
+    void User::updateUserPassword(const unsigned int userId, const std::string &passwordHash) {
         Transactions::exec("User::updateUserPassword", [&](pqxx::work &txn) {
             if (systemOnlyUser(txn, userId))
                 throw std::runtime_error("system-only users cannot receive normal user passwords");
 
-            txn.exec(
+            const auto res = txn.exec(
                 pqxx::prepped{"update_user_password"},
-                pqxx::params{userId, newPassword}
+                pqxx::params{userId, passwordHash}
             );
+
+            if (res.affected_rows() != 1)
+                throw std::runtime_error("User not found: " + std::to_string(userId));
         });
     }
 

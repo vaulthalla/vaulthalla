@@ -24,7 +24,7 @@ public:
     static void updateUser(const UserPtr& user);
 
     [[nodiscard]] static bool authenticateUser(const std::string& name, const std::string& password);
-    static void updateUserPassword(unsigned int userId, const std::string& newPassword);
+    static void updateUserPassword(unsigned int userId, const std::string& passwordHash);
 
     static void deleteUser(unsigned int userId);
     static std::vector<UserPtr> listUsers(model::ListQueryParams&& params = {});

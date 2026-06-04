@@ -39,12 +39,16 @@ On package upgrades, Vaulthalla restarts only active Vaulthalla units so new
 package binaries and service definitions take effect. Admin-disabled or inactive
 Vaulthalla units are left untouched.
 
-Unrelated service restarts during `apt upgrade` are controlled by host-level apt
-hooks such as `needrestart`, not by the Vaulthalla package. Ubuntu's
-`needrestart` apt hook may automatically restart any service it detects using
-obsolete libraries after an apt transaction. If `nexus.service` should never be
-auto-restarted by apt, set local `needrestart` policy in
-`/etc/needrestart/conf.d/local.conf`, for example:
+Vaulthalla ships scoped `needrestart` policy for its own units at
+`/etc/needrestart/conf.d/50-vaulthalla.conf`. Ubuntu's `needrestart` apt hook
+may detect Vaulthalla services after unrelated apt transactions, but the
+package policy defers automatic restarts of Vaulthalla units so the core FUSE
+service is not restarted outside Vaulthalla's package-controlled boundary.
+
+Unrelated third-party service restarts during `apt upgrade` remain controlled
+by host-level apt hooks such as `needrestart`, not by the Vaulthalla package.
+If `nexus.service` should never be auto-restarted by apt, set local
+`needrestart` policy in `/etc/needrestart/conf.d/local.conf`, for example:
 
 ```
 $nrconf{override_rc} = {} unless exists $nrconf{override_rc};

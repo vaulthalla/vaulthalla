@@ -58,7 +58,7 @@ const UserForm = ({ name }: { name?: string }) => {
       } else {
         await registerUser(data.name, data.email, data.password, Boolean(data.is_active), data.role)
       }
-      router.push('/dashboard/users')
+      router.push('/users')
     } catch (err) {
       setError(getErrorMessage(err) || 'Failed to save user')
     }

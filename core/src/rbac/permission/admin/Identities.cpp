@@ -35,6 +35,15 @@ bool Identities::canEdit(const Type type) const noexcept {
     return visit(type, [](const auto& node) { return node.canEdit(); });
 }
 
+bool Identities::canResetPassword(const Type type) const noexcept {
+    return visit(type, [](const auto& node) {
+            if constexpr (requires { node.canResetPassword(); })
+                return node.canResetPassword();
+            else
+                return false;
+        });
+}
+
 bool Identities::canAddMember(const Type type) const noexcept {
     return visit(type, [](const auto& node) {
             if constexpr (requires { node.canAddMember(); })

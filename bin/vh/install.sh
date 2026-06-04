@@ -343,7 +343,6 @@ run_apt_install_flow() {
     local -a apt_opts=()
     local -a install_env=(
         "DEBIAN_FRONTEND=noninteractive"
-        "NEEDRESTART_MODE=a"
         "NEEDRESTART_SUSPEND=1"
     )
 

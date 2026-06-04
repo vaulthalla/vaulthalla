@@ -104,7 +104,7 @@ export interface WebSocketCommandMap {
   }
 
   'auth.user.change_password': {
-    payload: { id: number; old_password: string; new_password: string }
+    payload: { id: number; old_password?: string; new_password: string }
     response: { user: User }
   }
 

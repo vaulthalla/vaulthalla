@@ -52,7 +52,7 @@ interface AuthState {
   login: (payload: WSCommandPayload<'auth.login'>) => Promise<void>
   registerUser: (name: string, email: string, password: string, is_active: boolean, role: string) => Promise<void>
   updateUser: (payload: WSCommandPayload<'auth.user.update'>) => Promise<void>
-  changePassword: (id: number, old_password: string, new_password: string) => Promise<void>
+  changePassword: (id: number, new_password: string, old_password?: string) => Promise<void>
   isUserAuthenticated: () => Promise<boolean>
   logout: () => Promise<void>
   refreshToken: () => Promise<void>
@@ -210,12 +210,13 @@ export const useAuthStore: UseBoundStore<StoreApi<AuthState>> = create<AuthState
         }
       },
 
-      changePassword: async (id, old_password, new_password) => {
+      changePassword: async (id, new_password, old_password) => {
         set({ loading: true, error: null })
         try {
           await useWebSocketStore.getState().waitForConnection()
           const sendCommand = useWebSocketStore.getState().sendCommand
-          await sendCommand('auth.user.change_password', { id, old_password, new_password })
+          const response = await sendCommand('auth.user.change_password', { id, old_password, new_password })
+          set(state => ({ user: state.user?.id === response.user.id ? response.user : state.user }))
           // If we were forcing a default-password change for the current user,
           // trust the successful update and stop re-checking this flag.
           if (get().adminPasswordIsDefault && get().user?.id === id) {
