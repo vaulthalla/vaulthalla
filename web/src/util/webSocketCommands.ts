@@ -130,9 +130,11 @@ export interface WebSocketCommandMap {
 
   'storage.vault.add': {
     payload:
-      | { name: string; type: 'local'; mount_point: string }
+      | { name: string; slug?: string; fuse_name?: string | null; type: 'local'; mount_point: string }
       | {
           name: string
+          slug?: string
+          fuse_name?: string | null
           type: 's3'
           api_key_id: number
           bucket: string

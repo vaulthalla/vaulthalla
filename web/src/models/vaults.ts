@@ -31,6 +31,10 @@ export interface RemoteSyncPolicy {
 interface IVault {
   id: number
   name: string
+  slug: string
+  fuse_name?: string | null
+  effective_fuse_name?: string
+  description?: string
   type: VaultType
   owner_id: number
   owner: string
@@ -58,6 +62,10 @@ interface IS3 extends IVault {
 export class Vault implements IVault {
   id: number = 0
   name: string = ''
+  slug: string = ''
+  fuse_name: string | null = null
+  effective_fuse_name: string = ''
+  description: string = ''
   type: VaultType = 'local'
   owner_id: number = 0
   owner: string = ''
@@ -72,6 +80,10 @@ export class Vault implements IVault {
 export class LocalDiskVault implements ILocalDisk {
   id: number = 0
   name: string = ''
+  slug: string = ''
+  fuse_name: string | null = null
+  effective_fuse_name: string = ''
+  description: string = ''
   type: VaultType = 'local'
   owner_id: number = 0
   owner: string = ''
@@ -87,6 +99,10 @@ export class LocalDiskVault implements ILocalDisk {
 export class S3Vault implements IS3 {
   id: number = 0
   name: string = ''
+  slug: string = ''
+  fuse_name: string | null = null
+  effective_fuse_name: string = ''
+  description: string = ''
   type: VaultType = 's3'
   owner_id: number = 0
   owner: string = ''

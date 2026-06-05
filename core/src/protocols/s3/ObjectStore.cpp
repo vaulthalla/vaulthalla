@@ -838,9 +838,11 @@ void ObjectStore::requireBucketRbacPermission(
 }
 
 void ObjectStore::requireBucketName(const std::string& bucket) {
-    if (bucket.size() < 3 || bucket.size() > 63) throw invalidArgument("Invalid bucket name", bucket);
-    if (bucket.find('/') != std::string::npos || bucket.find('\\') != std::string::npos)
+    try {
+        vault::model::requireValidS3Name(bucket);
+    } catch (const std::exception&) {
         throw invalidArgument("Invalid bucket name", bucket);
+    }
 }
 
 void ObjectStore::requireRbacPermission(

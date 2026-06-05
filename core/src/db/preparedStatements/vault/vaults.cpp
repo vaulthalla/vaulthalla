@@ -2,15 +2,8 @@
 
 void vh::db::Connection::initPreparedVaults() const {
     conn_->prepare("upsert_vault",
-                   R"(INSERT INTO vault (name, type, description, owner_id, mount_point, quota, is_active)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       ON CONFLICT (name, owner_id)
-       DO UPDATE SET
-           type = EXCLUDED.type,
-           description = EXCLUDED.description,
-           quota = EXCLUDED.quota,
-           is_active = EXCLUDED.is_active,
-           mount_point = EXCLUDED.mount_point
+                   R"(INSERT INTO vault (name, type, description, owner_id, mount_point, quota, is_active, slug, fuse_name)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING id)");
 
     conn_->prepare("upsert_s3_vault",

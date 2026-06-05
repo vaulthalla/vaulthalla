@@ -54,7 +54,7 @@ export function BucketsSection({
         <div className="rounded border border-white/10 bg-white/[0.03] p-3">
           <div className="mb-3 text-sm font-medium text-white">Bind vault</div>
           <div className="space-y-2">
-            <input className={fieldClass} placeholder="Bucket name" value={bindBucketName} onChange={event => setBindBucketName(event.target.value)} />
+            <input className={fieldClass} placeholder="Bucket name (defaults to vault slug)" value={bindBucketName} onChange={event => setBindBucketName(event.target.value)} />
             <select className={fieldClass} value={bindVaultId} onChange={event => setBindVaultId(event.target.value)}>
               <option value="">Vault</option>
               {vaults.map(vault => <option key={vault.id} value={vault.id}>{vault.name}</option>)}
@@ -62,7 +62,15 @@ export function BucketsSection({
             <select className={fieldClass} value={bindMode} onChange={event => setBindMode(event.target.value)}>
               {bindModeOptions.map(mode => <option key={mode} value={mode}>{mode}</option>)}
             </select>
-            <button className={primaryButtonClass} type="button" disabled={!bindBucketName || !bindVaultId} onClick={() => void onBindBucket({ bucket_name: bindBucketName, vault_id: Number(bindVaultId), mode: bindMode })}>
+            <button
+              className={primaryButtonClass}
+              type="button"
+              disabled={!bindVaultId}
+              onClick={() => void onBindBucket({
+                ...(bindBucketName.trim() ? { bucket_name: bindBucketName.trim() } : {}),
+                vault_id: Number(bindVaultId),
+                mode: bindMode,
+              })}>
               <PlusIcon className="h-4 w-4" />
               Bind
             </button>

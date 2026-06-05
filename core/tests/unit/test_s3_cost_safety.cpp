@@ -379,6 +379,8 @@ std::string uniqueBucketName(const std::string& label) {
         if (c == '_') c = '-';
     }
     if (out.size() > 63) out.resize(63);
+    while (!out.empty() && out.back() == '-') out.pop_back();
+    if (out.size() < 3) out = "gw0";
     return out;
 }
 
@@ -2235,6 +2237,7 @@ TEST(S3CostSafetyTest, GatewayRemoteDeleteMarksTombstoneWithoutDirectUpstreamDel
 
     auto fake = std::make_shared<CountingS3Controller>();
     const auto suffix = uniqueSuffix("gateway_delete_nosuchkey");
+    const auto bucketName = uniqueBucketName("gateway-delete-nosuchkey");
     const auto vaultId = seedDryRunS3VaultForDbTest(suffix, fake);
     auto engine = std::static_pointer_cast<vh::storage::CloudEngine>(
         vh::runtime::Deps::get().storageManager->getEngine(vaultId));
@@ -2247,7 +2250,7 @@ TEST(S3CostSafetyTest, GatewayRemoteDeleteMarksTombstoneWithoutDirectUpstreamDel
     constexpr std::string_view objectKey = "already-gone.txt";
     vh::db::query::s3::Gateway::bindBucket({
         .vault_id = vaultId,
-        .bucket_name = "gateway-delete-" + suffix,
+        .bucket_name = bucketName,
         .api_exclusive = true,
         .mode = "remote_cache",
         .created_by = owner->id
@@ -2268,7 +2271,7 @@ TEST(S3CostSafetyTest, GatewayRemoteDeleteMarksTombstoneWithoutDirectUpstreamDel
 
     vh::protocols::s3::ObjectStore store;
     vh::protocols::s3::ResolvedBucket bucket{
-        .bucket_name = "gateway-delete-" + suffix,
+        .bucket_name = bucketName,
         .vault_id = vaultId,
         .mode = "remote_cache",
         .api_exclusive = true,
@@ -2305,6 +2308,7 @@ TEST(S3CostSafetyTest, GatewayRemoteDeleteIgnoresDirectUpstreamFailureBecauseSyn
     auto fake = std::make_shared<CountingS3Controller>();
     fake->delete_object_failure = true;
     const auto suffix = uniqueSuffix("gateway_delete_failure");
+    const auto bucketName = uniqueBucketName("gateway-delete-failure");
     const auto vaultId = seedDryRunS3VaultForDbTest(suffix, fake);
     auto engine = std::static_pointer_cast<vh::storage::CloudEngine>(
         vh::runtime::Deps::get().storageManager->getEngine(vaultId));
@@ -2317,7 +2321,7 @@ TEST(S3CostSafetyTest, GatewayRemoteDeleteIgnoresDirectUpstreamFailureBecauseSyn
     constexpr std::string_view objectKey = "must-not-local-delete.txt";
     vh::db::query::s3::Gateway::bindBucket({
         .vault_id = vaultId,
-        .bucket_name = "gateway-delete-fail-" + suffix,
+        .bucket_name = bucketName,
         .api_exclusive = true,
         .mode = "remote_cache",
         .created_by = owner->id
@@ -2338,7 +2342,7 @@ TEST(S3CostSafetyTest, GatewayRemoteDeleteIgnoresDirectUpstreamFailureBecauseSyn
 
     vh::protocols::s3::ObjectStore store;
     vh::protocols::s3::ResolvedBucket bucket{
-        .bucket_name = "gateway-delete-fail-" + suffix,
+        .bucket_name = bucketName,
         .vault_id = vaultId,
         .mode = "remote_cache",
         .api_exclusive = true,

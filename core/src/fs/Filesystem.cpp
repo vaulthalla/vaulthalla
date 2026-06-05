@@ -309,7 +309,7 @@ void Filesystem::mkVault(const std::filesystem::path& absPath, unsigned int vaul
         const auto dir = std::make_shared<Directory>();
         dir->vault_id = vaultId;
         dir->path = "/";
-        dir->name = to_snake_case(vault->name);
+        dir->name = vault->effectiveFuseName();
         dir->parent_id = db::query::fs::Entry::getRootEntry()->id;
         dir->base32_alias = vault->mount_point;
         dir->backing_path = paths::getBackingPath() / dir->base32_alias;

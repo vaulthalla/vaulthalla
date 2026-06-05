@@ -24,7 +24,9 @@
 #include "seed/include/seed_db.hpp"
 #include "storage/CloudEngine.hpp"
 #include "storage/s3/pricing/GatewayPriceEstimate.hpp"
+#include "sync/model/LocalPolicy.hpp"
 #include "sync/model/RemotePolicy.hpp"
+#include "vault/model/Vault.hpp"
 
 #include <boost/asio.hpp>
 #include <boost/beast/http.hpp>
@@ -218,6 +220,14 @@ std::vector<uint8_t> hexBytes(const std::string& hex) {
     out.reserve(hex.size() / 2);
     for (std::size_t i = 0; i + 1 < hex.size(); i += 2)
         out.push_back(static_cast<uint8_t>(std::stoul(hex.substr(i, 2), nullptr, 16)));
+    return out;
+}
+
+std::string uniqueS3Name(const std::string& label) {
+    auto out = vh::vault::model::slugifyName(uniqueSuffix(label));
+    if (out.size() > 63) out.resize(63);
+    while (!out.empty() && out.back() == '-') out.pop_back();
+    if (out.size() < 3) out = "s3-" + out;
     return out;
 }
 
@@ -2175,6 +2185,170 @@ TEST_F(S3GatewayDbTest, S3GatewayWebSocketRejectsRemoteModeForLocalVaultBinding)
     const auto binding = vh::db::query::s3::Gateway::resolveBucket("local-binding-" + std::to_string(vaultId));
     ASSERT_TRUE(binding);
     EXPECT_EQ("local", binding->mode);
+}
+
+TEST_F(S3GatewayDbTest, VaultSlugDefaultsAndDisplayRenameDoesNotRewriteBindings) {
+    auto session = std::make_shared<vh::protocols::ws::Session>(
+        std::make_shared<vh::protocols::ws::Router>());
+    session->user = vh::db::query::identities::User::getUserByName("admin");
+    ASSERT_TRUE(session->user);
+    ASSERT_TRUE(session->user->isSuperAdmin());
+
+    auto vault = std::make_shared<vh::vault::model::Vault>();
+    vault->name = "My Photos";
+    vault->description = "Slug default test";
+    vault->owner_id = userId;
+    vault->type = vh::vault::model::VaultType::Local;
+    vault->is_active = true;
+
+    auto sync = std::make_shared<vh::sync::model::LocalPolicy>();
+    sync->conflict_policy = vh::sync::model::LocalPolicy::ConflictPolicy::KeepBoth;
+
+    vault = vh::runtime::Deps::get().storageManager->addVault(vault, sync);
+    ASSERT_TRUE(vault);
+    EXPECT_EQ("my-photos", vault->slug);
+    EXPECT_EQ("my-photos", vault->effectiveFuseName());
+    const auto mountPoint = vault->mount_point.string();
+    const auto initialFuseRoot = vh::runtime::Deps::get().storageManager
+        ->getEngine(vault->id)
+        ->paths
+        ->absRelToRoot(vh::runtime::Deps::get().storageManager->getEngine(vault->id)->paths->vaultRoot,
+                       vh::fs::model::PathType::FUSE_ROOT);
+    EXPECT_EQ(initialFuseRoot, std::filesystem::path("/my-photos"));
+
+    const auto bound = vh::protocols::ws::handler::S3Gateway::bucketsBind({
+        {"vault_id", vault->id}
+    }, session);
+    EXPECT_TRUE(bound.at("bound").get<bool>());
+    ASSERT_TRUE(vh::db::query::s3::Gateway::resolveBucket("my-photos"));
+
+    auto renamed = vh::db::query::vault::Vault::getVault(vault->id);
+    ASSERT_TRUE(renamed);
+    renamed->name = "Archive Photos";
+    vh::runtime::Deps::get().storageManager->updateVault(renamed);
+
+    const auto reloaded = vh::db::query::vault::Vault::getVault(vault->id);
+    ASSERT_TRUE(reloaded);
+    EXPECT_EQ("Archive Photos", reloaded->name);
+    EXPECT_EQ("my-photos", reloaded->slug);
+    EXPECT_EQ("my-photos", reloaded->effectiveFuseName());
+    EXPECT_EQ(mountPoint, reloaded->mount_point.string());
+    ASSERT_TRUE(vh::db::query::s3::Gateway::resolveBucket("my-photos"));
+}
+
+TEST_F(S3GatewayDbTest, SlugAndFuseOverrideControlOnlyDefaultFuseBinding) {
+    auto vault = std::make_shared<vh::vault::model::Vault>();
+    vault->name = "Slug Update " + uniqueSuffix("vault");
+    vault->description = "Slug update test";
+    vault->owner_id = userId;
+    vault->type = vh::vault::model::VaultType::Local;
+    vault->is_active = true;
+
+    auto sync = std::make_shared<vh::sync::model::LocalPolicy>();
+    sync->conflict_policy = vh::sync::model::LocalPolicy::ConflictPolicy::KeepBoth;
+
+    vault = vh::runtime::Deps::get().storageManager->addVault(vault, sync);
+    ASSERT_TRUE(vault);
+
+    auto update = vh::db::query::vault::Vault::getVault(vault->id);
+    ASSERT_TRUE(update);
+    update->slug = "renamed-default-" + std::to_string(vault->id);
+    vh::runtime::Deps::get().storageManager->updateVault(update);
+
+    auto reloaded = vh::db::query::vault::Vault::getVault(vault->id);
+    ASSERT_TRUE(reloaded);
+    EXPECT_EQ(update->slug, reloaded->effectiveFuseName());
+    EXPECT_EQ(
+        std::filesystem::path("/") / update->slug,
+        vh::runtime::Deps::get().storageManager->getEngine(vault->id)->paths->absRelToRoot(
+            vh::runtime::Deps::get().storageManager->getEngine(vault->id)->paths->vaultRoot,
+            vh::fs::model::PathType::FUSE_ROOT));
+
+    reloaded->fuse_name = "custom-root-" + std::to_string(vault->id);
+    vh::runtime::Deps::get().storageManager->updateVault(reloaded);
+    auto overridden = vh::db::query::vault::Vault::getVault(vault->id);
+    ASSERT_TRUE(overridden);
+    EXPECT_EQ(*reloaded->fuse_name, overridden->effectiveFuseName());
+
+    overridden->slug = "slug-after-override-" + std::to_string(vault->id);
+    vh::runtime::Deps::get().storageManager->updateVault(overridden);
+    auto afterSlugUpdate = vh::db::query::vault::Vault::getVault(vault->id);
+    ASSERT_TRUE(afterSlugUpdate);
+    EXPECT_EQ("slug-after-override-" + std::to_string(vault->id), afterSlugUpdate->slug);
+    EXPECT_EQ(*reloaded->fuse_name, afterSlugUpdate->effectiveFuseName());
+    EXPECT_FALSE(vh::db::query::s3::Gateway::resolveBucket(afterSlugUpdate->slug));
+}
+
+TEST_F(S3GatewayDbTest, ExplicitS3BucketBindingSurvivesVaultNameAndSlugUpdates) {
+    auto session = std::make_shared<vh::protocols::ws::Session>(
+        std::make_shared<vh::protocols::ws::Router>());
+    session->user = vh::db::query::identities::User::getUserByName("admin");
+    ASSERT_TRUE(session->user);
+    ASSERT_TRUE(session->user->isSuperAdmin());
+
+    const auto targetVaultId = createLocalVault(uniqueSuffix("explicit_bucket"), userId);
+    const auto bucketName = "explicit-binding-" + std::to_string(targetVaultId);
+    const auto bound = vh::protocols::ws::handler::S3Gateway::bucketsBind({
+        {"vault_id", targetVaultId},
+        {"bucket_name", bucketName}
+    }, session);
+    EXPECT_TRUE(bound.at("bound").get<bool>());
+
+    auto vault = vh::db::query::vault::Vault::getVault(targetVaultId);
+    ASSERT_TRUE(vault);
+    vault->name = "Renamed Explicit Bucket Vault";
+    vault->slug = "renamed-explicit-" + std::to_string(targetVaultId);
+    vh::runtime::Deps::get().storageManager->updateVault(vault);
+
+    ASSERT_TRUE(vh::db::query::s3::Gateway::resolveBucket(bucketName));
+    EXPECT_FALSE(vh::db::query::s3::Gateway::resolveBucket(vault->slug));
+}
+
+TEST_F(S3GatewayDbTest, RejectsInvalidAndDuplicateExternalNames) {
+    auto vault = std::make_shared<vh::vault::model::Vault>();
+    vault->name = "Invalid Slug " + uniqueSuffix("vault");
+    vault->slug = "Invalid_Slug";
+    vault->owner_id = userId;
+    vault->type = vh::vault::model::VaultType::Local;
+
+    auto sync = std::make_shared<vh::sync::model::LocalPolicy>();
+    EXPECT_THROW((void)vh::db::query::vault::Vault::upsertVault(vault, sync), std::invalid_argument);
+
+    auto first = std::make_shared<vh::vault::model::Vault>();
+    first->name = "Duplicate Slug A " + uniqueSuffix("vault");
+    first->slug = uniqueS3Name("duplicate-slug");
+    first->owner_id = userId;
+    first->type = vh::vault::model::VaultType::Local;
+    const auto duplicateSlug = first->slug;
+    first->id = vh::db::query::vault::Vault::upsertVault(first, std::make_shared<vh::sync::model::LocalPolicy>());
+
+    auto second = std::make_shared<vh::vault::model::Vault>();
+    second->name = "Duplicate Slug B " + uniqueSuffix("vault");
+    second->slug = duplicateSlug;
+    second->owner_id = userId;
+    second->type = vh::vault::model::VaultType::Local;
+    EXPECT_THROW((void)vh::db::query::vault::Vault::upsertVault(second, std::make_shared<vh::sync::model::LocalPolicy>()), std::invalid_argument);
+
+    auto fuseA = vh::db::query::vault::Vault::getVault(first->id);
+    ASSERT_TRUE(fuseA);
+    fuseA->fuse_name = "shared-fuse-" + std::to_string(first->id);
+    vh::db::query::vault::Vault::upsertVault(fuseA);
+
+    auto fuseB = std::make_shared<vh::vault::model::Vault>();
+    fuseB->name = "Duplicate Fuse " + uniqueSuffix("vault");
+    fuseB->slug = uniqueS3Name("duplicate-fuse");
+    fuseB->fuse_name = fuseA->fuse_name;
+    fuseB->owner_id = userId;
+    fuseB->type = vh::vault::model::VaultType::Local;
+    EXPECT_THROW((void)vh::db::query::vault::Vault::upsertVault(fuseB, std::make_shared<vh::sync::model::LocalPolicy>()), std::invalid_argument);
+
+    EXPECT_THROW(vh::db::query::s3::Gateway::bindBucket({
+        .vault_id = vaultId,
+        .bucket_name = "Bad_Bucket",
+        .api_exclusive = false,
+        .mode = "local",
+        .created_by = userId
+    }), std::invalid_argument);
 }
 
 TEST_F(S3GatewayDbTest, DisabledAndExpiredCredentialsDoNotAuthenticate) {
