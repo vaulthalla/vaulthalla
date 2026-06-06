@@ -29,6 +29,8 @@ type FormSyncPolicy = Omit<RemoteSyncPolicy, 'interval'> & { interval: number }
 
 type VaultFormValues = {
   name: string
+  slug?: string
+  fuse_name?: string | null
   type: VaultType
   mount_point?: string
   api_key_id?: number
@@ -99,6 +101,9 @@ const DEFAULT_SYNC_POLICY: FormSyncPolicy = {
   s3_request_budget: S3_BUDGET_PRESETS.balanced,
   max_remote_index_age_seconds: 24 * 60 * 60,
 }
+
+const S3_SAFE_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/
+const FUSE_UNSAFE_PATTERN = /[\/\\\0]/
 
 const storageTierOptionsForProvider = (provider?: string) => {
   if (provider === 'AWS') {
@@ -201,6 +206,8 @@ const defaultValuesFor = (initialValues?: Partial<LocalDiskVault | S3Vault | Vau
 
   return {
     name: initialValues?.name ?? '',
+    slug: initialValues?.slug ?? '',
+    fuse_name: initialValues?.fuse_name ?? '',
     type,
     mount_point: mountPoint,
     api_key_id: s3?.api_key_id || undefined,
@@ -411,6 +418,12 @@ const VaultForm = ({ initialValues }: { initialValues?: Partial<LocalDiskVault |
     setIsSubmitting(true)
     try {
       const isEdit = Boolean(initialValues?.name || initialValues?.id)
+      const slug = data.slug?.trim() ?? ''
+      const fuseName = typeof data.fuse_name === 'string' ? data.fuse_name.trim() : ''
+      const externalNameValues = {
+        ...(isEdit || slug ? { slug } : {}),
+        ...(isEdit ? { fuse_name: fuseName || null } : fuseName ? { fuse_name: fuseName } : {}),
+      }
 
       if (isEdit) {
         const updated =
@@ -419,6 +432,7 @@ const VaultForm = ({ initialValues }: { initialValues?: Partial<LocalDiskVault |
               new LocalDiskVault({
                 ...initialValues,
                 name: data.name,
+                ...externalNameValues,
                 type: 'local',
                 mount_point: data.mount_point ?? '',
               }),
@@ -427,6 +441,7 @@ const VaultForm = ({ initialValues }: { initialValues?: Partial<LocalDiskVault |
               new S3Vault({
                 ...initialValues,
                 name: data.name,
+                ...externalNameValues,
                 type: 's3',
                 api_key_id: Number(data.api_key_id),
                 bucket: data.bucket ?? '',
@@ -441,10 +456,11 @@ const VaultForm = ({ initialValues }: { initialValues?: Partial<LocalDiskVault |
       }
 
       if (data.type === 'local') {
-        await addVault({ name: data.name, type: 'local', mount_point: data.mount_point ?? '' })
+        await addVault({ name: data.name, ...externalNameValues, type: 'local', mount_point: data.mount_point ?? '' })
       } else {
         await addVault({
           name: data.name,
+          ...externalNameValues,
           type: 's3',
           api_key_id: Number(data.api_key_id),
           bucket: data.bucket ?? '',
@@ -575,6 +591,41 @@ const VaultForm = ({ initialValues }: { initialValues?: Partial<LocalDiskVault |
         <label className="block text-sm font-medium">Vault Name</label>
         <input {...register('name', { required: 'Name is required' })} className="mt-1 w-full rounded border p-2" />
         {errors.name && <span className="text-sm text-red-400">{errors.name.message}</span>}
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <div>
+          <label className="block text-sm font-medium">Vault Slug</label>
+          <input
+            {...register('slug', {
+              validate: value => {
+                const clean = value?.trim() ?? ''
+                if (!clean) return initialValues ? 'Slug is required' : true
+                return S3_SAFE_NAME_PATTERN.test(clean) || 'Use 3-63 lowercase letters, numbers, or hyphens'
+              },
+            })}
+            placeholder="my-photos"
+            className="mt-1 w-full rounded border p-2"
+          />
+          {errors.slug && <span className="text-sm text-red-400">{errors.slug.message}</span>}
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium">FUSE Name</label>
+          <input
+            {...register('fuse_name', {
+              validate: value => {
+                const clean = typeof value === 'string' ? value.trim() : ''
+                if (!clean) return true
+                if (clean === '.' || clean === '..') return 'Use a single path component'
+                return !FUSE_UNSAFE_PATTERN.test(clean) || 'Use a single path component'
+              },
+            })}
+            placeholder={defaults.slug || 'my-photos'}
+            className="mt-1 w-full rounded border p-2"
+          />
+          {errors.fuse_name && <span className="text-sm text-red-400">{errors.fuse_name.message}</span>}
+        </div>
       </div>
 
       <div>

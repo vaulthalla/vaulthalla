@@ -19,6 +19,9 @@ export type S3GatewayCredentialVaultRoleOverrideEffect = 'allow' | 'deny'
 export interface S3GatewayVaultRef {
   id: number
   name: string
+  slug?: string
+  fuse_name?: string | null
+  effective_fuse_name?: string
   owner_id?: number | null
 }
 
@@ -71,6 +74,9 @@ const asVaultRef = (input: unknown): S3GatewayVaultRef | null => {
   return {
     id: asNumber(input.id),
     name: asString(input.name),
+    slug: asString(input.slug),
+    fuse_name: asNullableString(input.fuse_name),
+    effective_fuse_name: asString(input.effective_fuse_name),
     owner_id: asNullableNumber(input.owner_id),
   }
 }
@@ -438,20 +444,23 @@ export class S3GatewayBucketBinding {
 }
 
 export interface S3GatewayBucketBindPayload {
-  bucket_name: string
+  bucket_name?: string
   vault_id: number
   mode?: S3GatewayBucketMode
   api_exclusive?: boolean
 }
 
 export interface S3GatewayCreateLocalBucketPayload {
-  bucket_name: string
+  bucket_name?: string
+  name?: string
+  description?: string | null
   owner_id?: number | null
   quota_bytes?: number | null
 }
 
 export interface S3GatewayCreateRemoteCachePayload {
-  bucket_name: string
+  bucket_name?: string
+  name?: string
   api_key_id?: number | null
   api_key?: string | null
   upstream_bucket: string

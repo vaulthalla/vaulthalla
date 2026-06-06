@@ -25,6 +25,7 @@
 #include "runtime/Manager.hpp"
 #include "storage/Manager.hpp"
 #include "storage/s3/pricing/PriceBudget.hpp"
+#include "sync/model/LocalPolicy.hpp"
 #include "sync/model/RemotePolicy.hpp"
 #include "vault/model/APIKey.hpp"
 #include "vault/model/S3Vault.hpp"
@@ -225,6 +226,9 @@ json vaultJson(const std::shared_ptr<::vh::vault::model::Vault>& vault) {
     return {
         {"id", vault->id},
         {"name", vault->name},
+        {"slug", vault->slug},
+        {"fuse_name", vault->fuse_name ? json(*vault->fuse_name) : json(nullptr)},
+        {"effective_fuse_name", vault->effectiveFuseName()},
         {"owner_id", vault->owner_id}
     };
 }
@@ -1245,6 +1249,7 @@ json S3Gateway::bucketsList(const json&, const std::shared_ptr<Session>& session
 
 json S3Gateway::bucketsBind(const json& payload, const std::shared_ptr<Session>& session) {
     const auto vault = resolveVault(payload);
+    const auto bucketName = optionalString(payload, "bucket_name").value_or(vault->slug);
     requireGatewayPermission(
         session,
         vh::rbac::permission::admin::S3GatewayPermissions::ManageBuckets,
@@ -1252,7 +1257,7 @@ json S3Gateway::bucketsBind(const json& payload, const std::shared_ptr<Session>&
     requireVaultEdit(session, vault->id);
     db::query::s3::Gateway::bindBucket({
         .vault_id = vault->id,
-        .bucket_name = payload.at("bucket_name").get<std::string>(),
+        .bucket_name = bucketName,
         .api_exclusive = payload.value("api_exclusive", false),
         .mode = bucketModeForVault(payload, vault),
         .created_by = session->user->id
@@ -1282,13 +1287,39 @@ json S3Gateway::bucketsCreateLocal(const json& payload, const std::shared_ptr<Se
     requireVaultCreateForOwner(session, ownerId);
     auto owner = db::query::identities::User::getUserById(ownerId);
     if (!owner) throw std::runtime_error("Owner user not found.");
-    const auto bucket = protocols::s3::ObjectStore{}.createBucket(
-        payload.at("bucket_name").get<std::string>(),
-        session->user,
-        owner->id,
-        "local",
-        payload.value("quota_bytes", static_cast<uintmax_t>(0)));
-    return {{"bucket", bucketJson(*db::query::s3::Gateway::resolveBucket(bucket.bucket_name))}};
+
+    if (const auto bucketName = optionalString(payload, "bucket_name")) {
+        const auto bucket = protocols::s3::ObjectStore{}.createBucket(
+            *bucketName,
+            session->user,
+            owner->id,
+            "local",
+            payload.value("quota_bytes", static_cast<uintmax_t>(0)));
+        return {{"bucket", bucketJson(*db::query::s3::Gateway::resolveBucket(bucket.bucket_name))}};
+    }
+
+    const auto displayName = optionalString(payload, "name")
+        .value_or("S3 gateway local bucket for " + owner->name);
+    auto vault = std::make_shared<::vh::vault::model::Vault>();
+    vault->name = displayName;
+    vault->description = payload.value("description", "S3 gateway bucket " + displayName);
+    vault->owner_id = owner->id;
+    vault->type = ::vh::vault::model::VaultType::Local;
+    vault->quota = payload.value("quota_bytes", static_cast<uintmax_t>(0));
+    vault->is_active = true;
+
+    auto sync = std::make_shared<sync::model::LocalPolicy>();
+    sync->conflict_policy = sync::model::LocalPolicy::ConflictPolicy::KeepBoth;
+
+    vault = runtime::Deps::get().storageManager->addVault(vault, sync);
+    db::query::s3::Gateway::bindBucket({
+        .vault_id = vault->id,
+        .bucket_name = vault->slug,
+        .api_exclusive = config::Registry::get().s3_gateway.default_api_exclusive,
+        .mode = "local",
+        .created_by = session->user->id
+    });
+    return {{"bucket", bucketJson(*db::query::s3::Gateway::resolveBucket(vault->slug))}};
 }
 
 json S3Gateway::bucketsCreateRemoteCache(const json& payload, const std::shared_ptr<Session>& session) {
@@ -1301,8 +1332,11 @@ json S3Gateway::bucketsCreateRemoteCache(const json& payload, const std::shared_
     const auto ownerId = payload.value("owner_id", session->user->id);
     requireVaultCreateForOwner(session, ownerId);
 
+    const auto bucketName = optionalString(payload, "bucket_name");
+    if (bucketName) ::vh::vault::model::requireValidS3Name(*bucketName);
+
     auto vault = std::make_shared<::vh::vault::model::S3Vault>();
-    vault->name = payload.at("bucket_name").get<std::string>();
+    vault->name = optionalString(payload, "name").value_or(bucketName.value_or("S3 gateway remote-cache bucket"));
     vault->description = payload.value("description", "S3 gateway remote-cache bucket " + vault->name);
     vault->owner_id = ownerId;
     vault->type = ::vh::vault::model::VaultType::S3;
@@ -1318,14 +1352,15 @@ json S3Gateway::bucketsCreateRemoteCache(const json& payload, const std::shared_
     policy->max_remote_index_age = std::chrono::hours(24);
 
     auto created = runtime::Deps::get().storageManager->addVault(vault, policy);
+    const auto effectiveBucketName = bucketName.value_or(created->slug);
     db::query::s3::Gateway::bindBucket({
         .vault_id = created->id,
-        .bucket_name = vault->name,
+        .bucket_name = effectiveBucketName,
         .api_exclusive = true,
         .mode = "remote_cache",
         .created_by = session->user->id
     });
-    return {{"bucket", bucketJson(*db::query::s3::Gateway::resolveBucket(vault->name))}};
+    return {{"bucket", bucketJson(*db::query::s3::Gateway::resolveBucket(effectiveBucketName))}};
 }
 
 json S3Gateway::budgetPolicyList(const json& payload, const std::shared_ptr<Session>& session) {

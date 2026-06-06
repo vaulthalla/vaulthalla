@@ -28,6 +28,40 @@ namespace {
         if (sync->max_remote_index_age) params.append(sync->max_remote_index_age->count());
         else params.append(std::optional<int64_t>{});
     }
+
+    std::optional<std::string> optionalNonEmpty(const std::string& value) {
+        if (value.empty()) return std::nullopt;
+        return value;
+    }
+
+    void validateExternalNames(
+        pqxx::work& txn,
+        const vh::vault::model::Vault& vault,
+        const bool exists) {
+        if (!vault.slug.empty()) vh::vault::model::requireValidVaultSlug(vault.slug);
+        if (vault.fuse_name) vh::vault::model::requireValidFuseName(*vault.fuse_name);
+
+        if (vault.slug.empty() && exists)
+            throw std::invalid_argument("vault.slug cannot be empty on update.");
+
+        if (vault.slug.empty()) return;
+
+        const auto slugOwner = txn.exec(
+            "SELECT id FROM vault WHERE slug = $1 AND id <> $2 LIMIT 1",
+            pqxx::params{vault.slug, vault.id});
+        if (!slugOwner.empty())
+            throw std::invalid_argument("vault.slug '" + vault.slug + "' is already in use.");
+
+        const auto effectiveFuseName = vault.effectiveFuseName();
+        if (effectiveFuseName.empty())
+            throw std::invalid_argument("effective FUSE name cannot be empty.");
+
+        const auto fuseOwner = txn.exec(
+            "SELECT id FROM vault WHERE COALESCE(fuse_name, slug) = $1 AND id <> $2 LIMIT 1",
+            pqxx::params{effectiveFuseName, vault.id});
+        if (!fuseOwner.empty())
+            throw std::invalid_argument("effective FUSE name '" + effectiveFuseName + "' is already in use.");
+    }
 }
 
 unsigned int Vault::upsertVault(const VaultPtr& vault,
@@ -40,6 +74,16 @@ unsigned int Vault::upsertVault(const VaultPtr& vault,
     }
 
     return Transactions::exec("Vault::upsertVault", [&](pqxx::work& txn) {
+        if (exists && vault->slug.empty()) {
+            const auto current = txn.exec(
+                "SELECT slug FROM vault WHERE id = $1",
+                pqxx::params{vault->id});
+            if (current.empty()) throw std::runtime_error("Vault not found for ID: " + std::to_string(vault->id));
+            vault->slug = current.one_field().as<std::string>();
+        }
+
+        validateExternalNames(txn, *vault, exists);
+
         pqxx::params p{
             vault->name,
             to_string(vault->type),
@@ -47,7 +91,9 @@ unsigned int Vault::upsertVault(const VaultPtr& vault,
             vault->owner_id,
             to_utf8_string(vault->mount_point.u8string()),
             vault->quota,
-            vault->is_active
+            vault->is_active,
+            optionalNonEmpty(vault->slug),
+            vault->fuse_name
         };
 
         pqxx::result vaultRes;
@@ -64,8 +110,10 @@ unsigned int Vault::upsertVault(const VaultPtr& vault,
                         mount_point = $5,
                         quota = $6,
                         is_active = $7,
+                        slug = $8,
+                        fuse_name = $9,
                         updated_at = CURRENT_TIMESTAMP
-                    WHERE id = $8
+                    WHERE id = $10
                     RETURNING id
                 )SQL",
                 p);

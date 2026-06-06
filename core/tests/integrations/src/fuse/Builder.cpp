@@ -39,7 +39,7 @@ Builder Builder::make(BuilderSpec&& spec) {
     const auto engine = makeVault();
     if (!engine) throw std::runtime_error("Failed to create vault");
 
-    const auto root = std::filesystem::path(engine->paths->fuseRoot / fs::model::to_snake_case(engine->vault->name));
+    const auto root = std::filesystem::path(engine->paths->fuseRoot / engine->vault->effectiveFuseName());
     if (!admin->meta.linux_uid) throw std::runtime_error("Admin Linux UID not found");
     seed_vault_tree(*admin->meta.linux_uid, root, spec.baseDir);
 

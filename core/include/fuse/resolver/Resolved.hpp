@@ -6,6 +6,7 @@
 #include <fuse_lowlevel.h>
 #include <memory>
 #include <optional>
+#include <vector>
 
 namespace vh {
     namespace identities { struct User; struct Group; }
@@ -42,6 +43,7 @@ namespace vh {
             std::optional<std::filesystem::path> path{};
             std::optional<fuse_ino_t> ino{};
             std::shared_ptr<storage::Engine> engine{};
+            std::optional<std::vector<std::shared_ptr<fs::model::Entry>>> dir{};
 
             [[nodiscard]] bool ok() const {
                 return status == Status::Ok;

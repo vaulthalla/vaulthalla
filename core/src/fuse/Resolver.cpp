@@ -1,13 +1,24 @@
 #include "fuse/Resolver.hpp"
 #include "db/query/identities/User.hpp"
 #include "db/query/identities/Group.hpp"
+#include "identities/User.hpp"
+#include "identities/Group.hpp"
 #include "runtime/Deps.hpp"
 #include "log/Registry.hpp"
 #include "fs/cache/Registry.hpp"
 #include "fs/model/Entry.hpp"
 #include "storage/Manager.hpp"
+#include "vault/model/Vault.hpp"
+#include "rbac/fs/policy/Evaluator.hpp"
+#include "rbac/permission/admin/Vaults.hpp"
+#include "rbac/role/Vault.hpp"
+#include "rbac/role/vault/Global.hpp"
+#include "rbac/resolver/Admin.hpp"
+#include "rbac/resolver/admin/all.hpp"
 #include "rbac/resolver/vault/all.hpp"
 #include "fs/model/Path.hpp"
+
+#include <algorithm>
 
 namespace vh::fuse {
     using resolver::Request;
@@ -19,7 +30,8 @@ namespace vh::fuse {
         [[nodiscard]]
         bool needsEntry(const Request& req) {
             return resolver::hasFlag(req.target, Target::Entry) ||
-                   resolver::hasFlag(req.target, Target::EntryForPath);
+                   resolver::hasFlag(req.target, Target::EntryForPath) ||
+                   resolver::hasFlag(req.target, Target::List);
         }
 
         [[nodiscard]]
@@ -31,6 +43,164 @@ namespace vh::fuse {
         [[nodiscard]]
         std::string_view entryName(const std::shared_ptr<fs::model::Entry>& entry) {
             return entry ? std::string_view(entry->name) : std::string_view("null");
+        }
+
+        [[nodiscard]]
+        bool needsList(const Request& req) {
+            return resolver::hasFlag(req.target, Target::List);
+        }
+
+        [[nodiscard]]
+        bool isMountRootEntry(const std::shared_ptr<fs::model::Entry>& entry) {
+            return entry && !entry->vault_id && entry->fuse_path == "/";
+        }
+
+        [[nodiscard]]
+        bool isVaultRootEntry(const std::shared_ptr<fs::model::Entry>& entry) {
+            return entry && entry->vault_id && entry->path == "/";
+        }
+
+        [[nodiscard]]
+        bool isMountRootMetadataAction(const rbac::permission::vault::FilesystemAction action) {
+            using Action = rbac::permission::vault::FilesystemAction;
+            return action == Action::Lookup || action == Action::List;
+        }
+
+        [[nodiscard]]
+        std::shared_ptr<vault::model::Vault> vaultForEntry(const std::shared_ptr<fs::model::Entry>& entry) {
+            if (!entry || !entry->vault_id) return nullptr;
+            const auto& manager = runtime::Deps::get().storageManager;
+            if (!manager) return nullptr;
+            return manager->getVault(static_cast<unsigned int>(*entry->vault_id));
+        }
+
+        [[nodiscard]]
+        bool isVaultOwner(
+            const std::shared_ptr<identities::User>& user,
+            const std::shared_ptr<fs::model::Entry>& entry
+        ) {
+            if (!user) return false;
+            const auto vault = vaultForEntry(entry);
+            return vault && vault->owner_id == user->id;
+        }
+
+        [[nodiscard]]
+        bool hasAdminVaultView(
+            const std::shared_ptr<identities::User>& user,
+            const std::shared_ptr<fs::model::Entry>& entry
+        ) {
+            if (!user || !entry || !entry->vault_id) return false;
+
+            using Perm = rbac::permission::admin::VaultPermissions;
+            try {
+                return rbac::resolver::Admin::has<Perm>({
+                    .user = user,
+                    .permission = Perm::View,
+                    .vault_id = static_cast<std::uint32_t>(*entry->vault_id)
+                });
+            } catch (const std::exception& e) {
+                log::Registry::auth()->warn(
+                    "[fuse::Resolver] Failed to evaluate admin vault visibility for vault {}: {}",
+                    *entry->vault_id,
+                    e.what()
+                );
+                return false;
+            }
+        }
+
+        [[nodiscard]]
+        bool hasVaultPermission(
+            const std::shared_ptr<identities::User>& user,
+            const rbac::permission::vault::FilesystemAction action,
+            const std::shared_ptr<fs::model::Entry>& entry,
+            const std::optional<std::filesystem::path>& path = std::nullopt
+        ) {
+            return rbac::resolver::Vault::has<rbac::permission::vault::FilesystemAction>({
+                .user = user,
+                .permission = action,
+                .path = path,
+                .entry = entry
+            });
+        }
+
+        [[nodiscard]]
+        bool canExposeVaultRoot(
+            const std::shared_ptr<identities::User>& user,
+            const std::shared_ptr<fs::model::Entry>& entry,
+            const rbac::permission::vault::FilesystemAction action
+        ) {
+            if (!user || !isVaultRootEntry(entry)) return false;
+            if (user->isSuperAdmin()) return true;
+            if (isVaultOwner(user, entry)) return true;
+            if (hasAdminVaultView(user, entry)) return true;
+            return hasVaultPermission(user, action, entry);
+        }
+
+        [[nodiscard]]
+        bool roleOverridesMayAffectListing(
+            const std::shared_ptr<rbac::role::Vault>& role,
+            const std::filesystem::path& directory
+        ) {
+            return role && rbac::fs::policy::Evaluator::overridesMayAffectListing(role->fs, directory);
+        }
+
+        [[nodiscard]]
+        bool roleOverridesMayAffectListing(
+            const rbac::role::vault::Global& role,
+            const std::filesystem::path& directory
+        ) {
+            return rbac::fs::policy::Evaluator::overridesMayAffectListing(role.fs, directory);
+        }
+
+        [[nodiscard]]
+        bool userOverridesMayAffectListing(
+            const std::shared_ptr<identities::User>& user,
+            const std::shared_ptr<fs::model::Entry>& directory
+        ) {
+            if (!user || !directory || !directory->vault_id) return false;
+
+            const auto vaultId = static_cast<std::uint32_t>(*directory->vault_id);
+            const auto& vaultPath = directory->path;
+
+            if (roleOverridesMayAffectListing(user->getDirectVaultRole(vaultId), vaultPath))
+                return true;
+
+            for (const auto& group : user->groups) {
+                if (!group) continue;
+                const auto it = group->roles.vaults.find(vaultId);
+                if (it != group->roles.vaults.end() && roleOverridesMayAffectListing(it->second, vaultPath))
+                    return true;
+            }
+
+            if (!user->roles.admin) return false;
+
+            return roleOverridesMayAffectListing(user->vaultGlobals().self, vaultPath) ||
+                   roleOverridesMayAffectListing(user->vaultGlobals().admin, vaultPath) ||
+                   roleOverridesMayAffectListing(user->vaultGlobals().user, vaultPath);
+        }
+
+        [[nodiscard]]
+        bool canReturnUnfilteredDirectory(
+            const std::shared_ptr<identities::User>& user,
+            const std::shared_ptr<fs::model::Entry>& directory
+        ) {
+            if (!user || !directory) return false;
+            if (isMountRootEntry(directory)) return false;
+            if (user->isSuperAdmin()) return true;
+            if (isVaultOwner(user, directory)) return true;
+            return !userOverridesMayAffectListing(user, directory);
+        }
+
+        [[nodiscard]]
+        bool deniedRootLookupShouldLookMissing(
+            const Request& req,
+            const Resolved& out,
+            const rbac::permission::vault::FilesystemAction action
+        ) {
+            return req.parentIno &&
+                   *req.parentIno == FUSE_ROOT_ID &&
+                   action == rbac::permission::vault::FilesystemAction::Lookup &&
+                   isVaultRootEntry(out.entry);
         }
     }
 
@@ -49,6 +219,7 @@ namespace vh::fuse {
         if (!resolveEntryForPath(req, res)) return res;
         if (!resolveEngine(req, res)) return res;
         if (!enforcePermissions(req, res)) return res;
+        if (!resolveList(req, res)) return res;
 
         if (!res.ino && (res.entry || res.path)) {
             log::Registry::fuse()->debug(
@@ -238,37 +409,44 @@ namespace vh::fuse {
         const std::shared_ptr<fs::model::Entry>& entry,
         const std::optional<std::filesystem::path>& path = std::nullopt
     ) {
-        if (!rbac::resolver::Vault::has<rbac::permission::vault::FilesystemAction>({
-            .user = user,
-            .permission = action,
-            .path = path,
-            .entry = entry
-        })) {
-            if (entry)
-                log::Registry::fuse()->warn("[auth] Access denied for user {} on path {}", user->name, entry->path.string());
-            else if (path)
-                log::Registry::fuse()->warn("[auth] Access denied for user {} on path {}", user->name, path->string());
-            else
-                log::Registry::fuse()->warn("[auth] Access denied for user {} with no resolved path/entry", user->name);
+        if (isMountRootEntry(entry))
+            return isMountRootMetadataAction(action);
 
-            return false;
-        }
+        if (isVaultRootEntry(entry) && isMountRootMetadataAction(action))
+            return canExposeVaultRoot(user, entry, action);
 
-        return true;
+        if (hasVaultPermission(user, action, entry, path))
+            return true;
+
+        if (entry)
+            log::Registry::fuse()->warn("[auth] Access denied for user {} on path {}", user->name, entry->path.string());
+        else if (path)
+            log::Registry::fuse()->warn("[auth] Access denied for user {} on path {}", user->name, path->string());
+        else
+            log::Registry::fuse()->warn("[auth] Access denied for user {} with no resolved path/entry", user->name);
+
+        return false;
     }
 
     bool Resolver::enforcePermissions(const Request& req, Resolved& out) {
         const bool checkEntry = needsEntry(req);
         const bool checkPath = needsPath(req);
 
+        auto deny = [&](const rbac::permission::vault::FilesystemAction action) {
+            if (deniedRootLookupShouldLookMissing(req, out, action))
+                out.setStatus(Status::MissingEntry, ENOENT);
+            else
+                out.setStatus(Status::AccessDenied, EACCES);
+        };
+
         if (req.action && (checkEntry || checkPath) && !enforcePermission(out.user, *req.action, out.entry, out.path)) {
-            out.setStatus(Status::AccessDenied, EACCES);
+            deny(*req.action);
             return false;
         }
 
         for (const auto& action : req.actions)
             if ((checkEntry || checkPath) && !enforcePermission(out.user, action, out.entry, out.path)) {
-                out.setStatus(Status::AccessDenied, EACCES);
+                deny(action);
                 return false;
             }
 
@@ -276,6 +454,8 @@ namespace vh::fuse {
     }
 
     bool Resolver::resolveEngine(const Request& req, Resolved& out) {
+        if (isMountRootEntry(out.entry)) return true;
+
         if (!(req.action || !req.actions.empty() || needsPath(req))) return true;
 
         if (out.entry && out.entry->vault_id)
@@ -289,6 +469,67 @@ namespace vh::fuse {
             return false;
         }
 
+        return true;
+    }
+
+    bool Resolver::resolveList(const Request& req, Resolved& out) {
+        if (!needsList(req)) return true;
+
+        if (!out.entry) {
+            out.setStatus(Status::MissingEntry, ENOENT);
+            return false;
+        }
+
+        if (!out.entry->isDirectory()) {
+            out.setStatus(Status::InvalidRequest, ENOTDIR);
+            return false;
+        }
+
+        std::vector<std::shared_ptr<fs::model::Entry>> entries;
+        try {
+            entries = runtime::Deps::get().fsCache->listDir(out.entry->id, false);
+        } catch (const std::exception& e) {
+            log::Registry::fuse()->error("[{}] Failed to list inode {}: {}", req.caller, out.entry->inode.value_or(0), e.what());
+            out.setStatus(Status::InternalError, EIO);
+            return false;
+        }
+
+        std::ranges::sort(entries, [](const auto& lhs, const auto& rhs) {
+            if (!lhs || !rhs) return !!lhs;
+            return lhs->name < rhs->name;
+        });
+
+        if (isMountRootEntry(out.entry)) {
+            if (out.user && out.user->isSuperAdmin()) {
+                out.dir = std::move(entries);
+                return true;
+            }
+
+            std::vector<std::shared_ptr<fs::model::Entry>> visible;
+            visible.reserve(entries.size());
+
+            for (const auto& entry : entries)
+                if (isVaultRootEntry(entry) &&
+                    canExposeVaultRoot(out.user, entry, rbac::permission::vault::FilesystemAction::List))
+                    visible.push_back(entry);
+
+            out.dir = std::move(visible);
+            return true;
+        }
+
+        if (canReturnUnfilteredDirectory(out.user, out.entry)) {
+            out.dir = std::move(entries);
+            return true;
+        }
+
+        std::vector<std::shared_ptr<fs::model::Entry>> visible;
+        visible.reserve(entries.size());
+
+        for (const auto& entry : entries)
+            if (entry && hasVaultPermission(out.user, rbac::permission::vault::FilesystemAction::Lookup, entry))
+                visible.push_back(entry);
+
+        out.dir = std::move(visible);
         return true;
     }
 }

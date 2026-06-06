@@ -5,6 +5,7 @@
 #include "db/encoding/timestamp.hpp"
 #include "rbac/permission/Override.hpp"
 #include "rbac/role/Vault.hpp"
+#include "vault/model/Vault.hpp"
 
 #include <algorithm>
 #include <ctime>
@@ -1011,6 +1012,8 @@ void Gateway::recordSyncOrigin(
 }
 
 void Gateway::bindBucket(const BucketBinding& binding) {
+    vh::vault::model::requireValidS3Name(binding.bucket_name);
+
     Transactions::exec("S3Gateway::bindBucket", [&](pqxx::work& txn) {
         txn.exec(
             R"SQL(

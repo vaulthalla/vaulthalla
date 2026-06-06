@@ -17,5 +17,6 @@ namespace vh::fuse {
         static bool resolvePath(const resolver::Request& req, resolver::Resolved& out);
         static bool resolveEntryForPath(const resolver::Request& req, resolver::Resolved& out);
         static bool enforcePermissions(const resolver::Request& req, resolver::Resolved& out);
+        static bool resolveList(const resolver::Request& req, resolver::Resolved& out);
     };
 }

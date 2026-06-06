@@ -4,6 +4,7 @@
 #include "vault/model/Vault.hpp"
 #include "vault/model/S3Vault.hpp"
 #include "sync/model/Policy.hpp"
+#include "sync/model/LocalPolicy.hpp"
 #include "sync/model/RemotePolicy.hpp"
 #include "db/query/vault/Vault.hpp"
 #include "db/query/sync/Policy.hpp"
@@ -37,6 +38,12 @@ using namespace vh::rbac;
 using json = nlohmann::json;
 
 namespace {
+    std::optional<std::string> optionalString(const json& payload, const char* key) {
+        if (!payload.is_object() || !payload.contains(key) || payload.at(key).is_null()) return std::nullopt;
+        const auto value = payload.at(key).get<std::string>();
+        return value.empty() ? std::optional<std::string>{} : std::make_optional(value);
+    }
+
     std::chrono::seconds parsePolicyInterval(const json& value) {
         if (value.is_number_integer()) return Policy::clampInterval(std::chrono::seconds(value.get<int64_t>()));
         if (!value.is_string()) throw std::runtime_error("sync.interval must be a string or number of seconds");
@@ -148,7 +155,10 @@ json Vaults::add(const json &payload, const std::shared_ptr<Session> &session) {
     std::shared_ptr<Vault> vault;
     std::shared_ptr<Policy> sync = nullptr;
 
-    if (typeLower == "s3") {
+    if (typeLower == "local") {
+        vault = std::make_shared<Vault>();
+        sync = std::make_shared<LocalPolicy>();
+    } else if (typeLower == "s3") {
         const auto apiKeyID = payload.at("api_key_id").get<unsigned int>();
 
         if (!resolver::Admin::has<permission::admin::keys::APIPermissions>({
@@ -174,11 +184,13 @@ json Vaults::add(const json &payload, const std::shared_ptr<Session> &session) {
         if (payload.contains("sync")) applyRemotePolicyPatch(*remote, payload.at("sync"));
         else applyRemotePolicyPatch(*remote, payload);
         sync = remote;
-    }
+    } else throw std::runtime_error("Unsupported vault type: " + type);
 
     vault->name = name;
+    vault->slug = payload.value("slug", std::string{});
+    if (payload.contains("fuse_name")) vault->fuse_name = optionalString(payload, "fuse_name");
     vault->mount_point = mountPoint;
-    vault->owner_id = session->user->id;
+    vault->owner_id = *ownerId;
 
     vault = runtime::Deps::get().storageManager->addVault(vault, sync);
 
@@ -208,6 +220,12 @@ json Vaults::update(const json &payload, const std::shared_ptr<Session> &session
         .permission = permission::admin::VaultPermissions::Edit,
         .vault_id = vault->id
     })) throw std::runtime_error("User does not have permission to update vault.");
+
+    const auto existing = db::query::vault::Vault::getVault(vault->id);
+    if (!existing) throw std::runtime_error("Vault not found with ID: " + std::to_string(vault->id));
+    if (!payload.contains("slug")) vault->slug = existing->slug;
+    if (!payload.contains("fuse_name")) vault->fuse_name = existing->fuse_name;
+    if (!payload.contains("mount_point")) vault->mount_point = existing->mount_point;
 
     // TODO: pull a diff and apply per role vGlobal perms to changes
 

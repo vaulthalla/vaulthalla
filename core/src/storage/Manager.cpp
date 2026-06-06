@@ -7,11 +7,15 @@
 #include "identities/User.hpp"
 #include "fs/model/Path.hpp"
 #include "db/query/vault/Vault.hpp"
+#include "db/query/fs/Entry.hpp"
 #include "db/query/identities/User.hpp"
+#include "fs/cache/Registry.hpp"
 #include "log/Registry.hpp"
+#include "runtime/Deps.hpp"
 #include "seed/include/seed_db.hpp"
 #include "crypto/id/Generator.hpp"
 
+#include <paths.h>
 #include <string>
 
 using namespace vh::storage;
@@ -179,6 +183,9 @@ void Manager::updateVault(const std::shared_ptr<Vault>& vault) {
     std::scoped_lock lock(mutex_);
     const auto oldEngineIt = vaultToEngine_.find(vault->id);
     const auto oldEngine = oldEngineIt != vaultToEngine_.end() ? oldEngineIt->second : nullptr;
+    const auto oldFuseRoot = oldEngine && oldEngine->paths
+        ? oldEngine->paths->absRelToRoot(oldEngine->paths->vaultRoot, PathType::FUSE_ROOT)
+        : std::filesystem::path{};
 
     db::query::vault::Vault::upsertVault(vault);
     const auto refreshed = db::query::vault::Vault::getVault(vault->id);
@@ -194,6 +201,20 @@ void Manager::updateVault(const std::shared_ptr<Vault>& vault) {
     eraseEnginePathEntry(engines_, oldEngine);
     vaultToEngine_[refreshed->id] = engine;
     engines_[enginePathKey(engine)] = engine;
+
+    const auto newFuseRoot = engine->paths->absRelToRoot(engine->paths->vaultRoot, PathType::FUSE_ROOT);
+    if (oldFuseRoot != newFuseRoot) {
+        if (auto root = db::query::fs::Entry::getFSEntryByPath(refreshed->id, "/")) {
+            root->name = refreshed->effectiveFuseName();
+            root->base32_alias = refreshed->mount_point.string();
+            root->path = "/";
+            root->fuse_path = newFuseRoot;
+            root->backing_path = vh::paths::getBackingPath() / root->base32_alias;
+            db::query::fs::Entry::updateFSEntry(root);
+            if (runtime::Deps::get().fsCache) runtime::Deps::get().fsCache->cacheEntry(root);
+        }
+    }
+
     log::Registry::storage()->info("[StorageManager] Updated vault with ID: {}", vault->id);
 }
 

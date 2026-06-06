@@ -1,6 +1,8 @@
 #pragma once
 
 #include <pqxx/row>
+#include <optional>
+#include <ranges>
 #include <string_view>
 #include <vector>
 

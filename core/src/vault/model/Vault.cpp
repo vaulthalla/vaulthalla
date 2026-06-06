@@ -1,6 +1,7 @@
 #include "vault/model/Vault.hpp"
 #include "vault/model/S3Vault.hpp"
 #include "db/encoding/timestamp.hpp"
+#include "db/encoding/has.hpp"
 #include "protocols/shell/util/lineHelpers.hpp"
 #include "protocols/shell/Table.hpp"
 #include "db/query/vault/Vault.hpp"
@@ -8,10 +9,92 @@
 #include <nlohmann/json.hpp>
 #include <pqxx/row>
 #include <fmt/core.h>
+#include <algorithm>
+#include <cctype>
+#include <stdexcept>
 
 using namespace vh::vault::model;
 using namespace vh::protocols::shell;
 using namespace vh::db::encoding;
+
+namespace {
+    void trimTrailingHyphens(std::string& value) {
+        while (!value.empty() && value.back() == '-') value.pop_back();
+    }
+
+    void trimLeadingHyphens(std::string& value) {
+        while (!value.empty() && value.front() == '-') value.erase(value.begin());
+    }
+
+    void normalizeSlugLength(std::string& value) {
+        trimLeadingHyphens(value);
+        trimTrailingHyphens(value);
+        if (value.empty()) value = "vault";
+        if (value.size() > 63) {
+            value.resize(63);
+            trimTrailingHyphens(value);
+            if (value.empty()) value = "vault";
+        }
+        while (value.size() < 3) value.push_back('0');
+    }
+}
+
+std::string vh::vault::model::slugifyName(const std::string_view name) {
+    std::string out;
+    out.reserve(std::min<std::size_t>(name.size(), 63));
+
+    bool previousWasHyphen = false;
+    for (const auto raw : name) {
+        const auto c = static_cast<unsigned char>(raw);
+        if (std::isalnum(c)) {
+            out.push_back(static_cast<char>(std::tolower(c)));
+            previousWasHyphen = false;
+        } else if (!previousWasHyphen) {
+            out.push_back('-');
+            previousWasHyphen = true;
+        }
+    }
+
+    normalizeSlugLength(out);
+    return out;
+}
+
+bool vh::vault::model::isValidVaultSlug(const std::string_view slug) {
+    if (slug.size() < 3 || slug.size() > 63) return false;
+    const auto isLowerAlnum = [](const char c) {
+        return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+    };
+    if (!isLowerAlnum(slug.front()) || !isLowerAlnum(slug.back())) return false;
+    return std::ranges::all_of(slug, [&](const char c) {
+        return isLowerAlnum(c) || c == '-';
+    });
+}
+
+bool vh::vault::model::isValidS3Name(const std::string_view name) {
+    return isValidVaultSlug(name);
+}
+
+bool vh::vault::model::isValidFuseName(const std::string_view fuseName) {
+    if (fuseName.empty() || fuseName == "." || fuseName == "..") return false;
+    return std::ranges::none_of(fuseName, [](const char c) {
+        return c == '/' || c == '\\' || c == '\0';
+    });
+}
+
+void vh::vault::model::requireValidVaultSlug(const std::string_view slug) {
+    if (!isValidVaultSlug(slug))
+        throw std::invalid_argument("vault.slug must be 3-63 chars, lowercase a-z, 0-9, or hyphen, and begin and end with a letter or digit.");
+}
+
+void vh::vault::model::requireValidS3Name(const std::string_view name) {
+    if (!isValidS3Name(name))
+        throw std::invalid_argument("S3 bucket name must be 3-63 chars, lowercase a-z, 0-9, or hyphen, and begin and end with a letter or digit.");
+}
+
+void vh::vault::model::requireValidFuseName(const std::string_view fuseName) {
+    if (!isValidFuseName(fuseName))
+        throw std::invalid_argument("vault.fuse_name must be a safe single path component: not empty, not '.' or '..', and without slash, backslash, or NUL.");
+}
 
 std::string Vault::quotaStr() const {
     if (quota == 0) return "unlimited";
@@ -44,6 +127,10 @@ void Vault::setQuotaFromStr(const std::string& str) {
     }
 }
 
+std::string Vault::effectiveFuseName() const {
+    return fuse_name && !fuse_name->empty() ? *fuse_name : slug;
+}
+
 
 std::string vh::vault::model::to_string(const VaultType& type) {
     switch (type) {
@@ -63,7 +150,9 @@ Vault::Vault(const pqxx::row& row)
     : id(row["id"].as<unsigned int>()),
       owner_id(row["owner_id"].as<unsigned int>()),
       name(row["name"].as<std::string>()),
-      description(row["description"].as<std::string>()),
+      description(try_get<std::string>(row, "description").value_or("")),
+      slug(try_get<std::string>(row, "slug").value_or(slugifyName(name))),
+      fuse_name(try_get<std::string>(row, "fuse_name")),
       quota(row["quota"].as<unsigned long long>()),
       type(from_string(row["type"].as<std::string>())),
       mount_point(std::filesystem::path(row["mount_point"].as<std::string>())),
@@ -75,6 +164,9 @@ void vh::vault::model::to_json(nlohmann::json& j, const Vault& v) {
     j = {
         {"id", v.id},
         {"name", v.name},
+        {"slug", v.slug},
+        {"fuse_name", v.fuse_name ? nlohmann::json(*v.fuse_name) : nlohmann::json(nullptr)},
+        {"effective_fuse_name", v.effectiveFuseName()},
         {"type", to_string(v.type)},
         {"description", v.description},
         {"quota", v.quota},
@@ -89,6 +181,11 @@ void vh::vault::model::to_json(nlohmann::json& j, const Vault& v) {
 void vh::vault::model::from_json(const nlohmann::json& j, Vault& v) {
     v.id = j.at("id").get<unsigned int>();
     v.name = j.at("name").get<std::string>();
+    if (j.contains("slug") && !j.at("slug").is_null()) v.slug = j.at("slug").get<std::string>();
+    if (j.contains("fuse_name")) {
+        if (j.at("fuse_name").is_null()) v.fuse_name = std::nullopt;
+        else v.fuse_name = j.at("fuse_name").get<std::string>();
+    }
     v.description = j.at("description").get<std::string>();
     v.quota = j.at("quota").get<unsigned long long>();
     v.type = from_string(j.at("type").get<std::string>());
@@ -109,6 +206,8 @@ void vh::vault::model::to_json(nlohmann::json& j, const std::vector<std::shared_
 
 std::string vh::vault::model::to_string(const Vault& v) {
     std::string out = "Name: " + v.name + "\n";
+    out += "Slug: " + v.slug + "\n";
+    out += "FUSE Name: " + v.effectiveFuseName() + "\n";
     out += "ID: " + std::to_string(v.id) + "\n";
     out += "Owner ID: " + std::to_string(v.owner_id) + "\n";
     out += "Type: " + to_string(v.type) + "\n";

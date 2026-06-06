@@ -2,7 +2,9 @@
 
 #include <ctime>
 #include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <nlohmann/json_fwd.hpp>
 #include <filesystem>
@@ -21,6 +23,8 @@ VaultType from_string(const std::string& type);
 struct Vault {
     uint32_t id{}, owner_id{};
     std::string name, description{};
+    std::string slug{};
+    std::optional<std::string> fuse_name{};
     uintmax_t quota{};
     VaultType type{VaultType::Local};
     std::filesystem::path mount_point;
@@ -34,7 +38,16 @@ struct Vault {
 
     [[nodiscard]] std::string quotaStr() const;
     void setQuotaFromStr(const std::string& str);
+    [[nodiscard]] std::string effectiveFuseName() const;
 };
+
+std::string slugifyName(std::string_view name);
+[[nodiscard]] bool isValidVaultSlug(std::string_view slug);
+[[nodiscard]] bool isValidS3Name(std::string_view name);
+[[nodiscard]] bool isValidFuseName(std::string_view fuseName);
+void requireValidVaultSlug(std::string_view slug);
+void requireValidS3Name(std::string_view name);
+void requireValidFuseName(std::string_view fuseName);
 
 void to_json(nlohmann::json& j, const Vault& v);
 void from_json(const nlohmann::json& j, Vault& v);

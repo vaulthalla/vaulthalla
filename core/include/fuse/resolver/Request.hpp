@@ -16,6 +16,7 @@ namespace vh::fuse::resolver {
         Entry = 1 << 0,
         Path = 1 << 1,
         EntryForPath = 1 << 2,
+        List = 1 << 3,
     };
 
     inline constexpr Target operator|(const Target lhs, const Target rhs) {

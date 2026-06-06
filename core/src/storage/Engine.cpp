@@ -34,7 +34,7 @@ namespace vh::storage {
     Engine::Engine(const std::shared_ptr<vault::model::Vault> &vault)
         : vault(vault),
           sync(db::query::sync::Policy::getSync(vault->id)),
-          paths(std::make_shared<Path>(makeAbsolute(to_snake_case(vault->name)), vault->mount_point)),
+          paths(std::make_shared<Path>(makeAbsolute(vault->effectiveFuseName()), vault->mount_point)),
           encryptionManager(std::make_shared<vault::EncryptionManager>(vault->id)) {
         if (!db::query::vault::Vault::vaultRootExists(vault->id)) Filesystem::mkVault(
             paths->absRelToRoot(paths->vaultRoot, PathType::FUSE_ROOT), vault->id);
