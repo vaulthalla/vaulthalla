@@ -42,6 +42,12 @@ namespace vh::rbac::fs::policy {
             permission::vault::FilesystemAction action
         );
 
+        [[nodiscard]]
+        static bool overridesMayAffectListing(
+            const permission::vault::Filesystem& perms,
+            const std::filesystem::path& directory
+        );
+
     private:
         struct TargetContext {
             std::shared_ptr<storage::Engine> engine{nullptr};

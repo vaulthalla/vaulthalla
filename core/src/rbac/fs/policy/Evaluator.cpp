@@ -27,6 +27,27 @@ using namespace vh::rbac::fs::policy;
 namespace {
     using Action = vh::rbac::permission::vault::FilesystemAction;
     using OverrideOpt = vh::rbac::permission::OverrideOpt;
+
+    [[nodiscard]]
+    bool isDirectoryListOverride(const vh::rbac::permission::Override& ov) {
+        const auto perm = vh::rbac::permission::vault::fs::Directories::resolveFromQualifiedName(
+            ov.permission.qualified_name
+        );
+        return perm && *perm == vh::rbac::permission::vault::fs::DirectoryPermissions::List;
+    }
+
+    [[nodiscard]]
+    bool allowsDirectoryListTraversalThrough(
+        const std::vector<vh::rbac::permission::Override>& overrides,
+        const std::filesystem::path& directory
+    ) {
+        return std::ranges::any_of(overrides, [&](const vh::rbac::permission::Override& o) {
+            return o.enabled &&
+                   o.effect == vh::rbac::permission::OverrideOpt::ALLOW &&
+                   isDirectoryListOverride(o) &&
+                   vh::rbac::fs::glob::Matcher::requiresTraversalThrough(o.pattern, directory);
+        });
+    }
 }
 
 Decision Evaluator::evaluate(const Request &req) {
@@ -50,6 +71,14 @@ Decision Evaluator::evaluate(const Request &req) {
             if (stage.matched && stage.allowed.has_value()) {
                 if (!*stage.allowed && req.action == permission::vault::FilesystemAction::Lookup
                     && requiresTraversalThrough(role->fs.overrides, target.vaultPath.string()))
+                    return {
+                        .allowed = true,
+                        .reason = Decision::Reason::LowRiskOpRequiredForOverrideTraversal,
+                        .evaluated_path = target.vaultPath
+                    };
+
+                if (!*stage.allowed && req.action == permission::vault::FilesystemAction::List
+                    && allowsDirectoryListTraversalThrough(role->fs.overrides, target.vaultPath))
                     return {
                         .allowed = true,
                         .reason = Decision::Reason::LowRiskOpRequiredForOverrideTraversal,
@@ -85,6 +114,14 @@ Decision Evaluator::evaluate(const Request &req) {
                     .evaluated_path = target.vaultPath
                 };
 
+            if (!*stage.allowed && req.action == permission::vault::FilesystemAction::List
+                && allowsDirectoryListTraversalThrough(role->fs.overrides, target.vaultPath))
+                return {
+                    .allowed = true,
+                    .reason = Decision::Reason::LowRiskOpRequiredForOverrideTraversal,
+                    .evaluated_path = target.vaultPath
+                };
+
             return {
                 .allowed = *stage.allowed,
                 .reason = stage.reason,
@@ -103,7 +140,15 @@ Decision Evaluator::evaluate(const Request &req) {
     };
     for (const auto &global: vGlobals) {
         const auto stage = resolveStage(global.fs, target, req.action);
-        if (stage.matched && stage.allowed.has_value())
+        if (stage.matched && stage.allowed.has_value()) {
+            if (!*stage.allowed && req.action == permission::vault::FilesystemAction::List
+                && allowsDirectoryListTraversalThrough(global.fs.overrides, target.vaultPath))
+                return {
+                    .allowed = true,
+                    .reason = Decision::Reason::LowRiskOpRequiredForOverrideTraversal,
+                    .evaluated_path = target.vaultPath
+                };
+
             return {
                 .allowed = *stage.allowed,
                 .reason = stage.reason,
@@ -111,6 +156,7 @@ Decision Evaluator::evaluate(const Request &req) {
                 .matched_override = stage.matchedOverride,
                 .override_effect = stage.overrideEffect
             };
+        }
     }
 
     // 4) Default deny
@@ -225,6 +271,14 @@ Decision Evaluator::evaluate(
                 .evaluated_path = target.vaultPath
             };
 
+        if (!*stage.allowed && req.action == permission::vault::FilesystemAction::List
+            && allowsDirectoryListTraversalThrough(perms.overrides, target.vaultPath))
+            return {
+                .allowed = true,
+                .reason = Decision::Reason::LowRiskOpRequiredForOverrideTraversal,
+                .evaluated_path = target.vaultPath
+            };
+
         return {
             .allowed = *stage.allowed,
             .reason = stage.reason,
@@ -318,6 +372,17 @@ std::optional<Decision> Evaluator::resolveTarget(const Request &req, TargetConte
     }
 
     return std::nullopt;
+}
+
+bool Evaluator::overridesMayAffectListing(
+    const permission::vault::Filesystem& perms,
+    const std::filesystem::path& directory
+) {
+    return std::ranges::any_of(perms.overrides, [&](const permission::Override& o) {
+        return o.enabled &&
+               (glob::Matcher::matches(o.pattern, directory) ||
+                glob::Matcher::requiresTraversalThrough(o.pattern, directory));
+    });
 }
 
 Evaluator::StageResult Evaluator::resolveStage(

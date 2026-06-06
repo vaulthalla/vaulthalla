@@ -82,6 +82,14 @@ void warnSetattrMetadataNoOpOncePerMinute() {
         "chmod/chown is forbidden beyond the gates. If this is a cp operation you may disregard this warning.");
 }
 
+fuse_ino_t inodeForEntry(const std::shared_ptr<Entry>& entry) {
+    if (!entry) return FUSE_ROOT_ID;
+    if (entry->inode) return *entry->inode;
+    if (!entry->fuse_path.empty())
+        return runtime::Deps::get().fsCache->getOrAssignInode(entry->fuse_path);
+    return FUSE_ROOT_ID;
+}
+
 }
 
 void getattr(const fuse_req_t req, const fuse_ino_t ino, fuse_file_info* fi) {
@@ -93,12 +101,17 @@ void getattr(const fuse_req_t req, const fuse_ino_t ino, fuse_file_info* fi) {
         .caller = "getattr",
         .fuseReq = req,
         .ino = ino,
-        .action = permission::vault::FilesystemAction::List,
+        .action = permission::vault::FilesystemAction::Lookup,
         .target = resolver::Target::Entry
     });
 
     if (!resolved.ok()) {
         replyError(req, timer, resolved.errnum);
+        return;
+    }
+
+    if (!resolved.entry) {
+        replyError(req, timer, ENOENT);
         return;
     }
 
@@ -167,15 +180,12 @@ void readdir(const fuse_req_t req, const fuse_ino_t ino, const size_t size, cons
     log::Registry::fuse()->debug("[readdir] Called for inode: {}, size: {}, offset: {}", ino, size, off);
     (void)fi;
 
-    const std::optional<permission::vault::FilesystemAction> action = ino == FUSE_ROOT_ID ?
-        std::nullopt : std::make_optional(permission::vault::FilesystemAction::List);
-
     const auto resolved = Resolver::resolve({
         .caller = "readdir",
         .fuseReq = req,
         .ino = ino,
-        .action = action,
-        .target = resolver::Target::Entry
+        .action = permission::vault::FilesystemAction::List,
+        .target = resolver::Target::Entry | resolver::Target::List
     });
 
     if (!resolved.ok()) {
@@ -183,7 +193,15 @@ void readdir(const fuse_req_t req, const fuse_ino_t ino, const size_t size, cons
         return;
     }
 
-    const auto entries = runtime::Deps::get().fsCache->listDir(resolved.entry->id, false);
+    if (!resolved.entry) {
+        replyError(req, timer, ENOENT);
+        return;
+    }
+
+    if (!resolved.dir) {
+        replyError(req, timer, EIO);
+        return;
+    }
 
     std::vector<char> buf(size);
     size_t buf_used = 0;
@@ -211,9 +229,11 @@ void readdir(const fuse_req_t req, const fuse_ino_t ino, const size_t size, cons
         if (!add_entry("..", dotdot, current_off)) goto reply;
     }
 
-    for (size_t i = 0; i < entries.size(); ++i, ++current_off) {
+    for (size_t i = 0; i < resolved.dir->size(); ++i, ++current_off) {
         if (off > current_off) continue;
-        if (!add_entry(entries[i]->name, statFromEntry(entries[i], ino), current_off + 1)) break;
+        const auto& entry = resolved.dir->at(i);
+        if (!entry) continue;
+        if (!add_entry(entry->name, statFromEntry(entry, inodeForEntry(entry)), current_off + 1)) break;
     }
 
     reply:
@@ -615,6 +635,7 @@ void access(const fuse_req_t req, const fuse_ino_t ino, const int mask) {
     std::vector<rbac::permission::vault::FilesystemAction> requiredPermissions;
     if (mask & W_OK) requiredPermissions.push_back(permission::vault::FilesystemAction::Write);
     if (mask & R_OK) requiredPermissions.push_back(permission::vault::FilesystemAction::Read);
+
     if (ino != FUSE_ROOT_ID && mask & X_OK) requiredPermissions.push_back(permission::vault::FilesystemAction::List);
 
     const auto resolved = Resolver::resolve({

@@ -320,7 +320,7 @@ void Registry::cacheEntry(const std::shared_ptr<Entry>& entry, const bool isFirs
     }
 
     const pqxx::result parentStats =
-        (!isFirstSeeding && entry->parent_id && !entry->isDirectory())
+        (!isFirstSeeding && entry->parent_id)
             ? db::query::fs::Directory::collectParentStats(*entry->parent_id)
             : pqxx::result{};
 
@@ -629,9 +629,12 @@ std::vector<std::shared_ptr<Entry>> Registry::listDir(const unsigned int parentI
             if (expected.size() == entries.size())
                 log::Registry::fs()->warn("Computed number of entries mismatch with actual");
 
-            throw std::runtime_error(fmt::format(
-                "[FSCache] Inconsistent entry count for parent ID {}: expected: {}, found {}, actual: {}",
-                parentId, numEntries, entries.size(), expected.size()));
+            log::Registry::fs()->warn(
+                "[FSCache] Inconsistent entry count for parent ID {}: expected: {}, found {}, actual: {}; using DB listing",
+                parentId,
+                numEntries,
+                entries.size(),
+                expected.size());
         }
         return expected;
     }
