@@ -1272,12 +1272,17 @@ verify_nginx_serves_vaulthalla() {
         probe="$(probe_local_http_root)"
         http_status="${probe%% *}"
         welcome_page="${probe##* }"
+        # nginx reloads asynchronously: old workers can keep serving the previous site set for a moment,
+        # so the welcome page is only conclusive once the probe window has passed (seen on vh-storage).
         if [ "$welcome_page" = "1" ]; then
-            NGINX_VERIFY_STATUS="NOT serving Vaulthalla: another nginx site (distro welcome page) answers http://127.0.0.1/"
-            return 1
+            if [ "$waited" -ge "$HTTP_PROBE_WINDOW_SECONDS" ]; then
+                NGINX_VERIFY_STATUS="NOT serving Vaulthalla: another nginx site (distro welcome page) answers http://127.0.0.1/"
+                return 1
+            fi
+            http_status="welcome"
         fi
         case "$http_status" in
-            502|503|504)
+            welcome|502|503|504)
                 ;;
             000|"")
                 NGINX_VERIFY_STATUS="not verified (no HTTP response from 127.0.0.1:80)"

@@ -504,3 +504,35 @@ class PrermStopBehaviorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PostinstNginxVerifyBehaviorTests(unittest.TestCase):
+    """nginx reloads asynchronously; the welcome page right after a reload is not conclusive (vh-storage)."""
+
+    def setUp(self) -> None:
+        self.h = _Harness("postinst")
+        self.addCleanup(self.h.cleanup)
+
+    def _verify(self, responses: str) -> subprocess.CompletedProcess[str]:
+        body = f"""
+        probe_local_http_root() {{
+            # Called via $(...), i.e. in a subshell: keep the call counter in a file.
+            n=$(cat "$VH_TEST_LOG/probe.n" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "$VH_TEST_LOG/probe.n"
+            r=$(printf '%s\\n' {responses} | sed -n "${{n}}p" | tr '_' ' ')
+            [ -n "$r" ] || r=$(printf '%s\\n' {responses} | tail -n 1 | tr '_' ' ')
+            printf '%s\\n' "$r"
+        }}
+        if verify_nginx_serves_vaulthalla; then echo "RC=0"; else echo "RC=1"; fi
+        echo "STATUS=$NGINX_VERIFY_STATUS"
+        """
+        return self.h.run(body)
+
+    def test_welcome_page_during_reload_then_app_is_verified(self) -> None:
+        result = self._verify("200_1 200_1 307_0")
+        self.assertIn("RC=0", result.stdout, result.stderr)
+        self.assertIn("STATUS=verified (HTTP 307", result.stdout)
+
+    def test_welcome_page_for_the_whole_window_is_reported_as_shadowed(self) -> None:
+        result = self._verify("200_1")
+        self.assertIn("RC=1", result.stdout, result.stderr)
+        self.assertIn("NOT serving Vaulthalla", result.stdout)
