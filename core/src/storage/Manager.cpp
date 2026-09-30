@@ -159,6 +159,12 @@ std::shared_ptr<Vault> Manager::addVault(std::shared_ptr<Vault> vault,
     if (!vault) throw std::invalid_argument("Vault cannot be null");
     std::scoped_lock lock(mutex_);
 
+    // One owner can't have two vaults with the same name. Enforced here, where every surface (CLI, ws, S3
+    // gateway) converges: the CLI checked this itself but the web console silently created a second vault
+    // with a suffixed FUSE name (lab parity smoke).
+    if (vault->id == 0 && db::query::vault::Vault::vaultExists(vault->name, vault->owner_id))
+        throw std::runtime_error("A vault named '" + vault->name + "' already exists for this owner");
+
     vault->mount_point = id::Generator({ .namespace_token = vault->name }).generate();
     vault->id = db::query::vault::Vault::upsertVault(vault, sync);
     vault = db::query::vault::Vault::getVault(vault->id);

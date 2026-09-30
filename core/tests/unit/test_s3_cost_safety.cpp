@@ -2143,6 +2143,31 @@ TEST(S3CostSafetyTest, StorageManagerUpdateRemovesOldEnginePathEntry) {
     EXPECT_EQ(refreshedEngine, manager->resolveStorageEngine(newPath));
 }
 
+TEST(S3CostSafetyTest, StorageManagerRejectsDuplicateVaultNameForSameOwner) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed duplicate vault test due to missing environment variables.";
+    ensureSeededRuntimeReady();
+
+    const auto owner = vh::db::query::identities::User::getUserByName("admin");
+    ASSERT_TRUE(owner);
+    const auto name = "dup-vault-" + uniqueSuffix("dup");
+    const auto makeVault = [&] {
+        auto vault = std::make_shared<vh::vault::model::Vault>();
+        vault->name = name;
+        vault->owner_id = owner->id;
+        vault->type = vh::vault::model::VaultType::Local;
+        return vault;
+    };
+    const auto manager = vh::runtime::Deps::get().storageManager;
+
+    const auto first = manager->addVault(makeVault(), std::make_shared<vh::sync::model::LocalPolicy>());
+    ASSERT_TRUE(first);
+    // Regression: the web console created a second same-named vault (suffixed FUSE name) while the CLI refused.
+    EXPECT_THROW(manager->addVault(makeVault(), std::make_shared<vh::sync::model::LocalPolicy>()), std::runtime_error);
+    EXPECT_TRUE(vh::db::query::vault::Vault::vaultExists(name, owner->id));
+
+    manager->removeVault(first->id);
+}
+
 TEST(S3CostSafetyTest, IndexRemoteOnlyPreservesEncryptionMetadataInLocalRow) {
     if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed remote index-only test due to missing environment variables.";
 

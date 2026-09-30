@@ -110,7 +110,7 @@ async def scenarios(cli: Cli, ws: Ws, r: Report) -> None:
     r.add(s, "CLI list sees ws-created vault", rc == 0 and v_ws in out, out[-300:])
     lst = await ws.send("storage.vault.list")
     ids = {v.get("name"): v.get("id") for v in lst.get("data", {}).get("vaults", [])}
-    rc, out = cli.run("vault", "delete", v_ws)
+    rc, out = cli.run("vault", "delete", v_ws, "--owner", "admin")  # names are per-owner, so --owner is required
     r.add(s, "CLI deletes ws-created vault", rc == 0, out)
     if ids.get(v_cli) is not None:
         rm = await ws.send("storage.vault.remove", {"id": ids[v_cli]})
@@ -153,7 +153,7 @@ async def scenarios(cli: Cli, ws: Ws, r: Report) -> None:
     s = "user"
     u_ws, u_cli = f"parity_u_ws_{tag}", f"parity_u_cli_{tag}"
     reg = await ws.send("auth.register", {"name": u_ws, "email": f"{u_ws}@example.invalid",
-                                          "password": "Parity-Only-" + uuid.uuid4().hex[:12], "is_active": True,
+                                          "password": "Zq9#" + uuid.uuid4().hex + "!Xw", "is_active": True,
                                           "role": "unprivileged"})
     r.add(s, "ws register succeeds", ok_status(reg), json.dumps(reg)[:300])
     rc, out = cli.run("user", "info", u_ws)
