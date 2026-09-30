@@ -33,10 +33,10 @@ journalctl -fu vaulthalla.service
 journalctl -fu vaulthalla-web.service
 ```
 
-If you are working from a repository clone, the local doctor script can provide extra context:
+If you are working from a repository clone, the installed-system doctor script inspects Vaulthalla paths, services, and ownership:
 
 ```bash
-bash .codex/scripts/doctor.sh
+bash bin/doctor.sh
 ```
 
 ## APT Repository Or Package Fails

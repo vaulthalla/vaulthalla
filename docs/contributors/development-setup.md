@@ -36,11 +36,10 @@ If you are on macOS or Windows, docs work is fine, and some web or release-tooli
 From the repo root:
 
 ```bash
-bash .codex/scripts/doctor.sh
-bash .codex/scripts/index.sh
+bash tools/dev/verify.sh doctor
 ```
 
-`doctor.sh` checks for `git`, `python3`, `node`, `pnpm`, `meson`, `ninja`, the presence of `web/node_modules`, and the top-level project files the repo expects.
+The `doctor` profile checks for `git`, `python3`, `node`, `pnpm`, `meson`, and `ninja`, flags Node and pnpm versions that drift from `web/.nvmrc` and the `packageManager` pin, and reports a missing `web/node_modules`, missing private web icons, an unconfigured `build/` directory, and release-version drift.
 
 ## Toolchains
 
@@ -251,7 +250,7 @@ Keep this workflow-specific and local. Do not commit real credentials.
 
 ### Missing `web/node_modules`
 
-`bash .codex/scripts/doctor.sh` will flag this. Run:
+`bash tools/dev/verify.sh doctor` will flag this. Run:
 
 ```bash
 cd web
