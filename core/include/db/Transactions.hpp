@@ -4,6 +4,7 @@
 #include "log/Registry.hpp"
 
 #include <memory>
+#include <optional>
 #include <pqxx/pqxx>
 #include <stdexcept>
 #include <string>
@@ -23,25 +24,45 @@ namespace vh::db {
             using Fn = std::remove_reference_t<Func>;
             using ReturnT = std::invoke_result_t<Fn&, pqxx::work&>;
 
-            if (!dbPool_) throw std::runtime_error("Transactions not initialized!");
+            // Local copy keeps the pool alive for as long as this call holds a lease on it.
+            const auto pool = dbPool_;
+            if (!pool) throw std::runtime_error("Transactions not initialized!");
 
             log::Registry::db()->trace("[Transactions::exec] Starting transaction: {}", ctx);
 
-            auto conn = dbPool_->acquire();
-            pqxx::work txn(conn->get());
+            // Declared before `txn` so the transaction is torn down (rolled back) before the lease hands the
+            // connection back to the pool, on every path.
+            auto conn = pool->acquire();
+            std::optional<pqxx::work> txn;
+
+            try {
+                txn.emplace(conn->get());
+            } catch (const std::exception& e) {
+                // A session the server dropped while idle (PostgreSQL restart, pg_terminate_backend) only shows
+                // up when BEGIN is sent. Nothing of `func` has run yet, so replacing the connection and beginning
+                // once more is always safe. Failures after `func` starts are surfaced, never retried.
+                if (conn->healthy()) {
+                    log::Registry::db()->error(
+                        "[Transactions::exec] Failed to begin transaction '{}': {}", ctx, e.what());
+                    throw;
+                }
+                log::Registry::db()->warn(
+                    "[Transactions::exec] Connection lost before transaction '{}' began ({}); reconnecting",
+                    ctx, e.what());
+                pool->repair(conn);
+                txn.emplace(conn->get());
+            }
 
             try {
                 if constexpr (std::is_void_v<ReturnT>) {
-                    func(txn);
-                    txn.commit();
+                    func(*txn);
+                    txn->commit();
                     log::Registry::db()->trace("[Transactions::exec] Transaction committed: {}", ctx);
-                    dbPool_->release(std::move(conn));
                     return;
                 } else {
-                    ReturnT result = func(txn);
-                    txn.commit();
+                    ReturnT result = func(*txn);
+                    txn->commit();
                     log::Registry::db()->trace("[Transactions::exec] Transaction committed: {}", ctx);
-                    dbPool_->release(std::move(conn));
                     return result;
                 }
             } catch (...) {
@@ -49,7 +70,6 @@ namespace vh::db {
                     "[Transactions::exec] Exception in transaction context '{}', rolling back",
                     ctx
                 );
-                dbPool_->release(std::move(conn));
                 throw;
             }
         }

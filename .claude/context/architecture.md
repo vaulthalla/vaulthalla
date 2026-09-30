@@ -95,9 +95,14 @@ prod fallback `127.0.0.1:36968`). `web/src/app/api/auth/session/route.ts` proxie
 
 - PostgreSQL via libpqxx. The schema is `deploy/psql/000…096_*.sql`, applied in order and installed to `/usr/share/vaulthalla/psql`.
   New migrations take the next number and must be idempotent against upgraded installs.
-- `core/include/db/DBPool.hpp` is a fixed pool of 4 connections. `core/include/db/Transactions.hpp` has `Transactions::exec(ctx, fn)`,
-  the only path to a `pqxx::work`. Queries live in `core/src/db/query/<domain>/`, prepared statements in
-  `core/src/db/preparedStatements/`.
+- `core/include/db/DBPool.hpp` is a fixed pool of 4 connections (config `database.pool_size` is **not** wired to it)
+  handed out as RAII `DBPool::Lease`s (FIFO) that always return the slot. A dead connection is replaced on
+  `acquire()` (reconnect + re-prepare, pool-wide backoff 250ms→5s, callers inside the window get
+  `DatabaseUnavailable`). `acquire()` throws `PoolAcquireTimeout` after 30s. libpq `connect_timeout=10`.
+  `core/include/db/Transactions.hpp` has `Transactions::exec(ctx, fn)`, the only path to a `pqxx::work`. It
+  reconnects and retries once only when BEGIN fails on a dead connection (before `fn` runs); later failures
+  surface. Pool state is in `SystemHealth.database` (`vh status`, stats ws, watchdog). Queries live in
+  `core/src/db/query/<domain>/`, prepared statements in `core/src/db/preparedStatements/`.
 - `db::Janitor` handles sweeps. Stats rollups read from `file_activity`, `files_trashed`, `operations`, `share_*`.
 
 ## Subsystem directory map (`core/src`, mirrored in `core/include`)

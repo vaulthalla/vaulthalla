@@ -36,6 +36,13 @@ Fix direction: RAII lease that always returns or replaces the connection, reconn
 a health signal into `SystemHealth`/watchdog, and a regression test that restarts or kills PostgreSQL
 backends (`pg_terminate_backend`) mid-run.
 
+**Status (branch `worktree-agent-af71be6ff010ea87d`, not yet merged or lab-proven):** code fix landed as described
+in `architecture.md` → Database, and `core/tests/unit/test_db_pool_reconnect.cpp` covers termination of all pool
+backends (repeated, concurrent), mid-transaction loss, exhaustion timeout, and an unreachable DB (via
+`CONNECTION LIMIT 0`). Still open: lab proof (restart `postgresql@16-main` under a running daemon on vh-storage),
+wiring `database.pool_size`, a database line in the watchdog email body, and TCP keepalives or a statement timeout
+for a server that hangs instead of dropping the session.
+
 ### P0-2: maintainer scripts can block indefinitely on the FUSE mount
 
 `debian/postinst` `is_mountpoint()` (~L67) runs `mountpoint -q "$path"` with no timeout, and there may be other

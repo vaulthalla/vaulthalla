@@ -13,6 +13,10 @@ using namespace vh::crypto;
 
 namespace vh::db {
 
+// Bounds (re)connect attempts so an unreachable server can't park a pool caller in connect() for the
+// kernel's TCP timeout. libpq's default is to wait forever.
+static constexpr int DB_CONNECT_TIMEOUT_SECONDS = 10;
+
 static std::optional<std::string> getFirstInitDBPass() {
     const std::filesystem::path f{"/run/vaulthalla/db_password"};
 
@@ -111,7 +115,8 @@ Connection::Connection() : tpmKeyProvider_(
                 " password=" + *pass +
                 " host=" + *host +
                 " port=" + *port +
-                " dbname=" + *name;
+                " dbname=" + *name +
+                " connect_timeout=" + std::to_string(DB_CONNECT_TIMEOUT_SECONDS);
 
             conn_ = std::make_unique<pqxx::connection>(DB_CONNECTION_STR);
 
@@ -143,7 +148,7 @@ Connection::Connection() : tpmKeyProvider_(
     const auto& config = config::Registry::get();
     const auto db = config.database;
     DB_CONNECTION_STR = "postgresql://" + db.user + ":" + password + "@" + db.host + ":" + std::to_string(db.port) + "/"
-                        + db.name;
+                        + db.name + "?connect_timeout=" + std::to_string(DB_CONNECT_TIMEOUT_SECONDS);
     conn_ = std::make_unique<pqxx::connection>(DB_CONNECTION_STR);
 }
 
@@ -151,8 +156,28 @@ Connection::~Connection() { if (conn_ && conn_->is_open()) conn_->close(); }
 
 pqxx::connection& Connection::get() const { return *conn_; }
 
-void Connection::initPrepared() const {
+bool Connection::healthy() const noexcept { return conn_ && conn_->is_open(); }
+
+void Connection::reconnect() {
+    auto fresh = std::make_unique<pqxx::connection>(DB_CONNECTION_STR);
+    conn_.swap(fresh);
+    fresh.reset();
+
+    if (!prepared_) return;
+
+    try {
+        initPrepared();
+    } catch (...) {
+        // An open-but-unprepared session would fail every query by statement name. Close it so healthy()
+        // reports false and the pool retries the whole reconnect later.
+        conn_->close();
+        throw;
+    }
+}
+
+void Connection::initPrepared() {
     if (!conn_ || !conn_->is_open()) throw std::runtime_error("Database connection is not open");
+    prepared_ = true;
 
     // Auth
     initPreparedUsers();
