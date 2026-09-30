@@ -165,7 +165,18 @@ void Session::accept(tcp::socket&& socket) {
 void Session::onHeadersRead(const std::shared_ptr<RequestType>& req, const beast::error_code& ec, std::size_t) {
     if (ec) return logFail("Error reading HTTP headers", ec);
 
-    hydrateFromRequest(*req);
+    // Hydration touches the DB and the secrets manager; a failure there must reject this one connection,
+    // never escape into the shared io_context (which used to terminate the daemon, taking FUSE with it).
+    try {
+        hydrateFromRequest(*req);
+    } catch (const std::exception& e) {
+        log::Registry::ws()->error("[ws::Session] Rejecting handshake from IP {}: session hydration failed: {}",
+                                   getIPAddress(), e.what());
+        beast::error_code ignored;
+        ws_->next_layer().shutdown(tcp::socket::shutdown_both, ignored);
+        ws_->next_layer().close(ignored);
+        return;
+    }
 
     auto self = shared_from_this();
     ws_->async_accept(
@@ -210,13 +221,12 @@ void Session::hydrateFromRequest(const RequestType& req) {
 
         // this should never happen, but if it does, we nuke the session
         if (!tokens || !tokens->refreshToken) {
-            log::Registry::ws()->critical("[ws::Session] Fatal invariant violation: refresh token missing after hydration/bootstrap; exiting with 69");
-            std::exit(69);
+            // Reject this connection; a client request must never be able to exit the daemon.
+            throw std::runtime_error("invariant violation: refresh token missing after hydration/bootstrap");
         }
 
         if (!tokens->refreshToken->isValid()) {
-            log::Registry::ws()->critical("[ws::Session] Fatal invariant violation: refresh token invalid after hydration/bootstrap; spiritually exiting with 420, operationally exiting with 70");
-            std::exit(70);
+            throw std::runtime_error("invariant violation: refresh token invalid after hydration/bootstrap");
         }
 
         installHandshakeDecorator();

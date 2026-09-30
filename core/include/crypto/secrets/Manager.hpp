@@ -30,6 +30,7 @@ private:
     mutable std::optional<std::unordered_map<std::string, std::string>> testSecrets_;
 
     std::string getOrInitSecret(const std::string& key) const;
+    [[nodiscard]] static bool isRegenerableSecret(const std::string& key);
     std::string decryptStoredSecret(const std::vector<uint8_t>& value, const std::vector<uint8_t>& iv) const;
     void setEncryptedValue(const std::string& key, const std::string& value) const;
 };
