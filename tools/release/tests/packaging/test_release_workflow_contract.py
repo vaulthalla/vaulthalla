@@ -152,6 +152,14 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         self.assertIn("run_bounded()", action)
         self.assertEqual(action.count('if ! run_bounded "$PYTHON_BIN" -m tools.release changelog'), 3)
 
+    def test_tooling_test_jobs_fetch_full_history_and_tags(self) -> None:
+        import yaml
+
+        checkout = self._job("release-tooling-verify")["steps"][0]
+        self.assertEqual(checkout["with"]["fetch-depth"], 0)
+        ci = yaml.safe_load(self._ci_workflow())
+        self.assertEqual(ci["jobs"]["tooling"]["steps"][0]["with"]["fetch-depth"], 0)
+
     def test_github_release_requires_sha256sums_asset(self) -> None:
         self.assertIn("release/SHA256SUMS", str(self._job("github-release")["steps"]))
 

@@ -22,6 +22,7 @@ from tools.release.cli_tools.commands.release_success import (
     cmd_resolve_release_notes_base,
 )
 from tools.release.cli_tools.commands.suites import cmd_run_tests
+from tools.release.cut import main_cut_release, main_release_status
 from tools.release.suites import SUITES
 from tools.release.cli_tools.commands.version import (
     cmd_check,
@@ -500,6 +501,38 @@ COMMANDS = {
                     "help": "Workflow run id to record. Defaults to GITHUB_RUN_ID.",
                 },
             },
+        ],
+    },
+
+    "cut-release": {
+        "help": (
+            "Cut a release: require a clean, in-sync branch; run check + fast suites; bump the 4 release-managed "
+            "files; commit; annotated tag vX.Y.Z; with --push, atomically push commit + tag (triggers release.yml). "
+            "Resumable; refuses if the tag already exists on the remote."
+        ),
+        "func": main_cut_release,
+        "args": [
+            {
+                "flags": ["target"],
+                "kwargs": {"help": "patch | minor | major | X.Y.Z (use X.Y.Z to resume an interrupted release)."},
+            },
+            {"flags": ["--push"], "kwargs": {"action": "store_true", "help": "Push commit + tag (default: local only)."}},
+            {"flags": ["--branch"], "kwargs": {"default": "main", "help": "Release branch (default: main)."}},
+            {"flags": ["--remote"], "kwargs": {"default": "origin", "help": "Remote (default: origin)."}},
+            {
+                "flags": ["--skip-tests"],
+                "kwargs": {"action": "store_true", "help": "Skip the fast test suites (not recommended)."},
+            },
+            {"flags": ["--no-fetch"], "kwargs": {"action": "store_true", "help": "Do not fetch the remote first."}},
+        ],
+    },
+
+    "release-status": {
+        "help": "Show (or --watch) the release.yml run for a tag via `gh`. Exit 0 only when it succeeded.",
+        "func": main_release_status,
+        "args": [
+            {"flags": ["version"], "kwargs": {"nargs": "?", "default": None, "help": "X.Y.Z (default: VERSION)."}},
+            {"flags": ["--watch"], "kwargs": {"action": "store_true", "help": "Poll until the run completes."}},
         ],
     },
 
