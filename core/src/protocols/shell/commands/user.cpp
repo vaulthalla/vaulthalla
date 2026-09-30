@@ -1,3 +1,4 @@
+#include <unistd.h>
 #include "protocols/shell/commands/all.hpp"
 #include "protocols/shell/commands/helpers.hpp"
 #include "protocols/shell/Router.hpp"
@@ -49,6 +50,8 @@ static void assignLinuxUidIfAvailable(const CommandCall& call, const std::shared
         const auto parsed = parseUInt(*linuxUidOpt);
         if (!parsed || *parsed <= 0)
             throw std::runtime_error("Invalid --linux-uid: must be a positive integer");
+        if (*parsed == ::getuid())
+            throw std::runtime_error("Invalid --linux-uid: the Vaulthalla service account cannot be bound to a user");
         user->meta.linux_uid = *parsed;
     }
 }
@@ -148,6 +151,10 @@ static CommandResult handleUpdateUser(const CommandCall& call) {
     }
 
     assignEmail(call, user, usage);
+    // The CLI authenticates callers by Linux UID, so rebinding your own UID would let you take over another
+    // account's CLI identity. Only another administrator (checked above for !isSelf) may change it.
+    if (isSelf && optVal(call, usage->resolveOptional("linux-uid")->option_tokens))
+        return invalid("Cannot change your own Linux UID binding. Ask another administrator to change it.");
     assignLinuxUidIfAvailable(call, user, usage);
 
     user->meta.updated_by = call.user->id;

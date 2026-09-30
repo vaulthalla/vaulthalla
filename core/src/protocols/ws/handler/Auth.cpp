@@ -8,6 +8,7 @@
 #include "protocols/ws/Session.hpp"
 #include "rbac/role/Admin.hpp"
 #include "rbac/resolver/admin/all.hpp"
+#include "auth/registration/Validator.hpp"
 
 using namespace vh::protocols::ws::handler;
 using namespace vh::auth;
@@ -101,13 +102,83 @@ json Auth::deleteUser(const json &payload, const std::shared_ptr<Session> &sessi
 
 json Auth::updateUser(const json &payload, const std::shared_ptr<Session> &session) {
     if (!session->user) throw std::runtime_error("User not authenticated");
-    if (session->user->isProtected)
+
+    // The web edit form targets payload.id; the old handler ignored it and mutated the caller instead.
+    const auto targetId = payload.contains("id") && !payload.at("id").is_null()
+        ? payload.at("id").get<unsigned int>()
+        : session->user->id;
+    const bool isSelf = targetId == session->user->id;
+
+    const auto target = isSelf ? session->user : db::query::identities::User::getUserById(targetId);
+    if (!target) throw std::runtime_error("User not found");
+    if (target->isProtected)
         throw std::runtime_error("Protected users cannot be updated through this route");
 
-    session->user->updateUser(payload);
-    runtime::Deps::get().authManager->updateUser(session->user);
+    if (!isSelf) {
+        if (target->isSuperAdmin()) throw std::runtime_error("Cannot update super admin user: " + target->name);
+        if (target->isAdmin() && !session->user->admins().canEdit())
+            throw std::runtime_error("Permission denied: updating admin users requires admin edit permission");
+        if (!target->isAdmin() && !session->user->users().canEdit())
+            throw std::runtime_error("Permission denied: updating users requires user edit permission");
+    }
 
-    return {{"user", *session->user}};
+    // CLI identity is bound by Linux UID; rebinding it is an operator action on the local CLI only.
+    if (payload.contains("linux_uid"))
+        throw std::runtime_error("linux_uid can only be changed by an administrator through the local CLI");
+    if (payload.contains("updated_by") || payload.contains("protected") || payload.contains("is_protected") ||
+        payload.contains("system_only"))
+        throw std::runtime_error("Unsupported field in user update");
+
+    if (payload.contains("password") && payload.at("password").is_string() &&
+        !payload.at("password").get<std::string>().empty())
+        throw std::runtime_error("Use auth.user.change_password to change or reset a password");
+
+    json changes = json::object();
+    if (payload.contains("name") && !payload.at("name").is_null()) {
+        const auto newName = payload.at("name").get<std::string>();
+        if (newName != target->name) {
+            if (!vh::auth::registration::Validator::isValidName(newName)) throw std::runtime_error("Invalid user name: " + newName);
+            changes["name"] = newName;
+        }
+    }
+    if (payload.contains("email")) changes["email"] = payload.at("email");
+
+    if (payload.contains("is_active") && !payload.at("is_active").is_null()) {
+        const auto active = payload.at("is_active").get<bool>();
+        if (isSelf && !active) throw std::runtime_error("Cannot deactivate your own account");
+        changes["is_active"] = active;
+    }
+
+    std::shared_ptr<vh::rbac::role::Admin> newRole;
+    if (payload.contains("role") && payload.at("role").is_string()) {
+        const auto roleName = payload.at("role").get<std::string>();
+        const auto currentRole = target->roles.admin ? target->roles.admin->name : std::string{};
+        if (!roleName.empty() && roleName != currentRole) {
+            // Role changes are privilege changes: never on your own account, judged by the resolved role.
+            if (isSelf) throw std::runtime_error("Cannot change your own role. Ask another administrator to change it.");
+            newRole = db::query::rbac::role::Admin::get(roleName);
+            if (!newRole) throw std::runtime_error("Invalid role specified: " + roleName);
+            if (newRole->name == "super_admin") throw std::runtime_error("Cannot assign super admin role to a user");
+            const auto staged = std::make_shared<User>();
+            staged->roles.admin = newRole;
+            if (staged->isAdmin() && !session->user->admins().canEdit())
+                throw std::runtime_error("Permission denied: assigning admin roles requires admin edit permission");
+        }
+    }
+
+    target->updateUser(changes);
+    if (newRole) {
+        newRole->user_id = target->id;
+        target->roles.admin = newRole;
+    }
+    target->meta.updated_by = session->user->id;
+    runtime::Deps::get().authManager->updateUser(target);
+
+    const auto persisted = db::query::identities::User::getUserById(target->id);
+    if (!persisted) throw std::runtime_error("Failed to reload user after update");
+    if (isSelf) session->user = persisted;
+
+    return {{"user", *persisted}};
 }
 
 json Auth::changePassword(const json &payload, const std::shared_ptr<Session> &session) {

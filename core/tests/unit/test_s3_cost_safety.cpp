@@ -2119,7 +2119,9 @@ TEST(S3CostSafetyTest, StorageManagerUpdateRemovesOldEnginePathEntry) {
 
     auto vault = vh::db::query::vault::Vault::getVault(vaultId);
     ASSERT_TRUE(vault);
-    vault->name += " renamed";
+    // Since vault slugs/fuse names (#95) the FUSE path follows effectiveFuseName(), not the display name,
+    // so change the fuse name to force a path change.
+    vault->fuse_name = vault->effectiveFuseName() + "-renamed";
     manager->updateVault(vault);
 
     const auto refreshedEngine = manager->getEngine(vaultId);

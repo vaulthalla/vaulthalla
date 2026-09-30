@@ -282,4 +282,56 @@ TEST_F(AuthPasswordChangeTest, ChangePasswordRejectsMissingSessionUser) {
     EXPECT_TRUE(authenticate(target->name, "old-password"));
 }
 
+// Regression (#126): the web "Edit User" form sends auth.user.update with the target's id; the handler used to
+// ignore it and apply the edit (name/email/is_active) to the calling admin instead.
+TEST_F(AuthPasswordChangeTest, UpdateUserTargetsPayloadIdNotCaller) {
+    auto manager = std::make_shared<vh::auth::Manager>();
+    ScopedRuntimeAuthManager scoped(manager);
+    const auto admin = createUser("upd_admin_target", "admin-password", "admin");
+    const auto target = createUser("upd_plain_target", "plain-password");
+
+    const auto response = vh::protocols::ws::handler::Auth::updateUser(
+        json{{"id", target->id}, {"name", "upd_plain_renamed"}, {"email", "renamed@vaulthalla.test"},
+             {"is_active", false}, {"role", target->roles.admin->name}, {"password", ""}},
+        sessionFor(admin));
+
+    const auto reloadedTarget = vh::db::query::identities::User::getUserById(target->id);
+    const auto reloadedAdmin = vh::db::query::identities::User::getUserById(admin->id);
+    EXPECT_EQ(reloadedTarget->name, "upd_plain_renamed");
+    EXPECT_FALSE(reloadedTarget->meta.is_active);
+    EXPECT_EQ(reloadedAdmin->name, "upd_admin_target");
+    EXPECT_TRUE(reloadedAdmin->meta.is_active);
+    EXPECT_EQ(response.at("user").at("id").get<unsigned int>(), target->id);
+}
+
+TEST_F(AuthPasswordChangeTest, UpdateUserRefusesSelfPrivilegeAndIdentityChanges) {
+    auto manager = std::make_shared<vh::auth::Manager>();
+    ScopedRuntimeAuthManager scoped(manager);
+    const auto admin = createUser("upd_admin_self", "admin-password", "admin");
+    const auto session = sessionFor(admin);
+    using vh::protocols::ws::handler::Auth;
+
+    EXPECT_THROW(Auth::updateUser(json{{"id", admin->id}, {"role", "super_admin"}}, session), std::runtime_error);
+    EXPECT_THROW(Auth::updateUser(json{{"id", admin->id}, {"role", "unprivileged"}}, session), std::runtime_error);
+    EXPECT_THROW(Auth::updateUser(json{{"id", admin->id}, {"linux_uid", 4242}}, session), std::runtime_error);
+    EXPECT_THROW(Auth::updateUser(json{{"id", admin->id}, {"is_active", false}}, session), std::runtime_error);
+    EXPECT_THROW(Auth::updateUser(json{{"id", admin->id}, {"updated_by", 1}}, session), std::runtime_error);
+
+    const auto reloaded = vh::db::query::identities::User::getUserById(admin->id);
+    EXPECT_EQ(reloaded->roles.admin->name, "admin");
+    EXPECT_FALSE(reloaded->meta.linux_uid.has_value());
+    EXPECT_TRUE(reloaded->meta.is_active);
+}
+
+TEST_F(AuthPasswordChangeTest, UpdateUserRequiresEditPermissionForOthers) {
+    auto manager = std::make_shared<vh::auth::Manager>();
+    ScopedRuntimeAuthManager scoped(manager);
+    const auto plain = createUser("upd_plain_actor", "plain-password");
+    const auto other = createUser("upd_plain_victim", "victim-password");
+
+    EXPECT_THROW(vh::protocols::ws::handler::Auth::updateUser(
+        json{{"id", other->id}, {"name", "upd_hijacked"}}, sessionFor(plain)), std::runtime_error);
+    EXPECT_EQ(vh::db::query::identities::User::getUserById(other->id)->name, "upd_plain_victim");
+}
+
 } // namespace vh::auth::test_password_change

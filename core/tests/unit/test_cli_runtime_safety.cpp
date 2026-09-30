@@ -497,8 +497,12 @@ std::shared_ptr<identities::User> userWithPassword(const std::string& password) 
 }
 
 TEST(DefaultPasswordGate, OnlyPasswordChangeAndSessionCommandsWhileDefault) {
-    (void)config::Registry::get(); // loads VH_PATH_TO_CONFIG on first use
-    ASSERT_FALSE(config::Registry::get().dev.enabled) << "test expects the shipped (non-dev) config";
+    // The gate is intentionally off in dev mode; pin production behavior regardless of the host's config.
+    const config::Config previous = config::Registry::get(); // loads VH_PATH_TO_CONFIG on first use
+    config::Config pinned = previous;
+    pinned.dev.enabled = false;
+    config::Registry::set(pinned);
+    struct RestoreConfig { config::Config value; ~RestoreConfig() { config::Registry::set(value); } } restore{previous};
 
     auto router = std::make_shared<protocols::ws::Router>();
     int blocked = 0, allowed = 0;
