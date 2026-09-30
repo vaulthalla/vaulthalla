@@ -9,7 +9,7 @@ override_dh_auto_configure:
 override_dh_installsystemd:
 	dh_installsystemd --no-start --no-stop-on-upgrade
 
-# Meson installs debian/vaulthalla.udev as 60-vaulthalla-tpm.rules; letting dh_installudev
+# Meson installs the TPM udev rule as 60-vaulthalla-tpm.rules; letting dh_installudev
 # also install it as 60-vaulthalla.rules would ship the same TPM rule twice.
 override_dh_installudev:
 
