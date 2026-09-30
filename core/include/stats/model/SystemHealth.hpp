@@ -66,6 +66,19 @@ struct ShellHealth {
     std::optional<bool> adminUidBound;
 };
 
+// DB connection pool state (db::DBPool::stats()). Reconnect failures mean the database is unreachable
+// (critical); dead idle connections mean a session loss that hasn't been repaired yet (degraded).
+struct DatabaseHealth {
+    std::size_t poolSize = 0;
+    std::size_t idle = 0;
+    std::size_t inUse = 0;
+    std::size_t brokenIdle = 0;
+    std::uint64_t reconnects = 0;
+    std::uint64_t reconnectFailures = 0;
+    std::uint32_t consecutiveReconnectFailures = 0;
+    std::uint64_t acquireTimeouts = 0;
+};
+
 struct HealthSummary {
     std::size_t servicesReady = 0;
     std::size_t servicesTotal = 0;
@@ -83,6 +96,7 @@ struct SystemHealth {
     S3GatewayHealth s3Gateway;
     DependencyHealth deps;
     ShellHealth shell;
+    std::optional<DatabaseHealth> database; // nullopt until the pool exists
     HealthSummary summary;
 
     [[nodiscard]] bool healthy() const noexcept;
@@ -99,6 +113,7 @@ void to_json(nlohmann::json& j, const ProtocolHealth& health);
 void to_json(nlohmann::json& j, const S3GatewayHealth& health);
 void to_json(nlohmann::json& j, const DependencyHealth& health);
 void to_json(nlohmann::json& j, const ShellHealth& health);
+void to_json(nlohmann::json& j, const DatabaseHealth& health);
 void to_json(nlohmann::json& j, const HealthSummary& health);
 void to_json(nlohmann::json& j, const SystemHealth& health);
 

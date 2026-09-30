@@ -59,4 +59,9 @@ Dev mode requires both `VH_BUILD_MODE=dev` and the gitignored `enable_dev_mode` 
 
 - Web has no unit runner (`pnpm test` is typecheck + lint only).
 - No seeded DB tests for the stats rollups or share stats. No operator-email dedupe, digest scheduler, or security-enqueue tests.
-- **No test covers DB loss/reconnect or pool exhaustion.** That's the gap behind P0-1 in `production-hardening.md`.
+- DB loss/reconnect and pool exhaustion: `DBPoolReconnectTest` (`test_db_pool_reconnect.cpp`) kills pool backends
+  with `pg_terminate_backend` (never restart the shared system PostgreSQL). Its unreachable-DB case needs a
+  non-superuser test role that owns its DB, and skips otherwise. A burner DB works:
+  `sudo -u postgres createdb -O <role> claude_burner_*`, then drop both afterwards.
+- The full `vh_unit_tests` binary against a real DB runs about 230s (S3CostSafety plus S3GatewayDb take about 185s),
+  so `meson test` hits its 120s timeout. Run `./build/core/vh_unit_tests` directly for the DB-backed run.

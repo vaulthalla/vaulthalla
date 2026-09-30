@@ -66,6 +66,16 @@ CommandResult handleStatus(const CommandCall& call) {
         << ", requests=" << health.s3Gateway.totalRequests
         << ", failed=" << health.s3Gateway.failedRequests << "\n";
 
+    if (health.database) {
+        const auto& pool = *health.database;
+        out << "database pool:\n";
+        out << "  connections: size=" << pool.poolSize << ", idle=" << pool.idle << ", in use=" << pool.inUse
+            << ", broken idle=" << pool.brokenIdle << "\n";
+        out << "  reconnects: ok=" << pool.reconnects << ", failed=" << pool.reconnectFailures
+            << " (consecutive=" << pool.consecutiveReconnectFailures << ")"
+            << ", acquire timeouts=" << pool.acquireTimeouts << "\n";
+    }
+
     out << "deps sanity:\n";
     out << "  core deps: " << renderDepsCoreReady(health.summary) << "\n";
     out << "  fuse session: " << (health.deps.fuseSession ? "present" : "missing") << "\n";
