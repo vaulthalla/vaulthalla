@@ -8,6 +8,8 @@
 /.env
 /.venv
 /.codex/scratch/
+/.claude/scratch/
+/.claude/settings.local.json
 /config.yaml
 enable_dev_mode
 *__pycache__*
