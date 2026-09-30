@@ -32,7 +32,10 @@ class ProviderScaffoldContract(unittest.TestCase):
         for base in roots:
             for path in base.rglob("*"):
                 if path.is_file() and path.suffix not in {".png", ".ico", ".woff2"}:
-                    if TARGET in path.read_text(errors="ignore") and path.name not in {"postrm"}:
+                    # Documentation may describe the path; postrm names it only to preserve it on purge.
+                    if path.suffix == ".md" or path.name.startswith("README") or path.name == "postrm":
+                        continue
+                    if TARGET in path.read_text(errors="ignore"):
                         offenders.append(str(path.relative_to(ROOT)))
         self.assertEqual(offenders, [], "only harness tooling may reference the test provider file")
 
