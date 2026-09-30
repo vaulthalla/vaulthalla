@@ -198,6 +198,19 @@ them) and the purge output says how to remove them. Operator-managed test
 credentials in `/etc/vaulthalla/testing/` are never shipped, touched on upgrade
 or removed on purge; `/etc/vaulthalla` is only removed when it is empty.
 
+Retired CLI socket units
+========================
+
+Releases up to 1.6.6 shipped `vaulthalla-cli.socket` and `vaulthalla-cli.service`.
+The socket unit held `/run/vaulthalla/cli.sock` without anything accepting on
+it, so `vh` hung once the daemon had re-bound the path. `vaulthalla.service` now
+owns the socket and re-creates it if it disappears. On upgrade, postinst stops
+both legacy units (bounded, honouring policy-rc.d via `deb-systemd-invoke`),
+purges their enablement with `deb-systemd-helper`, removes leftover `.wants`
+links, reloads systemd, restarts an active `vaulthalla.service`, and reports
+whether the daemon bound `/run/vaulthalla/cli.sock` again. Purge also removes
+any leftover enablement.
+
 Reinstall after remove
 ======================
 
@@ -278,7 +291,7 @@ Validation flows
    - `test -f /usr/share/vaulthalla/config/config.yaml`
 6. Verify services:
    - `systemctl status vaulthalla.service`
-   - `systemctl status vaulthalla-cli.socket`
+   - `test -S /run/vaulthalla/cli.sock` (owned by `vaulthalla.service`)
    - `systemctl status vaulthalla-web.service`
    - `systemctl status vaulthalla-swtpm.service` (expected active only when no hardware TPM is present)
 

@@ -164,8 +164,6 @@ Inspect services:
 
 ```bash
 sudo systemctl status vaulthalla.service
-sudo systemctl status vaulthalla-cli.service
-sudo systemctl status vaulthalla-cli.socket
 sudo systemctl status vaulthalla-web.service
 sudo systemctl status vaulthalla-swtpm.service
 ```

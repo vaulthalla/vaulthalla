@@ -55,14 +55,20 @@ REQUIRED_DEBIAN_PACKAGE_PATHS: tuple[str, ...] = (
     "usr/share/vaulthalla/config/config.yaml",
     "usr/share/vaulthalla/config/config_template.yaml.in",
     "lib/systemd/system/vaulthalla.service",
-    "lib/systemd/system/vaulthalla-cli.service",
-    "lib/systemd/system/vaulthalla-cli.socket",
     "lib/systemd/system/vaulthalla-web.service",
     "lib/systemd/system/vaulthalla-swtpm.service",
     "usr/share/doc/vaulthalla/copyright",
     "usr/share/vaulthalla/nginx/vaulthalla",
     "usr/share/vaulthalla/psql/000_schema.sql",
     "usr/share/vaulthalla-web/server.js",
+)
+# Retired units that must never ship again: vaulthalla-cli.socket was an orphaned listener on the
+# daemon's CLI socket path that made `vh` hang (#110). vaulthalla.service owns the socket.
+FORBIDDEN_DEBIAN_PACKAGE_PATHS: tuple[str, ...] = (
+    "lib/systemd/system/vaulthalla-cli.service",
+    "lib/systemd/system/vaulthalla-cli.socket",
+    "usr/lib/systemd/system/vaulthalla-cli.service",
+    "usr/lib/systemd/system/vaulthalla-cli.socket",
 )
 ALTERNATE_DEBIAN_PACKAGE_PATH_GROUPS: tuple[tuple[str, ...], ...] = (
     # dh_compress may gzip supplementary docs under /usr/share/doc.
@@ -321,6 +327,10 @@ def _validate_debian_package_contract(deb_path: Path) -> list[str]:
     for required in REQUIRED_DEBIAN_PACKAGE_PATHS:
         if required not in members:
             issues.append(f"[debian package] {deb_path.name}: missing `{required}`")
+
+    for forbidden in FORBIDDEN_DEBIAN_PACKAGE_PATHS:
+        if forbidden in members:
+            issues.append(f"[debian package] {deb_path.name}: ships retired `{forbidden}`")
 
     for alternatives in ALTERNATE_DEBIAN_PACKAGE_PATH_GROUPS:
         if not any(_member_matches_pattern(members, candidate) for candidate in alternatives):

@@ -137,6 +137,43 @@ class PackageLayoutContractTests(unittest.TestCase):
         self.assertIn('INSTALL_MODE="reinstall"', postinst)
         self.assertIn('rm -f "$REINSTALL_MARKER"', postinst)
 
+    def test_legacy_cli_units_are_not_shipped_and_retired_on_upgrade(self) -> None:
+        # vaulthalla-cli.socket was an orphaned listener on the daemon's socket path; `vh` hung (#110).
+        repo = self._repo_root()
+        self.assertFalse((repo / "deploy" / "systemd" / "vaulthalla-cli.socket").exists())
+        self.assertFalse((repo / "deploy" / "systemd" / "vaulthalla-cli.service.in").exists())
+        for relative in ("debian/install", "meson.build", "debian/prerm", "bin/setup/install_dirs.sh"):
+            self.assertNotIn("vaulthalla-cli.s", self._read(relative), relative)
+        # The source installer only ever disables/removes them (older dev installs).
+        dev_installer = self._read("bin/setup/install_systemd.sh")
+        self.assertNotIn("enable --now vaulthalla-cli", dev_installer)
+        self.assertNotIn("deploy/systemd/vaulthalla-cli", dev_installer)
+        self.assertIn('systemctl disable --now "$unit"', dev_installer)
+
+        postinst = self._read("debian/postinst")
+        for fragment in ("CLI_SOCKET_SYSTEMD_UNIT", "CLI_SYSTEMD_UNIT", "enable vaulthalla-cli", "start vaulthalla-cli"):
+            self.assertNotIn(fragment, postinst)
+        start = postinst.index("retire_legacy_cli_units() {")
+        body = postinst[start:postinst.index("\n}\n", start)]
+        self.assertIn("deb-systemd-helper purge $LEGACY_CLI_UNITS", body)
+        self.assertIn("deb-systemd-helper unmask $LEGACY_CLI_UNITS", body)
+        self.assertIn("safe_systemctl daemon-reload", body)
+        stop_start = postinst.index("stop_legacy_cli_unit_bounded() {")
+        stop_body = postinst[stop_start:postinst.index("\n}\n", stop_start)]
+        self.assertIn('run_bounded "$SERVICE_TRANSITION_TIMEOUT_SECONDS" deb-systemd-invoke stop "$unit"', stop_body)
+        self.assertIn('kill -s KILL "$unit"', stop_body)
+
+        configure = postinst[postinst.index("  configure)\n"):]
+        # Retire early (before anything that can abort configure), and before the core restart
+        # that makes the daemon bind /run/vaulthalla/cli.sock again.
+        self.assertLess(configure.index("retire_legacy_cli_units"), configure.index("bootstrap_db_if_safe"))
+        self.assertLess(configure.index("retire_legacy_cli_units"), configure.index("configure_systemd_units"))
+        self.assertLess(configure.index("configure_systemd_units"), configure.index("verify_cli_socket_owned_by_daemon"))
+
+        postrm = self._read("debian/postrm")
+        purge = postrm[postrm.index("purge_package_state() {"):]
+        self.assertIn("purge_legacy_cli_units", purge)
+
     def test_swtpm_disable_runs_after_debhelper_enable(self) -> None:
         postinst = self._read("debian/postinst")
         configure = postinst[postinst.index("  configure)\n"):]

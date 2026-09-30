@@ -32,7 +32,7 @@ price budgets) · `admin/` (users/groups/roles, operator emails, S3 guardrails, 
   Source installs (`make install` / `make dev`) are development-only.
 - CLI names: `vh`, `vaulthalla`. Socket: `/run/vaulthalla/cli.sock`. Non-root operators need the `vaulthalla`
   group plus a UID mapping via `vh setup assign-admin`. `setup db|remote-db|nginx` and `teardown db|nginx` need `sudo`.
-- Services: `vaulthalla`, `vaulthalla-cli.socket`, `vaulthalla-cli`, `vaulthalla-web`, `vaulthalla-swtpm`.
+- Services: `vaulthalla` (owns `/run/vaulthalla/cli.sock`), `vaulthalla-web`, `vaulthalla-swtpm`. `vaulthalla-cli.socket`/`.service` were retired in #110; mention them only as legacy units that upgrades remove.
 - S3/R2 sync strategies: `cache | sync | mirror`. Request budgets and price budgets are separate systems.
   Price budget scopes are global, provider, and vault; modes are `off | report | warn | enforce`.
 - Vault keys and internal secrets have separate export commands.

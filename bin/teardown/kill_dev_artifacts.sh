@@ -16,6 +16,7 @@ VH_SWTPM_STATE_DIR="${VH_SWTPM_STATE_DIR:-/var/lib/swtpm/vaulthalla}"
 VH_SYSTEMCTL_STOP_TIMEOUT="${VH_SYSTEMCTL_STOP_TIMEOUT:-35s}"
 VH_PID_GRACE_SECONDS="${VH_PID_GRACE_SECONDS:-2}"
 
+# vaulthalla-cli.{socket,service} are retired (#110) but still cleaned up on older dev installs.
 VH_DEV_CLEANUP_UNITS=(
   vaulthalla-web.service
   vaulthalla-cli.socket

@@ -107,8 +107,6 @@ echo "---- 🔧 systemd ----"
 
 for unit in \
   vaulthalla.service \
-  vaulthalla-cli.service \
-  vaulthalla-cli.socket \
   vaulthalla-web.service
 do
   echo "▶ $unit"
@@ -120,6 +118,21 @@ do
 
   echo
 done
+
+echo "---- 🔌 CLI socket ----"
+if sudo -n test -S /run/vaulthalla/cli.sock 2>/dev/null || test -S /run/vaulthalla/cli.sock 2>/dev/null; then
+  echo "✅ /run/vaulthalla/cli.sock (owned by vaulthalla.service)"
+else
+  echo "❌ /run/vaulthalla/cli.sock missing (is vaulthalla.service running?)"
+fi
+for legacy_unit in vaulthalla-cli.socket vaulthalla-cli.service; do
+  legacy_state="$(timeout 10 systemctl show -p ActiveState --value "$legacy_unit" 2>/dev/null || true)"
+  if [[ -n "$legacy_state" && "$legacy_state" != "inactive" ]]; then
+    echo "⚠️  retired $legacy_unit is '$legacy_state'; it can swallow vh clients."
+    echo "   Fix: sudo systemctl disable --now vaulthalla-cli.socket vaulthalla-cli.service"
+  fi
+done
+echo
 
 echo "---- 🌍 Env Sanity ----"
 

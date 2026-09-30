@@ -54,6 +54,13 @@ exec "$@"
 FAKE_SYSTEMCTL = r"""#!/bin/sh
 # Fake systemctl: ActiveState walks a scripted sequence (one entry per poll).
 printf '%s\n' "$*" >> "$VH_TEST_LOG/systemctl.argv"
+for last_arg; do :; done
+if [ -n "${last_arg:-}" ] && [ -f "$VH_TEST_LOG/unit-state.$last_arg" ]; then
+    case "$*" in
+        *"-p ActiveState"*) cat "$VH_TEST_LOG/unit-state.$last_arg"; exit 0 ;;
+        *"-p LoadState"*) echo not-found; exit 0 ;;
+    esac
+fi
 case "$*" in
     *"-p ActiveState"*)
         n=$(cat "$VH_TEST_LOG/state.n" 2>/dev/null || echo 0)
@@ -320,6 +327,148 @@ class PostrmConfigPurgeBehaviorTests(unittest.TestCase):
         (etc / "config.yaml").write_text("x\n", encoding="utf-8")
         h.run(f'CONFIG_DIR="{etc}"\nCERTBOT_CREDENTIALS_DIR="{etc}/certbot"\npurge_config_dir\n')
         self.assertFalse(etc.exists())
+
+
+FAKE_DEB_SYSTEMD_INVOKE = r"""#!/bin/sh
+printf '%s\n' "$*" >> "$VH_TEST_LOG/deb-systemd-invoke.argv"
+if [ -n "${FAKE_INVOKE_RC:-}" ]; then
+    exit "$FAKE_INVOKE_RC"
+fi
+shift
+for unit; do echo inactive > "$VH_TEST_LOG/unit-state.$unit"; done
+exit 0
+"""
+
+FAKE_DEB_SYSTEMD_HELPER = r"""#!/bin/sh
+printf '%s\n' "$*" >> "$VH_TEST_LOG/deb-systemd-helper.argv"
+exit 0
+"""
+
+
+class PostinstLegacyCliUnitBehaviorTests(unittest.TestCase):
+    """Upgrades from <= 1.6.6 must stop and purge vaulthalla-cli.{socket,service} (#110)."""
+
+    def setUp(self) -> None:
+        self.h = _Harness("postinst")
+        self.addCleanup(self.h.cleanup)
+        _write_exec(self.h.bin / "deb-systemd-invoke", FAKE_DEB_SYSTEMD_INVOKE)
+        _write_exec(self.h.bin / "deb-systemd-helper", FAKE_DEB_SYSTEMD_HELPER)
+        self.etc = self.h.tmp / "etc-systemd"
+        (self.etc / "sockets.target.wants").mkdir(parents=True)
+        (self.etc / "multi-user.target.wants").mkdir()
+        self.socket_link = self.etc / "sockets.target.wants" / "vaulthalla-cli.socket"
+        self.service_link = self.etc / "multi-user.target.wants" / "vaulthalla-cli.service"
+        self.unit_dir = self.h.tmp / "lib-systemd"
+        self.unit_dir.mkdir()
+        self.helper_state = self.h.tmp / "var-lib-systemd"
+        (self.helper_state / "deb-systemd-helper-enabled").mkdir(parents=True)
+
+    def _set_state(self, unit: str, state: str) -> None:
+        (self.h.log / f"unit-state.{unit}").write_text(state + "\n", encoding="utf-8")
+
+    def _retire(self, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+        return self.h.run(
+            f"""
+            systemd_running() {{ return 0; }}
+            LEGACY_CLI_WANTS_LINKS="{self.socket_link} {self.service_link}"
+            LEGACY_CLI_UNIT_DIRS="{self.unit_dir}"
+            DEB_SYSTEMD_HELPER_STATE_DIR="{self.helper_state}"
+            SERVICE_TRANSITION_TIMEOUT_SECONDS=5
+            SERVICE_KILL_SETTLE_SECONDS=1
+            retire_legacy_cli_units
+            echo "rc=$? retired=$LEGACY_CLI_UNITS_RETIRED"
+            """,
+            env,
+        )
+
+    def test_upgrade_stops_purges_and_reloads(self) -> None:
+        self._set_state("vaulthalla-cli.socket", "active")
+        self._set_state("vaulthalla-cli.service", "activating")
+        self.socket_link.symlink_to("/lib/systemd/system/vaulthalla-cli.socket")
+        self.service_link.symlink_to("/lib/systemd/system/vaulthalla-cli.service")
+        result = self._retire()
+        self.assertIn("rc=0 retired=1", result.stdout, result.stderr)
+        invoked = self.h.read_log("deb-systemd-invoke.argv").splitlines()
+        self.assertEqual(invoked, ["stop vaulthalla-cli.socket", "stop vaulthalla-cli.service"])
+        helper = self.h.read_log("deb-systemd-helper.argv")
+        self.assertIn("purge vaulthalla-cli.socket vaulthalla-cli.service", helper)
+        self.assertIn("unmask vaulthalla-cli.socket vaulthalla-cli.service", helper)
+        self.assertFalse(self.socket_link.is_symlink())
+        self.assertFalse(self.service_link.is_symlink())
+        systemctl = self.h.read_log("systemctl.argv")
+        self.assertIn("daemon-reload", systemctl)
+        self.assertNotIn("enable", systemctl)
+        self.assertNotIn("start vaulthalla-cli", systemctl)
+
+    def test_second_run_is_a_no_op(self) -> None:
+        self._set_state("vaulthalla-cli.socket", "active")
+        self.socket_link.symlink_to("/lib/systemd/system/vaulthalla-cli.socket")
+        self._retire()
+        for name in ("deb-systemd-invoke.argv", "deb-systemd-helper.argv", "systemctl.argv"):
+            (self.h.log / name).unlink(missing_ok=True)
+        result = self._retire()
+        self.assertIn("rc=0 retired=0", result.stdout)
+        self.assertEqual(self.h.read_log("deb-systemd-invoke.argv"), "")
+        self.assertEqual(self.h.read_log("deb-systemd-helper.argv"), "")
+        self.assertNotIn("daemon-reload", self.h.read_log("systemctl.argv"))
+
+    def test_fresh_host_without_legacy_units_is_untouched(self) -> None:
+        self._set_state("vaulthalla-cli.socket", "inactive")
+        self._set_state("vaulthalla-cli.service", "inactive")
+        result = self._retire()
+        self.assertIn("rc=0 retired=0", result.stdout)
+        self.assertEqual(self.h.read_log("deb-systemd-helper.argv"), "")
+        self.assertEqual(self.h.read_log("deb-systemd-invoke.argv"), "")
+
+    def test_inactive_units_with_helper_state_are_purged_without_stopping(self) -> None:
+        self._set_state("vaulthalla-cli.socket", "inactive")
+        self._set_state("vaulthalla-cli.service", "inactive")
+        (self.helper_state / "deb-systemd-helper-enabled" / "vaulthalla-cli.socket.dsh-also").write_text("", encoding="utf-8")
+        result = self._retire()
+        self.assertIn("rc=0 retired=1", result.stdout)
+        self.assertEqual(self.h.read_log("deb-systemd-invoke.argv"), "")
+        self.assertIn("purge vaulthalla-cli.socket vaulthalla-cli.service", self.h.read_log("deb-systemd-helper.argv"))
+
+    def test_hung_stop_escalates_to_cgroup_kill_and_never_fails(self) -> None:
+        self._set_state("vaulthalla-cli.socket", "inactive")
+        self._set_state("vaulthalla-cli.service", "deactivating")
+        result = self._retire({"FAKE_INVOKE_RC": "124"})
+        self.assertIn("rc=0 retired=1", result.stdout)
+        self.assertIn("kill -s KILL vaulthalla-cli.service", self.h.read_log("systemctl.argv"))
+        self.assertIn("sending SIGKILL", result.stderr + result.stdout)
+
+    def test_cli_socket_verification_reports_bound_and_missing(self) -> None:
+        import socket as socket_mod
+
+        sock_path = self.h.run_dir / "cli.sock"
+        self._set_state("vaulthalla.service", "active")
+        body = f"""
+            systemd_running() {{ return 0; }}
+            CLI_SOCKET_PATH="{sock_path}"
+            CLI_SOCKET_WAIT_SECONDS=2
+            verify_cli_socket_owned_by_daemon
+            echo "status=$CLI_SOCKET_STATUS"
+            """
+        missing = self.h.run(body)
+        self.assertIn("missing 2s after vaulthalla.service", missing.stdout)
+        server = socket_mod.socket(socket_mod.AF_UNIX, socket_mod.SOCK_STREAM)
+        self.addCleanup(server.close)
+        server.bind(str(sock_path))
+        bound = self.h.run(body)
+        self.assertIn(f"status={sock_path} bound by vaulthalla.service", bound.stdout)
+
+
+class PostrmLegacyCliUnitBehaviorTests(unittest.TestCase):
+    def test_purge_removes_legacy_enablement_leftovers(self) -> None:
+        h = _Harness("postrm")
+        self.addCleanup(h.cleanup)
+        _write_exec(h.bin / "deb-systemd-helper", FAKE_DEB_SYSTEMD_HELPER)
+        link = h.tmp / "vaulthalla-cli.socket"
+        link.symlink_to("/lib/systemd/system/vaulthalla-cli.socket")
+        result = h.run(f'LEGACY_CLI_WANTS_LINKS="{link}"\npurge_legacy_cli_units\necho rc=$?\n')
+        self.assertIn("rc=0", result.stdout)
+        self.assertFalse(link.is_symlink())
+        self.assertIn("purge vaulthalla-cli.socket vaulthalla-cli.service", h.read_log("deb-systemd-helper.argv"))
 
 
 class PrermStopBehaviorTests(unittest.TestCase):

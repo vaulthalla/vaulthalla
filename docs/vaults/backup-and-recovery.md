@@ -121,8 +121,8 @@ Use this as a cautious outline, not a blind script:
 Example service boundary:
 
 ```bash
-sudo systemctl stop vaulthalla.service vaulthalla-web.service vaulthalla-cli.socket
-sudo systemctl start vaulthalla.service vaulthalla-web.service vaulthalla-cli.socket
+sudo systemctl stop vaulthalla.service vaulthalla-web.service
+sudo systemctl start vaulthalla.service vaulthalla-web.service
 ```
 
 ## Preserved Database Reinstall

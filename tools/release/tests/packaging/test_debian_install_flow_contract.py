@@ -107,8 +107,6 @@ class DebianInstallFlowContractTests(unittest.TestCase):
             "Systemd: upgrade detected; restarting active Vaulthalla units only",
             'transition_unit_bounded try-restart "$SWTPM_SYSTEMD_UNIT"',
             'transition_unit_bounded try-restart "$CORE_SYSTEMD_UNIT"',
-            'transition_unit_bounded try-restart "$CLI_SOCKET_SYSTEMD_UNIT"',
-            'transition_unit_bounded try-restart "$CLI_SYSTEMD_UNIT"',
             'transition_unit_bounded try-restart "$WEB_SYSTEMD_UNIT"',
         )
         for fragment in required_upgrade_fragments:
@@ -148,12 +146,8 @@ class DebianInstallFlowContractTests(unittest.TestCase):
 
         required_fresh_fragments = (
             'safe_systemctl_unit_files enable "$CORE_SYSTEMD_UNIT"',
-            'safe_systemctl_unit_files enable "$CLI_SOCKET_SYSTEMD_UNIT"',
-            'safe_systemctl_unit_files enable "$CLI_SYSTEMD_UNIT"',
             'safe_systemctl_unit_files enable "$WEB_SYSTEMD_UNIT"',
-            'transition_unit_bounded start "$CLI_SOCKET_SYSTEMD_UNIT"',
             'transition_unit_bounded start "$CORE_SYSTEMD_UNIT"',
-            'transition_unit_bounded start "$CLI_SYSTEMD_UNIT"',
             'transition_unit_bounded start "$WEB_SYSTEMD_UNIT"',
         )
         for fragment in required_fresh_fragments:
@@ -181,8 +175,6 @@ class DebianInstallFlowContractTests(unittest.TestCase):
             "safe_systemctl kill -s KILL \"$unit\"",
             "safe_systemctl reset-failed \"$unit\"",
             "stop_service_bounded \"$WEB_SYSTEMD_UNIT\"",
-            "stop_service_bounded \"$CLI_SOCKET_SYSTEMD_UNIT\"",
-            "stop_service_bounded \"$CLI_SYSTEMD_UNIT\"",
             "stop_service_bounded \"$CORE_SYSTEMD_UNIT\"",
             "stop_service_bounded \"$SWTPM_SYSTEMD_UNIT\"",
         )

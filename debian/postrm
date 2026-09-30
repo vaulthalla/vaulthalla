@@ -38,6 +38,9 @@ PENDING_DB_PASS_FILE="${RUNTIME_DIR}/db_password"
 TPM_BACKEND_OVERRIDE_DIR="/etc/systemd/system/vaulthalla.service.d"
 TPM_BACKEND_OVERRIDE_FILE="${TPM_BACKEND_OVERRIDE_DIR}/tpm-backend.conf"
 SWTPM_BASE_DIR="/var/lib/swtpm"
+# Units shipped up to 1.6.6; postinst retires them on upgrade, purge cleans up any leftovers.
+LEGACY_CLI_UNITS="vaulthalla-cli.socket vaulthalla-cli.service"
+LEGACY_CLI_WANTS_LINKS="/etc/systemd/system/sockets.target.wants/vaulthalla-cli.socket /etc/systemd/system/multi-user.target.wants/vaulthalla-cli.service"
 SWTPM_STATE_DIR="${SWTPM_BASE_DIR}/vaulthalla"
 POSTGRES_RESOURCES_REMAIN="0"
 
@@ -407,12 +410,28 @@ purge_config_dir() {
     rmdir "$CONFIG_DIR" 2>/dev/null || true
 }
 
+purge_legacy_cli_units() {
+    # Enablement leftovers of vaulthalla-cli.{socket,service} (retired in favour of the daemon-owned socket).
+    if has_command deb-systemd-helper; then
+        # shellcheck disable=SC2086
+        run_bounded 30 deb-systemd-helper purge $LEGACY_CLI_UNITS >/dev/null 2>&1 || true
+        # shellcheck disable=SC2086
+        run_bounded 30 deb-systemd-helper unmask $LEGACY_CLI_UNITS >/dev/null 2>&1 || true
+    fi
+    for link in $LEGACY_CLI_WANTS_LINKS; do
+        if [ -L "$link" ]; then
+            rm -f "$link" || true
+        fi
+    done
+}
+
 purge_package_state() {
     # Called as `purge_package_state || true`: nothing in here may fail the purge.
     cleanup_web_cache
     rm -f "$LEGACY_PENDING_SUPERADMIN_UID_FILE" "$PENDING_DB_PASS_FILE" || true
     rm -f "$TPM_BACKEND_OVERRIDE_FILE" || true
     rmdir "$TPM_BACKEND_OVERRIDE_DIR" 2>/dev/null || true
+    purge_legacy_cli_units
 
     cleanup_nginx_site_link_if_package_path
     if [ -f "$NGINX_MANAGED_MARKER" ]; then

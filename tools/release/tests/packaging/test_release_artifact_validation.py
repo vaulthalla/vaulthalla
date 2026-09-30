@@ -23,8 +23,6 @@ class ReleaseArtifactValidationTests(unittest.TestCase):
             "usr/share/vaulthalla/config/config.yaml",
             "usr/share/vaulthalla/config/config_template.yaml.in",
             "lib/systemd/system/vaulthalla.service",
-            "lib/systemd/system/vaulthalla-cli.service",
-            "lib/systemd/system/vaulthalla-cli.socket",
             "lib/systemd/system/vaulthalla-web.service",
             "lib/systemd/system/vaulthalla-swtpm.service",
             "usr/share/doc/vaulthalla/LICENSE.gz",
@@ -195,6 +193,19 @@ class ReleaseArtifactValidationTests(unittest.TestCase):
             with patch("tools.release.packaging.debian._read_debian_package_members", return_value=members):
                 result = validate_release_artifacts(output_dir=output_dir, require_changelog=False)
             self.assertEqual(len(result.debian_artifacts), 1)
+
+    def test_validation_rejects_retired_cli_units(self) -> None:
+        for unit in ("vaulthalla-cli.socket", "vaulthalla-cli.service"):
+            with self.subTest(unit=unit), TemporaryDirectory() as temp_dir:
+                output_dir = Path(temp_dir) / "release"
+                self._stage_valid_release(output_dir)
+                members = self._valid_debian_members()
+                members.add(f"lib/systemd/system/{unit}")
+                with (
+                    patch("tools.release.packaging.debian._read_debian_package_members", return_value=members),
+                    self.assertRaisesRegex(ValueError, rf"ships retired .lib/systemd/system/{unit}."),
+                ):
+                    _ = validate_release_artifacts(output_dir=output_dir, require_changelog=False)
 
     def test_validation_requires_default_config_under_usr_share(self) -> None:
         with TemporaryDirectory() as temp_dir:

@@ -31,7 +31,6 @@ Relevant services:
 ```bash
 systemctl status vaulthalla-web.service
 systemctl status vaulthalla.service
-systemctl status vaulthalla-cli.socket
 ```
 
 ## Main Areas

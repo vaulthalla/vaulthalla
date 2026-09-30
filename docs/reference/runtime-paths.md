@@ -33,9 +33,7 @@ Use this reference when backing up, troubleshooting, or verifying package layout
 
 | Service | Purpose |
 | --- | --- |
-| `vaulthalla.service` | Core daemon. |
-| `vaulthalla-cli.socket` | Local CLI socket activation. |
-| `vaulthalla-cli.service` | CLI socket service. |
+| `vaulthalla.service` | Core daemon. Owns the CLI socket `/run/vaulthalla/cli.sock`. |
 | `vaulthalla-web.service` | Web console runtime. |
 | `vaulthalla-swtpm.service` | Managed software TPM fallback. |
 
@@ -85,5 +83,5 @@ If `vh` fails with a permission error:
 ls -l /run/vaulthalla/cli.sock
 id
 getent group vaulthalla
-systemctl status vaulthalla-cli.socket
+systemctl status vaulthalla.service
 ```

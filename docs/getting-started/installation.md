@@ -99,8 +99,7 @@ The repository helper also accepts install-time controls:
 
 The package installs these main runtime pieces:
 
-- `vaulthalla.service` for the core daemon.
-- `vaulthalla-cli.socket` and `vaulthalla-cli.service` for the local CLI control socket.
+- `vaulthalla.service` for the core daemon, which also owns the local CLI control socket `/run/vaulthalla/cli.sock`.
 - `vaulthalla-web.service` for the packaged web console.
 - `vaulthalla-swtpm.service` when the software TPM fallback is needed.
 - `/usr/bin/vh` and `/usr/bin/vaulthalla`, both pointing at the CLI.
@@ -179,7 +178,6 @@ After installation:
 vh status
 systemctl status vaulthalla.service
 systemctl status vaulthalla-web.service
-systemctl status vaulthalla-cli.socket
 ```
 
 If the CLI reports a socket or permission error, finish [First Run](/getting-started/first-run), especially the admin Linux UID and `vaulthalla` group steps.

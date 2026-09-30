@@ -3,8 +3,6 @@ set -e
 
 PKG="vaulthalla"
 CORE_SYSTEMD_UNIT="vaulthalla.service"
-CLI_SYSTEMD_UNIT="vaulthalla-cli.service"
-CLI_SOCKET_SYSTEMD_UNIT="vaulthalla-cli.socket"
 WEB_SYSTEMD_UNIT="vaulthalla-web.service"
 SWTPM_SYSTEMD_UNIT="vaulthalla-swtpm.service"
 SYSTEMCTL_COMMAND_TIMEOUT_SECONDS=10
@@ -173,16 +171,12 @@ disable_nginx_site_link_if_package_path() {
 
 case "$1" in
     remove|deconfigure)
-        # Stop frontend/client-facing units first to drain websocket/socket traffic before backend stop.
+        # Stop the frontend first to drain websocket traffic before the backend (which owns the CLI socket) stops.
         stop_service_bounded "$WEB_SYSTEMD_UNIT"
-        stop_service_bounded "$CLI_SOCKET_SYSTEMD_UNIT"
-        stop_service_bounded "$CLI_SYSTEMD_UNIT"
         stop_service_bounded "$CORE_SYSTEMD_UNIT"
         stop_service_bounded "$SWTPM_SYSTEMD_UNIT"
         # Units are disabled on remove; a later reinstall over the remaining config files is
         # detected by preinst and postinst re-enables and starts them.
-        safe_systemctl disable "$CLI_SYSTEMD_UNIT"
-        safe_systemctl disable "$CLI_SOCKET_SYSTEMD_UNIT"
         safe_systemctl disable "$CORE_SYSTEMD_UNIT"
         safe_systemctl disable "$WEB_SYSTEMD_UNIT"
         safe_systemctl disable "$SWTPM_SYSTEMD_UNIT"
