@@ -93,33 +93,37 @@ class DebianInstallFlowContractTests(unittest.TestCase):
         for fragment in required_fragments:
             self.assertIn(fragment, postinst)
 
-    def test_postinst_restarts_only_active_vaulthalla_units_on_upgrade(self) -> None:
+    def _configure_systemd_units_body(self) -> str:
         postinst = (self._repo_root() / "debian" / "postinst").read_text(encoding="utf-8")
         body_start = postinst.index("configure_systemd_units() {")
         body_end = postinst.index('\n}\n\ncase "$1" in', body_start)
-        body = postinst[body_start:body_end]
-        upgrade_body = body[body.index("if is_upgrade; then"):body.index("safe_systemctl preset")]
+        return postinst[body_start:body_end]
+
+    def test_postinst_restarts_only_active_vaulthalla_units_on_upgrade(self) -> None:
+        body = self._configure_systemd_units_body()
+        upgrade_body = body[body.index("if is_upgrade; then"):body.index('if [ "$INSTALL_MODE" = "reinstall" ]')]
 
         required_upgrade_fragments = (
-            "Systemd: upgrade detected; restarting active Vaulthalla units only.",
-            'safe_systemctl try-restart "$SWTPM_SYSTEMD_UNIT"',
-            'safe_systemctl try-restart "$CORE_SYSTEMD_UNIT"',
-            'safe_systemctl try-restart "$CLI_SOCKET_SYSTEMD_UNIT"',
-            'safe_systemctl try-restart "$CLI_SYSTEMD_UNIT"',
-            'safe_systemctl try-restart "$WEB_SYSTEMD_UNIT"',
+            "Systemd: upgrade detected; restarting active Vaulthalla units only",
+            'transition_unit_bounded try-restart "$SWTPM_SYSTEMD_UNIT"',
+            'transition_unit_bounded try-restart "$CORE_SYSTEMD_UNIT"',
+            'transition_unit_bounded try-restart "$CLI_SOCKET_SYSTEMD_UNIT"',
+            'transition_unit_bounded try-restart "$CLI_SYSTEMD_UNIT"',
+            'transition_unit_bounded try-restart "$WEB_SYSTEMD_UNIT"',
         )
         for fragment in required_upgrade_fragments:
             self.assertIn(fragment, upgrade_body)
 
         self.assertNotIn("enable --now", upgrade_body)
+        self.assertNotIn("enable ", upgrade_body)
         self.assertNotIn("daemon-reexec", body)
         self.assertLess(
-            body.index('safe_systemctl try-restart "$SWTPM_SYSTEMD_UNIT"'),
-            body.index('safe_systemctl try-restart "$CORE_SYSTEMD_UNIT"'),
+            body.index('transition_unit_bounded try-restart "$SWTPM_SYSTEMD_UNIT"'),
+            body.index('transition_unit_bounded try-restart "$CORE_SYSTEMD_UNIT"'),
         )
         self.assertLess(
-            body.index('safe_systemctl try-restart "$CORE_SYSTEMD_UNIT"'),
-            body.index('safe_systemctl try-restart "$WEB_SYSTEMD_UNIT"'),
+            body.index('transition_unit_bounded try-restart "$CORE_SYSTEMD_UNIT"'),
+            body.index('transition_unit_bounded try-restart "$WEB_SYSTEMD_UNIT"'),
         )
 
     def test_postinst_swtpm_backend_does_not_start_disabled_unit_on_upgrade(self) -> None:
@@ -130,34 +134,32 @@ class DebianInstallFlowContractTests(unittest.TestCase):
 
         self.assertIn("active unit restart is handled by configure_systemd_units", body)
         self.assertLess(
-            body.index("if is_upgrade; then"),
-            body.index("if ! has_command systemctl; then"),
+            body.index('if is_upgrade && [ "$tpm_was_deferred" = "0" ]; then'),
+            body.index("if ! systemd_running; then"),
         )
         self.assertLess(
-            body.index("if is_upgrade; then"),
+            body.index('if is_upgrade && [ "$tpm_was_deferred" = "0" ]; then'),
             body.index("if start_and_validate_swtpm_service; then"),
         )
 
     def test_postinst_fresh_install_still_enables_services(self) -> None:
-        postinst = (self._repo_root() / "debian" / "postinst").read_text(encoding="utf-8")
-        body_start = postinst.index("configure_systemd_units() {")
-        body_end = postinst.index('\n}\n\ncase "$1" in', body_start)
-        body = postinst[body_start:body_end]
-        fresh_body = body[body.index("safe_systemctl preset") :]
+        body = self._configure_systemd_units_body()
+        fresh_body = body[body.index('if [ "$INSTALL_MODE" = "reinstall" ]') :]
 
         required_fresh_fragments = (
-            'safe_systemctl preset "$CORE_SYSTEMD_UNIT"',
-            'safe_systemctl preset "$CLI_SOCKET_SYSTEMD_UNIT"',
-            'safe_systemctl preset "$CLI_SYSTEMD_UNIT"',
-            'safe_systemctl preset "$WEB_SYSTEMD_UNIT"',
-            'safe_systemctl preset "$SWTPM_SYSTEMD_UNIT"',
-            'safe_systemctl enable --now "$CORE_SYSTEMD_UNIT"',
-            'safe_systemctl enable --now "$CLI_SOCKET_SYSTEMD_UNIT"',
-            'safe_systemctl enable --now "$CLI_SYSTEMD_UNIT"',
-            'safe_systemctl enable --now "$WEB_SYSTEMD_UNIT"',
+            'safe_systemctl_unit_files enable "$CORE_SYSTEMD_UNIT"',
+            'safe_systemctl_unit_files enable "$CLI_SOCKET_SYSTEMD_UNIT"',
+            'safe_systemctl_unit_files enable "$CLI_SYSTEMD_UNIT"',
+            'safe_systemctl_unit_files enable "$WEB_SYSTEMD_UNIT"',
+            'transition_unit_bounded start "$CLI_SOCKET_SYSTEMD_UNIT"',
+            'transition_unit_bounded start "$CORE_SYSTEMD_UNIT"',
+            'transition_unit_bounded start "$CLI_SYSTEMD_UNIT"',
+            'transition_unit_bounded start "$WEB_SYSTEMD_UNIT"',
         )
         for fragment in required_fresh_fragments:
             self.assertIn(fragment, fresh_body)
+        # Presets could re-enable vaulthalla-swtpm on hardware-TPM hosts after it was disabled.
+        self.assertNotIn("preset", body)
 
     def test_prerm_and_postrm_cleanup_legacy_superadmin_seed_only_as_legacy(self) -> None:
         repo = self._repo_root()
@@ -176,7 +178,7 @@ class DebianInstallFlowContractTests(unittest.TestCase):
             "stop_service_bounded()",
             "systemctl --system $* failed; continuing.",
             "stop --no-block",
-            "safe_systemctl kill \"$unit\"",
+            "safe_systemctl kill -s KILL \"$unit\"",
             "safe_systemctl reset-failed \"$unit\"",
             "stop_service_bounded \"$WEB_SYSTEMD_UNIT\"",
             "stop_service_bounded \"$CLI_SOCKET_SYSTEMD_UNIT\"",

@@ -1,0 +1,7 @@
+# Build-internal static libraries and headers: the runtime package ships binaries only.
+usr/include/vaulthalla/paths.h
+usr/include/vaulthalla/version.h
+usr/lib/*/libvaulthalla.a
+usr/lib/*/libvhusage.a
+usr/lib/libvaulthalla.a
+usr/lib/libvhusage.a

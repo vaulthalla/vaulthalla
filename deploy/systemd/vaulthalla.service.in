@@ -1,8 +1,13 @@
 [Unit]
 Description=Vaulthalla Service - The Final Cloud
 After=network.target postgresql.service vaulthalla-swtpm.service
-Requires=postgresql.service
-Wants=vaulthalla-swtpm.service
+# Wants (not Requires): remote-DB hosts have no local PostgreSQL, and a PostgreSQL
+# restart must not stop the FUSE daemon underneath its clients.
+Wants=postgresql.service vaulthalla-swtpm.service
+# Give up after 10 failed starts within 10 minutes (e.g. missing DB credential or TPM)
+# instead of restarting forever; `systemctl reset-failed vaulthalla` re-arms it.
+StartLimitIntervalSec=600
+StartLimitBurst=10
 
 [Service]
 User=vaulthalla
@@ -12,7 +17,7 @@ SupplementaryGroups=tss
 ExecStart=@BINDIR@/vaulthalla-server
 ExecStopPost=/bin/sh -c 'if findmnt -rn -M /mnt/vaulthalla >/dev/null 2>&1; then fusermount3 -uz /mnt/vaulthalla 2>/dev/null || fusermount -uz /mnt/vaulthalla 2>/dev/null || umount -l /mnt/vaulthalla 2>/dev/null || true; fi'
 Restart=on-failure
-RestartSec=3
+RestartSec=10
 TimeoutStopSec=30s
 KillMode=mixed
 KillSignal=SIGTERM

@@ -121,13 +121,24 @@ Check that `/run/vaulthalla/db_password` exists when the service expects a runti
 sudo ls -l /run/vaulthalla/db_password
 ```
 
-For a preserved database reinstall, reseed the runtime password file:
+For a preserved database after reinstall (the install stopped with an "existing Vaulthalla PostgreSQL database" error, or `vaulthalla.service` cannot authenticate), choose adopt or overwrite:
+
+```bash
+sudo env VH_EXISTING_DB_ACTION=adopt dpkg --configure -a      # package still half-configured
+sudo vh setup db --adopt                                       # package already configured
+sudo vh setup db --overwrite                                   # discard the old database
+```
+
+If you exported the original role password, you can instead reseed it manually:
 
 ```bash
 sudo install -d -m 0755 /run/vaulthalla
 sudo install -m 0600 -o vaulthalla -g vaulthalla /path/to/db_password /run/vaulthalla/db_password
+sudo systemctl reset-failed vaulthalla
 sudo systemctl restart vaulthalla
 ```
+
+`vaulthalla.service` stops retrying after 10 failed starts within 10 minutes. After fixing the cause, run `sudo systemctl reset-failed vaulthalla`. The `vh setup` commands do this for you.
 
 ## TPM Or swtpm Fails
 

@@ -10,7 +10,7 @@
 # including file uploads, notifications, and other interactive features.
 websocket_server:
   enabled: true
-  host: 0.0.0.0
+  host: 127.0.0.1              # loopback: browsers reach /ws through nginx; set 0.0.0.0 only for direct exposure
   port: 36969
   max_connections: 1024
   max_upload_size_mb: 2048
@@ -21,7 +21,7 @@ websocket_server:
 # allowing users to view files directly in their browsers without downloading them.
 http_preview_server:
   enabled: true
-  host: 0.0.0.0
+  host: 127.0.0.1              # loopback: nginx proxies /preview, /download and /upload
   port: 36970
   max_connections: 512
   max_preview_size_mb: 512
