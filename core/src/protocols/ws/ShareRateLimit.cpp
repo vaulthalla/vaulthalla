@@ -13,6 +13,8 @@ namespace {
 using vh::share::RateLimitPolicy;
 using vh::share::TokenKind;
 
+constexpr RateLimitPolicy kLoginSustainedPolicy{.max_attempts = 30, .window = std::chrono::minutes{15}};
+
 [[nodiscard]] std::optional<RateLimitPolicy> policyFor(const std::string_view command) {
     using namespace std::chrono_literals;
 
@@ -153,16 +155,31 @@ vh::share::RateLimitDecision ShareRateLimit::check(
     if (!policy) return {.allowed = true, .remaining = 0, .retry_after = std::chrono::seconds{0}};
 
     if (command == "auth.login") {
-        // Two tiers act as a backoff: bursts are capped per minute, and sustained guessing from one IP is
-        // capped per quarter hour, so a client that keeps hitting the minute limit is shut out much longer.
-        using namespace std::chrono_literals;
-        const auto sustained = limiter_.check(
+        // Two tiers act as a backoff: failed bursts are capped per minute, and sustained guessing from one IP
+        // is capped per quarter hour, so a client that keeps hitting the minute limit is shut out much longer.
+        // Only failures count (see recordLoginFailure), so gate here without recording.
+        const auto sustained = limiter_.peek(
             std::format("auth.login.sustained|ip:{}|user:{}", clientIp(session), optionalString(payloadOf(message), "name")),
-            RateLimitPolicy{.max_attempts = 30, .window = 15min}, now);
+            kLoginSustainedPolicy, now);
         if (!sustained.allowed) return sustained;
+        return limiter_.peek(keyFor(command, message, session), *policy, now);
     }
 
     return limiter_.check(keyFor(command, message, session), *policy, now);
+}
+
+void ShareRateLimit::recordLoginFailure(const std::string_view accountName, const Session& session,
+                                        const Clock::time_point now) {
+    const auto ip = clientIp(session);
+    const auto name = std::string(accountName);
+    (void)limiter_.check(std::format("auth.login.sustained|ip:{}|user:{}", ip, name), kLoginSustainedPolicy, now);
+    if (const auto policy = policyFor("auth.login"))
+        (void)limiter_.check(std::format("auth.login|ip:{}|user:{}", ip, name), *policy, now);
+}
+
+ShareRateLimit& ShareRateLimit::instance() {
+    static ShareRateLimit limiter;
+    return limiter;
 }
 
 void ShareRateLimit::reset() {

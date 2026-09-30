@@ -545,21 +545,27 @@ TEST(LoginRateLimit, BurstThenSustainedLimitsPerIpAndAccount) {
     session->ipAddress = "198.51.100.9";
     const json alice{{"command", "auth.login"}, {"payload", {{"name", "alice"}, {"password", "x"}}}};
     const json bob{{"command", "auth.login"}, {"payload", {{"name", "bob"}, {"password", "x"}}}};
-
     const auto t0 = protocols::ws::ShareRateLimit::Clock::now();
-    for (int i = 0; i < 10; ++i) EXPECT_TRUE(limiter.check("auth.login", alice, *session, t0).allowed) << i;
+
+    // Successful logins never count: a script or several tabs logging in repeatedly is not guessing.
+    for (int i = 0; i < 50; ++i) EXPECT_TRUE(limiter.check("auth.login", alice, *session, t0).allowed) << i;
+
+    // Failed attempts do: 10 failures within a minute close the gate.
+    for (int i = 0; i < 10; ++i) {
+        EXPECT_TRUE(limiter.check("auth.login", alice, *session, t0).allowed) << i;
+        limiter.recordLoginFailure("alice", *session, t0);
+    }
     const auto denied = limiter.check("auth.login", alice, *session, t0);
     EXPECT_FALSE(denied.allowed);
     EXPECT_GT(denied.retry_after.count(), 0);
     // A shared proxy IP must not lock other accounts out.
     EXPECT_TRUE(limiter.check("auth.login", bob, *session, t0).allowed);
 
-    // Keep guessing at the per-minute cap: the 15-minute tier shuts the account/IP out for longer.
-    int allowedLater = 0;
+    // Keep failing at the per-minute cap: the 15-minute tier shuts the account/IP out for longer.
     for (int minute = 1; minute <= 3; ++minute)
         for (int i = 0; i < 10; ++i)
-            allowedLater += limiter.check("auth.login", alice, *session, t0 + std::chrono::minutes(minute)).allowed ? 1 : 0;
-    EXPECT_LT(allowedLater, 30);
+            if (limiter.check("auth.login", alice, *session, t0 + std::chrono::minutes(minute)).allowed)
+                limiter.recordLoginFailure("alice", *session, t0 + std::chrono::minutes(minute));
     EXPECT_FALSE(limiter.check("auth.login", alice, *session, t0 + std::chrono::minutes(5)).allowed);
     EXPECT_TRUE(limiter.check("auth.login", alice, *session, t0 + std::chrono::minutes(20)).allowed);
 }

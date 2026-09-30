@@ -6,6 +6,7 @@
 #include "identities/User.hpp"
 #include "db/query/identities/User.hpp"
 #include "protocols/ws/Session.hpp"
+#include "protocols/ws/ShareRateLimit.hpp"
 #include "rbac/role/Admin.hpp"
 #include "rbac/resolver/admin/all.hpp"
 #include "auth/registration/Validator.hpp"
@@ -32,7 +33,13 @@ json Auth::login(const json &payload, const std::shared_ptr<Session> &session) {
     const auto username = payload.at("name").get<std::string>();
     const auto password = payload.at("password").get<std::string>();
 
-    runtime::Deps::get().authManager->loginUser(username, password, session);
+    try {
+        runtime::Deps::get().authManager->loginUser(username, password, session);
+    } catch (...) {
+        // Only failed attempts count toward the auth.login rate limit (#103).
+        if (session) vh::protocols::ws::ShareRateLimit::instance().recordLoginFailure(username, *session);
+        throw;
+    }
     if (!session::Validator::softValidateActiveSession(session)) throw std::runtime_error(
         "Failed to validate session after login");
 

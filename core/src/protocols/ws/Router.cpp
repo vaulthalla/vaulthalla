@@ -26,8 +26,7 @@ bool isAuthCommand(const std::string_view command) {
 }
 
 vh::protocols::ws::ShareRateLimit& shareRateLimit() {
-    static vh::protocols::ws::ShareRateLimit limiter;
-    return limiter;
+    return vh::protocols::ws::ShareRateLimit::instance();
 }
 }
 
