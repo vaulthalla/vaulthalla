@@ -19,6 +19,9 @@ cloudflare.ini
 /deploy/vaulthalla.env
 /deploy/hash_password
 /deploy/bashrc
+# TEST-ONLY provider credentials (only the .example is tracked)
+providers.env
+/tools/lab/*.env
 /.bashrc
 
 # Core build (also cover root-level build artifacts)
