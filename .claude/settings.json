@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(meson compile:*)",
+      "Bash(meson test:*)",
+      "Bash(meson introspect:*)",
+      "Bash(ninja -C build:*)",
+      "Bash(pnpm --dir web typecheck)",
+      "Bash(pnpm --dir web lint)",
+      "Bash(python3 -m tools.release check)",
+      "Bash(python3 -m tools.release sync --dry-run)",
+      "Bash(python3 -m tools.release build-deb --dry-run)",
+      "Bash(python3 -m tools.release changelog draft:*)",
+      "Bash(python3 -m unittest:*)",
+      "Bash(bash tools/dev/verify.sh:*)",
+      "Bash(bash .claude/skills/lab/scripts/inspect.sh:*)",
+      "Bash(pmdocs validate:*)"
+    ],
+    "deny": [
+      "Bash(pkill -f:*)",
+      "Bash(pkill -9 -f:*)",
+      "Bash(pgrep -f vaulthalla:*)",
+      "Bash(killall:*)",
+      "Bash(fuser -k:*)",
+      "Bash(fuser -km:*)",
+      "Read(./deploy/vaulthalla.env)",
+      "Read(./deploy/bashrc)",
+      "Read(./.bashrc)",
+      "Read(./cloudflare.ini)"
+    ]
+  }
+}
