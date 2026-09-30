@@ -45,6 +45,10 @@ vaulthalla (1.6.6-1) unstable; urgency=high
       regenerated; session close no longer races the read loop (#127, #129).
     - Web login works on plain-HTTP installs: the session cookie is Secure
       only when the browser-facing request was HTTPS (#128).
+    - auth.login rate limiting counts failed attempts only; duplicate vault
+      names per owner are rejected on every surface (#103, #114).
+    - A malformed or missing config.yaml is reported instead of aborting the
+      daemon with a core dump (#130).
     - Fix daemon crash on unknown group, RBAC on interactive vault create,
       api-key list --json filtering, success reported without state change,
       settings.update, ws contract drift, and secret redaction (#112-#115).
