@@ -15,14 +15,17 @@ else
     echo "✅ Vaulthalla repository already exists."
 fi
 
-sudo apt update
+# Wait for other apt/dpkg users (e.g. unattended-upgrades after a reboot) instead of failing after 120s.
+APT_LOCK_OPTS=(-o DPkg::Lock::Timeout=900)
+
+sudo apt-get "${APT_LOCK_OPTS[@]}" update
 
 check_pkg() {
     local pkg="$1"
     local desc="$2"
     if ! dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "ok installed"; then
         echo "🔌 Installing $desc..."
-        sudo apt install -y "$pkg"
+        sudo apt-get "${APT_LOCK_OPTS[@]}" install -y "$pkg"
     else
         echo "✅ $desc already installed."
     fi
@@ -31,7 +34,7 @@ check_pkg() {
 # -- Build tools --
 if ! command -v meson &>/dev/null || ! command -v ninja &>/dev/null; then
     echo "🛠️ Installing Meson and Ninja build system..."
-    sudo apt install -y meson ninja-build
+    sudo apt-get "${APT_LOCK_OPTS[@]}" install -y meson ninja-build
 else
     echo "✅ Meson and Ninja already installed."
 fi

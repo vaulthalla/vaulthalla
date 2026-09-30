@@ -66,7 +66,7 @@ jobs:
         run: |
           set -euo pipefail
           if ! command -v shellcheck >/dev/null 2>&1; then
-            sudo apt-get install -y shellcheck || { sudo apt-get update && sudo apt-get install -y shellcheck; }
+            sudo apt-get -o DPkg::Lock::Timeout=900 install -y shellcheck || { sudo apt-get -o DPkg::Lock::Timeout=900 update && sudo apt-get -o DPkg::Lock::Timeout=900 install -y shellcheck; }
           fi
 
       - name: shellcheck (maintainer scripts blocking, bin/ advisory)
