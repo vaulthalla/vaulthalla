@@ -49,6 +49,14 @@ class MaintainerScriptSafetyTests(unittest.TestCase):
             self.assertTrue(text.startswith("#!/bin/sh\nset -e\n"), name)
             self.assertIn("#DEBHELPER#", text, name)
 
+    def test_debhelper_token_only_appears_as_a_standalone_line(self) -> None:
+        # dh_installdeb substitutes the token anywhere, including inside comments,
+        # which would splice generated code into a comment line.
+        for name in SCRIPTS:
+            for number, raw in enumerate(self._script(name).splitlines(), start=1):
+                if "#DEBHELPER#" in raw:
+                    self.assertEqual(raw.strip(), "#DEBHELPER#", f"{name}:{number}")
+
     def test_no_fuse_touching_mount_probes(self) -> None:
         # Any syscall on a live FUSE mount blocks forever if the daemon is wedged.
         forbidden = re.compile(r"\b(mountpoint|stat|ls|du|df|findmnt|find|test)\b[^|;&]*(/mnt/vaulthalla|MOUNT_ROOT)")

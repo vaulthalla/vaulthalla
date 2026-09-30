@@ -1387,7 +1387,7 @@ configure_nginx_if_safe() {
 }
 
 reconcile_swtpm_unit_enablement() {
-    # Runs after #DEBHELPER#: deb-systemd-helper enables every shipped unit on first
+    # Runs after the debhelper snippets: deb-systemd-helper enables every shipped unit on first
     # install, including vaulthalla-swtpm on hosts that use a hardware TPM.
     if has_hardware_tpm; then
         safe_systemctl_unit_files disable "$SWTPM_SYSTEMD_UNIT"
