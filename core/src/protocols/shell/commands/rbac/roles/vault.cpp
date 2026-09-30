@@ -14,6 +14,7 @@
 #include "usages.hpp"
 #include "protocols/shell/commands/helpers.hpp"
 #include "protocols/shell/util/argsHelpers.hpp"
+#include "protocols/RoleGuards.hpp"
 #include "rbac/resolver/Admin.hpp"
 
 #include <algorithm>
@@ -77,8 +78,12 @@ namespace vh::protocols::shell::commands::rbac::roles::vault {
             return invalid(oss.str());
         }
 
-        db::query::rbac::role::Vault::upsert(staged);
-        const auto newRole = db::query::rbac::role::Vault::get(staged->name);
+        std::shared_ptr<vh::rbac::role::Vault> newRole;
+        try {
+            newRole = ::vh::protocols::roles::createVaultRole(staged);
+        } catch (const ::vh::protocols::roles::RoleAlreadyExists& e) {
+            return invalid(e.what());
+        }
         return ok("Role '" + newRole->name + "' created successfully\n" + newRole->toString());
     }
 
@@ -148,8 +153,7 @@ namespace vh::protocols::shell::commands::rbac::roles::vault {
         const auto roleLkp = resolveVaultRole(call.positionals[0], "role vault delete");
         if (!roleLkp.ptr) return invalid(roleLkp.error);
 
-        if (db::query::rbac::role::vault::Assignments::countAssignmentsForRole(roleLkp.ptr->id) > 0)
-            return invalid("Cannot delete role '" + roleLkp.ptr->name + "' because it has active assignments. Remove those assignments before deleting the role.");
+        if (const auto denied = ::vh::protocols::roles::vaultRoleDeleteError(*roleLkp.ptr)) return invalid(*denied);
 
         db::query::rbac::role::Vault::remove(roleLkp.ptr->id);
 

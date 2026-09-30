@@ -28,7 +28,14 @@ public:
 
     void interruptTask(unsigned int vaultId);
 
-    void runNow(unsigned int vaultId, uint8_t trigger = 3); // Event::Trigger::WEBHOOK
+    // What an early-sync request actually did, so callers can report it truthfully.
+    enum class RunNowResult {
+        Started,      // a fresh sync task was scheduled to run immediately
+        Rerun,        // a sync was already running; an immediate rerun was queued behind it
+        NoTask        // no sync task exists for the vault (unknown vault, or its engine isn't loaded)
+    };
+
+    RunNowResult runNow(unsigned int vaultId, uint8_t trigger = 3); // Event::Trigger::WEBHOOK
 
     void refreshEngines();
 

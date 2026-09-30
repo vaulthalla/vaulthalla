@@ -1,6 +1,7 @@
 #pragma once
 
 #include <nlohmann/json_fwd.hpp>
+#include <cstdint>
 #include <string>
 #include <string_view>
 
@@ -17,6 +18,8 @@ struct IO {
 
 class SocketIO final : public IO {
 public:
+    static constexpr uint32_t kMaxFrameBytes = 1u << 20; // 1 MiB
+
     explicit SocketIO(int fd);
     void print(std::string_view msg) override;
     bool confirm(std::string_view promptIn, bool def_no) override;
@@ -25,8 +28,10 @@ public:
     std::string prompt(std::string_view promptIn);
     std::string promptSecret(std::string_view promptIn) override;
 
-    static nlohmann::json recv_json(int fd);
-    static void send_json(int fd, const nlohmann::json& j);
+    // Throws on EOF, on a frame larger than maxBytes, and when the socket's receive timeout expires.
+    static nlohmann::json recv_json(int fd, uint32_t maxBytes = kMaxFrameBytes);
+    // Never raises SIGPIPE; returns false if the peer is gone.
+    static bool send_json(int fd, const nlohmann::json& j);
 
 private:
     int fd_, id_counter_ = 0;

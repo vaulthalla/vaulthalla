@@ -316,6 +316,12 @@ json Vaults::sync(const json &payload, const std::shared_ptr<Session> &session) 
         .vault_id = vaultId
     })) throw std::runtime_error("User does not have permission to trigger vault.");
 
-    runtime::Deps::get().syncController->runNow(vaultId);
-    return {};
+    using RunNowResult = ::vh::sync::Controller::RunNowResult;
+    switch (runtime::Deps::get().syncController->runNow(vaultId)) {
+        case RunNowResult::Started: return {{"status", "started"}};
+        case RunNowResult::Rerun: return {{"status", "rerun_queued"}};
+        case RunNowResult::NoTask:
+        default:
+            throw std::runtime_error("No sync task is loaded for vault " + std::to_string(vaultId) + "; nothing was started");
+    }
 }
