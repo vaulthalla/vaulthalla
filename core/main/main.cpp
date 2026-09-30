@@ -17,6 +17,7 @@
 
 // Misc
 #include "config/Registry.hpp"
+#include <cstdio>
 #include "concurrency/ThreadPoolManager.hpp"
 #include "log/Registry.hpp"
 
@@ -153,9 +154,13 @@ int main() {
         return EXIT_SUCCESS;
 
     } catch (const std::exception& e) {
-        vh::log::Registry::vaulthalla()->error(
-            "[-] Failed to initialize Vaulthalla: {}", e.what()
-        );
+        // Config is loaded before logging, so a malformed or missing config.yaml lands here with no logger;
+        // calling it would throw again and abort with a core dump instead of this message (vh-storage).
+        try {
+            vh::log::Registry::vaulthalla()->error("[-] Failed to initialize Vaulthalla: {}", e.what());
+        } catch (...) {
+            std::fprintf(stderr, "[-] Failed to initialize Vaulthalla: %s\n", e.what());
+        }
         return EXIT_FAILURE;
     }
 }
