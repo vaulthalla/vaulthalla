@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# =========================[ CONFIG ]=========================
-: "${NEXUS_VAULTHALLA_REPO:=https://apt.vaulthalla.sh}"
-: "${NEXUS_VALKYRIAN_REPO:=https://apt.valkyrianlabs.com}"
-: "${UPLOAD_USER:=cooper}"
-: "${UPLOAD_PASS:=${NEXUS_COOPER_PASSWORD:-}}"
-: "${ARTIFACT_ROOT:="$(pwd)/dist"}"
+# Local Debian build helper (dev only). Publishing from here is retired: the only publication
+# path is the tag-triggered release workflow, which publishes idempotently (never overwrites a
+# published version), verifies sha256 in the APT index, and records the release.
+#   Cut a release:    python3 -m tools.release cut-release patch --push
+#   Emergency manual: python3 -m tools.release publish-deb --output-dir <dir> --require-enabled
+#                     (same idempotency/sha256 checks; needs RELEASE_PUBLISH_MODE=nexus + Nexus creds)
 
-# Toggle: push artifacts when --push is used
-PUSH=0
+# =========================[ CONFIG ]=========================
+: "${ARTIFACT_ROOT:="$(pwd)/dist"}"
 
 
 # ======================[ UTIL / PATHS ]======================
@@ -24,23 +24,25 @@ cd "$REPO_ROOT"
 # =======================[ ARG PARSE ]========================
 usage() {
   cat <<'EOF'
-Usage: bin/release-deb.sh [--push] [--sign]
+Usage: bin/install_deb.sh [--sign]
 
-  --push     Upload resulting .deb/.dsc/.changes to Nexus APT repos
   --sign     Build signed source/changes (omit -us -uc)
+  --push     RETIRED. Publishing happens only through the release workflow:
+             python3 -m tools.release cut-release {patch|minor|major} --push
 
 Environment:
-  NEXUS_VAULTHALLA_HOST, NEXUS_VALKYRIAN_HOST
-  NEXUS_VAULTHALLA_REPO, NEXUS_VALKYRIAN_REPO
-  UPLOAD_USER, UPLOAD_PASS (or NEXUS_COOPER_PASSWORD)
-  DEBIAN_BRANCH (default: debian)
+  ARTIFACT_ROOT (default: ./dist)
 EOF
 }
 
 SIGN=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --push) PUSH=1; shift ;;
+    --push)
+      die "--push is retired: this script no longer uploads to Nexus. Publish through the release workflow:
+  python3 -m tools.release cut-release {patch|minor|major} --push
+or, for an emergency manual publish with the same overwrite protection:
+  python3 -m tools.release publish-deb --output-dir <dir> --require-enabled" ;;
     --sign) SIGN=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "Unknown arg: $1" ;;
@@ -55,7 +57,6 @@ require dpkg-parsechangelog
 require sed
 require awk
 require pandoc
-[[ $PUSH -eq 1 ]] && require curl
 
 # cleanup old build dir if it exists
 rm -rf "$ARTIFACT_ROOT"
@@ -119,25 +120,6 @@ for f in *.deb *.dsc *.changes *.buildinfo *.orig.tar.* *.debian.tar.*; do
 done
 shopt -u nullglob
 
-# ======================[ OPTIONAL PUSH ]=====================
-if [[ $PUSH -eq 1 ]]; then
-  [[ -n "$UPLOAD_PASS" ]] || die "UPLOAD_PASS is empty (set UPLOAD_PASS or NEXUS_COOPER_PASSWORD)"
-
-  # Compute pool path: pool/main/<first>/<pkg>/
-  first="$(printf "%s" "$PKG_NAME" | cut -c1)"
-
-  log "Uploading to Nexus APT (Vaulthalla): $NEXUS_VAULTHALLA_REPO"
-  for f in "$ARTIFACT_ROOT"/*.deb; do
-    fname="$(basename "$f")"
-    log "  → $fname"
-    curl -sSf -u "$UPLOAD_USER:$UPLOAD_PASS" -H "Content-Type: multipart/form-data" \
-                                                 --data-binary "@$f" \
-                                                 "$NEXUS_VAULTHALLA_REPO"
-  done
-
-  log "Uploads complete. Nexus APT will handle indexing/signing per repo config."
-else
-  log "Skipping upload (no --push). Artifacts are in: $ARTIFACT_ROOT"
-fi
+log "Artifacts are in: $ARTIFACT_ROOT (local build only; publishing goes through the release workflow)"
 
 log "✅ Done: $MESON_VERSION"

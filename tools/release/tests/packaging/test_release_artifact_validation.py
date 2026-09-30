@@ -20,8 +20,8 @@ class ReleaseArtifactValidationTests(unittest.TestCase):
             "usr/bin/vaulthalla-cli",
             "usr/bin/vaulthalla",
             "usr/bin/vh",
-            "etc/vaulthalla/config.yaml",
-            "etc/vaulthalla/config_template.yaml.in",
+            "usr/share/vaulthalla/config/config.yaml",
+            "usr/share/vaulthalla/config/config_template.yaml.in",
             "lib/systemd/system/vaulthalla.service",
             "lib/systemd/system/vaulthalla-cli.service",
             "lib/systemd/system/vaulthalla-cli.socket",
@@ -34,8 +34,6 @@ class ReleaseArtifactValidationTests(unittest.TestCase):
             "usr/share/vaulthalla-web/server.js",
             "usr/share/vaulthalla-web/.next/static/chunks/main.js",
             "usr/share/man/man1/vh.1.gz",
-            "usr/lib/x86_64-linux-gnu/libvaulthalla.a",
-            "usr/lib/x86_64-linux-gnu/libvhusage.a",
             "usr/lib/x86_64-linux-gnu/udev/rules.d/60-vaulthalla-tpm.rules",
             "usr/lib/x86_64-linux-gnu/tmpfiles.d/vaulthalla.conf",
         }
@@ -182,6 +180,113 @@ class ReleaseArtifactValidationTests(unittest.TestCase):
                 result = validate_release_artifacts(output_dir=output_dir, require_changelog=True)
 
             self.assertEqual(len(result.debian_artifacts), 1)
+
+    def _stage_valid_release(self, output_dir: Path) -> None:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        _write(output_dir / "vaulthalla_1.2.3-1_amd64.deb", "deb")
+        self._write_valid_web_archive(output_dir / "vaulthalla-web_1.2.3-1_next-standalone.tar.gz")
+
+    def test_validation_does_not_require_static_libraries(self) -> None:
+        members = self._valid_debian_members()
+        self.assertFalse(any(member.endswith(".a") for member in members))
+        with TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir) / "release"
+            self._stage_valid_release(output_dir)
+            with patch("tools.release.packaging.debian._read_debian_package_members", return_value=members):
+                result = validate_release_artifacts(output_dir=output_dir, require_changelog=False)
+            self.assertEqual(len(result.debian_artifacts), 1)
+
+    def test_validation_requires_default_config_under_usr_share(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir) / "release"
+            self._stage_valid_release(output_dir)
+            members = self._valid_debian_members()
+            members.remove("usr/share/vaulthalla/config/config.yaml")
+            members.add("etc/vaulthalla/config.yaml")
+            with (
+                patch("tools.release.packaging.debian._read_debian_package_members", return_value=members),
+                self.assertRaisesRegex(ValueError, r"usr/share/vaulthalla/config/config\.yaml"),
+            ):
+                _ = validate_release_artifacts(output_dir=output_dir, require_changelog=False)
+
+    def test_validation_accepts_shipped_config_identical_to_reference(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir) / "release"
+            self._stage_valid_release(output_dir)
+            reference = Path(temp_dir) / "deploy" / "config" / "config.yaml"
+            _write(reference, "server:\n  port: 36969\n")
+            with (
+                patch(
+                    "tools.release.packaging.debian._read_debian_package_members",
+                    return_value=self._valid_debian_members(),
+                ),
+                patch(
+                    "tools.release.packaging.debian._read_debian_package_file",
+                    return_value=b"server:\n  port: 36969\n",
+                ) as read_file,
+            ):
+                result = validate_release_artifacts(
+                    output_dir=output_dir, require_changelog=False, reference_config=reference
+                )
+            self.assertEqual(len(result.debian_artifacts), 1)
+            self.assertEqual(read_file.call_args.args[1], "usr/share/vaulthalla/config/config.yaml")
+
+    def test_validation_rejects_shipped_config_that_differs_from_reference(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir) / "release"
+            self._stage_valid_release(output_dir)
+            reference = Path(temp_dir) / "deploy" / "config" / "config.yaml"
+            _write(reference, "server:\n  port: 36969\n")
+            with (
+                patch(
+                    "tools.release.packaging.debian._read_debian_package_members",
+                    return_value=self._valid_debian_members(),
+                ),
+                patch(
+                    "tools.release.packaging.debian._read_debian_package_file",
+                    return_value=b"server:\n  port: 36969\nprivate_override: true\n",
+                ),
+                self.assertRaisesRegex(ValueError, "not byte-identical"),
+            ):
+                _ = validate_release_artifacts(
+                    output_dir=output_dir, require_changelog=False, reference_config=reference
+                )
+
+    def test_validation_emits_sha256sums_when_missing(self) -> None:
+        from tools.release.packaging.checksums import read_sha256sums, sha256_file
+
+        with TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir) / "release"
+            self._stage_valid_release(output_dir)
+            with patch(
+                "tools.release.packaging.debian._read_debian_package_members",
+                return_value=self._valid_debian_members(),
+            ):
+                result = validate_release_artifacts(output_dir=output_dir, require_changelog=False)
+            self.assertTrue(result.checksums_generated)
+            entries = read_sha256sums(output_dir / "SHA256SUMS")
+            self.assertEqual(
+                entries["vaulthalla_1.2.3-1_amd64.deb"],
+                sha256_file(output_dir / "vaulthalla_1.2.3-1_amd64.deb"),
+            )
+            self.assertIn("vaulthalla-web_1.2.3-1_next-standalone.tar.gz", entries)
+
+    def test_validation_fails_when_artifact_changed_after_checksums(self) -> None:
+        from tools.release.packaging.checksums import write_sha256sums
+
+        with TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir) / "release"
+            self._stage_valid_release(output_dir)
+            write_sha256sums(output_dir)
+            _write(output_dir / "vaulthalla_1.2.3-1_amd64.deb", "tampered")
+            with (
+                patch(
+                    "tools.release.packaging.debian._read_debian_package_members",
+                    return_value=self._valid_debian_members(),
+                ),
+                self.assertRaisesRegex(ValueError, "SHA256SUMS does not match"),
+            ):
+                _ = validate_release_artifacts(output_dir=output_dir, require_changelog=False)
 
 
 if __name__ == "__main__":

@@ -4,7 +4,8 @@ import json
 import os
 import re
 from datetime import datetime, timezone
-from email.utils import format_datetime
+from email.utils import format_datetime, parsedate_to_datetime
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Literal, Mapping
@@ -351,6 +352,7 @@ def resolve_release_changelog(
         validation = validate_manual_changelog_current(
             repo_root=repo_root,
             changelog_path=manual_changelog_path,
+            baseline_tag=_manual_changelog_baseline_tag(context),
         )
         emit("Selected changelog path: manual/no-AI fallback (existing debian/changelog)")
         emit(
@@ -392,7 +394,15 @@ def validate_manual_changelog_current(
     *,
     repo_root: Path,
     changelog_path: Path | str,
+    baseline_tag: str | None = None,
 ) -> ManualChangelogValidation:
+    """Guard the manual fallback against shipping a previous release's notes.
+
+    `set-version`/`bump` only rewrite the top-entry header, so a matching version proves nothing
+    about the body. When `baseline_tag` (the last shipped release) is known, the top entry's trailer
+    date must not predate that tag's commit: an entry written before the previous release shipped is
+    by construction the previous release's notes.
+    """
     version_path = repo_root / "VERSION"
     version = read_version_file(version_path)
     target_path = Path(changelog_path)
@@ -422,6 +432,12 @@ def validate_manual_changelog_current(
                 "Manual changelog validation failed: stale changelog. "
                 f"{target_path} targets {detected} but VERSION is {version}."
             )
+        _require_entry_newer_than_baseline(
+            repo_root=repo_root,
+            content=content,
+            target_path=target_path,
+            baseline_tag=baseline_tag,
+        )
         return ManualChangelogValidation(
             path=target_path,
             version=str(version),
@@ -441,6 +457,72 @@ def validate_manual_changelog_current(
         detected_target=str(version),
         content=content,
     )
+
+
+_CHANGELOG_TRAILER_PATTERN = re.compile(r"^ -- .+?>\s{1,2}(?P<date>\S.*)$")
+
+
+def _manual_changelog_baseline_tag(context: ReleaseContext | None) -> str | None:
+    if context is None:
+        return None
+    return context.last_successful_release_tag or context.previous_tag
+
+
+def _top_entry_trailer_datetime(content: str) -> datetime | None:
+    for line in content.splitlines():
+        match = _CHANGELOG_TRAILER_PATTERN.match(line)
+        if match:
+            try:
+                return parsedate_to_datetime(match.group("date").strip())
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def _git_tag_commit_datetime(repo_root: Path, tag: str) -> datetime | None:
+    try:
+        completed = subprocess.run(
+            ["git", "log", "-1", "--format=%ct", f"{tag}^{{commit}}"],
+            cwd=repo_root,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=30,
+        )
+    except Exception:
+        return None
+    raw = completed.stdout.strip()
+    if completed.returncode != 0 or not raw.isdigit():
+        return None
+    return datetime.fromtimestamp(int(raw), tz=timezone.utc)
+
+
+def _require_entry_newer_than_baseline(
+    *,
+    repo_root: Path,
+    content: str,
+    target_path: Path,
+    baseline_tag: str | None,
+) -> None:
+    if not baseline_tag:
+        return
+    baseline_at = _git_tag_commit_datetime(repo_root, baseline_tag)
+    if baseline_at is None:
+        return
+    entry_at = _top_entry_trailer_datetime(content)
+    if entry_at is None:
+        raise ValueError(
+            "Manual changelog validation failed: stale changelog. "
+            f"Cannot read the top entry trailer date in {target_path} to prove it postdates {baseline_tag}."
+        )
+    if entry_at < baseline_at:
+        raise ValueError(
+            "Manual changelog validation failed: stale changelog body. "
+            f"The top entry in {target_path} is dated {entry_at.isoformat()}, before the previous release "
+            f"{baseline_tag} ({baseline_at.isoformat()}); only its version header was bumped. Either make the "
+            "AI changelog path available to the release-artifacts job (OPENAI_API_KEY) or write a real "
+            "top entry for this release (e.g. `dch`) before tagging."
+        )
 
 
 def validate_cached_draft_current(
@@ -979,19 +1061,29 @@ def _capture_release_stage_failure_artifact(
         return
 
 
+DEFAULT_AI_PROVIDER_TIMEOUT_SECONDS = 180.0
+DEFAULT_AI_EMERGENCY_TRIAGE_TIMEOUT_SECONDS = 45.0
+
+
 def _resolve_stage_provider_timeout_seconds(stage: AIStageName) -> float | None:
-    if stage != "emergency_triage":
-        return None
-    raw = os.getenv("RELEASE_AI_EMERGENCY_TRIAGE_PROVIDER_TIMEOUT_SECONDS", "45").strip()
+    # Every stage gets a bounded per-request timeout so a provider outage falls back to the
+    # cached/manual path instead of hanging the release job (the SDK default is 600s x retries).
+    if stage == "emergency_triage":
+        return _positive_float_env(
+            "RELEASE_AI_EMERGENCY_TRIAGE_PROVIDER_TIMEOUT_SECONDS", DEFAULT_AI_EMERGENCY_TRIAGE_TIMEOUT_SECONDS
+        )
+    return _positive_float_env("RELEASE_AI_PROVIDER_TIMEOUT_SECONDS", DEFAULT_AI_PROVIDER_TIMEOUT_SECONDS)
+
+
+def _positive_float_env(name: str, default: float) -> float:
+    raw = (os.getenv(name) or "").strip()
     if not raw:
-        return 45.0
+        return default
     try:
         value = float(raw)
     except ValueError:
-        return 45.0
-    if value <= 0:
-        return 45.0
-    return value
+        return default
+    return value if value > 0 else default
 
 
 def _validate_cached_context_matches(
