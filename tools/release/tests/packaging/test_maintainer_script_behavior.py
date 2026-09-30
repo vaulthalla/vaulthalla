@@ -292,6 +292,36 @@ class PostrmPurgeTreeBehaviorTests(unittest.TestCase):
         self.assertEqual(list(self.target.iterdir()), [])
 
 
+class PostrmConfigPurgeBehaviorTests(unittest.TestCase):
+    def test_purge_removes_package_config_but_keeps_operator_files(self) -> None:
+        h = _Harness("postrm")
+        self.addCleanup(h.cleanup)
+        etc = h.tmp / "etc-vaulthalla"
+        (etc / "testing").mkdir(parents=True)
+        (etc / "certbot").mkdir()
+        (etc / "testing" / "providers.env").write_text("AWS_ACCESS_KEY_ID=placeholder\n", encoding="utf-8")
+        (etc / "certbot" / "cloudflare.ini").write_text("dns_cloudflare_api_token=placeholder\n", encoding="utf-8")
+        for name in ("config.yaml", "config_template.yaml.in", "config.yaml.dpkg-old"):
+            (etc / name).write_text("x\n", encoding="utf-8")
+        result = h.run(f'CONFIG_DIR="{etc}"\nCERTBOT_CREDENTIALS_DIR="{etc}/certbot"\npurge_config_dir\necho rc=$?\n')
+        self.assertIn("rc=0", result.stdout)
+        self.assertFalse((etc / "config.yaml").exists())
+        self.assertFalse((etc / "config_template.yaml.in").exists())
+        self.assertFalse((etc / "config.yaml.dpkg-old").exists())
+        self.assertTrue((etc / "testing" / "providers.env").is_file())
+        self.assertTrue((etc / "certbot" / "cloudflare.ini").is_file())
+        self.assertIn("Preserved operator-managed", result.stdout)
+
+    def test_purge_removes_empty_config_dir(self) -> None:
+        h = _Harness("postrm")
+        self.addCleanup(h.cleanup)
+        etc = h.tmp / "etc-vaulthalla"
+        etc.mkdir()
+        (etc / "config.yaml").write_text("x\n", encoding="utf-8")
+        h.run(f'CONFIG_DIR="{etc}"\nCERTBOT_CREDENTIALS_DIR="{etc}/certbot"\npurge_config_dir\n')
+        self.assertFalse(etc.exists())
+
+
 class PrermStopBehaviorTests(unittest.TestCase):
     def setUp(self) -> None:
         self.h = _Harness("prerm")

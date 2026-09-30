@@ -155,6 +155,20 @@ class MaintainerScriptSafetyTests(unittest.TestCase):
         ):
             self.assertIn(fragment, postrm)
 
+    def test_etc_vaulthalla_is_never_removed_recursively(self) -> None:
+        # /etc/vaulthalla/testing/providers.env (operator-managed test credentials) and
+        # /etc/vaulthalla/certbot/ must survive upgrades and purge.
+        recursive = re.compile(r"\brm\s+-[a-zA-Z]*[rR]|-delete\b|\bpurge_tree\b")
+        etc_target = re.compile(r"/etc/vaulthalla|\$\{?CONFIG_DIR\}?|CERTBOT_CREDENTIALS_DIR")
+        for name in SCRIPTS:
+            for number, line in self._code_lines(name):
+                if recursive.search(line):
+                    self.assertIsNone(etc_target.search(line), f"{name}:{number} recursively removes under /etc/vaulthalla")
+            self.assertNotIn("/etc/vaulthalla/testing", self._script(name).replace("${CONFIG_DIR}/testing", ""), name)
+        purge = self._function_body(self._script("postrm"), "purge_config_dir")
+        self.assertIn('rmdir "$CONFIG_DIR"', purge)
+        self.assertIn('"${CONFIG_DIR}/testing"', purge)
+
     def test_purge_message_works_without_vh_installed(self) -> None:
         postrm = self._script("postrm")
         self.assertNotIn("sudo vh teardown db", postrm)
