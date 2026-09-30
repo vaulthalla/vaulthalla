@@ -98,16 +98,16 @@ jobs:
           if command -v sudo >/dev/null 2>&1; then
             APT_PREFIX="sudo"
           fi
-          ${APT_PREFIX} apt-get update
-          ${APT_PREFIX} apt-get install -y ca-certificates curl
+          ${APT_PREFIX} apt-get -o DPkg::Lock::Timeout=900 update
+          ${APT_PREFIX} apt-get -o DPkg::Lock::Timeout=900 install -y ca-certificates curl
           ${APT_PREFIX} install -d -m 0755 /etc/apt/keyrings
           ${APT_PREFIX} curl -fsSL https://apt.valkyrianlabs.com/pubkey.gpg \
             -o /etc/apt/keyrings/valkyrianlabs.gpg
           ${APT_PREFIX} chmod 0644 /etc/apt/keyrings/valkyrianlabs.gpg
           echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/valkyrianlabs.gpg] https://apt.valkyrianlabs.com stable main" \
             | ${APT_PREFIX} tee /etc/apt/sources.list.d/valkyrianlabs.list > /dev/null
-          ${APT_PREFIX} apt-get update
-          ${APT_PREFIX} apt-get install -y pmdocs
+          ${APT_PREFIX} apt-get -o DPkg::Lock::Timeout=900 update
+          ${APT_PREFIX} apt-get -o DPkg::Lock::Timeout=900 install -y pmdocs
           pmdocs --version
 
       - name: Validate versions and publication policy
@@ -273,7 +273,7 @@ jobs:
         run: |
           set -euo pipefail
           if ! command -v shellcheck >/dev/null 2>&1; then
-            sudo apt-get install -y shellcheck || { sudo apt-get update && sudo apt-get install -y shellcheck; }
+            sudo apt-get -o DPkg::Lock::Timeout=900 install -y shellcheck || { sudo apt-get -o DPkg::Lock::Timeout=900 update && sudo apt-get -o DPkg::Lock::Timeout=900 install -y shellcheck; }
           fi
 
       - name: shellcheck (maintainer scripts blocking, bin/ advisory)
@@ -330,16 +330,16 @@ jobs:
           if command -v sudo >/dev/null 2>&1; then
             APT_PREFIX="sudo"
           fi
-          ${APT_PREFIX} apt-get update
-          ${APT_PREFIX} apt-get install -y ca-certificates curl
+          ${APT_PREFIX} apt-get -o DPkg::Lock::Timeout=900 update
+          ${APT_PREFIX} apt-get -o DPkg::Lock::Timeout=900 install -y ca-certificates curl
           ${APT_PREFIX} install -d -m 0755 /etc/apt/keyrings
           ${APT_PREFIX} curl -fsSL https://apt.valkyrianlabs.com/pubkey.gpg \
             -o /etc/apt/keyrings/valkyrianlabs.gpg
           ${APT_PREFIX} chmod 0644 /etc/apt/keyrings/valkyrianlabs.gpg
           echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/valkyrianlabs.gpg] https://apt.valkyrianlabs.com stable main" \
             | ${APT_PREFIX} tee /etc/apt/sources.list.d/valkyrianlabs.list > /dev/null
-          ${APT_PREFIX} apt-get update
-          ${APT_PREFIX} apt-get install -y pmdocs
+          ${APT_PREFIX} apt-get -o DPkg::Lock::Timeout=900 update
+          ${APT_PREFIX} apt-get -o DPkg::Lock::Timeout=900 install -y pmdocs
           pmdocs --version
 
       - name: Validate documentation package
