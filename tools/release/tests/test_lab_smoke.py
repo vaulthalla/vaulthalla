@@ -29,7 +29,6 @@ class FakeLab:
         self.status, self.version = "ii ", "1.6.5-1"
         self.units = {
             "vaulthalla.service": {"LoadState": "loaded", "ActiveState": "active", "SubState": "running", "NRestarts": 0},
-            "vaulthalla-cli.socket": {"LoadState": "loaded", "ActiveState": "active", "SubState": "listening", "NRestarts": 0},
             "vaulthalla-web.service": {"LoadState": "loaded", "ActiveState": "active", "SubState": "running", "NRestarts": 0},
         }
         self.mounted = True
@@ -38,6 +37,7 @@ class FakeLab:
         self.audit = ""
         self.lock_held = False
         self.vh_rc = 0
+        self.cli_sock = True
         self.flapping_unit: str | None = None
         self.install_rewrites: str | None = None
         self.install_times_out = False
@@ -83,6 +83,8 @@ class FakeLab:
             return RemoteResult(0, f"{self.waiting}\n")
         if command.startswith("timeout 10 stat"):
             return RemoteResult(0 if self.waiting == 0 else 124, "directory\n")
+        if command.startswith("sudo -n test -S /run/vaulthalla/cli.sock"):
+            return RemoteResult(0 if self.cli_sock else 1)
         if "vh status" in command:
             return RemoteResult(self.vh_rc)
         if "apt-get update" in command:
@@ -161,7 +163,9 @@ class LabSmokeTests(unittest.TestCase):
         self.assertEqual([p["name"] for p in evidence["phases"]], ["baseline", "from:1.6.5-1", "candidate"])
         names = [c["name"] for c in evidence["phases"][-1]["checks"]]
         for expected in ("package_installed", "dpkg_audit_clean", "fuse_mounted", "fuse_waiting_zero",
-                         "fuse_stat", "vh_status", f"unchanged:{CONFIG}", f"unchanged:{PROVIDERS}"):
+                         "fuse_stat", "vh_status", f"unchanged:{CONFIG}", f"unchanged:{PROVIDERS}",
+                         "cli_socket_bound", "legacy_unit_retired:vaulthalla-cli.socket",
+                         "legacy_unit_retired:vaulthalla-cli.service"):
             self.assertIn(expected, names)
         self.assertEqual(self.lab.version, "1.6.7-1")
         # from-version already installed: no apt install for it, one for the candidate.
@@ -196,6 +200,19 @@ class LabSmokeTests(unittest.TestCase):
         self.lab.flapping_unit = "vaulthalla-web.service"
         evidence = self._run()
         self.assertIn("candidate/unit_restarts_stable:vaulthalla-web.service", self._failed(evidence))
+
+    def test_legacy_cli_socket_still_listening_fails_candidate(self) -> None:
+        self.lab.units["vaulthalla-cli.socket"] = {
+            "LoadState": "not-found", "ActiveState": "active", "SubState": "listening", "NRestarts": 0,
+        }
+        self.lab.cli_sock = False
+        evidence = self._run(from_version="1.6.5-1")
+        failed = self._failed(evidence)
+        self.assertIn("candidate/legacy_unit_retired:vaulthalla-cli.socket", failed)
+        self.assertIn("candidate/cli_socket_bound", failed)
+        self.assertNotIn("candidate/legacy_unit_retired:vaulthalla-cli.service", failed)
+        # The from-version phase still ships the legacy units and is not judged on them.
+        self.assertFalse(any(name.startswith("from:1.6.5-1/legacy_unit_retired") for name in failed))
 
     def test_dirty_dpkg_baseline_aborts_before_installing(self) -> None:
         self.lab.status = "iF "

@@ -71,7 +71,6 @@ if get_option('install_data')
 
     foreach unit_template : [
         'vaulthalla.service',
-        'vaulthalla-cli.service',
         'vaulthalla-web.service',
         'vaulthalla-swtpm.service',
     ]
@@ -84,11 +83,6 @@ if get_option('install_data')
             install_dir: get_option('systemd_system_unit_dir'),
         )
     endforeach
-
-    install_data(
-        'deploy/systemd/vaulthalla-cli.socket',
-        install_dir: get_option('systemd_system_unit_dir'),
-    )
 
     install_data(
         'LICENSE',

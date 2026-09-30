@@ -7,8 +7,6 @@ var/log/vaulthalla
 usr/share/vaulthalla/config
 debian/needrestart/50-vaulthalla.conf etc/needrestart/conf.d/
 lib/systemd/system/vaulthalla.service
-lib/systemd/system/vaulthalla-cli.service
-lib/systemd/system/vaulthalla-cli.socket
 lib/systemd/system/vaulthalla-web.service
 lib/systemd/system/vaulthalla-swtpm.service
 usr/share/doc/vaulthalla/LICENSE

@@ -14,8 +14,8 @@ semantics do **not** match `apt remove/purge`. Operator-facing detail lives in `
 - `psql/000…097_*.sql`: schema + ordered migrations → `/usr/share/vaulthalla/psql`.
 - `systemd/`: `vaulthalla.service.in` (server, user `vaulthalla`; `Wants=`+`After=postgresql.service`,
   `Restart=on-failure`, `RestartSec=10`, `StartLimitIntervalSec=600`/`StartLimitBurst=10`, `TimeoutStopSec=30s`,
-  ExecStopPost lazy `fusermount3 -uz` guarded by `findmnt`), `vaulthalla-cli.service.in` + `vaulthalla-cli.socket`
-  (`--systemd`, unix socket; see open question below), `vaulthalla-web.service.in` (`node
+  ExecStopPost lazy `fusermount3 -uz` guarded by `findmnt`; the daemon owns `/run/vaulthalla/cli.sock` and rebinds
+  it within ~1s), `vaulthalla-web.service.in` (`node
   /usr/share/vaulthalla-web/server.js`, StartLimit too), `vaulthalla-swtpm.service.in` (software TPM fallback).
 - `nginx/vaulthalla.conf` → `/usr/share/vaulthalla/nginx/vaulthalla` (template; proxies to 127.0.0.1).
 - `lifecycle/` (Python `main.py` + tests) → `/usr/lib/vaulthalla/lifecycle`: backs `vh setup/teardown`
@@ -57,6 +57,15 @@ python3-certbot-dns-cloudflare`. Build-Depends mirror `core/meson.build` pkg-con
   udevadm/apparmor_parser call; `PGCONNECT_TIMEOUT` is passed through `env` (sudo resets env). `/mnt/vaulthalla` is
   only inspected via `/proc/self/mountinfo` (`is_mountpoint`, octal-escaped exact match), and the mounted check runs
   before any `[ -d ]`.
+- **Legacy CLI units (#110)**: `vaulthalla-cli.{socket,service}` shipped up to 1.6.6. The socket unit was an
+  orphaned listener on the daemon's socket path that swallowed `vh` clients forever. They're no longer shipped
+  (`FORBIDDEN_DEBIAN_PACKAGE_PATHS` in `tools/release/packaging/debian.py` rejects them). `retire_legacy_cli_units`
+  runs early in configure (before DB bootstrap, so an abort can't leave the listener up). It only acts if unit files,
+  deb-systemd-helper state, `.wants` links, or a non-inactive unit exist. It stops each unit with bounded
+  `deb-systemd-invoke stop` (cgroup SIGKILL on timeout), runs `deb-systemd-helper purge` + `unmask`, removes the
+  `.wants` links, and runs `daemon-reload`. Stopping the socket (RemoveOnStop) deletes `cli.sock`; the core
+  `try-restart` re-binds it, and `verify_cli_socket_owned_by_daemon` reports `[ -S /run/vaulthalla/cli.sock ]` in the
+  summary. Units aren't conffiles, so no `dpkg-maintscript-helper` is needed. postrm purge re-runs the enablement cleanup.
 - Service transitions (`transition_unit_bounded`): `reset-failed` if failed, then bounded `systemctl <verb>`; on
   timeout, `systemctl kill -s KILL` (unit cgroup only) and continue. Never fails the package operation.
 - Converges user/group, `tss` membership, runtime/state dirs. Installs `/etc/vaulthalla/config.yaml` from
@@ -127,8 +136,6 @@ removed. The preserved-DB message prints raw `sudo -u postgres psql -c …` comm
 
 ## Open questions
 
-- `vaulthalla-cli.service` runs `vaulthalla-cli --systemd`, but cli.cpp has no `--systemd` handling (CLI/runtime
-  workstream). postinst now reports its start failure instead of hiding it.
 - `tools/dev/verify.sh lifecycle` only runs `test_main`; `test_db_lifecycle` must be run by module until it's updated.
 
 ## Teardown safety (`bin/teardown/*`)

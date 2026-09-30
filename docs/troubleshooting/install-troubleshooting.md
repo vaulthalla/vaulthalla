@@ -22,7 +22,6 @@ Use this guide when the package install, first-run setup, services, database boo
 vh status
 systemctl status vaulthalla.service
 systemctl status vaulthalla-web.service
-systemctl status vaulthalla-cli.socket
 systemctl status vaulthalla-swtpm.service
 ```
 
@@ -65,9 +64,10 @@ Check the socket:
 
 ```bash
 ls -l /run/vaulthalla/cli.sock
-systemctl status vaulthalla-cli.socket
-systemctl status vaulthalla-cli.service
+systemctl status vaulthalla.service
 ```
+
+`vaulthalla.service` owns `/run/vaulthalla/cli.sock` and re-creates it within about a second if it disappears. Releases up to 1.6.6 also shipped `vaulthalla-cli.socket` and `vaulthalla-cli.service`. Upgrades stop and remove them, because the socket unit could hold the socket path and make `vh` hang. If either unit still shows as active, run `sudo systemctl disable --now vaulthalla-cli.socket vaulthalla-cli.service`, then `sudo systemctl restart vaulthalla`.
 
 Check group membership:
 

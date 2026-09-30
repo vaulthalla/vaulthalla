@@ -37,8 +37,14 @@ NGINX_OPTOUT_MARKER="${STATE_DIR}/nginx_config_disabled"
 REINSTALL_MARKER="${STATE_DIR}/.reinstall_from_config_files"
 TPM_DEFERRED_MARKER="${STATE_DIR}/tpm_backend_deferred"
 CORE_SYSTEMD_UNIT="vaulthalla.service"
-CLI_SYSTEMD_UNIT="vaulthalla-cli.service"
-CLI_SOCKET_SYSTEMD_UNIT="vaulthalla-cli.socket"
+# Shipped up to 1.6.6: an orphaned systemd listener on the daemon's CLI socket path that swallowed
+# `vh` clients forever. vaulthalla.service owns /run/vaulthalla/cli.sock now; see retire_legacy_cli_units.
+LEGACY_CLI_UNITS="vaulthalla-cli.socket vaulthalla-cli.service"
+LEGACY_CLI_WANTS_LINKS="/etc/systemd/system/sockets.target.wants/vaulthalla-cli.socket /etc/systemd/system/multi-user.target.wants/vaulthalla-cli.service"
+LEGACY_CLI_UNIT_DIRS="/lib/systemd/system /usr/lib/systemd/system"
+DEB_SYSTEMD_HELPER_STATE_DIR="/var/lib/systemd"
+CLI_SOCKET_PATH="/run/vaulthalla/cli.sock"
+CLI_SOCKET_WAIT_SECONDS=15
 WEB_SYSTEMD_UNIT="vaulthalla-web.service"
 SWTPM_SYSTEMD_UNIT="vaulthalla-swtpm.service"
 PSQL_DEPLOY_DIR="/usr/share/vaulthalla/psql"
@@ -73,6 +79,8 @@ TPM_BACKEND_READY="1"
 TPM_BACKEND_RECOVERED="0"
 CONFIG_STATUS="unchanged"
 SERVICE_STATUS="not changed"
+CLI_SOCKET_STATUS="not checked (systemd is not running)"
+LEGACY_CLI_UNITS_RETIRED="0"
 POSTINST_ACTION="${1:-}"
 LAST_CONFIGURED_VERSION="${2:-}"
 
@@ -1394,6 +1402,124 @@ reconcile_swtpm_unit_enablement() {
     fi
 }
 
+legacy_cli_units_present() {
+    for unit in $LEGACY_CLI_UNITS; do
+        for dir in $LEGACY_CLI_UNIT_DIRS; do
+            if [ -e "${dir}/${unit}" ]; then
+                return 0
+            fi
+        done
+        if [ -e "${DEB_SYSTEMD_HELPER_STATE_DIR}/deb-systemd-helper-enabled/${unit}.dsh-also" ] \
+            || [ -e "${DEB_SYSTEMD_HELPER_STATE_DIR}/deb-systemd-helper-masked/${unit}" ]; then
+            return 0
+        fi
+        if systemd_running; then
+            case "$(unit_active_state "$unit")" in
+                inactive|unknown)
+                    ;;
+                *)
+                    return 0
+                    ;;
+            esac
+        fi
+    done
+    for link in $LEGACY_CLI_WANTS_LINKS; do
+        if [ -L "$link" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+stop_legacy_cli_unit_bounded() {
+    unit="$1"
+    case "$(unit_active_state "$unit")" in
+        inactive|unknown)
+            return 0
+            ;;
+        failed)
+            run_systemctl_quiet reset-failed "$unit" || true
+            return 0
+            ;;
+    esac
+    # deb-systemd-invoke honours policy-rc.d (chroots, image builds) and then runs systemctl stop.
+    if has_command deb-systemd-invoke; then
+        if run_bounded "$SERVICE_TRANSITION_TIMEOUT_SECONDS" deb-systemd-invoke stop "$unit" >/dev/null 2>&1; then
+            rc=0
+        else
+            rc=$?
+        fi
+    elif run_bounded "$SERVICE_TRANSITION_TIMEOUT_SECONDS" systemctl --system stop "$unit" >/dev/null 2>&1; then
+        rc=0
+    else
+        rc=$?
+    fi
+    if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+        warn_nonfatal "${unit}: stop did not finish within ${SERVICE_TRANSITION_TIMEOUT_SECONDS}s; sending SIGKILL to the unit cgroup."
+        run_systemctl_quiet kill -s KILL "$unit" || true
+        wait_for_unit_to_settle "$unit" "$SERVICE_KILL_SETTLE_SECONDS" || true
+    elif [ "$rc" -ne 0 ]; then
+        warn_nonfatal "${unit}: stop failed (exit ${rc}); continuing."
+    fi
+    run_systemctl_quiet reset-failed "$unit" || true
+    return 0
+}
+
+retire_legacy_cli_units() {
+    # Upgrades from releases that shipped vaulthalla-cli.{socket,service}: stop them, drop their
+    # enablement, and reload systemd. dpkg has already removed the unit files by now, but a
+    # running socket unit stays loaded (and listening) until it is stopped. Idempotent, never fatal.
+    # Stopping the socket (RemoveOnStop=yes) deletes cli.sock; the vaulthalla.service restart in
+    # configure_systemd_units makes the daemon bind it again.
+    if ! legacy_cli_units_present; then
+        return 0
+    fi
+    echo "[${PKG}] Retiring legacy ${LEGACY_CLI_UNITS} (vaulthalla.service owns ${CLI_SOCKET_PATH})."
+    LEGACY_CLI_UNITS_RETIRED="1"
+
+    if systemd_running; then
+        for legacy_unit in $LEGACY_CLI_UNITS; do
+            stop_legacy_cli_unit_bounded "$legacy_unit"
+        done
+    fi
+
+    if has_command deb-systemd-helper; then
+        # purge drops the enablement links it recorded plus its state; unmask undoes a remove-time mask.
+        # shellcheck disable=SC2086
+        run_bounded 30 deb-systemd-helper purge $LEGACY_CLI_UNITS >/dev/null 2>&1 || true
+        # shellcheck disable=SC2086
+        run_bounded 30 deb-systemd-helper unmask $LEGACY_CLI_UNITS >/dev/null 2>&1 || true
+    fi
+    for link in $LEGACY_CLI_WANTS_LINKS; do
+        if [ -L "$link" ]; then
+            rm -f "$link"
+        fi
+    done
+    safe_systemctl daemon-reload
+}
+
+verify_cli_socket_owned_by_daemon() {
+    # Report whether the daemon (re)created its CLI socket. Only /run is inspected, never the FUSE mount.
+    if ! systemd_running; then
+        return 0
+    fi
+    if [ "$(unit_active_state "$CORE_SYSTEMD_UNIT")" != "active" ]; then
+        CLI_SOCKET_STATUS="not checked (${CORE_SYSTEMD_UNIT} is not active)"
+        return 0
+    fi
+    waited=0
+    while [ "$waited" -lt "$CLI_SOCKET_WAIT_SECONDS" ]; do
+        if [ -S "$CLI_SOCKET_PATH" ]; then
+            CLI_SOCKET_STATUS="${CLI_SOCKET_PATH} bound by ${CORE_SYSTEMD_UNIT}"
+            return 0
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+    CLI_SOCKET_STATUS="${CLI_SOCKET_PATH} missing ${CLI_SOCKET_WAIT_SECONDS}s after ${CORE_SYSTEMD_UNIT} started; 'vh' cannot connect (check: journalctl -u ${CORE_SYSTEMD_UNIT})"
+    warn_nonfatal "$CLI_SOCKET_STATUS"
+}
+
 core_start_blocker() {
     # Prints why vaulthalla.service must not be started (empty when it can start).
     if [ "$TPM_BACKEND_READY" != "1" ]; then
@@ -1412,9 +1538,8 @@ configure_systemd_units() {
     if is_upgrade; then
         echo "[${PKG}] Systemd: upgrade detected; restarting active Vaulthalla units only (bounded to ${SERVICE_TRANSITION_TIMEOUT_SECONDS}s each)."
         transition_unit_bounded try-restart "$SWTPM_SYSTEMD_UNIT"
+        # The core restart also re-creates cli.sock after retire_legacy_cli_units stopped the old socket.
         transition_unit_bounded try-restart "$CORE_SYSTEMD_UNIT"
-        transition_unit_bounded try-restart "$CLI_SOCKET_SYSTEMD_UNIT"
-        transition_unit_bounded try-restart "$CLI_SYSTEMD_UNIT"
         transition_unit_bounded try-restart "$WEB_SYSTEMD_UNIT"
         SERVICE_STATUS="restarted active units"
         if [ "$TPM_BACKEND_RECOVERED" = "1" ] && [ -z "$(core_start_blocker)" ]; then
@@ -1430,8 +1555,6 @@ configure_systemd_units() {
     fi
 
     safe_systemctl_unit_files enable "$CORE_SYSTEMD_UNIT"
-    safe_systemctl_unit_files enable "$CLI_SOCKET_SYSTEMD_UNIT"
-    safe_systemctl_unit_files enable "$CLI_SYSTEMD_UNIT"
     safe_systemctl_unit_files enable "$WEB_SYSTEMD_UNIT"
 
     if ! systemd_running; then
@@ -1439,7 +1562,6 @@ configure_systemd_units() {
         return 0
     fi
 
-    transition_unit_bounded start "$CLI_SOCKET_SYSTEMD_UNIT"
     blocker="$(core_start_blocker)"
     if [ -n "$blocker" ]; then
         SERVICE_STATUS="units enabled; ${CORE_SYSTEMD_UNIT} NOT started: ${blocker}"
@@ -1457,7 +1579,6 @@ configure_systemd_units() {
             warn_nonfatal "${CORE_SYSTEMD_UNIT} is '${core_state}' after start; check: journalctl -u ${CORE_SYSTEMD_UNIT}"
         fi
     fi
-    transition_unit_bounded start "$CLI_SYSTEMD_UNIT"
     transition_unit_bounded start "$WEB_SYSTEMD_UNIT"
 }
 
@@ -1482,6 +1603,8 @@ case "$1" in
     align_config_file_permissions "$CONFIG_FILE"
     align_config_file_permissions "$CONFIG_TEMPLATE_FILE"
     require_runtime_assets
+    # Early, so nothing later in configure (e.g. an orphan-DB abort) can leave the old socket listening.
+    retire_legacy_cli_units
     configure_tpm_backend_if_safe
 
     # Remove any stale super-admin seed from older package revisions.
@@ -1496,6 +1619,8 @@ case "$1" in
 
     configure_systemd_units
 
+    verify_cli_socket_owned_by_daemon
+
     configure_nginx_if_safe
 
     rm -f "$REINSTALL_MARKER"
@@ -1505,6 +1630,10 @@ case "$1" in
     echo "[${PKG}]   DB bootstrap: ${DB_BOOTSTRAP_STATUS}"
     echo "[${PKG}]   TPM backend: ${TPM_BACKEND_STATUS}"
     echo "[${PKG}]   Services: ${SERVICE_STATUS}"
+    if [ "$LEGACY_CLI_UNITS_RETIRED" = "1" ]; then
+        CLI_SOCKET_STATUS="${CLI_SOCKET_STATUS}; legacy vaulthalla-cli.socket/.service stopped and purged"
+    fi
+    echo "[${PKG}]   CLI socket: ${CLI_SOCKET_STATUS}"
     echo "[${PKG}]   nginx config: ${NGINX_CONFIG_STATUS}"
     echo "[${PKG}]   Super-admin ownership: deferred to first CLI use ('vh' or 'vaulthalla')."
     ;;

@@ -123,7 +123,9 @@ the lab can publish. Enable only after a `vh-lab` runner with ssh access exists;
 command runs as `ssh H timeout -k 5 N bash -c …` (plus a local timeout); nothing is killed. Aborts before
 installing if dpkg is not clean. Asserts: `ii` at the expected version, empty `dpkg --audit`, units active with
 stable `NRestarts` over the settle window, FUSE mounted (mountinfo), fusectl `waiting == 0`, `timeout 10 stat`
-only after waiting is 0, `sudo timeout 15 vh status`, and sha256-identical `/etc/vaulthalla/config.yaml` and
+only after waiting is 0, `sudo timeout 15 vh status`, and, for the candidate phases (not `--from-version`),
+legacy `vaulthalla-cli.{socket,service}` `not-found/inactive` plus `sudo test -S /run/vaulthalla/cli.sock` (#110).
+Default units are `vaulthalla.service` and `vaulthalla-web.service`. It also checks sha256-identical `/etc/vaulthalla/config.yaml` and
 `/etc/vaulthalla/testing/providers.env` (when present before). Evidence schema `vaulthalla.release.lab_smoke.v1`.
 
 ## Package action artifact contract

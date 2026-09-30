@@ -34,9 +34,12 @@ PROTECTED_FILES: tuple[str, ...] = (CONFIG_PATH, "/etc/vaulthalla/testing/provid
 REMOTE_STAGING_DIR = "/tmp/vh-lab-smoke"
 DEFAULT_UNITS: tuple[str, ...] = (
     "vaulthalla.service",
-    "vaulthalla-cli.socket",
     "vaulthalla-web.service",
 )
+# Shipped up to 1.6.6. The socket unit was an orphaned listener on the daemon's CLI socket path
+# (`vh` hung forever); postinst retires both on upgrade and the daemon owns the socket (#110).
+LEGACY_CLI_UNITS: tuple[str, ...] = ("vaulthalla-cli.socket", "vaulthalla-cli.service")
+CLI_SOCKET_PATH = "/run/vaulthalla/cli.sock"
 APT_ENV = "DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l"
 APT_OPTS = "-y -q -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
 
@@ -180,8 +183,8 @@ class LabSmoke:
     def protected_shas(self) -> dict[str, str | None]:
         return {path: self.file_sha(path) for path in PROTECTED_FILES}
 
-    def unit_states(self) -> dict[str, dict[str, str]]:
-        units = " ".join(shlex.quote(unit) for unit in self.options.units)
+    def unit_states(self, units_to_check: tuple[str, ...] | None = None) -> dict[str, dict[str, str]]:
+        units = " ".join(shlex.quote(unit) for unit in (units_to_check or self.options.units))
         result = self.sh(
             f'for u in {units}; do echo "@@$u"; '
             'systemctl show "$u" -p LoadState -p ActiveState -p SubState -p NRestarts 2>/dev/null; done'
@@ -236,7 +239,12 @@ class LabSmoke:
             self.sleep(5)
 
     def assert_healthy(
-        self, phase: Phase, *, expected_version: str, protected_before: dict[str, str | None] | None
+        self,
+        phase: Phase,
+        *,
+        expected_version: str,
+        protected_before: dict[str, str | None] | None,
+        candidate: bool = True,
     ) -> None:
         status, version = self.package_state()
         phase.add("package_installed", status == "ii" and version == expected_version,
@@ -272,6 +280,16 @@ class LabSmoke:
                       stat.stdout.strip() or stat.stderr.strip()[:200] or f"exit {stat.returncode}")
         else:
             phase.add("fuse_stat", False, "skipped: FUSE requests pending (mount not touched)")
+        if candidate:
+            legacy = self.unit_states(LEGACY_CLI_UNITS)
+            for unit in LEGACY_CLI_UNITS:
+                state = legacy.get(unit, {})
+                retired = state.get("LoadState") == "not-found" and state.get("ActiveState") in ("inactive", None)
+                phase.add(f"legacy_unit_retired:{unit}", retired,
+                          f"{state.get('LoadState', '?')}/{state.get('ActiveState', '?')} (expected not-found/inactive)")
+            sock = self.sh(f"sudo -n test -S {CLI_SOCKET_PATH}")
+            phase.add("cli_socket_bound", sock.returncode == 0,
+                      f"{CLI_SOCKET_PATH} {'is a socket' if sock.returncode == 0 else 'missing'}")
         vh = self.sh("sudo -n timeout 15 vh status", timeout=30)
         phase.add("vh_status", vh.returncode == 0,
                   f"exit {vh.returncode}{' (timed out)' if vh.returncode == 124 else ''}")
@@ -338,7 +356,8 @@ class LabSmoke:
                         raise LabSmokeAbort(f"installing from-version {options.from_version} failed")
                 else:
                     start.add("from:already_installed", True, f"{PACKAGE} {version}")
-                self.assert_healthy(start, expected_version=options.from_version, protected_before=None)
+                self.assert_healthy(start, expected_version=options.from_version, protected_before=None,
+                                    candidate=False)
                 if not start.ok:
                     raise LabSmokeAbort(f"from-version {options.from_version} is not healthy; upgrade result would be meaningless")
 

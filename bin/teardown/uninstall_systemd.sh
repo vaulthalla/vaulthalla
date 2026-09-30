@@ -4,6 +4,7 @@ set -euo pipefail
 echo "🗑️  Removing Vaulthalla systemd services..."
 SYSTEMCTL_TIMEOUT="${VH_SYSTEMCTL_STOP_TIMEOUT:-35s}"
 
+# vaulthalla-cli.{service,socket} are retired (#110); kept so older dev installs are cleaned up.
 UNITS=(
   vaulthalla-web.service
   vaulthalla-cli.service
