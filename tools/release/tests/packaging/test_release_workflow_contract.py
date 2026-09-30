@@ -160,6 +160,18 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         ci = yaml.safe_load(self._ci_workflow())
         self.assertEqual(ci["jobs"]["tooling"]["steps"][0]["with"]["fetch-depth"], 0)
 
+    def test_legacy_local_publication_path_is_retired(self) -> None:
+        # Exactly one publication path (CI): the legacy script must not upload, and `make release`
+        # must not push. publish-deb is the only uploader and it refuses to overwrite published versions.
+        script = (self._repo_root() / "bin" / "install_deb.sh").read_text(encoding="utf-8")
+        self.assertNotIn("curl", script)
+        self.assertNotIn("UPLOAD_PASS", script)
+        self.assertIn("--push is retired", script)
+        makefile = (self._repo_root() / "Makefile").read_text(encoding="utf-8")
+        release_target = makefile.split("\nrelease:", 1)[1].split("\n\n", 1)[0]
+        self.assertNotIn("--push", release_target)
+        self.assertIn("cut-release", release_target)
+
     def test_github_release_requires_sha256sums_asset(self) -> None:
         self.assertIn("release/SHA256SUMS", str(self._job("github-release")["steps"]))
 
