@@ -23,6 +23,9 @@ class SuiteGuardTests(unittest.TestCase):
     def test_real_suites_meet_their_minimums(self) -> None:
         for name, spec in SUITES.items():
             with self.subTest(suite=name):
+                if not (self._repo_root() / spec.start_dir).is_dir():
+                    # Branch predates that suite; `run-tests` (strict) still reports it as a shortfall.
+                    continue
                 counts = count_by_group(spec, discover_suite(spec, self._repo_root()))
                 self.assertEqual(check_minimums(spec, counts), [])
 
@@ -55,6 +58,12 @@ class SuiteGuardTests(unittest.TestCase):
             _write(root / "suite" / "sub" / "__init__.py", "")
             counts = count_by_group(spec, discover_suite(spec, root))
             self.assertEqual(check_minimums(spec, counts), [])
+
+    def test_missing_suite_directory_is_a_shortfall(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            outcomes = run_suites(["lab"], repo_root=Path(temp_dir), stream=io.StringIO())
+        self.assertFalse(outcomes[0].ok)
+        self.assertIn("does not exist", outcomes[0].shortfalls[0])
 
     def test_run_suites_rejects_unknown_names(self) -> None:
         with self.assertRaisesRegex(ValueError, "Unknown test suite"):

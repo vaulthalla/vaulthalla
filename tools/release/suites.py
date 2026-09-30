@@ -38,7 +38,7 @@ SUITES: dict[str, SuiteSpec] = {
         start_dir="tools/release/tests",
         top_level_dir=None,
         subpackages=("changelog", "packaging"),
-        minimums={"changelog": 229, "packaging": 103, "root": 70},
+        minimums={"changelog": 229, "packaging": 103, "root": 85},
     ),
     "lifecycle": SuiteSpec(
         name="lifecycle",
@@ -46,6 +46,13 @@ SUITES: dict[str, SuiteSpec] = {
         top_level_dir=".",
         id_prefix="deploy.lifecycle.tests.",
         minimums={"root": 18},
+    ),
+    "lab": SuiteSpec(
+        name="lab",
+        start_dir="tools/lab/tests",
+        top_level_dir=".",
+        id_prefix="tools.lab.tests.",
+        minimums={"root": 6},
     ),
 }
 
@@ -110,6 +117,16 @@ def run_suites(
         if name not in SUITES:
             raise ValueError(f"Unknown test suite `{name}`. Known: {', '.join(sorted(SUITES))}.")
         spec = SUITES[name]
+        if not (repo_root / spec.start_dir).is_dir():
+            # A missing suite directory is exactly the silent-skip this guard exists to catch.
+            outcomes.append(
+                SuiteOutcome(
+                    name=name,
+                    counts={group: 0 for group in spec.minimums},
+                    shortfalls=[f"{spec.name}: start directory {spec.start_dir} does not exist"],
+                )
+            )
+            continue
         suite = discover_suite(spec, repo_root)
         counts = count_by_group(spec, suite)
         outcome = SuiteOutcome(name=name, counts=counts, shortfalls=check_minimums(spec, counts))

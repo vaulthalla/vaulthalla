@@ -23,6 +23,7 @@ from tools.release.cli_tools.commands.release_success import (
 )
 from tools.release.cli_tools.commands.suites import cmd_run_tests
 from tools.release.cut import main_cut_release, main_release_status
+from tools.release.lab_smoke import main_lab_smoke
 from tools.release.suites import SUITES
 from tools.release.cli_tools.commands.version import (
     cmd_check,
@@ -533,6 +534,42 @@ COMMANDS = {
         "args": [
             {"flags": ["version"], "kwargs": {"nargs": "?", "default": None, "help": "X.Y.Z (default: VERSION)."}},
             {"flags": ["--watch"], "kwargs": {"action": "store_true", "help": "Poll until the run completes."}},
+        ],
+    },
+
+    "lab-smoke": {
+        "help": (
+            "MUTATES THE TARGET HOST. Install/upgrade a candidate package on a lab host over ssh and assert "
+            "dpkg, units, FUSE (mountinfo + fusectl, timeout-guarded), `vh status`, and config integrity; "
+            "optional PostgreSQL restart and reboot re-checks. Writes JSON evidence; non-zero on any failure."
+        ),
+        "func": main_lab_smoke,
+        "args": [
+            {"flags": ["--host"], "kwargs": {"required": True, "help": "ssh host/alias of the lab (e.g. vh-storage)."}},
+            {"flags": ["--deb"], "kwargs": {"default": None, "help": "Candidate .deb to copy and install."}},
+            {"flags": ["--apt-version"], "kwargs": {"default": None, "help": "Candidate version from apt (X.Y.Z-N)."}},
+            {
+                "flags": ["--from-version"],
+                "kwargs": {"default": None, "help": "Install this apt version first (N-1 -> N upgrade path)."},
+            },
+            {"flags": ["--evidence"], "kwargs": {"default": None, "help": "Write JSON evidence to this path."}},
+            {
+                "flags": ["--pg-restart"],
+                "kwargs": {"action": "store_true", "help": "Restart PostgreSQL after install and re-assert (P0-1)."},
+            },
+            {"flags": ["--reboot"], "kwargs": {"action": "store_true", "help": "Reboot the host and re-assert."}},
+            {
+                "flags": ["--unit"],
+                "kwargs": {"action": "append", "default": None, "help": "Unit that must be active (repeatable)."},
+            },
+            {
+                "flags": ["--settle-seconds"],
+                "kwargs": {"type": int, "default": 15, "help": "NRestarts stability window (default: 15)."},
+            },
+            {
+                "flags": ["--install-timeout"],
+                "kwargs": {"type": int, "default": 900, "help": "Hard timeout for each apt install (default: 900s)."},
+            },
         ],
     },
 
