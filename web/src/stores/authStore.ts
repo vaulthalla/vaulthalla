@@ -56,7 +56,6 @@ interface AuthState {
   isUserAuthenticated: () => Promise<boolean>
   logout: () => Promise<void>
   refreshToken: () => Promise<void>
-  fetchUser: () => Promise<void>
   getUser: (id: number) => Promise<User | null>
   getUsers: () => Promise<User[]>
   fetchAdminPasswordIsDefault: (force: boolean) => Promise<boolean>
@@ -152,27 +151,6 @@ export const useAuthStore: UseBoundStore<StoreApi<AuthState>> = create<AuthState
         return refreshPromise
       },
 
-      fetchUser: async () => {
-        const token = get().token
-        if (!token) {
-          set({ user: null })
-          return
-        }
-
-        set({ loading: true, error: null })
-
-        try {
-          await useWebSocketStore.getState().waitForConnection()
-          const sendCommand = useWebSocketStore.getState().sendCommand
-          const response = await sendCommand('auth.me', null)
-
-          set({ user: response.user, status: 'authenticated' })
-        } catch (err) {
-          set({ error: getErrorMessage(err) || 'Failed to fetch user' })
-        } finally {
-          set({ loading: false })
-        }
-      },
 
       isUserAuthenticated: async () => {
         set({ loading: true, error: null })

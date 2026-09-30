@@ -169,10 +169,13 @@ namespace vh::config {
     }
 
     void to_json(nlohmann::json &j, const HttpPreviewConfig &c) {
+        // Symmetric with from_json, so a settings.update round trip can't silently reset these.
         j = {
             {"enabled", c.enabled},
             {"host", c.host},
-            {"port", c.port}
+            {"port", c.port},
+            {"max_connections", c.max_connections},
+            {"max_preview_size_bytes", c.max_preview_size_bytes}
         };
     }
 

@@ -2,6 +2,7 @@
 
 #include "auth/session/Manager.hpp"
 #include "log/Registry.hpp"
+#include "protocols/ws/LogRedaction.hpp"
 #include "protocols/ws/Session.hpp"
 #include "protocols/ws/ShareRateLimit.hpp"
 #include "protocols/ws/core/handler_templates.hpp"
@@ -186,7 +187,7 @@ void Router::routeMessage(json&& msg, const SessionPtr& session) {
             return;
         }
 
-        log::Registry::ws()->debug("[Router] Routing message: {}", msg.dump());
+        log::Registry::ws()->debug("[Router] Routing message: {}", redactForLog(msg).dump());
 
         auto command = msg.at("command").get<std::string>();
         const std::string accessToken = msg.value("token", "");
