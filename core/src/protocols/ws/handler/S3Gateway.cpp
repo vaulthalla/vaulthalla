@@ -334,6 +334,13 @@ json defaultOverrideJson(
     return out;
 }
 
+// resolveBucket() is an optional; dereferencing an empty one was UB when the read-back after a write missed.
+db::query::s3::BucketBinding requireBucket(const std::string& bucketName) {
+    auto bucket = db::query::s3::Gateway::resolveBucket(bucketName);
+    if (!bucket) throw std::runtime_error("S3 gateway bucket '" + bucketName + "' was not found after the update");
+    return std::move(*bucket);
+}
+
 json bucketJson(const db::query::s3::BucketBinding& bucket) {
     return {
         {"bucket_name", bucket.bucket_name},
@@ -1295,7 +1302,7 @@ json S3Gateway::bucketsCreateLocal(const json& payload, const std::shared_ptr<Se
             owner->id,
             "local",
             payload.value("quota_bytes", static_cast<uintmax_t>(0)));
-        return {{"bucket", bucketJson(*db::query::s3::Gateway::resolveBucket(bucket.bucket_name))}};
+        return {{"bucket", bucketJson(requireBucket(bucket.bucket_name))}};
     }
 
     const auto displayName = optionalString(payload, "name")
@@ -1319,7 +1326,7 @@ json S3Gateway::bucketsCreateLocal(const json& payload, const std::shared_ptr<Se
         .mode = "local",
         .created_by = session->user->id
     });
-    return {{"bucket", bucketJson(*db::query::s3::Gateway::resolveBucket(vault->slug))}};
+    return {{"bucket", bucketJson(requireBucket(vault->slug))}};
 }
 
 json S3Gateway::bucketsCreateRemoteCache(const json& payload, const std::shared_ptr<Session>& session) {
@@ -1360,7 +1367,7 @@ json S3Gateway::bucketsCreateRemoteCache(const json& payload, const std::shared_
         .mode = "remote_cache",
         .created_by = session->user->id
     });
-    return {{"bucket", bucketJson(*db::query::s3::Gateway::resolveBucket(effectiveBucketName))}};
+    return {{"bucket", bucketJson(requireBucket(effectiveBucketName))}};
 }
 
 json S3Gateway::budgetPolicyList(const json& payload, const std::shared_ptr<Session>& session) {

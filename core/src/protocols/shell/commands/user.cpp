@@ -107,7 +107,9 @@ static CommandResult handleUpdateUser(const CommandCall& call) {
     if (user->isProtected)
         return invalid("Cannot update protected user: " + user->name);
 
-    if (call.user->id != user->id) {
+    const bool isSelf = call.user->id == user->id;
+
+    if (!isSelf) {
         if (user->isSuperAdmin())
             return invalid("Cannot update super admin user: " + user->name);
 
@@ -125,12 +127,23 @@ static CommandResult handleUpdateUser(const CommandCall& call) {
     }
 
     if (const auto newRoleOpt = optVal(call, usage->resolveOptional("role")->option_tokens)) {
+        // Role changes are privilege changes: never on your own account (whatever your permissions), and the
+        // target role is judged by what it resolves to (name or numeric id), not by the literal argument.
+        if (isSelf) return invalid("Cannot change your own role. Ask another administrator to change it.");
         if (user->isSuperAdmin()) return invalid("Cannot change role of super_admin user: " + user->name);
-        if (*newRoleOpt == "super_admin") return invalid("Cannot change role to super_admin.");
 
         const auto rLkp = resolveAdminRole(*newRoleOpt, ERR);
         if (!rLkp || !rLkp.ptr) return invalid(rLkp.error);
         const auto role = rLkp.ptr;
+
+        if (role->name == "super_admin") return invalid("Cannot change role to super_admin.");
+
+        // Granting an admin-level role needs admin-edit rights even when the target is currently a plain user.
+        const auto staged = std::make_shared<User>();
+        staged->roles.admin = role;
+        if (staged->isAdmin() && !call.user->admins().canEdit())
+            return invalid("You do not have permission to assign admin roles.");
+
         user->roles.admin = role;
     }
 

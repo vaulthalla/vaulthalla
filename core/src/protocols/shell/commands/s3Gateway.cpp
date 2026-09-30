@@ -45,6 +45,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 namespace vh::protocols::shell::commands {
@@ -482,14 +483,40 @@ std::vector<uint8_t> plaintextForGatewayBackfill(
 }
 
 CommandResult saveConfigAndRestart(config::Config cfg, const std::string& message) {
+    const bool wantEnabled = cfg.s3_gateway.enabled;
     try {
         cfg.save();
         config::Registry::set(cfg);
         runtime::Manager::instance().restartService("S3GatewayService");
-        return ok(message);
     } catch (const std::exception& e) {
         return invalid("s3-gateway config update failed: " + std::string(e.what()));
     }
+
+    // restartService() returns before the listener is up (or has failed to bind); report the state the gateway
+    // actually reached instead of assuming success.
+    const auto service = runtime::Manager::instance().getS3GatewayService();
+    if (!service)
+        return ok(message + "Config saved; the S3 gateway service is not managed by this process, so the change "
+                            "takes effect on the next daemon restart.\n");
+
+    constexpr auto kSettleTimeout = std::chrono::seconds(5);
+    const auto deadline = std::chrono::steady_clock::now() + kSettleTimeout;
+    auto status = service->gatewayStatus();
+    while (std::chrono::steady_clock::now() < deadline && wantEnabled && !status.ready) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        status = service->gatewayStatus();
+    }
+
+    const auto endpoint = status.host + ":" + std::to_string(status.port);
+    if (wantEnabled && !status.ready)
+        return {1, "",
+                "s3-gateway: enabled in config, but the gateway is not listening on " + endpoint + " after " +
+                std::to_string(kSettleTimeout.count()) + "s (port in use or bind failure?). "
+                "Check the daemon log (journalctl -u vaulthalla) and `vh s3-gateway status`."};
+    if (!wantEnabled && status.ready)
+        return {1, "", "s3-gateway: disabled in config, but the gateway is still listening on " + endpoint + "."};
+
+    return ok(message + (wantEnabled ? "Listening on " + endpoint + ".\n" : ""));
 }
 
 std::optional<CommandResult> requireAdminCommand(const CommandCall& call, const std::string& action) {

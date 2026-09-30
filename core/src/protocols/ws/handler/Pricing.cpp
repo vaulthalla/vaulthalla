@@ -7,6 +7,7 @@
 #include "fs/model/Entry.hpp"
 #include "fs/model/File.hpp"
 #include "protocols/ws/Session.hpp"
+#include "rbac/permission/admin/S3Gateway.hpp"
 #include "rbac/permission/admin/Vaults.hpp"
 #include "rbac/permission/vault/sync/Action.hpp"
 #include "rbac/resolver/admin/all.hpp"
@@ -91,6 +92,17 @@ bool canEditVaultBudget(const std::shared_ptr<Session>& session, const std::uint
         .user = session->user,
         .permission = vh::rbac::permission::admin::VaultPermissions::Edit,
         .vault_id = vaultId
+    });
+}
+
+// Gateway credential budgets are gated exactly like the CLI (`vh s3-gateway budget ...`) and the
+// s3gateway.budget.* ws handlers: admin.s3_gateway.manage_budgets, not "is any admin".
+bool canManageGatewayBudgets(const std::shared_ptr<Session>& session) {
+    if (!session || !session->user) return false;
+    if (session->user->isSuperAdmin()) return true;
+    return vh::rbac::resolver::Admin::has<vh::rbac::permission::admin::S3GatewayPermissions>({
+        .user = session->user,
+        .permission = vh::rbac::permission::admin::S3GatewayPermissions::ManageBudgets
     });
 }
 
@@ -257,9 +269,11 @@ json Pricing::policyUpsert(const json& payload, const std::shared_ptr<Session>& 
     if (policy.scope == PriceBudgetScope::Global || policy.scope == PriceBudgetScope::Provider) {
         requireSuperAdmin(session, "Only super-admins may change global or provider S3 price budget policies.");
     } else if (policy.scope == PriceBudgetScope::GatewayCredential) {
-        if (!session->user->isAdmin())
-            throw std::runtime_error("Only admins may change key-wide S3 gateway credential budget policies.");
+        if (!canManageGatewayBudgets(session))
+            throw std::runtime_error("admin.s3_gateway.manage_budgets is required to change key-wide S3 gateway credential budget policies.");
     } else if (policy.scope == PriceBudgetScope::GatewayCredentialVault) {
+        if (!canManageGatewayBudgets(session))
+            throw std::runtime_error("admin.s3_gateway.manage_budgets is required to change S3 gateway credential vault budget policies.");
         if (!policy.vault_id || !canEditVaultBudget(session, *policy.vault_id))
             throw std::runtime_error("You do not have permission to change this S3 gateway credential vault budget policy.");
     } else if (!policy.vault_id || !canEditVaultBudget(session, *policy.vault_id)) {
@@ -276,9 +290,11 @@ json Pricing::policyDisable(const json& payload, const std::shared_ptr<Session>&
     if (scope == PriceBudgetScope::Global || scope == PriceBudgetScope::Provider) {
         requireSuperAdmin(session, "Only super-admins may disable global or provider S3 price budget policies.");
     } else if (scope == PriceBudgetScope::GatewayCredential) {
-        if (!session->user->isAdmin())
-            throw std::runtime_error("Only admins may disable key-wide S3 gateway credential budget policies.");
+        if (!canManageGatewayBudgets(session))
+            throw std::runtime_error("admin.s3_gateway.manage_budgets is required to disable key-wide S3 gateway credential budget policies.");
     } else if (scope == PriceBudgetScope::GatewayCredentialVault) {
+        if (!canManageGatewayBudgets(session))
+            throw std::runtime_error("admin.s3_gateway.manage_budgets is required to disable S3 gateway credential vault budget policies.");
         if (!vaultId || !canEditVaultBudget(session, *vaultId))
             throw std::runtime_error("You do not have permission to disable this S3 gateway credential vault budget policy.");
     } else if (!vaultId || !canEditVaultBudget(session, *vaultId)) {

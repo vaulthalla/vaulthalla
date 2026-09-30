@@ -486,9 +486,17 @@ static CommandResult handle_vault_sync(const CommandCall& call) {
         .vault_id = vault->id
     })) return invalid("vault sync: you do not have permission to trigger a sync for this vault");
 
-    runtime::Deps::get().syncController->runNow(vault->id);
-
-    return ok("Vault sync initiated for '" + vault->name + "' (ID: " + std::to_string(vault->id) + ")");
+    const auto label = "'" + vault->name + "' (ID: " + std::to_string(vault->id) + ")";
+    switch (runtime::Deps::get().syncController->runNow(vault->id)) {
+        case ::vh::sync::Controller::RunNowResult::Started:
+            return ok("Vault sync initiated for " + label);
+        case ::vh::sync::Controller::RunNowResult::Rerun:
+            return ok("Vault sync already running for " + label + "; queued an immediate rerun after it finishes");
+        case ::vh::sync::Controller::RunNowResult::NoTask:
+        default:
+            return invalid("vault sync: no sync task is loaded for " + label +
+                           "; nothing was started (is the vault's storage engine initialized? check `vh status` and the daemon log)");
+    }
 }
 
 static CommandResult handle_vault_sync_update(const CommandCall& call) {

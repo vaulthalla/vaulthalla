@@ -199,12 +199,29 @@ static bool command_is(const std::vector<std::string>& argv_norm, std::string_vi
     return argv_norm.size() >= 2 && argv_norm[0] == cmd && argv_norm[1] == subcmd;
 }
 
+// Canonical lifecycle subcommand for an alias accepted by the usage book (core/usage/src/usages/{setup,teardown}.cpp),
+// or "" when the command is not a lifecycle operation. The lifecycle utility only knows the canonical names.
+static std::string lifecycle_subcommand(const std::vector<std::string>& argv_norm) {
+    if (argv_norm.size() < 2) return {};
+    const auto& cmd = argv_norm[0];
+    const auto& sub = argv_norm[1];
+    const auto in = [&sub](std::initializer_list<std::string_view> names) {
+        return std::ranges::any_of(names, [&sub](const std::string_view n) { return sub == n; });
+    };
+
+    if (cmd == "setup") {
+        if (in({"db", "database", "postgres"})) return "db";
+        if (in({"remote-db", "remote_db", "remote", "rdb"})) return "remote-db";
+        if (in({"nginx", "proxy"})) return "nginx";
+    } else if (cmd == "teardown") {
+        if (in({"db", "database", "postgres"})) return "db";
+        if (in({"nginx", "proxy"})) return "nginx";
+    }
+    return {};
+}
+
 static bool is_lifecycle_command(const std::vector<std::string>& argv_norm) {
-    return command_is(argv_norm, "setup", "db")
-        || command_is(argv_norm, "setup", "remote-db")
-        || command_is(argv_norm, "setup", "nginx")
-        || command_is(argv_norm, "teardown", "db")
-        || command_is(argv_norm, "teardown", "nginx");
+    return !lifecycle_subcommand(argv_norm).empty();
 }
 
 static int lifecycle_sudo_required(const std::vector<std::string>& argv_norm) {
@@ -250,6 +267,7 @@ static int run_lifecycle_command(const std::vector<std::string>& argv_norm) {
     args.reserve(argv_norm.size() + 1);
     args.push_back(lifecycleBin);
     args.insert(args.end(), argv_norm.begin(), argv_norm.end());
+    args[2] = lifecycle_subcommand(argv_norm); // alias -> canonical ("setup database" -> "setup db")
 
     std::vector<char*> execArgv;
     execArgv.reserve(args.size() + 1);

@@ -53,20 +53,20 @@ static CommandResult handleListAPIKeys(const CommandCall &call) {
         keys = runtime::Deps::get().apiKeyManager->listUserAPIKeys(call.user->id);
     else keys = runtime::Deps::get().apiKeyManager->listAPIKeys();
 
-    for (const auto &key: keys) {
-        if (!resolver::Admin::has<Perm>({
+    // Filter first, then render once: erasing from `keys` while range-iterating it was UB, and the JSON
+    // branch used to return after inspecting only the first key.
+    std::erase_if(keys, [&](const std::shared_ptr<APIKey>& key) {
+        return !key || !resolver::Admin::has<Perm>({
             .user = call.user,
             .permission = Perm::View,
             .api_key_id = key->id
-        }))
-            std::erase(keys, key);
+        });
+    });
 
-        const auto jsonFlag = usage->resolveFlag("json");
-        if (hasFlag(call, jsonFlag->aliases)) {
-            auto out = nlohmann::json(keys).dump(4);
-            out.push_back('\n');
-            return ok(out);
-        }
+    if (const auto jsonFlag = usage->resolveFlag("json"); jsonFlag && hasFlag(call, jsonFlag->aliases)) {
+        auto out = nlohmann::json(keys).dump(4);
+        out.push_back('\n');
+        return ok(out);
     }
 
     return ok(to_string(keys));

@@ -81,8 +81,23 @@ Sync Interval:
 )";
 
 namespace vh::protocols::shell::commands::vault {
+    // The one RBAC gate for both the flag-driven and the interactive create paths.
+    static std::optional<CommandResult> deny_vault_create(const CommandCall& call, const unsigned int ownerId) {
+        using VPerm = ::vh::rbac::permission::admin::VaultPermissions;
+        if (::vh::rbac::resolver::Admin::has<VPerm>({
+            .user = call.user,
+            .permission = VPerm::Create,
+            .target_user_id = ownerId
+        })) return std::nullopt;
+        return invalid("vault create: user does not have permission to create vaults for user ID " + std::to_string(ownerId));
+    }
+
     static CommandResult finish_vault_create(const CommandCall& call, std::shared_ptr<vh::vault::model::Vault>& v,
                                              const std::shared_ptr<sync::model::Policy>& s) {
+        if (const auto denied = deny_vault_create(call, v->owner_id)) return *denied;
+        if (db::query::vault::Vault::vaultExists(v->name, v->owner_id)) return invalid(
+            "vault create: vault with name '" + v->name + "' already exists for user ID " + std::to_string(v->owner_id));
+
         try {
             const auto [okToProceed, waiver] = handle_encryption_waiver({call, v, false});
             if (!okToProceed) return invalid("vault create: user did not accept encryption waiver");
@@ -92,7 +107,9 @@ namespace vh::protocols::shell::commands::vault {
 
             return ok("\nSuccessfully created new vault!\n" + to_string(v));
         } catch (const std::exception& e) {
-            if (db::query::vault::Vault::vaultExists(v->name, v->owner_id))
+            // Only roll back a vault this call actually created (v->id is set by addVault); the name check above
+            // already refused pre-existing vaults, so this can never remove someone else's.
+            if (v->id != 0 && db::query::vault::Vault::vaultExists(v->name, v->owner_id))
                 vh::runtime::Deps::get().storageManager->removeVault(v->id);
 
             return invalid("\nvault create error: " + std::string(e.what()) + "\n");
@@ -107,6 +124,8 @@ namespace vh::protocols::shell::commands::vault {
 
     static CommandResult handle_vault_create_interactive(const CommandCall& call) {
         const auto& io = call.io;
+        if (!io) return invalid("vault create --interactive: requires an interactive terminal (stdin is not a TTY, "
+                                "or --yes/--non-interactive was given); pass the options as flags instead");
 
         std::shared_ptr<vh::vault::model::Vault> v;
         std::shared_ptr<sync::model::Policy> sync;
@@ -134,12 +153,16 @@ namespace vh::protocols::shell::commands::vault {
         v->quota = quotaStr.empty() ? 0 : parseSize(quotaStr);
 
         const auto ownerPrompt = io->prompt("Enter owner user ID or username (leave blank for yourself):");
-        const auto owner = resolveOwner(call, usage);
+        std::shared_ptr<identities::User> owner = resolveOwner(call, usage);
+        if (!ownerPrompt.empty()) {
+            const auto ownerLkp = resolveUser(ownerPrompt, "vault create");
+            if (!ownerLkp || !ownerLkp.ptr) return invalid(ownerLkp.error);
+            owner = ownerLkp.ptr;
+        }
         v->owner_id = owner->id;
 
-        if (v->owner_id != call.user->id) {
-            // TODO: vault/global perm scoping
-        }
+        // Same RBAC gate as the flag-driven path, checked before any further prompts.
+        if (const auto denied = deny_vault_create(call, v->owner_id)) return *denied;
 
         if (v->type == vh::vault::model::VaultType::Local) {
             auto fSync = std::make_shared<sync::model::LocalPolicy>();
@@ -225,13 +248,7 @@ namespace vh::protocols::shell::commands::vault {
         const auto usage = resolveUsage({"vault", "create"});
         validatePositionals(call, usage);
         const auto owner = resolveOwner(call, usage);
-
-        using VPerm = ::vh::rbac::permission::admin::VaultPermissions;
-        if (!::vh::rbac::resolver::Admin::has<VPerm>({
-            .user = call.user,
-            .permission = VPerm::Create,
-            .target_user_id = owner->id
-        })) return invalid("vault create: user does not have permission to create vaults for user ID " + std::to_string(owner->id));
+        if (const auto denied = deny_vault_create(call, owner->id)) return *denied;
 
         const auto type = parseVaultType(call);
         std::shared_ptr<vh::vault::model::Vault> vault;

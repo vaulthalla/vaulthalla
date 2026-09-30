@@ -151,7 +151,7 @@ export interface WebSocketCommandMap {
 
   'storage.vault.get': { payload: { id: number }; response: { vault: LocalDiskVault | S3Vault } }
 
-  'storage.vault.sync': { payload: { id: number }; response: null }
+  'storage.vault.sync': { payload: { id: number }; response: { status: 'started' | 'rerun_queued' } }
 
   // API Key commands
 

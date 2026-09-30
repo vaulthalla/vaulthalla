@@ -27,8 +27,8 @@ static std::vector<uint8_t> trimSecret(const std::vector<uint8_t>& secret) {
     auto start = secret.begin();
     while (start != secret.end() && std::isspace(*start)) ++start;
     auto end = secret.end();
-    do { --end; } while (end != start && std::isspace(*end));
-    return {start, end + 1};
+    while (end != start && std::isspace(*(end - 1))) --end; // empty/all-whitespace input yields {} (no UB)
+    return {start, end};
 }
 
 static CommandResult handle_secrets_set(const CommandCall& call) {
@@ -38,16 +38,29 @@ static CommandResult handle_secrets_set(const CommandCall& call) {
     const auto secretArg = call.positionals[0];
     const auto fileArg = call.positionals[1];
 
+    if (secretArg == "db-password") {
+        // Resealing alone only changed what the daemon *sends*; the PostgreSQL role kept its old password, so the
+        // next daemon restart or pool reconnect failed authentication. The role password and the sealed copy have
+        // to change together, and the running pool's connection string only changes on restart, so this is an
+        // operator procedure, not an in-daemon operation.
+        return invalid(
+            "secrets set db-password: refusing to change only the sealed copy of the database password; the "
+            "PostgreSQL role password must change with it or the daemon can no longer connect.\n"
+            "To rotate the database password:\n"
+            "  1. Set the new password on the role, e.g.  sudo -u postgres psql -c '\\password vaulthalla'\n"
+            "  2. Hand the same password to the daemon:   write it to /run/vaulthalla/db_password\n"
+            "     (owner vaulthalla, mode 0600, single line)\n"
+            "  3. Restart the daemon:                     sudo systemctl restart vaulthalla\n"
+            "The daemon reseals the handed-off password with the TPM on startup and deletes the file.");
+    }
+
+    if (!std::filesystem::path(fileArg).is_absolute())
+        return invalid("secrets set: the secret file path must be absolute (it is read by the vaulthalla daemon, "
+                       "not in your current directory): " + fileArg);
     if (!std::filesystem::exists(fileArg)) return invalid("secrets set: file does not exist: " + fileArg);
 
     const auto secret = trimSecret(readFileToVector(fileArg));
-
-    if (secretArg == "db-password") {
-        vh::crypto::secrets::TPMKeyProvider tpm(vh::paths::testMode ? "test_psql" : "psql");
-        tpm.init();
-        tpm.updateMasterKey(secret);
-        return ok("Successfully updated database password secret (sealed with TPM)");
-    }
+    if (secret.empty()) return invalid("secrets set: secret file is empty: " + fileArg);
 
     if (secretArg == "jwt-secret") {
         runtime::Deps::get().secretsManager->setJWTSecret({secret.begin(), secret.end()});
@@ -66,8 +79,12 @@ static CommandResult handle_secret_encrypt_and_response(const CommandCall& call,
         if (recipientOpt->empty()) return invalid("secrets export: --recipient requires a value");
         if (!outputOpt) return invalid("secrets export: --recipient requires --output to specify the output file");
 
+        if (const auto pathError = secretOutputPathError(*outputOpt)) return invalid("secrets export: " + *pathError);
+
         try {
+            writePrivateFile(*outputOpt, ""); // pre-create 0600 so gpg's output never exists with a looser mode
             vh::crypto::encryptors::GPG::encryptToFile(output, *recipientOpt, *outputOpt);
+            restrictToOwner(*outputOpt);
             return ok("Secret successfully encrypted and saved to " + *outputOpt);
         } catch (const std::exception& e) {
             return invalid("secrets export: failed to encrypt secret: " + std::string(e.what()));
@@ -75,13 +92,11 @@ static CommandResult handle_secret_encrypt_and_response(const CommandCall& call,
     }
 
     if (outputOpt) {
+        if (const auto pathError = secretOutputPathError(*outputOpt)) return invalid("secrets export: " + *pathError);
         log::Registry::audit()->warn(
             "[shell::handle_secret_encrypt_and_response] No recipient specified, saving unencrypted key(s) to " + *outputOpt);
         try {
-            std::ofstream outFile(*outputOpt);
-            if (!outFile) return invalid("secrets export: failed to open output file " + *outputOpt);
-            outFile << output.dump(4);
-            outFile.close();
+            writePrivateFile(*outputOpt, output.dump(4)); // mode 0600, symlinks refused
             return {0, "secret(s) successfully saved to " + *outputOpt,
                     "\nWARNING: No recipient specified, key(s) are unencrypted.\n"
                     "\nConsider using --recipient with a GPG fingerprint to encrypt the key(s) before saving."};

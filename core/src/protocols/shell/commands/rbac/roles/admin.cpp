@@ -15,6 +15,7 @@
 #include "usages.hpp"
 #include "protocols/shell/commands/helpers.hpp"
 #include "protocols/shell/util/argsHelpers.hpp"
+#include "protocols/RoleGuards.hpp"
 #include "rbac/resolver/Admin.hpp"
 
 #include <algorithm>
@@ -78,8 +79,12 @@ namespace vh::protocols::shell::commands::rbac::roles::admin {
             return invalid(oss.str());
         }
 
-        db::query::rbac::role::Admin::upsert(staged);
-        const auto newRole = db::query::rbac::role::Admin::get(staged->name);
+        std::shared_ptr<vh::rbac::role::Admin> newRole;
+        try {
+            newRole = ::vh::protocols::roles::createAdminRole(staged);
+        } catch (const ::vh::protocols::roles::RoleAlreadyExists& e) {
+            return invalid(e.what());
+        }
         notifications::enqueueAdminRoleCreated(newRole, notifications::actorFromUser("shell", call.user));
         return ok("Role '" + newRole->name + "' created successfully\n" + newRole->toString());
     }
@@ -137,6 +142,9 @@ namespace vh::protocols::shell::commands::rbac::roles::admin {
             return invalid(oss.str());
         }
 
+        if (const auto denied = ::vh::protocols::roles::adminRoleUpdateError(*call.user, *roleLkp.ptr, *staged))
+            return invalid(*denied);
+
         db::query::rbac::role::Admin::upsert(staged);
         notifications::enqueueAdminRoleUpdated(staged, notifications::actorFromUser("shell", call.user));
 
@@ -150,8 +158,8 @@ namespace vh::protocols::shell::commands::rbac::roles::admin {
         const auto roleLkp = resolveAdminRole(call.positionals[0], "role admin delete");
         if (!roleLkp.ptr) return invalid(roleLkp.error);
 
-        if (db::query::rbac::role::admin::Assignments::countAssignmentsForRole(roleLkp.ptr->id) > 0)
-            return invalid("Cannot delete role '" + roleLkp.ptr->name + "' because it has active assignments. Remove those assignments before deleting the role.");
+        if (const auto denied = ::vh::protocols::roles::adminRoleDeleteError(*call.user, *roleLkp.ptr))
+            return invalid(*denied);
 
         db::query::rbac::role::Admin::remove(roleLkp.ptr->id);
         notifications::enqueueAdminRoleDeleted(roleLkp.ptr, notifications::actorFromUser("shell", call.user));

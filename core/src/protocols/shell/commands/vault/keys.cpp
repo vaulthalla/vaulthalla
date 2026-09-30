@@ -1,5 +1,6 @@
 #include "protocols/shell/commands/vault.hpp"
 #include "protocols/shell/util/argsHelpers.hpp"
+#include "protocols/shell/commands/helpers.hpp"
 #include "runtime/Deps.hpp"
 #include "CommandUsage.hpp"
 
@@ -44,8 +45,12 @@ static CommandResult handle_key_encrypt_and_response(const CommandCall& call,
         if (recipientOpt->empty()) return invalid("vault keys export: --recipient requires a value");
         if (!outputOpt) return invalid("vault keys export: --recipient requires --output to specify the output file");
 
+        if (const auto pathError = secretOutputPathError(*outputOpt)) return invalid("vault keys export: " + *pathError);
+
         try {
+            writePrivateFile(*outputOpt, ""); // pre-create 0600 so gpg's output never exists with a looser mode
             crypto::encryptors::GPG::encryptToFile(output, *recipientOpt, *outputOpt);
+            restrictToOwner(*outputOpt);
             return ok("Vault key successfully encrypted and saved to " + *outputOpt);
         } catch (const std::exception& e) {
             return invalid("vault keys export: failed to encrypt vault key: " + std::string(e.what()));
@@ -53,14 +58,12 @@ static CommandResult handle_key_encrypt_and_response(const CommandCall& call,
     }
 
     if (outputOpt) {
+        if (const auto pathError = secretOutputPathError(*outputOpt)) return invalid("vault keys export: " + *pathError);
         log::Registry::audit()->warn(
             "[shell::handle_key_encrypt_and_response] No recipient specified, saving unencrypted key(s) to " + *
             outputOpt);
         try {
-            std::ofstream outFile(*outputOpt);
-            if (!outFile) return invalid("vault keys export: failed to open output file " + *outputOpt);
-            outFile << output.dump(4);
-            outFile.close();
+            writePrivateFile(*outputOpt, output.dump(4)); // mode 0600, symlinks refused
             return {0, "Vault key(s) successfully saved to " + *outputOpt,
                     "\nWARNING: No recipient specified, key(s) are unencrypted.\n"
                     "\nConsider using --recipient with a GPG fingerprint to encrypt the key(s) before saving."};
@@ -89,6 +92,7 @@ static CommandResult export_one_key(const CommandCall& call, const std::shared_p
     const auto context = fmt::format("User: {} -> {}", call.user->name, __func__);
     const auto& key = engine->encryptionManager->get_key(context);
     const auto vaultKey = db::query::vault::Key::getVaultKey(engine->vault->id);
+    if (!vaultKey) return invalid("vault keys export: no key record found for vault ID " + std::to_string(engine->vault->id));
 
     const auto out = generate_json_key_object(engine->vault, key, vaultKey, call.user->name);
     return handle_key_encrypt_and_response(call, out, usage);
@@ -105,6 +109,7 @@ static CommandResult export_all_keys(const CommandCall& call, const std::shared_
     for (const auto& engine : engines) {
         const auto& key = engine->encryptionManager->get_key(context);
         const auto vaultKey = db::query::vault::Key::getVaultKey(engine->vault->id);
+        if (!vaultKey) return invalid("vault keys export: no key record found for vault ID " + std::to_string(engine->vault->id));
         out.push_back(generate_json_key_object(engine->vault, key, vaultKey, call.user->name));
     }
 
@@ -152,6 +157,7 @@ static CommandResult handle_inspect_vault_key(const CommandCall& call) {
     const auto engine = engLkp.ptr;
 
     const auto vaultKey = db::query::vault::Key::getVaultKey(engine->vault->id);
+    if (!vaultKey) return invalid("vault keys inspect: no key record found for vault ID " + std::to_string(engine->vault->id));
 
     return ok(generate_json_key_info_object(engine->vault, vaultKey, call.user->name).dump(4));
 }
@@ -174,30 +180,47 @@ static CommandResult handle_rotate_vault_keys(const CommandCall& call) {
     validatePositionals(call, usage);
 
     const auto syncNow = hasFlag(call, usage->resolveFlag("now")->aliases);
-    const auto rotateKey = [&syncNow](const std::shared_ptr<storage::Engine>& engine) {
-        engine->encryptionManager->prepare_key_rotation();
-        if (syncNow) runtime::Deps::get().syncController->runNow(engine->vault->id);
+
+    // Reports what actually happened per vault: prepare_key_rotation() is a silent no-op while a rotation is
+    // already pending, so that case must not be announced as a fresh rotation.
+    const auto rotateKey = [&syncNow](const std::shared_ptr<storage::Engine>& engine) -> std::string {
+        const auto label = "'" + engine->vault->name + "' (ID: " + std::to_string(engine->vault->id) + ")";
+        const bool alreadyPending = db::query::vault::Key::keyRotationInProgress(engine->vault->id);
+        if (!alreadyPending) engine->encryptionManager->prepare_key_rotation();
+
+        std::string line = alreadyPending
+            ? "Key rotation for " + label + " is already pending; no new rotation was started."
+            : "Key rotation started for " + label + ".";
+
+        if (syncNow) {
+            using RunNowResult = ::vh::sync::Controller::RunNowResult;
+            switch (runtime::Deps::get().syncController->runNow(engine->vault->id)) {
+                case RunNowResult::Started: line += " Sync triggered to re-encrypt data now."; break;
+                case RunNowResult::Rerun: line += " Sync already running; an immediate rerun was queued."; break;
+                case RunNowResult::NoTask:
+                default: line += " WARNING: no sync task is loaded for this vault, so re-encryption did not start."; break;
+            }
+        } else {
+            line += " Existing data is re-encrypted by the next scheduled sync (use --now to sync immediately).";
+        }
+        return line + "\n";
     };
 
     const auto vaultArg = call.positionals[0];
 
     if (vaultArg == "all") {
+        std::string out;
         for (const auto& engine : runtime::Deps::get().storageManager->getEngines())
-            rotateKey(engine);
-
-        return ok("Vault keys for all vaults have been rotated successfully.\n"
-            "If you have --now flag set, the sync will be triggered immediately.");
+            out += rotateKey(engine);
+        if (out.empty()) return invalid("vault keys rotate: no vaults found");
+        return ok(out);
     }
 
     const auto engLkp = resolveEngine(call, vaultArg, usage, ERR);
     if (!engLkp || !engLkp.ptr) return invalid(engLkp.error);
     const auto engine = engLkp.ptr;
 
-    rotateKey(engine);
-
-    return ok("Vault key for '" + engine->vault->name + "' (ID: " + std::to_string(engine->vault->id) +
-              ") has been rotated successfully.\n"
-              "If you have --now flag set, the sync will be triggered immediately.");
+    return ok(rotateKey(engine));
 }
 
 static bool isVaultKeysMatch(const std::string& cmd, const std::string_view input) {
