@@ -255,8 +255,19 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
 
-      - name: Run release tooling tests
-        run: python -m unittest discover -s tools/release/tests -p 'test_*.py'
+      - name: Run release tooling + lifecycle tests (with minimum test counts)
+        run: python -m tools.release run-tests
+
+      - name: Install shellcheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            sudo apt-get install -y shellcheck || { sudo apt-get update && sudo apt-get install -y shellcheck; }
+          fi
+
+      - name: shellcheck (maintainer scripts blocking, bin/ advisory)
+        run: bash .github/scripts/shellcheck.sh
 
   web-verify:
     name: Web build and checks
