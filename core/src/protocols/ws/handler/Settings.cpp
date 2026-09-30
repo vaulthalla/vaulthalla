@@ -17,7 +17,15 @@ json Settings::get(const std::shared_ptr<Session>& session) {
 json Settings::update(const json& payload, const std::shared_ptr<Session>& session) {
     if (!session->user->isSuperAdmin()) throw std::runtime_error("Permission denied: Only admins can update settings");
 
-    const vh::config::Config config(payload);
+    if (!payload.is_object()) throw std::runtime_error("settings.update expects an object of settings sections");
+
+    // Partial update: merge the payload onto the current settings so sections/fields the client didn't send
+    // (or doesn't model) keep their values instead of being reset or rejected. Secrets are not part of this
+    // JSON (the DB password is TPM-sealed, the JWT secret lives in the secrets manager) and can't be set here.
+    nlohmann::json merged = vh::config::Registry::get();
+    merged.merge_patch(payload);
+
+    const vh::config::Config config(merged);
     config.save();
     vh::config::Registry::set(config);
     return {{"settings", config}};

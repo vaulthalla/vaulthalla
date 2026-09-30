@@ -114,11 +114,11 @@ export interface WebSocketCommandMap {
 
   'auth.logout': { payload: null; response: { success: boolean } }
 
-  'auth.me': { payload: null; response: { user: User } }
-
   'auth.users.list': { payload: null; response: { users: User[] } }
 
   'auth.user.get': { payload: { id: number }; response: { user: User } }
+
+  'auth.user.delete': { payload: { id: number }; response: { user_id: number } }
 
   'auth.user.get.byName': { payload: { name: string }; response: { user: User } }
 
@@ -157,7 +157,6 @@ export interface WebSocketCommandMap {
 
   'storage.apiKey.list': { payload: null; response: { keys: string } }
 
-  'storage.apiKey.list.user': { payload: null; response: { keys: string /* JSON string of API keys */ } }
 
   'storage.apiKey.add': { payload: Partial<S3APIKey>; response: null }
 
@@ -192,6 +191,16 @@ export interface WebSocketCommandMap {
   'roles.vault.list': { payload: null; response: { roles: VaultRoleDTO[] } }
 
   'roles.vault.list.assigned': { payload: { id: number }; response: { vault: VaultRoleDTO } }
+
+  'role.vault.assign': {
+    payload: { id: number; vault_id: number; subject_type: 'user' | 'group'; subject_id: number }
+    response: { assignment: VaultRoleDTO }
+  }
+
+  'role.vault.unassign': {
+    payload: { vault_id: number; subject_type: 'user' | 'group'; subject_id: number }
+    response: { unassigned: boolean }
+  }
 
   'permission.get': { payload: { id: number }; response: { permission: Permission } }
 
@@ -426,15 +435,8 @@ export interface WebSocketCommandMap {
 
   'group.get.byName': { payload: { name: string }; response: { group: Group } }
 
-  'group.get.byVolume': { payload: { volume_id: number }; response: { group: Group } }
-
-  'group.volume.add': { payload: { group_id: number; volume_id: number }; response: { group: Group } }
-
-  'group.volume.remove': { payload: { group_id: number; volume_id: number }; response: { group: Group } }
-
   'groups.list.byUser': { payload: { user_id: number }; response: { groups: Group[] } }
 
-  'groups.list.byVolume': { payload: { volume_id: number }; response: { groups: Group[] } }
 
   // FS commands
 
