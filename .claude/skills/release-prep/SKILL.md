@@ -9,27 +9,42 @@ Background reading: `.claude/context/release-pipeline.md`.
 
 ## Steps
 
-1. **Preconditions.** Be on a clean branch off `main`, and check that `python3 -m tools.release check` passes on the current state.
-2. **Bump.** Choose the semver level from the change set: patch for fixes, minor for features or new migrations/commands,
-   major for breaking config, CLI, or package contracts.
+1. **Preconditions.** On `main`, tracked files clean, in sync with `origin/main`. `python3 -m tools.release check`
+   passes and `python3 -m tools.release run-tests` is green (it enforces minimum test counts per suite).
+2. **Choose the level** from the change set (`git log vPREV..HEAD --stat`): patch for fixes, minor for features or
+   new migrations/commands, major for breaking config, CLI, or package contracts.
+3. **Changelog body.** CI's AI path only runs if `OPENAI_API_KEY` is visible to `release-artifacts` (as of
+   2026-09-30 it is a Production-environment secret, so it is not). Otherwise the manual fallback is used and it
+   **fails** if the `debian/changelog` top entry predates the previous tag. Write a real top entry when needed.
+   Offline preview: `python3 -m tools.release changelog draft --format raw`. Don't call live AI providers locally
+   unless the user asks.
+4. **Lab gate (recommended for anything touching packaging or runtime).** Build and upgrade-test on the lab first:
    ```bash
-   python3 -m tools.release bump patch        # or: set-version X.Y.Z
-   python3 -m tools.release sync --dry-run    # should report nothing left to change
-   git diff --stat                            # expect exactly: VERSION meson.build web/package.json debian/changelog
+   python3 -m tools.release build-deb --output-dir /tmp/claude-release
+   python3 -m tools.release lab-smoke --host vh-storage --deb /tmp/claude-release/vaulthalla_<ver>_amd64.deb \
+     --from-version <prev>-1 --evidence /tmp/claude-release/lab-smoke.json [--pg-restart]
    ```
-   Repo convention for the commit message: `bump version to X.Y.Z and update changelog, meson.build, package.json, and VERSION file`.
-3. **Verify.** Run `bash tools/dev/verify.sh release packaging`, plus the profiles for whatever
-   shipped since the last tag (`git log vPREV..HEAD --stat`). Report the known packaging failure honestly if it's still present.
-4. **Changelog preview (optional, offline).** `python3 -m tools.release changelog draft --format raw`. AI stages need
-   `OPENAI_API_KEY` and are run by CI. Don't call live providers locally unless the user asks.
-5. **Lab gate (recommended for anything touching packaging or runtime).** Build the `.deb` and upgrade-test it on
-   vh-storage with the `/lab` skill **before** tagging. Publishing is irreversible: the tag triggers
-   `publish-debian` to `apt.vaulthalla.sh stable`, and real hosts pull it.
-6. **Tag and push only on explicit user instruction.** `git tag vX.Y.Z && git push origin vX.Y.Z` triggers
-   `release.yml`: 10 jobs, with the `Production` environment gating publish/docs/ledger.
+   `lab-smoke` mutates the host, so follow the `/lab` permission boundary. Publishing is irreversible: a published
+   version can never be replaced (publish-deb refuses different bytes under the same version).
+5. **Cut locally** (no push). This runs check plus the suites, bumps exactly the 4 managed files, commits
+   `chore(release): vX.Y.Z`, and creates an annotated tag:
+   ```bash
+   python3 -m tools.release cut-release patch      # or minor | major | X.Y.Z
+   git show --stat HEAD                            # expect: VERSION meson.build web/package.json debian/changelog
+   ```
+6. **Push only on explicit user instruction.** `python3 -m tools.release cut-release X.Y.Z --push` resumes from the
+   local tag and runs `git push --atomic` of `main` plus the tag. That triggers `release.yml`. Then:
+   `python3 -m tools.release release-status X.Y.Z --watch`.
+   The GitHub UI "publish release" with tag `vX.Y.Z` triggers the same workflow, but only after the bump commit is on `main`.
+
+## After a failed run
+
+- Use "Re-run failed jobs", never "Re-run all jobs" after `publish-debian` uploaded (a rebuild would be refused as an
+  overwrite). A failed `docs-publish` doesn't affect the APT release or the success ledger.
+- `publish-deb` is idempotent: identical bytes already live are skipped, and it re-verifies sha256 in the APT index.
 
 ## Don'ts
 
-- Don't hand-edit versions in the managed files. Use `set-version`/`bump` so `check` stays green.
-- Don't use `make release` / `bin/install_deb.sh --push` (the legacy Nexus push path) unless the user asks for it.
+- Don't hand-edit versions in the managed files. Use `cut-release`, `set-version`, or `bump` so `check` stays green.
+- `bin/install_deb.sh --push` is retired, and `make release` never pushes. The only uploader is `publish-deb`.
 - Don't create tags, push, or trigger workflow_dispatch without being told to in this conversation.

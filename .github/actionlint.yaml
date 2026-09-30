@@ -1,0 +1,5 @@
+# Local lint config: `actionlint` (pip install actionlint-py) from the repo root.
+self-hosted-runner:
+  labels:
+    - ubuntu-latest-lts
+    - vh-lab

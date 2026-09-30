@@ -1,58 +1,45 @@
 # Debian Publication and Live APT Validation
 
-This document defines the Phase 12 publication boundary and the follow-up
-validation seam for live APT install testing.
-
 ## CI publication contract
 
-Release workflow publication is driven by:
+Publication is configured by:
 
 - `RELEASE_PUBLISH_MODE` (`disabled` or `nexus`)
-- `NEXUS_REPO_URL`
-- `NEXUS_USER`
-- `NEXUS_PASS`
+- `NEXUS_REPO_URL` (upload target; also the APT base used for index reads unless
+  `RELEASE_APT_REPOSITORY_URL` is set)
+- `NEXUS_USER`, `NEXUS_PASS` (step-scoped secrets; passed to curl on stdin via `--config -`, never argv)
+- `RELEASE_APT_SUITE` / `RELEASE_APT_COMPONENTS` / `RELEASE_APT_ARCHITECTURES` (index location)
 
-The workflow always runs the publication command:
+The `publish-debian` job runs:
 
 ```bash
-python3 -m tools.release publish-deb --output-dir <artifact_dir>
+python3 -m tools.release publish-deb --output-dir release --require-enabled [--lab-evidence lab/lab-smoke.json]
 ```
 
-Behavior:
+## Idempotency and integrity (a published version is immutable)
 
-- `RELEASE_PUBLISH_MODE=disabled`: publication is skipped with explicit logs.
-- `RELEASE_PUBLISH_MODE=nexus`: publication is required and fails fast if:
-  - Nexus credentials/config are missing
-  - no `.deb` artifacts exist in the release output directory
-  - Nexus upload fails for any selected artifact
+Nexus accepts re-uploads of an existing version (v1.6.4/1.6.5 re-runs replaced live bytes), so
+`publish-deb` enforces immutability itself. For each staged `.deb`
+(`<package>_<version>_<arch>.deb`):
 
-No runner-local environment sourcing is used in canonical CI publication logic.
+| APT `Packages` index says | Action |
+|---|---|
+| version absent | upload |
+| version present, same SHA256 | skip (success) |
+| version present, different SHA256 | **fail** (`PublicationIntegrityError`) |
+| version present, no SHA256 field | fail (identity cannot be proven) |
+| absent, but a newer version is live | fail unless `--allow-older-version` |
 
-## Artifact selection
+Before planning, the `.deb` must match `SHA256SUMS` (written by `build-deb`, verified by
+`validate-release-artifacts`); with `--lab-evidence`, it must also be the exact package lab-smoke
+passed. The index is read fail-closed: if any component/architecture index is unreadable, nothing
+is uploaded. After uploading, the index is polled (`--verify-attempts`, `--verify-delay`) until each
+package is listed **with the expected SHA256**.
 
-`publish-deb` publishes deterministic Debian artifacts from the staged release
-output directory:
+Re-running a failed `publish-debian` job is safe: it skips what is already live and re-verifies.
+Re-running *all jobs* rebuilds the package (new bytes) and will be refused; use "Re-run failed jobs".
 
-- all files matching `*.deb` (sorted deterministically)
+## Live validation
 
-This keeps selection explicit and aligned to the package action output contract.
-
-## Phase 12b live APT validation seam
-
-After publication is complete, live install validation should run against the
-real repository endpoint, not local files. Suggested validation flow:
-
-1. Provision a clean Debian/Ubuntu target.
-2. Configure APT source list to the published Nexus/APT endpoint.
-3. Run:
-   - `apt update`
-   - `apt install vaulthalla`
-4. Verify:
-   - package dependency resolution
-   - `vaulthalla-web.service` starts correctly
-   - web runtime payload exists at `/usr/share/vaulthalla-web`
-   - maintainer-script lifecycle semantics for remove/purge
-5. Execute upgrade validation:
-   - publish a newer package revision
-   - `apt upgrade vaulthalla`
-   - verify service/runtime continuity and expected script behavior
+Real-host validation is `python3 -m tools.release lab-smoke` (see `.claude/context/release-pipeline.md`):
+N-1 → N upgrade, units, FUSE, `vh status`, config integrity, optional PostgreSQL restart and reboot.
