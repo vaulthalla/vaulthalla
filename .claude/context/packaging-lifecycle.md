@@ -8,7 +8,7 @@ semantics do **not** match `apt remove/purge`.
 
 - `config/config.yaml` (default runtime config, ports 36969/36970/39000), `config/config_template.yaml.in`.
   A gitignored repo-root `config.yaml` overrides it for source installs (`bin/setup/install_dirs.sh`).
-- `psql/000…096_*.sql`: schema + ordered migrations → `/usr/share/vaulthalla/psql`.
+- `psql/000…097_*.sql`: schema + ordered migrations → `/usr/share/vaulthalla/psql`.
 - `systemd/`: `vaulthalla.service.in` (server, user `vaulthalla`), `vaulthalla-cli.service.in` +
   `vaulthalla-cli.socket` (`--systemd`, unix socket), `vaulthalla-web.service.in` (`node
   /usr/share/vaulthalla-web/server.js`), `vaulthalla-swtpm.service.in` (software TPM fallback).
