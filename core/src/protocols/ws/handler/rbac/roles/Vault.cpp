@@ -1,5 +1,6 @@
 #include "protocols/ws/handler/rbac/roles/Vault.hpp"
 #include "protocols/ws/Session.hpp"
+#include "protocols/RoleGuards.hpp"
 #include "db/query/rbac/role/Vault.hpp"
 #include "db/query/rbac/role/vault/Assignments.hpp"
 #include "identities/User.hpp"
@@ -16,9 +17,10 @@ namespace vh::protocols::ws::handler::rbac::roles {
         if (!session->user->vaultRolePerms().canAdd())
             throw std::runtime_error("Permission denied: Only admins can add roles");
 
-        auto role = std::make_shared<role::Vault>(payload);
-        role->id = db::query::rbac::role::Vault::upsert(role);
-        return {{"role", *role}};
+        // Create is insert-only: an existing name is an error, never an overwrite.
+        const auto staged = std::make_shared<vh::rbac::role::Vault>(payload);
+        const auto created = protocols::roles::createVaultRole(staged);
+        return {{"role", *created}};
     }
 
     json Vault::remove(const json& payload, const std::shared_ptr<Session>& session) {
@@ -26,6 +28,11 @@ namespace vh::protocols::ws::handler::rbac::roles {
             throw std::runtime_error("Permission denied: Only admins can remove roles");
 
         const auto roleId = payload.at("id").get<uint32_t>();
+        const auto existing = db::query::rbac::role::Vault::get(roleId);
+        if (!existing) throw std::runtime_error("Role not found");
+        if (const auto denied = protocols::roles::vaultRoleDeleteError(*existing))
+            throw std::runtime_error(*denied);
+
         db::query::rbac::role::Vault::remove(roleId);
         return {{"role_id", roleId}};
     }
@@ -34,10 +41,11 @@ namespace vh::protocols::ws::handler::rbac::roles {
         if (!session->user->vaultRolePerms().canEdit())
             throw std::runtime_error("Permission denied: Only admins can update roles");
 
-        auto role = db::query::rbac::role::Vault::get(payload.at("id").get<uint32_t>());
-        role->updateFromJson(payload);
-        db::query::rbac::role::Vault::upsert(role);
-        return {{"role", *role}};
+        auto existing = db::query::rbac::role::Vault::get(payload.at("id").get<uint32_t>());
+        if (!existing) throw std::runtime_error("Role not found");
+        existing->updateFromJson(payload);
+        db::query::rbac::role::Vault::upsert(existing);
+        return {{"role", *existing}};
     }
 
     json Vault::get(const json& payload, const std::shared_ptr<Session>& session) {
@@ -116,6 +124,9 @@ namespace vh::protocols::ws::handler::rbac::roles {
             .target_subject_id = subjectId,
             .vault_id = vaultId
         })) throw std::runtime_error("Permission denied");
+
+        if (!db::query::rbac::role::vault::Assignments::exists(vaultId, subjectType, subjectId))
+            throw std::runtime_error("No vault role is assigned to this " + subjectType + " on this vault");
 
         db::query::rbac::role::vault::Assignments::unassign(vaultId, subjectType, subjectId);
         return {{"unassigned", true}};

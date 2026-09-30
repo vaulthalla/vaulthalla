@@ -3,20 +3,21 @@ import { WSCommandPayload } from '@/util/webSocketCommands'
 import { Settings } from '@/models/settings'
 import { useWebSocketStore } from '@/stores/useWebSocket'
 
-interface PermissionStore {
+interface SettingsStore {
   getSettings: () => Promise<Settings | undefined>
-  updateSettings: (payload: WSCommandPayload<'settings.update'>) => Promise<void>
+  updateSettings: (payload: WSCommandPayload<'settings.update'>) => Promise<Settings>
 }
 
-export const useSettingsStore = create<PermissionStore>(() => ({
+export const useSettingsStore = create<SettingsStore>(() => ({
   async getSettings() {
     const sendCommand = useWebSocketStore.getState().sendCommand
     const response = await sendCommand('settings.get', null)
-    return Settings.fromData(response.settings)
+    return response.settings
   },
 
   async updateSettings(payload) {
     const sendCommand = useWebSocketStore.getState().sendCommand
-    await sendCommand('settings.update', payload)
+    const response = await sendCommand('settings.update', payload)
+    return response.settings
   },
 }))

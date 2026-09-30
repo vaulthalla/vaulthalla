@@ -61,16 +61,30 @@ ShellServer is not created in test mode (`paths::testMode`).
 `vh` / `vaulthalla` are symlinks to `vaulthalla-cli` (created by `bin/setup/install_dirs.sh` and the Debian payload).
 1. `core/main/cli.cpp` normalizes args and connects to `/run/vaulthalla/cli.sock`.
 2. It sends a JSON frame `{cmd, args, line, interactive}`.
-3. `shell/Server.cpp` authenticates the peer by UID/group (the `vaulthalla` group plus the app-user UID mapping) and dispatches the frame.
+3. `shell/Server.cpp` authenticates the peer by UID/group (the `vaulthalla` group plus the app-user UID mapping), answers
+   with a `{"type":"hello"}` frame, then dispatches the frame. Each client runs on its own thread (cap 16, extra
+   clients get exit 75 "busy"); request reads time out after 10s, prompt answers after 15 min, sends after 30s, and
+   writes use `MSG_NOSIGNAL`. `status`/`version` skip the DB user lookup so they work while the DB is down.
 4. `shell/Router.cpp` with `core/include/protocols/shell/Parser.hpp` tokenizes the line and runs the handler; output frames stream back.
 5. Usage/help comes from `core/usage/*` (root alias hard-coded as `vh`). The same code drives the `vh_usage` manpage
    generator and the integration-test command models, so CLI UX changes ripple into man pages and tests.
+
+Invariants: the **daemon owns `/run/vaulthalla/cli.sock`** (binds it itself; every ~1s it checks the path still points
+at its listener and rebinds if something replaced it). `deploy/systemd/vaulthalla-cli.{socket,service}` are obsolete
+(`vaulthalla-cli --systemd` never existed as a mode; the unit connected to its own socket and hung) and should not be
+shipped. The client waits at most `VAULTHALLA_CLI_TIMEOUT` (default 10s) for the first frame and exits 69 (no daemon),
+75 (not responding), 77 (not in the `vaulthalla` group), 76 (reply without exit status). `vh status` exits 0/1/2 for
+healthy/degraded/critical and includes a live `SELECT 1` DB probe.
 
 ### WebSocket flow
 
 The web client builds `ws(s)://<host>/ws` in `web/src/util/getUrl.ts` (overridable with `NEXT_PUBLIC_VAULTHALLA_WS_ORIGIN`).
 `web/src/stores/useWebSocket.ts` handles reconnect, the pending-request map keyed by `requestId`, and token injection.
 Router allowlists are **exact and per session mode**: unauthenticated, human, pending-share, and ready-share.
+While a human session's password still equals the seeded default, the Router serves only the
+`default_password::isAllowedWhileDefault` commands (`protocols/ws/DefaultPasswordGate.cpp`, issue #103) and answers
+everything else with `data.code = "password_change_required"`. `auth.login` is rate-limited per IP + account
+(`ShareRateLimit.cpp`). The Router's debug log redacts credentials (`LogRedaction.cpp`); never log a raw ws message.
 See `link-sharing.md`.
 
 ### HTTP auth/session proxy

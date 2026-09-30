@@ -104,6 +104,11 @@ WaiverResult commands::vault::handle_encryption_waiver(const WaiverContext& ctx)
     const auto waiverText = s3Vault->encrypt_upstream ?
         ENABLE_UPSTREAM_ENCRYPTION_WAIVER : DISABLE_UPSTREAM_ENCRYPTION_WAIVER;
 
+    // The waiver must be accepted by a person at a terminal; without one there is nobody to ask.
+    if (!ctx.call.io)
+        throw std::runtime_error("this change requires accepting an encryption waiver, which needs an interactive "
+                                 "terminal; re-run the command in a TTY without --yes/--non-interactive");
+
     if (const auto res = ctx.call.io->prompt(waiverText, "I DO NOT ACCEPT"); res == "I ACCEPT") {
         const auto waiver = create_encrypt_waiver(ctx.call, s3Vault);
         if (!waiver) throw std::runtime_error("Failed to create encryption waiver");

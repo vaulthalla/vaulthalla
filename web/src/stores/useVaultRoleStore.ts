@@ -11,6 +11,8 @@ interface VaultRoleStore {
   fetchVaultRoles: () => Promise<void>
   fetchAssignedRoles: (payload: WSCommandPayload<'roles.vault.list.assigned'>) => Promise<VaultRole[]>
   addVaultRole: (payload: WSCommandPayload<'role.vault.add'>) => Promise<void>
+  assignVaultRole: (payload: WSCommandPayload<'role.vault.assign'>) => Promise<void>
+  unassignVaultRole: (payload: WSCommandPayload<'role.vault.unassign'>) => Promise<void>
   removeVaultRole: (payload: WSCommandPayload<'role.vault.delete'>) => Promise<void>
   updateVaultRole: (payload: WSCommandPayload<'role.vault.update'>) => Promise<void>
   getVaultRole: (payload: WSCommandPayload<'role.vault.get'>) => Promise<VaultRole | null | undefined>
@@ -59,6 +61,20 @@ export const useVaultRoleStore = create<VaultRoleStore>()(
         await ws.waitForConnection()
         await ws.sendCommand('role.vault.add', payload)
         await get().fetchVaultRoles()
+      },
+
+      async assignVaultRole(payload) {
+        const ws = useWebSocketStore.getState()
+        await ws.waitForConnection()
+        await ws.sendCommand('role.vault.assign', payload)
+        await get().fetchAssignedRoles({ id: payload.vault_id })
+      },
+
+      async unassignVaultRole(payload) {
+        const ws = useWebSocketStore.getState()
+        await ws.waitForConnection()
+        await ws.sendCommand('role.vault.unassign', payload)
+        await get().fetchAssignedRoles({ id: payload.vault_id })
       },
 
       async removeVaultRole({ id }) {

@@ -15,10 +15,6 @@ interface PermissionStore {
   addGroupMember: (payload: WSCommandPayload<'group.member.add'>) => Promise<void>
   removeGroupMember: (payload: WSCommandPayload<'group.member.remove'>) => Promise<void>
   getGroupsByUser: (payload: WSCommandPayload<'groups.list.byUser'>) => Promise<Group[]>
-  getGroupsByVolume: (payload: WSCommandPayload<'groups.list.byVolume'>) => Promise<Group[]>
-  getGroupByVolume: (payload: WSCommandPayload<'group.get.byVolume'>) => Promise<Group | undefined>
-  addGroupVolume: (payload: WSCommandPayload<'group.volume.add'>) => Promise<void>
-  removeGroupVolume: (payload: WSCommandPayload<'group.volume.remove'>) => Promise<void>
 }
 
 export const useGroupStore = create<PermissionStore>()(
@@ -87,32 +83,6 @@ export const useGroupStore = create<PermissionStore>()(
         const sendCommand = useWebSocketStore.getState().sendCommand
         const response = await sendCommand('groups.list.byUser', { user_id })
         return response.groups
-      },
-
-      async getGroupsByVolume({ volume_id }) {
-        const sendCommand = useWebSocketStore.getState().sendCommand
-        const response = await sendCommand('groups.list.byVolume', { volume_id })
-        return response.groups
-      },
-
-      async getGroupByVolume({ volume_id }) {
-        const sendCommand = useWebSocketStore.getState().sendCommand
-        const response = await sendCommand('group.get.byVolume', { volume_id })
-        return response.group
-      },
-
-      async addGroupVolume({ group_id, volume_id }) {
-        const sendCommand = useWebSocketStore.getState().sendCommand
-        const response = await sendCommand('group.volume.add', { group_id, volume_id })
-        const updatedGroup = response.group
-        set(state => ({ groups: state.groups.map(g => (g.id === updatedGroup.id ? updatedGroup : g)) }))
-      },
-
-      async removeGroupVolume({ group_id, volume_id }) {
-        const sendCommand = useWebSocketStore.getState().sendCommand
-        const response = await sendCommand('group.volume.remove', { group_id, volume_id })
-        const updatedGroup = response.group
-        set(state => ({ groups: state.groups.map(g => (g.id === updatedGroup.id ? updatedGroup : g)) }))
       },
     }),
     {

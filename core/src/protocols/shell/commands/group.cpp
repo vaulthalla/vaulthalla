@@ -17,12 +17,18 @@ using namespace vh;
 using namespace vh::protocols::shell;
 using namespace vh::identities;
 
+// Never returns null: an unknown group is a command error, not a pointer every caller has to remember to check
+// (an unchecked nullptr here used to segfault the daemon on `vh group info nosuch`).
 static std::shared_ptr<Group> resolveGroup(const std::string& groupNameOrId) {
+    std::shared_ptr<Group> group;
     if (const auto gidOpt = parseUInt(groupNameOrId)) {
         if (*gidOpt <= 0) throw std::runtime_error("Group ID must be a positive integer");
-        return db::query::identities::Group::getGroup(*gidOpt);
+        group = db::query::identities::Group::getGroup(*gidOpt);
+    } else {
+        group = db::query::identities::Group::getGroupByName(groupNameOrId);
     }
-    return db::query::identities::Group::getGroupByName(groupNameOrId);
+    if (!group) throw std::runtime_error("group not found: " + groupNameOrId);
+    return group;
 }
 
 static void assignGidIfAvailable(const CommandCall& call, const std::shared_ptr<Group>& group, const std::shared_ptr<CommandUsage>& usage) {
@@ -152,7 +158,7 @@ static CommandResult handle_group_list_users(const CommandCall& call) {
     if (!call.user->groupPerms().canViewMembers())
         return invalid("group list-users: you do not have permission to view group members");
 
-    const auto usage = resolveUsage({"group", "list-users"});
+    if (call.positionals.empty()) return invalid("group user list: missing group name or ID");
     const auto group = resolveGroup(call.positionals[0]);
     return ok(to_string(group->members));
 }
