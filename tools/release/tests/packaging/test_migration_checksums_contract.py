@@ -153,19 +153,24 @@ class MigrationChecksumContractTests(unittest.TestCase):
             blob_hash[blob] = _sha256(batch[start:start + int(size)])
             offset = start + int(size) + 1
 
-        problems: list[str] = []
+        bad: dict[tuple[str, str], set[str]] = defaultdict(set)
         for blob, uses in blob_to_paths.items():
             digest = blob_hash[blob]
-            for tag, name in sorted(uses):
+            for tag, name in uses:
                 if name not in current:
-                    problems.append(f"{tag}: shipped {name}, which no longer exists")
+                    bad[(name, "(file removed)")].add(tag)
                 elif digest != current[name] and digest not in historical.get(name, set()):
-                    problems.append(f"{tag}: shipped {name} with sha256 {digest}, which is neither current nor "
-                                    "an accepted historical checksum")
-        self.assertFalse(
-            problems,
-            "released migrations changed in place without a reviewed allowlist entry:\n  " + "\n  ".join(problems),
-        )
+                    bad[(name, digest)].add(tag)
+        if bad:
+            lines = [
+                f"{name} sha256 {digest} shipped in {len(tags_)} tag(s), e.g. {sorted(tags_)[:3]}"
+                for (name, digest), tags_ in sorted(bad.items())
+            ]
+            self.fail(
+                "released migrations changed in place without a reviewed allowlist entry "
+                "(add a forward migration plus a 'historical' lock line and a kHistoricalMigrationChecksums "
+                "entry, or revert the edit):\n  " + "\n  ".join(lines)
+            )
 
 
 if __name__ == "__main__":
