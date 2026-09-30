@@ -341,7 +341,10 @@ COMMANDS = {
     },
 
     "publish-deb": {
-        "help": "Publish staged Debian package artifacts to Nexus.",
+        "help": (
+            "Publish staged Debian packages to Nexus, idempotently: skip versions already live with the same "
+            "sha256, refuse different bytes under a published version, verify sha256 in the APT index after upload."
+        ),
         "func": cmd_publish_deb,
         "args": [
             {
@@ -391,6 +394,36 @@ COMMANDS = {
                 "kwargs": {
                     "action": "store_true",
                     "help": "Fail if publication mode resolves to disabled for this run.",
+                },
+            },
+            {
+                "flags": ["--allow-older-version"],
+                "kwargs": {
+                    "action": "store_true",
+                    "help": "Allow publishing a version older than the newest one already in the APT index.",
+                },
+            },
+            {
+                "flags": ["--lab-evidence"],
+                "kwargs": {
+                    "default": None,
+                    "help": "lab-smoke evidence JSON; publication fails unless it passed for the same .deb sha256.",
+                },
+            },
+            {
+                "flags": ["--verify-attempts"],
+                "kwargs": {
+                    "type": int,
+                    "default": 10,
+                    "help": "Post-upload APT index polls before failing (default: 10).",
+                },
+            },
+            {
+                "flags": ["--verify-delay"],
+                "kwargs": {
+                    "type": float,
+                    "default": 15.0,
+                    "help": "Seconds between post-upload APT index polls (default: 15).",
                 },
             },
         ],
