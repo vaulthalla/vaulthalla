@@ -399,6 +399,11 @@ purge_config_dir() {
         echo "[${PKG}] Preserved operator-provided certbot credentials in ${CERTBOT_CREDENTIALS_DIR}."
         echo "[${PKG}]   Remove them after retiring the certificates: sudo rm -r ${CERTBOT_CREDENTIALS_DIR}"
     fi
+    if [ -d "${CONFIG_DIR}/testing" ]; then
+        # Operator-managed TEST-ONLY provider credentials; never shipped or removed by the package.
+        echo "[${PKG}] Preserved operator-managed ${CONFIG_DIR}/testing/ (not package-owned)."
+    fi
+    # Only ever rmdir: anything the package did not create stays in place.
     rmdir "$CONFIG_DIR" 2>/dev/null || true
 }
 

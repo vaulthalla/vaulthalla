@@ -194,7 +194,9 @@ also removes `/var/log/vaulthalla`, `/var/cache/vaulthalla-web`, the runtime
 `/etc/letsencrypt/renewal-hooks/deploy/vaulthalla-nginx-reload.sh`, and
 `/etc/vaulthalla/config.yaml`. Operator-provided certbot credentials in
 `/etc/vaulthalla/certbot/` are kept (certbot renewal configs still reference
-them) and the purge output says how to remove them.
+them) and the purge output says how to remove them. Operator-managed test
+credentials in `/etc/vaulthalla/testing/` are never shipped, touched on upgrade
+or removed on purge; `/etc/vaulthalla` is only removed when it is empty.
 
 Reinstall after remove
 ======================
