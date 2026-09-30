@@ -40,6 +40,11 @@ vaulthalla (1.6.6-1) unstable; urgency=high
       could hang every `vh` call; upgrades stop and purge them (#110).
     - Web "Edit User" now edits the selected user (it modified the calling
       admin); users can no longer rebind their own Linux UID (#126).
+    - A failing WebSocket handshake or protocol handler no longer aborts the
+      daemon; an undecryptable JWT secret (DB adopted after purge) is
+      regenerated; session close no longer races the read loop (#127, #129).
+    - Web login works on plain-HTTP installs: the session cookie is Secure
+      only when the browser-facing request was HTTPS (#128).
     - Fix daemon crash on unknown group, RBAC on interactive vault create,
       api-key list --json filtering, success reported without state change,
       settings.update, ws contract drift, and secret redaction (#112-#115).
