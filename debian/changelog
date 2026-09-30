@@ -1,12 +1,52 @@
-vaulthalla (1.6.6-1) unstable; urgency=medium
+vaulthalla (1.6.6-1) unstable; urgency=high
 
-  - update nginx template path
-  - enhance installation scripts
-  - refactor command argument handling
-  - Important files: debian/rules; debian/install; debian/prerm.ex
-  - Retained snippet: debian/prerm.ex
-  - Caution: packaging changes require verification
-  - add raw payload capture for artifacts
-  - update output structure for hosted schema
+  * Runtime
+    - Fix DB pool slot leak that wedged the daemon (FUSE, CLI, apt) forever
+      after a PostgreSQL restart; reconnect with backoff, bounded acquire,
+      database health in `vh status` (#97).
+    - Fix 1.5.x -> 1.6.x upgrade crash loop: accept reviewed historical
+      checksums for migrations edited after shipping (020, 060, 082) and add
+      097 forward migration; guard shipped migrations against edits (#98).
+  * Packaging
+    - Maintainer scripts never touch the FUSE mount (mountinfo probe) and bound
+      every systemctl/psql call; prerm waits for the daemon to really stop
+      (#99, #100).
+    - Purge succeeds when /var/lib/vaulthalla is a mount point and gives
+      post-purge DB cleanup commands that work without `vh` (#100).
+    - Detect an orphaned DB on (re)install: auto-adopt empty DBs, otherwise
+      prompt adopt/overwrite/abort (VH_EXISTING_DB_ACTION when
+      noninteractive); fix `vh teardown db`; `vh setup db` reports honestly
+      and supports --adopt/--overwrite (#101).
+    - nginx site now serves on stock Ubuntu nginx (unmodified distro default
+      site is disabled on fresh install and restored on purge/teardown) (#102).
+    - Default config ships under /usr/share/vaulthalla/config and is installed
+      to /etc only if missing (no conffile prompts); fresh installs bind
+      websocket/preview to 127.0.0.1 (#103, #104).
+    - Installs without a TPM/swtpm or without running systemd defer instead of
+      failing; opt-outs persist across upgrades; reinstall after remove
+      restores units (#105, #106).
+    - Depends on fuse3 and python3; Wants= instead of Requires= postgresql;
+      StartLimit on units; drop static libs/headers, duplicate udev rule and
+      dh_make leftovers (#107).
+  * Security and CLI
+    - Enforce the default admin password change server-side and rate-limit
+      auth.login (#103).
+    - Block CLI self role changes and role-create overwrites of existing or
+      built-in roles (#108, #109).
+    - CLI socket server serves clients concurrently with timeouts; `vh` fails
+      fast with actionable errors; `vh status` exits non-zero when degraded
+      (#110, #111).
+    - Stop shipping vaulthalla-cli.socket/.service, whose orphaned listener
+      could hang every `vh` call; upgrades stop and purge them (#110).
+    - Web "Edit User" now edits the selected user (it modified the calling
+      admin); users can no longer rebind their own Linux UID (#126).
+    - Fix daemon crash on unknown group, RBAC on interactive vault create,
+      api-key list --json filtering, success reported without state change,
+      settings.update, ws contract drift, and secret redaction (#112-#115).
+  * Release
+    - Run all packaging/lifecycle guard tests in CI with minimum counts;
+      idempotent sha256-verified APT publishing with SHA256SUMS; cut-release,
+      release-status and lab-smoke commands; scoped secrets and job timeouts
+      (#116-#119).
 
- -- Cooper Larson <cooper@valkyrianlabs.com>  Thu, 23 Apr 2026 15:40:45 +0000
+ -- Cooper Larson <cooper@valkyrianlabs.com>  Wed, 30 Sep 2026 22:40:34 +0000
