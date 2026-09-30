@@ -21,6 +21,8 @@ from tools.release.cli_tools.commands.release_success import (
     cmd_record_release_success,
     cmd_resolve_release_notes_base,
 )
+from tools.release.cli_tools.commands.suites import cmd_run_tests
+from tools.release.suites import SUITES
 from tools.release.cli_tools.commands.version import (
     cmd_check,
     cmd_sync,
@@ -496,6 +498,32 @@ COMMANDS = {
                 "kwargs": {
                     "default": None,
                     "help": "Workflow run id to record. Defaults to GITHUB_RUN_ID.",
+                },
+            },
+        ],
+    },
+
+    "run-tests": {
+        "help": (
+            "Run the fast Python suites (release tooling, deploy/lifecycle) with per-directory minimum test "
+            "counts, so a directory silently dropped from discovery fails the run."
+        ),
+        "func": cmd_run_tests,
+        "args": [
+            {
+                "flags": ["--suite"],
+                "kwargs": {
+                    "action": "append",
+                    "choices": tuple(SUITES),
+                    "default": None,
+                    "help": "Suite to run (repeatable; default: all).",
+                },
+            },
+            {
+                "flags": ["--count-only"],
+                "kwargs": {
+                    "action": "store_true",
+                    "help": "Only discover and check minimum counts; do not run tests.",
                 },
             },
         ],

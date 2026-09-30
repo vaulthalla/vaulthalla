@@ -151,6 +151,22 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         self.assertIn("--release-notes-base-resolution", action)
         self.assertIn("release_notes_base.resolution.json", action)
 
+    def _ci_workflow(self) -> str:
+        return (self._repo_root() / ".github" / "workflows" / "build_and_test.yml").read_text(encoding="utf-8")
+
+    def test_python_suites_run_through_count_guard_in_ci_and_release(self) -> None:
+        for content in (self._workflow(), self._ci_workflow()):
+            self.assertIn("python -m tools.release run-tests", content)
+            # Raw discover silently skips non-package directories (P0-4); only the guarded runner is allowed.
+            self.assertNotIn("unittest discover", content)
+
+    def test_shellcheck_runs_in_ci_and_release(self) -> None:
+        for content in (self._workflow(), self._ci_workflow()):
+            self.assertIn("bash .github/scripts/shellcheck.sh", content)
+        script = (self._repo_root() / ".github" / "scripts" / "shellcheck.sh").read_text(encoding="utf-8")
+        for maintainer_script in ("debian/postinst", "debian/prerm", "debian/postrm"):
+            self.assertIn(maintainer_script, script)
+
     def test_release_shell_blocks_do_not_use_python_heredocs(self) -> None:
         workflow = self._workflow()
         action = self._package_action()
