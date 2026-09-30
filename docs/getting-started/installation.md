@@ -104,7 +104,7 @@ The package installs these main runtime pieces:
 - `vaulthalla-web.service` for the packaged web console.
 - `vaulthalla-swtpm.service` when the software TPM fallback is needed.
 - `/usr/bin/vh` and `/usr/bin/vaulthalla`, both pointing at the CLI.
-- `/etc/vaulthalla/config.yaml` for runtime configuration.
+- `/etc/vaulthalla/config.yaml` for runtime configuration. It is copied from the packaged default at `/usr/share/vaulthalla/config/config.yaml` only when missing, and upgrades never overwrite it.
 - `/var/lib/vaulthalla` for Vaulthalla state.
 - `/run/vaulthalla` for sockets and runtime secrets.
 - `/mnt/vaulthalla` for the FUSE filesystem surface.
@@ -115,17 +115,39 @@ See [Runtime Paths](/reference/runtime-paths) for the full path map.
 
 Vaulthalla needs TPM-compatible key protection. The package prefers a hardware TPM when `/dev/tpmrm0` or `/dev/tpm0` is available. If no hardware TPM is available, the managed `swtpm` service provides a local software TPM with state under `/var/lib/swtpm/vaulthalla`.
 
-If neither hardware TPM nor `swtpm` is usable, configuration fails with a clear error. Use [Install Troubleshooting](/troubleshooting/install-troubleshooting) to diagnose TPM and `swtpm` failures.
+If neither hardware TPM nor `swtpm` is usable (for example after `--no-install-recommends` on a VM), the install still completes, but the TPM backend is reported as deferred and `vaulthalla.service` is not started. Install the fallback and re-run configuration:
+
+```bash
+sudo apt install swtpm swtpm-tools
+sudo dpkg-reconfigure vaulthalla
+```
+
+Use [Install Troubleshooting](/troubleshooting/install-troubleshooting) to diagnose TPM and `swtpm` failures.
 
 ## Local PostgreSQL Bootstrap
 
-When local PostgreSQL is installed and healthy, package setup can create or reuse the `vaulthalla` role and database. If a database already exists, interactive package flows preserve it unless you explicitly choose destructive recreation.
+When local PostgreSQL is installed and healthy, package setup creates the `vaulthalla` role and database and hands the generated password to the service, which seals it with the TPM. Upgrades never touch an existing role or database, and a remote database configured with `vh setup remote-db` is never bootstrapped locally.
+
+If a `vaulthalla` database already exists but this host has no sealed credential for it (typically a reinstall after `apt purge`), setup asks whether to **adopt** it (keep the data and rotate the role password), **overwrite** it (drop and recreate), or **abort**. Noninteractive installs read `VH_EXISTING_DB_ACTION=adopt|overwrite|abort` and default to abort, which stops configuration without changing PostgreSQL:
+
+```bash
+sudo env VH_EXISTING_DB_ACTION=adopt dpkg --configure -a
+sudo env VH_EXISTING_DB_ACTION=overwrite dpkg --configure -a
+```
+
+Adopting keeps users and vault metadata, but vault encryption keys and stored provider API keys are only recoverable if the original `/var/lib/vaulthalla/.sealed_*.blob` files and the same TPM are restored.
 
 You can also bootstrap later:
 
 ```bash
 sudo vh setup db
+sudo vh setup db --adopt      # keep an existing database without a sealed credential
+sudo vh setup db --overwrite  # drop it and start fresh
 ```
+
+`vh setup db` reports success only after `vaulthalla.service` stays running and has consumed the password handoff.
+
+`VH_SKIP_DB_BOOTSTRAP=1` and `VH_SKIP_NGINX_CONFIG=1` opt-outs are remembered across upgrades. `vh setup db` and `vh setup nginx` opt back in.
 
 For a remote database, use:
 
@@ -142,6 +164,10 @@ sudo vh setup nginx --domain vault.example.com
 sudo vh setup nginx --domain vault.example.com --certbot
 sudo vh setup nginx --domain vaulthalla.dev --s3-domain s3.vaulthalla.dev --certbot-dns-cloudflare --cloudflare-credentials /etc/vaulthalla/certbot/cloudflare.ini
 ```
+
+On a fresh install, the unmodified distro default site (`/etc/nginx/sites-enabled/default`) would shadow the Vaulthalla site on port 80, so setup disables that symlink and records it. `apt remove`, `apt purge`, and `vh teardown nginx` restore it. A modified default site is never touched. Setup then requests `http://127.0.0.1/` and reports whether the console actually answers. Upgrades never re-enable a site you removed.
+
+The web console reaches the daemon through Nginx. Fresh installs bind the websocket (36969) and preview (36970) servers to `127.0.0.1`.
 
 The Certbot option validates prerequisites and uses rollback behavior if certificate setup fails. The Cloudflare DNS-01 option issues a certificate without requiring an inbound HTTP challenge endpoint and renders a dedicated HTTPS S3 host.
 
@@ -172,13 +198,22 @@ Purge package-managed config:
 sudo apt purge vaulthalla
 ```
 
-Package purge does not silently destroy a preserved database. Interactive purge flows may offer database cleanup. Noninteractive purge preserves database state.
+Purge removes `/etc/vaulthalla/config.yaml`, `/var/log/vaulthalla`, the web cache, and the contents of `/var/lib/vaulthalla`, including the sealed secrets. If `/var/lib/vaulthalla` is a mount point, such as a dedicated data disk, purge empties it without crossing into other filesystems and keeps the directory. Operator-provided certbot credentials under `/etc/vaulthalla/certbot/` are kept because certbot renewal still references them.
 
-To intentionally tear down Vaulthalla-managed local database state:
+Package purge does not silently destroy a preserved database. Interactive purge flows may offer database cleanup. Noninteractive purge preserves database state. `vh` is gone after purge, so remove a preserved database with:
+
+```bash
+sudo -u postgres psql -c 'DROP DATABASE IF EXISTS vaulthalla WITH (FORCE);'
+sudo -u postgres psql -c 'DROP ROLE IF EXISTS vaulthalla;'
+```
+
+While the package is installed, tear down the local database with this command, which stops `vaulthalla.service` first:
 
 ```bash
 sudo vh teardown db
 ```
+
+Reinstalling after `apt remove` re-enables and starts the services.
 
 To remove managed Nginx configuration:
 
