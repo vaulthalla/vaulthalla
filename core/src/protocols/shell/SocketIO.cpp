@@ -1,30 +1,71 @@
 #include "protocols/shell/SocketIO.hpp"
 
 #include <nlohmann/json.hpp>
+#include <sys/socket.h>
 #include <unistd.h>
 #include <netinet/in.h>
+#include <algorithm>
+#include <cerrno>
 #include <string>
 #include <stdexcept>
 #include <cstring>
 
-using namespace vh::protocols::shell;
+namespace vh::protocols::shell {
+
+namespace {
+
+// Frames are length-prefixed; a single read()/write() may move fewer bytes than asked, so loop. EAGAIN means the
+// socket's SO_RCVTIMEO/SO_SNDTIMEO expired: the peer went quiet, which is reported rather than waited on forever.
+bool cliSocketReadAll(const int fd, void* buf, std::size_t n) {
+    auto* p = static_cast<unsigned char*>(buf);
+    while (n) {
+        const ssize_t r = ::recv(fd, p, n, 0);
+        if (r == 0) return false;
+        if (r < 0) {
+            if (errno == EINTR) continue;
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+                throw std::runtime_error("timed out waiting for input from the vh client");
+            return false;
+        }
+        p += r;
+        n -= static_cast<std::size_t>(r);
+    }
+    return true;
+}
+
+bool cliSocketWriteAll(const int fd, const void* buf, std::size_t n) {
+    const auto* p = static_cast<const unsigned char*>(buf);
+    while (n) {
+        // MSG_NOSIGNAL: a client that hung up (Ctrl-C) must not SIGPIPE the daemon.
+        const ssize_t w = ::send(fd, p, n, MSG_NOSIGNAL);
+        if (w < 0) {
+            if (errno == EINTR) continue;
+            return false;
+        }
+        if (w == 0) return false;
+        p += w;
+        n -= static_cast<std::size_t>(w);
+    }
+    return true;
+}
+
+}
 
 SocketIO::SocketIO(const int fd) : fd_(fd) {}
 
-void SocketIO::send_json(const int fd, const nlohmann::json& j) {
+bool SocketIO::send_json(const int fd, const nlohmann::json& j) {
     const std::string s = j.dump();
-    const uint32_t len = htonl(s.size());
-    ::write(fd, &len, 4);
-    ::write(fd, s.data(), s.size());
+    const uint32_t len = htonl(static_cast<uint32_t>(s.size()));
+    return cliSocketWriteAll(fd, &len, 4) && cliSocketWriteAll(fd, s.data(), s.size());
 }
 
-nlohmann::json SocketIO::recv_json(const int fd) {
+nlohmann::json SocketIO::recv_json(const int fd, const uint32_t maxBytes) {
     uint32_t len_be = 0;
-    if (::read(fd, &len_be, 4) != 4) throw std::runtime_error("EOF reading length");
+    if (!cliSocketReadAll(fd, &len_be, 4)) throw std::runtime_error("EOF reading length");
     const uint32_t len = ntohl(len_be);
+    if (len > maxBytes) throw std::runtime_error("frame too large (" + std::to_string(len) + " bytes)");
     std::string body(len, '\0');
-    if (::read(fd, body.data(), len) != static_cast<ssize_t>(len))
-        throw std::runtime_error("EOF reading body");
+    if (!cliSocketReadAll(fd, body.data(), len)) throw std::runtime_error("EOF reading body");
     return nlohmann::json::parse(body);
 }
 
@@ -38,39 +79,40 @@ void SocketIO::print(const std::string_view msg) {
 
 bool SocketIO::confirm(const std::string_view promptIn, const bool def_no) {
     auto id = next_id();
-    send_json(fd_, {
+    if (!send_json(fd_, {
         {"type", "prompt"},
         {"style", "confirm"},
         {"id", id},
         {"text", std::string{promptIn}},
         {"default", def_no ? "no" : "yes"}
-    });
+    })) throw std::runtime_error("vh client disconnected");
 
     while (true) {
         auto j = recv_json(fd_);
-        if (j["type"] == "input" && j["id"] == id) {
+        if (j.value("type", "") == "input" && j.value("id", "") == id) {
             std::string v = j.value("value", "");
             std::ranges::transform(v.begin(), v.end(), v.begin(), ::tolower);
             if (v == "y" || v == "yes") return true;
             if (v == "n" || v == "no") return false;
             if (v.empty()) return !def_no;
+            return false; // anything else is not a yes
         }
     }
 }
 
 std::string SocketIO::prompt(const std::string_view promptIn, const std::string_view def) {
     auto id = next_id();
-    send_json(fd_, {
+    if (!send_json(fd_, {
         {"type", "prompt"},
         {"style", "input"},
         {"id", id},
         {"text", std::string{promptIn}},
         {"default", std::string{def}}
-    });
+    })) throw std::runtime_error("vh client disconnected");
 
     while (true) {
         auto j = recv_json(fd_);
-        if (j["type"] == "input" && j["id"] == id) {
+        if (j.value("type", "") == "input" && j.value("id", "") == id) {
             return j.value("value", std::string{def});
         }
     }
@@ -81,17 +123,19 @@ std::string SocketIO::prompt(const std::string_view promptIn) { return prompt(pr
 
 std::string SocketIO::promptSecret(const std::string_view promptIn) {
     auto id = next_id();
-    send_json(fd_, {
+    if (!send_json(fd_, {
         {"type", "prompt"},
         {"style", "secret"},
         {"id", id},
         {"text", std::string{promptIn}},
         {"default", ""}
-    });
+    })) throw std::runtime_error("vh client disconnected");
 
     while (true) {
         auto j = recv_json(fd_);
-        if (j["type"] == "input" && j["id"] == id)
+        if (j.value("type", "") == "input" && j.value("id", "") == id)
             return j.value("value", std::string{});
     }
+}
+
 }

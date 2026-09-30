@@ -72,14 +72,14 @@ CommandResult commands::vault::handle_vaults_list(const CommandCall& call) {
         vaults = db::query::vault::Vault::listUserVaults(call.user->id, typeFilter, parseListQuery(call));
     else {
         vaults = db::query::vault::Vault::listVaults(typeFilter, parseListQuery(call));
-        for (const auto& v : vaults) {
-            using Perm = permission::admin::VaultPermissions;
-            if (!resolver::Admin::has<Perm>({
+        using Perm = permission::admin::VaultPermissions;
+        std::erase_if(vaults, [&](const auto& v) {
+            return !v || !resolver::Admin::has<Perm>({
                 .user = call.user,
                 .permission = Perm::View,
                 .vault_id = v->id
-            })) std::erase(vaults, v);
-        }
+            });
+        });
     }
 
     if (hasFlag(call, "json")) return ok(nlohmann::json(vaults).dump(4));

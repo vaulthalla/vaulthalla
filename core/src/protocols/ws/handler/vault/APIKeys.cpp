@@ -57,13 +57,13 @@ json APIKeys::list(const std::shared_ptr<Session>& session) {
         return {{"keys", json(runtime::Deps::get().apiKeyManager->listUserAPIKeys(session->user->id)).dump(4)}};
 
     auto keys = runtime::Deps::get().apiKeyManager->listAPIKeys();
-    for (const auto& key : keys) {
-        if (!resolver::Admin::has<Permission>({
+    std::erase_if(keys, [&](const auto& key) {
+        return !key || !resolver::Admin::has<Permission>({
             .user = session->user,
             .permission = Permission::View,
             .api_key_id = key->id
-        })) std::erase(keys, key);
-    }
+        });
+    });
 
     return {{"keys", json(keys).dump(4)}};
 }

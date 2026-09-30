@@ -16,6 +16,9 @@ using vh::share::TokenKind;
 [[nodiscard]] std::optional<RateLimitPolicy> policyFor(const std::string_view command) {
     using namespace std::chrono_literals;
 
+    // Password guessing: per client IP (issue #103). A locked-out IP waits out the rest of the window.
+    if (command == "auth.login")
+        return RateLimitPolicy{.max_attempts = 10, .window = 1min};
     if (command == "share.session.open")
         return RateLimitPolicy{.max_attempts = 12, .window = 5min};
     if (command == "share.email.challenge.start")
@@ -90,6 +93,12 @@ using vh::share::TokenKind;
     const auto& payload = payloadOf(message);
     const auto ip = clientIp(session);
 
+    if (command == "auth.login") {
+        // Keyed by IP *and* account: behind the nginx proxy every client shares 127.0.0.1, and an IP-only key
+        // would let one guesser lock every user out of login.
+        return std::format("{}|ip:{}|user:{}", command, ip, optionalString(payload, "name"));
+    }
+
     if (command == "share.session.open") {
         return std::format("{}|ip:{}|{}", command, ip, tokenLookupKey(payload, "public_token", TokenKind::PublicShare));
     }
@@ -142,6 +151,17 @@ vh::share::RateLimitDecision ShareRateLimit::check(
 
     const auto policy = policyFor(command);
     if (!policy) return {.allowed = true, .remaining = 0, .retry_after = std::chrono::seconds{0}};
+
+    if (command == "auth.login") {
+        // Two tiers act as a backoff: bursts are capped per minute, and sustained guessing from one IP is
+        // capped per quarter hour, so a client that keeps hitting the minute limit is shut out much longer.
+        using namespace std::chrono_literals;
+        const auto sustained = limiter_.check(
+            std::format("auth.login.sustained|ip:{}|user:{}", clientIp(session), optionalString(payloadOf(message), "name")),
+            RateLimitPolicy{.max_attempts = 30, .window = 15min}, now);
+        if (!sustained.allowed) return sustained;
+    }
+
     return limiter_.check(keyFor(command, message, session), *policy, now);
 }
 

@@ -6,7 +6,7 @@ import { APIKey, S3APIKey } from '@/models/apiKey'
 
 interface ApiKeyStore {
   apiKeys: APIKey[]
-  fetchApiKeys: (payload: WSCommandPayload<'storage.apiKey.list.user'>) => Promise<void>
+  fetchApiKeys: (payload: WSCommandPayload<'storage.apiKey.list'>) => Promise<void>
   addApiKey: (payload: WSCommandPayload<'storage.apiKey.add'>) => Promise<void>
   removeApiKey: (payload: WSCommandPayload<'storage.apiKey.remove'>) => Promise<void>
   getApiKey: (payload: WSCommandPayload<'storage.apiKey.get'>) => Promise<APIKey | S3APIKey>

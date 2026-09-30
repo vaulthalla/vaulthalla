@@ -389,14 +389,29 @@ static std::shared_ptr<CommandUsage> vrole(const std::weak_ptr<CommandUsage>& pa
 static std::shared_ptr<CommandUsage> key_export(const std::weak_ptr<CommandUsage>& parent) {
     auto cmd = buildBaseUsage(parent);
     cmd->aliases = {"export"};
-    cmd->description = "Export an encryption key for a specific vault.";
+    cmd->description = "Export an encryption key for a specific vault. --output is written by the daemon, so it must "
+                       "be an absolute path; the file is created with mode 0600.";
     cmd->positionals = {vaultOrAll};
     cmd->optional = {gpgRecipient, outputFile, owner};
     cmd->examples = {
-        {"vh vault keys export 42 --output keyfile.pem --recipient ABCDEF1234567890",
-         "Export the encryption key for the vault with ID 42 to 'keyfile.pem', encrypted for the GPG recipient with fingerprint 'ABCDEF1234567890'."},
-        {"vh vault keys export myvault --owner alice --output myvault_key.pem",
-         "Export the encryption key for the vault named 'myvault' owned by 'alice' to 'myvault_key.pem' (unencrypted)."}
+        {"vh vault keys export 42 --output /var/lib/vaulthalla/keyfile.pem --recipient ABCDEF1234567890",
+         "Export the encryption key for the vault with ID 42 to '/var/lib/vaulthalla/keyfile.pem', encrypted for the GPG recipient with fingerprint 'ABCDEF1234567890'."},
+        {"vh vault keys export myvault --owner alice --output /var/lib/vaulthalla/myvault_key.pem",
+         "Export the encryption key for the vault named 'myvault' owned by 'alice' to '/var/lib/vaulthalla/myvault_key.pem' (unencrypted)."}
+    };
+    return cmd;
+}
+
+static std::shared_ptr<CommandUsage> key_inspect(const std::weak_ptr<CommandUsage>& parent) {
+    auto cmd = buildBaseUsage(parent);
+    cmd->aliases = {"inspect", "info", "show"};
+    cmd->description = "Show encryption key metadata (version, creation and rotation state) for a vault. "
+                       "Never prints key material.";
+    cmd->positionals = {vaultPos};
+    cmd->optional = {owner};
+    cmd->examples = {
+        {"vh vault keys inspect 42", "Show key metadata for the vault with ID 42."},
+        {"vh vault keys inspect myvault --owner alice", "Show key metadata for 'myvault' owned by 'alice'."}
     };
     return cmd;
 }
@@ -404,7 +419,8 @@ static std::shared_ptr<CommandUsage> key_export(const std::weak_ptr<CommandUsage
 static std::shared_ptr<CommandUsage> key_rotate(const std::weak_ptr<CommandUsage>& parent) {
     auto cmd = buildBaseUsage(parent);
     cmd->aliases = {"rotate", "renew"};
-    cmd->description = "Rotate the encryption key for a specific vault.";
+    cmd->description = "Start an encryption key rotation for a vault (or 'all'). Existing data is re-encrypted by "
+                       "the next sync; a vault whose rotation is already pending is reported, not rotated again.";
     cmd->positionals = {vaultOrAll};
     cmd->optional = {owner};
     cmd->optional_flags = {syncNowFlag};
@@ -423,14 +439,15 @@ static std::shared_ptr<CommandUsage> key(const std::weak_ptr<CommandUsage>& pare
     cmd->pluralAliasImpliesList = true;
     cmd->description = "Manage encryption keys for vaults.";
     cmd->examples = {
-        {"vh vault keys export 42 --output keyfile.pem --recipient ABCDEF1234567890",
-         "Export the encryption key for the vault with ID 42 to 'keyfile.pem', encrypted for the GPG recipient with fingerprint 'ABCDEF1234567890'."},
+        {"vh vault keys export 42 --output /var/lib/vaulthalla/keyfile.pem --recipient ABCDEF1234567890",
+         "Export the encryption key for the vault with ID 42 to '/var/lib/vaulthalla/keyfile.pem', encrypted for the GPG recipient with fingerprint 'ABCDEF1234567890'."},
         {"vh vault keys rotate myvault --owner alice",
          "Rotate the encryption key for the vault named 'myvault' owned by 'alice'."}
     };
     cmd->subcommands = {
         key_export(cmd->weak_from_this()),
-        key_rotate(cmd->weak_from_this())
+        key_rotate(cmd->weak_from_this()),
+        key_inspect(cmd->weak_from_this())
     };
     return cmd;
 }
@@ -717,8 +734,8 @@ static std::shared_ptr<CommandUsage> base(const std::weak_ptr<CommandUsage>& par
         {"vh vault info 42", "Show information for the vault with ID 42."},
         {"vh vaults", "List all vaults accessible to the current user."},
         {"vh vault role assign 42 read-only bob", "Add user 'bob' to the 'read-only' role for the vault with ID 42."},
-        {"vh vault keys export 42 --output keyfile.pem --recipient ABCDEF1234567890",
-         "Export the encryption key for the vault with ID 42 to 'keyfile.pem', encrypted for the GPG recipient with fingerprint 'ABCDEF1234567890'."},
+        {"vh vault keys export 42 --output /var/lib/vaulthalla/keyfile.pem --recipient ABCDEF1234567890",
+         "Export the encryption key for the vault with ID 42 to '/var/lib/vaulthalla/keyfile.pem', encrypted for the GPG recipient with fingerprint 'ABCDEF1234567890'."},
         {"vh vault sync 42", "Manually trigger a sync for the vault with ID 42."}
     };
 
