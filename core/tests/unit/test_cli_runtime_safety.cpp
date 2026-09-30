@@ -6,6 +6,9 @@
 //  - secrets are redacted from ws debug logs; daemon-written secret files are 0600 and absolute-path only;
 //  - (DB-backed) no CLI self-promotion, no role upsert-over-existing, no daemon crash on unknown group.
 
+#include "config/Config.hpp"
+#include "config/Registry.hpp"
+#include "crypto/util/hash.hpp"
 #include "db/Transactions.hpp"
 #include "db/query/identities/User.hpp"
 #include "db/query/rbac/role/Admin.hpp"
@@ -17,7 +20,9 @@
 #include "protocols/shell/SocketIO.hpp"
 #include "protocols/shell/commands/all.hpp"
 #include "protocols/shell/commands/helpers.hpp"
+#include "protocols/ws/DefaultPasswordGate.hpp"
 #include "protocols/ws/LogRedaction.hpp"
+#include "protocols/ws/ShareRateLimit.hpp"
 #include "protocols/ws/Router.hpp"
 #include "protocols/ws/Session.hpp"
 #include "protocols/ws/handler/rbac/roles/Admin.hpp"
@@ -469,6 +474,89 @@ TEST_F(CliRbacDbTest, BuiltInAndOwnRolesAreProtected) {
 
     EXPECT_TRUE(protocols::roles::adminRoleDeleteError(*admin, *superRole).has_value());
     EXPECT_TRUE(protocols::roles::adminRoleDeleteError(*admin, *adminRole).has_value());
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Issue #103: default admin password enforced server-side, and auth.login rate limited.
+
+std::shared_ptr<protocols::ws::Session> closedSessionWith(const std::shared_ptr<protocols::ws::Router>& router,
+                                                          const std::shared_ptr<identities::User>& user) {
+    auto session = std::make_shared<protocols::ws::Session>(router);
+    session->ipAddress = "203.0.113.7";
+    session->user = user;
+    session->close(); // responses become no-ops; we observe which handlers ran
+    return session;
+}
+
+std::shared_ptr<identities::User> userWithPassword(const std::string& password) {
+    auto user = std::make_shared<identities::User>();
+    user->id = 4242;
+    user->name = "admin";
+    user->setPasswordHash(crypto::hash::password(password));
+    return user;
+}
+
+TEST(DefaultPasswordGate, OnlyPasswordChangeAndSessionCommandsWhileDefault) {
+    (void)config::Registry::get(); // loads VH_PATH_TO_CONFIG on first use
+    ASSERT_FALSE(config::Registry::get().dev.enabled) << "test expects the shipped (non-dev) config";
+
+    auto router = std::make_shared<protocols::ws::Router>();
+    int blocked = 0, allowed = 0;
+    // auth.* commands skip token validation in classifyCommand, so these exercise the gate alone.
+    router->registerHandler("auth.users.list", [&](json&&, const auto&) { ++blocked; });
+    router->registerHandler("auth.user.change_password", [&](json&&, const auto&) { ++allowed; });
+    router->registerHandler("auth.admin.default_password", [&](json&&, const auto&) { ++allowed; });
+
+    const auto user = userWithPassword(std::string(protocols::ws::default_password::kSeededAdminPassword));
+    const auto session = closedSessionWith(router, user);
+    EXPECT_TRUE(session->userHasDefaultPassword());
+
+    router->routeMessage(json{{"command", "auth.users.list"}, {"payload", json::object()}}, session);
+    router->routeMessage(json{{"command", "auth.user.change_password"}, {"payload", json::object()}}, session);
+    router->routeMessage(json{{"command", "auth.admin.default_password"}, {"payload", nullptr}}, session);
+    EXPECT_EQ(blocked, 0) << "a non-allowlisted command ran while the default password is still set";
+    EXPECT_EQ(allowed, 2);
+
+    // After a password change the session's user carries a new hash; the cached verdict is re-evaluated.
+    user->setPasswordHash(crypto::hash::password("a-much-better-passphrase-123!"));
+    EXPECT_FALSE(session->userHasDefaultPassword());
+    router->routeMessage(json{{"command", "auth.users.list"}, {"payload", json::object()}}, session);
+    EXPECT_EQ(blocked, 1);
+}
+
+TEST(DefaultPasswordGate, AllowlistIsMinimal) {
+    using protocols::ws::default_password::isAllowedWhileDefault;
+    for (const auto* cmd : {"auth.user.change_password", "auth.isAuthenticated", "auth.refresh", "auth.logout",
+                            "auth.admin.default_password", "auth.login"})
+        EXPECT_TRUE(isAllowedWhileDefault(cmd)) << cmd;
+    for (const auto* cmd : {"auth.users.list", "auth.user.update", "auth.register", "role.admin.add",
+                            "settings.update", "storage.vault.list", "fs.upload.start"})
+        EXPECT_FALSE(isAllowedWhileDefault(cmd)) << cmd;
+}
+
+TEST(LoginRateLimit, BurstThenSustainedLimitsPerIpAndAccount) {
+    protocols::ws::ShareRateLimit limiter;
+    const auto session = std::make_shared<protocols::ws::Session>(std::make_shared<protocols::ws::Router>());
+    session->ipAddress = "198.51.100.9";
+    const json alice{{"command", "auth.login"}, {"payload", {{"name", "alice"}, {"password", "x"}}}};
+    const json bob{{"command", "auth.login"}, {"payload", {{"name", "bob"}, {"password", "x"}}}};
+
+    const auto t0 = protocols::ws::ShareRateLimit::Clock::now();
+    for (int i = 0; i < 10; ++i) EXPECT_TRUE(limiter.check("auth.login", alice, *session, t0).allowed) << i;
+    const auto denied = limiter.check("auth.login", alice, *session, t0);
+    EXPECT_FALSE(denied.allowed);
+    EXPECT_GT(denied.retry_after.count(), 0);
+    // A shared proxy IP must not lock other accounts out.
+    EXPECT_TRUE(limiter.check("auth.login", bob, *session, t0).allowed);
+
+    // Keep guessing at the per-minute cap: the 15-minute tier shuts the account/IP out for longer.
+    int allowedLater = 0;
+    for (int minute = 1; minute <= 3; ++minute)
+        for (int i = 0; i < 10; ++i)
+            allowedLater += limiter.check("auth.login", alice, *session, t0 + std::chrono::minutes(minute)).allowed ? 1 : 0;
+    EXPECT_LT(allowedLater, 30);
+    EXPECT_FALSE(limiter.check("auth.login", alice, *session, t0 + std::chrono::minutes(5)).allowed);
+    EXPECT_TRUE(limiter.check("auth.login", alice, *session, t0 + std::chrono::minutes(20)).allowed);
 }
 
 }
