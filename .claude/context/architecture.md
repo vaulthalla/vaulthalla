@@ -93,8 +93,12 @@ prod fallback `127.0.0.1:36968`). `web/src/app/api/auth/session/route.ts` proxie
 
 ## Database
 
-- PostgreSQL via libpqxx. The schema is `deploy/psql/000…096_*.sql`, applied in order and installed to `/usr/share/vaulthalla/psql`.
-  New migrations take the next number and must be idempotent against upgraded installs.
+- PostgreSQL via libpqxx. The schema is `deploy/psql/000…097_*.sql`, applied in order (all in ONE transaction by `core/seed/include/SqlDeployer.hpp`) and installed to `/usr/share/vaulthalla/psql`.
+  New migrations take the next number and must be idempotent against upgraded installs. SqlDeployer records sha256(raw bytes)
+  per file and refuses to start on a mismatch, so **never edit a shipped migration**: 020/060/082 were edited in place and
+  bricked upgrades (1.5.x→1.6.x crash loop on 060). Reviewed exceptions live in `kHistoricalMigrationChecksums` (accepted, recorded
+  hash rewritten to current, not re-run; a forward migration owns the delta). `core/seed/shipped_migrations.lock` pins every hash;
+  `tools/release/tests/packaging/test_migration_checksums_contract.py` enforces it (plus every local v* tag).
 - `core/include/db/DBPool.hpp` is a fixed pool of 4 connections (config `database.pool_size` is **not** wired to it)
   handed out as RAII `DBPool::Lease`s (FIFO) that always return the slot. A dead connection is replaced on
   `acquire()` (reconnect + re-prepare, pool-wide backoff 250ms→5s, callers inside the window get
