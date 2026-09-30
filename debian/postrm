@@ -1,27 +1,71 @@
 #!/bin/sh
 set -e
 
+# postrm for vaulthalla
+# - remove: transient cleanup only
+# - purge: the destructive boundary. Every cleanup step is best-effort: a busy
+#   directory, a mount point, a lingering process or an unreachable PostgreSQL never
+#   fails the purge. /var/lib/vaulthalla is commonly a dedicated data-disk mount point,
+#   so its contents are removed without crossing into other filesystems and the mount
+#   point itself is kept (root:root 0755).
+
 PKG="vaulthalla"
 DB_USER="vaulthalla"
 DB_NAME="vaulthalla"
+STATE_DIR="/var/lib/vaulthalla"
+LOG_DIR="/var/log/vaulthalla"
+RUNTIME_DIR="/run/vaulthalla"
+MOUNT_ROOT="/mnt/vaulthalla"
+CONFIG_DIR="/etc/vaulthalla"
+CERTBOT_CREDENTIALS_DIR="${CONFIG_DIR}/certbot"
+WEB_ROOT="/usr/share/vaulthalla-web"
+WEB_CACHE_DIR="/var/cache/vaulthalla-web"
 SYSTEMCTL_COMMAND_TIMEOUT_SECONDS=10
+PSQL_TIMEOUT_SECONDS=60
+PGCONNECT_TIMEOUT_SECONDS=10
+NGINX_TIMEOUT_SECONDS=30
+UNMOUNT_TIMEOUT_SECONDS=10
 SYSTEMCTL_UNAVAILABLE_LOGGED="0"
 NGINX_SITE_AVAIL="/etc/nginx/sites-available/vaulthalla"
 NGINX_SITE_ENABLED="/etc/nginx/sites-enabled/vaulthalla"
-NGINX_MANAGED_MARKER="/var/lib/vaulthalla/nginx_site_managed"
-LEGACY_PENDING_SUPERADMIN_UID_FILE="/run/vaulthalla/superadmin_uid"
-PENDING_DB_PASS_FILE="/run/vaulthalla/db_password"
-TPM_BACKEND_OVERRIDE_FILE="/etc/systemd/system/vaulthalla.service.d/tpm-backend.conf"
+NGINX_MANAGED_MARKER="${STATE_DIR}/nginx_site_managed"
+NGINX_DEFAULT_SITE_AVAIL="/etc/nginx/sites-available/default"
+NGINX_DEFAULT_SITE_ENABLED="/etc/nginx/sites-enabled/default"
+NGINX_DEFAULT_DISABLED_MARKER="${STATE_DIR}/nginx_default_site_disabled"
+NGINX_RENEWAL_DEPLOY_HOOK="/etc/letsencrypt/renewal-hooks/deploy/vaulthalla-nginx-reload.sh"
+LEGACY_PENDING_SUPERADMIN_UID_FILE="${RUNTIME_DIR}/superadmin_uid"
+PENDING_DB_PASS_FILE="${RUNTIME_DIR}/db_password"
+TPM_BACKEND_OVERRIDE_DIR="/etc/systemd/system/vaulthalla.service.d"
+TPM_BACKEND_OVERRIDE_FILE="${TPM_BACKEND_OVERRIDE_DIR}/tpm-backend.conf"
 SWTPM_BASE_DIR="/var/lib/swtpm"
 SWTPM_STATE_DIR="${SWTPM_BASE_DIR}/vaulthalla"
+POSTGRES_RESOURCES_REMAIN="0"
 
 has_command() {
     command -v "$1" >/dev/null 2>&1
 }
 
+warn_nonfatal() {
+    echo "[${PKG}] WARNING: $*" >&2
+}
+
+run_bounded() {
+    limit="$1"
+    shift
+    if has_command timeout; then
+        timeout --kill-after=5 "$limit" "$@"
+        return $?
+    fi
+    "$@"
+}
+
+systemd_running() {
+    has_command systemctl && [ -d /run/systemd/system ]
+}
+
 log_systemctl_unavailable_once() {
     if [ "$SYSTEMCTL_UNAVAILABLE_LOGGED" = "0" ]; then
-        echo "[${PKG}] systemctl unavailable; skipping systemd post-remove actions."
+        echo "[${PKG}] systemd not running or systemctl unavailable; skipping systemd post-remove actions."
         SYSTEMCTL_UNAVAILABLE_LOGGED="1"
     fi
 }
@@ -30,27 +74,53 @@ run_systemctl_quiet() {
     if ! has_command systemctl; then
         return 127
     fi
-    if has_command timeout; then
-        timeout "$SYSTEMCTL_COMMAND_TIMEOUT_SECONDS" systemctl --system "$@" >/dev/null 2>&1
+    run_bounded "$SYSTEMCTL_COMMAND_TIMEOUT_SECONDS" systemctl --system "$@" >/dev/null 2>&1
+}
+
+safe_systemctl() {
+    if ! systemd_running; then
+        log_systemctl_unavailable_once
+        return 0
+    fi
+    if ! run_systemctl_quiet "$@"; then
+        echo "[${PKG}] WARNING: systemctl --system $* failed; continuing."
+    fi
+    return 0
+}
+
+mountinfo_escape_path() {
+    printf '%s' "$1" | sed -e 's/\\/\\134/g' -e 's/ /\\040/g' -e 's/	/\\011/g'
+}
+
+is_mountpoint() {
+    # Kernel mount table only; never stat/mountpoint a path that may be a wedged FUSE mount.
+    VH_MOUNTINFO_TARGET="$(mountinfo_escape_path "$1")"
+    export VH_MOUNTINFO_TARGET
+    if [ -r /proc/self/mountinfo ]; then
+        awk '$5 == ENVIRON["VH_MOUNTINFO_TARGET"] { found = 1 } END { exit(found ? 0 : 1) }' /proc/self/mountinfo
         return $?
     fi
-    systemctl --system "$@" >/dev/null 2>&1
+    if [ -r /proc/mounts ]; then
+        awk '$2 == ENVIRON["VH_MOUNTINFO_TARGET"] { found = 1 } END { exit(found ? 0 : 1) }' /proc/mounts
+        return $?
+    fi
+    return 1
 }
 
 run_as_postgres() {
     if has_command runuser; then
-        runuser -u postgres -- "$@"
+        run_bounded "$PSQL_TIMEOUT_SECONDS" runuser -u postgres -- env PGCONNECT_TIMEOUT="$PGCONNECT_TIMEOUT_SECONDS" "$@"
         return $?
     fi
     if has_command sudo; then
-        sudo -u postgres "$@"
+        run_bounded "$PSQL_TIMEOUT_SECONDS" sudo -n -u postgres env PGCONNECT_TIMEOUT="$PGCONNECT_TIMEOUT_SECONDS" "$@"
         return $?
     fi
     return 1
 }
 
 psql_q() {
-    run_as_postgres psql -X -v ON_ERROR_STOP=1 -tAc "$1" "${2:-postgres}"
+    run_as_postgres psql -X -q -v ON_ERROR_STOP=1 -tA -d "${2:-postgres}" -c "$1"
 }
 
 postgresql_server_ready() {
@@ -58,7 +128,7 @@ postgresql_server_ready() {
         run_as_postgres pg_isready -q >/dev/null 2>&1
         return $?
     fi
-    run_as_postgres psql -X -v ON_ERROR_STOP=1 -d postgres -tAc 'SELECT 1' >/dev/null 2>&1
+    psql_q 'SELECT 1' >/dev/null 2>&1
 }
 
 is_noninteractive_context() {
@@ -68,7 +138,21 @@ is_noninteractive_context() {
     if [ ! -t 0 ] || [ ! -t 1 ]; then
         return 0
     fi
+    if ! ( : </dev/tty ) 2>/dev/null; then
+        return 0
+    fi
     return 1
+}
+
+print_manual_postgres_cleanup() {
+    # `vh` is already gone during purge, so give commands that work without the package.
+    POSTGRES_RESOURCES_REMAIN="1"
+    echo "[${PKG}] To remove the preserved PostgreSQL database and role later, run:"
+    echo "[${PKG}]   sudo -u postgres psql -c 'DROP DATABASE IF EXISTS ${DB_NAME} WITH (FORCE);'"
+    echo "[${PKG}]   sudo -u postgres psql -c 'DROP ROLE IF EXISTS ${DB_USER};'"
+    echo "[${PKG}] (PostgreSQL < 13: omit 'WITH (FORCE)' and stop clients first.)"
+    echo "[${PKG}] Reinstalling Vaulthalla detects this database and asks whether to adopt or overwrite it"
+    echo "[${PKG}] (noninteractive: VH_EXISTING_DB_ACTION=adopt|overwrite)."
 }
 
 confirm_postgres_resource_removal() {
@@ -82,11 +166,7 @@ confirm_postgres_resource_removal() {
     printf '%s' "[${PKG}] Remove these PostgreSQL resources? This will permanently delete the local Vaulthalla database. [y/N] "
 
     answer=""
-    if [ -r /dev/tty ]; then
-        IFS= read -r answer </dev/tty || true
-    else
-        IFS= read -r answer || true
-    fi
+    IFS= read -r answer </dev/tty || true
 
     case "$answer" in
         y|Y|yes|YES)
@@ -98,40 +178,53 @@ confirm_postgres_resource_removal() {
     esac
 }
 
+drop_local_database() {
+    # One statement per psql call: DROP DATABASE cannot run inside a transaction block.
+    server_version="$(psql_q "SHOW server_version_num" 2>/dev/null | tr -d '[:space:]' || true)"
+    case "$server_version" in
+        ''|*[!0-9]*) server_version=0 ;;
+    esac
+    if [ "$server_version" -ge 130000 ]; then
+        psql_q "DROP DATABASE IF EXISTS ${DB_NAME} WITH (FORCE)" >/dev/null
+        return $?
+    fi
+    psql_q "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${DB_NAME}' AND pid <> pg_backend_pid()" >/dev/null 2>&1 || true
+    psql_q "DROP DATABASE IF EXISTS ${DB_NAME}" >/dev/null
+}
+
 drop_local_postgres_resources_if_confirmed() {
-    # Use direct SQL here because package binaries/lifecycle payloads may already be absent in postrm purge.
+    # Use direct SQL here because package binaries/lifecycle payloads are already absent in postrm purge.
     if ! has_command psql; then
         echo "[${PKG}] Local PostgreSQL resources preserved (psql not installed)."
-        echo "[${PKG}] To remove local DB resources manually later: sudo vh teardown db"
+        print_manual_postgres_cleanup
         return 0
     fi
 
     if ! id postgres >/dev/null 2>&1; then
         echo "[${PKG}] Local PostgreSQL resources preserved (postgres user missing)."
-        echo "[${PKG}] To remove local DB resources manually later: sudo vh teardown db"
         return 0
     fi
 
     if ! run_as_postgres true >/dev/null 2>&1; then
         echo "[${PKG}] Local PostgreSQL resources preserved (cannot execute commands as postgres)."
-        echo "[${PKG}] To remove local DB resources manually later: sudo vh teardown db"
+        print_manual_postgres_cleanup
         return 0
     fi
 
     if ! postgresql_server_ready; then
         echo "[${PKG}] Local PostgreSQL resources preserved (server not ready)."
-        echo "[${PKG}] To remove local DB resources manually later: sudo vh teardown db"
+        print_manual_postgres_cleanup
         return 0
     fi
 
     if ! ROLE_EXISTS_RAW="$(psql_q "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'")"; then
         echo "[${PKG}] WARNING: Unable to detect PostgreSQL role state for '${DB_USER}'. Preserving local DB resources."
-        echo "[${PKG}] To remove local DB resources manually later: sudo vh teardown db"
+        print_manual_postgres_cleanup
         return 0
     fi
     if ! DB_EXISTS_RAW="$(psql_q "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'")"; then
         echo "[${PKG}] WARNING: Unable to detect PostgreSQL database state for '${DB_NAME}'. Preserving local DB resources."
-        echo "[${PKG}] To remove local DB resources manually later: sudo vh teardown db"
+        print_manual_postgres_cleanup
         return 0
     fi
     ROLE_EXISTS="$(printf '%s' "$ROLE_EXISTS_RAW" | tr -d '[:space:]')"
@@ -144,50 +237,35 @@ drop_local_postgres_resources_if_confirmed() {
 
     if is_noninteractive_context; then
         echo "[${PKG}] Noninteractive purge detected; local PostgreSQL resources preserved by default."
-        echo "[${PKG}] To remove local DB resources manually later: sudo vh teardown db"
+        print_manual_postgres_cleanup
         return 0
     fi
 
     if ! confirm_postgres_resource_removal; then
         echo "[${PKG}] Local PostgreSQL resources preserved by operator choice."
-        echo "[${PKG}] To remove local DB resources manually later: sudo vh teardown db"
+        print_manual_postgres_cleanup
         return 0
     fi
 
     echo "[${PKG}] Removing local PostgreSQL resources for '${DB_USER}'..."
 
     if [ "$DB_EXISTS" = "1" ]; then
-        if ! run_as_postgres psql -X -v ON_ERROR_STOP=1 postgres <<EOF
-SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${DB_NAME}' AND pid <> pg_backend_pid();
-DROP DATABASE IF EXISTS ${DB_NAME};
-EOF
-        then
+        if ! drop_local_database; then
             echo "[${PKG}] WARNING: Failed to drop PostgreSQL database '${DB_NAME}'. Continuing purge."
-            echo "[${PKG}] WARNING: You can retry manual cleanup with: sudo vh teardown db"
+            print_manual_postgres_cleanup
             return 0
         fi
     fi
 
     if [ "$ROLE_EXISTS" = "1" ]; then
-        if ! run_as_postgres psql -X -v ON_ERROR_STOP=1 -c "DROP ROLE IF EXISTS ${DB_USER};" postgres; then
+        if ! psql_q "DROP ROLE IF EXISTS ${DB_USER}" >/dev/null; then
             echo "[${PKG}] WARNING: Failed to drop PostgreSQL role '${DB_USER}'. Continuing purge."
-            echo "[${PKG}] WARNING: You can retry manual cleanup with: sudo vh teardown db"
+            print_manual_postgres_cleanup
             return 0
         fi
     fi
 
     echo "[${PKG}] Removed local PostgreSQL resources (database/role: ${DB_NAME}/${DB_USER})."
-    return 0
-}
-
-safe_systemctl() {
-    if ! has_command systemctl; then
-        log_systemctl_unavailable_once
-        return 0
-    fi
-    if ! run_systemctl_quiet "$@"; then
-        echo "[${PKG}] WARNING: systemctl --system $* failed; continuing."
-    fi
     return 0
 }
 
@@ -205,50 +283,173 @@ cleanup_nginx_site_link_if_package_path() {
     esac
 }
 
+restore_nginx_default_site_if_disabled() {
+    if [ ! -f "$NGINX_DEFAULT_DISABLED_MARKER" ]; then
+        return 0
+    fi
+    default_target="$(sed -n 's/^target=//p' "$NGINX_DEFAULT_DISABLED_MARKER" 2>/dev/null | head -n 1)"
+    if [ -z "$default_target" ]; then
+        default_target="$NGINX_DEFAULT_SITE_AVAIL"
+    fi
+    if [ ! -e "$NGINX_DEFAULT_SITE_ENABLED" ] && [ ! -L "$NGINX_DEFAULT_SITE_ENABLED" ] && [ -f "$NGINX_DEFAULT_SITE_AVAIL" ]; then
+        if ln -s "$default_target" "$NGINX_DEFAULT_SITE_ENABLED" 2>/dev/null; then
+            echo "[${PKG}] Restored nginx default site: ${NGINX_DEFAULT_SITE_ENABLED}"
+        fi
+    fi
+    rm -f "$NGINX_DEFAULT_DISABLED_MARKER" || true
+}
+
 reload_nginx_if_safe() {
     if ! has_command nginx; then
         return 0
     fi
-    if ! has_command systemctl; then
+    if ! systemd_running; then
         return 0
     fi
-    if ! systemctl --quiet is-active nginx.service >/dev/null 2>&1; then
+    if ! run_systemctl_quiet --quiet is-active nginx.service; then
         return 0
     fi
-    if nginx -t >/dev/null 2>&1; then
+    if run_bounded "$NGINX_TIMEOUT_SECONDS" nginx -t >/dev/null 2>&1; then
         safe_systemctl reload nginx.service
     fi
 }
 
+remove_renewal_deploy_hook() {
+    # Installed by `vh setup nginx --certbot-dns-cloudflare`.
+    if [ -f "$NGINX_RENEWAL_DEPLOY_HOOK" ] || [ -L "$NGINX_RENEWAL_DEPLOY_HOOK" ]; then
+        rm -f "$NGINX_RENEWAL_DEPLOY_HOOK" && echo "[${PKG}] Removed certbot deploy hook: ${NGINX_RENEWAL_DEPLOY_HOOK}"
+    fi
+}
+
+purge_tree() {
+    # purge_tree <dir>: delete a package-owned tree without crossing into other
+    # filesystems. A mount point keeps its (emptied) directory, owned root:root 0755.
+    dir="$1"
+    if [ -L "$dir" ]; then
+        rm -f "$dir" || warn_nonfatal "Could not remove symlink ${dir}."
+        return 0
+    fi
+    if is_mountpoint "$dir"; then
+        find "$dir" -xdev -mindepth 1 -delete 2>/dev/null || warn_nonfatal "Some entries under mount point ${dir} could not be removed (nested mount or busy)."
+        chown root:root "$dir" 2>/dev/null || true
+        chmod 0755 "$dir" 2>/dev/null || true
+        echo "[${PKG}] ${dir} is a mount point: removed its contents and kept the directory (root:root 0755)."
+        return 0
+    fi
+    if [ ! -d "$dir" ]; then
+        return 0
+    fi
+    find "$dir" -xdev -mindepth 1 -delete 2>/dev/null || warn_nonfatal "Some entries under ${dir} could not be removed (nested mount or busy)."
+    rmdir "$dir" 2>/dev/null || warn_nonfatal "Could not remove ${dir}; it still has entries."
+}
+
+cleanup_web_cache() {
+    # .next/cache is created at runtime (a symlink to /var/cache/vaulthalla-web, or a real
+    # directory), so dpkg does not own it and leaves /usr/share/vaulthalla-web behind.
+    cache_link="${WEB_ROOT}/.next/cache"
+    if [ -L "$cache_link" ]; then
+        rm -f "$cache_link" || true
+    elif [ -d "$cache_link" ]; then
+        purge_tree "$cache_link"
+    fi
+    rmdir "${WEB_ROOT}/.next" 2>/dev/null || true
+    rmdir "$WEB_ROOT" 2>/dev/null || true
+    purge_tree "$WEB_CACHE_DIR"
+}
+
+detach_mount_root() {
+    # Units are stopped by now and ExecStopPost lazily unmounts; clean up a stale mount
+    # without ever touching it (lazy unmount never waits on the FUSE daemon).
+    if ! is_mountpoint "$MOUNT_ROOT"; then
+        return 0
+    fi
+    if has_command fusermount3; then
+        run_bounded "$UNMOUNT_TIMEOUT_SECONDS" fusermount3 -uz "$MOUNT_ROOT" >/dev/null 2>&1 || true
+    fi
+    if is_mountpoint "$MOUNT_ROOT"; then
+        run_bounded "$UNMOUNT_TIMEOUT_SECONDS" umount -l "$MOUNT_ROOT" >/dev/null 2>&1 || true
+    fi
+}
+
+remove_service_account() {
+    if has_command pgrep && pgrep -u "$DB_USER" >/dev/null 2>&1; then
+        warn_nonfatal "Processes owned by '${DB_USER}' are still running; the account may not be removable yet."
+    fi
+    if id "$DB_USER" >/dev/null 2>&1; then
+        deluser --system --quiet "$DB_USER" || warn_nonfatal "Could not remove system user '${DB_USER}'."
+    fi
+    if getent group "$DB_USER" >/dev/null 2>&1; then
+        delgroup --system --quiet "$DB_USER" || warn_nonfatal "Could not remove system group '${DB_USER}'."
+    fi
+}
+
+purge_config_dir() {
+    # config.yaml is not a dpkg conffile (the daemon rewrites it), so purge removes it
+    # explicitly; dpkg removes obsolete conffiles from older releases itself.
+    for f in config.yaml config_template.yaml.in; do
+        rm -f "${CONFIG_DIR}/${f}" "${CONFIG_DIR}/${f}.dpkg-vh-new" \
+            "${CONFIG_DIR}/${f}.dpkg-old" "${CONFIG_DIR}/${f}.dpkg-dist" "${CONFIG_DIR}/${f}.dpkg-bak" || true
+    done
+    if [ -d "$CERTBOT_CREDENTIALS_DIR" ]; then
+        rmdir "$CERTBOT_CREDENTIALS_DIR" 2>/dev/null || true
+    fi
+    if [ -d "$CERTBOT_CREDENTIALS_DIR" ]; then
+        # Operator-provided DNS credentials are still referenced by certbot renewal configs
+        # under /etc/letsencrypt; deleting them would break unattended renewals.
+        echo "[${PKG}] Preserved operator-provided certbot credentials in ${CERTBOT_CREDENTIALS_DIR}."
+        echo "[${PKG}]   Remove them after retiring the certificates: sudo rm -r ${CERTBOT_CREDENTIALS_DIR}"
+    fi
+    rmdir "$CONFIG_DIR" 2>/dev/null || true
+}
+
+purge_package_state() {
+    # Called as `purge_package_state || true`: nothing in here may fail the purge.
+    cleanup_web_cache
+    rm -f "$LEGACY_PENDING_SUPERADMIN_UID_FILE" "$PENDING_DB_PASS_FILE" || true
+    rm -f "$TPM_BACKEND_OVERRIDE_FILE" || true
+    rmdir "$TPM_BACKEND_OVERRIDE_DIR" 2>/dev/null || true
+
+    cleanup_nginx_site_link_if_package_path
+    if [ -f "$NGINX_MANAGED_MARKER" ]; then
+        rm -f "$NGINX_SITE_AVAIL" || true
+        echo "[${PKG}] Removed package-managed nginx site file: ${NGINX_SITE_AVAIL}"
+    elif [ -f "$NGINX_SITE_AVAIL" ]; then
+        echo "[${PKG}] Preserving nginx site file on purge; no package-managed marker present."
+    fi
+    rm -f "$NGINX_MANAGED_MARKER" || true
+    restore_nginx_default_site_if_disabled
+    remove_renewal_deploy_hook
+    reload_nginx_if_safe
+
+    drop_local_postgres_resources_if_confirmed
+
+    remove_service_account
+
+    purge_tree "$SWTPM_STATE_DIR"
+    rmdir "$SWTPM_BASE_DIR" 2>/dev/null || true
+    purge_tree "$STATE_DIR"
+    purge_tree "$LOG_DIR"
+    purge_tree "$RUNTIME_DIR"
+    detach_mount_root
+    if ! is_mountpoint "$MOUNT_ROOT"; then
+        rmdir "$MOUNT_ROOT" 2>/dev/null || true
+    fi
+    purge_config_dir
+
+    if [ "$POSTGRES_RESOURCES_REMAIN" = "1" ]; then
+        echo "[${PKG}] Note: the PostgreSQL database/role '${DB_NAME}' were kept (see commands above)."
+    fi
+    return 0
+}
+
 case "$1" in
     remove)
-        rm -f "$LEGACY_PENDING_SUPERADMIN_UID_FILE" "$PENDING_DB_PASS_FILE"
-        rm -f "$TPM_BACKEND_OVERRIDE_FILE"
+        rm -f "$LEGACY_PENDING_SUPERADMIN_UID_FILE" "$PENDING_DB_PASS_FILE" || true
+        rm -f "$TPM_BACKEND_OVERRIDE_FILE" || true
         ;;
 
     purge)
-        rm -rf /var/cache/vaulthalla-web
-        rm -f "$LEGACY_PENDING_SUPERADMIN_UID_FILE" "$PENDING_DB_PASS_FILE"
-        rm -f "$TPM_BACKEND_OVERRIDE_FILE"
-        cleanup_nginx_site_link_if_package_path
-        if [ -f "$NGINX_MANAGED_MARKER" ]; then
-            rm -f "$NGINX_SITE_AVAIL"
-            echo "[${PKG}] Removed package-managed nginx site file: ${NGINX_SITE_AVAIL}"
-        elif [ -f "$NGINX_SITE_AVAIL" ]; then
-            echo "[${PKG}] Preserving nginx site file on purge; no package-managed marker present."
-        fi
-        rm -f "$NGINX_MANAGED_MARKER"
-        reload_nginx_if_safe
-        drop_local_postgres_resources_if_confirmed
-
-        deluser --system --quiet vaulthalla || true
-        delgroup --system --quiet vaulthalla || true
-        rm -rf "$SWTPM_STATE_DIR"
-        rmdir "$SWTPM_BASE_DIR" >/dev/null 2>&1 || true
-        rm -rf /var/lib/vaulthalla /var/log/vaulthalla
-        rmdir /run/vaulthalla >/dev/null 2>&1 || true
-        rmdir /mnt/vaulthalla >/dev/null 2>&1 || true
-        rmdir /etc/vaulthalla >/dev/null 2>&1 || true
+        purge_package_state || true
         ;;
 esac
 

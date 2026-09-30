@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 import filecmp
+import hashlib
 import os
 import pwd
 import re
@@ -12,6 +13,7 @@ import shutil
 import string
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +21,15 @@ DB_NAME = "vaulthalla"
 DB_USER = "vaulthalla"
 SERVICE_UNIT = "vaulthalla.service"
 PENDING_DB_PASSWORD_FILE = Path("/run/vaulthalla/db_password")
+STATE_DIR = Path("/var/lib/vaulthalla")
+# TPMKeyProvider("psql") seals the DB password to <backing path>/.sealed_psql.blob/psql.{priv,pub}.
+SEALED_DB_SECRET_DIR = STATE_DIR / ".sealed_psql.blob"
+DB_BOOTSTRAP_OPTOUT_MARKER = STATE_DIR / "db_bootstrap_disabled"
+NGINX_OPTOUT_MARKER = STATE_DIR / "nginx_config_disabled"
+PGCONNECT_TIMEOUT_SECONDS = 10
+DEFAULT_COMMAND_TIMEOUT_SECONDS = 120
+SERVICE_HEALTH_TIMEOUT_SECONDS = 30
+SERVICE_HEALTH_STABLE_SECONDS = 5
 
 DEFAULT_CONFIG_PATH = Path("/etc/vaulthalla/config.yaml")
 DEFAULT_SCHEMA_DIR = Path("/usr/share/vaulthalla/psql")
@@ -27,6 +38,9 @@ DEFAULT_NGINX_TEMPLATE = Path("/usr/share/vaulthalla/nginx/vaulthalla")
 NGINX_SITE_AVAILABLE = Path("/etc/nginx/sites-available/vaulthalla")
 NGINX_SITE_ENABLED = Path("/etc/nginx/sites-enabled/vaulthalla")
 NGINX_MANAGED_MARKER = Path("/var/lib/vaulthalla/nginx_site_managed")
+NGINX_DEFAULT_SITE_AVAILABLE = Path("/etc/nginx/sites-available/default")
+NGINX_DEFAULT_SITE_ENABLED = Path("/etc/nginx/sites-enabled/default")
+NGINX_DEFAULT_DISABLED_MARKER = Path("/var/lib/vaulthalla/nginx_default_site_disabled")
 NGINX_RENEWAL_DEPLOY_HOOK = Path("/etc/letsencrypt/renewal-hooks/deploy/vaulthalla-nginx-reload.sh")
 LETSENCRYPT_LIVE_DIR = Path("/etc/letsencrypt/live")
 CERTBOT_RENEWAL_WINDOW_SECONDS = 30 * 24 * 60 * 60
@@ -50,8 +64,16 @@ def eprint(msg: str) -> None:
     print(msg, file=sys.stderr)
 
 
-def run_capture(args: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(args, capture_output=True, text=True, check=False)
+def run_capture(
+    args: list[str],
+    input_text: str | None = None,
+    timeout: float = DEFAULT_COMMAND_TIMEOUT_SECONDS,
+) -> subprocess.CompletedProcess[str]:
+    # Every external call is bounded; secrets travel via input_text (stdin), never argv.
+    try:
+        return subprocess.run(args, capture_output=True, text=True, check=False, input=input_text, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        raise LifecycleError(f"command timed out after {timeout:.0f}s: {' '.join(args[:6])}") from exc
 
 
 def command_exists(command: str) -> bool:
@@ -237,11 +259,17 @@ def make_db_password(length: int = 48) -> str:
 def choose_postgres_prefix() -> list[str]:
     candidates: list[list[str]] = []
     if command_exists("runuser"):
-        candidates.append(["runuser", "-u", "postgres", "--", "psql", "-X", "-v", "ON_ERROR_STOP=1"])
+        candidates.append(
+            ["runuser", "-u", "postgres", "--", "env", f"PGCONNECT_TIMEOUT={PGCONNECT_TIMEOUT_SECONDS}",
+             "psql", "-X", "-v", "ON_ERROR_STOP=1"]
+        )
     if command_exists("sudo"):
         probe = run_capture(["sudo", "-n", "true"])
         if probe.returncode == 0:
-            candidates.append(["sudo", "-n", "-u", "postgres", "psql", "-X", "-v", "ON_ERROR_STOP=1"])
+            candidates.append(
+                ["sudo", "-n", "-u", "postgres", "env", f"PGCONNECT_TIMEOUT={PGCONNECT_TIMEOUT_SECONDS}",
+                 "psql", "-X", "-v", "ON_ERROR_STOP=1"]
+            )
 
     for prefix in candidates:
         probe = run_capture(prefix + ["-d", "postgres", "-tAc", "SELECT 1;"])
@@ -254,7 +282,85 @@ def choose_postgres_prefix() -> list[str]:
 
 
 def psql_sql(prefix: list[str], db: str, sql: str) -> subprocess.CompletedProcess[str]:
+    # One statement per call (psql -c runs a multi-statement string as one transaction,
+    # which DROP DATABASE refuses). Never put secrets here: argv is world-readable.
     return run_capture(prefix + ["-d", db, "-tAc", sql])
+
+
+def psql_stdin(prefix: list[str], db: str, sql: str) -> subprocess.CompletedProcess[str]:
+    # The channel for SQL that carries a secret (role passwords): fed via stdin.
+    return run_capture(prefix + ["-q", "-d", db], input_text=sql)
+
+
+def sql_literal(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def sealed_db_secret_present() -> bool:
+    return (SEALED_DB_SECRET_DIR / "psql.priv").is_file()
+
+
+def pending_db_password() -> str | None:
+    try:
+        tokens = PENDING_DB_PASSWORD_FILE.read_text(encoding="utf-8").split()
+    except OSError:
+        return None
+    return tokens[0] if tokens else None
+
+
+def query_flag(prefix: list[str], db: str, sql: str, step: str) -> bool:
+    result = psql_sql(prefix, db, sql)
+    if result.returncode != 0:
+        raise LifecycleError(format_failure(step, result))
+    return trim(result.stdout) in ("1", "t", "true")
+
+
+def local_db_has_vaulthalla_data(prefix: list[str]) -> bool:
+    # Once the daemon has started even once, initdb has seeded principals into
+    # public.users; an absent/empty users table means an interrupted install.
+    if not query_flag(prefix, DB_NAME, "SELECT to_regclass('public.users') IS NOT NULL;", "failed inspecting database"):
+        return False
+    return query_flag(prefix, DB_NAME, "SELECT EXISTS (SELECT 1 FROM public.users);", "failed inspecting database")
+
+
+def postgres_server_version_num(prefix: list[str]) -> int:
+    result = psql_sql(prefix, "postgres", "SHOW server_version_num;")
+    try:
+        return int(trim(result.stdout)) if result.returncode == 0 else 0
+    except ValueError:
+        return 0
+
+
+def drop_local_database(prefix: list[str]) -> None:
+    if postgres_server_version_num(prefix) >= 130000:
+        steps = [f"DROP DATABASE IF EXISTS {DB_NAME} WITH (FORCE);"]
+    else:
+        steps = [
+            f"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{DB_NAME}' AND pid <> pg_backend_pid();",
+            f"DROP DATABASE IF EXISTS {DB_NAME};",
+        ]
+    for sql in steps:
+        result = psql_sql(prefix, "postgres", sql)
+        if result.returncode != 0:
+            raise LifecycleError(format_failure(f"failed dropping PostgreSQL database '{DB_NAME}'", result))
+
+
+def drop_local_role(prefix: list[str]) -> None:
+    result = psql_sql(prefix, "postgres", f"DROP ROLE IF EXISTS {DB_USER};")
+    if result.returncode != 0:
+        raise LifecycleError(format_failure(f"failed dropping PostgreSQL role '{DB_USER}'", result))
+
+
+def set_local_role_password(prefix: list[str], password: str, role_exists: bool) -> None:
+    if role_exists:
+        sql = f"ALTER ROLE {DB_USER} WITH LOGIN PASSWORD {sql_literal(password)};\n"
+    else:
+        sql = f"CREATE ROLE {DB_USER} LOGIN PASSWORD {sql_literal(password)};\n"
+    result = psql_stdin(prefix, "postgres", sql)
+    if result.returncode != 0:
+        # Don't echo psql output: some errors quote the failing statement (with the password).
+        action = "set password for" if role_exists else "create"
+        raise LifecycleError(f"failed to {action} PostgreSQL role '{DB_USER}' (exit {result.returncode})")
 
 
 def write_pending_db_password(password: str) -> None:
@@ -263,12 +369,21 @@ def write_pending_db_password(password: str) -> None:
     except KeyError as exc:
         raise LifecycleError(f"system user '{DB_USER}' not found") from exc
 
+    tmp = PENDING_DB_PASSWORD_FILE.with_name(PENDING_DB_PASSWORD_FILE.name + ".lifecycle-new")
     try:
         PENDING_DB_PASSWORD_FILE.parent.mkdir(parents=True, exist_ok=True)
-        PENDING_DB_PASSWORD_FILE.write_text(password + "\n", encoding="utf-8")
-        os.chown(PENDING_DB_PASSWORD_FILE, account.pw_uid, account.pw_gid)
-        os.chmod(PENDING_DB_PASSWORD_FILE, 0o600)
+        # Created 0600 and renamed into place: never world-readable, never half-written.
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(password + "\n")
+        os.chown(tmp, account.pw_uid, account.pw_gid)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, PENDING_DB_PASSWORD_FILE)
     except OSError as exc:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
         raise LifecycleError(f"failed preparing pending DB password handoff file: {exc}") from exc
 
 
@@ -288,15 +403,74 @@ def load_password_from_file(path: str) -> str:
     return first[0]
 
 
+def unit_properties(unit: str, *names: str) -> dict[str, str]:
+    args = ["systemctl", "show", unit]
+    for name in names:
+        args.extend(["-p", name])
+    result = run_capture(args, timeout=15)
+    props: dict[str, str] = {}
+    for line in (result.stdout or "").splitlines():
+        key, sep, value = line.partition("=")
+        if sep:
+            props[key] = value
+    return props
+
+
 def restart_or_start_service() -> str:
     if not command_exists("systemctl"):
         raise LifecycleError("systemctl is not available; cannot hand off lifecycle updates to runtime startup")
-    active = run_capture(["systemctl", "--quiet", "is-active", SERVICE_UNIT])
+    # A unit that hit StartLimitBurst refuses manual starts until its failed state is reset.
+    run_capture(["systemctl", "reset-failed", SERVICE_UNIT], timeout=15)
+    active = run_capture(["systemctl", "--quiet", "is-active", SERVICE_UNIT], timeout=15)
     action = "restart" if active.returncode == 0 else "start"
-    result = run_capture(["systemctl", action, SERVICE_UNIT])
+    result = run_capture(["systemctl", action, SERVICE_UNIT], timeout=90)
     if result.returncode != 0:
         raise LifecycleError(format_failure(f"failed to {action} {SERVICE_UNIT}", result))
     return "restarted" if action == "restart" else "started"
+
+
+def wait_for_service_healthy(
+    seed_expected: bool,
+    timeout: float = SERVICE_HEALTH_TIMEOUT_SECONDS,
+    stable: float = SERVICE_HEALTH_STABLE_SECONDS,
+) -> tuple[bool, str]:
+    """Report what the daemon actually did instead of assuming a started unit is healthy.
+
+    Healthy means ActiveState=active with no new automatic restarts for `stable` seconds
+    and, when a password seed was written, the daemon consumed (removed) the seed.
+    """
+    baseline = unit_properties(SERVICE_UNIT, "NRestarts").get("NRestarts", "0")
+    deadline = time.monotonic() + timeout
+    active_since: float | None = None
+    while True:
+        props = unit_properties(SERVICE_UNIT, "ActiveState", "SubState", "NRestarts")
+        active_state = props.get("ActiveState", "unknown")
+        state = f"{active_state}/{props.get('SubState', 'unknown')}"
+        restarted = props.get("NRestarts", baseline) != baseline
+        now = time.monotonic()
+        if restarted or active_state == "failed":
+            return False, f"{state}; restarts={props.get('NRestarts', '?')} (was {baseline})"
+        if active_state == "active":
+            if active_since is None:
+                active_since = now
+            seed_consumed = not seed_expected or not PENDING_DB_PASSWORD_FILE.exists()
+            if seed_consumed and now - active_since >= stable:
+                return True, f"{state} (stable for {stable:.0f}s)"
+        else:
+            active_since = None
+        if now >= deadline:
+            return False, f"{state} after {timeout:.0f}s"
+        time.sleep(1)
+
+
+def require_service_healthy(seed_expected: bool, context: str) -> str:
+    healthy, detail = wait_for_service_healthy(seed_expected)
+    if not healthy:
+        raise LifecycleError(
+            f"{context}: {SERVICE_UNIT} is not running correctly ({detail}). "
+            f"See: journalctl -u {SERVICE_UNIT} -n 50"
+        )
+    return detail
 
 
 def validate_and_reload_nginx() -> str:
@@ -679,6 +853,69 @@ def is_managed_site_symlink_target(path: Path) -> bool:
     return target in (str(NGINX_SITE_AVAILABLE), "../sites-available/vaulthalla")
 
 
+def dpkg_conffile_md5(path: Path) -> str | None:
+    if not command_exists("dpkg-query"):
+        return None
+    owner = run_capture(["dpkg-query", "-S", str(path)], timeout=30)
+    if owner.returncode != 0 or not owner.stdout.strip():
+        return None
+    package = owner.stdout.splitlines()[0].split(":", 1)[0].strip()
+    conffiles = run_capture(["dpkg-query", "-W", "-f=${Conffiles}\n", package], timeout=30)
+    if conffiles.returncode != 0:
+        return None
+    for line in conffiles.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0] == str(path) and "obsolete" not in parts[2:]:
+            return parts[1]
+    return None
+
+
+def nginx_default_site_is_stock_symlink() -> bool:
+    """True only for the unmodified distro default site enabled via its usual symlink."""
+    link = NGINX_DEFAULT_SITE_ENABLED
+    if not link.is_symlink() or not NGINX_DEFAULT_SITE_AVAILABLE.is_file():
+        return False
+    if os.readlink(link) not in (str(NGINX_DEFAULT_SITE_AVAILABLE), "../sites-available/default"):
+        return False
+    expected = dpkg_conffile_md5(NGINX_DEFAULT_SITE_AVAILABLE)
+    if not expected:
+        return False
+    try:
+        actual = hashlib.md5(NGINX_DEFAULT_SITE_AVAILABLE.read_bytes()).hexdigest()
+    except OSError:
+        return False
+    return actual == expected
+
+
+def disable_stock_nginx_default_site() -> bool:
+    # The stock default site holds `listen 80 default_server`, so a catch-all Vaulthalla
+    # site would never answer. Only the unmodified distro symlink is touched, and the
+    # marker lets `vh teardown nginx` / package purge restore it.
+    if not nginx_default_site_is_stock_symlink():
+        return False
+    target = os.readlink(NGINX_DEFAULT_SITE_ENABLED)
+    NGINX_DEFAULT_SITE_ENABLED.unlink()
+    NGINX_DEFAULT_DISABLED_MARKER.parent.mkdir(parents=True, exist_ok=True)
+    NGINX_DEFAULT_DISABLED_MARKER.write_text(f"target={target}\n", encoding="utf-8")
+    return True
+
+
+def restore_nginx_default_site() -> bool:
+    if not NGINX_DEFAULT_DISABLED_MARKER.exists():
+        return False
+    target = str(NGINX_DEFAULT_SITE_AVAILABLE)
+    for line in NGINX_DEFAULT_DISABLED_MARKER.read_text(encoding="utf-8").splitlines():
+        if line.startswith("target=") and line[len("target="):].strip():
+            target = line[len("target="):].strip()
+    restored = False
+    link = NGINX_DEFAULT_SITE_ENABLED
+    if not link.exists() and not link.is_symlink() and NGINX_DEFAULT_SITE_AVAILABLE.is_file():
+        link.symlink_to(target)
+        restored = True
+    NGINX_DEFAULT_DISABLED_MARKER.unlink()
+    return restored
+
+
 def requested_certificate_domains(domain: str, s3_domain: str | None) -> list[str]:
     domains: list[str] = []
     for candidate in (domain, s3_domain):
@@ -885,7 +1122,18 @@ fi
         raise LifecycleError(f"failed installing nginx renewal deploy hook: {exc}") from exc
 
 
-def setup_db(_args: argparse.Namespace) -> int:
+ADOPT_KEY_WARNING = (
+    "vault encryption keys and stored provider API keys in an adopted database are only "
+    f"recoverable if the original {STATE_DIR}/.sealed_*.blob files and the same TPM are restored"
+)
+
+
+def setup_db(args: argparse.Namespace) -> int:
+    adopt = bool(getattr(args, "adopt", False))
+    overwrite = bool(getattr(args, "overwrite", False))
+    if adopt and overwrite:
+        raise LifecycleError("choose only one of --adopt or --overwrite")
+
     schemas = schema_dir()
     if not schemas.is_dir():
         raise LifecycleError(f"canonical schema path is missing: {schemas}")
@@ -896,32 +1144,71 @@ def setup_db(_args: argparse.Namespace) -> int:
         raise LifecycleError("PostgreSQL client 'psql' is not installed")
 
     prefix = choose_postgres_prefix()
-    role_state = psql_sql(prefix, "postgres", f"SELECT 1 FROM pg_roles WHERE rolname = '{DB_USER}';")
-    if role_state.returncode != 0:
-        raise LifecycleError(format_failure("failed querying PostgreSQL role state", role_state))
-    role_exists = trim(role_state.stdout) == "1"
+    role_exists = query_flag(
+        prefix, "postgres", f"SELECT 1 FROM pg_roles WHERE rolname = '{DB_USER}';", "failed querying PostgreSQL role state"
+    )
+    db_exists = query_flag(
+        prefix, "postgres", f"SELECT 1 FROM pg_database WHERE datname = '{DB_NAME}';", "failed querying PostgreSQL database state"
+    )
+    sealed = sealed_db_secret_present()
+    seed = pending_db_password()
 
-    db_state = psql_sql(prefix, "postgres", f"SELECT 1 FROM pg_database WHERE datname = '{DB_NAME}';")
-    if db_state.returncode != 0:
-        raise LifecycleError(format_failure("failed querying PostgreSQL database state", db_state))
-    db_exists = trim(db_state.stdout) == "1"
+    if overwrite:
+        drop_local_database(prefix)
+        if role_exists:
+            drop_local_role(prefix)
+        role_exists = db_exists = False
+        seed = None
 
-    created_role = False
-    created_db = False
-    generated_password = ""
+    password: str | None = None
+    warnings: list[str] = []
+    if not role_exists and not db_exists:
+        password = seed or make_db_password()
+        mode = "recreated after --overwrite" if overwrite else "created"
+    elif adopt:
+        password = make_db_password()
+        mode = "adopted (--adopt: role password rotated)"
+        warnings.append(ADOPT_KEY_WARNING)
+    elif seed:
+        password = seed
+        mode = f"converged to pending password handoff {PENDING_DB_PASSWORD_FILE}"
+    elif sealed and role_exists:
+        mode = "existing (sealed credential present; password unchanged)"
+    elif sealed:
+        # The database survived but its role was dropped: recreate the role; the daemon
+        # reseals the new password from the handoff file on startup.
+        password = make_db_password()
+        mode = "role recreated for the existing database (sealed credential re-seeded)"
+    elif not db_exists or not local_db_has_vaulthalla_data(prefix):
+        password = make_db_password()
+        mode = "adopted (empty database left by an interrupted install; role password rotated)"
+    else:
+        raise LifecycleError(
+            f"an existing '{DB_NAME}' database with Vaulthalla data was found, but this host has no sealed "
+            f"credential for it ({SEALED_DB_SECRET_DIR}) and no pending {PENDING_DB_PASSWORD_FILE}. "
+            f"Re-run with --adopt to keep the data and rotate the role password ({ADOPT_KEY_WARNING}), "
+            "or with --overwrite to permanently delete it and start fresh."
+        )
 
-    if not role_exists:
-        generated_password = make_db_password()
-        create_role = psql_sql(prefix, "postgres", f"CREATE ROLE {DB_USER} LOGIN PASSWORD '{generated_password}';")
-        if create_role.returncode != 0:
-            raise LifecycleError(format_failure(f"failed creating PostgreSQL role '{DB_USER}'", create_role))
-        created_role = True
+    if password is not None:
+        # Seed first (atomic), then align the role; roll the seed back if the role update fails.
+        write_pending_db_password(password)
+        try:
+            set_local_role_password(prefix, password, role_exists)
+        except LifecycleError:
+            try:
+                PENDING_DB_PASSWORD_FILE.unlink()
+            except OSError:
+                pass
+            raise
 
     if not db_exists:
         create_db = psql_sql(prefix, "postgres", f"CREATE DATABASE {DB_NAME} OWNER {DB_USER};")
         if create_db.returncode != 0:
             raise LifecycleError(format_failure(f"failed creating PostgreSQL database '{DB_NAME}'", create_db))
-        created_db = True
+    elif not role_exists:
+        # Best effort: the role was just (re)created for a database that outlived it.
+        psql_sql(prefix, "postgres", f"ALTER DATABASE {DB_NAME} OWNER TO {DB_USER};")
 
     grant_db = psql_sql(prefix, "postgres", f"GRANT ALL PRIVILEGES ON DATABASE {DB_NAME} TO {DB_USER};")
     if grant_db.returncode != 0:
@@ -931,20 +1218,26 @@ def setup_db(_args: argparse.Namespace) -> int:
     if grant_schema.returncode != 0:
         raise LifecycleError(format_failure("failed granting schema privileges", grant_schema))
 
-    if created_role:
-        write_pending_db_password(generated_password)
+    opted_back_in = False
+    if DB_BOOTSTRAP_OPTOUT_MARKER.exists():
+        DB_BOOTSTRAP_OPTOUT_MARKER.unlink()
+        opted_back_in = True
 
     action = restart_or_start_service()
+    for warning in warnings:
+        eprint(f"setup db: WARNING: {warning}")
+    health = require_service_healthy(password is not None, "setup db")
 
     print("setup db: local PostgreSQL bootstrap complete")
-    print(f"  role: {'created' if created_role else 'already existed'} ({DB_USER})")
-    print(f"  database: {'created' if created_db else 'already existed'} ({DB_NAME})")
+    print(f"  role/database: {mode} ({DB_USER}/{DB_NAME})")
     print(f"  canonical schema path: {schemas} (validated)")
-    if created_role:
-        print(f"  seeded runtime DB password: {PENDING_DB_PASSWORD_FILE} (owner/mode verified)")
+    if password is not None:
+        print(f"  runtime DB password: seeded via {PENDING_DB_PASSWORD_FILE} and consumed by the service")
     else:
-        print("  seeded runtime DB password: unchanged (existing role/password path)")
-    print(f"  service: {SERVICE_UNIT} {action}")
+        print(f"  runtime DB password: unchanged (sealed credential at {SEALED_DB_SECRET_DIR})")
+    if opted_back_in:
+        print(f"  package DB bootstrap opt-out removed: {DB_BOOTSTRAP_OPTOUT_MARKER}")
+    print(f"  service: {SERVICE_UNIT} {action}; {health}")
     print("  migrations: delegated to normal runtime startup flow (SqlDeployer)")
     return 0
 
@@ -972,6 +1265,7 @@ def setup_remote_db(args: argparse.Namespace) -> int:
     password = load_password_from_file(args.password_file)
     write_pending_db_password(password)
     action = restart_or_start_service()
+    health = require_service_healthy(True, "setup remote-db")
 
     print("setup remote-db: remote PostgreSQL configuration applied")
     print(f"  config file: {path}")
@@ -980,8 +1274,8 @@ def setup_remote_db(args: argparse.Namespace) -> int:
     print(f"  database.user: {updates['user']}")
     print(f"  database.name: {updates['name']}")
     print(f"  database.pool_size: {updates['pool_size']}")
-    print(f"  seeded runtime DB password: {PENDING_DB_PASSWORD_FILE} (owner/mode verified)")
-    print(f"  service: {SERVICE_UNIT} {action}")
+    print(f"  seeded runtime DB password: {PENDING_DB_PASSWORD_FILE} (consumed by the service)")
+    print(f"  service: {SERVICE_UNIT} {action}; {health}")
     print("  migrations: delegated to normal runtime startup flow (SqlDeployer)")
     return 0
 
@@ -1073,7 +1367,21 @@ def setup_nginx(args: argparse.Namespace) -> int:
         NGINX_SITE_ENABLED.symlink_to(NGINX_SITE_AVAILABLE)
         created_site_link = True
 
-    reload_status = validate_and_reload_nginx()
+    disabled_default_site = False
+    if not domain:
+        disabled_default_site = disable_stock_nginx_default_site()
+
+    try:
+        reload_status = validate_and_reload_nginx()
+    except LifecycleError:
+        if disabled_default_site:
+            restore_nginx_default_site()
+        raise
+
+    opted_back_in = False
+    if NGINX_OPTOUT_MARKER.exists():
+        NGINX_OPTOUT_MARKER.unlink()
+        opted_back_in = True
 
     if args.certbot:
         ensure_certbot_prereqs()
@@ -1112,6 +1420,10 @@ def setup_nginx(args: argparse.Namespace) -> int:
             + f" ({NGINX_SITE_AVAILABLE})"
         )
         print(f"  site link: {'enabled' if created_site_link else 'already enabled'} ({NGINX_SITE_ENABLED})")
+        if disabled_default_site:
+            print(f"  distro default site: disabled ({NGINX_DEFAULT_SITE_ENABLED}; restored by 'vh teardown nginx')")
+        if opted_back_in:
+            print(f"  package nginx opt-out removed: {NGINX_OPTOUT_MARKER}")
         print(f"  config source: {config_path()}")
         print(f"  domain: {domain if domain else 'default catch-all (_)' }")
         if s3_domain:
@@ -1164,6 +1476,8 @@ def teardown_nginx(_args: argparse.Namespace) -> int:
         NGINX_RENEWAL_DEPLOY_HOOK.unlink()
         removed_renewal_hook = True
 
+    restored_default_site = restore_nginx_default_site()
+
     if command_exists("nginx") and command_exists("systemctl"):
         active = run_capture(["systemctl", "--quiet", "is-active", "nginx.service"])
         if active.returncode == 0:
@@ -1174,6 +1488,7 @@ def teardown_nginx(_args: argparse.Namespace) -> int:
     print(f"  removed site file: {'yes' if removed_site else 'no'}")
     print(f"  removed managed marker: {'yes' if removed_marker else 'no'}")
     print(f"  removed renewal hook: {'yes' if removed_renewal_hook else 'no'}")
+    print(f"  restored distro default site: {'yes' if restored_default_site else 'no'}")
     return 0
 
 
@@ -1181,23 +1496,32 @@ def teardown_db(_args: argparse.Namespace) -> int:
     if not command_exists("psql"):
         raise LifecycleError("PostgreSQL client 'psql' is not installed")
     prefix = choose_postgres_prefix()
-    teardown_sql = (
-        f"REVOKE CONNECT ON DATABASE {DB_NAME} FROM public; "
-        f"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{DB_NAME}'; "
-        f"DROP DATABASE IF EXISTS {DB_NAME}; "
-        f"DROP ROLE IF EXISTS {DB_USER};"
-    )
-    result = psql_sql(prefix, "postgres", teardown_sql)
-    if result.returncode != 0:
-        raise LifecycleError(format_failure("failed tearing down local PostgreSQL role/database", result))
 
+    # Stop the daemon first: dropping its database underneath a running pool wedges it.
+    stopped_service = False
+    if command_exists("systemctl"):
+        active = run_capture(["systemctl", "--quiet", "is-active", SERVICE_UNIT], timeout=15)
+        if active.returncode == 0:
+            stop = run_capture(["systemctl", "stop", SERVICE_UNIT], timeout=90)
+            if stop.returncode != 0:
+                raise LifecycleError(format_failure(f"failed stopping {SERVICE_UNIT} before teardown", stop))
+            stopped_service = True
+
+    # Separate psql invocations: DROP DATABASE cannot run inside a transaction block.
+    drop_local_database(prefix)
+    drop_local_role(prefix)
+
+    removed_seed = False
     if PENDING_DB_PASSWORD_FILE.exists():
         PENDING_DB_PASSWORD_FILE.unlink()
+        removed_seed = True
 
     print("teardown db: completed")
+    print(f"  stopped {SERVICE_UNIT}: {'yes' if stopped_service else 'no (not active)'}")
     print(f"  dropped database: {DB_NAME}")
     print(f"  dropped role: {DB_USER}")
-    print(f"  removed pending password handoff: {'yes' if not PENDING_DB_PASSWORD_FILE.exists() else 'no'}")
+    print(f"  removed pending password handoff: {'yes' if removed_seed else 'no (none present)'}")
+    print("  next: 'sudo vh setup db' creates a fresh role/database and restarts the service")
     return 0
 
 
@@ -1210,7 +1534,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     setup_cmd = root.add_parser("setup", help="Lifecycle setup operations")
     setup_sub = setup_cmd.add_subparsers(dest="setup_cmd", required=True)
-    setup_sub.add_parser("db", help="Bootstrap local PostgreSQL role/database integration")
+    setup_database = setup_sub.add_parser("db", help="Bootstrap local PostgreSQL role/database integration")
+    existing_db = setup_database.add_mutually_exclusive_group()
+    existing_db.add_argument(
+        "--adopt",
+        action="store_true",
+        help="Keep an existing 'vaulthalla' database that has no sealed credential on this host; rotate the role password.",
+    )
+    existing_db.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Permanently drop the existing 'vaulthalla' database and role, then bootstrap fresh.",
+    )
 
     setup_remote = setup_sub.add_parser("remote-db", help="Configure remote PostgreSQL settings in local config")
     setup_remote.add_argument("--host", required=True)

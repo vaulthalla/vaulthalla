@@ -1,4 +1,3 @@
 var/lib/vaulthalla
 var/log/vaulthalla
 etc/vaulthalla
-run/vaulthalla
