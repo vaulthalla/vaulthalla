@@ -73,8 +73,16 @@ class DebianRulesContractTests(unittest.TestCase):
         repo_root = Path(__file__).resolve().parents[4]
         install_manifest = (repo_root / "debian" / "install").read_text(encoding="utf-8")
 
-        self.assertIn("usr/lib/*/libvaulthalla.a usr/lib/libvaulthalla.a", install_manifest)
-        self.assertIn("usr/lib/*/libvhusage.a usr/lib/libvhusage.a", install_manifest)
+        # The runtime package ships no static libraries or headers; dh_missing
+        # (--fail-missing in compat 13) is satisfied through debian/not-installed.
+        self.assertNotIn("libvaulthalla.a", install_manifest)
+        self.assertNotIn("libvhusage.a", install_manifest)
+        self.assertNotIn("usr/include", install_manifest)
+        not_installed = (repo_root / "debian" / "not-installed").read_text(encoding="utf-8")
+        self.assertIn("usr/lib/*/libvaulthalla.a", not_installed)
+        self.assertIn("usr/lib/*/libvhusage.a", not_installed)
+        self.assertIn("usr/include/vaulthalla/paths.h", not_installed)
+        self.assertIn("usr/share/vaulthalla/config", install_manifest)
         self.assertIn("var/lib/vaulthalla", install_manifest)
         self.assertIn("var/log/vaulthalla", install_manifest)
         self.assertIn("usr/lib/udev/rules.d/60-vaulthalla-tpm.rules", install_manifest)
