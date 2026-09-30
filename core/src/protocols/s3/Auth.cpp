@@ -2,6 +2,7 @@
 
 #include "config/Registry.hpp"
 #include "db/query/identities/User.hpp"
+#include "identities/User.hpp"
 #include "protocols/s3/Error.hpp"
 
 #include <algorithm>
