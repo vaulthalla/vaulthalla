@@ -30,9 +30,12 @@ static std::shared_ptr<CommandUsage> status_base(const std::weak_ptr<CommandUsag
     const auto cmd = std::make_shared<CommandUsage>();
     cmd->parent = parent;
     cmd->aliases = {"status"};
-    cmd->description = "Show a concise Vaulthalla runtime status snapshot.";
+    cmd->description = "Show a concise Vaulthalla runtime status snapshot, including a live database round trip. "
+                       "Exit status: 0 healthy, 1 degraded, 2 critical (e.g. database unreachable); "
+                       "69 daemon not running, 75 daemon not responding, 77 not permitted to use the control socket.";
     cmd->examples = {
-        {"vh status", "Show runtime service state, protocol readiness, deps sanity, and optional systemd summary when elevated."}
+        {"vh status", "Show runtime service state, database reachability, protocol readiness, deps sanity, and a systemd summary when elevated."},
+        {"vh status >/dev/null || echo unhealthy", "Use the exit status in scripts and health checks."}
     };
     return cmd;
 }
