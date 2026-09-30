@@ -179,10 +179,19 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         workflow = self._workflow()
         validate_job = workflow.split("validate-release-state:", 1)[1].split("core-verify:", 1)[0]
         install_step = validate_job.split("Install release-tooling dependencies", 1)[1].split("Validate versions", 1)[0]
-        self.assertIn("apt-get update", install_step)
+        self.assertRegex(install_step, r"apt-get (-o \S+ )*update")
         self.assertIn("apt.valkyrianlabs.com", install_step)
-        self.assertIn("apt-get install -y pmdocs", install_step)
+        self.assertRegex(install_step, r"apt-get (-o \S+ )*install -y pmdocs")
         self.assertIn("pmdocs --version", install_step)
+
+    def test_ci_apt_calls_wait_for_the_dpkg_lock(self) -> None:
+        # Self-hosted runners run their own apt maintenance; apt's default 120s lock wait failed PR builds.
+        import re
+        for path in (".github/workflows/release.yml", ".github/workflows/build_and_test.yml", "bin/setup/install_deps.sh"):
+            text = (self._repo_root() / path).read_text(encoding="utf-8")
+            for match in re.finditer(r"\bapt(?:-get)?\s+(?:-\S+\s+\S+\s+)*(update|install)\b[^\n]*", text):
+                line = match.group(0)
+                self.assertTrue("DPkg::Lock::Timeout" in line or "APT_LOCK_OPTS" in line, f"{path}: {line}")
 
     def test_docs_publish_does_not_refresh_apt_metadata(self) -> None:
         workflow = self._workflow()
