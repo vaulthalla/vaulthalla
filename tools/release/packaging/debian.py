@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+from tools.release.packaging.checksums import SHA256SUMS_NAME, verify_sha256sums, write_sha256sums
 from tools.release.version.adapters.debian import CHANGELOG_HEADER_PATTERN
 from tools.release.version.validate import ReleasePaths, require_synced_release_state
 
@@ -51,8 +52,8 @@ REQUIRED_DEBIAN_PACKAGE_PATHS: tuple[str, ...] = (
     "usr/bin/vaulthalla-cli",
     "usr/bin/vaulthalla",
     "usr/bin/vh",
-    "etc/vaulthalla/config.yaml",
-    "etc/vaulthalla/config_template.yaml.in",
+    "usr/share/vaulthalla/config/config.yaml",
+    "usr/share/vaulthalla/config/config_template.yaml.in",
     "lib/systemd/system/vaulthalla.service",
     "lib/systemd/system/vaulthalla-cli.service",
     "lib/systemd/system/vaulthalla-cli.socket",
@@ -68,14 +69,17 @@ ALTERNATE_DEBIAN_PACKAGE_PATH_GROUPS: tuple[tuple[str, ...], ...] = (
     ("usr/share/doc/vaulthalla/LICENSE", "usr/share/doc/vaulthalla/LICENSE.gz"),
     ("usr/share/man/man1/vh.1", "usr/share/man/man1/vh.1.gz"),
     ("usr/share/vaulthalla-web/.next/static/*",),
-    ("usr/lib/libvaulthalla.a", "usr/lib/*/libvaulthalla.a"),
-    ("usr/lib/libvhusage.a", "usr/lib/*/libvhusage.a"),
     ("usr/lib/udev/rules.d/60-vaulthalla-tpm.rules", "usr/lib/*/udev/rules.d/60-vaulthalla-tpm.rules"),
     ("usr/lib/tmpfiles.d/vaulthalla.conf", "usr/lib/*/tmpfiles.d/vaulthalla.conf"),
 )
 REQUIRED_WEB_ARCHIVE_ROOT = "vaulthalla-web/"
 REQUIRED_WEB_SERVER_ENTRY = "vaulthalla-web/server.js"
 REQUIRED_WEB_STATIC_PREFIX = "vaulthalla-web/.next/static/"
+# The package ships the pristine default config; postinst seeds /etc/vaulthalla/config.yaml from it.
+# It must be byte-identical to the tracked deploy/config/config.yaml so a local build can never ship the
+# gitignored repo-root config.yaml override (which may carry operator-specific values).
+SHIPPED_DEFAULT_CONFIG_MEMBER = "usr/share/vaulthalla/config/config.yaml"
+REFERENCE_DEFAULT_CONFIG_PATH = "deploy/config/config.yaml"
 
 
 @dataclass(frozen=True)
@@ -89,6 +93,7 @@ class DebianBuildResult:
     artifacts: tuple[Path, ...]
     build_log: Path | None = None
     web_artifact: Path | None = None
+    checksums: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -97,6 +102,8 @@ class ReleaseArtifactValidationResult:
     debian_artifacts: tuple[Path, ...]
     web_artifacts: tuple[Path, ...]
     changelog_artifacts: tuple[Path, ...]
+    checksums: Path | None = None
+    checksums_generated: bool = False
 
 
 def build_debian_package(
@@ -200,6 +207,7 @@ def build_debian_package(
         )
 
     artifacts_all = tuple(sorted(set(artifacts + (web_artifact,))))
+    checksums = write_sha256sums(destination)
     return DebianBuildResult(
         repo_root=root,
         output_dir=destination,
@@ -210,6 +218,7 @@ def build_debian_package(
         artifacts=artifacts_all,
         build_log=build_log,
         web_artifact=web_artifact,
+        checksums=checksums,
     )
 
 
@@ -217,7 +226,13 @@ def validate_release_artifacts(
     *,
     output_dir: Path | str,
     require_changelog: bool = True,
+    reference_config: Path | str | None = None,
 ) -> ReleaseArtifactValidationResult:
+    """Validate staged release artifacts.
+
+    `reference_config` (normally `<repo>/deploy/config/config.yaml`) enables the byte-identity check of the
+    shipped default config inside every `.deb`.
+    """
     destination = Path(output_dir).resolve()
     if not destination.is_dir():
         raise ValueError(f"Release artifact validation failed: output directory does not exist: {destination}")
@@ -264,6 +279,8 @@ def validate_release_artifacts(
     contract_issues: list[str] = []
     for artifact in debian_artifacts:
         contract_issues.extend(_validate_debian_package_contract(artifact))
+        if reference_config is not None:
+            contract_issues.extend(_validate_shipped_default_config(artifact, Path(reference_config)))
     for artifact in web_artifacts:
         contract_issues.extend(_validate_web_archive_contract(artifact))
     if contract_issues:
@@ -274,11 +291,26 @@ def validate_release_artifacts(
             f"{rendered}"
         )
 
+    # Integrity: verify the SHA256SUMS written by build-deb (or emit it for artifacts staged
+    # another way). Anything that changed between build and validation fails here.
+    checksums_path = destination / SHA256SUMS_NAME
+    checksums_generated = False
+    if checksums_path.is_file():
+        checksum_issues = verify_sha256sums(destination)
+        if checksum_issues:
+            rendered = "\n".join(f"- {item}" for item in checksum_issues)
+            raise ValueError(f"Release artifact validation failed. {SHA256SUMS_NAME} does not match:\n{rendered}")
+    else:
+        checksums_path = write_sha256sums(destination)
+        checksums_generated = True
+
     return ReleaseArtifactValidationResult(
         output_dir=destination,
         debian_artifacts=debian_artifacts,
         web_artifacts=web_artifacts,
         changelog_artifacts=changelog_artifacts,
+        checksums=checksums_path,
+        checksums_generated=checksums_generated,
     )
 
 
@@ -300,7 +332,21 @@ def _validate_debian_package_contract(deb_path: Path) -> list[str]:
     return issues
 
 
-def _read_debian_package_members(deb_path: Path) -> set[str]:
+def _validate_shipped_default_config(deb_path: Path, reference_config: Path) -> list[str]:
+    if not reference_config.is_file():
+        return [f"[debian package] reference default config is missing: {reference_config}"]
+    shipped = _read_debian_package_file(deb_path, SHIPPED_DEFAULT_CONFIG_MEMBER)
+    if shipped is None:
+        return [f"[debian package] {deb_path.name}: missing `{SHIPPED_DEFAULT_CONFIG_MEMBER}`"]
+    if shipped != reference_config.read_bytes():
+        return [
+            f"[debian package] {deb_path.name}: `{SHIPPED_DEFAULT_CONFIG_MEMBER}` is not byte-identical to "
+            f"{REFERENCE_DEFAULT_CONFIG_PATH} (was a local/private config.yaml override packaged?)"
+        ]
+    return []
+
+
+def _debian_fsys_tar_bytes(deb_path: Path) -> bytes:
     try:
         completed = subprocess.run(
             ("dpkg-deb", "--fsys-tarfile", str(deb_path)),
@@ -321,9 +367,27 @@ def _read_debian_package_members(deb_path: Path) -> set[str]:
             f"Failed to inspect Debian package contents for {deb_path} "
             f"(exit {completed.returncode}): {stderr or 'no stderr output'}"
         )
+    return completed.stdout
 
+
+def _read_debian_package_file(deb_path: Path, member: str) -> bytes | None:
+    """Return the bytes of one regular file inside the .deb data tar, or None when absent."""
+    data = _debian_fsys_tar_bytes(deb_path)
     try:
-        with tarfile.open(fileobj=BytesIO(completed.stdout), mode="r:*") as data_tar:
+        with tarfile.open(fileobj=BytesIO(data), mode="r:*") as data_tar:
+            for info in data_tar.getmembers():
+                if _normalize_archive_path(info.name) == member and info.isfile():
+                    extracted = data_tar.extractfile(info)
+                    return extracted.read() if extracted is not None else None
+    except Exception as exc:
+        raise ValueError(f"Failed to parse Debian data tar stream for {deb_path}: {exc}") from exc
+    return None
+
+
+def _read_debian_package_members(deb_path: Path) -> set[str]:
+    data = _debian_fsys_tar_bytes(deb_path)
+    try:
+        with tarfile.open(fileobj=BytesIO(data), mode="r:*") as data_tar:
             normalized = {
                 _normalize_archive_path(member.name)
                 for member in data_tar.getmembers()
