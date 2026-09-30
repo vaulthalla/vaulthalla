@@ -1,5 +1,10 @@
 # Production hardening phase: kickoff state
 
+> **Status (Phase 1, 2026-09-30):** P0-1..P0-4 are fixed on `phase1/hardening` (PR #124) and tracked as GitHub
+> issues #97–#126 on the "Vaulthalla Roadmap" project. The live incident was recovered (daemon cgroup killed,
+> postinst completed). Real-host results, the release loop, and remaining defects are in
+> `.claude/context/phase1-results.md` — read that first; the sections below are the original kickoff capture.
+
 Phase goal: make the build → package → publish → install/upgrade → run pipeline robust enough for
 real-world use, proven on the `vh-storage` lab VM. The backlog below was captured on 2026-09-30 during repo
 ingestion. Items were verified against code and the live lab unless marked otherwise.

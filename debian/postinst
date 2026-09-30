@@ -1582,6 +1582,25 @@ configure_systemd_units() {
     transition_unit_bounded start "$WEB_SYSTEMD_UNIT"
 }
 
+readopt_operator_testing_dir() {
+    # ${CONFIG_DIR}/testing holds operator-managed TEST-ONLY credentials (tools/lab/providers.env.example).
+    # The package never creates or rewrites it, but purge deletes the vaulthalla group, leaving the directory
+    # on a dangling gid; on reinstall hand it back to the (new) vaulthalla group so the service user can read it.
+    testing_dir="${CONFIG_DIR}/testing"
+    [ -d "$testing_dir" ] || return 0
+    [ ! -L "$testing_dir" ] || return 0
+    dir_gid="$(stat -c '%g' "$testing_dir" 2>/dev/null || true)"
+    [ -n "$dir_gid" ] || return 0
+    if getent group "$dir_gid" >/dev/null 2>&1; then
+        return 0
+    fi
+    if chgrp -hR "$DB_USER" "$testing_dir" >/dev/null 2>&1; then
+        echo "[${PKG}] Re-adopted ${testing_dir} for group '${DB_USER}' (previous group id ${dir_gid} no longer exists)."
+    else
+        warn_nonfatal "could not re-adopt ${testing_dir} for group '${DB_USER}'"
+    fi
+}
+
 case "$1" in
   configure)
     if ! id "$DB_USER" >/dev/null 2>&1; then
@@ -1591,6 +1610,7 @@ case "$1" in
     systemd-tmpfiles --create /usr/lib/tmpfiles.d/vaulthalla.conf >/dev/null 2>&1 || true
 
     ensure_tss_group_and_user_added
+    readopt_operator_testing_dir
     refresh_tpm_udev_rules
 
     create_dir "$STATE_DIR"   0700 "$DB_USER" "$DB_USER"

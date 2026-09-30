@@ -1,7 +1,7 @@
 """Real-host install/upgrade smoke test for a candidate package (`python3 -m tools.release lab-smoke`).
 
 Everything runs over `ssh <host>`; every remote command is wrapped in `timeout` and every local
-ssh/scp has its own timeout. Hazard rules (see .claude/skills/lab/SKILL.md):
+ssh transfer has its own timeout. Hazard rules (see .claude/skills/lab/SKILL.md):
 - never kill by substring; this module never kills anything,
 - the FUSE mount is detected via /proc/self/mountinfo and fusectl counters, and is only touched
   (`stat`) with a timeout and only after the kernel reports no waiting requests,
@@ -83,7 +83,24 @@ class SshLabHost:
         return self._exec(["ssh", *self.SSH_OPTIONS, self.host, remote], timeout + 30)
 
     def copy_to(self, local: Path, remote_path: str, *, timeout: int) -> RemoteResult:
-        return self._exec(["scp", "-q", *self.SSH_OPTIONS, str(local), f"{self.host}:{remote_path}"], timeout)
+        # Stream over the ssh channel instead of scp: modern scp speaks SFTP, and hardened hosts (vh-storage
+        # included) run sshd without an sftp Subsystem. Write to a temp name and rename so a cut-off transfer
+        # never leaves a truncated .deb at the final path.
+        partial = f"{remote_path}.partial"
+        remote = (
+            f"timeout -k 5 {int(timeout)} bash -c "
+            + shlex.quote(f"umask 022 && cat > {shlex.quote(partial)} && mv -f {shlex.quote(partial)} {shlex.quote(remote_path)}")
+        )
+        try:
+            with local.open("rb") as handle:
+                completed = subprocess.run(
+                    ["ssh", *self.SSH_OPTIONS, self.host, remote],
+                    stdin=handle, capture_output=True, check=False, timeout=timeout + 30,
+                )
+        except subprocess.TimeoutExpired as exc:
+            return RemoteResult(124, _text(exc.stdout), _text(exc.stderr), timed_out=True)
+        return RemoteResult(completed.returncode, _text(completed.stdout), _text(completed.stderr),
+                            timed_out=completed.returncode == 124)
 
 
 def _text(value: object) -> str:

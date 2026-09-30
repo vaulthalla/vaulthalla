@@ -47,6 +47,16 @@ class ProviderScaffoldContract(unittest.TestCase):
             text = path.read_text()
             self.assertNotRegex(text, r"rm\s+-[a-zA-Z]*r[a-zA-Z]*\s+[\"']?/etc/vaulthalla(/testing)?[\"']?(\s|$)", name)
 
+    def test_postinst_readopts_testing_dir_after_purge(self):
+        # purge deletes the vaulthalla group; reinstall must hand the dir back so the service user can read it.
+        text = (ROOT / "debian/postinst").read_text()
+        self.assertIn("readopt_operator_testing_dir()", text)
+        configure = text.split('configure)', 1)[1]
+        self.assertIn("readopt_operator_testing_dir", configure)
+        body = text.split("readopt_operator_testing_dir() {", 1)[1].split("\n}\n", 1)[0]
+        self.assertIn('getent group "$dir_gid"', body, "must only touch a dangling group")
+        self.assertNotIn("rm ", body)
+
     def test_filled_copies_are_gitignored(self):
         res = subprocess.run(["git", "check-ignore", "-q", "tools/lab/providers.env"], cwd=ROOT)
         self.assertEqual(res.returncode, 0, "tools/lab/providers.env must be gitignored")

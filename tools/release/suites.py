@@ -52,7 +52,7 @@ SUITES: dict[str, SuiteSpec] = {
         start_dir="tools/lab/tests",
         top_level_dir=".",
         id_prefix="tools.lab.tests.",
-        minimums={"root": 6},
+        minimums={"root": 7},
     ),
 }
 
