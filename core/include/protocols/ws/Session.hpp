@@ -132,6 +132,8 @@ private:
     bool writing_ = false;                 // only touched on strand
     std::deque<std::string> writeQueue_;   // only touched on strand
     bool closeAfterWrite_ = false;         // only touched on strand
+    bool closeStarted_ = false;            // only touched on strand
+    bool externallyHttps_ = false;         // set during handshake hydration (cookie Secure flag)
 
     bool sendAccessToken_{false};
 };

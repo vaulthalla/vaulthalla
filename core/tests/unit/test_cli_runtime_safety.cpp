@@ -20,6 +20,7 @@
 #include "protocols/shell/SocketIO.hpp"
 #include "protocols/shell/commands/all.hpp"
 #include "protocols/shell/commands/helpers.hpp"
+#include "protocols/ws/CookiePolicy.hpp"
 #include "protocols/ws/DefaultPasswordGate.hpp"
 #include "protocols/ws/LogRedaction.hpp"
 #include "protocols/ws/ShareRateLimit.hpp"
@@ -563,4 +564,20 @@ TEST(LoginRateLimit, BurstThenSustainedLimitsPerIpAndAccount) {
     EXPECT_TRUE(limiter.check("auth.login", alice, *session, t0 + std::chrono::minutes(20)).allowed);
 }
 
+}
+
+// Session cookies are Secure only when the browser-facing request was HTTPS (behind the local proxy).
+// Always-Secure made web login impossible on the package's default plain-HTTP nginx site.
+TEST(WsCookiePolicy, SecureOnlyForHttpsSeenByTheLocalProxy) {
+    using vh::protocols::ws::cookie_policy::isExternallyHttps;
+    EXPECT_TRUE(isExternallyHttps("127.0.0.1", "https", ""));
+    EXPECT_TRUE(isExternallyHttps("::1", "HTTPS", ""));
+    EXPECT_TRUE(isExternallyHttps("::ffff:127.0.0.1", "https, http", ""));
+    EXPECT_TRUE(isExternallyHttps("127.0.0.1", "", "for=10.0.0.11;proto=https;host=vault.example.com"));
+    EXPECT_FALSE(isExternallyHttps("127.0.0.1", "http", ""));
+    EXPECT_FALSE(isExternallyHttps("127.0.0.1", "", ""));
+    EXPECT_FALSE(isExternallyHttps("127.0.0.1", "", "for=10.0.0.11;proto=http"));
+    // A remote client talking to the daemon directly can't claim HTTPS.
+    EXPECT_FALSE(isExternallyHttps("10.0.0.11", "https", ""));
+    EXPECT_FALSE(isExternallyHttps("10.0.0.11", "", "proto=https"));
 }

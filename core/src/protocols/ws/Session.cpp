@@ -6,6 +6,7 @@
 #include "log/Registry.hpp"
 #include "protocols/ws/Router.hpp"
 #include "protocols/ws/DefaultPasswordGate.hpp"
+#include "protocols/ws/CookiePolicy.hpp"
 #include "crypto/util/hash.hpp"
 #include "protocols/ws/handler/fs/Upload.hpp"
 #include "runtime/Deps.hpp"
@@ -195,6 +196,10 @@ void Session::hydrateFromRequest(const RequestType& req) {
     ipAddress = getIPAddress();
     userAgent = getUserAgent();
     shareHandshake_ = isShareHandshakeTarget(std::string_view{req.target().data(), req.target().size()});
+    externallyHttps_ = cookie_policy::isExternallyHttps(
+        ipAddress,
+        std::string_view{req["X-Forwarded-Proto"].data(), req["X-Forwarded-Proto"].size()},
+        std::string_view{req["Forwarded"].data(), req["Forwarded"].size()});
 
     log::Registry::ws()->debug(
         "[ws::Session] Attempting to hydrate {} session from request. IP: {}, User-Agent: {}",
@@ -245,9 +250,10 @@ void Session::installHandshakeDecorator() const {
 
     const auto t = token->rawToken;
     const auto cookieName = shareHandshake_ ? std::string{"share_refresh"} : std::string{"refresh"};
+    const bool secureCookie = externallyHttps_;
     ws_->set_option(websocket::stream_base::timeout::suggested(beast::role_type::server));
     ws_->set_option(websocket::stream_base::decorator(
-        [t, cookieName](websocket::response_type& res) {
+        [t, cookieName, secureCookie](websocket::response_type& res) {
             res.set(beast_http::field::server, "Vaulthalla");
 
             const bool isDev = config::Registry::get().dev.enabled;
@@ -259,7 +265,7 @@ void Session::installHandshakeDecorator() const {
                 "; SameSite=" + sameSite +
                 "; Max-Age=604800";
 
-            cookie += "; Secure";
+            if (secureCookie) cookie += "; Secure";
 
             // IMPORTANT: use insert to avoid clobbering other Set-Cookie headers
             res.insert(beast_http::field::set_cookie, cookie);
@@ -347,17 +353,31 @@ void Session::closeOnStrand() {
         return;
     }
 
-    boost::system::error_code ec;
-    if (ws->is_open())
-        ws->close(websocket::close_code::normal, ec);
+    if (!ws->is_open() || closeStarted_) {
+        if (!ws->is_open()) {
+            ws_.reset();
+            buffer_.consume(buffer_.size());
+        }
+        return;
+    }
 
-    if (ec)
-        log::Registry::ws()->debug("[ws::Session] ws close error: {}", ec.message());
-
-    ws_.reset();
-    buffer_.consume(buffer_.size());
-
-    log::Registry::ws()->debug("[ws::Session] Closed session for IP: {}", ipAddress);
+    // Never use the synchronous close() here: it writes the close frame and then *reads* until the peer
+    // answers, while this session's async_read is always outstanding. Two concurrent reads (or a sync op
+    // racing an async one) corrupt Beast's per-stream op locks — the vh-storage abort on
+    // soft_mutex::unlock "id_ == T::id" and the "server must not mask frames" corruption seen by browsers.
+    // async_close is the one close op allowed alongside a pending read; callers only get here once no
+    // write is in flight (closeAfterWrite_).
+    closeStarted_ = true;
+    ws->async_close(
+        websocket::close_code::normal,
+        asio::bind_executor(
+            strand_,
+            [self = shared_from_this()](const beast::error_code& ec) {
+                if (ec) log::Registry::ws()->debug("[ws::Session] ws close error: {}", ec.message());
+                self->ws_.reset();
+                self->buffer_.consume(self->buffer_.size());
+                log::Registry::ws()->debug("[ws::Session] Closed session for IP: {}", self->ipAddress);
+            }));
 }
 
 void Session::maybeStartWrite() {
