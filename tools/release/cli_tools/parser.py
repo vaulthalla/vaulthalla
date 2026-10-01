@@ -25,6 +25,7 @@ from tools.release.cli_tools.commands.suites import cmd_run_tests
 from tools.release.cut import main_cut_release, main_release_status
 from tools.release.lab_smoke import main_lab_smoke
 from tools.release.suites import SUITES
+from tools.release.packaging.publication import DEFAULT_VERIFY_ATTEMPTS, DEFAULT_VERIFY_DELAY_SECONDS
 from tools.release.cli_tools.commands.version import (
     cmd_check,
     cmd_sync,
@@ -418,16 +419,16 @@ COMMANDS = {
                 "flags": ["--verify-attempts"],
                 "kwargs": {
                     "type": int,
-                    "default": 10,
-                    "help": "Post-upload APT index polls before failing (default: 10).",
+                    "default": DEFAULT_VERIFY_ATTEMPTS,
+                    "help": f"Post-upload APT index polls before failing (default: {DEFAULT_VERIFY_ATTEMPTS}).",
                 },
             },
             {
                 "flags": ["--verify-delay"],
                 "kwargs": {
                     "type": float,
-                    "default": 15.0,
-                    "help": "Seconds between post-upload APT index polls (default: 15).",
+                    "default": DEFAULT_VERIFY_DELAY_SECONDS,
+                    "help": f"Seconds between post-upload APT index polls (default: {DEFAULT_VERIFY_DELAY_SECONDS:g}).",
                 },
             },
         ],

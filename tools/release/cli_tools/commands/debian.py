@@ -5,6 +5,7 @@ from pathlib import Path
 from tools.release.packaging import build_debian_package, validate_release_artifacts, \
     resolve_debian_publication_settings, publish_debian_artifacts
 from tools.release.packaging.debian import REFERENCE_DEFAULT_CONFIG_PATH
+from tools.release.packaging.publication import DEFAULT_VERIFY_ATTEMPTS, DEFAULT_VERIFY_DELAY_SECONDS
 
 
 def cmd_build_deb(args: argparse.Namespace) -> int:
@@ -91,8 +92,8 @@ def cmd_publish_deb(args: argparse.Namespace) -> int:
         require_enabled=bool(args.require_enabled),
         allow_older_version=bool(getattr(args, "allow_older_version", False)),
         lab_evidence=lab_evidence,
-        verify_attempts=int(getattr(args, "verify_attempts", 10)),
-        verify_delay_seconds=float(getattr(args, "verify_delay", 15.0)),
+        verify_attempts=int(getattr(args, "verify_attempts", DEFAULT_VERIFY_ATTEMPTS)),
+        verify_delay_seconds=float(getattr(args, "verify_delay", DEFAULT_VERIFY_DELAY_SECONDS)),
     )
 
     print("Debian publication")

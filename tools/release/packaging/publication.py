@@ -20,7 +20,8 @@ from tools.release.packaging.checksums import SHA256SUMS_NAME, read_sha256sums, 
 
 DEFAULT_PUBLICATION_MODE = "disabled"
 SUPPORTED_PUBLICATION_MODES: tuple[str, ...] = ("disabled", "nexus")
-DEFAULT_VERIFY_ATTEMPTS = 10
+# Nexus can take several minutes to reindex after an upload (v1.7.0: >2.5 min), so poll for ~10 minutes.
+DEFAULT_VERIFY_ATTEMPTS = 40
 DEFAULT_VERIFY_DELAY_SECONDS = 15.0
 LAB_SMOKE_EVIDENCE_SCHEMA = "vaulthalla.release.lab_smoke.v1"
 _DEB_NAME_PATTERN = re.compile(r"^(?P<package>[a-z0-9][a-z0-9+.-]*)_(?P<version>[^_]+)_(?P<arch>[a-z0-9-]+)\.deb$")
