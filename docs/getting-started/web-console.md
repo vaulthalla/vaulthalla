@@ -33,6 +33,18 @@ systemctl status vaulthalla-web.service
 systemctl status vaulthalla.service
 ```
 
+### HTTP And HTTPS
+
+A fresh package install serves the console over plain HTTP on port 80 (`http://<host>/`), which is enough to finish first run on a trusted network. The session cookie is marked `Secure` only when the browser-facing request arrived over HTTPS, as reported by the local Nginx proxy (`X-Forwarded-Proto`), so login works on both.
+
+:::callout{theme="warning" title="Use HTTPS beyond a trusted LAN"}
+Over plain HTTP, passwords and session tokens cross the network unencrypted. Before exposing the console, enable TLS with `sudo vh setup nginx --domain vault.example.com --certbot`.
+:::
+
+### First Login
+
+Fresh installs seed the web `admin` account with the documented default password `vh!adm1n`. Until it is changed, the daemon only allows that session to change the password (or log out); the console sends you straight to the change-password page. Repeated failed logins are rate-limited per client address and account.
+
 ## Main Areas
 
 The web console includes:
