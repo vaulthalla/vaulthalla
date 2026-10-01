@@ -536,3 +536,36 @@ class PostinstNginxVerifyBehaviorTests(unittest.TestCase):
         result = self._verify("200_1")
         self.assertIn("RC=1", result.stdout, result.stderr)
         self.assertIn("NOT serving Vaulthalla", result.stdout)
+
+
+class PostinstUpgradeRestartBehaviorTests(unittest.TestCase):
+    """An upgrade restarts running units, starts units that had *failed*, and leaves stopped ones stopped."""
+
+    def setUp(self) -> None:
+        self.h = _Harness("postinst")
+        self.addCleanup(self.h.cleanup)
+
+    def _upgrade(self, core_state: str) -> str:
+        (self.h.log / "unit-state.vaulthalla.service").write_text(core_state + "\n", encoding="utf-8")
+        (self.h.log / "unit-state.vaulthalla-web.service").write_text("active\n", encoding="utf-8")
+        body = """
+        POSTINST_ACTION=configure
+        INSTALL_MODE=upgrade
+        systemd_running() { return 0; }
+        core_start_blocker() { :; }
+        configure_systemd_units
+        echo "STATUS=$SERVICE_STATUS"
+        """
+        result = self.h.run(body)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout + "\n" + self.h.read_log("systemctl.argv")
+
+    def test_failed_core_unit_is_started_by_the_upgrade(self) -> None:
+        out = self._upgrade("failed")
+        self.assertIn("start vaulthalla.service", out)
+        self.assertIn("started previously failed vaulthalla.service", out)
+
+    def test_operator_stopped_core_unit_stays_stopped(self) -> None:
+        out = self._upgrade("inactive")
+        self.assertNotIn("--system start vaulthalla.service", out)
+        self.assertIn("try-restart vaulthalla.service", out)

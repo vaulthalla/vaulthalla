@@ -1542,11 +1542,36 @@ configure_systemd_units() {
 
     if is_upgrade; then
         echo "[${PKG}] Systemd: upgrade detected; restarting active Vaulthalla units only (bounded to ${SERVICE_TRANSITION_TIMEOUT_SECONDS}s each)."
+        # Capture 'failed' before the try-restarts below (transition_unit_bounded resets failed units).
+        failed_before=""
+        for unit in "$CORE_SYSTEMD_UNIT" "$WEB_SYSTEMD_UNIT"; do
+            if [ "$(unit_active_state "$unit")" = "failed" ]; then
+                failed_before="${failed_before} ${unit}"
+            fi
+        done
         transition_unit_bounded try-restart "$SWTPM_SYSTEMD_UNIT"
         # The core restart also re-creates cli.sock after retire_legacy_cli_units stopped the old socket.
         transition_unit_bounded try-restart "$CORE_SYSTEMD_UNIT"
         transition_unit_bounded try-restart "$WEB_SYSTEMD_UNIT"
         SERVICE_STATUS="restarted active units"
+        # try-restart leaves a stopped unit alone, which is right for an operator's 'systemctl stop'
+        # (inactive). A unit in 'failed' state crashed or hit its start limit instead; the upgrade that
+        # ships the fix should bring it back (vh-storage: StartLimit-failed daemon stayed down after a
+        # fixing upgrade).
+        restarted_failed=""
+        for unit in $failed_before; do
+            if run_bounded 10 systemctl --system is-enabled --quiet "$unit" >/dev/null 2>&1; then
+                if [ "$unit" = "$CORE_SYSTEMD_UNIT" ] && [ -n "$(core_start_blocker)" ]; then
+                    continue
+                fi
+                echo "[${PKG}] Systemd: ${unit} was in failed state; starting it."
+                transition_unit_bounded start "$unit"
+                restarted_failed="${restarted_failed:+${restarted_failed}, }${unit}"
+            fi
+        done
+        if [ -n "$restarted_failed" ]; then
+            SERVICE_STATUS="restarted active units; started previously failed ${restarted_failed}"
+        fi
         if [ "$TPM_BACKEND_RECOVERED" = "1" ] && [ -z "$(core_start_blocker)" ]; then
             echo "[${PKG}] Systemd: TPM backend is now available; starting ${CORE_SYSTEMD_UNIT}."
             transition_unit_bounded start "$CORE_SYSTEMD_UNIT"
