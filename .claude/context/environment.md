@@ -46,6 +46,13 @@ The dev infrastructure is on the maintainer's home Proxmox server. All VMs are o
   and the price bot, so ask first.**
 - Unattended-upgrades is enabled here too, so PostgreSQL restarts will happen under any client (see P0-1).
 
+## vh-storage state (after Phase 1, 2026-10-01)
+
+- Runs CI-built Phase 1 candidates (see `phase1-results.md`); `gdb` and `systemd-coredump` are installed for crash triage.
+- `/etc/vaulthalla/testing/providers.env` (root:vaulthalla 0640) holds the TEST-ONLY S3/R2 scaffold, unfilled.
+- The maintainer granted blanket mutation authority for Phase 1 work only; outside it, the rules below apply.
+- sshd has no sftp Subsystem: use `ssh vh-storage 'cat > /tmp/f' < f` instead of `scp`.
+
 ## vh-storage safety rules
 
 - **Wrap every command that might touch `/mnt/vaulthalla` in `timeout`.** When the daemon is wedged, `df`, `stat`,
