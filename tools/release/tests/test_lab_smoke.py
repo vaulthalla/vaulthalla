@@ -81,7 +81,7 @@ class FakeLab:
             return RemoteResult(0, line if self.mounted else "")
         if "/sys/fs/fuse/connections/47/waiting" in command:
             return RemoteResult(0, f"{self.waiting}\n")
-        if command.startswith("timeout 10 stat"):
+        if command.startswith("timeout 10 sudo -n stat"):
             return RemoteResult(0 if self.waiting == 0 else 124, "directory\n")
         if command.startswith("sudo -n test -S /run/vaulthalla/cli.sock"):
             return RemoteResult(0 if self.cli_sock else 1)

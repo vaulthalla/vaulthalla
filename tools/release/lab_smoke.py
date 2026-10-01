@@ -292,7 +292,8 @@ class LabSmoke:
             waiting = self.fuse_waiting(minor) if minor else None
         phase.add("fuse_waiting_zero", waiting == 0, f"fusectl conn {minor or '?'} waiting={waiting}")
         if waiting == 0:
-            stat = self.sh(f"timeout 10 stat -c %F {MOUNTPOINT}", timeout=20)
+            # As root: this probes that the mount answers, not the ssh user's RBAC (an unlinked user gets EACCES).
+            stat = self.sh(f"timeout 10 sudo -n stat -c %F {MOUNTPOINT}", timeout=20)
             phase.add("fuse_stat", stat.returncode == 0,
                       stat.stdout.strip() or stat.stderr.strip()[:200] or f"exit {stat.returncode}")
         else:

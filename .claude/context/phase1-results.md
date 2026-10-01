@@ -54,8 +54,18 @@ Integration branch `phase1/hardening` → PR #124. Issues #97–#133 on the "Vau
 
 - Rulesets: `main` needs a PR with 1 approving review; release-tag creation is core-maintainer only (org admins bypass).
 - `Production` environment has no protection rules (maintainer deferred adding a reviewer, #118).
-- `OPENAI_API_KEY` is Production-scoped, so the build job takes the manual changelog path; Phase 1 releases use a
-  hand-written `debian/changelog` top entry (single rolling entry by repo design).
+- The AI changelog runs in `release-artifacts`, which has **no environment**: its key and profile must be
+  repository-level (`VH_AI_RELEASE_DEEPSEEK_API_KEY` secret, `VH_AI_RELEASE_PROFILE=ds-flash` variable). Copies on
+  the Production environment are not visible to it. v1.7.0 was the first release with hosted AI (DeepSeek
+  `ds-flash`, strict json_schema, ~13 min).
+- Nexus can take more than 2.5 min to list an upload in the APT index. v1.7.0's publish job timed out verifying,
+  then passed on `gh run rerun --failed` (same SHA256, so the upload is skipped). The verify window is now ~10 min.
+- **v1.7.0 shipped 2026-10-01** (run 36903232826). GitHub asset, `SHA256SUMS` and APT `Packages` all list
+  sha256 `9287f3a5…`. `lab-smoke --from-version 1.6.6-1 --apt-version 1.7.0-1 --pg-restart --reboot` passed
+  on vh-storage.
+- Lab gotchas: putting published 1.6.6 back over a CI build with the same version label stops at a dpkg conffile
+  prompt (config.yaml); finish with `dpkg --force-confold --configure -a`. Published 1.6.6 denies FUSE `getattr`
+  to an unlinked Unix user, so the lab-smoke mount probe runs as root.
 - `python3 -m tools.release run-tests` is the only test entrypoint CI uses (min-count floors in `tools/release/suites.py`).
 
 ## Debian/Ubuntu assumptions to exercise later (#120)
