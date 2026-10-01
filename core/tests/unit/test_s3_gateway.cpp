@@ -1,10 +1,14 @@
 #include "db/Transactions.hpp"
+#include "db/query/identities/User.hpp"
 #include "db/query/s3/Gateway.hpp"
+#include "db/query/vault/Vault.hpp"
 #include "concurrency/ThreadPoolManager.hpp"
 #include "config/Config.hpp"
 #include "config/Registry.hpp"
 #include "config/config_yaml.hpp"
 #include "fs/Filesystem.hpp"
+#include "fs/model/Path.hpp"
+#include "identities/User.hpp"
 #include "protocols/s3/CredentialManager.hpp"
 #include "protocols/s3/MultipartStore.hpp"
 #include "protocols/s3/ObjectStore.hpp"
@@ -26,6 +30,8 @@
 #include "seed/include/init_db_tables.hpp"
 #include "seed/include/seed_db.hpp"
 #include "storage/CloudEngine.hpp"
+#include "storage/Engine.hpp"
+#include "storage/Manager.hpp"
 #include "storage/s3/pricing/GatewayPriceEstimate.hpp"
 #include "sync/model/LocalPolicy.hpp"
 #include "sync/model/RemotePolicy.hpp"
@@ -35,6 +41,7 @@
 #include <boost/beast/http.hpp>
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
+#include <pqxx/pqxx>
 #include <paths.h>
 #include <sys/socket.h>
 #include <sys/time.h>
@@ -55,6 +62,13 @@
 
 namespace {
 namespace beast = boost::beast;
+
+// Own helper (not the identically named one in test_s3_cost_safety.cpp): unity builds only share it when both
+// files land in the same chunk.
+std::string s3GatewayUniqueSuffix(const std::string& label) {
+    return label + "_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+}
+
 namespace http = beast::http;
 using tcp = boost::asio::ip::tcp;
 
@@ -227,7 +241,7 @@ std::vector<uint8_t> hexBytes(const std::string& hex) {
 }
 
 std::string uniqueS3Name(const std::string& label) {
-    auto out = vh::vault::model::slugifyName(uniqueSuffix(label));
+    auto out = vh::vault::model::slugifyName(s3GatewayUniqueSuffix(label));
     if (out.size() > 63) out.resize(63);
     while (!out.empty() && out.back() == '-') out.pop_back();
     if (out.size() < 3) out = "s3-" + out;
@@ -345,7 +359,7 @@ multipart:
 
 TEST(S3GatewayMultipartTest, PartRootUsesGeneratedHiddenBackingPath) {
     const auto oldBackingPath = vh::paths::backingPath;
-    const auto tempBacking = std::filesystem::temp_directory_path() / uniqueSuffix("vh_s3_gateway_parts_root");
+    const auto tempBacking = std::filesystem::temp_directory_path() / s3GatewayUniqueSuffix("vh_s3_gateway_parts_root");
     vh::paths::backingPath = tempBacking;
 
     EXPECT_EQ(vh::protocols::s3::MultipartStore::partRoot(),
@@ -910,7 +924,7 @@ protected:
         }
 
         vh::paths::enableTestMode();
-        const auto pathRoot = std::filesystem::temp_directory_path() / uniqueSuffix("vh_s3_gateway_db_paths");
+        const auto pathRoot = std::filesystem::temp_directory_path() / s3GatewayUniqueSuffix("vh_s3_gateway_db_paths");
         std::filesystem::remove_all(pathRoot);
         vh::paths::backingPath = pathRoot / "backing";
         vh::paths::mountPath = pathRoot / "mount";
@@ -970,7 +984,7 @@ protected:
 
     static uint32_t createLocalVault(const std::string& label, const uint32_t ownerId) {
         const auto newVaultId = vh::db::Transactions::exec("S3GatewayDbTest::createLocalVault", [&](pqxx::work& txn) {
-            const auto mountPoint = uniqueSuffix("s3gw");
+            const auto mountPoint = s3GatewayUniqueSuffix("s3gw");
             const auto seededVaultId = txn.exec(
                 "INSERT INTO vault (type, name, owner_id, mount_point, description) VALUES ($1, $2, $3, $4, $5) RETURNING id",
                 pqxx::params{"local", "S3 Gateway " + label, ownerId, mountPoint.substr(0, 33), ""}
@@ -999,8 +1013,8 @@ protected:
         return vh::db::Transactions::exec("S3GatewayDbTest::userWithAdminRole", [&](pqxx::work& txn) {
             return insertS3GatewayHydratableTestUser(
                 txn,
-                "s3_gateway_" + label + "_" + uniqueSuffix("user"),
-                "s3-gateway-" + label + "-" + uniqueSuffix("email") + "@vaulthalla.test",
+                "s3_gateway_" + label + "_" + s3GatewayUniqueSuffix("user"),
+                "s3-gateway-" + label + "-" + s3GatewayUniqueSuffix("email") + "@vaulthalla.test",
                 role);
         });
     }
@@ -1055,8 +1069,8 @@ protected:
         credential.user_id = principalUserId;
         credential.principal_user_id = principalUserId;
         credential.created_by = principalUserId;
-        credential.name = "s3gw-" + scopeMode + "-" + uniqueSuffix("credential");
-        credential.access_key = "VHTEST" + uniqueSuffix("ACCESS").substr(0, 24);
+        credential.name = "s3gw-" + scopeMode + "-" + s3GatewayUniqueSuffix("credential");
+        credential.access_key = "VHTEST" + s3GatewayUniqueSuffix("ACCESS").substr(0, 24);
         credential.encrypted_secret_access_key = {1, 2, 3};
         credential.iv = {4, 5, 6};
         credential.enabled = true;
@@ -1218,7 +1232,7 @@ TEST_F(S3GatewayDbTest, UserAccessCredentialUsesPrincipalRbacWithoutGatewayRoleA
 TEST_F(S3GatewayDbTest, UserAccessCredentialCannotExceedPrincipalRbac) {
     const auto admin = vh::db::query::identities::User::getUserByName("admin");
     ASSERT_TRUE(admin);
-    const auto unownedVaultId = createLocalVault(uniqueSuffix("user_access_denied"), admin->id);
+    const auto unownedVaultId = createLocalVault(s3GatewayUniqueSuffix("user_access_denied"), admin->id);
     vh::db::query::s3::Gateway::bindBucket({
         .vault_id = unownedVaultId,
         .bucket_name = "binding-no-access-" + std::to_string(unownedVaultId),
@@ -1304,7 +1318,7 @@ TEST_F(S3GatewayDbTest, VaultAllowlistDefaultRoleRequiresPrincipalAndCredentialA
     EXPECT_FALSE(write.allowed);
     EXPECT_EQ(vh::rbac::s3::policy::Decision::Reason::EffectiveCredentialRoleDenied, write.reason);
 
-    const auto adminOwnedVaultId = createLocalVault(uniqueSuffix("allowlist_principal_denied"), admin->id);
+    const auto adminOwnedVaultId = createLocalVault(s3GatewayUniqueSuffix("allowlist_principal_denied"), admin->id);
     const auto principal = vh::db::query::identities::User::getUserById(userId);
     ASSERT_TRUE(principal);
     credential = createCredential(principal->id, "vault_allowlist");
@@ -1326,7 +1340,7 @@ TEST_F(S3GatewayDbTest, VaultAllowlistPerVaultRoleOverridesDefaultRoleForOneVaul
     const auto admin = vh::db::query::identities::User::getUserByName("admin");
     ASSERT_TRUE(admin);
     ASSERT_TRUE(admin->isSuperAdmin());
-    const auto secondVaultId = createLocalVault(uniqueSuffix("allowlist_role_override"), admin->id);
+    const auto secondVaultId = createLocalVault(s3GatewayUniqueSuffix("allowlist_role_override"), admin->id);
     const auto credential = createCredential(admin->id, "vault_allowlist");
     setCredentialDefaultVaultRole(credential.id, "reader", admin->id);
     selectCredentialVault(credential.id, vaultId, admin->id);
@@ -1391,7 +1405,7 @@ TEST_F(S3GatewayDbTest, VaultAllowlistRoleOverridesApplyToCredentialAperture) {
     EXPECT_EQ(vh::rbac::fs::policy::Decision::Reason::DeniedByOverride,
               privateRead.credential_decision->reason);
 
-    const auto secondVaultId = createLocalVault(uniqueSuffix("allowlist_override_narrow"), admin->id);
+    const auto secondVaultId = createLocalVault(s3GatewayUniqueSuffix("allowlist_override_narrow"), admin->id);
     const auto perVaultCredential = createCredential(admin->id, "vault_allowlist");
     setCredentialDefaultVaultRole(perVaultCredential.id, "reader", admin->id);
     selectCredentialVault(perVaultCredential.id, vaultId, admin->id);
@@ -1457,7 +1471,7 @@ TEST_F(S3GatewayDbTest, GlobalCredentialUsesPrincipalRbacAndRequiresAdminPrincip
     ASSERT_TRUE(admin);
     ASSERT_TRUE(admin->isSuperAdmin());
     const auto globalAdminCredential = createCredential(admin->id, "global");
-    const auto secondVaultId = createLocalVault(uniqueSuffix("global_default"), admin->id);
+    const auto secondVaultId = createLocalVault(s3GatewayUniqueSuffix("global_default"), admin->id);
 
     auto missingDefault = evaluateS3(
         admin,
@@ -1653,7 +1667,7 @@ TEST_F(S3GatewayDbTest, SignedDeleteBucketUsesCanAdminWithoutCanDeleteScope) {
     auto secret = manager.createCredential({
         .created_by = admin->id,
         .principal_user_id = admin->id,
-        .name = "route-admin-delete-" + uniqueSuffix("credential"),
+        .name = "route-admin-delete-" + s3GatewayUniqueSuffix("credential"),
         .scope_mode = "vault_allowlist",
         .description = std::nullopt,
         .expires_at = std::nullopt,
@@ -1695,7 +1709,7 @@ TEST_F(S3GatewayDbTest, SignedDedicatedHostRootListsBuckets) {
     auto secret = manager.createCredential({
         .created_by = admin->id,
         .principal_user_id = admin->id,
-        .name = "dedicated-root-" + uniqueSuffix("credential"),
+        .name = "dedicated-root-" + s3GatewayUniqueSuffix("credential"),
         .scope_mode = "user_access",
         .description = std::nullopt,
         .expires_at = std::nullopt,
@@ -1740,7 +1754,7 @@ TEST_F(S3GatewayDbTest, SignedDedicatedHostPutAndGetAuthenticateAndRoutePathStyl
     auto secret = manager.createCredential({
         .created_by = admin->id,
         .principal_user_id = admin->id,
-        .name = "dedicated-object-" + uniqueSuffix("credential"),
+        .name = "dedicated-object-" + s3GatewayUniqueSuffix("credential"),
         .scope_mode = "vault_allowlist",
         .description = std::nullopt,
         .expires_at = std::nullopt,
@@ -1804,7 +1818,7 @@ TEST_F(S3GatewayDbTest, NonAdminScopeMutationCannotNameUnownedVaultEvenWithNoAct
         [](pqxx::work& txn) {
             const auto admin = vh::db::query::identities::User::getUserByName("admin");
             if (!admin) throw std::runtime_error("admin user not available");
-            const auto mount = uniqueSuffix("s3gw_unscope").substr(0, 33);
+            const auto mount = s3GatewayUniqueSuffix("s3gw_unscope").substr(0, 33);
             const auto seededVaultId = txn.exec(
                 "INSERT INTO vault (type, name, owner_id, mount_point, description) VALUES ($1, $2, $3, $4, $5) RETURNING id",
                 pqxx::params{"local", "S3 Gateway Unowned Scope Vault", admin->id, mount, ""}
@@ -1874,7 +1888,7 @@ TEST_F(S3GatewayDbTest, S3GatewayWebSocketNormalizesCredentialScopeNames) {
     ASSERT_TRUE(session->user->isAdmin());
 
     const auto created = vh::protocols::ws::handler::S3Gateway::credentialsCreate({
-        {"name", "ws-normalized-scope-" + uniqueSuffix("credential")},
+        {"name", "ws-normalized-scope-" + s3GatewayUniqueSuffix("credential")},
         {"scope_mode", "vault-allowlist"},
         {"vault_scopes", nlohmann::json::array({
             {
@@ -1976,7 +1990,7 @@ TEST_F(S3GatewayDbTest, S3GatewayWebSocketDefaultRoleSelectedVaultAndDefaultOver
     ASSERT_TRUE(admin);
     ASSERT_TRUE(admin->isSuperAdmin());
     const auto session = wsSessionForUser(admin->id);
-    const auto secondVaultId = createLocalVault(uniqueSuffix("ws_selected"), admin->id);
+    const auto secondVaultId = createLocalVault(s3GatewayUniqueSuffix("ws_selected"), admin->id);
     const auto credential = createCredential(admin->id, "vault_allowlist");
 
     const auto initialDefault = vh::protocols::ws::handler::S3Gateway::credentialsDefaultRoleGet({
@@ -2295,7 +2309,7 @@ TEST_F(S3GatewayDbTest, VaultSlugDefaultsAndDisplayRenameDoesNotRewriteBindings)
 
 TEST_F(S3GatewayDbTest, SlugAndFuseOverrideControlOnlyDefaultFuseBinding) {
     auto vault = std::make_shared<vh::vault::model::Vault>();
-    vault->name = "Slug Update " + uniqueSuffix("vault");
+    vault->name = "Slug Update " + s3GatewayUniqueSuffix("vault");
     vault->description = "Slug update test";
     vault->owner_id = userId;
     vault->type = vh::vault::model::VaultType::Local;
@@ -2343,7 +2357,7 @@ TEST_F(S3GatewayDbTest, ExplicitS3BucketBindingSurvivesVaultNameAndSlugUpdates) 
     ASSERT_TRUE(session->user);
     ASSERT_TRUE(session->user->isSuperAdmin());
 
-    const auto targetVaultId = createLocalVault(uniqueSuffix("explicit_bucket"), userId);
+    const auto targetVaultId = createLocalVault(s3GatewayUniqueSuffix("explicit_bucket"), userId);
     const auto bucketName = "explicit-binding-" + std::to_string(targetVaultId);
     const auto bound = vh::protocols::ws::handler::S3Gateway::bucketsBind({
         {"vault_id", targetVaultId},
@@ -2363,7 +2377,7 @@ TEST_F(S3GatewayDbTest, ExplicitS3BucketBindingSurvivesVaultNameAndSlugUpdates) 
 
 TEST_F(S3GatewayDbTest, RejectsInvalidAndDuplicateExternalNames) {
     auto vault = std::make_shared<vh::vault::model::Vault>();
-    vault->name = "Invalid Slug " + uniqueSuffix("vault");
+    vault->name = "Invalid Slug " + s3GatewayUniqueSuffix("vault");
     vault->slug = "Invalid_Slug";
     vault->owner_id = userId;
     vault->type = vh::vault::model::VaultType::Local;
@@ -2372,7 +2386,7 @@ TEST_F(S3GatewayDbTest, RejectsInvalidAndDuplicateExternalNames) {
     EXPECT_THROW((void)vh::db::query::vault::Vault::upsertVault(vault, sync), std::invalid_argument);
 
     auto first = std::make_shared<vh::vault::model::Vault>();
-    first->name = "Duplicate Slug A " + uniqueSuffix("vault");
+    first->name = "Duplicate Slug A " + s3GatewayUniqueSuffix("vault");
     first->slug = uniqueS3Name("duplicate-slug");
     first->owner_id = userId;
     first->type = vh::vault::model::VaultType::Local;
@@ -2380,7 +2394,7 @@ TEST_F(S3GatewayDbTest, RejectsInvalidAndDuplicateExternalNames) {
     first->id = vh::db::query::vault::Vault::upsertVault(first, std::make_shared<vh::sync::model::LocalPolicy>());
 
     auto second = std::make_shared<vh::vault::model::Vault>();
-    second->name = "Duplicate Slug B " + uniqueSuffix("vault");
+    second->name = "Duplicate Slug B " + s3GatewayUniqueSuffix("vault");
     second->slug = duplicateSlug;
     second->owner_id = userId;
     second->type = vh::vault::model::VaultType::Local;
@@ -2392,7 +2406,7 @@ TEST_F(S3GatewayDbTest, RejectsInvalidAndDuplicateExternalNames) {
     vh::db::query::vault::Vault::upsertVault(fuseA);
 
     auto fuseB = std::make_shared<vh::vault::model::Vault>();
-    fuseB->name = "Duplicate Fuse " + uniqueSuffix("vault");
+    fuseB->name = "Duplicate Fuse " + s3GatewayUniqueSuffix("vault");
     fuseB->slug = uniqueS3Name("duplicate-fuse");
     fuseB->fuse_name = fuseA->fuse_name;
     fuseB->owner_id = userId;
@@ -2413,7 +2427,7 @@ TEST_F(S3GatewayDbTest, DisabledAndExpiredCredentialsDoNotAuthenticate) {
     auto active = manager.createCredential({
         .created_by = userId,
         .principal_user_id = userId,
-        .name = "disabled-auth-" + uniqueSuffix("credential"),
+        .name = "disabled-auth-" + s3GatewayUniqueSuffix("credential"),
         .scope_mode = "user_access",
         .description = std::nullopt,
         .expires_at = std::nullopt,
@@ -2431,7 +2445,7 @@ TEST_F(S3GatewayDbTest, DisabledAndExpiredCredentialsDoNotAuthenticate) {
     auto expired = manager.createCredential({
         .created_by = userId,
         .principal_user_id = userId,
-        .name = "expired-auth-" + uniqueSuffix("credential"),
+        .name = "expired-auth-" + s3GatewayUniqueSuffix("credential"),
         .scope_mode = "user_access",
         .description = std::nullopt,
         .expires_at = std::time(nullptr) - 60,
@@ -2441,13 +2455,13 @@ TEST_F(S3GatewayDbTest, DisabledAndExpiredCredentialsDoNotAuthenticate) {
 }
 
 TEST_F(S3GatewayDbTest, CredentialScopeShorthandWritesFinalRbacTablesAndGatesActions) {
-    const auto secondVaultId = createLocalVault(uniqueSuffix("scope"), userId);
+    const auto secondVaultId = createLocalVault(s3GatewayUniqueSuffix("scope"), userId);
 
     vh::db::query::s3::GatewayCredential credential;
     credential.user_id = userId;
     credential.principal_user_id = userId;
     credential.created_by = userId;
-    credential.name = "scope-query-" + uniqueSuffix("credential");
+    credential.name = "scope-query-" + s3GatewayUniqueSuffix("credential");
     credential.access_key = "VHTESTSCOPEQUERY" + std::to_string(vaultId);
     credential.encrypted_secret_access_key = {1, 2, 3};
     credential.iv = {4, 5, 6};
@@ -2555,12 +2569,12 @@ TEST_F(S3GatewayDbTest, SignedRouteScopeDeniedReturnsS3XmlAccessDenied) {
         .created_by = admin->id
     });
 
-    const auto selectedOtherVaultId = createLocalVault(uniqueSuffix("scope_denied_selected"), admin->id);
+    const auto selectedOtherVaultId = createLocalVault(s3GatewayUniqueSuffix("scope_denied_selected"), admin->id);
     const vh::protocols::s3::CredentialManager manager;
     auto secret = manager.createCredential({
         .created_by = admin->id,
         .principal_user_id = admin->id,
-        .name = "route-scope-denied-" + uniqueSuffix("credential"),
+        .name = "route-scope-denied-" + s3GatewayUniqueSuffix("credential"),
         .scope_mode = "vault_allowlist",
         .description = std::nullopt,
         .expires_at = std::nullopt,
@@ -2877,7 +2891,7 @@ TEST_F(S3GatewayDbTest, ObjectStoreLocalListUsesMetadataEtagsForFilesystemEntrie
     ASSERT_TRUE(admin);
     ASSERT_TRUE(admin->isSuperAdmin());
 
-    const auto localVaultId = createLocalVault(uniqueSuffix("metadata_list_local"), admin->id);
+    const auto localVaultId = createLocalVault(s3GatewayUniqueSuffix("metadata_list_local"), admin->id);
     const auto engine = vh::runtime::Deps::get().storageManager->getEngine(localVaultId);
     ASSERT_TRUE(engine);
     const std::filesystem::path vaultPath = "/metadata-only-list.txt";
@@ -2915,7 +2929,7 @@ TEST_F(S3GatewayDbTest, ObjectStoreRemoteListUsesRemoteIndexWithoutGatewayRows) 
     ASSERT_TRUE(admin);
     ASSERT_TRUE(admin->isSuperAdmin());
 
-    const auto remoteVaultId = createLocalVault(uniqueSuffix("metadata_list_remote"), admin->id);
+    const auto remoteVaultId = createLocalVault(s3GatewayUniqueSuffix("metadata_list_remote"), admin->id);
     const auto bucketName = "remote-index-list-" + std::to_string(remoteVaultId);
     vh::db::query::s3::Gateway::bindBucket({
         .vault_id = remoteVaultId,
@@ -2950,7 +2964,7 @@ TEST_F(S3GatewayDbTest, DeleteBucketRejectsLocalFilesystemEntriesWithoutGatewayR
     ASSERT_TRUE(admin);
     ASSERT_TRUE(admin->isSuperAdmin());
 
-    const auto localVaultId = createLocalVault(uniqueSuffix("delete_bucket_local"), admin->id);
+    const auto localVaultId = createLocalVault(s3GatewayUniqueSuffix("delete_bucket_local"), admin->id);
     const auto engine = vh::runtime::Deps::get().storageManager->getEngine(localVaultId);
     ASSERT_TRUE(engine);
     const std::filesystem::path vaultPath = "/only-in-fs.txt";
@@ -2987,7 +3001,7 @@ TEST_F(S3GatewayDbTest, DeleteBucketRejectsRemoteIndexLiveObjects) {
     ASSERT_TRUE(admin);
     ASSERT_TRUE(admin->isSuperAdmin());
 
-    const auto remoteVaultId = createLocalVault(uniqueSuffix("delete_bucket_remote"), admin->id);
+    const auto remoteVaultId = createLocalVault(s3GatewayUniqueSuffix("delete_bucket_remote"), admin->id);
     const auto bucketName = "delete-remote-non-empty-" + std::to_string(remoteVaultId);
     vh::db::query::s3::Gateway::bindBucket({
         .vault_id = remoteVaultId,
@@ -3020,7 +3034,7 @@ TEST_F(S3GatewayDbTest, DeleteBucketAllowsTrulyEmptyApiExclusiveBucket) {
     ASSERT_TRUE(admin);
     ASSERT_TRUE(admin->isSuperAdmin());
 
-    const auto emptyVaultId = createLocalVault(uniqueSuffix("delete_bucket_empty"), admin->id);
+    const auto emptyVaultId = createLocalVault(s3GatewayUniqueSuffix("delete_bucket_empty"), admin->id);
     const auto bucketName = "delete-empty-" + std::to_string(emptyVaultId);
     vh::db::query::s3::Gateway::bindBucket({
         .vault_id = emptyVaultId,

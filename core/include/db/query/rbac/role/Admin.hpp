@@ -15,6 +15,9 @@ class Admin {
     using AdminRolePtr = std::shared_ptr<AdminRole>;
 
 public:
+    // Insert-only: never touches an existing row. Throws pqxx::unique_violation when the name is taken.
+    static unsigned int insert(const AdminRolePtr& role);
+
     static unsigned int upsert(const AdminRolePtr& role);
 
     static void remove(unsigned int id);

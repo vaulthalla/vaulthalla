@@ -104,6 +104,8 @@ static const auto noPricingFlag = Flag::WithAliases("no_pricing",
 
 static const auto enableFlag = Flag::Alias("enable", "Enable the override (default)", "enable");
 static const auto disableFlag = Flag::Alias("disable", "Disable the override", "disable");
+static const auto allowEffectFlag = Flag::Alias("allow", "Make the override an allow", "allow");
+static const auto denyEffectFlag = Flag::Alias("deny", "Make the override a deny", "deny");
 
 static const auto regexPattern = Optional::Single("regex_pattern",
                                                   "Regex pattern to scope the override to specific paths", "pattern",
@@ -261,17 +263,18 @@ static std::shared_ptr<CommandUsage> role_unassign(const std::weak_ptr<CommandUs
 static std::shared_ptr<CommandUsage> role_override_add(const std::weak_ptr<CommandUsage>& parent) {
     auto cmd = buildBaseUsage(parent);
     cmd->aliases = {"add", "new", "create", "mk"};
-    cmd->description = "Add a permission override for a user or group in a specific vault role.";
+    cmd->description = "Add path-scoped permission overrides (--allow-<perm> / --deny-<perm>, see 'vh permission vault') "
+                       "to the vault role assigned to a user or group.";
     cmd->positionals = {vaultPos, roleId};
-    cmd->required_flags = {permissionsFlags};
     cmd->required = {subjectOption};
     cmd->optional_flags = {enableFlag, disableFlag};
     cmd->optional = {regexPattern, owner};
+    cmd->option_prefixes = {"allow-", "deny-"};
     cmd->examples = {
-        {R"(vh vault role override 42 read-only bob --download allow --pattern ".*\.pdf$")",
-         "Allow user 'bob' to download PDF files in the vault with ID 42, overriding the 'read-only' role."},
-        {R"(vh vault role override myvault read-write developers --gid 1001 --delete deny --pattern "^/sensitive/")",
-         "Deny group with GID 1001 from deleting files in the '/sensitive/' directory in the vault named 'myvault'."}
+        {R"(vh vault role override add 42 read-only -u bob --allow-files-download --pattern "/reports/**")",
+         "Allow user 'bob' to download files under /reports in the vault with ID 42."},
+        {R"(vh vault role override add myvault read-write --group developers --deny-files-delete --pattern "/sensitive/**" --owner alice)",
+         "Deny group 'developers' from deleting files under /sensitive in the vault 'myvault' owned by 'alice'."}
     };
     return cmd;
 }
@@ -279,15 +282,16 @@ static std::shared_ptr<CommandUsage> role_override_add(const std::weak_ptr<Comma
 static std::shared_ptr<CommandUsage> role_override_update(const std::weak_ptr<CommandUsage>& parent) {
     auto cmd = buildBaseUsage(parent);
     cmd->aliases = {"update", "set", "modify", "edit"};
-    cmd->description = "Update a permission override for a user or group in a specific vault role.";
+    cmd->description = "Update an override (by ID) on the vault role assigned to a user or group.";
     cmd->positionals = {vaultPos, roleId, bitPosition};
-    cmd->optional_flags = {enableFlag, disableFlag};
+    cmd->required = {subjectOption};
+    cmd->optional_flags = {allowEffectFlag, denyEffectFlag, enableFlag, disableFlag};
     cmd->optional = {regexPattern, owner};
     cmd->examples = {
-        {R"(vh vault role override update 42 read-only 7 --deny --pattern ".*\.exe$")",
-         "Update override ID 7 for user 'bob' in the vault with ID 42 to deny downloading .exe files."},
-        {R"(vh vault role override update myvault read-write 3 --enabled false --owner alice)",
-         "Disable override ID 3 for group 'developers' in the vault named 'myvault' owned by 'alice'."}
+        {R"(vh vault role override update 42 read-only 7 -u bob --deny --pattern "/reports/*.exe")",
+         "Make override 7 for user 'bob' on vault 42 a deny for .exe files under /reports."},
+        {R"(vh vault role override update myvault read-write 3 --group developers --disable --owner alice)",
+         "Disable override 3 for group 'developers' on the vault 'myvault' owned by 'alice'."}
     };
     return cmd;
 }
@@ -322,7 +326,7 @@ static std::shared_ptr<CommandUsage> role_override_list(const std::weak_ptr<Comm
     cmd->required = {subjectOption};
     cmd->optional = {owner};
     cmd->examples = {
-        {"vh vault role override list 42 read-only -u bob",
+        {"vh vault role override list 42 read-only bob",
          "List all overrides for user 'bob' in role 'read-only' on vault 42."},
         {"vh vault role override ls myvault read-write --group developers --owner alice",
          "List all overrides for group 'developers' in 'myvault' (owner 'alice') on role 'read-write'."}
@@ -335,10 +339,10 @@ static std::shared_ptr<CommandUsage> role_override(const std::weak_ptr<CommandUs
     cmd->aliases = {"override", "o"};
     cmd->description = "Manage permission overrides for users or groups in a specific vault role.";
     cmd->examples = {
-        {R"(vh vault role override 42 read-only -u bob --download allow --pattern ".*\.pdf$")",
-         "Allow user 'bob' to download PDF files in vault 42, overriding 'read-only'."},
-        {R"(vh vault role override myvault read-write --group developers --delete deny --pattern "^/sensitive/" --owner alice)",
-         "Deny 'developers' from deleting files under '/sensitive/' in 'myvault' (owner 'alice')."}
+        {R"(vh vault role override add 42 read-only -u bob --allow-files-download --pattern "/reports/**")",
+         "Allow user 'bob' to download files under /reports in vault 42, on top of 'read-only'."},
+        {R"(vh vault role override add myvault read-write --group developers --deny-files-delete --pattern "/sensitive/**" --owner alice)",
+         "Deny 'developers' from deleting files under /sensitive in 'myvault' (owner 'alice')."}
     };
     cmd->subcommands = {
         role_override_add(cmd->weak_from_this()),
@@ -372,7 +376,7 @@ static std::shared_ptr<CommandUsage> vrole(const std::weak_ptr<CommandUsage>& pa
         {"vh vault role assign 42 read-only bob", "Add user 'bob' to the 'read-only' role for the vault with ID 42."},
         {"vh vault role remove myvault read-write developers --owner alice",
          "Remove group 'developers' from the 'read-write' role for the vault named 'myvault' owned by 'alice'."},
-        {R"(vh vault role override 42 read-only bob --download allow --pattern ".*\.pdf$")",
+        {R"(vh vault role override add 42 read-only -u bob --allow-files-download --pattern "/reports/**")",
          "Allow user 'bob' to download PDF files in the vault with ID 42, overriding the 'read-only' role."},
         {"vh vault role list myvault --owner alice",
          "List all role assignments for the vault named 'myvault' owned by 'alice'."}

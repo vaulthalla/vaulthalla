@@ -58,7 +58,7 @@ namespace vh::rbac::role {
         // shared_from_this() throws bad_weak_ptr inside a constructor (no owner exists yet). A non-owning
         // aliasing pointer is enough for the resolver, which only mutates *this for the duration of the call.
         std::shared_ptr<Vault> self(std::shared_ptr<Vault>{}, this);
-        PermResolver::applyPermissionsFromWebCli(self, toPermissions(), pMap);
+        PermResolver::applySnapshot(self, toPermissions(), pMap);
     }
 
     void Vault::updateFromJson(const nlohmann::json &j) {
@@ -82,7 +82,7 @@ namespace vh::rbac::role {
 
         using PermResolver = resolver::PermissionResolverEnumPack<std::shared_ptr<Vault>>::type;
         auto self = shared_from_this();
-        PermResolver::applyPermissionsFromWebCli(self, toPermissions(), pMap);
+        PermResolver::applySnapshot(self, toPermissions(), pMap);
     }
 
     std::vector<std::string> Vault::getFlags() const {

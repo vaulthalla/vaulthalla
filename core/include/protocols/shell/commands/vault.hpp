@@ -95,15 +95,6 @@ namespace vh::protocols::shell::commands::vault {
     Lookup<storage::Engine> resolveEngine(const CommandCall &call, const std::string &vaultArg,
                                           const std::shared_ptr<CommandUsage> &usage, const std::string &errPrefix);
 
-    std::optional<std::string> checkOverridePermissions(const CommandCall &call,
-                                                        const std::shared_ptr<vh::vault::model::Vault> &vault,
-                                                        const std::string &errPrefix);
-
-    Lookup<vh::rbac::role::Vault> resolveVRole(const std::string &roleArg,
-                                           const std::shared_ptr<vh::vault::model::Vault> &vault,
-                                           const Subject *subjectOrNull,
-                                           const std::string &errPrefix);
-
     PatternParse parseGlobPatternOpt(const CommandCall &call, bool required, const std::string &errPrefix);
 
     EnableParse parseEnableDisableOpt(const CommandCall &call, const std::string &errPrefix);

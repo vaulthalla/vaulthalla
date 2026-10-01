@@ -104,39 +104,6 @@ Lookup<storage::Engine> resolveEngine(const CommandCall& call, const std::string
     return out;
 }
 
-std::optional<std::string> checkOverridePermissions(const CommandCall& call, const std::shared_ptr<vh::vault::model::Vault>& vault, const std::string& errPrefix) {
-    if (vault->owner_id == call.user->id) return std::nullopt;
-
-    using Perm = ::vh::rbac::permission::vault::RolePermissions;
-    if (!::vh::rbac::resolver::Vault::has<Perm>({
-        .user = call.user,
-        .permission = Perm::Assign,
-        .vault_id = vault->id
-    })) return errPrefix + ": you do not have permission to override roles for this vault";
-
-    return std::nullopt;
-}
-
-Lookup<::vh::rbac::role::Vault> resolveVRole(const std::string& roleArg,
-                              const std::shared_ptr<vh::vault::model::Vault>& vault,
-                              const Subject* subjectOrNull,
-                              const std::string& errPrefix) {
-    Lookup<::vh::rbac::role::Vault> out;
-    if (const auto idOpt = parseUInt(roleArg)) {
-        if (*idOpt <= 0) { out.error = errPrefix + ": role ID must be a positive integer"; return out; }
-        out.ptr = db::query::rbac::role::Vault::get(*idOpt);
-        if (!out.ptr) out.error = errPrefix + ": role with id " + std::to_string(*idOpt) + " not found";
-        return out;
-    }
-    if (!subjectOrNull) {
-        out.error = errPrefix + ": non-integer role arg requires a subject (--user/--group) to infer the role";
-        return out;
-    }
-    out.ptr = db::query::rbac::role::vault::Assignments::get(vault->id, subjectOrNull->type, subjectOrNull->id);
-    if (!out.ptr) out.error = errPrefix + ": role not found for " + subjectOrNull->type + " id " + std::to_string(subjectOrNull->id);
-    return out;
-}
-
 PatternParse parseGlobPatternOpt(const CommandCall& call, bool required, const std::string& errPrefix) {
     PatternParse out;
     auto p = optVal(call, "path");

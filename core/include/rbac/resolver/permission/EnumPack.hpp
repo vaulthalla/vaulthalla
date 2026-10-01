@@ -1,6 +1,8 @@
 #pragma once
 
 #include "Traits.hpp"
+#include "TargetTraits.hpp"
+#include "policy/all.hpp"
 #include "rbac/resolver/Permission.hpp"
 #include "rbac/role/Admin.hpp"
 #include "rbac/role/Vault.hpp"
@@ -16,6 +18,7 @@ struct PermissionResolverEnumPack<std::shared_ptr<role::Admin>> {
             permission::admin::VaultPermissions,
             permission::admin::S3GatewayPermissions,
             permission::admin::identities::IdentityPermissions,
+            permission::admin::identities::GroupPermissions,
             permission::admin::settings::SettingsPermissions,
             permission::admin::AuditPermissions,
             permission::admin::roles::RolesPermissions
@@ -30,7 +33,8 @@ struct PermissionResolverEnumPack<std::shared_ptr<role::Admin>> {
             permission::vault::sync::SyncActionPermissions,
             permission::vault::sync::SyncConfigPermissions,
             permission::vault::fs::FilePermissions,
-            permission::vault::fs::DirectoryPermissions
+            permission::vault::fs::DirectoryPermissions,
+            permission::vault::fs::SharePermissions
         >;
     };
 
@@ -42,7 +46,8 @@ struct PermissionResolverEnumPack<std::shared_ptr<role::Admin>> {
             permission::vault::sync::SyncActionPermissions,
             permission::vault::sync::SyncConfigPermissions,
             permission::vault::fs::FilePermissions,
-            permission::vault::fs::DirectoryPermissions
+            permission::vault::fs::DirectoryPermissions,
+            permission::vault::fs::SharePermissions
         >;
     };
 }

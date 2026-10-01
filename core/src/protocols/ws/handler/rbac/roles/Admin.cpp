@@ -1,85 +1,63 @@
 #include "protocols/ws/handler/rbac/roles/Admin.hpp"
 #include "protocols/ws/Session.hpp"
-#include "protocols/RoleGuards.hpp"
-#include "db/query/rbac/role/Admin.hpp"
-#include "db/query/rbac/role/Vault.hpp"
-#include "identities/User.hpp"
-#include "notifications/SecurityAlertProducer.hpp"
+#include "ops/Roles.hpp"
 #include "rbac/role/Admin.hpp"
 
 using namespace vh::rbac;
 
 namespace vh::protocols::ws::handler::rbac::roles {
 
-    json Admin::add(const json& payload, const std::shared_ptr<Session>& session) {
-        if (!session->user->adminRolePerms().canAdd())
-            throw std::runtime_error("Permission denied: Only admins can add role");
+    namespace {
+    // The web's role forms send every permission as {qualified, value}: a complete snapshot.
+    ops::roles::PermissionEdit adminRolePayloadPermissions(const json& payload) {
+        ops::roles::PermissionEdit edit;
+        if (!payload.contains("permissions") || !payload.at("permissions").is_array()) return edit;
+        for (const auto& p : payload.at("permissions"))
+            edit.changes.emplace_back(p.at("qualified").get<std::string>(), p.at("value").get<bool>());
+        edit.complete = true;
+        return edit;
+    }
 
-        // Create is insert-only: an existing name (including super_admin) is an error, never an overwrite.
-        const auto staged = std::make_shared<vh::rbac::role::Admin>(payload);
-        const auto created = protocols::roles::createAdminRole(staged);
-        notifications::enqueueAdminRoleCreated(created, notifications::actorFromUser("websocket", session->user));
+    std::optional<std::string> adminRolePayloadString(const json& payload, const char* key) {
+        if (!payload.contains(key) || payload.at(key).is_null()) return std::nullopt;
+        return payload.at(key).get<std::string>();
+    }
+    }
+
+    json Admin::add(const json& payload, const std::shared_ptr<Session>& session) {
+        const auto created = ops::roles::createAdminRole(session->user, {
+            .name = payload.at("name").get<std::string>(),
+            .description = payload.value("description", ""),
+            .permissions = adminRolePayloadPermissions(payload)
+        }, "websocket");
         return {{"role", *created}};
     }
 
     json Admin::remove(const json& payload, const std::shared_ptr<Session>& session) {
-        if (!session->user->adminRolePerms().canDelete())
-            throw std::runtime_error("Permission denied: Only admins can remove role");
-
-        const auto roleId = payload.at("id").get<uint32_t>();
-        const auto existing = db::query::rbac::role::Admin::get(roleId);
-        if (!existing) throw std::runtime_error("Role not found");
-        if (const auto denied = protocols::roles::adminRoleDeleteError(*session->user, *existing))
-            throw std::runtime_error(*denied);
-
-        db::query::rbac::role::Admin::remove(roleId);
-        notifications::enqueueAdminRoleDeleted(existing, notifications::actorFromUser("websocket", session->user));
-
-        return {{"role", roleId}};
+        const auto removed = ops::roles::removeAdminRole(session->user, payload.at("id").get<uint32_t>(), "websocket");
+        return {{"role", removed->id}};
     }
 
     json Admin::update(const json& payload, const std::shared_ptr<Session>& session) {
-        if (!session->user->adminRolePerms().canEdit())
-            throw std::runtime_error("Permission denied: Only admins can update role");
-
-        const auto existing = db::query::rbac::role::Admin::get(payload.at("id").get<uint32_t>());
-        if (!existing) throw std::runtime_error("Role not found");
-
-        const auto updated = std::make_shared<vh::rbac::role::Admin>(*existing);
-        updated->updateFromJson(payload);
-        if (const auto denied = protocols::roles::adminRoleUpdateError(*session->user, *existing, *updated))
-            throw std::runtime_error(*denied);
-
-        db::query::rbac::role::Admin::upsert(updated);
-        notifications::enqueueAdminRoleUpdated(updated, notifications::actorFromUser("websocket", session->user));
+        const auto updated = ops::roles::updateAdminRole(session->user, {
+            .role = payload.at("id").get<uint32_t>(),
+            .name = adminRolePayloadString(payload, "name"),
+            .description = adminRolePayloadString(payload, "description"),
+            .permissions = adminRolePayloadPermissions(payload)
+        }, "websocket");
         return {{"role", *updated}};
     }
 
     json Admin::get(const json& payload, const std::shared_ptr<Session>& session) {
-        if (!session->user->adminRolePerms().canView())
-            throw std::runtime_error("Permission denied: Only admins can view role");
-
-        const auto roleId = payload.at("id").get<uint32_t>();
-        auto role = db::query::rbac::role::Admin::get(roleId);
-        if (!role) throw std::runtime_error("Role not found");
-        return {{"role", *role}};
+        return {{"role", *ops::roles::getAdminRole(session->user, payload.at("id").get<uint32_t>())}};
     }
 
     json Admin::getByName(const json& payload, const std::shared_ptr<Session>& session) {
-        if (!session->user->adminRolePerms().canView())
-            throw std::runtime_error("Permission denied: Only admins can view role");
-
-        const auto roleName = payload.at("name").get<std::string>();
-        auto role = db::query::rbac::role::Admin::get(roleName);
-        if (!role) throw std::runtime_error("Role not found");
-        return {{"role", *role}};
+        return {{"role", *ops::roles::getAdminRole(session->user, payload.at("name").get<std::string>())}};
     }
 
     json Admin::list(const std::shared_ptr<Session>& session) {
-        if (!session->user->adminRolePerms().canView())
-            throw std::runtime_error("Permission denied: Only admins can view roles");
-
-        return {{"roles", db::query::rbac::role::Admin::list()}};
+        return {{"roles", ops::roles::listAdminRoles(session->user)}};
     }
 
 }

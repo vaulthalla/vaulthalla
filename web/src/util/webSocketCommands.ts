@@ -170,7 +170,7 @@ export interface WebSocketCommandMap {
 
   'role.admin.update': { payload: AdminRolePayload; response: { role: AdminRoleDTO } }
 
-  'role.admin.delete': { payload: { id: number }; response: { role: AdminRoleDTO } }
+  'role.admin.delete': { payload: { id: number }; response: { role: number } }
 
   'role.admin.get': { payload: { id: number }; response: { role: AdminRoleDTO } }
 
@@ -178,19 +178,19 @@ export interface WebSocketCommandMap {
 
   'roles.admin.list': { payload: null; response: { roles: AdminRoleDTO[] } }
 
-  'role.vault.add': { payload: VaultRolePayload; response: { vault: VaultRoleDTO } }
+  'role.vault.add': { payload: VaultRolePayload; response: { role: VaultRoleDTO } }
 
-  'role.vault.update': { payload: VaultRolePayload; response: { vault: VaultRoleDTO } }
+  'role.vault.update': { payload: VaultRolePayload; response: { role: VaultRoleDTO } }
 
-  'role.vault.delete': { payload: { id: number }; response: { vault: VaultRoleDTO } }
+  'role.vault.delete': { payload: { id: number }; response: { role_id: number } }
 
-  'role.vault.get': { payload: { id: number }; response: { vault: VaultRoleDTO } }
+  'role.vault.get': { payload: { id: number }; response: { role: VaultRoleDTO } }
 
-  'role.vault.get.byName': { payload: { name: string }; response: { vault: VaultRoleDTO } }
+  'role.vault.get.byName': { payload: { name: string }; response: { role: VaultRoleDTO } }
 
   'roles.vault.list': { payload: null; response: { roles: VaultRoleDTO[] } }
 
-  'roles.vault.list.assigned': { payload: { id: number }; response: { vault: VaultRoleDTO } }
+  'roles.vault.list.assigned': { payload: { id: number }; response: { assigned_roles: VaultRoleDTO[] } }
 
   'role.vault.assign': {
     payload: { id: number; vault_id: number; subject_type: 'user' | 'group'; subject_id: number }

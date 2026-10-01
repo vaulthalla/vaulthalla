@@ -3,7 +3,6 @@ import { persist } from 'zustand/middleware'
 import { useWebSocketStore } from '@/stores/useWebSocket'
 import { VaultRole } from '@/models/role'
 import { WSCommandPayload, WSCommandResponse } from '@/util/webSocketCommands'
-import { VaultRoleDTO } from '@/models/permission'
 
 interface VaultRoleStore {
   vaultRoles: VaultRole[]
@@ -20,17 +19,8 @@ interface VaultRoleStore {
   getAssignedRoles: (payload: WSCommandPayload<'roles.vault.list.assigned'>) => Promise<VaultRole[]>
 }
 
-const normalizeAssignedRoles = (response: WSCommandResponse<'roles.vault.list.assigned'>): VaultRole[] => {
-  const responseLike = response as WSCommandResponse<'roles.vault.list.assigned'> & {
-    roles?: VaultRoleDTO[]
-    vaults?: VaultRoleDTO[]
-  }
-
-  if (Array.isArray(responseLike.roles)) return responseLike.roles.map(role => VaultRole.fromData(role))
-  if (Array.isArray(responseLike.vaults)) return responseLike.vaults.map(role => VaultRole.fromData(role))
-  if (responseLike.vault) return [VaultRole.fromData(responseLike.vault)]
-  return []
-}
+const normalizeAssignedRoles = (response: WSCommandResponse<'roles.vault.list.assigned'>): VaultRole[] =>
+  (response.assigned_roles ?? []).map(role => VaultRole.fromData(role))
 
 export const useVaultRoleStore = create<VaultRoleStore>()(
   persist(
@@ -99,7 +89,7 @@ export const useVaultRoleStore = create<VaultRoleStore>()(
         const ws = useWebSocketStore.getState()
         await ws.waitForConnection()
         const response = await ws.sendCommand('role.vault.get', { id })
-        return VaultRole.fromData(response.vault)
+        return VaultRole.fromData(response.role)
       },
 
       async getVaultRoleByName({ name }) {
@@ -109,7 +99,7 @@ export const useVaultRoleStore = create<VaultRoleStore>()(
         const ws = useWebSocketStore.getState()
         await ws.waitForConnection()
         const response = await ws.sendCommand('role.vault.get.byName', { name })
-        return VaultRole.fromData(response.vault)
+        return VaultRole.fromData(response.role)
       },
 
       async getAssignedRoles({ id }) {

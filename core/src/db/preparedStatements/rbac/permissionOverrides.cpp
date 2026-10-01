@@ -25,7 +25,7 @@ void vh::db::Connection::initPreparedPermOverrides() const {
         "get_permission_override_by_vault_subject_and_bitpos",
         R"SQL(
             SELECT
-                p.id AS permission_override_id,
+                p.id AS permission_id,
                 p.name,
                 p.description,
                 p.category,
@@ -85,7 +85,7 @@ void vh::db::Connection::initPreparedPermOverrides() const {
         "list_vault_permission_overrides",
         R"SQL(
             SELECT
-                p.id AS permission_override_id,
+                p.id AS permission_id,
                 p.name,
                 p.description,
                 p.category,
@@ -115,7 +115,7 @@ void vh::db::Connection::initPreparedPermOverrides() const {
         "list_subject_permission_overrides",
         R"SQL(
             SELECT
-                p.id AS permission_override_id,
+                p.id AS permission_id,
                 p.name,
                 p.description,
                 p.category,
@@ -147,7 +147,7 @@ void vh::db::Connection::initPreparedPermOverrides() const {
         R"SQL(
             (
                 SELECT
-                    p.id AS permission_override_id,
+                    p.id AS permission_id,
                     p.name,
                     p.description,
                     p.category,
@@ -175,7 +175,7 @@ void vh::db::Connection::initPreparedPermOverrides() const {
             UNION ALL
             (
                 SELECT
-                    p.id AS permission_override_id,
+                    p.id AS permission_id,
                     p.name,
                     p.description,
                     p.category,
@@ -255,7 +255,7 @@ void vh::db::Connection::initPreparedPermOverrides() const {
                 vra.role_id,
                 vra.assigned_at,
 
-                p.id AS permission_override_id,
+                p.id AS permission_id,
                 p.name,
                 p.description,
                 p.category,
@@ -279,7 +279,7 @@ void vh::db::Connection::initPreparedPermOverrides() const {
         "get_vault_permission_override_by_id",
         R"SQL(
         SELECT
-            p.id AS permission_override_id,
+            p.id AS permission_id,
             p.name,
             p.description,
             p.category,

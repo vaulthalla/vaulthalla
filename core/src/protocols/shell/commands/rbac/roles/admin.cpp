@@ -1,187 +1,72 @@
 #include "protocols/shell/commands/rbac.hpp"
 #include "protocols/shell/types.hpp"
-
-#include "identities/User.hpp"
-#include "rbac/role/Admin.hpp"
-#include "rbac/resolver/permission/all.hpp"
-
-#include "db/query/rbac/role/Admin.hpp"
-#include "db/query/rbac/role/admin/Assignments.hpp"
-
-#include "notifications/SecurityAlertProducer.hpp"
-#include "runtime/Deps.hpp"
-#include "UsageManager.hpp"
-#include "CommandUsage.hpp"
-#include "usages.hpp"
 #include "protocols/shell/commands/helpers.hpp"
 #include "protocols/shell/util/argsHelpers.hpp"
-#include "protocols/RoleGuards.hpp"
-#include "rbac/resolver/Admin.hpp"
+#include "protocols/shell/util/permissionFlags.hpp"
+#include "protocols/shell/util/runOp.hpp"
+#include "ops/Roles.hpp"
+#include "rbac/role/Admin.hpp"
 
-#include <algorithm>
-#include <ranges>
+#include "UsageManager.hpp"
+#include "CommandUsage.hpp"
 
-using namespace vh::rbac;
+#include <string>
 
 namespace vh::protocols::shell::commands::rbac::roles::admin {
-    static CommandResult handle_create(const CommandCall& call) {
-        if (!call.user->roles.admin->roles.admin.canAdd())
-            return invalid("You do not have permission to create admin roles");
+    // CLI syntax only: a numeric positional names a role by id, anything else by name.
+    static ops::roles::Ref adminRoleCliRef(const std::string& nameOrId) {
+        if (const auto id = parseUInt(nameOrId)) return *id;
+        return nameOrId;
+    }
 
+    static CommandResult handle_create(const CommandCall& call) {
         const auto usage = resolveUsage({"role", "admin", "create"});
         validatePositionals(call, usage);
 
-        if (call.positionals.empty())
-            return invalid("Missing required role name");
-
-        const auto& roleName = call.positionals[0];
-        const std::string description = call.positionals.size() > 1
-            ? call.positionals[1]
-            : "";
-
-        if (const auto existing = resolveAdminRole(roleName, "role admin create"); existing.ptr)
-            return invalid("Admin role already exists: '" + roleName + "'");
-
-        using AdminPermissionResolver = resolver::PermissionResolverEnumPack<std::shared_ptr<vh::rbac::role::Admin>>::type;
-
-        auto staged = std::make_shared<vh::rbac::role::Admin>();
-        staged->name = roleName;
-        staged->description = description;
-
-        const auto exported = staged->toPermissions();
-        const auto byFlag = AdminPermissionResolver::buildFlagMap(exported);
-
-        std::vector<std::string> errors;
-
-        for (const auto& opt : call.options) {
-            if (!opt.value) continue;
-
-            if (std::ranges::any_of(usage->optional, [&opt](const auto& e) {
-                return e.label == opt.key || std::ranges::any_of(e.option_tokens,
-                    [&opt](const auto& t) { return t == opt.key; });
-            })) continue; // Skip options that are defined in usage, as they are handled separately
-
-            const auto it = byFlag.find(*opt.value);
-            if (it == byFlag.end()) {
-                errors.push_back("Unknown permission flag '" + *opt.value + "'");
-                continue;
-            }
-
-            if (!AdminPermissionResolver::apply(staged, it->second))
-                errors.push_back("Failed to apply permission flag '" + *opt.value + "'");
-        }
-
-        if (!errors.empty()) {
-            std::ostringstream oss;
-            oss << "Failed to create admin role from flags:\n";
-            for (const auto& e : errors)
-                oss << "  - " << e << '\n';
-            return invalid(oss.str());
-        }
-
-        std::shared_ptr<vh::rbac::role::Admin> newRole;
-        try {
-            newRole = ::vh::protocols::roles::createAdminRole(staged);
-        } catch (const ::vh::protocols::roles::RoleAlreadyExists& e) {
-            return invalid(e.what());
-        }
-        notifications::enqueueAdminRoleCreated(newRole, notifications::actorFromUser("shell", call.user));
-        return ok("Role '" + newRole->name + "' created successfully\n" + newRole->toString());
+        return runOp("role admin create", [&] {
+            const auto from = optVal(call, usage->resolveOptional("inherit_from")->option_tokens);
+            return ops::roles::createAdminRole(call.user, {
+                .name = call.positionals[0],
+                .description = optVal(call, usage->resolveOptional("description")->option_tokens).value_or(""),
+                .from = from ? std::optional<ops::roles::Ref>(adminRoleCliRef(*from)) : std::nullopt,
+                .permissions = permissionEditFromFlags<vh::rbac::role::Admin>(call, usage)
+            }, "shell");
+        }, [](const auto& role) { return "Role '" + role->name + "' created successfully\n" + role->toString(); });
     }
 
     static CommandResult handle_update(const CommandCall& call) {
-        if (!call.user->roles.admin->roles.admin.canEdit())
-            return invalid("You do not have permission to edit admin roles");
-
         const auto usage = resolveUsage({"role", "admin", "update"});
         validatePositionals(call, usage);
 
-        const auto roleLkp = resolveAdminRole(call.positionals[0], "role admin update");
-        if (!roleLkp.ptr) return invalid(roleLkp.error);
-
-        using AdminPermissionResolver = resolver::PermissionResolverEnumPack<std::shared_ptr<vh::rbac::role::Admin>>::type;
-
-        auto staged = std::make_shared<vh::rbac::role::Admin>(*roleLkp.ptr);
-        const auto exported = staged->toPermissions();
-        const auto byFlag = AdminPermissionResolver::buildFlagMap(exported);
-
-        for (const auto& field : usage->optional)
-            for (const auto& opt : field.option_tokens)
-                if (const auto val = optVal(call, opt)) {
-                    if (val->empty()) continue;
-                    if (field.label.contains("desc")) staged->description = *val;
-                    else if (field.label.contains("name")) staged->name = *val;
-                    break;
-                }
-
-        std::vector<std::string> errors;
-
-        for (const auto& opt : call.options) {
-            if (!opt.value) continue;
-
-            if (std::ranges::any_of(usage->optional, [&opt](const auto& e) {
-                return e.label == opt.key || std::ranges::any_of(e.option_tokens,
-                    [&opt](const auto& t) { return t == opt.key; });
-            })) continue; // Skip options that are defined in usage, as they are handled separately
-
-            const auto it = byFlag.find(*opt.value);
-            if (it == byFlag.end()) {
-                errors.push_back("Unknown permission flag '" + *opt.value + "'");
-                continue;
-            }
-
-            if (!AdminPermissionResolver::apply(staged, it->second))
-                errors.push_back("Failed to apply permission flag '" + *opt.value + "'");
-        }
-
-        if (!errors.empty()) {
-            std::ostringstream oss;
-            oss << "Failed to update permissions from flags:\n";
-            for (const auto& e : errors)
-                oss << "  - " << e << '\n';
-            return invalid(oss.str());
-        }
-
-        if (const auto denied = ::vh::protocols::roles::adminRoleUpdateError(*call.user, *roleLkp.ptr, *staged))
-            return invalid(*denied);
-
-        db::query::rbac::role::Admin::upsert(staged);
-        notifications::enqueueAdminRoleUpdated(staged, notifications::actorFromUser("shell", call.user));
-
-        return ok("Role '" + staged->name + "' updated successfully\n" + staged->toString());
+        return runOp("role admin update", [&] {
+            return ops::roles::updateAdminRole(call.user, {
+                .role = adminRoleCliRef(call.positionals[0]),
+                .name = optVal(call, usage->resolveOptional("role_name")->option_tokens),
+                .description = optVal(call, usage->resolveOptional("description")->option_tokens),
+                .permissions = permissionEditFromFlags<vh::rbac::role::Admin>(call, usage)
+            }, "shell");
+        }, [](const auto& role) { return "Role '" + role->name + "' updated successfully\n" + role->toString(); });
     }
 
     static CommandResult handle_delete(const CommandCall& call) {
-        if (!call.user->roles.admin->roles.admin.canDelete()) return invalid("You do not have permission to delete admin roles");
         validatePositionals(call, resolveUsage({"role", "admin", "delete"}));
-
-        const auto roleLkp = resolveAdminRole(call.positionals[0], "role admin delete");
-        if (!roleLkp.ptr) return invalid(roleLkp.error);
-
-        if (const auto denied = ::vh::protocols::roles::adminRoleDeleteError(*call.user, *roleLkp.ptr))
-            return invalid(*denied);
-
-        db::query::rbac::role::Admin::remove(roleLkp.ptr->id);
-        notifications::enqueueAdminRoleDeleted(roleLkp.ptr, notifications::actorFromUser("shell", call.user));
-
-        return ok("Role '" + roleLkp.ptr->name + "' deleted successfully");
+        return runOp("role admin delete",
+            [&] { return ops::roles::removeAdminRole(call.user, adminRoleCliRef(call.positionals[0]), "shell"); },
+            [](const auto& role) { return "Role '" + role->name + "' deleted successfully"; });
     }
 
     static CommandResult handle_info(const CommandCall& call) {
-        if (!call.user->roles.admin->roles.admin.canView()) return invalid("You do not have permission to view admin roles");
         validatePositionals(call, resolveUsage({"role", "admin", "info"}));
-
-        if (const auto roleLkp = resolveAdminRole(call.positionals[0], "role admin list");
-            roleLkp && roleLkp.ptr) return ok(to_string(*roleLkp.ptr));
-        else if (roleLkp) return invalid(roleLkp.error);
-
-        return invalid("Role not found: '" + call.positionals[0] + "'");
+        return runOp("role admin info",
+            [&] { return ops::roles::getAdminRole(call.user, adminRoleCliRef(call.positionals[0])); },
+            [](const auto& role) { return to_string(*role); });
     }
 
     static CommandResult handle_list(const CommandCall& call) {
-        if (!call.user->roles.admin->roles.admin.canView()) return invalid("You do not have permission to view admin roles");
         validatePositionals(call, resolveUsage({"role", "admin", "list"}));
-        return ok(to_string(db::query::rbac::role::Admin::list(parseListQuery(call))));
+        return runOp("role admin list",
+            [&] { return ops::roles::listAdminRoles(call.user, parseListQuery(call)); },
+            [](const auto& roles) { return to_string(roles); });
     }
 
     static bool is_admin_role_match(const std::string& cmd, const std::string_view input) {

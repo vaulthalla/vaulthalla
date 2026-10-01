@@ -18,7 +18,8 @@
 #include "db/query/rbac/role/Admin.hpp"
 #include "db/query/rbac/role/admin/Assignments.hpp"
 #include "identities/User.hpp"
-#include "protocols/RoleGuards.hpp"
+#include "ops/Error.hpp"
+#include "ops/Roles.hpp"
 #include "protocols/shell/Router.hpp"
 #include "protocols/shell/Server.hpp"
 #include "protocols/shell/SocketIO.hpp"
@@ -433,11 +434,9 @@ TEST_F(CliRbacDbTest, RoleCreateNeverOverwritesExistingRoles) {
     const auto before = adminRoleBits("super_admin");
     const auto adminBefore = adminRoleBits("admin");
 
-    auto staged = std::make_shared<rbac::role::Admin>(rbac::role::Admin::None());
-    staged->name = "super_admin";
-    EXPECT_THROW((void)protocols::roles::createAdminRole(staged), protocols::roles::RoleAlreadyExists);
-    staged->name = "admin";
-    EXPECT_THROW((void)protocols::roles::createAdminRole(staged), protocols::roles::RoleAlreadyExists);
+    const auto creator = createUser(unique("ops_super_"), "super_admin");
+    EXPECT_THROW((void)ops::roles::createAdminRole(creator, {.name = "super_admin"}, "test"), ops::Conflict);
+    EXPECT_THROW((void)ops::roles::createAdminRole(creator, {.name = "admin"}, "test"), ops::Conflict);
 
     // ws role.admin.add with an existing name: previously ON CONFLICT (name) DO UPDATE wiped its permissions.
     const auto superUser = createUser(unique("ws_super_"), "super_admin");
@@ -467,20 +466,19 @@ TEST_F(CliRbacDbTest, WsRoleCreateWithPermissionsWorks) {
 
 TEST_F(CliRbacDbTest, BuiltInAndOwnRolesAreProtected) {
     const auto admin = createUser(unique("cli_admin_"), "admin");
-    const auto superRole = db::query::rbac::role::Admin::get("super_admin");
-    const auto adminRole = db::query::rbac::role::Admin::get("admin");
     const auto auditor = db::query::rbac::role::Admin::get("auditor");
+    ASSERT_TRUE(auditor);
 
-    EXPECT_TRUE(protocols::roles::adminRoleUpdateError(*admin, *superRole, *superRole).has_value());
-    EXPECT_TRUE(protocols::roles::adminRoleUpdateError(*admin, *adminRole, *adminRole).has_value()) << "own role";
+    EXPECT_THROW((void)ops::roles::updateAdminRole(admin, {.role = std::string("super_admin"), .description = std::string("x")}, "test"),
+                 ops::Denied);
+    EXPECT_THROW((void)ops::roles::updateAdminRole(admin, {.role = std::string("admin"), .description = std::string("x")}, "test"),
+                 ops::Denied) << "own role";
+    EXPECT_THROW((void)ops::roles::updateAdminRole(admin, {.role = auditor->id, .name = std::string("super_admin")}, "test"),
+                 ops::Denied) << "rename onto the reserved name";
+    EXPECT_NO_THROW((void)ops::roles::updateAdminRole(admin, {.role = auditor->id, .description = auditor->description}, "test"));
 
-    auto renamed = std::make_shared<rbac::role::Admin>(*auditor);
-    renamed->name = "super_admin";
-    EXPECT_TRUE(protocols::roles::adminRoleUpdateError(*admin, *auditor, *renamed).has_value());
-    EXPECT_FALSE(protocols::roles::adminRoleUpdateError(*admin, *auditor, *auditor).has_value());
-
-    EXPECT_TRUE(protocols::roles::adminRoleDeleteError(*admin, *superRole).has_value());
-    EXPECT_TRUE(protocols::roles::adminRoleDeleteError(*admin, *adminRole).has_value());
+    EXPECT_THROW((void)ops::roles::removeAdminRole(admin, std::string("super_admin"), "test"), ops::Denied);
+    EXPECT_THROW((void)ops::roles::removeAdminRole(admin, std::string("admin"), "test"), ops::Denied);
 }
 
 // ---------------------------------------------------------------------------------------------------------------

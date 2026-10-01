@@ -1,161 +1,81 @@
 #include "protocols/shell/commands/vault.hpp"
 #include "protocols/shell/util/argsHelpers.hpp"
-#include "runtime/Deps.hpp"
-#include "db/query/rbac/role/vault/Assignments.hpp"
-#include "db/query/identities/User.hpp"
-#include "db/query/identities/Group.hpp"
-
-#include "vault/model/Vault.hpp"
+#include "protocols/shell/util/runOp.hpp"
+#include "ops/Roles.hpp"
 #include "rbac/role/Vault.hpp"
-#include "identities/User.hpp"
-#include "identities/Group.hpp"
-#include "rbac/resolver/vault/all.hpp"
+#include "vault/model/Vault.hpp"
 
-#include "config/Registry.hpp"
+#include <nlohmann/json.hpp>
 
-#include <optional>
 #include <string>
-#include <vector>
-#include <memory>
-#include <utility>
-
-using namespace vh;
-using namespace vh::protocols::shell;
-using namespace vh::identities;
-using namespace vh::rbac;
-using namespace vh::vault::model;
-using namespace vh::storage;
-using namespace vh::config;
 
 namespace vh::protocols::shell::commands::vault {
-    static CommandResult handle_vault_role_assign(const CommandCall &call) {
-        constexpr const auto *ERR = "vault role assign";
+    // Resolves the CLI's vault argument (name+owner or id) and --user/--group subject into the op's target.
+    static std::optional<CommandResult> vaultRoleCliTarget(const CommandCall& call, const std::shared_ptr<CommandUsage>& usage,
+                                                           const char* err, ops::roles::VaultSubject& out,
+                                                           std::string& vaultName) {
+        const auto vLkp = resolveVault(call, call.positionals.at(0), usage, err);
+        if (!vLkp || !vLkp.ptr) return invalid(vLkp.error);
+        const auto subjLkp = parseSubject(call, err);
+        if (!subjLkp || !subjLkp.ptr) return invalid(subjLkp.error);
+        out = {.vault_id = vLkp.ptr->id, .subject = {.type = subjLkp.ptr->type, .id = subjLkp.ptr->id}};
+        vaultName = vLkp.ptr->name;
+        return std::nullopt;
+    }
 
+    static ops::roles::Ref vaultRoleCliRoleRef(const std::string& nameOrId) {
+        if (const auto id = parseUInt(nameOrId)) return *id;
+        return nameOrId;
+    }
+
+    static CommandResult handle_vault_role_assign(const CommandCall &call) {
         const auto usage = resolveUsage({"vault", "role", "assign"});
         validatePositionals(call, usage);
 
-        const auto vaultArg = call.positionals.at(0);
-        const auto roleArg = call.positionals.at(1);
+        ops::roles::VaultSubject target;
+        std::string vaultName;
+        if (auto err = vaultRoleCliTarget(call, usage, "vault role assign", target, vaultName)) return *err;
 
-        const auto vLkp = resolveVault(call, vaultArg, usage, ERR);
-        if (!vLkp) return invalid(vLkp.error);
-        const auto vault = vLkp.ptr;
-
-        const auto roleLkp = resolveVaultRole(roleArg, ERR);
-        if (!roleLkp || !roleLkp.ptr) return invalid(roleLkp.error);
-        const auto role = roleLkp.ptr;
-
-        const auto subjLkp = parseSubject(call, ERR);
-        if (!subjLkp) return invalid(subjLkp.error);
-        const auto [subjectType, subjectId] = *subjLkp.ptr;
-
-        if (!resolver::Vault::has<permission::vault::RolePermissions>({
-            .user = call.user,
-            .permission = permission::vault::RolePermissions::Assign,
-            .target_subject_type = subjectType,
-            .target_subject_id = subjectId,
-            .vault_id = vault->id
-        }))
-            return invalid("vault role assign: you do not have permission to assign this role to the specified subject");
-
-        db::query::rbac::role::vault::Assignments::assign(vault->id, subjectType, subjectId, role->id);
-        const auto vr = db::query::rbac::role::vault::Assignments::get(vault->id, subjectType, subjectId);
-        if (!vr) return invalid("vault role assign: failed to verify role assignment after database operation");
-
-        if (subjectType == "user") {
-            const auto user = db::query::identities::User::getUserById(subjectId);
-            if (!user) return invalid("vault role assign: failed to retrieve user after database operation");
-            return ok(
-                "Successfully assigned role '" + role->name + "' to user '" + user->name + "' for vault '" + vault->name +
-                "'");
-        }
-
-        if (subjectType == "group") {
-            const auto group = db::query::identities::Group::getGroup(subjectId);
-            if (!group) return invalid("vault role assign: failed to retrieve group after database operation");
-            return ok(
-                "Successfully assigned role '" + role->name + "' to group '" + group->name + "' for vault '" + vault->name +
-                "'");
-        }
-
-        return invalid("vault role assign: unknown subject type '" + subjectType + "' - expected 'user' or 'group'");
+        return runOp("vault role assign", [&] {
+            return ops::roles::assignVaultRole(call.user, {.target = target, .role = vaultRoleCliRoleRef(call.positionals.at(1))});
+        }, [&](const auto& assignment) {
+            return "Successfully assigned role '" + assignment->name + "' to " + target.subject.type + " " +
+                   std::to_string(target.subject.id) + " for vault '" + vaultName + "'";
+        });
     }
 
     static CommandResult handle_vault_role_remove(const CommandCall &call) {
-        constexpr const auto *ERR = "vault role remove";
-
         const auto usage = resolveUsage({"vault", "role", "remove"});
         validatePositionals(call, usage);
 
-        const auto vaultArg = call.positionals.at(0);
-        const auto roleArg = call.positionals.at(1);
+        ops::roles::VaultSubject target;
+        std::string vaultName;
+        if (auto err = vaultRoleCliTarget(call, usage, "vault role remove", target, vaultName)) return *err;
 
-        const auto vLkp = resolveVault(call, vaultArg, usage, ERR);
-        if (!vLkp || !vLkp.ptr) return invalid(vLkp.error);
-        const auto vault = vLkp.ptr;
-
-        const auto subjLkp = parseSubject(call, ERR);
-        if (!subjLkp || !subjLkp.ptr) return invalid(subjLkp.error);
-        const auto subj = *subjLkp.ptr;
-
-        const auto roleLkp = resolveVRole(roleArg, vault, &subj, ERR);
-        if (!roleLkp || !roleLkp.ptr) return invalid(roleLkp.error);
-        const auto role = roleLkp.ptr;
-
-        if (!resolver::Vault::has<permission::vault::RolePermissions>({
-            .user = call.user,
-            .permission = permission::vault::RolePermissions::Revoke,
-            .target_subject_type = subj.type,
-            .target_subject_id = subj.id,
-            .vault_id = vault->id
-        }))
-            return invalid("vault role remove: you do not have permission to remove this role from the specified subject");
-
-        db::query::rbac::role::vault::Assignments::unassign(vault->id, subj.type, subj.id);
-
-        return ok("Successfully removed role '" + role->name + "' from vault '" + vault->name + "'");
+        return runOp("vault role remove", [&] { return ops::roles::unassignVaultRole(call.user, target); },
+            [&](const auto& removed) {
+                return "Successfully removed role '" + removed->name + "' from vault '" + vaultName + "'";
+            });
     }
 
     static CommandResult handle_vault_role_list(const CommandCall &call) {
-        constexpr const auto *ERR = "vault role list";
-
         const auto usage = resolveUsage({"vault", "role", "list"});
         validatePositionals(call, usage);
 
-        std::shared_ptr<::vh::vault::model::Vault> vault;
+        std::optional<unsigned int> vaultId;
         if (!call.positionals.empty()) {
-            const auto vaultArg = call.positionals.at(0);
-
-            const auto vLkp = resolveVault(call, vaultArg, usage, ERR);
+            const auto vLkp = resolveVault(call, call.positionals.at(0), usage, "vault role list");
             if (!vLkp || !vLkp.ptr) return invalid(vLkp.error);
-            vault = vLkp.ptr;
+            vaultId = vLkp.ptr->id;
         }
 
-        std::vector<std::shared_ptr<::vh::rbac::role::Vault>> roles;
-        if (vault) {
-            if (!resolver::Vault::has<permission::vault::RolePermissions>({
-                .user = call.user,
-                .permission = permission::vault::RolePermissions::View,
-                .vault_id = vault->id
-            }))
-                return invalid("vault list: you do not have permission to view roles for this vault");
-            roles = db::query::rbac::role::vault::Assignments::listForVault(vault->id);
-        } else {
-            roles = db::query::rbac::role::vault::Assignments::listAll();
-            std::erase_if(roles, [&](const std::shared_ptr<::vh::rbac::role::Vault> &r) {
-                return !resolver::Vault::has<permission::vault::RolePermissions>({
-                    .user = call.user,
-                    .permission = permission::vault::RolePermissions::View,
-                    .vault_id = r->assignment->vault_id
-                });
+        return runOp("vault role list", [&] { return ops::roles::listVaultRoleAssignments(call.user, vaultId); },
+            [](const auto& roles) -> std::string {
+                if (roles.empty()) return "No vault roles found.";
+                nlohmann::json j;
+                j["roles"] = roles;
+                return j.dump(4);
             });
-        }
-
-        if (roles.empty()) return ok("No vault roles found.");
-
-        nlohmann::json j;
-        j["roles"] = roles;
-        return ok(j.dump(4));
     }
 
     static bool isVaultRoleMatch(const std::string &cmd, const std::string_view input) {
@@ -166,7 +86,6 @@ namespace vh::protocols::shell::commands::vault {
         if (call.positionals.empty() || hasKey(call, "help") || hasKey(call, "h"))
             return usage(call.constructFullArgs());
 
-        const auto usageManager = runtime::Deps::get().shellUsageManager;
         const auto [sub, subcall] = descend(call);
 
         if (isVaultRoleMatch({"assign"}, sub)) return handle_vault_role_assign(subcall);

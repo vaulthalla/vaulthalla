@@ -1,184 +1,72 @@
 #include "protocols/shell/commands/rbac.hpp"
 #include "protocols/shell/types.hpp"
-
-#include "identities/User.hpp"
-#include "rbac/role/Vault.hpp"
-#include "rbac/resolver/permission/all.hpp"
-
-#include "db/query/rbac/role/Vault.hpp"
-#include "db/query/rbac/role/vault/Assignments.hpp"
-
-#include "runtime/Deps.hpp"
-#include "UsageManager.hpp"
-#include "CommandUsage.hpp"
-#include "usages.hpp"
 #include "protocols/shell/commands/helpers.hpp"
 #include "protocols/shell/util/argsHelpers.hpp"
-#include "protocols/RoleGuards.hpp"
-#include "rbac/resolver/Admin.hpp"
+#include "protocols/shell/util/permissionFlags.hpp"
+#include "protocols/shell/util/runOp.hpp"
+#include "ops/Roles.hpp"
+#include "rbac/role/Vault.hpp"
 
-#include <algorithm>
-#include <ranges>
+#include "UsageManager.hpp"
+#include "CommandUsage.hpp"
 
-using namespace vh::rbac;
+#include <string>
 
 namespace vh::protocols::shell::commands::rbac::roles::vault {
-    static CommandResult handle_create(const CommandCall& call) {
-        if (!call.user->roles.admin->roles.vault.canAdd())
-            return invalid("You do not have permission to create vault roles");
+    // CLI syntax only: a numeric positional names a role by id, anything else by name.
+    static ops::roles::Ref vaultRoleCliRef(const std::string& nameOrId) {
+        if (const auto id = parseUInt(nameOrId)) return *id;
+        return nameOrId;
+    }
 
+    static CommandResult handle_create(const CommandCall& call) {
         const auto usage = resolveUsage({"role", "vault", "create"});
         validatePositionals(call, usage);
 
-        if (call.positionals.empty())
-            return invalid("Missing required role name");
-
-        const auto& roleName = call.positionals[0];
-        const std::string description = call.positionals.size() > 1
-            ? call.positionals[1]
-            : "";
-
-        if (const auto existing = resolveVaultRole(roleName, "role vault create"); existing.ptr)
-            return invalid("Vault role already exists: '" + roleName + "'");
-
-        using VaultPermissionResolver = resolver::PermissionResolverEnumPack<std::shared_ptr<vh::rbac::role::Vault>>::type;
-
-        auto staged = std::make_shared<vh::rbac::role::Vault>();
-        staged->name = roleName;
-        staged->description = description;
-
-        const auto exported = staged->toPermissions();
-        const auto byFlag = VaultPermissionResolver::buildFlagMap(exported);
-
-        std::vector<std::string> errors;
-
-        for (const auto& opt : call.options) {
-            if (!opt.value) continue;
-
-            if (std::ranges::any_of(usage->optional, [&opt](const auto& e) {
-                return e.label == opt.key || std::ranges::any_of(e.option_tokens,
-                    [&opt](const auto& t) { return t == opt.key; });
-            })) continue; // Skip options that are defined in usage, as they are handled separately
-
-            const auto it = byFlag.find(*opt.value);
-            if (it == byFlag.end()) {
-                errors.push_back("Unknown permission flag '" + *opt.value + "'");
-                continue;
-            }
-
-            if (!VaultPermissionResolver::apply(staged, it->second))
-                errors.push_back("Failed to apply permission flag '" + *opt.value + "'");
-        }
-
-        if (!errors.empty()) {
-            std::ostringstream oss;
-            oss << "Failed to create vault role from flags:\n";
-            for (const auto& e : errors)
-                oss << "  - " << e << '\n';
-            return invalid(oss.str());
-        }
-
-        std::shared_ptr<vh::rbac::role::Vault> newRole;
-        try {
-            newRole = ::vh::protocols::roles::createVaultRole(staged);
-        } catch (const ::vh::protocols::roles::RoleAlreadyExists& e) {
-            return invalid(e.what());
-        }
-        return ok("Role '" + newRole->name + "' created successfully\n" + newRole->toString());
+        return runOp("role vault create", [&] {
+            const auto from = optVal(call, usage->resolveOptional("inherit_from")->option_tokens);
+            return ops::roles::createVaultRole(call.user, {
+                .name = call.positionals[0],
+                .description = optVal(call, usage->resolveOptional("description")->option_tokens).value_or(""),
+                .from = from ? std::optional<ops::roles::Ref>(vaultRoleCliRef(*from)) : std::nullopt,
+                .permissions = permissionEditFromFlags<vh::rbac::role::Vault>(call, usage)
+            });
+        }, [](const auto& role) { return "Role '" + role->name + "' created successfully\n" + role->toString(); });
     }
 
     static CommandResult handle_update(const CommandCall& call) {
-        if (!call.user->roles.admin->roles.vault.canEdit())
-            return invalid("You do not have permission to edit vault roles");
-
         const auto usage = resolveUsage({"role", "vault", "update"});
         validatePositionals(call, usage);
 
-        const auto roleLkp = resolveVaultRole(call.positionals[0], "role vault update");
-        if (!roleLkp.ptr) return invalid(roleLkp.error);
-
-        using VaultPermissionResolver = resolver::PermissionResolverEnumPack<std::shared_ptr<vh::rbac::role::Vault>>::type;
-
-        auto staged = std::make_shared<vh::rbac::role::Vault>(*roleLkp.ptr);
-        const auto exported = staged->toPermissions();
-        const auto byFlag = VaultPermissionResolver::buildFlagMap(exported);
-
-        for (const auto& field : usage->optional)
-            for (const auto& opt : field.option_tokens)
-                if (const auto val = optVal(call, opt)) {
-                    if (val->empty()) continue;
-                    if (field.label.contains("desc")) staged->description = *val;
-                    else if (field.label.contains("name")) staged->name = *val;
-                    break;
-                }
-
-        std::vector<std::string> errors;
-
-        for (const auto& opt : call.options) {
-            if (!opt.value) continue;
-
-            if (std::ranges::any_of(usage->optional, [&opt](const auto& e) {
-                return e.label == opt.key || std::ranges::any_of(e.option_tokens,
-                    [&opt](const auto& t) { return t == opt.key; });
-            })) continue; // Skip options that are defined in usage, as they are handled separately
-
-            const auto it = byFlag.find(*opt.value);
-            if (it == byFlag.end()) {
-                errors.push_back("Unknown permission flag '" + *opt.value + "'");
-                continue;
-            }
-
-            if (!VaultPermissionResolver::apply(staged, it->second))
-                errors.push_back("Failed to apply permission flag '" + *opt.value + "'");
-        }
-
-        if (!errors.empty()) {
-            std::ostringstream oss;
-            oss << "Failed to update permissions from flags:\n";
-            for (const auto& e : errors)
-                oss << "  - " << e << '\n';
-            return invalid(oss.str());
-        }
-
-        db::query::rbac::role::Vault::upsert(staged);
-        return ok("Role '" + staged->name + "' updated successfully\n" + staged->toString());
+        return runOp("role vault update", [&] {
+            return ops::roles::updateVaultRole(call.user, {
+                .role = vaultRoleCliRef(call.positionals[0]),
+                .name = optVal(call, usage->resolveOptional("role_name")->option_tokens),
+                .description = optVal(call, usage->resolveOptional("description")->option_tokens),
+                .permissions = permissionEditFromFlags<vh::rbac::role::Vault>(call, usage)
+            });
+        }, [](const auto& role) { return "Role '" + role->name + "' updated successfully\n" + role->toString(); });
     }
 
     static CommandResult handle_delete(const CommandCall& call) {
-        if (!call.user->roles.admin->roles.vault.canDelete())
-            return invalid("You do not have permission to delete vault roles");
-
         validatePositionals(call, resolveUsage({"role", "vault", "delete"}));
-
-        const auto roleLkp = resolveVaultRole(call.positionals[0], "role vault delete");
-        if (!roleLkp.ptr) return invalid(roleLkp.error);
-
-        if (const auto denied = ::vh::protocols::roles::vaultRoleDeleteError(*roleLkp.ptr)) return invalid(*denied);
-
-        db::query::rbac::role::Vault::remove(roleLkp.ptr->id);
-
-        return ok("Role '" + roleLkp.ptr->name + "' deleted successfully");
+        return runOp("role vault delete",
+            [&] { return ops::roles::removeVaultRole(call.user, vaultRoleCliRef(call.positionals[0])); },
+            [](const auto& role) { return "Role '" + role->name + "' deleted successfully"; });
     }
 
     static CommandResult handle_info(const CommandCall& call) {
-        if (!call.user->roles.admin->roles.vault.canView())
-            return invalid("You do not have permission to view vault roles");
-
         validatePositionals(call, resolveUsage({"role", "vault", "info"}));
-
-        if (const auto roleLkp = resolveVaultRole(call.positionals[0], "role vault list");
-            roleLkp && roleLkp.ptr) return ok(to_string(*roleLkp.ptr));
-        else if (roleLkp) return invalid(roleLkp.error);
-
-        return invalid("Role not found: '" + call.positionals[0] + "'");
+        return runOp("role vault info",
+            [&] { return ops::roles::getVaultRole(call.user, vaultRoleCliRef(call.positionals[0])); },
+            [](const auto& role) { return to_string(*role); });
     }
 
     static CommandResult handle_list(const CommandCall& call) {
-        if (!call.user->roles.admin->roles.vault.canView())
-            return invalid("You do not have permission to view vault roles");
-
         validatePositionals(call, resolveUsage({"role", "vault", "list"}));
-        return ok(to_string(db::query::rbac::role::Vault::list(parseListQuery(call))));
+        return runOp("role vault list",
+            [&] { return ops::roles::listVaultRoles(call.user, parseListQuery(call)); },
+            [](const auto& roles) { return to_string(roles); });
     }
 
     static bool is_vault_role_match(const std::string& cmd, const std::string_view input) {

@@ -38,7 +38,7 @@ namespace vh::rbac::role::vault {
 
         using PermResolver = resolver::PermissionResolverEnumPack<std::shared_ptr<Global>>::type;
         auto self = shared_from_this();
-        PermResolver::applyPermissionsFromWebCli(self, toPermissions(), pMap);
+        PermResolver::applySnapshot(self, toPermissions(), pMap);
     }
 
     Global Global::fromJson(const nlohmann::json &j) { return Global(j); }
@@ -52,7 +52,7 @@ namespace vh::rbac::role::vault {
 
         using PermResolver = resolver::PermissionResolverEnumPack<std::shared_ptr<Global>>::type;
         auto self = shared_from_this();
-        PermResolver::applyPermissionsFromWebCli(self, toPermissions(), pMap);
+        PermResolver::applySnapshot(self, toPermissions(), pMap);
     }
 
     std::vector<std::string> Global::getFlags() const {

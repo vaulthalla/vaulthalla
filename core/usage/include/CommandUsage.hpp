@@ -26,6 +26,9 @@ public:
     std::vector<Example> examples;
     TestUsage test_usage;
     bool pluralAliasImpliesList = false;
+    // Option families the command accepts beyond its declared options and validates itself, e.g. the generated
+    // permission flags {"allow-", "deny-"} of role commands. Every other undeclared option is rejected.
+    std::vector<std::string> option_prefixes;
 
     int term_width = 100;  // target width for str()
     std::size_t max_key_col = 30; // cap left column width

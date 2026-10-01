@@ -11,6 +11,27 @@ namespace vh::db::query::rbac::role {
 using AdminRole = vh::rbac::role::Admin;
 using AdminRolePtr = std::shared_ptr<AdminRole>;
 
+unsigned int Admin::insert(const AdminRolePtr& role) {
+    if (!role) throw std::invalid_argument("role::Admin::insert received null role");
+
+    return Transactions::exec("role::Admin::insert", [&](pqxx::work& txn) {
+        return txn.exec(
+            pqxx::prepped{"admin_role_insert"},
+            pqxx::params{
+                role->name,
+                role->description,
+                role->identities.toBitString(),
+                role->audits.toBitString(),
+                role->settings.toBitString(),
+                role->roles.toBitString(),
+                role->vaults.toBitString(),
+                role->keys.toBitString(),
+                role->s3Gateway.toBitString()
+            }
+        ).one_row()["id"].as<unsigned int>();
+    });
+}
+
 unsigned int Admin::upsert(const AdminRolePtr& role) {
     if (!role) throw std::invalid_argument("role::Admin::upsert received null role");
 
