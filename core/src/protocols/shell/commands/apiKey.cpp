@@ -116,7 +116,7 @@ static CommandResult handleCreateAPIKey(const CommandCall &call) {
     key->provider = s3_provider_from_shell_input(*providerOpt);
 
     if (!vh::paths::testMode) {
-        const auto [valid, validationErrors] = s3::Controller(key, "").validateAPICredentials();
+        const auto [valid, validationErrors] = ::vh::storage::s3::Controller(key, "").validateAPICredentials();
         if (!valid) return invalid("API key validation failed:\n" + validationErrors);
     }
 

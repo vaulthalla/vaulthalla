@@ -419,19 +419,28 @@ export interface WebSocketCommandMap {
 
   // Group commands
 
-  'group.add': { payload: { name: string; description?: string }; response: { group: Group } }
+  'group.add': {
+    payload: { name: string; description?: string; linux_gid?: number }
+    response: { name: string; group: Group }
+  }
 
-  'group.remove': { payload: { id: number }; response: null }
+  'group.remove': { payload: { id: number }; response: { id: number } }
 
-  'group.update': { payload: Partial<Group>; response: { group: Group } }
+  'group.update': { payload: Partial<Group> & { id: number }; response: { id: number; name: string; group: Group } }
 
   'group.get': { payload: { id: number }; response: { group: Group } }
 
   'groups.list': { payload: null; response: { groups: Group[] } }
 
-  'group.member.add': { payload: { group_id: number; user_id: number }; response: { group: Group } }
+  'group.member.add': {
+    payload: { group_id: number; user_id: number }
+    response: { group: Group; group_id: number; user_id: number }
+  }
 
-  'group.member.remove': { payload: { group_id: number; user_id: number }; response: { group: Group } }
+  'group.member.remove': {
+    payload: { group_id: number; user_id: number }
+    response: { group: Group; group_id: number; user_id: number }
+  }
 
   'group.get.byName': { payload: { name: string }; response: { group: Group } }
 

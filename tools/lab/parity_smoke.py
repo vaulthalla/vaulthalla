@@ -90,7 +90,7 @@ def names(items, key="name") -> set[str]:
     return {i.get(key) for i in (items or []) if isinstance(i, dict)}
 
 
-async def scenarios(cli: Cli, ws: Ws, r: Report) -> None:
+async def scenarios(cli: Cli, ws: Ws, r: Report, ws_user: str) -> None:
     tag = time.strftime("%H%M%S")
 
     # --- vaults ---------------------------------------------------------------
@@ -110,7 +110,7 @@ async def scenarios(cli: Cli, ws: Ws, r: Report) -> None:
     r.add(s, "CLI list sees ws-created vault", rc == 0 and v_ws in out, out[-300:])
     lst = await ws.send("storage.vault.list")
     ids = {v.get("name"): v.get("id") for v in lst.get("data", {}).get("vaults", [])}
-    rc, out = cli.run("vault", "delete", v_ws, "--owner", "admin")  # names are per-owner, so --owner is required
+    rc, out = cli.run("vault", "delete", v_ws, "--owner", ws_user)  # names are per-owner; the ws caller owns it
     r.add(s, "CLI deletes ws-created vault", rc == 0, out)
     if ids.get(v_cli) is not None:
         rm = await ws.send("storage.vault.remove", {"id": ids[v_cli]})
@@ -170,7 +170,7 @@ async def scenarios(cli: Cli, ws: Ws, r: Report) -> None:
               (upd.get("data") or {}).get("user", {}).get("id") == uid, json.dumps(upd)[:300])
         me = await ws.send("auth.isAuthenticated", {"token": ws.token})
         r.add(s, "editing another user leaves the caller unchanged (#126)",
-              (me.get("data") or {}).get("user", {}).get("name") == "admin", json.dumps(me)[:200])
+              (me.get("data") or {}).get("user", {}).get("name") == ws_user, json.dumps(me)[:200])
         dele = await ws.send("auth.user.delete", {"id": uid})
         r.add(s, "ws deletes CLI-created user", ok_status(dele), json.dumps(dele)[:300])
     rc, out = cli.run("user", "delete", u_ws)
@@ -189,7 +189,7 @@ async def main_async(args) -> int:
         login = await ws.send("auth.login", {"name": args.admin_user, "password": password})
         if not report.add("setup", "ws admin login", ok_status(login), str(login.get("error", ""))):
             return 1
-        await scenarios(cli, ws, report)
+        await scenarios(cli, ws, report, args.admin_user)
     failed = [c for c in report.checks if not c.ok]
     print(f"\n{len(report.checks) - len(failed)}/{len(report.checks)} checks passed")
     if args.evidence:

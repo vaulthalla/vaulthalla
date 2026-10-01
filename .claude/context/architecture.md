@@ -135,7 +135,22 @@ key provider, secrets · `db` · `email` providers (Resend, SES v2) · `fs` · `
 `log` spdlog registries + rotation · `notifications` operator emails · `preview` thumbnails (pdfium,
 turbojpeg) · `protocols` · `rbac` roles/permissions/resolver/actor · `runtime` Manager · `share` link
 sharing · `stats` dashboard telemetry + snapshots · `storage` local + S3 backends, remote index · `sync`
-controller, strategies `cache|sync|mirror`, cost guardrails · `vault` vault model, slugs, FUSE names.
+controller, strategies `cache|sync|mirror`, cost guardrails · `vault` vault model, slugs, FUSE names ·
+`ops` actor-authorized operations shared by the CLI and ws handlers (below).
+
+### `ops/`: shared command operations (Stage 1: groups only)
+
+`core/{include,src}/ops/` holds plain free functions with typed request structs, one file pair per family
+(`ops::groups` so far). Each op takes the acting `User` (`ops::Actor`, null → `ops::Denied`), authorizes, looks up,
+validates, persists, and returns domain objects. Refusals are typed `ops::Error`s (`Denied`, `NotFound`, `Invalid`,
+`Conflict`). The CLI handler parses with `CommandUsage` and calls the op through `shell::runOp`, which maps
+`ops::Error` to exit 2. The ws handler maps its payload to the request, and `makePayloadHandler` turns the exception
+into an `ERROR` response. Rules: RBAC for an operation lives in the op, never in the frontend as well; code beneath
+`ops::` (managers, `db::query`) never authorizes; internal callers use those primitives directly, not ops; no
+registry, base class or transport abstraction. Parity is proven by `test_ops_parity_groups.cpp`, which runs each
+group operation through both surfaces for every seeded admin role and compares verdicts and DB state.
+Other dual-surface families (API keys, vaults, S3 gateway, users) still implement business logic in both handler
+sets; migrate them one family per change, on this pattern, each with its own parity suite.
 
 ## Subsystem invariants (enforced in code, keep them)
 

@@ -28,6 +28,11 @@
 2. `set -a; source ./deploy/vaulthalla.env; set +a`
 3. `./build/core/vh_unit_tests --gtest_filter='<Filter>'`
 
+CLI ↔ ws parity for families migrated to `core/ops/`: `--gtest_filter='GroupParityTest.*:OpsGroups*'`. A parity case
+runs one logical operation through `shell::Router::executeLine` and through the ws handler, for every seeded admin
+role, and compares allow/deny (against an oracle from the role's permission bits) and resulting DB state, never text.
+New families add a `test_ops_parity_<family>.cpp` on the same pattern.
+
 Don't assume the shell `.bashrc` has current credentials. **Never print or commit secret values.** If you hit DB auth,
 stale secrets, or port conflicts: `make uninstall` → `make test` → re-source.
 
