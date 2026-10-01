@@ -12,6 +12,7 @@ from tools.release.changelog.ai.config import (
     AIStageName,
     AIStructuredMode,
     DEFAULT_AI_DRAFT_MODEL,
+    HOSTED_PROVIDER_KINDS,
     OPENAI_API_KEY_ENV_VAR,
 )
 from tools.release.changelog.ai.providers.capabilities import (
@@ -425,7 +426,7 @@ class OpenAIProvider:
         temperature: float | None,
         max_output_tokens: int | None,
     ) -> _GenerationOutcome:
-        if self.provider_kind == "openai":
+        if self.provider_kind in HOSTED_PROVIDER_KINDS:
             return self._generate_hosted_openai_output(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
@@ -464,7 +465,7 @@ class OpenAIProvider:
             )
         client_request_id = _new_client_request_id()
         parameter_capabilities = resolve_request_parameter_capabilities(
-            provider_kind="openai",
+            provider_kind=self.provider_kind,
             model=self.model,
         )
         request_payload = self._build_responses_request(

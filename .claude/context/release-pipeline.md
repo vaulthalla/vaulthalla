@@ -93,7 +93,7 @@ tooling (`CLAUDE.md`, `.claude/`, and the legacy `.codex/` and `.agents/`) as de
     never skips publication.
   - `Production` environment: **no protection rules** (checked 2026-09-30, `can_admins_bypass: true`). It holds
     secrets `NEXUS_USER`, `NEXUS_PASS`, `OPENAI_API_KEY` and variables `NEXUS_REPO_URL=https://apt.vaulthalla.sh`,
-    `RELEASE_PUBLISH_MODE=nexus`, `RELEASE_AI_PROFILE_OPENAI`, `RELEASE_DEBIAN_DISTRIBUTION`, `RELEASE_DEBIAN_URGENCY`.
+    `RELEASE_PUBLISH_MODE=nexus`, `VH_AI_RELEASE_PROFILE` (legacy `RELEASE_AI_PROFILE_OPENAI` still honored), `RELEASE_DEBIAN_DISTRIBUTION`, `RELEASE_DEBIAN_URGENCY`.
     Environment-scoped vars/secrets are only visible to jobs that declare `environment: Production`.
   - Docs: `pmdocs validate --source docs` then `pmdocs push` to `DOCS_SYNC_ENDPOINT` (vaulthalla.io).
 - Composite actions (`.github/actions/`): `runner`, `build`, `test`, `setup_web`, `build_web`, `sync_web_icons`,

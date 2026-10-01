@@ -233,7 +233,7 @@ def cut_release(
                 log(
                     "[cut-release] WARNING: debian/changelog's top entry predates "
                     f"{previous_tag}. CI's manual changelog fallback will refuse it; the release needs the AI "
-                    "path (OPENAI_API_KEY visible to release-artifacts) or a hand-written entry."
+                    "path (VH_AI_RELEASE_PROFILE + its provider key visible to release-artifacts) or a hand-written entry."
                 )
 
         from tools.release.cli_tools.commands.version import cmd_set_version

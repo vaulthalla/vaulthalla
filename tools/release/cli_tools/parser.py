@@ -116,7 +116,7 @@ COMMON_ARGS = {
     "provider": {
         "flags": ["--provider"],
         "kwargs": {
-            "choices": ("openai", "openai-compatible"),
+            "choices": ("openai", "openai-compatible", "deepseek"),
             "default": None,
             "help": f"AI provider transport override (default resolved from config; legacy: {DEFAULT_AI_PROVIDER_KIND}).",
         },

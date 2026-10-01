@@ -40,7 +40,9 @@ concurrency:
 env:
   RELEASE_REF: ${{ github.event.inputs.ref || github.ref }}
   RELEASE_AI_MODE: ${{ vars.RELEASE_AI_MODE || 'auto' }}
-  RELEASE_AI_PROFILE_OPENAI: ${{ vars.RELEASE_AI_PROFILE_OPENAI || 'openai-balanced' }}
+  # Hosted AI profile from ai.yml (e.g. ds-flash). Must be a *repository* variable: release-artifacts has no
+  # environment, so Production-environment variables/secrets are not visible to it.
+  VH_AI_RELEASE_PROFILE: ${{ vars.VH_AI_RELEASE_PROFILE || vars.RELEASE_AI_PROFILE_OPENAI || 'openai-balanced' }}
   RELEASE_AI_PROVIDER_TIMEOUT_SECONDS: ${{ vars.RELEASE_AI_PROVIDER_TIMEOUT_SECONDS || '180' }}
   RELEASE_LOCAL_LLM_ENABLED: ${{ vars.RELEASE_LOCAL_LLM_ENABLED || 'false' }}
   RELEASE_LOCAL_LLM_PROFILE: ${{ vars.RELEASE_LOCAL_LLM_PROFILE || '' }}
@@ -399,6 +401,7 @@ jobs:
           # Production environment is NOT visible here (this job has no environment); OPENAI_API_KEY must
           # be a repository (or build-environment) secret for the AI changelog path to run.
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || '' }}
+          VH_AI_RELEASE_DEEPSEEK_API_KEY: ${{ secrets.VH_AI_RELEASE_DEEPSEEK_API_KEY || '' }}
           RELEASE_LOCAL_LLM_API_KEY: ${{ secrets.RELEASE_LOCAL_LLM_API_KEY || '' }}
           GITHUB_TOKEN: ${{ github.token }}
         with:
