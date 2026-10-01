@@ -40,7 +40,7 @@ runs:
         fi
         "$PYTHON_BIN" --version
         echo "[preflight] RELEASE_AI_MODE=${RELEASE_AI_MODE:-<unset>}"
-        echo "[preflight] RELEASE_AI_PROFILE_OPENAI=${RELEASE_AI_PROFILE_OPENAI:-<unset>}"
+        echo "[preflight] VH_AI_RELEASE_PROFILE=${VH_AI_RELEASE_PROFILE:-${RELEASE_AI_PROFILE_OPENAI:-<unset>}}"
         echo "[preflight] RELEASE_LOCAL_LLM_ENABLED=${RELEASE_LOCAL_LLM_ENABLED:-<unset>}"
         echo "[preflight] RELEASE_LOCAL_LLM_PROFILE=${RELEASE_LOCAL_LLM_PROFILE:-<unset>}"
         echo "[preflight] RELEASE_LOCAL_LLM_BASE_URL=${RELEASE_LOCAL_LLM_BASE_URL:-<unset>}"
@@ -56,6 +56,11 @@ runs:
           echo "[preflight] OPENAI_API_KEY configured: yes"
         else
           echo "[preflight] OPENAI_API_KEY configured: no"
+        fi
+        if [ -n "${VH_AI_RELEASE_DEEPSEEK_API_KEY:-}" ]; then
+          echo "[preflight] VH_AI_RELEASE_DEEPSEEK_API_KEY configured: yes"
+        else
+          echo "[preflight] VH_AI_RELEASE_DEEPSEEK_API_KEY configured: no"
         fi
         if [ -n "${RELEASE_LOCAL_LLM_API_KEY:-}" ]; then
           echo "[preflight] RELEASE_LOCAL_LLM_API_KEY configured: yes"
@@ -127,7 +132,11 @@ runs:
         selection_output="${{ inputs.output_dir }}/changelog.selection.json"
         echo "[changelog] starting changelog generation/validation"
         mode="${RELEASE_AI_MODE:-auto}"
-        openai_profile="${RELEASE_AI_PROFILE_OPENAI:-openai-balanced}"
+        # Hard wall-clock bound for the whole changelog stage. Provider calls have their own per-request
+        # timeout (RELEASE_AI_PROVIDER_TIMEOUT_SECONDS) so an outage falls back to cached/manual well before this.
+        changelog_timeout="${RELEASE_CHANGELOG_TIMEOUT_SECONDS:-2700}"
+        run_bounded() { timeout --kill-after=60s "$changelog_timeout" "$@"; }
+        openai_profile="${VH_AI_RELEASE_PROFILE:-${RELEASE_AI_PROFILE_OPENAI:-openai-balanced}}"
         local_profile="${RELEASE_LOCAL_LLM_PROFILE:-}"
         local_base_url="${RELEASE_LOCAL_LLM_BASE_URL:-}"
         base_resolution_output="${{ inputs.output_dir }}/release_notes_base.resolution.json"
@@ -174,7 +183,7 @@ runs:
           openai-only)
             echo "[changelog] command path: changelog ai-release (explicit OpenAI profile)"
             echo "[changelog] ai_profile=${openai_profile}"
-            if ! "$PYTHON_BIN" -m tools.release changelog ai-release \
+            if ! run_bounded "$PYTHON_BIN" -m tools.release changelog ai-release \
               --ai-profile "${openai_profile}" \
               "${common_args[@]}"; then
               echo "::error::AI release path failed in openai-only mode."
@@ -198,7 +207,7 @@ runs:
             if [ -n "$local_base_url" ]; then
               local_args+=(--base-url "$local_base_url")
             fi
-            if ! "$PYTHON_BIN" -m tools.release changelog ai-release \
+            if ! run_bounded "$PYTHON_BIN" -m tools.release changelog ai-release \
               "${local_args[@]}" \
               "${common_args[@]}"; then
               echo "::error::AI release path failed in local-only mode."
@@ -208,7 +217,7 @@ runs:
           auto|disabled)
             echo "[changelog] command path: changelog release (auto/disabled orchestrator)"
             echo "[changelog] openai_profile=${openai_profile}"
-            if ! "$PYTHON_BIN" -m tools.release changelog release \
+            if ! run_bounded "$PYTHON_BIN" -m tools.release changelog release \
               "${common_args[@]}"; then
               echo "::error::Changelog stage failed. See logs above for path selection/fallback/stale-check diagnostics."
               exit 1

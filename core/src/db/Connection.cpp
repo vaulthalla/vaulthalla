@@ -13,6 +13,10 @@ using namespace vh::crypto;
 
 namespace vh::db {
 
+// Bounds (re)connect attempts so an unreachable server can't park a pool caller in connect() for the
+// kernel's TCP timeout. libpq's default is to wait forever.
+static constexpr int DB_CONNECT_TIMEOUT_SECONDS = 10;
+
 static std::optional<std::string> getFirstInitDBPass() {
     const std::filesystem::path f{"/run/vaulthalla/db_password"};
 
@@ -111,7 +115,8 @@ Connection::Connection() : tpmKeyProvider_(
                 " password=" + *pass +
                 " host=" + *host +
                 " port=" + *port +
-                " dbname=" + *name;
+                " dbname=" + *name +
+                " connect_timeout=" + std::to_string(DB_CONNECT_TIMEOUT_SECONDS);
 
             conn_ = std::make_unique<pqxx::connection>(DB_CONNECTION_STR);
 
@@ -123,7 +128,15 @@ Connection::Connection() : tpmKeyProvider_(
 
     const auto initPass = getFirstInitDBPass();
     if (tpmKeyProvider_->sealedExists()) {
-        tpmKeyProvider_->init();
+        try {
+            tpmKeyProvider_->init();
+        } catch (const std::exception& e) {
+            const auto msg = std::string("Database password failed to initialize: could not unseal the stored DB "
+                                         "password with the TPM (sealed under ") + paths::getBackingPath().string() +
+                             "): " + e.what();
+            log::Registry::runtime()->error("[DBConnection] {}", msg);
+            throw std::runtime_error(msg);
+        }
         if (initPass) {
             const auto replacement = std::vector<uint8_t>(initPass->begin(), initPass->end());
             tpmKeyProvider_->updateMasterKey(replacement);
@@ -131,8 +144,16 @@ Connection::Connection() : tpmKeyProvider_(
             log::Registry::runtime()->info("[seed] Reseeded TPM-stored DB password from pending handoff file");
         }
     } else {
-        if (!initPass)
-            throw std::runtime_error("Database password failed to initialize. See logs for details.");
+        if (!initPass) {
+            const auto msg = std::string("Database password failed to initialize: no TPM-sealed DB password under ") +
+                             paths::getBackingPath().string() +
+                             " and no pending password handoff at /run/vaulthalla/db_password (the sealed secret was "
+                             "removed, e.g. by a package purge, or first-time DB setup never ran). Write the "
+                             "PostgreSQL role's password to /run/vaulthalla/db_password (owner vaulthalla, mode 0600) "
+                             "and restart vaulthalla.service.";
+            log::Registry::runtime()->error("[DBConnection] {}", msg);
+            throw std::runtime_error(msg);
+        }
         tpmKeyProvider_->init(*initPass);
         clearPendingDBPassIfPresent();
     }
@@ -143,16 +164,44 @@ Connection::Connection() : tpmKeyProvider_(
     const auto& config = config::Registry::get();
     const auto db = config.database;
     DB_CONNECTION_STR = "postgresql://" + db.user + ":" + password + "@" + db.host + ":" + std::to_string(db.port) + "/"
-                        + db.name;
-    conn_ = std::make_unique<pqxx::connection>(DB_CONNECTION_STR);
+                        + db.name + "?connect_timeout=" + std::to_string(DB_CONNECT_TIMEOUT_SECONDS);
+    try {
+        conn_ = std::make_unique<pqxx::connection>(DB_CONNECTION_STR);
+    } catch (const std::exception& e) {
+        // libpq's message names the cause (e.g. password authentication failed) and never includes the password.
+        const auto msg = "Database connection failed for " + db.user + "@" + db.host + ":" + std::to_string(db.port) +
+                         "/" + db.name + ": " + e.what();
+        log::Registry::runtime()->error("[DBConnection] {}", msg);
+        throw std::runtime_error(msg);
+    }
 }
 
 Connection::~Connection() { if (conn_ && conn_->is_open()) conn_->close(); }
 
 pqxx::connection& Connection::get() const { return *conn_; }
 
-void Connection::initPrepared() const {
+bool Connection::healthy() const noexcept { return conn_ && conn_->is_open(); }
+
+void Connection::reconnect() {
+    auto fresh = std::make_unique<pqxx::connection>(DB_CONNECTION_STR);
+    conn_.swap(fresh);
+    fresh.reset();
+
+    if (!prepared_) return;
+
+    try {
+        initPrepared();
+    } catch (...) {
+        // An open-but-unprepared session would fail every query by statement name. Close it so healthy()
+        // reports false and the pool retries the whole reconnect later.
+        conn_->close();
+        throw;
+    }
+}
+
+void Connection::initPrepared() {
     if (!conn_ || !conn_->is_open()) throw std::runtime_error("Database connection is not open");
+    prepared_ = true;
 
     // Auth
     initPreparedUsers();

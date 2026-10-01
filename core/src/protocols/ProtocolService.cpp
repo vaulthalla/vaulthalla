@@ -70,7 +70,20 @@ void ProtocolService::initProtocols() {
     initWebsocketServer();
     initHttpServer();
 
-    ioThread_ = std::thread([ctx = ioContext_] { ctx->run(); });
+    ioThread_ = std::thread([ctx = ioContext_] {
+        // Exceptions thrown by completion handlers propagate out of run(); an uncaught one would terminate
+        // the whole daemon (FUSE included). Log it and keep serving: run() can be called again.
+        for (;;) {
+            try {
+                ctx->run();
+                return;
+            } catch (const std::exception& e) {
+                log::Registry::runtime()->error("[ProtocolService] Unhandled exception in a protocol handler: {}", e.what());
+            } catch (...) {
+                log::Registry::runtime()->error("[ProtocolService] Unhandled non-standard exception in a protocol handler");
+            }
+        }
+    });
 }
 
 

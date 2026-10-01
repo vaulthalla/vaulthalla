@@ -1,3 +1,5 @@
+#include "db/query/rbac/role/Admin.hpp"
+#include "auth/Manager.hpp"
 #include "db/encoding/interval.hpp"
 #include "db/Transactions.hpp"
 #include "db/query/fs/File.hpp"
@@ -2119,7 +2121,9 @@ TEST(S3CostSafetyTest, StorageManagerUpdateRemovesOldEnginePathEntry) {
 
     auto vault = vh::db::query::vault::Vault::getVault(vaultId);
     ASSERT_TRUE(vault);
-    vault->name += " renamed";
+    // Since vault slugs/fuse names (#95) the FUSE path follows effectiveFuseName(), not the display name,
+    // so change the fuse name to force a path change.
+    vault->fuse_name = vault->effectiveFuseName() + "-renamed";
     manager->updateVault(vault);
 
     const auto refreshedEngine = manager->getEngine(vaultId);
@@ -2139,6 +2143,75 @@ TEST(S3CostSafetyTest, StorageManagerUpdateRemovesOldEnginePathEntry) {
     EXPECT_EQ(1, matchingVaults);
     EXPECT_EQ(nullptr, manager->resolveStorageEngine(oldPath));
     EXPECT_EQ(refreshedEngine, manager->resolveStorageEngine(newPath));
+}
+
+TEST(S3CostSafetyTest, StorageManagerRejectsDuplicateVaultNameForSameOwner) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed duplicate vault test due to missing environment variables.";
+    ensureSeededRuntimeReady();
+
+    const auto owner = vh::db::query::identities::User::getUserByName("admin");
+    ASSERT_TRUE(owner);
+    const auto name = "dup-vault-" + uniqueSuffix("dup");
+    const auto makeVault = [&] {
+        auto vault = std::make_shared<vh::vault::model::Vault>();
+        vault->name = name;
+        vault->owner_id = owner->id;
+        vault->type = vh::vault::model::VaultType::Local;
+        return vault;
+    };
+    const auto manager = vh::runtime::Deps::get().storageManager;
+
+    const auto first = manager->addVault(makeVault(), std::make_shared<vh::sync::model::LocalPolicy>());
+    ASSERT_TRUE(first);
+    // Regression: the web console created a second same-named vault (suffixed FUSE name) while the CLI refused.
+    EXPECT_THROW(manager->addVault(makeVault(), std::make_shared<vh::sync::model::LocalPolicy>()), std::runtime_error);
+    EXPECT_TRUE(vh::db::query::vault::Vault::vaultExists(name, owner->id));
+
+    manager->removeVault(first->id);
+}
+
+TEST(S3CostSafetyTest, RegisterUserCreatesOwnedDefaultVault) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed registration test due to missing environment variables.";
+    ensureSeededRuntimeReady();
+
+    // Regression: web-console registration always failed ("Sync cannot be null on vault creation") after
+    // the user row was written, because the default vault was upserted with no owner and no sync policy.
+    auto manager = std::make_shared<vh::auth::Manager>();
+    auto user = std::make_shared<vh::identities::User>();
+    user->name = "reg_" + uniqueSuffix("default_vault");
+    user->email = user->name + "@vaulthalla.test";
+    user->roles.admin = vh::db::query::rbac::role::Admin::get("unprivileged");
+    ASSERT_TRUE(user->roles.admin);
+
+    ASSERT_NO_THROW(manager->registerUser(user, "Zq9#" + uniqueSuffix("pw") + "!Xw-Long"));
+    const auto stored = vh::db::query::identities::User::getUserByName(user->name);
+    ASSERT_TRUE(stored);
+    EXPECT_TRUE(vh::db::query::vault::Vault::vaultExists(user->name + "'s Local Disk Vault", stored->id));
+}
+
+TEST(S3CostSafetyTest, DeletingAVaultOwnerDoesNotBreakVaultLoading) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed owner deletion test due to missing environment variables.";
+    ensureSeededRuntimeReady();
+
+    // Regression: owner_id is ON DELETE SET NULL; the next listVaults threw "Attempt to convert SQL null to
+    // unsigned int" and the daemon could not start after any vault owner was deleted.
+    auto manager = std::make_shared<vh::auth::Manager>();
+    auto user = std::make_shared<vh::identities::User>();
+    user->name = "orphan_" + uniqueSuffix("owner");
+    user->email = user->name + "@vaulthalla.test";
+    user->roles.admin = vh::db::query::rbac::role::Admin::get("unprivileged");
+    ASSERT_TRUE(user->roles.admin);
+    manager->registerUser(user, "Zq9#" + uniqueSuffix("pw") + "!Xw-Long");
+    const auto stored = vh::db::query::identities::User::getUserByName(user->name);
+    ASSERT_TRUE(stored);
+
+    vh::db::query::identities::User::deleteUser(stored->id);
+
+    std::vector<std::shared_ptr<vh::vault::model::Vault>> vaults;
+    ASSERT_NO_THROW(vaults = vh::db::query::vault::Vault::listVaults());
+    const auto orphan = std::ranges::find_if(vaults, [&](const auto& v) { return v->name == user->name + "'s Local Disk Vault"; });
+    ASSERT_NE(orphan, vaults.end());
+    EXPECT_EQ((*orphan)->owner_id, 0u);
 }
 
 TEST(S3CostSafetyTest, IndexRemoteOnlyPreservesEncryptionMetadataInLocalRow) {

@@ -44,6 +44,16 @@ install_unit_file() {
   sudo install -m 0644 "$input" "$output"
 }
 
+retire_legacy_cli_units() {
+  # vaulthalla-cli.{socket,service} were retired (#110): the socket unit was an orphaned listener on the
+  # daemon's /run/vaulthalla/cli.sock that made `vh` hang. vaulthalla.service owns the socket now.
+  local unit
+  for unit in vaulthalla-cli.socket vaulthalla-cli.service; do
+    sudo timeout 30 systemctl disable --now "$unit" >/dev/null 2>&1 || true
+    sudo rm -f "$SYSTEMD_UNIT_DIR/$unit"
+  done
+}
+
 has_hardware_tpm() {
   [[ -c /dev/tpmrm0 || -c /dev/tpm0 ]]
 }
@@ -88,10 +98,6 @@ render_unit \
   "$SYSTEMD_UNIT_DIR/vaulthalla.service"
 
 render_unit \
-  "$ROOT_DIR/deploy/systemd/vaulthalla-cli.service.in" \
-  "$SYSTEMD_UNIT_DIR/vaulthalla-cli.service"
-
-render_unit \
   "$ROOT_DIR/deploy/systemd/vaulthalla-web.service.in" \
   "$SYSTEMD_UNIT_DIR/vaulthalla-web.service"
 
@@ -99,10 +105,7 @@ render_unit \
   "$ROOT_DIR/deploy/systemd/vaulthalla-swtpm.service.in" \
   "$SYSTEMD_UNIT_DIR/vaulthalla-swtpm.service"
 
-install_unit_file \
-  "$ROOT_DIR/deploy/systemd/vaulthalla-cli.socket" \
-  "$SYSTEMD_UNIT_DIR/vaulthalla-cli.socket"
-
+retire_legacy_cli_units
 echo "🧩 Installing service overrides..."
 sudo install -d -m 0755 "$SYSTEMD_UNIT_DIR/vaulthalla.service.d"
 
@@ -132,8 +135,6 @@ if [[ "$TPM_BACKEND_MODE" == "swtpm" ]]; then
   fi
 fi
 sudo systemctl enable --now vaulthalla.service
-sudo systemctl enable --now vaulthalla-cli.socket
-sudo systemctl enable --now vaulthalla-cli.service
 sudo systemctl enable --now vaulthalla-web.service
 
 echo

@@ -14,6 +14,7 @@
 #include "runtime/Deps.hpp"
 #include "seed/include/seed_db.hpp"
 #include "crypto/id/Generator.hpp"
+#include "sync/model/LocalPolicy.hpp"
 
 #include <paths.h>
 #include <string>
@@ -129,25 +130,20 @@ void Manager::initUserStorage(const std::shared_ptr<User>& user) {
     try {
         log::Registry::storage()->debug("[StorageManager] Initializing storage user storage...");
 
-        if (!user->id) throw std::runtime_error("User ID is not set. Cannot initialize storage.");
+        if (!user || !user->id) throw std::runtime_error("User ID is not set. Cannot initialize storage.");
 
+        // Go through addVault like every other surface: it sets the owner, persists the sync policy and
+        // registers the engine under the manager lock. The old direct upsert had no owner or sync policy,
+        // so every web-console registration failed after the user row was already written.
         auto vault = std::make_shared<Vault>();
         vault->name = user->name + "'s Local Disk Vault";
         vault->description = "Default local disk vault for " + user->name;
-        vault->mount_point = id::Generator({ .namespace_token = vault->name }).generate();
+        vault->owner_id = user->id;
+        vault->type = VaultType::Local;
+        const auto created = addVault(vault, std::make_shared<sync::model::LocalPolicy>());
 
-        {
-            std::scoped_lock lock(mutex_);
-            vault->id = db::query::vault::Vault::upsertVault(vault);
-            vault = db::query::vault::Vault::getVault(vault->id);
-        }
-
-        if (!vault) throw std::runtime_error("Failed to create or retrieve vault for user: " + user->name);
-
-        vaultToEngine_[vault->id] = std::make_shared<Engine>(vault);
-
-        log::Registry::storage()->info("[StorageManager] User storage initialized for user: {} (ID: {})",
-                                              user->name, user->id);
+        log::Registry::storage()->info("[StorageManager] User storage initialized for user: {} (ID: {}, vault ID: {})",
+                                              user->name, user->id, created->id);
     } catch (const std::exception& e) {
         log::Registry::storage()->error("[StorageManager] Error initializing user storage: {}", e.what());
         throw;
@@ -158,6 +154,12 @@ std::shared_ptr<Vault> Manager::addVault(std::shared_ptr<Vault> vault,
                                                 const std::shared_ptr<sync::model::Policy>& sync) {
     if (!vault) throw std::invalid_argument("Vault cannot be null");
     std::scoped_lock lock(mutex_);
+
+    // One owner can't have two vaults with the same name. Enforced here, where every surface (CLI, ws, S3
+    // gateway) converges: the CLI checked this itself but the web console silently created a second vault
+    // with a suffixed FUSE name (lab parity smoke).
+    if (vault->id == 0 && db::query::vault::Vault::vaultExists(vault->name, vault->owner_id))
+        throw std::runtime_error("A vault named '" + vault->name + "' already exists for this owner");
 
     vault->mount_point = id::Generator({ .namespace_token = vault->name }).generate();
     vault->id = db::query::vault::Vault::upsertVault(vault, sync);

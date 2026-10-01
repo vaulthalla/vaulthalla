@@ -1,5 +1,6 @@
 #include "protocols/ws/handler/rbac/roles/Admin.hpp"
 #include "protocols/ws/Session.hpp"
+#include "protocols/RoleGuards.hpp"
 #include "db/query/rbac/role/Admin.hpp"
 #include "db/query/rbac/role/Vault.hpp"
 #include "identities/User.hpp"
@@ -14,10 +15,11 @@ namespace vh::protocols::ws::handler::rbac::roles {
         if (!session->user->adminRolePerms().canAdd())
             throw std::runtime_error("Permission denied: Only admins can add role");
 
-        auto role = std::make_shared<role::Admin>(payload);
-        role->id = db::query::rbac::role::Admin::upsert(role);
-        notifications::enqueueAdminRoleCreated(role, notifications::actorFromUser("websocket", session->user));
-        return {{"role", *role}};
+        // Create is insert-only: an existing name (including super_admin) is an error, never an overwrite.
+        const auto staged = std::make_shared<vh::rbac::role::Admin>(payload);
+        const auto created = protocols::roles::createAdminRole(staged);
+        notifications::enqueueAdminRoleCreated(created, notifications::actorFromUser("websocket", session->user));
+        return {{"role", *created}};
     }
 
     json Admin::remove(const json& payload, const std::shared_ptr<Session>& session) {
@@ -25,9 +27,13 @@ namespace vh::protocols::ws::handler::rbac::roles {
             throw std::runtime_error("Permission denied: Only admins can remove role");
 
         const auto roleId = payload.at("id").get<uint32_t>();
-        auto role = db::query::rbac::role::Admin::get(roleId);
+        const auto existing = db::query::rbac::role::Admin::get(roleId);
+        if (!existing) throw std::runtime_error("Role not found");
+        if (const auto denied = protocols::roles::adminRoleDeleteError(*session->user, *existing))
+            throw std::runtime_error(*denied);
+
         db::query::rbac::role::Admin::remove(roleId);
-        notifications::enqueueAdminRoleDeleted(role, notifications::actorFromUser("websocket", session->user));
+        notifications::enqueueAdminRoleDeleted(existing, notifications::actorFromUser("websocket", session->user));
 
         return {{"role", roleId}};
     }
@@ -36,11 +42,17 @@ namespace vh::protocols::ws::handler::rbac::roles {
         if (!session->user->adminRolePerms().canEdit())
             throw std::runtime_error("Permission denied: Only admins can update role");
 
-        auto role = db::query::rbac::role::Admin::get(payload.at("id").get<uint32_t>());
-        role->updateFromJson(payload);
-        db::query::rbac::role::Admin::upsert(role);
-        notifications::enqueueAdminRoleUpdated(role, notifications::actorFromUser("websocket", session->user));
-        return {{"role", *role}};
+        const auto existing = db::query::rbac::role::Admin::get(payload.at("id").get<uint32_t>());
+        if (!existing) throw std::runtime_error("Role not found");
+
+        const auto updated = std::make_shared<vh::rbac::role::Admin>(*existing);
+        updated->updateFromJson(payload);
+        if (const auto denied = protocols::roles::adminRoleUpdateError(*session->user, *existing, *updated))
+            throw std::runtime_error(*denied);
+
+        db::query::rbac::role::Admin::upsert(updated);
+        notifications::enqueueAdminRoleUpdated(updated, notifications::actorFromUser("websocket", session->user));
+        return {{"role", *updated}};
     }
 
     json Admin::get(const json& payload, const std::shared_ptr<Session>& session) {

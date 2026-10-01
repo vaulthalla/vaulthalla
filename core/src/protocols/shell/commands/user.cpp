@@ -1,3 +1,4 @@
+#include <unistd.h>
 #include "protocols/shell/commands/all.hpp"
 #include "protocols/shell/commands/helpers.hpp"
 #include "protocols/shell/Router.hpp"
@@ -49,6 +50,8 @@ static void assignLinuxUidIfAvailable(const CommandCall& call, const std::shared
         const auto parsed = parseUInt(*linuxUidOpt);
         if (!parsed || *parsed <= 0)
             throw std::runtime_error("Invalid --linux-uid: must be a positive integer");
+        if (*parsed == ::getuid())
+            throw std::runtime_error("Invalid --linux-uid: the Vaulthalla service account cannot be bound to a user");
         user->meta.linux_uid = *parsed;
     }
 }
@@ -107,7 +110,9 @@ static CommandResult handleUpdateUser(const CommandCall& call) {
     if (user->isProtected)
         return invalid("Cannot update protected user: " + user->name);
 
-    if (call.user->id != user->id) {
+    const bool isSelf = call.user->id == user->id;
+
+    if (!isSelf) {
         if (user->isSuperAdmin())
             return invalid("Cannot update super admin user: " + user->name);
 
@@ -125,16 +130,31 @@ static CommandResult handleUpdateUser(const CommandCall& call) {
     }
 
     if (const auto newRoleOpt = optVal(call, usage->resolveOptional("role")->option_tokens)) {
+        // Role changes are privilege changes: never on your own account (whatever your permissions), and the
+        // target role is judged by what it resolves to (name or numeric id), not by the literal argument.
+        if (isSelf) return invalid("Cannot change your own role. Ask another administrator to change it.");
         if (user->isSuperAdmin()) return invalid("Cannot change role of super_admin user: " + user->name);
-        if (*newRoleOpt == "super_admin") return invalid("Cannot change role to super_admin.");
 
         const auto rLkp = resolveAdminRole(*newRoleOpt, ERR);
         if (!rLkp || !rLkp.ptr) return invalid(rLkp.error);
         const auto role = rLkp.ptr;
+
+        if (role->name == "super_admin") return invalid("Cannot change role to super_admin.");
+
+        // Granting an admin-level role needs admin-edit rights even when the target is currently a plain user.
+        const auto staged = std::make_shared<User>();
+        staged->roles.admin = role;
+        if (staged->isAdmin() && !call.user->admins().canEdit())
+            return invalid("You do not have permission to assign admin roles.");
+
         user->roles.admin = role;
     }
 
     assignEmail(call, user, usage);
+    // The CLI authenticates callers by Linux UID, so rebinding your own UID would let you take over another
+    // account's CLI identity. Only another administrator (checked above for !isSelf) may change it.
+    if (isSelf && optVal(call, usage->resolveOptional("linux-uid")->option_tokens))
+        return invalid("Cannot change your own Linux UID binding. Ask another administrator to change it.");
     assignLinuxUidIfAvailable(call, user, usage);
 
     user->meta.updated_by = call.user->id;

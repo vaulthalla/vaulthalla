@@ -1,5 +1,6 @@
 #include "stats/model/SystemHealth.hpp"
 
+#include "db/Transactions.hpp"
 #include "protocols/ProtocolService.hpp"
 #include "protocols/s3/GatewayService.hpp"
 #include "protocols/shell/Server.hpp"
@@ -76,7 +77,11 @@ SystemHealthStatus computeOverallStatus(const SystemHealth& health) {
     if (!health.deps.storageManager && !health.deps.authManager && !health.deps.sessionManager)
         return SystemHealthStatus::Critical;
 
+    if (health.database && health.database->consecutiveReconnectFailures > 0)
+        return SystemHealthStatus::Critical;
+
     const bool ok = health.runtime.allRunning
+        && (!health.database || health.database->brokenIdle == 0)
         && protocolsHealthy(health.protocols, health.s3Gateway)
         && depsHealthy(health.deps, health.summary);
 
@@ -155,6 +160,20 @@ SystemHealth SystemHealth::snapshot() {
     };
 
     out.shell.adminUidBound = shellServer ? std::optional<bool>(shellServer->adminUIDSet()) : std::nullopt;
+
+    if (const auto pool = db::Transactions::dbPool_) {
+        const auto poolStats = pool->stats();
+        out.database = DatabaseHealth{
+            .poolSize = poolStats.size,
+            .idle = poolStats.idle,
+            .inUse = poolStats.inUse,
+            .brokenIdle = poolStats.brokenIdle,
+            .reconnects = poolStats.reconnects,
+            .reconnectFailures = poolStats.reconnectFailures,
+            .consecutiveReconnectFailures = poolStats.consecutiveReconnectFailures,
+            .acquireTimeouts = poolStats.acquireTimeouts
+        };
+    }
 
     const auto [protocolsReady, protocolsTotal] = protocolReadySummary(out.protocols, out.s3Gateway);
     out.summary = {
@@ -248,6 +267,19 @@ void to_json(nlohmann::json& j, const ShellHealth& health) {
     };
 }
 
+void to_json(nlohmann::json& j, const DatabaseHealth& health) {
+    j = nlohmann::json{
+        {"pool_size", health.poolSize},
+        {"idle", health.idle},
+        {"in_use", health.inUse},
+        {"broken_idle", health.brokenIdle},
+        {"reconnects", health.reconnects},
+        {"reconnect_failures", health.reconnectFailures},
+        {"consecutive_reconnect_failures", health.consecutiveReconnectFailures},
+        {"acquire_timeouts", health.acquireTimeouts},
+    };
+}
+
 void to_json(nlohmann::json& j, const HealthSummary& health) {
     j = nlohmann::json{
         {"services_ready", health.servicesReady},
@@ -268,6 +300,7 @@ void to_json(nlohmann::json& j, const SystemHealth& health) {
         {"s3_gateway", health.s3Gateway},
         {"deps", health.deps},
         {"shell", health.shell},
+        {"database", health.database ? nlohmann::json(*health.database) : nlohmann::json(nullptr)},
         {"summary", health.summary},
     };
 }

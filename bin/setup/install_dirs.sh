@@ -85,14 +85,6 @@ install_file "$ROOT_DIR/deploy/nginx/vaulthalla.conf" "$DATA_DIR/nginx/vaulthall
 echo "🧰 Installing lifecycle utility..."
 install_file "$ROOT_DIR/deploy/lifecycle/main.py" "$LIBEXEC_DIR/lifecycle" 0755
 
-echo "⚙️  Installing systemd socket payload..."
-if [[ -f "$ROOT_DIR/deploy/systemd/vaulthalla-cli.socket" ]]; then
-  install_file \
-    "$ROOT_DIR/deploy/systemd/vaulthalla-cli.socket" \
-    "$SYSTEMD_UNIT_DIR/vaulthalla-cli.socket" \
-    0644
-fi
-
 # Historical Meson experiments kept here for reference only:
 #
 # license_files: ['LICENSE', 'debian/copyright']

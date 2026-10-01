@@ -21,6 +21,10 @@ from tools.release.cli_tools.commands.release_success import (
     cmd_record_release_success,
     cmd_resolve_release_notes_base,
 )
+from tools.release.cli_tools.commands.suites import cmd_run_tests
+from tools.release.cut import main_cut_release, main_release_status
+from tools.release.lab_smoke import main_lab_smoke
+from tools.release.suites import SUITES
 from tools.release.cli_tools.commands.version import (
     cmd_check,
     cmd_sync,
@@ -112,7 +116,7 @@ COMMON_ARGS = {
     "provider": {
         "flags": ["--provider"],
         "kwargs": {
-            "choices": ("openai", "openai-compatible"),
+            "choices": ("openai", "openai-compatible", "deepseek"),
             "default": None,
             "help": f"AI provider transport override (default resolved from config; legacy: {DEFAULT_AI_PROVIDER_KIND}).",
         },
@@ -341,7 +345,10 @@ COMMANDS = {
     },
 
     "publish-deb": {
-        "help": "Publish staged Debian package artifacts to Nexus.",
+        "help": (
+            "Publish staged Debian packages to Nexus, idempotently: skip versions already live with the same "
+            "sha256, refuse different bytes under a published version, verify sha256 in the APT index after upload."
+        ),
         "func": cmd_publish_deb,
         "args": [
             {
@@ -391,6 +398,36 @@ COMMANDS = {
                 "kwargs": {
                     "action": "store_true",
                     "help": "Fail if publication mode resolves to disabled for this run.",
+                },
+            },
+            {
+                "flags": ["--allow-older-version"],
+                "kwargs": {
+                    "action": "store_true",
+                    "help": "Allow publishing a version older than the newest one already in the APT index.",
+                },
+            },
+            {
+                "flags": ["--lab-evidence"],
+                "kwargs": {
+                    "default": None,
+                    "help": "lab-smoke evidence JSON; publication fails unless it passed for the same .deb sha256.",
+                },
+            },
+            {
+                "flags": ["--verify-attempts"],
+                "kwargs": {
+                    "type": int,
+                    "default": 10,
+                    "help": "Post-upload APT index polls before failing (default: 10).",
+                },
+            },
+            {
+                "flags": ["--verify-delay"],
+                "kwargs": {
+                    "type": float,
+                    "default": 15.0,
+                    "help": "Seconds between post-upload APT index polls (default: 15).",
                 },
             },
         ],
@@ -463,6 +500,100 @@ COMMANDS = {
                 "kwargs": {
                     "default": None,
                     "help": "Workflow run id to record. Defaults to GITHUB_RUN_ID.",
+                },
+            },
+        ],
+    },
+
+    "cut-release": {
+        "help": (
+            "Cut a release: require a clean, in-sync branch; run check + fast suites; bump the 4 release-managed "
+            "files; commit; annotated tag vX.Y.Z; with --push, atomically push commit + tag (triggers release.yml). "
+            "Resumable; refuses if the tag already exists on the remote."
+        ),
+        "func": main_cut_release,
+        "args": [
+            {
+                "flags": ["target"],
+                "kwargs": {"help": "patch | minor | major | X.Y.Z (use X.Y.Z to resume an interrupted release)."},
+            },
+            {"flags": ["--push"], "kwargs": {"action": "store_true", "help": "Push commit + tag (default: local only)."}},
+            {"flags": ["--branch"], "kwargs": {"default": "main", "help": "Release branch (default: main)."}},
+            {"flags": ["--remote"], "kwargs": {"default": "origin", "help": "Remote (default: origin)."}},
+            {
+                "flags": ["--skip-tests"],
+                "kwargs": {"action": "store_true", "help": "Skip the fast test suites (not recommended)."},
+            },
+            {"flags": ["--no-fetch"], "kwargs": {"action": "store_true", "help": "Do not fetch the remote first."}},
+        ],
+    },
+
+    "release-status": {
+        "help": "Show (or --watch) the release.yml run for a tag via `gh`. Exit 0 only when it succeeded.",
+        "func": main_release_status,
+        "args": [
+            {"flags": ["version"], "kwargs": {"nargs": "?", "default": None, "help": "X.Y.Z (default: VERSION)."}},
+            {"flags": ["--watch"], "kwargs": {"action": "store_true", "help": "Poll until the run completes."}},
+        ],
+    },
+
+    "lab-smoke": {
+        "help": (
+            "MUTATES THE TARGET HOST. Install/upgrade a candidate package on a lab host over ssh and assert "
+            "dpkg, units, FUSE (mountinfo + fusectl, timeout-guarded), `vh status`, and config integrity; "
+            "optional PostgreSQL restart and reboot re-checks. Writes JSON evidence; non-zero on any failure."
+        ),
+        "func": main_lab_smoke,
+        "args": [
+            {"flags": ["--host"], "kwargs": {"required": True, "help": "ssh host/alias of the lab (e.g. vh-storage)."}},
+            {"flags": ["--deb"], "kwargs": {"default": None, "help": "Candidate .deb to copy and install."}},
+            {"flags": ["--apt-version"], "kwargs": {"default": None, "help": "Candidate version from apt (X.Y.Z-N)."}},
+            {
+                "flags": ["--from-version"],
+                "kwargs": {"default": None, "help": "Install this apt version first (N-1 -> N upgrade path)."},
+            },
+            {"flags": ["--evidence"], "kwargs": {"default": None, "help": "Write JSON evidence to this path."}},
+            {
+                "flags": ["--pg-restart"],
+                "kwargs": {"action": "store_true", "help": "Restart PostgreSQL after install and re-assert (P0-1)."},
+            },
+            {"flags": ["--reboot"], "kwargs": {"action": "store_true", "help": "Reboot the host and re-assert."}},
+            {
+                "flags": ["--unit"],
+                "kwargs": {"action": "append", "default": None, "help": "Unit that must be active (repeatable)."},
+            },
+            {
+                "flags": ["--settle-seconds"],
+                "kwargs": {"type": int, "default": 15, "help": "NRestarts stability window (default: 15)."},
+            },
+            {
+                "flags": ["--install-timeout"],
+                "kwargs": {"type": int, "default": 900, "help": "Hard timeout for each apt install (default: 900s)."},
+            },
+        ],
+    },
+
+    "run-tests": {
+        "help": (
+            "Run the fast Python suites (release tooling, deploy/lifecycle) with per-directory minimum test "
+            "counts, so a directory silently dropped from discovery fails the run."
+        ),
+        "func": cmd_run_tests,
+        "args": [
+            {
+                "flags": ["--suite"],
+                "kwargs": {
+                    "action": "append",
+                    "choices": tuple(SUITES),
+                    "default": None,
+                    "help": "Suite to run (repeatable; default: all).",
+                },
+            },
+            {
+                "flags": ["--count-only"],
+                "kwargs": {
+                    "action": "store_true",
+                    "help": "Only discover and check minimum counts; do not run tests.",
                 },
             },
         ],

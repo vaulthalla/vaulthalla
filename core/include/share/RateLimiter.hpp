@@ -30,6 +30,13 @@ public:
         Clock::time_point now = Clock::now()
     );
 
+    // Same decision as check() but records nothing (for limits that only count failures).
+    [[nodiscard]] RateLimitDecision peek(
+        const std::string& key,
+        const RateLimitPolicy& policy,
+        Clock::time_point now = Clock::now()
+    ) const;
+
     void reset();
     void prune(Clock::time_point now = Clock::now());
     [[nodiscard]] std::size_t bucketCount() const;

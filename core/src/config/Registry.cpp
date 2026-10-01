@@ -7,7 +7,12 @@ namespace vh::config {
 
 void Registry::init() {
     std::call_once(init_flag_, [&]() {
-        config_ = loadConfig(paths::getConfigPath());
+        const auto path = paths::getConfigPath();
+        try {
+            config_ = loadConfig(path);
+        } catch (const std::exception& e) {
+            throw std::runtime_error("cannot load config " + std::string(path) + ": " + e.what());
+        }
         initialized_ = true;
     });
 }

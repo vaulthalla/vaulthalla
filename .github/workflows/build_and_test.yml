@@ -6,6 +6,14 @@ on:
   push:
     branches:
       - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build:
     runs-on:
@@ -13,6 +21,7 @@ jobs:
       - Linux
       - X64
       - ubuntu-latest-lts
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/runner
@@ -20,3 +29,45 @@ jobs:
           test: 'true'
           build_web: 'true'
           test_web: 'true'
+
+  tooling:
+    name: Release tooling, lifecycle tests, shellcheck
+    runs-on:
+      - self-hosted
+      - Linux
+      - X64
+      - ubuntu-latest-lts
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install release-tooling dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Version drift check
+        run: python -m tools.release check
+
+      - name: Python suites (with minimum test counts)
+        run: python -m tools.release run-tests
+
+      - name: Install shellcheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            sudo apt-get -o DPkg::Lock::Timeout=900 install -y shellcheck || { sudo apt-get -o DPkg::Lock::Timeout=900 update && sudo apt-get -o DPkg::Lock::Timeout=900 install -y shellcheck; }
+          fi
+
+      - name: shellcheck (maintainer scripts blocking, bin/ advisory)
+        run: bash .github/scripts/shellcheck.sh

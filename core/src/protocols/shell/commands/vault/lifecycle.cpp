@@ -55,6 +55,7 @@ CommandResult commands::vault::handle_vault_update(const CommandCall& call) {
     parseS3API(call, usage, vault, false);
 
     if (hasFlag(call, "interactive") && vault->type == VaultType::S3) {
+        if (!call.io) return invalid("vault update --interactive: requires an interactive terminal");
         const auto s3Vault = std::static_pointer_cast<S3Vault>(vault);
         const auto apiKey = db::query::vault::APIKey::getAPIKey(s3Vault->api_key_id);
         if (!apiKey) return invalid("vault update: API key not found: " + std::to_string(s3Vault->api_key_id));

@@ -7,7 +7,6 @@ import { useRouter } from 'next/navigation'
 import OverrideForm, { PermissionOverrideFormData } from '@/components/roles/vault/OverrideForm'
 import { Button } from '@/components/Button'
 import { Vault } from '@/models/vaults'
-import { PermissionPayload } from '@/models/role'
 import { useAuthStore } from '@/stores/authStore'
 import { useVaultRoleStore } from '@/stores/useVaultRoleStore'
 import { User } from '@/models/user'
@@ -20,7 +19,7 @@ const sectionVariants = { hidden: { opacity: 0, y: 10 }, visible: { opacity: 1, 
 
 export const AssignUserForm = ({ vault }: AssignUserFormProps) => {
   const router = useRouter()
-  const { vaultRoles, fetchVaultRoles, addVaultRole } = useVaultRoleStore()
+  const { vaultRoles, fetchVaultRoles, assignVaultRole } = useVaultRoleStore()
   const [users, setUsers] = useState<User[]>([])
   const [usersLoading, setUsersLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -108,21 +107,19 @@ export const AssignUserForm = ({ vault }: AssignUserFormProps) => {
       return
     }
 
+    if (overrides.length) {
+      // The server has no per-assignment override input on role.vault.assign; refuse rather than drop them.
+      setError('Permission overrides cannot be submitted with an assignment yet. Remove them to assign the role.')
+      return
+    }
+
     setError(null)
     setSuccessMessage(null)
     setIsSubmitting(true)
 
     try {
-      await addVaultRole({
-        type: 'vault',
-        name: role.name,
-        description: role.description,
-        permissions: role.permissions.map(permission => new PermissionPayload(permission.qualified, permission.value)),
-        vault_id: vault.id,
-        subject_type: 'user',
-        subject_id: formData.user_id,
-        ...(overrides.length ? { permission_overrides: overrides } : {}),
-      })
+      // Assign the existing role; role.vault.add creates a new role template and never assigned anyone.
+      await assignVaultRole({ id: role.id, vault_id: vault.id, subject_type: 'user', subject_id: formData.user_id })
 
       const userName = users.find(user => user.id === formData.user_id)?.name ?? `User ${formData.user_id}`
       setSuccessMessage(`Assigned ${userName} to "${role.name}" on ${vault.name}.`)

@@ -3,16 +3,21 @@ set -e
 
 PKG="vaulthalla"
 CORE_SYSTEMD_UNIT="vaulthalla.service"
-CLI_SYSTEMD_UNIT="vaulthalla-cli.service"
-CLI_SOCKET_SYSTEMD_UNIT="vaulthalla-cli.socket"
 WEB_SYSTEMD_UNIT="vaulthalla-web.service"
 SWTPM_SYSTEMD_UNIT="vaulthalla-swtpm.service"
 SYSTEMCTL_COMMAND_TIMEOUT_SECONDS=10
-SYSTEMCTL_STOP_WAIT_SECONDS=20
+# Longer than vaulthalla.service TimeoutStopSec=30s so a graceful FUSE shutdown and the
+# ExecStopPost lazy unmount get their full window before we escalate.
+SYSTEMCTL_STOP_WAIT_SECONDS=45
+SYSTEMCTL_KILL_SETTLE_SECONDS=15
 SYSTEMCTL_STOP_POLL_INTERVAL_SECONDS=1
+NGINX_TIMEOUT_SECONDS=30
 SYSTEMCTL_UNAVAILABLE_LOGGED="0"
 NGINX_SITE_AVAIL="/etc/nginx/sites-available/vaulthalla"
 NGINX_SITE_ENABLED="/etc/nginx/sites-enabled/vaulthalla"
+NGINX_DEFAULT_SITE_AVAIL="/etc/nginx/sites-available/default"
+NGINX_DEFAULT_SITE_ENABLED="/etc/nginx/sites-enabled/default"
+NGINX_DEFAULT_DISABLED_MARKER="/var/lib/vaulthalla/nginx_default_site_disabled"
 LEGACY_PENDING_SUPERADMIN_UID_FILE="/run/vaulthalla/superadmin_uid"
 PENDING_DB_PASS_FILE="/run/vaulthalla/db_password"
 TPM_BACKEND_OVERRIDE_FILE="/etc/systemd/system/vaulthalla.service.d/tpm-backend.conf"
@@ -21,9 +26,23 @@ has_command() {
     command -v "$1" >/dev/null 2>&1
 }
 
+run_bounded() {
+    limit="$1"
+    shift
+    if has_command timeout; then
+        timeout --kill-after=5 "$limit" "$@"
+        return $?
+    fi
+    "$@"
+}
+
+systemd_running() {
+    has_command systemctl && [ -d /run/systemd/system ]
+}
+
 log_systemctl_unavailable_once() {
     if [ "$SYSTEMCTL_UNAVAILABLE_LOGGED" = "0" ]; then
-        echo "[${PKG}] systemctl unavailable; skipping systemd teardown actions."
+        echo "[${PKG}] systemd not running or systemctl unavailable; skipping systemd teardown actions."
         SYSTEMCTL_UNAVAILABLE_LOGGED="1"
     fi
 }
@@ -32,15 +51,11 @@ run_systemctl_quiet() {
     if ! has_command systemctl; then
         return 127
     fi
-    if has_command timeout; then
-        timeout "$SYSTEMCTL_COMMAND_TIMEOUT_SECONDS" systemctl --system "$@" >/dev/null 2>&1
-        return $?
-    fi
-    systemctl --system "$@" >/dev/null 2>&1
+    run_bounded "$SYSTEMCTL_COMMAND_TIMEOUT_SECONDS" systemctl --system "$@" >/dev/null 2>&1
 }
 
 safe_systemctl() {
-    if ! has_command systemctl; then
+    if ! systemd_running; then
         log_systemctl_unavailable_once
         return 0
     fi
@@ -50,10 +65,45 @@ safe_systemctl() {
     return 0
 }
 
+unit_property() {
+    # unit_property <unit> <property>
+    value="$(run_bounded "$SYSTEMCTL_COMMAND_TIMEOUT_SECONDS" systemctl --system show -p "$2" --value "$1" 2>/dev/null || true)"
+    printf '%s' "$value"
+}
+
+unit_fully_stopped() {
+    # `is-active` is false while a unit is "deactivating" (ExecStop/ExecStopPost still
+    # running, main process alive), so require a terminal ActiveState AND no MainPID.
+    state="$(unit_property "$1" ActiveState)"
+    main_pid="$(unit_property "$1" MainPID)"
+    case "$state" in
+        inactive|failed)
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+    [ -z "$main_pid" ] || [ "$main_pid" = "0" ]
+}
+
+wait_for_unit_stopped() {
+    unit="$1"
+    limit="$2"
+    waited=0
+    while [ "$waited" -lt "$limit" ]; do
+        if unit_fully_stopped "$unit"; then
+            return 0
+        fi
+        sleep "$SYSTEMCTL_STOP_POLL_INTERVAL_SECONDS"
+        waited=$((waited + SYSTEMCTL_STOP_POLL_INTERVAL_SECONDS))
+    done
+    unit_fully_stopped "$unit"
+}
+
 stop_service_bounded() {
     unit="$1"
 
-    if ! has_command systemctl; then
+    if ! systemd_running; then
         log_systemctl_unavailable_once
         return 0
     fi
@@ -63,23 +113,45 @@ stop_service_bounded() {
         echo "[${PKG}] WARNING: Failed to submit stop job for ${unit}; continuing."
     fi
 
-    waited=0
-    while [ "$waited" -lt "$SYSTEMCTL_STOP_WAIT_SECONDS" ]; do
-        if ! run_systemctl_quiet is-active --quiet "$unit"; then
-            return 0
-        fi
-        sleep "$SYSTEMCTL_STOP_POLL_INTERVAL_SECONDS"
-        waited=$((waited + SYSTEMCTL_STOP_POLL_INTERVAL_SECONDS))
-    done
+    if wait_for_unit_stopped "$unit" "$SYSTEMCTL_STOP_WAIT_SECONDS"; then
+        return 0
+    fi
 
-    echo "[${PKG}] WARNING: ${unit} did not stop within ${SYSTEMCTL_STOP_WAIT_SECONDS}s; forcing unit kill and continuing removal."
-    safe_systemctl kill "$unit"
+    # Cgroup-scoped kill of this unit only; never kill by process name.
+    echo "[${PKG}] WARNING: ${unit} did not stop within ${SYSTEMCTL_STOP_WAIT_SECONDS}s; sending SIGKILL to the unit cgroup and continuing removal."
+    safe_systemctl kill -s KILL "$unit"
+    if ! wait_for_unit_stopped "$unit" "$SYSTEMCTL_KILL_SETTLE_SECONDS"; then
+        echo "[${PKG}] WARNING: ${unit} still has state '$(unit_property "$unit" ActiveState)' after SIGKILL; continuing."
+    fi
     safe_systemctl reset-failed "$unit"
     return 0
 }
 
+reload_nginx_if_valid() {
+    if has_command nginx && run_bounded "$NGINX_TIMEOUT_SECONDS" nginx -t >/dev/null 2>&1; then
+        safe_systemctl reload nginx.service
+    fi
+}
+
+restore_nginx_default_site_if_disabled() {
+    if [ ! -f "$NGINX_DEFAULT_DISABLED_MARKER" ]; then
+        return 0
+    fi
+    default_target="$(sed -n 's/^target=//p' "$NGINX_DEFAULT_DISABLED_MARKER" 2>/dev/null | head -n 1)"
+    if [ -z "$default_target" ]; then
+        default_target="$NGINX_DEFAULT_SITE_AVAIL"
+    fi
+    if [ ! -e "$NGINX_DEFAULT_SITE_ENABLED" ] && [ ! -L "$NGINX_DEFAULT_SITE_ENABLED" ] && [ -f "$NGINX_DEFAULT_SITE_AVAIL" ]; then
+        if ln -s "$default_target" "$NGINX_DEFAULT_SITE_ENABLED" 2>/dev/null; then
+            echo "[${PKG}] Restored nginx default site: ${NGINX_DEFAULT_SITE_ENABLED}"
+        fi
+    fi
+    rm -f "$NGINX_DEFAULT_DISABLED_MARKER" || true
+}
+
 disable_nginx_site_link_if_package_path() {
     if [ ! -L "$NGINX_SITE_ENABLED" ]; then
+        restore_nginx_default_site_if_disabled
         return 0
     fi
 
@@ -88,9 +160,8 @@ disable_nginx_site_link_if_package_path() {
         "$NGINX_SITE_AVAIL"|../sites-available/vaulthalla)
             rm -f "$NGINX_SITE_ENABLED"
             echo "[${PKG}] Disabled nginx site symlink: ${NGINX_SITE_ENABLED}"
-            if has_command nginx && nginx -t >/dev/null 2>&1; then
-                safe_systemctl reload nginx.service
-            fi
+            restore_nginx_default_site_if_disabled
+            reload_nginx_if_valid
             ;;
         *)
             echo "[${PKG}] Leaving nginx symlink untouched; target is not package site path."
@@ -100,14 +171,12 @@ disable_nginx_site_link_if_package_path() {
 
 case "$1" in
     remove|deconfigure)
-        # Stop frontend/client-facing units first to drain websocket/socket traffic before backend stop.
+        # Stop the frontend first to drain websocket traffic before the backend (which owns the CLI socket) stops.
         stop_service_bounded "$WEB_SYSTEMD_UNIT"
-        stop_service_bounded "$CLI_SOCKET_SYSTEMD_UNIT"
-        stop_service_bounded "$CLI_SYSTEMD_UNIT"
         stop_service_bounded "$CORE_SYSTEMD_UNIT"
         stop_service_bounded "$SWTPM_SYSTEMD_UNIT"
-        safe_systemctl disable "$CLI_SYSTEMD_UNIT"
-        safe_systemctl disable "$CLI_SOCKET_SYSTEMD_UNIT"
+        # Units are disabled on remove; a later reinstall over the remaining config files is
+        # detected by preinst and postinst re-enables and starts them.
         safe_systemctl disable "$CORE_SYSTEMD_UNIT"
         safe_systemctl disable "$WEB_SYSTEMD_UNIT"
         safe_systemctl disable "$SWTPM_SYSTEMD_UNIT"

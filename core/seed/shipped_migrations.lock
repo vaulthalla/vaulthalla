@@ -1,0 +1,51 @@
+# Shipped migration checksums for deploy/psql/*.sql.
+#
+# sha256 of the raw file bytes, exactly what SqlDeployer (core/seed/include/SqlDeployer.hpp) records in
+# schema_migrations.sha256. Enforced by tools/release/tests/packaging/test_migration_checksums_contract.py.
+#
+# Format: <status> <sha256> <filename> <note>
+#   current     the hash of the file as it is in this tree (exactly one per deploy/psql/*.sql file)
+#   historical  a hash a released tag shipped for a file whose content later changed. Each one must also be in
+#               kHistoricalMigrationChecksums in SqlDeployer.hpp, with a forward migration that owns the delta.
+#
+# Update procedure:
+#   - New migration: add a "current" line with note "unreleased" (sha256sum deploy/psql/NNN_name.sql).
+#   - Editing a migration that has NOT shipped in any v* tag: update its "current" hash.
+#   - After it ships, replace "unreleased" with the first tag (e.g. "v1.7.0+"). The note is informational.
+#   - NEVER edit a migration that shipped. Add the next-numbered migration instead. The contract test compares
+#     every v* tag's deploy/psql against this file when tags are available, so an in-place edit fails unless the
+#     old hash is added as "historical" here AND in kHistoricalMigrationChecksums (reviewed, with a forward
+#     migration).
+current    560de3193041cbaa279475a54cb2bb1546ec2ef1f67f857402a0a8d5719cca10  000_schema.sql  v0.28.0-alpha+
+current    888c6335c1b2dcac74f0d03c7a73b96550829e8e562c0a923168ece1805ce0b7  001_triggers.sql  v0.28.0-alpha+
+current    226f3eba01dd5ade18fff06e8b7ec42db217df4f32f5e08244a525b35f5f317e  005_types.sql  v0.28.0-alpha+
+current    81ee559888a9130aa5d044fc4be6d415b834f415664a195ba528111b3c945872  010_auth.sql  v0.28.0-alpha+
+current    8e05edda985d128bab63a8c0d6238e9222f7f6c1a09c8a27f047d630a27b4c90  020_vaults.sql  v1.5.1+
+current    ce8d812797d734b18c6d3f5823903dcd5fa0c4d4dc5172d64f83bf9a1c0d5633  030_vault_waivers.sql  v0.28.0-alpha+
+current    f794dd30fec5bba76511f92b921109daf72486ad1fe34d2a1ad8f043c895fdda  040_files.sql  v0.28.0-alpha+
+current    2ef6e7acc8dc585e23109724a878b6457285e368acc74fbe5f1ebe7337114ba4  050_sync.sql  v0.28.0-alpha+
+current    7e125375547b27b472ceb39b600ec60a9f8eda03890c175cda3ce4271c770f95  060_acl.sql  v1.6.0+
+current    721b621f1c45cb47fe6dc21499711533a3850c2dc0a5be2c4b0a14d801233888  070_link_shares.sql  v1.1.0+
+current    6f96bc89f57663a7a9670c9e8e71c2ab2bf508c6413a2dd636b75138bdeaa6b3  071_link_share_vault_roles.sql  v1.1.0+
+current    9cb3ee753574d20bc2d6bf4c359a4be243fbbe40da42fda44349b25a1df66af2  072_share_vault_role_assignments.sql  v1.1.0+
+current    72cfcfe9631b85adefc32ae431610403b9ffb088c4c9cd35c8f9bdc578f52407  080_stats.sql  v1.2.0+
+current    c790720fe967f5de6d9753cd54c95cc9e5d0841e886edf8730c6f630954d3fa9  081_dashboard_preferences.sql  v1.2.0+
+current    b029c5e1ef60187818177978046386370eb014e48ce4745026b1b0f0116ae1cc  082_stats_metric_samples.sql  v1.2.0..v1.2.3,v1.2.6+
+current    96134521f41a2f120996b28909c9e6f76ad4c868bfa3fac08f8db53f9271239d  083_symlinks_and_protected_principals.sql  v1.2.4+
+current    fc1ed8427012f7e997ff7b440e82a03366f98fb74ac8f75e4da4c1a64f8f676a  084_stats_fuse_alertable_errors.sql  v1.2.6+
+current    b55e496e88d74f4395d45c3ef86912d3719eac140d89e107a6b9f470095e4ee4  085_operator_notifications.sql  v1.4.0+
+current    3eb0e45492f613ee12f306c19cb7f1bcd8f2ff73a9c347e3686abd25471631dd  086_sync_cost_safety.sql  v1.5.0+
+current    1c25c4d48705f10625eb3606b8d9a6207f8d3cc0ca191a43feffecc407456d4b  087_sync_throughput_failed_ops.sql  v1.5.0+
+current    c196c725a6fd921aad3b9088073f41942b39212257eca3a23075dc4cba6153dc  088_backfill_s3_budget_defaults.sql  v1.5.0+
+current    84b4f6e5bfabbff4d255173eccdf9b6a474b9e84e6c761b581da7c6135fca859  089_remote_object_index_encryption_metadata.sql  v1.5.0+
+current    d6ed1c210c65051a26dd405b1b825b93277f900dbb5604ec862a842504fac2f5  090_s3_storage_tier_id.sql  v1.5.1+
+current    c5bc3d6885de21798ae5b8903d0075e14e0d4f0f5ec2bebb9548521be6008c24  091_s3_price_estimates.sql  v1.5.1+
+current    f53e76db638f0210337acf755865e378d6ab0c14652d76a67c7735e703e49f61  092_s3_budget_price_estimates.sql  v1.5.1+
+current    d4ade58a91b1a73dd47fbf2ad379589c0fc2e149e27c8b378216d6f21fe4d221  093_s3_price_budget_policies.sql  v1.5.1+
+current    3c69612a62a836033419a7c1054678d8b3b3706db4e829d6bb654b281da4e6da  094_s3_price_budget_command_center.sql  v1.5.1+
+current    ab0eae33518b5a4032a3163903adf6233f795dbbd55b8b6c88f6daae6e379883  095_s3_gateway.sql  v1.6.0+
+current    f49cb5cf909432e09c5b7b7c92a577bc6db40a0776f534d3ed845acc8c2f6fc8  096_vault_external_names.sql  v1.6.6+
+current    18435273a98b1c172a720564e31b8914e6de94564dabeac206a170d16c1f8a13  097_admin_role_s3_gateway_permissions.sql  unreleased
+historical 64170212eb3f9fbe0f7c949791b953f0376a1f2bcf66b3dec7afc5db6325d570  020_vaults.sql  v0.28.0-alpha..v1.5.0
+historical c154cd7e10f7931f29c12b9221c90f66d6b953cfb5e3dc15ea50f0940e5d4220  060_acl.sql  v0.28.0-alpha..v1.5.1
+historical 720caaa27c0d51635fe3f459a8426f019d3f0dbdc0b7ae176d283309933a7f53  082_stats_metric_samples.sql  v1.2.4..v1.2.5

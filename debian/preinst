@@ -1,0 +1,30 @@
+#!/bin/sh
+set -e
+
+# preinst for vaulthalla
+# - Records "reinstall over config-files state" (after `apt remove`, not purge) so
+#   postinst restores enabled/started units instead of treating it as an upgrade.
+#   dpkg calls `preinst install <old-version>` only in that situation; a normal
+#   upgrade is `preinst upgrade <old-version>`.
+
+PKG="vaulthalla"
+STATE_DIR="/var/lib/vaulthalla"
+REINSTALL_MARKER="${STATE_DIR}/.reinstall_from_config_files"
+
+case "$1" in
+    install)
+        if [ -n "${2:-}" ]; then
+            if [ -d "$STATE_DIR" ] || install -d -m 0700 "$STATE_DIR"; then
+                if printf '%s\n' "from=${2}" > "$REINSTALL_MARKER" 2>/dev/null; then
+                    echo "[${PKG}] Reinstalling over configuration left by removed version ${2}."
+                fi
+            fi
+        fi
+        ;;
+    upgrade|abort-upgrade)
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

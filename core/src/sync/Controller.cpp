@@ -91,7 +91,7 @@ void Controller::runLoop() {
     }
 }
 
-void Controller::runNow(const unsigned int vaultId, const uint8_t trigger) {
+Controller::RunNowResult Controller::runNow(const unsigned int vaultId, const uint8_t trigger) {
     log::Registry::sync()->debug("[SyncController] Early sync request for vault ID: {}", vaultId);
 
     std::shared_ptr<Local> task;
@@ -111,7 +111,7 @@ void Controller::runNow(const unsigned int vaultId, const uint8_t trigger) {
         std::scoped_lock lock(taskMapMutex_);
         if (!taskMap_.contains(vaultId)) {
             log::Registry::sync()->error("[SyncController] No task found for vault ID: {} after refresh", vaultId);
-            return;
+            return RunNowResult::NoTask;
         }
         task = taskMap_[vaultId];
     }
@@ -121,7 +121,7 @@ void Controller::runNow(const unsigned int vaultId, const uint8_t trigger) {
         log::Registry::sync()->debug(
             "[SyncController] Sync already running for vault ID: {}; queued immediate rerun",
             vaultId);
-        return;
+        return RunNowResult::Rerun;
     }
 
     task->interrupt();
@@ -134,6 +134,8 @@ void Controller::runNow(const unsigned int vaultId, const uint8_t trigger) {
         taskMap_[vaultId] = task;
         pq.push(task);
     }
+
+    return RunNowResult::Started;
 }
 
 void Controller::refreshEngines() {

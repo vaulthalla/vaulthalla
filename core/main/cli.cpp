@@ -1,5 +1,6 @@
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <poll.h>
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
@@ -19,6 +20,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <cerrno>
+#include <initializer_list>
 
 static bool readn(const int fd, void* b, size_t n) {
     auto* p = static_cast<uint8_t*>(b);
@@ -34,7 +36,7 @@ static bool readn(const int fd, void* b, size_t n) {
 static bool writen(const int fd, const void* b, size_t n) {
     const auto* p = static_cast<const uint8_t*>(b);
     while (n) {
-        const ssize_t w = ::write(fd, p, n);
+        const ssize_t w = ::send(fd, p, n, MSG_NOSIGNAL);
         if (w <= 0) return false;
         p += w;
         n -= w;
@@ -195,16 +197,29 @@ static std::string read_secret_line_from_stdin() {
     return line;
 }
 
-static bool command_is(const std::vector<std::string>& argv_norm, std::string_view cmd, std::string_view subcmd) {
-    return argv_norm.size() >= 2 && argv_norm[0] == cmd && argv_norm[1] == subcmd;
+// Canonical lifecycle subcommand for an alias accepted by the usage book (core/usage/src/usages/{setup,teardown}.cpp),
+// or "" when the command is not a lifecycle operation. The lifecycle utility only knows the canonical names.
+static std::string lifecycle_subcommand(const std::vector<std::string>& argv_norm) {
+    if (argv_norm.size() < 2) return {};
+    const auto& cmd = argv_norm[0];
+    const auto& sub = argv_norm[1];
+    const auto in = [&sub](std::initializer_list<std::string_view> names) {
+        return std::ranges::any_of(names, [&sub](const std::string_view n) { return sub == n; });
+    };
+
+    if (cmd == "setup") {
+        if (in({"db", "database", "postgres"})) return "db";
+        if (in({"remote-db", "remote_db", "remote", "rdb"})) return "remote-db";
+        if (in({"nginx", "proxy"})) return "nginx";
+    } else if (cmd == "teardown") {
+        if (in({"db", "database", "postgres"})) return "db";
+        if (in({"nginx", "proxy"})) return "nginx";
+    }
+    return {};
 }
 
 static bool is_lifecycle_command(const std::vector<std::string>& argv_norm) {
-    return command_is(argv_norm, "setup", "db")
-        || command_is(argv_norm, "setup", "remote-db")
-        || command_is(argv_norm, "setup", "nginx")
-        || command_is(argv_norm, "teardown", "db")
-        || command_is(argv_norm, "teardown", "nginx");
+    return !lifecycle_subcommand(argv_norm).empty();
 }
 
 static int lifecycle_sudo_required(const std::vector<std::string>& argv_norm) {
@@ -250,6 +265,7 @@ static int run_lifecycle_command(const std::vector<std::string>& argv_norm) {
     args.reserve(argv_norm.size() + 1);
     args.push_back(lifecycleBin);
     args.insert(args.end(), argv_norm.begin(), argv_norm.end());
+    args[2] = lifecycle_subcommand(argv_norm); // alias -> canonical ("setup database" -> "setup db")
 
     std::vector<char*> execArgv;
     execArgv.reserve(args.size() + 1);
@@ -330,17 +346,15 @@ static std::string systemd_unit_state(const std::string& unit) {
     return "unknown (exit " + std::to_string(state.code) + ")";
 }
 
-static void append_status_systemd_summary_if_needed(const std::vector<std::string>& argv_norm, const int exitCode) {
-    if (exitCode != 0 || !should_append_status_systemd_summary(argv_norm))
-        return;
+static void append_status_systemd_summary_if_needed(const std::vector<std::string>& argv_norm) {
+    // Shown for healthy and unhealthy results alike: the unit states matter most when status is not healthy.
+    if (!should_append_status_systemd_summary(argv_norm)) return;
     if (!command_exists("systemctl")) return;
 
     std::ostringstream out;
     out << "systemd summary (supplemental):\n";
-    constexpr std::array<std::string_view, 4> units{
+    constexpr std::array<std::string_view, 2> units{
         "vaulthalla.service",
-        "vaulthalla-cli.service",
-        "vaulthalla-cli.socket",
         "vaulthalla-web.service"
     };
     for (const auto unit : units)
@@ -351,8 +365,103 @@ static void append_status_systemd_summary_if_needed(const std::vector<std::strin
 
 /* ----------------------------------------------------------------- */
 
+// Distinct exit codes (sysexits.h values) so scripts and the maintainer scripts can tell "the daemon is not
+// there" apart from "the command failed".
+namespace exit_code {
+constexpr int kProtocol = 76;     // EX_PROTOCOL: malformed/incomplete reply
+constexpr int kUnavailable = 69;  // EX_UNAVAILABLE: no daemon listening
+constexpr int kTempFail = 75;     // EX_TEMPFAIL: daemon not responding / busy
+constexpr int kNoPerm = 77;       // EX_NOPERM: not allowed to use the control socket
+}
+
+static constexpr const char* kSocketPath = "/run/vaulthalla/cli.sock";
+
+static int connect_timeout_seconds() {
+    if (const char* env = std::getenv("VAULTHALLA_CLI_TIMEOUT"); env && *env) {
+        char* end = nullptr;
+        const long v = std::strtol(env, &end, 10);
+        if (end && *end == '\0' && v > 0 && v <= 3600) return static_cast<int>(v);
+    }
+    return 10;
+}
+
+static int report_not_responding(const int seconds) {
+    fmt::print(stderr,
+               "vh: the vaulthalla daemon is not responding at {} (no reply within {}s).\n"
+               "    Is vaulthalla.service running?  systemctl status vaulthalla\n"
+               "    Recent daemon log:               journalctl -u vaulthalla -n 50\n"
+               "    (Set VAULTHALLA_CLI_TIMEOUT=<seconds> to wait longer.)\n",
+               kSocketPath, seconds);
+    return exit_code::kTempFail;
+}
+
+static int report_connect_error(const int err, const int seconds) {
+    switch (err) {
+        case EACCES:
+        case EPERM:
+            fmt::print(stderr,
+                       "vh: permission denied opening {}.\n"
+                       "    The control socket is restricted to the 'vaulthalla' group. Either run with sudo, or add\n"
+                       "    yourself to the group and start a new login session:\n"
+                       "      sudo usermod -aG vaulthalla $USER\n",
+                       kSocketPath);
+            return exit_code::kNoPerm;
+        case ENOENT:
+        case ECONNREFUSED:
+            fmt::print(stderr,
+                       "vh: the vaulthalla daemon is not running (nothing is listening at {}).\n"
+                       "    Check the service:  systemctl status vaulthalla\n"
+                       "    Recent daemon log:  journalctl -u vaulthalla -n 50\n",
+                       kSocketPath);
+            return exit_code::kUnavailable;
+        case EAGAIN:
+        case ETIMEDOUT:
+        case EINPROGRESS:
+            return report_not_responding(seconds);
+        default:
+            fmt::print(stderr, "vh: cannot connect to {}: {}\n", kSocketPath, std::strerror(err));
+            return exit_code::kUnavailable;
+    }
+}
+
+// Waits up to `seconds` for the socket to become readable. False on timeout.
+static bool wait_readable(const int fd, const int seconds) {
+    pollfd pfd{.fd = fd, .events = POLLIN, .revents = 0};
+    for (;;) {
+        const int rc = ::poll(&pfd, 1, seconds * 1000);
+        if (rc < 0 && errno == EINTR) continue;
+        return rc > 0;
+    }
+}
+
+static void print_text_field(const nlohmann::json& frame, const char* key, FILE* stream) {
+    if (!frame.contains(key) || frame[key].is_null()) return;
+    const auto& v = frame[key];
+    fmt::print(stream, "{}", ensureNewLine(v.is_string() ? v.get<std::string>() : v.dump()));
+}
+
+// Final reply → process exit code. A reply without exit_code is only a success if it explicitly says ok.
+static int final_exit_code(const nlohmann::json& frame) {
+    if (frame.contains("exit_code") && frame["exit_code"].is_number_integer())
+        return frame["exit_code"].get<int>();
+    if (frame.contains("ok") && frame["ok"].is_boolean())
+        return frame["ok"].get<bool>() ? 0 : 1;
+    fmt::print(stderr, "vh: the daemon's reply had no exit status; treating it as a failure\n");
+    return exit_code::kProtocol;
+}
+
 int main(const int argc, char** argv) {
     std::vector<std::string> argv_norm = canonicalize_argv_norm(argc, argv);
+
+    // Legacy: vaulthalla-cli.service used to run `vaulthalla-cli --systemd` behind vaulthalla-cli.socket. That mode
+    // never existed; the unit connected to its own socket and hung forever. The daemon owns the socket now.
+    if (argv_norm.size() == 1 && argv_norm.front() == "--systemd") {
+        fmt::print(stderr,
+                   "vaulthalla-cli --systemd is obsolete: vaulthalla.service owns {} directly.\n"
+                   "Disable the stale units:  sudo systemctl disable --now vaulthalla-cli.socket vaulthalla-cli.service\n",
+                   kSocketPath);
+        return 0;
+    }
 
     if (is_lifecycle_command(argv_norm)) {
         if (::geteuid() != 0)
@@ -362,17 +471,22 @@ int main(const int argc, char** argv) {
 
     // Quoted line for legacy servers
     std::string line = build_line_from_tokens(argv_norm);
+    const int timeoutSeconds = connect_timeout_seconds();
 
-    const int s = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    const int s = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (s < 0) { perror("socket"); return 1; }
+
+    // Bounds connect() when the listener's backlog is full (a wedged daemon that stopped accepting).
+    timeval tv{.tv_sec = timeoutSeconds, .tv_usec = 0};
+    (void)::setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
     sockaddr_un addr{};
     addr.sun_family = AF_UNIX;
-    std::snprintf(addr.sun_path, sizeof(addr.sun_path), "/run/vaulthalla/cli.sock");
-    if (::connect(s, (sockaddr*)&addr, sizeof(sa_family_t) + std::strlen(addr.sun_path) + 1) != 0) {
-        perror("connect");
+    std::snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", kSocketPath);
+    if (::connect(s, reinterpret_cast<sockaddr*>(&addr), sizeof(sa_family_t) + std::strlen(addr.sun_path) + 1) != 0) {
+        const int err = errno;
         ::close(s);
-        return 1;
+        return report_connect_error(err, timeoutSeconds);
     }
 
     // Prepare request
@@ -393,27 +507,42 @@ int main(const int argc, char** argv) {
     // Send request
     send_json_frame(s, j);
 
+    // A connect() to a unix socket succeeds as soon as the connection is queued, even when nobody will ever
+    // accept it (daemon crash-looping, a stale listener left by another unit). The daemon answers every accepted
+    // connection right away (a "hello" frame, or an error), so silence here means nobody is serving the socket.
+    // After the first frame there is no client-side limit: commands and prompts take as long as they take.
+    bool first = true;
+
     // Frame loop: handle both streaming (type-based) and legacy single-reply
     for (;;) {
+        if (first && !wait_readable(s, timeoutSeconds)) {
+            ::close(s);
+            return report_not_responding(timeoutSeconds);
+        }
+        first = false;
+
         nlohmann::json frame;
         if (!recv_json_frame(s, frame)) {
             // connection closed unexpectedly
             ::close(s);
-            fmt::print(stderr, "{}", "Connection closed\n");
-            return 1;
+            fmt::print(stderr, "vh: connection to the vaulthalla daemon closed before the command finished "
+                               "(daemon restarted or crashed? journalctl -u vaulthalla -n 50)\n");
+            return exit_code::kTempFail;
         }
 
         // Legacy reply: has no "type", but includes exit_code/ok/stdout/stderr
         if (!frame.contains("type")) {
-            if (frame.contains("stdout")) fmt::print("{}", ensureNewLine(frame["stdout"].get<std::string>()));
-            if (frame.contains("stderr")) fmt::print(stderr, "{}", ensureNewLine(frame["stderr"].get<std::string>()));
-            const int ec = frame.value("exit_code", 0);
-            append_status_systemd_summary_if_needed(argv_norm, ec);
+            print_text_field(frame, "stdout", stdout);
+            print_text_field(frame, "stderr", stderr);
+            const int ec = final_exit_code(frame);
+            append_status_systemd_summary_if_needed(argv_norm);
             ::close(s);
             return ec;
         }
 
         const auto type = frame.value("type", std::string{});
+
+        if (type == "hello") continue; // daemon accepted the connection
 
         if (type == "output") {
             // {type:"output", text:"...", stream?: "stdout"|"stderr"}
@@ -443,10 +572,11 @@ int main(const int argc, char** argv) {
             // Print the prompt exactly as sent
             if (!text.empty()) {
                 // Don't double-append newline if server already included it
-                if (!text.empty() && text.back() == '\n')
+                if (text.back() == '\n')
                     fmt::print("{}", text);
                 else
                     fmt::print("{} ", text);
+                std::fflush(stdout);
             }
 
             // Read one line from user
@@ -467,10 +597,10 @@ int main(const int argc, char** argv) {
 
         if (type == "result") {
             // {type:"result", ok:bool, exit_code:int, stdout?:..., stderr?:..., data?:...}
-            if (frame.contains("stdout")) fmt::print("{}", ensureNewLine(frame["stdout"].get<std::string>()));
-            if (frame.contains("stderr")) fmt::print(stderr, "{}", ensureNewLine(frame["stderr"].get<std::string>()));
-            const int ec = frame.value("exit_code", 0);
-            append_status_systemd_summary_if_needed(argv_norm, ec);
+            print_text_field(frame, "stdout", stdout);
+            print_text_field(frame, "stderr", stderr);
+            const int ec = final_exit_code(frame);
+            append_status_systemd_summary_if_needed(argv_norm);
             ::close(s);
             return ec;
         }

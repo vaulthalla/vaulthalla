@@ -13,9 +13,14 @@ namespace {
 using vh::share::RateLimitPolicy;
 using vh::share::TokenKind;
 
+constexpr RateLimitPolicy kLoginSustainedPolicy{.max_attempts = 30, .window = std::chrono::minutes{15}};
+
 [[nodiscard]] std::optional<RateLimitPolicy> policyFor(const std::string_view command) {
     using namespace std::chrono_literals;
 
+    // Password guessing: per client IP (issue #103). A locked-out IP waits out the rest of the window.
+    if (command == "auth.login")
+        return RateLimitPolicy{.max_attempts = 10, .window = 1min};
     if (command == "share.session.open")
         return RateLimitPolicy{.max_attempts = 12, .window = 5min};
     if (command == "share.email.challenge.start")
@@ -90,6 +95,12 @@ using vh::share::TokenKind;
     const auto& payload = payloadOf(message);
     const auto ip = clientIp(session);
 
+    if (command == "auth.login") {
+        // Keyed by IP *and* account: behind the nginx proxy every client shares 127.0.0.1, and an IP-only key
+        // would let one guesser lock every user out of login.
+        return std::format("{}|ip:{}|user:{}", command, ip, optionalString(payload, "name"));
+    }
+
     if (command == "share.session.open") {
         return std::format("{}|ip:{}|{}", command, ip, tokenLookupKey(payload, "public_token", TokenKind::PublicShare));
     }
@@ -142,7 +153,33 @@ vh::share::RateLimitDecision ShareRateLimit::check(
 
     const auto policy = policyFor(command);
     if (!policy) return {.allowed = true, .remaining = 0, .retry_after = std::chrono::seconds{0}};
+
+    if (command == "auth.login") {
+        // Two tiers act as a backoff: failed bursts are capped per minute, and sustained guessing from one IP
+        // is capped per quarter hour, so a client that keeps hitting the minute limit is shut out much longer.
+        // Only failures count (see recordLoginFailure), so gate here without recording.
+        const auto sustained = limiter_.peek(
+            std::format("auth.login.sustained|ip:{}|user:{}", clientIp(session), optionalString(payloadOf(message), "name")),
+            kLoginSustainedPolicy, now);
+        if (!sustained.allowed) return sustained;
+        return limiter_.peek(keyFor(command, message, session), *policy, now);
+    }
+
     return limiter_.check(keyFor(command, message, session), *policy, now);
+}
+
+void ShareRateLimit::recordLoginFailure(const std::string_view accountName, const Session& session,
+                                        const Clock::time_point now) {
+    const auto ip = clientIp(session);
+    const auto name = std::string(accountName);
+    (void)limiter_.check(std::format("auth.login.sustained|ip:{}|user:{}", ip, name), kLoginSustainedPolicy, now);
+    if (const auto policy = policyFor("auth.login"))
+        (void)limiter_.check(std::format("auth.login|ip:{}|user:{}", ip, name), *policy, now);
+}
+
+ShareRateLimit& ShareRateLimit::instance() {
+    static ShareRateLimit limiter;
+    return limiter;
 }
 
 void ShareRateLimit::reset() {

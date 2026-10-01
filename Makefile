@@ -62,9 +62,13 @@ deb:
 	@echo "🔧 Building Debian package..."
 	./bin/install_deb.sh
 
+# Releases are cut locally (bump + commit + annotated tag) and published only by the tag-triggered
+# release workflow. This target is a dry run: it bumps/commits/tags locally but never pushes.
+# Push with: python3 -m tools.release cut-release <part> --push   (see .claude/skills/release-prep)
+RELEASE_PART ?= patch
 release:
-	@echo "🔧 Building release package..."
-	./bin/install_deb.sh --push
+	@echo "🔧 Cutting a local release ($(RELEASE_PART)); nothing is pushed or published from here."
+	python3 -m tools.release cut-release $(RELEASE_PART)
 
 doctor:
 	@echo "🔍 Running doctor script..."

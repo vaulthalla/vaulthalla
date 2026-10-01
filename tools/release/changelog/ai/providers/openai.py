@@ -12,6 +12,7 @@ from tools.release.changelog.ai.config import (
     AIStageName,
     AIStructuredMode,
     DEFAULT_AI_DRAFT_MODEL,
+    HOSTED_PROVIDER_KINDS,
     OPENAI_API_KEY_ENV_VAR,
 )
 from tools.release.changelog.ai.providers.capabilities import (
@@ -22,6 +23,7 @@ from tools.release.changelog.ai.providers.capabilities import (
     resolve_generation_settings,
 )
 from tools.release.changelog.ai.providers.parsing import JSONParseError, parse_json_object_from_text
+from tools.release.changelog.ai.providers.strict_schema import drop_null_optionals, to_strict_schema
 
 LOCAL_NO_AUTH_API_KEY_PLACEHOLDER = "local-no-auth"
 _MODE_RECOVERABLE_ERROR_MARKERS = (
@@ -320,6 +322,8 @@ class OpenAIProvider:
                 attempt["content_length"] = len(outcome.content)
                 try:
                     parsed = parse_json_object_from_text(outcome.content)
+                    if mode == "strict_json_schema":
+                        parsed = drop_null_optionals(parsed, json_schema)
                 except JSONParseError as exc:
                     attempt["error"] = str(exc)
                     attempt["error_type"] = "json_parse_error"
@@ -425,7 +429,7 @@ class OpenAIProvider:
         temperature: float | None,
         max_output_tokens: int | None,
     ) -> _GenerationOutcome:
-        if self.provider_kind == "openai":
+        if self.provider_kind in HOSTED_PROVIDER_KINDS:
             return self._generate_hosted_openai_output(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
@@ -464,7 +468,7 @@ class OpenAIProvider:
             )
         client_request_id = _new_client_request_id()
         parameter_capabilities = resolve_request_parameter_capabilities(
-            provider_kind="openai",
+            provider_kind=self.provider_kind,
             model=self.model,
         )
         request_payload = self._build_responses_request(
@@ -702,7 +706,7 @@ class OpenAIProvider:
                 "type": "json_schema",
                 "json_schema": {
                     "name": "vaulthalla_release_changelog_draft",
-                    "schema": json_schema,
+                    "schema": to_strict_schema(json_schema),
                     "strict": True,
                 },
             }
@@ -757,7 +761,7 @@ class OpenAIProvider:
                 "format": {
                     "type": "json_schema",
                     "name": "vaulthalla_release_changelog_draft",
-                    "schema": json_schema,
+                    "schema": to_strict_schema(json_schema),
                     "strict": True,
                 }
             }

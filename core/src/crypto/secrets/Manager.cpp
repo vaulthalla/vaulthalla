@@ -3,6 +3,7 @@
 #include "crypto/model/Secret.hpp"
 #include "crypto/util/encrypt.hpp"
 #include "crypto/util/hash.hpp"
+#include "log/Registry.hpp"
 
 #include <paths.h>
 #include <utility>
@@ -81,7 +82,24 @@ std::string Manager::getOrInitSecret(const std::string& key) const {
         return newSecret;
     }
 
-    return decryptStoredSecret(secret->value, secret->iv);
+    try {
+        return decryptStoredSecret(secret->value, secret->iv);
+    } catch (const std::exception& e) {
+        // Only secrets this process can mint itself may be replaced. An unreadable one means the stored value
+        // was sealed under a different master key (DB adopted after purge, or restored without its
+        // .sealed_master.blob); regenerating it only invalidates outstanding sessions.
+        if (!isRegenerableSecret(key)) throw;
+        log::Registry::runtime()->warn(
+            "[secrets] Stored secret '{}' cannot be decrypted with this host's master key ({}); regenerating it. "
+            "Existing sessions are invalidated.", key, e.what());
+        const auto newSecret = hash::generate_secure_password(64);
+        setEncryptedValue(key, newSecret);
+        return newSecret;
+    }
+}
+
+bool Manager::isRegenerableSecret(const std::string& key) {
+    return key == "jwt_secret";
 }
 
 std::string Manager::decryptStoredSecret(const std::vector<uint8_t>& value, const std::vector<uint8_t>& iv) const {

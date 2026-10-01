@@ -55,7 +55,9 @@ namespace vh::rbac::role {
             pMap.emplace(p.at("qualified").get<std::string>(), p.at("value").get<bool>());
 
         using PermResolver = resolver::PermissionResolverEnumPack<std::shared_ptr<Vault>>::type;
-        auto self = shared_from_this();
+        // shared_from_this() throws bad_weak_ptr inside a constructor (no owner exists yet). A non-owning
+        // aliasing pointer is enough for the resolver, which only mutates *this for the duration of the call.
+        std::shared_ptr<Vault> self(std::shared_ptr<Vault>{}, this);
         PermResolver::applyPermissionsFromWebCli(self, toPermissions(), pMap);
     }
 

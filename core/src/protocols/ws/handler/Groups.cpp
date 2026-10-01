@@ -40,6 +40,8 @@ json Groups::remove(const json& payload, const std::shared_ptr<Session>& session
         throw std::runtime_error("Permission denied: You do not have permission to delete groups");
 
     const auto groupId = payload.at("id").get<unsigned int>();
+    if (!db::query::identities::Group::getGroup(groupId))
+        throw std::runtime_error("Group not found: " + std::to_string(groupId));
     db::query::identities::Group::deleteGroup(groupId);
 
     return {{"id", groupId}};

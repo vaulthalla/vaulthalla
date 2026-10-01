@@ -75,7 +75,7 @@ Packaging changes can affect:
 - `/mnt/vaulthalla`
 - local PostgreSQL bootstrap and teardown behavior
 - nginx site installation and reload behavior
-- `vaulthalla.service`, `vaulthalla-cli.service`, `vaulthalla-cli.socket`, `vaulthalla-web.service`, and `vaulthalla-swtpm.service`
+- `vaulthalla.service` (which owns `/run/vaulthalla/cli.sock`), `vaulthalla-web.service`, and `vaulthalla-swtpm.service`, plus retiring the legacy `vaulthalla-cli.socket`/`vaulthalla-cli.service` on upgrade
 - hardware TPM versus `swtpm` fallback selection
 
 That is why package lifecycle work is "coordinate first" even when the code change looks small.

@@ -5,6 +5,9 @@
 #include "auth/model/TokenPair.hpp"
 #include "log/Registry.hpp"
 #include "protocols/ws/Router.hpp"
+#include "protocols/ws/DefaultPasswordGate.hpp"
+#include "protocols/ws/CookiePolicy.hpp"
+#include "crypto/util/hash.hpp"
 #include "protocols/ws/handler/fs/Upload.hpp"
 #include "runtime/Deps.hpp"
 #include "identities/User.hpp"
@@ -65,6 +68,21 @@ std::string Session::getUserAgent() const {
     if (const auto it = handshakeRequest_.find(beast_http::field::user_agent);
         it != handshakeRequest_.end()) return std::string(it->value());
     return  "unknown";
+}
+
+bool Session::userHasDefaultPassword() {
+    const auto u = user;
+    if (!u || u->password_hash.empty()) return false;
+
+    std::scoped_lock lock(defaultPasswordMutex_);
+    if (!defaultPasswordCached_ || defaultPasswordUserId_ != u->id || defaultPasswordHash_ != u->password_hash) {
+        defaultPasswordUserId_ = u->id;
+        defaultPasswordHash_ = u->password_hash;
+        defaultPasswordIsDefault_ = crypto::hash::verifyPassword(
+            std::string(default_password::kSeededAdminPassword), u->password_hash);
+        defaultPasswordCached_ = true;
+    }
+    return defaultPasswordIsDefault_;
 }
 
 void Session::setAuthenticatedUser(const std::shared_ptr<User>& u) {
@@ -147,8 +165,21 @@ void Session::accept(tcp::socket&& socket) {
 
 void Session::onHeadersRead(const std::shared_ptr<RequestType>& req, const beast::error_code& ec, std::size_t) {
     if (ec) return logFail("Error reading HTTP headers", ec);
+    if (closing_.load(std::memory_order_acquire)) return;
 
-    hydrateFromRequest(*req);
+    // Hydration touches the DB and the secrets manager; a failure there must reject this one connection,
+    // never escape into the shared io_context (which used to terminate the daemon, taking FUSE with it).
+    try {
+        hydrateFromRequest(*req);
+    } catch (const std::exception& e) {
+        log::Registry::ws()->error("[ws::Session] Rejecting handshake from IP {}: session hydration failed: {}",
+                                   getIPAddress(), e.what());
+        beast::error_code ignored;
+        ws_->next_layer().shutdown(tcp::socket::shutdown_both, ignored);
+        ws_->next_layer().close(ignored);
+        return;
+    }
+    if (closing_.load(std::memory_order_acquire)) return;  // closed during hydration (e.g. by the sweeper)
 
     auto self = shared_from_this();
     ws_->async_accept(
@@ -167,6 +198,10 @@ void Session::hydrateFromRequest(const RequestType& req) {
     ipAddress = getIPAddress();
     userAgent = getUserAgent();
     shareHandshake_ = isShareHandshakeTarget(std::string_view{req.target().data(), req.target().size()});
+    externallyHttps_ = cookie_policy::isExternallyHttps(
+        ipAddress,
+        std::string_view{req["X-Forwarded-Proto"].data(), req["X-Forwarded-Proto"].size()},
+        std::string_view{req["Forwarded"].data(), req["Forwarded"].size()});
 
     log::Registry::ws()->debug(
         "[ws::Session] Attempting to hydrate {} session from request. IP: {}, User-Agent: {}",
@@ -193,13 +228,12 @@ void Session::hydrateFromRequest(const RequestType& req) {
 
         // this should never happen, but if it does, we nuke the session
         if (!tokens || !tokens->refreshToken) {
-            log::Registry::ws()->critical("[ws::Session] Fatal invariant violation: refresh token missing after hydration/bootstrap; exiting with 69");
-            std::exit(69);
+            // Reject this connection; a client request must never be able to exit the daemon.
+            throw std::runtime_error("invariant violation: refresh token missing after hydration/bootstrap");
         }
 
         if (!tokens->refreshToken->isValid()) {
-            log::Registry::ws()->critical("[ws::Session] Fatal invariant violation: refresh token invalid after hydration/bootstrap; spiritually exiting with 420, operationally exiting with 70");
-            std::exit(70);
+            throw std::runtime_error("invariant violation: refresh token invalid after hydration/bootstrap");
         }
 
         installHandshakeDecorator();
@@ -216,11 +250,13 @@ void Session::installHandshakeDecorator() const {
         return;
     }
 
+    if (!ws_) return;
     const auto t = token->rawToken;
     const auto cookieName = shareHandshake_ ? std::string{"share_refresh"} : std::string{"refresh"};
+    const bool secureCookie = externallyHttps_;
     ws_->set_option(websocket::stream_base::timeout::suggested(beast::role_type::server));
     ws_->set_option(websocket::stream_base::decorator(
-        [t, cookieName](websocket::response_type& res) {
+        [t, cookieName, secureCookie](websocket::response_type& res) {
             res.set(beast_http::field::server, "Vaulthalla");
 
             const bool isDev = config::Registry::get().dev.enabled;
@@ -232,7 +268,7 @@ void Session::installHandshakeDecorator() const {
                 "; SameSite=" + sameSite +
                 "; Max-Age=604800";
 
-            cookie += "; Secure";
+            if (secureCookie) cookie += "; Secure";
 
             // IMPORTANT: use insert to avoid clobbering other Set-Cookie headers
             res.insert(beast_http::field::set_cookie, cookie);
@@ -242,8 +278,16 @@ void Session::installHandshakeDecorator() const {
 
 void Session::onHandshakeAccepted(const beast::error_code& ec) {
     if (ec) return logFail("Handshake error", ec);
+    handshakeDone_ = true;
+    if (closing_.load(std::memory_order_acquire)) {
+        // close() arrived mid-handshake; finish it now that a proper websocket close is possible.
+        closeStarted_ = false;
+        if (!writing_) closeOnStrand();
+        return;
+    }
 
     log::Registry::ws()->debug("[ws::Session] Handshake accepted from IP: {}", getIPAddress());
+    maybeStartWrite();  // flush anything queued while the handshake was in flight
     startReadLoop();
 }
 
@@ -314,33 +358,56 @@ void Session::send(json message) {
 }
 
 void Session::closeOnStrand() {
-    auto ws = ws_;
-    if (!ws) {
+    // The stream lives as long as the Session: pending async ops hold `self`, and resetting ws_ under
+    // them left handlers dereferencing a null stream (vh-storage SIGSEGV in installHandshakeDecorator
+    // under connection churn) and reads running on a destroyed socket.
+    if (!ws_ || closeStarted_) {
         buffer_.consume(buffer_.size());
         return;
     }
+    if (writing_) {  // never overlap the close with an in-flight write; onWrite comes back here
+        closeAfterWrite_ = true;
+        return;
+    }
+    closeStarted_ = true;
 
-    boost::system::error_code ec;
-    if (ws->is_open())
-        ws->close(websocket::close_code::normal, ec);
+    if (!handshakeDone_ || !ws_->is_open()) {
+        // No websocket session yet (still reading the upgrade request or mid-handshake): closing the TCP
+        // socket cancels the pending op, whose handler sees closing_ and stops.
+        beast::error_code ignored;
+        ws_->next_layer().shutdown(tcp::socket::shutdown_both, ignored);
+        ws_->next_layer().close(ignored);
+        buffer_.consume(buffer_.size());
+        log::Registry::ws()->debug("[ws::Session] Closed pre-handshake connection for IP: {}", ipAddress);
+        return;
+    }
 
-    if (ec)
-        log::Registry::ws()->debug("[ws::Session] ws close error: {}", ec.message());
-
-    ws_.reset();
-    buffer_.consume(buffer_.size());
-
-    log::Registry::ws()->debug("[ws::Session] Closed session for IP: {}", ipAddress);
+    // Never the synchronous close(): it writes the close frame and then *reads* until the peer answers,
+    // racing this session's always-pending async_read and corrupting Beast's op locks (soft_mutex abort,
+    // "server must not mask frames" in browsers). async_close is the one close op allowed alongside a
+    // pending read; callers only get here once no write is in flight (closeAfterWrite_).
+    ws_->async_close(
+        websocket::close_code::normal,
+        asio::bind_executor(
+            strand_,
+            [self = shared_from_this()](const beast::error_code& ec) {
+                if (ec) log::Registry::ws()->debug("[ws::Session] ws close error: {}", ec.message());
+                self->buffer_.consume(self->buffer_.size());
+                log::Registry::ws()->debug("[ws::Session] Closed session for IP: {}", self->ipAddress);
+            }));
 }
 
 void Session::maybeStartWrite() {
-    if (writing_ || writeQueue_.empty()) return;
+    // Writes wait for the websocket handshake: async_accept is itself writing the 101 response, and Beast
+    // allows a single write op per stream. Sessions are reachable (sweeper, broadcasts) before they finish
+    // the handshake; starting an async_write then tripped Beast's soft_mutex assertion (vh-storage churn).
+    if (writing_ || writeQueue_.empty() || !handshakeDone_ || closeStarted_) return;
     writing_ = true;
     doWrite();
 }
 
 void Session::doWrite() {
-    if (!ws_) {
+    if (!ws_ || closeStarted_) {
         writing_ = false;
         writeQueue_.clear();
         return;

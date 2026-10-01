@@ -1,5 +1,9 @@
 name: Release Pipeline
 
+# Cut a release with `python3 -m tools.release cut-release {patch|minor|major|X.Y.Z} --push`, or create a
+# release in the GitHub UI (which creates the tag). Either way the `v*` tag push triggers this workflow.
+# See .claude/context/release-pipeline.md for the job graph, gates, and re-run rules.
+
 on:
   workflow_dispatch:
     inputs:
@@ -23,22 +27,26 @@ on:
     tags:
       - "v*"
 
+# Least privilege by default; jobs that write (GitHub Release assets, OIDC docs push) widen it locally.
 permissions:
-  contents: write
-  id-token: write
+  contents: read
+  actions: read
 
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+# Non-secret configuration only. Secrets are scoped to the steps that use them.
 env:
+  RELEASE_REF: ${{ github.event.inputs.ref || github.ref }}
   RELEASE_AI_MODE: ${{ vars.RELEASE_AI_MODE || 'auto' }}
-  RELEASE_AI_PROFILE_OPENAI: ${{ vars.RELEASE_AI_PROFILE_OPENAI || 'openai-balanced' }}
+  # Hosted AI profile from ai.yml (e.g. ds-flash). Must be a *repository* variable: release-artifacts has no
+  # environment, so Production-environment variables/secrets are not visible to it.
+  VH_AI_RELEASE_PROFILE: ${{ vars.VH_AI_RELEASE_PROFILE || vars.RELEASE_AI_PROFILE_OPENAI || 'openai-balanced' }}
+  RELEASE_AI_PROVIDER_TIMEOUT_SECONDS: ${{ vars.RELEASE_AI_PROVIDER_TIMEOUT_SECONDS || '180' }}
   RELEASE_LOCAL_LLM_ENABLED: ${{ vars.RELEASE_LOCAL_LLM_ENABLED || 'false' }}
   RELEASE_LOCAL_LLM_PROFILE: ${{ vars.RELEASE_LOCAL_LLM_PROFILE || '' }}
   RELEASE_LOCAL_LLM_BASE_URL: ${{ vars.RELEASE_LOCAL_LLM_BASE_URL || '' }}
-  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || '' }}
-  RELEASE_LOCAL_LLM_API_KEY: ${{ secrets.RELEASE_LOCAL_LLM_API_KEY || '' }}
   RELEASE_DEBIAN_DISTRIBUTION: ${{ vars.RELEASE_DEBIAN_DISTRIBUTION || '' }}
   RELEASE_DEBIAN_URGENCY: ${{ vars.RELEASE_DEBIAN_URGENCY || '' }}
   RELEASE_PUBLISH_MODE: ${{ vars.RELEASE_PUBLISH_MODE || 'disabled' }}
@@ -50,9 +58,6 @@ env:
   RELEASE_EXPECTED_DEBIAN_PACKAGES: ${{ vars.RELEASE_EXPECTED_DEBIAN_PACKAGES || '' }}
   DOCS_SYNC_ENDPOINT: ${{ vars.DOCS_SYNC_ENDPOINT || 'https://vaulthalla.io/api/documentation/sync' }}
   NEXUS_REPO_URL: ${{ vars.NEXUS_REPO_URL || '' }}
-  NEXUS_USER: ${{ secrets.NEXUS_USER || '' }}
-  NEXUS_PASS: ${{ secrets.NEXUS_PASS || '' }}
-  GITHUB_TOKEN: ${{ github.token }}
 
 jobs:
   validate-release-state:
@@ -62,6 +67,7 @@ jobs:
       - Linux
       - X64
       - ubuntu-latest-lts
+    timeout-minutes: 20
     outputs:
       version: ${{ steps.state.outputs.version }}
       release_tag: ${{ steps.state.outputs.release_tag }}
@@ -94,16 +100,16 @@ jobs:
           if command -v sudo >/dev/null 2>&1; then
             APT_PREFIX="sudo"
           fi
-          ${APT_PREFIX} apt-get update
-          ${APT_PREFIX} apt-get install -y ca-certificates curl
+          ${APT_PREFIX} apt-get -o DPkg::Lock::Timeout=900 update
+          ${APT_PREFIX} apt-get -o DPkg::Lock::Timeout=900 install -y ca-certificates curl
           ${APT_PREFIX} install -d -m 0755 /etc/apt/keyrings
           ${APT_PREFIX} curl -fsSL https://apt.valkyrianlabs.com/pubkey.gpg \
             -o /etc/apt/keyrings/valkyrianlabs.gpg
           ${APT_PREFIX} chmod 0644 /etc/apt/keyrings/valkyrianlabs.gpg
           echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/valkyrianlabs.gpg] https://apt.valkyrianlabs.com stable main" \
             | ${APT_PREFIX} tee /etc/apt/sources.list.d/valkyrianlabs.list > /dev/null
-          ${APT_PREFIX} apt-get update
-          ${APT_PREFIX} apt-get install -y pmdocs
+          ${APT_PREFIX} apt-get -o DPkg::Lock::Timeout=900 update
+          ${APT_PREFIX} apt-get -o DPkg::Lock::Timeout=900 install -y pmdocs
           pmdocs --version
 
       - name: Validate versions and publication policy
@@ -181,12 +187,14 @@ jobs:
           echo "VERSION=${version}"
           echo "release_tag=${release_tag:-<none>}"
           echo "publish_required=${publish_required}"
+          echo "release_ref=${RELEASE_REF}"
 
       - name: Resolve successful release notes base
         id: release_base
         shell: bash
         env:
           INPUT_RELEASE_NOTES_BASE: ${{ github.event.inputs.release_notes_base || '' }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir -p .release-base
@@ -217,6 +225,7 @@ jobs:
       - X64
       - ubuntu-latest-lts
     needs: validate-release-state
+    timeout-minutes: 90
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -237,11 +246,14 @@ jobs:
       - X64
       - ubuntu-latest-lts
     needs: validate-release-state
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.ref || github.ref }}
+          # Full history + tags: tag-aware contract tests (e.g. migration checksums per v* tag) must run.
+          fetch-depth: 0
 
       - name: Setup Python 3.12
         uses: actions/setup-python@v5
@@ -255,8 +267,19 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
 
-      - name: Run release tooling tests
-        run: python -m unittest discover -s tools/release/tests -p 'test_*.py'
+      - name: Run release tooling + lifecycle tests (with minimum test counts)
+        run: python -m tools.release run-tests
+
+      - name: Install shellcheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            sudo apt-get -o DPkg::Lock::Timeout=900 install -y shellcheck || { sudo apt-get -o DPkg::Lock::Timeout=900 update && sudo apt-get -o DPkg::Lock::Timeout=900 install -y shellcheck; }
+          fi
+
+      - name: shellcheck (maintainer scripts blocking, bin/ advisory)
+        run: bash .github/scripts/shellcheck.sh
 
   web-verify:
     name: Web build and checks
@@ -266,6 +289,7 @@ jobs:
       - X64
       - ubuntu-latest-lts
     needs: validate-release-state
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -289,6 +313,7 @@ jobs:
       - X64
       - ubuntu-latest-lts
     needs: validate-release-state
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -307,16 +332,16 @@ jobs:
           if command -v sudo >/dev/null 2>&1; then
             APT_PREFIX="sudo"
           fi
-          ${APT_PREFIX} apt-get update
-          ${APT_PREFIX} apt-get install -y ca-certificates curl
+          ${APT_PREFIX} apt-get -o DPkg::Lock::Timeout=900 update
+          ${APT_PREFIX} apt-get -o DPkg::Lock::Timeout=900 install -y ca-certificates curl
           ${APT_PREFIX} install -d -m 0755 /etc/apt/keyrings
           ${APT_PREFIX} curl -fsSL https://apt.valkyrianlabs.com/pubkey.gpg \
             -o /etc/apt/keyrings/valkyrianlabs.gpg
           ${APT_PREFIX} chmod 0644 /etc/apt/keyrings/valkyrianlabs.gpg
           echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/valkyrianlabs.gpg] https://apt.valkyrianlabs.com stable main" \
             | ${APT_PREFIX} tee /etc/apt/sources.list.d/valkyrianlabs.list > /dev/null
-          ${APT_PREFIX} apt-get update
-          ${APT_PREFIX} apt-get install -y pmdocs
+          ${APT_PREFIX} apt-get -o DPkg::Lock::Timeout=900 update
+          ${APT_PREFIX} apt-get -o DPkg::Lock::Timeout=900 install -y pmdocs
           pmdocs --version
 
       - name: Validate documentation package
@@ -335,6 +360,7 @@ jobs:
       - release-tooling-verify
       - web-verify
       - docs-validate
+    timeout-minutes: 90
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -370,6 +396,14 @@ jobs:
       - name: Build release artifacts (Debian + web deployable)
         id: package
         uses: ./.github/actions/package
+        env:
+          # Only this step talks to AI providers / the GitHub API. NOTE: a secret defined only on the
+          # Production environment is NOT visible here (this job has no environment); OPENAI_API_KEY must
+          # be a repository (or build-environment) secret for the AI changelog path to run.
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || '' }}
+          VH_AI_RELEASE_DEEPSEEK_API_KEY: ${{ secrets.VH_AI_RELEASE_DEEPSEEK_API_KEY || '' }}
+          RELEASE_LOCAL_LLM_API_KEY: ${{ secrets.RELEASE_LOCAL_LLM_API_KEY || '' }}
+          GITHUB_TOKEN: ${{ github.token }}
         with:
           output_dir: release
           python_executable: ${{ env.RELEASE_PYTHON }}
@@ -377,20 +411,34 @@ jobs:
 
       - name: Verify release artifact directory before upload
         shell: bash
+        env:
+          ARTIFACT_DIR: ${{ steps.package.outputs.artifact_dir }}
         run: |
           set -euo pipefail
-          artifact_dir="${{ steps.package.outputs.artifact_dir }}"
-          if [ -z "$artifact_dir" ]; then
+          if [ -z "$ARTIFACT_DIR" ]; then
             echo "::error::Package action did not return artifact_dir output."
             exit 1
           fi
-          if [ ! -d "$artifact_dir" ]; then
-            echo "::error::artifact_dir does not exist: $artifact_dir"
+          if [ ! -d "$ARTIFACT_DIR" ]; then
+            echo "::error::artifact_dir does not exist: $ARTIFACT_DIR"
             exit 1
           fi
-          echo "Artifact directory: $artifact_dir"
+          if [ ! -f "$ARTIFACT_DIR/SHA256SUMS" ]; then
+            echo "::error::SHA256SUMS missing from $ARTIFACT_DIR."
+            exit 1
+          fi
+          echo "Artifact directory: $ARTIFACT_DIR"
           echo "Staged files:"
-          find "$artifact_dir" -maxdepth 2 -type f | sort
+          find "$ARTIFACT_DIR" -maxdepth 2 -type f | sort
+          echo "SHA256SUMS:"
+          cat "$ARTIFACT_DIR/SHA256SUMS"
+          {
+            echo "### Release artifacts"
+            echo ""
+            echo '```'
+            cat "$ARTIFACT_DIR/SHA256SUMS"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload combined release artifact
         uses: actions/upload-artifact@v4
@@ -398,6 +446,82 @@ jobs:
           name: vaulthalla-release-${{ needs.validate-release-state.outputs.version }}
           path: ${{ steps.package.outputs.artifact_dir }}
           if-no-files-found: error
+
+  lab-smoke:
+    # Optional pre-publish gate: installs/upgrades the exact candidate .deb on a real lab host.
+    # Default OFF. Enable with the REPOSITORY variable VH_LAB_SMOKE_ENABLED=true only once a runner with
+    # label `vh-lab` (and ssh access to VH_LAB_HOST) exists; otherwise this job queues until it times out.
+    name: Lab smoke (pre-publish)
+    runs-on:
+      - self-hosted
+      - vh-lab
+    needs:
+      - validate-release-state
+      - release-artifacts
+    if: vars.VH_LAB_SMOKE_ENABLED == 'true'
+    environment: Lab
+    timeout-minutes: 60
+    concurrency:
+      group: vaulthalla-lab-host
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install release-tooling dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Download combined release artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: vaulthalla-release-${{ needs.validate-release-state.outputs.version }}
+          path: release
+
+      - name: Run lab smoke against the candidate package
+        shell: bash
+        env:
+          VH_LAB_HOST: ${{ vars.VH_LAB_HOST || 'vh-storage' }}
+          VH_LAB_FROM_VERSION: ${{ vars.VH_LAB_FROM_VERSION || '' }}
+          VH_LAB_SMOKE_PG_RESTART: ${{ vars.VH_LAB_SMOKE_PG_RESTART || 'false' }}
+          RELEASE_NOTES_BASE: ${{ needs.validate-release-state.outputs.release_notes_base }}
+        run: |
+          set -euo pipefail
+          mapfile -t debs < <(find release -maxdepth 1 -type f -name '*.deb' | LC_ALL=C sort)
+          if [ "${#debs[@]}" -ne 1 ]; then
+            echo "::error::lab-smoke expects exactly one .deb, found ${#debs[@]}."
+            exit 1
+          fi
+          args=(--host "$VH_LAB_HOST" --deb "${debs[0]}" --evidence lab/lab-smoke.json)
+          from_version="$VH_LAB_FROM_VERSION"
+          if [ -z "$from_version" ] && [ -n "$RELEASE_NOTES_BASE" ]; then
+            from_version="${RELEASE_NOTES_BASE#v}-1"
+          fi
+          if [ -n "$from_version" ] && [ "$from_version" != "none" ]; then
+            args+=(--from-version "$from_version")
+          fi
+          if [ "$VH_LAB_SMOKE_PG_RESTART" = "true" ]; then
+            args+=(--pg-restart)
+          fi
+          python -m tools.release lab-smoke "${args[@]}"
+
+      - name: Upload lab smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vaulthalla-lab-smoke-${{ needs.validate-release-state.outputs.version }}
+          path: lab/lab-smoke.json
+          if-no-files-found: warn
 
   publish-debian:
     name: Publish Debian packages
@@ -409,7 +533,20 @@ jobs:
     needs:
       - validate-release-state
       - release-artifacts
+      - lab-smoke
+    # lab-smoke is skipped when disabled; it must never be failed/cancelled. Explicit result checks
+    # (not the implicit success()) keep a skipped optional gate from skipping publication.
+    if: >-
+      !cancelled() &&
+      needs.validate-release-state.result == 'success' &&
+      needs.release-artifacts.result == 'success' &&
+      (needs.lab-smoke.result == 'success' || needs.lab-smoke.result == 'skipped')
     environment: Production
+    timeout-minutes: 30
+    concurrency:
+      # One APT publication at a time across all tags; queued, never cancelled.
+      group: vaulthalla-apt-publish
+      cancel-in-progress: false
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -435,41 +572,33 @@ jobs:
           name: vaulthalla-release-${{ needs.validate-release-state.outputs.version }}
           path: release
 
-      - name: Publish or dry-run Debian packages
+      - name: Download lab smoke evidence
+        if: needs.lab-smoke.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: vaulthalla-lab-smoke-${{ needs.validate-release-state.outputs.version }}
+          path: lab
+
+      - name: Publish (idempotent, sha256-verified) or dry-run Debian packages
         shell: bash
+        env:
+          NEXUS_USER: ${{ secrets.NEXUS_USER || '' }}
+          NEXUS_PASS: ${{ secrets.NEXUS_PASS || '' }}
+          PUBLISH_REQUIRED: ${{ needs.validate-release-state.outputs.publish_required }}
+          LAB_SMOKE_RESULT: ${{ needs.lab-smoke.result }}
         run: |
           set -euo pipefail
-          if [ "${{ needs.validate-release-state.outputs.publish_required }}" = "true" ]; then
-            python -m tools.release publish-deb --output-dir release --require-enabled
+          if [ "$PUBLISH_REQUIRED" = "true" ]; then
+            # Absent -> upload; same sha256 already live -> skip; different sha256 -> fail.
+            # Then polls the APT Packages index until the expected sha256 is listed.
+            args=(--output-dir release --require-enabled)
+            if [ "$LAB_SMOKE_RESULT" = "success" ]; then
+              args+=(--lab-evidence lab/lab-smoke.json)
+            fi
+            python -m tools.release publish-deb "${args[@]}"
           else
             python -m tools.release publish-deb --output-dir release --mode disabled --dry-run
           fi
-
-      - name: Verify published APT package metadata
-        if: needs.validate-release-state.outputs.publish_required == 'true'
-        shell: bash
-        env:
-          RELEASE_VERSION: ${{ needs.validate-release-state.outputs.version }}
-          RELEASE_TAG: ${{ needs.validate-release-state.outputs.release_tag }}
-        run: |
-          set -euo pipefail
-          next_patch="$(python -c 'import os; major, minor, patch = (int(part) for part in os.environ["RELEASE_VERSION"].split(".")); print(f"{major}.{minor}.{patch + 1}")')"
-          for attempt in 1 2 3 4 5; do
-            if python -m tools.release resolve-release-notes-base \
-              --version "$next_patch" \
-              --output release/current_publication.resolution.json; then
-              resolved="$(python -c 'import json; from pathlib import Path; print(json.loads(Path("release/current_publication.resolution.json").read_text(encoding="utf-8"))["last_successful_release_tag"])')"
-              if [ "$resolved" = "$RELEASE_TAG" ]; then
-                echo "[publish] verified APT metadata for ${RELEASE_TAG}"
-                exit 0
-              fi
-              echo "[publish] APT metadata resolved ${resolved}, expected ${RELEASE_TAG}"
-            fi
-            echo "[publish] APT metadata verification attempt ${attempt}/5 did not confirm ${RELEASE_TAG}; waiting."
-            sleep 15
-          done
-          echo "::error::Published APT metadata did not confirm ${RELEASE_TAG}."
-          exit 1
 
   github-release:
     name: Update GitHub Release
@@ -482,9 +611,14 @@ jobs:
       - validate-release-state
       - release-artifacts
       - publish-debian
-    if: >
+    if: >-
+      !cancelled() &&
+      needs.publish-debian.result == 'success' &&
       needs.validate-release-state.outputs.publish_required == 'true' &&
       needs.validate-release-state.outputs.release_tag != ''
+    permissions:
+      contents: write
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -510,6 +644,10 @@ jobs:
           mapfile -t release_assets < <(find release -type f | LC_ALL=C sort -u)
           if [ "${#release_assets[@]}" -eq 0 ]; then
             echo "::error::No files found for GitHub release asset attachment under release."
+            exit 1
+          fi
+          if ! printf '%s\n' "${release_assets[@]}" | grep -qx 'release/SHA256SUMS'; then
+            echo "::error::SHA256SUMS is missing from the release artifact."
             exit 1
           fi
           echo "[gh-release] deduped asset count: ${#release_assets[@]}"
@@ -592,6 +730,9 @@ jobs:
           echo "[release-path] should_sync=${{ steps.release_notes_sync.outputs.should_sync }}"
           echo "[release-path] reason=${{ steps.release_notes_sync.outputs.reason }}"
 
+      # Creates the release if the tag was pushed by `cut-release`, or updates the release that the GitHub
+      # UI created (same tag): assets are attached/overwritten, the existing title/body are kept, and the
+      # generated notes are merged into the body below.
       - name: Attach artifacts to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -686,13 +827,15 @@ jobs:
               repo: context.repo.repo,
               release_id: release.data.id,
               tag_name: tag,
-              name: tag,
+              name: release.data.name || tag,
               body,
             });
 
             core.info(`Merged generated notes into GitHub Release ${release.data.id} for tag ${tag} from ${notesPath}.`);
 
   docs-publish:
+    # Independent of the release ledger: a docs failure never marks a live APT release as failed.
+    # Retry with "Re-run failed jobs" (it reuses this run's artifacts and gates).
     name: Publish docs
     runs-on:
       - self-hosted
@@ -703,13 +846,16 @@ jobs:
       - validate-release-state
       - docs-validate
       - publish-debian
-      - github-release
-    if: >
+    if: >-
+      !cancelled() &&
       needs.validate-release-state.outputs.publish_required == 'true' &&
       needs.docs-validate.result == 'success' &&
-      needs.publish-debian.result == 'success' &&
-      needs.github-release.result == 'success'
+      needs.publish-debian.result == 'success'
     environment: Production
+    permissions:
+      contents: read
+      id-token: write
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -731,11 +877,19 @@ jobs:
         run: |
           set -euo pipefail
           pmdocs validate --source docs
-          pmdocs push \
-            --endpoint "${DOCS_SYNC_ENDPOINT}" \
-            --source docs \
-            --github-oidc \
-            --publish
+          for attempt in 1 2 3; do
+            if timeout 300 pmdocs push \
+              --endpoint "${DOCS_SYNC_ENDPOINT}" \
+              --source docs \
+              --github-oidc \
+              --publish; then
+              exit 0
+            fi
+            echo "[docs] pmdocs push attempt ${attempt}/3 failed; retrying in $((attempt * 20))s"
+            sleep $((attempt * 20))
+          done
+          echo "::error::pmdocs push failed after 3 attempts. The APT release is unaffected; re-run this job."
+          exit 1
 
   record-release-success:
     name: Record release success
@@ -748,13 +902,15 @@ jobs:
       - validate-release-state
       - publish-debian
       - github-release
-      - docs-publish
-    if: >
+    if: >-
+      !cancelled() &&
       needs.validate-release-state.outputs.publish_required == 'true' &&
       needs.publish-debian.result == 'success' &&
-      needs.github-release.result == 'success' &&
-      needs.docs-publish.result == 'success'
+      needs.github-release.result == 'success'
     environment: Production
+    permissions:
+      contents: write
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4

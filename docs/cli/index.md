@@ -47,6 +47,24 @@ vh user
 vh role
 ```
 
+### Exit Codes
+
+`vh` fails fast instead of hanging when the daemon is unavailable, and its exit status is safe to use in scripts:
+
+| Exit | Meaning |
+|---|---|
+| `0` | Success (`vh status`: healthy) |
+| `1` | The command failed, for example an unknown vault, user or group (`vh status`: degraded) |
+| `2` | Invalid usage (`vh status`: critical, for example the database is unreachable) |
+| `69` | The daemon is not running: nothing listens on `/run/vaulthalla/cli.sock` |
+| `75` | The daemon did not answer in time (default 10s, `VAULTHALLA_CLI_TIMEOUT` overrides) |
+| `76` | The daemon sent an unreadable reply |
+| `77` | No permission to open the control socket: run with `sudo` or join the `vaulthalla` group |
+
+```bash
+vh status >/dev/null || echo "vaulthalla is not healthy"
+```
+
 ## Lifecycle Commands
 
 Lifecycle commands modify host services and require `sudo`:

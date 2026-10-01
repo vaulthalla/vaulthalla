@@ -1,5 +1,5 @@
 project('vaulthalla', 'cpp',
-        version: '1.6.6',
+        version: '1.7.0',
         license: 'AGPL-3.0-or-later',
         meson_version: '>=1.3.0',
         default_options: [
@@ -30,16 +30,23 @@ if get_option('install_data')
     install_emptydir(state_dir)
     install_emptydir(log_dir)
 
-    install_config_file = 'deploy/config/config.yaml'
-    if fs.exists(meson.project_source_root() / 'config.yaml')
-        install_config_file = 'config.yaml'
-    endif
-
+    # Packaged defaults live under /usr/share; postinst copies config.yaml into
+    # /etc/vaulthalla only when it is missing (it is runtime-owned, not a conffile).
     install_data(
-        install_config_file,
+        'deploy/config/config.yaml',
         'deploy/config/config_template.yaml.in',
-        install_dir: sysconf_dir,
+        install_dir: data_dir / 'config',
     )
+
+    # Source installs only: opt in to installing the gitignored repo-root config.yaml
+    # into /etc/vaulthalla. Package builds never set this, so a private local config
+    # can never leak into a .deb.
+    if get_option('install_local_config_override') and fs.exists(meson.project_source_root() / 'config.yaml')
+        install_data(
+            'config.yaml',
+            install_dir: sysconf_dir,
+        )
+    endif
 
     install_subdir(
         'deploy/psql',
@@ -64,7 +71,6 @@ if get_option('install_data')
 
     foreach unit_template : [
         'vaulthalla.service',
-        'vaulthalla-cli.service',
         'vaulthalla-web.service',
         'vaulthalla-swtpm.service',
     ]
@@ -77,11 +83,6 @@ if get_option('install_data')
             install_dir: get_option('systemd_system_unit_dir'),
         )
     endforeach
-
-    install_data(
-        'deploy/systemd/vaulthalla-cli.socket',
-        install_dir: get_option('systemd_system_unit_dir'),
-    )
 
     install_data(
         'LICENSE',

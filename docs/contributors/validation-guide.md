@@ -19,18 +19,23 @@ Run the narrowest checks that actually prove your change. Then be honest about w
 Useful repo helpers:
 
 ```bash
-bash .codex/scripts/doctor.sh
-bash .codex/scripts/changed.sh all
-bash .codex/scripts/verify.sh web
-bash .codex/scripts/verify.sh release
-bash .codex/scripts/verify.sh all
+bash tools/dev/verify.sh doctor      # toolchain and version-pin sanity
+bash tools/dev/verify.sh             # infer checks from your uncommitted changes
+bash tools/dev/verify.sh web         # typecheck + lint
+bash tools/dev/verify.sh release     # version drift + release-tooling tests
+bash tools/dev/verify.sh packaging   # Debian packaging contract tests
+bash tools/dev/verify.sh all         # everything except the destructive integration harness
 ```
 
-Those scripts are helpful shortcuts, not a substitute for subsystem-specific judgment.
+These profiles are helpful shortcuts, not a substitute for subsystem-specific judgment.
 
 ## Docs-Only Changes
 
-There is no dedicated markdown or docs validation pipeline documented in this repo today.
+Docs are validated in the release pipeline with `pmdocs validate --source docs`. Locally, run:
+
+```bash
+bash tools/dev/verify.sh docs   # Payload Markdown checks on changed pages, then pmdocs validate when installed
+```
 
 For docs-only PRs, do this at minimum:
 
@@ -41,7 +46,7 @@ For docs-only PRs, do this at minimum:
 
 If the change is truly docs-only, code tests are usually not required.
 
-A lightweight docs validation check for relative links and referenced paths would be useful future work, but it is not required for docs-only PRs today.
+The docs checks validate structure and directives. They do not prove that commands, paths, or described behavior are correct, so that review is still on you.
 
 ## Web And Frontend Changes
 
@@ -69,7 +74,7 @@ Use that for manual checks when you changed UI behavior.
 You can also run the repo helper from the root:
 
 ```bash
-bash .codex/scripts/verify.sh web
+bash tools/dev/verify.sh web
 ```
 
 ## S3 Gateway Browser And Smoke Validation
@@ -249,7 +254,7 @@ python3 -m unittest discover -s tools/release/tests -p 'test_*.py'
 Useful helper:
 
 ```bash
-bash .codex/scripts/verify.sh release
+bash tools/dev/verify.sh release
 ```
 
 If the change affects packaging outputs, add:

@@ -22,7 +22,6 @@ Use this guide when the package install, first-run setup, services, database boo
 vh status
 systemctl status vaulthalla.service
 systemctl status vaulthalla-web.service
-systemctl status vaulthalla-cli.socket
 systemctl status vaulthalla-swtpm.service
 ```
 
@@ -33,10 +32,10 @@ journalctl -fu vaulthalla.service
 journalctl -fu vaulthalla-web.service
 ```
 
-If you are working from a repository clone, the local doctor script can provide extra context:
+If you are working from a repository clone, the installed-system doctor script inspects Vaulthalla paths, services, and ownership:
 
 ```bash
-bash .codex/scripts/doctor.sh
+bash bin/doctor.sh
 ```
 
 ## APT Repository Or Package Fails
@@ -65,9 +64,10 @@ Check the socket:
 
 ```bash
 ls -l /run/vaulthalla/cli.sock
-systemctl status vaulthalla-cli.socket
-systemctl status vaulthalla-cli.service
+systemctl status vaulthalla.service
 ```
+
+`vaulthalla.service` owns `/run/vaulthalla/cli.sock` and re-creates it within about a second if it disappears. Releases up to 1.6.6 also shipped `vaulthalla-cli.socket` and `vaulthalla-cli.service`. Upgrades stop and remove them, because the socket unit could hold the socket path and make `vh` hang. If either unit still shows as active, run `sudo systemctl disable --now vaulthalla-cli.socket vaulthalla-cli.service`, then `sudo systemctl restart vaulthalla`.
 
 Check group membership:
 
@@ -121,13 +121,24 @@ Check that `/run/vaulthalla/db_password` exists when the service expects a runti
 sudo ls -l /run/vaulthalla/db_password
 ```
 
-For a preserved database reinstall, reseed the runtime password file:
+For a preserved database after reinstall (the install stopped with an "existing Vaulthalla PostgreSQL database" error, or `vaulthalla.service` cannot authenticate), choose adopt or overwrite:
+
+```bash
+sudo env VH_EXISTING_DB_ACTION=adopt dpkg --configure -a      # package still half-configured
+sudo vh setup db --adopt                                       # package already configured
+sudo vh setup db --overwrite                                   # discard the old database
+```
+
+If you exported the original role password, you can instead reseed it manually:
 
 ```bash
 sudo install -d -m 0755 /run/vaulthalla
 sudo install -m 0600 -o vaulthalla -g vaulthalla /path/to/db_password /run/vaulthalla/db_password
+sudo systemctl reset-failed vaulthalla
 sudo systemctl restart vaulthalla
 ```
+
+`vaulthalla.service` stops retrying after 10 failed starts within 10 minutes. After fixing the cause, run `sudo systemctl reset-failed vaulthalla`. The `vh setup` commands do this for you.
 
 ## TPM Or swtpm Fails
 

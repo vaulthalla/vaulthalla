@@ -15,12 +15,21 @@ class Connection {
 
     [[nodiscard]] pqxx::connection& get() const;
 
-    void initPrepared() const;
+    // False once libpq has seen the server drop the session (PostgreSQL restart, pg_terminate_backend,
+    // network loss) or a reconnect could not re-prepare statements. DBPool replaces such connections.
+    [[nodiscard]] bool healthy() const noexcept;
+
+    // Opens a fresh session with the stored connection string and re-prepares statements if this
+    // connection had them. Throws, leaving the connection unhealthy, if either step fails.
+    void reconnect();
+
+    void initPrepared();
 
   private:
     std::unique_ptr<crypto::secrets::TPMKeyProvider> tpmKeyProvider_;
     std::string DB_CONNECTION_STR;
     std::unique_ptr<pqxx::connection> conn_;
+    bool prepared_ = false;
 
     // Auth
     void initPreparedUsers() const;

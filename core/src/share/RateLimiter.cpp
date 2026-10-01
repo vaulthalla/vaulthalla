@@ -57,6 +57,28 @@ RateLimitDecision RateLimiter::check(
     };
 }
 
+RateLimitDecision RateLimiter::peek(
+    const std::string& key,
+    const RateLimitPolicy& policy,
+    const Clock::time_point now
+) const {
+    if (key.empty()) throw std::invalid_argument("Rate limit key is required");
+    if (policy.max_attempts == 0) throw std::invalid_argument("Rate limit max attempts is required");
+
+    std::scoped_lock lock(mutex_);
+    const auto it = buckets_.find(key);
+    if (it == buckets_.end() || now - it->second.window_start >= policy.window)
+        return {.allowed = true, .remaining = policy.max_attempts, .retry_after = std::chrono::seconds{0}};
+
+    const auto& bucket = it->second;
+    if (bucket.count >= policy.max_attempts) {
+        const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - bucket.window_start);
+        return {.allowed = false, .remaining = 0,
+                .retry_after = elapsed >= policy.window ? std::chrono::seconds{0} : policy.window - elapsed};
+    }
+    return {.allowed = true, .remaining = policy.max_attempts - bucket.count, .retry_after = std::chrono::seconds{0}};
+}
+
 void RateLimiter::reset() {
     std::scoped_lock lock(mutex_);
     buckets_.clear();

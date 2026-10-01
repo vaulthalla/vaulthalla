@@ -27,10 +27,8 @@ class DebianRulesContractTests(unittest.TestCase):
             "deploy/config/config.yaml",
             "deploy/config/config_template.yaml.in",
             "deploy/systemd/vaulthalla.service.in",
-            "deploy/systemd/vaulthalla-cli.service.in",
             "deploy/systemd/vaulthalla-web.service.in",
             "deploy/systemd/vaulthalla-swtpm.service.in",
-            "deploy/systemd/vaulthalla-cli.socket",
             "deploy/nginx/vaulthalla.conf",
             "deploy/psql/.",
             "deploy/lifecycle/main.py",
@@ -60,7 +58,6 @@ class DebianRulesContractTests(unittest.TestCase):
             "install_subdir(\n        'deploy/psql'",
             "'deploy/nginx/vaulthalla.conf'",
             "'deploy/lifecycle/main.py'",
-            "'deploy/systemd/vaulthalla-cli.socket'",
             "'debian/vaulthalla.udev'",
             "'debian/tmpfiles.d/vaulthalla.conf'",
             "install_symlink(\n        'vaulthalla'",
@@ -68,13 +65,26 @@ class DebianRulesContractTests(unittest.TestCase):
         )
         for fragment in required_fragments:
             self.assertIn(fragment, meson)
+        # The daemon owns /run/vaulthalla/cli.sock; the old socket unit was an orphaned listener (#110).
+        self.assertNotIn("vaulthalla-cli.socket", meson)
+        self.assertNotIn("'vaulthalla-cli.service'", meson)
+        self.assertFalse((repo_root / "deploy" / "systemd" / "vaulthalla-cli.socket").exists())
+        self.assertFalse((repo_root / "deploy" / "systemd" / "vaulthalla-cli.service.in").exists())
 
     def test_debian_install_declares_meson_staged_payloads(self) -> None:
         repo_root = Path(__file__).resolve().parents[4]
         install_manifest = (repo_root / "debian" / "install").read_text(encoding="utf-8")
 
-        self.assertIn("usr/lib/*/libvaulthalla.a usr/lib/libvaulthalla.a", install_manifest)
-        self.assertIn("usr/lib/*/libvhusage.a usr/lib/libvhusage.a", install_manifest)
+        # The runtime package ships no static libraries or headers; dh_missing
+        # (--fail-missing in compat 13) is satisfied through debian/not-installed.
+        self.assertNotIn("libvaulthalla.a", install_manifest)
+        self.assertNotIn("libvhusage.a", install_manifest)
+        self.assertNotIn("usr/include", install_manifest)
+        not_installed = (repo_root / "debian" / "not-installed").read_text(encoding="utf-8")
+        self.assertIn("usr/lib/*/libvaulthalla.a", not_installed)
+        self.assertIn("usr/lib/*/libvhusage.a", not_installed)
+        self.assertIn("usr/include/vaulthalla/paths.h", not_installed)
+        self.assertIn("usr/share/vaulthalla/config", install_manifest)
         self.assertIn("var/lib/vaulthalla", install_manifest)
         self.assertIn("var/log/vaulthalla", install_manifest)
         self.assertIn("usr/lib/udev/rules.d/60-vaulthalla-tpm.rules", install_manifest)

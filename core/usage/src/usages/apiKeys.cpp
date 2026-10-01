@@ -87,19 +87,6 @@ std::shared_ptr<CommandUsage> info(const std::weak_ptr<CommandUsage>& parent) {
     return cmd;
 }
 
-std::shared_ptr<CommandUsage> update(const std::weak_ptr<CommandUsage>& parent) {
-    auto cmd = buildBaseUsage(parent);
-    cmd->aliases = {"update", "set", "modify", "edit"};
-    cmd->description = "Update properties of an existing API key.";
-    cmd->positionals = { apiKeyPos };
-    cmd->optional = { keyNameOpt, Optional(accessKey), Optional(secretKey), Optional(provider), Optional(endpoint), region };
-    cmd->examples = {
-        {"vh api-key update 42 --name newname --region us-east-1", "Update the name and region of the API key with ID 42."},
-        {"vh api-key set 42 --secret newsecretkey", "Update the secret key of the API key with ID 42 (using alias)."}
-    };
-    return cmd;
-}
-
 std::shared_ptr<CommandUsage> base(const std::weak_ptr<CommandUsage>& parent) {
     auto cmd = buildBaseUsage(parent);
     cmd->aliases = {"api-key", "aku", "ak"};
@@ -110,19 +97,17 @@ std::shared_ptr<CommandUsage> base(const std::weak_ptr<CommandUsage>& parent) {
     const auto createCmd = create(cmd->weak_from_this());
     const auto removeCmd = remove(cmd->weak_from_this());
     const auto infoCmd = info(cmd->weak_from_this());
-    const auto updateCmd = update(cmd->weak_from_this());
 
     const auto createMultiple = TestCommandUsage::Multiple(createCmd);
     const auto createSingle = TestCommandUsage::Single(createCmd);
     const auto removeSingle = TestCommandUsage::Single(removeCmd);
     const auto removeMultiple = TestCommandUsage::Multiple(removeCmd);
     const auto infoSingle = TestCommandUsage::Single(infoCmd);
-    const auto updateSingle = TestCommandUsage::Single(updateCmd);
 
     listCmd->test_usage.setup = { createMultiple };
     listCmd->test_usage.teardown = { removeMultiple };
 
-    createCmd->test_usage.lifecycle = { infoSingle, updateSingle };
+    createCmd->test_usage.lifecycle = { infoSingle };
     createCmd->test_usage.teardown = { removeSingle };
 
     removeCmd->test_usage.setup = { createSingle };
@@ -130,10 +115,7 @@ std::shared_ptr<CommandUsage> base(const std::weak_ptr<CommandUsage>& parent) {
     infoCmd->test_usage.setup = { createMultiple };
     infoCmd->test_usage.teardown = { removeMultiple };
 
-    updateCmd->test_usage.setup = { createMultiple };
-    updateCmd->test_usage.teardown = { removeMultiple };
-
-    cmd->subcommands = { listCmd, createCmd, removeCmd, infoCmd, updateCmd };
+    cmd->subcommands = { listCmd, createCmd, removeCmd, infoCmd };
     return cmd;
 }
 

@@ -1,8 +1,8 @@
 vaulthalla for Debian
 ---------------------
 
-Install policy (Phase 2)
-========================
+Install policy
+==============
 
 Package install is intentionally low-prompt and conservative:
 
@@ -12,11 +12,17 @@ Package install is intentionally low-prompt and conservative:
 - optional nginx integration is attempted only when nginx is already present and
   host checks indicate low-risk automation
 - package install does not bind initial super-admin Linux UID
+- the only prompt is the existing-database choice described below, and only on
+  an interactive (re)install that finds Vaulthalla data it cannot authenticate to
+- maintainer scripts never block indefinitely: every `systemctl`, `psql`,
+  `nginx -t` and `udevadm` call is bounded by a timeout, and the FUSE mount root
+  `/mnt/vaulthalla` is only inspected through `/proc/self/mountinfo`
 
 Package metadata policy
 =======================
 
-- hard runtime deps remain in `Depends`
+- hard runtime deps remain in `Depends` (including `fuse3` for `fusermount3`
+  and `python3` for the `vh setup`/`vh teardown` lifecycle helper)
 - integration components are `Recommends`:
   - `postgresql`
   - `nginx`
@@ -29,15 +35,34 @@ Package metadata policy
 This keeps `apt install vaulthalla` helpful by default while preserving lean
 installs via `--no-install-recommends`.
 
-On hosts without hardware TPM, `--no-install-recommends` installs should add
-`swtpm`/`swtpm-tools` manually before re-running configure.
+`nodejs` is unversioned on purpose: the web console (Next.js 16) officially
+wants Node.js >= 20.9, but Ubuntu 24.04 ships 18.19. A versioned dependency would
+make the package uninstallable there, so the distro Node.js is accepted as-is.
+Hosts that can should install a newer Node.js (for example from NodeSource).
+
+Configuration file
+==================
+
+The packaged default config lives at `/usr/share/vaulthalla/config/config.yaml`
+(with `config_template.yaml.in` beside it). postinst copies it to
+`/etc/vaulthalla/config.yaml` only when that file does not exist, and never
+overwrites it afterwards. `/etc/vaulthalla/config.yaml` is not a dpkg conffile:
+the daemon and `vh setup remote-db` rewrite it, so upgrades must not prompt about
+it. Hosts upgraded from releases that shipped it as a conffile keep their file
+unchanged (dpkg tracks it as an obsolete conffile). `apt purge` removes it.
+
+Fresh installs bind the websocket (36969) and HTTP preview (36970) servers to
+127.0.0.1; browsers reach them through nginx (`/ws`, `/preview`, `/download`,
+`/upload`). An existing `/etc/vaulthalla/config.yaml` is never modified.
 
 APT upgrade service restart boundary
 ====================================
 
 On package upgrades, Vaulthalla restarts only active Vaulthalla units so new
 package binaries and service definitions take effect. Admin-disabled or inactive
-Vaulthalla units are left untouched.
+Vaulthalla units are left untouched. Each restart is bounded; a unit that does
+not finish within the bound gets SIGKILL on its own cgroup (never a process-name
+kill) and the upgrade continues. A slow service never fails the upgrade.
 
 Vaulthalla ships scoped `needrestart` policy for its own units at
 `/etc/needrestart/conf.d/50-vaulthalla.conf`. Ubuntu's `needrestart` apt hook
@@ -45,8 +70,8 @@ may detect Vaulthalla services after unrelated apt transactions, but the
 package policy defers automatic restarts of Vaulthalla units so the core FUSE
 service is not restarted outside Vaulthalla's package-controlled boundary.
 
-Unrelated third-party service restarts during `apt upgrade` remain controlled
-by host-level apt hooks such as `needrestart`, not by the Vaulthalla package.
+Unrelated service restarts during `apt upgrade` are controlled by host-level apt
+hooks such as `needrestart`, not by the Vaulthalla package.
 If `nexus.service` should never be auto-restarted by apt, set local
 `needrestart` policy in `/etc/needrestart/conf.d/local.conf`, for example:
 
@@ -57,6 +82,10 @@ $nrconf{override_rc}->{qr(^nexus\.service$)} = 0;
 
 Vaulthalla does not ship third-party restart policy for services such as
 Sonatype Nexus.
+
+`vaulthalla.service` gives up after 10 failed starts within 10 minutes (for
+example, no DB credential or no TPM) instead of restarting forever. Re-arm it
+with `sudo systemctl reset-failed vaulthalla` (the `vh setup` commands do this).
 
 TPM backend behavior
 ====================
@@ -70,8 +99,11 @@ During postinst, Vaulthalla selects a TPM backend deterministically:
 - if managed `swtpm` fails initial startup and a swtpm AppArmor profile exists,
   postinst applies a targeted local AppArmor override for Vaulthalla's swtpm
   state path, reloads the profile, and retries startup
-- if neither hardware TPM nor `swtpm` is available, configure fails with a
-  clear install-time error and remediation steps
+- if neither hardware TPM nor `swtpm` is available (for example
+  `--no-install-recommends` on a VM), configure still succeeds: the TPM backend
+  is reported as deferred, `vaulthalla.service` is enabled but not started, and
+  `/var/lib/vaulthalla/tpm_backend_deferred` records it. Fix with
+  `sudo apt install swtpm swtpm-tools && sudo dpkg-reconfigure vaulthalla`.
 
 Managed `swtpm` state path:
 
@@ -84,42 +116,53 @@ Automatic DB behavior
 During postinst, Vaulthalla attempts local DB bootstrap only when all of these
 conditions hold:
 
-- `VH_SKIP_DB_BOOTSTRAP` is not enabled
-- `psql` exists
-- local `postgres` user exists
-- local PostgreSQL is accepting connections
+- `VH_SKIP_DB_BOOTSTRAP` is not enabled, now or on any earlier install
+  (the opt-out persists in `/var/lib/vaulthalla/db_bootstrap_disabled`)
+- `database.host` in `/etc/vaulthalla/config.yaml` is local (a remote DB
+  configured with `vh setup remote-db` is never touched)
+- no sealed DB credential exists yet (`/var/lib/vaulthalla/.sealed_psql.blob`);
+  normal upgrades therefore never touch the role or database
+- `psql` exists, the local `postgres` user exists, and local PostgreSQL is
+  accepting connections
 
 If any check fails, package install continues and reports skip reason.
 
-When bootstrap runs successfully, postinst creates (or reuses):
+When bootstrap runs, postinst writes the new role password to
+`/run/vaulthalla/db_password` (atomically, mode 0600) *before* creating the
+`vaulthalla` role and database, so an interrupted install resumes with the same
+password on the next `dpkg --configure -a`. The service consumes the file on
+startup and seals the password with the TPM.
 
-- role: `vaulthalla`
-- database: `vaulthalla`
+`vaulthalla.service` is only started when a DB credential exists (sealed or
+pending); otherwise the summary says why it was not started.
 
-If a new role password is generated, it is seeded to:
+Existing database without a sealed credential (reinstall after purge)
+=====================================================================
 
-- `/run/vaulthalla/db_password`
+`apt purge` deletes `/var/lib/vaulthalla` (including the sealed DB password)
+but, by default, keeps the PostgreSQL database. A later install finds a
+`vaulthalla` role/database it cannot authenticate to:
 
-Reinstall recovery when local DB resources already exist
-========================================================
+- if the database holds no Vaulthalla data (an interrupted install), it is
+  adopted automatically: the role password is rotated and seeded
+- otherwise, interactive installs prompt:
+  `[a]dopt / [o]verwrite / a[b]ort`. EOF or an unrecognized answer aborts.
+  Overwrite asks for a typed confirmation phrase.
+- noninteractive installs use `VH_EXISTING_DB_ACTION=adopt|overwrite|abort`
+  and default to abort
 
-When local role/database `vaulthalla` already exist during postinst bootstrap:
+Abort stops configuration with a non-zero exit and leaves PostgreSQL untouched.
+Resolve it with one of:
 
-- Interactive installs prompt for recovery choice:
-  1. reuse existing DB by providing a password file (seeded to `/run/vaulthalla/db_password`)
-  2. destructive drop/recreate (typed confirmation required)
-  3. exit without DB changes
-- Noninteractive installs preserve local DB resources by default and do not
-  reseed runtime password handoff automatically.
-- Reuse path intentionally relies on normal runtime startup to consume
-  `/run/vaulthalla/db_password`, seal/store through existing runtime secret
-  flow, and remove the handoff file.
+- `sudo env VH_EXISTING_DB_ACTION=adopt dpkg --configure -a`
+- `sudo env VH_EXISTING_DB_ACTION=overwrite dpkg --configure -a`
 
-Manual reseed example (reuse preserved DB):
-
-- `sudo install -d -m 0755 /run/vaulthalla`
-- `sudo install -m 0600 -o vaulthalla -g vaulthalla /path/to/db_password /run/vaulthalla/db_password`
-- `sudo systemctl restart vaulthalla`
+Adopt rotates the role password as the local `postgres` superuser (fed via
+stdin, never argv) and hands it to the service. Users, vault metadata and
+settings are kept, but vault encryption keys and stored provider API keys are
+only recoverable if the original `/var/lib/vaulthalla/.sealed_*.blob` files and
+the same TPM are restored. Overwrite drops the database (`WITH (FORCE)`) and
+role and bootstraps fresh. Normal upgrades never abort over this; they warn.
 
 DB teardown behavior on remove/purge
 ====================================
@@ -132,9 +175,48 @@ DB teardown behavior on remove/purge
 - Noninteractive purge (`DEBIAN_FRONTEND=noninteractive` or no TTY) does not
   prompt and preserves local PostgreSQL resources.
 
-Manual cleanup remains available via:
+`vh` is gone after purge, so manual cleanup uses psql directly:
 
-- `sudo vh teardown db`
+- `sudo -u postgres psql -c 'DROP DATABASE IF EXISTS vaulthalla WITH (FORCE);'`
+- `sudo -u postgres psql -c 'DROP ROLE IF EXISTS vaulthalla;'`
+
+While the package is installed, `sudo vh teardown db` does the same (it stops
+`vaulthalla.service` first).
+
+Purge and data-disk mount points
+================================
+
+`/var/lib/vaulthalla` is often a dedicated data disk. Purge removes its
+contents without crossing into other filesystems, keeps the mount point
+directory (owned `root:root`, mode `0755`) and never fails because of it. Purge
+also removes `/var/log/vaulthalla`, `/var/cache/vaulthalla-web`, the runtime
+`/usr/share/vaulthalla-web/.next/cache`, the certbot deploy hook
+`/etc/letsencrypt/renewal-hooks/deploy/vaulthalla-nginx-reload.sh`, and
+`/etc/vaulthalla/config.yaml`. Operator-provided certbot credentials in
+`/etc/vaulthalla/certbot/` are kept (certbot renewal configs still reference
+them) and the purge output says how to remove them. Operator-managed test
+credentials in `/etc/vaulthalla/testing/` are never shipped, touched on upgrade
+or removed on purge; `/etc/vaulthalla` is only removed when it is empty.
+
+Retired CLI socket units
+========================
+
+Releases up to 1.6.6 shipped `vaulthalla-cli.socket` and `vaulthalla-cli.service`.
+The socket unit held `/run/vaulthalla/cli.sock` without anything accepting on
+it, so `vh` hung once the daemon had re-bound the path. `vaulthalla.service` now
+owns the socket and re-creates it if it disappears. On upgrade, postinst stops
+both legacy units (bounded, honouring policy-rc.d via `deb-systemd-invoke`),
+purges their enablement with `deb-systemd-helper`, removes leftover `.wants`
+links, reloads systemd, restarts an active `vaulthalla.service`, and reports
+whether the daemon bound `/run/vaulthalla/cli.sock` again. Purge also removes
+any leftover enablement.
+
+Reinstall after remove
+======================
+
+`apt remove` stops and disables the units. Reinstalling over the remaining
+configuration files (`preinst install <old-version>`) is detected, and postinst
+re-enables and starts the units instead of treating it as an upgrade.
 
 Automatic nginx behavior
 ========================
@@ -142,18 +224,32 @@ Automatic nginx behavior
 During postinst, Vaulthalla attempts nginx integration only when all of these
 conditions hold:
 
-- `VH_SKIP_NGINX_CONFIG` is not enabled
+- `VH_SKIP_NGINX_CONFIG` is not enabled, now or on any earlier install
+  (the opt-out persists in `/var/lib/vaulthalla/nginx_config_disabled`)
 - nginx is installed and active
 - no non-nginx listeners are detected on `:80`/`:443`
 - no custom nginx site layout is detected
 - packaged template exists at `/usr/share/vaulthalla/nginx/vaulthalla`
 
-If checks pass, postinst installs/enables:
+If checks pass on a fresh install (or reinstall), postinst installs/enables:
 
 - `/etc/nginx/sites-available/vaulthalla`
 - `/etc/nginx/sites-enabled/vaulthalla`
 
-and reloads nginx only after `nginx -t` succeeds.
+The distro default site (`sites-enabled/default`) holds `listen 80
+default_server`, which would shadow the package site. When it is the unmodified
+distro symlink (its target still matches the dpkg conffile checksum), postinst
+disables it and records that in `/var/lib/vaulthalla/nginx_default_site_disabled`;
+`apt remove`, `apt purge` and `vh teardown nginx` restore it. A modified default
+site is never touched.
+
+nginx is reloaded only after `nginx -t` succeeds, and postinst then requests
+`http://127.0.0.1/` to verify that the Vaulthalla console answers. The summary
+reports the result honestly (verified, upstream still starting, or shadowed by
+another site).
+
+Upgrades never create or re-enable the site: if an operator ran
+`vh teardown nginx` or removed the link, that choice is kept.
 
 Super-admin bootstrap policy
 ============================
@@ -166,7 +262,7 @@ Initial ownership claim is handled in CLI flow; operators should run:
 Advanced overrides
 ==================
 
-Use these install-time environment flags for explicit opt-out:
+Use these install-time environment flags for explicit opt-out (they persist):
 
 - `VH_SKIP_DB_BOOTSTRAP=1`
 - `VH_SKIP_NGINX_CONFIG=1`
@@ -175,6 +271,8 @@ Examples:
 
 - `VH_SKIP_DB_BOOTSTRAP=1 sudo -E apt install vaulthalla`
 - `VH_SKIP_NGINX_CONFIG=1 sudo -E apt install vaulthalla`
+
+`sudo vh setup db` and `sudo vh setup nginx` opt back in and remove the markers.
 
 Validation flows
 ================
@@ -190,9 +288,10 @@ Validation flows
 5. Verify payload:
    - `test -f /usr/share/vaulthalla-web/server.js`
    - `test -f /usr/share/vaulthalla/psql/000_schema.sql`
+   - `test -f /usr/share/vaulthalla/config/config.yaml`
 6. Verify services:
    - `systemctl status vaulthalla.service`
-   - `systemctl status vaulthalla-cli.socket`
+   - `test -S /run/vaulthalla/cli.sock` (owned by `vaulthalla.service`)
    - `systemctl status vaulthalla-web.service`
    - `systemctl status vaulthalla-swtpm.service` (expected active only when no hardware TPM is present)
 
@@ -207,6 +306,7 @@ If package-time automation skipped optional integration steps, admins can run:
 
 - `vh setup assign-admin`
 - `vh setup db`
+- `vh setup db --adopt` / `vh setup db --overwrite`
 - `vh setup remote-db --host <host> --user <user> --database <name> --password-file <path>`
 - `vh setup nginx`
 - `vh setup nginx --certbot --domain <fqdn>`
@@ -217,29 +317,37 @@ These commands are explicit integration actions and are intended for controlled
 operator use. They are conservative and fail with actionable errors on
 conflicts/unusable local state.
 
-For local PostgreSQL bootstrap, `vh setup db` now:
+For local PostgreSQL bootstrap, `vh setup db`:
 
 - validates packaged SQL assets under `/usr/share/vaulthalla/psql`
 - creates/reuses local `vaulthalla` role and database
-- seeds `/run/vaulthalla/db_password` only when the role is newly created
-- starts/restarts `vaulthalla.service` so normal runtime startup can consume the
-  pending DB password and run canonical schema/migration deployment via
-  `SqlDeployer`
+- seeds `/run/vaulthalla/db_password` whenever it sets a role password (new
+  role, `--adopt`, `--overwrite`, or an empty database left by an interrupted
+  install); passwords go to psql via stdin, never argv
+- refuses an existing database with Vaulthalla data but no sealed credential
+  unless `--adopt` or `--overwrite` is given
+- starts/restarts `vaulthalla.service` (after `reset-failed`) and only reports
+  success once the service stays active and has consumed the password handoff;
+  otherwise it exits non-zero and points at `journalctl`
+- leaves schema/migration deployment to normal runtime startup (`SqlDeployer`)
 
 For explicit remote PostgreSQL configuration, `vh setup remote-db`:
 
 - updates canonical `config.yaml` database host/port/user/name settings via
   existing config helpers
 - seeds runtime-consumed DB password handoff to `/run/vaulthalla/db_password`
-- starts/restarts `vaulthalla.service` so runtime picks up config + password
+- starts/restarts `vaulthalla.service` so runtime picks up config + password,
+  and verifies it stays active
 - leaves schema/migration deployment to normal runtime startup (`SqlDeployer`)
 
 For nginx integration, `vh setup nginx` and `vh teardown nginx` only manage the
-Vaulthalla site path and marker:
+Vaulthalla site path and markers:
 
 - `/etc/nginx/sites-available/vaulthalla`
 - `/etc/nginx/sites-enabled/vaulthalla`
 - `/var/lib/vaulthalla/nginx_site_managed`
+- `/var/lib/vaulthalla/nginx_default_site_disabled` (unmodified distro default
+  site disabled for a catch-all Vaulthalla site; restored on teardown)
 
 They do not claim ownership over unrelated nginx site configuration.
 
@@ -273,4 +381,4 @@ The Cloudflare credentials file must be a regular file with mode `0600`.
 The generated managed site redirects HTTP to HTTPS and serves S3 only from the
 dedicated S3 hostname.
 
- -- Cooper Larson <cooper@valkyrianlabs.com>  Tue, 21 Apr 2026 00:00:00 +0000
+ -- Cooper Larson <cooper@valkyrianlabs.com>  Wed, 30 Sep 2026 00:00:00 +0000

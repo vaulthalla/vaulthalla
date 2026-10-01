@@ -2,16 +2,11 @@ usr/bin/vaulthalla-server
 usr/bin/vaulthalla-cli
 usr/bin/vaulthalla
 usr/bin/vh
-usr/include/vaulthalla/version.h
-usr/include/vaulthalla/paths.h
 var/lib/vaulthalla
 var/log/vaulthalla
-etc/vaulthalla/config.yaml
-etc/vaulthalla/config_template.yaml.in
+usr/share/vaulthalla/config
 debian/needrestart/50-vaulthalla.conf etc/needrestart/conf.d/
 lib/systemd/system/vaulthalla.service
-lib/systemd/system/vaulthalla-cli.service
-lib/systemd/system/vaulthalla-cli.socket
 lib/systemd/system/vaulthalla-web.service
 lib/systemd/system/vaulthalla-swtpm.service
 usr/share/doc/vaulthalla/LICENSE
@@ -21,7 +16,5 @@ usr/share/vaulthalla/nginx/vaulthalla
 usr/share/vaulthalla/psql
 usr/lib/vaulthalla/lifecycle
 usr/share/vaulthalla-web usr/share/
-usr/lib/*/libvaulthalla.a usr/lib/libvaulthalla.a
-usr/lib/*/libvhusage.a usr/lib/libvhusage.a
 usr/lib/udev/rules.d/60-vaulthalla-tpm.rules
 usr/lib/tmpfiles.d/vaulthalla.conf
