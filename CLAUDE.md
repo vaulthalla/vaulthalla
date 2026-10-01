@@ -15,13 +15,14 @@ live P0 (the DB pool wedges after a PostgreSQL restart, which hangs FUSE and `ap
 |---|---|---|
 | `core/` | C++ daemon `vaulthalla-server`, CLI `vaulthalla-cli`, `usage/` (help + manpages), `tests/{unit,integrations}` | `.claude/context/architecture.md` |
 | `web/` | Next.js 16 / React 19 / Zustand, ws-driven | `.claude/context/web-client.md` |
-| `deploy/` | runtime config, `psql/000…096` migrations, systemd units, nginx template, `lifecycle/` (Python behind `vh setup/teardown`) | `.claude/context/packaging-lifecycle.md` |
+| `deploy/` | runtime config, `psql/000…097` migrations, systemd units, nginx template, `lifecycle/` (Python behind `vh setup/teardown`) | `.claude/context/packaging-lifecycle.md` |
 | `debian/` | package metadata + maintainer scripts (the lifecycle source of truth) | `.claude/context/packaging-lifecycle.md` |
 | `tools/release/` | `python3 -m tools.release`: versioning, changelog/AI pipeline, deb build/validate/publish | `.claude/context/release-pipeline.md` |
-| `.github/` | `build_and_test.yml`, `release.yml` (10 jobs), composite actions, self-hosted runners | `.claude/context/release-pipeline.md` |
+| `.github/` | `build_and_test.yml`, `release.yml` (11 jobs incl. optional lab-smoke), composite actions, self-hosted runners | `.claude/context/release-pipeline.md` |
 | `bin/` | source install/uninstall/test-env scripts (dev helpers, **not** apt semantics) | `.claude/context/testing.md` |
 | `docs/` | operator docs (Payload Markdown, published by `pmdocs`) | `.claude/context/docs-authoring.md` |
 | `tools/{smoke,e2e,dev}` | S3 gateway smoke, Playwright env, share preview smoke, `dev/verify.sh` (shared verification entrypoint) | `.claude/context/testing.md` |
+| `tools/lab/` | real-host tooling: ws client, CLI↔web parity smoke, ws churn, TEST-ONLY S3/R2 credential scaffold | `.claude/context/phase1-results.md` |
 
 Phase 1 (packaging/upgrade/release hardening) results and how candidates are proven on the lab: `.claude/context/phase1-results.md`.
 Other context: `.claude/context/environment.md` (VM topology: this box, the lab, dev-db, price bot), `link-sharing.md`
