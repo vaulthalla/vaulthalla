@@ -47,7 +47,14 @@ void Manager::registerUser(std::shared_ptr<User> user, const std::string& passwo
     db::query::identities::User::createUser(user);
 
     user = getUser(user->name);
-    runtime::Deps::get().storageManager->initUserStorage(user);
+    try {
+        runtime::Deps::get().storageManager->initUserStorage(user);
+    } catch (...) {
+        // Don't leave a half-registered account behind an error response.
+        db::query::identities::User::deleteUser(user->id);
+        usersByName_.erase(user->name);
+        throw;
+    }
 
     log::Registry::auth()->info("[AuthManager] User registered: {}", user->name);
 }

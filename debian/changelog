@@ -42,7 +42,12 @@ vaulthalla (1.6.6-1) unstable; urgency=high
       admin); users can no longer rebind their own Linux UID (#126).
     - A failing WebSocket handshake or protocol handler no longer aborts the
       daemon; an undecryptable JWT secret (DB adopted after purge) is
-      regenerated; session close no longer races the read loop (#127, #129).
+      regenerated; websocket sessions no longer crash the daemon under
+      connection churn (writes wait for the handshake, the stream outlives
+      pending operations, close never overlaps a write) (#127, #129).
+    - Web console "Add User" works: the user's default vault is created with
+      an owner and sync policy, and a failed registration is rolled back
+      (#131).
     - Web login works on plain-HTTP installs: the session cookie is Secure
       only when the browser-facing request was HTTPS (#128).
     - auth.login rate limiting counts failed attempts only; duplicate vault

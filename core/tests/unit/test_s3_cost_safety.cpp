@@ -1,3 +1,5 @@
+#include "db/query/rbac/role/Admin.hpp"
+#include "auth/Manager.hpp"
 #include "db/encoding/interval.hpp"
 #include "db/Transactions.hpp"
 #include "db/query/fs/File.hpp"
@@ -2166,6 +2168,25 @@ TEST(S3CostSafetyTest, StorageManagerRejectsDuplicateVaultNameForSameOwner) {
     EXPECT_TRUE(vh::db::query::vault::Vault::vaultExists(name, owner->id));
 
     manager->removeVault(first->id);
+}
+
+TEST(S3CostSafetyTest, RegisterUserCreatesOwnedDefaultVault) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed registration test due to missing environment variables.";
+    ensureSeededRuntimeReady();
+
+    // Regression: web-console registration always failed ("Sync cannot be null on vault creation") after
+    // the user row was written, because the default vault was upserted with no owner and no sync policy.
+    auto manager = std::make_shared<vh::auth::Manager>();
+    auto user = std::make_shared<vh::identities::User>();
+    user->name = "reg_" + uniqueSuffix("default_vault");
+    user->email = user->name + "@vaulthalla.test";
+    user->roles.admin = vh::db::query::rbac::role::Admin::get("unprivileged");
+    ASSERT_TRUE(user->roles.admin);
+
+    ASSERT_NO_THROW(manager->registerUser(user, "Zq9#" + uniqueSuffix("pw") + "!Xw-Long"));
+    const auto stored = vh::db::query::identities::User::getUserByName(user->name);
+    ASSERT_TRUE(stored);
+    EXPECT_TRUE(vh::db::query::vault::Vault::vaultExists(user->name + "'s Local Disk Vault", stored->id));
 }
 
 TEST(S3CostSafetyTest, IndexRemoteOnlyPreservesEncryptionMetadataInLocalRow) {

@@ -165,6 +165,7 @@ void Session::accept(tcp::socket&& socket) {
 
 void Session::onHeadersRead(const std::shared_ptr<RequestType>& req, const beast::error_code& ec, std::size_t) {
     if (ec) return logFail("Error reading HTTP headers", ec);
+    if (closing_.load(std::memory_order_acquire)) return;
 
     // Hydration touches the DB and the secrets manager; a failure there must reject this one connection,
     // never escape into the shared io_context (which used to terminate the daemon, taking FUSE with it).
@@ -178,6 +179,7 @@ void Session::onHeadersRead(const std::shared_ptr<RequestType>& req, const beast
         ws_->next_layer().close(ignored);
         return;
     }
+    if (closing_.load(std::memory_order_acquire)) return;  // closed during hydration (e.g. by the sweeper)
 
     auto self = shared_from_this();
     ws_->async_accept(
@@ -248,6 +250,7 @@ void Session::installHandshakeDecorator() const {
         return;
     }
 
+    if (!ws_) return;
     const auto t = token->rawToken;
     const auto cookieName = shareHandshake_ ? std::string{"share_refresh"} : std::string{"refresh"};
     const bool secureCookie = externallyHttps_;
@@ -275,8 +278,16 @@ void Session::installHandshakeDecorator() const {
 
 void Session::onHandshakeAccepted(const beast::error_code& ec) {
     if (ec) return logFail("Handshake error", ec);
+    handshakeDone_ = true;
+    if (closing_.load(std::memory_order_acquire)) {
+        // close() arrived mid-handshake; finish it now that a proper websocket close is possible.
+        closeStarted_ = false;
+        if (!writing_) closeOnStrand();
+        return;
+    }
 
     log::Registry::ws()->debug("[ws::Session] Handshake accepted from IP: {}", getIPAddress());
+    maybeStartWrite();  // flush anything queued while the handshake was in flight
     startReadLoop();
 }
 
@@ -347,47 +358,56 @@ void Session::send(json message) {
 }
 
 void Session::closeOnStrand() {
-    auto ws = ws_;
-    if (!ws) {
+    // The stream lives as long as the Session: pending async ops hold `self`, and resetting ws_ under
+    // them left handlers dereferencing a null stream (vh-storage SIGSEGV in installHandshakeDecorator
+    // under connection churn) and reads running on a destroyed socket.
+    if (!ws_ || closeStarted_) {
         buffer_.consume(buffer_.size());
         return;
     }
+    if (writing_) {  // never overlap the close with an in-flight write; onWrite comes back here
+        closeAfterWrite_ = true;
+        return;
+    }
+    closeStarted_ = true;
 
-    if (!ws->is_open() || closeStarted_) {
-        if (!ws->is_open()) {
-            ws_.reset();
-            buffer_.consume(buffer_.size());
-        }
+    if (!handshakeDone_ || !ws_->is_open()) {
+        // No websocket session yet (still reading the upgrade request or mid-handshake): closing the TCP
+        // socket cancels the pending op, whose handler sees closing_ and stops.
+        beast::error_code ignored;
+        ws_->next_layer().shutdown(tcp::socket::shutdown_both, ignored);
+        ws_->next_layer().close(ignored);
+        buffer_.consume(buffer_.size());
+        log::Registry::ws()->debug("[ws::Session] Closed pre-handshake connection for IP: {}", ipAddress);
         return;
     }
 
-    // Never use the synchronous close() here: it writes the close frame and then *reads* until the peer
-    // answers, while this session's async_read is always outstanding. Two concurrent reads (or a sync op
-    // racing an async one) corrupt Beast's per-stream op locks — the vh-storage abort on
-    // soft_mutex::unlock "id_ == T::id" and the "server must not mask frames" corruption seen by browsers.
-    // async_close is the one close op allowed alongside a pending read; callers only get here once no
-    // write is in flight (closeAfterWrite_).
-    closeStarted_ = true;
-    ws->async_close(
+    // Never the synchronous close(): it writes the close frame and then *reads* until the peer answers,
+    // racing this session's always-pending async_read and corrupting Beast's op locks (soft_mutex abort,
+    // "server must not mask frames" in browsers). async_close is the one close op allowed alongside a
+    // pending read; callers only get here once no write is in flight (closeAfterWrite_).
+    ws_->async_close(
         websocket::close_code::normal,
         asio::bind_executor(
             strand_,
             [self = shared_from_this()](const beast::error_code& ec) {
                 if (ec) log::Registry::ws()->debug("[ws::Session] ws close error: {}", ec.message());
-                self->ws_.reset();
                 self->buffer_.consume(self->buffer_.size());
                 log::Registry::ws()->debug("[ws::Session] Closed session for IP: {}", self->ipAddress);
             }));
 }
 
 void Session::maybeStartWrite() {
-    if (writing_ || writeQueue_.empty()) return;
+    // Writes wait for the websocket handshake: async_accept is itself writing the 101 response, and Beast
+    // allows a single write op per stream. Sessions are reachable (sweeper, broadcasts) before they finish
+    // the handshake; starting an async_write then tripped Beast's soft_mutex assertion (vh-storage churn).
+    if (writing_ || writeQueue_.empty() || !handshakeDone_ || closeStarted_) return;
     writing_ = true;
     doWrite();
 }
 
 void Session::doWrite() {
-    if (!ws_) {
+    if (!ws_ || closeStarted_) {
         writing_ = false;
         writeQueue_.clear();
         return;
