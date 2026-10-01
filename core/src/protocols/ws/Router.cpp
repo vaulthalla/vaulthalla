@@ -21,8 +21,19 @@ bool containsCommand(const std::array<std::string_view, N>& commands, const std:
     return std::ranges::find(commands, command) != commands.end();
 }
 
-bool isAuthCommand(const std::string_view command) {
-    return command.starts_with("auth");
+// Commands that establish, refresh, inspect or end a session. They must work before (or without a valid) access
+// token. Everything else under `auth.` (user register/update/delete/get/list, password change) is account
+// management and goes through RequireHumanAuth like any other command; a `starts_with("auth")` rule used to
+// let unauthenticated sockets reach handlers that dereference session->user.
+bool isSessionLifecycleCommand(const std::string_view command) {
+    constexpr std::array commands{
+        std::string_view{"auth.login"},
+        std::string_view{"auth.logout"},
+        std::string_view{"auth.refresh"},
+        std::string_view{"auth.isAuthenticated"},
+        std::string_view{"auth.admin.default_password"}
+    };
+    return containsCommand(commands, command);
 }
 
 vh::protocols::ws::ShareRateLimit& shareRateLimit() {
@@ -174,11 +185,11 @@ Router::CommandAuthDecision Router::classifyCommand(const std::string_view comma
             isSharePreviewCommand(command) ||
             isShareUploadCommand(command))
             return CommandAuthDecision::Deny;
-        if (isAuthCommand(command)) return CommandAuthDecision::Allow;
+        if (isSessionLifecycleCommand(command)) return CommandAuthDecision::Allow;
         return CommandAuthDecision::RequireHumanAuth;
     }
 
-    if (isAuthCommand(command) || isPublicShareCommand(command)) return CommandAuthDecision::Allow;
+    if (isSessionLifecycleCommand(command) || isPublicShareCommand(command)) return CommandAuthDecision::Allow;
     return CommandAuthDecision::Deny;
 }
 

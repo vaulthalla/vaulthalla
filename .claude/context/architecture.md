@@ -81,6 +81,11 @@ healthy/degraded/critical and includes a live `SELECT 1` DB probe.
 The web client builds `ws(s)://<host>/ws` in `web/src/util/getUrl.ts` (overridable with `NEXT_PUBLIC_VAULTHALLA_WS_ORIGIN`).
 `web/src/stores/useWebSocket.ts` handles reconnect, the pending-request map keyed by `requestId`, and token injection.
 Router allowlists are **exact and per session mode**: unauthenticated, human, pending-share, and ready-share.
+Only the session-lifecycle commands (`auth.login`, `auth.logout`, `auth.refresh`, `auth.isAuthenticated`,
+`auth.admin.default_password`) skip access-token validation (`isSessionLifecycleCommand`, mirrored by the web's
+`SESSION_LIFECYCLE_COMMANDS`). Every other `auth.*` command (register, user update/delete/get/list, password change)
+is account management and goes through `RequireHumanAuth`. A `starts_with("auth")` rule used to let unauthenticated
+sockets reach handlers that dereference `session->user` (a remote daemon segfault); `WsAuthRouting.*` guards it.
 While a human session's password still equals the seeded default, the Router serves only the
 `default_password::isAllowedWhileDefault` commands (`protocols/ws/DefaultPasswordGate.cpp`, issue #103) and answers
 everything else with `data.code = "password_change_required"`. `auth.login` is rate-limited per IP + account

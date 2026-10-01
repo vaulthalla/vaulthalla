@@ -107,7 +107,7 @@ static CommandResult handleCreateAPIKey(const CommandCall &call) {
     }
 
     auto key = std::make_shared<APIKey>();
-    key->user_id = call.user->id;
+    key->user_id = owner->id; // the owner the Create check above authorized, never silently the caller
     key->name = name;
     key->access_key = *accessKeyOpt;
     key->secret_access_key = *secretOpt;

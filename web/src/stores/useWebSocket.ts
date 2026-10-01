@@ -32,7 +32,17 @@ interface PendingRequest {
   timeout: ReturnType<typeof setTimeout>
 }
 
-const isAuthCommand = (command: keyof WebSocketCommandMap) => command.startsWith('auth.')
+// Session-lifecycle commands work without (or with an expired) access token. Mirrors core's
+// isSessionLifecycleCommand (protocols/ws/Router.cpp); every other auth.* command is account management and gets
+// the normal token + refresh-and-retry path.
+const SESSION_LIFECYCLE_COMMANDS: ReadonlySet<keyof WebSocketCommandMap> = new Set<keyof WebSocketCommandMap>([
+  'auth.login',
+  'auth.logout',
+  'auth.refresh',
+  'auth.isAuthenticated',
+  'auth.admin.default_password',
+])
+const isAuthCommand = (command: keyof WebSocketCommandMap) => SESSION_LIFECYCLE_COMMANDS.has(command)
 const isUnauthorizedMessage = (message: unknown) => {
   if (!message || typeof message !== 'object') return false
   const record = message as Record<string, unknown>

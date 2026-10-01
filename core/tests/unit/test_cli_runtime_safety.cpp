@@ -6,6 +6,10 @@
 //  - secrets are redacted from ws debug logs; daemon-written secret files are 0600 and absolute-path only;
 //  - (DB-backed) no CLI self-promotion, no role upsert-over-existing, no daemon crash on unknown group.
 
+#include "auth/model/Token.hpp"
+#include "auth/model/TokenPair.hpp"
+#include "auth/session/Issuer.hpp"
+#include "auth/session/Manager.hpp"
 #include "config/Config.hpp"
 #include "config/Registry.hpp"
 #include "crypto/util/hash.hpp"
@@ -26,6 +30,7 @@
 #include "protocols/ws/ShareRateLimit.hpp"
 #include "protocols/ws/Router.hpp"
 #include "protocols/ws/Session.hpp"
+#include "protocols/ws/handler/Auth.hpp"
 #include "protocols/ws/handler/rbac/roles/Admin.hpp"
 #include "rbac/role/Admin.hpp"
 #include "runtime/Deps.hpp"
@@ -44,6 +49,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+#include <array>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -497,6 +503,32 @@ std::shared_ptr<identities::User> userWithPassword(const std::string& password) 
     return user;
 }
 
+// Installs a session manager and a test JWT secret so routed commands can pass real access-token validation
+// (RequireHumanAuth) without a database; restores the previous runtime state on scope exit.
+struct ScopedWsTokenAuth {
+    std::shared_ptr<auth::session::Manager> previous;
+
+    ScopedWsTokenAuth() : previous(runtime::Deps::get().sessionManager) {
+        auth::session::Issuer::setJwtSecretForTesting("cli-runtime-safety-ws-auth-secret");
+        runtime::Deps::get().sessionManager = std::make_shared<auth::session::Manager>();
+    }
+
+    ~ScopedWsTokenAuth() {
+        runtime::Deps::get().sessionManager = previous;
+        auth::session::Issuer::clearJwtSecretForTesting();
+    }
+
+    // A valid access token for `session`'s human user.
+    static std::string issue(const std::shared_ptr<protocols::ws::Session>& session) {
+        auth::session::Issuer::accessToken(session);
+        return session->tokens->accessToken->rawToken;
+    }
+};
+
+json routed(const std::string& command, const std::string& token = "") {
+    return json{{"command", command}, {"payload", json::object()}, {"token", token}};
+}
+
 TEST(DefaultPasswordGate, OnlyPasswordChangeAndSessionCommandsWhileDefault) {
     // The gate is intentionally off in dev mode; pin production behavior regardless of the host's config.
     const config::Config previous = config::Registry::get(); // loads VH_PATH_TO_CONFIG on first use
@@ -505,19 +537,22 @@ TEST(DefaultPasswordGate, OnlyPasswordChangeAndSessionCommandsWhileDefault) {
     config::Registry::set(pinned);
     struct RestoreConfig { config::Config value; ~RestoreConfig() { config::Registry::set(value); } } restore{previous};
 
+    // Account commands (auth.users.list, auth.user.change_password) need a valid access token since Stage 0 S1/S2;
+    // give the session one so these exercise the default-password gate, not token validation.
+    const ScopedWsTokenAuth tokenAuth;
     auto router = std::make_shared<protocols::ws::Router>();
     int blocked = 0, allowed = 0;
-    // auth.* commands skip token validation in classifyCommand, so these exercise the gate alone.
     router->registerHandler("auth.users.list", [&](json&&, const auto&) { ++blocked; });
     router->registerHandler("auth.user.change_password", [&](json&&, const auto&) { ++allowed; });
     router->registerHandler("auth.admin.default_password", [&](json&&, const auto&) { ++allowed; });
 
     const auto user = userWithPassword(std::string(protocols::ws::default_password::kSeededAdminPassword));
     const auto session = closedSessionWith(router, user);
+    const auto token = ScopedWsTokenAuth::issue(session);
     EXPECT_TRUE(session->userHasDefaultPassword());
 
-    router->routeMessage(json{{"command", "auth.users.list"}, {"payload", json::object()}}, session);
-    router->routeMessage(json{{"command", "auth.user.change_password"}, {"payload", json::object()}}, session);
+    router->routeMessage(routed("auth.users.list", token), session);
+    router->routeMessage(routed("auth.user.change_password", token), session);
     router->routeMessage(json{{"command", "auth.admin.default_password"}, {"payload", nullptr}}, session);
     EXPECT_EQ(blocked, 0) << "a non-allowlisted command ran while the default password is still set";
     EXPECT_EQ(allowed, 2);
@@ -525,7 +560,7 @@ TEST(DefaultPasswordGate, OnlyPasswordChangeAndSessionCommandsWhileDefault) {
     // After a password change the session's user carries a new hash; the cached verdict is re-evaluated.
     user->setPasswordHash(crypto::hash::password("a-much-better-passphrase-123!"));
     EXPECT_FALSE(session->userHasDefaultPassword());
-    router->routeMessage(json{{"command", "auth.users.list"}, {"payload", json::object()}}, session);
+    router->routeMessage(routed("auth.users.list", token), session);
     EXPECT_EQ(blocked, 1);
 }
 
@@ -537,6 +572,91 @@ TEST(DefaultPasswordGate, AllowlistIsMinimal) {
     for (const auto* cmd : {"auth.users.list", "auth.user.update", "auth.register", "role.admin.add",
                             "settings.update", "storage.vault.list", "fs.upload.start"})
         EXPECT_FALSE(isAllowedWhileDefault(cmd)) << cmd;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Stage 0 S1/S2: `auth*` used to be routed as session-lifecycle for every session. Unauthenticated sockets reached
+// account handlers that dereference session->user (a remote daemon segfault), and logged-in sessions reached
+// them without access-token validation.
+
+constexpr std::array<std::string_view, 5> kSessionLifecycleCommands{
+    "auth.login", "auth.logout", "auth.refresh", "auth.isAuthenticated", "auth.admin.default_password"};
+constexpr std::array<std::string_view, 8> kAccountCommands{
+    "auth.register", "auth.user.delete", "auth.user.update", "auth.user.change_password",
+    "auth.user.get", "auth.user.get.byName", "auth.users.list", "auth.user.anything_new"};
+
+TEST(WsAuthRouting, OnlySessionLifecycleCommandsSkipHumanAuth) {
+    using Decision = protocols::ws::Router::CommandAuthDecision;
+    const auto unauth = std::make_shared<protocols::ws::Session>(std::make_shared<protocols::ws::Router>());
+    const auto human = std::make_shared<protocols::ws::Session>(std::make_shared<protocols::ws::Router>());
+    human->user = userWithPassword("irrelevant-for-routing");
+
+    for (const auto cmd : kSessionLifecycleCommands) {
+        EXPECT_EQ(Decision::Allow, protocols::ws::Router::classifyCommand(cmd, *unauth)) << cmd;
+        EXPECT_EQ(Decision::Allow, protocols::ws::Router::classifyCommand(cmd, *human)) << cmd;
+    }
+    // Account commands take exactly the path of any ordinary authenticated command: RequireHumanAuth, i.e.
+    // session::Manager::validate (access token, else the server-side refresh-token renewal) and the web client's
+    // unauthorized -> refresh -> retry. Nothing auth-specific remains on that path.
+    const auto ordinaryHuman = protocols::ws::Router::classifyCommand("storage.vault.list", *human);
+    const auto ordinaryUnauth = protocols::ws::Router::classifyCommand("storage.vault.list", *unauth);
+    for (const auto cmd : kAccountCommands) {
+        EXPECT_EQ(Decision::Deny, protocols::ws::Router::classifyCommand(cmd, *unauth)) << cmd;
+        EXPECT_EQ(Decision::RequireHumanAuth, protocols::ws::Router::classifyCommand(cmd, *human)) << cmd;
+        EXPECT_EQ(ordinaryUnauth, protocols::ws::Router::classifyCommand(cmd, *unauth)) << cmd;
+        EXPECT_EQ(ordinaryHuman, protocols::ws::Router::classifyCommand(cmd, *human)) << cmd;
+    }
+}
+
+TEST(WsAuthRouting, UnauthenticatedSocketNeverReachesAccountHandlers) {
+    auto router = std::make_shared<protocols::ws::Router>();
+    int reached = 0;
+    for (const auto cmd : kAccountCommands)
+        router->registerHandler(std::string(cmd), [&](json&&, const auto&) { ++reached; });
+    int lifecycle = 0;
+    router->registerHandler("auth.admin.default_password", [&](json&&, const auto&) { ++lifecycle; });
+
+    const auto session = std::make_shared<protocols::ws::Session>(router);
+    session->ipAddress = "203.0.113.8";
+    session->close();
+    ASSERT_EQ(session->user, nullptr);
+
+    for (const auto cmd : kAccountCommands) router->routeMessage(routed(std::string(cmd)), session);
+    router->routeMessage(routed("auth.admin.default_password"), session);
+    EXPECT_EQ(reached, 0) << "an account handler ran for an unauthenticated socket";
+    EXPECT_EQ(lifecycle, 1);
+}
+
+TEST(WsAuthRouting, AccountCommandsRequireAValidAccessToken) {
+    const ScopedWsTokenAuth tokenAuth;
+    auto router = std::make_shared<protocols::ws::Router>();
+    int reached = 0;
+    router->registerHandler("auth.user.update", [&](json&&, const auto&) { ++reached; });
+
+    auto user = userWithPassword("a-much-better-passphrase-123!");
+    const auto session = closedSessionWith(router, user);
+    const auto token = ScopedWsTokenAuth::issue(session);
+
+    router->routeMessage(routed("auth.user.update", ""), session);
+    router->routeMessage(routed("auth.user.update", token + "x"), session);
+    EXPECT_EQ(reached, 0) << "auth.user.update ran without a valid access token";
+
+    router->routeMessage(routed("auth.user.update", token), session);
+    EXPECT_EQ(reached, 1);
+}
+
+TEST(WsAuthHandlers, NullSessionUserIsAnErrorNotACrash) {
+    using protocols::ws::handler::Auth;
+    const auto session = std::make_shared<protocols::ws::Session>(std::make_shared<protocols::ws::Router>());
+    session->close();
+    ASSERT_EQ(session->user, nullptr);
+
+    EXPECT_THROW((void)Auth::listUsers(session), std::exception);
+    EXPECT_THROW((void)Auth::getUser(json{{"id", 1}}, session), std::exception);
+    EXPECT_THROW((void)Auth::deleteUser(json{{"id", 1}}, session), std::exception);
+    EXPECT_THROW((void)Auth::registerUser(json::object(), session), std::exception);
+    EXPECT_THROW((void)Auth::updateUser(json::object(), session), std::exception);
+    EXPECT_THROW((void)Auth::getUserByName(json{{"name", "admin"}}, session), std::exception);
 }
 
 TEST(LoginRateLimit, BurstThenSustainedLimitsPerIpAndAccount) {

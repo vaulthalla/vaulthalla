@@ -22,6 +22,13 @@ Identities::Type identityTypeFor(const std::shared_ptr<User>& user) {
     return user->isAdmin() ? Identities::Type::Admins : Identities::Type::Users;
 }
 
+// Account-management handlers are routed only for authenticated human sessions, but never trust that here: a null
+// session user would be a daemon-killing null dereference, not a catchable error.
+const std::shared_ptr<User>& requireSessionUser(const std::shared_ptr<vh::protocols::ws::Session>& session) {
+    if (!session || !session->user) throw std::runtime_error("User not authenticated");
+    return session->user;
+}
+
 std::string resetPermissionError(const Identities::Type type) {
     if (type == Identities::Type::Admins)
         return "Permission denied: password reset requires admin identity reset-password permission";
@@ -48,6 +55,7 @@ json Auth::login(const json &payload, const std::shared_ptr<Session> &session) {
 }
 
 json Auth::registerUser(const json &payload, const std::shared_ptr<Session> &session) {
+    requireSessionUser(session);
     const auto name = payload.at("name").get<std::string>();
     const auto email = payload.at("email").get<std::string>();
     const auto password = payload.at("password").get<std::string>();
@@ -57,8 +65,6 @@ json Auth::registerUser(const json &payload, const std::shared_ptr<Session> &ses
     const auto user = std::make_shared<User>(name, email, isActive);
 
     if (const auto userRole = db::query::rbac::role::Admin::get(role)) {
-        if (!session->user) throw std::runtime_error("User not authenticated");
-
         if (userRole->name == "super_admin") throw std::runtime_error("Cannot assign super admin role to a user");
 
         if (userRole->name == "admin" && !session->user->identities().canAdd(Identities::Type::Admins))
@@ -82,6 +88,7 @@ json Auth::refreshToken(const std::string &token, const std::shared_ptr<Session>
 }
 
 json Auth::deleteUser(const json &payload, const std::shared_ptr<Session> &session) {
+    requireSessionUser(session);
     const auto id = payload.at("id").get<unsigned int>();
 
     const auto targetUser = db::query::identities::User::getUserById(id);
@@ -217,6 +224,7 @@ json Auth::changePassword(const json &payload, const std::shared_ptr<Session> &s
 }
 
 json Auth::getUser(const json &payload, const std::shared_ptr<Session> &session) {
+    requireSessionUser(session);
     const auto userId = payload.at("id").get<unsigned int>();
 
     const auto targetUser = db::query::identities::User::getUserById(userId);
@@ -239,6 +247,7 @@ json Auth::logout(const std::shared_ptr<Session> &session) {
 }
 
 json Auth::listUsers(const std::shared_ptr<Session> &session) {
+    requireSessionUser(session);
     if (!session->user->identities().canView(Identities::Type::Admins))
         throw std::runtime_error("Permission denied");
 

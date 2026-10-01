@@ -334,12 +334,29 @@ json Pricing::status(const json& payload, const std::shared_ptr<Session>& sessio
             return trend.gateway_credential_id != gatewayCredentialId;
         });
     }
+    // Without a vault_id the service lists system-wide notifications and overrides. Only a super-admin may see
+    // those unfiltered; a credential owner gets the rows for vaults they can view, the same rule as
+    // pricing.notifications.list (this path used to return every vault's notifications and overrides).
+    constexpr std::size_t kStatusRows = 20;
+    const bool filterByVault = !vaultId && !session->user->isSuperAdmin();
+    auto notifications = service.listNotifications(filterByVault ? 500 : kStatusRows, vaultId, false);
+    auto overrides = service.listOverrides(filterByVault ? 500 : kStatusRows, vaultId, true);
+    if (filterByVault) {
+        std::erase_if(notifications, [&](const auto& notification) {
+            return !notification.vault_id || !canViewVaultBudget(session, *notification.vault_id);
+        });
+        std::erase_if(overrides, [&](const auto& override_) {
+            return !canViewVaultBudget(session, override_.vault_id);
+        });
+        if (notifications.size() > kStatusRows) notifications.resize(kStatusRows);
+        if (overrides.size() > kStatusRows) overrides.resize(kStatusRows);
+    }
     return {
         {"policies", visiblePolicies(payload.is_object() ? payload : json::object(), session)},
         {"ledger", service.listLedger(limitFromPayload(payload, 20), vaultId, gatewayCredentialId)},
         {"trends", trends},
-        {"notifications", service.listNotifications(20, vaultId, false)},
-        {"overrides", service.listOverrides(20, vaultId, true)}
+        {"notifications", notifications},
+        {"overrides", overrides}
     };
 }
 

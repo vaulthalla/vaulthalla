@@ -12,6 +12,8 @@
 #include "protocols/s3/Router.hpp"
 #include "protocols/s3/SigV4.hpp"
 #include "protocols/s3/Xml.hpp"
+#include "protocols/shell/Router.hpp"
+#include "protocols/shell/commands/all.hpp"
 #include "protocols/ws/handler/S3Gateway.hpp"
 #include "protocols/ws/Router.hpp"
 #include "protocols/ws/Session.hpp"
@@ -20,6 +22,7 @@
 #include "rbac/s3/policy/Evaluator.hpp"
 #include "rbac/role/Admin.hpp"
 #include "runtime/Deps.hpp"
+#include "UsageManager.hpp"
 #include "seed/include/init_db_tables.hpp"
 #include "seed/include/seed_db.hpp"
 #include "storage/CloudEngine.hpp"
@@ -2143,6 +2146,60 @@ TEST_F(S3GatewayDbTest, S3GatewayWebSocketPermissionGatesUseGatewayAdminPermissi
             {"vault_role_name", "reader"}
         }, manageSession),
         std::exception);
+}
+
+// Stage 0 S4: `vh s3-gateway creds scope <cred> revoke-vault <vault>` used to delete the credential's vault role
+// assignment and selected vault after only "principal or ManageCredentials", with no vault-role Revoke check. The ws
+// twin (s3.gateway.credentials.selectedVaults.remove) always required RolePermissions::Revoke on that vault.
+TEST_F(S3GatewayDbTest, CliScopeRevokeVaultRequiresVaultRoleRevoke) {
+    if (!vh::runtime::Deps::get().shellUsageManager)
+        vh::runtime::Deps::get().shellUsageManager = std::make_shared<vh::protocols::shell::UsageManager>();
+    const auto router = std::make_shared<vh::protocols::shell::Router>();
+    vh::protocols::shell::commands::registerS3GatewayCommands(router);
+
+    const auto principalId = userWithAdminRole(
+        "revoke_principal",
+        adminRoleWithS3("revoke_principal", vh::rbac::permission::admin::S3Gateway::None()));
+    assignPrincipalVaultRole(vaultId, principalId, "reader");
+    const auto credential = createCredential(principalId, "vault_allowlist");
+    setCredentialDefaultVaultRole(credential.id, "reader");
+    selectCredentialVault(credential.id, vaultId);
+    assignCredentialVaultRole(credential.id, vaultId, "reader");
+
+    const auto selectedCount = [&] {
+        return vh::db::query::s3::Gateway::listCredentialSelectedVaults(credential.id).size();
+    };
+    const auto assignmentCount = [&] {
+        return vh::db::query::s3::Gateway::listCredentialVaultRoleAssignments(credential.id).size();
+    };
+    ASSERT_EQ(1u, selectedCount());
+    ASSERT_EQ(1u, assignmentCount());
+
+    const auto line = "s3-gateway creds scope " + std::to_string(credential.id) + " revoke-vault " + std::to_string(vaultId);
+    const auto run = [&](const uint32_t callerId) {
+        const auto caller = vh::db::query::identities::User::getUserById(callerId);
+        try {
+            return router->executeLine(line, caller, nullptr).exit_code;
+        } catch (const std::exception&) {
+            return 1;
+        }
+    };
+
+    // Credential manager that may retarget principals but holds no vault-role rights on this vault.
+    const auto managerId = userWithAdminRole(
+        "revoke_manager",
+        adminRoleWithS3("revoke_manager", vh::rbac::permission::admin::S3Gateway::PrincipalAssigner()));
+    EXPECT_NE(0, run(managerId));
+    EXPECT_EQ(1u, selectedCount()) << "revoke-vault removed the selected vault without vault-role Revoke";
+    EXPECT_EQ(1u, assignmentCount()) << "revoke-vault removed the role assignment without vault-role Revoke";
+
+    // Positive control: a caller with vault-role authority (super_admin) still revokes through the same line.
+    const auto superAdmin = vh::db::query::identities::User::getUserByName("admin");
+    ASSERT_TRUE(superAdmin);
+    ASSERT_TRUE(superAdmin->isSuperAdmin());
+    EXPECT_EQ(0, run(superAdmin->id));
+    EXPECT_EQ(0u, selectedCount());
+    EXPECT_EQ(0u, assignmentCount());
 }
 
 TEST_F(S3GatewayDbTest, S3GatewayWebSocketAssignPrincipalPermissionAllowsRetargeting) {

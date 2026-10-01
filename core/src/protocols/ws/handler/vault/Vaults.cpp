@@ -223,6 +223,19 @@ json Vaults::update(const json &payload, const std::shared_ptr<Session> &session
 
     const auto existing = db::query::vault::Vault::getVault(vault->id);
     if (!existing) throw std::runtime_error("Vault not found with ID: " + std::to_string(vault->id));
+
+    // Attaching an API key is a use of that key: same Consume gate as storage.vault.add and CLI
+    // `vault update --api-key`. Without it, vault Edit alone let a caller bind any key id to their vault.
+    if (type == VaultType::S3) {
+        const auto newKeyId = std::static_pointer_cast<S3Vault>(vault)->api_key_id;
+        const auto existingS3 = existing->type == VaultType::S3 ? std::static_pointer_cast<S3Vault>(existing) : nullptr;
+        if ((!existingS3 || existingS3->api_key_id != newKeyId) &&
+            !resolver::Admin::has<permission::admin::keys::APIPermissions>({
+                .user = session->user,
+                .permission = permission::admin::keys::APIPermissions::Consume,
+                .api_key_id = newKeyId
+            })) throw std::runtime_error("User does not have permission to add this api-key to vault.");
+    }
     if (!payload.contains("slug")) vault->slug = existing->slug;
     if (!payload.contains("fuse_name")) vault->fuse_name = existing->fuse_name;
     if (!payload.contains("mount_point")) vault->mount_point = existing->mount_point;

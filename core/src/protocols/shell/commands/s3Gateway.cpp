@@ -952,6 +952,11 @@ CommandResult handleCredsScope(const CommandCall& call) {
             : optVal(call, "vault").value_or("");
         if (vaultValue.empty()) return invalid("s3-gateway creds scope revoke-vault: vault is required");
         const auto vault = resolveVaultArg(call, vaultValue);
+        // Same gate as ws s3.gateway.credentials.selectedVaults.remove: dropping a vault grant is a vault-role
+        // revoke for the credential's principal, not just a credential-scope edit.
+        if (auto err = requireGatewayCredentialVaultRolePermission(
+                call, *credential, vault->id, ::vh::rbac::permission::vault::RolePermissions::Revoke, "revoke-vault"))
+            return *err;
         db::query::s3::Gateway::deleteCredentialVaultRoleAssignment(credential->id, vault->id);
         db::query::s3::Gateway::deleteCredentialSelectedVault(credential->id, vault->id);
         return ok("S3 gateway selected vault revoked.\n");
