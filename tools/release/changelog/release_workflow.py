@@ -12,6 +12,7 @@ from typing import Any, Callable, Literal, Mapping
 
 from tools.release.changelog.ai.config import (
     DEEPSEEK_API_KEY_ENV_VAR,
+    DEFAULT_DEEPSEEK_BASE_URL,
     OPENAI_API_KEY_ENV_VAR,
     AIPipelineCLIOverrides,
     AIPipelineConfig,
@@ -1031,7 +1032,9 @@ def _build_stage_providers(
             provider = build_structured_json_provider(provider_cfg)
             _ = run_provider_preflight(provider_cfg, provider=provider, require_model=True)
             providers_by_fingerprint[fingerprint] = provider
-            endpoint = provider_cfg.base_url or "<hosted>"
+            endpoint = provider_cfg.base_url or (
+                DEFAULT_DEEPSEEK_BASE_URL if provider_cfg.kind == "deepseek" else "<hosted>"
+            )
             logger(
                 "AI preflight OK: "
                 f"provider={provider_cfg.kind}, model={provider_cfg.model}, endpoint={endpoint}"

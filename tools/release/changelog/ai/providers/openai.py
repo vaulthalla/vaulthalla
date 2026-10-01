@@ -23,6 +23,7 @@ from tools.release.changelog.ai.providers.capabilities import (
     resolve_generation_settings,
 )
 from tools.release.changelog.ai.providers.parsing import JSONParseError, parse_json_object_from_text
+from tools.release.changelog.ai.providers.strict_schema import drop_null_optionals, to_strict_schema
 
 LOCAL_NO_AUTH_API_KEY_PLACEHOLDER = "local-no-auth"
 _MODE_RECOVERABLE_ERROR_MARKERS = (
@@ -321,6 +322,8 @@ class OpenAIProvider:
                 attempt["content_length"] = len(outcome.content)
                 try:
                     parsed = parse_json_object_from_text(outcome.content)
+                    if mode == "strict_json_schema":
+                        parsed = drop_null_optionals(parsed, json_schema)
                 except JSONParseError as exc:
                     attempt["error"] = str(exc)
                     attempt["error_type"] = "json_parse_error"
@@ -703,7 +706,7 @@ class OpenAIProvider:
                 "type": "json_schema",
                 "json_schema": {
                     "name": "vaulthalla_release_changelog_draft",
-                    "schema": json_schema,
+                    "schema": to_strict_schema(json_schema),
                     "strict": True,
                 },
             }
@@ -758,7 +761,7 @@ class OpenAIProvider:
                 "format": {
                     "type": "json_schema",
                     "name": "vaulthalla_release_changelog_draft",
-                    "schema": json_schema,
+                    "schema": to_strict_schema(json_schema),
                     "strict": True,
                 }
             }

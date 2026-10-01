@@ -38,7 +38,7 @@ SUITES: dict[str, SuiteSpec] = {
         start_dir="tools/release/tests",
         top_level_dir=None,
         subpackages=("changelog", "packaging"),
-        minimums={"changelog": 237, "packaging": 167, "root": 86},
+        minimums={"changelog": 240, "packaging": 167, "root": 86},
     ),
     "lifecycle": SuiteSpec(
         name="lifecycle",
