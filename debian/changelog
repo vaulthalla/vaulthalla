@@ -48,6 +48,8 @@ vaulthalla (1.6.6-1) unstable; urgency=high
     - Web console "Add User" works: the user's default vault is created with
       an owner and sync policy, and a failed registration is rolled back
       (#131).
+    - Deleting a user who owns a vault no longer prevents the daemon from
+      starting (ownerless vaults load as N/A) (#133).
     - Web login works on plain-HTTP installs: the session cookie is Secure
       only when the browser-facing request was HTTPS (#128).
     - auth.login rate limiting counts failed attempts only; duplicate vault

@@ -2189,6 +2189,31 @@ TEST(S3CostSafetyTest, RegisterUserCreatesOwnedDefaultVault) {
     EXPECT_TRUE(vh::db::query::vault::Vault::vaultExists(user->name + "'s Local Disk Vault", stored->id));
 }
 
+TEST(S3CostSafetyTest, DeletingAVaultOwnerDoesNotBreakVaultLoading) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed owner deletion test due to missing environment variables.";
+    ensureSeededRuntimeReady();
+
+    // Regression: owner_id is ON DELETE SET NULL; the next listVaults threw "Attempt to convert SQL null to
+    // unsigned int" and the daemon could not start after any vault owner was deleted.
+    auto manager = std::make_shared<vh::auth::Manager>();
+    auto user = std::make_shared<vh::identities::User>();
+    user->name = "orphan_" + uniqueSuffix("owner");
+    user->email = user->name + "@vaulthalla.test";
+    user->roles.admin = vh::db::query::rbac::role::Admin::get("unprivileged");
+    ASSERT_TRUE(user->roles.admin);
+    manager->registerUser(user, "Zq9#" + uniqueSuffix("pw") + "!Xw-Long");
+    const auto stored = vh::db::query::identities::User::getUserByName(user->name);
+    ASSERT_TRUE(stored);
+
+    vh::db::query::identities::User::deleteUser(stored->id);
+
+    std::vector<std::shared_ptr<vh::vault::model::Vault>> vaults;
+    ASSERT_NO_THROW(vaults = vh::db::query::vault::Vault::listVaults());
+    const auto orphan = std::ranges::find_if(vaults, [&](const auto& v) { return v->name == user->name + "'s Local Disk Vault"; });
+    ASSERT_NE(orphan, vaults.end());
+    EXPECT_EQ((*orphan)->owner_id, 0u);
+}
+
 TEST(S3CostSafetyTest, IndexRemoteOnlyPreservesEncryptionMetadataInLocalRow) {
     if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed remote index-only test due to missing environment variables.";
 
