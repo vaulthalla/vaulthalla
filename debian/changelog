@@ -1,4 +1,4 @@
-vaulthalla (1.6.6-1) unstable; urgency=high
+vaulthalla (1.7.0-1) unstable; urgency=high
 
   * Runtime
     - Fix DB pool slot leak that wedged the daemon (FUSE, CLI, apt) forever
