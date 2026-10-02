@@ -26,7 +26,7 @@ void Server::onAccept(tcp::socket socket) {
         return;
     }
 
-    auto session = std::make_shared<Session>(std::move(socket));
+    auto session = Session::open(std::move(socket));
     auto& pools = concurrency::ThreadPoolManager::instance();
     auto pool = pools.s3Pool();
 

@@ -6,6 +6,7 @@
 #include "protocols/http/Server.hpp"
 #include "protocols/http/Session.hpp"
 #include "protocols/http/upload/Coordinator.hpp"
+#include "protocols/SessionLifetimes.hpp"
 #include "log/Registry.hpp"
 
 #include <boost/asio/io_context.hpp>
@@ -14,6 +15,10 @@
 #include <sodium.h>
 
 namespace vh::protocols {
+
+namespace {
+constexpr std::chrono::seconds kHttpSessionDrainTimeout{10};
+}
 
 ProtocolService::ProtocolService() : AsyncService("ProtocolService") {}
 
@@ -141,6 +146,8 @@ void ProtocolService::shutdownProtocols() noexcept {
             else thread.join();
         }
         ioThreads_.clear();
+        // Again for any accepted before the stop; there are no accepts after the joins.
+        http::Session::cancelAllActive();
     } catch (const std::exception& e) {
         log::Registry::runtime()->error("[ProtocolService] Shutdown failed: {}", e.what());
     } catch (...) {
@@ -149,6 +156,12 @@ void ProtocolService::shutdownProtocols() noexcept {
 
     wsServer_.reset();
     httpServer_.reset();
+    // Preview sessions run on pool threads with sockets bound to ioContext_; it outlives every one of them.
+    if (ioContext_ && !http::Session::waitUntilNoneAlive(kHttpSessionDrainTimeout)) {
+        log::Registry::runtime()->error("[ProtocolService] HTTP sessions still running {}s after shutdown; keeping their io_context",
+                                        kHttpSessionDrainTimeout.count());
+        retainForProcessLifetime(std::move(ioContext_));
+    }
     ioContext_.reset();
     ioContextInitialized_.store(false, std::memory_order_release);
 }

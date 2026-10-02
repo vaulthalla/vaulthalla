@@ -16,6 +16,7 @@
 #include "protocols/s3/ObjectStore.hpp"
 #include "protocols/s3/GatewayService.hpp"
 #include "protocols/s3/Router.hpp"
+#include "protocols/s3/Session.hpp"
 #include "protocols/s3/SigV4.hpp"
 #include "protocols/s3/Xml.hpp"
 #include "protocols/shell/Router.hpp"
@@ -874,6 +875,48 @@ TEST(S3GatewayServiceTest, EnabledServiceBindsAndReturnsS3XmlErrors) {
     EXPECT_GE(service.gatewayStatus().totalRequests, 1u);
 
     service.stop();
+}
+
+// Sessions run on pool threads with sockets bound to the gateway's io_context: stopping must not free the context
+// while one is still alive (heap-use-after-free under ASan), and must end idle keep-alive connections.
+TEST(S3GatewayServiceTest, StopEndsOpenConnectionsBeforeFreeingTheirContext) {
+    ConfigRestore restoreConfig(vh::config::Registry::get());
+
+    auto cfg = vh::config::Registry::get();
+    cfg.s3_gateway.enabled = true;
+    cfg.s3_gateway.host = "127.0.0.1";
+    cfg.s3_gateway.port = freeLoopbackPort();
+    vh::config::Registry::set(cfg);
+
+    vh::concurrency::ThreadPoolManager::instance().init();
+    ThreadPoolShutdown shutdownPools{true};
+
+    vh::protocols::s3::GatewayService service;
+    service.start();
+
+    const auto readyBy = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!service.gatewayStatus().ready && std::chrono::steady_clock::now() < readyBy)
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    ASSERT_TRUE(service.gatewayStatus().ready);
+
+    boost::asio::io_context clientContext;
+    std::vector<boost::asio::ip::tcp::socket> idle;
+    for (int i = 0; i < 3; ++i) {
+        idle.emplace_back(clientContext);
+        idle.back().connect({boost::asio::ip::make_address("127.0.0.1"), cfg.s3_gateway.port});
+    }
+
+    const auto acceptedBy = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (vh::protocols::s3::Session::metrics().activeSessions < idle.size() &&
+           std::chrono::steady_clock::now() < acceptedBy)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    ASSERT_GE(vh::protocols::s3::Session::metrics().activeSessions, idle.size());
+
+    const auto stopStarted = std::chrono::steady_clock::now();
+    service.stop();
+
+    EXPECT_EQ(vh::protocols::s3::Session::metrics().activeSessions, 0u);
+    EXPECT_LT(std::chrono::steady_clock::now() - stopStarted, std::chrono::seconds(5));
 }
 
 TEST(S3GatewayServiceTest, DisabledServiceReportsNotConfiguredWithoutFailing) {

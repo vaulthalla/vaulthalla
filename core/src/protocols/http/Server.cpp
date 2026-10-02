@@ -15,7 +15,7 @@ Server::Server(net::io_context& ioc, const tcp::endpoint& endpoint)
       }) {}
 
 void Server::onAccept(tcp::socket socket) {
-    auto session = std::make_shared<Session>(std::move(socket));
+    auto session = Session::open(std::move(socket));
     ThreadPoolManager::instance().httpPool()->submit(std::make_unique<task::AsyncSession>(session));
 }
 

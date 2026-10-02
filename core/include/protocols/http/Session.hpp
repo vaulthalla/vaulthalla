@@ -1,11 +1,13 @@
 #pragma once
 
 #include "protocols/http/Router.hpp"
+#include "protocols/SessionLifetimes.hpp"
 
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/asio.hpp>
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -21,10 +23,15 @@ class Session : public std::enable_shared_from_this<Session> {
 public:
     explicit Session(tcp::socket socket);
 
+    // A session for an accepted socket, registered so cancelAllActive() reaches it even before a pool thread runs it.
+    [[nodiscard]] static std::shared_ptr<Session> open(tcp::socket socket);
+
     void run();
     void cancel() noexcept;
 
     static void cancelAllActive() noexcept;
+    // True once every session object (and so every socket) is gone; false if the timeout passed first.
+    [[nodiscard]] static bool waitUntilNoneAlive(std::chrono::milliseconds timeout);
 
 private:
     bool read_one();
@@ -38,6 +45,7 @@ private:
         std::string body = {}
     );
 
+    SessionLifetimes::Token lifetime_;   // first: released after socket_ is destroyed
     tcp::socket socket_;
     beast::flat_buffer buffer_;
     std::atomic<bool> stopRequested_{false};
