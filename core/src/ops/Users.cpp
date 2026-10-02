@@ -9,6 +9,7 @@
 #include "identities/User.hpp"
 #include "log/Registry.hpp"
 #include "rbac/permission/admin/identities/Base.hpp"
+#include "rbac/permission/admin/VaultGlobals.hpp"
 #include "rbac/resolver/admin/all.hpp"
 #include "rbac/role/Admin.hpp"
 #include "runtime/Deps.hpp"
@@ -100,6 +101,13 @@ void requireBindableUid(const uint32_t uid, const std::optional<uint32_t> curren
         throw Conflict("linux uid " + std::to_string(uid) + " is already bound to " + holder->name);
 }
 
+// The account's global vault policy (user_global_vault_policy) starts from its built-in role's preset; roles loaded
+// from admin_role carry none, so without this every account was written with an empty policy.
+void applyRolePreset(rbac::role::Admin& role, const uint32_t userId) {
+    const auto preset = rbac::role::Admin::builtin(role.name, userId);
+    role.vGlobals = preset ? preset->vGlobals : rbac::permission::admin::VaultGlobals{};
+}
+
 std::string generatePassword() {
     const std::size_t length = paths::testMode ? 8 : 84;
     for (int attempt = 0; attempt < 4096; ++attempt)
@@ -129,6 +137,7 @@ Created create(const Actor& actor, const Create& req) {
 
     auto user = std::make_shared<identities::User>(req.name, req.email.value_or(""), req.is_active);
     if (!req.email || req.email->empty()) user->email = std::nullopt;
+    applyRolePreset(*role, 0);
     user->roles.admin = role;
     user->meta.linux_uid = req.linux_uid;
     user->meta.created_by = actor->id;
@@ -188,6 +197,7 @@ UserPtr update(const Actor& actor, const Update& req) {
             if (!can(actor, IdPerm::Edit, role))
                 throw Denied(std::string("you do not have permission to manage ") + kindOf(role));
             role->user_id = target->id;
+            applyRolePreset(*role, target->id);
             target->roles.admin = role;
             endSessions = true;   // live sessions carry the old role
         }

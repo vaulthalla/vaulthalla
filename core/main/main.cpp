@@ -77,6 +77,7 @@ void initDB() {
         vh::seed::seed_database();
 
     vh::seed::reconcileSystemPrincipals();
+    vh::seed::reconcileGlobalVaultPolicies();
 }
 
 void initDeps() {

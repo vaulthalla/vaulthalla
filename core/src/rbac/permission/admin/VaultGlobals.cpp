@@ -4,7 +4,13 @@
 #include <nlohmann/json.hpp>
 
 namespace vh::rbac::permission::admin {
-    VaultGlobals::VaultGlobals(const pqxx::result &res) {
+    VaultGlobals::VaultGlobals() {
+        self.scope = role::vault::Global::Scope::Self;
+        admin.scope = role::vault::Global::Scope::Admin;
+        user.scope = role::vault::Global::Scope::User;
+    }
+
+    VaultGlobals::VaultGlobals(const pqxx::result &res) : VaultGlobals() {
         for (const auto &row: res) {
             const auto scope = row["scope"].as<std::string>();
             if (scope == "self") self = role::vault::Global(row);

@@ -173,6 +173,14 @@ namespace vh::rbac::role {
                roles.toFlagsString() + " " + keys.toFlagsString() + " " + s3Gateway.toFlagsString();
     }
 
+    std::optional<Admin> Admin::builtin(const std::string_view name, const uint32_t userId) {
+        for (auto role : {None(userId), Auditor(userId), Support(userId), IdentityAdmin(userId), SecurityAdmin(userId),
+                          PlatformOperator(userId), VaultAdmin(userId), OrgAdmin(userId), SuperAdmin(userId),
+                          KeyCustodian(userId)})
+            if (role.name == name) return role;
+        return std::nullopt;
+    }
+
     Admin Admin::fromJson(const nlohmann::json &j) { return Admin(j); }
 
     std::vector<Admin> admin_roles_from_pq_res(const pqxx::result &res) {
