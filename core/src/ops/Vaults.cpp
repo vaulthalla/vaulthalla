@@ -1,5 +1,7 @@
 #include "ops/Vaults.hpp"
 
+#include "ops/Users.hpp"
+
 #include "db/query/identities/User.hpp"
 #include "db/query/sync/Policy.hpp"
 #include "db/query/vault/APIKey.hpp"
@@ -241,10 +243,9 @@ VaultPtr update(const Actor& actor, const Update& req) {
     if (req.fuse_name) staged->fuse_name = *req.fuse_name;
     if (req.is_active) staged->is_active = *req.is_active;
     if (req.owner_id && *req.owner_id != existing->owner_id) {
-        if (!db::query::identities::User::getUserById(*req.owner_id))
-            throw NotFound("owner not found: " + std::to_string(*req.owner_id));
-        // Handing a vault to someone is creating one for them.
-        if (!canCreateFor(actor, *req.owner_id)) throw Denied("you do not have permission to give vaults to that owner");
+        requireTransferable(actor, existing->id, *req.owner_id);
+        if (req.name && *req.name != existing->name && db::query::vault::Vault::vaultExists(*req.name, *req.owner_id))
+            throw Conflict("the new owner already has a vault named '" + *req.name + "'");
         staged->owner_id = *req.owner_id;
     }
 
@@ -293,6 +294,25 @@ VaultPtr update(const Actor& actor, const Update& req) {
     if (encryptionChanged) recordWaiver(actor, std::static_pointer_cast<S3Vault>(staged));
     if (newPolicy) pushSyncToEngine(existing->id, currentPolicy(existing->id));
     return requireVault(existing->id);
+}
+
+void requireTransferable(const Actor& actor, const unsigned int vaultId, const unsigned int newOwnerId) {
+    requireActor(actor);
+    const auto vault = requireVault(vaultId);
+    if (!actor->isSuperAdmin() && !(actor->roles.admin && ops::users::isAdminIdentity(*actor->roles.admin)))
+        throw Denied("only administrators can transfer vault ownership");
+    if (!canOnVault(actor, VaultPerm::Edit, vaultId)) throw Denied("you do not have permission to edit vault " + vault->name);
+    if (!db::query::identities::User::getUserById(newOwnerId)) throw NotFound("owner not found: " + std::to_string(newOwnerId));
+    // Handing a vault to someone is creating one for them.
+    if (!canCreateFor(actor, newOwnerId)) throw Denied("you do not have permission to give vaults to that owner");
+    if (newOwnerId != vault->owner_id && db::query::vault::Vault::vaultExists(vault->name, newOwnerId))
+        throw Conflict("the new owner already has a vault named '" + vault->name + "'");
+}
+
+void requireRemovable(const Actor& actor, const unsigned int vaultId) {
+    requireActor(actor);
+    const auto vault = requireVault(vaultId);
+    if (!canOnVault(actor, VaultPerm::Remove, vaultId)) throw Denied("you do not have permission to remove vault " + vault->name);
 }
 
 VaultPtr remove(const Actor& actor, const unsigned int vaultId) {

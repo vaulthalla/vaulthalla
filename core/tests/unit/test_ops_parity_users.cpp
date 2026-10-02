@@ -22,6 +22,8 @@
 #include "ops/Error.hpp"
 #include "ops/Roles.hpp"
 #include "ops/Users.hpp"
+#include "ops/Vaults.hpp"
+#include "vault/model/Vault.hpp"
 #include "protocols/shell/Router.hpp"
 #include "protocols/shell/commands/all.hpp"
 #include "protocols/ws/Router.hpp"
@@ -241,15 +243,15 @@ TEST_F(UserParityTest, AccountsAboveTheActorCannotBeManaged) {
     EXPECT_FALSE(wsOk([&] {
         (void)protocols::ws::handler::Auth::changePassword(json{{"id", auditor->id}, {"new_password", "Another-Pass-77"}}, ws(mgr));
     }));
-    EXPECT_NE(cli("user delete " + auditor->name, mgr).first, 0);
-    EXPECT_FALSE(wsOk([&] { (void)protocols::ws::handler::Auth::deleteUser(json{{"id", auditor->id}}, ws(mgr)); }));
+    EXPECT_NE(cli("user delete " + auditor->name + " --yes", mgr).first, 0);
+    EXPECT_FALSE(wsOk([&] { (void)protocols::ws::handler::Auth::deleteUser(json{{"id", auditor->id}, {"confirm", true}}, ws(mgr)); }));
     EXPECT_NE(cli("user update " + auditor->name + " --disable", mgr).first, 0);
     EXPECT_TRUE(db::query::identities::User::getUserById(auditor->id));
 
     // An admin-class account within the actor's reach is fine.
     const auto minor = seedUser("up_minor", customRole({"admin.identities.users.view"}));
     EXPECT_EQ(cli("user update " + minor->name + " --email minor@x.test", mgr).first, 0);
-    EXPECT_TRUE(wsOk([&] { (void)protocols::ws::handler::Auth::deleteUser(json{{"id", minor->id}}, ws(mgr)); }));
+    EXPECT_TRUE(wsOk([&] { (void)protocols::ws::handler::Auth::deleteUser(json{{"id", minor->id}, {"confirm", true}}, ws(mgr)); }));
 }
 
 TEST_F(UserParityTest, DeactivationAndDeletionEndSessions) {
@@ -271,7 +273,7 @@ TEST_F(UserParityTest, DeactivationAndDeletionEndSessions) {
     const auto gone = seedUser("up_gone", "unprivileged");
     const auto goneSession = loggedIn(gone);
     const auto goneToken = goneSession->tokens->accessToken->rawToken;
-    (void)protocols::ws::handler::Auth::deleteUser(json{{"id", gone->id}}, ws(superUser));
+    (void)protocols::ws::handler::Auth::deleteUser(json{{"id", gone->id}, {"confirm", true}}, ws(superUser));
     EXPECT_TRUE(sessions->getSessionsByUserId(gone->id).empty());
     EXPECT_FALSE(sessions->validate(goneSession, goneToken));
 
@@ -300,8 +302,8 @@ TEST_F(UserParityTest, SelfServiceLimitsMatch) {
     }));
 
     const auto self = seedUser("up_self", "identity_admin");
-    EXPECT_NE(cli("user delete " + self->name, self).first, 0);
-    EXPECT_FALSE(wsOk([&] { (void)protocols::ws::handler::Auth::deleteUser(json{{"id", self->id}}, ws(self)); }));
+    EXPECT_NE(cli("user delete " + self->name + " --yes", self).first, 0);
+    EXPECT_FALSE(wsOk([&] { (void)protocols::ws::handler::Auth::deleteUser(json{{"id", self->id}, {"confirm", true}}, ws(self)); }));
     EXPECT_FALSE(wsOk([&] {
         (void)protocols::ws::handler::Auth::updateUser(json{{"id", self->id}, {"is_active", false}}, ws(self));
     }));
@@ -340,6 +342,73 @@ TEST_F(UserParityTest, ListShowsWhatTheActorMayViewOnBothSurfaces) {
     // And --sort is a column, not SQL.
     EXPECT_NE(cli("user list --sort \"id; DELETE FROM users\"", superUser).first, 0);
     EXPECT_TRUE(db::query::identities::User::getUserById(viewer->id));
+}
+
+// #133: deleting an account used to leave its vaults ownerless. Now it asks first, then transfers or destroys them.
+TEST_F(UserParityTest, DeletingAnAccountAsksAndThenTransfersOrDestroysItsVaults) {
+    const auto vaultFor = [](const UserPtr& owner) {
+        return ops::vaults::create(superUser, {.name = "up_v_" + usersTag(), .type = vault::model::VaultType::Local,
+                                               .owner_id = owner->id});
+    };
+    const auto ownerOf = [](const unsigned int vaultId) -> std::optional<uint32_t> {
+        const auto v = db::query::vault::Vault::getVault(vaultId);
+        return v ? std::optional<uint32_t>{v->owner_id} : std::nullopt;
+    };
+
+    // Unconfirmed: the question, naming the vaults, and nothing changes. Same on both surfaces.
+    const auto doomed = seedUser("up_doomed", "unprivileged");
+    const auto doomedVault = vaultFor(doomed);
+    try {
+        (void)ops::users::remove(superUser, {.id = doomed->id});
+        ADD_FAILURE() << "deletion went ahead without confirmation";
+    } catch (const ops::NeedsConfirmation& e) {
+        EXPECT_EQ(e.code, "user_delete");
+        const std::string text = e.what();
+        EXPECT_NE(text.find(ops::users::USER_DELETE_CONFIRMATION), std::string::npos) << text;
+        EXPECT_NE(text.find(doomedVault->name), std::string::npos) << text;
+    }
+    const auto [code, out] = cli("user delete " + doomed->name, superUser);
+    EXPECT_NE(code, 0);
+    EXPECT_NE(out.find("--yes"), std::string::npos) << out;
+    EXPECT_FALSE(wsOk([&] { (void)protocols::ws::handler::Auth::deleteUser(json{{"id", doomed->id}}, ws(superUser)); }));
+    EXPECT_TRUE(db::query::identities::User::getUserById(doomed->id));
+    EXPECT_EQ(ownerOf(doomedVault->id), doomed->id);
+
+    // Confirmed without a transfer: the vaults go with the account.
+    ASSERT_EQ(cli("user delete " + doomed->name + " --yes", superUser).first, 0);
+    EXPECT_FALSE(db::query::identities::User::getUserById(doomed->id));
+    EXPECT_FALSE(ownerOf(doomedVault->id)) << "the vault was left behind, ownerless";
+
+    // Confirmed with a transfer: the heir owns them afterwards.
+    const auto leaving = seedUser("up_leaving", "unprivileged"), heir = seedUser("up_heir", "unprivileged");
+    const auto kept = vaultFor(leaving);
+    ASSERT_TRUE(wsOk([&] {
+        (void)protocols::ws::handler::Auth::deleteUser(
+            json{{"id", leaving->id}, {"transfer_to", heir->id}, {"confirm", true}}, ws(superUser));
+    }));
+    EXPECT_FALSE(db::query::identities::User::getUserById(leaving->id));
+    EXPECT_EQ(ownerOf(kept->id), heir->id);
+}
+
+TEST_F(UserParityTest, VaultOwnershipTransferIsForAdministrators) {
+    // May delete plain accounts but holds no vault rights: deleting is not a licence to move vaults between users.
+    const auto deleter = seedUser("up_deleter", customRole({"admin.identities.users.delete", "admin.identities.users.view"}));
+    const auto leaving = seedUser("up_leaving2", "unprivileged"), heir = seedUser("up_heir2", "unprivileged");
+    const auto v = ops::vaults::create(superUser, {.name = "up_v2_" + usersTag(), .type = vault::model::VaultType::Local,
+                                                   .owner_id = leaving->id});
+    EXPECT_THROW((void)ops::users::remove(deleter, {.id = leaving->id, .transfer_to = heir->id, .confirmed = true}), ops::Denied);
+    EXPECT_TRUE(db::query::identities::User::getUserById(leaving->id)) << "a refused transfer must change nothing";
+    EXPECT_EQ(db::query::vault::Vault::getVault(v->id)->owner_id, leaving->id);
+
+    // An owner can't hand their own vault to someone else either.
+    EXPECT_NE(cli("vault update " + std::to_string(v->id) + " --owner " + heir->name, leaving).first, 0);
+    EXPECT_EQ(db::query::vault::Vault::getVault(v->id)->owner_id, leaving->id);
+
+    // A clash with a vault the heir already has is refused before anything changes.
+    (void)ops::vaults::create(superUser, {.name = v->name, .type = vault::model::VaultType::Local, .owner_id = heir->id});
+    EXPECT_THROW((void)ops::users::remove(superUser, {.id = leaving->id, .transfer_to = heir->id, .confirmed = true}),
+                 ops::Conflict);
+    EXPECT_TRUE(db::query::identities::User::getUserById(leaving->id));
 }
 
 }

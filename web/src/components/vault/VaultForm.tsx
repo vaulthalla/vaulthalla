@@ -1,6 +1,7 @@
 'use client'
 
 import { useApiKeyStore } from '@/stores/apiKeyStore'
+import { useAuthStore } from '@/stores/authStore'
 import { useVaultStore } from '@/stores/vaultStore'
 import { WebSocketCommandError } from '@/stores/useWebSocket'
 import {
@@ -30,6 +31,7 @@ type FormSyncPolicy = Omit<RemoteSyncPolicy, 'interval'> & { interval: number }
 
 type VaultFormValues = {
   name: string
+  owner_id?: number
   slug?: string
   fuse_name?: string | null
   type: VaultType
@@ -207,6 +209,7 @@ const defaultValuesFor = (initialValues?: Partial<LocalDiskVault | S3Vault | Vau
 
   return {
     name: initialValues?.name ?? '',
+    owner_id: initialValues?.owner_id,
     slug: initialValues?.slug ?? '',
     fuse_name: initialValues?.fuse_name ?? '',
     type,
@@ -408,6 +411,18 @@ const VaultForm = ({ initialValues }: { initialValues?: Partial<LocalDiskVault |
   const updateVault = useVaultStore(state => state.updateVault)
 
   const defaults = useMemo(() => defaultValuesFor(initialValues), [initialValues])
+  const isEditing = Boolean(initialValues?.name || initialValues?.id)
+  // Ownership transfer is for administrators: the list only loads for accounts that may view users, and the
+  // server refuses the change for anyone else.
+  const [owners, setOwners] = useState<{ id: number; name: string }[]>([])
+  useEffect(() => {
+    if (!isEditing) return
+    useAuthStore
+      .getState()
+      .getUsers()
+      .then(users => setOwners(users.map(u => ({ id: u.id, name: u.name }))))
+      .catch(() => setOwners([]))
+  }, [isEditing])
 
   const {
     register,
@@ -445,6 +460,7 @@ const VaultForm = ({ initialValues }: { initialValues?: Partial<LocalDiskVault |
               new LocalDiskVault({
                 ...initialValues,
                 name: data.name,
+                ...(data.owner_id ? { owner_id: Number(data.owner_id) } : {}),
                 ...externalNameValues,
                 type: 'local',
                 mount_point: data.mount_point ?? '',
@@ -456,6 +472,7 @@ const VaultForm = ({ initialValues }: { initialValues?: Partial<LocalDiskVault |
                   new S3Vault({
                     ...initialValues,
                     name: data.name,
+                    ...(data.owner_id ? { owner_id: Number(data.owner_id) } : {}),
                     ...externalNameValues,
                     type: 's3',
                     api_key_id: Number(data.api_key_id),
@@ -613,6 +630,23 @@ const VaultForm = ({ initialValues }: { initialValues?: Partial<LocalDiskVault |
         <input {...register('name', { required: 'Name is required' })} className="mt-1 w-full rounded border p-2" />
         {errors.name && <span className="text-sm text-red-400">{errors.name.message}</span>}
       </div>
+
+      {isEditing && owners.length > 0 && (
+        <div>
+          <label className="block text-sm font-medium">Owner</label>
+          <select
+            {...register('owner_id', { valueAsNumber: true })}
+            className="mt-1 w-full rounded border p-2"
+            data-testid="vault-owner-select">
+            {owners.map(owner => (
+              <option key={owner.id} value={owner.id}>
+                {owner.name}
+              </option>
+            ))}
+          </select>
+          <span className="text-xs text-white/50">Transferring ownership is limited to administrators.</span>
+        </div>
+      )}
 
       <div className="grid gap-4 md:grid-cols-2">
         <div>

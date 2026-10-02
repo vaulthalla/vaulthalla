@@ -60,6 +60,7 @@ interface AuthState {
   getUsers: () => Promise<User[]>
   fetchAdminPasswordIsDefault: (force: boolean) => Promise<boolean>
   getUserByName: (payload: WSCommandPayload<'auth.user.get.byName'>) => Promise<User>
+  deleteUser: (payload: WSCommandPayload<'auth.user.delete'>) => Promise<void>
   setToken: (token: string | null) => void
   markUnauthenticated: (reason?: string) => void
 }
@@ -254,6 +255,11 @@ export const useAuthStore: UseBoundStore<StoreApi<AuthState>> = create<AuthState
           set({ error: getErrorMessage(err) || 'Failed to fetch admin password' })
           throw err
         }
+      },
+
+      deleteUser: async (payload: WSCommandPayload<'auth.user.delete'>) => {
+        await useWebSocketStore.getState().waitForConnection()
+        await useWebSocketStore.getState().sendCommand('auth.user.delete', payload)
       },
 
       getUserByName: async ({ name }: WSCommandPayload<'auth.user.get.byName'>) => {

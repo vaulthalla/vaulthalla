@@ -119,7 +119,12 @@ export interface WebSocketCommandMap {
 
   'auth.user.get': { payload: { id: number }; response: { user: User } }
 
-  'auth.user.delete': { payload: { id: number }; response: { user_id: number } }
+  // Without confirm the reply is an error with data.code 'user_delete' and the question to ask. The user's vaults
+  // are destroyed unless transfer_to names who gets them.
+  'auth.user.delete': {
+    payload: { id: number; confirm?: boolean; transfer_to?: number | null }
+    response: { user_id: number }
+  }
 
   'auth.user.get.byName': { payload: { name: string }; response: { user: User } }
 

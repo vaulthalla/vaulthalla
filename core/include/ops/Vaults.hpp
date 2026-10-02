@@ -94,6 +94,12 @@ enum class SyncStart { Started, RerunQueued };
 [[nodiscard]] VaultPtr create(const Actor& actor, const Create& req);
 [[nodiscard]] VaultPtr update(const Actor& actor, const Update& req);
 VaultPtr remove(const Actor& actor, unsigned int vaultId);
+
+// Checks only, nothing changes: what update {owner_id} and remove would refuse. Ownership transfer is an
+// administrator's act: it needs an admin account, vault Edit, and the right to create vaults for the new owner, and
+// the new owner must not already have a vault with that name.
+void requireTransferable(const Actor& actor, unsigned int vaultId, unsigned int newOwnerId);
+void requireRemovable(const Actor& actor, unsigned int vaultId);
 [[nodiscard]] Details get(const Actor& actor, unsigned int vaultId);
 [[nodiscard]] std::vector<VaultPtr> list(const Actor& actor, db::model::ListQueryParams params = {},
                                          std::optional<vault::model::VaultType> type = std::nullopt);

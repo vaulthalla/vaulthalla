@@ -59,7 +59,12 @@ json Auth::refreshToken(const std::string &token, const std::shared_ptr<Session>
 }
 
 json Auth::deleteUser(const json &payload, const std::shared_ptr<Session> &session) {
-    const auto removed = ops::users::remove(requireSessionUser(session), payload.at("id").get<unsigned int>());
+    // Without confirm the reply is an error with data.code "user_delete" and the text to show; the web asks, then
+    // resends with confirm (and transfer_to to keep the vaults).
+    ops::users::Remove req{.id = payload.at("id").get<unsigned int>(), .confirmed = payload.value("confirm", false)};
+    if (payload.contains("transfer_to") && !payload.at("transfer_to").is_null())
+        req.transfer_to = payload.at("transfer_to").get<unsigned int>();
+    const auto removed = ops::users::remove(requireSessionUser(session), req);
     return {{"user_id", removed->id}};
 }
 

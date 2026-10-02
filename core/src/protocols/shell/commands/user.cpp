@@ -82,8 +82,26 @@ CommandResult deleteUser(const CommandCall& call) {
     validatePositionals(call, usage);
     const auto id = userIdFromPositional(call.positionals[0]);
     if (!id) return userNotFound("user delete", call.positionals[0]);
-    return runOp("user delete", [&] { return ops::users::remove(call.user, *id); },
-                 [](const ops::users::UserPtr& user) { return "User deleted successfully: " + user->name; });
+
+    ops::users::Remove req{.id = *id, .confirmed = hasFlag(call, "yes")};
+    if (const auto heir = optVal(call, "transfer-to")) {
+        const auto heirId = userIdFromPositional(*heir);
+        if (!heirId) return userNotFound("user delete --transfer-to", *heir);
+        req.transfer_to = *heirId;
+    }
+    const auto format = [](const ops::users::UserPtr& user) { return "User deleted successfully: " + user->name; };
+    try {
+        return ok(format(ops::users::remove(call.user, req)));
+    } catch (const ops::NeedsConfirmation& e) {
+        if (!call.io)
+            return invalid("user delete: " + std::string(e.what()) + "\nRe-run with --yes to confirm.");
+        if (!call.io->confirm(std::string(e.what()) + "\nDelete this user? [no]", true))
+            return invalid("user delete: cancelled; nothing was changed");
+        req.confirmed = true;
+        return runOp("user delete", [&] { return ops::users::remove(call.user, req); }, format);
+    } catch (const ops::Error& e) {
+        return invalid("user delete: " + std::string(e.what()));
+    }
 }
 
 CommandResult userInfo(const CommandCall& call) {

@@ -53,8 +53,20 @@ struct Update {
 [[nodiscard]] Created create(const Actor& actor, const Create& req);
 // Role changes and deactivation end the account's sessions.
 UserPtr update(const Actor& actor, const Update& req);
-// Ends the account's sessions, then removes it. Returns what was removed.
-UserPtr remove(const Actor& actor, uint32_t id);
+// What deleting an account asks first (#133). NeedsConfirmation code: "user_delete".
+inline constexpr const char* USER_DELETE_CONFIRMATION =
+    "Are you sure you wish to delete this user? The user's existing vaults will be destroyed unless ownership is "
+    "transferred.";
+
+struct Remove {
+    uint32_t id{};
+    std::optional<uint32_t> transfer_to{};   // give every vault the account owns to this user; absent: destroy them
+    bool confirmed{false};                   // false: throw NeedsConfirmation listing what happens to the vaults
+};
+
+// Checks every vault first (transfer or remove rights, name clashes), then transfers or destroys them, ends the
+// account's sessions and removes it. Returns what was removed.
+UserPtr remove(const Actor& actor, const Remove& req);
 [[nodiscard]] UserPtr get(const Actor& actor, uint32_t id);
 [[nodiscard]] UserPtr getByName(const Actor& actor, const std::string& name);
 // The accounts the actor may view.

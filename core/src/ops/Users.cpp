@@ -1,6 +1,9 @@
 #include "ops/Users.hpp"
 
 #include "ops/Roles.hpp"
+#include "ops/Vaults.hpp"
+#include "db/query/vault/Vault.hpp"
+#include "vault/model/Vault.hpp"
 #include "auth/Manager.hpp"
 #include "auth/registration/Validator.hpp"
 #include "crypto/util/hash.hpp"
@@ -215,17 +218,46 @@ UserPtr update(const Actor& actor, const Update& req) {
     return requireUser(target->id);
 }
 
-UserPtr remove(const Actor& actor, const uint32_t id) {
+UserPtr remove(const Actor& actor, const Remove& req) {
     requireActor(actor);
-    const auto target = requireUser(id);
+    const auto target = requireUser(req.id);
     if (target->id == actor->id) throw Denied("you cannot delete your own account; ask another administrator");
     requireManage(actor, target, IdPerm::Delete, "deleted");
+
+    std::shared_ptr<identities::User> heir;
+    if (req.transfer_to) {
+        heir = requireUser(*req.transfer_to);
+        if (heir->id == target->id) throw Invalid("vaults can't be transferred to the account being deleted");
+        if (!heir->meta.is_active) throw Invalid("vaults can't be transferred to a deactivated account: " + heir->name);
+    }
+
+    const auto owned = db::query::vault::Vault::listUserVaults(target->id);
+    if (!req.confirmed) {
+        std::string text = USER_DELETE_CONFIRMATION;
+        if (!owned.empty()) {
+            text += "\n" + target->name + " owns " + std::to_string(owned.size()) + " vault(s):";
+            for (const auto& v : owned) text += " " + v->name + ";";
+            text += heir ? "\nThey will be transferred to " + heir->name + "." : "\nThey will be destroyed.";
+        }
+        throw NeedsConfirmation("user_delete", text);
+    }
+
+    // Every vault is checked before anything changes, so a refusal leaves the account and its vaults as they were.
+    for (const auto& v : owned) {
+        if (heir) vaults::requireTransferable(actor, v->id, heir->id);
+        else vaults::requireRemovable(actor, v->id);
+    }
+    for (const auto& v : owned) {
+        if (heir) (void)vaults::update(actor, {.id = v->id, .owner_id = heir->id});
+        else (void)vaults::remove(actor, v->id);
+    }
 
     runtime::Deps::get().authManager->revokeSessions(target->id);
     db::query::identities::User::deleteUser(target->id);
     if (db::query::identities::User::getUserById(target->id))
         throw std::runtime_error("failed to delete user " + std::to_string(target->id));
-    log::Registry::audit()->info("[ops::users] {} deleted user {}", actor->name, target->name);
+    log::Registry::audit()->info("[ops::users] {} deleted user {} ({} vault(s) {})", actor->name, target->name, owned.size(),
+                                 heir ? "transferred to " + heir->name : std::string("destroyed"));
     return target;
 }
 

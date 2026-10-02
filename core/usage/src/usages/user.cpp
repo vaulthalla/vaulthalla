@@ -54,11 +54,16 @@ static std::shared_ptr<CommandUsage> create(const std::weak_ptr<CommandUsage>& p
 static std::shared_ptr<CommandUsage> remove(const std::weak_ptr<CommandUsage>& parent) {
     auto cmd = buildBaseUsage(parent);
     cmd->aliases = {"delete", "remove", "rm"};
-    cmd->description = "Delete an existing user by username.";
+    cmd->description = "Delete an existing user by username. The user's vaults are destroyed unless ownership is "
+                       "transferred with --transfer-to; you are asked to confirm either way.";
     cmd->positionals = {userPos};
+    cmd->optional = {Optional::ManyToOne("transfer_to", "Give the user's vaults to this user instead of destroying them",
+                                         {"transfer-to"}, "user")};
+    cmd->optional_flags = {Flag::Alias("yes", "Delete without asking for confirmation", "yes")};
     cmd->examples = {
-        {"vh user delete alice", "Delete the user named 'alice'."},
-        {"vh user remove bob", "Delete the user named 'bob' (using alias)."},
+        {"vh user delete alice", "Delete the user named 'alice' after confirming; her vaults are destroyed."},
+        {"vh user delete alice --transfer-to bob", "Delete 'alice' and give her vaults to 'bob' (administrators only)."},
+        {"vh user remove bob --yes", "Delete the user named 'bob' without asking (using alias)."},
         {"vh u rm charlie", "Delete the user named 'charlie' (using shortest alias)."}
     };
     return cmd;

@@ -94,6 +94,7 @@ namespace vh::test::integration::cmd {
         std::ostringstream oss;
         oss << "vh " << randomAlias(root_->aliases) << ' ' << randomAlias(cmd->aliases);
         oss << ' ' << randomizePrimaryPositional(entity);
+        oss << " --yes";  // deletion asks first (#133); the harness has no terminal
         return oss.str();
     }
 
