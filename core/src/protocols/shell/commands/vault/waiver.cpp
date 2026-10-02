@@ -8,14 +8,13 @@
 
 namespace vh::protocols::shell::commands::vault {
 
-CommandResult runVaultChange(const CommandCall& call, const std::string_view prefix,
-                             const std::function<ops::vaults::VaultPtr(bool acceptWaiver)>& op,
-                             const std::function<std::string(const ops::vaults::VaultPtr&)>& format) {
+CommandResult runWithWaiver(const CommandCall& call, const std::string_view prefix,
+                            const std::function<std::string(bool acceptWaiver)>& op) {
     const auto refused = [&](const std::string& why) { return invalid(std::string(prefix) + ": " + why); };
     const bool acceptedByFlag = hasFlag(call, "accept-overwrite-waiver") || hasFlag(call, "accept-decryption-waiver");
     try {
         try {
-            return ok(format(op(acceptedByFlag)));
+            return ok(op(acceptedByFlag));
         } catch (const ops::NeedsConfirmation& e) {
             // The op found existing data the encryption change affects. A person has to accept the waiver.
             if (!call.io)
@@ -24,11 +23,17 @@ CommandResult runVaultChange(const CommandCall& call, const std::string_view pre
                                std::string(e.what()));
             if (call.io->prompt(e.what(), "I DO NOT ACCEPT") != "I ACCEPT")
                 return refused("the encryption waiver was not accepted; nothing was changed");
-            return ok(format(op(true)));
+            return ok(op(true));
         }
     } catch (const ops::Error& e) {
         return refused(e.what());
     }
+}
+
+CommandResult runVaultChange(const CommandCall& call, const std::string_view prefix,
+                             const std::function<ops::vaults::VaultPtr(bool acceptWaiver)>& op,
+                             const std::function<std::string(const ops::vaults::VaultPtr&)>& format) {
+    return runWithWaiver(call, prefix, [&](const bool accept) { return format(op(accept)); });
 }
 
 }

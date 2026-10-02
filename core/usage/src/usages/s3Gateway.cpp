@@ -253,7 +253,13 @@ std::shared_ptr<CommandUsage> bucket(const std::weak_ptr<CommandUsage>& parent) 
     };
     createRemoteCache->optional_flags = {
         Flag::WithAliases("encrypt", "Encrypt objects before upstream upload", {"encrypt"}),
-        Flag::WithAliases("no_encrypt", "Do not encrypt objects before upstream upload", {"no-encrypt"})
+        Flag::WithAliases("no_encrypt", "Do not encrypt objects before upstream upload", {"no-encrypt"}),
+        Flag::WithAliases("accept_overwrite_waiver",
+                          "Accept the encryption waiver when the upstream bucket already holds data",
+                          {"accept-overwrite-waiver"}),
+        Flag::WithAliases("accept_decryption_waiver",
+                          "Accept the waiver for storing upstream data unencrypted over existing data",
+                          {"accept-decryption-waiver"})
     };
     createRemoteCache->examples = {
         {"vh s3-gateway bucket create-remote-cache edge --api-key r2-main --upstream-bucket origin --encrypt",

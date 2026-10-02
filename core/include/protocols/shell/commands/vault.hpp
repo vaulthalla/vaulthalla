@@ -47,8 +47,12 @@ namespace vh::protocols::shell::commands::vault {
     // router.cpp
     void registerCommands(const std::shared_ptr<Router> &r);
 
-    // waiver.cpp: runs a vault create/update; when the op needs an encryption waiver, asks the person at the
-    // terminal (or honours --accept-overwrite-waiver / --accept-decryption-waiver) and repeats it accepted.
+    // waiver.cpp: runs an op that may need an encryption waiver (it throws ops::NeedsConfirmation); asks the
+    // person at the terminal (or honours --accept-overwrite-waiver / --accept-decryption-waiver) and repeats it
+    // accepted. `op` returns the command's output.
+    CommandResult runWithWaiver(const CommandCall &call, std::string_view prefix,
+                                const std::function<std::string(bool acceptWaiver)> &op);
+
     CommandResult runVaultChange(const CommandCall &call, std::string_view prefix,
                                  const std::function<ops::vaults::VaultPtr(bool acceptWaiver)> &op,
                                  const std::function<std::string(const ops::vaults::VaultPtr &)> &format);

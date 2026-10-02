@@ -2,19 +2,11 @@
 
 #include "crypto/secrets/TPMKeyProvider.hpp"
 #include "crypto/util/encrypt.hpp"
-#include "db/query/identities/User.hpp"
 #include "db/query/s3/Gateway.hpp"
-#include "rbac/permission/admin/S3Gateway.hpp"
-#include "rbac/permission/vault/Filesystem.hpp"
-#include "rbac/permission/vault/Roles.hpp"
-#include "rbac/resolver/admin/all.hpp"
-#include "rbac/resolver/vault/all.hpp"
 
-#include <algorithm>
 #include <array>
 #include <paths.h>
 #include <sodium.h>
-#include <set>
 #include <stdexcept>
 
 namespace vh::protocols::s3 {
@@ -37,51 +29,13 @@ bool validScopeMode(const std::string& mode) {
     return mode == "user_access" || mode == "global" || mode == "vault_allowlist";
 }
 
-bool actionAllowedByPrincipal(
-    const std::shared_ptr<identities::User>& user,
-    const uint32_t vaultId,
-    const rbac::permission::vault::FilesystemAction action) {
-    if (!user) return false;
-    if (user->isSuperAdmin()) return true;
-    return rbac::resolver::Vault::has<rbac::permission::vault::FilesystemAction>({
-        .user = user,
-        .permission = action,
-        .vault_id = vaultId,
-        .path = "/"
-    });
-}
-
-bool canAssignGatewayPrincipal(const std::shared_ptr<identities::User>& actor) {
-    if (!actor) return false;
-    if (actor->isSuperAdmin()) return true;
-    using Perm = rbac::permission::admin::S3GatewayPermissions;
-    return rbac::resolver::Admin::has<Perm>({
-        .user = actor,
-        .permission = Perm::AssignPrincipal
-    });
-}
-
-bool canManageGatewayCredentials(const std::shared_ptr<identities::User>& actor) {
-    if (!actor) return false;
-    if (actor->isSuperAdmin()) return true;
-    using Perm = rbac::permission::admin::S3GatewayPermissions;
-    return rbac::resolver::Admin::has<Perm>({
-        .user = actor,
-        .permission = Perm::ManageCredentials
-    });
-}
-
+// Shape only. Who may create which credential is ops::s3_gateway's to decide, before it calls this.
 void validateScopeRequest(const CredentialCreateOptions& options) {
     if (options.created_by == 0) throw std::invalid_argument("credential creation requires created_by");
     if (options.principal_user_id == 0) throw std::invalid_argument("credential creation requires principal_user_id");
     if (options.name.empty()) throw std::invalid_argument("credential name must not be empty");
-    CredentialManager::validateScopeMutation(
-        options.created_by,
-        options.principal_user_id,
-        options.scope_mode,
-        options.vault_scopes,
-        options.selected_vault_ids,
-        options.default_vault_role_id);
+    if (!validScopeMode(options.scope_mode))
+        throw std::invalid_argument("invalid S3 gateway credential scope mode: " + options.scope_mode);
 }
 }
 
@@ -187,92 +141,6 @@ std::string CredentialManager::generateAccessKey() {
 
 std::string CredentialManager::generateSecretKey() {
     return randomFromAlphabet(kSecretAlphabet, 40);
-}
-
-void CredentialManager::validateScopeMutation(
-    const uint32_t actorUserId,
-    const uint32_t principalUserId,
-    const std::string& scopeMode,
-    const std::vector<CredentialVaultAccessShorthand>& vaultScopes,
-    const std::vector<uint32_t>& selectedVaultIds,
-    const std::optional<uint32_t> defaultVaultRoleId) {
-    if (actorUserId == 0) throw std::invalid_argument("S3 gateway credential scope update requires an actor user");
-    if (principalUserId == 0) throw std::invalid_argument("S3 gateway credential scope update requires a principal user");
-    if (!validScopeMode(scopeMode)) throw std::invalid_argument("invalid S3 gateway credential scope mode: " + scopeMode);
-
-    const auto actor = db::query::identities::User::getUserById(actorUserId);
-    const auto principal = db::query::identities::User::getUserById(principalUserId);
-    if (!actor || !actor->meta.is_active) throw std::invalid_argument("credential scope actor is not active");
-    if (!principal || !principal->meta.is_active) throw std::invalid_argument("credential principal is not active");
-
-    const bool actorAdmin = actor->isAdmin();
-    if (principalUserId != actorUserId && !canAssignGatewayPrincipal(actor))
-        throw std::invalid_argument("assigning an S3 gateway credential to another principal requires admin.s3_gateway.assign_principal");
-    if (scopeMode == "global" && !canManageGatewayCredentials(actor))
-        throw std::invalid_argument("global S3 gateway credentials require admin.s3_gateway.manage_credentials");
-    if (scopeMode == "global" && !principal->isAdmin())
-        throw std::invalid_argument("global S3 gateway credentials require an admin principal");
-    if (scopeMode == "global") {
-        if (!defaultVaultRoleId)
-            throw std::invalid_argument("global S3 gateway credentials require a default vault role");
-        return;
-    }
-    if (scopeMode == "user_access") return;
-
-    std::set<uint32_t> requestedVaultIds(selectedVaultIds.begin(), selectedVaultIds.end());
-    for (const auto& scope : vaultScopes)
-        if (scope.vault_id != 0) requestedVaultIds.insert(scope.vault_id);
-
-    if (!defaultVaultRoleId && vaultScopes.empty())
-        throw std::invalid_argument("vault_allowlist S3 gateway credentials require a default vault role");
-    if (requestedVaultIds.empty())
-        throw std::invalid_argument("vault_allowlist S3 gateway credentials require at least one selected vault");
-
-    auto actorCanGrantVault = [&](const uint32_t vaultId) {
-        if (actor->isSuperAdmin()) return true;
-        using Perm = rbac::permission::vault::RolePermissions;
-        return rbac::resolver::Vault::has<Perm>({
-            .user = actor,
-            .permission = Perm::Assign,
-            .target_subject_type = std::string{"user"},
-            .target_subject_id = principalUserId,
-            .vault_id = vaultId
-        });
-    };
-
-    for (const auto vaultId : requestedVaultIds) {
-        if (!actorCanGrantVault(vaultId))
-            throw std::invalid_argument("actor cannot grant S3 gateway vault access for vault " + std::to_string(vaultId));
-        const auto hasAnyVaultAccess =
-            actionAllowedByPrincipal(principal, vaultId, rbac::permission::vault::FilesystemAction::List) ||
-            actionAllowedByPrincipal(principal, vaultId, rbac::permission::vault::FilesystemAction::Read) ||
-            actionAllowedByPrincipal(principal, vaultId, rbac::permission::vault::FilesystemAction::Write) ||
-            actionAllowedByPrincipal(principal, vaultId, rbac::permission::vault::FilesystemAction::Delete);
-        if (!hasAnyVaultAccess)
-            throw std::invalid_argument("principal cannot access vault " + std::to_string(vaultId));
-    }
-
-    if (!actorAdmin) {
-        for (const auto& scope : vaultScopes) {
-            if (scope.can_admin)
-                throw std::invalid_argument("non-admin users cannot grant S3 gateway admin scope");
-            const auto hasAnyVaultAccess =
-                actionAllowedByPrincipal(principal, scope.vault_id, rbac::permission::vault::FilesystemAction::List) ||
-                actionAllowedByPrincipal(principal, scope.vault_id, rbac::permission::vault::FilesystemAction::Read) ||
-                actionAllowedByPrincipal(principal, scope.vault_id, rbac::permission::vault::FilesystemAction::Write) ||
-                actionAllowedByPrincipal(principal, scope.vault_id, rbac::permission::vault::FilesystemAction::Delete);
-            if (!hasAnyVaultAccess)
-                throw std::invalid_argument("principal cannot access vault " + std::to_string(scope.vault_id));
-            if (scope.can_list && !actionAllowedByPrincipal(principal, scope.vault_id, rbac::permission::vault::FilesystemAction::List))
-                throw std::invalid_argument("principal cannot list vault " + std::to_string(scope.vault_id));
-            if (scope.can_read && !actionAllowedByPrincipal(principal, scope.vault_id, rbac::permission::vault::FilesystemAction::Read))
-                throw std::invalid_argument("principal cannot read vault " + std::to_string(scope.vault_id));
-            if (scope.can_write && !actionAllowedByPrincipal(principal, scope.vault_id, rbac::permission::vault::FilesystemAction::Write))
-                throw std::invalid_argument("principal cannot write vault " + std::to_string(scope.vault_id));
-            if (scope.can_delete && !actionAllowedByPrincipal(principal, scope.vault_id, rbac::permission::vault::FilesystemAction::Delete))
-                throw std::invalid_argument("principal cannot delete from vault " + std::to_string(scope.vault_id));
-        }
-    }
 }
 
 std::vector<uint8_t> CredentialManager::encryptSecret(const std::string& secret, std::vector<uint8_t>& iv) const {

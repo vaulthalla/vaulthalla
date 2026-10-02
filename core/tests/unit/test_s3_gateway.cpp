@@ -10,6 +10,8 @@
 #include "fs/model/Path.hpp"
 #include "identities/User.hpp"
 #include "protocols/s3/CredentialManager.hpp"
+#include "ops/Error.hpp"
+#include "ops/S3Gateway.hpp"
 #include "protocols/s3/MultipartStore.hpp"
 #include "protocols/s3/ObjectStore.hpp"
 #include "protocols/s3/GatewayService.hpp"
@@ -1794,22 +1796,24 @@ TEST_F(S3GatewayDbTest, SignedDedicatedHostPutAndGetAuthenticateAndRoutePathStyl
     EXPECT_EQ(response.body(), "dedicated host body");
 }
 
+// The scope rule moved from CredentialManager::validateScopeMutation into ops::s3_gateway, the one place both
+// surfaces authorize credential policy.
 TEST_F(S3GatewayDbTest, NonAdminScopeMutationCannotGrantGatewayAdminScope) {
+    const auto user = vh::db::query::identities::User::getUserById(userId);
+    ASSERT_TRUE(user);
     EXPECT_THROW(
-        vh::protocols::s3::CredentialManager::validateScopeMutation(
-            userId,
-            userId,
-            "vault_allowlist",
-            {{
-                .credential_id = 123,
+        (void)vh::ops::s3_gateway::createCredential(user, {
+            .name = "non-admin-admin-scope-" + s3GatewayUniqueSuffix("credential"),
+            .scope_mode = std::string{"vault_allowlist"},
+            .vault_access = {{
                 .vault_id = vaultId,
-                .can_list = true,
-                .can_read = true,
-                .can_write = false,
-                .can_delete = false,
-                .can_admin = true
-            }}),
-        std::invalid_argument);
+                .list = true,
+                .read = true,
+                .write = false,
+                .del = false,
+                .admin = true
+            }}}),
+        vh::ops::Error);
 }
 
 TEST_F(S3GatewayDbTest, NonAdminScopeMutationCannotNameUnownedVaultEvenWithNoActions) {
@@ -1830,21 +1834,21 @@ TEST_F(S3GatewayDbTest, NonAdminScopeMutationCannotNameUnownedVaultEvenWithNoAct
             return seededVaultId;
         });
 
+    const auto user = vh::db::query::identities::User::getUserById(userId);
+    ASSERT_TRUE(user);
     EXPECT_THROW(
-        vh::protocols::s3::CredentialManager::validateScopeMutation(
-            userId,
-            userId,
-            "vault_allowlist",
-            {{
-                .credential_id = 123,
+        (void)vh::ops::s3_gateway::createCredential(user, {
+            .name = "non-admin-unowned-" + s3GatewayUniqueSuffix("credential"),
+            .scope_mode = std::string{"vault_allowlist"},
+            .vault_access = {{
                 .vault_id = unownedVaultId,
-                .can_list = false,
-                .can_read = false,
-                .can_write = false,
-                .can_delete = false,
-                .can_admin = false
-            }}),
-        std::invalid_argument);
+                .list = false,
+                .read = false,
+                .write = false,
+                .del = false,
+                .admin = false
+            }}}),
+        vh::ops::Error);
 }
 
 TEST_F(S3GatewayDbTest, UserAccessCredentialCannotCreateBucketWithoutAdminPrincipal) {
