@@ -56,8 +56,14 @@ vh user update alice --enable
 Delete:
 
 ```bash
-vh user delete alice
+vh user delete alice                      # asks first; her vaults are destroyed
+vh user delete alice --transfer-to bob    # asks first; her vaults go to bob
+vh user delete alice --yes                # no question (scripts)
 ```
+
+Deleting an account always asks: "Are you sure you wish to delete this user? The user's existing vaults will be destroyed unless ownership is transferred." The web console asks the same in its delete dialog, where you can pick who receives the vaults. Every vault is checked before anything changes, so a refused transfer or removal leaves the account and its vaults as they were.
+
+Transferring vault ownership, here or with `vh vault update <id> --owner <user>` / the vault edit page, is limited to administrators: it needs an admin account, edit rights on the vault, and the right to create vaults for the new owner. The new owner can't already have a vault with the same name.
 
 The built-in super admin user and role are protected from ordinary mutation paths. The super admin can't be renamed, because the daemon looks it up by name.
 
@@ -66,6 +72,7 @@ Rules that apply on the CLI and in the web console alike:
 - An account whose admin role grants anything beyond managing its owner's own vaults and keys is an *admin account*. Creating, editing, deleting or resetting the password of an admin account needs the `admin.identities.admins.*` permissions; plain accounts use `admin.identities.users.*`.
 - Nobody can assign a role that grants admin permissions they don't hold. Nobody can edit, delete, deactivate or reset the password of an account whose role exceeds their own.
 - Nobody can change their own role, Linux UID binding or active state, or delete their own account. Ask another administrator.
+- An account's global vault policy (what it may do in vaults through no specific vault role) starts from its built-in role's preset and follows the role when it changes. `unprivileged` grants none, and neither does a custom role (custom roles have no preset yet): such accounts reach a vault, their own default vault included, through a vault role assignment.
 - Deleting, deactivating, re-roling or resetting the password of an account ends all of its sessions immediately. A deactivated account can't log in.
 - `vh user create` creates the account's default vault, as the web console does, and prints a generated password once.
 
