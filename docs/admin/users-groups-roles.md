@@ -72,7 +72,7 @@ Rules that apply on the CLI and in the web console alike:
 - An account whose admin role grants anything beyond managing its owner's own vaults and keys is an *admin account*. Creating, editing, deleting or resetting the password of an admin account needs the `admin.identities.admins.*` permissions; plain accounts use `admin.identities.users.*`.
 - Nobody can assign a role that grants admin permissions they don't hold. Nobody can edit, delete, deactivate or reset the password of an account whose role exceeds their own.
 - Nobody can change their own role, Linux UID binding or active state, or delete their own account. Ask another administrator.
-- An account's global vault policy (what it may do in vaults through no specific vault role) starts from its built-in role's preset and follows the role when it changes. `unprivileged` grants none, and neither does a custom role (custom roles have no preset yet): such accounts reach a vault, their own default vault included, through a vault role assignment.
+- An account's global vault policy (what it may do in vaults through no specific vault role) is seeded from its role when the role is assigned (the built-in role's preset), then belongs to the account. `unprivileged` grants none, and custom roles seed `unprivileged`: such accounts reach a vault, their own default vault included, through a vault role assignment.
 - Deleting, deactivating, re-roling or resetting the password of an account ends all of its sessions immediately. A deactivated account can't log in.
 - `vh user create` creates the account's default vault, as the web console does, and prints a generated password once.
 
@@ -125,6 +125,14 @@ Useful admin permission areas include:
 - Admin management.
 
 Grant only the permissions needed for the operator's job.
+
+To start from an existing role, pass `--from` and then the flags that differ:
+
+```bash
+vh role admin create support-lead --from support --allow-<permission> ...
+```
+
+`--from` copies that role's permissions into the new one as a starting point. Without it, a role starts from `unprivileged`. Once created, the role owns its own permissions: later changes to the role it came from don't reach it. The web console's role form does the same with its **Start from** list.
 
 ## Vault Roles
 

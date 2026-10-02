@@ -12,7 +12,6 @@
 #include "identities/User.hpp"
 #include "log/Registry.hpp"
 #include "rbac/permission/admin/identities/Base.hpp"
-#include "rbac/permission/admin/VaultGlobals.hpp"
 #include "rbac/resolver/admin/all.hpp"
 #include "rbac/role/Admin.hpp"
 #include "runtime/Deps.hpp"
@@ -104,11 +103,12 @@ void requireBindableUid(const uint32_t uid, const std::optional<uint32_t> curren
         throw Conflict("linux uid " + std::to_string(uid) + " is already bound to " + holder->name);
 }
 
-// The account's global vault policy (user_global_vault_policy) starts from its built-in role's preset; roles loaded
-// from admin_role carry none, so without this every account was written with an empty policy.
+// The account's global vault policy (user_global_vault_policy) is seeded from its role when the role is assigned,
+// then owned by the account. Roles loaded from admin_role carry none: a built-in role seeds its preset, a custom role
+// seeds unprivileged.
 void applyRolePreset(rbac::role::Admin& role, const uint32_t userId) {
     const auto preset = rbac::role::Admin::builtin(role.name, userId);
-    role.vGlobals = preset ? preset->vGlobals : rbac::permission::admin::VaultGlobals{};
+    role.vGlobals = (preset ? *preset : rbac::role::Admin::None(userId)).vGlobals;
 }
 
 std::string generatePassword() {

@@ -47,9 +47,10 @@ with it) and delete the role.
   preset. Only the super admin (who bypasses the check) could use vaults through the global policy, which is why the
   gateway bucket list (it follows filesystem rights) came back empty. Accounts on a built-in role now start from its
   preset, and `seed::reconcileGlobalVaultPolicies` repairs existing ones at startup.
-- Still open: custom admin roles (e.g. the lab's `parity-op`, cloned `--from super_admin`) have no preset, so their
-  accounts get an all-zero global vault policy. `admin_role` stores no vGlobals; giving custom roles one (cloned from
-  the `--from` role, or set explicitly) is a design decision for the maintainer.
+- Decided (maintainer, 2026-10-02): `--from` (CLI) or the web's **Start from** list only seeds a new role's fields;
+  once saved the role owns its bitmasks, with no inheritance chain. No `--from` starts from `unprivileged`. Global vault
+  policy is per account and is seeded when a role is assigned: a built-in role seeds its preset, a custom role seeds
+  `Admin::None(userId)`. `admin_role` stores no global vault policy, by design.
 - Fixed: stopping the S3 gateway (and the HTTP preview service) freed its io_context while a pool-thread session could
   still be closing its socket (ASan heap-use-after-free in `S3GatewayServiceTest`). Sessions are now registered at
   accept, cancelled after the io threads join, and the context is freed only once every session object is gone

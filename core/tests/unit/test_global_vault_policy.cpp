@@ -8,6 +8,7 @@
 #include "db/query/vault/Vault.hpp"
 #include "fs/Filesystem.hpp"
 #include "identities/User.hpp"
+#include "ops/Roles.hpp"
 #include "ops/Users.hpp"
 #include "rbac/permission/admin/VaultGlobals.hpp"
 #include "rbac/permission/vault/Filesystem.hpp"
@@ -141,6 +142,24 @@ TEST_F(GlobalVaultPolicyDbTest, ARoleChangeRewritesThePolicy) {
     ASSERT_EQ(rows.size(), 3u);
     for (const auto& [scope, files] : rows) EXPECT_FALSE(allZero(files)) << scope;
     EXPECT_TRUE(canOnOwnVault(db::query::identities::User::getUserById(user->id), Action::Read));
+}
+
+// A custom role is seeded from --from (or nothing: unprivileged) and then owns its own bitmasks. It stores no global
+// vault policy, so its accounts are seeded from the unprivileged constructor.
+TEST_F(GlobalVaultPolicyDbTest, CustomRolesCopyTheirSourceAndSeedAccountsUnprivileged) {
+    const auto auditor = rbac::role::Admin::Auditor();
+    const auto custom = ops::roles::createAdminRole(superUser, {.name = "gvp_custom_" + gvpTag(),
+                                                                .from = std::string("auditor")}, "test");
+    EXPECT_EQ(custom->toFlagsString(), auditor.toFlagsString()) << "--from copies the source role's permissions";
+
+    const auto blank = ops::roles::createAdminRole(superUser, {.name = "gvp_blank_" + gvpTag()}, "test");
+    EXPECT_EQ(blank->toFlagsString(), rbac::role::Admin::None().toFlagsString()) << "no --from starts unprivileged";
+
+    const auto user = create("gvp_custom_user", custom->name);
+    const auto rows = policyRows(user->id);
+    ASSERT_EQ(rows.size(), 3u);
+    for (const auto& [scope, files] : rows) EXPECT_TRUE(allZero(files)) << scope;
+    EXPECT_FALSE(canOnOwnVault(user, Action::Read));
 }
 
 TEST_F(GlobalVaultPolicyDbTest, StartupRepairsAccountsWrittenTheOldWay) {
