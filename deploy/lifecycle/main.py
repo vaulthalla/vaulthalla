@@ -26,6 +26,9 @@ STATE_DIR = Path("/var/lib/vaulthalla")
 SEALED_DB_SECRET_DIR = STATE_DIR / ".sealed_psql.blob"
 DB_BOOTSTRAP_OPTOUT_MARKER = STATE_DIR / "db_bootstrap_disabled"
 NGINX_OPTOUT_MARKER = STATE_DIR / "nginx_config_disabled"
+# The generated initial web password of the built-in super admin ('admin'), written once by the daemon on a fresh
+# install (core auth/Bootstrap.hpp). Whether that password is still in use is auth_bootstrap_state in the DB.
+INITIAL_PASSWORD_FILE = STATE_DIR / "super_admin_initial_password"
 PGCONNECT_TIMEOUT_SECONDS = 10
 DEFAULT_COMMAND_TIMEOUT_SECONDS = 120
 SERVICE_HEALTH_TIMEOUT_SECONDS = 30
@@ -1280,6 +1283,93 @@ def setup_remote_db(args: argparse.Namespace) -> int:
     return 0
 
 
+def generated_super_admin_password_in_use() -> bool | None:
+    """The DB's view; None when it can't say (no local PostgreSQL, a remote DB, a pre-1.8.0 schema)."""
+    if not command_exists("psql"):
+        return None
+    try:
+        prefix = choose_postgres_prefix()
+    except LifecycleError:
+        return None
+    result = psql_sql(prefix, DB_NAME, "SELECT super_admin_password_generated FROM auth_bootstrap_state WHERE id = 1;")
+    if result.returncode != 0:
+        return None
+    return trim(result.stdout) in ("1", "t", "true")
+
+
+def initial_password_exposed() -> bool:
+    # The plaintext copy is the risk. The DB only rules out a stale copy of a password that was already changed.
+    if not INITIAL_PASSWORD_FILE.exists():
+        return False
+    return generated_super_admin_password_in_use() is not False
+
+
+def rotate_super_admin_password_as_operator() -> bool:
+    # `vh setup set-super-admin-password` only runs as the Linux user bound as the super admin, never as root.
+    operator = os.environ.get("SUDO_USER")
+    vh_bin = shutil.which("vh") or "/usr/bin/vh"
+    if not operator or operator == "root" or not command_exists("runuser"):
+        eprint("Run 'vh setup set-super-admin-password' as the Linux user bound as the Vaulthalla super admin "
+               "(without sudo), then rerun this command.")
+        return False
+    print(f"Running 'vh setup set-super-admin-password' as {operator}...", flush=True)
+    return subprocess.run(["runuser", "-u", operator, "--", vh_bin, "setup", "set-super-admin-password"]).returncode == 0
+
+
+INITIAL_PASSWORD_WARNING = """
+WARNING: the generated initial web console password of the super-admin account 'admin' is still in use, and a
+plaintext copy of it is still on this server:
+  {path}
+You are about to put the web console behind nginx, which usually means reaching it over the network. The generated
+password is strong (128 random bits); the concern is the copy on disk. Changing the password is recommended, but
+keeping it is fine once the file is gone. nginx itself is optional.
+"""
+
+INITIAL_PASSWORD_CHOICES = """  1) Change the super-admin password now (vh setup set-super-admin-password; also removes the file)
+  2) Keep the generated password and delete the plaintext file
+  3) Continue without changes (not recommended)
+  4) Cancel"""
+
+
+def confirm_initial_password_before_exposure(interactive: bool | None = None) -> bool:
+    """A safeguard, not a gate: warns and offers remediation. False only when the operator cancels."""
+    if not initial_password_exposed():
+        return True
+    print(INITIAL_PASSWORD_WARNING.format(path=INITIAL_PASSWORD_FILE), flush=True)
+    if interactive is None:
+        interactive = sys.stdin.isatty() and sys.stdout.isatty()
+    if not interactive:
+        eprint("Non-interactive: continuing. Change the password with 'vh setup set-super-admin-password', "
+               f"or delete {INITIAL_PASSWORD_FILE} to keep it.")
+        return True
+
+    while True:
+        print(INITIAL_PASSWORD_CHOICES, flush=True)
+        try:
+            choice = input("Choose [1-4]: ").strip()
+        except EOFError:
+            choice = "4"
+        if choice == "1":
+            if rotate_super_admin_password_as_operator():
+                if INITIAL_PASSWORD_FILE.exists():
+                    eprint(f"The password was changed, but {INITIAL_PASSWORD_FILE} is still there; "
+                           f"remove it: sudo rm -f {INITIAL_PASSWORD_FILE}")
+                return True
+            print("The password was not changed.", flush=True)
+        elif choice == "2":
+            try:
+                INITIAL_PASSWORD_FILE.unlink(missing_ok=True)
+            except OSError as exc:
+                eprint(f"Could not delete {INITIAL_PASSWORD_FILE}: {exc}")
+                continue
+            print(f"Deleted {INITIAL_PASSWORD_FILE}; the generated password stays in effect.", flush=True)
+            return True
+        elif choice == "3":
+            return True
+        elif choice in ("4", ""):
+            return False
+
+
 def setup_nginx(args: argparse.Namespace) -> int:
     requested_domain = trim(args.domain) if args.domain else None
     requested_s3_domain = trim(args.s3_domain) if args.s3_domain else None
@@ -1326,6 +1416,10 @@ def setup_nginx(args: argparse.Namespace) -> int:
             )
         if not filecmp.cmp(NGINX_SITE_AVAILABLE, template_path, shallow=False):
             raise LifecycleError(f"existing site file differs and is not package-managed: {NGINX_SITE_AVAILABLE}")
+
+    if not confirm_initial_password_before_exposure():
+        print("setup nginx: cancelled; nothing was changed.")
+        return 1
 
     projection = load_config_projection(config_path())
     cert_name = None

@@ -34,6 +34,7 @@ PENDING_DB_PASS_FILE="${RUNTIME_DIR}/db_password"
 SEALED_DB_SECRET_DIR="${STATE_DIR}/.sealed_psql.blob"
 DB_BOOTSTRAP_OPTOUT_MARKER="${STATE_DIR}/db_bootstrap_disabled"
 NGINX_OPTOUT_MARKER="${STATE_DIR}/nginx_config_disabled"
+INITIAL_PASSWORD_FILE="${STATE_DIR}/super_admin_initial_password"
 REINSTALL_MARKER="${STATE_DIR}/.reinstall_from_config_files"
 TPM_DEFERRED_MARKER="${STATE_DIR}/tpm_backend_deferred"
 CORE_SYSTEMD_UNIT="vaulthalla.service"
@@ -1686,6 +1687,12 @@ case "$1" in
     echo "[${PKG}]   CLI socket: ${CLI_SOCKET_STATUS}"
     echo "[${PKG}]   nginx config: ${NGINX_CONFIG_STATUS}"
     echo "[${PKG}]   Super-admin ownership: deferred to first CLI use ('vh' or 'vaulthalla')."
+    # The daemon generates the web 'admin' password once, on a new database (no universal default); never on upgrade.
+    if [ -f "$INITIAL_PASSWORD_FILE" ]; then
+        echo "[${PKG}]   Web console: sign in as 'admin' with the generated password in ${INITIAL_PASSWORD_FILE} (root-readable). Change it with 'vh setup set-super-admin-password', or keep it and delete the file."
+    elif [ "$INSTALL_MODE" = "fresh" ]; then
+        echo "[${PKG}]   Web console: the generated password for 'admin' is written to ${INITIAL_PASSWORD_FILE} when the service first starts with a new database."
+    fi
     ;;
 
   abort-upgrade|abort-remove|abort-deconfigure)

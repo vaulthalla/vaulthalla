@@ -306,3 +306,94 @@ server {
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InitialPasswordSafeguardTests(unittest.TestCase):
+    """`vh setup nginx` warns before exposing the web console while the generated super-admin password is still in
+    use and its plaintext copy is on disk. A safeguard, not a gate: only an explicit cancel stops it."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.file = Path(self.tmp.name) / "super_admin_initial_password"
+        self.file.write_text("0123456789abcdef0123456789abcdef\n", encoding="utf-8")
+        patcher = mock.patch.object(main, "INITIAL_PASSWORD_FILE", self.file)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(self.tmp.cleanup)
+
+    def generated(self, value):
+        return mock.patch.object(main, "generated_super_admin_password_in_use", return_value=value)
+
+    def test_nothing_to_warn_about_without_the_file(self) -> None:
+        self.file.unlink()
+        with self.generated(True), mock.patch("builtins.input") as prompt:
+            self.assertTrue(main.confirm_initial_password_before_exposure(interactive=True))
+        prompt.assert_not_called()
+
+    def test_a_stale_copy_of_a_changed_password_is_not_flagged(self) -> None:
+        with self.generated(False), mock.patch("builtins.input") as prompt:
+            self.assertFalse(main.initial_password_exposed())
+            self.assertTrue(main.confirm_initial_password_before_exposure(interactive=True))
+        prompt.assert_not_called()
+
+    def test_without_a_readable_db_the_file_alone_counts(self) -> None:
+        with self.generated(None):
+            self.assertTrue(main.initial_password_exposed())
+
+    def test_non_interactive_runs_warn_and_continue(self) -> None:
+        with self.generated(True), mock.patch("builtins.input") as prompt, \
+                mock.patch("builtins.print") as out, mock.patch.object(main, "eprint") as err:
+            self.assertTrue(main.confirm_initial_password_before_exposure(interactive=False))
+        prompt.assert_not_called()
+        self.assertIn(str(self.file), " ".join(str(c) for c in out.call_args_list))
+        err.assert_called()
+        self.assertTrue(self.file.exists())
+
+    def test_keeping_the_password_deletes_only_the_file(self) -> None:
+        with self.generated(True), mock.patch("builtins.input", return_value="2"), mock.patch("builtins.print"):
+            self.assertTrue(main.confirm_initial_password_before_exposure(interactive=True))
+        self.assertFalse(self.file.exists())
+
+    def test_cancel_stops_and_keeps_everything(self) -> None:
+        with self.generated(True), mock.patch("builtins.input", return_value="4"), mock.patch("builtins.print"):
+            self.assertFalse(main.confirm_initial_password_before_exposure(interactive=True))
+        self.assertTrue(self.file.exists())
+
+    def test_continuing_without_changes_is_allowed(self) -> None:
+        with self.generated(True), mock.patch("builtins.input", return_value="3"), mock.patch("builtins.print"):
+            self.assertTrue(main.confirm_initial_password_before_exposure(interactive=True))
+        self.assertTrue(self.file.exists())
+
+    def test_rotation_runs_the_cli_as_the_operator(self) -> None:
+        def rotate():
+            self.file.unlink()
+            return True
+
+        with self.generated(True), mock.patch("builtins.input", return_value="1"), mock.patch("builtins.print"), \
+                mock.patch.object(main, "rotate_super_admin_password_as_operator", side_effect=rotate) as rotated:
+            self.assertTrue(main.confirm_initial_password_before_exposure(interactive=True))
+        rotated.assert_called_once()
+
+    def test_a_failed_rotation_asks_again(self) -> None:
+        with self.generated(True), mock.patch("builtins.input", side_effect=["1", "4"]), mock.patch("builtins.print"), \
+                mock.patch.object(main, "rotate_super_admin_password_as_operator", return_value=False):
+            self.assertFalse(main.confirm_initial_password_before_exposure(interactive=True))
+        self.assertTrue(self.file.exists())
+
+    def test_rotation_never_runs_as_root(self) -> None:
+        with mock.patch.dict(main.os.environ, {"SUDO_USER": "root"}), mock.patch.object(main, "eprint"), \
+                mock.patch.object(main.subprocess, "run") as run:
+            self.assertFalse(main.rotate_super_admin_password_as_operator())
+        run.assert_not_called()
+
+    def test_setup_nginx_stops_before_touching_anything_when_cancelled(self) -> None:
+        args = main.build_parser().parse_args(["setup", "nginx"])
+        with mock.patch.object(main, "command_exists", return_value=True), \
+                mock.patch.object(main.Path, "exists", return_value=True), \
+                mock.patch.object(main, "has_non_nginx_listeners_on_web_ports", return_value=False), \
+                mock.patch.object(main, "extract_managed_nginx_domain", return_value=None), \
+                mock.patch.object(main, "extract_managed_nginx_s3_domain", return_value=None), \
+                mock.patch.object(main, "confirm_initial_password_before_exposure", return_value=False), \
+                mock.patch.object(main, "load_config_projection") as projection, mock.patch("builtins.print"):
+            self.assertEqual(main.setup_nginx(args), 1)
+        projection.assert_not_called()

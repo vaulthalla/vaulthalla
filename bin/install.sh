@@ -51,3 +51,9 @@ vh_assert_dev_mode_consistency
 "$BIN_DIR/setup/install_db.sh"
 "$BIN_DIR/setup/install_systemd.sh"
 "$BIN_DIR/setup/install_dev_nginx.sh"
+
+INITIAL_PASSWORD_FILE="/var/lib/vaulthalla/super_admin_initial_password"
+echo
+echo "Web console: sign in as 'admin'. There is no default password: a new database gets a generated one, written to"
+echo "  ${INITIAL_PASSWORD_FILE} (read it with: sudo cat ${INITIAL_PASSWORD_FILE})."
+echo "  Change it with 'vh setup set-super-admin-password' (removes the file), or keep it and delete the file."
