@@ -148,14 +148,36 @@ controller, strategies `cache|sync|mirror`, cost guardrails · `vault` vault mod
 `core/{include,src}/ops/` holds plain free functions with typed request structs, one file pair per family
 (`ops::groups`, `ops::roles`, ...). Each op takes the acting `User` (`ops::Actor`, null → `ops::Denied`), authorizes, looks up,
 validates, persists, and returns domain objects. Refusals are typed `ops::Error`s (`Denied`, `NotFound`, `Invalid`,
-`Conflict`). The CLI handler parses with `CommandUsage` and calls the op through `shell::runOp`, which maps
-`ops::Error` to exit 2. The ws handler maps its payload to the request, and `makePayloadHandler` turns the exception
-into an `ERROR` response. Rules: RBAC for an operation lives in the op, never in the frontend as well; code beneath
+`Conflict`, and `NeedsConfirmation{code}` for "a person must accept this first", e.g. the encryption waiver). The CLI
+handler parses with `CommandUsage` and calls the op through `shell::runOp`, which maps `ops::Error` to exit 2 (CLI
+waiver prompts go through `shell::commands::vault::runWithWaiver`). The ws handler maps its payload to the request,
+and `makePayloadHandler` turns the exception into an `ERROR` response (`NeedsConfirmation` adds `data.code`; the web
+asks and resends with `accept_encryption_waiver`). Rules: RBAC for an operation lives in the op, never in the frontend as well; code beneath
 `ops::` (managers, `db::query`) never authorizes; internal callers use those primitives directly, not ops; no
 registry, base class or transport abstraction. Parity is proven by `test_ops_parity_groups.cpp`, which runs each
 group operation through both surfaces for every seeded admin role and compares verdicts and DB state.
-Families still implementing business logic in both handler sets get migrated one per change, on this pattern,
-each with its own `test_ops_parity_<family>.cpp`.
+Migrated families (each with `test_ops_parity_<family>.cpp`): `groups`, `roles`, `api_keys`, `vaults` (lifecycle +
+sync policy), `users`, `s3_gateway` (credentials, grants, buckets, credential budgets), `pricing` (price budget
+policies), `config` (every settings write: one validation, one apply step that restarts the S3 gateway when
+`s3_gateway.enabled` changes). Still per-surface: the ws-only pricing preflight/override/notification endpoints,
+email test-send/history, vault keys/sync diagnostics, and lifecycle commands (`setup`, `teardown`, `secrets`).
+
+Rules the families hold (keep them in ops, never re-add them in a handler):
+- **Users:** an account is an *admin identity* when its admin role grants anything outside the self scopes
+  (`ops::users::isAdminIdentity`); that, not `User::isAdmin()` (a strict "full admin" gate used by S3 policy bypass and
+  system stats), picks admins.* vs users.* identity permissions. The ceiling applies to assignment *and* to managing an
+  account above you (edit, delete, reset password). Deletion, deactivation, role change and password reset call
+  `auth::Manager::revokeSessions` (refresh tokens revoked, live sessions invalidated). `auth::Manager` has no user cache.
+- **Vaults:** every change goes through `storage::Manager::updateVault` so the live engine (RBAC's source of the owner)
+  follows; owner reassignment needs Create for the new owner; a key change needs Consume; sync settings need vault
+  `sync.config.edit`.
+- **S3 gateway:** the scope rule that was `CredentialManager::validateScopeMutation` is `requireScopeMutation` in ops;
+  `CredentialManager` and `db::query::s3::Gateway` are trusted primitives. Vault names resolve owner-scoped or uniquely,
+  never to the first match. Overrides need an explicit effect and pattern. Remote-cache buckets are created through
+  `ops::vaults::create` (Consume, waiver) and rolled back if the bind fails.
+- **Health:** `stats::model::SystemHealth::snapshot()` takes a bounded live DB probe; an unreachable database is
+  critical there, so `vh status` and `stats.system.health` report the same severity.
+- **Lists:** `ListQueryParams::sort` must be a column name (`isSortColumn`); it lands in ORDER BY.
 
 **Role permissions (one mechanism).** Every permission change goes through
 `PermissionResolver::applyChanges(role, exported, [(qualified, grant)], complete)`, which reports unknown names, missing

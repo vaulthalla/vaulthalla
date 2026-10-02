@@ -73,6 +73,8 @@ vh s3-gateway budget status --key backup
 vh s3-gateway budget ledger --key backup --limit 50
 ```
 
+When `--mode` (or the web console's mode) is omitted, a gateway key budget enforces its cap, and the catalog age limit defaults to 43200 seconds. Both surfaces use the same defaults.
+
 Disable policies:
 
 ```bash

@@ -46,13 +46,28 @@ vh user update alice --email alice@new.example.com
 vh user update alice --linux-uid 1001
 ```
 
+Deactivate or reactivate an account:
+
+```bash
+vh user update alice --disable
+vh user update alice --enable
+```
+
 Delete:
 
 ```bash
 vh user delete alice
 ```
 
-The built-in super admin user and role are protected from ordinary mutation paths.
+The built-in super admin user and role are protected from ordinary mutation paths. The super admin can't be renamed, because the daemon looks it up by name.
+
+Rules that apply on the CLI and in the web console alike:
+
+- An account whose admin role grants anything beyond managing its owner's own vaults and keys is an *admin account*. Creating, editing, deleting or resetting the password of an admin account needs the `admin.identities.admins.*` permissions; plain accounts use `admin.identities.users.*`.
+- Nobody can assign a role that grants admin permissions they don't hold. Nobody can edit, delete, deactivate or reset the password of an account whose role exceeds their own.
+- Nobody can change their own role, Linux UID binding or active state, or delete their own account. Ask another administrator.
+- Deleting, deactivating, re-roling or resetting the password of an account ends all of its sessions immediately. A deactivated account can't log in.
+- `vh user create` creates the account's default vault, as the web console does, and prints a generated password once.
 
 ## Groups
 

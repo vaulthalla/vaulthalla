@@ -28,7 +28,9 @@
 2. `set -a; source ./deploy/vaulthalla.env; set +a`
 3. `./build/core/vh_unit_tests --gtest_filter='<Filter>'`
 
-CLI ↔ ws parity for families migrated to `core/ops/`: `--gtest_filter='GroupParityTest.*:OpsGroups*'`. A parity case
+CLI ↔ ws parity for families migrated to `core/ops/`:
+`--gtest_filter='*Parity*:OpsGroups*:AuthPasswordChange*'` (groups, roles, API keys, vaults, users, S3 gateway,
+pricing/config). The whole binary takes ~7 minutes against a local DB; meson's test timeout is 30 minutes (#123). A parity case
 runs one logical operation through `shell::Router::executeLine` and through the ws handler, for every seeded admin
 role, and compares allow/deny (against an oracle from the role's permission bits) and resulting DB state, never text.
 New families add a `test_ops_parity_<family>.cpp` on the same pattern.
