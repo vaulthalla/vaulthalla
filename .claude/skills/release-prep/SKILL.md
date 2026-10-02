@@ -18,14 +18,11 @@ Background reading: `.claude/context/release-pipeline.md`.
    **fails** if the `debian/changelog` top entry predates the previous tag. Write a real top entry when needed.
    Offline preview: `python3 -m tools.release changelog draft --format raw`. Don't call live AI providers locally
    unless the user asks.
-4. **Lab gate (recommended for anything touching packaging or runtime).** Build and upgrade-test on the lab first:
-   ```bash
-   python3 -m tools.release build-deb --output-dir /tmp/claude-release
-   python3 -m tools.release lab-smoke --host vh-storage --deb /tmp/claude-release/vaulthalla_<ver>_amd64.deb \
-     --from-version <prev>-1 --evidence /tmp/claude-release/lab-smoke.json [--pg-restart]
-   ```
-   `lab-smoke` mutates the host, so follow the `/lab` permission boundary. Publishing is irreversible: a published
-   version can never be replaced (publish-deb refuses different bytes under the same version).
+4. **Pre-release proof stays off the lab.** Prove packaging/runtime changes on the dev VM (`/verify`,
+   `make run_test`, `python3 -m tools.release build-deb --output-dir /tmp/claude-release` + a local install) and with a
+   CI dry run. **Never install the candidate on vh-storage**: it tests the real apt install/upgrade path and must sit
+   on the published version (see `/lab`). Publishing is irreversible: a published version can never be replaced
+   (publish-deb refuses different bytes under the same version).
 5. **Cut locally** (no push). This runs check plus the suites, bumps exactly the 4 managed files, commits
    `chore(release): vX.Y.Z`, and creates an annotated tag:
    ```bash
