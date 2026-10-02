@@ -1,5 +1,6 @@
 #include "stats/model/SystemHealth.hpp"
 
+#include "db/DBPool.hpp"
 #include "db/Transactions.hpp"
 #include "protocols/ProtocolService.hpp"
 #include "protocols/s3/GatewayService.hpp"
@@ -11,6 +12,7 @@
 #include <array>
 #include <chrono>
 #include <nlohmann/json.hpp>
+#include <pqxx/pqxx>
 
 namespace vh::stats::model {
 
@@ -70,6 +72,32 @@ std::pair<std::size_t, std::size_t> protocolReadySummary(const ProtocolHealth& p
     return {ready, total};
 }
 
+constexpr std::chrono::seconds kDatabaseProbeAcquireTimeout{3};
+
+// Bounded live round trip to PostgreSQL that must not park on the pool if every connection is busy. A session
+// the server dropped while idle only shows up when used, so it is replaced once (as Transactions::exec does)
+// and a recovered server reads as reachable.
+void probeDatabase(db::DBPool& pool, DatabaseHealth& out) {
+    const auto start = std::chrono::steady_clock::now();
+    try {
+        auto lease = pool.acquire(kDatabaseProbeAcquireTimeout);
+        try {
+            pqxx::nontransaction tx(lease->get());
+            (void)tx.exec("SELECT 1").one_row();
+        } catch (const std::exception&) {
+            if (lease->healthy()) throw;
+            pool.repair(lease);
+            pqxx::nontransaction tx(lease->get());
+            (void)tx.exec("SELECT 1").one_row();
+        }
+        out.reachable = true;
+    } catch (const std::exception& e) {
+        out.reachable = false;
+        out.probeError = e.what();
+    }
+    out.probeLatencyMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+}
+
 SystemHealthStatus computeOverallStatus(const SystemHealth& health) {
     if (health.runtime.services.empty())
         return SystemHealthStatus::Critical;
@@ -77,11 +105,12 @@ SystemHealthStatus computeOverallStatus(const SystemHealth& health) {
     if (!health.deps.storageManager && !health.deps.authManager && !health.deps.sessionManager)
         return SystemHealthStatus::Critical;
 
-    if (health.database && health.database->consecutiveReconnectFailures > 0)
+    // No pool, or a pool that cannot reach PostgreSQL: nothing that needs the database works.
+    if (!health.database || !health.database->reachable || health.database->consecutiveReconnectFailures > 0)
         return SystemHealthStatus::Critical;
 
     const bool ok = health.runtime.allRunning
-        && (!health.database || health.database->brokenIdle == 0)
+        && health.database->brokenIdle == 0
         && protocolsHealthy(health.protocols, health.s3Gateway)
         && depsHealthy(health.deps, health.summary);
 
@@ -173,6 +202,7 @@ SystemHealth SystemHealth::snapshot() {
             .consecutiveReconnectFailures = poolStats.consecutiveReconnectFailures,
             .acquireTimeouts = poolStats.acquireTimeouts
         };
+        probeDatabase(*pool, *out.database);
     }
 
     const auto [protocolsReady, protocolsTotal] = protocolReadySummary(out.protocols, out.s3Gateway);
@@ -277,6 +307,9 @@ void to_json(nlohmann::json& j, const DatabaseHealth& health) {
         {"reconnect_failures", health.reconnectFailures},
         {"consecutive_reconnect_failures", health.consecutiveReconnectFailures},
         {"acquire_timeouts", health.acquireTimeouts},
+        {"reachable", health.reachable},
+        {"probe_latency_ms", health.probeLatencyMs},
+        {"probe_error", health.probeError.empty() ? nlohmann::json(nullptr) : nlohmann::json(health.probeError)},
     };
 }
 

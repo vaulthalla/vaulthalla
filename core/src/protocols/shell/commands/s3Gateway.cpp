@@ -8,6 +8,7 @@
 #include "db/query/vault/APIKey.hpp"
 #include "db/query/vault/Vault.hpp"
 #include "identities/User.hpp"
+#include "ops/Config.hpp"
 #include "ops/S3Gateway.hpp"
 #include "protocols/s3/GatewayService.hpp"
 #include "protocols/shell/Router.hpp"
@@ -272,12 +273,12 @@ std::vector<uint8_t> plaintextForGatewayBackfill(
     return engine->decrypt(file);
 }
 
-CommandResult saveConfigAndRestart(config::Config cfg, const std::string& message) {
-    const bool wantEnabled = cfg.s3_gateway.enabled;
+// Through ops::config (the same apply step settings.update uses), then report the state the gateway reached.
+CommandResult setGatewayEnabled(const CommandCall& call, const bool wantEnabled, const std::string& message) {
     try {
-        cfg.save();
-        config::Registry::set(cfg);
-        runtime::Manager::instance().restartService("S3GatewayService");
+        (void)::vh::ops::config::setGatewayEnabled(call.user, wantEnabled);
+    } catch (const ::vh::ops::Error& e) {
+        return invalid(std::string("s3-gateway: ") + e.what());
     } catch (const std::exception& e) {
         return invalid("s3-gateway config update failed: " + std::string(e.what()));
     }
@@ -309,12 +310,6 @@ CommandResult saveConfigAndRestart(config::Config cfg, const std::string& messag
     return ok(message + (wantEnabled ? "Listening on " + endpoint + ".\n" : ""));
 }
 
-bool canManageService(const CommandCall& call) {
-    if (call.user->isSuperAdmin()) return true;
-    using Perm = ::vh::rbac::permission::admin::S3GatewayPermissions;
-    return ::vh::rbac::resolver::Admin::has<Perm>({.user = call.user, .permission = Perm::ManageService});
-}
-
 CommandResult handleS3GatewayStatus(const CommandCall& call) {
     const auto status = gw::status(call.user);
     std::ostringstream out;
@@ -329,19 +324,9 @@ CommandResult handleS3GatewayStatus(const CommandCall& call) {
     return ok(out.str());
 }
 
-CommandResult handleEnable(const CommandCall& call) {
-    if (!canManageService(call)) return invalid("s3-gateway enable: admin.s3_gateway permission is required");
-    auto cfg = config::Registry::get();
-    cfg.s3_gateway.enabled = true;
-    return saveConfigAndRestart(cfg, "S3 gateway enabled.\n");
-}
+CommandResult handleEnable(const CommandCall& call) { return setGatewayEnabled(call, true, "S3 gateway enabled.\n"); }
 
-CommandResult handleDisable(const CommandCall& call) {
-    if (!canManageService(call)) return invalid("s3-gateway disable: admin.s3_gateway permission is required");
-    auto cfg = config::Registry::get();
-    cfg.s3_gateway.enabled = false;
-    return saveConfigAndRestart(cfg, "S3 gateway disabled.\n");
-}
+CommandResult handleDisable(const CommandCall& call) { return setGatewayEnabled(call, false, "S3 gateway disabled.\n"); }
 
 CommandResult handleCredsCreate(const CommandCall& call) {
     if (call.positionals.empty()) return usage(call.constructFullArgs());

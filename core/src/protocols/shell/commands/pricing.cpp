@@ -5,15 +5,14 @@
 #include "protocols/shell/Table.hpp"
 #include "protocols/shell/commands/helpers.hpp"
 #include "protocols/shell/util/argsHelpers.hpp"
-#include "rbac/permission/admin/Vaults.hpp"
-#include "rbac/resolver/admin/all.hpp"
+#include "ops/Pricing.hpp"
+#include "protocols/shell/util/runOp.hpp"
 #include "runtime/Deps.hpp"
 #include "storage/s3/pricing/PriceBudget.hpp"
 #include "usage/include/UsageManager.hpp"
 #include "vault/model/Vault.hpp"
 
-#include <algorithm>
-#include <cctype>
+#include <functional>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -22,27 +21,8 @@ namespace vh::protocols::shell::commands {
 namespace {
 
 using vh::storage::s3::pricing::PriceBudgetLedgerEntry;
-using vh::storage::s3::pricing::PriceBudgetMode;
 using vh::storage::s3::pricing::PriceBudgetPolicy;
 using vh::storage::s3::pricing::PriceBudgetScope;
-using vh::storage::s3::pricing::PriceBudgetService;
-using vh::vault::model::VaultType;
-
-CommandResult requirePricingSuperAdmin(const CommandCall& call) {
-    if (call.user && call.user->isSuperAdmin()) return {};
-    return invalid("pricing budget: insufficient permissions; requires super-admin");
-}
-
-CommandResult requireVaultBudgetEdit(const CommandCall& call, const std::uint32_t vaultId) {
-    if (call.user && call.user->isSuperAdmin()) return {};
-    using Perm = vh::rbac::permission::admin::VaultPermissions;
-    if (vh::rbac::resolver::Admin::has<Perm>({
-        .user = call.user,
-        .permission = Perm::Edit,
-        .vault_id = vaultId
-    })) return {};
-    return invalid("pricing budget: insufficient permissions; requires vault edit permission");
-}
 
 std::string valueOrDash(const std::optional<std::string>& value) {
     return value && !value->empty() ? *value : "-";
@@ -56,101 +36,27 @@ std::string boolText(const bool value) {
     return value ? "yes" : "no";
 }
 
-std::optional<std::uint32_t> resolveVaultId(const std::string& value, const CommandCall& call, std::string& error) {
-    std::shared_ptr<vh::vault::model::Vault> vault;
-    if (const auto id = parseUInt(value)) vault = vh::db::query::vault::Vault::getVault(*id);
-    else if (call.user) vault = vh::db::query::vault::Vault::getVault(value, call.user->id);
-
-    if (!vault) {
-        error = "pricing budget: vault not found: " + value;
-        return std::nullopt;
-    }
-    if (vault->type != VaultType::S3) {
-        error = "pricing budget: vault price budgets are only available for S3 vaults";
-        return std::nullopt;
-    }
+// A vault by id, or by name among the caller's own vaults. Whether it may carry a budget is ops::pricing's call.
+std::uint32_t vaultIdArg(const std::string& value, const CommandCall& call) {
+    if (const auto id = parseUInt(value)) return *id;
+    const auto vault = vh::db::query::vault::Vault::getVault(value, call.user->id);
+    if (!vault) throw vh::ops::NotFound("vault not found: " + value);
     return vault->id;
 }
 
-std::optional<std::string> parseProviderKey(const std::string& value, std::string& error) {
-    auto provider = value;
-    std::ranges::transform(provider, provider.begin(), [](const unsigned char c) {
-        return static_cast<char>(std::tolower(c));
-    });
-    if (!vh::storage::s3::pricing::isSupportedPriceBudgetProvider(provider)) {
-        error = "pricing budget: unsupported provider key for price budgets: " + value +
-            " (supported: aws-s3, cloudflare-r2)";
-        return std::nullopt;
+vh::ops::pricing::PolicySpec specFromOptions(const CommandCall& call, const PriceBudgetScope scope) {
+    vh::ops::pricing::PolicySpec spec{.scope = scope, .mode = optVal(call, "mode"), .currency = optVal(call, "currency"),
+                                      .max_run_cost = optVal(call, "max-run"), .max_daily_cost = optVal(call, "max-daily"),
+                                      .max_monthly_cost = optVal(call, "max-monthly"),
+                                      .require_verified_catalog = !hasFlag(call, "no-require-verified-catalog"),
+                                      .allow_stale_catalog = hasFlag(call, "allow-stale-catalog")};
+    if (const auto age = optVal(call, "max-catalog-age")) {
+        const auto parsed = parseUInt(*age);
+        if (!parsed || *parsed == 0)
+            throw vh::ops::Invalid("--max-catalog-age must be a positive integer number of seconds");
+        spec.max_catalog_age_seconds = static_cast<std::int64_t>(*parsed);
     }
-    return provider;
-}
-
-bool assignDecimalOpt(
-    const CommandCall& call,
-    const std::string& option,
-    std::optional<std::string>& target,
-    std::string& error) {
-    const auto value = optVal(call, option);
-    if (!value) return true;
-    if (!vh::storage::s3::pricing::isValidPriceBudgetDecimal(*value)) {
-        error = "pricing budget: --" + option + " must be a non-negative decimal with at most 8 fractional digits";
-        return false;
-    }
-    target = *value;
-    return true;
-}
-
-std::optional<std::int64_t> parseMaxCatalogAge(const CommandCall& call, std::string& error) {
-    const auto value = optVal(call, "max-catalog-age");
-    if (!value) return 43200;
-    const auto parsed = parseUInt(*value);
-    if (!parsed || *parsed == 0) {
-        error = "pricing budget: --max-catalog-age must be a positive integer number of seconds";
-        return std::nullopt;
-    }
-    return static_cast<std::int64_t>(*parsed);
-}
-
-std::optional<PriceBudgetPolicy> parsePolicyOptions(
-    const CommandCall& call,
-    PriceBudgetScope scope,
-    std::optional<std::string> providerKey,
-    std::optional<std::uint32_t> vaultId,
-    std::string& error) {
-    PriceBudgetPolicy policy;
-    policy.scope = scope;
-    policy.provider_key = std::move(providerKey);
-    policy.vault_id = vaultId;
-    policy.mode = PriceBudgetMode::Report;
-    policy.currency = "USD";
-    policy.require_verified_catalog = !hasFlag(call, "no-require-verified-catalog");
-    policy.allow_stale_catalog = hasFlag(call, "allow-stale-catalog");
-    policy.max_catalog_age_seconds = parseMaxCatalogAge(call, error);
-    if (!error.empty()) return std::nullopt;
-
-    if (const auto mode = optVal(call, "mode")) {
-        try {
-            policy.mode = vh::storage::s3::pricing::priceBudgetModeFromString(*mode);
-        } catch (const std::exception& e) {
-            error = "pricing budget: " + std::string(e.what());
-            return std::nullopt;
-        }
-    }
-
-    if (const auto currency = optVal(call, "currency")) {
-        policy.currency = vh::storage::s3::pricing::normalizePriceBudgetCurrency(*currency);
-        if (!vh::storage::s3::pricing::isValidPriceBudgetCurrency(policy.currency)) {
-            error = "pricing budget: --currency must be 3-8 alphanumeric characters";
-            return std::nullopt;
-        }
-    }
-
-    if (!assignDecimalOpt(call, "max-run", policy.max_run_cost, error) ||
-        !assignDecimalOpt(call, "max-daily", policy.max_daily_cost, error) ||
-        !assignDecimalOpt(call, "max-monthly", policy.max_monthly_cost, error))
-        return std::nullopt;
-
-    return policy;
+    return spec;
 }
 
 std::string renderPolicies(const std::vector<PriceBudgetPolicy>& policies) {
@@ -224,116 +130,82 @@ std::string renderLedger(const std::vector<PriceBudgetLedgerEntry>& entries) {
 }
 
 CommandResult handleBudgetList(const CommandCall& call) {
-    if (auto denied = requirePricingSuperAdmin(call); denied.exit_code != 0) return denied;
-    return ok(renderPolicies(PriceBudgetService{}.listPolicies(true)));
-}
-
-CommandResult setPolicy(
-    const CommandCall& call,
-    const PriceBudgetScope scope,
-    std::optional<std::string> providerKey,
-    std::optional<std::uint32_t> vaultId) {
-    const auto denied = scope == PriceBudgetScope::Vault && vaultId
-        ? requireVaultBudgetEdit(call, *vaultId)
-        : requirePricingSuperAdmin(call);
-    if (denied.exit_code != 0) return denied;
-
-    std::string error;
-    auto policy = parsePolicyOptions(call, scope, std::move(providerKey), vaultId, error);
-    if (!policy) return invalid(error);
-
-    try {
-        const auto saved = PriceBudgetService{}.upsertPolicy(*policy);
-        return ok("S3 price budget policy saved.\n" + renderPolicies({saved}));
-    } catch (const std::exception& e) {
-        return invalid("pricing budget: " + std::string(e.what()));
-    }
+    return runOp("pricing budget", [&] { return vh::ops::pricing::listPolicies(call.user); },
+                 [](const std::vector<PriceBudgetPolicy>& policies) { return renderPolicies(policies); });
 }
 
 CommandResult handleSetGlobal(const CommandCall& call) {
-    return setPolicy(call, PriceBudgetScope::Global, std::nullopt, std::nullopt);
+    return runOp("pricing budget", [&] { return vh::ops::pricing::upsertPolicy(call.user, specFromOptions(call, PriceBudgetScope::Global)); },
+                 [](const PriceBudgetPolicy& saved) { return "S3 price budget policy saved.\n" + renderPolicies({saved}); });
 }
 
 CommandResult handleSetProvider(const CommandCall& call) {
     const auto usage = resolveUsage({"pricing", "budget", "set-provider"});
     validatePositionals(call, usage);
-    std::string error;
-    const auto provider = parseProviderKey(call.positionals[0], error);
-    if (!provider) return invalid(error);
-    return setPolicy(call, PriceBudgetScope::Provider, provider, std::nullopt);
+    return runOp("pricing budget", [&] {
+        auto spec = specFromOptions(call, PriceBudgetScope::Provider);
+        spec.provider_key = call.positionals[0];
+        return vh::ops::pricing::upsertPolicy(call.user, spec);
+    }, [](const PriceBudgetPolicy& saved) { return "S3 price budget policy saved.\n" + renderPolicies({saved}); });
 }
 
 CommandResult handleSetVault(const CommandCall& call) {
     const auto usage = resolveUsage({"pricing", "budget", "set-vault"});
     validatePositionals(call, usage);
-    std::string error;
-    const auto vaultId = resolveVaultId(call.positionals[0], call, error);
-    if (!vaultId) return invalid(error);
-    return setPolicy(call, PriceBudgetScope::Vault, std::nullopt, vaultId);
+    return runOp("pricing budget", [&] {
+        auto spec = specFromOptions(call, PriceBudgetScope::Vault);
+        spec.vault_id = vaultIdArg(call.positionals[0], call);
+        return vh::ops::pricing::upsertPolicy(call.user, spec);
+    }, [](const PriceBudgetPolicy& saved) { return "S3 price budget policy saved.\n" + renderPolicies({saved}); });
 }
 
-CommandResult disablePolicy(
-    const CommandCall& call,
-    const PriceBudgetScope scope,
-    const std::optional<std::string>& providerKey,
-    const std::optional<std::uint32_t>& vaultId) {
-    const auto denied = scope == PriceBudgetScope::Vault && vaultId
-        ? requireVaultBudgetEdit(call, *vaultId)
-        : requirePricingSuperAdmin(call);
-    if (denied.exit_code != 0) return denied;
-    try {
-        const bool disabled = PriceBudgetService{}.disablePolicy(scope, providerKey, vaultId);
-        return ok(disabled
-            ? "S3 price budget policy disabled.\n"
-            : "No matching S3 price budget policy was configured.\n");
-    } catch (const std::exception& e) {
-        return invalid("pricing budget: " + std::string(e.what()));
-    }
+CommandResult disablePolicy(const CommandCall& call, const PriceBudgetScope scope,
+                            const std::function<std::optional<std::string>()>& provider,
+                            const std::function<std::optional<std::uint32_t>()>& vault) {
+    return runOp("pricing budget", [&] { return vh::ops::pricing::disablePolicy(call.user, scope, provider(), vault()); },
+                 [](const bool disabled) {
+                     return std::string(disabled ? "S3 price budget policy disabled.\n"
+                                                 : "No matching S3 price budget policy was configured.\n");
+                 });
 }
 
 CommandResult handleDisableGlobal(const CommandCall& call) {
-    return disablePolicy(call, PriceBudgetScope::Global, std::nullopt, std::nullopt);
+    return disablePolicy(call, PriceBudgetScope::Global, [] { return std::nullopt; }, [] { return std::nullopt; });
 }
 
 CommandResult handleDisableProvider(const CommandCall& call) {
     const auto usage = resolveUsage({"pricing", "budget", "disable-provider"});
     validatePositionals(call, usage);
-    std::string error;
-    const auto provider = parseProviderKey(call.positionals[0], error);
-    if (!provider) return invalid(error);
-    return disablePolicy(call, PriceBudgetScope::Provider, provider, std::nullopt);
+    return disablePolicy(call, PriceBudgetScope::Provider,
+                         [&] { return std::make_optional(call.positionals[0]); }, [] { return std::nullopt; });
 }
 
 CommandResult handleDisableVault(const CommandCall& call) {
     const auto usage = resolveUsage({"pricing", "budget", "disable-vault"});
     validatePositionals(call, usage);
-    std::string error;
-    const auto vaultId = resolveVaultId(call.positionals[0], call, error);
-    if (!vaultId) return invalid(error);
-    return disablePolicy(call, PriceBudgetScope::Vault, std::nullopt, vaultId);
+    return disablePolicy(call, PriceBudgetScope::Vault, [] { return std::nullopt; },
+                         [&] { return std::make_optional(vaultIdArg(call.positionals[0], call)); });
 }
 
 CommandResult handleStatus(const CommandCall& call) {
-    if (auto denied = requirePricingSuperAdmin(call); denied.exit_code != 0) return denied;
-    PriceBudgetService service;
-    service.expireStaleReservations();
-    std::ostringstream out;
-    out << "S3 price budget policies\n"
-        << renderPolicies(service.listPolicies(true))
-        << "\nRecent ledger rows\n"
-        << renderLedger(service.listLedger(20));
-    return ok(out.str());
+    return runOp("pricing budget", [&] { return vh::ops::pricing::status(call.user, {}, 20); },
+                 [](const vh::ops::pricing::Status& status) {
+                     std::ostringstream out;
+                     out << "S3 price budget policies\n" << renderPolicies(status.policies)
+                         << "\nRecent ledger rows\n" << renderLedger(status.ledger);
+                     return out.str();
+                 });
 }
 
 CommandResult handleLedger(const CommandCall& call) {
-    if (auto denied = requirePricingSuperAdmin(call); denied.exit_code != 0) return denied;
     auto limit = std::uint32_t{50};
     if (const auto limitOpt = optVal(call, "limit")) {
         const auto parsed = parseUInt(*limitOpt);
         if (!parsed || *parsed == 0) return invalid("pricing budget ledger: --limit must be a positive integer");
         limit = *parsed;
     }
-    return ok(renderLedger(PriceBudgetService{}.listLedger(limit)));
+    return runOp("pricing budget ledger", [&] { return vh::ops::pricing::ledger(call.user, {}, limit); },
+                 [](const std::vector<PriceBudgetLedgerEntry>& entries) { return renderLedger(entries); });
 }
 
 bool isBudgetMatch(const std::string& cmd, const std::string_view input) {
