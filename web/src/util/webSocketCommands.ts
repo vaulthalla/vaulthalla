@@ -128,7 +128,9 @@ export interface WebSocketCommandMap {
 
   'auth.user.get.byName': { payload: { name: string }; response: { user: User } }
 
-  'auth.admin.default_password': { payload: null; response: { isDefault: boolean } }
+  // Security posture for the signed-in account: the super admin's initial password file while its generated
+  // password is still in use and the file is still on disk, else null. A warning, never a gate.
+  'auth.security.status': { payload: null; response: { initial_password_file: string | null } }
 
   // Vault commands
 

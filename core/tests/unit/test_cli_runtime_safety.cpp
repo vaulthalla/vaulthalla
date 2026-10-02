@@ -28,7 +28,6 @@
 #include "protocols/ws/CookiePolicy.hpp"
 #include "protocols/ws/ConnectionLifecycleManager.hpp"
 #include "auth/model/RefreshToken.hpp"
-#include "protocols/ws/DefaultPasswordGate.hpp"
 #include "protocols/ws/LogRedaction.hpp"
 #include "protocols/ws/ShareRateLimit.hpp"
 #include "protocols/ws/Router.hpp"
@@ -529,49 +528,23 @@ json routed(const std::string& command, const std::string& token = "") {
     return json{{"command", command}, {"payload", json::object()}, {"token", token}};
 }
 
-TEST(DefaultPasswordGate, OnlyPasswordChangeAndSessionCommandsWhileDefault) {
-    // The gate is intentionally off in dev mode; pin production behavior regardless of the host's config.
-    const config::Config previous = config::Registry::get(); // loads VH_PATH_TO_CONFIG on first use
-    config::Config pinned = previous;
-    pinned.dev.enabled = false;
-    config::Registry::set(pinned);
-    struct RestoreConfig { config::Config value; ~RestoreConfig() { config::Registry::set(value); } } restore{previous};
-
-    // Account commands (auth.users.list, auth.user.change_password) need a valid access token since Stage 0 S1/S2;
-    // give the session one so these exercise the default-password gate, not token validation.
+// The universal default password and its gate are gone (1.8.0): authentication answers whether a credential is
+// valid, and a valid session is never partially authenticated. Even an account still holding the retired default
+// (startup replaces it; see auth::bootstrap) is not refused anything because of its password.
+TEST(NoPasswordGate, AValidSessionRunsCommandsWhateverItsPassword) {
     const ScopedWsTokenAuth tokenAuth;
     auto router = std::make_shared<protocols::ws::Router>();
-    int blocked = 0, allowed = 0;
-    router->registerHandler("auth.users.list", [&](json&&, const auto&) { ++blocked; });
-    router->registerHandler("auth.user.change_password", [&](json&&, const auto&) { ++allowed; });
-    router->registerHandler("auth.admin.default_password", [&](json&&, const auto&) { ++allowed; });
+    int reached = 0;
+    router->registerHandler("auth.users.list", [&](json&&, const auto&) { ++reached; });
+    router->registerHandler("storage.vault.list", [&](json&&, const auto&) { ++reached; });
 
-    const auto user = userWithPassword(std::string(protocols::ws::default_password::kSeededAdminPassword));
+    const auto user = userWithPassword("vh!adm1n");
     const auto session = closedSessionWith(router, user);
     const auto token = ScopedWsTokenAuth::issue(session);
-    EXPECT_TRUE(session->userHasDefaultPassword());
 
     router->routeMessage(routed("auth.users.list", token), session);
-    router->routeMessage(routed("auth.user.change_password", token), session);
-    router->routeMessage(json{{"command", "auth.admin.default_password"}, {"payload", nullptr}}, session);
-    EXPECT_EQ(blocked, 0) << "a non-allowlisted command ran while the default password is still set";
-    EXPECT_EQ(allowed, 2);
-
-    // After a password change the session's user carries a new hash; the cached verdict is re-evaluated.
-    user->setPasswordHash(crypto::hash::password("a-much-better-passphrase-123!"));
-    EXPECT_FALSE(session->userHasDefaultPassword());
-    router->routeMessage(routed("auth.users.list", token), session);
-    EXPECT_EQ(blocked, 1);
-}
-
-TEST(DefaultPasswordGate, AllowlistIsMinimal) {
-    using protocols::ws::default_password::isAllowedWhileDefault;
-    for (const auto* cmd : {"auth.user.change_password", "auth.isAuthenticated", "auth.refresh", "auth.logout",
-                            "auth.admin.default_password", "auth.login"})
-        EXPECT_TRUE(isAllowedWhileDefault(cmd)) << cmd;
-    for (const auto* cmd : {"auth.users.list", "auth.user.update", "auth.register", "role.admin.add",
-                            "settings.update", "storage.vault.list", "fs.upload.start"})
-        EXPECT_FALSE(isAllowedWhileDefault(cmd)) << cmd;
+    router->routeMessage(routed("storage.vault.list", token), session);
+    EXPECT_EQ(reached, 2);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -579,11 +552,11 @@ TEST(DefaultPasswordGate, AllowlistIsMinimal) {
 // account handlers that dereference session->user (a remote daemon segfault), and logged-in sessions reached
 // them without access-token validation.
 
-constexpr std::array<std::string_view, 5> kSessionLifecycleCommands{
-    "auth.login", "auth.logout", "auth.refresh", "auth.isAuthenticated", "auth.admin.default_password"};
-constexpr std::array<std::string_view, 8> kAccountCommands{
+constexpr std::array<std::string_view, 4> kSessionLifecycleCommands{
+    "auth.login", "auth.logout", "auth.refresh", "auth.isAuthenticated"};
+constexpr std::array<std::string_view, 9> kAccountCommands{
     "auth.register", "auth.user.delete", "auth.user.update", "auth.user.change_password",
-    "auth.user.get", "auth.user.get.byName", "auth.users.list", "auth.user.anything_new"};
+    "auth.user.get", "auth.user.get.byName", "auth.users.list", "auth.security.status", "auth.user.anything_new"};
 
 TEST(WsAuthRouting, OnlySessionLifecycleCommandsSkipHumanAuth) {
     using Decision = protocols::ws::Router::CommandAuthDecision;
@@ -614,7 +587,7 @@ TEST(WsAuthRouting, UnauthenticatedSocketNeverReachesAccountHandlers) {
     for (const auto cmd : kAccountCommands)
         router->registerHandler(std::string(cmd), [&](json&&, const auto&) { ++reached; });
     int lifecycle = 0;
-    router->registerHandler("auth.admin.default_password", [&](json&&, const auto&) { ++lifecycle; });
+    router->registerHandler("auth.isAuthenticated", [&](json&&, const auto&) { ++lifecycle; });
 
     const auto session = std::make_shared<protocols::ws::Session>(router);
     session->ipAddress = "203.0.113.8";
@@ -622,7 +595,7 @@ TEST(WsAuthRouting, UnauthenticatedSocketNeverReachesAccountHandlers) {
     ASSERT_EQ(session->user, nullptr);
 
     for (const auto cmd : kAccountCommands) router->routeMessage(routed(std::string(cmd)), session);
-    router->routeMessage(routed("auth.admin.default_password"), session);
+    router->routeMessage(routed("auth.isAuthenticated"), session);
     EXPECT_EQ(reached, 0) << "an account handler ran for an unauthenticated socket";
     EXPECT_EQ(lifecycle, 1);
 }

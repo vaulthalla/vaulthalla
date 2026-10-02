@@ -34,6 +34,7 @@
 #include "storage/s3/Controller.hpp"
 #include "crypto/id/Generator.hpp"
 #include "crypto/util/hash.hpp"
+#include "auth/Bootstrap.hpp"
 #include "auth/SystemUid.hpp"
 
 // Libraries
@@ -548,7 +549,8 @@ void initAdmin() {
     const auto user = std::make_shared<User>();
     user->name = "admin";
     user->email = "";
-    user->setPasswordHash(hash::password("vh!adm1n"));
+    // No universal default: a per-install password, written once for the operator (auth/Bootstrap.hpp).
+    user->setPasswordHash(auth::bootstrap::issueInitialCredential());
     user->meta.linux_uid = loadPendingSuperAdminUid();
 
     user->roles.admin = db::query::rbac::role::Admin::get("super_admin");
@@ -703,7 +705,10 @@ void vh::seed::reconcileSystemPrincipals() {
     const auto systemUid = configuredSystemUid();
     const auto rootHash = hash::password(id::Generator({ .namespace_token = "vaulthalla-root-user" }).generate());
     const auto systemHash = hash::password(id::Generator({ .namespace_token = "vaulthalla-system-user" }).generate());
-    const auto adminHash = hash::password("vh!adm1n");
+    // Only used if 'admin' is missing (the seed normally creates it); an existing account's password is never touched.
+    const auto adminHash = db::query::identities::User::adminUserExists()
+        ? hash::password(id::Generator({ .namespace_token = "vaulthalla-admin-unused" }).generate())
+        : auth::bootstrap::issueInitialCredential();
 
     db::Transactions::exec("initdb::reconcileSystemPrincipals", [&](pqxx::work& txn) {
         txn.exec("SELECT set_config('vaulthalla.bootstrap', 'on', true)");

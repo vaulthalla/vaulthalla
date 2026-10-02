@@ -311,14 +311,4 @@ namespace vh::db::query::identities {
             ).one_field().as<bool>();
         });
     }
-
-    bool User::adminPasswordIsDefault() {
-        return Transactions::exec("User::adminPasswordIsDefault", [](pqxx::work &txn) -> bool {
-            const auto passwordHash = txn.exec(
-                pqxx::prepped{"get_admin_password"}
-            ).one_field().as<std::string>();
-
-            return vh::crypto::hash::verifyPassword("vh!adm1n", passwordHash);
-        });
-    }
 }

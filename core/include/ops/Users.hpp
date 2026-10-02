@@ -71,6 +71,19 @@ UserPtr remove(const Actor& actor, const Remove& req);
 [[nodiscard]] UserPtr getByName(const Actor& actor, const std::string& name);
 // The accounts the actor may view.
 [[nodiscard]] std::vector<UserPtr> list(const Actor& actor, db::model::ListQueryParams params = {});
+// `vh setup set-super-admin-password`: only the account bound to the configured super-admin Linux UID (the 'admin'
+// account) may set that account's web password, over the local socket. Throws Denied for anyone else.
+UserPtr requireSuperAdminOperator(const Actor& actor);
+
+struct SuperAdminPasswordSet {
+    UserPtr user;
+    std::optional<std::string> leftover_file;   // the initial plaintext copy could not be removed: why
+};
+
+// Sets admin's web password (normal hashing and policy), ends its web sessions, records the rotation and removes the
+// initial plaintext copy. A copy that can't be removed is reported, not rolled back.
+SuperAdminPasswordSet setSuperAdminPassword(const Actor& actor, const std::string& newPassword);
+
 // Your own password needs the current one; anyone else's needs reset-password over them (and ends their sessions).
 UserPtr changePassword(const Actor& actor, uint32_t id, const std::optional<std::string>& currentPassword,
                        const std::string& newPassword);

@@ -1,5 +1,6 @@
 #include "protocols/ws/handler/Auth.hpp"
 #include "runtime/Deps.hpp"
+#include "auth/Bootstrap.hpp"
 #include "auth/Manager.hpp"
 #include "auth/session/Validator.hpp"
 #include "identities/User.hpp"
@@ -132,6 +133,13 @@ json Auth::getUserByName(const json &payload, const std::shared_ptr<Session> &se
     return {{"user", *ops::users::getByName(requireSessionUser(session), payload.at("name").get<std::string>())}};
 }
 
-json Auth::doesAdminHaveDefaultPassword() {
-    return {{"isDefault", db::query::identities::User::adminPasswordIsDefault()}};
+// Security posture for a warning in the web console, never a gate: a signed-in session is fully usable either way.
+// Only the super admin pays for the check (one row read, one stat), and only when the console asks for it (after
+// sign-in and on a page load).
+json Auth::securityStatus(const std::shared_ptr<Session>& session) {
+    const auto& user = requireSessionUser(session);
+    json out = {{"initial_password_file", nullptr}};
+    if (user->name == auth::bootstrap::kSuperAdminName && auth::bootstrap::initialPasswordExposed())
+        out["initial_password_file"] = auth::bootstrap::initialPasswordFile().string();
+    return out;
 }

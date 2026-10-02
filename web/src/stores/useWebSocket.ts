@@ -40,7 +40,6 @@ const SESSION_LIFECYCLE_COMMANDS: ReadonlySet<keyof WebSocketCommandMap> = new S
   'auth.logout',
   'auth.refresh',
   'auth.isAuthenticated',
-  'auth.admin.default_password',
 ])
 const isAuthCommand = (command: keyof WebSocketCommandMap) => SESSION_LIFECYCLE_COMMANDS.has(command)
 const isUnauthorizedMessage = (message: unknown) => {

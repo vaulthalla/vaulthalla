@@ -81,11 +81,6 @@ public:
     [[nodiscard]] const std::string& shareSessionId() const noexcept { return shareSessionId_; }
     [[nodiscard]] const std::string& shareSessionToken() const noexcept { return shareSessionToken_; }
 
-    // True while the authenticated user's password still verifies against the seeded default (issue #103).
-    // Cached per session and keyed by user id + password hash: the argon2 verify runs once per login or password
-    // change, not per message, and a changed password (new hash) is re-evaluated automatically.
-    [[nodiscard]] bool userHasDefaultPassword();
-
     static std::string generateUUIDv4();
 
 private:
@@ -121,11 +116,6 @@ private:
 
     std::shared_ptr<handler::fs::Upload> uploadHandler_{nullptr};
 
-    std::mutex defaultPasswordMutex_;
-    uint32_t defaultPasswordUserId_ = 0;
-    std::string defaultPasswordHash_;
-    bool defaultPasswordCached_ = false;
-    bool defaultPasswordIsDefault_ = false;
     std::shared_ptr<Router> router_;
     SessionMode mode_{SessionMode::Unauthenticated};
     std::shared_ptr<vh::share::Principal> sharePrincipal_{nullptr};

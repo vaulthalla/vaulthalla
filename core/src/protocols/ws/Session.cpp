@@ -5,7 +5,6 @@
 #include "auth/model/TokenPair.hpp"
 #include "log/Registry.hpp"
 #include "protocols/ws/Router.hpp"
-#include "protocols/ws/DefaultPasswordGate.hpp"
 #include "protocols/ws/CookiePolicy.hpp"
 #include "crypto/util/hash.hpp"
 #include "protocols/ws/handler/fs/Upload.hpp"
@@ -68,21 +67,6 @@ std::string Session::getUserAgent() const {
     if (const auto it = handshakeRequest_.find(beast_http::field::user_agent);
         it != handshakeRequest_.end()) return std::string(it->value());
     return  "unknown";
-}
-
-bool Session::userHasDefaultPassword() {
-    const auto u = user;
-    if (!u || u->password_hash.empty()) return false;
-
-    std::scoped_lock lock(defaultPasswordMutex_);
-    if (!defaultPasswordCached_ || defaultPasswordUserId_ != u->id || defaultPasswordHash_ != u->password_hash) {
-        defaultPasswordUserId_ = u->id;
-        defaultPasswordHash_ = u->password_hash;
-        defaultPasswordIsDefault_ = crypto::hash::verifyPassword(
-            std::string(default_password::kSeededAdminPassword), u->password_hash);
-        defaultPasswordCached_ = true;
-    }
-    return defaultPasswordIsDefault_;
 }
 
 void Session::setAuthenticatedUser(const std::shared_ptr<User>& u) {

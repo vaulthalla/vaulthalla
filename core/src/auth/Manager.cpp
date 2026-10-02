@@ -11,6 +11,7 @@
 #include "crypto/secrets/Manager.hpp"
 #include "runtime/Deps.hpp"
 #include "auth/session/Issuer.hpp"
+#include "auth/Bootstrap.hpp"
 
 #include <sodium.h>
 #include <stdexcept>
@@ -100,6 +101,7 @@ std::shared_ptr<User> Manager::changePassword(const uint32_t userId, const std::
 
     log::Registry::audit()->info("[AuthManager] User {} is changing password", user->name);
     log::Registry::auth()->info("[AuthManager] Changing password for user: {}", user->name);
+    if (updatedUser->name == bootstrap::kSuperAdminName) (void)bootstrap::onSuperAdminPasswordChanged();
 
     return updatedUser;
 }
@@ -115,6 +117,7 @@ std::shared_ptr<User> Manager::resetPassword(const uint32_t userId, const std::s
 
     log::Registry::audit()->info("[AuthManager] Password reset for user {}", user->name);
     log::Registry::auth()->info("[AuthManager] Reset password for user: {}", user->name);
+    if (updatedUser->name == bootstrap::kSuperAdminName) (void)bootstrap::onSuperAdminPasswordChanged();
 
     return updatedUser;
 }

@@ -17,6 +17,7 @@ namespace setup {
     CommandResult handleDb(const CommandCall& call);
     CommandResult handleRemoteDb(const CommandCall& call);
     CommandResult handleNginx(const CommandCall& call);
+    CommandResult handleSetSuperAdminPassword(const CommandCall& call);
 }
 
 }

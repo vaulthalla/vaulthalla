@@ -29,7 +29,6 @@ const PasswordForm = ({ name }: { name: string }) => {
   const changePassword = useAuthStore(state => state.changePassword)
   const getUserByName = useAuthStore(state => state.getUserByName)
   const currentUser = useAuthStore(state => state.user)
-  const adminPasswordIsDefault = useAuthStore(state => state.adminPasswordIsDefault)
   const [user, setUser] = useState<User | null>(null)
   const [error, setError] = useState('')
 
@@ -74,15 +73,6 @@ const PasswordForm = ({ name }: { name: string }) => {
 
   const isSelfChange = currentUser?.id === user.id
 
-  const AdminDefaultWarning = () =>
-    isSelfChange && adminPasswordIsDefault && (
-      <div className="bg-black/40 px-2 py-6 text-center">
-        <h2 className="text-destructive mb-4 text-3xl">WARNING</h2>
-        <h3 className="text-destructive mb-2 text-lg">Default password detected for admin.</h3>
-        <h3 className="text-warning">Please set a new password to proceed.</h3>
-      </div>
-    )
-
   return (
     <div className="mx-auto mt-12 h-fit max-w-sm space-y-4 rounded-3xl bg-white p-6 shadow dark:bg-gray-800">
       <h2 className="text-2xl font-semibold">
@@ -98,8 +88,6 @@ const PasswordForm = ({ name }: { name: string }) => {
           </h3>
         )}
       </div>
-
-      <AdminDefaultWarning />
 
       <form onSubmit={handleSubmit(onSubmit)} className="mt-4 flex max-w-md flex-col gap-4 text-sm">
         <div hidden>

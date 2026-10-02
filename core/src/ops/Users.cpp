@@ -4,6 +4,7 @@
 #include "ops/Vaults.hpp"
 #include "db/query/vault/Vault.hpp"
 #include "vault/model/Vault.hpp"
+#include "auth/Bootstrap.hpp"
 #include "auth/Manager.hpp"
 #include "auth/registration/Validator.hpp"
 #include "crypto/util/hash.hpp"
@@ -288,6 +289,34 @@ std::vector<UserPtr> list(const Actor& actor, db::model::ListQueryParams params)
         return u->id != actor->id && roleIsAdminIdentity(u->roles.admin) != admins;
     });
     return all;
+}
+
+UserPtr requireSuperAdminOperator(const Actor& actor) {
+    requireActor(actor);
+    const auto admin = db::query::identities::User::getUserByName(auth::bootstrap::kSuperAdminName);
+    if (!admin) throw NotFound(std::string("the '") + auth::bootstrap::kSuperAdminName + "' account does not exist");
+    if (!admin->meta.linux_uid)
+        throw Denied("no Linux user is bound as the Vaulthalla super admin yet; run 'vh setup assign-admin' as that user");
+    if (actor->id != admin->id || actor->meta.linux_uid != admin->meta.linux_uid)
+        throw Denied("only the Linux user bound as the Vaulthalla super admin (UID " +
+                     std::to_string(*admin->meta.linux_uid) + ") may set this password; run it as that user, without sudo");
+    return admin;
+}
+
+SuperAdminPasswordSet setSuperAdminPassword(const Actor& actor, const std::string& newPassword) {
+    const auto admin = requireSuperAdminOperator(actor);
+    const auto& auth = runtime::Deps::get().authManager;
+    SuperAdminPasswordSet out;
+    try {
+        out.user = auth->resetPassword(admin->id, newPassword);   // records the rotation and removes the copy
+    } catch (const Error&) {
+        throw;
+    } catch (const std::exception& e) {
+        throw Invalid(e.what());   // the password policy refused it
+    }
+    auth->revokeSessions(admin->id);
+    if (auth::bootstrap::initialPasswordFileExists()) out.leftover_file = auth::bootstrap::removeInitialPasswordFile();
+    return out;
 }
 
 UserPtr changePassword(const Actor& actor, const uint32_t id, const std::optional<std::string>& currentPassword,

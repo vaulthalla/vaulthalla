@@ -3,8 +3,6 @@
 #include "auth/session/Manager.hpp"
 #include "log/Registry.hpp"
 #include "config/Config.hpp"
-#include "config/Registry.hpp"
-#include "protocols/ws/DefaultPasswordGate.hpp"
 #include "protocols/ws/LogRedaction.hpp"
 #include "protocols/ws/Session.hpp"
 #include "protocols/ws/ShareRateLimit.hpp"
@@ -30,8 +28,7 @@ bool isSessionLifecycleCommand(const std::string_view command) {
         std::string_view{"auth.login"},
         std::string_view{"auth.logout"},
         std::string_view{"auth.refresh"},
-        std::string_view{"auth.isAuthenticated"},
-        std::string_view{"auth.admin.default_password"}
+        std::string_view{"auth.isAuthenticated"}
     };
     return containsCommand(commands, command);
 }
@@ -231,18 +228,6 @@ void Router::routeMessage(json&& msg, const SessionPtr& session) {
             Response::ERROR(std::move(command), std::move(msg),
                             "Rate limit exceeded. Try again in " + std::to_string(rateLimit.retry_after.count()) +
                             "s.")(session);
-            return;
-        }
-
-        // Seeded default password (issue #103): enforced here, not only by the browser. Share sessions have no
-        // account password; dev installs mirror the web's dev-mode bypass.
-        if (session->user && !session->isShareSession() && !config::Registry::get().dev.enabled &&
-            !default_password::isAllowedWhileDefault(command) && session->userHasDefaultPassword()) {
-            log::Registry::ws()->warn("[Router] Refused '{}' for user '{}': default password not changed yet",
-                                      command, session->user->name);
-            Response(std::move(command), std::move(msg), Status::ERROR,
-                     json{{"code", std::string(default_password::kErrorCode)}},
-                     std::string(default_password::kErrorMessage))(session);
             return;
         }
 
