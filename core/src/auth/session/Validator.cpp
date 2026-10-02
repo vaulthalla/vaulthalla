@@ -121,6 +121,9 @@ void Validator::rehydrateFromStoredRefreshToken(const std::shared_ptr<Session>& 
     const auto storedToken = db::query::auth::RefreshToken::get(claims->jti);
     if (!storedToken)
         throw std::runtime_error("No stored refresh token found for JTI");
+    // A revoked token (logout elsewhere, account deleted/deactivated/re-roled) must not bring a session back.
+    if (!storedToken->isValid())
+        throw std::runtime_error("Stored refresh token is not valid");
 
     validateClaims(storedToken, claims);
 
@@ -152,6 +155,11 @@ void Validator::rehydrateFromStoredRefreshToken(const std::shared_ptr<Session>& 
     if (user->systemOnly) {
         runtime::Deps::get().sessionManager->invalidate(session);
         throw std::runtime_error("System-only users cannot use human refresh tokens");
+    }
+
+    if (!user->meta.is_active) {
+        runtime::Deps::get().sessionManager->invalidate(session);
+        throw std::runtime_error("Deactivated users cannot use refresh tokens");
     }
 
     if (storedToken->userId != user->id) {

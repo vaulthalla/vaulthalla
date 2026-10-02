@@ -4,6 +4,7 @@
 #include "auth/registration/Validator.hpp"
 #include "crypto/util/hash.hpp"
 #include "db/query/identities/User.hpp"
+#include "db/query/auth/RefreshToken.hpp"
 #include "storage/Manager.hpp"
 #include "protocols/ws/Session.hpp"
 #include "log/Registry.hpp"
@@ -52,7 +53,6 @@ void Manager::registerUser(std::shared_ptr<User> user, const std::string& passwo
     } catch (...) {
         // Don't leave a half-registered account behind an error response.
         db::query::identities::User::deleteUser(user->id);
-        usersByName_.erase(user->name);
         throw;
     }
 
@@ -63,6 +63,7 @@ void Manager::loginUser(const std::string& name, const std::string& password, co
     auto user = getUser(name);
     if (!user) throw std::runtime_error("User not found: " + name);
     if (user->systemOnly) throw std::runtime_error("System-only users cannot log in");
+    if (!user->meta.is_active) throw std::runtime_error("This account is deactivated");
 
     if (!hash::verifyPassword(password, user->password_hash)) throw std::runtime_error(
         "Invalid password for user: " + name);
@@ -80,7 +81,6 @@ void Manager::updateUser(const std::shared_ptr<User>& user) {
     if (!user) throw std::runtime_error("Cannot update null user");
 
     db::query::identities::User::updateUser(user);
-    usersByName_[user->name] = db::query::identities::User::getUserById(user->id);
 
     log::Registry::auth()->debug("[AuthManager] User updated: {}", user->name);
 }
@@ -97,7 +97,6 @@ std::shared_ptr<User> Manager::changePassword(const uint32_t userId, const std::
     db::query::identities::User::updateUserPassword(user->id, hashNewPassword(newPassword));
     const auto updatedUser = db::query::identities::User::getUserById(user->id);
     if (!updatedUser) throw std::runtime_error("Failed to reload user after password change: " + user->name);
-    cacheUser(updatedUser);
 
     log::Registry::audit()->info("[AuthManager] User {} is changing password", user->name);
     log::Registry::auth()->info("[AuthManager] Changing password for user: {}", user->name);
@@ -113,7 +112,6 @@ std::shared_ptr<User> Manager::resetPassword(const uint32_t userId, const std::s
     db::query::identities::User::updateUserPassword(user->id, hashNewPassword(newPassword));
     const auto updatedUser = db::query::identities::User::getUserById(user->id);
     if (!updatedUser) throw std::runtime_error("Failed to reload user after password reset: " + user->name);
-    cacheUser(updatedUser);
 
     log::Registry::audit()->info("[AuthManager] Password reset for user {}", user->name);
     log::Registry::auth()->info("[AuthManager] Reset password for user: {}", user->name);
@@ -121,45 +119,23 @@ std::shared_ptr<User> Manager::resetPassword(const uint32_t userId, const std::s
     return updatedUser;
 }
 
+// Always the database: accounts change through the CLI and the web alike, and a login or a password check
+// against a cached copy honoured renamed, deactivated, demoted and even deleted accounts.
 std::shared_ptr<User> Manager::getUser(const std::string& name) {
-    {
-        std::scoped_lock lock(mutex_);
-        if (usersByName_.contains(name)) return usersByName_[name];
-    }
-
-    if (const auto user = db::query::identities::User::getUserByName(name)) {
-        cacheUser(user);
-        return user;
-    }
-
+    if (const auto user = db::query::identities::User::getUserByName(name)) return user;
     throw std::runtime_error("User not found: " + name);
 }
 
 std::shared_ptr<identities::User> Manager::getUser(const uint32_t id) {
-    {
-        std::scoped_lock lock(mutex_);
-        if (usersById_.contains(id)) return usersById_[id];
-    }
-
-    if (const auto user = db::query::identities::User::getUserById(id)) {
-        cacheUser(user);
-        return user;
-    }
-
+    if (const auto user = db::query::identities::User::getUserById(id)) return user;
     throw std::runtime_error("User not found: " + std::to_string(id));
 }
 
-void Manager::cacheUser(std::shared_ptr<identities::User> user) {
-    if (!user) return;
-    std::scoped_lock lock(mutex_);
-    usersByName_[user->name] = user;
-    usersById_[user->id] = user;
-}
-
-void Manager::evictUser(std::shared_ptr<identities::User> user) {
-    if (!user) return;
-    std::scoped_lock lock(mutex_);
-    usersByName_.erase(user->name);
-    usersById_.erase(user->id);
+void Manager::revokeSessions(const uint32_t userId) {
+    // Refresh tokens first, so no live session can rehydrate from one while the runtime sessions are dropped.
+    db::query::auth::RefreshToken::revokeAll(userId);
+    if (const auto& sessions = runtime::Deps::get().sessionManager)
+        for (const auto& session : sessions->getSessionsByUserId(userId)) sessions->invalidate(session);
+    log::Registry::auth()->info("[AuthManager] Revoked sessions for user id {}", userId);
 }
 }

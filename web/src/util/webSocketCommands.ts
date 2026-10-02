@@ -94,12 +94,13 @@ export interface WebSocketCommandMap {
   'auth.login': { payload: { name: string; password: string }; response: { token: string; user: User } }
 
   'auth.register': {
-    payload: { name: string; email: string; password: string; is_active?: boolean; role?: string }
-    response: { token: string; user: User }
+    payload: { name: string; email?: string; password: string; is_active?: boolean; role: string }
+    response: { user: User }
   }
 
+  // A patch. Role changes and deactivation end the account's sessions.
   'auth.user.update': {
-    payload: { id: number; name?: string; email?: string; password?: string; role?: string; is_active?: boolean }
+    payload: { id: number; name?: string; email?: string | null; password?: string; role?: string; is_active?: boolean }
     response: { user: User }
   }
 

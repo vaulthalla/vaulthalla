@@ -64,6 +64,7 @@ namespace {
     const auto user = db::query::auth::RefreshToken::getUserByJti(claims.jti);
     if (!user) throw std::runtime_error("No user found for refresh token");
     if (user->systemOnly) throw std::runtime_error("System-only users cannot rehydrate human sessions");
+    if (!user->meta.is_active) throw std::runtime_error("Deactivated users cannot rehydrate sessions");
     if (storedToken->userId != user->id)
         throw std::runtime_error("User ID mismatch for refresh token");
 

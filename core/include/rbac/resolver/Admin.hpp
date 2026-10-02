@@ -72,7 +72,8 @@ namespace vh::rbac::resolver {
 
                 switch (*resolved.identity) {
                     case admin::Entity::Group:
-                        allowed = AdminResolverTraits<EnumT>::group(perms.groups).has(permission);
+                        // Groups are governed by GroupPermissions (their own enum and target trait), not these.
+                        allowed = false;
                         break;
 
                     case admin::Entity::User:

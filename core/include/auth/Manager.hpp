@@ -4,8 +4,6 @@
 
 #include <memory>
 #include <string>
-#include <unordered_map>
-#include <mutex>
 
 namespace vh::identities { struct User; }
 namespace vh::protocols::ws { class Session; }
@@ -33,13 +31,9 @@ public:
     std::shared_ptr<identities::User> getUser(const std::string& name);
     std::shared_ptr<identities::User> getUser(uint32_t id);
 
-    void cacheUser(std::shared_ptr<identities::User> user);
-    void evictUser(std::shared_ptr<identities::User> user);
-
-private:
-    std::mutex mutex_;
-    std::unordered_map<std::string, std::shared_ptr<identities::User>> usersByName_;
-    std::unordered_map<uint32_t, std::shared_ptr<identities::User>> usersById_;
+    // Ends every session the user has: revokes their refresh tokens and drops their live sessions, so the next
+    // request on an open socket is refused. Used when an account is deleted, deactivated, re-roled or reset.
+    void revokeSessions(uint32_t userId);
 };
 
 }

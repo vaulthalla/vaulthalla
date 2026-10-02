@@ -4,6 +4,8 @@
 #include "db/query/identities/User.hpp"
 #include "db/query/rbac/role/Admin.hpp"
 #include "identities/User.hpp"
+#include "ops/Roles.hpp"
+#include "ops/Users.hpp"
 #include "protocols/ws/Router.hpp"
 #include "protocols/ws/Session.hpp"
 #include "protocols/ws/handler/Auth.hpp"
@@ -233,8 +235,19 @@ TEST_F(AuthPasswordChangeTest, AdminResetUsesAdminScopeForAdminTargets) {
     auto manager = std::make_shared<vh::auth::Manager>();
     ScopedRuntimeAuthManager scoped(manager);
 
+    // The target is an admin-class account the actor outranks. (This test used to reset a super_admin's password
+    // from the admin role: the escalation SuperAdminPasswordCannotBeResetByOthers now refuses.)
     const auto actor = createUser("admin_password_reset_actor", "actor-password", "admin");
-    const auto target = createUser("admin_password_reset_target", "old-password", "super_admin");
+    const auto target = createUser("admin_password_reset_target", "old-password", "auditor");
+    ASSERT_TRUE(vh::ops::users::isAdminIdentity(*target->roles.admin));
+    ASSERT_TRUE(vh::ops::roles::permissionsBeyondActor(actor, *target->roles.admin).empty());
+
+    // The users scope is not enough for an admin-class account.
+    const auto usersOnly = createUser("admin_password_reset_users_only", "actor-password", "identity_admin");
+    EXPECT_THROW((void)vh::protocols::ws::handler::Auth::changePassword(
+        json{{"id", target->id}, {"new_password", "new-password"}}, sessionFor(usersOnly)), std::runtime_error);
+    EXPECT_TRUE(authenticate(target->name, "old-password"));
+
     const auto session = sessionFor(actor);
 
     const auto response = vh::protocols::ws::handler::Auth::changePassword(
@@ -245,6 +258,18 @@ TEST_F(AuthPasswordChangeTest, AdminResetUsesAdminScopeForAdminTargets) {
     EXPECT_EQ(response.at("user").at("id").get<unsigned int>(), target->id);
     EXPECT_FALSE(authenticate(target->name, "old-password"));
     EXPECT_TRUE(authenticate(target->name, "new-password"));
+}
+
+TEST_F(AuthPasswordChangeTest, SuperAdminPasswordCannotBeResetByOthers) {
+    auto manager = std::make_shared<vh::auth::Manager>();
+    ScopedRuntimeAuthManager scoped(manager);
+
+    const auto actor = createUser("super_reset_actor", "actor-password", "admin");
+    const auto target = createUser("super_reset_target", "old-password", "super_admin");
+
+    EXPECT_THROW((void)vh::protocols::ws::handler::Auth::changePassword(
+        json{{"id", target->id}, {"new_password", "new-password"}}, sessionFor(actor)), std::runtime_error);
+    EXPECT_TRUE(authenticate(target->name, "old-password"));
 }
 
 TEST_F(AuthPasswordChangeTest, PasswordResetRejectsSystemOnlyTarget) {

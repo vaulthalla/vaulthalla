@@ -19,6 +19,8 @@ namespace vh::rbac::resolver::admin {
 
         [[nodiscard]] bool isValid() const {
             if (identity == Entity::Group) return !!group;
+            // User/admin identity permissions are class-wide ("add admins"): there may be no target account yet.
+            if (identity) return true;
             return !!owner;
         }
 
