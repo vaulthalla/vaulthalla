@@ -66,6 +66,11 @@ ShellServer is not created in test mode (`paths::testMode`).
    clients get exit 75 "busy"); request reads time out after 10s, prompt answers after 15 min, sends after 30s, and
    writes use `MSG_NOSIGNAL`. `status`/`version` skip the DB user lookup so they work while the DB is down.
 4. `shell/Router.cpp` with `core/include/protocols/shell/Parser.hpp` tokenizes the line and runs the handler; output frames stream back.
+   Before dispatch the Router rejects options the usage definitions don't declare: each option must be declared by
+   a node on the path the positionals select (argument words are skipped), or match a declared `option_prefixes`
+   family (role commands' generated `--allow-*`/`--deny-*`). `--help`/`-h` are always accepted.
+   `test_cli_options.cpp` keeps definitions honest: every documented example must pass this check, and every
+   subcommand name a handler dispatches on must be defined.
 5. Usage/help comes from `core/usage/*` (root alias hard-coded as `vh`). The same code drives the `vh_usage` manpage
    generator and the integration-test command models, so CLI UX changes ripple into man pages and tests.
 

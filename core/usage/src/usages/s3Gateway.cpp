@@ -48,7 +48,10 @@ std::shared_ptr<CommandUsage> creds(const std::weak_ptr<CommandUsage>& parent) {
         Optional::ManyToOne("scope", "Scope: user-access, global, or vault-allowlist", {"scope"}, "scope"),
         Optional::ManyToOne("vault", "Vault ID or name allowed by the credential; repeat for multiple vaults", {"vault"}, "vault"),
         Optional::ManyToOne("expires", "Credential lifetime, such as 30d or 12h", {"expires"}, "duration"),
-        Optional::ManyToOne("description", "Credential description", {"description"}, "text")
+        Optional::ManyToOne("description", "Credential description", {"description"}, "text"),
+        Optional::ManyToOne("default_role", "Default vault role for vault-allowlist credentials",
+                            {"default-role", "default-vault-role", "role"}, "role"),
+        Optional::ManyToOne("selected_vault", "Vault ID or name the default role applies to", {"selected-vault"}, "vault")
     };
     create->optional_flags = {
         Flag::WithAliases("list", "Allow List operations for scoped vaults", {"list"}),
@@ -94,7 +97,10 @@ std::shared_ptr<CommandUsage> creds(const std::weak_ptr<CommandUsage>& parent) {
         Optional::ManyToOne("scope", "Scope: user-access, global, or vault-allowlist", {"scope"}, "scope"),
         Optional::ManyToOne("user", "Retarget principal user name or ID", {"user", "u"}, "user"),
         Optional::ManyToOne("expires", "Credential lifetime, such as 30d or 12h", {"expires"}, "duration"),
-        Optional::ManyToOne("description", "Credential description", {"description"}, "text")
+        Optional::ManyToOne("description", "Credential description", {"description"}, "text"),
+        Optional::ManyToOne("default_role", "Default vault role for vault-allowlist credentials",
+                            {"default-role", "default-vault-role", "role"}, "role"),
+        Optional::ManyToOne("selected_vault", "Vault ID or name the default role applies to", {"selected-vault"}, "vault")
     };
     scopeSet->optional_flags = {
         Flag::WithAliases("enforce-budget-for-local-requests", "Count local/cache hits against gateway key budgets", {"enforce-budget-for-local-requests"}),
@@ -127,7 +133,79 @@ std::shared_ptr<CommandUsage> creds(const std::weak_ptr<CommandUsage>& parent) {
     revokeVault->examples = {{"vh s3-gateway creds scope backup revoke-vault photos", "Remove one vault from the allowlist."}};
 
     scope->subcommands = {scopeShow, scopeSet, allowVault, revokeVault};
-    cmd->subcommands = {create, list, revoke, scope};
+
+    // Per-vault role assignments and path overrides for a credential's principal (CLI twin of
+    // s3.gateway.credentials.roles.*). These were dispatched by the handlers but never defined here.
+    const auto credentialPos = Positional::Alias("credential", "Credential name, access key, or ID", "credential");
+    const auto roleVaultOpt = Option::Single("vault", "Vault ID or name", "vault", "vault");
+
+    auto role = build(cmd->weak_from_this());
+    role->aliases = {"role", "roles"};
+    role->description = "Manage per-vault role assignments and overrides for a credential.";
+
+    auto roleList = build(role->weak_from_this());
+    roleList->aliases = {"list", "ls"};
+    roleList->description = "List a credential's per-vault role assignments.";
+    roleList->positionals = {credentialPos};
+    roleList->optional_flags = {jsonFlag};
+    roleList->examples = {{"vh s3-gateway creds role list backup", "Show which vault role the credential uses on each vault."}};
+
+    auto roleAssign = build(role->weak_from_this());
+    roleAssign->aliases = {"assign"};
+    roleAssign->description = "Assign a vault role to the credential on one vault.";
+    roleAssign->positionals = {credentialPos};
+    roleAssign->required = {roleVaultOpt, Option::Single("role", "Vault role name or ID", "role", "role")};
+    roleAssign->optional_flags = {jsonFlag};
+    roleAssign->examples = {{"vh s3-gateway creds role assign backup --vault photos --role reader", "Use the 'reader' role on 'photos'."}};
+
+    auto roleRevoke = build(role->weak_from_this());
+    roleRevoke->aliases = {"revoke"};
+    roleRevoke->description = "Remove the credential's role assignment on one vault.";
+    roleRevoke->positionals = {credentialPos};
+    roleRevoke->required = {roleVaultOpt};
+    roleRevoke->examples = {{"vh s3-gateway creds role revoke backup --vault photos", "Drop the per-vault role on 'photos'."}};
+
+    auto roleOverride = build(role->weak_from_this());
+    roleOverride->aliases = {"override", "overrides"};
+    roleOverride->description = "Manage path overrides on a credential's per-vault role.";
+
+    auto overrideList = build(roleOverride->weak_from_this());
+    overrideList->aliases = {"list", "ls"};
+    overrideList->description = "List path overrides for the credential on one vault.";
+    overrideList->positionals = {credentialPos};
+    overrideList->required = {roleVaultOpt};
+    overrideList->optional_flags = {jsonFlag};
+    overrideList->examples = {{"vh s3-gateway creds role override list backup --vault photos", "Show path overrides on 'photos'."}};
+
+    auto overrideAdd = build(roleOverride->weak_from_this());
+    overrideAdd->aliases = {"add"};
+    overrideAdd->description = "Add a path override (allow or deny one permission under a glob).";
+    overrideAdd->positionals = {credentialPos};
+    overrideAdd->required = {
+        roleVaultOpt,
+        Option::Multi("permission", "Permission (qualified name, short name, or ID)", {"permission", "perm"}, {"permission"}),
+        Option::Multi("pattern", "Glob the override applies to", {"pattern", "path"}, {"glob"})
+    };
+    overrideAdd->optional = {Optional::ManyToOne("effect", "allow or deny", {"effect"}, "effect")};
+    overrideAdd->optional_flags = {
+        Flag::WithAliases("allow", "Allow (same as --effect allow)", {"allow", "allow-effect"}),
+        Flag::WithAliases("deny", "Deny (same as --effect deny)", {"deny", "deny-effect"}),
+        jsonFlag
+    };
+    overrideAdd->examples = {{R"(vh s3-gateway creds role override add backup --vault photos --permission download --pattern "/private/**" --deny)",
+                              "Deny downloads under /private on 'photos' for this credential."}};
+
+    auto overrideRemove = build(roleOverride->weak_from_this());
+    overrideRemove->aliases = {"remove", "rm"};
+    overrideRemove->description = "Remove a path override by ID.";
+    overrideRemove->positionals = {credentialPos};
+    overrideRemove->required = {roleVaultOpt};
+    overrideRemove->optional = {Optional::ManyToOne("id", "Override ID (or pass it as the second positional)", {"id"}, "id")};
+    overrideRemove->examples = {{"vh s3-gateway creds role override remove backup --vault photos --id 7", "Remove override 7."}};
+
+    roleOverride->subcommands = {overrideList, overrideAdd, overrideRemove};
+    role->subcommands = {roleList, roleAssign, roleRevoke, roleOverride};
+    cmd->subcommands = {create, list, revoke, scope, role};
     return cmd;
 }
 

@@ -3,6 +3,7 @@
 #include <protocols/shell/types.hpp>
 #include "protocols/shell/SocketIO.hpp"
 
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -20,6 +21,10 @@ public:
     CommandResult executeLine(const std::string& line,
         const std::shared_ptr<identities::User>& user,
         SocketIO* io = nullptr) const;
+
+    // The option-validation verdict executeLine would reach for `line`, without running the handler: an error
+    // message for an undeclared option, or nullopt. Lets tests check definitions against documented examples.
+    [[nodiscard]] std::optional<std::string> optionError(const std::string& line) const;
 
 private:
 

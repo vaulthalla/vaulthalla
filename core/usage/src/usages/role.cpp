@@ -21,6 +21,7 @@ static std::shared_ptr<CommandUsage> admin_list(const std::weak_ptr<CommandUsage
     cmd->aliases = {"list", "ls"};
     cmd->description = "List all admin roles in the system.";
     cmd->optional_flags = { jsonFlag };
+    cmd->optional = listQueryOptions();
     cmd->examples.push_back({"vh role admin list", "List all admin roles."});
     cmd->examples.push_back({"vh role admin list --json", "List all admin roles in JSON format."});
     return cmd;
@@ -83,6 +84,7 @@ static std::shared_ptr<CommandUsage> vault_list(const std::weak_ptr<CommandUsage
     cmd->aliases = {"list", "ls"};
     cmd->description = "List all vault roles in the system.";
     cmd->optional_flags = { jsonFlag };
+    cmd->optional = listQueryOptions();
     cmd->examples.push_back({"vh role vault list", "List all vault roles."});
     cmd->examples.push_back({"vh role vault list --json", "List all vault roles in JSON format."});
     return cmd;

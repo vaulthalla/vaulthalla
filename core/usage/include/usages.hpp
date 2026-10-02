@@ -44,6 +44,15 @@ const auto limitOpt = Optional::ManyToOne("limit", "Limit the number of vaults d
 
 const auto pageOpt = Optional::ManyToOne("page", "Specify the page number when using --limit for pagination", {"page", "p"}, "page");
 
+const auto sortOpt = Optional::ManyToOne("sort", "Sort by this field", {"sort"}, "field");
+
+const auto directionOpt = Optional::ManyToOne("direction", "Sort direction: asc or desc", {"direction"}, "asc|desc");
+
+const auto filterOpt = Optional::ManyToOne("filter", "Only show entries matching this text", {"filter"}, "text");
+
+// Every option parseListQuery() reads; list commands that use it declare all of these.
+inline std::vector<Optional> listQueryOptions() { return {limitOpt, pageOpt, sortOpt, directionOpt, filterOpt}; }
+
 const auto userPos = Positional::WithAliases("user", "Username or ID of the user", {"name", "id"});
 
 }

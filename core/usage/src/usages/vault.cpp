@@ -220,7 +220,7 @@ static std::shared_ptr<CommandUsage> list(const std::weak_ptr<CommandUsage>& par
     cmd->aliases = {"list", "ls"};
     cmd->description = "List all vaults accessible to the current user.";
     cmd->required_flags = {localFlag, s3Flag, jsonFlag};
-    cmd->optional = {limitOpt};
+    cmd->optional = listQueryOptions();
     cmd->examples = {
         {"vh vaults", "List all vaults accessible to the current user."},
         {"vh vaults --local", "List only local vaults."},
@@ -237,8 +237,8 @@ static std::shared_ptr<CommandUsage> role_assign(const std::weak_ptr<CommandUsag
     cmd->required = {subjectOption};
     cmd->optional = {owner};
     cmd->examples = {
-        {"vh vault role assign 42 read-only bob", "Add user 'bob' to the 'read-only' role for the vault with ID 42."},
-        {"vh vault role assign myvault read-write developers --owner alice",
+        {"vh vault role assign 42 read-only -u bob", "Add user 'bob' to the 'read-only' role for the vault with ID 42."},
+        {"vh vault role assign myvault read-write --group developers --owner alice",
          "Add group 'developers' to the 'read-write' role for the vault named 'myvault' owned by 'alice'."}
     };
     return cmd;
@@ -246,15 +246,15 @@ static std::shared_ptr<CommandUsage> role_assign(const std::weak_ptr<CommandUsag
 
 static std::shared_ptr<CommandUsage> role_unassign(const std::weak_ptr<CommandUsage>& parent) {
     auto cmd = buildBaseUsage(parent);
-    cmd->aliases = {"unassign", "rm-assn"};
+    cmd->aliases = {"unassign", "remove", "rm-assn"};
     cmd->description = "Remove a role assignment from a user or group for a specific vault.";
     cmd->positionals = {vaultPos, roleId};
     cmd->required = {subjectOption};
     cmd->optional = {owner};
     cmd->examples = {
-        {"vh vault role unassign 42 read-only bob",
+        {"vh vault role unassign 42 read-only -u bob",
          "Remove user 'bob' from the 'read-only' role for the vault with ID 42."},
-        {"vh vault role unassign myvault read-write developers --owner alice",
+        {"vh vault role unassign myvault read-write --group developers --owner alice",
          "Remove group 'developers' from the 'read-write' role for the vault named 'myvault' owned by 'alice'."}
     };
     return cmd;
@@ -326,7 +326,7 @@ static std::shared_ptr<CommandUsage> role_override_list(const std::weak_ptr<Comm
     cmd->required = {subjectOption};
     cmd->optional = {owner};
     cmd->examples = {
-        {"vh vault role override list 42 read-only bob",
+        {"vh vault role override list 42 read-only -u bob",
          "List all overrides for user 'bob' in role 'read-only' on vault 42."},
         {"vh vault role override ls myvault read-write --group developers --owner alice",
          "List all overrides for group 'developers' in 'myvault' (owner 'alice') on role 'read-write'."}
@@ -373,8 +373,8 @@ static std::shared_ptr<CommandUsage> vrole(const std::weak_ptr<CommandUsage>& pa
     cmd->pluralAliasImpliesList = true;
     cmd->description = "Manage vault role assignments and permission overrides.";
     cmd->examples = {
-        {"vh vault role assign 42 read-only bob", "Add user 'bob' to the 'read-only' role for the vault with ID 42."},
-        {"vh vault role remove myvault read-write developers --owner alice",
+        {"vh vault role assign 42 read-only -u bob", "Add user 'bob' to the 'read-only' role for the vault with ID 42."},
+        {"vh vault role remove myvault read-write --group developers --owner alice",
          "Remove group 'developers' from the 'read-write' role for the vault named 'myvault' owned by 'alice'."},
         {R"(vh vault role override add 42 read-only -u bob --allow-files-download --pattern "/reports/**")",
          "Allow user 'bob' to download PDF files in the vault with ID 42, overriding the 'read-only' role."},
@@ -439,7 +439,7 @@ static std::shared_ptr<CommandUsage> key_rotate(const std::weak_ptr<CommandUsage
 
 static std::shared_ptr<CommandUsage> key(const std::weak_ptr<CommandUsage>& parent) {
     auto cmd = buildBaseUsage(parent);
-    cmd->aliases = {"key", "k"};
+    cmd->aliases = {"key", "keys", "k"};
     cmd->pluralAliasImpliesList = true;
     cmd->description = "Manage encryption keys for vaults.";
     cmd->examples = {
@@ -737,7 +737,7 @@ static std::shared_ptr<CommandUsage> base(const std::weak_ptr<CommandUsage>& par
         {"vh vault delete myvault --owner alice", "Delete the vault named 'myvault' owned by user 'alice'."},
         {"vh vault info 42", "Show information for the vault with ID 42."},
         {"vh vaults", "List all vaults accessible to the current user."},
-        {"vh vault role assign 42 read-only bob", "Add user 'bob' to the 'read-only' role for the vault with ID 42."},
+        {"vh vault role assign 42 read-only -u bob", "Add user 'bob' to the 'read-only' role for the vault with ID 42."},
         {"vh vault keys export 42 --output /var/lib/vaulthalla/keyfile.pem --recipient ABCDEF1234567890",
          "Export the encryption key for the vault with ID 42 to '/var/lib/vaulthalla/keyfile.pem', encrypted for the GPG recipient with fingerprint 'ABCDEF1234567890'."},
         {"vh vault sync 42", "Manually trigger a sync for the vault with ID 42."}

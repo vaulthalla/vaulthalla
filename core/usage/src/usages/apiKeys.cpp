@@ -38,6 +38,7 @@ static std::shared_ptr<CommandUsage> list(const std::weak_ptr<CommandUsage>& par
     cmd->aliases = {"list", "ls"};
     cmd->description = "List all API keys in the system.";
     cmd->optional_flags = { jsonFlag };
+    cmd->optional = listQueryOptions();
     cmd->examples = {
         {"vh api-keys", "List all API keys in the system."},
         {"vh api-key", "List all API keys in the system (using alias)."},
@@ -55,9 +56,9 @@ std::shared_ptr<CommandUsage> create(const std::weak_ptr<CommandUsage>& parent) 
     cmd->required = { accessKey, secretKey, provider, endpoint };
     cmd->optional = { region };
     cmd->examples = {
-        {"vh api-key create --name mykey --access AKIA... --secret wJalrXUtnFEMI/K7MDENG/bPxRfiCYzEXAMPLEKEY --provider aws --region us-east-1",
+        {"vh api-key create mykey --access AKIA... --secret wJalrXUtnFEMI/K7MDENG/bPxRfiCYzEXAMPLEKEY --provider aws --endpoint https://s3.us-east-1.amazonaws.com --region us-east-1",
          "Create a new API key named 'mykey' for AWS S3 in the us-east-1 region."},
-        {"vh api-key mk --name r2key --access <accessKey> --secret <secret> --provider cloudflare-r2 --endpoint https://<account_id>.r2.cloudflarestorage.com",
+        {"vh api-key mk r2key --access <accessKey> --secret <secret> --provider cloudflare-r2 --endpoint https://<account_id>.r2.cloudflarestorage.com",
          "Create a new API key named 'r2key' for Cloudflare R2 (using alias)."}
     };
     return cmd;

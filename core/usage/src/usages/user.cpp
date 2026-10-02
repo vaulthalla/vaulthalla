@@ -22,6 +22,7 @@ static std::shared_ptr<CommandUsage> list(const std::weak_ptr<CommandUsage>& par
     auto cmd = buildBaseUsage(parent);
     cmd->aliases = {"list", "ls"};
     cmd->description = "List all users in the system.";
+    cmd->optional = listQueryOptions();
     cmd->examples = {
         {"vh users", "List all users in the system."},
         {"vh user", "List all users in the system (using alias)."},
@@ -105,7 +106,7 @@ static std::shared_ptr<CommandUsage> base(const std::weak_ptr<CommandUsage>& par
 
     // ---------- examples ----------
     cmd->examples = {
-        {"vh user create --name alice --role admin --email alice123@icann.org --linux-uid 1001",
+        {"vh user create alice --role admin --email alice123@icann.org --linux-uid 1001",
          "Create a new user named 'alice' with admin role, email, and Linux UID."},
         {"vh user delete alice", "Delete the user named 'alice'."},
         {"vh user info alice", "Get information about the user named 'alice'."},
