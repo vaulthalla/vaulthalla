@@ -1,3 +1,43 @@
+vaulthalla (1.8.0-1) unstable; urgency=high
+
+  * Security
+    - One authorization path for CLI and web: users, roles, groups, vaults,
+      API keys, the S3 gateway, price budgets and settings run through shared
+      core/ops operations instead of two diverging implementations.
+    - Close role escalation: admin accounts are judged by what their role
+      grants, nobody assigns or manages a role above their own, and the super
+      admin can't be renamed or have its password reset by others.
+    - Deleting, deactivating, re-roling or resetting an account ends its
+      sessions; deactivated accounts can't log in; revoked refresh tokens no
+      longer rehydrate sessions; logins no longer read a stale user cache.
+    - Refuse SQL in `--sort` on list commands.
+    - S3 gateway: role grants can't exceed the principal or delegate role
+      administration without admin rights; overrides need an explicit effect
+      and pattern; bucket existence is not revealed before authorization;
+      vault names never resolve to another owner's vault by accident.
+    - Price budgets need vault edit permission (owners can't drop an imposed
+      budget); settings writes are validated on every surface.
+  * Runtime
+    - Vault updates reach the live engine immediately; owner changes need
+      create permission for the new owner; key changes need Consume.
+    - Health status takes a live database probe, so the web console and
+      `vh status` agree when PostgreSQL is down.
+    - Login rate limiting sees real client addresses behind nginx (#125).
+    - WebSocket handlers run on several threads, so login bursts no longer
+      stall every handshake (#132).
+    - Changing s3_gateway.enabled through settings restarts the gateway.
+  * CLI
+    - Unknown options are rejected instead of silently ignored.
+    - Role permission flags, `role admin create --from` and vault role
+      overrides work as documented.
+    - `vh user update --disable|--enable`; `vh user create` creates the
+      default vault like the web console.
+  * Web console
+    - Encryption waiver confirmation for S3 vault changes over existing data.
+    - Role permission editing applies the full permission set.
+
+ -- Cooper Larson <cooper@valkyrianlabs.com>  Fri, 02 Oct 2026 13:59:38 +0000
+
 vaulthalla (1.7.0-1) unstable; urgency=high
 
   * Runtime
