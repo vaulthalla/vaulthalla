@@ -9,7 +9,9 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <memory>
+#include <sstream>
 #include <set>
 #include <string>
 
@@ -62,6 +64,32 @@ void expectDocumentedFlagsResolve(std::shared_ptr<RoleT> role, const char* label
 TEST(RolePermissions, DocumentedCliFlagsResolveToPermissions) {
     expectDocumentedFlagsResolve(std::make_shared<rbac::role::Admin>(rbac::role::Admin::None()), "admin");
     expectDocumentedFlagsResolve(std::make_shared<rbac::role::Vault>(), "vault");
+}
+
+// toFlagsString() renders a role as CLI flags (the integration harness feeds it back to `vh role ... create`). The
+// vault role glued its groups together ("--allow-roles-view_override--deny-sync-action-trigger"), which the CLI
+// silently ignored until unknown options were rejected.
+template<class RoleT>
+void expectFlagsStringIsWellFormed(const RoleT& role, const char* label) {
+    const auto documented = role.getFlags();
+    std::istringstream in(role.toFlagsString());
+    std::string token;
+    std::size_t count = 0;
+    while (in >> token) {
+        ++count;
+        const bool allow = token.starts_with("--allow-"), deny = token.starts_with("--deny-");
+        ASSERT_TRUE(allow || deny) << label << ": " << token;
+        EXPECT_EQ(token.find("--", 2), std::string::npos) << label << ": two flags glued together: " << token;
+        const auto name = token.substr(allow ? 8 : 7);
+        EXPECT_TRUE(std::ranges::any_of(documented, [&](const std::string& f) { return f.ends_with(name); }))
+            << label << ": " << token << " is not a documented flag";
+    }
+    EXPECT_GT(count, 0u) << label;
+}
+
+TEST(RolePermissions, FlagsStringIsOneValidFlagPerToken) {
+    expectFlagsStringIsWellFormed(rbac::role::Admin::Auditor(), "admin");
+    expectFlagsStringIsWellFormed(rbac::role::Vault::Manager(), "vault");
 }
 
 TEST(RolePermissions, GrantingEverySuperAdminPermissionReproducesSuperAdmin) {

@@ -23,8 +23,10 @@ namespace vh::rbac::role::vault {
 
     std::string Base::toFlagsString() const {
         std::ostringstream oss;
-        oss << roles.toFlagsString()
-                << sync.toFlagsString()
+        // Space-separated like role::Admin's: these are CLI flags, and gluing the groups together produced
+        // tokens such as "--allow-roles-view_override--deny-sync-action-trigger" that no command accepts.
+        oss << roles.toFlagsString() << ' '
+                << sync.toFlagsString() << ' '
                 << fs.toFlagString();
         return oss.str();
     }
