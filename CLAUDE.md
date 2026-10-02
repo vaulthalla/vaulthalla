@@ -3,7 +3,7 @@
 A Linux-native, self-hosted cloud: a C++23 daemon with a native FUSE filesystem, encrypted vaults (AES-256-GCM,
 TPM2/swtpm-sealed secrets), RBAC, local and S3/R2 storage with cost guardrails, an S3-compatible gateway,
 a `vh` CLI over a unix socket, and a packaged Next.js web console. It ships as a single Debian package
-`vaulthalla` from `apt.vaulthalla.sh`. It was built mostly by hand by one maintainer (Cooper). Version: `VERSION` (1.6.6).
+`vaulthalla` from `apt.vaulthalla.sh`. It was built mostly by hand by one maintainer (Cooper). Version: `VERSION` (1.8.0).
 
 **Current phase: production hardening.** The build → package → publish → install/upgrade → run pipeline
 has to become trustworthy on real hosts. Start with `.claude/context/production-hardening.md`: it has a
@@ -25,6 +25,7 @@ live P0 (the DB pool wedges after a PostgreSQL restart, which hangs FUSE and `ap
 | `tools/lab/` | real-host tooling: ws client, CLI↔web parity smoke, ws churn, TEST-ONLY S3/R2 credential scaffold | `.claude/context/phase1-results.md` |
 
 Phase 1 (packaging/upgrade/release hardening) results and how candidates are proven on the lab: `.claude/context/phase1-results.md`.
+Phase 2 (one CLI/web operation layer, security fixes, v1.8.0 candidate) lab matrix and open items: `.claude/context/phase2-results.md`.
 Other context: `.claude/context/environment.md` (VM topology: this box, the lab, dev-db, price bot), `link-sharing.md`
 (share model, invariants, open gaps), `history/stats-dashboard.md` (dashboard design log).
 `.claude/scratch/` is gitignored working notes, including the pre-migration Codex archive. Use it for

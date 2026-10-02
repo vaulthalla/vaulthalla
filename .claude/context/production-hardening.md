@@ -4,6 +4,9 @@
 > issues #97–#126 on the "Vaulthalla Roadmap" project. The live incident was recovered (daemon cgroup killed,
 > postinst completed). Real-host results, the release loop, and remaining defects are in
 > `.claude/context/phase1-results.md` — read that first; the sections below are the original kickoff capture.
+>
+> **Status (Phase 2, 2026-10-02):** on `phase2/trustworthy` (v1.8.0 candidate): every audit finding S1–S11 is fixed with
+> regression tests, #123/#125/#132 are fixed, and the lab matrix is in `phase2-results.md`. #133 stays a product decision.
 
 Phase goal: make the build → package → publish → install/upgrade → run pipeline robust enough for
 real-world use, proven on the `vh-storage` lab VM. The backlog below was captured on 2026-09-30 during repo
