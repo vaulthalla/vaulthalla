@@ -2,6 +2,7 @@
 
 import { useApiKeyStore } from '@/stores/apiKeyStore'
 import { useVaultStore } from '@/stores/vaultStore'
+import { WebSocketCommandError } from '@/stores/useWebSocket'
 import {
   Controller,
   useForm,
@@ -387,6 +388,18 @@ const S3Guardrails = ({
   )
 }
 
+// The server refuses an encryption change over a bucket that already holds data until a person accepts the
+// waiver (the CLI asks the same question). Show its text, and resend accepted only on an explicit yes.
+const withEncryptionWaiver = async <T,>(send: (accept: boolean) => Promise<T>): Promise<T> => {
+  try {
+    return await send(false)
+  } catch (error) {
+    if (!(error instanceof WebSocketCommandError) || error.code !== 'encryption_waiver') throw error
+    if (!window.confirm(`${error.message}\n\nAccept this waiver and continue?`)) throw error
+    return send(true)
+  }
+}
+
 const VaultForm = ({ initialValues }: { initialValues?: Partial<LocalDiskVault | S3Vault | Vault> }) => {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const router = useRouter()
@@ -437,18 +450,23 @@ const VaultForm = ({ initialValues }: { initialValues?: Partial<LocalDiskVault |
                 mount_point: data.mount_point ?? '',
               }),
             )
-          : await updateVault(
-              new S3Vault({
-                ...initialValues,
-                name: data.name,
-                ...externalNameValues,
-                type: 's3',
-                api_key_id: Number(data.api_key_id),
-                bucket: data.bucket ?? '',
-                storage_tier_id: data.storage_tier_id ?? null,
-                encrypt_upstream: data.encrypt_upstream ?? true,
-                sync: buildSyncPayload(data, initialValues),
-              }),
+          : await withEncryptionWaiver(accept =>
+              updateVault(
+                Object.assign(
+                  new S3Vault({
+                    ...initialValues,
+                    name: data.name,
+                    ...externalNameValues,
+                    type: 's3',
+                    api_key_id: Number(data.api_key_id),
+                    bucket: data.bucket ?? '',
+                    storage_tier_id: data.storage_tier_id ?? null,
+                    encrypt_upstream: data.encrypt_upstream ?? true,
+                    sync: buildSyncPayload(data, initialValues),
+                  }),
+                  accept ? { accept_encryption_waiver: true } : {},
+                ),
+              ),
             )
 
         router.push(`/vaults/${updated.id}`)
@@ -458,16 +476,19 @@ const VaultForm = ({ initialValues }: { initialValues?: Partial<LocalDiskVault |
       if (data.type === 'local') {
         await addVault({ name: data.name, ...externalNameValues, type: 'local', mount_point: data.mount_point ?? '' })
       } else {
-        await addVault({
-          name: data.name,
-          ...externalNameValues,
-          type: 's3',
-          api_key_id: Number(data.api_key_id),
-          bucket: data.bucket ?? '',
-          storage_tier_id: data.storage_tier_id ?? null,
-          encrypt_upstream: data.encrypt_upstream ?? true,
-          sync: buildSyncPayload(data, initialValues),
-        })
+        await withEncryptionWaiver(accept =>
+          addVault({
+            name: data.name,
+            ...externalNameValues,
+            type: 's3',
+            api_key_id: Number(data.api_key_id),
+            bucket: data.bucket ?? '',
+            storage_tier_id: data.storage_tier_id ?? null,
+            encrypt_upstream: data.encrypt_upstream ?? true,
+            sync: buildSyncPayload(data, initialValues),
+            ...(accept ? { accept_encryption_waiver: true } : {}),
+          }),
+        )
       }
 
       router.push('/dashboard/vaults')

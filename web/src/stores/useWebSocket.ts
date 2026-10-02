@@ -53,6 +53,16 @@ const isErrorMessage = (message: unknown) => {
   const record = message as Record<string, unknown>
   return record.status === 'error' || record.status === 'ERROR' || record.status === 'INTERNAL_ERROR' || isUnauthorizedMessage(message)
 }
+// A refused command. `code` is set when the server asks for something the client can act on (e.g.
+// 'encryption_waiver': show the message, then resend with the acceptance set).
+export class WebSocketCommandError extends Error {
+  code?: string
+  constructor(message: string, code?: string) {
+    super(message)
+    this.name = 'WebSocketCommandError'
+    this.code = code
+  }
+}
 const isUnauthorizedError = (error: unknown) => {
   if (!(error instanceof Error)) return false
   return error.message.toLowerCase().includes('unauthorized')
@@ -137,7 +147,8 @@ export const useWebSocketStore: UseBoundStore<StoreApi<WebSocketStore>> = create
 
               if (isErrorMessage(message)) {
                 const error = isUnauthorizedMessage(message) ? 'unauthorized' : message.error || 'WebSocket command failed'
-                handler.reject(new Error(error))
+                const code = typeof message.data?.code === 'string' ? message.data.code : undefined
+                handler.reject(new WebSocketCommandError(error, code))
               } else {
                 handler.resolve(message.data ?? {})
               }

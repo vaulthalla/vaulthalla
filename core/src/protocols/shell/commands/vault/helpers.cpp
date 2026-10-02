@@ -21,6 +21,7 @@
 #include "rbac/resolver/admin/all.hpp"
 #include "rbac/resolver/vault/all.hpp"
 #include "rbac/fs/glob/Tokenizer.hpp"
+#include "ops/Error.hpp"
 
 using namespace vh;
 
@@ -164,94 +165,66 @@ std::unique_ptr<::vh::vault::model::VaultType> parseVaultType(const CommandCall&
     throw std::runtime_error("Vault type not specified: must provide either --local or --s3");
 }
 
-void assignDescIfAvailable(const CommandCall& call, const std::shared_ptr<CommandUsage>& usage, const std::shared_ptr<vh::vault::model::Vault>& vault) {
-    if (const auto descOpt = optVal(call, usage->resolveOptional("description")->option_tokens))
-        vault->description = *descOpt;
-}
-
-void assignQuotaIfAvailable(const CommandCall& call, const std::shared_ptr<CommandUsage>& usage, const std::shared_ptr<vh::vault::model::Vault>& vault) {
-    if (const auto quotaOpt = optVal(call, usage->resolveOptional("quota")->option_tokens)) {
-        if (*quotaOpt == "none" || *quotaOpt == "unlimited") vault->quota = 0;
-        else vault->quota = parseSize(*quotaOpt);
+std::optional<uintmax_t> quotaFromOption(const CommandCall& call) {
+    const auto quota = optVal(call, std::vector<std::string>{"quota", "q"});
+    if (!quota) return std::nullopt;
+    if (*quota == "none" || *quota == "unlimited") return 0;
+    try {
+        return parseSize(*quota);
+    } catch (const std::exception& e) {
+        throw ops::Invalid("invalid --quota '" + *quota + "': " + e.what());
     }
 }
 
-void assignOwnerIfAvailable(const CommandCall& call, const std::shared_ptr<CommandUsage>& usage, const std::shared_ptr<vh::vault::model::Vault>& vault) {
-    if (const auto ownerOpt = optVal(call, usage->resolveOptional("owner")->option_tokens)) {
-        Lookup<identities::User> ownerLkp;
-        if (const auto idOpt = parseUInt(*ownerOpt)) {
-            if (*idOpt <= 0) throw std::runtime_error("vault create: --owner must be a positive integer");
-            ownerLkp.ptr = db::query::identities::User::getUserById(*idOpt);
-        } else ownerLkp.ptr = db::query::identities::User::getUserByName(*ownerOpt);
-        if (!ownerLkp.ptr) throw std::runtime_error("vault create: owner not found: " + *ownerOpt);
-        vault->owner_id = ownerLkp.ptr->id;
-    }
+std::optional<unsigned int> apiKeyIdFromOption(const CommandCall& call) {
+    const auto value = optVal(call, "api-key");
+    if (!value) return std::nullopt;
+    const auto key = parseUInt(*value) ? db::query::vault::APIKey::getAPIKey(*parseUInt(*value))
+                                       : db::query::vault::APIKey::getAPIKey(*value);
+    if (!key) throw ops::NotFound("API key not found: " + *value);
+    return key->id;
 }
 
-void parseSync(const CommandCall& call, const std::shared_ptr<CommandUsage>& usage, const std::shared_ptr<vh::vault::model::Vault>& vault, const std::shared_ptr<sync::model::Policy>& sync) {
-    if (const auto syncIntervalOpt = optVal(call, usage->resolveOptional("interval")->option_tokens))
-        sync->interval = db::encoding::parseSyncInterval(*syncIntervalOpt);
-
-    if (vault->type == vh::vault::model::VaultType::Local) {
-        if (const auto conflictOpt = optVal(call, usage->resolveGroupOptional("Local Vault Options", "conflict")->option_tokens)) {
-            const auto fsync = std::static_pointer_cast<sync::model::LocalPolicy>(sync);
-            fsync->conflict_policy = sync::model::fsConflictPolicyFromString(*conflictOpt);
-        }
-    } else if (vault->type == vh::vault::model::VaultType::S3) {
-        if (const auto conflictOpt = optVal(call, usage->resolveGroupOptional("S3 Vault Options", "conflict")->option_tokens)) {
-            const auto rsync = std::static_pointer_cast<sync::model::RemotePolicy>(sync);
-            rsync->conflict_policy = sync::model::rsConflictPolicyFromString(*conflictOpt);
-        }
-    }
-
-    if (vault->type == vh::vault::model::VaultType::S3) {
-        const auto rsync = std::static_pointer_cast<sync::model::RemotePolicy>(sync);
-        if (const auto syncStrategyOpt = optVal(call, usage->resolveGroupOptional("S3 Vault Options", "strategy")->option_tokens))
-            rsync->strategy = sync::model::strategyFromString(*syncStrategyOpt);
-        if (const auto indexAgeOpt = optVal(call, "max-remote-index-age"))
-            rsync->max_remote_index_age = sync::model::remoteIndexAgeFromString(*indexAgeOpt);
-    }
+std::optional<bool> encryptFromFlags(const CommandCall& call) {
+    const bool on = hasFlag(call, "encrypt"), off = hasFlag(call, "no-encrypt");
+    if (on && off) throw ops::Invalid("--encrypt and --no-encrypt are mutually exclusive");
+    if (on) return true;
+    if (off) return false;
+    return std::nullopt;
 }
 
-void parseS3API(const CommandCall& call, const std::shared_ptr<CommandUsage>& usage, const std::shared_ptr<vh::vault::model::Vault>& vault, const bool required) {
-    if (vault->type == vh::vault::model::VaultType::Local) return;
+static std::optional<std::optional<uint64_t>> budgetOption(const CommandCall& call, const std::string& key) {
+    const auto value = optVal(call, key);
+    if (!value) return std::nullopt;
+    if (*value == "none" || *value == "null" || *value == "unlimited") return std::optional<uint64_t>{};
+    const auto parsed = parseUInt(*value);
+    if (!parsed) throw ops::Invalid("--" + key + " must be a non-negative integer or 'unlimited'");
+    return std::optional<uint64_t>{*parsed};
+}
 
-    const auto s3Vault = std::static_pointer_cast<vh::vault::model::S3Vault>(vault);
-
-    if (const auto apiKeyOpt = optVal(call, usage->resolveGroupOptional("S3 Vault Options", "api-key")->option_tokens)) {
-        std::shared_ptr<vh::vault::model::APIKey> apiKey;
-        if (const auto apiKeyId = parseUInt(*apiKeyOpt)) {
-            apiKey = db::query::vault::APIKey::getAPIKey(*apiKeyId);
-            if (!apiKey) throw std::runtime_error("API key not found: " + *apiKeyOpt);
-        } else {
-            apiKey = db::query::vault::APIKey::getAPIKey(*apiKeyOpt);
-            if (!apiKey) throw std::runtime_error("API key not found: " + *apiKeyOpt);
-        }
-
-        using AKPerm = ::vh::rbac::permission::admin::keys::APIPermissions;
-        if (!::vh::rbac::resolver::Admin::has<AKPerm>({
-            .user = call.user,
-            .permission = AKPerm::Consume,
-            .api_key_id = apiKey->id
-        })) throw std::runtime_error("you do not have permission to use this API key");
-
-        s3Vault->api_key_id = apiKey->id;
-    } else if (required) throw std::runtime_error("--api-key is required for S3 vaults");
-
-    if (const auto bucketOpt = optVal(call, usage->resolveGroupOptional("S3 Vault Options", "bucket")->option_tokens)) {
-        if (bucketOpt->empty()) throw std::runtime_error("--bucket cannot be empty");
-        s3Vault->bucket = *bucketOpt;
-    } else if (required) throw std::runtime_error("--bucket is required for S3 vaults");
-
-    if (const auto tierOpt = optVal(call, std::vector<std::string>{"storage-tier", "storage-class"})) {
-        const auto apiKey = db::query::vault::APIKey::getAPIKey(s3Vault->api_key_id);
-        if (!apiKey) throw std::runtime_error("API key not found: " + std::to_string(s3Vault->api_key_id));
-
-        const auto profile = storage::s3::provider::resolve(apiKey->provider);
-        const auto tier = profile->normalizeStorageTier(*tierOpt);
-        if (!tier.ok) throw std::runtime_error(tier.error);
-        s3Vault->storage_tier_id = tier.normalized_id;
+ops::vaults::SyncPatch syncPatchFromOptions(const CommandCall& call) {
+    ops::vaults::SyncPatch patch;
+    try {
+        if (const auto v = optVal(call, std::vector<std::string>{"interval", "sync-interval"}))
+            patch.interval = db::encoding::parseSyncInterval(*v);
+        if (const auto v = optVal(call, std::vector<std::string>{"max-remote-index-age", "remote-index-age"}))
+            patch.max_remote_index_age = sync::model::remoteIndexAgeFromString(*v);
+    } catch (const ops::Error&) {
+        throw;
+    } catch (const std::exception& e) {
+        throw ops::Invalid(e.what());
     }
+    patch.conflict_policy = optVal(call, std::vector<std::string>{"on-sync-conflict", "conflict"});
+    patch.strategy = optVal(call, std::vector<std::string>{"sync-strategy", "strategy"});
+    patch.s3_budget_preset = optVal(call, std::vector<std::string>{"s3-budget-preset", "budget-preset"});
+    patch.s3_budget.list = budgetOption(call, "s3-budget-list");
+    patch.s3_budget.head = budgetOption(call, "s3-budget-head");
+    patch.s3_budget.get = budgetOption(call, "s3-budget-get");
+    patch.s3_budget.put = budgetOption(call, "s3-budget-put");
+    patch.s3_budget.copy = budgetOption(call, "s3-budget-copy");
+    patch.s3_budget.del = budgetOption(call, "s3-budget-delete");
+    patch.s3_budget.downloaded_bytes = budgetOption(call, "s3-budget-download-bytes");
+    return patch;
 }
 
 }

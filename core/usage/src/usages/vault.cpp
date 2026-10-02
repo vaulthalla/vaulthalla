@@ -180,9 +180,11 @@ static std::shared_ptr<CommandUsage> update(const std::weak_ptr<CommandUsage>& p
     cmd->examples = {
         {"vh vault update 42 --desc \"Updated Description\" --quota 20G",
          "Update the description and quota of the vault with ID 42."},
-        {"vh vault update myvault --owner bob --api-key newkey --bucket newbucket --sync-strategy mirror "
-         "--on-sync-conflict keep_remote --owner alice",
+        {"vh vault update myvault --owner alice --api-key newkey --bucket newbucket --sync-strategy mirror "
+         "--on-sync-conflict keep_remote",
          "Update multiple properties of the vault named 'myvault' owned by 'alice'."},
+        {"vh vault update 42 --owner bob",
+         "Give the vault with ID 42 to 'bob' (needs permission to create vaults for him)."},
         {"vh vault update 42 --storage-tier none",
          "Clear an S3 vault storage tier so the provider default is used."}
     };

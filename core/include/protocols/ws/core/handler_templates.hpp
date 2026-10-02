@@ -2,6 +2,7 @@
 
 #include "protocols/ws/Router.hpp"
 #include "protocols/ws/model/Response.hpp"
+#include "ops/Error.hpp"
 
 #include <functional>
 #include <memory>
@@ -40,6 +41,10 @@ namespace vh::protocols::ws::core {
                 const json &payload = msg.at("payload");
                 json data = std::invoke(fn, payload, session);
                 model::Response::SUCCESS(std::string(cmd), std::move(msg), std::move(data))(session);
+            } catch (const ops::NeedsConfirmation &e) {
+                // A stable code the client can act on (show the text, resend with the acceptance set).
+                model::Response(std::string(cmd), std::move(msg), model::Status::ERROR, json{{"code", e.code}},
+                                std::string(e.what()))(session);
             } catch (const std::exception &e) {
                 model::Response::ERROR(std::string(cmd), std::move(msg), std::string(e.what()))(session);
             } catch (...) {

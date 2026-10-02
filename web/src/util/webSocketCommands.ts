@@ -141,11 +141,17 @@ export interface WebSocketCommandMap {
           storage_tier_id?: string | null
           encrypt_upstream?: boolean
           sync?: RemoteSyncPolicy
+          accept_encryption_waiver?: boolean
         }
     response: { vault: LocalDiskVault | S3Vault }
   }
 
-  'storage.vault.update': { payload: LocalDiskVault | S3Vault; response: { vault: LocalDiskVault | S3Vault } }
+  // A patch: fields left out keep their current values. A refusal with data.code 'encryption_waiver' means the
+  // bucket already holds data; resend with accept_encryption_waiver once the person accepts the message.
+  'storage.vault.update': {
+    payload: (LocalDiskVault | S3Vault) & { accept_encryption_waiver?: boolean }
+    response: { vault: LocalDiskVault | S3Vault }
+  }
 
   'storage.vault.remove': { payload: { id: number }; response: null }
 

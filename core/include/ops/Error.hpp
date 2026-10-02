@@ -1,6 +1,8 @@
 #pragma once
 
 #include <stdexcept>
+#include <string>
+#include <utility>
 
 // Refusals raised by ops:: operations. They are what crosses the shared boundary: the CLI adapter turns them into
 // a usage-error result (exit 2), the ws handler templates into an ERROR response. Anything that is not an
@@ -28,6 +30,14 @@ struct Invalid : Error {
 // The request collides with existing state (name or id already taken).
 struct Conflict : Error {
     using Error::Error;
+};
+
+// The operation needs a person's explicit acceptance first (e.g. an encryption waiver over existing bucket data).
+// `code` is stable for clients; what() is the text to show. The caller asks, then repeats the request with the
+// acceptance set. Operations never prompt themselves.
+struct NeedsConfirmation : Error {
+    std::string code;
+    NeedsConfirmation(std::string code_, const std::string& text) : Error(text), code(std::move(code_)) {}
 };
 
 }
