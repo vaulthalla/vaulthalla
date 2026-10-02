@@ -228,9 +228,10 @@ void Session::hydrateFromRequest(const RequestType& req) {
 
     if (user) log::Registry::ws()->debug("[ws::Session] Session hydrated with user: {} (ID: {})", user->name, user->id);
     else {
-        log::Registry::ws()->critical("[ws::Session] No user associated with session after hydration");
+        // The normal state of a connection before login: a fresh refresh token, no user yet. (This was logged as
+        // critical for every anonymous connection.) What must hold is that the token exists and is valid.
+        log::Registry::ws()->debug("[ws::Session] Anonymous session bootstrapped with a fresh refresh token");
 
-        // this should never happen, but if it does, we nuke the session
         if (!tokens || !tokens->refreshToken) {
             // Reject this connection; a client request must never be able to exit the daemon.
             throw std::runtime_error("invariant violation: refresh token missing after hydration/bootstrap");
@@ -283,6 +284,7 @@ void Session::installHandshakeDecorator() const {
 void Session::onHandshakeAccepted(const beast::error_code& ec) {
     if (ec) return logFail("Handshake error", ec);
     handshakeDone_ = true;
+    handshakeComplete_.store(true, std::memory_order_release);
     if (closing_.load(std::memory_order_acquire)) {
         // close() arrived mid-handshake; finish it now that a proper websocket close is possible.
         closeStarted_ = false;

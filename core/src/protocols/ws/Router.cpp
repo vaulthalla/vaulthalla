@@ -223,9 +223,10 @@ void Router::routeMessage(json&& msg, const SessionPtr& session) {
         const auto rateLimit = shareRateLimit().check(command, msg, *session);
         if (!rateLimit.allowed) {
             log::Registry::ws()->warn(
-                "[Router] Share command rate limited: {} for IP {}",
+                "[Router] Share command rate limited: {} for client {}",
                 command,
-                session->ipAddress.empty() ? "unknown" : session->ipAddress
+                !session->clientAddress.empty() ? session->clientAddress
+                    : session->ipAddress.empty() ? "unknown" : session->ipAddress
             );
             Response::ERROR(std::move(command), std::move(msg),
                             "Rate limit exceeded. Try again in " + std::to_string(rateLimit.retry_after.count()) +

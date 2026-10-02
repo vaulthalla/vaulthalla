@@ -47,6 +47,9 @@ public:
     const std::string uuid{generateUUIDv4()};
     std::shared_ptr<identities::User> user{nullptr};
     std::shared_ptr<auth::model::TokenPair> tokens;
+    // True once the websocket handshake finished. Until then the session is still being set up (tokens included).
+    [[nodiscard]] bool handshakeComplete() const noexcept { return handshakeComplete_.load(std::memory_order_acquire); }
+
     std::string userAgent, ipAddress;
     // Who is on the other end for rate limiting: the forwarded client behind the local proxy, else the peer.
     // ipAddress stays the TCP peer (refresh tokens are bound to it).
@@ -137,6 +140,7 @@ private:
     bool closeAfterWrite_ = false;         // only touched on strand
     bool closeStarted_ = false;            // only touched on strand
     bool handshakeDone_ = false;           // only touched on strand
+    std::atomic<bool> handshakeComplete_{false};  // the same fact, readable off the strand (the sweeper)
     bool externallyHttps_ = false;         // set during handshake hydration (cookie Secure flag)
 
     bool sendAccessToken_{false};

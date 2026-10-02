@@ -26,6 +26,8 @@
 #include "protocols/shell/commands/all.hpp"
 #include "protocols/shell/commands/helpers.hpp"
 #include "protocols/ws/CookiePolicy.hpp"
+#include "protocols/ws/ConnectionLifecycleManager.hpp"
+#include "auth/model/RefreshToken.hpp"
 #include "protocols/ws/DefaultPasswordGate.hpp"
 #include "protocols/ws/LogRedaction.hpp"
 #include "protocols/ws/ShareRateLimit.hpp"
@@ -717,6 +719,28 @@ TEST(LoginRateLimit, ClientsBehindTheProxyAreLimitedSeparately) {
     EXPECT_FALSE(limiter.check("auth.login", alice, *attacker, t0).allowed);
     EXPECT_TRUE(limiter.check("auth.login", alice, *owner, t0).allowed)
         << "one client's failures behind nginx locked every client out of the account";
+}
+
+// ws_churn on the lab: nginx answered 502 to healthy connections whenever the 30s sweep ran. Sessions are indexed
+// at TCP accept, before the handshake gives them tokens, and the sweeper closed them as "expired refresh token".
+TEST(WsLifecycleSweep, SessionsStillInTheirHandshakeAreOnlyTimedOut) {
+    using Manager = vh::protocols::ws::ConnectionLifecycleManager;
+    const auto session = std::make_shared<vh::protocols::ws::Session>(std::make_shared<vh::protocols::ws::Router>());
+    ASSERT_FALSE(session->handshakeComplete());
+    const auto opened = session->connectionOpenedAt;
+    EXPECT_EQ(Manager::verdict(*session, opened + std::chrono::seconds(5), std::chrono::seconds(60)),
+              Manager::SweepVerdict::Keep) << "a session mid-handshake has no tokens yet; that is not expiry";
+    EXPECT_EQ(Manager::verdict(*session, opened + std::chrono::seconds(61), std::chrono::seconds(60)),
+              Manager::SweepVerdict::UnauthenticatedTimeout);
+}
+
+// The cookie placeholder token has no jti; revoking it went to the DB with "" and threw out of
+// session::Manager::invalidate, leaving the session indexed and failing every later sweep.
+TEST(WsLifecycleSweep, InvalidatingATokenWithoutAJtiDoesNotTouchTheDatabase) {
+    vh::auth::model::RefreshToken placeholder("raw-cookie-value");
+    ASSERT_TRUE(placeholder.jti.empty());
+    EXPECT_NO_THROW(placeholder.hardInvalidate());
+    EXPECT_FALSE(placeholder.isValid());
 }
 
 // Session cookies are Secure only when the browser-facing request was HTTPS (behind the local proxy).

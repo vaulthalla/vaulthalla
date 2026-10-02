@@ -135,7 +135,13 @@ void Manager::revokeSessions(const uint32_t userId) {
     // Refresh tokens first, so no live session can rehydrate from one while the runtime sessions are dropped.
     db::query::auth::RefreshToken::revokeAll(userId);
     if (const auto& sessions = runtime::Deps::get().sessionManager)
-        for (const auto& session : sessions->getSessionsByUserId(userId)) sessions->invalidate(session);
+        for (const auto& session : sessions->getSessionsByUserId(userId)) {
+            try {
+                sessions->invalidate(session);
+            } catch (const std::exception& e) {
+                log::Registry::auth()->error("[AuthManager] Failed to invalidate a session of user id {}: {}", userId, e.what());
+            }
+        }
     log::Registry::auth()->info("[AuthManager] Revoked sessions for user id {}", userId);
 }
 }

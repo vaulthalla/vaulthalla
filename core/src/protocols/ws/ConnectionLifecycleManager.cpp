@@ -46,40 +46,38 @@ void ConnectionLifecycleManager::runLoop() {
     }
 }
 
+ConnectionLifecycleManager::SweepVerdict ConnectionLifecycleManager::verdict(
+    const Session& session, const system_clock::time_point now, const seconds unauthenticatedTimeout) {
+    const bool expired = session.connectionOpenedAt + unauthenticatedTimeout < now;
+    if (!session.handshakeComplete()) return expired ? SweepVerdict::UnauthenticatedTimeout : SweepVerdict::Keep;
+    if (!session.user && !session.isShareSession() && expired) return SweepVerdict::UnauthenticatedTimeout;
+
+    const auto refreshToken = session.tokens
+                                  ? (session.tokens->refreshToken ? session.tokens->refreshToken
+                                                                  : session.tokens->shareRefreshToken)
+                                  : nullptr;
+    if (!refreshToken || !refreshToken->isValid()) return SweepVerdict::InvalidRefreshToken;
+    return SweepVerdict::Keep;
+}
+
 void ConnectionLifecycleManager::sweepActiveSessions() const {
     for (const auto& [_, session] : runtime::Deps::get().sessionManager->getActive()) {
+        if (!session) continue;
+        const auto decision = verdict(*session, system_clock::now(), unauthenticated_session_timeout_);
+        if (decision == SweepVerdict::Keep) continue;
         try {
-            if (!session) continue;
-
-            if (!session->user && !session->isShareSession() &&
-                session->connectionOpenedAt + unauthenticated_session_timeout_ < system_clock::now()) {
-                log::Registry::ws()->debug("[LifecycleManager] Closing unauthenticated session (no token) opened at {}",
-                                        system_clock::to_time_t(session->connectionOpenedAt));
-
-                model::Response::UNAUTHORIZED("unauthenticated_session_timeout",
-                    "Session closed due to inactivity. Please authenticate to continue.")(session);
-                runtime::Deps::get().sessionManager->invalidate(session);
-                session->close();
-                continue;
-            }
-
-            const auto refreshToken = session->tokens
-                                          ? (session->tokens->refreshToken
-                                                 ? session->tokens->refreshToken
-                                                 : session->tokens->shareRefreshToken)
-                                          : nullptr;
-            if (!refreshToken || !refreshToken->isValid()) {
-                log::Registry::ws()->debug("[LifecycleManager] Closing session with expired refresh token (opened at {})",
-                                        system_clock::to_time_t(session->connectionOpenedAt));
-
-                model::Response::UNAUTHORIZED("unauthenticated_session_timeout",
-                    "Session closed due to expired refresh token. Please re-authenticate to continue.")(session);
-                runtime::Deps::get().sessionManager->invalidate(session);
-                session->close();
-                continue;
-            }
+            log::Registry::ws()->debug("[LifecycleManager] Closing {} session opened at {}",
+                                       decision == SweepVerdict::UnauthenticatedTimeout ? "unauthenticated" : "expired",
+                                       system_clock::to_time_t(session->connectionOpenedAt));
+            model::Response::UNAUTHORIZED("unauthenticated_session_timeout",
+                decision == SweepVerdict::UnauthenticatedTimeout
+                    ? "Session closed due to inactivity. Please authenticate to continue."
+                    : "Session closed due to expired refresh token. Please re-authenticate to continue.")(session);
+            runtime::Deps::get().sessionManager->invalidate(session);
         } catch (const std::exception& e) {
-            log::Registry::ws()->error("[LifecycleManager] Error while sweeping sessions: {}", e.what());
+            log::Registry::ws()->error("[LifecycleManager] Error while sweeping a session: {}", e.what());
         }
+        // Close regardless: a session that failed to invalidate cleanly must not linger and be swept forever.
+        session->close();
     }
 }
