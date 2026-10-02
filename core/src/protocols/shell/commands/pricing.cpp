@@ -1,6 +1,7 @@
 #include "protocols/shell/commands/all.hpp"
 
 #include "db/query/vault/Vault.hpp"
+#include "identities/User.hpp"
 #include "protocols/shell/Router.hpp"
 #include "protocols/shell/Table.hpp"
 #include "protocols/shell/commands/helpers.hpp"
@@ -96,7 +97,7 @@ std::string renderPolicies(const std::vector<PriceBudgetPolicy>& policies) {
     return table.render();
 }
 
-std::string renderLedger(const std::vector<PriceBudgetLedgerEntry>& entries) {
+std::string renderBudgetLedger(const std::vector<PriceBudgetLedgerEntry>& entries) {
     if (entries.empty()) return "No S3 price budget ledger rows.\n";
 
     Table table({
@@ -192,7 +193,7 @@ CommandResult handleStatus(const CommandCall& call) {
                  [](const vh::ops::pricing::Status& status) {
                      std::ostringstream out;
                      out << "S3 price budget policies\n" << renderPolicies(status.policies)
-                         << "\nRecent ledger rows\n" << renderLedger(status.ledger);
+                         << "\nRecent ledger rows\n" << renderBudgetLedger(status.ledger);
                      return out.str();
                  });
 }
@@ -205,7 +206,7 @@ CommandResult handleLedger(const CommandCall& call) {
         limit = *parsed;
     }
     return runOp("pricing budget ledger", [&] { return vh::ops::pricing::ledger(call.user, {}, limit); },
-                 [](const std::vector<PriceBudgetLedgerEntry>& entries) { return renderLedger(entries); });
+                 [](const std::vector<PriceBudgetLedgerEntry>& entries) { return renderBudgetLedger(entries); });
 }
 
 bool isBudgetMatch(const std::string& cmd, const std::string_view input) {
