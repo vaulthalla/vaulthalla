@@ -31,6 +31,8 @@ namespace vh::protocols::shell {
 CommandResult invalid(std::string msg) { return {2, "", std::move(msg)}; }
 CommandResult ok(std::string out) { return {0, std::move(out), ""}; }
 
+std::string yesNo(const bool value) { return value ? "yes" : "no"; }
+
 CommandResult invalid(const std::vector<std::string>& args, std::string msg) {
     const auto usageManager = runtime::Deps::get().shellUsageManager;
     return {2, usageManager->renderHelp(args), std::move(msg)};

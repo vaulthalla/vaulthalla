@@ -1,81 +1,40 @@
 #include "protocols/ws/handler/vault/APIKeys.hpp"
 #include "vault/model/APIKey.hpp"
 #include "identities/User.hpp"
-#include "vault/APIKeyManager.hpp"
 #include "protocols/ws/Session.hpp"
-#include "runtime/Deps.hpp"
-#include "rbac/role/Admin.hpp"
-#include "rbac/resolver/admin/all.hpp"
+#include "ops/APIKeys.hpp"
 
 #include <nlohmann/json.hpp>
 
 using namespace vh::protocols::ws::handler;
-using namespace vh::vault::model;
-using namespace vh::storage;
-using namespace vh::rbac;
 using json = nlohmann::json;
 
-using Permission = permission::admin::keys::APIPermissions;
-
 json APIKeys::add(const json& payload, const std::shared_ptr<Session>& session) {
-    const auto name = payload.at("name").get<std::string>();
-    const auto provider = s3_provider_from_string(payload.at("provider").get<std::string>());
-    const auto accessKey = payload.at("access_key").get<std::string>();
-    const auto secretKey = payload.at("secret_access_key").get<std::string>();
-    const auto region = payload.at("region").get<std::string>();
-    const auto endpoint = payload.at("endpoint").get<std::string>();
-    const auto ownerId = payload.contains("owner_id") ? payload.at("owner_id").get<uint32_t>() : session->user->id;
+    std::optional<vh::ops::api_keys::Ref> owner;
+    if (payload.contains("owner_id") && !payload.at("owner_id").is_null()) owner = payload.at("owner_id").get<uint32_t>();
 
-    if (!resolver::Admin::has<Permission>({
-        .user = session->user,
-        .permission = Permission::Create,
-        .target_user_id = ownerId
-    })) throw std::runtime_error("Insufficient permissions to create API key");
-
-    auto key = std::make_shared<APIKey>(ownerId, name, provider, accessKey, secretKey, region, endpoint);
-    runtime::Deps::get().apiKeyManager->addAPIKey(key);
-
-    return {};
+    const auto key = vh::ops::api_keys::create(session->user, {
+        .name = payload.at("name").get<std::string>(),
+        .provider = vh::vault::model::s3_provider_from_string(payload.at("provider").get<std::string>()),
+        .access_key = payload.at("access_key").get<std::string>(),
+        .secret_access_key = payload.at("secret_access_key").get<std::string>(),
+        .endpoint = payload.at("endpoint").get<std::string>(),
+        .region = payload.value("region", "auto"),
+        .owner = owner
+    });
+    return {{"api_key", key}};
 }
 
 json APIKeys::remove(const json& payload, const std::shared_ptr<Session>& session) {
-    const auto keyId = payload.at("id").get<unsigned int>();
-
-    if (!resolver::Admin::has<Permission>({
-        .user = session->user,
-        .permission = Permission::Remove,
-        .api_key_id = keyId
-    })) throw std::runtime_error("Insufficient permissions to remove API key");
-
-    runtime::Deps::get().apiKeyManager->removeAPIKey(keyId, session->user->id);
+    (void)vh::ops::api_keys::remove(session->user, payload.at("id").get<unsigned int>());
     return {};
 }
 
 json APIKeys::list(const std::shared_ptr<Session>& session) {
-    const auto& akPerms = session->user->apiKeysPerms();
-    if (akPerms.self.canView() && !(akPerms.admin.canView() || akPerms.user.canView()))
-        return {{"keys", json(runtime::Deps::get().apiKeyManager->listUserAPIKeys(session->user->id)).dump(4)}};
-
-    auto keys = runtime::Deps::get().apiKeyManager->listAPIKeys();
-    std::erase_if(keys, [&](const auto& key) {
-        return !key || !resolver::Admin::has<Permission>({
-            .user = session->user,
-            .permission = Permission::View,
-            .api_key_id = key->id
-        });
-    });
-
-    return {{"keys", json(keys).dump(4)}};
+    // The console parses `keys` as a JSON string (WebSocketCommandMap types it `string`).
+    return {{"keys", json(vh::ops::api_keys::list(session->user)).dump(4)}};
 }
 
 json APIKeys::get(const json& payload, const std::shared_ptr<Session>& session) {
-    const unsigned int keyId = payload.at("id").get<unsigned int>();
-
-    if (!resolver::Admin::has<Permission>({
-            .user = session->user,
-            .permission = Permission::View,
-            .api_key_id = keyId
-        })) throw std::runtime_error("Insufficient permissions to get API key");
-
-    return {{"api_key", runtime::Deps::get().apiKeyManager->getAPIKey(keyId, session->user->id)}};
+    return {{"api_key", vh::ops::api_keys::get(session->user, payload.at("id").get<unsigned int>())}};
 }

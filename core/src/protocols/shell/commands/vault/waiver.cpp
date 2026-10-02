@@ -54,7 +54,7 @@ static std::shared_ptr<Waiver> create_encrypt_waiver(const CommandCall& call, co
 }
 
 static bool upstream_bucket_is_empty(const std::shared_ptr<S3Vault>& s3Vault) {
-    const auto apiKey = runtime::Deps::get().apiKeyManager->getAPIKey(s3Vault->api_key_id, s3Vault->owner_id);
+    const auto apiKey = runtime::Deps::get().apiKeyManager->getAPIKey(s3Vault->api_key_id);
     if (!apiKey) throw std::runtime_error("Failed to load API key ID " + std::to_string(s3Vault->api_key_id));
     if (apiKey->secret_access_key.empty()) throw std::runtime_error("API key ID " + std::to_string(s3Vault->api_key_id) + " has no secret access key");
     const s3::Controller ctrl(apiKey, s3Vault->bucket);

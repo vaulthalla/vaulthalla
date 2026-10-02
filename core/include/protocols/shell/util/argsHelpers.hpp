@@ -59,6 +59,9 @@ namespace vh::protocols::shell {
 
     CommandResult ok(std::string out);
 
+    // "yes"/"no" for CLI status output.
+    [[nodiscard]] std::string yesNo(bool value);
+
     CommandResult usage(const std::vector<std::string> &args = {});
 
     std::optional<std::string> optVal(const CommandCall &c, const std::vector<std::string> &args);

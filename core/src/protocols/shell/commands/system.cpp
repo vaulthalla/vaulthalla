@@ -25,10 +25,6 @@ CommandResult handleVersion(const CommandCall&) {
     return {0, "Vaulthalla v" + std::string(VH_VERSION), ""};
 }
 
-std::string yesNo(const bool value) {
-    return value ? "yes" : "no";
-}
-
 // Bounded live round-trip to PostgreSQL. The pool counters only reflect failures somebody already hit; a
 // status check must find out now, and must not park on the pool if every connection is busy.
 struct DatabaseProbe {

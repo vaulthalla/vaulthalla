@@ -52,10 +52,6 @@ namespace vh::protocols::shell::commands {
 
 namespace {
 
-std::string yesNo(const bool value) {
-    return value ? "yes" : "no";
-}
-
 std::vector<std::string> optVals(const CommandCall& call, const std::string& key) {
     std::vector<std::string> values;
     for (const auto& [k, v] : call.options)

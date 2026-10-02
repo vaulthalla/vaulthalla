@@ -158,7 +158,7 @@ export interface WebSocketCommandMap {
   'storage.apiKey.list': { payload: null; response: { keys: string } }
 
 
-  'storage.apiKey.add': { payload: Partial<S3APIKey>; response: null }
+  'storage.apiKey.add': { payload: Partial<S3APIKey>; response: { api_key: APIKey } }
 
   'storage.apiKey.remove': { payload: { id: number }; response: null }
 

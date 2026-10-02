@@ -16,6 +16,7 @@
 #include "protocols/shell/util/argsHelpers.hpp"
 #include "runtime/Deps.hpp"
 #include "usage/include/UsageManager.hpp"
+#include "CommandUsage.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -28,10 +29,6 @@
 namespace vh::protocols::shell::commands {
 
 namespace {
-
-std::string yesNo(const bool value) {
-    return value ? "yes" : "no";
-}
 
 std::string instanceName() {
     char host[256]{};

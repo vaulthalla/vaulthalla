@@ -62,21 +62,10 @@ unsigned int APIKeyManager::addAPIKey(std::shared_ptr<APIKey>& key) {
     return key->id;
 }
 
-void APIKeyManager::removeAPIKey(const unsigned int keyId, const unsigned int userId) {
+void APIKeyManager::removeAPIKey(const unsigned int keyId) {
     std::scoped_lock lock(apiKeysMutex_);
-
-    const auto it = apiKeys_.find(keyId);
-    if (it != apiKeys_.end()) {
-        if (it->second->user_id != userId) {
-            throw std::runtime_error("API key does not belong to the user");
-        }
-        apiKeys_.erase(it);
-    } else {
-        const auto key = db::query::vault::APIKey::getAPIKey(keyId);
-        if (!key) throw std::runtime_error("API key not found");
-        if (key->user_id != userId) throw std::runtime_error("API key does not belong to the user");
-    }
-
+    if (!apiKeys_.erase(keyId) && !db::query::vault::APIKey::getAPIKey(keyId))
+        throw std::runtime_error("API key not found");
     db::query::vault::APIKey::removeAPIKey(keyId);
 }
 
@@ -90,12 +79,11 @@ std::vector<std::shared_ptr<APIKey>> APIKeyManager::listUserAPIKeys(unsigned int
     return db::query::vault::APIKey::listAPIKeys(userId);
 }
 
-std::shared_ptr<APIKey> APIKeyManager::getAPIKey(unsigned int keyId, unsigned int userId) const {
+std::shared_ptr<APIKey> APIKeyManager::getAPIKey(const unsigned int keyId) const {
     std::scoped_lock lock(apiKeysMutex_);
 
     auto key = db::query::vault::APIKey::getAPIKey(keyId);
     if (!key) throw std::runtime_error("API key not found");
-    if (key->user_id != userId) throw std::runtime_error("API key does not belong to the user");
 
     // --- Decrypt secret_access_key before returning ---
     const auto masterKey = tpmKeyProvider_->getMasterKey();

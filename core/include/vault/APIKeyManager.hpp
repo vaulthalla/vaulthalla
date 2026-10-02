@@ -16,12 +16,17 @@ public:
 
     void initAPIKeys();
 
+    // Trusted primitives: no authorization here. Who may create, see, remove or consume a key is decided by
+    // rbac::resolver (admin keys.api self/user/admin permissions) in ops::api_keys. A hidden "key belongs to the
+    // caller" check used to contradict it (admins could not remove users' keys on the web, and S3 vaults using a
+    // key their owner may consume but does not own could not build their engine).
     unsigned int addAPIKey(std::shared_ptr<model::APIKey>& key);
-    void removeAPIKey(unsigned int keyId, unsigned int userId);
+    void removeAPIKey(unsigned int keyId);
 
     [[nodiscard]] std::vector<std::shared_ptr<model::APIKey>> listAPIKeys() const;
     [[nodiscard]] std::vector<std::shared_ptr<model::APIKey>> listUserAPIKeys(unsigned int userId) const;
-    [[nodiscard]] std::shared_ptr<model::APIKey> getAPIKey(unsigned int keyId, unsigned int userId) const;
+    // With the secret decrypted. Throws when the key does not exist.
+    [[nodiscard]] std::shared_ptr<model::APIKey> getAPIKey(unsigned int keyId) const;
 
 private:
     mutable std::mutex apiKeysMutex_;

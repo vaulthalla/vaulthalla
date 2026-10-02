@@ -129,14 +129,14 @@ std::unordered_map<std::string, std::string> CloudEngine::getMetaMapFromFile(con
 
 CloudEngine::CloudEngine(const std::shared_ptr<S3Vault>& vault)
     : Engine(vault),
-      key_(runtime::Deps::get().apiKeyManager->getAPIKey(vault->api_key_id, vault->owner_id)),
+      key_(runtime::Deps::get().apiKeyManager->getAPIKey(vault->api_key_id)),
       s3Provider_(std::make_shared<s3::Controller>(key_, vault->bucket)) {
     resolveS3ProviderConfiguration();
 }
 
 CloudEngine::CloudEngine(const std::shared_ptr<S3Vault>& vault, std::shared_ptr<s3::Controller> s3Provider)
     : Engine(vault),
-      key_(runtime::Deps::get().apiKeyManager->getAPIKey(vault->api_key_id, vault->owner_id)),
+      key_(runtime::Deps::get().apiKeyManager->getAPIKey(vault->api_key_id)),
       s3Provider_(std::move(s3Provider)) {
     resolveS3ProviderConfiguration();
 }
