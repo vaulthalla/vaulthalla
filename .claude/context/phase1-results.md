@@ -47,6 +47,7 @@ Integration branch `phase1/hardening` → PR #124. Issues #97–#133 on the "Vau
 - CLI exit codes: 69 no daemon, 75 timeout (`VAULTHALLA_CLI_TIMEOUT`), 76 bad reply, 77 socket permission; `vh status` 0/1/2.
 - Session cookie `Secure` iff the browser-facing request was HTTPS (`X-Forwarded-Proto` from a loopback peer).
 - Default admin `vh!adm1n` stays (maintainer decision) but the daemon restricts that session to password change.
+  *Superseded in 1.8.0:* no universal default; a per-install generated password and no gate (see architecture.md).
 - `auth.login` rate limit counts failures only (10/min, 30/15min per IP+account).
 - Ownerless vaults (owner deleted) load as owner N/A; what deleting an owner *should* do is open (#133).
 

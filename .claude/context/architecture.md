@@ -86,16 +86,32 @@ healthy/degraded/critical and includes a live `SELECT 1` DB probe.
 The web client builds `ws(s)://<host>/ws` in `web/src/util/getUrl.ts` (overridable with `NEXT_PUBLIC_VAULTHALLA_WS_ORIGIN`).
 `web/src/stores/useWebSocket.ts` handles reconnect, the pending-request map keyed by `requestId`, and token injection.
 Router allowlists are **exact and per session mode**: unauthenticated, human, pending-share, and ready-share.
-Only the session-lifecycle commands (`auth.login`, `auth.logout`, `auth.refresh`, `auth.isAuthenticated`,
-`auth.admin.default_password`) skip access-token validation (`isSessionLifecycleCommand`, mirrored by the web's
+Only the session-lifecycle commands (`auth.login`, `auth.logout`, `auth.refresh`, `auth.isAuthenticated`) skip
+access-token validation (`isSessionLifecycleCommand`, mirrored by the web's
 `SESSION_LIFECYCLE_COMMANDS`). Every other `auth.*` command (register, user update/delete/get/list, password change)
 is account management and goes through `RequireHumanAuth`. A `starts_with("auth")` rule used to let unauthenticated
 sockets reach handlers that dereference `session->user` (a remote daemon segfault); `WsAuthRouting.*` guards it.
-While a human session's password still equals the seeded default, the Router serves only the
-`default_password::isAllowedWhileDefault` commands (`protocols/ws/DefaultPasswordGate.cpp`, issue #103) and answers
-everything else with `data.code = "password_change_required"`. `auth.login` is rate-limited per IP + account
+There is no password gate (removed in 1.8.0, with the universal default password): a valid session is fully
+authenticated. The super admin's initial-credential posture is advisory only: `auth.security.status` (human auth,
+read once per page load) returns the initial password file path for `admin` while the generated password is in use
+and the file exists; the web shows `InitialPasswordWarning`. Credential lifecycle: `core/auth/Bootstrap.hpp`
+(see "Super-admin initial credential" below). `auth.login` is rate-limited per IP + account
 (`ShareRateLimit.cpp`). The Router's debug log redacts credentials (`LogRedaction.cpp`); never log a raw ws message.
 See `link-sharing.md`.
+
+### Super-admin initial credential
+
+No universal default password. `seed::initAdmin` (fresh DB only: `initDB` seeds when no `admin` row exists) calls
+`auth::bootstrap::issueInitialCredential()`: 16 CSPRNG bytes as 32 hex characters, hashed normally, plaintext written
+atomically (temp + rename, 0600, daemon user) to `<backing path>/super_admin_initial_password`
+(`/var/lib/vaulthalla/...`), and `auth_bootstrap_state.super_admin_password_generated = TRUE` (singleton row, migration
+098). Nothing re-issues it while the `admin` row exists: restarts, upgrades, reinstalls (adopt) and a deleted file
+keep the password. Any change of admin's password (`auth::Manager::changePassword/resetPassword`) marks it rotated and
+removes the file; a failed removal is logged and reported, never rolled back. `vh setup set-super-admin-password` is a
+daemon shell command (`setup/superAdminPassword.cpp` → `ops::users::setSuperAdminPassword`) restricted to the caller
+whose UID is bound to `admin` (root/system/sudo refused). Startup `retireLegacyDefaultPassword()` replaces a pre-1.8.0
+`vh!adm1n` with a generated one (file written, admin's refresh tokens revoked). `vh setup nginx` (lifecycle Python)
+warns while generated + file present and offers rotate / delete file / continue / cancel; non-TTY warns and continues.
 
 ### HTTP auth/session proxy
 

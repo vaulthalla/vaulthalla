@@ -65,7 +65,7 @@ Deleting an account always asks: "Are you sure you wish to delete this user? The
 
 Transferring vault ownership, here or with `vh vault update <id> --owner <user>` / the vault edit page, is limited to administrators: it needs an admin account, edit rights on the vault, and the right to create vaults for the new owner. The new owner can't already have a vault with the same name.
 
-The built-in super admin user and role are protected from ordinary mutation paths. The super admin can't be renamed, because the daemon looks it up by name.
+The built-in super admin user and role are protected from ordinary mutation paths. The super admin can't be renamed, because the daemon looks it up by name. Its web console password starts as a generated, per-install one; see [Web Console](/getting-started/web-console#first-login). Change it with `vh setup set-super-admin-password`, run as the Linux user bound as the super admin.
 
 Rules that apply on the CLI and in the web console alike:
 

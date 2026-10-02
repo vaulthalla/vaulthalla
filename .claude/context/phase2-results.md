@@ -59,6 +59,13 @@ with it) and delete the role.
   ENOENT (an unprivileged user is denied below the vault root instead of the root looking missing). The other deny
   cases hold. Not investigated further; candidates are the 0.1s kernel entry cache shared across uids after the allow
   stage, or the expectation itself.
+- Replaced (2026-10-02): the universal default password `vh!adm1n` and its gate. The gate was split-brained: the ws
+  Router refused every non-allowlisted command for *any* session whose own password verified against the default,
+  while the web's RequireAuth asked an unauthenticated lifecycle command whether the *admin* account had it and
+  redirected everyone to `/users/admin/change-password`. Pages that loaded anything beyond the allowlist got
+  `password_change_required` errors, which surfaced as logouts or hangs. Now: a per-install generated password, a
+  plaintext file under `/var/lib/vaulthalla`, `vh setup set-super-admin-password`, an advisory web warning and a
+  `vh setup nginx` safeguard. See architecture.md "Super-admin initial credential".
 - ws-only endpoints that kept their own authorization: pricing preflight/overrides/notifications, email test-send and
   history.
 - Revocation that races a session's in-flight request reads token fields off the strand (pre-existing for CLI-driven

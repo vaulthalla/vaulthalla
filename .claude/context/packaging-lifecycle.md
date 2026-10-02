@@ -43,7 +43,9 @@ python3-certbot-dns-cloudflare`. Build-Depends mirror `core/meson.build` pkg-con
 
 `nginx_site_managed` (package owns the site file), `nginx_default_site_disabled` (distro default symlink we removed;
 `target=` line), `db_bootstrap_disabled` / `nginx_config_disabled` (persisted `VH_SKIP_*` opt-outs; `vh setup db` /
-`vh setup nginx` delete them), `tpm_backend_deferred`, `.reinstall_from_config_files` (written by preinst).
+`vh setup nginx` delete them), `tpm_backend_deferred`, `.reinstall_from_config_files` (written by preinst),
+`super_admin_initial_password` (the generated web `admin` password, written once by the daemon on a new database,
+0600 daemon user; never recreated; removed on rotation; postinst's summary points at it when present).
 
 ## `preinst`
 
