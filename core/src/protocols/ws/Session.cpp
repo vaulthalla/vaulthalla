@@ -196,6 +196,10 @@ void Session::hydrateFromRequest(const RequestType& req) {
 
     handshakeRequest_ = req;
     ipAddress = getIPAddress();
+    clientAddress = cookie_policy::clientAddress(
+        ipAddress,
+        std::string_view{req["X-Real-IP"].data(), req["X-Real-IP"].size()},
+        std::string_view{req["X-Forwarded-For"].data(), req["X-Forwarded-For"].size()});
     userAgent = getUserAgent();
     shareHandshake_ = isShareHandshakeTarget(std::string_view{req.target().data(), req.target().size()});
     externallyHttps_ = cookie_policy::isExternallyHttps(

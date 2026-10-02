@@ -690,6 +690,35 @@ TEST(LoginRateLimit, BurstThenSustainedLimitsPerIpAndAccount) {
 
 }
 
+// #125: behind the packaged nginx every peer is 127.0.0.1, so the login limiter degraded to per-account. The
+// forwarded client is believed only from the loopback proxy, and only the hop nginx itself added.
+TEST(WsClientAddress, ForwardedClientOnlyFromTheLocalProxy) {
+    using vh::protocols::ws::cookie_policy::clientAddress;
+    EXPECT_EQ(clientAddress("127.0.0.1", "203.0.113.5", ""), "203.0.113.5");
+    EXPECT_EQ(clientAddress("::1", "", "198.51.100.1, 203.0.113.6"), "203.0.113.6") << "the client-supplied hops are spoofable";
+    EXPECT_EQ(clientAddress("127.0.0.1", "not-an-ip", "also bad"), "127.0.0.1");
+    EXPECT_EQ(clientAddress("127.0.0.1", "", ""), "127.0.0.1");
+    // A remote peer can't claim to be someone else.
+    EXPECT_EQ(clientAddress("10.0.0.11", "203.0.113.5", "203.0.113.5"), "10.0.0.11");
+}
+
+TEST(LoginRateLimit, ClientsBehindTheProxyAreLimitedSeparately) {
+    vh::protocols::ws::ShareRateLimit limiter;
+    const auto sessionFor = [](const std::string& client) {
+        auto session = std::make_shared<vh::protocols::ws::Session>(std::make_shared<vh::protocols::ws::Router>());
+        session->ipAddress = "127.0.0.1";
+        session->clientAddress = client;
+        return session;
+    };
+    const auto attacker = sessionFor("203.0.113.66"), owner = sessionFor("198.51.100.20");
+    const nlohmann::json alice{{"command", "auth.login"}, {"payload", {{"name", "alice"}, {"password", "x"}}}};
+    const auto t0 = vh::protocols::ws::ShareRateLimit::Clock::now();
+    for (int i = 0; i < 10; ++i) limiter.recordLoginFailure("alice", *attacker, t0);
+    EXPECT_FALSE(limiter.check("auth.login", alice, *attacker, t0).allowed);
+    EXPECT_TRUE(limiter.check("auth.login", alice, *owner, t0).allowed)
+        << "one client's failures behind nginx locked every client out of the account";
+}
+
 // Session cookies are Secure only when the browser-facing request was HTTPS (behind the local proxy).
 // Always-Secure made web login impossible on the package's default plain-HTTP nginx site.
 TEST(WsCookiePolicy, SecureOnlyForHttpsSeenByTheLocalProxy) {

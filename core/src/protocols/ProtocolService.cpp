@@ -9,6 +9,7 @@
 #include "log/Registry.hpp"
 
 #include <boost/asio/io_context.hpp>
+#include <algorithm>
 #include <chrono>
 #include <sodium.h>
 
@@ -70,20 +71,24 @@ void ProtocolService::initProtocols() {
     initWebsocketServer();
     initHttpServer();
 
-    ioThread_ = std::thread([ctx = ioContext_] {
-        // Exceptions thrown by completion handlers propagate out of run(); an uncaught one would terminate
-        // the whole daemon (FUSE included). Log it and keep serving: run() can be called again.
-        for (;;) {
-            try {
-                ctx->run();
-                return;
-            } catch (const std::exception& e) {
-                log::Registry::runtime()->error("[ProtocolService] Unhandled exception in a protocol handler: {}", e.what());
-            } catch (...) {
-                log::Registry::runtime()->error("[ProtocolService] Unhandled non-standard exception in a protocol handler");
+    const auto threads = std::clamp(std::thread::hardware_concurrency(), 2u, 8u);
+    ioThreads_.reserve(threads);
+    for (unsigned i = 0; i < threads; ++i)
+        ioThreads_.emplace_back([ctx = ioContext_] {
+            // Exceptions thrown by completion handlers propagate out of run(); an uncaught one would terminate
+            // the whole daemon (FUSE included). Log it and keep serving: run() can be called again.
+            for (;;) {
+                try {
+                    ctx->run();
+                    return;
+                } catch (const std::exception& e) {
+                    log::Registry::runtime()->error("[ProtocolService] Unhandled exception in a protocol handler: {}", e.what());
+                } catch (...) {
+                    log::Registry::runtime()->error("[ProtocolService] Unhandled non-standard exception in a protocol handler");
+                }
             }
-        }
-    });
+        });
+    log::Registry::runtime()->info("[ProtocolService] Serving protocols on {} io threads", threads);
 }
 
 
@@ -119,7 +124,7 @@ void ProtocolService::shutdownProtocols() noexcept {
         websocketReady_.store(false, std::memory_order_release);
         httpPreviewReady_.store(false, std::memory_order_release);
 
-        if (!httpServer_ && !wsServer_ && !ioContext_ && !ioThread_.joinable()) {
+        if (!httpServer_ && !wsServer_ && !ioContext_ && ioThreads_.empty()) {
             ioContextInitialized_.store(false, std::memory_order_release);
             return;
         }
@@ -129,7 +134,13 @@ void ProtocolService::shutdownProtocols() noexcept {
         http::Session::cancelAllActive();
         http::upload::Coordinator::instance().abortAll("http_service_stopping");
         if (ioContext_) ioContext_->stop();
-        if (ioThread_.joinable() && std::this_thread::get_id() != ioThread_.get_id()) ioThread_.join();
+        for (auto& thread : ioThreads_) {
+            if (!thread.joinable()) continue;
+            // Stopping from inside a handler can't join its own thread; let it finish on its own.
+            if (std::this_thread::get_id() == thread.get_id()) thread.detach();
+            else thread.join();
+        }
+        ioThreads_.clear();
     } catch (const std::exception& e) {
         log::Registry::runtime()->error("[ProtocolService] Shutdown failed: {}", e.what());
     } catch (...) {

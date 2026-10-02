@@ -48,6 +48,9 @@ public:
     std::shared_ptr<identities::User> user{nullptr};
     std::shared_ptr<auth::model::TokenPair> tokens;
     std::string userAgent, ipAddress;
+    // Who is on the other end for rate limiting: the forwarded client behind the local proxy, else the peer.
+    // ipAddress stays the TCP peer (refresh tokens are bound to it).
+    std::string clientAddress;
     const std::chrono::system_clock::time_point connectionOpenedAt = std::chrono::system_clock::now();
 
     explicit Session(const std::shared_ptr<Router>& router);
