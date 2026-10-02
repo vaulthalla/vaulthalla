@@ -20,6 +20,7 @@
 #include "protocols/ws/Session.hpp"
 #include "protocols/ws/handler/vault/Vaults.hpp"
 #include "runtime/Deps.hpp"
+#include "seed/include/init_db_tables.hpp"
 #include "seed/include/seed_db.hpp"
 #include "storage/Engine.hpp"
 #include "storage/Manager.hpp"
@@ -39,6 +40,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <shared_mutex>

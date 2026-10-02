@@ -18,6 +18,7 @@
 #include "protocols/ws/Session.hpp"
 #include "protocols/ws/handler/vault/APIKeys.hpp"
 #include "runtime/Deps.hpp"
+#include "seed/include/init_db_tables.hpp"
 #include "seed/include/seed_db.hpp"
 #include "storage/Manager.hpp"
 #include "UsageManager.hpp"
