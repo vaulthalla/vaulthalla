@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useMemo } from 'react'
+import React, { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -13,7 +13,8 @@ import { formatDateTime } from '@/lib/format'
 import { Button } from '@/components/ui/Button'
 import { Field, Input } from '@/components/ui/Field'
 import { DefinitionList, PageHeader, Panel } from '@/components/ui/Panel'
-import { InlineError, QueryState } from '@/components/ui/State'
+import { QueryState } from '@/components/ui/State'
+import { errorMessage } from '@/lib/ws/errors'
 import { notify } from '@/components/ui/Toast'
 import { Avatar } from '@/components/shell/UserMenu'
 import type { UserRecord } from '@/features/access/types'
@@ -75,7 +76,9 @@ const Account = ({ user }: { user: UserRecord }) => {
                 ),
               ],
               ['Last login', user.last_login ? <span key="l" className="tabular">{formatDateTime(user.last_login)}</span> : 'Never'],
-              ['Password set', user.password_changed_at ? <span key="p" className="tabular">{formatDateTime(user.password_changed_at)}</span> : '—'],
+              ...(user.password_changed_at
+                ? ([['Password set', <span key="p" className="tabular">{formatDateTime(user.password_changed_at)}</span>]] as [React.ReactNode, React.ReactNode][])
+                : []),
               ['Member since', <span key="c" className="tabular">{formatDateTime(user.created_at)}</span>],
               ['CLI login', user.linux_uid !== undefined ? <span key="u" className="tabular">Linux UID {user.linux_uid}</span> : 'Not bound'],
             ]}
@@ -104,9 +107,22 @@ const PasswordPanel = ({ user }: { user: UserRecord }) => {
     },
   })
   const errors = form.formState.errors
+  const [invalid, setInvalid] = useState(false)
+  // One visible failure line ("…failed: reason"), for the server's refusal and for fields that don't validate. The
+  // packaged-install proof (web/tests/e2e/lab-first-run.spec.ts) drives this form and reads it.
+  const failure = change.error ? errorMessage(change.error) : invalid && Object.keys(errors).length ? 'fix the highlighted fields' : null
   return (
     <Panel id="password" title="Password" description="Use at least 12 characters with upper and lower case, digits and symbols. Weak or breached passwords are refused.">
-      <form noValidate onSubmit={form.handleSubmit(values => change.mutate(values))} className="space-y-4">
+      <form
+        noValidate
+        onSubmit={form.handleSubmit(
+          values => {
+            setInvalid(false)
+            change.mutate(values)
+          },
+          () => setInvalid(true),
+        )}
+        className="space-y-4">
         {/* Lets password managers attach the new password to the right account. */}
         <input type="text" name="username" autoComplete="username" value={user.name} readOnly hidden />
         <Field label="Current password" htmlFor="pw-current" required error={errors.current?.message} className="sm:max-w-[calc(50%-0.5rem)]">
@@ -120,7 +136,11 @@ const PasswordPanel = ({ user }: { user: UserRecord }) => {
             <Input id="pw-confirm" type="password" autoComplete="new-password" aria-invalid={Boolean(errors.confirm) || undefined} {...form.register('confirm')} />
           </Field>
         </div>
-        <InlineError error={change.error} />
+        {failure ? (
+          <p role="alert" className="rounded-control border border-danger-line bg-danger-soft px-3 py-2 text-sm text-danger">
+            Password change failed: {failure}
+          </p>
+        ) : null}
         <div className="flex justify-end">
           <Button type="submit" variant="secondary" loading={change.isPending}>
             Change password

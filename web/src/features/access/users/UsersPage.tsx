@@ -40,6 +40,10 @@ export function UsersPage() {
               <span className="block truncate" title={u.name}>
                 {u.name}
               </span>
+              {/* Phones show role and status here; their columns start at sm. */}
+              <span className="block truncate text-xs font-normal text-fg-subtle sm:hidden">
+                {roleLabel(u.admin_role?.name)} · {u.is_active ? 'Active' : 'Inactive'}
+              </span>
             </span>
             <AccountBadges user={u} selfId={selfId} className="hidden xl:inline-flex" />
           </span>
@@ -63,19 +67,21 @@ export function UsersPage() {
       {
         key: 'role',
         header: 'Admin role',
+        hideBelow: 'sm',
         sortValue: u => u.admin_role?.name ?? null,
         cell: u => <span className="whitespace-nowrap text-fg-muted">{roleLabel(u.admin_role?.name)}</span>,
       },
       {
         key: 'status',
         header: 'Status',
+        hideBelow: 'sm',
         sortValue: u => (u.is_active ? 0 : 1),
         cell: u => <StatusBadge active={u.is_active} />,
       },
       {
         key: 'last_login',
         header: 'Last login',
-        hideBelow: 'sm',
+        hideBelow: 'md',
         sortValue: u => (u.last_login ? Date.parse(u.last_login) : null),
         cell: u =>
           u.last_login ? (

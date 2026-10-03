@@ -172,7 +172,9 @@ export const AccessPanel = ({ user, rules, quiet }: { user: UserRecord; rules: A
             !rules.active.allowed && !quiet
               ? rules.active.reason
               : user.is_active
-                ? 'The account can sign in. Turning this off signs it out everywhere.'
+                ? rules.active.allowed
+                  ? 'The account can sign in. Turning this off signs it out everywhere.'
+                  : 'The account can sign in.'
                 : `Deactivated${user.deactivated_at ? ` on ${formatDate(user.deactivated_at)}` : ''}. The account can't sign in.`
           }
           checked={user.is_active}

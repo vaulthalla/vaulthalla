@@ -115,7 +115,10 @@ const UserDetail = ({ user }: { user: UserRecord }) => {
                 ['Created', <span key="c" className="tabular">{formatDateTime(user.created_at)}</span>],
                 ...(createdBy ? ([['Created by', createdBy]] as [React.ReactNode, React.ReactNode][]) : []),
                 ['Last login', user.last_login ? <span key="l" className="tabular">{formatDateTime(user.last_login)}</span> : 'Never'],
-                ['Password set', user.password_changed_at ? <span key="p" className="tabular">{formatDateTime(user.password_changed_at)}</span> : '—'],
+                // core doesn't persist password_changed_at yet (always null); show it only when it's known.
+                ...(user.password_changed_at
+                  ? ([['Password set', <span key="p" className="tabular">{formatDateTime(user.password_changed_at)}</span>]] as [React.ReactNode, React.ReactNode][])
+                  : []),
                 ...(!user.is_active && user.deactivated_at
                   ? ([['Deactivated', <span key="d" className="tabular">{formatDateTime(user.deactivated_at)}</span>]] as [React.ReactNode, React.ReactNode][])
                   : []),

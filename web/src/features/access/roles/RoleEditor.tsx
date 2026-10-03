@@ -291,7 +291,7 @@ const RoleForm = ({
                 className="md:col-span-2"
                 hint="Copies that role’s permissions as a starting point. The new role keeps its own copy.">
                 <Select id="role-template" value={template} onChange={e => applyTemplate(e.target.value)}>
-                  <option value="">Nothing granted</option>
+                  <option value="">{type === 'admin' ? 'Unprivileged (nothing granted)' : 'Nothing granted'}</option>
                   {[...templates]
                     .filter(t => t.id > 0)
                     .sort((a, b) => a.name.localeCompare(b.name))

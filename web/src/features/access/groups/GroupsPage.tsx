@@ -71,11 +71,16 @@ export function GroupsPage() {
         cell: g => (
           <span className="block min-w-0">
             <span className="block truncate font-medium text-fg">{g.name}</span>
-            {g.description ? <span className="block max-w-md truncate text-xs font-normal text-fg-subtle">{g.description}</span> : null}
+            {g.description ? (
+              <span className="block max-w-[14rem] truncate text-xs font-normal text-fg-subtle sm:max-w-md">{g.description}</span>
+            ) : null}
+            <span className="block text-xs font-normal text-fg-faint sm:hidden">
+              <span className="tabular">{g.members.length}</span> member{g.members.length === 1 ? '' : 's'}
+            </span>
           </span>
         ),
       },
-      { key: 'members', header: 'Members', sortValue: g => g.members.length, cell: g => <MemberStack group={g} /> },
+      { key: 'members', header: 'Members', hideBelow: 'sm', sortValue: g => g.members.length, cell: g => <MemberStack group={g} /> },
       {
         key: 'gid',
         header: 'Linux GID',

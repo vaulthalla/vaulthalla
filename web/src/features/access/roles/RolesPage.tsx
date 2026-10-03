@@ -80,6 +80,11 @@ export function RolesPage() {
           <span className="flex items-center gap-2">
             <span className="truncate">{roleLabel(r.name)}</span>
             {isBuiltinRole(type, r.name) ? <Badge className="h-5 px-2 text-[11px] font-normal">Built-in</Badge> : null}
+            {r.permissions?.length ? (
+              <span className="text-xs font-normal text-fg-subtle tabular sm:hidden">
+                {r.permissions.filter(p => p.value).length}/{r.permissions.length}
+              </span>
+            ) : null}
           </span>
         ),
       },
