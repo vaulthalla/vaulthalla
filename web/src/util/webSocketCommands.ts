@@ -19,7 +19,7 @@ import {
 } from '@/models/dashboard/dashboardPreferences'
 import { CacheStats } from '@/models/stats/cacheStats'
 import { ConnectionStats } from '@/models/stats/connectionStats'
-import { DashboardOverview, DashboardOverviewRequest } from '@/models/stats/dashboardOverview'
+import { DashboardOverview, DashboardOverviewRequest, type DashboardSeverity } from '@/models/stats/dashboardOverview'
 import { DbStats } from '@/models/stats/dbStats'
 import { FuseStats } from '@/models/stats/fuseStats'
 import { OperationStats } from '@/models/stats/operationStats'
@@ -589,6 +589,20 @@ export interface WebSocketCommandMap {
   'stats.vault.pricing': { payload: { vault_id: number }; response: { stats: PricingBudgetStats } }
 
   'stats.dashboard.overview': { payload: DashboardOverviewRequest | null; response: { stats: DashboardOverview } }
+
+  // Cheap admin-only rollup of the default overview cards (no cards, sections or series). Daemons before 1.9 answer
+  // "Unknown command".
+  'stats.dashboard.severity': {
+    payload: null
+    response: {
+      stats: {
+        overall_status: DashboardSeverity
+        error_count: number
+        warning_count: number
+        checked_at: number | string | null
+      }
+    }
+  }
 
   'stats.pricing.budget': { payload: { vault_id?: number | null } | null; response: { stats: PricingBudgetStats } }
 
