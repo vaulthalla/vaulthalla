@@ -57,6 +57,7 @@ const COMMAND_TIMEOUTS: Partial<Record<Command, number>> = {
   'storage.vault.add': 60_000,
   'storage.vault.update': 60_000,
   'storage.apiKey.add': 60_000,
+  'storage.apiKey.update': 60_000,
   'email.test.send': 60_000,
   's3.gateway.buckets.createRemoteCache': 180_000,
   'pricing.budget.preflight': 60_000,
