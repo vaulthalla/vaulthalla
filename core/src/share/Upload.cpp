@@ -30,7 +30,8 @@ Upload::Upload(const pqxx::row& row)
     : id(row["id"].as<std::string>()),
       share_id(row["share_id"].as<std::string>()),
       share_session_id(row["share_session_id"].as<std::string>()),
-      target_parent_entry_id(row["target_parent_entry_id"].as<uint32_t>()),
+      // NULL once the target folder was deleted (migration 101); 0 means "no parent".
+      target_parent_entry_id(row["target_parent_entry_id"].is_null() ? 0 : row["target_parent_entry_id"].as<uint32_t>()),
       target_path(row["target_path"].as<std::string>()),
       tmp_path(upload_model_detail::opt_string(row, "tmp_path")),
       original_filename(row["original_filename"].as<std::string>()),

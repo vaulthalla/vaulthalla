@@ -78,6 +78,8 @@ time-zone-aware value.
 
 ## Link shares
 
+- Folders that received uploads through a share link can be deleted again. Deleting such a folder (or anything
+  above it) used to fail with a database error; the link's upload history is now kept without its folder.
 - The "Upload Dropbox" share role is upload-only on new installs: recipients can upload but can't list the
   folder, so they don't see each other's submissions. Existing installs keep their `share_upload_dropbox` role
   unchanged. To make it upload-only there too, run `vh role vault update share_upload_dropbox --deny-dirs-list`.

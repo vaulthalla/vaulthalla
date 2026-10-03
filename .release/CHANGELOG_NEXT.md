@@ -78,5 +78,8 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
   filename fallback, and no longer strips leading dots.
 
 ## Link shares
+- Migration 101 makes share_upload.target_parent_entry_id nullable and
+  ON DELETE SET NULL, so folders that received share uploads can be deleted
+  (previously a foreign key violation); upload history rows survive.
 - Seed share_upload_dropbox without directory List on new installs; share
   uploads need only the upload operation. Existing role rows are unchanged.
