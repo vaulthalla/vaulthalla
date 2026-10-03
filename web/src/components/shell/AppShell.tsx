@@ -4,29 +4,24 @@ import React, { useEffect, useState } from 'react'
 import Link from 'next/link'
 import NextImage from 'next/image'
 import { usePathname } from 'next/navigation'
-import * as RD from '@radix-ui/react-dialog'
 import { cn } from '@/util/cn'
-import { NAV, type NavItem, type NavSection } from '@/components/shell/nav'
+import type { NavItem, NavSection } from '@/components/shell/nav'
 import { useUiPrefs } from '@/components/shell/uiPrefs'
-import { useSession } from '@/lib/session'
-import { meets } from '@/lib/permissions'
 import { Tooltip } from '@/components/ui/Tooltip'
 import { IconButton } from '@/components/ui/IconButton'
 import { BarsIcon, ChevronLeftIcon, MagnifyingGlassIcon } from '@/components/ui/icons'
 import { Kbd } from '@/components/ui/Badge'
-import { CommandPalette, useCommandPalette } from '@/components/shell/CommandPalette'
+import dynamic from 'next/dynamic'
+import { useCommandPalette } from '@/components/shell/commandPaletteStore'
+import { useVisibleNav } from '@/components/shell/useVisibleNav'
 import { UserMenu } from '@/components/shell/UserMenu'
 import { ConnectionIndicator } from '@/components/shell/ConnectionIndicator'
 import { TopBarExtras } from '@/components/shell/TopBarExtras'
 import Logo from '@/public/vaulthalla-logo.png'
 import pkg from '../../../package.json'
 
-export const useVisibleNav = (): NavSection[] => {
-  const user = useSession(state => state.user)
-  return NAV.map(section => ({ ...section, items: section.items.filter(item => meets(user, item.requires)) })).filter(
-    section => section.items.length > 0,
-  )
-}
+// cmdk loads the first time the palette opens.
+const CommandPalette = dynamic(() => import('@/components/shell/CommandPalette').then(m => m.CommandPalette), { ssr: false })
 
 const isActive = (pathname: string, href: string) => pathname === href || pathname.startsWith(`${href}/`)
 
@@ -39,7 +34,7 @@ const NavLink = ({ item, collapsed, onNavigate }: { item: NavItem; collapsed: bo
       onClick={onNavigate}
       aria-current={active ? 'page' : undefined}
       className={cn(
-        'group relative flex h-9 items-center gap-3 rounded-control px-2.5 text-sm text-fg-muted transition-colors hover:bg-surface-2 hover:text-fg',
+        'group relative flex h-9 w-full items-center gap-3 rounded-control px-2.5 text-sm text-fg-muted transition-colors hover:bg-surface-2 hover:text-fg',
         active && 'bg-accent-soft text-fg shadow-[inset_0_0_0_1px_var(--accent-line)]',
         collapsed && 'justify-center px-0',
       )}>
@@ -49,7 +44,7 @@ const NavLink = ({ item, collapsed, onNavigate }: { item: NavItem; collapsed: bo
     </Link>
   )
   return collapsed ? (
-    <Tooltip content={item.label} side="right">
+    <Tooltip content={item.label} side="right" wrapperClassName="flex">
       {link}
     </Tooltip>
   ) : (
@@ -57,7 +52,7 @@ const NavLink = ({ item, collapsed, onNavigate }: { item: NavItem; collapsed: bo
   )
 }
 
-const NavSections = ({ sections, collapsed, onNavigate }: { sections: NavSection[]; collapsed: boolean; onNavigate?: () => void }) => (
+export const NavSections = ({ sections, collapsed, onNavigate }: { sections: NavSection[]; collapsed: boolean; onNavigate?: () => void }) => (
   <nav aria-label="Main" className="flex flex-col gap-5">
     {sections.map((section, index) => (
       <div key={section.label ?? index} className="flex flex-col gap-0.5">
@@ -76,7 +71,7 @@ const NavSections = ({ sections, collapsed, onNavigate }: { sections: NavSection
   </nav>
 )
 
-const Brand = ({ collapsed }: { collapsed: boolean }) => (
+export const Brand = ({ collapsed }: { collapsed: boolean }) => (
   <Link href="/files" className={cn('flex items-center gap-2.5 rounded-control px-1.5 py-1', collapsed && 'justify-center px-0')}>
     <NextImage src={Logo} alt="" width={30} height={30} priority className="size-[30px] drop-shadow-[0_0_10px_rgb(34_211_238/0.25)]" />
     {collapsed ? <span className="sr-only">Vaulthalla</span> : <span className="text-[15px] font-semibold tracking-tight text-fg">Vaulthalla</span>}
@@ -96,7 +91,7 @@ const Rail = () => {
       <div className={cn('flex h-14 items-center px-3', collapsed && 'justify-center px-0')}>
         <Brand collapsed={collapsed} />
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3 scrollbar-thin">
+      <div className={cn('min-h-0 flex-1 px-3 py-3 scrollbar-thin', collapsed ? 'overflow-visible' : 'overflow-y-auto')}>
         <NavSections sections={sections} collapsed={collapsed} />
       </div>
       <div className={cn('flex items-center justify-between border-t border-line px-3 py-2.5', collapsed && 'flex-col gap-2 px-0')}>
@@ -115,32 +110,26 @@ const Rail = () => {
   )
 }
 
+// The mobile navigation sheet (Radix dialog) loads on first tap.
+const MobileNavSheet = dynamic(() => import('@/components/shell/MobileNav').then(m => m.MobileNavSheet), { ssr: false })
+
 const MobileNav = () => {
-  const sections = useVisibleNav()
   const [open, setOpen] = useState(false)
-  const pathname = usePathname()
-  useEffect(() => setOpen(false), [pathname])
+  const [armed, setArmed] = useState(false)
   return (
-    <RD.Root open={open} onOpenChange={setOpen}>
-      <RD.Trigger asChild>
-        <IconButton label="Open navigation" icon={BarsIcon} className="md:hidden" tooltip={false} />
-      </RD.Trigger>
-      <RD.Portal>
-        <RD.Overlay className="fixed inset-0 z-[60] animate-fade-in bg-black/60" />
-        <RD.Content
-          aria-describedby={undefined}
-          className="glass-strong fixed inset-y-0 left-0 z-[61] flex w-72 max-w-[85vw] animate-pop-in flex-col rounded-r-panel focus:outline-none">
-          <RD.Title className="sr-only">Navigation</RD.Title>
-          <div className="flex h-14 items-center px-4">
-            <Brand collapsed={false} />
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
-            <NavSections sections={sections} collapsed={false} onNavigate={() => setOpen(false)} />
-          </div>
-          <div className="border-t border-line px-4 py-3 font-mono text-[11px] text-fg-faint">v{pkg.version}</div>
-        </RD.Content>
-      </RD.Portal>
-    </RD.Root>
+    <>
+      <IconButton
+        label="Open navigation"
+        icon={BarsIcon}
+        className="md:hidden"
+        tooltip={false}
+        onClick={() => {
+          setArmed(true)
+          setOpen(true)
+        }}
+      />
+      {armed ? <MobileNavSheet open={open} onOpenChange={setOpen} /> : null}
+    </>
   )
 }
 
@@ -175,6 +164,15 @@ const TopBar = () => (
   </header>
 )
 
+const PaletteMount = () => {
+  const open = useCommandPalette(state => state.open)
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => {
+    if (open) setMounted(true)
+  }, [open])
+  return mounted ? <CommandPalette /> : null
+}
+
 export const AppShell = ({ children }: { children: React.ReactNode }) => (
   <div className="flex min-h-dvh">
     <Rail />
@@ -184,6 +182,6 @@ export const AppShell = ({ children }: { children: React.ReactNode }) => (
         <div className="mx-auto w-full max-w-[1400px]">{children}</div>
       </main>
     </div>
-    <CommandPalette />
+    <PaletteMount />
   </div>
 )

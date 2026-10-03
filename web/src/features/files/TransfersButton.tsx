@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useEffect, useRef } from 'react'
-import * as RP from '@radix-ui/react-popover'
+import { Popover } from '@/components/ui/Popover'
 import { cn } from '@/util/cn'
 import { formatBytes } from '@/lib/format'
 import { Button } from '@/components/ui/Button'
@@ -82,8 +82,11 @@ export const TransfersButton = () => {
   if (!tasks.length) return null
 
   return (
-    <RP.Root open={open} onOpenChange={setOpen}>
-      <RP.Trigger asChild>
+    <Popover
+      open={open}
+      onOpenChange={setOpen}
+      className="w-[min(24rem,calc(100vw-1rem))]"
+      trigger={
         <button
           type="button"
           aria-label={active.length ? `${active.length} transfers in progress` : 'Transfers'}
@@ -107,9 +110,8 @@ export const TransfersButton = () => {
           <ArrowsUpDownLeftRightIcon className="size-4 rotate-45" aria-hidden />
           {failed ? <span className="absolute top-1.5 right-1.5 size-2 rounded-full bg-danger" aria-hidden /> : null}
         </button>
-      </RP.Trigger>
-      <RP.Portal>
-        <RP.Content align="end" sideOffset={8} collisionPadding={8} className="glass-strong z-[65] w-[min(24rem,calc(100vw-1rem))] animate-pop-in rounded-panel">
+      }>
+
           <div className="flex items-center justify-between border-b border-line px-3.5 py-2.5">
             <span className="text-sm font-medium text-fg">Transfers</span>
             {tasks.length > active.length ? (
@@ -123,8 +125,6 @@ export const TransfersButton = () => {
               <TaskRow key={task.id} task={task} />
             ))}
           </ul>
-        </RP.Content>
-      </RP.Portal>
-    </RP.Root>
+            </Popover>
   )
 }

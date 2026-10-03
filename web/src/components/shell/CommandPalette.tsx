@@ -1,22 +1,15 @@
 'use client'
 
-import React, { useEffect } from 'react'
+import React from 'react'
 import { useRouter } from 'next/navigation'
 import { Command } from 'cmdk'
 import * as RD from '@radix-ui/react-dialog'
-import { create } from 'zustand'
-import { useVisibleNav } from '@/components/shell/AppShell'
+import { useVisibleNav } from '@/components/shell/useVisibleNav'
+import { useCommandPalette } from '@/components/shell/commandPaletteStore'
 import { useWs } from '@/lib/query'
 import { useCan } from '@/lib/permissions'
 import { logout } from '@/lib/session'
 import { FolderIcon, MagnifyingGlassIcon, PlusIcon, RightFromBracketIcon, UserIcon, VaultIcon } from '@/components/ui/icons'
-
-interface PaletteState {
-  open: boolean
-  setOpen: (open: boolean) => void
-}
-
-export const useCommandPalette = create<PaletteState>(set => ({ open: false, setOpen: open => set({ open }) }))
 
 const itemClass =
   'flex cursor-default items-center gap-3 rounded-md px-3 py-2 text-sm text-fg-muted data-[selected=true]:bg-surface-3 data-[selected=true]:text-fg [&_svg]:size-4 [&_svg]:text-fg-subtle data-[selected=true]:[&_svg]:text-accent-text'
@@ -71,17 +64,6 @@ export const CommandPalette = () => {
   const sections = useVisibleNav()
   const canUsers = useCan({ permission: 'admin.identities.users.view' })
   const canCreateVault = useCan({ anyOf: ['admin.vaults.self.create', 'admin.vaults.user.create', 'admin.vaults.admin.create'] })
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
-        event.preventDefault()
-        setOpen(!useCommandPalette.getState().open)
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [setOpen])
 
   const go = (href: string) => {
     setOpen(false)

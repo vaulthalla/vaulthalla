@@ -5,7 +5,8 @@
 #   doctor      toolchain + repo sanity (no builds)
 #   changed     infer profiles from `git diff` + untracked files vs HEAD (default)
 #   core        meson compile + meson test in build/ (configures build/ if missing)
-#   web         pnpm typecheck + lint (VERIFY_STRICT_LINT=0 downgrades lint failures to warnings)
+#   web         pnpm typecheck + lint (VERIFY_STRICT_LINT=0 downgrades lint failures to warnings);
+#               VERIFY_WEB_BUILD=1 also builds and enforces the first-load JS budgets (web/perf-budgets.json)
 #   release     vl-release contract: vlr check + vlr version check (release.toml, staged .release/ docs)
 #   packaging   product contracts (tools/contracts: Debian packaging, maintainer scripts, migrations,
 #               release workflow) + tools/lab tests, each with a minimum test count
@@ -75,6 +76,13 @@ run_web() {
   if ! pnpm --dir web lint; then
     [[ "${VERIFY_STRICT_LINT:-1}" == "1" ]] && die "web lint failed"
     warn "web lint failed (VERIFY_STRICT_LINT=0, continuing)"
+  fi
+  # Performance budgets need a production build (slow): VERIFY_WEB_BUILD=1 builds and enforces them, as CI does.
+  if [[ "${VERIFY_WEB_BUILD:-0}" == "1" ]]; then
+    log "web production build"; pnpm --dir web build
+    log "web performance budgets"; pnpm --dir web budgets
+  else
+    log "web budgets skipped (set VERIFY_WEB_BUILD=1 to build and enforce them)"
   fi
 }
 

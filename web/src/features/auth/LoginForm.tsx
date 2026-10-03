@@ -3,7 +3,6 @@
 import React, { useEffect, useState } from 'react'
 import NextImage from 'next/image'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { useForm } from 'react-hook-form'
 import { api, login, refreshSession } from '@/lib/session'
 import { errorMessage, isWsError } from '@/lib/ws/errors'
 import { Button } from '@/components/ui/Button'
@@ -20,11 +19,9 @@ export const LoginForm = () => {
   const next = safeNext(useSearchParams().get('next'))
   const [quote, setQuote] = useState<string | null>(null)
   const [error, setError] = useState<unknown>(null)
-  const {
-    register,
-    handleSubmit,
-    formState: { isSubmitting },
-  } = useForm<{ name: string; password: string }>()
+  const [name, setName] = useState('')
+  const [password, setPassword] = useState('')
+  const [isSubmitting, setSubmitting] = useState(false)
 
   useEffect(() => {
     setQuote(vaulthallaQuotes[Math.floor(Math.random() * vaulthallaQuotes.length)])
@@ -39,15 +36,19 @@ export const LoginForm = () => {
     }
   }, [next, router])
 
-  const onSubmit = handleSubmit(async ({ name, password }) => {
+  const onSubmit = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!name.trim() || !password) return setError(new Error('Enter your username and password'))
     setError(null)
+    setSubmitting(true)
     try {
       await login(name.trim(), password)
       router.replace(next)
     } catch (err) {
       setError(isWsError(err, 'unauthorized', 'error', 'denied', 'invalid') ? new Error(errorMessage(err, 'Invalid username or password')) : err)
+      setSubmitting(false)
     }
-  })
+  }
 
   return (
     <div className="w-full max-w-sm">
@@ -66,10 +67,10 @@ export const LoginForm = () => {
 
       <form onSubmit={onSubmit} className="glass space-y-4 rounded-panel p-6" noValidate>
         <Field label="Username" htmlFor="login-name">
-          <Input id="login-name" autoComplete="username" autoFocus required {...register('name', { required: true })} />
+          <Input id="login-name" autoComplete="username" autoFocus required value={name} onChange={e => setName(e.target.value)} />
         </Field>
         <Field label="Password" htmlFor="login-password">
-          <Input id="login-password" type="password" autoComplete="current-password" required {...register('password', { required: true })} />
+          <Input id="login-password" type="password" autoComplete="current-password" required value={password} onChange={e => setPassword(e.target.value)} />
         </Field>
         <InlineError error={error} />
         <Button type="submit" variant="primary" size="lg" className="w-full" loading={isSubmitting}>

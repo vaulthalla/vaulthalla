@@ -11,7 +11,9 @@ import { ChevronDownIcon, CloudIcon, HardDriveIcon, VaultIcon, CheckIcon } from 
 import { FileBrowser } from '@/features/files/FileBrowser'
 import { authSource } from '@/features/files/source'
 import { normalizePath, type Entry } from '@/features/files/entries'
-import { ShareDialog } from '@/features/shares/ShareDialog'
+import dynamic from 'next/dynamic'
+
+const ShareDialog = dynamic(() => import('@/features/shares/ShareDialog').then(m => m.ShareDialog), { ssr: false })
 import { useCan } from '@/lib/permissions'
 import Link from 'next/link'
 
@@ -115,7 +117,7 @@ export function FilesPage() {
         leading={list.length > 1 ? switcher : null}
         onShare={setShareTarget}
       />
-      <ShareDialog vaultId={vault.id} target={shareTarget} onClose={() => setShareTarget(null)} />
+      {shareTarget ? <ShareDialog vaultId={vault.id} target={shareTarget} onClose={() => setShareTarget(null)} /> : null}
     </>
   )
 }

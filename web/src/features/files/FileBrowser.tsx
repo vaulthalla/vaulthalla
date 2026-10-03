@@ -9,13 +9,12 @@ import { formatBytes, formatDateTime, formatRelative } from '@/lib/format'
 import { Button } from '@/components/ui/Button'
 import { IconButton } from '@/components/ui/IconButton'
 import { Input } from '@/components/ui/Field'
-import { Checkbox } from '@/components/ui/Field'
+import { Checkbox } from '@/components/ui/Choice'
 import { ContextMenu, DropdownMenu, type MenuEntry } from '@/components/ui/Menu'
 import { EmptyState, ErrorState } from '@/components/ui/State'
 import { Spinner } from '@/components/ui/Spinner'
 import { confirm } from '@/components/ui/Confirm'
 import { notify } from '@/components/ui/Toast'
-import { Tooltip } from '@/components/ui/Tooltip'
 import {
   ArrowsRotateIcon,
   ArrowsUpDownLeftRightIcon,
@@ -44,8 +43,12 @@ import { FileIcon } from '@/features/files/FileIcon'
 import { useThumbnails } from '@/features/files/thumbnails'
 import { startDownload, startUpload, type PickedFile } from '@/features/files/transfers'
 import { collectDropped, collectPicked } from '@/features/files/drop'
-import { DestinationDialog, NameDialog } from '@/features/files/dialogs'
-import { PreviewSheet } from '@/features/files/PreviewSheet'
+import dynamic from 'next/dynamic'
+
+// Dialogs load the first time they're needed.
+const NameDialog = dynamic(() => import('@/features/files/dialogs').then(m => m.NameDialog), { ssr: false })
+const DestinationDialog = dynamic(() => import('@/features/files/dialogs').then(m => m.DestinationDialog), { ssr: false })
+const PreviewSheet = dynamic(() => import('@/features/files/PreviewSheet').then(m => m.PreviewSheet), { ssr: false })
 
 type SortKey = 'name' | 'size' | 'modified'
 
@@ -622,7 +625,7 @@ export function FileBrowser({ source, path, onNavigate, leading, onShare, classN
         </div>
       ) : null}
 
-      <PreviewSheet
+      {preview ? <PreviewSheet
         source={source}
         entry={preview}
         siblings={entries}
@@ -630,9 +633,9 @@ export function FileBrowser({ source, path, onNavigate, leading, onShare, classN
         onSelect={setPreview}
         onDownload={download}
         onShare={onShare}
-      />
+      /> : null}
 
-      <NameDialog
+      {naming ? <NameDialog
         open={naming !== null}
         onOpenChange={o => !o && setNaming(null)}
         title={naming?.mode === 'rename' ? `Rename ${naming.entry.kind === 'dir' ? 'folder' : 'file'}` : 'New folder'}
@@ -648,7 +651,7 @@ export function FileBrowser({ source, path, onNavigate, leading, onShare, classN
           }
           await refresh()
         }}
-      />
+      /> : null}
 
       {destination ? (
         <DestinationDialog
@@ -749,9 +752,9 @@ const Row = React.memo(function Row({ id, entry, thumb, selected, focused, top, 
       <span className="text-right text-fg-subtle tabular max-md:hidden">
         {entry.kind === 'dir' ? (entry.fileCount !== undefined ? `${entry.fileCount + (entry.dirCount ?? 0)} items` : '—') : formatBytes(entry.size)}
       </span>
-      <Tooltip content={entry.modified ? formatDateTime(entry.modified) : undefined}>
-        <span className="truncate text-fg-subtle max-md:hidden">{entry.modified ? formatRelative(entry.modified) : '—'}</span>
-      </Tooltip>
+      <span className="truncate text-fg-subtle max-md:hidden" title={entry.modified ? formatDateTime(entry.modified) : undefined}>
+        {entry.modified ? formatRelative(entry.modified) : '—'}
+      </span>
       <div onClick={event => event.stopPropagation()}>{menu}</div>
     </div>
   )

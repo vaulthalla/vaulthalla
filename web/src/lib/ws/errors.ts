@@ -3,6 +3,7 @@ export type WsErrorKind =
   | 'denied' // authenticated, but not allowed
   | 'not_found'
   | 'invalid'
+  | 'conflict'
   | 'needs_confirmation' // the server wants an explicit acceptance (e.g. encryption waiver) before proceeding
   | 'error'
   | 'timeout' // no answer yet; the server may still be working
@@ -20,7 +21,7 @@ export class WsError extends Error {
   }
 }
 
-const REFUSAL_CODES: Record<string, WsErrorKind> = { denied: 'denied', not_found: 'not_found', invalid: 'invalid' }
+const REFUSAL_CODES: Record<string, WsErrorKind> = { denied: 'denied', not_found: 'not_found', invalid: 'invalid', conflict: 'conflict' }
 
 // Older daemons send refusals without a code; their wording is stable enough to classify the common case.
 const DENIED_TEXT = /(permission|not allowed|must be an admin|forbidden|access denied|not authori[sz]ed to)/i

@@ -1,10 +1,7 @@
 'use client'
 
-import React, { useState } from 'react'
+import type React from 'react'
 import { create } from 'zustand'
-import { Dialog, DialogContent } from '@/components/ui/Dialog'
-import { Button } from '@/components/ui/Button'
-import { Input } from '@/components/ui/Field'
 
 export interface ConfirmRequest {
   title: string
@@ -20,7 +17,7 @@ interface ConfirmState {
   request: (ConfirmRequest & { resolve: (ok: boolean) => void }) | null
 }
 
-const useConfirmStore = create<ConfirmState>(() => ({ request: null }))
+export const useConfirmStore = create<ConfirmState>(() => ({ request: null }))
 
 // Every destructive action goes through this. Resolves true only on an explicit confirm.
 export const confirm = (request: ConfirmRequest): Promise<boolean> =>
@@ -28,59 +25,3 @@ export const confirm = (request: ConfirmRequest): Promise<boolean> =>
     useConfirmStore.getState().request?.resolve(false)
     useConfirmStore.setState({ request: { ...request, resolve } })
   })
-
-export const ConfirmHost = () => {
-  const request = useConfirmStore(state => state.request)
-  const [typed, setTyped] = useState('')
-
-  const close = (ok: boolean) => {
-    request?.resolve(ok)
-    useConfirmStore.setState({ request: null })
-    setTyped('')
-  }
-
-  const blocked = Boolean(request?.typeToConfirm) && typed !== request?.typeToConfirm
-
-  return (
-    <Dialog open={Boolean(request)} onOpenChange={open => !open && close(false)}>
-      {request ? (
-        <DialogContent
-          size="sm"
-          title={request.title}
-          description={typeof request.description === 'string' ? request.description : undefined}
-          footer={
-            <>
-              <Button variant="ghost" onClick={() => close(false)}>
-                {request.cancelLabel ?? 'Cancel'}
-              </Button>
-              <Button
-                variant={request.tone === 'primary' ? 'primary' : 'danger-solid'}
-                disabled={blocked}
-                onClick={() => close(true)}
-                autoFocus={!request.typeToConfirm}>
-                {request.confirmLabel ?? 'Confirm'}
-              </Button>
-            </>
-          }>
-          {typeof request.description === 'string' ? null : <div className="text-sm text-fg-muted">{request.description}</div>}
-          {request.typeToConfirm ? (
-            <div className="mt-1 space-y-2 text-sm text-fg-muted">
-              <p>
-                Type <span className="font-mono text-fg">{request.typeToConfirm}</span> to confirm.
-              </p>
-              <Input
-                autoFocus
-                value={typed}
-                onChange={event => setTyped(event.target.value)}
-                aria-label={`Type ${request.typeToConfirm} to confirm`}
-                onKeyDown={event => {
-                  if (event.key === 'Enter' && !blocked) close(true)
-                }}
-              />
-            </div>
-          ) : null}
-        </DialogContent>
-      ) : null}
-    </Dialog>
-  )
-}
