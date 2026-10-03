@@ -42,6 +42,8 @@ export interface VaultRoleDTO extends RoleDTO {
   subject_type?: SubjectType | null
   subject_id?: number | null
   assigned_at?: number | string | null
+  // What roles.vault.list.assigned / role.vault.assign actually send: the subject, nested, with string ids.
+  assignment?: { subject_id: string | number; subject_type: SubjectType; vault_id: string | number } | null
   permission_overrides?: PermissionOverrideDTO[]
   permissions: PermissionDTO[]
 }

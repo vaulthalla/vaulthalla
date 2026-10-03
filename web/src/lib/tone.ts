@@ -4,20 +4,34 @@ export type Tone = 'ok' | 'info' | 'warn' | 'danger' | 'unknown' | 'accent' | 'n
 
 export type Severity = 'healthy' | 'info' | 'warning' | 'error' | 'unknown'
 
+// Also covers the component statuses core folds into severities (dashboardOverviewSeverityFromStatus in
+// stats/model/DashboardOverview.cpp: "ready", "stale", "stalled", ...), so a raw status gets the overview's tone.
 export const severityTone = (severity: string | null | undefined): Tone => {
   switch (severity) {
     case 'healthy':
     case 'ok':
+    case 'idle':
+    case 'normal':
+    case 'ready':
       return 'ok'
     case 'info':
+    case 'syncing':
+    case 'success':
       return 'info'
     case 'warning':
     case 'warn':
     case 'degraded':
+    case 'pressured':
+    case 'stale':
       return 'warn'
     case 'error':
     case 'critical':
     case 'failed':
+    case 'saturated':
+    case 'failing':
+    case 'stalled':
+    case 'diverged':
+    case 'overdue':
       return 'danger'
     default:
       return 'unknown'
