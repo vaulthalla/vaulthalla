@@ -3,8 +3,6 @@
 #include "auth/session/Manager.hpp"
 #include "log/Registry.hpp"
 #include "config/Config.hpp"
-#include "config/Registry.hpp"
-#include "protocols/ws/DefaultPasswordGate.hpp"
 #include "protocols/ws/LogRedaction.hpp"
 #include "protocols/ws/Session.hpp"
 #include "protocols/ws/ShareRateLimit.hpp"
@@ -21,8 +19,18 @@ bool containsCommand(const std::array<std::string_view, N>& commands, const std:
     return std::ranges::find(commands, command) != commands.end();
 }
 
-bool isAuthCommand(const std::string_view command) {
-    return command.starts_with("auth");
+// Commands that establish, refresh, inspect or end a session. They must work before (or without a valid) access
+// token. Everything else under `auth.` (user register/update/delete/get/list, password change) is account
+// management and goes through RequireHumanAuth like any other command; a `starts_with("auth")` rule used to
+// let unauthenticated sockets reach handlers that dereference session->user.
+bool isSessionLifecycleCommand(const std::string_view command) {
+    constexpr std::array commands{
+        std::string_view{"auth.login"},
+        std::string_view{"auth.logout"},
+        std::string_view{"auth.refresh"},
+        std::string_view{"auth.isAuthenticated"}
+    };
+    return containsCommand(commands, command);
 }
 
 vh::protocols::ws::ShareRateLimit& shareRateLimit() {
@@ -174,11 +182,11 @@ Router::CommandAuthDecision Router::classifyCommand(const std::string_view comma
             isSharePreviewCommand(command) ||
             isShareUploadCommand(command))
             return CommandAuthDecision::Deny;
-        if (isAuthCommand(command)) return CommandAuthDecision::Allow;
+        if (isSessionLifecycleCommand(command)) return CommandAuthDecision::Allow;
         return CommandAuthDecision::RequireHumanAuth;
     }
 
-    if (isAuthCommand(command) || isPublicShareCommand(command)) return CommandAuthDecision::Allow;
+    if (isSessionLifecycleCommand(command) || isPublicShareCommand(command)) return CommandAuthDecision::Allow;
     return CommandAuthDecision::Deny;
 }
 
@@ -212,25 +220,14 @@ void Router::routeMessage(json&& msg, const SessionPtr& session) {
         const auto rateLimit = shareRateLimit().check(command, msg, *session);
         if (!rateLimit.allowed) {
             log::Registry::ws()->warn(
-                "[Router] Share command rate limited: {} for IP {}",
+                "[Router] Share command rate limited: {} for client {}",
                 command,
-                session->ipAddress.empty() ? "unknown" : session->ipAddress
+                !session->clientAddress.empty() ? session->clientAddress
+                    : session->ipAddress.empty() ? "unknown" : session->ipAddress
             );
             Response::ERROR(std::move(command), std::move(msg),
                             "Rate limit exceeded. Try again in " + std::to_string(rateLimit.retry_after.count()) +
                             "s.")(session);
-            return;
-        }
-
-        // Seeded default password (issue #103): enforced here, not only by the browser. Share sessions have no
-        // account password; dev installs mirror the web's dev-mode bypass.
-        if (session->user && !session->isShareSession() && !config::Registry::get().dev.enabled &&
-            !default_password::isAllowedWhileDefault(command) && session->userHasDefaultPassword()) {
-            log::Registry::ws()->warn("[Router] Refused '{}' for user '{}': default password not changed yet",
-                                      command, session->user->name);
-            Response(std::move(command), std::move(msg), Status::ERROR,
-                     json{{"code", std::string(default_password::kErrorCode)}},
-                     std::string(default_password::kErrorMessage))(session);
             return;
         }
 

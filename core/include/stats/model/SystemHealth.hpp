@@ -66,8 +66,8 @@ struct ShellHealth {
     std::optional<bool> adminUidBound;
 };
 
-// DB connection pool state (db::DBPool::stats()). Reconnect failures mean the database is unreachable
-// (critical); dead idle connections mean a session loss that hasn't been repaired yet (degraded).
+// DB connection pool state (db::DBPool::stats()) plus a live probe. An unreachable database, or reconnect
+// failures, are critical; dead idle connections mean a session loss that hasn't been repaired yet (degraded).
 struct DatabaseHealth {
     std::size_t poolSize = 0;
     std::size_t idle = 0;
@@ -77,6 +77,11 @@ struct DatabaseHealth {
     std::uint64_t reconnectFailures = 0;
     std::uint32_t consecutiveReconnectFailures = 0;
     std::uint64_t acquireTimeouts = 0;
+    // A live, bounded `SELECT 1` taken with the snapshot: the counters above only move when some request has
+    // already failed, so on their own an idle daemon reads healthy while PostgreSQL is down.
+    bool reachable = false;
+    long long probeLatencyMs = 0;
+    std::string probeError;
 };
 
 struct HealthSummary {
@@ -96,7 +101,7 @@ struct SystemHealth {
     S3GatewayHealth s3Gateway;
     DependencyHealth deps;
     ShellHealth shell;
-    std::optional<DatabaseHealth> database; // nullopt until the pool exists
+    std::optional<DatabaseHealth> database; // nullopt until the pool exists (critical)
     HealthSummary summary;
 
     [[nodiscard]] bool healthy() const noexcept;

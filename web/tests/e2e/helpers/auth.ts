@@ -28,9 +28,6 @@ export async function loginThroughUi(page: Page) {
   await page.getByPlaceholder('Enter your password').fill(password)
   await page.getByRole('button', { name: /^login$/i }).click()
   await page.waitForURL(url => !url.pathname.endsWith('/login'), { timeout: 15_000 })
-  if (page.url().includes('/change-password')) {
-    throw new Error('E2E login reached the forced password-change page. Provide a seeded non-expiring E2E admin user.')
-  }
 }
 
 export async function authenticateAndSaveState(browser: Browser, storageStatePath = authStatePath) {

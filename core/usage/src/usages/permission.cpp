@@ -23,7 +23,7 @@ static std::shared_ptr<CommandUsage> base(const std::weak_ptr<CommandUsage>& par
     cmd->optional = { typeFilter };
     cmd->optional_flags = { userFlag, vaultFlag };
     cmd->description = "Display available permission flags for user and vault roles.";
-    cmd->examples.push_back({"vh permissions", "Show all available permission flags."});
+    cmd->examples.push_back({"vh permission", "Show all available permission flags."});
     return cmd;
 }
 

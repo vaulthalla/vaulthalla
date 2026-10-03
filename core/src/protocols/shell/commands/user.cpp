@@ -1,244 +1,128 @@
-#include <unistd.h>
 #include "protocols/shell/commands/all.hpp"
 #include "protocols/shell/commands/helpers.hpp"
 #include "protocols/shell/Router.hpp"
-#include "db/query/identities/User.hpp"
 #include "protocols/shell/util/argsHelpers.hpp"
-#include "crypto/util/hash.hpp"
-#include "log/Registry.hpp"
-#include "rbac/role/Admin.hpp"
+#include "protocols/shell/util/runOp.hpp"
+#include "identities/User.hpp"
+#include "ops/Users.hpp"
 #include "runtime/Deps.hpp"
 #include "usage/include/UsageManager.hpp"
 #include "CommandUsage.hpp"
-#include "auth/registration/Validator.hpp"
-#include "identities/User.hpp"
 
-#include <paths.h>
+#include <optional>
+#include <string>
 
-using namespace vh;
-using namespace vh::protocols::shell;
-using namespace vh::rbac::role;
-using namespace vh::identities;
-using namespace vh::auth;
-using namespace vh::crypto;
+namespace vh::protocols::shell::commands {
 
-static const unsigned int PASSWORD_LENGTH = vh::paths::testMode ? 8 : 84;
+namespace {
 
-static std::string tryAssignNewPassword(const std::shared_ptr<User>& user) {
-    constexpr unsigned short maxRetries = 1024 * 4; // 4096 attempts max
-    for (unsigned short i = 1; i < maxRetries; ++i) {
-        if (const auto password = hash::generate_secure_password(PASSWORD_LENGTH); registration::Validator::isValidPassword(password)) {
-            user->setPasswordHash(hash::password(password));
-            return password;
-        }
-        if (i == maxRetries)
-            throw std::runtime_error("Failed to generate a valid password after " + std::to_string(maxRetries) + " attempts");
-    }
-    throw std::runtime_error("Failed to generate a valid password");
+std::optional<uint32_t> linuxUidFromOption(const CommandCall& call, const std::shared_ptr<CommandUsage>& usage) {
+    const auto value = optVal(call, usage->resolveOptional("linux-uid")->option_tokens);
+    if (!value) return std::nullopt;
+    const auto parsed = parseUInt(*value);
+    if (!parsed || *parsed == 0) throw ops::Invalid("--linux-uid must be a positive integer");
+    return *parsed;
 }
 
-static void assignEmail(const CommandCall& call, const std::shared_ptr<User>& user, const std::shared_ptr<CommandUsage>& usage) {
-    if (const auto emailOpt = optVal(call, usage->resolveOptional("email")->option_tokens)) {
-        if (!registration::Validator::isValidEmail(*emailOpt))
-            throw std::runtime_error("Invalid email address: " + *emailOpt);
-        user->email = *emailOpt;
-    }
+// The positional names a user by name or id; ops decide what the caller may see of it.
+std::optional<uint32_t> userIdFromPositional(const std::string& arg) {
+    const auto lookup = resolveUser(arg, "");
+    if (!lookup || !lookup.ptr) return std::nullopt;
+    return lookup.ptr->id;
 }
 
-static void assignLinuxUidIfAvailable(const CommandCall& call, const std::shared_ptr<User>& user, const std::shared_ptr<CommandUsage>& usage) {
-    if (const auto linuxUidOpt = optVal(call, usage->resolveOptional("linux-uid")->option_tokens)) {
-        const auto parsed = parseUInt(*linuxUidOpt);
-        if (!parsed || *parsed <= 0)
-            throw std::runtime_error("Invalid --linux-uid: must be a positive integer");
-        if (*parsed == ::getuid())
-            throw std::runtime_error("Invalid --linux-uid: the Vaulthalla service account cannot be bound to a user");
-        user->meta.linux_uid = *parsed;
-    }
+CommandResult userNotFound(const std::string_view prefix, const std::string& arg) {
+    return invalid(std::string(prefix) + ": user not found: " + arg);
 }
 
-static CommandResult createUser(const CommandCall& call) {
-    constexpr const auto* ERR = "user create";
-
+CommandResult createUser(const CommandCall& call) {
     const auto usage = resolveUsage({"user", "create"});
     validatePositionals(call, usage);
-
-    const auto user = std::make_shared<User>();
-    user->name = call.positionals[0];
-    assignEmail(call, user, usage);
-    assignLinuxUidIfAvailable(call, user, usage);
-    user->roles.admin = std::make_shared<Admin>();
-    user->meta.updated_by = call.user->id;
-
-    if (!registration::Validator::isValidName(user->name)) return invalid("Invalid user name: " + user->name);
-
-    const auto roleOpt = optVal(call, usage->resolveRequired("role")->option_tokens);
-    if (!roleOpt) return invalid("user create: --role is required");
-
-    const auto rLkp = resolveAdminRole(*roleOpt, ERR);
-    if (!rLkp || !rLkp.ptr) return invalid(rLkp.error);
-    const auto role = rLkp.ptr;
-
-    user->roles.admin = role;
-
-    if (user->isSuperAdmin())
-        return invalid("Cannot create user with super_admin role.");
-
-    if (user->isAdmin() && !call.user->admins().canAdd())
-        return invalid("You do not have permission to create admin users.");
-
-    if (!user->isAdmin() && !call.user->users().canAdd())
-        return invalid("You do not have permission to create users.");
-
-    const auto password = tryAssignNewPassword(user);
-    user->id = db::query::identities::User::createUser(user);
-
-    std::string out = "User created successfully: " + to_string(user) + "\n";
-    out += "Password: " + password + "\n";
-    return ok(out);
+    return runOp("user create", [&] {
+        const auto role = optVal(call, usage->resolveRequired("role")->option_tokens);
+        if (!role) throw ops::Invalid("--role is required");
+        return ops::users::create(call.user, {
+            .name = call.positionals[0],
+            .role = *role,
+            .email = optVal(call, usage->resolveOptional("email")->option_tokens),
+            .linux_uid = linuxUidFromOption(call, usage)
+        });
+    }, [](const ops::users::Created& created) {
+        std::string out = "User created successfully: " + identities::to_string(created.user) + "\n";
+        if (created.generated_password) out += "Password: " + *created.generated_password + "\n";
+        return out;
+    });
 }
 
-static CommandResult handleUpdateUser(const CommandCall& call) {
-    constexpr const auto* ERR = "user update";
-
+CommandResult updateUser(const CommandCall& call) {
     const auto usage = resolveUsage({"user", "update"});
     validatePositionals(call, usage);
-
-    const auto uLkp = resolveUser(call.positionals[0], ERR);
-    if (!uLkp || !uLkp.ptr) return invalid(uLkp.error);
-    const auto user = uLkp.ptr;
-
-    if (user->isProtected)
-        return invalid("Cannot update protected user: " + user->name);
-
-    const bool isSelf = call.user->id == user->id;
-
-    if (!isSelf) {
-        if (user->isSuperAdmin())
-            return invalid("Cannot update super admin user: " + user->name);
-
-        if (user->isAdmin() && !call.user->admins().canEdit())
-            return invalid("You do not have permission to update admin users.");
-
-        if (!user->isAdmin() && !call.user->users().canEdit())
-            return invalid("You do not have permission to update users.");
-    }
-
-    if (const auto newNameOpt = optVal(call, usage->resolveOptional("name")->option_tokens)) {
-        if (user->isSuperAdmin()) return invalid("Cannot change name of super_admin user: " + user->name);
-        if (!registration::Validator::isValidName(*newNameOpt)) return invalid("Invalid new user name: " + *newNameOpt);
-        user->name = *newNameOpt;
-    }
-
-    if (const auto newRoleOpt = optVal(call, usage->resolveOptional("role")->option_tokens)) {
-        // Role changes are privilege changes: never on your own account (whatever your permissions), and the
-        // target role is judged by what it resolves to (name or numeric id), not by the literal argument.
-        if (isSelf) return invalid("Cannot change your own role. Ask another administrator to change it.");
-        if (user->isSuperAdmin()) return invalid("Cannot change role of super_admin user: " + user->name);
-
-        const auto rLkp = resolveAdminRole(*newRoleOpt, ERR);
-        if (!rLkp || !rLkp.ptr) return invalid(rLkp.error);
-        const auto role = rLkp.ptr;
-
-        if (role->name == "super_admin") return invalid("Cannot change role to super_admin.");
-
-        // Granting an admin-level role needs admin-edit rights even when the target is currently a plain user.
-        const auto staged = std::make_shared<User>();
-        staged->roles.admin = role;
-        if (staged->isAdmin() && !call.user->admins().canEdit())
-            return invalid("You do not have permission to assign admin roles.");
-
-        user->roles.admin = role;
-    }
-
-    assignEmail(call, user, usage);
-    // The CLI authenticates callers by Linux UID, so rebinding your own UID would let you take over another
-    // account's CLI identity. Only another administrator (checked above for !isSelf) may change it.
-    if (isSelf && optVal(call, usage->resolveOptional("linux-uid")->option_tokens))
-        return invalid("Cannot change your own Linux UID binding. Ask another administrator to change it.");
-    assignLinuxUidIfAvailable(call, user, usage);
-
-    user->meta.updated_by = call.user->id;
-
-    db::query::identities::User::updateUser(user);
-
-    return ok("User updated successfully: " + user->name + "\n" + to_string(user));
+    const auto id = userIdFromPositional(call.positionals[0]);
+    if (!id) return userNotFound("user update", call.positionals[0]);
+    return runOp("user update", [&] {
+        if (hasFlag(call, "disable") && hasFlag(call, "enable")) throw ops::Invalid("--disable and --enable are mutually exclusive");
+        ops::users::Update req{
+            .id = *id,
+            .name = optVal(call, usage->resolveOptional("name")->option_tokens),
+            .role = optVal(call, usage->resolveOptional("role")->option_tokens),
+            .linux_uid = linuxUidFromOption(call, usage)
+        };
+        if (const auto email = optVal(call, usage->resolveOptional("email")->option_tokens))
+            req.email = std::optional<std::string>{*email};
+        if (hasFlag(call, "disable")) req.is_active = false;
+        if (hasFlag(call, "enable")) req.is_active = true;
+        return ops::users::update(call.user, req);
+    }, [](const ops::users::UserPtr& user) {
+        return "User updated successfully: " + user->name + "\n" + identities::to_string(user);
+    });
 }
 
-static CommandResult deleteUser(const CommandCall& call) {
+CommandResult deleteUser(const CommandCall& call) {
     const auto usage = resolveUsage({"user", "delete"});
     validatePositionals(call, usage);
+    const auto id = userIdFromPositional(call.positionals[0]);
+    if (!id) return userNotFound("user delete", call.positionals[0]);
 
-    const auto uLkp = resolveUser(call.positionals[0], "user delete");
-    if (!uLkp || !uLkp.ptr) return invalid(uLkp.error);
-    const auto user = uLkp.ptr;
-
-    if (user->isProtected) {
-        log::Registry::audit()->warn("[UserCommands] Attempt to delete protected user: {}, by user: {}",
-            user->name, call.user->name);
-        log::Registry::shell()->warn("[UserCommands] Attempt to delete protected user: {}, by user: {}",
-            user->name, call.user->name);
-        return invalid("Cannot delete protected user: " + user->name);
+    ops::users::Remove req{.id = *id, .confirmed = hasFlag(call, "yes")};
+    if (const auto heir = optVal(call, "transfer-to")) {
+        const auto heirId = userIdFromPositional(*heir);
+        if (!heirId) return userNotFound("user delete --transfer-to", *heir);
+        req.transfer_to = *heirId;
     }
-
-    if (user->isSuperAdmin()) {
-        log::Registry::audit()->warn("[UserCommands] Attempt to delete super_admin user: {}, by user: {}",
-            user->name, call.user->name);
-        log::Registry::shell()->warn("[UserCommands] Attempt to delete super_admin user: {}, by user: {}",
-            user->name, call.user->name);
-        return invalid("Cannot delete super admin user: " + user->name);
+    const auto format = [](const ops::users::UserPtr& user) { return "User deleted successfully: " + user->name; };
+    try {
+        return ok(format(ops::users::remove(call.user, req)));
+    } catch (const ops::NeedsConfirmation& e) {
+        if (!call.io)
+            return invalid("user delete: " + std::string(e.what()) + "\nRe-run with --yes to confirm.");
+        if (!call.io->confirm(std::string(e.what()) + "\nDelete this user? [no]", true))
+            return invalid("user delete: cancelled; nothing was changed");
+        req.confirmed = true;
+        return runOp("user delete", [&] { return ops::users::remove(call.user, req); }, format);
+    } catch (const ops::Error& e) {
+        return invalid("user delete: " + std::string(e.what()));
     }
-
-    if (call.user->id != user->id) {
-        if (user->isSuperAdmin())
-            return invalid("Cannot delete super admin user: " + user->name);
-
-        if (user->isAdmin() && !call.user->admins().canDelete())
-            return invalid("You do not have permission to delete admin users.");
-
-        if (!user->isAdmin() && !call.user->users().canDelete())
-            return invalid("You do not have permission to delete users.");
-    }
-
-    db::query::identities::User::deleteUser(user->id);
-    return ok("User deleted successfully: " + user->name);
 }
 
-static CommandResult handleUserInfo(const CommandCall& call) {
-    constexpr const auto* ERR = "user info";
-
+CommandResult userInfo(const CommandCall& call) {
     const auto usage = resolveUsage({"user", "info"});
     validatePositionals(call, usage);
-
-    const auto uLkp = resolveUser(call.positionals[0], ERR);
-    if (!uLkp || !uLkp.ptr) return invalid(uLkp.error);
-    const auto user = uLkp.ptr;
-
-    if (call.user->id != user->id) {
-        if (user->isSuperAdmin() && !call.user->admins().canView())
-            return invalid("You do not have permission to view super admin users.");
-
-        if (user->isAdmin() && !call.user->admins().canView())
-            return invalid("You do not have permission to view admin users.");
-
-        if (!user->isAdmin() && !call.user->users().canView())
-            return invalid("You do not have permission to view users.");
-    }
-
-    return ok(to_string(user));
+    const auto id = userIdFromPositional(call.positionals[0]);
+    if (!id) return userNotFound("user info", call.positionals[0]);
+    return runOp("user info", [&] { return ops::users::get(call.user, *id); },
+                 [](const ops::users::UserPtr& user) { return identities::to_string(user); });
 }
 
-static CommandResult handle_list_users(const CommandCall& call) {
-    if (!call.user->admins().canView())
-        return invalid("You do not have permission to list users.");
-
-    return ok(to_string(db::query::identities::User::listUsers(parseListQuery(call))));
+CommandResult listUsers(const CommandCall& call) {
+    return runOp("user list", [&] { return ops::users::list(call.user, parseListQuery(call)); },
+                 [](const std::vector<ops::users::UserPtr>& users) { return identities::to_string(users); });
 }
 
-static bool isUserMatch(const std::string& cmd, const std::string_view input) {
+bool isUserMatch(const std::string& cmd, const std::string_view input) {
     return isCommandMatch({"user", cmd}, input);
 }
 
-static CommandResult handle_user(const CommandCall& call) {
+CommandResult handleUser(const CommandCall& call) {
     if (call.positionals.empty() || hasFlag(call, "h") || hasFlag(call, "help"))
         return usage(call.constructFullArgs());
 
@@ -246,14 +130,18 @@ static CommandResult handle_user(const CommandCall& call) {
 
     if (isUserMatch("create", sub)) return createUser(subcall);
     if (isUserMatch("delete", sub)) return deleteUser(subcall);
-    if (isUserMatch("info", sub)) return handleUserInfo(subcall);
-    if (isUserMatch("update", sub)) return handleUpdateUser(subcall);
-    if (isUserMatch("list", sub) || isUserMatch("ls", sub)) return handle_list_users(subcall);
+    if (isUserMatch("info", sub)) return userInfo(subcall);
+    if (isUserMatch("update", sub)) return updateUser(subcall);
+    if (isUserMatch("list", sub) || isUserMatch("ls", sub)) return listUsers(subcall);
 
     return invalid(call.constructFullArgs(), "Unknown user subcommand: '" + std::string(sub) + "'");
 }
 
-void commands::registerUserCommands(const std::shared_ptr<Router>& r) {
+}
+
+void registerUserCommands(const std::shared_ptr<Router>& r) {
     const auto usageManager = runtime::Deps::get().shellUsageManager;
-    r->registerCommand(usageManager->resolve("user"), handle_user);
+    r->registerCommand(usageManager->resolve("user"), handleUser);
+}
+
 }

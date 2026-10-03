@@ -5,7 +5,6 @@
 #include "auth/model/TokenPair.hpp"
 #include "log/Registry.hpp"
 #include "protocols/ws/Router.hpp"
-#include "protocols/ws/DefaultPasswordGate.hpp"
 #include "protocols/ws/CookiePolicy.hpp"
 #include "crypto/util/hash.hpp"
 #include "protocols/ws/handler/fs/Upload.hpp"
@@ -68,21 +67,6 @@ std::string Session::getUserAgent() const {
     if (const auto it = handshakeRequest_.find(beast_http::field::user_agent);
         it != handshakeRequest_.end()) return std::string(it->value());
     return  "unknown";
-}
-
-bool Session::userHasDefaultPassword() {
-    const auto u = user;
-    if (!u || u->password_hash.empty()) return false;
-
-    std::scoped_lock lock(defaultPasswordMutex_);
-    if (!defaultPasswordCached_ || defaultPasswordUserId_ != u->id || defaultPasswordHash_ != u->password_hash) {
-        defaultPasswordUserId_ = u->id;
-        defaultPasswordHash_ = u->password_hash;
-        defaultPasswordIsDefault_ = crypto::hash::verifyPassword(
-            std::string(default_password::kSeededAdminPassword), u->password_hash);
-        defaultPasswordCached_ = true;
-    }
-    return defaultPasswordIsDefault_;
 }
 
 void Session::setAuthenticatedUser(const std::shared_ptr<User>& u) {
@@ -196,6 +180,10 @@ void Session::hydrateFromRequest(const RequestType& req) {
 
     handshakeRequest_ = req;
     ipAddress = getIPAddress();
+    clientAddress = cookie_policy::clientAddress(
+        ipAddress,
+        std::string_view{req["X-Real-IP"].data(), req["X-Real-IP"].size()},
+        std::string_view{req["X-Forwarded-For"].data(), req["X-Forwarded-For"].size()});
     userAgent = getUserAgent();
     shareHandshake_ = isShareHandshakeTarget(std::string_view{req.target().data(), req.target().size()});
     externallyHttps_ = cookie_policy::isExternallyHttps(
@@ -224,9 +212,10 @@ void Session::hydrateFromRequest(const RequestType& req) {
 
     if (user) log::Registry::ws()->debug("[ws::Session] Session hydrated with user: {} (ID: {})", user->name, user->id);
     else {
-        log::Registry::ws()->critical("[ws::Session] No user associated with session after hydration");
+        // The normal state of a connection before login: a fresh refresh token, no user yet. (This was logged as
+        // critical for every anonymous connection.) What must hold is that the token exists and is valid.
+        log::Registry::ws()->debug("[ws::Session] Anonymous session bootstrapped with a fresh refresh token");
 
-        // this should never happen, but if it does, we nuke the session
         if (!tokens || !tokens->refreshToken) {
             // Reject this connection; a client request must never be able to exit the daemon.
             throw std::runtime_error("invariant violation: refresh token missing after hydration/bootstrap");
@@ -279,6 +268,7 @@ void Session::installHandshakeDecorator() const {
 void Session::onHandshakeAccepted(const beast::error_code& ec) {
     if (ec) return logFail("Handshake error", ec);
     handshakeDone_ = true;
+    handshakeComplete_.store(true, std::memory_order_release);
     if (closing_.load(std::memory_order_acquire)) {
         // close() arrived mid-handshake; finish it now that a proper websocket close is possible.
         closeStarted_ = false;

@@ -14,6 +14,7 @@
 #include "storage/Engine.hpp"
 #include "storage/s3/provider/Registry.hpp"
 #include "protocols/ws/Session.hpp"
+#include "ops/Vaults.hpp"
 #include "runtime/Deps.hpp"
 #include "sync/Controller.hpp"
 #include "rbac/role/Admin.hpp"
@@ -75,253 +76,138 @@ namespace {
         return value.get<uint64_t>();
     }
 
-    std::shared_ptr<RemotePolicy> loadRemotePolicy(const unsigned int vaultId) {
-        if (const auto engine = vh::runtime::Deps::get().storageManager->getEngine(vaultId)) {
-            if (const auto remote = std::dynamic_pointer_cast<RemotePolicy>(engine->sync)) return remote;
-        }
-
-        return std::dynamic_pointer_cast<RemotePolicy>(vh::db::query::sync::Policy::getSync(vaultId));
+    std::optional<std::optional<uint64_t>> budgetField(const json& budget, const char* key) {
+        if (!budget.contains(key)) return std::nullopt;
+        return parseBudgetValue(budget.at(key));
     }
 
-    void applyRemotePolicyPatch(RemotePolicy& sync, const json& patch) {
-        if (patch.contains("interval")) sync.interval = parsePolicyInterval(patch.at("interval"));
-        if (patch.contains("enabled")) sync.enabled = patch.at("enabled").get<bool>();
-        if (patch.contains("strategy")) sync.strategy = strategyFromString(patch.at("strategy").get<std::string>());
-        if (patch.contains("conflict_policy"))
-            sync.conflict_policy = rsConflictPolicyFromString(patch.at("conflict_policy").get<std::string>());
-        if (patch.contains("max_remote_index_age_seconds")) {
-            if (patch.at("max_remote_index_age_seconds").is_null()) sync.max_remote_index_age = std::nullopt;
+    // The ws sync object (a patch: absent keys stay as they are) in the shared op's terms.
+    vh::ops::vaults::SyncPatch syncPatchFromPayload(const json& sync) {
+        vh::ops::vaults::SyncPatch patch;
+        if (!sync.is_object()) return patch;
+        if (sync.contains("interval")) patch.interval = parsePolicyInterval(sync.at("interval"));
+        if (sync.contains("enabled")) patch.enabled = sync.at("enabled").get<bool>();
+        if (sync.contains("strategy")) patch.strategy = sync.at("strategy").get<std::string>();
+        if (sync.contains("conflict_policy")) patch.conflict_policy = sync.at("conflict_policy").get<std::string>();
+        if (sync.contains("max_remote_index_age_seconds")) {
+            const auto& v = sync.at("max_remote_index_age_seconds");
+            if (v.is_null()) patch.max_remote_index_age = std::optional<std::chrono::seconds>{};
             else {
-                const auto seconds = patch.at("max_remote_index_age_seconds").get<int64_t>();
+                const auto seconds = v.get<int64_t>();
                 if (seconds < 0) throw std::runtime_error("sync.max_remote_index_age_seconds cannot be negative");
-                sync.max_remote_index_age = std::chrono::seconds(seconds);
+                patch.max_remote_index_age = std::optional<std::chrono::seconds>{std::chrono::seconds(seconds)};
             }
         }
-
-        if (patch.contains("s3_request_budget")) {
-            const auto& budget = patch.at("s3_request_budget");
+        if (sync.contains("s3_request_budget")) {
+            const auto& budget = sync.at("s3_request_budget");
             if (!budget.is_object()) throw std::runtime_error("sync.s3_request_budget must be an object");
-            if (budget.contains("list_requests"))
-                sync.s3_request_budget.max_list_requests = parseBudgetValue(budget.at("list_requests"));
-            if (budget.contains("head_requests"))
-                sync.s3_request_budget.max_head_requests = parseBudgetValue(budget.at("head_requests"));
-            if (budget.contains("get_requests"))
-                sync.s3_request_budget.max_get_requests = parseBudgetValue(budget.at("get_requests"));
-            if (budget.contains("put_requests"))
-                sync.s3_request_budget.max_put_requests = parseBudgetValue(budget.at("put_requests"));
-            if (budget.contains("copy_requests"))
-                sync.s3_request_budget.max_copy_requests = parseBudgetValue(budget.at("copy_requests"));
-            if (budget.contains("delete_requests"))
-                sync.s3_request_budget.max_delete_requests = parseBudgetValue(budget.at("delete_requests"));
-            if (budget.contains("downloaded_bytes"))
-                sync.s3_request_budget.max_downloaded_bytes = parseBudgetValue(budget.at("downloaded_bytes"));
+            patch.s3_budget.list = budgetField(budget, "list_requests");
+            patch.s3_budget.head = budgetField(budget, "head_requests");
+            patch.s3_budget.get = budgetField(budget, "get_requests");
+            patch.s3_budget.put = budgetField(budget, "put_requests");
+            patch.s3_budget.copy = budgetField(budget, "copy_requests");
+            patch.s3_budget.del = budgetField(budget, "delete_requests");
+            patch.s3_budget.downloaded_bytes = budgetField(budget, "downloaded_bytes");
         }
-
-        sync.interval = Policy::clampInterval(sync.interval);
-        sync.rehash_config();
+        return patch;
     }
 
-    std::shared_ptr<RemotePolicy> patchedRemotePolicyForVault(const unsigned int vaultId, const json& patch) {
-        auto existing = loadRemotePolicy(vaultId);
-        if (!existing) throw std::runtime_error("S3 sync policy not found for vault ID: " + std::to_string(vaultId));
-
-        auto updated = std::make_shared<RemotePolicy>(*existing);
-        applyRemotePolicyPatch(*updated, patch);
-        updated->id = existing->id;
-        updated->vault_id = existing->vault_id ? existing->vault_id : vaultId;
-        return updated;
+    template<class T>
+    std::optional<T> vaultPayloadField(const json& payload, const char* key) {
+        if (!payload.contains(key) || payload.at(key).is_null()) return std::nullopt;
+        return payload.at(key).get<T>();
     }
 
-    void attachRemotePolicyJson(json& vaultJson, const unsigned int vaultId) {
-        if (const auto sync = loadRemotePolicy(vaultId)) vaultJson["sync"] = *sync;
+    bool vaultPayloadAcceptsWaiver(const json& payload) {
+        return payload.value("accept_encryption_waiver", false);
+    }
+
+    json vaultDetailsJson(const vh::ops::vaults::Details& details) {
+        json out;
+        if (details.vault->type == VaultType::S3) {
+            out = *std::static_pointer_cast<S3Vault>(details.vault);
+            if (const auto remote = std::dynamic_pointer_cast<RemotePolicy>(details.sync)) out["sync"] = *remote;
+        } else out = *details.vault;
+        out["owner"] = details.owner_name;
+        return out;
     }
 }
 
 json Vaults::add(const json &payload, const std::shared_ptr<Session> &session) {
-    const std::string name = payload.at("name").get<std::string>();
-    const std::string type = payload.at("type").get<std::string>();
-    const std::string typeLower = boost::algorithm::to_lower_copy(type);
-    const std::string mountPoint = payload.value("mount_point", "");
-    const auto ownerId = payload.contains("owner_id")
-                             ? std::make_optional(payload.at("owner_id").get<uint32_t>())
-                             : session->user->id;
+    const auto typeName = boost::algorithm::to_lower_copy(payload.at("type").get<std::string>());
+    if (typeName != "local" && typeName != "s3") throw std::runtime_error("Unsupported vault type: " + typeName);
+    const auto type = typeName == "s3" ? VaultType::S3 : VaultType::Local;
 
-    if (!resolver::Admin::has<permission::admin::VaultPermissions>({
-        .user = session->user,
-        .permission = permission::admin::VaultPermissions::Create,
-        .target_user_id = ownerId
-    })) throw std::runtime_error("User does not have permission to add vault.");
+    vh::ops::vaults::Create req{
+        .name = payload.at("name").get<std::string>(),
+        .type = type,
+        .owner_id = vaultPayloadField<uint32_t>(payload, "owner_id"),
+        .description = payload.value("description", std::string{}),
+        .quota = payload.value("quota", static_cast<uintmax_t>(0)),
+        .slug = payload.value("slug", std::string{}),
+        .fuse_name = optionalString(payload, "fuse_name"),
+        .s3 = std::nullopt,
+        // Older clients put sync settings at the top level of an S3 add.
+        .sync = syncPatchFromPayload(payload.contains("sync") ? payload.at("sync") : (type == VaultType::S3 ? payload : json::object())),
+        .accept_waiver = vaultPayloadAcceptsWaiver(payload)
+    };
+    if (type == VaultType::S3)
+        req.s3 = vh::ops::vaults::S3Spec{
+            .api_key_id = payload.at("api_key_id").get<unsigned int>(),
+            .bucket = payload.at("bucket").get<std::string>(),
+            .storage_tier = vaultPayloadField<std::string>(payload, "storage_tier_id"),
+            .encrypt_upstream = vaultPayloadField<bool>(payload, "encrypt_upstream")
+        };
 
-    std::shared_ptr<Vault> vault;
-    std::shared_ptr<Policy> sync = nullptr;
-
-    if (typeLower == "local") {
-        vault = std::make_shared<Vault>();
-        sync = std::make_shared<LocalPolicy>();
-    } else if (typeLower == "s3") {
-        const auto apiKeyID = payload.at("api_key_id").get<unsigned int>();
-
-        if (!resolver::Admin::has<permission::admin::keys::APIPermissions>({
-            .user = session->user,
-            .permission = permission::admin::keys::APIPermissions::Consume,
-            .api_key_id = apiKeyID
-        })) throw std::runtime_error("User does not have permission to add this api-key to vault.");
-
-        const std::string bucket = payload.at("bucket").get<std::string>();
-        const auto s3Vault = std::make_shared<S3Vault>(name, apiKeyID, bucket);
-        const auto apiKey = db::query::vault::APIKey::getAPIKey(apiKeyID);
-        if (!apiKey) throw std::runtime_error("API key not found: " + std::to_string(apiKeyID));
-
-        const auto requestedTier = payload.contains("storage_tier_id") && !payload.at("storage_tier_id").is_null()
-            ? std::make_optional(payload.at("storage_tier_id").get<std::string>())
-            : std::optional<std::string>{};
-        const auto tier = storage::s3::provider::resolve(apiKey->provider)->normalizeStorageTier(requestedTier);
-        if (!tier.ok) throw std::runtime_error(tier.error);
-        s3Vault->storage_tier_id = tier.normalized_id;
-
-        vault = s3Vault;
-        const auto remote = std::make_shared<RemotePolicy>();
-        if (payload.contains("sync")) applyRemotePolicyPatch(*remote, payload.at("sync"));
-        else applyRemotePolicyPatch(*remote, payload);
-        sync = remote;
-    } else throw std::runtime_error("Unsupported vault type: " + type);
-
-    vault->name = name;
-    vault->slug = payload.value("slug", std::string{});
-    if (payload.contains("fuse_name")) vault->fuse_name = optionalString(payload, "fuse_name");
-    vault->mount_point = mountPoint;
-    vault->owner_id = *ownerId;
-
-    vault = runtime::Deps::get().storageManager->addVault(vault, sync);
-
+    const auto vault = vh::ops::vaults::create(session->user, req);
     return {{"vault", *vault}};
 }
 
 json Vaults::update(const json &payload, const std::shared_ptr<Session> &session) {
-    std::shared_ptr<Vault> vault;
-    const auto type = from_string(payload.at("type").get<std::string>());
-    if (type == VaultType::S3) {
-        const auto s3Vault = std::make_shared<S3Vault>();
-        from_json(payload, *s3Vault);
-        const auto apiKey = db::query::vault::APIKey::getAPIKey(s3Vault->api_key_id);
-        if (!apiKey) throw std::runtime_error("API key not found: " + std::to_string(s3Vault->api_key_id));
-
-        const auto tier = storage::s3::provider::resolve(apiKey->provider)->normalizeStorageTier(s3Vault->storage_tier_id);
-        if (!tier.ok) throw std::runtime_error(tier.error);
-        s3Vault->storage_tier_id = tier.normalized_id;
-        vault = s3Vault;
-    } else {
-        vault = std::make_shared<Vault>();
-        from_json(payload, *vault);
+    const auto id = payload.at("id").get<unsigned int>();
+    if (payload.contains("type")) {
+        const auto current = vh::ops::vaults::get(session->user, id).vault->type;
+        if (from_string(payload.at("type").get<std::string>()) != current)
+            throw std::runtime_error("A vault's type cannot be changed");
     }
 
-    if (!resolver::Admin::has<permission::admin::VaultPermissions>({
-        .user = session->user,
-        .permission = permission::admin::VaultPermissions::Edit,
-        .vault_id = vault->id
-    })) throw std::runtime_error("User does not have permission to update vault.");
-
-    const auto existing = db::query::vault::Vault::getVault(vault->id);
-    if (!existing) throw std::runtime_error("Vault not found with ID: " + std::to_string(vault->id));
-    if (!payload.contains("slug")) vault->slug = existing->slug;
-    if (!payload.contains("fuse_name")) vault->fuse_name = existing->fuse_name;
-    if (!payload.contains("mount_point")) vault->mount_point = existing->mount_point;
-
-    // TODO: pull a diff and apply per role vGlobal perms to changes
-
-    std::shared_ptr<RemotePolicy> updatedSync;
-    if (type == VaultType::S3 && payload.contains("sync") && payload.at("sync").is_object()) {
-        updatedSync = patchedRemotePolicyForVault(vault->id, payload.at("sync"));
-        db::query::vault::Vault::updateVaultSync(updatedSync, vault->type);
-
-        if (const auto engine = runtime::Deps::get().storageManager->getEngine(vault->id)) {
-            std::unique_lock lock(engine->mutex);
-            engine->sync = updatedSync;
-        }
-    }
-
-    runtime::Deps::get().storageManager->updateVault(vault);
-    if (updatedSync && runtime::Deps::get().syncController)
-        runtime::Deps::get().syncController->refreshEngines();
+    vh::ops::vaults::Update req{
+        .id = id,
+        .name = vaultPayloadField<std::string>(payload, "name"),
+        .description = vaultPayloadField<std::string>(payload, "description"),
+        .quota = vaultPayloadField<uintmax_t>(payload, "quota"),
+        .owner_id = vaultPayloadField<uint32_t>(payload, "owner_id"),
+        .slug = vaultPayloadField<std::string>(payload, "slug"),
+        .fuse_name = payload.contains("fuse_name") ? std::optional<std::optional<std::string>>(optionalString(payload, "fuse_name"))
+                                                   : std::nullopt,
+        .is_active = vaultPayloadField<bool>(payload, "is_active"),
+        .api_key_id = vaultPayloadField<unsigned int>(payload, "api_key_id"),
+        .bucket = vaultPayloadField<std::string>(payload, "bucket"),
+        .storage_tier = payload.contains("storage_tier_id")
+            ? std::optional<std::optional<std::string>>(vaultPayloadField<std::string>(payload, "storage_tier_id"))
+            : std::nullopt,
+        .encrypt_upstream = vaultPayloadField<bool>(payload, "encrypt_upstream"),
+        .sync = syncPatchFromPayload(payload.contains("sync") ? payload.at("sync") : json::object()),
+        .accept_waiver = vaultPayloadAcceptsWaiver(payload)
+    };
+    const auto vault = vh::ops::vaults::update(session->user, req);
     return {{"vault", *vault}};
 }
 
 json Vaults::remove(const json &payload, const std::shared_ptr<Session> &session) {
-    const auto vaultId = payload.at("id").get<unsigned int>();
-
-    if (!resolver::Admin::has<permission::admin::VaultPermissions>({
-        .user = session->user,
-        .permission = permission::admin::VaultPermissions::Remove,
-        .vault_id = vaultId
-    }))
-        throw std::runtime_error("User does not have permission to remove vault.");
-
-    const auto vault = runtime::Deps::get().storageManager->getVault(vaultId);
-    if (!vault) throw std::runtime_error("Vault not found with ID: " + std::to_string(vaultId));
-
-    runtime::Deps::get().storageManager->removeVault(vaultId);
+    (void)vh::ops::vaults::remove(session->user, payload.at("id").get<unsigned int>());
     return {};
 }
 
 json Vaults::get(const json &payload, const std::shared_ptr<Session> &session) {
-    const auto vaultId = payload.at("id").get<unsigned int>();
-
-    if (!resolver::Admin::has<permission::admin::VaultPermissions>({
-        .user = session->user,
-        .permission = permission::admin::VaultPermissions::View,
-        .vault_id = vaultId
-    }))
-        throw std::runtime_error("User does not have permission to view vault.");
-
-    const auto vault = runtime::Deps::get().storageManager->getVault(vaultId);
-    if (!vault) throw std::runtime_error("Vault not found with ID: " + std::to_string(vaultId));
-
-    json data = {};
-
-    if (vault->type == VaultType::S3) {
-        const auto s3Vault = std::static_pointer_cast<S3Vault>(vault);
-        data["vault"] = *s3Vault;
-        attachRemotePolicyJson(data["vault"], vaultId);
-    } else data["vault"] = *vault;
-
-    if (vault->owner_id == session->user->id) data["vault"]["owner"] = session->user->name;
-    else data["vault"]["owner"] = db::query::vault::Vault::getVaultOwnersName(vaultId);
-
-    return data;
+    return {{"vault", vaultDetailsJson(vh::ops::vaults::get(session->user, payload.at("id").get<unsigned int>()))}};
 }
 
 json Vaults::list(const std::shared_ptr<Session> &session) {
-    const auto &adminVPerms = session->user->vaultsPerms();
-    if (adminVPerms.self.canView() && !(adminVPerms.admin.canView() || adminVPerms.user.canView()))
-        return json{{"vaults", db::query::vault::Vault::listUserVaults(session->user->id)}};
-
-    auto vaults = db::query::vault::Vault::listVaults();
-    std::erase_if(vaults, [&](const auto &v) {
-            return !resolver::Admin::has<permission::admin::VaultPermissions>({
-                .user = session->user,
-                .permission = permission::admin::VaultPermissions::View,
-                .vault_id = v->id
-            });
-        });
-
-    return json{{"vaults", vaults}};
+    return json{{"vaults", vh::ops::vaults::list(session->user)}};
 }
 
 json Vaults::sync(const json &payload, const std::shared_ptr<Session> &session) {
-    const auto vaultId = payload.at("id").get<unsigned int>();
-
-    if (!resolver::Vault::has<permission::vault::sync::SyncActionPermissions>({
-        .user = session->user,
-        .permission = permission::vault::sync::SyncActionPermissions::Trigger,
-        .vault_id = vaultId
-    })) throw std::runtime_error("User does not have permission to trigger vault.");
-
-    using RunNowResult = ::vh::sync::Controller::RunNowResult;
-    switch (runtime::Deps::get().syncController->runNow(vaultId)) {
-        case RunNowResult::Started: return {{"status", "started"}};
-        case RunNowResult::Rerun: return {{"status", "rerun_queued"}};
-        case RunNowResult::NoTask:
-        default:
-            throw std::runtime_error("No sync task is loaded for vault " + std::to_string(vaultId) + "; nothing was started");
-    }
+    const auto started = vh::ops::vaults::triggerSync(session->user, payload.at("id").get<unsigned int>());
+    return {{"status", started == vh::ops::vaults::SyncStart::Started ? "started" : "rerun_queued"}};
 }

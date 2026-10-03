@@ -3,7 +3,7 @@
 A Linux-native, self-hosted cloud: a C++23 daemon with a native FUSE filesystem, encrypted vaults (AES-256-GCM,
 TPM2/swtpm-sealed secrets), RBAC, local and S3/R2 storage with cost guardrails, an S3-compatible gateway,
 a `vh` CLI over a unix socket, and a packaged Next.js web console. It ships as a single Debian package
-`vaulthalla` from `apt.vaulthalla.sh`. It was built mostly by hand by one maintainer (Cooper). Version: `VERSION` (1.6.6).
+`vaulthalla` from `apt.vaulthalla.sh`. It was built mostly by hand by one maintainer (Cooper). Version: `VERSION` (kept in sync by `vlr version`).
 
 **Current phase: production hardening.** The build → package → publish → install/upgrade → run pipeline
 has to become trustworthy on real hosts. Start with `.claude/context/production-hardening.md`: it has a
@@ -15,16 +15,18 @@ live P0 (the DB pool wedges after a PostgreSQL restart, which hangs FUSE and `ap
 |---|---|---|
 | `core/` | C++ daemon `vaulthalla-server`, CLI `vaulthalla-cli`, `usage/` (help + manpages), `tests/{unit,integrations}` | `.claude/context/architecture.md` |
 | `web/` | Next.js 16 / React 19 / Zustand, ws-driven | `.claude/context/web-client.md` |
-| `deploy/` | runtime config, `psql/000…097` migrations, systemd units, nginx template, `lifecycle/` (Python behind `vh setup/teardown`) | `.claude/context/packaging-lifecycle.md` |
+| `deploy/` | runtime config, `psql/000…098` migrations, systemd units, nginx template, `lifecycle/` (Python behind `vh setup/teardown`) | `.claude/context/packaging-lifecycle.md` |
 | `debian/` | package metadata + maintainer scripts (the lifecycle source of truth) | `.claude/context/packaging-lifecycle.md` |
-| `tools/release/` | `python3 -m tools.release`: versioning, changelog/AI pipeline, deb build/validate/publish | `.claude/context/release-pipeline.md` |
-| `.github/` | `build_and_test.yml`, `release.yml` (11 jobs incl. optional lab-smoke), composite actions, self-hosted runners | `.claude/context/release-pipeline.md` |
+| `release.toml`, `.release/` | vl-release (`vlr`) contract: versions, Debian package contract, APT publication; staged release notes + changelog for the next release | `.claude/context/release-pipeline.md` |
+| `.github/` | `build_and_test.yml`, `release.yml` (a thin `vlr` transaction), composite actions, self-hosted runners | `.claude/context/release-pipeline.md` |
 | `bin/` | source install/uninstall/test-env scripts (dev helpers, **not** apt semantics) | `.claude/context/testing.md` |
 | `docs/` | operator docs (Payload Markdown, published by `pmdocs`) | `.claude/context/docs-authoring.md` |
 | `tools/{smoke,e2e,dev}` | S3 gateway smoke, Playwright env, share preview smoke, `dev/verify.sh` (shared verification entrypoint) | `.claude/context/testing.md` |
-| `tools/lab/` | real-host tooling: ws client, CLI↔web parity smoke, ws churn, TEST-ONLY S3/R2 credential scaffold | `.claude/context/phase1-results.md` |
+| `tools/contracts/` | product contracts (Debian packaging, maintainer scripts, shipped migrations, release workflow) | `.claude/context/packaging-lifecycle.md` |
+| `tools/lab/` | real-host tooling: ws client, CLI↔web parity smoke, ws churn, `lab_smoke` (real-apt upgrade check), TEST-ONLY S3/R2 credential scaffold | `.claude/context/phase1-results.md` |
 
 Phase 1 (packaging/upgrade/release hardening) results and how candidates are proven on the lab: `.claude/context/phase1-results.md`.
+Phase 2 (one CLI/web operation layer, security fixes, v1.8.0 candidate) lab matrix and open items: `.claude/context/phase2-results.md`.
 Other context: `.claude/context/environment.md` (VM topology: this box, the lab, dev-db, price bot), `link-sharing.md`
 (share model, invariants, open gaps), `history/stats-dashboard.md` (dashboard design log).
 `.claude/scratch/` is gitignored working notes, including the pre-migration Codex archive. Use it for
@@ -37,13 +39,13 @@ meson setup build -Dbuild_unit_tests=true && meson compile -C build   # core (un
 meson test -C build --print-errorlogs                                 # unit tests (DB-backed: see testing.md)
 make run_test                                                         # integration harness on /tmp/vh_mount (destructive to local test env)
 pnpm --dir web typecheck && pnpm --dir web lint                       # web ("pnpm test" = the same two)
-python3 -m tools.release check                                        # version drift across VERSION/meson/package.json/debian
+vlr check && vlr version check                                        # release contract + version drift (VERSION/meson/package.json)
 bash tools/dev/verify.sh [profiles]               # surface-aware verification (see /verify)
 bash .claude/skills/lab/scripts/inspect.sh                            # read-only lab health snapshot (see /lab)
 ```
 
-Skills: `/verify` (proof per surface), `/lab` (vh-storage procedures and FUSE hazards), `/release-prep` (bump/tag
-flow), `payload-markdown` + `payload-markdown-docs` (doc authoring; vendored by `pmdocs install skill --claude`).
+Skills: `/verify` (proof per surface), `/lab` (vh-storage procedures and FUSE hazards), `/vl-release` (staged release docs,
+versions, cutting releases), `payload-markdown` + `payload-markdown-docs` (doc authoring; vendored by `pmdocs install skill --claude`).
 
 ## Hard rules
 
@@ -59,6 +61,9 @@ flow), `payload-markdown` + `payload-markdown-docs` (doc authoring; vendored by 
 - **Secrets on disk, never print or commit them:** repo-root `.bashrc`, `deploy/vaulthalla.env`, `deploy/bashrc`,
   `/etc/vaulthalla/vaulthalla.env`, `cloudflare.ini`, `config.yaml` at the repo root (gitignored override). Source them; don't cat them.
 - **No tags, pushes, releases, or workflow dispatches** without explicit instruction. A `v*` tag publishes to the real APT repo.
+- **Release history and versions are vl-release's:** never hand-edit `debian/changelog`, `RELEASE_NOTES.md` or version
+  numbers (`vlr version`). Material changes update `.release/RELEASE_NOTES_NEXT.md` and `.release/CHANGELOG_NEXT.md` in
+  the same change (see `/vl-release`); run `vlr check` before calling substantial work done.
 - **Unity build:** no new file-scope `using namespace` in `core/src/**/*.cpp`, keep `LC_ALL=C sort` source
   discovery, and never weaken unity/warning flags to get green.
 - **Maintainer scripts:** idempotent, never overwrite `/etc/vaulthalla/config.yaml`, never destructively reset
@@ -74,7 +79,6 @@ flow), `payload-markdown` + `payload-markdown-docs` (doc authoring; vendored by 
 - Run the proof for the surface you touched (`/verify`), and report exactly what ran, what passed, and what was skipped.
   Runtime/packaging changes aren't proven by unit tests alone. Say whether a lab install was done.
 - Keep `.claude/context/*` true. When code changes a fact recorded there, update the doc in the same change.
-  Keep `tools/release/changelog/scoring.py`'s agent-context path list in sync if these dirs move.
 - Handoff format: **Outcome**, **Scope** (files/subsystems and why), **Validation** (commands + results), **Risks**,
   **Next action**.
 - The review hotspots, in order, are: behavior regressions; auth/RBAC/share scoping; FUSE and DB-pool blocking paths;

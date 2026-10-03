@@ -6,6 +6,10 @@
 //  - secrets are redacted from ws debug logs; daemon-written secret files are 0600 and absolute-path only;
 //  - (DB-backed) no CLI self-promotion, no role upsert-over-existing, no daemon crash on unknown group.
 
+#include "auth/model/Token.hpp"
+#include "auth/model/TokenPair.hpp"
+#include "auth/session/Issuer.hpp"
+#include "auth/session/Manager.hpp"
 #include "config/Config.hpp"
 #include "config/Registry.hpp"
 #include "crypto/util/hash.hpp"
@@ -14,18 +18,21 @@
 #include "db/query/rbac/role/Admin.hpp"
 #include "db/query/rbac/role/admin/Assignments.hpp"
 #include "identities/User.hpp"
-#include "protocols/RoleGuards.hpp"
+#include "ops/Error.hpp"
+#include "ops/Roles.hpp"
 #include "protocols/shell/Router.hpp"
 #include "protocols/shell/Server.hpp"
 #include "protocols/shell/SocketIO.hpp"
 #include "protocols/shell/commands/all.hpp"
 #include "protocols/shell/commands/helpers.hpp"
 #include "protocols/ws/CookiePolicy.hpp"
-#include "protocols/ws/DefaultPasswordGate.hpp"
+#include "protocols/ws/ConnectionLifecycleManager.hpp"
+#include "auth/model/RefreshToken.hpp"
 #include "protocols/ws/LogRedaction.hpp"
 #include "protocols/ws/ShareRateLimit.hpp"
 #include "protocols/ws/Router.hpp"
 #include "protocols/ws/Session.hpp"
+#include "protocols/ws/handler/Auth.hpp"
 #include "protocols/ws/handler/rbac/roles/Admin.hpp"
 #include "rbac/role/Admin.hpp"
 #include "runtime/Deps.hpp"
@@ -44,6 +51,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+#include <array>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -427,11 +435,9 @@ TEST_F(CliRbacDbTest, RoleCreateNeverOverwritesExistingRoles) {
     const auto before = adminRoleBits("super_admin");
     const auto adminBefore = adminRoleBits("admin");
 
-    auto staged = std::make_shared<rbac::role::Admin>(rbac::role::Admin::None());
-    staged->name = "super_admin";
-    EXPECT_THROW((void)protocols::roles::createAdminRole(staged), protocols::roles::RoleAlreadyExists);
-    staged->name = "admin";
-    EXPECT_THROW((void)protocols::roles::createAdminRole(staged), protocols::roles::RoleAlreadyExists);
+    const auto creator = createUser(unique("ops_super_"), "super_admin");
+    EXPECT_THROW((void)ops::roles::createAdminRole(creator, {.name = "super_admin"}, "test"), ops::Conflict);
+    EXPECT_THROW((void)ops::roles::createAdminRole(creator, {.name = "admin"}, "test"), ops::Conflict);
 
     // ws role.admin.add with an existing name: previously ON CONFLICT (name) DO UPDATE wiped its permissions.
     const auto superUser = createUser(unique("ws_super_"), "super_admin");
@@ -461,20 +467,19 @@ TEST_F(CliRbacDbTest, WsRoleCreateWithPermissionsWorks) {
 
 TEST_F(CliRbacDbTest, BuiltInAndOwnRolesAreProtected) {
     const auto admin = createUser(unique("cli_admin_"), "admin");
-    const auto superRole = db::query::rbac::role::Admin::get("super_admin");
-    const auto adminRole = db::query::rbac::role::Admin::get("admin");
     const auto auditor = db::query::rbac::role::Admin::get("auditor");
+    ASSERT_TRUE(auditor);
 
-    EXPECT_TRUE(protocols::roles::adminRoleUpdateError(*admin, *superRole, *superRole).has_value());
-    EXPECT_TRUE(protocols::roles::adminRoleUpdateError(*admin, *adminRole, *adminRole).has_value()) << "own role";
+    EXPECT_THROW((void)ops::roles::updateAdminRole(admin, {.role = std::string("super_admin"), .description = std::string("x")}, "test"),
+                 ops::Denied);
+    EXPECT_THROW((void)ops::roles::updateAdminRole(admin, {.role = std::string("admin"), .description = std::string("x")}, "test"),
+                 ops::Denied) << "own role";
+    EXPECT_THROW((void)ops::roles::updateAdminRole(admin, {.role = auditor->id, .name = std::string("super_admin")}, "test"),
+                 ops::Denied) << "rename onto the reserved name";
+    EXPECT_NO_THROW((void)ops::roles::updateAdminRole(admin, {.role = auditor->id, .description = auditor->description}, "test"));
 
-    auto renamed = std::make_shared<rbac::role::Admin>(*auditor);
-    renamed->name = "super_admin";
-    EXPECT_TRUE(protocols::roles::adminRoleUpdateError(*admin, *auditor, *renamed).has_value());
-    EXPECT_FALSE(protocols::roles::adminRoleUpdateError(*admin, *auditor, *auditor).has_value());
-
-    EXPECT_TRUE(protocols::roles::adminRoleDeleteError(*admin, *superRole).has_value());
-    EXPECT_TRUE(protocols::roles::adminRoleDeleteError(*admin, *adminRole).has_value());
+    EXPECT_THROW((void)ops::roles::removeAdminRole(admin, std::string("super_admin"), "test"), ops::Denied);
+    EXPECT_THROW((void)ops::roles::removeAdminRole(admin, std::string("admin"), "test"), ops::Denied);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -497,46 +502,134 @@ std::shared_ptr<identities::User> userWithPassword(const std::string& password) 
     return user;
 }
 
-TEST(DefaultPasswordGate, OnlyPasswordChangeAndSessionCommandsWhileDefault) {
-    // The gate is intentionally off in dev mode; pin production behavior regardless of the host's config.
-    const config::Config previous = config::Registry::get(); // loads VH_PATH_TO_CONFIG on first use
-    config::Config pinned = previous;
-    pinned.dev.enabled = false;
-    config::Registry::set(pinned);
-    struct RestoreConfig { config::Config value; ~RestoreConfig() { config::Registry::set(value); } } restore{previous};
+// Installs a session manager and a test JWT secret so routed commands can pass real access-token validation
+// (RequireHumanAuth) without a database; restores the previous runtime state on scope exit.
+struct ScopedWsTokenAuth {
+    std::shared_ptr<auth::session::Manager> previous;
 
-    auto router = std::make_shared<protocols::ws::Router>();
-    int blocked = 0, allowed = 0;
-    // auth.* commands skip token validation in classifyCommand, so these exercise the gate alone.
-    router->registerHandler("auth.users.list", [&](json&&, const auto&) { ++blocked; });
-    router->registerHandler("auth.user.change_password", [&](json&&, const auto&) { ++allowed; });
-    router->registerHandler("auth.admin.default_password", [&](json&&, const auto&) { ++allowed; });
+    ScopedWsTokenAuth() : previous(runtime::Deps::get().sessionManager) {
+        auth::session::Issuer::setJwtSecretForTesting("cli-runtime-safety-ws-auth-secret");
+        runtime::Deps::get().sessionManager = std::make_shared<auth::session::Manager>();
+    }
 
-    const auto user = userWithPassword(std::string(protocols::ws::default_password::kSeededAdminPassword));
-    const auto session = closedSessionWith(router, user);
-    EXPECT_TRUE(session->userHasDefaultPassword());
+    ~ScopedWsTokenAuth() {
+        runtime::Deps::get().sessionManager = previous;
+        auth::session::Issuer::clearJwtSecretForTesting();
+    }
 
-    router->routeMessage(json{{"command", "auth.users.list"}, {"payload", json::object()}}, session);
-    router->routeMessage(json{{"command", "auth.user.change_password"}, {"payload", json::object()}}, session);
-    router->routeMessage(json{{"command", "auth.admin.default_password"}, {"payload", nullptr}}, session);
-    EXPECT_EQ(blocked, 0) << "a non-allowlisted command ran while the default password is still set";
-    EXPECT_EQ(allowed, 2);
+    // A valid access token for `session`'s human user.
+    static std::string issue(const std::shared_ptr<protocols::ws::Session>& session) {
+        auth::session::Issuer::accessToken(session);
+        return session->tokens->accessToken->rawToken;
+    }
+};
 
-    // After a password change the session's user carries a new hash; the cached verdict is re-evaluated.
-    user->setPasswordHash(crypto::hash::password("a-much-better-passphrase-123!"));
-    EXPECT_FALSE(session->userHasDefaultPassword());
-    router->routeMessage(json{{"command", "auth.users.list"}, {"payload", json::object()}}, session);
-    EXPECT_EQ(blocked, 1);
+json routed(const std::string& command, const std::string& token = "") {
+    return json{{"command", command}, {"payload", json::object()}, {"token", token}};
 }
 
-TEST(DefaultPasswordGate, AllowlistIsMinimal) {
-    using protocols::ws::default_password::isAllowedWhileDefault;
-    for (const auto* cmd : {"auth.user.change_password", "auth.isAuthenticated", "auth.refresh", "auth.logout",
-                            "auth.admin.default_password", "auth.login"})
-        EXPECT_TRUE(isAllowedWhileDefault(cmd)) << cmd;
-    for (const auto* cmd : {"auth.users.list", "auth.user.update", "auth.register", "role.admin.add",
-                            "settings.update", "storage.vault.list", "fs.upload.start"})
-        EXPECT_FALSE(isAllowedWhileDefault(cmd)) << cmd;
+// The universal default password and its gate are gone (1.8.0): authentication answers whether a credential is
+// valid, and a valid session is never partially authenticated. Even an account still holding the retired default
+// (startup replaces it; see auth::bootstrap) is not refused anything because of its password.
+TEST(NoPasswordGate, AValidSessionRunsCommandsWhateverItsPassword) {
+    const ScopedWsTokenAuth tokenAuth;
+    auto router = std::make_shared<protocols::ws::Router>();
+    int reached = 0;
+    router->registerHandler("auth.users.list", [&](json&&, const auto&) { ++reached; });
+    router->registerHandler("storage.vault.list", [&](json&&, const auto&) { ++reached; });
+
+    const auto user = userWithPassword("vh!adm1n");
+    const auto session = closedSessionWith(router, user);
+    const auto token = ScopedWsTokenAuth::issue(session);
+
+    router->routeMessage(routed("auth.users.list", token), session);
+    router->routeMessage(routed("storage.vault.list", token), session);
+    EXPECT_EQ(reached, 2);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Stage 0 S1/S2: `auth*` used to be routed as session-lifecycle for every session. Unauthenticated sockets reached
+// account handlers that dereference session->user (a remote daemon segfault), and logged-in sessions reached
+// them without access-token validation.
+
+constexpr std::array<std::string_view, 4> kSessionLifecycleCommands{
+    "auth.login", "auth.logout", "auth.refresh", "auth.isAuthenticated"};
+constexpr std::array<std::string_view, 9> kAccountCommands{
+    "auth.register", "auth.user.delete", "auth.user.update", "auth.user.change_password",
+    "auth.user.get", "auth.user.get.byName", "auth.users.list", "auth.security.status", "auth.user.anything_new"};
+
+TEST(WsAuthRouting, OnlySessionLifecycleCommandsSkipHumanAuth) {
+    using Decision = protocols::ws::Router::CommandAuthDecision;
+    const auto unauth = std::make_shared<protocols::ws::Session>(std::make_shared<protocols::ws::Router>());
+    const auto human = std::make_shared<protocols::ws::Session>(std::make_shared<protocols::ws::Router>());
+    human->user = userWithPassword("irrelevant-for-routing");
+
+    for (const auto cmd : kSessionLifecycleCommands) {
+        EXPECT_EQ(Decision::Allow, protocols::ws::Router::classifyCommand(cmd, *unauth)) << cmd;
+        EXPECT_EQ(Decision::Allow, protocols::ws::Router::classifyCommand(cmd, *human)) << cmd;
+    }
+    // Account commands take exactly the path of any ordinary authenticated command: RequireHumanAuth, i.e.
+    // session::Manager::validate (access token, else the server-side refresh-token renewal) and the web client's
+    // unauthorized -> refresh -> retry. Nothing auth-specific remains on that path.
+    const auto ordinaryHuman = protocols::ws::Router::classifyCommand("storage.vault.list", *human);
+    const auto ordinaryUnauth = protocols::ws::Router::classifyCommand("storage.vault.list", *unauth);
+    for (const auto cmd : kAccountCommands) {
+        EXPECT_EQ(Decision::Deny, protocols::ws::Router::classifyCommand(cmd, *unauth)) << cmd;
+        EXPECT_EQ(Decision::RequireHumanAuth, protocols::ws::Router::classifyCommand(cmd, *human)) << cmd;
+        EXPECT_EQ(ordinaryUnauth, protocols::ws::Router::classifyCommand(cmd, *unauth)) << cmd;
+        EXPECT_EQ(ordinaryHuman, protocols::ws::Router::classifyCommand(cmd, *human)) << cmd;
+    }
+}
+
+TEST(WsAuthRouting, UnauthenticatedSocketNeverReachesAccountHandlers) {
+    auto router = std::make_shared<protocols::ws::Router>();
+    int reached = 0;
+    for (const auto cmd : kAccountCommands)
+        router->registerHandler(std::string(cmd), [&](json&&, const auto&) { ++reached; });
+    int lifecycle = 0;
+    router->registerHandler("auth.isAuthenticated", [&](json&&, const auto&) { ++lifecycle; });
+
+    const auto session = std::make_shared<protocols::ws::Session>(router);
+    session->ipAddress = "203.0.113.8";
+    session->close();
+    ASSERT_EQ(session->user, nullptr);
+
+    for (const auto cmd : kAccountCommands) router->routeMessage(routed(std::string(cmd)), session);
+    router->routeMessage(routed("auth.isAuthenticated"), session);
+    EXPECT_EQ(reached, 0) << "an account handler ran for an unauthenticated socket";
+    EXPECT_EQ(lifecycle, 1);
+}
+
+TEST(WsAuthRouting, AccountCommandsRequireAValidAccessToken) {
+    const ScopedWsTokenAuth tokenAuth;
+    auto router = std::make_shared<protocols::ws::Router>();
+    int reached = 0;
+    router->registerHandler("auth.user.update", [&](json&&, const auto&) { ++reached; });
+
+    auto user = userWithPassword("a-much-better-passphrase-123!");
+    const auto session = closedSessionWith(router, user);
+    const auto token = ScopedWsTokenAuth::issue(session);
+
+    router->routeMessage(routed("auth.user.update", ""), session);
+    router->routeMessage(routed("auth.user.update", token + "x"), session);
+    EXPECT_EQ(reached, 0) << "auth.user.update ran without a valid access token";
+
+    router->routeMessage(routed("auth.user.update", token), session);
+    EXPECT_EQ(reached, 1);
+}
+
+TEST(WsAuthHandlers, NullSessionUserIsAnErrorNotACrash) {
+    using protocols::ws::handler::Auth;
+    const auto session = std::make_shared<protocols::ws::Session>(std::make_shared<protocols::ws::Router>());
+    session->close();
+    ASSERT_EQ(session->user, nullptr);
+
+    EXPECT_THROW((void)Auth::listUsers(session), std::exception);
+    EXPECT_THROW((void)Auth::getUser(json{{"id", 1}}, session), std::exception);
+    EXPECT_THROW((void)Auth::deleteUser(json{{"id", 1}}, session), std::exception);
+    EXPECT_THROW((void)Auth::registerUser(json::object(), session), std::exception);
+    EXPECT_THROW((void)Auth::updateUser(json::object(), session), std::exception);
+    EXPECT_THROW((void)Auth::getUserByName(json{{"name", "admin"}}, session), std::exception);
 }
 
 TEST(LoginRateLimit, BurstThenSustainedLimitsPerIpAndAccount) {
@@ -570,6 +663,57 @@ TEST(LoginRateLimit, BurstThenSustainedLimitsPerIpAndAccount) {
     EXPECT_TRUE(limiter.check("auth.login", alice, *session, t0 + std::chrono::minutes(20)).allowed);
 }
 
+}
+
+// #125: behind the packaged nginx every peer is 127.0.0.1, so the login limiter degraded to per-account. The
+// forwarded client is believed only from the loopback proxy, and only the hop nginx itself added.
+TEST(WsClientAddress, ForwardedClientOnlyFromTheLocalProxy) {
+    using vh::protocols::ws::cookie_policy::clientAddress;
+    EXPECT_EQ(clientAddress("127.0.0.1", "203.0.113.5", ""), "203.0.113.5");
+    EXPECT_EQ(clientAddress("::1", "", "198.51.100.1, 203.0.113.6"), "203.0.113.6") << "the client-supplied hops are spoofable";
+    EXPECT_EQ(clientAddress("127.0.0.1", "not-an-ip", "also bad"), "127.0.0.1");
+    EXPECT_EQ(clientAddress("127.0.0.1", "", ""), "127.0.0.1");
+    // A remote peer can't claim to be someone else.
+    EXPECT_EQ(clientAddress("10.0.0.11", "203.0.113.5", "203.0.113.5"), "10.0.0.11");
+}
+
+TEST(LoginRateLimit, ClientsBehindTheProxyAreLimitedSeparately) {
+    vh::protocols::ws::ShareRateLimit limiter;
+    const auto sessionFor = [](const std::string& client) {
+        auto session = std::make_shared<vh::protocols::ws::Session>(std::make_shared<vh::protocols::ws::Router>());
+        session->ipAddress = "127.0.0.1";
+        session->clientAddress = client;
+        return session;
+    };
+    const auto attacker = sessionFor("203.0.113.66"), owner = sessionFor("198.51.100.20");
+    const nlohmann::json alice{{"command", "auth.login"}, {"payload", {{"name", "alice"}, {"password", "x"}}}};
+    const auto t0 = vh::protocols::ws::ShareRateLimit::Clock::now();
+    for (int i = 0; i < 10; ++i) limiter.recordLoginFailure("alice", *attacker, t0);
+    EXPECT_FALSE(limiter.check("auth.login", alice, *attacker, t0).allowed);
+    EXPECT_TRUE(limiter.check("auth.login", alice, *owner, t0).allowed)
+        << "one client's failures behind nginx locked every client out of the account";
+}
+
+// ws_churn on the lab: nginx answered 502 to healthy connections whenever the 30s sweep ran. Sessions are indexed
+// at TCP accept, before the handshake gives them tokens, and the sweeper closed them as "expired refresh token".
+TEST(WsLifecycleSweep, SessionsStillInTheirHandshakeAreOnlyTimedOut) {
+    using Manager = vh::protocols::ws::ConnectionLifecycleManager;
+    const auto session = std::make_shared<vh::protocols::ws::Session>(std::make_shared<vh::protocols::ws::Router>());
+    ASSERT_FALSE(session->handshakeComplete());
+    const auto opened = session->connectionOpenedAt;
+    EXPECT_EQ(Manager::verdict(*session, opened + std::chrono::seconds(5), std::chrono::seconds(60)),
+              Manager::SweepVerdict::Keep) << "a session mid-handshake has no tokens yet; that is not expiry";
+    EXPECT_EQ(Manager::verdict(*session, opened + std::chrono::seconds(61), std::chrono::seconds(60)),
+              Manager::SweepVerdict::UnauthenticatedTimeout);
+}
+
+// The cookie placeholder token has no jti; revoking it went to the DB with "" and threw out of
+// session::Manager::invalidate, leaving the session indexed and failing every later sweep.
+TEST(WsLifecycleSweep, InvalidatingATokenWithoutAJtiDoesNotTouchTheDatabase) {
+    vh::auth::model::RefreshToken placeholder("raw-cookie-value");
+    ASSERT_TRUE(placeholder.jti.empty());
+    EXPECT_NO_THROW(placeholder.hardInvalidate());
+    EXPECT_FALSE(placeholder.isValid());
 }
 
 // Session cookies are Secure only when the browser-facing request was HTTPS (behind the local proxy).

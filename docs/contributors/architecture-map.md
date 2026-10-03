@@ -27,7 +27,8 @@ This is the contributor-facing map of the repo. It is not a full internal design
 | `deploy/` | Runtime config, PostgreSQL schema SQL, systemd units, nginx template, lifecycle utility |
 | `debian/` | Debian package metadata and maintainer scripts |
 | `bin/` | Dev and operator install/uninstall/test helpers |
-| `tools/release/` | Versioning, changelog generation, packaging, publication, and contract tests |
+| `release.toml`, `.release/` | vl-release configuration and the staged release notes and changelog for the next release |
+| `tools/contracts/` | Contract tests for Debian packaging, maintainer scripts, shipped migrations, and the release workflow |
 | `.github/` | CI workflows and composite actions |
 
 ## Subsystem Map
@@ -45,8 +46,8 @@ This is the contributor-facing map of the repo. It is not a full internal design
 | RBAC and permission model | Defines admin and vault permissions, glob/path policy logic, role templates, and permission resolution | `core/src/rbac/*`, `core/include/rbac/*`, `deploy/psql/060_acl.sql` | Security-sensitive | Maintainer approval first, focused tests, threat-aware review |
 | Auth, session, and secret handling | Manages token issuance, refresh/session validation, secret storage, and auth-related protocol behavior | `core/src/auth/*`, `core/include/auth/*`, `core/src/crypto/*`, `core/include/crypto/*`, `web/src/stores/useWebSocket.ts` | Security-sensitive | Maintainer approval first, focused tests, no hand-wavy validation |
 | Packaging, systemd, and lifecycle | Defines package payload, install/remove/purge scripts, systemd units, and privileged host setup flows | `debian/*`, `deploy/systemd/*`, `deploy/lifecycle/main.py`, `bin/setup/*`, `bin/teardown/*` | Coordinate before implementing | Package dry runs, lifecycle tests, clean-host install/upgrade/remove/purge checks |
-| Release tooling | Manages version sync, changelog generation, packaging orchestration, publication, and contract tests | `tools/release/*`, `.github/actions/package/action.yml`, `.github/workflows/release.yml` | Maintainer-guided | `python3 -m tools.release check`, release-tooling test suite, dry-run packaging |
-| Tests and harnesses | Unit, integration, lifecycle, and release contract coverage | `core/tests/*`, `deploy/lifecycle/tests/*`, `tools/release/tests/*` | Open for scoped work | Run the relevant test surface and avoid unrelated churn |
+| Release process | vl-release (`vlr`) keeps versions in sync, builds and validates the package, publishes to APT and records the release history | `release.toml`, `.release/*`, `.github/workflows/release.yml`, `web/bin/build_release_payload.sh` | Maintainer-guided | `bash tools/dev/verify.sh release packaging`, `make deb` |
+| Tests and harnesses | Unit, integration, lifecycle, and packaging contract coverage | `core/tests/*`, `deploy/lifecycle/tests/*`, `tools/contracts/*`, `tools/lab/tests/*` | Open for scoped work | Run the relevant test surface and avoid unrelated churn |
 
 ## Subsystem Notes
 
@@ -76,9 +77,9 @@ One practical caveat: the CI web build syncs private icon assets from `~/vaultha
 
 The Debian maintainer scripts in `debian/postinst`, `debian/prerm`, and `debian/postrm` are the lifecycle source of truth for install, upgrade, remove, and purge. The `bin/` scripts are helpful local wrappers, but they are not the Debian contract.
 
-### Release tooling
+### Releases
 
-`tools/release/` is not just a convenience folder. It owns version alignment, changelog production, dry-run packaging, publication policy, and release artifact validation. Treat it like a product surface, not a scratchpad.
+Releases are cut with [vl-release](https://github.com/valkyrianlabs/vl-release) (`vlr`). `release.toml` is the contract: the version files kept in sync, what the Debian package must and must never contain, and where it is published. Release notes and the Debian changelog are written ahead of time in `.release/`, in the same change as the code they describe; the published `debian/changelog` and `RELEASE_NOTES.md` are written only by `vlr prepare` during a release. Treat this as a product surface, not a scratchpad.
 
 ## Read By Interest
 

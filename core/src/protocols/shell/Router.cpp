@@ -5,20 +5,53 @@
 #include "identities/User.hpp"
 #include "CommandUsage.hpp"
 #include "protocols/shell/util/argsHelpers.hpp"
+#include "protocols/shell/util/usageOptions.hpp"
 
 #include <fmt/core.h>
 #include <cctype>
 #include <string>
 #include <algorithm>
+#include <optional>
 
 using namespace vh::identities;
 
 using namespace vh::protocols::shell;
 
+namespace {
+
+// Options are definition-driven: each must be declared by the command or by a subcommand its positionals select
+// (or belong to a family the definition declares in option_prefixes). Unknown options used to be silently
+// discarded, so a typo like --description for --desc did nothing and still reported success.
+std::optional<std::string> unknownOptionError(const CommandCall& call, const std::shared_ptr<CommandUsage>& root) {
+    if (!root || call.options.empty()) return std::nullopt;
+
+    // Subcommands can follow argument positionals (`s3-gateway creds scope <cred> set`), so argument words are
+    // skipped rather than ending the walk.
+    std::vector<std::shared_ptr<CommandUsage>> path{root};
+    for (const auto& positional : call.positionals)
+        if (auto child = path.back()->findSubcommand(positional)) path.push_back(std::move(child));
+
+    for (const auto& opt : call.options) {
+        if (opt.key == "help" || opt.key == "h") continue;
+        if (std::ranges::any_of(path, [&](const auto& node) {
+                return usageDeclaresOption(*node, opt.key) ||
+                       std::ranges::any_of(node->option_prefixes, [&](const std::string& p) { return opt.key.starts_with(p); });
+            })) continue;
+
+        std::string command = "vh";
+        for (const auto& node : path) command += " " + node->primary();
+        const auto dashes = opt.key.size() == 1 ? "-" : "--";
+        return "unknown option '" + std::string(dashes) + opt.key + "' for '" + command + "' (see '" + command + " --help')";
+    }
+    return std::nullopt;
+}
+
+}
+
 void Router::registerCommand(const std::shared_ptr<CommandUsage>& usage, CommandHandler handler) {
     std::string key = normalize(usage->primary());
 
-    CommandInfo info{usage->description.empty() ? "No description provided." : usage->description, std::move(handler), {}};
+    CommandInfo info{usage->description.empty() ? "No description provided." : usage->description, std::move(handler), usage, {}};
 
     for (const std::string& alias : usage->aliases) {
         std::string a = alias;
@@ -73,7 +106,18 @@ CommandResult Router::executeLine(const std::string& line, const std::shared_ptr
     if (!commands_.contains(canonical))
         return invalid(call.constructFullArgs(), fmt::format("[Router] Unknown command or alias: {}", call.name));
 
-    return commands_.at(canonical).handler(call);
+    const auto& info = commands_.at(canonical);
+    if (const auto err = unknownOptionError(call, info.usage)) return invalid(*err);
+    return info.handler(call);
+}
+
+std::optional<std::string> Router::optionError(const std::string& line) const {
+    auto call = parseTokens(tokenize(line));
+    if (call.name.empty()) return std::nullopt;
+    const auto canonical = canonicalFor(call.name);
+    if (call.positionals.empty() && pluralMap_.contains(call.name)) call.positionals.emplace_back("list");
+    if (!commands_.contains(canonical)) return "unknown command: " + call.name;
+    return unknownOptionError(call, commands_.at(canonical).usage);
 }
 
 std::string Router::normalize(const std::string& s) {

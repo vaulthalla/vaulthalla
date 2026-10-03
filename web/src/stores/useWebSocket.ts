@@ -32,7 +32,16 @@ interface PendingRequest {
   timeout: ReturnType<typeof setTimeout>
 }
 
-const isAuthCommand = (command: keyof WebSocketCommandMap) => command.startsWith('auth.')
+// Session-lifecycle commands work without (or with an expired) access token. Mirrors core's
+// isSessionLifecycleCommand (protocols/ws/Router.cpp); every other auth.* command is account management and gets
+// the normal token + refresh-and-retry path.
+const SESSION_LIFECYCLE_COMMANDS: ReadonlySet<keyof WebSocketCommandMap> = new Set<keyof WebSocketCommandMap>([
+  'auth.login',
+  'auth.logout',
+  'auth.refresh',
+  'auth.isAuthenticated',
+])
+const isAuthCommand = (command: keyof WebSocketCommandMap) => SESSION_LIFECYCLE_COMMANDS.has(command)
 const isUnauthorizedMessage = (message: unknown) => {
   if (!message || typeof message !== 'object') return false
   const record = message as Record<string, unknown>
@@ -42,6 +51,16 @@ const isErrorMessage = (message: unknown) => {
   if (!message || typeof message !== 'object') return false
   const record = message as Record<string, unknown>
   return record.status === 'error' || record.status === 'ERROR' || record.status === 'INTERNAL_ERROR' || isUnauthorizedMessage(message)
+}
+// A refused command. `code` is set when the server asks for something the client can act on (e.g.
+// 'encryption_waiver': show the message, then resend with the acceptance set).
+export class WebSocketCommandError extends Error {
+  code?: string
+  constructor(message: string, code?: string) {
+    super(message)
+    this.name = 'WebSocketCommandError'
+    this.code = code
+  }
 }
 const isUnauthorizedError = (error: unknown) => {
   if (!(error instanceof Error)) return false
@@ -127,7 +146,8 @@ export const useWebSocketStore: UseBoundStore<StoreApi<WebSocketStore>> = create
 
               if (isErrorMessage(message)) {
                 const error = isUnauthorizedMessage(message) ? 'unauthorized' : message.error || 'WebSocket command failed'
-                handler.reject(new Error(error))
+                const code = typeof message.data?.code === 'string' ? message.data.code : undefined
+                handler.reject(new WebSocketCommandError(error, code))
               } else {
                 handler.resolve(message.data ?? {})
               }

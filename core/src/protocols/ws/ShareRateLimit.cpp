@@ -72,6 +72,8 @@ constexpr RateLimitPolicy kLoginSustainedPolicy{.max_attempts = 30, .window = st
 }
 
 [[nodiscard]] std::string clientIp(const Session& session) {
+    // #125: behind nginx every peer is 127.0.0.1, so key on the forwarded client the session resolved.
+    if (!session.clientAddress.empty()) return session.clientAddress;
     return session.ipAddress.empty() ? "unknown" : session.ipAddress;
 }
 

@@ -72,12 +72,27 @@ static std::shared_ptr<CommandUsage> assign_admin(const std::weak_ptr<CommandUsa
     return cmd;
 }
 
+static std::shared_ptr<CommandUsage> set_super_admin_password(const std::weak_ptr<CommandUsage>& parent) {
+    const auto cmd = buildBaseUsage(parent);
+    cmd->aliases = {"set-super-admin-password", "super-admin-password"};
+    cmd->description = "Change the web console password of the built-in super-admin account ('admin'). Asks for the new "
+                       "password. Only the Linux user bound as the Vaulthalla super admin (see 'vh setup assign-admin') may "
+                       "run it; do not use sudo. Ends the account's web sessions and removes the initial password file "
+                       "(/var/lib/vaulthalla/super_admin_initial_password) if it is still there. Keeping the generated "
+                       "initial password instead is fine: delete that file.";
+    cmd->examples = {
+        {"vh setup set-super-admin-password", "Prompt for and set a new web console password for 'admin'."}
+    };
+    return cmd;
+}
+
 static std::shared_ptr<CommandUsage> base(const std::weak_ptr<CommandUsage>& parent) {
     const auto cmd = buildBaseUsage(parent);
     cmd->aliases = {"setup"};
     cmd->description = "Perform explicit Vaulthalla integration setup tasks.";
     cmd->examples = {
         {"vh setup assign-admin", "Run explicit admin-claim onboarding for the current operator."},
+        {"vh setup set-super-admin-password", "Change the web console password of the built-in 'admin' account."},
         {"sudo vh setup db", "Bootstrap local PostgreSQL integration."},
         {"sudo vh setup remote-db --host db.example.net --user vaulthalla --database vaulthalla --password-file /path/to/password-file", "Configure remote PostgreSQL integration."},
         {"sudo vh setup nginx", "Configure Vaulthalla nginx integration."},
@@ -89,7 +104,8 @@ static std::shared_ptr<CommandUsage> base(const std::weak_ptr<CommandUsage>& par
         assign_admin(cmd->weak_from_this()),
         db(cmd->weak_from_this()),
         remote_db(cmd->weak_from_this()),
-        nginx(cmd->weak_from_this())
+        nginx(cmd->weak_from_this()),
+        set_super_admin_password(cmd->weak_from_this())
     };
     return cmd;
 }

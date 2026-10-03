@@ -17,7 +17,8 @@ std::shared_ptr<CommandUsage> providerResendSet(const std::weak_ptr<CommandUsage
     cmd->aliases = {"set"};
     cmd->description = "Set the encrypted Resend API key using a hidden prompt.";
     cmd->optional_flags = {
-        Flag::Alias("api_key", "Prompt for the Resend API key", "api-key")
+        Flag::Alias("api_key", "Prompt for the Resend API key", "api-key"),
+        Flag::Alias("yes", "Replace an already stored key without asking", "yes")
     };
     cmd->examples = {
         {"vh email provider resend set", "Prompt for and store the Resend API key."},
@@ -44,7 +45,8 @@ std::shared_ptr<CommandUsage> providerSesSet(const std::weak_ptr<CommandUsage>& 
     cmd->description = "Set encrypted SES credentials using hidden prompts.";
     cmd->optional_flags = {
         Flag::Alias("access", "Prompt only for the SES access key ID", "access"),
-        Flag::Alias("secret", "Prompt only for the SES secret access key", "secret")
+        Flag::Alias("secret", "Prompt only for the SES secret access key", "secret"),
+        Flag::Alias("yes", "Replace already stored credentials without asking", "yes")
     };
     cmd->examples = {
         {"vh email provider ses set", "Prompt for and store both SES credential values."},

@@ -57,8 +57,8 @@ yarn-error.log*
 /debian/tmp
 /debian/vaulthalla
 /release/
+/dist/
 /obj-x86_64-linux-gnu/
-/.changelog_scratch
 
 # ═══════════════════════════════════════════════════════
 # 🌐 WEB (scoped to /web)

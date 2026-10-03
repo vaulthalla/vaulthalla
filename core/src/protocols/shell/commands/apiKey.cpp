@@ -1,32 +1,25 @@
 #include "protocols/shell/commands/all.hpp"
 #include "protocols/shell/commands/helpers.hpp"
 #include "protocols/shell/Router.hpp"
-#include "db/query/vault/APIKey.hpp"
 #include "vault/model/APIKey.hpp"
 #include "identities/User.hpp"
 #include "protocols/shell/util/argsHelpers.hpp"
-#include "vault/APIKeyManager.hpp"
-#include "storage/s3/Controller.hpp"
+#include "protocols/shell/util/runOp.hpp"
+#include "ops/APIKeys.hpp"
 #include "runtime/Deps.hpp"
 #include "usage/include/UsageManager.hpp"
-#include "config/Registry.hpp"
 #include "CommandUsage.hpp"
-#include "rbac/resolver/admin/all.hpp"
 
-#include <paths.h>
+#include <nlohmann/json.hpp>
 
-#include "protocols/shell/commands/vault.hpp"
+
 
 using namespace vh;
 using namespace vh::protocols::shell;
 using namespace vh::vault::model;
-using namespace vh::crypto;
-using namespace vh::storage;
-using namespace vh::config;
-using namespace vh::rbac;
 
-using Perm = permission::admin::keys::APIPermissions;
 
+// CLI provider spellings (the web sends display names; both map to the same S3Provider).
 static S3Provider s3_provider_from_shell_input(const std::string &str) {
     if (str == "aws") return S3Provider::AWS;
     if (str == "cloudflare-r2") return S3Provider::CloudflareR2;
@@ -37,135 +30,58 @@ static S3Provider s3_provider_from_shell_input(const std::string &str) {
     if (str == "ceph") return S3Provider::Ceph;
     if (str == "storj") return S3Provider::Storj;
     if (str == "other") return S3Provider::Other;
-    throw std::invalid_argument("Invalid provider: " + str);
+    throw ops::Invalid("invalid provider '" + str + "' (aws, cloudflare-r2, wasabi, backblaze-b2, digitalocean, minio, ceph, storj, other)");
+}
+
+// CLI syntax only: a numeric positional names a key by id, anything else by name.
+static ops::api_keys::Ref apiKeyCliRef(const std::string &nameOrId) {
+    if (const auto id = parseUInt(nameOrId)) return *id;
+    return nameOrId;
 }
 
 static CommandResult handleListAPIKeys(const CommandCall &call) {
     const auto usage = resolveUsage({"api-key", "list"});
     validatePositionals(call, usage);
+    const bool json = hasFlag(call, "json");
 
-    const auto params = parseListQuery(call);
-
-    std::vector<std::shared_ptr<APIKey> > keys;
-
-    const auto &akPerms = call.user->apiKeysPerms();
-    if (akPerms.self.canView() && !(akPerms.admin.canView() || akPerms.user.canView()))
-        keys = runtime::Deps::get().apiKeyManager->listUserAPIKeys(call.user->id);
-    else keys = runtime::Deps::get().apiKeyManager->listAPIKeys();
-
-    // Filter first, then render once: erasing from `keys` while range-iterating it was UB, and the JSON
-    // branch used to return after inspecting only the first key.
-    std::erase_if(keys, [&](const std::shared_ptr<APIKey>& key) {
-        return !key || !resolver::Admin::has<Perm>({
-            .user = call.user,
-            .permission = Perm::View,
-            .api_key_id = key->id
+    return runOp("api-key list", [&] { return ops::api_keys::list(call.user, parseListQuery(call)); },
+        [&](const auto &keys) {
+            if (!json) return to_string(keys);
+            auto out = nlohmann::json(keys).dump(4);
+            out.push_back('\n');
+            return out;
         });
-    });
-
-    if (const auto jsonFlag = usage->resolveFlag("json"); jsonFlag && hasFlag(call, jsonFlag->aliases)) {
-        auto out = nlohmann::json(keys).dump(4);
-        out.push_back('\n');
-        return ok(out);
-    }
-
-    return ok(to_string(keys));
 }
 
 static CommandResult handleCreateAPIKey(const CommandCall &call) {
     const auto usage = resolveUsage({"api-key", "create"});
     validatePositionals(call, usage);
 
-    const auto name = call.positionals[0];
-
-    const auto accessKeyOpt = optVal(call, usage->resolveRequired("access")->option_tokens);
-    const auto secretOpt = optVal(call, usage->resolveRequired("secret")->option_tokens);
-    const auto endpointOpt = optVal(call, usage->resolveRequired("endpoint")->option_tokens);
-    const auto providerOpt = optVal(call, usage->resolveRequired("provider")->option_tokens);
-    const auto regionOpt = optVal(call, usage->resolveOptional("region")->option_tokens);
-
-    const auto owner = commands::vault::resolveOwner(call, usage);
-    if (!owner) return invalid("Owner not found.");
-
-    if (!resolver::Admin::has<Perm>({
-        .user = call.user,
-        .permission = Perm::Create,
-        .target_user_id = owner->id
-    }))
-        return invalid("API key creation failed.");
-
-    std::vector<std::string> errors;
-    if (!accessKeyOpt || accessKeyOpt->empty()) errors.emplace_back("Missing required option: --access");
-    if (!secretOpt || secretOpt->empty()) errors.emplace_back("Missing required option: --secret");
-    if (!endpointOpt || endpointOpt->empty()) errors.emplace_back("Missing required option: --endpoint");
-    if (!providerOpt || providerOpt->empty()) errors.emplace_back("Missing required option: --provider");
-
-    if (!errors.empty()) {
-        std::string errorMsg = "API key creation failed:\n";
-        for (const auto &err: errors) errorMsg += "  - " + err + "\n";
-        return invalid(errorMsg);
-    }
-
-    auto key = std::make_shared<APIKey>();
-    key->user_id = call.user->id;
-    key->name = name;
-    key->access_key = *accessKeyOpt;
-    key->secret_access_key = *secretOpt;
-    key->region = regionOpt ? *regionOpt : "auto";
-    key->endpoint = *endpointOpt;
-    key->provider = s3_provider_from_shell_input(*providerOpt);
-
-    if (!vh::paths::testMode) {
-        const auto [valid, validationErrors] = s3::Controller(key, "").validateAPICredentials();
-        if (!valid) return invalid("API key validation failed:\n" + validationErrors);
-    }
-
-    key->id = runtime::Deps::get().apiKeyManager->addAPIKey(key);
-
-    return ok("Successfully created API key!\n" + to_string(key));
-}
-
-static std::shared_ptr<APIKey> resolveAPIKey(const std::string &nameOrId) {
-    if (nameOrId.empty()) return nullptr;
-    if (const auto &idOpt = parseUInt(nameOrId); idOpt && *idOpt > 0)
-        return db::query::vault::APIKey::getAPIKey(*idOpt);
-    return db::query::vault::APIKey::getAPIKey(nameOrId);
+    return runOp("api-key create", [&] {
+        const auto provider = optVal(call, usage->resolveRequired("provider")->option_tokens);
+        return ops::api_keys::create(call.user, {
+            .name = call.positionals[0],
+            .provider = s3_provider_from_shell_input(provider.value_or("")),
+            .access_key = optVal(call, usage->resolveRequired("access")->option_tokens).value_or(""),
+            .secret_access_key = optVal(call, usage->resolveRequired("secret")->option_tokens).value_or(""),
+            .endpoint = optVal(call, usage->resolveRequired("endpoint")->option_tokens).value_or(""),
+            .region = optVal(call, usage->resolveOptional("region")->option_tokens).value_or("auto")
+        });
+    }, [](const auto &key) { return "Successfully created API key!\n" + to_string(key); });
 }
 
 static CommandResult handleDeleteAPIKey(const CommandCall &call) {
     const auto usage = resolveUsage({"api-key", "delete"});
     validatePositionals(call, usage);
-
-    const auto key = resolveAPIKey(call.positionals[0]);
-    if (!key) return invalid("API key not found: " + call.positionals[0]);
-
-    if (!resolver::Admin::has<Perm>({
-        .user = call.user,
-        .permission = Perm::Remove,
-        .api_key_id = key->id
-    }))
-        return invalid("You do not have permission to delete this API key.");
-
-    runtime::Deps::get().apiKeyManager->removeAPIKey(key->id, key->user_id);
-
-    return ok("API key deleted successfully: " + std::to_string(key->id) + "\n");
+    return runOp("api-key delete", [&] { return ops::api_keys::remove(call.user, apiKeyCliRef(call.positionals[0])); },
+        [](const auto &key) { return "API key deleted successfully: " + std::to_string(key->id) + "\n"; });
 }
 
 static CommandResult handleAPIKeyInfo(const CommandCall &call) {
     const auto usage = resolveUsage({"api-key", "info"});
     validatePositionals(call, usage);
-
-    const auto key = resolveAPIKey(call.positionals[0]);
-    if (!key) return invalid("API key not found: " + call.positionals[0]);
-
-    if (!resolver::Admin::has<Perm>({
-        .user = call.user,
-        .permission = Perm::View,
-        .api_key_id = key->id
-    }))
-        return invalid("You do not have permission to view this API key.");
-
-    return ok(to_string(key));
+    return runOp("api-key info", [&] { return ops::api_keys::get(call.user, apiKeyCliRef(call.positionals[0])); },
+        [](const auto &key) { return to_string(key); });
 }
 
 static bool isAPIKeyMatch(const std::string &cmd, const std::string_view input) {

@@ -6,8 +6,8 @@
 #include "db/query/vault/Vault.hpp"
 #include "fs/model/Entry.hpp"
 #include "fs/model/File.hpp"
+#include "ops/Pricing.hpp"
 #include "protocols/ws/Session.hpp"
-#include "rbac/permission/admin/S3Gateway.hpp"
 #include "rbac/permission/admin/Vaults.hpp"
 #include "rbac/permission/vault/sync/Action.hpp"
 #include "rbac/resolver/admin/all.hpp"
@@ -32,8 +32,6 @@
 namespace vh::protocols::ws::handler {
 namespace {
 
-using vh::storage::s3::pricing::PriceBudgetMode;
-using vh::storage::s3::pricing::PriceBudgetPolicy;
 using vh::storage::s3::pricing::PriceBudgetScope;
 using vh::storage::s3::pricing::PriceBudgetService;
 using vh::storage::s3::pricing::priceBudgetModeFromString;
@@ -79,33 +77,6 @@ bool canViewVaultBudget(const std::shared_ptr<Session>& session, const std::uint
     });
 }
 
-bool canEditVaultBudget(const std::shared_ptr<Session>& session, const std::uint32_t vaultId) {
-    if (!session || !session->user) return false;
-    if (session->user->isSuperAdmin()) return true;
-    try {
-        if (vh::db::query::vault::Vault::getVaultOwnerId(vaultId) == session->user->id) return true;
-    } catch (const std::exception&) {
-        return false;
-    }
-    if (!runtime::Deps::get().storageManager) return false;
-    return vh::rbac::resolver::Admin::has<vh::rbac::permission::admin::VaultPermissions>({
-        .user = session->user,
-        .permission = vh::rbac::permission::admin::VaultPermissions::Edit,
-        .vault_id = vaultId
-    });
-}
-
-// Gateway credential budgets are gated exactly like the CLI (`vh s3-gateway budget ...`) and the
-// s3gateway.budget.* ws handlers: admin.s3_gateway.manage_budgets, not "is any admin".
-bool canManageGatewayBudgets(const std::shared_ptr<Session>& session) {
-    if (!session || !session->user) return false;
-    if (session->user->isSuperAdmin()) return true;
-    return vh::rbac::resolver::Admin::has<vh::rbac::permission::admin::S3GatewayPermissions>({
-        .user = session->user,
-        .permission = vh::rbac::permission::admin::S3GatewayPermissions::ManageBudgets
-    });
-}
-
 void requireVaultBudgetView(const std::shared_ptr<Session>& session, const std::uint32_t vaultId) {
     if (!canViewVaultBudget(session, vaultId))
         throw std::runtime_error("You do not have permission to view S3 price budget data for this vault.");
@@ -115,68 +86,30 @@ void requireSuperAdmin(const std::shared_ptr<Session>& session, const char* mess
     if (!session->user || !session->user->isSuperAdmin()) throw std::runtime_error(message);
 }
 
-bool policyVisibleTo(const PriceBudgetPolicy& policy, const std::shared_ptr<Session>& session, const std::optional<std::uint32_t>& scopedVaultId) {
-    if (session->user->isSuperAdmin()) return true;
-    if (policy.gateway_credential_id) {
-        const auto credentials = vh::db::query::s3::Gateway::listCredentialsForPrincipal(session->user->id);
-        if (std::ranges::any_of(credentials, [&](const auto& credential) {
-            return credential.id == *policy.gateway_credential_id;
-        })) return true;
-        return policy.vault_id && canViewVaultBudget(session, *policy.vault_id);
-    }
-    if (policy.vault_id) return canViewVaultBudget(session, *policy.vault_id);
-    if (scopedVaultId) return canViewVaultBudget(session, *scopedVaultId);
-    return false;
+// The payload as ops::pricing's request and filter.
+vh::ops::pricing::PolicySpec specFromPayload(const json& payload) {
+    vh::ops::pricing::PolicySpec spec{
+        .scope = priceBudgetScopeFromString(payload.at("scope").get<std::string>()),
+        .provider_key = optionalStringPayload(payload, "provider_key"),
+        .vault_id = optionalUIntPayload(payload, "vault_id"),
+        .gateway_credential_id = optionalUIntPayload(payload, "gateway_credential_id"),
+        .mode = optionalStringPayload(payload, "mode"),
+        .currency = optionalStringPayload(payload, "currency"),
+        .max_run_cost = optionalStringPayload(payload, "max_run_cost"),
+        .max_daily_cost = optionalStringPayload(payload, "max_daily_cost"),
+        .max_monthly_cost = optionalStringPayload(payload, "max_monthly_cost")
+    };
+    if (payload.contains("require_verified_catalog")) spec.require_verified_catalog = payload.at("require_verified_catalog").get<bool>();
+    if (payload.contains("allow_stale_catalog")) spec.allow_stale_catalog = payload.at("allow_stale_catalog").get<bool>();
+    if (payload.contains("max_catalog_age_seconds") && !payload.at("max_catalog_age_seconds").is_null())
+        spec.max_catalog_age_seconds = payload.at("max_catalog_age_seconds").get<std::int64_t>();
+    return spec;
 }
 
-std::vector<PriceBudgetPolicy> visiblePolicies(const json& payload, const std::shared_ptr<Session>& session) {
-    const auto scopedVaultId = optionalVaultId(payload);
-    const auto scopedGatewayCredentialId = optionalUIntPayload(payload, "gateway_credential_id");
-    if (scopedVaultId) requireVaultBudgetView(session, *scopedVaultId);
-
-    auto policies = PriceBudgetService{}.listPolicies(payload.value("include_inactive", true));
-    std::erase_if(policies, [&](const auto& policy) {
-        if (!policyVisibleTo(policy, session, scopedVaultId)) return true;
-        if (scopedGatewayCredentialId) {
-            if (policy.scope == PriceBudgetScope::GatewayCredential ||
-                policy.scope == PriceBudgetScope::GatewayCredentialVault) {
-                if (policy.gateway_credential_id != scopedGatewayCredentialId) return true;
-                return scopedVaultId && policy.vault_id && *policy.vault_id != *scopedVaultId;
-            }
-            return true;
-        }
-        if (!scopedVaultId) return false;
-        if (policy.vault_id && *policy.vault_id != *scopedVaultId) return true;
-        return policy.scope == PriceBudgetScope::GatewayCredential;
-    });
-    return policies;
-}
-
-PriceBudgetPolicy policyFromPayload(const json& payload) {
-    PriceBudgetPolicy policy;
-    policy.scope = priceBudgetScopeFromString(payload.at("scope").get<std::string>());
-    policy.provider_key = optionalStringPayload(payload, "provider_key");
-    policy.vault_id = optionalUIntPayload(payload, "vault_id");
-    policy.gateway_credential_id = optionalUIntPayload(payload, "gateway_credential_id");
-    policy.mode = priceBudgetModeFromString(payload.value("mode", "report"));
-    policy.currency = payload.value("currency", "USD");
-    policy.max_run_cost = optionalStringPayload(payload, "max_run_cost");
-    policy.max_daily_cost = optionalStringPayload(payload, "max_daily_cost");
-    policy.max_monthly_cost = optionalStringPayload(payload, "max_monthly_cost");
-    policy.require_verified_catalog = payload.value("require_verified_catalog", true);
-    policy.allow_stale_catalog = payload.value("allow_stale_catalog", false);
-    policy.max_catalog_age_seconds = payload.contains("max_catalog_age_seconds") && !payload.at("max_catalog_age_seconds").is_null()
-        ? std::make_optional(payload.at("max_catalog_age_seconds").get<std::int64_t>())
-        : std::optional<std::int64_t>{43200};
-    return policy;
-}
-
-bool ownsGatewayCredential(const std::shared_ptr<Session>& session, const std::optional<std::uint32_t>& credentialId) {
-    if (!credentialId) return false;
-    const auto credentials = vh::db::query::s3::Gateway::listCredentialsForPrincipal(session->user->id);
-    return std::ranges::any_of(credentials, [&](const auto& credential) {
-        return credential.id == *credentialId;
-    });
+vh::ops::pricing::Filter filterFromPayload(const json& payload) {
+    if (!payload.is_object()) return {};
+    return {.vault_id = optionalVaultId(payload), .gateway_credential_id = optionalUIntPayload(payload, "gateway_credential_id"),
+            .include_inactive = payload.value("include_inactive", true)};
 }
 
 std::vector<std::uint32_t> policyIdsFromPayload(const json& payload) {
@@ -261,85 +194,34 @@ json buildPreflight(const json& payload) {
 } // namespace
 
 json Pricing::policyList(const json& payload, const std::shared_ptr<Session>& session) {
-    return {{"policies", visiblePolicies(payload.is_object() ? payload : json::object(), session)}};
+    return {{"policies", vh::ops::pricing::listPolicies(session->user, filterFromPayload(payload))}};
 }
 
 json Pricing::policyUpsert(const json& payload, const std::shared_ptr<Session>& session) {
-    auto policy = policyFromPayload(payload);
-    if (policy.scope == PriceBudgetScope::Global || policy.scope == PriceBudgetScope::Provider) {
-        requireSuperAdmin(session, "Only super-admins may change global or provider S3 price budget policies.");
-    } else if (policy.scope == PriceBudgetScope::GatewayCredential) {
-        if (!canManageGatewayBudgets(session))
-            throw std::runtime_error("admin.s3_gateway.manage_budgets is required to change key-wide S3 gateway credential budget policies.");
-    } else if (policy.scope == PriceBudgetScope::GatewayCredentialVault) {
-        if (!canManageGatewayBudgets(session))
-            throw std::runtime_error("admin.s3_gateway.manage_budgets is required to change S3 gateway credential vault budget policies.");
-        if (!policy.vault_id || !canEditVaultBudget(session, *policy.vault_id))
-            throw std::runtime_error("You do not have permission to change this S3 gateway credential vault budget policy.");
-    } else if (!policy.vault_id || !canEditVaultBudget(session, *policy.vault_id)) {
-        throw std::runtime_error("You do not have permission to change this vault S3 price budget policy.");
-    }
-    return {{"policy", PriceBudgetService{}.upsertPolicy(std::move(policy))}};
+    return {{"policy", vh::ops::pricing::upsertPolicy(session->user, specFromPayload(payload))}};
 }
 
 json Pricing::policyDisable(const json& payload, const std::shared_ptr<Session>& session) {
-    const auto scope = priceBudgetScopeFromString(payload.at("scope").get<std::string>());
-    const auto providerKey = optionalStringPayload(payload, "provider_key");
-    const auto vaultId = optionalUIntPayload(payload, "vault_id");
-    const auto gatewayCredentialId = optionalUIntPayload(payload, "gateway_credential_id");
-    if (scope == PriceBudgetScope::Global || scope == PriceBudgetScope::Provider) {
-        requireSuperAdmin(session, "Only super-admins may disable global or provider S3 price budget policies.");
-    } else if (scope == PriceBudgetScope::GatewayCredential) {
-        if (!canManageGatewayBudgets(session))
-            throw std::runtime_error("admin.s3_gateway.manage_budgets is required to disable key-wide S3 gateway credential budget policies.");
-    } else if (scope == PriceBudgetScope::GatewayCredentialVault) {
-        if (!canManageGatewayBudgets(session))
-            throw std::runtime_error("admin.s3_gateway.manage_budgets is required to disable S3 gateway credential vault budget policies.");
-        if (!vaultId || !canEditVaultBudget(session, *vaultId))
-            throw std::runtime_error("You do not have permission to disable this S3 gateway credential vault budget policy.");
-    } else if (!vaultId || !canEditVaultBudget(session, *vaultId)) {
-        throw std::runtime_error("You do not have permission to disable this vault S3 price budget policy.");
-    }
-    return {{"disabled", PriceBudgetService{}.disablePolicy(scope, providerKey, vaultId, gatewayCredentialId)}};
+    return {{"disabled", vh::ops::pricing::disablePolicy(
+        session->user,
+        priceBudgetScopeFromString(payload.at("scope").get<std::string>()),
+        optionalStringPayload(payload, "provider_key"),
+        optionalUIntPayload(payload, "vault_id"),
+        optionalUIntPayload(payload, "gateway_credential_id"))}};
 }
 
 json Pricing::ledgerList(const json& payload, const std::shared_ptr<Session>& session) {
-    auto vaultId = optionalVaultId(payload);
-    const auto gatewayCredentialId = optionalUIntPayload(payload, "gateway_credential_id");
-    if (!session->user->isSuperAdmin()) {
-        if (gatewayCredentialId && ownsGatewayCredential(session, gatewayCredentialId)) {
-            if (vaultId) requireVaultBudgetView(session, *vaultId);
-        } else {
-            if (!vaultId) throw std::runtime_error("Vault-scoped ledger access requires vault_id.");
-            requireVaultBudgetView(session, *vaultId);
-        }
-    } else if (vaultId) {
-        requireVaultBudgetView(session, *vaultId);
-    }
-    return {{"ledger", PriceBudgetService{}.listLedger(limitFromPayload(payload), vaultId, gatewayCredentialId)}};
+    return {{"ledger", vh::ops::pricing::ledger(session->user, filterFromPayload(payload), limitFromPayload(payload))}};
 }
 
 json Pricing::status(const json& payload, const std::shared_ptr<Session>& session) {
-    auto vaultId = optionalVaultId(payload);
-    const auto gatewayCredentialId = optionalUIntPayload(payload, "gateway_credential_id");
-    if (vaultId) requireVaultBudgetView(session, *vaultId);
-    else if (!session->user->isSuperAdmin() && !(gatewayCredentialId && ownsGatewayCredential(session, gatewayCredentialId)))
-        throw std::runtime_error("System price budget status requires super-admin.");
-
-    PriceBudgetService service;
-    service.expireStaleReservations();
-    auto trends = service.trendStats(vaultId, gatewayCredentialId);
-    if (gatewayCredentialId) {
-        std::erase_if(trends, [&](const auto& trend) {
-            return trend.gateway_credential_id != gatewayCredentialId;
-        });
-    }
+    const auto status = vh::ops::pricing::status(session->user, filterFromPayload(payload), limitFromPayload(payload, 20));
     return {
-        {"policies", visiblePolicies(payload.is_object() ? payload : json::object(), session)},
-        {"ledger", service.listLedger(limitFromPayload(payload, 20), vaultId, gatewayCredentialId)},
-        {"trends", trends},
-        {"notifications", service.listNotifications(20, vaultId, false)},
-        {"overrides", service.listOverrides(20, vaultId, true)}
+        {"policies", status.policies},
+        {"ledger", status.ledger},
+        {"trends", status.trends},
+        {"notifications", status.notifications},
+        {"overrides", status.overrides}
     };
 }
 

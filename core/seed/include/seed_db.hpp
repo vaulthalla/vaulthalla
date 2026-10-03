@@ -15,6 +15,10 @@ void initAdminGroup();
 void initAdminDefaultVault();
 void initRoot();
 void reconcileSystemPrincipals();
+// Accounts written before 1.8.0 have a single all-zero "self" row in user_global_vault_policy and no admin/user rows
+// (every scope defaulted to "self", and roles loaded by name carried no preset). Give them their built-in role's
+// preset. Accounts that already have admin/user rows are left alone. Idempotent; runs at every start.
+void reconcileGlobalVaultPolicies();
 
 // dev
 void cleanupDevR2TestBucket();

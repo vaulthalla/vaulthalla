@@ -4,6 +4,8 @@
 #include "db/query/vault/Vault.hpp"
 #include "db/query/rbac/Permission.hpp"
 #include "db/query/rbac/role/Admin.hpp"
+#include "db/query/identities/helpers.hpp"
+#include "rbac/permission/admin/VaultGlobals.hpp"
 #include "db/query/identities/User.hpp"
 #include "db/query/identities/Group.hpp"
 #include "db/query/fs/Directory.hpp"
@@ -32,6 +34,7 @@
 #include "storage/s3/Controller.hpp"
 #include "crypto/id/Generator.hpp"
 #include "crypto/util/hash.hpp"
+#include "auth/Bootstrap.hpp"
 #include "auth/SystemUid.hpp"
 
 // Libraries
@@ -491,6 +494,7 @@ void vh::seed::initSystemUser() {
 
     user->roles.admin = db::query::rbac::role::Admin::get("super_admin");
     user->roles.admin->user_id = user->id;
+    user->roles.admin->vGlobals = role::Admin::builtin("super_admin", 0)->vGlobals;
 
     db::query::identities::User::createUser(user);
 
@@ -545,11 +549,13 @@ void initAdmin() {
     const auto user = std::make_shared<User>();
     user->name = "admin";
     user->email = "";
-    user->setPasswordHash(hash::password("vh!adm1n"));
+    // No universal default: a per-install password, written once for the operator (auth/Bootstrap.hpp).
+    user->setPasswordHash(auth::bootstrap::issueInitialCredential());
     user->meta.linux_uid = loadPendingSuperAdminUid();
 
     user->roles.admin = db::query::rbac::role::Admin::get("super_admin");
     user->roles.admin->user_id = user->id;
+    user->roles.admin->vGlobals = role::Admin::builtin("super_admin", 0)->vGlobals;
 
     db::query::identities::User::createUser(user);
 }
@@ -699,7 +705,10 @@ void vh::seed::reconcileSystemPrincipals() {
     const auto systemUid = configuredSystemUid();
     const auto rootHash = hash::password(id::Generator({ .namespace_token = "vaulthalla-root-user" }).generate());
     const auto systemHash = hash::password(id::Generator({ .namespace_token = "vaulthalla-system-user" }).generate());
-    const auto adminHash = hash::password("vh!adm1n");
+    // Only used if 'admin' is missing (the seed normally creates it); an existing account's password is never touched.
+    const auto adminHash = db::query::identities::User::adminUserExists()
+        ? hash::password(id::Generator({ .namespace_token = "vaulthalla-admin-unused" }).generate())
+        : auth::bootstrap::issueInitialCredential();
 
     db::Transactions::exec("initdb::reconcileSystemPrincipals", [&](pqxx::work& txn) {
         txn.exec("SELECT set_config('vaulthalla.bootstrap', 'on', true)");
@@ -749,4 +758,25 @@ void vh::seed::reconcileSystemPrincipals() {
     });
 
     log::Registry::vaulthalla()->info("[initdb] Protected system principals reconciled");
+}
+
+void vh::seed::reconcileGlobalVaultPolicies() {
+    db::Transactions::exec("initdb::reconcileGlobalVaultPolicies", [&](pqxx::work& txn) {
+        const auto rows = txn.exec(
+            "SELECT u.id, r.name FROM users u "
+            "JOIN admin_role_assignments a ON a.user_id = u.id JOIN admin_role r ON r.id = a.role_id "
+            "WHERE NOT EXISTS (SELECT 1 FROM user_global_vault_policy p "
+            "                  WHERE p.user_id = u.id AND p.scope IN ('admin', 'user'))");
+        std::size_t repaired = 0;
+        for (const auto& row : rows) {
+            const auto userId = row[0].as<uint32_t>();
+            const auto preset = role::Admin::builtin(row[1].as<std::string>(), userId);
+            const auto policy = preset ? preset->vGlobals : permission::admin::VaultGlobals{};
+            txn.exec(pqxx::prepped{"user_global_vault_policy_delete_all_for_user"}, pqxx::params{userId});
+            db::query::identities::upsertGlobalVRoles(txn, policy, userId);
+            ++repaired;
+        }
+        if (repaired)
+            log::Registry::vaulthalla()->info("[initdb] Wrote the role's global vault policy for {} account(s)", repaired);
+    });
 }

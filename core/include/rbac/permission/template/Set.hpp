@@ -180,12 +180,18 @@ namespace vh::rbac::permission {
                 qualifiedName.push_back('.');
                 qualifiedName.append(entry.slug);
 
+                // The documented CLI flags (`vh permission`, getFlags(), toFlagsString()) come first: they use the
+                // set's short flagPrefix(). The qualified spellings stay as aliases.
                 std::vector<std::string> flags;
-                flags.reserve(3);
+                flags.reserve(6);
 
+                const auto shortPrefix = std::string(flagPrefix());
                 const auto dashed = std::string(qualifiedPrefix);
                 const auto slug = std::string(entry.slug);
 
+                flags.emplace_back(std::format("--{}-{}", shortPrefix, slug));
+                flags.emplace_back(std::format("--{}-{}-{}", ALLOW_FLAG_ALIAS, shortPrefix, slug));
+                flags.emplace_back(std::format("--{}-{}-{}", DENY_FLAG_ALIAS, shortPrefix, slug));
                 flags.emplace_back(std::format("--{}-{}", dashed, slug));
                 flags.emplace_back(std::format("--{}-{}-{}", ALLOW_FLAG_ALIAS, dashed, slug));
                 flags.emplace_back(std::format("--{}-{}-{}", DENY_FLAG_ALIAS, dashed, slug));

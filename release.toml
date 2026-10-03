@@ -1,0 +1,103 @@
+# vl-release repository contract: https://github.com/valkyrianlabs/vl-release
+# `vlr help config` documents every key. Release CI (.github/workflows/release.yml) only calls `vlr` commands.
+schema_version = 1
+
+[tool]
+requires = ">=0.1.3,<1"
+
+[project]
+name = "Vaulthalla"
+package = "vaulthalla"
+repository = "vaulthalla/vaulthalla"
+
+[version]
+canonical = "VERSION"
+targets = [
+  { kind = "meson", path = "meson.build" },
+  { kind = "package_json", path = "web/package.json" },
+]
+
+[release]
+branch = "main"
+# Fast guardrails `vlr cut` runs before tagging. Core/web builds and unit tests run in release CI.
+test_command = ["bash", "tools/dev/verify.sh", "release", "packaging", "lifecycle", "shell"]
+
+[debian]
+distribution = "unstable"
+urgency = "high"
+maintainer = "Cooper Larson <cooper@valkyrianlabs.com>"
+# Private icons and the Next.js production build; debian/rules packages web/.next/standalone + static.
+# Also writes the web deployable tarball attached to the GitHub release (extra_artifacts).
+pre_build = [["bash", "web/bin/build_release_payload.sh", "build/web-payload"]]
+# Never copied into the build tree: local secrets and overrides (gitignored, absent in CI) and stale build dirs.
+build_excludes = [
+  ".bashrc",
+  "cloudflare.ini",
+  "config.yaml",
+  "enable_dev_mode",
+  "deploy/vaulthalla.env",
+  "deploy/bashrc",
+  ".venv",
+  ".idea",
+  ".claude",
+  "test-results",
+  "build-asan",
+  "build-check",
+  "build-check-install",
+  "build-ci",
+  "build-ci-release",
+  "build-install",
+  "build-phase1",
+  "build-relg",
+  "web/test-results",
+  "web/playwright-report",
+]
+extra_artifacts = ["build/web-payload/vaulthalla-web_*_next-standalone.tar.gz"]
+
+[[debian.packages]]
+name = "vaulthalla"
+architecture = "amd64"
+required_paths = [
+  "usr/bin/vaulthalla-server",
+  "usr/bin/vaulthalla-cli",
+  "usr/bin/vaulthalla",
+  "usr/bin/vh",
+  "usr/lib/vaulthalla/lifecycle",
+  "usr/share/vaulthalla/config/config.yaml",
+  "usr/share/vaulthalla/config/config_template.yaml.in",
+  "lib/systemd/system/vaulthalla.service",
+  "lib/systemd/system/vaulthalla-web.service",
+  "lib/systemd/system/vaulthalla-swtpm.service",
+  "usr/share/doc/vaulthalla/copyright",
+  "usr/share/vaulthalla/nginx/vaulthalla",
+  "usr/share/vaulthalla/psql/000_schema.sql",
+  "usr/share/vaulthalla-web/server.js",
+]
+# Retired units (#110): vaulthalla-cli.socket was an orphaned listener on the daemon's CLI socket path that made
+# `vh` hang; vaulthalla.service owns the socket. The repo-root config.yaml override is source-install only.
+forbidden_paths = [
+  "lib/systemd/system/vaulthalla-cli.service",
+  "lib/systemd/system/vaulthalla-cli.socket",
+  "usr/lib/systemd/system/vaulthalla-cli.service",
+  "usr/lib/systemd/system/vaulthalla-cli.socket",
+  "etc/vaulthalla/config.yaml",
+]
+any_of = [
+  # dh_compress may gzip supplementary docs.
+  ["usr/share/doc/vaulthalla/LICENSE", "usr/share/doc/vaulthalla/LICENSE.gz"],
+  ["usr/share/man/man1/vh.1", "usr/share/man/man1/vh.1.gz"],
+  ["usr/share/vaulthalla-web/.next/static/*"],
+  ["usr/lib/udev/rules.d/60-vaulthalla-tpm.rules", "usr/lib/*/udev/rules.d/60-vaulthalla-tpm.rules"],
+  ["usr/lib/tmpfiles.d/vaulthalla.conf", "usr/lib/*/tmpfiles.d/vaulthalla.conf"],
+]
+# postinst seeds /etc/vaulthalla/config.yaml from the shipped default: it must be the tracked file, never a local
+# override.
+identical_files = [
+  { member = "usr/share/vaulthalla/config/config.yaml", source = "deploy/config/config.yaml" },
+]
+
+[publish.apt]
+repository_url = "https://apt.vaulthalla.sh"
+suite = "stable"
+components = ["main"]
+architectures = ["amd64"]

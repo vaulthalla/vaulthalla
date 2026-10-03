@@ -94,12 +94,13 @@ export interface WebSocketCommandMap {
   'auth.login': { payload: { name: string; password: string }; response: { token: string; user: User } }
 
   'auth.register': {
-    payload: { name: string; email: string; password: string; is_active?: boolean; role?: string }
-    response: { token: string; user: User }
+    payload: { name: string; email?: string; password: string; is_active?: boolean; role: string }
+    response: { user: User }
   }
 
+  // A patch. Role changes and deactivation end the account's sessions.
   'auth.user.update': {
-    payload: { id: number; name?: string; email?: string; password?: string; role?: string; is_active?: boolean }
+    payload: { id: number; name?: string; email?: string | null; password?: string; role?: string; is_active?: boolean }
     response: { user: User }
   }
 
@@ -118,11 +119,18 @@ export interface WebSocketCommandMap {
 
   'auth.user.get': { payload: { id: number }; response: { user: User } }
 
-  'auth.user.delete': { payload: { id: number }; response: { user_id: number } }
+  // Without confirm the reply is an error with data.code 'user_delete' and the question to ask. The user's vaults
+  // are destroyed unless transfer_to names who gets them.
+  'auth.user.delete': {
+    payload: { id: number; confirm?: boolean; transfer_to?: number | null }
+    response: { user_id: number }
+  }
 
   'auth.user.get.byName': { payload: { name: string }; response: { user: User } }
 
-  'auth.admin.default_password': { payload: null; response: { isDefault: boolean } }
+  // Security posture for the signed-in account: the super admin's initial password file while its generated
+  // password is still in use and the file is still on disk, else null. A warning, never a gate.
+  'auth.security.status': { payload: null; response: { initial_password_file: string | null } }
 
   // Vault commands
 
@@ -141,11 +149,17 @@ export interface WebSocketCommandMap {
           storage_tier_id?: string | null
           encrypt_upstream?: boolean
           sync?: RemoteSyncPolicy
+          accept_encryption_waiver?: boolean
         }
     response: { vault: LocalDiskVault | S3Vault }
   }
 
-  'storage.vault.update': { payload: LocalDiskVault | S3Vault; response: { vault: LocalDiskVault | S3Vault } }
+  // A patch: fields left out keep their current values. A refusal with data.code 'encryption_waiver' means the
+  // bucket already holds data; resend with accept_encryption_waiver once the person accepts the message.
+  'storage.vault.update': {
+    payload: (LocalDiskVault | S3Vault) & { accept_encryption_waiver?: boolean }
+    response: { vault: LocalDiskVault | S3Vault }
+  }
 
   'storage.vault.remove': { payload: { id: number }; response: null }
 
@@ -158,7 +172,7 @@ export interface WebSocketCommandMap {
   'storage.apiKey.list': { payload: null; response: { keys: string } }
 
 
-  'storage.apiKey.add': { payload: Partial<S3APIKey>; response: null }
+  'storage.apiKey.add': { payload: Partial<S3APIKey>; response: { api_key: APIKey } }
 
   'storage.apiKey.remove': { payload: { id: number }; response: null }
 
@@ -170,7 +184,7 @@ export interface WebSocketCommandMap {
 
   'role.admin.update': { payload: AdminRolePayload; response: { role: AdminRoleDTO } }
 
-  'role.admin.delete': { payload: { id: number }; response: { role: AdminRoleDTO } }
+  'role.admin.delete': { payload: { id: number }; response: { role: number } }
 
   'role.admin.get': { payload: { id: number }; response: { role: AdminRoleDTO } }
 
@@ -178,19 +192,19 @@ export interface WebSocketCommandMap {
 
   'roles.admin.list': { payload: null; response: { roles: AdminRoleDTO[] } }
 
-  'role.vault.add': { payload: VaultRolePayload; response: { vault: VaultRoleDTO } }
+  'role.vault.add': { payload: VaultRolePayload; response: { role: VaultRoleDTO } }
 
-  'role.vault.update': { payload: VaultRolePayload; response: { vault: VaultRoleDTO } }
+  'role.vault.update': { payload: VaultRolePayload; response: { role: VaultRoleDTO } }
 
-  'role.vault.delete': { payload: { id: number }; response: { vault: VaultRoleDTO } }
+  'role.vault.delete': { payload: { id: number }; response: { role_id: number } }
 
-  'role.vault.get': { payload: { id: number }; response: { vault: VaultRoleDTO } }
+  'role.vault.get': { payload: { id: number }; response: { role: VaultRoleDTO } }
 
-  'role.vault.get.byName': { payload: { name: string }; response: { vault: VaultRoleDTO } }
+  'role.vault.get.byName': { payload: { name: string }; response: { role: VaultRoleDTO } }
 
   'roles.vault.list': { payload: null; response: { roles: VaultRoleDTO[] } }
 
-  'roles.vault.list.assigned': { payload: { id: number }; response: { vault: VaultRoleDTO } }
+  'roles.vault.list.assigned': { payload: { id: number }; response: { assigned_roles: VaultRoleDTO[] } }
 
   'role.vault.assign': {
     payload: { id: number; vault_id: number; subject_type: 'user' | 'group'; subject_id: number }
@@ -419,19 +433,28 @@ export interface WebSocketCommandMap {
 
   // Group commands
 
-  'group.add': { payload: { name: string; description?: string }; response: { group: Group } }
+  'group.add': {
+    payload: { name: string; description?: string; linux_gid?: number }
+    response: { name: string; group: Group }
+  }
 
-  'group.remove': { payload: { id: number }; response: null }
+  'group.remove': { payload: { id: number }; response: { id: number } }
 
-  'group.update': { payload: Partial<Group>; response: { group: Group } }
+  'group.update': { payload: Partial<Group> & { id: number }; response: { id: number; name: string; group: Group } }
 
   'group.get': { payload: { id: number }; response: { group: Group } }
 
   'groups.list': { payload: null; response: { groups: Group[] } }
 
-  'group.member.add': { payload: { group_id: number; user_id: number }; response: { group: Group } }
+  'group.member.add': {
+    payload: { group_id: number; user_id: number }
+    response: { group: Group; group_id: number; user_id: number }
+  }
 
-  'group.member.remove': { payload: { group_id: number; user_id: number }; response: { group: Group } }
+  'group.member.remove': {
+    payload: { group_id: number; user_id: number }
+    response: { group: Group; group_id: number; user_id: number }
+  }
 
   'group.get.byName': { payload: { name: string }; response: { group: Group } }
 

@@ -62,7 +62,7 @@ namespace vh::rbac::role {
         // shared_from_this() throws bad_weak_ptr inside a constructor (no owner exists yet). A non-owning
         // aliasing pointer is enough for the resolver, which only mutates *this for the duration of the call.
         std::shared_ptr<Admin> self(std::shared_ptr<Admin>{}, this);
-        PermResolver::applyPermissionsFromWebCli(self, toPermissions(), pMap);
+        PermResolver::applySnapshot(self, toPermissions(), pMap);
     }
 
     void Admin::updateFromJson(const nlohmann::json &j) {
@@ -77,7 +77,7 @@ namespace vh::rbac::role {
 
         using PermResolver = resolver::PermissionResolverEnumPack<std::shared_ptr<Admin>>::type;
         auto self = shared_from_this();
-        PermResolver::applyPermissionsFromWebCli(self, toPermissions(), pMap);
+        PermResolver::applySnapshot(self, toPermissions(), pMap);
     }
 
     std::string Admin::usage() {
@@ -171,6 +171,14 @@ namespace vh::rbac::role {
         return identities.toFlagsString() + " " + vaults.toFlagsString() + " " + audits.toFlagsString() + " " + settings
                .toFlagsString() + " " +
                roles.toFlagsString() + " " + keys.toFlagsString() + " " + s3Gateway.toFlagsString();
+    }
+
+    std::optional<Admin> Admin::builtin(const std::string_view name, const uint32_t userId) {
+        for (auto role : {None(userId), Auditor(userId), Support(userId), IdentityAdmin(userId), SecurityAdmin(userId),
+                          PlatformOperator(userId), VaultAdmin(userId), OrgAdmin(userId), SuperAdmin(userId),
+                          KeyCustodian(userId)})
+            if (role.name == name) return role;
+        return std::nullopt;
     }
 
     Admin Admin::fromJson(const nlohmann::json &j) { return Admin(j); }

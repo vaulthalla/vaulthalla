@@ -21,9 +21,9 @@ bash tools/dev/verify.sh core web   # explicit profiles
 | `doctor` | toolchain/version pin check (node vs `.nvmrc`, pnpm vs `packageManager`, icons, build dir, release sync) | seconds |
 | `core` | `meson compile -C build` then `meson test -C build` (sources `deploy/vaulthalla.env` if present) | minutes |
 | `web` | `pnpm --dir web typecheck` + `lint` (strict; `VERIFY_STRICT_LINT=0` to soften) | ~1 min |
-| `release` | `python3 -m tools.release check` + the unittest suite CI runs | seconds |
-| `packaging` | the 69 packaging contract tests that `unittest discover` skips (run by module) | seconds |
-| `lifecycle` | `deploy/lifecycle` unit tests (not run in CI) | seconds |
+| `release` | `vlr check` + `vlr version check` (release.toml, staged `.release/` docs, version targets) | seconds |
+| `packaging` | `tools/contracts` (packaging, maintainer scripts, migrations, release workflow) + `tools/lab/tests`, with minimum test counts | seconds |
+| `lifecycle` | `deploy/lifecycle` unit tests (minimum test count) | seconds |
 | `docs` | payload-markdown checker on changed docs (or all), then `pmdocs validate --source docs` | seconds |
 | `shell` | `bash -n` (+ shellcheck if installed) on changed `bin/`, `web/bin/`, and maintainer scripts | seconds |
 | `integration` | **Destructive:** `make uninstall && make clean-full && make run_test` on `/tmp/vh_mount` | 10+ min |
@@ -35,8 +35,9 @@ bash tools/dev/verify.sh core web   # explicit profiles
   `VERIFY_ALLOW_DESTRUCTIVE=1`. Only set that after the user agrees in this conversation.
 - DB-backed unit tests need `make test` first. That step is also destructive to the local test DB, so ask first.
   See `.claude/context/testing.md`.
-- The `packaging` profile has one known failure as of 2026-09-30 (`production-hardening.md` P0-4). Don't
-  "fix" the test by weakening it. Reconcile the wording in `debian/README.Debian` or the assertion deliberately.
+- The `packaging` and `lifecycle` suites have minimum test counts (`run_suite` in `tools/dev/verify.sh`). When you add
+  tests, raise the floor; never lower it to get green, and never weaken a contract test to pass.
+- `release` needs `vlr` (vl-release). A change to user-visible behavior should also update `.release/` (`/vl-release`).
 - Web: if `node -v` doesn't match `web/.nvmrc`, say so in the report. A toolchain mismatch weakens the result.
 - Report honestly. List each profile run and its pass/fail, anything skipped and why, and the exact failing test names.
   Never summarize a partial run as "tests pass".

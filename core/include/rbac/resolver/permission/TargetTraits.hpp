@@ -3,6 +3,7 @@
 #include "Traits.hpp"
 #include "rbac/role/Admin.hpp"
 #include "rbac/role/Vault.hpp"
+#include "rbac/role/vault/Base.hpp"
 
 namespace vh::rbac::resolver {
     template<>
@@ -33,12 +34,21 @@ namespace vh::rbac::resolver {
     };
 
     template<>
+    struct PermissionTargetTraits<permission::admin::identities::GroupPermissions> {
+        static constexpr auto domain = RoleDomain::Admin;
+        static constexpr bool canOverride = false;
+
+        static auto& target(role::Admin& role) { return role.identities.groups; }
+        static const auto& target(const role::Admin& role) { return role.identities.groups; }
+    };
+
+    template<>
     struct PermissionTargetTraits<permission::vault::RolePermissions> {
         static constexpr auto domain = RoleDomain::Vault;
         static constexpr bool canOverride = false;
 
-        static auto& target(role::Vault& role) { return role.roles; }
-        static const auto& target(const role::Vault& role) { return role.roles; }
+        static auto& target(role::vault::Base& role) { return role.roles; }
+        static const auto& target(const role::vault::Base& role) { return role.roles; }
     };
 
     template<>
@@ -46,8 +56,8 @@ namespace vh::rbac::resolver {
         static constexpr auto domain = RoleDomain::Vault;
         static constexpr bool canOverride = false;
 
-        static auto& target(role::Vault& role) { return role.sync.config; }
-        static const auto& target(const role::Vault& role) { return role.sync.config; }
+        static auto& target(role::vault::Base& role) { return role.sync.config; }
+        static const auto& target(const role::vault::Base& role) { return role.sync.config; }
     };
 
     template<>
@@ -55,8 +65,8 @@ namespace vh::rbac::resolver {
         static constexpr auto domain = RoleDomain::Vault;
         static constexpr bool canOverride = false;
 
-        static auto& target(role::Vault& role) { return role.sync.action; }
-        static const auto& target(const role::Vault& role) { return role.sync.action; }
+        static auto& target(role::vault::Base& role) { return role.sync.action; }
+        static const auto& target(const role::vault::Base& role) { return role.sync.action; }
     };
 
     template<>
@@ -64,8 +74,8 @@ namespace vh::rbac::resolver {
         static constexpr auto domain = RoleDomain::Vault;
         static constexpr bool canOverride = true;
 
-        static auto& target(role::Vault& role) { return role.fs.files; }
-        static const auto& target(const role::Vault& role) { return role.fs.files; }
+        static auto& target(role::vault::Base& role) { return role.fs.files; }
+        static const auto& target(const role::vault::Base& role) { return role.fs.files; }
     };
 
     template<>
@@ -73,7 +83,7 @@ namespace vh::rbac::resolver {
         static constexpr auto domain = RoleDomain::Vault;
         static constexpr bool canOverride = true;
 
-        static auto& target(role::Vault& role) { return role.fs.directories; }
-        static const auto& target(const role::Vault& role) { return role.fs.directories; }
+        static auto& target(role::vault::Base& role) { return role.fs.directories; }
+        static const auto& target(const role::vault::Base& role) { return role.fs.directories; }
     };
 }

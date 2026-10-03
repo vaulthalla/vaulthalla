@@ -3,6 +3,10 @@
 #include "protocols/shell/types.hpp"
 #include "protocols/shell/util/argsHelpers.hpp"
 #include "helpers.hpp"
+#include "ops/Vaults.hpp"
+
+#include <functional>
+#include <string_view>
 
 #include <memory>
 #include <optional>
@@ -40,22 +44,18 @@ namespace vh::storage {
 }
 
 namespace vh::protocols::shell::commands::vault {
-    struct WaiverContext {
-        const CommandCall &call;
-        std::shared_ptr<vh::vault::model::Vault> vault;
-        bool isUpdate = false;
-    };
-
-    struct WaiverResult {
-        bool okToProceed;
-        std::shared_ptr<sync::model::Waiver> waiver;
-    };
-
     // router.cpp
     void registerCommands(const std::shared_ptr<Router> &r);
 
-    // waiver.cpp
-    WaiverResult handle_encryption_waiver(const WaiverContext &ctx);
+    // waiver.cpp: runs an op that may need an encryption waiver (it throws ops::NeedsConfirmation); asks the
+    // person at the terminal (or honours --accept-overwrite-waiver / --accept-decryption-waiver) and repeats it
+    // accepted. `op` returns the command's output.
+    CommandResult runWithWaiver(const CommandCall &call, std::string_view prefix,
+                                const std::function<std::string(bool acceptWaiver)> &op);
+
+    CommandResult runVaultChange(const CommandCall &call, std::string_view prefix,
+                                 const std::function<ops::vaults::VaultPtr(bool acceptWaiver)> &op,
+                                 const std::function<std::string(const ops::vaults::VaultPtr &)> &format);
 
     // create.cpp
     CommandResult handle_vault_create(const CommandCall &call);
@@ -95,15 +95,6 @@ namespace vh::protocols::shell::commands::vault {
     Lookup<storage::Engine> resolveEngine(const CommandCall &call, const std::string &vaultArg,
                                           const std::shared_ptr<CommandUsage> &usage, const std::string &errPrefix);
 
-    std::optional<std::string> checkOverridePermissions(const CommandCall &call,
-                                                        const std::shared_ptr<vh::vault::model::Vault> &vault,
-                                                        const std::string &errPrefix);
-
-    Lookup<vh::rbac::role::Vault> resolveVRole(const std::string &roleArg,
-                                           const std::shared_ptr<vh::vault::model::Vault> &vault,
-                                           const Subject *subjectOrNull,
-                                           const std::string &errPrefix);
-
     PatternParse parseGlobPatternOpt(const CommandCall &call, bool required, const std::string &errPrefix);
 
     EnableParse parseEnableDisableOpt(const CommandCall &call, const std::string &errPrefix);
@@ -112,19 +103,14 @@ namespace vh::protocols::shell::commands::vault {
 
     std::unique_ptr<vh::vault::model::VaultType> parseVaultType(const CommandCall &call);
 
-    void assignDescIfAvailable(const CommandCall &call, const std::shared_ptr<CommandUsage> &usage,
-                               const std::shared_ptr<vh::vault::model::Vault> &vault);
+    // CLI options -> the ops::vaults request fields they set (absent options stay unset).
+    ops::vaults::SyncPatch syncPatchFromOptions(const CommandCall &call);
 
-    void assignQuotaIfAvailable(const CommandCall &call, const std::shared_ptr<CommandUsage> &usage,
-                                const std::shared_ptr<vh::vault::model::Vault> &vault);
+    std::optional<uintmax_t> quotaFromOption(const CommandCall &call);
 
-    void assignOwnerIfAvailable(const CommandCall &call, const std::shared_ptr<CommandUsage> &usage,
-                                const std::shared_ptr<vh::vault::model::Vault> &vault);
+    // --api-key by name or id.
+    std::optional<unsigned int> apiKeyIdFromOption(const CommandCall &call);
 
-    void parseSync(const CommandCall &call, const std::shared_ptr<CommandUsage> &usage,
-                   const std::shared_ptr<vh::vault::model::Vault> &vault,
-                   const std::shared_ptr<sync::model::Policy> &sync);
-
-    void parseS3API(const CommandCall &call, const std::shared_ptr<CommandUsage> &usage,
-                    const std::shared_ptr<vh::vault::model::Vault> &vault, bool required = false);
+    // --encrypt / --no-encrypt (mutually exclusive).
+    std::optional<bool> encryptFromFlags(const CommandCall &call);
 }

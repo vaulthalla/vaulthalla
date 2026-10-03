@@ -1,7 +1,7 @@
 # Shipped migration checksums for deploy/psql/*.sql.
 #
 # sha256 of the raw file bytes, exactly what SqlDeployer (core/seed/include/SqlDeployer.hpp) records in
-# schema_migrations.sha256. Enforced by tools/release/tests/packaging/test_migration_checksums_contract.py.
+# schema_migrations.sha256. Enforced by tools/contracts/test_migration_checksums_contract.py.
 #
 # Format: <status> <sha256> <filename> <note>
 #   current     the hash of the file as it is in this tree (exactly one per deploy/psql/*.sql file)
@@ -46,6 +46,7 @@ current    3c69612a62a836033419a7c1054678d8b3b3706db4e829d6bb654b281da4e6da  094
 current    ab0eae33518b5a4032a3163903adf6233f795dbbd55b8b6c88f6daae6e379883  095_s3_gateway.sql  v1.6.0+
 current    f49cb5cf909432e09c5b7b7c92a577bc6db40a0776f534d3ed845acc8c2f6fc8  096_vault_external_names.sql  v1.6.6+
 current    18435273a98b1c172a720564e31b8914e6de94564dabeac206a170d16c1f8a13  097_admin_role_s3_gateway_permissions.sql  unreleased
+current    22bc5dfcd12b4d5b160b7a7f1ec72a830a2b8da40bce7d2d7e74a35193a7bd7a  098_auth_bootstrap_state.sql  unreleased
 historical 64170212eb3f9fbe0f7c949791b953f0376a1f2bcf66b3dec7afc5db6325d570  020_vaults.sql  v0.28.0-alpha..v1.5.0
 historical c154cd7e10f7931f29c12b9221c90f66d6b953cfb5e3dc15ea50f0940e5d4220  060_acl.sql  v0.28.0-alpha..v1.5.1
 historical 720caaa27c0d51635fe3f459a8426f019d3f0dbdc0b7ae176d283309933a7f53  082_stats_metric_samples.sql  v1.2.4..v1.2.5

@@ -59,7 +59,7 @@ void Handler::registerAuthHandlers(const std::shared_ptr<Router>& r) {
     r->registerPayload("auth.user.get", &handler::Auth::getUser);
     r->registerPayload("auth.user.get.byName", &handler::Auth::getUserByName);
     r->registerSessionOnlyHandler("auth.users.list", &handler::Auth::listUsers);
-    r->registerEmptyHandler("auth.admin.default_password", &handler::Auth::doesAdminHaveDefaultPassword);
+    r->registerSessionOnlyHandler("auth.security.status", &handler::Auth::securityStatus);
     r->registerHandlerWithToken("auth.refresh", &handler::Auth::refreshToken);
 }
 

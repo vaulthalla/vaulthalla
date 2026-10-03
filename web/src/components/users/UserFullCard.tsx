@@ -8,9 +8,13 @@ import * as motion from 'motion/react-client'
 import { getUserIcon } from '@/util/icons/getUserIcon'
 import Link from 'next/link'
 import { Button } from '@/components/Button'
+import DeleteUserModal from '@/components/users/DeleteUserModal'
+import { useRouter } from 'next/navigation'
 
 const UserFullCard = ({ name }: { name: string }) => {
   const [user, setUser] = useState<User | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const router = useRouter()
 
   useEffect(() => {
     const fetchUser = async () => {
@@ -68,6 +72,12 @@ const UserFullCard = ({ name }: { name: string }) => {
           Change Password
         </Button>
       </Link>
+      <Button variant="destructive" className="mt-2" onClick={() => setDeleting(true)} data-testid="delete-user-button">
+        Delete
+      </Button>
+      {deleting && (
+        <DeleteUserModal user={user} onClose={() => setDeleting(false)} onDeleted={() => router.push('/users')} />
+      )}
     </motion.div>
   )
 }

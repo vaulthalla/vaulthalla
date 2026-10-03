@@ -21,7 +21,7 @@ protected:
 
     static void SetUpTestSuite() {
         if (!static_cast<bool>(std::getenv("VH_TEST_DB_USER")) ||
-            !static_cast<bool>(std::getenv("VH_TEST_DB_PSS")) ||
+            !static_cast<bool>(std::getenv("VH_TEST_DB_PASS")) ||
             !static_cast<bool>(std::getenv("VH_TEST_DB_HOST")) ||
             !static_cast<bool>(std::getenv("VH_TEST_DB_PORT")) ||
             !static_cast<bool>(std::getenv("VH_TEST_DB_NAME"))) {

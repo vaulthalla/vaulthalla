@@ -11,6 +11,24 @@ using VaultRole = vh::rbac::role::Vault;
 using VaultRolePtr = std::shared_ptr<VaultRole>;
 
 namespace vh::db::query::rbac::role {
+    unsigned int Vault::insert(const VaultRolePtr& role) {
+        if (!role) throw std::invalid_argument("role::Vault::insert received null role");
+
+        return Transactions::exec("role::Vault::insert", [&](pqxx::work& txn) {
+            return txn.exec(
+                pqxx::prepped{"vault_role_insert"},
+                pqxx::params{
+                    role->name,
+                    role->description,
+                    role->fs.files.toBitString(),
+                    role->fs.directories.toBitString(),
+                    role->sync.toBitString(),
+                    role->roles.toBitString()
+                }
+            ).one_row()["id"].as<unsigned int>();
+        });
+    }
+
     unsigned int Vault::upsert(const VaultRolePtr& role) {
         if (!role) throw std::invalid_argument("role::Vault::upsert received null role");
 

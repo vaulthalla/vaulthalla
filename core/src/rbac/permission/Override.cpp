@@ -31,7 +31,7 @@ Override::Override(const pqxx::row &row)
       effect(overrideOptFromString(row["effect"].as<std::string>())),
       enabled(row["enabled"].as<bool>()),
       pattern(rbac::fs::glob::Tokenizer::parse(row["glob_path"].as<std::string>())) {
-    if (const auto v = try_get<uint32_t>(row, std::vector<std::string_view>{"permission_override_id", "override_id", "id"}))
+    if (const auto v = try_get<uint32_t>(row, std::vector<std::string_view>{"override_id", "id"}))
         id = *v;
 
     if (const auto v = try_get<uint32_t>(row, std::vector<std::string_view>{"role_assignment_id", "assignment_id"}))

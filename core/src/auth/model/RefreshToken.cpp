@@ -51,7 +51,8 @@ bool RefreshToken::dangerousDivergence(const std::shared_ptr<RefreshToken>& othe
 
 void RefreshToken::hardInvalidate() {
     revoke();
-    db::query::auth::RefreshToken::refresh(jti);
+    // A token that never got a jti (the cookie placeholder before hydration) has no row to revoke.
+    if (!jti.empty()) db::query::auth::RefreshToken::refresh(jti);
     hashedToken.clear();
     rawToken.clear();
 }

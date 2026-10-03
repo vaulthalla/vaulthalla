@@ -6,9 +6,9 @@
 |---|---|---|
 | `core/**` C++ | `meson compile -C build` (unity build) | `meson test -C build --print-errorlogs` (unit, DB-backed), `make run_test` (integration harness) |
 | `web/**` | `pnpm --dir web typecheck && pnpm --dir web lint` | `pnpm --dir web build` (needs private icons), Playwright `pnpm --dir web test:e2e` |
-| `tools/release/**`, `VERSION`, managed files | `python3 -m tools.release check` | `python3 -m unittest discover -s tools/release/tests -p 'test_*.py'` |
-| `debian/**`, `deploy/systemd`, `deploy/psql` | `bash tools/dev/verify.sh packaging` (runs the 69 orphaned packaging tests by module) | build a `.deb` and install/upgrade it on the lab VM (`/lab` skill) |
-| `deploy/lifecycle/**` | `python3 -m unittest deploy.lifecycle.tests.test_main` (not run in CI) | lab VM `vh setup …` run |
+| `release.toml`, `.release/`, `VERSION`, version targets | `vlr check && vlr version check` | `make deb` (local release rehearsal: prepare + build + validate in a worktree of HEAD) |
+| `debian/**`, `deploy/systemd`, `deploy/psql` | `bash tools/dev/verify.sh packaging` (`tools/contracts`) | `make deb`, then install it on the dev VM (never on vh-storage; `/lab`) |
+| `deploy/lifecycle/**` | `bash tools/dev/verify.sh lifecycle` | a dev VM `vh setup …` run |
 | `docs/**` | `python3 .claude/skills/payload-markdown/scripts/check_payload_markdown_doc.py <files>` | `pmdocs validate --source docs` |
 | `bin/**` shell | `bash -n <script>` | a real `make test` / `make dev` cycle, after asking first |
 
@@ -27,6 +27,13 @@
    credentials into the ignored `deploy/vaulthalla.env`.
 2. `set -a; source ./deploy/vaulthalla.env; set +a`
 3. `./build/core/vh_unit_tests --gtest_filter='<Filter>'`
+
+CLI ↔ ws parity for families migrated to `core/ops/`:
+`--gtest_filter='*Parity*:OpsGroups*:AuthPasswordChange*'` (groups, roles, API keys, vaults, users, S3 gateway,
+pricing/config). The whole binary takes ~7 minutes against a local DB; meson's test timeout is 30 minutes (#123). A parity case
+runs one logical operation through `shell::Router::executeLine` and through the ws handler, for every seeded admin
+role, and compares allow/deny (against an oracle from the role's permission bits) and resulting DB state, never text.
+New families add a `test_ops_parity_<family>.cpp` on the same pattern.
 
 Don't assume the shell `.bashrc` has current credentials. **Never print or commit secret values.** If you hit DB auth,
 stale secrets, or port conflicts: `make uninstall` → `make test` → re-source.

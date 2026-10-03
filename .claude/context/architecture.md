@@ -66,6 +66,11 @@ ShellServer is not created in test mode (`paths::testMode`).
    clients get exit 75 "busy"); request reads time out after 10s, prompt answers after 15 min, sends after 30s, and
    writes use `MSG_NOSIGNAL`. `status`/`version` skip the DB user lookup so they work while the DB is down.
 4. `shell/Router.cpp` with `core/include/protocols/shell/Parser.hpp` tokenizes the line and runs the handler; output frames stream back.
+   Before dispatch the Router rejects options the usage definitions don't declare: each option must be declared by
+   a node on the path the positionals select (argument words are skipped), or match a declared `option_prefixes`
+   family (role commands' generated `--allow-*`/`--deny-*`). `--help`/`-h` are always accepted.
+   `test_cli_options.cpp` keeps definitions honest: every documented example must pass this check, and every
+   subcommand name a handler dispatches on must be defined.
 5. Usage/help comes from `core/usage/*` (root alias hard-coded as `vh`). The same code drives the `vh_usage` manpage
    generator and the integration-test command models, so CLI UX changes ripple into man pages and tests.
 
@@ -81,11 +86,32 @@ healthy/degraded/critical and includes a live `SELECT 1` DB probe.
 The web client builds `ws(s)://<host>/ws` in `web/src/util/getUrl.ts` (overridable with `NEXT_PUBLIC_VAULTHALLA_WS_ORIGIN`).
 `web/src/stores/useWebSocket.ts` handles reconnect, the pending-request map keyed by `requestId`, and token injection.
 Router allowlists are **exact and per session mode**: unauthenticated, human, pending-share, and ready-share.
-While a human session's password still equals the seeded default, the Router serves only the
-`default_password::isAllowedWhileDefault` commands (`protocols/ws/DefaultPasswordGate.cpp`, issue #103) and answers
-everything else with `data.code = "password_change_required"`. `auth.login` is rate-limited per IP + account
+Only the session-lifecycle commands (`auth.login`, `auth.logout`, `auth.refresh`, `auth.isAuthenticated`) skip
+access-token validation (`isSessionLifecycleCommand`, mirrored by the web's
+`SESSION_LIFECYCLE_COMMANDS`). Every other `auth.*` command (register, user update/delete/get/list, password change)
+is account management and goes through `RequireHumanAuth`. A `starts_with("auth")` rule used to let unauthenticated
+sockets reach handlers that dereference `session->user` (a remote daemon segfault); `WsAuthRouting.*` guards it.
+There is no password gate (removed in 1.8.0, with the universal default password): a valid session is fully
+authenticated. The super admin's initial-credential posture is advisory only: `auth.security.status` (human auth,
+read once per page load) returns the initial password file path for `admin` while the generated password is in use
+and the file exists; the web shows `InitialPasswordWarning`. Credential lifecycle: `core/auth/Bootstrap.hpp`
+(see "Super-admin initial credential" below). `auth.login` is rate-limited per IP + account
 (`ShareRateLimit.cpp`). The Router's debug log redacts credentials (`LogRedaction.cpp`); never log a raw ws message.
 See `link-sharing.md`.
+
+### Super-admin initial credential
+
+No universal default password. `seed::initAdmin` (fresh DB only: `initDB` seeds when no `admin` row exists) calls
+`auth::bootstrap::issueInitialCredential()`: 16 CSPRNG bytes as 32 hex characters, hashed normally, plaintext written
+atomically (temp + rename, 0600, daemon user) to `<backing path>/super_admin_initial_password`
+(`/var/lib/vaulthalla/...`), and `auth_bootstrap_state.super_admin_password_generated = TRUE` (singleton row, migration
+098). Nothing re-issues it while the `admin` row exists: restarts, upgrades, reinstalls (adopt) and a deleted file
+keep the password. Any change of admin's password (`auth::Manager::changePassword/resetPassword`) marks it rotated and
+removes the file; a failed removal is logged and reported, never rolled back. `vh setup set-super-admin-password` is a
+daemon shell command (`setup/superAdminPassword.cpp` → `ops::users::setSuperAdminPassword`) restricted to the caller
+whose UID is bound to `admin` (root/system/sudo refused). Startup `retireLegacyDefaultPassword()` replaces a pre-1.8.0
+`vh!adm1n` with a generated one (file written, admin's refresh tokens revoked). `vh setup nginx` (lifecycle Python)
+warns while generated + file present and offers rotate / delete file / continue / cancel; non-TTY warns and continues.
 
 ### HTTP auth/session proxy
 
@@ -112,7 +138,7 @@ prod fallback `127.0.0.1:36968`). `web/src/app/api/auth/session/route.ts` proxie
   per file and refuses to start on a mismatch, so **never edit a shipped migration**: 020/060/082 were edited in place and
   bricked upgrades (1.5.x→1.6.x crash loop on 060). Reviewed exceptions live in `kHistoricalMigrationChecksums` (accepted, recorded
   hash rewritten to current, not re-run; a forward migration owns the delta). `core/seed/shipped_migrations.lock` pins every hash;
-  `tools/release/tests/packaging/test_migration_checksums_contract.py` enforces it (plus every local v* tag).
+  `tools/contracts/test_migration_checksums_contract.py` enforces it (plus every local v* tag).
 - `core/include/db/DBPool.hpp` is a fixed pool of 4 connections (config `database.pool_size` is **not** wired to it)
   handed out as RAII `DBPool::Lease`s (FIFO) that always return the slot. A dead connection is replaced on
   `acquire()` (reconnect + re-prepare, pool-wide backoff 250ms→5s, callers inside the window get
@@ -130,7 +156,55 @@ key provider, secrets · `db` · `email` providers (Resend, SES v2) · `fs` · `
 `log` spdlog registries + rotation · `notifications` operator emails · `preview` thumbnails (pdfium,
 turbojpeg) · `protocols` · `rbac` roles/permissions/resolver/actor · `runtime` Manager · `share` link
 sharing · `stats` dashboard telemetry + snapshots · `storage` local + S3 backends, remote index · `sync`
-controller, strategies `cache|sync|mirror`, cost guardrails · `vault` vault model, slugs, FUSE names.
+controller, strategies `cache|sync|mirror`, cost guardrails · `vault` vault model, slugs, FUSE names ·
+`ops` actor-authorized operations shared by the CLI and ws handlers (below).
+
+### `ops/`: shared command operations
+
+`core/{include,src}/ops/` holds plain free functions with typed request structs, one file pair per family
+(`ops::groups`, `ops::roles`, ...). Each op takes the acting `User` (`ops::Actor`, null → `ops::Denied`), authorizes, looks up,
+validates, persists, and returns domain objects. Refusals are typed `ops::Error`s (`Denied`, `NotFound`, `Invalid`,
+`Conflict`, and `NeedsConfirmation{code}` for "a person must accept this first", e.g. the encryption waiver). The CLI
+handler parses with `CommandUsage` and calls the op through `shell::runOp`, which maps `ops::Error` to exit 2 (CLI
+waiver prompts go through `shell::commands::vault::runWithWaiver`). The ws handler maps its payload to the request,
+and `makePayloadHandler` turns the exception into an `ERROR` response (`NeedsConfirmation` adds `data.code`; the web
+asks and resends with `accept_encryption_waiver`). Rules: RBAC for an operation lives in the op, never in the frontend as well; code beneath
+`ops::` (managers, `db::query`) never authorizes; internal callers use those primitives directly, not ops; no
+registry, base class or transport abstraction. Parity is proven by `test_ops_parity_groups.cpp`, which runs each
+group operation through both surfaces for every seeded admin role and compares verdicts and DB state.
+Migrated families (each with `test_ops_parity_<family>.cpp`): `groups`, `roles`, `api_keys`, `vaults` (lifecycle +
+sync policy), `users`, `s3_gateway` (credentials, grants, buckets, credential budgets), `pricing` (price budget
+policies), `config` (every settings write: one validation, one apply step that restarts the S3 gateway when
+`s3_gateway.enabled` changes). Still per-surface: the ws-only pricing preflight/override/notification endpoints,
+email test-send/history, vault keys/sync diagnostics, and lifecycle commands (`setup`, `teardown`, `secrets`).
+
+Rules the families hold (keep them in ops, never re-add them in a handler):
+- **Users:** an account is an *admin identity* when its admin role grants anything outside the self scopes
+  (`ops::users::isAdminIdentity`); that, not `User::isAdmin()` (a strict "full admin" gate used by S3 policy bypass and
+  system stats), picks admins.* vs users.* identity permissions. The ceiling applies to assignment *and* to managing an
+  account above you (edit, delete, reset password). Deletion, deactivation, role change and password reset call
+  `auth::Manager::revokeSessions` (refresh tokens revoked, live sessions invalidated). `auth::Manager` has no user cache.
+- **Vaults:** every change goes through `storage::Manager::updateVault` so the live engine (RBAC's source of the owner)
+  follows; owner reassignment needs Create for the new owner; a key change needs Consume; sync settings need vault
+  `sync.config.edit`.
+- **S3 gateway:** the scope rule that was `CredentialManager::validateScopeMutation` is `requireScopeMutation` in ops;
+  `CredentialManager` and `db::query::s3::Gateway` are trusted primitives. Vault names resolve owner-scoped or uniquely,
+  never to the first match. Overrides need an explicit effect and pattern. Remote-cache buckets are created through
+  `ops::vaults::create` (Consume, waiver) and rolled back if the bind fails.
+- **Health:** `stats::model::SystemHealth::snapshot()` takes a bounded live DB probe; an unreachable database is
+  critical there, so `vh status` and `stats.system.health` report the same severity.
+- **Lists:** `ListQueryParams::sort` must be a column name (`isSortColumn`); it lands in ORDER BY.
+
+**Role permissions (one mechanism).** Every permission change goes through
+`PermissionResolver::applyChanges(role, exported, [(qualified, grant)], complete)`, which reports unknown names, missing
+snapshot values and unapplicable permissions instead of skipping them. The CLI translates `--allow-*`/`--deny-*`
+(the short flags `vh permission` prints, from each set's `flagPrefix()`) into that delta via
+`shell/util/permissionFlags.hpp`; the web sends a complete `{qualified, value}` snapshot. The resolver only dispatches
+a permission if its target trait (`TargetTraits.hpp`) or context policy (`policy/*.hpp`, included by `EnumPack.hpp`)
+is visible; `test_role_permissions.cpp` round-trips every exported permission so a missing trait can't silently
+no-op again. `ops::roles` enforces the escalation ceiling: nobody grants an admin permission they do not hold
+(`permissionsBeyondActor`). Vault-role overrides persist through `db::query::rbac::permission::Override` on the
+subject's assignment.
 
 ## Subsystem invariants (enforced in code, keep them)
 

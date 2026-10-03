@@ -1,134 +1,84 @@
 #include "protocols/ws/handler/rbac/roles/Vault.hpp"
 #include "protocols/ws/Session.hpp"
-#include "protocols/RoleGuards.hpp"
-#include "db/query/rbac/role/Vault.hpp"
-#include "db/query/rbac/role/vault/Assignments.hpp"
-#include "identities/User.hpp"
-#include "rbac/role/Admin.hpp"
+#include "ops/Roles.hpp"
 #include "rbac/role/Vault.hpp"
-#include "rbac/resolver/vault/all.hpp"
-#include "rbac/permission/vault/Roles.hpp"
 
 using namespace vh::rbac;
 
 namespace vh::protocols::ws::handler::rbac::roles {
 
-    json Vault::add(const json& payload, const std::shared_ptr<Session>& session) {
-        if (!session->user->vaultRolePerms().canAdd())
-            throw std::runtime_error("Permission denied: Only admins can add roles");
+    namespace {
+    ops::roles::PermissionEdit vaultRolePayloadPermissions(const json& payload) {
+        ops::roles::PermissionEdit edit;
+        if (!payload.contains("permissions") || !payload.at("permissions").is_array()) return edit;
+        for (const auto& p : payload.at("permissions"))
+            edit.changes.emplace_back(p.at("qualified").get<std::string>(), p.at("value").get<bool>());
+        edit.complete = true;
+        return edit;
+    }
 
-        // Create is insert-only: an existing name is an error, never an overwrite.
-        const auto staged = std::make_shared<vh::rbac::role::Vault>(payload);
-        const auto created = protocols::roles::createVaultRole(staged);
+    std::optional<std::string> vaultRolePayloadString(const json& payload, const char* key) {
+        if (!payload.contains(key) || payload.at(key).is_null()) return std::nullopt;
+        return payload.at(key).get<std::string>();
+    }
+
+    ops::roles::VaultSubject vaultRolePayloadTarget(const json& payload) {
+        return {.vault_id = payload.at("vault_id").get<uint32_t>(),
+                .subject = {.type = payload.at("subject_type").get<std::string>(),
+                            .id = payload.at("subject_id").get<uint32_t>()}};
+    }
+    }
+
+    json Vault::add(const json& payload, const std::shared_ptr<Session>& session) {
+        const auto created = ops::roles::createVaultRole(session->user, {
+            .name = payload.at("name").get<std::string>(),
+            .description = payload.value("description", ""),
+            .permissions = vaultRolePayloadPermissions(payload)
+        });
         return {{"role", *created}};
     }
 
     json Vault::remove(const json& payload, const std::shared_ptr<Session>& session) {
-        if (!session->user->vaultRolePerms().canDelete())
-            throw std::runtime_error("Permission denied: Only admins can remove roles");
-
-        const auto roleId = payload.at("id").get<uint32_t>();
-        const auto existing = db::query::rbac::role::Vault::get(roleId);
-        if (!existing) throw std::runtime_error("Role not found");
-        if (const auto denied = protocols::roles::vaultRoleDeleteError(*existing))
-            throw std::runtime_error(*denied);
-
-        db::query::rbac::role::Vault::remove(roleId);
-        return {{"role_id", roleId}};
+        const auto removed = ops::roles::removeVaultRole(session->user, payload.at("id").get<uint32_t>());
+        return {{"role_id", removed->id}};
     }
 
     json Vault::update(const json& payload, const std::shared_ptr<Session>& session) {
-        if (!session->user->vaultRolePerms().canEdit())
-            throw std::runtime_error("Permission denied: Only admins can update roles");
-
-        auto existing = db::query::rbac::role::Vault::get(payload.at("id").get<uint32_t>());
-        if (!existing) throw std::runtime_error("Role not found");
-        existing->updateFromJson(payload);
-        db::query::rbac::role::Vault::upsert(existing);
-        return {{"role", *existing}};
+        const auto updated = ops::roles::updateVaultRole(session->user, {
+            .role = payload.at("id").get<uint32_t>(),
+            .name = vaultRolePayloadString(payload, "name"),
+            .description = vaultRolePayloadString(payload, "description"),
+            .permissions = vaultRolePayloadPermissions(payload)
+        });
+        return {{"role", *updated}};
     }
 
     json Vault::get(const json& payload, const std::shared_ptr<Session>& session) {
-        if (!session->user->vaultRolePerms().canView())
-            throw std::runtime_error("Permission denied: Only admins can view roles");
-
-        const auto roleId = payload.at("id").get<uint32_t>();
-        auto role = db::query::rbac::role::Vault::get(roleId);
-        if (!role) throw std::runtime_error("Role not found");
-        return {{"role", *role}};
+        return {{"role", *ops::roles::getVaultRole(session->user, payload.at("id").get<uint32_t>())}};
     }
 
     json Vault::getByName(const json& payload, const std::shared_ptr<Session>& session) {
-        if (!session->user->vaultRolePerms().canView())
-            throw std::runtime_error("Permission denied: Only admins can view roles");
-
-        const auto roleName = payload.at("name").get<std::string>();
-        auto role = db::query::rbac::role::Vault::get(roleName);
-        if (!role) throw std::runtime_error("Role not found");
-        return {{"role", *role}};
+        return {{"role", *ops::roles::getVaultRole(session->user, payload.at("name").get<std::string>())}};
     }
 
     json Vault::list(const std::shared_ptr<Session>& session) {
-        if (!session->user->vaultRolePerms().canView())
-            throw std::runtime_error("Permission denied: Only admins can list roles");
-
-        return {{"roles", db::query::rbac::role::Vault::list()}};
+        return {{"roles", ops::roles::listVaultRoles(session->user)}};
     }
 
     json Vault::listAssigned(const json &payload, const std::shared_ptr<Session> &session) {
-        const auto& vaultId = payload.at("id").get<uint32_t>();
-
-        using Permission = permission::vault::RolePermissions;
-        if (!resolver::Vault::has<Permission>({
-            .user = session->user,
-            .permission = Permission::View,
-            .vault_id = vaultId
-        })) throw std::runtime_error("Permission denied");
-
-        return {{"assigned_roles", db::query::rbac::role::vault::Assignments::listForVault(vaultId)}};
+        return {{"assigned_roles", ops::roles::listVaultRoleAssignments(session->user, payload.at("id").get<uint32_t>())}};
     }
 
     json Vault::assign(const json &payload, const std::shared_ptr<Session> &session) {
-        const auto& subjectType = payload.at("subject_type").get<std::string>();
-        const auto& subjectId = payload.at("subject_id").get<uint32_t>();
-        const auto& roleId = payload.at("id").get<uint32_t>();
-        const auto& vaultId = payload.at("vault_id").get<uint32_t>();
-
-        using Permission = permission::vault::RolePermissions;
-        if (!resolver::Vault::has<Permission>({
-            .user = session->user,
-            .permission = Permission::Assign,
-            .target_subject_type = subjectType,
-            .target_subject_id = subjectId,
-            .vault_id = vaultId
-        })) throw std::runtime_error("Permission denied");
-
-        db::query::rbac::role::vault::Assignments::assign(vaultId, subjectType, subjectId, roleId);
-
-        if (const auto& role = db::query::rbac::role::vault::Assignments::get(vaultId, subjectType, subjectId))
-            return {{"assignment", *role}};
-
-        throw std::runtime_error("Failed to assign role");
+        const auto assignment = ops::roles::assignVaultRole(session->user, {
+            .target = vaultRolePayloadTarget(payload),
+            .role = payload.at("id").get<uint32_t>()
+        });
+        return {{"assignment", *assignment}};
     }
 
     json Vault::unassign(const json &payload, const std::shared_ptr<Session> &session) {
-        const auto& subjectType = payload.at("subject_type").get<std::string>();
-        const auto& subjectId = payload.at("subject_id").get<uint32_t>();
-        const auto& vaultId = payload.at("vault_id").get<uint32_t>();
-
-        using Permission = permission::vault::RolePermissions;
-        if (!resolver::Vault::has<Permission>({
-            .user = session->user,
-            .permission = Permission::Revoke,
-            .target_subject_type = subjectType,
-            .target_subject_id = subjectId,
-            .vault_id = vaultId
-        })) throw std::runtime_error("Permission denied");
-
-        if (!db::query::rbac::role::vault::Assignments::exists(vaultId, subjectType, subjectId))
-            throw std::runtime_error("No vault role is assigned to this " + subjectType + " on this vault");
-
-        db::query::rbac::role::vault::Assignments::unassign(vaultId, subjectType, subjectId);
+        (void)ops::roles::unassignVaultRole(session->user, vaultRolePayloadTarget(payload));
         return {{"unassigned", true}};
     }
 

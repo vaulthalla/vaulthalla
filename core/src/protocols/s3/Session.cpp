@@ -35,9 +35,13 @@ constexpr std::chrono::seconds kS3SocketIdleTimeout{60};
 constexpr std::size_t kReadBufferBytes = 64u * 1024u;
 constexpr std::size_t kMaxBufferedBodyBytes = 16u * 1024u * 1024u;
 
-std::atomic<uint64_t> g_activeSessions{0};
 std::atomic<uint64_t> g_totalRequests{0};
 std::atomic<uint64_t> g_failedRequests{0};
+
+[[nodiscard]] SessionLifetimes& sessionLifetimes() {
+    static SessionLifetimes value;
+    return value;
+}
 
 [[nodiscard]] std::mutex& activeSessionsMutex() {
     static std::mutex value;
@@ -63,7 +67,6 @@ void registerActiveSession(const std::shared_ptr<Session>& session) {
     std::scoped_lock lock(activeSessionsMutex());
     pruneActiveSessionsLocked();
     activeSessions().push_back(session);
-    g_activeSessions.fetch_add(1, std::memory_order_relaxed);
 }
 
 void unregisterActiveSession(const Session* session) {
@@ -76,7 +79,6 @@ void unregisterActiveSession(const Session* session) {
         }),
         sessions.end()
     );
-    g_activeSessions.fetch_sub(1, std::memory_order_relaxed);
 }
 
 void setSocketTimeouts(const int fd) noexcept {
@@ -300,15 +302,24 @@ Router::BodyPayload decodeAwsChunkedBody(
 }
 } // namespace
 
-Session::Session(tcp::socket socket) : socket_(std::move(socket)) {
+Session::Session(tcp::socket socket) : lifetime_(sessionLifetimes()), socket_(std::move(socket)) {
     buffer_.max_size(64u * 1024u);
     nativeHandle_.store(socket_.native_handle(), std::memory_order_release);
     setSocketTimeouts(nativeHandle_.load(std::memory_order_acquire));
 }
 
+std::shared_ptr<Session> Session::open(tcp::socket socket) {
+    auto session = std::make_shared<Session>(std::move(socket));
+    registerActiveSession(session);
+    return session;
+}
+
+bool Session::waitUntilNoneAlive(const std::chrono::milliseconds timeout) {
+    return sessionLifetimes().waitUntilNoneAlive(timeout);
+}
+
 void Session::run() {
     const auto self = shared_from_this();
-    registerActiveSession(self);
 
     while (!stopRequested_.load(std::memory_order_acquire) && readOne()) {}
 
@@ -341,7 +352,7 @@ void Session::cancelAllActive() noexcept {
 
 Session::Metrics Session::metrics() noexcept {
     return {
-        .activeSessions = g_activeSessions.load(std::memory_order_relaxed),
+        .activeSessions = sessionLifetimes().live(),
         .totalRequests = g_totalRequests.load(std::memory_order_relaxed),
         .failedRequests = g_failedRequests.load(std::memory_order_relaxed)
     };

@@ -53,6 +53,7 @@ reload_systemd_and_restart_web() {
   fi
 }
 
+# Older dev installs set VAULTHALLA_WEB_DEV_MODE through a drop-in; it only fed the retired default-password gate.
 clear_dev_web_runtime_flags() {
   if [[ ! -f "$WEB_DEV_DROPIN" ]]; then
     return 0
@@ -61,14 +62,6 @@ clear_dev_web_runtime_flags() {
   echo "Removing dev nginx web runtime flags (${WEB_DEV_DROPIN})."
   sudo rm -f "$WEB_DEV_DROPIN"
   rmdir "$(dirname "$WEB_DEV_DROPIN")" >/dev/null 2>&1 || true
-  reload_systemd_and_restart_web
-}
-
-configure_dev_web_runtime_flags() {
-  echo "Configuring vaulthalla-web.service for dev nginx runtime mode."
-  sudo install -d -m 0755 "$(dirname "$WEB_DEV_DROPIN")"
-  printf '[Service]\nEnvironment=VAULTHALLA_WEB_DEV_MODE=true\n' | sudo tee "$WEB_DEV_DROPIN" >/dev/null
-  sudo chmod 0644 "$WEB_DEV_DROPIN"
   reload_systemd_and_restart_web
 }
 
@@ -102,10 +95,13 @@ if [[ ! -x "$LIFECYCLE" ]]; then
 fi
 
 echo "Configuring dev nginx for $VH_DEV_WEB_DOMAIN and $VH_DEV_S3_DOMAIN..."
+echo "This exposes the web console over HTTPS (optional; skipped without Cloudflare credentials). If the generated"
+echo "initial super-admin password is still in use and its file still exists, setup nginx offers to rotate it or"
+echo "delete the file first."
 "$LIFECYCLE" setup nginx \
   --domain "$VH_DEV_WEB_DOMAIN" \
   --s3-domain "$VH_DEV_S3_DOMAIN" \
   --certbot-dns-cloudflare \
   --cloudflare-credentials "$VH_DEV_CLOUDFLARE_CREDENTIALS"
 
-configure_dev_web_runtime_flags
+clear_dev_web_runtime_flags

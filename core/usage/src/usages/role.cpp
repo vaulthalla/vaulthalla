@@ -21,6 +21,7 @@ static std::shared_ptr<CommandUsage> admin_list(const std::weak_ptr<CommandUsage
     cmd->aliases = {"list", "ls"};
     cmd->description = "List all admin roles in the system.";
     cmd->optional_flags = { jsonFlag };
+    cmd->optional = listQueryOptions();
     cmd->examples.push_back({"vh role admin list", "List all admin roles."});
     cmd->examples.push_back({"vh role admin list --json", "List all admin roles in JSON format."});
     return cmd;
@@ -44,10 +45,11 @@ static std::shared_ptr<CommandUsage> admin_create(const std::weak_ptr<CommandUsa
     cmd->optional = { descriptionOpt, inheritFrom };
     cmd->examples.push_back({"vh role admin create audit_reader --description \"Read-only audit access\" --allow-audit-view",
                             "Create a new admin role named 'audit_reader' with audit viewing permission."});
-    cmd->examples.push_back({"vh role admin create user_ops --allow-identities-users-view --allow-identities-users-modify",
+    cmd->examples.push_back({"vh role admin create user_ops --allow-users-view --allow-users-edit",
                             "Create a new admin role named 'user_ops' with user identity management permissions."});
     cmd->examples.push_back({"vh role admin create settings_admin --from super_admin --deny-settings-services-edit",
                             "Create a new admin role from 'super_admin' and revoke service settings edit permission."});
+    cmd->option_prefixes = {"allow-", "deny-"};
     return cmd;
 }
 
@@ -59,10 +61,11 @@ static std::shared_ptr<CommandUsage> admin_update(const std::weak_ptr<CommandUsa
     cmd->optional = { descriptionOpt, roleNameOpt };
     cmd->examples.push_back({"vh role admin update audit_reader --name audit_observer --allow-audit-view",
                             "Rename 'audit_reader' to 'audit_observer' and ensure audit viewing permission is granted."});
-    cmd->examples.push_back({"vh role admin update user_ops --deny-identities-users-modify",
+    cmd->examples.push_back({"vh role admin update user_ops --deny-users-edit",
                             "Revoke user identity modification permission from 'user_ops'."});
-    cmd->examples.push_back({"vh role admin update super_admin --deny-settings-sharing-edit --deny-settings-services-edit",
-                            "Revoke sharing and services settings edit permissions from 'super_admin'."});
+    cmd->examples.push_back({"vh role admin update settings_admin --deny-settings-share-edit --deny-settings-services-edit",
+                            "Revoke sharing and services settings edit permissions from 'settings_admin'."});
+    cmd->option_prefixes = {"allow-", "deny-"};
     return cmd;
 }
 
@@ -81,6 +84,7 @@ static std::shared_ptr<CommandUsage> vault_list(const std::weak_ptr<CommandUsage
     cmd->aliases = {"list", "ls"};
     cmd->description = "List all vault roles in the system.";
     cmd->optional_flags = { jsonFlag };
+    cmd->optional = listQueryOptions();
     cmd->examples.push_back({"vh role vault list", "List all vault roles."});
     cmd->examples.push_back({"vh role vault list --json", "List all vault roles in JSON format."});
     return cmd;
@@ -104,10 +108,11 @@ static std::shared_ptr<CommandUsage> vault_create(const std::weak_ptr<CommandUsa
     cmd->optional = { descriptionOpt, inheritFrom };
     cmd->examples.push_back({"vh role vault create uploader --description \"Upload-only vault role\" --allow-files-upload --allow-dirs-upload",
                             "Create a vault role named 'uploader' with file and directory upload permissions."});
-    cmd->examples.push_back({"vh role vault create publisher --allow-share-public --allow-share-public_with_val",
+    cmd->examples.push_back({"vh role vault create publisher --allow-files-share-public --allow-files-share-public_with_val",
                             "Create a vault role named 'publisher' with public sharing permissions."});
     cmd->examples.push_back({"vh role vault create sync_operator --from power_user --allow-sync-action-trigger --deny-files-delete",
                             "Create a vault role from 'power_user', allow sync triggering, and revoke file deletion."});
+    cmd->option_prefixes = {"allow-", "deny-"};
     return cmd;
 }
 
@@ -119,10 +124,11 @@ static std::shared_ptr<CommandUsage> vault_update(const std::weak_ptr<CommandUsa
     cmd->optional = { descriptionOpt, roleNameOpt };
     cmd->examples.push_back({"vh role vault update uploader --name ingest_only --allow-files-upload --allow-dirs-upload",
                             "Rename 'uploader' to 'ingest_only' and ensure upload permissions are granted."});
-    cmd->examples.push_back({"vh role vault update publisher --deny-share-public",
+    cmd->examples.push_back({"vh role vault update publisher --deny-files-share-public",
                             "Revoke public sharing permission from 'publisher'."});
     cmd->examples.push_back({"vh role vault update power_user --allow-files-rename --allow-dirs-rename --deny-files-delete",
                             "Grant rename permissions and revoke file deletion for 'power_user'."});
+    cmd->option_prefixes = {"allow-", "deny-"};
     return cmd;
 }
 

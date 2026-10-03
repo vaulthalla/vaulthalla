@@ -31,7 +31,7 @@ jobs:
           test_web: 'true'
 
   tooling:
-    name: Release tooling, lifecycle tests, shellcheck
+    name: Release contract, packaging contracts, lifecycle and lab tests, shellcheck
     runs-on:
       - self-hosted
       - Linux
@@ -43,23 +43,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+      - name: Install vl-release
+        uses: ./.github/actions/setup_valkyrianlabs_tools
 
-      - name: Install release-tooling dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-
-      - name: Version drift check
-        run: python -m tools.release check
-
-      - name: Python suites (with minimum test counts)
-        run: python -m tools.release run-tests
+      - name: Release contract, packaging contracts, lifecycle and lab tests
+        run: bash tools/dev/verify.sh release packaging lifecycle
 
       - name: Install shellcheck
         shell: bash

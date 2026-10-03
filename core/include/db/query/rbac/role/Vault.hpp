@@ -16,6 +16,9 @@ class Vault {
     using VaultRolePtr = std::shared_ptr<VaultRole>;
 
 public:
+    // Insert-only: never touches an existing row. Throws pqxx::unique_violation when the name is taken.
+    static unsigned int insert(const VaultRolePtr& role);
+
     static unsigned int upsert(const VaultRolePtr& role);
     static unsigned int upsert(pqxx::work& txn, const VaultRolePtr& role);
 

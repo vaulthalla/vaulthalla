@@ -45,22 +45,55 @@ namespace vh::rbac::resolver {
             return byFlag;
         }
 
-        static void applyPermissionsFromWebCli(
+        // The one way to change a role's permissions, used by the CLI (--allow-*/--deny-* deltas) and the web
+        // (full {qualified, value} snapshots) alike. Changes name permissions by qualified name. With
+        // `complete`, every exported permission must be present (a snapshot). Returns every problem (unknown
+        // name, missing value, a permission the resolver cannot apply) instead of skipping it; callers apply to a
+        // staged copy and discard it when anything is returned.
+        static std::vector<std::string> applyChanges(
             Role &role,
-            const std::vector<permission::Permission> &permissions,
-            const std::unordered_map<std::string, bool> &newVals
+            const std::vector<permission::Permission> &exported,
+            const std::vector<std::pair<std::string, bool>> &changes,
+            const bool complete
         ) {
-            for (const auto &perm: permissions) {
-                if (!newVals.contains(perm.qualified_name))
-                    throw std::runtime_error("Missing permission value for: " + perm.qualified_name);
+            std::vector<std::string> problems;
+            std::unordered_map<std::string, const permission::Permission *> byName;
+            for (const auto &perm: exported) byName.emplace(perm.qualified_name, &perm);
 
-                apply(
-                    role,
-                    perm,
-                    newVals.at(perm.qualified_name)
-                        ? PermissionOperation::Grant
-                        : PermissionOperation::Revoke
-                );
+            std::unordered_map<std::string, bool> seen;
+            for (const auto &[name, grant]: changes) {
+                const auto it = byName.find(name);
+                if (it == byName.end()) {
+                    problems.push_back("unknown permission '" + name + "'");
+                    continue;
+                }
+                if (const auto [prev, inserted] = seen.emplace(name, grant); !inserted && prev->second != grant) {
+                    problems.push_back("conflicting values for permission '" + name + "'");
+                    continue;
+                }
+                if (!apply(role, *it->second, grant ? PermissionOperation::Grant : PermissionOperation::Revoke))
+                    problems.push_back("permission '" + name + "' could not be applied to this role");
+            }
+
+            if (complete)
+                for (const auto &perm: exported)
+                    if (!seen.contains(perm.qualified_name))
+                        problems.push_back("missing value for permission '" + perm.qualified_name + "'");
+
+            return problems;
+        }
+
+        // Strict snapshot for the role models' JSON constructors: throws on any problem.
+        static void applySnapshot(
+            Role &role,
+            const std::vector<permission::Permission> &exported,
+            const std::unordered_map<std::string, bool> &values
+        ) {
+            const std::vector<std::pair<std::string, bool>> changes(values.begin(), values.end());
+            if (const auto problems = applyChanges(role, exported, changes, true); !problems.empty()) {
+                std::string msg = "invalid role permissions:";
+                for (const auto &p: problems) msg += " " + p + ";";
+                throw std::invalid_argument(msg);
             }
         }
 

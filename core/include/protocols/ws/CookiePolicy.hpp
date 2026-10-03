@@ -1,5 +1,6 @@
 #pragma once
 
+#include <string>
 #include <string_view>
 
 namespace vh::protocols::ws::cookie_policy {
@@ -14,5 +15,11 @@ namespace vh::protocols::ws::cookie_policy {
                                      std::string_view forwarded);
 
 [[nodiscard]] bool isLoopbackAddress(std::string_view address);
+
+// The client a request came from. Behind the packaged nginx site every peer is loopback, so only then are the
+// proxy's headers believed: X-Real-IP (nginx's $remote_addr), else the last X-Forwarded-For hop (the one nginx
+// appended; earlier hops are whatever the client sent). Anything that is not an IP address is ignored.
+[[nodiscard]] std::string clientAddress(std::string_view peerAddress, std::string_view xRealIp,
+                                        std::string_view xForwardedFor);
 
 }

@@ -21,7 +21,7 @@ static std::shared_ptr<CommandUsage> list(const std::weak_ptr<CommandUsage>& par
     cmd->aliases = {"list", "ls"};
     cmd->description = "List all groups in the system.";
     cmd->optional_flags = { jsonFlag };
-    cmd->optional = { limitOpt, pageOpt };
+    cmd->optional = listQueryOptions();
     cmd->examples.push_back({"vh groups", "List all groups."});
     return cmd;
 }

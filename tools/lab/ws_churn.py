@@ -22,6 +22,9 @@ import uuid
 import websockets
 
 
+ADMIN_USER = "admin"
+
+
 def daemon_state(host: str) -> tuple[str, str]:
     out = subprocess.run(["ssh", "-o", "BatchMode=yes", host,
                           "systemctl show vaulthalla -p MainPID --value; systemctl show vaulthalla -p NRestarts --value"],
@@ -40,7 +43,7 @@ async def call(ws, command, payload=None, token=""):
 
 async def login_logout(url, password):
     async with websockets.connect(url, open_timeout=10) as ws:
-        msg = await call(ws, "auth.login", {"name": "admin", "password": password})
+        msg = await call(ws, "auth.login", {"name": ADMIN_USER, "password": password})
         token = msg.get("token", "")
         await call(ws, "storage.vault.list", None, token)
         await call(ws, "auth.logout", None, token)
@@ -49,7 +52,7 @@ async def login_logout(url, password):
 async def abrupt_disconnect(url, password):
     ws = await websockets.connect(url, open_timeout=10)
     rid = str(uuid.uuid4())
-    await ws.send(json.dumps({"command": "auth.login", "payload": {"name": "admin", "password": password},
+    await ws.send(json.dumps({"command": "auth.login", "payload": {"name": ADMIN_USER, "password": password},
                               "requestId": rid, "token": ""}))
     ws.transport.abort()  # drop the TCP connection while the server is answering
 
@@ -77,6 +80,8 @@ async def idle_until_swept(url, _password):
 
 
 async def run(args) -> int:
+    global ADMIN_USER
+    ADMIN_USER = args.admin_user
     with open(args.admin_password_file) as fh:
         password = fh.read().strip()
     pid0, restarts0 = daemon_state(args.host)
@@ -107,6 +112,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--host", required=True)
     ap.add_argument("--ws-url", required=True)
+    ap.add_argument("--admin-user", default="admin")
     ap.add_argument("--admin-password-file", required=True)
     ap.add_argument("--rounds", type=int, default=5)
     ap.add_argument("--concurrency", type=int, default=4)

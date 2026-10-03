@@ -103,6 +103,8 @@ vh s3-gateway creds scope backup revoke-vault archive
 vh s3-gateway creds revoke VH...
 ```
 
+Shorthand grants always include listing and reading; `--write`, `--delete` and `--admin` add to them. Only admins can grant `--admin` (role administration), and a grant never exceeds what the principal can already do on that vault. Naming vaults without `--scope` creates a vault-allowlist credential. Asking for `--scope user-access` while naming vaults is refused, not silently changed. `revoke-vault` removes both the vault selection and any per-vault role.
+
 The `allow-vault` shorthand and boolean create flags are compatibility paths. At save time, Vaulthalla converts them into selected vaults, a default role when it can infer one, and per-vault role exceptions only when needed. New automation should use the default-role and selected-vault model, with `creds role assign` only for per-vault exceptions.
 
 Assign per-vault role exceptions and path overrides:
@@ -119,6 +121,8 @@ vh s3-gateway creds role override list backup --vault archive
 vh s3-gateway creds role override remove backup --vault archive 42
 vh s3-gateway creds role revoke backup --vault archive
 ```
+
+Overrides need both `--effect allow|deny` and `--pattern` (or `--path`); there is no default that grants everything. Revoking a role or removing an override that doesn't exist is an error. A vault named without `--owner` must be your own, or the only vault with that name; an ambiguous name is refused.
 
 The role commands write `s3_gateway_credential_vault_role_assignment` and `s3_gateway_credential_vault_role_override` rows directly. They are exception tools, not the primary selected-vault list. Boolean create flags and `creds scope allow-vault` are CLI/API shorthand that writes the selected-vault, default-role, and per-vault exception tables.
 

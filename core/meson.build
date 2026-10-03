@@ -219,7 +219,8 @@ if get_option('build_unit_tests')
         install: false,
     )
 
-    test('vh_unit_tests', vh_unit_tests, env: unit_test_env, workdir: meson.current_build_dir(), timeout: 120)
+    # DB-backed suites make one run take several minutes (#123); 120s always timed out.
+    test('vh_unit_tests', vh_unit_tests, env: unit_test_env, workdir: meson.current_build_dir(), timeout: 1800)
 endif
 
 if get_option('integration_tests')

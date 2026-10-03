@@ -11,6 +11,7 @@
 #include "identities/User.hpp"
 #include "notifications/OperatorNotification.hpp"
 #include "notifications/OperatorNotificationState.hpp"
+#include "ops/Config.hpp"
 #include "protocols/ws/Session.hpp"
 #include "runtime/Deps.hpp"
 
@@ -39,18 +40,6 @@ std::string lower(std::string value) {
     return value;
 }
 
-bool validWeekday(const std::string& value) {
-    static const std::vector<std::string> days{
-        "sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"
-    };
-    return std::ranges::find(days, lower(value)) != days.end();
-}
-
-bool validSeverity(const std::string& value) {
-    static const std::vector<std::string> severities{"info", "warning", "critical"};
-    return std::ranges::find(severities, lower(value)) != severities.end();
-}
-
 std::string instanceName() {
     char host[256]{};
     if (::gethostname(host, sizeof(host) - 1) == 0 && host[0] != '\0')
@@ -75,28 +64,6 @@ json secretStatus() {
         {"ses_access_key_id", deps.secretsManager->hasSecret(::vh::email::providers::SesProvider::kAccessKeySecret)},
         {"ses_secret_access_key", deps.secretsManager->hasSecret(::vh::email::providers::SesProvider::kSecretKeySecret)}
     };
-}
-
-void validateEmailConfig(const ::vh::config::Config& cfg) {
-    (void)::vh::email::parseAddress(cfg.email.from);
-    if (cfg.email.reply_to) (void)::vh::email::parseAddress(*cfg.email.reply_to);
-
-    const auto validateRecipients = [](const std::vector<std::string>& recipients) {
-        for (const auto& recipient : recipients) (void)::vh::email::parseAddress(recipient);
-    };
-    validateRecipients(cfg.operator_emails.recipients.alerts);
-    validateRecipients(cfg.operator_emails.recipients.weekly);
-    validateRecipients(cfg.operator_emails.recipients.security);
-
-    if (!validWeekday(cfg.operator_emails.weekly_digest.weekday))
-        throw std::invalid_argument("weekly_digest.weekday must be sunday through saturday");
-    if (!validSeverity(cfg.operator_emails.alerting.min_severity))
-        throw std::invalid_argument("alerting.min_severity must be info, warning, or critical");
-}
-
-void saveConfig(const ::vh::config::Config& cfg) {
-    cfg.save();
-    ::vh::config::Registry::set(cfg);
 }
 
 std::optional<std::string> recordDryRun(
@@ -191,22 +158,12 @@ json Email::updateConfig(const json& payload, const std::shared_ptr<Session>& se
     requireSuperAdmin(session);
     if (!payload.is_object()) throw std::invalid_argument("email.config.update payload must be an object");
 
-    auto cfg = ::vh::config::Registry::get();
-
-    if (payload.contains("email")) {
-        auto email = json(cfg.email);
-        email.merge_patch(payload.at("email"));
-        email.get_to(cfg.email);
-    }
-
-    if (payload.contains("operator_emails")) {
-        auto operatorEmails = json(cfg.operator_emails);
-        operatorEmails.merge_patch(payload.at("operator_emails"));
-        operatorEmails.get_to(cfg.operator_emails);
-    }
-
-    validateEmailConfig(cfg);
-    saveConfig(cfg);
+    // Only the email sections, patched onto the current settings and saved through ops::config (the same
+    // validation the CLI and settings.update get).
+    nlohmann::json settings = ::vh::config::Registry::get();
+    for (const auto* section : {"email", "operator_emails"})
+        if (payload.contains(section)) settings[section].merge_patch(payload.at(section));
+    const auto cfg = ops::config::saveSettings(session->user, settings);
 
     return {
         {"email", cfg.email},

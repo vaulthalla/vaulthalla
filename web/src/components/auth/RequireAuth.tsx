@@ -3,21 +3,10 @@
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 import CircleNotchLoader from '@/components/loading/CircleNotchLoader'
+import InitialPasswordWarning from '@/components/auth/InitialPasswordWarning'
 import { useAuthStore } from '@/stores/authStore'
 
 const PUBLIC_ROUTES = new Set<string>(['/login'])
-const CHANGE_PASSWORD_ROUTE = '/users/admin/change-password'
-
-const fetchRuntimeDevMode = async () => {
-  try {
-    const response = await fetch('/api/runtime/config', { cache: 'no-store' })
-    if (!response.ok) return false
-    const body = await response.json() as { devMode?: boolean }
-    return body.devMode === true
-  } catch {
-    return false
-  }
-}
 
 export default function RequireAuth({ children }: { children: React.ReactNode }) {
   const router = useRouter()
@@ -60,25 +49,12 @@ export default function RequireAuth({ children }: { children: React.ReactNode })
           return
         }
 
-        const cached = useAuthStore.getState().adminPasswordIsDefault
-        const [adminPasswordIsDefault, devMode] = await Promise.all([
-          useAuthStore.getState().fetchAdminPasswordIsDefault(cached === true),
-          fetchRuntimeDevMode(),
-        ])
-
-        if (disposed || id !== requestId.current) return
-
-        if (
-          !devMode
-          && adminPasswordIsDefault
-          && pathname !== CHANGE_PASSWORD_ROUTE
-        ) {
-          setChecked(false)
-          router.replace(CHANGE_PASSWORD_ROUTE)
-          return
-        }
-
         setChecked(true)
+
+        // A signed-in session is fully usable. The security posture only feeds a warning, so it is read once per
+        // page load in the background and never delays or redirects navigation.
+        if (useAuthStore.getState().initialPasswordFile === undefined)
+          void useAuthStore.getState().fetchSecurityStatus().catch(() => undefined)
       } catch (err) {
         console.error('RequireAuth failed:', err)
         if (!disposed && id === requestId.current) {
@@ -96,5 +72,10 @@ export default function RequireAuth({ children }: { children: React.ReactNode })
   }, [pathname, router])
 
   if (!checked) return <CircleNotchLoader />
-  return <>{children}</>
+  return (
+    <>
+      <InitialPasswordWarning />
+      {children}
+    </>
+  )
 }

@@ -58,7 +58,7 @@ The initial admin binding is handled by:
 vh setup assign-admin
 ```
 
-Run this as the Linux account that should operate Vaulthalla. The command binds the built-in admin user to that Linux UID when it is still unbound. If the admin user is already bound to the same UID, the command reports that it is already assigned. If it is bound to a different UID, it refuses to rebind.
+Run this as the Linux account that should operate Vaulthalla. The command binds the built-in admin user to that Linux UID when it is still unbound. That Linux account is also the only one that can change the web console password of `admin` with `vh setup set-super-admin-password`; see [Web Console](/getting-started/web-console#first-login) for the generated initial password. If the admin user is already bound to the same UID, the command reports that it is already assigned. If it is bound to a different UID, it refuses to rebind.
 
 :::callout{theme="warning" title="The first non-root CLI user can become the CLI owner"}
 If setup is skipped and the admin UID is still unbound, the first eligible non-root user that reaches the CLI socket can claim the initial CLI ownership. Choose the operator user intentionally during install or immediately run `vh setup assign-admin` as the intended user.

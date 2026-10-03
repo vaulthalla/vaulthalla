@@ -1,6 +1,7 @@
 #include "protocols/ws/CookiePolicy.hpp"
 
 #include <algorithm>
+#include <boost/asio/ip/address.hpp>
 #include <cctype>
 #include <string>
 
@@ -45,6 +46,27 @@ bool isExternallyHttps(const std::string_view peerAddress, const std::string_vie
         pos = semi + 1;
     }
     return false;
+}
+
+std::string clientAddress(const std::string_view peerAddress, const std::string_view xRealIp,
+                          const std::string_view xForwardedFor) {
+    const std::string peer(peerAddress);
+    if (!isLoopbackAddress(peerAddress)) return peer;
+    const auto asIp = [](const std::string_view candidate) -> std::string {
+        std::string value(candidate);
+        value.erase(0, value.find_first_not_of(" \t"));
+        value.erase(value.find_last_not_of(" \t") + 1);
+        boost::system::error_code ec;
+        const auto address = boost::asio::ip::make_address(value, ec);
+        return ec ? std::string{} : address.to_string();
+    };
+    if (auto real = asIp(xRealIp); !real.empty()) return real;
+    if (!xForwardedFor.empty()) {
+        const auto comma = xForwardedFor.rfind(',');
+        if (auto last = asIp(comma == std::string_view::npos ? xForwardedFor : xForwardedFor.substr(comma + 1)); !last.empty())
+            return last;
+    }
+    return peer;
 }
 
 }

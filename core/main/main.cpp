@@ -5,6 +5,7 @@
 
 // Database
 #include "db/Transactions.hpp"
+#include "auth/Bootstrap.hpp"
 #include "db/query/identities/User.hpp"
 
 // Storage
@@ -77,6 +78,8 @@ void initDB() {
         vh::seed::seed_database();
 
     vh::seed::reconcileSystemPrincipals();
+    vh::auth::bootstrap::retireLegacyDefaultPassword();
+    vh::seed::reconcileGlobalVaultPolicies();
 }
 
 void initDeps() {

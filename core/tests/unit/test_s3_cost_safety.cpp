@@ -1568,6 +1568,71 @@ TEST(S3CostSafetyTest, WsVaultGetAndUpdateRoundTripS3SyncBudget) {
     EXPECT_EQ(42u, *engine->remote_policy()->s3_request_budget.max_get_requests);
 }
 
+// Stage 0 S6: storage.vault.update only checked that a new api_key_id existed, never APIPermissions::Consume, so a
+// caller with vault Edit could bind any API key to a vault. storage.vault.add and CLI `vault update --api-key` both
+// require Consume; the gate applies only when the key actually changes.
+TEST(S3CostSafetyTest, WsVaultUpdateRequiresConsumeToChangeApiKey) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed ws vault update consume test due to missing environment variables.";
+
+    auto fake = std::make_shared<CountingS3Controller>();
+    const auto suffix = uniqueSuffix("ws_update_consume");
+    const auto vaultId = seedDryRunS3VaultForDbTest(suffix, fake);
+    const auto keyIdBefore = [&] {
+        return std::static_pointer_cast<vh::vault::model::S3Vault>(
+            vh::db::query::vault::Vault::getVault(vaultId))->api_key_id;
+    };
+    const auto originalKeyId = keyIdBefore();
+
+    const auto admin = vh::db::query::identities::User::getUserByName("admin");
+    ASSERT_TRUE(admin);
+    auto otherKey = std::make_shared<vh::vault::model::APIKey>(
+        admin->id,
+        "consume-gate-key-" + suffix,
+        vh::vault::model::S3Provider::AWS,
+        "ABCDEFGHIJKLMNOPQRST",
+        "ABCDEFGHIJKLMNOPQRSTABCDEFGHIJKLMNOPQRST",
+        "us-east-1",
+        "https://s3.example.com");
+    vh::runtime::Deps::get().apiKeyManager->addAPIKey(otherKey);
+    ASSERT_NE(originalKeyId, otherKey->id);
+
+    // Vault editor with no API-key permissions at all.
+    const auto editorId = seedS3CostUserForDbTest(suffix, "editor");
+    const auto editorSession = wsSessionForUser(editorId, vh::rbac::role::Admin::Custom(
+        "ws_update_consume_editor",
+        "vault editor without key permissions",
+        vh::rbac::permission::admin::Identities::None(),
+        vh::rbac::permission::admin::Vaults::Full(),
+        vh::rbac::permission::admin::Audits::None(),
+        vh::rbac::permission::admin::Settings::None(),
+        vh::rbac::permission::admin::Roles::None(),
+        vh::rbac::permission::admin::Keys::None(),
+        vh::rbac::permission::admin::S3Gateway::None()));
+
+    const auto before = vh::protocols::ws::handler::Vaults::get({{"id", vaultId}}, superAdminWsSession());
+    ASSERT_TRUE(before.contains("vault"));
+
+    auto swapKey = before["vault"];
+    swapKey["api_key_id"] = otherKey->id;
+    try {
+        (void)vh::protocols::ws::handler::Vaults::update(swapKey, editorSession);
+        ADD_FAILURE() << "vault Edit alone attached an API key the caller cannot consume";
+    } catch (const std::exception& e) {
+        EXPECT_NE(std::string(e.what()).find("api-key"), std::string::npos) << e.what();
+    }
+    EXPECT_EQ(originalKeyId, keyIdBefore());
+
+    // Same key: no Consume needed, so the editor's ordinary edit is not caught by the gate.
+    auto sameKey = before["vault"];
+    sameKey["description"] = "edited without touching the key";
+    try {
+        (void)vh::protocols::ws::handler::Vaults::update(sameKey, editorSession);
+    } catch (const std::exception& e) {
+        EXPECT_EQ(std::string(e.what()).find("api-key"), std::string::npos) << e.what();
+    }
+    EXPECT_EQ(originalKeyId, keyIdBefore());
+}
+
 TEST(S3CostSafetyTest, DryRunViewOnlyUsesFreshLocalIndexWithoutS3Refresh) {
     if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed dry-run auth test due to missing environment variables.";
 
@@ -3251,6 +3316,70 @@ TEST(S3CostSafetyTest, S3GatewayWsBudgetPolicyListDisableAndStatusForCredentialS
     EXPECT_TRUE(std::ranges::none_of(listedActive["policies"], [](const nlohmann::json& policy) {
         return policy.at("scope").get<std::string>() == "gateway_credential_vault";
     }));
+}
+
+// Stage 0 S5: pricing.budget.status with only an owned gateway_credential_id (no vault_id) used to return the
+// system-wide notification and override lists (listNotifications/listOverrides with vault_id = nullopt) to any
+// credential owner. Non-super-admins now only get rows for vaults they can view.
+TEST(S3CostSafetyTest, GenericPricingWsCredentialStatusDoesNotLeakOtherVaultsNotificationsOrOverrides) {
+    if (!hasDbEnv()) GTEST_SKIP() << "Skipping db-backed pricing status leak test due to missing environment variables.";
+    ensureDbReady();
+
+    const auto ownVaultId = seedS3VaultForDbTest(uniqueSuffix("status_leak_own"));
+    const auto foreignVaultId = seedS3VaultForDbTest(uniqueSuffix("status_leak_foreign"));
+    const auto ownerId = ownerForVaultDbTest(ownVaultId);
+    const auto foreignOwnerId = ownerForVaultDbTest(foreignVaultId);
+    ASSERT_NE(ownerId, foreignOwnerId);
+    const auto credentialId = seedGatewayCredentialForDbTest(ownerId, uniqueSuffix("status_leak_cred"));
+
+    vh::storage::s3::pricing::PriceBudgetService service;
+    const auto makeNotification = [&](const std::uint32_t vaultId, const std::string& title) {
+        vh::storage::s3::pricing::PriceBudgetNotification notification;
+        notification.type = "budget.warn_threshold";
+        notification.severity = "warning";
+        notification.title = title;
+        notification.message = title;
+        notification.vault_id = vaultId;
+        return service.createNotification(std::move(notification));
+    };
+    const auto ownNotification = makeNotification(ownVaultId, "status leak own vault");
+    const auto foreignNotification = makeNotification(foreignVaultId, "status leak foreign vault");
+
+    const auto foreignPolicy = saveVaultBudgetPolicyForDbTest(
+        foreignVaultId,
+        std::nullopt,
+        vh::storage::s3::pricing::PriceBudgetMode::Enforce,
+        "0.10000000");
+    const auto foreignOverride = service.requestOverride({
+        .run_uuid = uniqueSuffix("status-leak-run"),
+        .vault_id = foreignVaultId,
+        .requested_by = foreignOwnerId,
+        .reason = "status leak regression",
+        .policy_ids = {foreignPolicy.id},
+        .estimated_cost = "1.00000000",
+        .currency = "USD",
+        .ttl_minutes = 30
+    });
+
+    const auto status = vh::protocols::ws::handler::Pricing::status({
+        {"gateway_credential_id", credentialId}
+    }, wsSessionForUser(ownerId));
+
+    ASSERT_TRUE(status.contains("notifications"));
+    ASSERT_TRUE(status.contains("overrides"));
+    EXPECT_TRUE(std::ranges::none_of(status["notifications"], [&](const nlohmann::json& row) {
+        return row.at("id").get<std::uint32_t>() == foreignNotification.id;
+    })) << "credential owner saw another vault's budget notification";
+    EXPECT_TRUE(std::ranges::none_of(status["overrides"], [&](const nlohmann::json& row) {
+        return row.at("id").get<std::uint32_t>() == foreignOverride.id;
+    })) << "credential owner saw another vault's budget override";
+    EXPECT_TRUE(std::ranges::all_of(status["notifications"], [&](const nlohmann::json& row) {
+        return row.contains("vault_id") && !row.at("vault_id").is_null() &&
+            row.at("vault_id").get<std::uint32_t>() == ownVaultId;
+    }));
+    EXPECT_TRUE(std::ranges::any_of(status["notifications"], [&](const nlohmann::json& row) {
+        return row.at("id").get<std::uint32_t>() == ownNotification.id;
+    })) << "owner's own vault notification should stay visible";
 }
 
 TEST(S3CostSafetyTest, GenericPricingWsGatewayCredentialStatusFiltersPoliciesAndTrends) {

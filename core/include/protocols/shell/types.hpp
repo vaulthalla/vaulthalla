@@ -65,9 +65,12 @@ struct CommandResult {
 
 using CommandHandler = std::function<CommandResult(const CommandCall&)>;
 
+class CommandUsage;
+
 struct CommandInfo {
     std::string description;                 // own
     CommandHandler handler;
+    std::shared_ptr<CommandUsage> usage;     // definition the options are validated against
     std::unordered_set<std::string> aliases; // own normalized aliases (no dashes)
     void print(std::string canonical) const;
 };

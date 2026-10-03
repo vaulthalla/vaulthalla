@@ -35,7 +35,9 @@ protected:
     void onStop() override;
 
 private:
-    std::thread ioThread_;
+    // Several threads run the io_context (#132): websocket handlers run on it, some blocking (argon2, DB), and a
+    // single thread let one login burst stall every handshake. Per-connection state is strand-serialized.
+    std::vector<std::thread> ioThreads_;
     std::mutex lifecycleMutex_;
     std::shared_ptr<boost::asio::io_context> ioContext_;
     std::shared_ptr<ws::Server> wsServer_;

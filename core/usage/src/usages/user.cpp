@@ -17,11 +17,15 @@ static const auto emailOpt = Optional::ManyToOne("email", "Email address of the 
 static const auto role = Option::Multi("role", "Role name or ID to assign to the user", {"role", "r"}, {"name", "id"});
 static const auto linuxUidOpt = Optional::ManyToOne("linux_uid", "Linux UID for system integration",
                                                     {"linux-uid", "uid"}, "id");
+static const auto disableFlag = Flag::WithAliases("disable", "Deactivate the account and end its sessions",
+                                                  {"disable", "deactivate"});
+static const auto enableFlag = Flag::WithAliases("enable", "Reactivate a deactivated account", {"enable", "activate"});
 
 static std::shared_ptr<CommandUsage> list(const std::weak_ptr<CommandUsage>& parent) {
     auto cmd = buildBaseUsage(parent);
     cmd->aliases = {"list", "ls"};
     cmd->description = "List all users in the system.";
+    cmd->optional = listQueryOptions();
     cmd->examples = {
         {"vh users", "List all users in the system."},
         {"vh user", "List all users in the system (using alias)."},
@@ -40,8 +44,8 @@ static std::shared_ptr<CommandUsage> create(const std::weak_ptr<CommandUsage>& p
     cmd->examples = {
         {"vh user create alice --role admin --email alice123@icann.org --linux-uid 1001",
          "Create a new user named 'alice' with admin role, email, and Linux UID."},
-        {"vh user new bob --role user --email bon@icann.org --linux-uid 1002",
-         "Create a new user named 'bob' with user role, email, and Linux UID (using alias)."},
+        {"vh user new bob --role unprivileged --email bon@icann.org --linux-uid 1002",
+         "Create a new user named 'bob' with no admin permissions, email, and Linux UID (using alias)."},
         {"vh u mk charlie --role 2", "Create a new user named 'charlie' with role ID 2 (using shortest alias)."}
     };
     return cmd;
@@ -50,11 +54,16 @@ static std::shared_ptr<CommandUsage> create(const std::weak_ptr<CommandUsage>& p
 static std::shared_ptr<CommandUsage> remove(const std::weak_ptr<CommandUsage>& parent) {
     auto cmd = buildBaseUsage(parent);
     cmd->aliases = {"delete", "remove", "rm"};
-    cmd->description = "Delete an existing user by username.";
+    cmd->description = "Delete an existing user by username. The user's vaults are destroyed unless ownership is "
+                       "transferred with --transfer-to; you are asked to confirm either way.";
     cmd->positionals = {userPos};
+    cmd->optional = {Optional::ManyToOne("transfer_to", "Give the user's vaults to this user instead of destroying them",
+                                         {"transfer-to"}, "user")};
+    cmd->optional_flags = {Flag::Alias("yes", "Delete without asking for confirmation", "yes")};
     cmd->examples = {
-        {"vh user delete alice", "Delete the user named 'alice'."},
-        {"vh user remove bob", "Delete the user named 'bob' (using alias)."},
+        {"vh user delete alice", "Delete the user named 'alice' after confirming; her vaults are destroyed."},
+        {"vh user delete alice --transfer-to bob", "Delete 'alice' and give her vaults to 'bob' (administrators only)."},
+        {"vh user remove bob --yes", "Delete the user named 'bob' without asking (using alias)."},
         {"vh u rm charlie", "Delete the user named 'charlie' (using shortest alias)."}
     };
     return cmd;
@@ -79,11 +88,13 @@ static std::shared_ptr<CommandUsage> update(const std::weak_ptr<CommandUsage>& p
     cmd->description = "Update properties of an existing user.";
     cmd->positionals = {userPos};
     cmd->optional = {nameOpt, emailOpt, Optional(role), linuxUidOpt};
+    cmd->optional_flags = {disableFlag, enableFlag};
     cmd->examples = {
-        {"vh user update alice --email alice123@icann.org --role user",
+        {"vh user update alice --email alice123@icann.org --role unprivileged",
          "Update user 'alice' with a new email and role."},
         {"vh user set bob --name robert --linux-uid 2002",
          "Change username of 'bob' to 'robert' and update Linux UID (using alias)."},
+        {"vh user update mallory --disable", "Deactivate 'mallory' and end the account's sessions."},
         {"vh u edit charlie --email charlie@limewire.net --role 3",
          "Update user 'charlie' with a new email and role ID (using shortest alias)."}
     };
@@ -105,11 +116,11 @@ static std::shared_ptr<CommandUsage> base(const std::weak_ptr<CommandUsage>& par
 
     // ---------- examples ----------
     cmd->examples = {
-        {"vh user create --name alice --role admin --email alice123@icann.org --linux-uid 1001",
+        {"vh user create alice --role admin --email alice123@icann.org --linux-uid 1001",
          "Create a new user named 'alice' with admin role, email, and Linux UID."},
         {"vh user delete alice", "Delete the user named 'alice'."},
         {"vh user info alice", "Get information about the user named 'alice'."},
-        {"vh user update alice --email alice123@icann.org --role user",
+        {"vh user update alice --email alice123@icann.org --role unprivileged",
          "Update user 'alice' with a new email and role."}
     };
 

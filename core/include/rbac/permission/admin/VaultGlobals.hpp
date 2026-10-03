@@ -12,7 +12,9 @@ namespace vh::rbac::permission::admin {
     struct VaultGlobals {
         role::vault::Global self{}, admin{}, user{};
 
-        VaultGlobals() = default;
+        // Each entry labelled with its own scope. The writer keys rows by scope, so three default (all "self")
+        // entries collapsed into one empty self row and the admin/user rows were never written.
+        VaultGlobals();
 
         explicit VaultGlobals(const pqxx::result &res);
 

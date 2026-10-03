@@ -28,6 +28,7 @@ This is an operator reference for the command families exposed through `vh`. Use
 
 ```bash
 vh setup assign-admin
+vh setup set-super-admin-password
 sudo vh setup db
 sudo vh setup remote-db --host <host> --port 5432 --user <user> --database <name> --password-file <path>
 sudo vh setup nginx --domain vault.example.com
@@ -37,7 +38,9 @@ sudo vh teardown nginx
 sudo vh teardown db
 ```
 
-`setup assign-admin` is a normal CLI command. The database, remote database, Nginx, and teardown commands are privileged lifecycle commands and should be run with `sudo`.
+`setup assign-admin` and `setup set-super-admin-password` are normal CLI commands. `setup set-super-admin-password` changes the web console password of the built-in `admin` account; only the Linux user bound as the super admin may run it, without `sudo`, and it removes the generated initial password file. The database, remote database, Nginx, and teardown commands are privileged lifecycle commands and should be run with `sudo`.
+
+`setup nginx` checks for the generated initial `admin` password first. If it is still in use and its plaintext copy (`/var/lib/vaulthalla/super_admin_initial_password`) still exists, it offers to change the password, delete the file and keep the password, continue, or cancel. Run without a terminal, it warns and continues.
 
 ## Users
 

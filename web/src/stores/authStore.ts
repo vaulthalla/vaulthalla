@@ -47,7 +47,8 @@ interface AuthState {
   status: AuthStatus
   loading: boolean
   error: string | null
-  adminPasswordIsDefault: boolean | undefined
+  // Server-reported security posture (auth.security.status). A warning only, never a gate; not persisted.
+  initialPasswordFile: string | null | undefined
 
   login: (payload: WSCommandPayload<'auth.login'>) => Promise<void>
   registerUser: (name: string, email: string, password: string, is_active: boolean, role: string) => Promise<void>
@@ -58,21 +59,22 @@ interface AuthState {
   refreshToken: () => Promise<void>
   getUser: (id: number) => Promise<User | null>
   getUsers: () => Promise<User[]>
-  fetchAdminPasswordIsDefault: (force: boolean) => Promise<boolean>
+  fetchSecurityStatus: () => Promise<string | null>
   getUserByName: (payload: WSCommandPayload<'auth.user.get.byName'>) => Promise<User>
+  deleteUser: (payload: WSCommandPayload<'auth.user.delete'>) => Promise<void>
   setToken: (token: string | null) => void
   markUnauthenticated: (reason?: string) => void
 }
 
 export const useAuthStore: UseBoundStore<StoreApi<AuthState>> = create<AuthState>()(
-  persist<AuthState, [], [], Pick<AuthState, 'token' | 'user' | 'adminPasswordIsDefault'>>(
+  persist<AuthState, [], [], Pick<AuthState, 'token' | 'user'>>(
     (set, get) => ({
       token: null,
       user: null,
       status: 'unknown',
       loading: false,
       error: null,
-      adminPasswordIsDefault: undefined,
+      initialPasswordFile: undefined,
 
       login: async ({ name, password }) => {
         set({ loading: true, error: null })
@@ -83,7 +85,7 @@ export const useAuthStore: UseBoundStore<StoreApi<AuthState>> = create<AuthState
           const token = response.token ?? get().token
           if (!token) throw new Error('Login response did not include an access token')
 
-          set({ token, user: response.user, status: 'authenticated', error: null })
+          set({ token, user: response.user, status: 'authenticated', error: null, initialPasswordFile: undefined })
         } catch (err) {
           set({ error: getErrorMessage(err) || 'Login failed' })
           throw err
@@ -195,11 +197,8 @@ export const useAuthStore: UseBoundStore<StoreApi<AuthState>> = create<AuthState
           const sendCommand = useWebSocketStore.getState().sendCommand
           const response = await sendCommand('auth.user.change_password', { id, old_password, new_password })
           set(state => ({ user: state.user?.id === response.user.id ? response.user : state.user }))
-          // If we were forcing a default-password change for the current user,
-          // trust the successful update and stop re-checking this flag.
-          if (get().adminPasswordIsDefault && get().user?.id === id) {
-            set({ adminPasswordIsDefault: false })
-          }
+          // Changing the super admin's password retires the initial password file; re-read the posture.
+          if (get().user?.id === id && get().initialPasswordFile) void get().fetchSecurityStatus().catch(() => undefined)
         } catch (err) {
           set({ error: getErrorMessage(err) || 'Password change failed' })
           throw err
@@ -240,20 +239,16 @@ export const useAuthStore: UseBoundStore<StoreApi<AuthState>> = create<AuthState
         }
       },
 
-      fetchAdminPasswordIsDefault: async (force = false) => {
-        const cached = get().adminPasswordIsDefault
-        if (!force && cached !== undefined) return cached
+      fetchSecurityStatus: async () => {
+        await useWebSocketStore.getState().waitForConnection()
+        const response = await useWebSocketStore.getState().sendCommand('auth.security.status', null)
+        set({ initialPasswordFile: response.initial_password_file })
+        return response.initial_password_file
+      },
 
-        try {
-          await useWebSocketStore.getState().waitForConnection()
-          const sendCommand = useWebSocketStore.getState().sendCommand
-          const response = await sendCommand('auth.admin.default_password', null)
-          set({ adminPasswordIsDefault: response.isDefault })
-          return response.isDefault
-        } catch (err) {
-          set({ error: getErrorMessage(err) || 'Failed to fetch admin password' })
-          throw err
-        }
+      deleteUser: async (payload: WSCommandPayload<'auth.user.delete'>) => {
+        await useWebSocketStore.getState().waitForConnection()
+        await useWebSocketStore.getState().sendCommand('auth.user.delete', payload)
       },
 
       getUserByName: async ({ name }: WSCommandPayload<'auth.user.get.byName'>) => {
@@ -279,7 +274,7 @@ export const useAuthStore: UseBoundStore<StoreApi<AuthState>> = create<AuthState
           user: null,
           status: 'unauthenticated',
           error: reason,
-          adminPasswordIsDefault: undefined,
+          initialPasswordFile: undefined,
         })
       },
     }),
@@ -288,7 +283,6 @@ export const useAuthStore: UseBoundStore<StoreApi<AuthState>> = create<AuthState
       partialize: state => ({
         token: state.token,
         user: state.user,
-        adminPasswordIsDefault: state.adminPasswordIsDefault,
       }),
       onRehydrateStorage: () => () => {
         if (!useAuthStore.getState().token) {

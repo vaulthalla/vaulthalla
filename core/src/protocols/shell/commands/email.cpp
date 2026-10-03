@@ -1,3 +1,4 @@
+#include "ops/Config.hpp"
 #include "protocols/shell/commands/all.hpp"
 
 #include "config/Registry.hpp"
@@ -16,6 +17,7 @@
 #include "protocols/shell/util/argsHelpers.hpp"
 #include "runtime/Deps.hpp"
 #include "usage/include/UsageManager.hpp"
+#include "CommandUsage.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -28,10 +30,6 @@
 namespace vh::protocols::shell::commands {
 
 namespace {
-
-std::string yesNo(const bool value) {
-    return value ? "yes" : "no";
-}
 
 std::string instanceName() {
     char host[256]{};
@@ -87,11 +85,13 @@ std::vector<std::string>* recipientsForGroup(config::OperatorEmailRecipientsConf
     return nullptr;
 }
 
-CommandResult saveEmailConfig(config::Config cfg, const std::string& message) {
+// Through ops::config, so the CLI and the web validate and apply settings the same way.
+CommandResult saveEmailConfig(const CommandCall& call, const config::Config& cfg, const std::string& message) {
     try {
-        cfg.save();
-        config::Registry::set(cfg);
+        (void)ops::config::saveSettings(call.user, nlohmann::json(cfg));
         return ok(message);
+    } catch (const ops::Error& e) {
+        return invalid("email config: " + std::string(e.what()));
     } catch (const std::exception& e) {
         return invalid("email config: failed to save config: " + std::string(e.what()));
     }
@@ -266,6 +266,7 @@ CommandResult handleProviderUse(const CommandCall& call) {
         auto cfg = config::Registry::get();
         cfg.email.provider = config::emailProviderKindFromString(call.positionals[0]);
         return saveEmailConfig(
+            call,
             cfg,
             "Email provider set to " + config::emailProviderKindToString(cfg.email.provider) + ".\n"
         );
@@ -355,7 +356,7 @@ CommandResult handleSet(const CommandCall& call) {
         return invalid("email set " + call.positionals[0] + ": " + std::string(e.what()));
     }
 
-    return saveEmailConfig(cfg, "Updated email setting " + call.positionals[0] + ".\n");
+    return saveEmailConfig(call, cfg, "Updated email setting " + call.positionals[0] + ".\n");
 }
 
 CommandResult handleRecipients(const CommandCall& call) {
@@ -389,14 +390,14 @@ CommandResult handleRecipients(const CommandCall& call) {
     if (action == "add") {
         if (std::ranges::find(*recipients, recipient) == recipients->end())
             recipients->push_back(recipient);
-        return saveEmailConfig(cfg, "Added " + recipient + " to " + call.positionals[0] + " recipients.\n");
+        return saveEmailConfig(call, cfg, "Added " + recipient + " to " + call.positionals[0] + " recipients.\n");
     }
     if (action == "remove" || action == "delete") {
         const auto before = recipients->size();
         std::erase(*recipients, recipient);
         if (before == recipients->size())
             return invalid("email recipients remove: recipient is not configured for " + call.positionals[0]);
-        return saveEmailConfig(cfg, "Removed " + recipient + " from " + call.positionals[0] + " recipients.\n");
+        return saveEmailConfig(call, cfg, "Removed " + recipient + " from " + call.positionals[0] + " recipients.\n");
     }
 
     return invalid("email recipients: unknown action '" + call.positionals[1] + "'");
@@ -445,7 +446,7 @@ CommandResult handleWeekly(const CommandCall& call) {
         return invalid("email weekly set: unknown field '" + call.positionals[1] + "'");
     }
 
-    return saveEmailConfig(cfg, "Updated weekly digest setting " + call.positionals[1] + ".\n");
+    return saveEmailConfig(call, cfg, "Updated weekly digest setting " + call.positionals[1] + ".\n");
 }
 
 CommandResult handleSecurity(const CommandCall& call) {
@@ -477,7 +478,7 @@ CommandResult handleSecurity(const CommandCall& call) {
     else if (field == "admin-role-changes" || field == "admin_role_changes") security.admin_role_changes = *parsed;
     else return invalid("email security set: unknown field '" + call.positionals[1] + "'");
 
-    return saveEmailConfig(cfg, "Updated security alert setting " + call.positionals[1] + ".\n");
+    return saveEmailConfig(call, cfg, "Updated security alert setting " + call.positionals[1] + ".\n");
 }
 
 CommandResult handleAlerting(const CommandCall& call) {
@@ -533,7 +534,7 @@ CommandResult handleAlerting(const CommandCall& call) {
         return invalid("email alerting set: unknown field '" + call.positionals[1] + "'");
     }
 
-    return saveEmailConfig(cfg, "Updated alerting setting " + call.positionals[1] + ".\n");
+    return saveEmailConfig(call, cfg, "Updated alerting setting " + call.positionals[1] + ".\n");
 }
 
 CommandResult handleDoctor(const CommandCall& call) {

@@ -59,16 +59,14 @@ clean-test:
 	./bin/tests/uninstall.sh
 
 deb:
-	@echo "🔧 Building Debian package..."
+	@echo "🔧 Local release rehearsal (vlr prepare + build-deb + validate in a throwaway worktree of HEAD)..."
 	./bin/install_deb.sh
 
-# Releases are cut locally (bump + commit + annotated tag) and published only by the tag-triggered
-# release workflow. This target is a dry run: it bumps/commits/tags locally but never pushes.
-# Push with: python3 -m tools.release cut-release <part> --push   (see .claude/skills/release-prep)
-RELEASE_PART ?= patch
+# Releases: `vlr cut patch|minor|major --push` bumps, commits and tags; the tag push starts release CI, which
+# prepares, builds, publishes and records the release (see .claude/skills/vl-release). Nothing publishes from here.
 release:
-	@echo "🔧 Cutting a local release ($(RELEASE_PART)); nothing is pushed or published from here."
-	python3 -m tools.release cut-release $(RELEASE_PART)
+	@echo "Cut releases with: vlr cut patch|minor|major --push   (vlr status shows what would ship)"
+	@vlr status
 
 doctor:
 	@echo "🔍 Running doctor script..."

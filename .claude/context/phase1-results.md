@@ -10,7 +10,7 @@ Integration branch `phase1/hardening` → PR #124. Issues #97–#133 on the "Vau
   same runner, nothing published. Local `.deb` builds aren't possible on the dev VM (private web icons live
   only on the CI runner).
 - **Copying to the lab:** vh-storage's sshd has no sftp Subsystem, so modern `scp` fails. Stream instead:
-  `ssh vh-storage 'cat > /tmp/x.deb' < x.deb` (`tools.release lab-smoke` does this).
+  `ssh vh-storage 'cat > /tmp/x.deb' < x.deb` (`tools/lab/lab_smoke.py` does this; since 2026-10-02 candidates never go on vh-storage).
 - **Crash diagnosis on the lab:** `systemd-coredump` + `gdb` are installed there. Shipped binaries are stripped;
   build `meson setup build-relg --buildtype=debugoptimized -Db_ndebug=false`, copy to
   `/usr/local/sbin/vaulthalla-server-debug`, point a `vaulthalla.service.d` `ExecStart=` drop-in at it, reproduce,
@@ -47,6 +47,7 @@ Integration branch `phase1/hardening` → PR #124. Issues #97–#133 on the "Vau
 - CLI exit codes: 69 no daemon, 75 timeout (`VAULTHALLA_CLI_TIMEOUT`), 76 bad reply, 77 socket permission; `vh status` 0/1/2.
 - Session cookie `Secure` iff the browser-facing request was HTTPS (`X-Forwarded-Proto` from a loopback peer).
 - Default admin `vh!adm1n` stays (maintainer decision) but the daemon restricts that session to password change.
+  *Superseded in 1.8.0:* no universal default; a per-install generated password and no gate (see architecture.md).
 - `auth.login` rate limit counts failures only (10/min, 30/15min per IP+account).
 - Ownerless vaults (owner deleted) load as owner N/A; what deleting an owner *should* do is open (#133).
 
@@ -66,7 +67,8 @@ Integration branch `phase1/hardening` → PR #124. Issues #97–#133 on the "Vau
 - Lab gotchas: putting published 1.6.6 back over a CI build with the same version label stops at a dpkg conffile
   prompt (config.yaml); finish with `dpkg --force-confold --configure -a`. Published 1.6.6 denies FUSE `getattr`
   to an unlinked Unix user, so the lab-smoke mount probe runs as root.
-- `python3 -m tools.release run-tests` is the only test entrypoint CI uses (min-count floors in `tools/release/suites.py`).
+- `python3 -m tools.release run-tests` was the only test entrypoint CI used (superseded in 1.8.0 by vl-release and
+  `tools/dev/verify.sh` `run_suite` floors).
 
 ## Debian/Ubuntu assumptions to exercise later (#120)
 

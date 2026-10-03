@@ -57,6 +57,13 @@ vh pricing budget set-provider aws-s3 --mode enforce --max-run 1 --max-daily 10
 vh pricing budget set-vault archive --mode report --max-run 0.25
 ```
 
+Who may set what, on the CLI and in the web console alike:
+
+- Global and provider budgets are super-admin only. A provider budget must name a supported provider (`aws-s3`, `cloudflare-r2`).
+- A vault budget needs permission to edit that vault. Owning the vault is not enough on its own, so an owner can't remove a budget an admin imposed.
+- Only S3/R2 vaults carry price budgets.
+- When `--mode` is omitted, a price budget only reports.
+
 ## Catalog Freshness
 
 Price estimates depend on pricing catalog data. Policy options can control catalog freshness:

@@ -36,7 +36,6 @@ public:
 
     [[nodiscard]] static bool userExists(const std::string& name);
     [[nodiscard]] static bool adminUserExists();
-    [[nodiscard]] static bool adminPasswordIsDefault();
 };
 
 }

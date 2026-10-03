@@ -5,6 +5,7 @@
 #include "log/Registry.hpp"
 #include "protocols/s3/Server.hpp"
 #include "protocols/s3/Session.hpp"
+#include "protocols/SessionLifetimes.hpp"
 
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/address.hpp>
@@ -18,6 +19,8 @@ namespace vh::protocols::s3 {
 namespace asio = boost::asio;
 
 namespace {
+constexpr std::chrono::seconds kSessionDrainTimeout{10};
+
 asio::ip::address bindAddressForHost(const std::string& host) {
     if (host.empty() || host == "*") return asio::ip::make_address("0.0.0.0");
     if (host == "localhost") return asio::ip::make_address("127.0.0.1");
@@ -107,9 +110,10 @@ void GatewayService::shutdownGateway() noexcept {
         if (!server_ && !ioContext_ && !ioThread_.joinable()) return;
 
         if (server_) server_->close();
-        Session::cancelAllActive();
         if (ioContext_) ioContext_->stop();
         if (ioThread_.joinable() && std::this_thread::get_id() != ioThread_.get_id()) ioThread_.join();
+        // No accepts after the join, so this reaches every session, queued ones included.
+        Session::cancelAllActive();
     } catch (const std::exception& e) {
         log::Registry::runtime()->error("[S3GatewayService] Shutdown failed: {}", e.what());
     } catch (...) {
@@ -117,6 +121,12 @@ void GatewayService::shutdownGateway() noexcept {
     }
 
     server_.reset();
+    // Sessions run on pool threads with sockets bound to ioContext_; it outlives every one of them.
+    if (ioContext_ && !Session::waitUntilNoneAlive(kSessionDrainTimeout)) {
+        log::Registry::runtime()->error("[S3GatewayService] {} session(s) still running {}s after shutdown; keeping their io_context",
+                                        Session::metrics().activeSessions, kSessionDrainTimeout.count());
+        protocols::retainForProcessLifetime(std::move(ioContext_));
+    }
     ioContext_.reset();
 }
 

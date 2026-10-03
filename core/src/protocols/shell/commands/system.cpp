@@ -3,14 +3,10 @@
 #include "protocols/shell/util/argsHelpers.hpp"
 #include "runtime/Deps.hpp"
 #include "stats/model/SystemHealth.hpp"
-#include "db/DBPool.hpp"
-#include "db/Transactions.hpp"
 #include "usage/include/UsageManager.hpp"
 
 #include <version.h>
 
-#include <chrono>
-#include <pqxx/pqxx>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -23,54 +19,6 @@ CommandResult handleHelp(const CommandCall&) { return usage(); }
 
 CommandResult handleVersion(const CommandCall&) {
     return {0, "Vaulthalla v" + std::string(VH_VERSION), ""};
-}
-
-std::string yesNo(const bool value) {
-    return value ? "yes" : "no";
-}
-
-// Bounded live round-trip to PostgreSQL. The pool counters only reflect failures somebody already hit; a
-// status check must find out now, and must not park on the pool if every connection is busy.
-struct DatabaseProbe {
-    bool ok = false;
-    long long latencyMs = 0;
-    std::string error;
-};
-
-constexpr std::chrono::seconds kDatabaseProbeAcquireTimeout{3};
-
-DatabaseProbe probeDatabase() {
-    DatabaseProbe out;
-    const auto pool = db::Transactions::dbPool_;
-    if (!pool) {
-        out.error = "database pool is not initialized";
-        return out;
-    }
-
-    const auto start = std::chrono::steady_clock::now();
-    const auto elapsedMs = [&start] {
-        return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
-    };
-
-    try {
-        auto lease = pool->acquire(kDatabaseProbeAcquireTimeout);
-        try {
-            pqxx::nontransaction tx(lease->get());
-            (void)tx.exec("SELECT 1").one_row();
-        } catch (const std::exception&) {
-            // A session the server dropped while idle only shows up when used; replace it once, like
-            // Transactions::exec does, so a recovered server reads as healthy.
-            if (lease->healthy()) throw;
-            pool->repair(lease);
-            pqxx::nontransaction tx(lease->get());
-            (void)tx.exec("SELECT 1").one_row();
-        }
-        out.ok = true;
-    } catch (const std::exception& e) {
-        out.error = e.what();
-    }
-    out.latencyMs = elapsedMs();
-    return out;
 }
 
 // healthy -> 0, degraded -> 1, critical -> 2 (monitoring-plugin convention), so scripts can act on `vh status`.
@@ -93,17 +41,17 @@ CommandResult handleStatus(const CommandCall& call) {
     if (hasKey(call, "help") || hasKey(call, "h"))
         return usage(call.constructFullArgs());
 
+    // The snapshot owns severity (an unreachable database is critical there), so `vh status` and the web's
+    // stats.system.health agree.
     const auto health = stats::model::SystemHealth::snapshot();
-    const auto dbProbe = probeDatabase();
-
-    // An unreachable database makes the whole system critical, whatever the in-process services say.
-    const auto overall = dbProbe.ok ? health.overallStatus : stats::model::SystemHealthStatus::Critical;
+    const auto overall = health.overallStatus;
 
     std::ostringstream out;
     out << "vh status: " << stats::model::to_string(overall) << "\n";
     out << "database:\n";
-    if (dbProbe.ok) out << "  reachable: yes (" << dbProbe.latencyMs << " ms round trip)\n";
-    else out << "  reachable: NO (" << dbProbe.error << ", after " << dbProbe.latencyMs << " ms)\n";
+    if (!health.database) out << "  reachable: NO (database pool is not initialized)\n";
+    else if (health.database->reachable) out << "  reachable: yes (" << health.database->probeLatencyMs << " ms round trip)\n";
+    else out << "  reachable: NO (" << health.database->probeError << ", after " << health.database->probeLatencyMs << " ms)\n";
     out << "runtime manager:\n";
     out << "  all services running: " << yesNo(health.runtime.allRunning) << "\n";
     out << "  service count: " << health.runtime.serviceCount << "\n";

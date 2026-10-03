@@ -43,7 +43,22 @@ Over plain HTTP, passwords and session tokens cross the network unencrypted. Bef
 
 ### First Login
 
-Fresh installs seed the web `admin` account with the documented default password `vh!adm1n`. Until it is changed, the daemon only allows that session to change the password (or log out); the console sends you straight to the change-password page. Repeated failed logins are rate-limited per client address and account.
+There is no default password. When the service first starts with a new database, it generates a strong password for the web `admin` account (16 random bytes, shown as 32 hex characters), unique to this install, and writes a copy to a root-readable file:
+
+```bash
+sudo cat /var/lib/vaulthalla/super_admin_initial_password
+```
+
+Sign in as `admin` with it. The session is a normal one; nothing forces you to change the password first. Repeated failed logins are rate-limited per client address and account.
+
+Changing it is recommended but not required:
+
+- Change it with `vh setup set-super-admin-password`, run as the Linux user bound as the Vaulthalla super admin (see `vh setup assign-admin`), without `sudo`. Changing it from the web console works too. Either way the file is removed.
+- Or keep the generated password and delete the file: `sudo rm /var/lib/vaulthalla/super_admin_initial_password`. Deleting the file doesn't change the password.
+
+Until you do one or the other, the console shows the super admin a warning, and `vh setup nginx` asks what to do before putting the console behind nginx. The file is written only once: deleting it never makes a new one appear, and upgrades, reinstalls and restarts keep the existing password.
+
+Installs older than 1.8.0 seeded the same default password everywhere. If `admin` still uses it, the first start of 1.8.0 replaces it with a generated one, writes it to the file above, and ends the account's web sessions. Passwords you set yourself are not touched.
 
 ## Main Areas
 

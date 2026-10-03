@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string_view>
+
 #include "rbac/role/Meta.hpp"
 #include "rbac/permission/admin/all.hpp"
 #include "rbac/permission/Permission.hpp"
@@ -51,6 +53,11 @@ namespace vh::rbac::role {
         static Admin fromJson(const nlohmann::json &j);
 
         // ---------- canonical builtins ----------
+
+        // The built-in role with this name, bound to `userId` so its global vault policy (vGlobals) is populated.
+        // Roles loaded from admin_role carry no vGlobals: an account's policy is its own (user_global_vault_policy)
+        // and starts from this preset. nullopt for custom roles.
+        static std::optional<Admin> builtin(std::string_view name, uint32_t userId);
 
         static Admin None(const std::optional<uint32_t> userId = std::nullopt) {
             return make(

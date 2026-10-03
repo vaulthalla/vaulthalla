@@ -47,7 +47,13 @@ public:
     const std::string uuid{generateUUIDv4()};
     std::shared_ptr<identities::User> user{nullptr};
     std::shared_ptr<auth::model::TokenPair> tokens;
+    // True once the websocket handshake finished. Until then the session is still being set up (tokens included).
+    [[nodiscard]] bool handshakeComplete() const noexcept { return handshakeComplete_.load(std::memory_order_acquire); }
+
     std::string userAgent, ipAddress;
+    // Who is on the other end for rate limiting: the forwarded client behind the local proxy, else the peer.
+    // ipAddress stays the TCP peer (refresh tokens are bound to it).
+    std::string clientAddress;
     const std::chrono::system_clock::time_point connectionOpenedAt = std::chrono::system_clock::now();
 
     explicit Session(const std::shared_ptr<Router>& router);
@@ -74,11 +80,6 @@ public:
     [[nodiscard]] vh::rbac::Actor rbacActor() const;
     [[nodiscard]] const std::string& shareSessionId() const noexcept { return shareSessionId_; }
     [[nodiscard]] const std::string& shareSessionToken() const noexcept { return shareSessionToken_; }
-
-    // True while the authenticated user's password still verifies against the seeded default (issue #103).
-    // Cached per session and keyed by user id + password hash: the argon2 verify runs once per login or password
-    // change, not per message, and a changed password (new hash) is re-evaluated automatically.
-    [[nodiscard]] bool userHasDefaultPassword();
 
     static std::string generateUUIDv4();
 
@@ -115,11 +116,6 @@ private:
 
     std::shared_ptr<handler::fs::Upload> uploadHandler_{nullptr};
 
-    std::mutex defaultPasswordMutex_;
-    uint32_t defaultPasswordUserId_ = 0;
-    std::string defaultPasswordHash_;
-    bool defaultPasswordCached_ = false;
-    bool defaultPasswordIsDefault_ = false;
     std::shared_ptr<Router> router_;
     SessionMode mode_{SessionMode::Unauthenticated};
     std::shared_ptr<vh::share::Principal> sharePrincipal_{nullptr};
@@ -134,6 +130,7 @@ private:
     bool closeAfterWrite_ = false;         // only touched on strand
     bool closeStarted_ = false;            // only touched on strand
     bool handshakeDone_ = false;           // only touched on strand
+    std::atomic<bool> handshakeComplete_{false};  // the same fact, readable off the strand (the sweeper)
     bool externallyHttps_ = false;         // set during handshake hydration (cookie Secure flag)
 
     bool sendAccessToken_{false};

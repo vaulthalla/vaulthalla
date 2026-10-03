@@ -83,17 +83,15 @@ pnpm test
 pnpm dev
 ```
 
-### Release-tooling work
+### Release work
 
-The release tooling uses Python dependencies from `requirements.txt`.
-
-Setup:
+Releases use [vl-release](https://github.com/valkyrianlabs/vl-release) (`vlr`), installed from the ValkyrianLabs APT
+repository (`sudo apt install vl-release`). `release.toml` configures it; the repository needs no Python packages.
 
 ```bash
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -r requirements.txt
-python3 -m tools.release check
+vlr doctor
+vlr check
+vlr status
 ```
 
 ### Core/runtime work

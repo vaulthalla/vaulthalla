@@ -47,12 +47,6 @@ public:
 
     static std::string generateAccessKey();
     static std::string generateSecretKey();
-    static void validateScopeMutation(uint32_t actorUserId,
-                                      uint32_t principalUserId,
-                                      const std::string& scopeMode,
-                                      const std::vector<CredentialVaultAccessShorthand>& vaultScopes,
-                                      const std::vector<uint32_t>& selectedVaultIds = {},
-                                      std::optional<uint32_t> defaultVaultRoleId = std::nullopt);
 
 private:
     std::unique_ptr<crypto::secrets::TPMKeyProvider> tpmKeyProvider_;

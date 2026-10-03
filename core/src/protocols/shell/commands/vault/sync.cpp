@@ -1,4 +1,5 @@
 #include "protocols/shell/commands/vault.hpp"
+#include "protocols/shell/util/runOp.hpp"
 #include "protocols/shell/util/argsHelpers.hpp"
 #include "runtime/Deps.hpp"
 #include "sync/Controller.hpp"
@@ -394,31 +395,6 @@ namespace {
         return result;
     }
 
-    std::optional<uint64_t> parseBudgetValue(const std::string& raw) {
-        const auto value = canonicalColumn(raw);
-        if (value.empty() || value == "none" || value == "null" || value == "unlimited") return std::nullopt;
-        return parseUint64(raw);
-    }
-
-    bool applyBudgetOption(
-        const CommandCall& call,
-        const std::string& option,
-        std::optional<uint64_t>& budgetValue,
-        std::string& error) {
-        const auto value = optVal(call, option);
-        if (!value) return true;
-        const auto parsed = parseBudgetValue(*value);
-        if (!parsed && !canonicalColumn(*value).empty() &&
-            canonicalColumn(*value) != "none" &&
-            canonicalColumn(*value) != "null" &&
-            canonicalColumn(*value) != "unlimited") {
-            error = "vault sync update: --" + option + " must be a non-negative integer or 'unlimited'";
-            return false;
-        }
-        budgetValue = parsed;
-        return true;
-    }
-
     std::string remoteIndexSummaryString(
         const db::query::sync::RemoteIndexSummary& summary,
         const std::optional<std::chrono::seconds>& maxAge) {
@@ -470,131 +446,36 @@ namespace {
 }
 
 static CommandResult handle_vault_sync(const CommandCall& call) {
-    constexpr const auto* ERR = "vault sync";
-
     const auto usage = resolveUsage({"vault", "sync"});
     validatePositionals(call, usage);
 
-    const auto vLkp = resolveVault(call, call.positionals[0], usage, ERR);
+    const auto vLkp = resolveVault(call, call.positionals[0], usage, "vault sync");
     if (!vLkp || !vLkp.ptr) return invalid(vLkp.error);
     const auto vault = vLkp.ptr;
-
-    using Perm = rbac::permission::vault::sync::SyncActionPermissions;
-    if (!rbac::resolver::Vault::has<Perm>({
-        .user = call.user,
-        .permission = Perm::Trigger,
-        .vault_id = vault->id
-    })) return invalid("vault sync: you do not have permission to trigger a sync for this vault");
-
     const auto label = "'" + vault->name + "' (ID: " + std::to_string(vault->id) + ")";
-    switch (runtime::Deps::get().syncController->runNow(vault->id)) {
-        case ::vh::sync::Controller::RunNowResult::Started:
-            return ok("Vault sync initiated for " + label);
-        case ::vh::sync::Controller::RunNowResult::Rerun:
-            return ok("Vault sync already running for " + label + "; queued an immediate rerun after it finishes");
-        case ::vh::sync::Controller::RunNowResult::NoTask:
-        default:
-            return invalid("vault sync: no sync task is loaded for " + label +
-                           "; nothing was started (is the vault's storage engine initialized? check `vh status` and the daemon log)");
-    }
+
+    return runOp("vault sync", [&] { return ops::vaults::triggerSync(call.user, vault->id); },
+        [&](const auto started) {
+            if (started == ops::vaults::SyncStart::Started) return "Vault sync initiated for " + label;
+            return "Vault sync already running for " + label + "; queued an immediate rerun after it finishes";
+        });
 }
 
 static CommandResult handle_vault_sync_update(const CommandCall& call) {
-    constexpr const auto* ERR = "vault sync update";
-
     const auto usage = resolveUsage({"vault", "sync", "update"});
     validatePositionals(call, usage);
 
-    const auto eLkp = resolveEngine(call, call.positionals[0], usage, ERR);
-    if (!eLkp || !eLkp.ptr) return invalid(eLkp.error);
-    const auto engine = eLkp.ptr;
+    const auto vLkp = resolveVault(call, call.positionals[0], usage, "vault sync update");
+    if (!vLkp || !vLkp.ptr) return invalid(vLkp.error);
+    const auto vault = vLkp.ptr;
 
-    using Perm = rbac::permission::vault::sync::SyncConfigPermissions;
-    if (!rbac::resolver::Vault::has<Perm>({
-        .user = call.user,
-        .permission = Perm::Edit,
-        .vault_id = engine->vault->id
-    })) return invalid("vault sync update: you do not have permission to update this vault's sync configuration");
-
-    if (const auto intervalOpt = optVal(call, "interval")) {
-        try {
-            engine->sync->interval = parseSyncInterval(*intervalOpt);
-        } catch (const std::exception& e) {
-            return invalid("vault sync update: " + std::string(e.what()));
-        }
-    }
-
-    if (engine->vault->type == VaultType::Local) {
-        if (const auto onSyncConflictOpt = optVal(call, "on-sync-conflict")) {
-            const auto fsync = std::static_pointer_cast<LocalPolicy>(engine->sync);
-
-            try {
-                fsync->conflict_policy = fsConflictPolicyFromString(*onSyncConflictOpt);
-            } catch (const std::exception& e) {
-                return invalid("vault sync update: " + std::string(e.what()));
-            }
-        }
-    } else if (engine->vault->type == VaultType::S3) {
-        const auto rsync = std::static_pointer_cast<RemotePolicy>(engine->sync);
-
-        if (const auto syncStrategyOpt = optVal(call, "sync-strategy")) {
-            try {
-                rsync->strategy = strategyFromString(*syncStrategyOpt);
-            } catch (const std::exception& e) {
-                return invalid("vault sync update: " + std::string(e.what()));
-            }
-        }
-
-        if (const auto onSyncConflictOpt = optVal(call, "on-sync-conflict")) {
-            try {
-                rsync->conflict_policy = rsConflictPolicyFromString(*onSyncConflictOpt);
-            } catch (const std::exception& e) {
-                return invalid("vault sync update: " + std::string(e.what()));
-            }
-        }
-
-        if (const auto presetOpt = optVal(call, "s3-budget-preset")) {
-            try {
-                rsync->s3_request_budget = s3RequestBudgetForPreset(s3BudgetPresetFromString(*presetOpt));
-            } catch (const std::exception& e) {
-                return invalid("vault sync update: " + std::string(e.what()));
-            }
-        }
-
-        if (const auto indexAgeOpt = optVal(call, "max-remote-index-age")) {
-            try {
-                rsync->max_remote_index_age = remoteIndexAgeFromString(*indexAgeOpt);
-            } catch (const std::exception& e) {
-                return invalid("vault sync update: " + std::string(e.what()));
-            }
-        }
-
-        std::string budgetError;
-        if (!applyBudgetOption(call, "s3-budget-list", rsync->s3_request_budget.max_list_requests, budgetError) ||
-            !applyBudgetOption(call, "s3-budget-head", rsync->s3_request_budget.max_head_requests, budgetError) ||
-            !applyBudgetOption(call, "s3-budget-get", rsync->s3_request_budget.max_get_requests, budgetError) ||
-            !applyBudgetOption(call, "s3-budget-put", rsync->s3_request_budget.max_put_requests, budgetError) ||
-            !applyBudgetOption(call, "s3-budget-copy", rsync->s3_request_budget.max_copy_requests, budgetError) ||
-            !applyBudgetOption(call, "s3-budget-delete", rsync->s3_request_budget.max_delete_requests, budgetError) ||
-            !applyBudgetOption(call, "s3-budget-download-bytes", rsync->s3_request_budget.max_downloaded_bytes, budgetError))
-            return invalid(budgetError);
-    }
-
-    engine->sync->interval = Policy::clampInterval(engine->sync->interval);
-    engine->sync->rehash_config();
-    db::query::vault::Vault::updateVaultSync(engine->sync, engine->vault->type);
-
-    if (engine->vault->type == VaultType::Local) {
-        const auto fsync = std::static_pointer_cast<LocalPolicy>(engine->sync);
-        return ok("Successfully updated local vault sync configuration!\n" + to_string(fsync));
-    }
-
-    if (engine->vault->type == VaultType::S3) {
-        const auto rsync = std::static_pointer_cast<RemotePolicy>(engine->sync);
-        return ok("Successfully updated S3 vault sync configuration!\n" + to_string(rsync));
-    }
-
-    return invalid("vault sync update: invalid sync configuration");
+    return runOp("vault sync update", [&] { return ops::vaults::updateSync(call.user, vault->id, syncPatchFromOptions(call)); },
+        [&](const auto& policy) -> std::string {
+            if (const auto remote = std::dynamic_pointer_cast<RemotePolicy>(policy))
+                return "Successfully updated S3 vault sync configuration!\n" + to_string(remote);
+            return "Successfully updated local vault sync configuration!\n" +
+                   to_string(std::static_pointer_cast<LocalPolicy>(policy));
+        });
 }
 
 static CommandResult handle_vault_sync_reconcile(const CommandCall& call) {

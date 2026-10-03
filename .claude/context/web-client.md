@@ -11,7 +11,7 @@
 
 - `src/app/(auth)`: login. `src/app/(app)/(admin)`: admin area (dashboards, operator-email, users,
   roles, S3 gateway…). `src/app/(app)/(fs)`: filesystem UI. `src/app/share/[token]`: public shares.
-  `src/app/api/auth/session`, `src/app/api/runtime/config`: server routes.
+  `src/app/api/auth/session`: server route.
 - `src/stores/*`: ws-driven Zustand stores. `useWebSocket.ts` is the transport, `fsStore.ts` holds filesystem state,
   `vaultShareStore.ts` holds share bootstrap only, `statsStore`.
 - `src/models/*`: typed payloads. The `WebSocketCommandMap` typing must be extended for every new ws command.

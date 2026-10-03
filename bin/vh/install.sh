@@ -482,6 +482,24 @@ compute_session_handoff_summary() {
     SESSION_NOTE="A full new login shell/session may still be required to refresh parent-shell group membership."
 }
 
+INITIAL_PASSWORD_FILE="/var/lib/vaulthalla/super_admin_initial_password"
+
+# The web console has no universal default password: each install generates one for 'admin' and writes it once to
+# INITIAL_PASSWORD_FILE when the service first starts with a new database.
+print_web_console_sign_in() {
+    log "Web console sign-in:"
+    log "  user: admin"
+    if run_priv test -f "$INITIAL_PASSWORD_FILE" 2>/dev/null; then
+        log "  initial password (generated for this install): sudo cat ${INITIAL_PASSWORD_FILE}"
+    else
+        log "  initial password: ${INITIAL_PASSWORD_FILE} (written when the service first starts with a new database;"
+        log "    if it is absent on an existing install, the password was already changed or the file deleted)"
+    fi
+    log "  change it: vh setup set-super-admin-password (as the super-admin Linux user, without sudo; removes the file)"
+    log "  keeping the generated password is fine; delete the file before exposing the console to a network"
+    log "  HTTPS through nginx is optional ('vh setup nginx' below); it offers to do either first"
+}
+
 print_summary() {
     local operator_user="$1"
     local profile_label="$PROFILE"
@@ -518,8 +536,11 @@ print_summary() {
         warn "First non-root user to call 'vh' or 'vaulthalla' will claim super-admin ownership for their Linux UID."
     fi
 
+    print_web_console_sign_in
+
     log "Recommended next commands:"
     log "  vh setup assign-admin"
+    log "  vh setup set-super-admin-password"
     log "  vh setup db"
     log "  vh setup remote-db"
     log "  vh setup nginx"

@@ -1,4 +1,5 @@
 #include "protocols/shell/commands/vault.hpp"
+#include "protocols/shell/util/runOp.hpp"
 #include "protocols/shell/Router.hpp"
 #include "protocols/shell/util/argsHelpers.hpp"
 
@@ -36,23 +37,14 @@ using namespace vh::config;
 using namespace vh::crypto;
 
 CommandResult commands::vault::handle_vault_info(const CommandCall& call) {
-    constexpr const auto* ERR = "vault info";
-
     const auto usage = resolveUsage({"vault", "info"});
     validatePositionals(call, usage);
 
-    const auto vLkp = resolveVault(call, call.positionals[0], usage, ERR);
+    const auto vLkp = resolveVault(call, call.positionals[0], usage, "vault info");
     if (!vLkp || !vLkp.ptr) return invalid(vLkp.error);
-    const auto vault = vLkp.ptr;
 
-    using Perm = permission::admin::VaultPermissions;
-    if (!resolver::Admin::has<Perm>({
-        .user = call.user,
-        .permission = Perm::View,
-        .vault_id = vault->id
-    })) return invalid("vault info: insufficient permissions");
-
-    return ok(to_string(vault));
+    return runOp("vault info", [&] { return ops::vaults::get(call.user, vLkp.ptr->id); },
+        [](const auto& details) { return to_string(details.vault); });
 }
 
 CommandResult commands::vault::handle_vaults_list(const CommandCall& call) {
@@ -67,21 +59,10 @@ CommandResult commands::vault::handle_vaults_list(const CommandCall& call) {
     if (f_local) typeFilter = VaultType::Local;
     else if (f_s3) typeFilter = VaultType::S3;
 
-    std::vector<std::shared_ptr<::vh::vault::model::Vault>> vaults;
-    if (call.user->vaultsPerms().self.canView() && !(call.user->vaultsPerms().admin.canView() || call.user->vaultsPerms().user.canView()))
-        vaults = db::query::vault::Vault::listUserVaults(call.user->id, typeFilter, parseListQuery(call));
-    else {
-        vaults = db::query::vault::Vault::listVaults(typeFilter, parseListQuery(call));
-        using Perm = permission::admin::VaultPermissions;
-        std::erase_if(vaults, [&](const auto& v) {
-            return !v || !resolver::Admin::has<Perm>({
-                .user = call.user,
-                .permission = Perm::View,
-                .vault_id = v->id
-            });
+    const bool json = hasFlag(call, "json");
+    return runOp("vault list", [&] { return ops::vaults::list(call.user, parseListQuery(call), typeFilter); },
+        [&](const auto& vaults) {
+            if (json) return nlohmann::json(vaults).dump(4);
+            return ::vh::vault::model::to_string(vaults);
         });
-    }
-
-    if (hasFlag(call, "json")) return ok(nlohmann::json(vaults).dump(4));
-    return ok(::vh::vault::model::to_string(vaults));
 }

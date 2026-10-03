@@ -28,5 +28,4 @@ void vh::db::Connection::initPreparedUsers() const {
 
     conn_->prepare("admin_user_exists", "SELECT EXISTS(SELECT 1 FROM users WHERE name = 'admin') AS exists");
 
-    conn_->prepare("get_admin_password", "SELECT password_hash FROM users WHERE name = 'admin'");
 }

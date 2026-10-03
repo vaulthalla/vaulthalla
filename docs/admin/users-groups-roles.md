@@ -46,13 +46,35 @@ vh user update alice --email alice@new.example.com
 vh user update alice --linux-uid 1001
 ```
 
+Deactivate or reactivate an account:
+
+```bash
+vh user update alice --disable
+vh user update alice --enable
+```
+
 Delete:
 
 ```bash
-vh user delete alice
+vh user delete alice                      # asks first; her vaults are destroyed
+vh user delete alice --transfer-to bob    # asks first; her vaults go to bob
+vh user delete alice --yes                # no question (scripts)
 ```
 
-The built-in super admin user and role are protected from ordinary mutation paths.
+Deleting an account always asks: "Are you sure you wish to delete this user? The user's existing vaults will be destroyed unless ownership is transferred." The web console asks the same in its delete dialog, where you can pick who receives the vaults. Every vault is checked before anything changes, so a refused transfer or removal leaves the account and its vaults as they were.
+
+Transferring vault ownership, here or with `vh vault update <id> --owner <user>` / the vault edit page, is limited to administrators: it needs an admin account, edit rights on the vault, and the right to create vaults for the new owner. The new owner can't already have a vault with the same name.
+
+The built-in super admin user and role are protected from ordinary mutation paths. The super admin can't be renamed, because the daemon looks it up by name. Its web console password starts as a generated, per-install one; see [Web Console](/getting-started/web-console#first-login). Change it with `vh setup set-super-admin-password`, run as the Linux user bound as the super admin.
+
+Rules that apply on the CLI and in the web console alike:
+
+- An account whose admin role grants anything beyond managing its owner's own vaults and keys is an *admin account*. Creating, editing, deleting or resetting the password of an admin account needs the `admin.identities.admins.*` permissions; plain accounts use `admin.identities.users.*`.
+- Nobody can assign a role that grants admin permissions they don't hold. Nobody can edit, delete, deactivate or reset the password of an account whose role exceeds their own.
+- Nobody can change their own role, Linux UID binding or active state, or delete their own account. Ask another administrator.
+- An account's global vault policy (what it may do in vaults through no specific vault role) is seeded from its role when the role is assigned (the built-in role's preset), then belongs to the account. `unprivileged` grants none, and custom roles seed `unprivileged`: such accounts reach a vault, their own default vault included, through a vault role assignment.
+- Deleting, deactivating, re-roling or resetting the password of an account ends all of its sessions immediately. A deactivated account can't log in.
+- `vh user create` creates the account's default vault, as the web console does, and prints a generated password once.
 
 ## Groups
 
@@ -103,6 +125,14 @@ Useful admin permission areas include:
 - Admin management.
 
 Grant only the permissions needed for the operator's job.
+
+To start from an existing role, pass `--from` and then the flags that differ:
+
+```bash
+vh role admin create support-lead --from support --allow-<permission> ...
+```
+
+`--from` copies that role's permissions into the new one as a starting point. Without it, a role starts from `unprivileged`. Once created, the role owns its own permissions: later changes to the role it came from don't reach it. The web console's role form does the same with its **Start from** list.
 
 ## Vault Roles
 

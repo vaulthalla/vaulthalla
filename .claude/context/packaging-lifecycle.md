@@ -43,7 +43,9 @@ python3-certbot-dns-cloudflare`. Build-Depends mirror `core/meson.build` pkg-con
 
 `nginx_site_managed` (package owns the site file), `nginx_default_site_disabled` (distro default symlink we removed;
 `target=` line), `db_bootstrap_disabled` / `nginx_config_disabled` (persisted `VH_SKIP_*` opt-outs; `vh setup db` /
-`vh setup nginx` delete them), `tpm_backend_deferred`, `.reinstall_from_config_files` (written by preinst).
+`vh setup nginx` delete them), `tpm_backend_deferred`, `.reinstall_from_config_files` (written by preinst),
+`super_admin_initial_password` (the generated web `admin` password, written once by the daemon on a new database,
+0600 daemon user; never recreated; removed on rotation; postinst's summary points at it when present).
 
 ## `preinst`
 
@@ -59,7 +61,7 @@ python3-certbot-dns-cloudflare`. Build-Depends mirror `core/meson.build` pkg-con
   before any `[ -d ]`.
 - **Legacy CLI units (#110)**: `vaulthalla-cli.{socket,service}` shipped up to 1.6.6. The socket unit was an
   orphaned listener on the daemon's socket path that swallowed `vh` clients forever. They're no longer shipped
-  (`FORBIDDEN_DEBIAN_PACKAGE_PATHS` in `tools/release/packaging/debian.py` rejects them). `retire_legacy_cli_units`
+  (`forbidden_paths` in release.toml's package contract; `vlr validate-artifacts` rejects them). `retire_legacy_cli_units`
   runs early in configure (before DB bootstrap, so an abort can't leave the listener up). It only acts if unit files,
   deb-systemd-helper state, `.wants` links, or a non-inactive unit exist. It stops each unit with bounded
   `deb-systemd-invoke stop` (cgroup SIGKILL on timeout), runs `deb-systemd-helper purge` + `unmask`, removes the
@@ -130,7 +132,7 @@ removed. The preserved-DB message prints raw `sudo -u postgres psql -c …` comm
 - An unavailable optional integration (nginx/PostgreSQL/swtpm/systemd, incl. systemctl present but systemd not PID 1)
   never hard-fails install or upgrade. The only intentional configure failure is abort on an orphan DB with data.
 - Maintainer scripts never block indefinitely and never touch the FUSE mount except via mountinfo / lazy unmount.
-- Pinned by `tools/release/tests/packaging/test_maintainer_script_safety.py`, `test_package_layout_contract.py`,
+- Pinned by `tools/contracts/test_maintainer_script_safety.py`, `test_package_layout_contract.py`,
   `test_maintainer_script_behavior.py` (runs script functions under dash with stubs), and
   `deploy/lifecycle/tests/test_db_lifecycle.py`.
 

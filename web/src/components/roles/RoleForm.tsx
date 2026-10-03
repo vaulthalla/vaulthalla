@@ -68,8 +68,12 @@ export default function RoleForm({
   onSavedAction,
 }: RoleFormProps) {
   const { permissions, fetchPermissions } = usePermStore()
-  const { addAdminRole, updateAdminRole } = useAdminRoleStore()
-  const { addVaultRole, updateVaultRole } = useVaultRoleStore()
+  const { adminRoles, fetchAdminRoles, addAdminRole, updateAdminRole } = useAdminRoleStore()
+  const { vaultRoles, fetchVaultRoles, addVaultRole, updateVaultRole } = useVaultRoleStore()
+  // Like `vh role ... create --from`: copies another role's permissions into the form as a starting point. Nothing
+  // links the new role to it once saved.
+  const [startFrom, setStartFrom] = useState('')
+  const templates: Array<AdminRole | VaultRole> = type === 'admin' ? adminRoles : vaultRoles
 
   const [form, setForm] = useState<RoleFormData>({
     id: defaultValues?.id,
@@ -133,6 +137,23 @@ export default function RoleForm({
   }, [type, defaultValues, vaultId, subjectType, subjectId, permissions.length, fetchPermissions])
 
   const isEditMode = !!form.id
+
+  useEffect(() => {
+    if (isEditMode) return
+    void (type === 'admin' ? fetchAdminRoles() : fetchVaultRoles()).catch(() => undefined)
+  }, [isEditMode, type, fetchAdminRoles, fetchVaultRoles])
+
+  const handleStartFrom = (value: string) => {
+    setStartFrom(value)
+    const template = templates.find(role => String(role.id) === value)
+    setForm(prev => ({
+      ...prev,
+      permissions:
+        template ?
+          mergePermissions(scopedBackendPermissions, template.permissions)
+        : buildBasePermissions(scopedBackendPermissions),
+    }))
+  }
   const enabledCount = useMemo(() => form.permissions.filter(permission => permission.value).length, [form.permissions])
 
   const handleSubmit = async () => {
@@ -179,6 +200,7 @@ export default function RoleForm({
   }
 
   const handleReset = () => {
+    setStartFrom('')
     const basePerms =
       defaultValues?.permissions?.length ?
         mergePermissions(scopedBackendPermissions, defaultValues.permissions)
@@ -250,6 +272,27 @@ export default function RoleForm({
                 className="w-full rounded-2xl border border-white/20 bg-black/20 p-3 text-white"
               />
             </div>
+
+            {!isEditMode && (
+              <div className="space-y-2 lg:col-span-2">
+                <label className="block text-sm font-medium text-white">Start from</label>
+                <select
+                  value={startFrom}
+                  onChange={e => handleStartFrom(e.target.value)}
+                  className="w-full rounded-2xl border border-white/20 bg-black/20 p-3 text-white"
+                  data-testid="role-start-from">
+                  <option value="">{type === 'admin' ? 'Unprivileged (nothing enabled)' : 'Nothing enabled'}</option>
+                  {templates.map(role => (
+                    <option key={role.id} value={String(role.id)}>
+                      {role.name}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-white/45">
+                  Copies that role&apos;s permissions into this form. The new role keeps its own copy once saved.
+                </p>
+              </div>
+            )}
           </div>
         </div>
       </motion.div>
