@@ -120,7 +120,8 @@ json Auth::logout(const std::shared_ptr<Session> &session) {
 }
 
 json Auth::listUsers(const std::shared_ptr<Session> &session) {
-    return {{"users", to_json(ops::users::list(requireSessionUser(session)))}};
+    // The slim list projection; auth.user.get / auth.isAuthenticated keep the full role with its permissions.
+    return {{"users", vh::identities::to_list_json(ops::users::list(requireSessionUser(session)))}};
 }
 
 json Auth::isUserAuthenticated(const std::string &token, const std::shared_ptr<Session> &session) {

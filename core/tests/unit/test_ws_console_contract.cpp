@@ -1,6 +1,7 @@
-// Web-console wire contract pieces that live in core: typed refusal codes on ws ERROR responses and the admin gates
-// that produce them.
+// Web-console wire contract pieces that live in core: typed refusal codes on ws ERROR responses, the admin gates
+// that produce them, and the cheap dashboard severity read.
 
+#include "db/Transactions.hpp"
 #include "identities/User.hpp"
 #include "ops/Error.hpp"
 #include "protocols/ws/Router.hpp"
@@ -9,10 +10,17 @@
 #include "protocols/ws/handler/Settings.hpp"
 #include "protocols/ws/handler/Stats.hpp"
 #include "rbac/role/Admin.hpp"
+#include "runtime/Deps.hpp"
+#include "seed/include/init_db_tables.hpp"
+#include "seed/include/seed_db.hpp"
+#include "stats/model/DashboardOverview.hpp"
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
+#include <paths.h>
 
+#include <cstdlib>
+#include <filesystem>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -70,8 +78,56 @@ TEST(WsErrorCodes, OpsRefusalsCarryAStableCodeAndKeepTheirMessage) {
 TEST(WsErrorCodes, AdminGatesRefuseWithDenied) {
     const auto s = sessionFor(powerlessUser());
     EXPECT_THROW((void)protocols::ws::handler::Stats::dashboardOverview(json::object(), s), ops::Denied);
+    EXPECT_THROW((void)protocols::ws::handler::Stats::dashboardSeverity(s), ops::Denied);
     EXPECT_THROW((void)protocols::ws::handler::Stats::systemHealth(s), ops::Denied);
     EXPECT_THROW((void)protocols::ws::handler::Stats::systemTrends(json::object(), s), ops::Denied);
     EXPECT_THROW((void)protocols::ws::handler::Settings::get(s), ops::Denied);
 }
+
+class DashboardSeverityTest : public ::testing::Test {
+protected:
+    inline static bool skipTests = false;
+
+    static void SetUpTestSuite() {
+        if (!(std::getenv("VH_TEST_DB_USER") && std::getenv("VH_TEST_DB_PASS") && std::getenv("VH_TEST_DB_HOST") &&
+              std::getenv("VH_TEST_DB_PORT") && std::getenv("VH_TEST_DB_NAME"))) {
+            skipTests = true;
+            return;
+        }
+        paths::enableTestMode();
+        const auto root = std::filesystem::temp_directory_path() / "vh_console_contract_severity";
+        paths::backingPath = root / "backing";
+        paths::mountPath = root / "mount";
+        std::filesystem::create_directories(paths::backingPath);
+        std::filesystem::create_directories(paths::mountPath);
+
+        db::Transactions::init();
+        db::seed::nuke_and_recreate_schema_public();
+        db::Transactions::dbPool_->initPreparedStatements();
+        seed::seed_database();
+        runtime::Deps::init();
+    }
+
+    void SetUp() override {
+        if (skipTests) GTEST_SKIP() << "Skipping db tests due to missing environment variables.";
+    }
+};
+
+// #146: the nav badge needs the overview's severity, not its 85 KB of cards.
+TEST_F(DashboardSeverityTest, SeverityMatchesTheOverviewSummaryWithoutTheCards) {
+    const auto full = stats::model::DashboardOverview::snapshot();
+    const auto slim = stats::model::DashboardOverview::severity();
+    EXPECT_EQ(slim.overallStatus, full.overallStatus);
+    EXPECT_EQ(slim.errorCount, full.errorCount);
+    EXPECT_EQ(slim.warningCount, full.warningCount);
+    EXPECT_TRUE(slim.sections.empty());
+
+    const auto payload = stats::model::dashboardSeverityJson(slim);
+    EXPECT_EQ(payload.size(), 4u);
+    EXPECT_TRUE(payload.at("overall_status").is_string());
+    EXPECT_TRUE(payload.at("error_count").is_number_unsigned());
+    EXPECT_TRUE(payload.at("warning_count").is_number_unsigned());
+    EXPECT_TRUE(payload.at("checked_at").is_number_unsigned());
+}
+
 }

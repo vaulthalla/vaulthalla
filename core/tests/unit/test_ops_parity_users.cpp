@@ -337,6 +337,21 @@ TEST_F(UserParityTest, ListShowsWhatTheActorMayViewOnBothSurfaces) {
     ASSERT_EQ(code, 0) << out;
     for (const auto& name : wsNames) EXPECT_NE(out.find(name), std::string::npos) << name;
 
+    // #146: the list is a slim projection (no permission sets); the single-user read keeps the full role.
+    for (const auto& u : listed) {
+        const auto& role = u.at("admin_role");
+        EXPECT_FALSE(role.contains("permissions")) << u.at("name");
+        EXPECT_FALSE(role.contains("s3_gateway")) << u.at("name");
+        EXPECT_TRUE(role.at("id").is_number());
+        EXPECT_TRUE(role.at("name").is_string());
+        EXPECT_TRUE(role.contains("description"));
+        EXPECT_EQ(role.at("type"), "admin");
+        ASSERT_TRUE(u.at("vault_roles").is_array());
+        for (const auto& vr : u.at("vault_roles")) EXPECT_FALSE(vr.contains("permissions"));
+    }
+    const auto single = protocols::ws::handler::Auth::getUser(json{{"id", viewer->id}}, ws(superUser)).at("user");
+    EXPECT_TRUE(single.at("admin_role").contains("permissions"));
+
     // Nobody without a view permission lists anything.
     EXPECT_NE(cli("user list", seedUser("up_blind", "unprivileged")).first, 0);
     // And --sort is a column, not SQL.

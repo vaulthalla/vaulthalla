@@ -1025,6 +1025,14 @@ void dashboardOverviewAddAttention(DashboardOverview& overview, const DashboardC
 }
 
 DashboardOverview DashboardOverview::snapshot(const DashboardOverviewRequest& request) {
+    return build(request, true);
+}
+
+DashboardOverview DashboardOverview::severity() {
+    return build({}, false);
+}
+
+DashboardOverview DashboardOverview::build(const DashboardOverviewRequest& request, const bool full) {
     DashboardOverview overview;
     overview.checkedAt = dashboardOverviewUnixTimestamp();
 
@@ -1041,7 +1049,9 @@ DashboardOverview DashboardOverview::snapshot(const DashboardOverviewRequest& re
     const auto wantsSeries = std::any_of(overview.cards.begin(), overview.cards.end(), [](const auto& card) {
         return card.variant == "visual" || card.variant == "graph" || card.id == "system.trends";
     });
-    if (wantsSeries) {
+    // Trend series and sections are presentation only; severity never reads them, so the severity-only build skips
+    // both (and the trend query).
+    if (full && wantsSeries) {
         try {
             dashboardOverviewAttachTrendSeries(overview.cards, vh::db::query::stats::Snapshot::systemTrends(24));
         } catch (...) {
@@ -1049,8 +1059,10 @@ DashboardOverview DashboardOverview::snapshot(const DashboardOverviewRequest& re
         }
     }
 
-    for (const auto& descriptor : dashboardOverviewSectionDescriptors()) {
-        overview.sections.push_back(dashboardOverviewBuildSection(descriptor, overview.cards));
+    if (full) {
+        for (const auto& descriptor : dashboardOverviewSectionDescriptors()) {
+            overview.sections.push_back(dashboardOverviewBuildSection(descriptor, overview.cards));
+        }
     }
 
     std::string worst = "healthy";
@@ -1191,6 +1203,15 @@ void to_json(nlohmann::json& j, const DashboardSectionSummary& section) {
         {"warnings", section.warnings},
         {"errors", section.errors},
         {"checked_at", section.checkedAt},
+    };
+}
+
+nlohmann::json dashboardSeverityJson(const DashboardOverview& overview) {
+    return nlohmann::json{
+        {"overall_status", overview.overallStatus},
+        {"error_count", overview.errorCount},
+        {"warning_count", overview.warningCount},
+        {"checked_at", overview.checkedAt},
     };
 }
 

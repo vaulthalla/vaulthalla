@@ -218,6 +218,12 @@ json Stats::dashboardOverview(const json& payload, const std::shared_ptr<Session
     return {{"stats", vh::stats::model::DashboardOverview::snapshot(vh::stats::model::dashboardOverviewRequestFromJson(payload))}};
 }
 
+json Stats::dashboardSeverity(const std::shared_ptr<Session>& session) {
+    if (!session->user->isAdmin()) throw vh::ops::Denied("Must be an admin to view dashboard overview stats.");
+    // Wrapped in `stats` like every other stats.* response.
+    return {{"stats", vh::stats::model::dashboardSeverityJson(vh::stats::model::DashboardOverview::severity())}};
+}
+
 json Stats::systemHealth(const std::shared_ptr<Session>& session) {
     if (!session->user->isAdmin()) throw vh::ops::Denied("Must be an admin to view system health.");
     return {{"stats", vh::stats::model::SystemHealth::snapshot()}};

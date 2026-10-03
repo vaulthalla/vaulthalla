@@ -106,7 +106,17 @@ struct DashboardOverview {
     std::vector<DashboardAttentionItem> attention;
 
     static DashboardOverview snapshot(const DashboardOverviewRequest& request = {});
+    // The default dashboard's overall_status / warning_count / error_count / checked_at from the same cards and the
+    // same aggregation as snapshot(), without trend series or sections. Cards and attention are filled but callers
+    // serialize only the four summary fields (stats.dashboard.severity).
+    static DashboardOverview severity();
+
+private:
+    static DashboardOverview build(const DashboardOverviewRequest& request, bool full);
 };
+
+// The stats.dashboard.severity payload: {overall_status, error_count, warning_count, checked_at}.
+nlohmann::json dashboardSeverityJson(const DashboardOverview& overview);
 
 DashboardOverviewRequest dashboardOverviewRequestFromJson(const nlohmann::json& payload);
 

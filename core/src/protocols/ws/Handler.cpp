@@ -209,6 +209,7 @@ void Handler::registerStatHandlers(const std::shared_ptr<Router>& r) {
     r->registerPayload("stats.vault.trends", &handler::Stats::vaultTrends);
     r->registerPayload("stats.vault.security", &handler::Stats::vaultSecurity);
     r->registerPayload("stats.dashboard.overview", &handler::Stats::dashboardOverview);
+    r->registerSessionOnlyHandler("stats.dashboard.severity", &handler::Stats::dashboardSeverity);
     r->registerSessionOnlyHandler("stats.system.health", &handler::Stats::systemHealth);
     r->registerSessionOnlyHandler("stats.system.threadpools", &handler::Stats::systemThreadPools);
     r->registerSessionOnlyHandler("stats.system.fuse", &handler::Stats::systemFuse);
