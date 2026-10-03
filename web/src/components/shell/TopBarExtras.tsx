@@ -1,10 +1,12 @@
 'use client'
 
+import dynamic from 'next/dynamic'
 import { TransfersButton } from '@/features/files/TransfersButton'
-import { HealthIndicator } from '@/features/health/HealthIndicator'
-import { NotificationsBell } from '@/features/cost/NotificationsBell'
 
-// Feature indicators that live in the top bar. Each renders nothing for sessions it doesn't apply to.
+// Status indicators load after first paint; each renders nothing for sessions it doesn't apply to.
+const HealthIndicator = dynamic(() => import('@/features/health/HealthIndicator').then(m => m.HealthIndicator), { ssr: false })
+const NotificationsBell = dynamic(() => import('@/features/cost/NotificationsBell').then(m => m.NotificationsBell), { ssr: false })
+
 export const TopBarExtras = () => (
   <>
     <HealthIndicator />
