@@ -352,6 +352,17 @@ TEST_F(UserParityTest, ListShowsWhatTheActorMayViewOnBothSurfaces) {
     const auto single = protocols::ws::handler::Auth::getUser(json{{"id", viewer->id}}, ws(superUser)).at("user");
     EXPECT_TRUE(single.at("admin_role").contains("permissions"));
 
+    // The session payload (login / refresh / isAuthenticated) keeps every permission but only {qualified, value}.
+    const auto session = protocols::ws::handler::Auth::sessionUser(*viewer);
+    const auto& perms = session.at("admin_role").at("permissions");
+    ASSERT_TRUE(perms.is_array());
+    EXPECT_EQ(perms.size(), single.at("admin_role").at("permissions").size());
+    for (const auto& p : perms) {
+        EXPECT_EQ(p.size(), 2u) << p.dump();
+        EXPECT_TRUE(p.at("qualified").is_string());
+        EXPECT_TRUE(p.at("value").is_boolean());
+    }
+
     // Nobody without a view permission lists anything.
     EXPECT_NE(cli("user list", seedUser("up_blind", "unprivileged")).first, 0);
     // And --sort is a column, not SQL.

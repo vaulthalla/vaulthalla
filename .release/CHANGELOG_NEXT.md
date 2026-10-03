@@ -62,7 +62,8 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
   "invalid", "conflict"); admin gates in the stats, settings, email, pricing
   and share upload handlers now raise typed denials.
 - auth.users.list returns a slim projection: admin and vault roles without
-  their permission sets.
+  their permission sets; auth.login, auth.refresh and auth.isAuthenticated
+  return the session user's permissions as {qualified, value} only.
 - Add stats.dashboard.severity (overall status and counts without the
   dashboard cards) for the console's status badge.
 - Add ws commands role.vault.overrides.{list,add,update,remove} for
