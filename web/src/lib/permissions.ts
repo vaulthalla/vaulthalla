@@ -17,7 +17,9 @@ export const isAdminUser = (user: IUser | null) => {
   return perms.has('admin.identities.admins.delete') && perms.has('admin.vaults.admin.remove')
 }
 
-export const isSuperAdminUser = (user: IUser | null) => isAdminUser(user) && user?.admin_role?.name === 'super_admin'
+// Mirrors core User::isSuperAdmin().
+export const isSuperAdminUser = (user: IUser | null) =>
+  isAdminUser(user) && hasAdminPermission(user, 'admin.keys.encryption.rotate') && user?.admin_role?.name === 'super_admin'
 
 export const hasAdminPermission = (user: IUser | null, qualified: string) => adminPermissions(user).has(qualified)
 
@@ -28,6 +30,7 @@ export const hasAnyAdminPermission = (user: IUser | null, prefix: string) => {
 }
 
 export type Requirement =
+  | { superAdmin: true }
   | { admin: true }
   | { permission: string }
   | { anyOf: string[] }
@@ -35,6 +38,7 @@ export type Requirement =
 
 export const meets = (user: IUser | null, requirement?: Requirement): boolean => {
   if (!requirement) return true
+  if ('superAdmin' in requirement) return isSuperAdminUser(user)
   if ('admin' in requirement) return isAdminUser(user)
   if ('permission' in requirement) return hasAdminPermission(user, requirement.permission)
   if ('anyOf' in requirement) return requirement.anyOf.some(p => hasAdminPermission(user, p))

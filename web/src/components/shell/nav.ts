@@ -67,7 +67,7 @@ export const NAV: NavSection[] = [
         requires: { prefix: 'admin.keys.api' },
         keywords: 'api keys s3 r2 aws',
       },
-      { label: 'Cost control', href: '/cost', icon: SackDollarIcon, requires: { admin: true }, keywords: 'budget pricing spend' },
+      { label: 'Cost control', href: '/cost', icon: SackDollarIcon, requires: { superAdmin: true }, keywords: 'budget pricing spend' },
       { label: 'S3 gateway', href: '/s3-gateway', icon: CloudIcon, requires: { permission: 'admin.s3_gateway.view' } },
     ],
   },
@@ -75,8 +75,8 @@ export const NAV: NavSection[] = [
     label: 'System',
     items: [
       { label: 'Health', href: '/health', icon: GaugeHighIcon, requires: { admin: true }, keywords: 'dashboard stats status' },
-      { label: 'Notifications', href: '/notifications', icon: EnvelopeIcon, requires: { admin: true }, keywords: 'operator email' },
-      { label: 'Settings', href: '/settings', icon: SlidersIcon, requires: { prefix: 'admin.settings' }, keywords: 'config' },
+      { label: 'Notifications', href: '/notifications', icon: EnvelopeIcon, requires: { superAdmin: true }, keywords: 'operator email' },
+      { label: 'Settings', href: '/settings', icon: SlidersIcon, requires: { superAdmin: true }, keywords: 'config' },
     ],
   },
 ]

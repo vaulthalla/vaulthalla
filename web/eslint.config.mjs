@@ -18,7 +18,7 @@ const eslintConfig = [
       'jsx-a11y/anchor-is-valid': 'error',
       'jsx-a11y/aria-props': 'error',
       'jsx-a11y/aria-proptypes': 'error',
-      'jsx-a11y/aria-role': 'error',
+      'jsx-a11y/aria-role': ['error', { ignoreNonDOM: true }],
       'jsx-a11y/aria-unsupported-elements': 'error',
       'jsx-a11y/heading-has-content': 'error',
       'jsx-a11y/iframe-has-title': 'error',

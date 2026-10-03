@@ -3,7 +3,7 @@
 import React, { useState } from 'react'
 import Link from 'next/link'
 import { cn } from '@/util/cn'
-import { useIsAdmin } from '@/lib/permissions'
+import { useCan } from '@/lib/permissions'
 import { formatRelative } from '@/lib/format'
 import { severityTone, toneClasses } from '@/lib/tone'
 import { Button } from '@/components/ui/Button'
@@ -21,9 +21,10 @@ const worst = (items: PriceNotification[]) =>
     null,
   )
 
-// Top-bar bell for open budget/pricing alerts. Admins only; renders nothing for everyone else.
+// Top-bar bell for open budget/pricing alerts. Super admins only (core gates price budgets on isSuperAdmin);
+// renders nothing for everyone else.
 export const NotificationsBell = () => {
-  const isAdmin = useIsAdmin()
+  const isAdmin = useCan({ superAdmin: true })
   const [open, setOpen] = useState(false)
   const alerts = useNotifications(isAdmin, false, 60_000)
   if (!isAdmin) return null
