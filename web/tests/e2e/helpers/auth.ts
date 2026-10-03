@@ -20,14 +20,19 @@ export function e2eCredentials() {
   return { user, password }
 }
 
+// The console's sign-in form (labelled fields; the session cookie is HttpOnly, the access token lives in memory).
+export async function signIn(page: Page, user: string, password: string) {
+  await page.goto('/login')
+  await expect(page.getByRole('heading', { name: /sign in to vaulthalla/i })).toBeVisible()
+  await page.getByLabel('Username').fill(user)
+  await page.getByLabel('Password').fill(password)
+  await page.getByRole('button', { name: /^sign in$/i }).click()
+  await page.waitForURL(url => !url.pathname.endsWith('/login'), { timeout: 15_000 })
+}
+
 export async function loginThroughUi(page: Page) {
   const { user, password } = e2eCredentials()
-  await page.goto('/login')
-  await expect(page.getByRole('heading', { name: /login to vaulthalla/i })).toBeVisible()
-  await page.getByPlaceholder('Enter your username').fill(user)
-  await page.getByPlaceholder('Enter your password').fill(password)
-  await page.getByRole('button', { name: /^login$/i }).click()
-  await page.waitForURL(url => !url.pathname.endsWith('/login'), { timeout: 15_000 })
+  await signIn(page, user, password)
 }
 
 export async function authenticateAndSaveState(browser: Browser, storageStatePath = authStatePath) {
