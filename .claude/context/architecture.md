@@ -138,7 +138,7 @@ prod fallback `127.0.0.1:36968`). `web/src/app/api/auth/session/route.ts` proxie
   per file and refuses to start on a mismatch, so **never edit a shipped migration**: 020/060/082 were edited in place and
   bricked upgrades (1.5.x→1.6.x crash loop on 060). Reviewed exceptions live in `kHistoricalMigrationChecksums` (accepted, recorded
   hash rewritten to current, not re-run; a forward migration owns the delta). `core/seed/shipped_migrations.lock` pins every hash;
-  `tools/release/tests/packaging/test_migration_checksums_contract.py` enforces it (plus every local v* tag).
+  `tools/contracts/test_migration_checksums_contract.py` enforces it (plus every local v* tag).
 - `core/include/db/DBPool.hpp` is a fixed pool of 4 connections (config `database.pool_size` is **not** wired to it)
   handed out as RAII `DBPool::Lease`s (FIFO) that always return the slot. A dead connection is replaced on
   `acquire()` (reconnect + re-prepare, pool-wide backoff 250ms→5s, callers inside the window get

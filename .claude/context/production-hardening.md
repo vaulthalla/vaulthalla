@@ -67,16 +67,10 @@ gate that installs and upgrades the candidate `.deb` on a real host with a runni
 publication. Candidate: a lab smoke stage (N-1 → N upgrade, service health, FUSE `stat` with timeout,
 `vh status`, DB restart survival) using vh-storage or a disposable clone of it.
 
-### P0-4: 69 packaging guardrail tests never run, and one has already rotted
+### P0-4 (resolved): packaging guardrail tests that never ran
 
-`tools/release/tests/packaging/` has no `__init__.py`. Python 3.12 `unittest discover` skips namespace dirs, so
-CI's `release-tooling-verify` reports "272 OK" while excluding `test_debian_install_flow_contract`,
-`test_debian_packaging`, `test_debian_publication`, `test_debian_rules_contract`,
-`test_release_artifact_validation`, and `test_release_workflow_contract`. Run by module (as of 2026-09-30):
-68 pass, and **1 fails**: `test_readme_documents_needrestart_service_restart_boundary` expects the phrase
-"Unrelated service restarts during `apt upgrade` are controlled by host-level apt", but
-`debian/README.Debian` now says "Unrelated third-party service restarts … remain controlled by host-level apt hooks".
-Fix: add the `__init__.py`, reconcile the wording, and add a CI assertion on the minimum test count so this can't regress silently.
+They lived in a directory `unittest discover` skipped. They are now `tools/contracts` (a package), run by
+`tools/dev/verify.sh packaging` in CI and release with a minimum test count, so a suite dropped from discovery fails.
 
 ## P1: pipeline and packaging robustness
 

@@ -197,9 +197,8 @@ For help or manpage-related work, also inspect the affected usage definitions un
 Run:
 
 ```bash
-python3 -m tools.release check
-python3 -m tools.release build-deb --dry-run
-python3 -m unittest discover -s tools/release/tests -p 'test_*.py'
+bash tools/dev/verify.sh release packaging
+make deb   # local release rehearsal: builds and validates the package from a worktree of HEAD (commit first)
 ```
 
 Then describe the lifecycle validation you performed:
@@ -226,8 +225,8 @@ At minimum:
 If packaging or release behavior is involved, also run:
 
 ```bash
-python3 -m tools.release build-deb --dry-run
-python3 -m unittest discover -s tools/release/tests -p 'test_*.py'
+bash tools/dev/verify.sh packaging
+make deb
 ```
 
 Use a disposable PostgreSQL-backed environment when you can. Document migration or upgrade assumptions clearly.
@@ -242,26 +241,20 @@ If the change was approved for public work, do not rely on partial validation. S
 - clear impact description
 - explicit note about anything you could not validate
 
-## Release Tooling Changes
+## Release Changes
 
-Run:
-
-```bash
-python3 -m tools.release check
-python3 -m unittest discover -s tools/release/tests -p 'test_*.py'
-```
-
-Useful helper:
+Releases use [vl-release](https://github.com/valkyrianlabs/vl-release) (`vlr`), configured by `release.toml`. Run:
 
 ```bash
-bash tools/dev/verify.sh release
+bash tools/dev/verify.sh release    # vlr check + vlr version check
+vlr prepare --dry-run               # preview the release notes and Debian changelog entry
 ```
 
-If the change affects packaging outputs, add:
+If the change affects packaging outputs, add `make deb`.
 
-```bash
-python3 -m tools.release build-deb --dry-run
-```
+Changes users or operators would notice also update `.release/RELEASE_NOTES_NEXT.md`, and packaging-facing ones
+`.release/CHANGELOG_NEXT.md`, in the same pull request. Never edit `debian/changelog`, `RELEASE_NOTES.md` or version
+numbers by hand.
 
 ## What To Put In The PR
 

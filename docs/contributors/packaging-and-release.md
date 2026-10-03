@@ -32,12 +32,14 @@ Read this together with:
 
 | Surface | Paths | Why it matters |
 | --- | --- | --- |
-| Debian package metadata | `debian/control`, `debian/install`, `debian/changelog`, `debian/rules` | Defines build inputs, staged payload, and package metadata |
+| Debian package metadata | `debian/control`, `debian/install`, `debian/rules` | Defines build inputs, staged payload, and package metadata |
+| Release contract and history | `release.toml`, `.release/*_NEXT.md`, `debian/changelog`, `RELEASE_NOTES.md` | vl-release config, the staged notes for the next release, and the published history (written only by `vlr prepare`) |
 | Debian maintainer scripts | `debian/postinst`, `debian/prerm`, `debian/postrm` | Source of truth for install, upgrade, remove, and purge behavior |
 | Systemd units | `deploy/systemd/*` | Defines daemon, CLI socket/service, web service, and `swtpm` runtime behavior |
 | Lifecycle utility | `deploy/lifecycle/main.py` | Powers privileged `vh setup` and `vh teardown` flows |
 | Dev/operator helpers | `bin/install.sh`, `bin/uninstall.sh`, `bin/setup/*`, `bin/teardown/*` | Useful local wrappers, but not the Debian lifecycle contract |
-| Release automation | `tools/release/*`, `.github/actions/package/action.yml`, `.github/workflows/release.yml` | Owns dry-run packaging, artifact validation, and publication policy |
+| Release automation | `release.toml`, `.github/workflows/release.yml`, `web/bin/build_release_payload.sh` | vl-release builds, validates and publishes the package; the workflow only orders `vlr` commands |
+| Packaging contracts | `tools/contracts/*` | Tests pinning maintainer-script safety, package layout, shipped migrations and the release workflow |
 
 ## Important Repo Reality
 
@@ -57,7 +59,7 @@ Good packaging contributions include:
 - contract tests and validation improvements
 - focused, conservative bug fixes
 - systemd or packaging clarity improvements that do not change behavior unexpectedly
-- dry-run packaging or artifact validation fixes in `tools/release/`
+- package contract (`release.toml`) or contract test (`tools/contracts/`) improvements
 
 What does not count as a good first packaging PR:
 
@@ -84,12 +86,11 @@ That is why package lifecycle work is "coordinate first" even when the code chan
 
 If your PR changes packaging or lifecycle behavior, aim to validate these layers:
 
-### Release-tooling and package dry run
+### Release contract and package build
 
 ```bash
-python3 -m tools.release check
-python3 -m tools.release build-deb --dry-run
-python3 -m unittest discover -s tools/release/tests -p 'test_*.py'
+bash tools/dev/verify.sh release packaging
+make deb   # local release rehearsal from a worktree of HEAD: vlr prepare, build-deb, validate-artifacts
 ```
 
 ### Lifecycle behavior
