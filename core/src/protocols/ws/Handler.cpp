@@ -114,6 +114,10 @@ void Handler::registerRoleHandlers(const std::shared_ptr<Router>& r) {
 
     r->registerPayload("role.vault.assign", &handler::rbac::roles::Vault::assign);
     r->registerPayload("role.vault.unassign", &handler::rbac::roles::Vault::unassign);
+    r->registerPayload("role.vault.overrides.list", &handler::rbac::roles::Vault::listOverrides);
+    r->registerPayload("role.vault.overrides.add", &handler::rbac::roles::Vault::addOverrides);
+    r->registerPayload("role.vault.overrides.update", &handler::rbac::roles::Vault::updateOverride);
+    r->registerPayload("role.vault.overrides.remove", &handler::rbac::roles::Vault::removeOverride);
 }
 
 void Handler::registerPermissionsHandlers(const std::shared_ptr<Router>& r) {

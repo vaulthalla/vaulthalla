@@ -13,3 +13,8 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
   sync was scheduled in the future (always, once a vault had synced): it now
   sleeps until the earliest sync is due, a sync is queued, or the service
   stops.
+
+## API
+- Add ws commands `role.vault.overrides.{list,add,update,remove}` for
+  per-assignment, path-scoped vault permission overrides (the same ops and
+  RBAC as `vh vault role override ...`), so the web console can manage them.

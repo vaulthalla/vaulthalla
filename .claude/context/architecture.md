@@ -204,7 +204,8 @@ a permission if its target trait (`TargetTraits.hpp`) or context policy (`policy
 is visible; `test_role_permissions.cpp` round-trips every exported permission so a missing trait can't silently
 no-op again. `ops::roles` enforces the escalation ceiling: nobody grants an admin permission they do not hold
 (`permissionsBeyondActor`). Vault-role overrides persist through `db::query::rbac::permission::Override` on the
-subject's assignment.
+subject's assignment; both `vh vault role override ...` and ws `role.vault.overrides.{list,add,update,remove}` call
+`ops::roles::*VaultRoleOverride*` (parity in `test_ops_parity_roles.cpp`).
 
 ## Subsystem invariants (enforced in code, keep them)
 
