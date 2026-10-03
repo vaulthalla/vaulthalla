@@ -1,8 +1,9 @@
 'use client'
 
+import { replaceQuery } from '@/lib/url'
 import React from 'react'
 import dynamic from 'next/dynamic'
-import { usePathname, useRouter, useSearchParams } from 'next/navigation'
+import { useSearchParams } from 'next/navigation'
 import { PageHeader } from '@/components/ui/Panel'
 import { Button } from '@/components/ui/Button'
 import { EmptyState, QueryState, Skeleton } from '@/components/ui/State'
@@ -32,8 +33,6 @@ type Tab = (typeof TABS)[number]
 export const CostPage = () => {
   const allowed = useIsSuperAdmin()
   const params = useSearchParams()
-  const router = useRouter()
-  const pathname = usePathname()
   const focusVault = Number(params.get('vault')) || null
   const requested = params.get('tab') as Tab | null
   const tab: Tab =
@@ -49,12 +48,7 @@ export const CostPage = () => {
     predicate: q => String(q.queryKey[0]).startsWith('pricing.') || q.queryKey[0] === 'stats.pricing.budget',
   })
 
-  const setTab = (next: string) => {
-    const search = new URLSearchParams(params.toString())
-    search.set('tab', next)
-    if (next !== 'budgets') search.delete('vault')
-    router.replace(`${pathname}?${search.toString()}`, { scroll: false })
-  }
+  const setTab = (next: string) => replaceQuery(next === 'budgets' ? { tab: next } : { tab: next, vault: null })
 
   const header = (
     <PageHeader

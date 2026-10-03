@@ -1,8 +1,9 @@
 'use client'
 
+import { replaceQuery } from '@/lib/url'
 import React, { useMemo } from 'react'
 import Link from 'next/link'
-import { usePathname, useRouter, useSearchParams } from 'next/navigation'
+import { useSearchParams } from 'next/navigation'
 import { useWs } from '@/lib/query'
 import { useCan } from '@/lib/permissions'
 import { formatDate } from '@/lib/format'
@@ -52,8 +53,6 @@ export function RolesPage() {
   const canAddVault = useCan({ permission: 'admin.roles.vault.add' })
   const canViewUsers = useCan({ anyOf: ['admin.identities.users.view', 'admin.identities.admins.view'] })
 
-  const router = useRouter()
-  const pathname = usePathname()
   const params = useSearchParams()
   const type: RoleType = parseRoleType(params.get('type')) ?? (canViewAdmin || !canViewVault ? 'admin' : 'vault')
   const canView = type === 'admin' ? canViewAdmin : canViewVault
@@ -128,7 +127,7 @@ export function RolesPage() {
     [type, canViewUsers, holders, users.data],
   )
 
-  const setType = (next: RoleType) => router.replace(`${pathname}?type=${next}`, { scroll: false })
+  const setType = (next: RoleType) => replaceQuery({ type: next })
   const table = (roles: RoleRow[]) => (
     <DataTable<RoleRow>
       key={type}

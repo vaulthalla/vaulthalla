@@ -37,7 +37,9 @@ export async function loginThroughUi(page: Page) {
 
 export async function authenticateAndSaveState(browser: Browser, storageStatePath = authStatePath) {
   await mkdir(dirname(storageStatePath), { recursive: true })
-  const context = await browser.newContext({ storageState: undefined })
+  const base = new URL(process.env.VAULTHALLA_E2E_BASE_URL ?? 'http://127.0.0.1:3000')
+  const local = ['localhost', '127.0.0.1', '::1'].includes(base.hostname)
+  const context = await browser.newContext({ storageState: undefined, ignoreHTTPSErrors: local })
   const page = await context.newPage()
   try {
     await loginThroughUi(page)

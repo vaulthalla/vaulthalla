@@ -1,8 +1,9 @@
 'use client'
 
+import { replaceQuery } from '@/lib/url'
 import React, { useState } from 'react'
 import dynamic from 'next/dynamic'
-import { usePathname, useRouter, useSearchParams } from 'next/navigation'
+import { useSearchParams } from 'next/navigation'
 import { useIsFetching } from '@tanstack/react-query'
 import { PageHeader } from '@/components/ui/Panel'
 import { Button } from '@/components/ui/Button'
@@ -27,8 +28,6 @@ type Tab = (typeof TABS)[number]
 export const GatewayPage = () => {
   const can = useGatewayPerms()
   const params = useSearchParams()
-  const router = useRouter()
-  const pathname = usePathname()
   const requested = params.get('tab') as Tab | null
   const tab: Tab = requested && TABS.includes(requested) ? requested : 'keys'
   const status = useGatewayStatus(can.view)
@@ -39,11 +38,7 @@ export const GatewayPage = () => {
   const fetching = useIsFetching({ predicate: q => String(q.queryKey[0]).startsWith('s3.gateway.') })
   const open = openId !== null ? ((credentials.data ?? []).find(c => c.id === openId) ?? null) : null
 
-  const setTab = (next: string) => {
-    const search = new URLSearchParams(params.toString())
-    search.set('tab', next)
-    router.replace(`${pathname}?${search.toString()}`, { scroll: false })
-  }
+  const setTab = (next: string) => replaceQuery({ tab: next })
   const openCredential = (c: GatewayCredential) => setOpenId(c.id)
 
   const header = (

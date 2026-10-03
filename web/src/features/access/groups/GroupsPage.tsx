@@ -1,8 +1,9 @@
 'use client'
 
+import { replaceQuery } from '@/lib/url'
 import React, { useMemo, useState } from 'react'
 import dynamic from 'next/dynamic'
-import { usePathname, useRouter, useSearchParams } from 'next/navigation'
+import { useSearchParams } from 'next/navigation'
 import { useWs, useWsMutation } from '@/lib/query'
 import { useCan } from '@/lib/permissions'
 import { formatDate } from '@/lib/format'
@@ -45,11 +46,9 @@ export function GroupsPage() {
   const query = useWs('groups.list', null, { enabled: canView })
   const remove = useWsMutation('group.remove', { invalidates: [...GROUP_COMMANDS] })
 
-  const router = useRouter()
-  const pathname = usePathname()
   const params = useSearchParams()
   const openId = Number(params.get('group')) || null
-  const setOpenId = (id: number | null) => router.replace(id ? `${pathname}?group=${id}` : pathname, { scroll: false })
+  const setOpenId = (id: number | null) => replaceQuery({ group: id ? String(id) : null })
 
   const [formOpen, setFormOpen] = useState(false)
   const [editing, setEditing] = useState<GroupRecord | null>(null)
