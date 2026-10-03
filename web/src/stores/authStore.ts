@@ -85,7 +85,7 @@ export const useAuthStore: UseBoundStore<StoreApi<AuthState>> = create<AuthState
           const token = response.token ?? get().token
           if (!token) throw new Error('Login response did not include an access token')
 
-          set({ token, user: response.user, status: 'authenticated', error: null, initialPasswordFile: undefined })
+          set({ token, user: response.user as unknown as User, status: 'authenticated', error: null, initialPasswordFile: undefined })
         } catch (err) {
           set({ error: getErrorMessage(err) || 'Login failed' })
           throw err
@@ -133,7 +133,7 @@ export const useAuthStore: UseBoundStore<StoreApi<AuthState>> = create<AuthState
             const token = response.token ?? get().token
             if (!token) throw new Error('Refresh response did not include an access token')
 
-            set({ token, user: response.user ?? get().user, error: null, status: 'authenticated' })
+            set({ token, user: (response.user as unknown as User) ?? get().user, error: null, status: 'authenticated' })
             console.log('[Auth] Token refreshed')
           } catch (err) {
             const message = getErrorMessage(err) || 'Token refresh failed'
@@ -163,7 +163,7 @@ export const useAuthStore: UseBoundStore<StoreApi<AuthState>> = create<AuthState
           const response = await sendCommand('auth.isAuthenticated', { token })
 
           if (!response.isAuthenticated || !response.user) return false
-          set({ user: response.user, status: 'authenticated' })
+          set({ user: response.user as unknown as User, status: 'authenticated' })
           return true
         } catch (err) {
           set({ error: getErrorMessage(err), user: null })
@@ -181,7 +181,7 @@ export const useAuthStore: UseBoundStore<StoreApi<AuthState>> = create<AuthState
           const sendCommand = useWebSocketStore.getState().sendCommand
           const response = await sendCommand('auth.user.update', payload)
 
-          set(state => ({ user: state.user?.id === payload.id ? { ...state.user, ...response.user } : state.user }))
+          set(state => ({ user: state.user?.id === payload.id ? ({ ...state.user, ...response.user } as unknown as User) : state.user }))
         } catch (err) {
           set({ error: getErrorMessage(err) || 'User update failed' })
           throw err
@@ -196,7 +196,7 @@ export const useAuthStore: UseBoundStore<StoreApi<AuthState>> = create<AuthState
           await useWebSocketStore.getState().waitForConnection()
           const sendCommand = useWebSocketStore.getState().sendCommand
           const response = await sendCommand('auth.user.change_password', { id, old_password, new_password })
-          set(state => ({ user: state.user?.id === response.user.id ? response.user : state.user }))
+          set(state => ({ user: state.user?.id === response.user.id ? (response.user as unknown as User) : state.user }))
           // Changing the super admin's password retires the initial password file; re-read the posture.
           if (get().user?.id === id && get().initialPasswordFile) void get().fetchSecurityStatus().catch(() => undefined)
         } catch (err) {
@@ -214,7 +214,7 @@ export const useAuthStore: UseBoundStore<StoreApi<AuthState>> = create<AuthState
           const sendCommand = useWebSocketStore.getState().sendCommand
           const response = await sendCommand('auth.user.get', { id })
 
-          return response.user
+          return response.user as unknown as User
         } catch (err) {
           set({ error: getErrorMessage(err) || 'Failed to fetch user' })
           throw err
@@ -230,7 +230,7 @@ export const useAuthStore: UseBoundStore<StoreApi<AuthState>> = create<AuthState
           const sendCommand = useWebSocketStore.getState().sendCommand
           const response = await sendCommand('auth.users.list', null)
 
-          return response.users
+          return response.users as unknown as User[]
         } catch (err) {
           set({ error: getErrorMessage(err) || 'Failed to fetch users' })
           throw err
@@ -256,7 +256,7 @@ export const useAuthStore: UseBoundStore<StoreApi<AuthState>> = create<AuthState
           await useWebSocketStore.getState().waitForConnection()
           const sendCommand = useWebSocketStore.getState().sendCommand
           const response = await sendCommand('auth.user.get.byName', { name })
-          return response.user
+          return response.user as unknown as User
         } catch (err) {
           set({ error: getErrorMessage(err) || 'Failed to fetch user by name' })
           throw err
