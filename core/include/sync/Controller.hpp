@@ -2,6 +2,7 @@
 
 #include "concurrency/AsyncService.hpp"
 
+#include <condition_variable>
 #include <memory>
 #include <queue>
 #include <unordered_map>
@@ -41,6 +42,7 @@ public:
 
 protected:
     void runLoop() override;
+    void onStop() override;
 
 private:
     friend struct Local;
@@ -51,6 +53,8 @@ private:
                     FSTaskCompare> pq;
 
     mutable std::mutex pqMutex_;
+    // Signalled whenever a task is queued and on stop, so runLoop can sleep until the earliest task is due.
+    std::condition_variable pqCv_;
     mutable std::shared_mutex taskMapMutex_;
 
     std::unordered_map<unsigned int, std::shared_ptr<Local>> taskMap_{};

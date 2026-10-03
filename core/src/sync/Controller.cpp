@@ -16,6 +16,11 @@
 
 namespace vh::sync {
 
+namespace {
+// Upper bound on one idle wait, so shouldStop() and the periodic engine refresh are honored even without a notify.
+constexpr std::chrono::seconds kMaxIdleWait{1};
+}
+
 using vh::concurrency::AsyncService;
 using vh::concurrency::ThreadPoolManager;
 using vh::storage::Engine;
@@ -29,9 +34,16 @@ Controller::Controller()
     : AsyncService("SyncController") {}
 
 void Controller::requeue(const std::shared_ptr<Local>& task) {
-    std::scoped_lock lock(pqMutex_);
-    pq.push(task);
+    {
+        std::scoped_lock lock(pqMutex_);
+        pq.push(task);
+    }
+    pqCv_.notify_one();
     log::Registry::sync()->debug("[SyncController] Requeued task for vault ID: {}", task->vaultId());
+}
+
+void Controller::onStop() {
+    pqCv_.notify_all();
 }
 
 void Controller::interruptTask(const unsigned int vaultId) {
@@ -76,18 +88,22 @@ void Controller::runLoop() {
         std::shared_ptr<Local> task;
 
         {
-            std::scoped_lock lock(pqMutex_);
-            task = pq.top();
+            std::unique_lock lock(pqMutex_);
+            if (pq.empty()) continue;
+            const auto& top = pq.top();
+            const auto now = std::chrono::system_clock::now();
+            if (top && !top->isInterrupted() && top->next_run > now) {
+                // Not due yet: sleep until it is, until a task is queued, or until stop. This used to pop and
+                // re-push the task in a tight loop, which kept one core at 100% whenever a sync was scheduled.
+                pqCv_.wait_until(lock, std::min(top->next_run, now + kMaxIdleWait));
+                continue;
+            }
+            task = top;
             pq.pop();
         }
 
         if (!task || task->isInterrupted()) continue;
-
-        if (task->next_run <= std::chrono::system_clock::now()) ThreadPoolManager::instance().syncPool()->submit(task);
-        else {
-            std::scoped_lock lock(pqMutex_);
-            pq.push(task);
-        }
+        ThreadPoolManager::instance().syncPool()->submit(task);
     }
 }
 
@@ -134,6 +150,7 @@ Controller::RunNowResult Controller::runNow(const unsigned int vaultId, const ui
         taskMap_[vaultId] = task;
         pq.push(task);
     }
+    pqCv_.notify_one();
 
     return RunNowResult::Started;
 }
@@ -163,6 +180,8 @@ void Controller::pruneStaleTasks(const std::vector<std::shared_ptr<Engine> >& en
 
 
 void Controller::processTask(const std::shared_ptr<Engine>& engine) {
+    // Wakes runLoop after any push below (taken after the locks are released: the destructor runs last).
+    struct Notify { std::condition_variable& cv; ~Notify() { cv.notify_one(); } } notify{pqCv_};
     std::scoped_lock lock(taskMapMutex_, pqMutex_);
 
     if (!engine || !engine->sync || !engine->sync->enabled) {
