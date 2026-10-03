@@ -1,4 +1,5 @@
 #include "protocols/ws/handler/share/Upload.hpp"
+#include "ops/Error.hpp"
 
 #include "fs/Filesystem.hpp"
 #include "fs/model/File.hpp"
@@ -298,7 +299,7 @@ void requireAcceptedDuplicatePolicy(const json& payload) {
     const auto finalVaultPath = joinVaultPath(parent.vault_path, filename);
     const auto scope = mgr->authorize(actor, vh::share::Operation::Upload, finalVaultPath,
                                       vh::share::TargetType::File, parent.vault_id);
-    if (!scope.allowed) throw std::runtime_error("Share upload scope denied: " + scope.reason);
+    if (!scope.allowed) throw vh::ops::Denied("Share upload scope denied: " + scope.reason);
 
     ensureNoExistingTarget(*resolver, actor, parent.vault_id, finalVaultPath);
 
@@ -360,7 +361,7 @@ void requireAcceptedDuplicatePolicy(const json& payload) {
             });
             auto scope = mgr->authorize(actor, vh::share::Operation::Upload, finalVaultPath,
                                         vh::share::TargetType::File, currentParent.vault_id);
-            if (!scope.allowed) throw std::runtime_error("Share upload scope denied: " + scope.reason);
+            if (!scope.allowed) throw vh::ops::Denied("Share upload scope denied: " + scope.reason);
             ensureNoExistingTarget(*resolver, actor, currentParent.vault_id, finalVaultPath);
 
             if (refreshed->link_created_by == 0)

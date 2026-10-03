@@ -1,4 +1,5 @@
 #include "protocols/ws/handler/Auth.hpp"
+#include "ops/Error.hpp"
 #include "runtime/Deps.hpp"
 #include "auth/Bootstrap.hpp"
 #include "auth/Manager.hpp"
@@ -74,7 +75,7 @@ json Auth::updateUser(const json &payload, const std::shared_ptr<Session> &sessi
 
     // CLI identity is bound by Linux UID; rebinding it is an operator action on the local CLI only.
     if (payload.contains("linux_uid"))
-        throw std::runtime_error("linux_uid can only be changed by an administrator through the local CLI");
+        throw vh::ops::Denied("linux_uid can only be changed by an administrator through the local CLI");
     if (payload.contains("updated_by") || payload.contains("protected") || payload.contains("is_protected") ||
         payload.contains("system_only"))
         throw std::runtime_error("Unsupported field in user update");
