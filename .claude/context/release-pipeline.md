@@ -68,8 +68,11 @@ The build needs the private icons (`$VAULTHALLA_WEB_ICON_SRC`, default `~/vaulth
     legacy `NEXUS_REPO_URL` variable), `NEXUS_USER`, `NEXUS_PASSWORD` (falls back to the legacy `NEXUS_PASS` secret).
   - `github-release` (`contents: write`): `vlr github-release` creates/updates the release with the assets.
   - `finalize` (`contents: write`): `vlr finalize` commits the promoted `debian/changelog` + `RELEASE_NOTES.md` and the
-    cleared `_NEXT` files onto `main` (a no-op if `main` already records the version). It pushes with the workflow
-    token, so a branch protection rule on `main` must allow GitHub Actions to push.
+    cleared `_NEXT` files onto `main` (a no-op if `main` already records the version). `main` has the ruleset
+    "Core-Maintainer Only - Push Main" (pull request required; bypass: org admins and the repo admin role; checked
+    2026-10-03), which rejects the plain workflow token. Finalize therefore needs GitHub Actions added as a bypass
+    actor on that ruleset, or the secret `RELEASE_FINALIZE_TOKEN` (a bypass actor's token with contents:write, used
+    by the job's checkout). Without either, everything is published and only `finalize` fails; fix, then re-run it.
   - `Production` environment: no protection rules (checked 2026-09-30); holds `NEXUS_USER`, `NEXUS_PASS`,
     `NEXUS_REPO_URL=https://apt.vaulthalla.sh`, `RELEASE_PUBLISH_MODE=nexus`. Environment-scoped values are only
     visible to jobs that declare `environment: Production`.
