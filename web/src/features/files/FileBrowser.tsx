@@ -275,6 +275,14 @@ export function FileBrowser({ source, path, onNavigate, leading, onShare, classN
         }
         return
       case 'Backspace':
+        // ⌘⌫ deletes, like Finder; plain Backspace goes up a folder.
+        if (event.metaKey) {
+          if (source.caps.mutate && selectedEntries.length) {
+            event.preventDefault()
+            void remove(selectedEntries)
+          }
+          return
+        }
         if (current !== '/') {
           event.preventDefault()
           onNavigate(parentOf(current))
@@ -678,7 +686,7 @@ const RowMenu = ({ entries }: { entries: MenuEntry[] }) => (
         type="button"
         tabIndex={-1}
         aria-label="Item actions"
-        className="grid size-8 place-items-center rounded-md text-fg-subtle opacity-100 transition hover:bg-surface-3 hover:text-fg md:opacity-0 md:group-hover:opacity-100 md:group-aria-selected:opacity-100 data-[state=open]:opacity-100">
+        className="grid size-8 place-items-center rounded-md text-fg-subtle opacity-100 transition hover:bg-surface-3 hover:text-fg pointer-fine:opacity-0 pointer-fine:group-hover:opacity-100 pointer-fine:group-aria-selected:opacity-100 data-[state=open]:opacity-100">
         <EllipsisIcon className="size-4" aria-hidden />
       </button>
     }
@@ -728,7 +736,7 @@ const Row = React.memo(function Row({ id, entry, thumb, selected, focused, top, 
         checked={selected}
         onClick={event => event.stopPropagation()}
         onCheckedChange={onToggle}
-        className={cn('md:opacity-0 md:group-hover:opacity-100', selected && 'md:opacity-100')}
+        className={cn('pointer-fine:opacity-0 pointer-fine:group-hover:opacity-100', selected && 'pointer-fine:opacity-100')}
       />
       <div className="flex min-w-0 items-center gap-3">
         <Thumb entry={entry} thumb={thumb} />
