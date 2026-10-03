@@ -13,3 +13,35 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
   sync was scheduled in the future (always, once a vault had synced): it now
   sleeps until the earliest sync is due, a sync is queued, or the service
   stops.
+
+## S3 API keys
+- Add storage.apiKey.update: edits a key in place (same id, so vault s3
+  bindings survive), keeps the sealed secret when none is given, re-checks
+  credentials with the provider and reloads the engines of the vaults using it.
+- Refuse removing an API key while a vault uses it (ops Invalid naming the
+  vaults, CLI and ws), and refuse deleting a user whose key a surviving vault
+  uses. Migration 099 changes the s3.api_key_id foreign key from ON DELETE
+  CASCADE to ON DELETE RESTRICT.
+- storage.apiKey.list returns keys as a JSON array instead of a JSON-encoded
+  string.
+
+## Web console API
+- ws ERROR responses for ops refusals carry data.code ("denied", "not_found",
+  "invalid", "conflict"); admin gates in the stats, settings, email, pricing
+  and share upload handlers now raise typed denials.
+- auth.users.list returns a slim projection: admin and vault roles without
+  their permission sets.
+- Add stats.dashboard.severity (overall status and counts without the
+  dashboard cards) for the console's status badge.
+- Contract test: core ws registrations must match web WebSocketCommandMap.
+
+## HTTP
+- Upload sessions use a sliding 30-minute idle TTL (refreshed by every
+  request and body chunk of the owning session) with a 24-hour ceiling,
+  instead of expiring 30 minutes after creation.
+- Content-Disposition carries an RFC 5987 filename* (UTF-8) next to an ASCII
+  filename fallback, and no longer strips leading dots.
+
+## Link shares
+- Seed share_upload_dropbox without directory List on new installs; share
+  uploads need only the upload operation. Existing role rows are unchanged.

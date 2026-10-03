@@ -26,7 +26,16 @@ for archaeology, because parts of it are stale (for example, it says uploads sta
   Raw tokens never go in URLs. Manual QA therefore needs the HTTPS origin (Caddy, `https://vh.home.arpa:8443`).
 - Uploads use the HTTP lane `/upload/session?share=1` (`fsStore.ts`, `http/upload/Coordinator.cpp`).
 - Directory thumbnails use scoped HTTP preview, never per-row ws preview.
-- Upload-only ("dropbox") shares never list or preview beyond what they were granted.
+- Upload-only ("dropbox") shares never list or preview beyond what they were granted. A share upload needs only the
+  `upload` op (parent resolves as Write → directory Upload, the file as Write → file Upload); no `metadata`/`list`.
+  The seeded `share_upload_dropbox` role has no directory List on installs seeded after #151 (older installs keep
+  their row; `vh role vault update share_upload_dropbox --deny-dirs-list` fixes one). The web dropbox preset should
+  send `allowed_ops: ['upload']`.
+- HTTP upload sessions (`http/upload/Coordinator.cpp`) expire 30 minutes after the owning session's last request or
+  body chunk (sliding), with a 24 h ceiling; `Coordinator::setClockForTesting` drives the tests.
+- Download `Content-Disposition` is `attachment; filename="<ASCII fallback>"; filename*=UTF-8''<pct-encoded>`
+  (`Router::attachmentContentDisposition`); leading dots are kept. Single-file downloads are still buffered in RAM
+  (256 MiB cap): files are sealed as one AES-256-GCM blob, so streaming needs a chunked at-rest format first.
 
 ## Open items (verified 2026-09-30)
 
