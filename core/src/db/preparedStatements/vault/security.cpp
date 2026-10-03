@@ -64,14 +64,14 @@ void vh::db::Connection::initPreparedVaultSecurity() const {
                 (SELECT created_at FROM last_denied) AS last_denied_access_at,
                 COALESCE((SELECT error_code FROM last_denied), (SELECT error_message FROM last_denied)) AS last_denied_access_reason,
                 NULLIF(GREATEST(
-                    COALESCE((SELECT MAX(assigned_at) FROM vault_role_assignments WHERE vault_id = $1), '-infinity'::timestamp),
+                    COALESCE((SELECT MAX(assigned_at) FROM vault_role_assignments WHERE vault_id = $1), '-infinity'::timestamptz),
                     COALESCE((
                         SELECT MAX(vpo.updated_at)
                         FROM vault_permission_overrides vpo
                         JOIN vault_role_assignments vra ON vra.id = vpo.assignment_id
                         WHERE vra.vault_id = $1
-                    ), '-infinity'::timestamp)
-                ), '-infinity'::timestamp) AS last_permission_change_at,
+                    ), '-infinity'::timestamptz)
+                ), '-infinity'::timestamptz) AS last_permission_change_at,
                 NULLIF(GREATEST(
                     COALESCE((SELECT MAX(updated_at) FROM share_link WHERE vault_id = $1), '-infinity'::timestamptz),
                     COALESCE((SELECT MAX(updated_at) FROM link_share_vault_role WHERE vault_id = $1), '-infinity'::timestamptz),

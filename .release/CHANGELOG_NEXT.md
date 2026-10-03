@@ -8,13 +8,75 @@ Optional "## Section" headings group bullets; if used, every bullet must be unde
 One level of nested "  - " detail bullets is allowed. Consolidate; don't paste commit logs.
 -->
 
+## Web console
+- Rebuild the console on one design system (dark tokens, components/ui
+  primitives), a single permission-filtered shell with a command palette,
+  and a typed ws client (connect deadline, backoff with jitter, per-command
+  timeouts, typed refusals) with a TanStack Query cache over ws.
+- Keep the access token in memory only (refresh cookie re-issues it); clear
+  all session state on logout; show a reconnecting state instead of
+  redirecting to login when the daemon is unreachable.
+- Files: one FileBrowser for vaults and share links (URL-addressed paths,
+  virtualized list/grid, keyboard, row and context menus, upload button,
+  multi-item drop, transfer manager with session splitting, retry, cancel and
+  a beforeunload guard, download preflight); fixes a late listing landing on
+  the wrong vault.
+- Vault detail as tabs (overview, access incl. unassign and overrides,
+  shares, sync & cost, gateway, settings); Health replaces the dashboard and
+  never renders unknown data as healthy; pollers stop when hidden or left.
+- Admin pages: user active flag saved as a boolean, explicit update payloads,
+  roles from roles.admin.list, confirmation for every destructive action.
+- Hard per-route first-load JavaScript budgets in CI (web/perf-budgets.json);
+  design-token color guard and jsx-a11y rules in pnpm test.
+- Redirect old console URLs to their new routes.
+
 ## Runtime
 - Fix the sync controller spinning one CPU core at 100% whenever the next
   sync was scheduled in the future (always, once a vault had synced): it now
   sleeps until the earliest sync is due, a sync is queued, or the service
   stops.
 
-## API
-- Add ws commands `role.vault.overrides.{list,add,update,remove}` for
+## Database
+- Run every daemon DB session with TimeZone=UTC (recording the session's
+  original zone as vaulthalla.database_timezone) so naive timestamps are no
+  longer local wall time read back as UTC on non-UTC servers.
+- Migration 100 converts every timestamp column to timestamptz, reading
+  existing values in the recorded database zone (session zone for manual
+  runs); idempotent, keeps defaults and indexes, skips columns a view
+  depends on with a warning, and avoids the table rewrite when the zone is
+  UTC.
+
+## API keys
+- Add storage.apiKey.update: edits a key in place (same id, so vault s3
+  bindings survive), keeps the sealed secret when none is given, re-checks
+  credentials with the provider and reloads the engines of the vaults using it.
+- Refuse removing an API key while a vault uses it (ops Invalid naming the
+  vaults, CLI and ws), and refuse deleting a user whose key a surviving vault
+  uses. Migration 099 changes the s3.api_key_id foreign key from ON DELETE
+  CASCADE to ON DELETE RESTRICT.
+- storage.apiKey.list returns keys as a JSON array instead of a JSON-encoded
+  string.
+
+## Web console API
+- ws ERROR responses for ops refusals carry data.code ("denied", "not_found",
+  "invalid", "conflict"); admin gates in the stats, settings, email, pricing
+  and share upload handlers now raise typed denials.
+- auth.users.list returns a slim projection: admin and vault roles without
+  their permission sets.
+- Add stats.dashboard.severity (overall status and counts without the
+  dashboard cards) for the console's status badge.
+- Add ws commands role.vault.overrides.{list,add,update,remove} for
   per-assignment, path-scoped vault permission overrides (the same ops and
-  RBAC as `vh vault role override ...`), so the web console can manage them.
+  RBAC as vh vault role override ...).
+- Contract test: core ws registrations must match web WebSocketCommandMap.
+
+## HTTP
+- Upload sessions use a sliding 30-minute idle TTL (refreshed by every
+  request and body chunk of the owning session) with a 24-hour ceiling,
+  instead of expiring 30 minutes after creation.
+- Content-Disposition carries an RFC 5987 filename* (UTF-8) next to an ASCII
+  filename fallback, and no longer strips leading dots.
+
+## Link shares
+- Seed share_upload_dropbox without directory List on new installs; share
+  uploads need only the upload operation. Existing role rows are unchanged.

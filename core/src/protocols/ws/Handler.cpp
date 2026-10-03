@@ -91,6 +91,7 @@ void Handler::registerStorageHandlers(const std::shared_ptr<Router>& r) {
 
 void Handler::registerAPIKeyHandlers(const std::shared_ptr<Router>& r) {
     r->registerPayload("storage.apiKey.add", &handler::APIKeys::add);
+    r->registerPayload("storage.apiKey.update", &handler::APIKeys::update);
     r->registerPayload("storage.apiKey.remove", &handler::APIKeys::remove);
     r->registerSessionOnlyHandler("storage.apiKey.list", &handler::APIKeys::list);
     r->registerPayload("storage.apiKey.get", &handler::APIKeys::get);
@@ -212,6 +213,7 @@ void Handler::registerStatHandlers(const std::shared_ptr<Router>& r) {
     r->registerPayload("stats.vault.trends", &handler::Stats::vaultTrends);
     r->registerPayload("stats.vault.security", &handler::Stats::vaultSecurity);
     r->registerPayload("stats.dashboard.overview", &handler::Stats::dashboardOverview);
+    r->registerSessionOnlyHandler("stats.dashboard.severity", &handler::Stats::dashboardSeverity);
     r->registerSessionOnlyHandler("stats.system.health", &handler::Stats::systemHealth);
     r->registerSessionOnlyHandler("stats.system.threadpools", &handler::Stats::systemThreadPools);
     r->registerSessionOnlyHandler("stats.system.fuse", &handler::Stats::systemFuse);

@@ -1,4 +1,5 @@
 #include "protocols/ws/handler/Pricing.hpp"
+#include "ops/Error.hpp"
 
 #include "db/query/fs/File.hpp"
 #include "db/query/s3/Gateway.hpp"
@@ -79,11 +80,11 @@ bool canViewVaultBudget(const std::shared_ptr<Session>& session, const std::uint
 
 void requireVaultBudgetView(const std::shared_ptr<Session>& session, const std::uint32_t vaultId) {
     if (!canViewVaultBudget(session, vaultId))
-        throw std::runtime_error("You do not have permission to view S3 price budget data for this vault.");
+        throw vh::ops::Denied("You do not have permission to view S3 price budget data for this vault.");
 }
 
 void requireSuperAdmin(const std::shared_ptr<Session>& session, const char* message) {
-    if (!session->user || !session->user->isSuperAdmin()) throw std::runtime_error(message);
+    if (!session->user || !session->user->isSuperAdmin()) throw vh::ops::Denied(message);
 }
 
 // The payload as ops::pricing's request and filter.
@@ -237,7 +238,7 @@ json Pricing::overrideRequest(const json& payload, const std::shared_ptr<Session
         .user = session->user,
         .permission = vh::rbac::permission::vault::sync::SyncActionPermissions::Trigger,
         .vault_id = vaultId
-    })) throw std::runtime_error("You do not have permission to request a budget override for this vault.");
+    })) throw vh::ops::Denied("You do not have permission to request a budget override for this vault.");
 
     return {{"override", PriceBudgetService{}.requestOverride({
         .run_uuid = optionalStringPayload(payload, "run_uuid"),

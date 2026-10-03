@@ -18,6 +18,42 @@ namespace vh::protocols::ws {
 }
 
 namespace vh::protocols::ws::core {
+    // What an ERROR response carries for the exception being handled (call only inside a catch block). An ops
+    // refusal gets a stable machine-readable `data.code` so clients can render a typed state instead of matching
+    // message text: Denied "denied", NotFound "not_found", Invalid "invalid", Conflict "conflict", and
+    // NeedsConfirmation its own code (the client asks, then resends with the acceptance set). Anything that is not
+    // an ops::Error is a fault: the message, no code.
+    struct ErrorReply {
+        std::string message;
+        json data{};
+    };
+
+    inline ErrorReply describeCurrentError() {
+        try {
+            throw;
+        } catch (const ops::NeedsConfirmation &e) {
+            return {e.what(), json{{"code", e.code}}};
+        } catch (const ops::Denied &e) {
+            return {e.what(), json{{"code", "denied"}}};
+        } catch (const ops::NotFound &e) {
+            return {e.what(), json{{"code", "not_found"}}};
+        } catch (const ops::Invalid &e) {
+            return {e.what(), json{{"code", "invalid"}}};
+        } catch (const ops::Conflict &e) {
+            return {e.what(), json{{"code", "conflict"}}};
+        } catch (const std::exception &e) {
+            return {e.what()};
+        } catch (...) {
+            return {"Unknown error"};
+        }
+    }
+
+    inline void respondWithCurrentError(std::string &&cmd, json &&msg, const std::shared_ptr<Session> &session) {
+        auto reply = describeCurrentError();
+        model::Response(std::move(cmd), std::move(msg), model::Status::ERROR, std::move(reply.data),
+                        std::move(reply.message))(session);
+    }
+
     template<class Fn>
     Router::Handler makeWsHandler(std::string cmd, Fn &&fn) {
         return [cmd = std::move(cmd), fn = std::forward<Fn>(fn)]
@@ -25,10 +61,8 @@ namespace vh::protocols::ws::core {
             try {
                 json data = std::invoke(fn, msg, session);
                 model::Response::SUCCESS(std::string(cmd), std::move(msg), std::move(data))(session);
-            } catch (const std::exception &e) {
-                model::Response::ERROR(std::string(cmd), std::move(msg), std::string(e.what()))(session);
             } catch (...) {
-                model::Response::ERROR(std::string(cmd), std::move(msg), std::string("Unknown error"))(session);
+                respondWithCurrentError(std::string(cmd), std::move(msg), session);
             }
         };
     }
@@ -41,14 +75,8 @@ namespace vh::protocols::ws::core {
                 const json &payload = msg.at("payload");
                 json data = std::invoke(fn, payload, session);
                 model::Response::SUCCESS(std::string(cmd), std::move(msg), std::move(data))(session);
-            } catch (const ops::NeedsConfirmation &e) {
-                // A stable code the client can act on (show the text, resend with the acceptance set).
-                model::Response(std::string(cmd), std::move(msg), model::Status::ERROR, json{{"code", e.code}},
-                                std::string(e.what()))(session);
-            } catch (const std::exception &e) {
-                model::Response::ERROR(std::string(cmd), std::move(msg), std::string(e.what()))(session);
             } catch (...) {
-                model::Response::ERROR(std::string(cmd), std::move(msg), std::string("Unknown error"))(session);
+                respondWithCurrentError(std::string(cmd), std::move(msg), session);
             }
         };
     }
@@ -61,10 +89,8 @@ namespace vh::protocols::ws::core {
                 const json& payload = msg.at("payload");
                 json data = std::invoke(fn, payload);
                 model::Response::SUCCESS(std::string(cmd), std::move(msg), std::move(data))(session);
-            } catch (const std::exception &e) {
-                model::Response::ERROR(std::string(cmd), std::move(msg), std::string(e.what()))(session);
             } catch (...) {
-                model::Response::ERROR(std::string(cmd), std::move(msg), std::string("Unknown error"))(session);
+                respondWithCurrentError(std::string(cmd), std::move(msg), session);
             }
         };
     }
@@ -77,10 +103,8 @@ namespace vh::protocols::ws::core {
                 const auto &token = msg.at("token").get_ref<const std::string &>();
                 json data = std::invoke(fn, token, session);
                 model::Response::SUCCESS(std::string(cmd), std::move(msg), std::move(data))(session);
-            } catch (const std::exception &e) {
-                model::Response::ERROR(std::string(cmd), std::move(msg), std::string(e.what()))(session);
             } catch (...) {
-                model::Response::ERROR(std::string(cmd), std::move(msg), std::string("Unknown error"))(session);
+                respondWithCurrentError(std::string(cmd), std::move(msg), session);
             }
         };
     }
@@ -92,10 +116,8 @@ namespace vh::protocols::ws::core {
             try {
                 json data = std::invoke(fn, session);
                 model::Response::SUCCESS(std::string(cmd), std::move(msg), std::move(data))(session);
-            } catch (const std::exception &e) {
-                model::Response::ERROR(std::string(cmd), std::move(msg), std::string(e.what()))(session);
             } catch (...) {
-                model::Response::ERROR(std::string(cmd), std::move(msg), std::string("Unknown error"))(session);
+                respondWithCurrentError(std::string(cmd), std::move(msg), session);
             }
         };
     }
@@ -107,10 +129,8 @@ namespace vh::protocols::ws::core {
             try {
                 json data = std::invoke(fn);
                 model::Response::SUCCESS(std::string(cmd), std::move(msg), std::move(data))(session);
-            } catch (const std::exception &e) {
-                model::Response::ERROR(std::string(cmd), std::move(msg), std::string(e.what()))(session);
             } catch (...) {
-                model::Response::ERROR(std::string(cmd), std::move(msg), std::string("Unknown error"))(session);
+                respondWithCurrentError(std::string(cmd), std::move(msg), session);
             }
         };
     }

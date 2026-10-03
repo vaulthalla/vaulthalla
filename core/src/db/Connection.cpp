@@ -7,6 +7,7 @@
 
 #include <fstream>
 #include <paths.h>
+#include <pqxx/nontransaction>
 #include <string_view>
 
 using namespace vh::crypto;
@@ -16,6 +17,18 @@ namespace vh::db {
 // Bounds (re)connect attempts so an unreachable server can't park a pool caller in connect() for the
 // kernel's TCP timeout. libpq's default is to wait forever.
 static constexpr int DB_CONNECT_TIMEOUT_SECONDS = 10;
+
+void Connection::configureSession(pqxx::connection& conn) {
+    // Every daemon session runs in UTC: naive `timestamp` values are then written and read as UTC (the C++ side
+    // parses and prints them as UTC), and timestamptz text carries +00. Before this, a non-UTC server TimeZone made
+    // CURRENT_TIMESTAMP land in naive columns as local wall time, read back with a 'Z' (#157).
+    // The zone the session started in (database/role/server default) is kept in vaulthalla.database_timezone, so
+    // migration 100 can interpret rows written before the switch in that zone.
+    pqxx::nontransaction tx(conn);
+    const auto original = tx.exec("SELECT current_setting('TimeZone')").one_field().as<std::string>();
+    tx.exec("SELECT set_config('vaulthalla.database_timezone', $1, false), set_config('TimeZone', 'UTC', false)",
+            pqxx::params{original});
+}
 
 static std::optional<std::string> getFirstInitDBPass() {
     const std::filesystem::path f{"/run/vaulthalla/db_password"};
@@ -119,6 +132,7 @@ Connection::Connection() : tpmKeyProvider_(
                 " connect_timeout=" + std::to_string(DB_CONNECT_TIMEOUT_SECONDS);
 
             conn_ = std::make_unique<pqxx::connection>(DB_CONNECTION_STR);
+            configureSession(*conn_);
 
             log::Registry::runtime()->info(
                 "[DBConnection] Test mode: using connection string from environment variables");
@@ -167,6 +181,7 @@ Connection::Connection() : tpmKeyProvider_(
                         + db.name + "?connect_timeout=" + std::to_string(DB_CONNECT_TIMEOUT_SECONDS);
     try {
         conn_ = std::make_unique<pqxx::connection>(DB_CONNECTION_STR);
+        configureSession(*conn_);
     } catch (const std::exception& e) {
         // libpq's message names the cause (e.g. password authentication failed) and never includes the password.
         const auto msg = "Database connection failed for " + db.user + "@" + db.host + ":" + std::to_string(db.port) +
@@ -184,6 +199,7 @@ bool Connection::healthy() const noexcept { return conn_ && conn_->is_open(); }
 
 void Connection::reconnect() {
     auto fresh = std::make_unique<pqxx::connection>(DB_CONNECTION_STR);
+    configureSession(*fresh);
     conn_.swap(fresh);
     fresh.reset();
 

@@ -1,4 +1,5 @@
 #include "protocols/ws/handler/Email.hpp"
+#include "ops/Error.hpp"
 
 #include "config/Registry.hpp"
 #include "crypto/secrets/Manager.hpp"
@@ -30,7 +31,7 @@ namespace {
 
 void requireSuperAdmin(const std::shared_ptr<Session>& session) {
     if (!session || !session->user || !session->user->isSuperAdmin())
-        throw std::runtime_error("Permission denied: operator email administration requires super-admin");
+        throw vh::ops::Denied("Permission denied: operator email administration requires super-admin");
 }
 
 std::string lower(std::string value) {

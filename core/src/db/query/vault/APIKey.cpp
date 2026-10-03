@@ -26,6 +26,31 @@ namespace vh::db::query::vault {
         });
     }
 
+    void APIKey::updateAPIKey(const std::shared_ptr<vh::vault::model::APIKey>& key) {
+        Transactions::exec("APIKey::updateAPIKey", [&](pqxx::work& txn) {
+            pqxx::params p{
+                key->id,
+                key->name,
+                to_string(key->provider),
+                key->access_key,
+                to_hex_bytea(key->encrypted_secret_access_key),
+                to_hex_bytea(key->iv),
+                key->region,
+                key->endpoint
+            };
+            txn.exec(pqxx::prepped{"update_api_key"}, p);
+        });
+    }
+
+    std::vector<std::pair<unsigned int, std::string>> APIKey::listVaultsUsingKey(const unsigned int keyId) {
+        return Transactions::exec("APIKey::listVaultsUsingKey", [&](pqxx::work& txn) {
+            std::vector<std::pair<unsigned int, std::string>> out;
+            for (const auto& row : txn.exec(pqxx::prepped{"list_api_key_vaults"}, keyId))
+                out.emplace_back(row["id"].as<unsigned int>(), row["name"].as<std::string>());
+            return out;
+        });
+    }
+
     void APIKey::removeAPIKey(const unsigned int keyId) {
         Transactions::exec("APIKey::removeAPIKey", [&](pqxx::work& txn) {
             txn.exec(pqxx::prepped{"remove_api_key"}, keyId);

@@ -21,6 +21,9 @@ public:
     // caller" check used to contradict it (admins could not remove users' keys on the web, and S3 vaults using a
     // key their owner may consume but does not own could not build their engine).
     unsigned int addAPIKey(std::shared_ptr<model::APIKey>& key);
+    // In place, keeping the id. A non-empty key->secret_access_key is sealed as the new secret (and wiped from
+    // `key`); an empty one keeps the stored ciphertext.
+    void updateAPIKey(const std::shared_ptr<model::APIKey>& key);
     void removeAPIKey(unsigned int keyId);
 
     [[nodiscard]] std::vector<std::shared_ptr<model::APIKey>> listAPIKeys() const;

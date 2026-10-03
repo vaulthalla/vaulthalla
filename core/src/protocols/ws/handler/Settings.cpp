@@ -1,4 +1,5 @@
 #include "protocols/ws/handler/Settings.hpp"
+#include "ops/Error.hpp"
 #include "identities/User.hpp"
 #include "protocols/ws/Session.hpp"
 #include "config/Registry.hpp"
@@ -11,7 +12,7 @@ namespace vh::protocols::ws::handler {
 
 json Settings::get(const std::shared_ptr<Session>& session) {
     // TODO: need to make settings granular by permissions
-    if (!session->user->isSuperAdmin()) throw std::runtime_error("Permission denied: Only admins can view settings");
+    if (!session->user->isSuperAdmin()) throw vh::ops::Denied("Permission denied: Only admins can view settings");
     return {{"settings", vh::config::Registry::get()}};
 }
 

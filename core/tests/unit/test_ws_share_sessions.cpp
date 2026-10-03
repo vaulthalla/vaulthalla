@@ -8,6 +8,7 @@
 #include "protocols/ws/handler/share/Sessions.hpp"
 #include "rbac/role/Vault.hpp"
 #include "runtime/Deps.hpp"
+#include "seed/include/seed_db.hpp"
 #include "share/AuditEvent.hpp"
 #include "share/EmailChallenge.hpp"
 #include "share/Manager.hpp"
@@ -315,32 +316,8 @@ vh::share::Link makeLink(const vh::share::AccessMode mode = vh::share::AccessMod
 }
 
 vh::rbac::role::Vault uploadDropboxRoleForTest() {
-    namespace permission = vh::rbac::permission;
-    namespace fs = vh::rbac::permission::vault::fs;
-    namespace role = vh::rbac::role;
-
-    auto files = fs::Files::Custom(
-        static_cast<fs::Files::SetMask>(fs::FilePermissions::Upload),
-        fs::Share::None(std::string{fs::Files::FLAG_PREFIX})
-    );
-    auto dirs = fs::Directories::Custom(
-        static_cast<fs::Directories::SetMask>(
-            static_cast<fs::Directories::SetMask>(fs::DirectoryPermissions::List) |
-            static_cast<fs::Directories::SetMask>(fs::DirectoryPermissions::Upload) |
-            static_cast<fs::Directories::SetMask>(fs::DirectoryPermissions::Touch)
-        ),
-        fs::Share::None(std::string{fs::Directories::FLAG_PREFIX})
-    );
-
-    auto vaultRole = role::Vault::Custom(
-        "share_upload_dropbox",
-        "Share-focused role template for directory dropbox uploads without download access.",
-        role::vault::Base::Custom(
-            permission::vault::Roles::None(),
-            permission::vault::Sync::None(),
-            permission::vault::Filesystem::Custom(std::move(files), std::move(dirs))
-        )
-    );
+    // The role new installs seed (#151: upload-only, no directory List).
+    auto vaultRole = vh::seed::shareUploadDropboxRole();
     vaultRole.id = 99;
     vaultRole.assign(99, "public", 42);
     return vaultRole;
@@ -531,7 +508,9 @@ TEST_F(WsShareSessionsTest, OpenResponseRemovesPreviewFromEffectiveOpsWhenScoped
 
     EXPECT_TRUE(opSet(share.at("allowed_ops").get<uint32_t>(), vh::share::Operation::Preview));
     EXPECT_FALSE(opSet(effective, vh::share::Operation::Preview));
-    EXPECT_TRUE(opSet(effective, vh::share::Operation::List));
+    // #151: the seeded dropbox role is upload-only, so even a link that asks for list can't list through it.
+    EXPECT_TRUE(opSet(share.at("allowed_ops").get<uint32_t>(), vh::share::Operation::List));
+    EXPECT_FALSE(opSet(effective, vh::share::Operation::List));
     EXPECT_TRUE(opSet(effective, vh::share::Operation::Upload));
     expectNoSecretFields(response);
 }

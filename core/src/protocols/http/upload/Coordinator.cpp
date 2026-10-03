@@ -25,6 +25,7 @@
 #include "sync/Controller.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cerrno>
 #include <cctype>
@@ -70,7 +71,10 @@ struct UploadSessionState {
     uint32_t user_id{};
     std::string share_session_id;
     std::unordered_map<std::string, UploadFileState> files;
-    std::chrono::steady_clock::time_point created_at{std::chrono::steady_clock::now()};
+    // Both from uploadClock(). last_activity slides on every owned request and every body chunk; the purge reads it
+    // under the registry lock only, hence atomic.
+    std::chrono::steady_clock::time_point created_at{};
+    std::atomic<std::chrono::steady_clock::rep> last_activity{0};
     bool finished{false};
     std::mutex mutex;
 };
@@ -87,7 +91,31 @@ using vh::protocols::http::upload::detail::UploadSessionState;
 
 constexpr uint32_t kMaxHttpUploadFiles = 4096;
 constexpr uint64_t kDefaultMaxHttpUploadFileBytes = 8ull * 1024ull * 1024ull * 1024ull;
+// Sliding idle TTL: a session expires 30 minutes after its last activity (create, a PUT chunk, finish), not after
+// creation, so long uploads on slow links finish. The hard ceiling bounds a session that trickles forever.
 constexpr std::chrono::minutes kUploadSessionTtl{30};
+constexpr std::chrono::hours kUploadSessionMaxAge{24};
+
+[[nodiscard]] vh::protocols::http::upload::Coordinator::Clock& uploadClockOverride() {
+    static vh::protocols::http::upload::Coordinator::Clock value;
+    return value;
+}
+
+[[nodiscard]] std::chrono::steady_clock::time_point uploadClock() {
+    const auto& clock = uploadClockOverride();
+    return clock ? clock() : std::chrono::steady_clock::now();
+}
+
+void touchUploadSession(UploadSessionState& session) noexcept {
+    session.last_activity.store(uploadClock().time_since_epoch().count(), std::memory_order_relaxed);
+}
+
+[[nodiscard]] bool uploadSessionExpired(const UploadSessionState& session,
+                                        const std::chrono::steady_clock::time_point now) noexcept {
+    const std::chrono::steady_clock::time_point lastActivity{
+        std::chrono::steady_clock::duration{session.last_activity.load(std::memory_order_relaxed)}};
+    return lastActivity < now - kUploadSessionTtl || session.created_at < now - kUploadSessionMaxAge;
+}
 
 [[nodiscard]] std::unordered_map<std::string, std::shared_ptr<UploadSessionState>>& sessions() {
     static std::unordered_map<std::string, std::shared_ptr<UploadSessionState>> value;
@@ -349,9 +377,9 @@ void cleanupSession(
 }
 
 void cleanupExpiredSessionsLocked() noexcept {
-    const auto cutoff = std::chrono::steady_clock::now() - kUploadSessionTtl;
+    const auto now = uploadClock();
     for (auto it = sessions().begin(); it != sessions().end();) {
-        if (it->second && it->second->created_at < cutoff) {
+        if (it->second && uploadSessionExpired(*it->second, now)) {
             cleanupSession(it->second, "http_upload_expired", true);
             it = sessions().erase(it);
         } else ++it;
@@ -382,12 +410,14 @@ void verifySessionOwner(
         throw std::runtime_error("Upload share session mismatch");
 }
 
+// Only the owning session's requests keep an upload alive.
 [[nodiscard]] std::shared_ptr<vh::protocols::ws::Session> resolveAndVerify(
     const request& req,
-    const UploadSessionState& upload
+    UploadSessionState& upload
 ) {
     auto session = sessionResolver()(req);
     verifySessionOwner(upload, session);
+    touchUploadSession(upload);
     return session;
 }
 
@@ -552,6 +582,7 @@ void Coordinator::FileStream::write(const void* data, const std::size_t size) {
         file.received_size += size;
         shareUploadId = file.share_upload_id;
     }
+    touchUploadSession(*impl_->session);
 
     if (impl_->manager && impl_->principal)
         impl_->manager->recordUploadChunk(*impl_->principal, shareUploadId, size);
@@ -574,6 +605,7 @@ nlohmann::json Coordinator::FileStream::finish() {
         file.status = FileStatus::Complete;
         response = fileResponseJson(file);
     }
+    touchUploadSession(*impl_->session);
     impl_->finished = true;
     return response;
 }
@@ -631,6 +663,8 @@ nlohmann::json Coordinator::createSession(const request& req, const nlohmann::js
     auto upload = std::make_shared<UploadSessionState>();
     upload->id = vh::protocols::ws::Session::generateUUIDv4();
     upload->mode = shareMode ? UploadMode::Share : UploadMode::Authenticated;
+    upload->created_at = uploadClock();
+    touchUploadSession(*upload);
 
     nlohmann::json responseFiles = nlohmann::json::array();
     std::unordered_set<std::string> fileIds;
@@ -812,6 +846,7 @@ nlohmann::json Coordinator::createSession(const request& req, const nlohmann::js
     {
         std::scoped_lock lock(sessionsMutex());
         cleanupExpiredSessionsLocked();
+        touchUploadSession(*upload);
         sessions().emplace(upload->id, upload);
     }
 
@@ -1027,6 +1062,13 @@ void Coordinator::setEngineResolverForTesting(EngineResolver resolver) {
 }
 
 void Coordinator::resetEngineResolverForTesting() { engineResolver() = defaultEngineResolver; }
+
+void Coordinator::setClockForTesting(Clock clock) {
+    if (!clock) throw std::invalid_argument("Upload clock is required");
+    uploadClockOverride() = std::move(clock);
+}
+
+void Coordinator::resetClockForTesting() { uploadClockOverride() = nullptr; }
 
 void Coordinator::clearForTesting() {
     std::scoped_lock lock(sessionsMutex());

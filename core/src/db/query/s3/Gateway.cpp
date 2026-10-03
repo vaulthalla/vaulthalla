@@ -1160,7 +1160,7 @@ ObjectListResult Gateway::listObjectStates(const uint32_t vaultId, const ObjectL
                             NULL::BIGINT AS size_bytes,
                             NULL::TEXT AS content_type,
                             NULL::TEXT AS storage_class,
-                            NULL::TIMESTAMP AS last_modified,
+                            NULL::TIMESTAMPTZ AS last_modified,
                             NULL::BOOLEAN AS multipart,
                             NULL::INTEGER AS part_count
                         FROM source

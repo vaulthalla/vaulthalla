@@ -133,7 +133,7 @@ prod fallback `127.0.0.1:36968`). `web/src/app/api/auth/session/route.ts` proxie
 
 ## Database
 
-- PostgreSQL via libpqxx. The schema is `deploy/psql/000…097_*.sql`, applied in order (all in ONE transaction by `core/seed/include/SqlDeployer.hpp`) and installed to `/usr/share/vaulthalla/psql`.
+- PostgreSQL via libpqxx. The schema is `deploy/psql/000…100_*.sql`, applied in order (all in ONE transaction by `core/seed/include/SqlDeployer.hpp`) and installed to `/usr/share/vaulthalla/psql`.
   New migrations take the next number and must be idempotent against upgraded installs. SqlDeployer records sha256(raw bytes)
   per file and refuses to start on a mismatch, so **never edit a shipped migration**: 020/060/082 were edited in place and
   bricked upgrades (1.5.x→1.6.x crash loop on 060). Reviewed exceptions live in `kHistoricalMigrationChecksums` (accepted, recorded
@@ -147,6 +147,11 @@ prod fallback `127.0.0.1:36968`). `web/src/app/api/auth/session/route.ts` proxie
   reconnects and retries once only when BEGIN fails on a dead connection (before `fn` runs); later failures
   surface. Pool state is in `SystemHealth.database` (`vh status`, stats ws, watchdog). Queries live in
   `core/src/db/query/<domain>/`, prepared statements in `core/src/db/preparedStatements/`.
+- **Time zones (#157):** every daemon session runs with `TimeZone=UTC` (`db::Connection::configureSession`, on connect
+  and reconnect) and records the zone it started in as `vaulthalla.database_timezone`. Migration 100 converted every
+  `timestamp` column to `timestamptz`, reading old values in that recorded zone (manual psql runs fall back to the
+  session zone); columns a view depends on are skipped with a warning. New columns must be `TIMESTAMPTZ`. Text output
+  is `YYYY-MM-DD HH:MM:SS[.ffffff]+00`, which `db::encoding::parsePostgresTimestamp` handles. Guard: `DbTimezoneTest`.
 - `db::Janitor` handles sweeps. Stats rollups read from `file_activity`, `files_trashed`, `operations`, `share_*`.
 
 ## Subsystem directory map (`core/src`, mirrored in `core/include`)
@@ -167,8 +172,10 @@ validates, persists, and returns domain objects. Refusals are typed `ops::Error`
 `Conflict`, and `NeedsConfirmation{code}` for "a person must accept this first", e.g. the encryption waiver). The CLI
 handler parses with `CommandUsage` and calls the op through `shell::runOp`, which maps `ops::Error` to exit 2 (CLI
 waiver prompts go through `shell::commands::vault::runWithWaiver`). The ws handler maps its payload to the request,
-and `makePayloadHandler` turns the exception into an `ERROR` response (`NeedsConfirmation` adds `data.code`; the web
-asks and resends with `accept_encryption_waiver`). Rules: RBAC for an operation lives in the op, never in the frontend as well; code beneath
+and every ws handler template (`protocols/ws/core/handler_templates.hpp`, `describeCurrentError`) turns the exception into
+an `ERROR` response whose `data.code` is stable: `denied`, `not_found`, `invalid`, `conflict`, or the `NeedsConfirmation`
+code (the web asks and resends with `accept_encryption_waiver`); a non-`ops::Error` fault has no code. Handler-level
+gates (stats/settings/email/pricing admin checks, share upload scope) throw `ops::Denied` so they carry `denied`. Rules: RBAC for an operation lives in the op, never in the frontend as well; code beneath
 `ops::` (managers, `db::query`) never authorizes; internal callers use those primitives directly, not ops; no
 registry, base class or transport abstraction. Parity is proven by `test_ops_parity_groups.cpp`, which runs each
 group operation through both surfaces for every seeded admin role and compares verdicts and DB state.
@@ -184,6 +191,11 @@ Rules the families hold (keep them in ops, never re-add them in a handler):
   system stats), picks admins.* vs users.* identity permissions. The ceiling applies to assignment *and* to managing an
   account above you (edit, delete, reset password). Deletion, deactivation, role change and password reset call
   `auth::Manager::revokeSessions` (refresh tokens revoked, live sessions invalidated). `auth::Manager` has no user cache.
+- **API keys:** `update` edits in place (keeps the id, so `s3` rows survive; an empty secret keeps the sealed one;
+  `KeyPerm::Edit`), re-validates credentials outside test mode and reloads the engines of the vaults using the key
+  (`storage::Manager::reloadEngine`). `remove` refuses (`Invalid`, naming the vaults) while any `s3` row references the
+  key, and `ops::users::remove` refuses up front when a surviving vault uses one of the account's keys. Backed by
+  `s3.api_key_id ... ON DELETE RESTRICT` (migration 099; it was CASCADE and silently dropped bindings).
 - **Vaults:** every change goes through `storage::Manager::updateVault` so the live engine (RBAC's source of the owner)
   follows; owner reassignment needs Create for the new owner; a key change needs Consume; sync settings need vault
   `sync.config.edit`.
@@ -215,10 +227,13 @@ subject's assignment; both `vh vault role override ...` and ws `role.vault.overr
 - If email is disabled, the server must still report healthy. Security alerts are enqueued only after a successful DB write
   and never block the mutation. `Manager::startWatchdog()` stays restart-only.
 
-**Stats / dashboards** (22 `stats.*` ws commands, `dashboard.preferences.*`)
+**Stats / dashboards** (26 `stats.*` ws commands, `dashboard.preferences.*`)
 - The backend owns severity, warning, and error truth. Never show fake integrity, recoverability, or latency badges; report
   unavailable values as `null` / `"not_available"`.
 - Stats commands are read-only, and snapshots are background-only. Preferences are scoped to `session->user->id`.
+- `stats.dashboard.severity` (nav badge) returns `{stats: {overall_status, error_count, warning_count, checked_at}}` from
+  `DashboardOverview::severity()`: the same default cards and aggregation as the overview, without trend series or
+  sections, and without serializing cards.
 - Rationale history: `history/stats-dashboard.md`.
 
 **S3 pricing / cost estimates** (`core/{include,src}/storage/s3/pricing/`)

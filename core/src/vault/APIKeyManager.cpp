@@ -62,6 +62,29 @@ unsigned int APIKeyManager::addAPIKey(std::shared_ptr<APIKey>& key) {
     return key->id;
 }
 
+void APIKeyManager::updateAPIKey(const std::shared_ptr<APIKey>& key) {
+    std::scoped_lock lock(apiKeysMutex_);
+
+    const auto stored = db::query::vault::APIKey::getAPIKey(key->id);
+    if (!stored) throw std::runtime_error("API key not found");
+
+    if (key->secret_access_key.empty()) {
+        key->encrypted_secret_access_key = stored->encrypted_secret_access_key;
+        key->iv = stored->iv;
+    } else {
+        const auto masterKey = tpmKeyProvider_->getMasterKey();
+        std::vector<uint8_t> iv;
+        const auto plaintext = std::vector<uint8_t>(key->secret_access_key.begin(), key->secret_access_key.end());
+        key->encrypted_secret_access_key = encrypt_aes256_gcm(plaintext, masterKey, iv);
+        key->iv = iv;
+        sodium_memzero(key->secret_access_key.data(), key->secret_access_key.size());
+        key->secret_access_key.clear();
+    }
+
+    db::query::vault::APIKey::updateAPIKey(key);
+    if (auto refreshed = db::query::vault::APIKey::getAPIKey(key->id)) apiKeys_[key->id] = std::move(refreshed);
+}
+
 void APIKeyManager::removeAPIKey(const unsigned int keyId) {
     std::scoped_lock lock(apiKeysMutex_);
     if (!apiKeys_.erase(keyId) && !db::query::vault::APIKey::getAPIKey(keyId))

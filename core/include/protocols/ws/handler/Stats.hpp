@@ -21,6 +21,8 @@ struct Stats {
     static json vaultTrends(const json& payload, const std::shared_ptr<Session>& session);
     static json vaultSecurity(const json& payload, const std::shared_ptr<Session>& session);
     static json dashboardOverview(const json& payload, const std::shared_ptr<Session>& session);
+    // The overview's severity only (nav badge): {stats: {overall_status, error_count, warning_count, checked_at}}.
+    static json dashboardSeverity(const std::shared_ptr<Session>& session);
     static json systemHealth(const std::shared_ptr<Session>& session);
     static json systemThreadPools(const std::shared_ptr<Session>& session);
     static json systemFuse(const std::shared_ptr<Session>& session);

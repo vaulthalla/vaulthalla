@@ -1653,7 +1653,7 @@ std::vector<PriceBudgetTrendStats> PriceBudgetService::trendStats(
                 "VALUES (" + std::to_string(trend.policy_id) + ", " +
                 txn.quote(alertKey) + ", " +
                 txn.quote(trend.window_type) + ", " +
-                txn.quote(trend.window_start) + "::timestamp) "
+                txn.quote(trend.window_start) + "::timestamptz) "
                 "ON CONFLICT (policy_id, alert_key, window_type, window_start) DO NOTHING "
                 "RETURNING id");
             return !result.empty();

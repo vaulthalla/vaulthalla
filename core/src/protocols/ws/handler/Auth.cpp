@@ -1,4 +1,5 @@
 #include "protocols/ws/handler/Auth.hpp"
+#include "ops/Error.hpp"
 #include "runtime/Deps.hpp"
 #include "auth/Bootstrap.hpp"
 #include "auth/Manager.hpp"
@@ -74,7 +75,7 @@ json Auth::updateUser(const json &payload, const std::shared_ptr<Session> &sessi
 
     // CLI identity is bound by Linux UID; rebinding it is an operator action on the local CLI only.
     if (payload.contains("linux_uid"))
-        throw std::runtime_error("linux_uid can only be changed by an administrator through the local CLI");
+        throw vh::ops::Denied("linux_uid can only be changed by an administrator through the local CLI");
     if (payload.contains("updated_by") || payload.contains("protected") || payload.contains("is_protected") ||
         payload.contains("system_only"))
         throw std::runtime_error("Unsupported field in user update");
@@ -119,7 +120,8 @@ json Auth::logout(const std::shared_ptr<Session> &session) {
 }
 
 json Auth::listUsers(const std::shared_ptr<Session> &session) {
-    return {{"users", to_json(ops::users::list(requireSessionUser(session)))}};
+    // The slim list projection; auth.user.get / auth.isAuthenticated keep the full role with its permissions.
+    return {{"users", vh::identities::to_list_json(ops::users::list(requireSessionUser(session)))}};
 }
 
 json Auth::isUserAuthenticated(const std::string &token, const std::shared_ptr<Session> &session) {

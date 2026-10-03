@@ -34,6 +34,10 @@ public:
 
     void updateVault(const std::shared_ptr<vault::model::Vault>& vault);
 
+    // Rebuilds a vault's engine from its stored row, e.g. after the credentials of the API key it uses changed.
+    // No-op for an unknown vault.
+    void reloadEngine(unsigned int vaultId);
+
     void removeVault(unsigned int vaultId);
 
     std::shared_ptr<vault::model::Vault> getVault(unsigned int vaultId) const;

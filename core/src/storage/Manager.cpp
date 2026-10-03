@@ -221,6 +221,22 @@ void Manager::updateVault(const std::shared_ptr<Vault>& vault) {
     log::Registry::storage()->info("[StorageManager] Updated vault with ID: {}", vault->id);
 }
 
+void Manager::reloadEngine(const unsigned int vaultId) {
+    const auto vault = db::query::vault::Vault::getVault(vaultId);
+    if (!vault) return;
+
+    std::shared_ptr<Engine> engine;
+    if (vault->type == VaultType::S3) engine = std::make_shared<CloudEngine>(std::static_pointer_cast<S3Vault>(vault));
+    else engine = std::make_shared<Engine>(vault);
+
+    std::scoped_lock lock(mutex_);
+    if (const auto it = vaultToEngine_.find(vaultId); it != vaultToEngine_.end())
+        eraseEnginePathEntry(engines_, it->second);
+    vaultToEngine_[vaultId] = engine;
+    engines_[enginePathKey(engine)] = engine;
+    log::Registry::storage()->info("[StorageManager] Reloaded engine for vault with ID: {}", vaultId);
+}
+
 void Manager::removeVault(const unsigned int vaultId) {
     std::scoped_lock lock(mutex_);
     const auto oldEngineIt = vaultToEngine_.find(vaultId);
