@@ -77,7 +77,7 @@ export const ServicePanel = ({
       <StatGrid className="xl:grid-cols-4">
         <StatTile
           label="Bind address"
-          value={bind ? <span className="font-mono text-base">{bind}</span> : null}
+          value={bind ? <span className="font-mono text-sm" title={bind}>{bind}</span> : null}
           hint={
             isWildcardBind(s) ? 'Listens on every interface'
             : s?.configured === false ?

@@ -99,6 +99,16 @@ const ProviderPanel = ({ settings }: { settings: EmailSettings }) => {
       : null,
   }
   const invalid = Object.values(problems).some(Boolean)
+  const dirty =
+    provider !== email.provider
+    || enabled !== email.enabled
+    || operatorEnabled !== settings.operator.enabled
+    || joinFrom(name, address) !== email.from
+    || (replyTo.trim() || null) !== email.reply_to
+    || (baseUrl.trim() || null) !== email.base_url
+    || region.trim() !== email.ses.region
+    || (sesEndpoint.trim() || null) !== email.ses.endpoint
+    || Boolean(resendKey.trim() || sesAccess.trim() || sesSecret.trim())
 
   const save = () =>
     run(async () => {
@@ -149,7 +159,7 @@ const ProviderPanel = ({ settings }: { settings: EmailSettings }) => {
       title="Delivery"
       description="How operator email leaves this server."
       actions={
-        <Button variant="primary" onClick={() => void save()} loading={busy} disabled={invalid}>
+        <Button variant="primary" onClick={() => void save()} loading={busy} disabled={invalid || !dirty}>
           <FloppyDiskIcon aria-hidden />
           Save delivery
         </Button>
