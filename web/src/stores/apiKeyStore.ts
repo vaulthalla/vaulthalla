@@ -20,7 +20,7 @@ export const useApiKeyStore = create<ApiKeyStore>()(
       async fetchApiKeys() {
         const sendCommand = useWebSocketStore.getState().sendCommand
         const response = await sendCommand('storage.apiKey.list', null)
-        set({ apiKeys: JSON.parse(response.keys) })
+        set({ apiKeys: typeof response.keys === 'string' ? JSON.parse(response.keys) : response.keys })
       },
 
       async addApiKey(apiKeyPayload) {

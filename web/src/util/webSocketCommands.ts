@@ -8,7 +8,7 @@ import { VaultSyncHealth } from '@/models/stats/vaultSyncHealth'
 import { APIKey, S3APIKey } from '@/models/apiKey'
 import { User } from '@/models/user'
 import { AdminRolePayload, VaultRolePayload, Permission } from '@/models/role'
-import { Settings } from '@/models/settings'
+import { Settings, SettingsSection } from '@/models/settings'
 import { Group } from '@/models/group'
 import { File, IFileUpload } from '@/models/file'
 import { Directory } from '@/models/directory'
@@ -169,12 +169,29 @@ export interface WebSocketCommandMap {
 
   // API Key commands
 
-  'storage.apiKey.list': { payload: null; response: { keys: string } }
-
+  // Older daemons send `keys` as a JSON-encoded string, newer ones as an array: parse with parseApiKeyList()
+  // (features/credentials/types.ts).
+  'storage.apiKey.list': { payload: null; response: { keys: string | APIKey[] } }
 
   'storage.apiKey.add': { payload: Partial<S3APIKey>; response: { api_key: APIKey } }
 
-  'storage.apiKey.remove': { payload: { id: number }; response: null }
+  // Edit in place: same id, so vaults bound to the key keep their binding. Fields left out keep their value; an
+  // empty or missing secret_access_key keeps the stored secret. Daemons before 1.9 answer "Unknown command".
+  'storage.apiKey.update': {
+    payload: {
+      id: number
+      name?: string
+      provider?: string
+      region?: string
+      endpoint?: string
+      access_key?: string
+      secret_access_key?: string
+    }
+    response: { api_key: APIKey }
+  }
+
+  // Refused (data.code 'invalid') while any vault still uses the key.
+  'storage.apiKey.remove': { payload: { id: number }; response: Record<string, never> | null }
 
   'storage.apiKey.get': { payload: { id: number }; response: { api_key: APIKey } }
 
@@ -225,7 +242,8 @@ export interface WebSocketCommandMap {
   // Settings
   'settings.get': { payload: null; response: { settings: Settings } }
 
-  'settings.update': { payload: Partial<Settings>; response: { settings: Settings } }
+  // A JSON merge patch (RFC 7386) onto the current config: send only what changed; null removes an optional key.
+  'settings.update': { payload: Partial<Record<keyof Settings, SettingsSection>>; response: { settings: Settings } }
 
   // Operator email administration
   'email.config.get': { payload: null; response: OperatorEmailConfigResponse }
