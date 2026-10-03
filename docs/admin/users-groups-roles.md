@@ -209,7 +209,7 @@ Keep overrides rare. They are powerful but harder to audit than simple role assi
 
 ## Web Console
 
-The web console includes Users, Groups, Admin Roles, and Vault Roles pages. Use them for interactive administration and use `vh` for scriptable or recovery-oriented operations.
+The web console groups these under **Access**: Users, Groups, and Roles (admin and vault roles in one list, with a grouped permission editor). Use them for interactive administration and use `vh` for scriptable or recovery-oriented operations.
 
 ## Troubleshooting Access
 

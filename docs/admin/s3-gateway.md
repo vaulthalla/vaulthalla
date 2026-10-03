@@ -18,7 +18,7 @@ S3 Gateway is documented as a top-level protocol surface in [S3 Gateway](/s3-gat
 
 ## Web Console
 
-Navigate to Admin -> S3 Gateway.
+Open **S3 gateway** (under Storage & cost) in the web console.
 
 Operators can use the page to:
 

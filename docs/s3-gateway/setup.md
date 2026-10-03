@@ -119,7 +119,7 @@ Virtual-hosted style may be accepted by the direct listener when enabled, but pa
 
 Use the browser workflow for interactive setup:
 
-1. Navigate to Admin -> S3 Gateway.
+1. Open **S3 gateway** (under Storage & cost) in the web console.
 2. Check service readiness and endpoint information.
 3. Create a gateway credential.
 4. Copy the secret immediately; the secret access key is shown only once.

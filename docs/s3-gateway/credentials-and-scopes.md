@@ -136,7 +136,7 @@ vh s3-gateway creds scope backup set --no-enforce-budget-for-local-requests
 
 ## Web Console Workflow
 
-In Admin -> S3 Gateway:
+In the console's **S3 gateway** page:
 
 1. Open the credentials section.
 2. Create a credential and choose the effective principal, description, expiry, and scope mode.

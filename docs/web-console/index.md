@@ -21,22 +21,22 @@ The Vaulthalla web console is the browser-based control surface for most operato
 
 | Task | Web console | CLI |
 | --- | --- | --- |
-| View runtime health | Dashboard | `vh status` |
-| Browse files | Filesystem page | `/mnt/vaulthalla` and vault commands |
-| Create vaults | Vaults page | `vh vault create ...` |
-| Manage S3/R2 API keys | API Keys page | `vh api-key ...` |
-| Manage users and groups | Users and Groups pages | `vh user ...`, `vh group ...` |
-| Manage roles | Admin Roles and Vault Roles pages | `vh role ...`, `vh vault role ...` |
-| Manage shares | Shares page and filesystem share action | Web-first workflow |
-| Manage price budgets | Cost Control page | `vh pricing budget ...` |
-| Manage S3 Gateway | Admin -> S3 Gateway | `vh s3-gateway ...` |
-| Configure operator email | Operator Email page | `vh email ...` |
+| View runtime health | Health | `vh status` |
+| Browse files | Files | `/mnt/vaulthalla` and vault commands |
+| Create vaults | Vaults → New vault | `vh vault create ...` |
+| Manage S3/R2 API keys | Provider credentials | `vh api-key ...` |
+| Manage users and groups | Users and Groups | `vh user ...`, `vh group ...` |
+| Manage roles | Roles (admin and vault roles in one list) | `vh role ...`, `vh vault role ...` |
+| Manage shares | Shares, and Share link… on a file or folder in Files | Web-first workflow |
+| Manage price budgets | Cost control | `vh pricing budget ...` |
+| Manage S3 Gateway | S3 gateway | `vh s3-gateway ...` |
+| Configure operator email | Notifications | `vh email ...` |
 
-Use the CLI for lifecycle commands, recovery exports, automation, and host-local troubleshooting. Use the web console for interactive administration, filesystem browsing, dashboards, shares, and policy editing.
+Use the CLI for lifecycle commands, recovery exports, automation, and host-local troubleshooting. Use the web console for interactive administration, file browsing, health telemetry, shares, and policy editing.
 
-## Dashboard
+## Health
 
-The Dashboard area summarizes runtime health, filesystem activity, storage, operations, and trends. It can show setup advisories, such as an unbound CLI admin UID, without marking the whole runtime unhealthy.
+The Health area (formerly the dashboard) summarizes runtime health, filesystem activity, storage, operations, and trends. It can show setup advisories, such as an unbound CLI admin UID, without marking the whole runtime unhealthy.
 
 Treat dashboard backup/recovery indicators as status signals. They do not prove a real backup has completed.
 
@@ -89,7 +89,7 @@ vh vault sync dry-run <vault>
 
 ## S3 Gateway
 
-Admin -> S3 Gateway manages the downstream S3-compatible protocol surface. Use it to check service readiness, create gateway credentials, bind gateway buckets, set gateway key and key/vault budgets, review ledger/status details, and copy client snippets.
+**S3 gateway** manages the downstream S3-compatible protocol surface. Use it to check service readiness, create gateway credentials, bind gateway buckets, set gateway key and key/vault budgets, review ledger/status details, and copy client snippets.
 
 See [S3 Gateway](/s3-gateway) for endpoint setup, downstream client examples, credential scopes, bucket modes, budget behavior, and S3 operation semantics.
 
@@ -101,7 +101,7 @@ See [Sharing](/sharing).
 
 ## Operator Email
 
-The Operator Email page configures notification providers and checks delivery history. Use it with CLI smoke tests:
+The **Notifications** page (operator email) configures notification providers and checks delivery history. Use it with CLI smoke tests:
 
 ```bash
 vh email doctor

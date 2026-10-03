@@ -1,6 +1,6 @@
 ---
 title: Web Console
-description: Use the Vaulthalla browser console for dashboards, files, vaults, sharing, users, roles, API keys, cost control, and operator email.
+description: Use the Vaulthalla browser console for files, shares, vaults, users, groups, roles, provider credentials, cost control, the S3 gateway, health, notifications, and settings.
 order: 30
 status: published
 tags:
@@ -62,33 +62,44 @@ Installs older than 1.8.0 seeded the same default password everywhere. If `admin
 
 ## Main Areas
 
-The web console includes:
+One sidebar groups the console. It only shows the areas your role can use:
 
-- Dashboard pages for runtime health, filesystem activity, storage, operations, and trends.
-- Filesystem browser for browsing `/mnt/vaulthalla` through authenticated application permissions.
-- Vault management for local and S3-compatible vaults.
-- Share management for public or email-validated links.
-- Cost Control for pricing policies, request budgeting context, overrides, ledger, and status.
-- Operator Email for notification provider setup and diagnostics.
-- API Keys for S3-compatible providers.
-- Users, Groups, Admin Roles, and Vault Roles for access control.
-- Settings for instance-level configuration.
+| Section | Pages |
+|---|---|
+| (top) | **Files**, **Shares**, **Vaults** |
+| Access | **Users**, **Groups**, **Roles** (admin and vault roles in one list) |
+| Storage & cost | **Provider credentials** (S3/R2 API keys), **Cost control**, **S3 gateway** |
+| System | **Health** (runtime, filesystem, storage and activity telemetry), **Notifications** (operator email), **Settings** |
 
-## Filesystem Browser
+Press `⌘K` (`Ctrl+K`) anywhere to jump to a page, a vault, a user or an action. Your account menu (top right) opens **Your account**, where you change your own password. Older console addresses such as `/dashboard`, `/api-keys`, `/pricing-budget` and `/operator-email` redirect to their new pages.
 
-Use the filesystem browser for common file operations through the web UI. The available actions depend on the current path, the selected item, and the user's role permissions. Typical actions include browsing, previewing, downloading, copying, deleting, sharing, and uploading where permitted.
+## Files
 
-Share-mode browsing has a smaller action set. A public or email-validated share only grants the operations included in that share role, such as metadata, list, preview, download, upload, or mkdir.
+**Files** browses your vaults through Vaulthalla permissions (the same tree as `/mnt/vaulthalla`). The vault switcher sits next to the folder path, and the path is part of the address, so back, refresh and links to a folder work.
 
-## Vault Form
+- **Upload** with the Upload button (files or a whole folder), or drop files and folders anywhere on the page.
+- Open a folder or preview a file by double-clicking it or pressing Enter. Each row has a `⋯` menu, and right-click opens the same menu: download (folders download as a zip), share, rename, move to, copy to and delete. Deleting always asks first.
+- Keyboard: arrow keys move, Shift/Ctrl extend the selection, Ctrl+A selects all, F2 renames, Delete deletes, Backspace goes up a folder.
+- The transfers indicator in the top bar shows progress, speed and time left. Uploads can be cancelled, briefly interrupted files are retried, and the browser warns before you close a tab mid-upload. A refused download (for example a file over the download size limit) is reported there instead of replacing the page.
 
-Create local and S3/R2 vaults from the Vaults area.
+The actions offered depend on your role; the daemon enforces every permission.
 
-For local vaults, choose the vault name, description, quota, and sync conflict behavior.
+People who open a share link see the same file browser, limited to the operations the link grants (for example browse and download). An **Upload dropbox** link shows only an upload area: recipients can send files into the folder but can't see what's already there.
 
-For S3-compatible vaults, choose:
+## Vaults
 
-- API key.
+**Vaults** lists every vault you can manage with its storage, owner, usage and status. **New vault** creates a local or S3-compatible vault. Opening a vault shows its tabs:
+
+- **Overview**: capacity, sync health, activity, recovery readiness, security, share links, retention, cost and trends, as reported by the daemon.
+- **Access**: who has which vault role (users and groups), assign, change or remove a role, and path-scoped permission overrides.
+- **Shares**: the vault's share links.
+- **Sync & cost**: the S3 sync policy and request guardrails, and a summary of the vault's price budget.
+- **Gateway**: S3 gateway bucket bindings for this vault.
+- **Settings**: name, description, quota, owner, slug and FUSE name, and deleting the vault. A vault's storage type can't be changed after creation. Deleting a vault removes it from Vaulthalla; the data on disk or in the bucket is left in place.
+
+For S3-compatible vaults, creation asks for:
+
+- Provider credential.
 - Bucket.
 - Storage tier or storage class.
 - Sync strategy: `cache`, `sync`, or `mirror`.
@@ -98,21 +109,25 @@ For S3-compatible vaults, choose:
 - Request budget preset or custom request limits.
 - Maximum remote index age.
 
-The web form defaults new S3 vaults toward bounded behavior: cache-style sync, upstream encryption enabled, balanced request budgeting, and a finite remote-index freshness window.
+The form defaults new S3 vaults toward bounded behavior: cache-style sync, upstream encryption enabled, balanced request budgeting, and a finite remote-index freshness window.
 
-## Cost Control Page
+## Health
 
-The Cost Control page manages price budgets. Use it to set global, provider-level, or vault-level policies; review status and ledger entries; and handle approved overrides. Request budgets for a specific S3/R2 vault are configured on the vault sync policy and are covered in [Request Budgets](/cost-control/request-budgets).
+**Health** shows the daemon's own view of runtime, filesystem, storage and activity, with a customizable overview of cards. Severity always comes from the daemon: when a value isn't measured, or the daemon can't be reached, the console says "not available" or "unknown" rather than showing it as healthy. The dot next to the search box in the top bar shows the overall status.
 
-## S3 Gateway Page
+## Cost Control
 
-Admin -> S3 Gateway manages downstream S3-compatible access. Credential creation chooses the effective principal from a relational user selector when the actor has `admin.s3_gateway.assign_principal`; users without that permission see their own principal only.
+**Cost control** manages price budgets. Use it to set global, provider-level, or vault-level policies; review status and ledger entries; and handle approved overrides. Request budgets for a specific S3/R2 vault are configured on the vault sync policy and are covered in [Request Budgets](/cost-control/request-budgets).
+
+## S3 Gateway
+
+**S3 gateway** manages downstream S3-compatible access. Credential creation chooses the effective principal from a relational user selector when the actor has `admin.s3_gateway.assign_principal`; users without that permission see their own principal only.
 
 Gateway authorization is RBAC-native. `user_access` credentials inherit the principal user's Vaulthalla RBAC without gateway role rows. `vault_allowlist` credentials are managed through selected vaults, default vault roles, role exceptions, and path overrides in the credential role editor. Boolean scope flags are CLI/API shorthand only and are not the web-console policy model.
 
-## Operator Email Page
+## Notifications
 
-Use Operator Email to configure provider credentials, run dry-run and send tests, inspect delivery history, and confirm notification routing. See [Operator Emails](/admin/operator-emails).
+Use **Notifications** (operator email) to configure provider credentials, run dry-run and send tests, inspect delivery history, and confirm notification routing. See [Operator Emails](/admin/operator-emails).
 
 ## Troubleshooting Access
 
@@ -126,4 +141,4 @@ journalctl -fu vaulthalla.service
 sudo nginx -t
 ```
 
-If login succeeds but data views fail, check the core daemon logs and WebSocket proxy path first. If previews or downloads fail, also check the preview endpoint proxy and vault permissions.
+If the console says it can't reach the server, the daemon is down or restarting, or the WebSocket proxy path (`/ws`) is wrong; the page reconnects on its own once it's back. If login succeeds but a page shows an error, check the core daemon logs first. If previews or downloads fail, also check the preview endpoint proxy and vault permissions.
