@@ -7,7 +7,7 @@ import { DefinitionList } from '@/components/ui/Panel'
 import { Spinner } from '@/components/ui/Spinner'
 import { ChevronLeftIcon, ChevronRightIcon, DownloadIcon, ShareNodesIcon } from '@/components/ui/icons'
 import { formatBytes, formatDateTime } from '@/lib/format'
-import { isImage, isPreviewable, type Entry } from '@/features/files/entries'
+import { isPreviewable, type Entry } from '@/features/files/entries'
 import { FileIcon } from '@/features/files/FileIcon'
 import type { FsSource } from '@/features/files/source'
 
@@ -67,7 +67,7 @@ export const PreviewSheet = ({
             </>
           }>
           <div className="relative grid min-h-64 place-items-center overflow-hidden rounded-card border border-line bg-black/40">
-            {previewable && isImage(entry) ? (
+            {previewable ? (
               <>
                 {!loaded ? <Spinner className="absolute" /> : null}
                 {/* eslint-disable-next-line @next/next/no-img-element -- authenticated preview route, not optimizable */}
@@ -79,8 +79,6 @@ export const PreviewSheet = ({
                   className="max-h-[60dvh] w-full object-contain"
                 />
               </>
-            ) : previewable ? (
-              <iframe title={entry.name} src={source.previewUrl(entry.path, 1024)} className="h-[60dvh] w-full bg-white" />
             ) : (
               <div className="flex flex-col items-center gap-3 py-16 text-fg-subtle">
                 <FileIcon entry={entry} className="size-10" />

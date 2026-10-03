@@ -17,6 +17,7 @@ import { useVisibleNav } from '@/components/shell/useVisibleNav'
 import { UserMenu } from '@/components/shell/UserMenu'
 import { ConnectionIndicator } from '@/components/shell/ConnectionIndicator'
 import { TopBarExtras } from '@/components/shell/TopBarExtras'
+import { InitialPasswordWarning } from '@/components/shell/InitialPasswordWarning'
 import Logo from '@/public/vaulthalla-logo.png'
 import pkg from '../../../package.json'
 
@@ -179,7 +180,10 @@ export const AppShell = ({ children }: { children: React.ReactNode }) => (
     <div className="flex min-w-0 flex-1 flex-col">
       <TopBar />
       <main id="main" className="min-w-0 flex-1 px-4 py-6 sm:px-6 lg:px-8">
-        <div className="mx-auto w-full max-w-[1400px]">{children}</div>
+        <div className="mx-auto w-full max-w-[1400px]">
+          <InitialPasswordWarning />
+          {children}
+        </div>
       </main>
     </div>
     <PaletteMount />
