@@ -130,4 +130,28 @@ TEST_F(DashboardSeverityTest, SeverityMatchesTheOverviewSummaryWithoutTheCards) 
     EXPECT_TRUE(payload.at("checked_at").is_number_unsigned());
 }
 
+// #159: on a live (idle) test database the DB card never reports an unmeasured value as healthy, and the stats
+// query's own transaction does not make oldest_tx warn.
+TEST_F(DashboardSeverityTest, DbCardTonesNeverFakeHealth) {
+    stats::model::DashboardOverviewRequest request;
+    request.cards.push_back({.id = "system.db", .variant = "tiles", .size = "2x1"});
+    const auto overview = stats::model::DashboardOverview::snapshot(request);
+    ASSERT_EQ(overview.cards.size(), 1u);
+    const auto& card = overview.cards.front();
+    ASSERT_TRUE(card.available);
+
+    bool sawOldestTx = false;
+    bool sawSlowQueries = false;
+    for (const auto& metric : card.metrics) {
+        if (metric.value == "unknown") EXPECT_EQ(metric.tone, "unknown") << metric.key;
+        if (metric.key == "oldest_tx") {
+            sawOldestTx = true;
+            EXPECT_EQ(metric.tone, "healthy") << metric.value;
+        }
+        if (metric.key == "slow_queries") sawSlowQueries = true;
+    }
+    EXPECT_TRUE(sawOldestTx);
+    EXPECT_TRUE(sawSlowQueries);
+}
+
 }

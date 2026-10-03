@@ -31,6 +31,10 @@ and the console only asks the daemon for what the page on screen needs.
   and groups, plus path-scoped permission overrides), shares, sync & cost, gateway and settings.
 - **Health** (formerly the dashboard) shows only what the daemon reports: when a value is unknown or the daemon
   is unreachable it says so, and never shows green. Polling stops when you leave the page or hide the tab.
+  The daemon's own health ratings were corrected too: a value it can't measure (slow queries without
+  `pg_stat_statements`, connection errors) is rated unknown instead of healthy, the oldest database transaction
+  warns only after an hour (it used to warn on every idle install), and FUSE errors that are part of normal
+  operation (a lookup of a name that doesn't exist yet) no longer raise a warning.
 - **Shares.** Recipients get the same file browser, with paths in the address. The new "Upload dropbox" preset
   lets people send files into a folder without seeing what's already there. Rotating or revoking a link asks first.
 - **Safer by default.** Every destructive action asks for confirmation. Logging out clears everything the browser

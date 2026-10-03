@@ -436,7 +436,7 @@ DashboardCardSummary dashboardOverviewBuildConnections(const DashboardOverviewCa
     dashboardOverviewAddMetric(card, "sweep_interval", "Sweep", dashboardOverviewFormatDuration(stats.sweepIntervalSeconds), "info", static_cast<double>(stats.sweepIntervalSeconds), "seconds");
     dashboardOverviewAddMetric(card, "opened_24h", "Opened 24h", stats.connectionsOpened24h ? dashboardOverviewFormatCount(*stats.connectionsOpened24h) : "unknown", "info", dashboardOverviewOptionalDouble(stats.connectionsOpened24h));
     dashboardOverviewAddMetric(card, "closed_24h", "Closed 24h", stats.connectionsClosed24h ? dashboardOverviewFormatCount(*stats.connectionsClosed24h) : "unknown", "info", dashboardOverviewOptionalDouble(stats.connectionsClosed24h));
-    dashboardOverviewAddMetric(card, "errors_24h", "Errors 24h", stats.connectionErrors24h ? dashboardOverviewFormatCount(*stats.connectionErrors24h) : "unknown", stats.connectionErrors24h && *stats.connectionErrors24h > 0 ? "warning" : "healthy", dashboardOverviewOptionalDouble(stats.connectionErrors24h));
+    dashboardOverviewAddMetric(card, "errors_24h", "Errors 24h", stats.connectionErrors24h ? dashboardOverviewFormatCount(*stats.connectionErrors24h) : "unknown", dashboard_tone::zeroIsHealthy(stats.connectionErrors24h), dashboardOverviewOptionalDouble(stats.connectionErrors24h));
     dashboardOverviewAddMetric(card, "swept_24h", "Swept 24h", stats.sessionsSwept24h ? dashboardOverviewFormatCount(*stats.sessionsSwept24h) : "unknown", "info", dashboardOverviewOptionalDouble(stats.sessionsSwept24h));
 
     if (stats.status == "warning") {
@@ -490,7 +490,7 @@ DashboardCardSummary dashboardOverviewBuildFuse(const DashboardOverviewCardDescr
     dashboardOverviewAddMetric(card, "avg_latency", "Avg Latency", dashboardOverviewFormatMillis(avgLatencyMs), avgLatencyMs > 100.0 ? "warning" : "info", avgLatencyMs, "ms");
     dashboardOverviewAddMetric(card, "max_latency", "Max Latency", dashboardOverviewFormatMillis(maxLatencyMs), maxLatencyMs > 500.0 ? "warning" : "info", maxLatencyMs, "ms");
     dashboardOverviewAddMetric(card, "op_types", "Op Types", dashboardOverviewFormatCount(activeOpTypes), "info", static_cast<double>(activeOpTypes));
-    dashboardOverviewAddMetric(card, "errno_types", "Errno Types", dashboardOverviewFormatCount(stats.topErrors.size()), stats.topErrors.empty() ? "healthy" : "warning", static_cast<double>(stats.topErrors.size()));
+    dashboardOverviewAddMetric(card, "errno_types", "Errno Types", dashboardOverviewFormatCount(stats.topErrors.size()), dashboard_tone::fuseErrnoTypes(stats.topErrors.size(), stats.alertableErrnoTypes, card.severity), static_cast<double>(stats.topErrors.size()));
 
     if (stats.alertableErrorRate > 0.10) {
         dashboardOverviewAddIssue(card, "system.fuse.error_rate_high", "error", "FUSE alertable error rate is above 10%.", "alertable_error_rate");
@@ -601,10 +601,10 @@ DashboardCardSummary dashboardOverviewBuildDb(const DashboardOverviewCardDescrip
     dashboardOverviewAddMetric(card, "idle_tx_connections", "Idle Tx", dashboardOverviewFormatCount(stats->connectionsIdleInTransaction), stats->connectionsIdleInTransaction == 0 ? "healthy" : "warning", static_cast<double>(stats->connectionsIdleInTransaction));
     dashboardOverviewAddMetric(card, "max_connections", "Max Conn", stats->connectionsMax ? dashboardOverviewFormatCount(*stats->connectionsMax) : "unknown", "info", dashboardOverviewOptionalDouble(stats->connectionsMax));
     dashboardOverviewAddMetric(card, "cache_hit", "Cache Hit", stats->cacheHitRatio ? dashboardOverviewFormatPercent(*stats->cacheHitRatio) : "unknown", stats->cacheHitRatio ? "healthy" : "unknown", stats->cacheHitRatio);
-    dashboardOverviewAddMetric(card, "slow_queries", "Slow Queries", stats->slowQueryCount ? dashboardOverviewFormatCount(*stats->slowQueryCount) : "unknown", stats->slowQueryCount && *stats->slowQueryCount > 0 ? "warning" : "healthy", dashboardOverviewOptionalDouble(stats->slowQueryCount));
+    dashboardOverviewAddMetric(card, "slow_queries", "Slow Queries", stats->slowQueryCount ? dashboardOverviewFormatCount(*stats->slowQueryCount) : "unknown", dashboard_tone::zeroIsHealthy(stats->slowQueryCount), dashboardOverviewOptionalDouble(stats->slowQueryCount));
     dashboardOverviewAddMetric(card, "deadlocks", "Deadlocks", dashboardOverviewFormatCount(stats->deadlocks), stats->deadlocks == 0 ? "healthy" : "error", static_cast<double>(stats->deadlocks));
     dashboardOverviewAddMetric(card, "temp_bytes", "Temp Bytes", dashboardOverviewFormatBytes(stats->tempBytes), "info", static_cast<double>(stats->tempBytes), "bytes");
-    dashboardOverviewAddMetric(card, "oldest_tx", "Oldest Tx", dashboardOverviewFormatOptionalDuration(stats->oldestTransactionAgeSeconds), stats->oldestTransactionAgeSeconds ? "warning" : "healthy", dashboardOverviewOptionalDouble(stats->oldestTransactionAgeSeconds), "seconds");
+    dashboardOverviewAddMetric(card, "oldest_tx", "Oldest Tx", !stats->connected ? "unknown" : dashboardOverviewFormatOptionalDuration(stats->oldestTransactionAgeSeconds), dashboard_tone::dbOldestTransaction(stats->connected, stats->oldestTransactionAgeSeconds), dashboardOverviewOptionalDouble(stats->oldestTransactionAgeSeconds), "seconds");
     dashboardOverviewAddMetric(card, "largest_tables", "Tables", dashboardOverviewFormatCount(stats->largestTables.size()), "info", static_cast<double>(stats->largestTables.size()));
 
     if (!stats->connected) {
@@ -1020,6 +1020,29 @@ void dashboardOverviewAddAttention(DashboardOverview& overview, const DashboardC
         .href = issue.href ? issue.href : std::optional<std::string>(card.href),
         .metricKey = issue.metricKey,
     });
+}
+
+}
+
+namespace dashboard_tone {
+
+std::string zeroIsHealthy(const std::optional<std::uint64_t>& value, const std::string& nonZeroTone) {
+    if (!value) return "unknown";
+    return *value == 0 ? "healthy" : nonZeroTone;
+}
+
+std::string dbOldestTransaction(const bool connected, const std::optional<std::uint64_t>& ageSeconds) {
+    if (!connected) return "unknown";
+    if (!ageSeconds) return "healthy";
+    if (*ageSeconds >= kDbOldestTransactionCriticalSeconds) return "error";
+    if (*ageSeconds >= kDbOldestTransactionWarningSeconds) return "warning";
+    return "healthy";
+}
+
+std::string fuseErrnoTypes(const std::size_t errnoTypes, const std::uint64_t alertableErrnoTypes, const std::string& cardSeverity) {
+    if (errnoTypes == 0) return "healthy";
+    if (alertableErrnoTypes == 0) return "info";
+    return cardSeverity;
 }
 
 }

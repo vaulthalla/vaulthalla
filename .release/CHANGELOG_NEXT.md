@@ -66,6 +66,12 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
   return the session user's permissions as {qualified, value} only.
 - Add stats.dashboard.severity (overall status and counts without the
   dashboard cards) for the console's status badge.
+- Dashboard metric tones never report an unmeasured value as healthy
+  (slow_queries, connections errors_24h -> unknown); oldest_tx compares
+  the age with the DbStats thresholds (warning >= 1 h, error >= 24 h) and
+  excludes the stats query's own transaction; errno_types warns only for
+  errnos with alertable occurrences (FuseStats now tracks alertable_count
+  per errno and alertable_errno_types).
 - Add ws commands role.vault.overrides.{list,add,update,remove} for
   per-assignment, path-scoped vault permission overrides (the same ops and
   RBAC as vh vault role override ...).

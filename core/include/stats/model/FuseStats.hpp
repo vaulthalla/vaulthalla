@@ -61,6 +61,8 @@ struct FuseErrnoStatsSnapshot {
     int errnoValue = 0;
     std::string name;
     std::uint64_t count = 0;
+    // Occurrences of this errno that were not expected for the op that returned it (see isExpectedError).
+    std::uint64_t alertableCount = 0;
 };
 
 struct FuseStatsSnapshot {
@@ -78,6 +80,8 @@ struct FuseStatsSnapshot {
     std::uint64_t openHandlesPeak = 0;
     std::vector<FuseOpStatsSnapshot> ops;
     std::vector<FuseErrnoStatsSnapshot> topErrors;
+    // Distinct errnos with at least one alertable occurrence, counted before topErrors is truncated.
+    std::uint64_t alertableErrnoTypes = 0;
     std::uint64_t checkedAt = 0;
 };
 
@@ -120,6 +124,7 @@ private:
 
     std::array<OpCounters, static_cast<std::size_t>(FuseOperation::Count)> ops_{};
     std::array<std::atomic<std::uint64_t>, kErrnoBucketCount> errnoCounts_{};
+    std::array<std::atomic<std::uint64_t>, kErrnoBucketCount> alertableErrnoCounts_{};
     PaddedAtomic<std::uint64_t> unknownErrnoCount_;
     PaddedAtomic<std::uint64_t> openHandlesCurrent_;
     PaddedAtomic<std::uint64_t> openHandlesPeak_;

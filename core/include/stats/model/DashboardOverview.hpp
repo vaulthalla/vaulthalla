@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -114,6 +115,23 @@ struct DashboardOverview {
 private:
     static DashboardOverview build(const DashboardOverviewRequest& request, bool full);
 };
+
+// Metric tones the dashboard cards share (exposed for tests). A value that was not measured is "unknown", never
+// "healthy": stats never fake health.
+namespace dashboard_tone {
+
+// A count that should be zero: unknown when unmeasured, healthy at zero, otherwise nonZeroTone.
+std::string zeroIsHealthy(const std::optional<std::uint64_t>& value, const std::string& nonZeroTone = "warning");
+
+// The database's oldest open transaction against kDbOldestTransaction{Warning,Critical}Seconds. Connected with no
+// age means no transaction is open (healthy); disconnected means it was not measured (unknown).
+std::string dbOldestTransaction(bool connected, const std::optional<std::uint64_t>& ageSeconds);
+
+// FUSE errno variety: only errnos with alertable occurrences can carry the card's severity. Expected errnos alone
+// (lookup ENOENT, statfs EACCES) are info.
+std::string fuseErrnoTypes(std::size_t errnoTypes, std::uint64_t alertableErrnoTypes, const std::string& cardSeverity);
+
+}
 
 // The stats.dashboard.severity payload: {overall_status, error_count, warning_count, checked_at}.
 nlohmann::json dashboardSeverityJson(const DashboardOverview& overview);
