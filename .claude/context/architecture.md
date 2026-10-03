@@ -133,7 +133,7 @@ prod fallback `127.0.0.1:36968`). `web/src/app/api/auth/session/route.ts` proxie
 
 ## Database
 
-- PostgreSQL via libpqxx. The schema is `deploy/psql/000…099_*.sql`, applied in order (all in ONE transaction by `core/seed/include/SqlDeployer.hpp`) and installed to `/usr/share/vaulthalla/psql`.
+- PostgreSQL via libpqxx. The schema is `deploy/psql/000…100_*.sql`, applied in order (all in ONE transaction by `core/seed/include/SqlDeployer.hpp`) and installed to `/usr/share/vaulthalla/psql`.
   New migrations take the next number and must be idempotent against upgraded installs. SqlDeployer records sha256(raw bytes)
   per file and refuses to start on a mismatch, so **never edit a shipped migration**: 020/060/082 were edited in place and
   bricked upgrades (1.5.x→1.6.x crash loop on 060). Reviewed exceptions live in `kHistoricalMigrationChecksums` (accepted, recorded
@@ -147,6 +147,11 @@ prod fallback `127.0.0.1:36968`). `web/src/app/api/auth/session/route.ts` proxie
   reconnects and retries once only when BEGIN fails on a dead connection (before `fn` runs); later failures
   surface. Pool state is in `SystemHealth.database` (`vh status`, stats ws, watchdog). Queries live in
   `core/src/db/query/<domain>/`, prepared statements in `core/src/db/preparedStatements/`.
+- **Time zones (#157):** every daemon session runs with `TimeZone=UTC` (`db::Connection::configureSession`, on connect
+  and reconnect) and records the zone it started in as `vaulthalla.database_timezone`. Migration 100 converted every
+  `timestamp` column to `timestamptz`, reading old values in that recorded zone (manual psql runs fall back to the
+  session zone); columns a view depends on are skipped with a warning. New columns must be `TIMESTAMPTZ`. Text output
+  is `YYYY-MM-DD HH:MM:SS[.ffffff]+00`, which `db::encoding::parsePostgresTimestamp` handles. Guard: `DbTimezoneTest`.
 - `db::Janitor` handles sweeps. Stats rollups read from `file_activity`, `files_trashed`, `operations`, `share_*`.
 
 ## Subsystem directory map (`core/src`, mirrored in `core/include`)

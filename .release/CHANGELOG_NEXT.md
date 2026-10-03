@@ -14,7 +14,16 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
   sleeps until the earliest sync is due, a sync is queued, or the service
   stops.
 
-## S3 API keys
+## Database
+- Run every daemon DB session with TimeZone=UTC (recording the session's
+  original zone as vaulthalla.database_timezone) so naive timestamps are no
+  longer local wall time read back as UTC on non-UTC servers.
+- Migration 100 converts every timestamp column to timestamptz, reading
+  existing values in the recorded database zone (session zone for manual
+  runs); idempotent, keeps defaults and indexes, skips columns a view
+  depends on with a warning, and avoids the table rewrite when the zone is
+  UTC.
+
 - Add storage.apiKey.update: edits a key in place (same id, so vault s3
   bindings survive), keeps the sealed secret when none is given, re-checks
   credentials with the provider and reloads the engines of the vaults using it.

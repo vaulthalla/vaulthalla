@@ -8,14 +8,26 @@ Everything after the title is the Markdown release body. Describe the resulting 
 for users and operators; keep it representative of what actually ships.
 -->
 
-# API key edits keep vault bindings, long uploads finish, idle CPU fix
+# Correct times on non-UTC servers, safer API key edits, idle CPU fix
 
 The daemon no longer keeps one CPU core busy while it waits for the next vault sync. A background loop
 re-checked the sync schedule nonstop, so an idle server showed a constant load of about 1.0 with one core at
 100% (1.8.0 and earlier). It now sleeps until the next sync is due and still starts on-demand syncs
 immediately.
 
-## S3 API keys
+## Times on servers outside UTC
+
+On a server whose PostgreSQL time zone isn't UTC, most times the daemon reported were off by the UTC offset: a
+file uploaded a minute ago showed as "7 hours ago" on a Mountain Time host, and `vh user list` printed local times
+marked as UTC. The daemon now talks to PostgreSQL in UTC, and the upgrade converts every stored time to a
+time-zone-aware value.
+
+- **Before you upgrade:** the upgrade reads times already in the database as the database's current time zone
+  (`SHOW timezone` in `psql`). If you changed that setting after installing, times written before the change stay
+  off by the difference.
+- The first start after the upgrade rewrites the tables that hold times once, so it takes longer on large
+  installs. Servers already on UTC skip the rewrite.
+
 
 - Editing an API key in the web console now changes the key in place. It keeps its id, and every vault that
   uses it keeps its S3 binding. Saving an edit used to delete the key and create a new one, which silently
