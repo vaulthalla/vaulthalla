@@ -36,6 +36,8 @@ const watch = (page: Page) => {
 const wsTraffic = (page: Page) => {
   const stats = { sentCommands: [] as string[], receivedBytes: 0 }
   page.on('websocket', ws => {
+    // Only the console socket: not the dev server's HMR socket.
+    if (!/\/ws$/.test(new URL(ws.url()).pathname)) return
     ws.on('framesent', frame => {
       if (typeof frame.payload !== 'string') return
       try {
@@ -90,6 +92,7 @@ test.describe.serial('console', () => {
     await gotoFiles(page)
     await page.waitForTimeout(2000)
     // Session refresh + vault list + one directory listing: a few KB, never the 85 KB dashboard overview.
+    // Measure against a production build: React StrictMode doubles every request under `next dev`.
     expect(traffic.sentCommands).not.toContain('stats.dashboard.overview')
     expect(traffic.receivedBytes, 'ws bytes received while opening /files').toBeLessThan(20 * 1024)
 

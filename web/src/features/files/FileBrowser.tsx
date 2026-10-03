@@ -37,7 +37,15 @@ import {
   XmarkIcon,
 } from '@/components/ui/icons'
 import { useUiPrefs } from '@/components/shell/uiPrefs'
-import { baseName, joinPath, normalizePath, parentOf, pathSegments, sortEntries, type Entry } from '@/features/files/entries'
+import {
+  baseName,
+  joinPath,
+  normalizePath,
+  parentOf,
+  pathSegments,
+  sortEntries,
+  type Entry,
+} from '@/features/files/entries'
 import type { FsSource, Listing } from '@/features/files/source'
 import { FileIcon } from '@/features/files/FileIcon'
 import { useThumbnails } from '@/features/files/thumbnails'
@@ -47,7 +55,9 @@ import dynamic from 'next/dynamic'
 
 // Dialogs load the first time they're needed.
 const NameDialog = dynamic(() => import('@/features/files/dialogs').then(m => m.NameDialog), { ssr: false })
-const DestinationDialog = dynamic(() => import('@/features/files/dialogs').then(m => m.DestinationDialog), { ssr: false })
+const DestinationDialog = dynamic(() => import('@/features/files/dialogs').then(m => m.DestinationDialog), {
+  ssr: false,
+})
 const PreviewSheet = dynamic(() => import('@/features/files/PreviewSheet').then(m => m.PreviewSheet), { ssr: false })
 
 type SortKey = 'name' | 'size' | 'modified'
@@ -117,7 +127,8 @@ export function FileBrowser({ source, path, onNavigate, leading, onShare, classN
   // ---------- actions ----------
 
   const refresh = useCallback(
-    (...dirs: string[]) => Promise.all([current, ...dirs].map(dir => queryClient.invalidateQueries({ queryKey: listingKey(source, dir) }))),
+    (...dirs: string[]) =>
+      Promise.all([current, ...dirs].map(dir => queryClient.invalidateQueries({ queryKey: listingKey(source, dir) }))),
     [source, current],
   )
 
@@ -130,7 +141,13 @@ export function FileBrowser({ source, path, onNavigate, leading, onShare, classN
   )
 
   const download = useCallback(
-    (entry: Entry) => void startDownload(source, entry.path, entry.kind === 'dir' ? entry.name || source.rootLabel : entry.name, entry.kind === 'dir'),
+    (entry: Entry) =>
+      void startDownload(
+        source,
+        entry.path,
+        entry.kind === 'dir' ? entry.name || source.rootLabel : entry.name,
+        entry.kind === 'dir',
+      ),
     [source],
   )
 
@@ -153,9 +170,9 @@ export function FileBrowser({ source, path, onNavigate, leading, onShare, classN
       const ok = await confirm({
         title: targets.length === 1 ? `Delete “${targets[0].name}”?` : `Delete ${targets.length} items?`,
         description:
-          dirs > 0
-            ? 'Folders are deleted with everything inside them. Deleted items move to the vault’s trash retention.'
-            : 'Deleted items move to the vault’s trash retention.',
+          dirs > 0 ?
+            'Folders are deleted with everything inside them. Deleted items move to the vault’s trash retention.'
+          : 'Deleted items move to the vault’s trash retention.',
         confirmLabel: 'Delete',
       })
       if (!ok) return
@@ -170,7 +187,8 @@ export function FileBrowser({ source, path, onNavigate, leading, onShare, classN
       }
       setSelected(new Set())
       await refresh()
-      if (!failed) notify.success(targets.length === 1 ? `Deleted ${targets[0].name}` : `Deleted ${targets.length} items`)
+      if (!failed)
+        notify.success(targets.length === 1 ? `Deleted ${targets[0].name}` : `Deleted ${targets.length} items`)
     },
     [refresh, source],
   )
@@ -185,7 +203,9 @@ export function FileBrowser({ source, path, onNavigate, leading, onShare, classN
       }
       setSelected(new Set())
       await refresh(dir)
-      notify.success(`${mode === 'move' ? 'Moved' : 'Copied'} ${targets.length === 1 ? targets[0].name : `${targets.length} items`}`)
+      notify.success(
+        `${mode === 'move' ? 'Moved' : 'Copied'} ${targets.length === 1 ? targets[0].name : `${targets.length} items`}`,
+      )
     },
     [refresh, source],
   )
@@ -194,17 +214,57 @@ export function FileBrowser({ source, path, onNavigate, leading, onShare, classN
     (entry: Entry, many: Entry[] = [entry]): MenuEntry[] => {
       const multi = many.length > 1
       const list: MenuEntry[] = []
-      if (!multi) list.push({ key: 'open', label: entry.kind === 'dir' ? 'Open' : 'Preview', icon: entry.kind === 'dir' ? FolderOpenIcon : EyeIcon, onSelect: () => open(entry), shortcut: '↵' })
+      if (!multi)
+        list.push({
+          key: 'open',
+          label: entry.kind === 'dir' ? 'Open' : 'Preview',
+          icon: entry.kind === 'dir' ? FolderOpenIcon : EyeIcon,
+          onSelect: () => open(entry),
+          shortcut: '↵',
+        })
       if (source.caps.download)
-        list.push({ key: 'download', label: multi ? `Download ${many.length} items` : entry.kind === 'dir' ? 'Download as zip' : 'Download', icon: DownloadIcon, onSelect: () => many.forEach(download) })
-      if (!multi && source.caps.share && onShare) list.push({ key: 'share', label: 'Share link…', icon: ShareNodesIcon, onSelect: () => onShare(entry) })
+        list.push({
+          key: 'download',
+          label:
+            multi ? `Download ${many.length} items`
+            : entry.kind === 'dir' ? 'Download as zip'
+            : 'Download',
+          icon: DownloadIcon,
+          onSelect: () => many.forEach(download),
+        })
+      if (!multi && source.caps.share && onShare)
+        list.push({ key: 'share', label: 'Share link…', icon: ShareNodesIcon, onSelect: () => onShare(entry) })
       if (source.caps.mutate) {
         list.push('separator')
-        if (!multi) list.push({ key: 'rename', label: 'Rename…', icon: PenIcon, onSelect: () => setNaming({ mode: 'rename', entry }), shortcut: 'F2' })
-        list.push({ key: 'move', label: 'Move to…', icon: ArrowsUpDownLeftRightIcon, onSelect: () => setDestination({ mode: 'move', entries: many }) })
-        list.push({ key: 'copy', label: 'Copy to…', icon: CopyIcon, onSelect: () => setDestination({ mode: 'copy', entries: many }) })
+        if (!multi)
+          list.push({
+            key: 'rename',
+            label: 'Rename…',
+            icon: PenIcon,
+            onSelect: () => setNaming({ mode: 'rename', entry }),
+            shortcut: 'F2',
+          })
+        list.push({
+          key: 'move',
+          label: 'Move to…',
+          icon: ArrowsUpDownLeftRightIcon,
+          onSelect: () => setDestination({ mode: 'move', entries: many }),
+        })
+        list.push({
+          key: 'copy',
+          label: 'Copy to…',
+          icon: CopyIcon,
+          onSelect: () => setDestination({ mode: 'copy', entries: many }),
+        })
         list.push('separator')
-        list.push({ key: 'delete', label: multi ? `Delete ${many.length} items` : 'Delete', icon: TrashIcon, danger: true, onSelect: () => void remove(many), shortcut: 'Del' })
+        list.push({
+          key: 'delete',
+          label: multi ? `Delete ${many.length} items` : 'Delete',
+          icon: TrashIcon,
+          danger: true,
+          onSelect: () => void remove(many),
+          shortcut: 'Del',
+        })
       }
       return list
     },
@@ -315,8 +375,9 @@ export function FileBrowser({ source, path, onNavigate, leading, onShare, classN
   // ---------- drag & drop ----------
 
   const canUpload = source.caps.upload && !stale
-  const dropProps = canUpload
-    ? {
+  const dropProps =
+    canUpload ?
+      {
         onDragEnter: (event: React.DragEvent) => {
           if (!event.dataTransfer.types.includes('Files')) return
           event.preventDefault()
@@ -338,7 +399,9 @@ export function FileBrowser({ source, path, onNavigate, leading, onShare, classN
           event.preventDefault()
           dragDepth.current = 0
           setDragging(false)
-          void collectDropped(event.dataTransfer).then(upload, error => notify.error(error, 'Could not read the dropped files'))
+          void collectDropped(event.dataTransfer).then(upload, error =>
+            notify.error(error, 'Could not read the dropped files'),
+          )
         },
       }
     : {}
@@ -370,12 +433,16 @@ export function FileBrowser({ source, path, onNavigate, leading, onShare, classN
   const items = virtualizer.getVirtualItems()
   const firstRow = items[0]?.index ?? 0
   const lastRow = items.length ? items[items.length - 1].index : -1
-  const visibleEntries = view === 'grid' ? entries.slice(firstRow * gridCols, (lastRow + 1) * gridCols) : entries.slice(firstRow, lastRow + 1)
+  const visibleEntries =
+    view === 'grid' ?
+      entries.slice(firstRow * gridCols, (lastRow + 1) * gridCols)
+    : entries.slice(firstRow, lastRow + 1)
   const thumb = useThumbnails(source, visibleEntries, true)
 
-  const contextEntries = menuTarget
-    ? selected.has(menuTarget.key) && selectedEntries.length > 1
-      ? entryActions(menuTarget, selectedEntries)
+  const contextEntries =
+    menuTarget ?
+      selected.has(menuTarget.key) && selectedEntries.length > 1 ?
+        entryActions(menuTarget, selectedEntries)
       : entryActions(menuTarget)
     : []
 
@@ -386,124 +453,177 @@ export function FileBrowser({ source, path, onNavigate, leading, onShare, classN
 
   return (
     <div className={cn('relative', className)} {...dropProps}>
-      {/* toolbar */}
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        {leading}
-        <nav aria-label="Folder path" className="flex min-w-0 flex-1 items-center gap-0.5 text-sm">
-          <button
-            type="button"
-            onClick={() => onNavigate('/')}
-            className={cn('inline-flex max-w-[16rem] items-center gap-1.5 rounded-md px-2 py-1 text-fg-muted hover:bg-surface-2 hover:text-fg', !segments.length && 'font-medium text-fg')}>
-            <HouseIcon className="size-3.5 shrink-0" aria-hidden />
-            <span className={cn('truncate', leading && 'sr-only')}>{source.rootLabel}</span>
-          </button>
-          {segments.map((segment, index) => {
-            const last = index === segments.length - 1
-            return (
-              <React.Fragment key={index}>
-                <ChevronRightIcon className="size-3 shrink-0 text-fg-faint" aria-hidden />
-                <button
-                  type="button"
-                  aria-current={last ? 'page' : undefined}
-                  onClick={() => onNavigate(`/${segments.slice(0, index + 1).join('/')}`)}
-                  className={cn('max-w-[14rem] truncate rounded-md px-2 py-1 text-fg-muted hover:bg-surface-2 hover:text-fg', last && 'font-medium text-fg')}>
-                  {segment}
-                </button>
-              </React.Fragment>
-            )
-          })}
-          {listing.isFetching ? <Spinner className="ml-2 size-3.5" /> : null}
-        </nav>
-        <div className="flex items-center gap-1.5">
-          <div className="relative hidden sm:block">
-            <MagnifyingGlassIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-fg-faint" aria-hidden />
-            <Input value={filter} onChange={e => setFilter(e.target.value)} placeholder="Filter" aria-label="Filter this folder" className="h-8 w-40 pl-8" />
-          </div>
-          <IconButton label="Refresh" icon={ArrowsRotateIcon} size="icon-sm" onClick={() => void refresh()} />
-          <IconButton
-            label={view === 'list' ? 'Grid view' : 'List view'}
-            icon={view === 'list' ? Grid2Icon : ListIcon}
-            size="icon-sm"
-            onClick={() => setView(view === 'list' ? 'grid' : 'list')}
-          />
-          {source.caps.mutate ? (
-            <IconButton label="New folder" icon={FolderPlusIcon} size="icon-sm" disabled={stale} onClick={() => setNaming({ mode: 'mkdir' })} />
-          ) : null}
-          {source.caps.upload ? (
-            <DropdownMenu
-              label="Upload"
-              trigger={
-                <Button variant="primary" size="sm" disabled={stale}>
-                  <UploadIcon aria-hidden /> Upload
-                </Button>
-              }
-              entries={[
-                { key: 'files', label: 'Files…', icon: FileArrowUpIcon, onSelect: () => fileInput.current?.click() },
-                ...(source.caps.folders ? [{ key: 'folder', label: 'Folder…', icon: FolderOpenIcon, onSelect: () => folderInput.current?.click() }] : []),
-              ]}
+      {/* toolbar (the selection bar overlays it, so selecting never shifts the list under the pointer) */}
+      <div className="relative mb-4">
+        <div className="flex flex-wrap items-center gap-2">
+          {leading}
+          <nav aria-label="Folder path" className="flex min-w-0 flex-1 items-center gap-0.5 text-sm">
+            <button
+              type="button"
+              onClick={() => onNavigate('/')}
+              className={cn(
+                'text-fg-muted hover:bg-surface-2 hover:text-fg inline-flex max-w-[16rem] items-center gap-1.5 rounded-md px-2 py-1',
+                !segments.length && 'text-fg font-medium',
+              )}>
+              <HouseIcon className="size-3.5 shrink-0" aria-hidden />
+              <span className={cn('truncate', leading && 'sr-only')}>{source.rootLabel}</span>
+            </button>
+            {segments.map((segment, index) => {
+              const last = index === segments.length - 1
+              return (
+                <React.Fragment key={index}>
+                  <ChevronRightIcon className="text-fg-faint size-3 shrink-0" aria-hidden />
+                  <button
+                    type="button"
+                    aria-current={last ? 'page' : undefined}
+                    onClick={() => onNavigate(`/${segments.slice(0, index + 1).join('/')}`)}
+                    className={cn(
+                      'text-fg-muted hover:bg-surface-2 hover:text-fg max-w-[14rem] truncate rounded-md px-2 py-1',
+                      last && 'text-fg font-medium',
+                    )}>
+                    {segment}
+                  </button>
+                </React.Fragment>
+              )
+            })}
+            {listing.isFetching ?
+              <Spinner className="ml-2 size-3.5" />
+            : null}
+          </nav>
+          <div className="flex items-center gap-1.5">
+            <div className="relative hidden sm:block">
+              <MagnifyingGlassIcon
+                className="text-fg-faint pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2"
+                aria-hidden
+              />
+              <Input
+                value={filter}
+                onChange={e => setFilter(e.target.value)}
+                placeholder="Filter"
+                aria-label="Filter this folder"
+                className="h-8 w-40 pl-8"
+              />
+            </div>
+            <IconButton label="Refresh" icon={ArrowsRotateIcon} size="icon-sm" onClick={() => void refresh()} />
+            <IconButton
+              label={view === 'list' ? 'Grid view' : 'List view'}
+              icon={view === 'list' ? Grid2Icon : ListIcon}
+              size="icon-sm"
+              onClick={() => setView(view === 'list' ? 'grid' : 'list')}
             />
-          ) : null}
+            {source.caps.mutate ?
+              <IconButton
+                label="New folder"
+                icon={FolderPlusIcon}
+                size="icon-sm"
+                disabled={stale}
+                onClick={() => setNaming({ mode: 'mkdir' })}
+              />
+            : null}
+            {source.caps.upload ?
+              <DropdownMenu
+                label="Upload"
+                trigger={
+                  <Button variant="primary" size="sm" disabled={stale}>
+                    <UploadIcon aria-hidden /> Upload
+                  </Button>
+                }
+                entries={[
+                  { key: 'files', label: 'Files…', icon: FileArrowUpIcon, onSelect: () => fileInput.current?.click() },
+                  ...(source.caps.folders ?
+                    [
+                      {
+                        key: 'folder',
+                        label: 'Folder…',
+                        icon: FolderOpenIcon,
+                        onSelect: () => folderInput.current?.click(),
+                      },
+                    ]
+                  : []),
+                ]}
+              />
+            : null}
+          </div>
+          <input
+            ref={fileInput}
+            type="file"
+            multiple
+            hidden
+            onChange={event => {
+              upload(collectPicked(event.target.files))
+              event.target.value = ''
+            }}
+          />
+          <input
+            ref={folderInput}
+            type="file"
+            hidden
+            {...({ webkitdirectory: '', directory: '' } as Record<string, string>)}
+            onChange={event => {
+              upload(collectPicked(event.target.files))
+              event.target.value = ''
+            }}
+          />
         </div>
-        <input
-          ref={fileInput}
-          type="file"
-          multiple
-          hidden
-          onChange={event => {
-            upload(collectPicked(event.target.files))
-            event.target.value = ''
-          }}
-        />
-        <input
-          ref={folderInput}
-          type="file"
-          hidden
-          {...({ webkitdirectory: '', directory: '' } as Record<string, string>)}
-          onChange={event => {
-            upload(collectPicked(event.target.files))
-            event.target.value = ''
-          }}
-        />
-      </div>
-
-      {/* selection bar */}
-      {selectedEntries.length > 0 ? (
-        <div className="glass sticky top-16 z-20 mb-3 flex flex-wrap items-center gap-2 rounded-card px-3 py-2 text-sm">
-          <span className="mr-1 font-medium text-fg tabular">{selectedEntries.length} selected</span>
-          {source.caps.download ? (
-            <Button size="sm" variant="ghost" onClick={() => selectedEntries.forEach(download)}>
-              <DownloadIcon aria-hidden /> Download
-            </Button>
-          ) : null}
-          {source.caps.mutate ? (
-            <>
-              {selectedEntries.length === 1 ? (
-                <Button size="sm" variant="ghost" onClick={() => setNaming({ mode: 'rename', entry: selectedEntries[0] })}>
-                  <PenIcon aria-hidden /> Rename
+        {/* selection bar */}
+        {selectedEntries.length > 0 ?
+          <div className="animate-fade-in rounded-card border-accent-line bg-bg-raised absolute inset-0 z-20 flex border shadow-[var(--shadow-pop)] flex-wrap items-center gap-2 overflow-hidden px-3 text-sm">
+            <span className="text-fg tabular mr-1 font-medium">{selectedEntries.length} selected</span>
+            {source.caps.download ?
+              <Button size="sm" variant="ghost" onClick={() => selectedEntries.forEach(download)}>
+                <DownloadIcon aria-hidden /> Download
+              </Button>
+            : null}
+            {source.caps.mutate ?
+              <>
+                {selectedEntries.length === 1 ?
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setNaming({ mode: 'rename', entry: selectedEntries[0] })}>
+                    <PenIcon aria-hidden /> Rename
+                  </Button>
+                : null}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setDestination({ mode: 'move', entries: selectedEntries })}>
+                  <ArrowsUpDownLeftRightIcon aria-hidden /> Move
                 </Button>
-              ) : null}
-              <Button size="sm" variant="ghost" onClick={() => setDestination({ mode: 'move', entries: selectedEntries })}>
-                <ArrowsUpDownLeftRightIcon aria-hidden /> Move
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => setDestination({ mode: 'copy', entries: selectedEntries })}>
-                <CopyIcon aria-hidden /> Copy
-              </Button>
-              <Button size="sm" variant="danger" onClick={() => void remove(selectedEntries)}>
-                <TrashIcon aria-hidden /> Delete
-              </Button>
-            </>
-          ) : null}
-          <IconButton label="Clear selection" icon={XmarkIcon} size="icon-sm" className="ml-auto" onClick={() => setSelected(new Set())} />
-        </div>
-      ) : null}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setDestination({ mode: 'copy', entries: selectedEntries })}>
+                  <CopyIcon aria-hidden /> Copy
+                </Button>
+                <Button size="sm" variant="danger" onClick={() => void remove(selectedEntries)}>
+                  <TrashIcon aria-hidden /> Delete
+                </Button>
+              </>
+            : null}
+            <IconButton
+              label="Clear selection"
+              icon={XmarkIcon}
+              size="icon-sm"
+              className="ml-auto"
+              onClick={() => setSelected(new Set())}
+            />
+          </div>
+        : null}
+      </div>
 
       {/* body */}
       <div className="panel relative overflow-hidden">
-        {view === 'list' ? (
-          <div className="grid grid-cols-[2rem_minmax(0,1fr)_6rem_10rem_2.5rem] items-center gap-3 border-b border-line px-3 py-2 text-xs text-fg-subtle max-md:grid-cols-[2rem_minmax(0,1fr)_2.5rem]">
+        {view === 'list' ?
+          <div className="border-line text-fg-subtle grid grid-cols-[2rem_minmax(0,1fr)_6rem_10rem_2.5rem] items-center gap-3 border-b px-3 py-2 text-xs max-md:grid-cols-[2rem_minmax(0,1fr)_2.5rem]">
             <Checkbox
               aria-label="Select all"
-              checked={allSelected ? true : selected.size ? 'indeterminate' : false}
+              checked={
+                allSelected ? true
+                : selected.size ?
+                  'indeterminate'
+                : false
+              }
               onCheckedChange={() => setSelected(allSelected ? new Set() : new Set(entries.map(e => e.key)))}
               disabled={!entries.length || stale}
             />
@@ -512,8 +632,18 @@ export function FileBrowser({ source, path, onNavigate, leading, onShare, classN
                 key={key}
                 type="button"
                 onClick={() => setSort(s => ({ key, dir: s.key === key && s.dir === 'asc' ? 'desc' : 'asc' }))}
-                aria-sort={sort.key === key ? (sort.dir === 'asc' ? 'ascending' : 'descending') : undefined}
-                className={cn('flex items-center gap-1 text-left font-medium capitalize hover:text-fg', key !== 'name' && 'max-md:hidden', key === 'size' && 'justify-end')}>
+                aria-sort={
+                  sort.key === key ?
+                    sort.dir === 'asc' ?
+                      'ascending'
+                    : 'descending'
+                  : undefined
+                }
+                className={cn(
+                  'hover:text-fg flex items-center gap-1 text-left font-medium capitalize',
+                  key !== 'name' && 'max-md:hidden',
+                  key === 'size' && 'justify-end',
+                )}>
                 {key}
                 <span aria-hidden className={cn('text-[9px]', sort.key !== key && 'opacity-0')}>
                   {sort.dir === 'asc' ? '▲' : '▼'}
@@ -522,7 +652,7 @@ export function FileBrowser({ source, path, onNavigate, leading, onShare, classN
             ))}
             <span />
           </div>
-        ) : null}
+        : null}
 
         <ContextMenu entries={contextEntries} onOpenChange={o => !o && setMenuTarget(null)}>
           <div
@@ -534,42 +664,46 @@ export function FileBrowser({ source, path, onNavigate, leading, onShare, classN
             aria-activedescendant={entries[focus] ? `fs-row-${focus}` : undefined}
             tabIndex={0}
             onKeyDown={onKeyDown}
-            className={cn('relative min-h-64 outline-none focus-visible:shadow-[inset_0_0_0_1px_var(--accent-line)]', stale && 'pointer-events-none opacity-60 transition-opacity')}
+            className={cn(
+              'relative min-h-64 outline-none focus-visible:shadow-[inset_0_0_0_1px_var(--accent-line)]',
+              stale && 'pointer-events-none opacity-60 transition-opacity',
+            )}
             style={{ height: entries.length ? virtualizer.getTotalSize() : undefined }}>
-            {listing.isPending ? (
+            {listing.isPending ?
               <div className="space-y-2 p-4">
                 {Array.from({ length: 6 }, (_, i) => (
                   <div key={i} className="skeleton h-9" style={{ opacity: 1 - i * 0.14 }} />
                 ))}
               </div>
-            ) : listing.error && !listing.data ? (
+            : listing.error && !listing.data ?
               <ErrorState error={listing.error} onRetry={() => void listing.refetch()} />
-            ) : !entries.length ? (
-              filter ? (
+            : !entries.length ?
+              filter ?
                 <EmptyState title={`Nothing matches “${filter}”`} />
-              ) : (
-                <EmptyState
+              : <EmptyState
                   icon={FolderOpenIcon}
                   title={source.caps.list ? 'This folder is empty' : 'Nothing to show'}
                   description={source.caps.upload ? 'Drop files anywhere on this page, or use Upload.' : undefined}
                   action={
-                    source.caps.upload ? (
+                    source.caps.upload ?
                       <Button variant="secondary" onClick={() => fileInput.current?.click()}>
                         <UploadIcon aria-hidden /> Upload files
                       </Button>
-                    ) : undefined
+                    : undefined
                   }
                 />
-              )
-            ) : (
-              items.map(row => {
+
+            : items.map(row => {
                 if (view === 'grid') {
                   const start = row.index * gridCols
                   return (
                     <div
                       key={row.key}
                       className="absolute inset-x-0 grid gap-3 px-3 pt-3"
-                      style={{ transform: `translateY(${row.start - virtualizer.options.scrollMargin}px)`, gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))` }}>
+                      style={{
+                        transform: `translateY(${row.start - virtualizer.options.scrollMargin}px)`,
+                        gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))`,
+                      }}>
                       {entries.slice(start, start + gridCols).map((entry, offset) => (
                         <GridTile
                           key={entry.key}
@@ -611,57 +745,64 @@ export function FileBrowser({ source, path, onNavigate, leading, onShare, classN
                   />
                 )
               })
-            )}
+            }
           </div>
         </ContextMenu>
 
-        {entries.length ? (
-          <div className="flex items-center justify-between border-t border-line px-4 py-2 text-xs text-fg-subtle tabular">
-            <span>{countLabel(entries.filter(e => e.kind === 'dir').length, 'folder')} · {countLabel(entries.filter(e => e.kind === 'file').length, 'file')}</span>
+        {entries.length ?
+          <div className="border-line text-fg-subtle tabular flex items-center justify-between border-t px-4 py-2 text-xs">
+            <span>
+              {countLabel(entries.filter(e => e.kind === 'dir').length, 'folder')} ·{' '}
+              {countLabel(entries.filter(e => e.kind === 'file').length, 'file')}
+            </span>
             <span>{formatBytes(entries.reduce((sum, e) => sum + (e.kind === 'file' ? (e.size ?? 0) : 0), 0))}</span>
           </div>
-        ) : null}
+        : null}
       </div>
 
-      {dragging ? (
-        <div className="pointer-events-none fixed inset-0 z-50 grid animate-fade-in place-items-center bg-bg/70 backdrop-blur-sm">
-          <div className="glass-strong flex flex-col items-center gap-3 rounded-panel border-2 border-dashed border-accent-line px-14 py-10 text-center">
-            <UploadIcon className="size-8 text-accent-text" aria-hidden />
-            <p className="text-base font-medium text-fg">Drop to upload</p>
-            <p className="text-sm text-fg-subtle">into {current === '/' ? source.rootLabel : baseName(current)}</p>
+      {dragging ?
+        <div className="animate-fade-in bg-bg/70 pointer-events-none fixed inset-0 z-50 grid place-items-center backdrop-blur-sm">
+          <div className="glass-strong rounded-panel border-accent-line flex flex-col items-center gap-3 border-2 border-dashed px-14 py-10 text-center">
+            <UploadIcon className="text-accent-text size-8" aria-hidden />
+            <p className="text-fg text-base font-medium">Drop to upload</p>
+            <p className="text-fg-subtle text-sm">into {current === '/' ? source.rootLabel : baseName(current)}</p>
           </div>
         </div>
-      ) : null}
+      : null}
 
-      {preview ? <PreviewSheet
-        source={source}
-        entry={preview}
-        siblings={entries}
-        onOpenChange={o => !o && setPreview(null)}
-        onSelect={setPreview}
-        onDownload={download}
-        onShare={onShare}
-      /> : null}
+      {preview ?
+        <PreviewSheet
+          source={source}
+          entry={preview}
+          siblings={entries}
+          onOpenChange={o => !o && setPreview(null)}
+          onSelect={setPreview}
+          onDownload={download}
+          onShare={onShare}
+        />
+      : null}
 
-      {naming ? <NameDialog
-        open={naming !== null}
-        onOpenChange={o => !o && setNaming(null)}
-        title={naming?.mode === 'rename' ? `Rename ${naming.entry.kind === 'dir' ? 'folder' : 'file'}` : 'New folder'}
-        initial={naming?.mode === 'rename' ? naming.entry.name : ''}
-        confirmLabel={naming?.mode === 'rename' ? 'Rename' : 'Create'}
-        onSubmit={async name => {
-          if (naming?.mode === 'rename') {
-            if (name === naming.entry.name) return
-            await source.rename(naming.entry.path, joinPath(parentOf(naming.entry.path), name))
-            notify.success(`Renamed to ${name}`)
-          } else {
-            await source.mkdir(joinPath(current, name))
-          }
-          await refresh()
-        }}
-      /> : null}
+      {naming ?
+        <NameDialog
+          open={naming !== null}
+          onOpenChange={o => !o && setNaming(null)}
+          title={naming?.mode === 'rename' ? `Rename ${naming.entry.kind === 'dir' ? 'folder' : 'file'}` : 'New folder'}
+          initial={naming?.mode === 'rename' ? naming.entry.name : ''}
+          confirmLabel={naming?.mode === 'rename' ? 'Rename' : 'Create'}
+          onSubmit={async name => {
+            if (naming?.mode === 'rename') {
+              if (name === naming.entry.name) return
+              await source.rename(naming.entry.path, joinPath(parentOf(naming.entry.path), name))
+              notify.success(`Renamed to ${name}`)
+            } else {
+              await source.mkdir(joinPath(current, name))
+            }
+            await refresh()
+          }}
+        />
+      : null}
 
-      {destination ? (
+      {destination ?
         <DestinationDialog
           open
           onOpenChange={o => !o && setDestination(null)}
@@ -672,7 +813,7 @@ export function FileBrowser({ source, path, onNavigate, leading, onShare, classN
           disabledPaths={destination.entries.filter(e => e.kind === 'dir').map(e => e.path)}
           onSubmit={dir => transfer(destination.mode, destination.entries, dir)}
         />
-      ) : null}
+      : null}
     </div>
   )
 }
@@ -686,7 +827,7 @@ const RowMenu = ({ entries }: { entries: MenuEntry[] }) => (
         type="button"
         tabIndex={-1}
         aria-label="Item actions"
-        className="grid size-8 place-items-center rounded-md text-fg-subtle opacity-100 transition hover:bg-surface-3 hover:text-fg pointer-fine:opacity-0 pointer-fine:group-hover:opacity-100 pointer-fine:group-aria-selected:opacity-100 data-[state=open]:opacity-100">
+        className="text-fg-subtle hover:bg-surface-3 hover:text-fg grid size-8 place-items-center rounded-md opacity-100 transition data-[state=open]:opacity-100 pointer-fine:opacity-0 pointer-fine:group-hover:opacity-100 pointer-fine:group-aria-selected:opacity-100">
         <EllipsisIcon className="size-4" aria-hidden />
       </button>
     }
@@ -706,16 +847,32 @@ interface ItemProps {
 }
 
 const Thumb = ({ entry, thumb, large }: { entry: Entry; thumb: string | null; large?: boolean }) =>
-  thumb ? (
+  thumb ?
     // eslint-disable-next-line @next/next/no-img-element -- authenticated thumbnail route
-    <img src={thumb} alt="" loading="lazy" decoding="async" className={cn('shrink-0 rounded object-cover', large ? 'h-28 w-full' : 'size-8')} />
-  ) : (
-    <span className={cn('grid shrink-0 place-items-center rounded bg-surface-2', large ? 'h-28 w-full' : 'size-8')}>
+    <img
+      src={thumb}
+      alt=""
+      loading="lazy"
+      decoding="async"
+      className={cn('shrink-0 rounded object-cover', large ? 'h-28 w-full' : 'size-8')}
+    />
+  : <span className={cn('bg-surface-2 grid shrink-0 place-items-center rounded', large ? 'h-28 w-full' : 'size-8')}>
       <FileIcon entry={entry} className={large ? 'size-9' : undefined} />
     </span>
-  )
 
-const Row = React.memo(function Row({ id, entry, thumb, selected, focused, top, onClick, onToggle, onOpen, onContext, menu }: ItemProps & { top: number; onToggle: () => void }) {
+const Row = React.memo(function Row({
+  id,
+  entry,
+  thumb,
+  selected,
+  focused,
+  top,
+  onClick,
+  onToggle,
+  onOpen,
+  onContext,
+  menu,
+}: ItemProps & { top: number; onToggle: () => void }) {
   return (
     <div
       id={id}
@@ -725,7 +882,7 @@ const Row = React.memo(function Row({ id, entry, thumb, selected, focused, top, 
       onDoubleClick={onOpen}
       onContextMenu={onContext}
       className={cn(
-        'group absolute inset-x-0 grid cursor-default grid-cols-[2rem_minmax(0,1fr)_6rem_10rem_2.5rem] items-center gap-3 border-b border-line/50 px-3 text-sm transition-colors hover:bg-surface-2 max-md:grid-cols-[2rem_minmax(0,1fr)_2.5rem]',
+        'group border-line/50 hover:bg-surface-2 absolute inset-x-0 grid cursor-default select-none grid-cols-[2rem_minmax(0,1fr)_6rem_10rem_2.5rem] items-center gap-3 border-b px-3 text-sm transition-colors max-md:grid-cols-[2rem_minmax(0,1fr)_2.5rem]',
         selected && 'bg-accent-soft hover:bg-accent-soft',
         focused && 'shadow-[inset_2px_0_0_var(--accent)]',
       )}
@@ -736,7 +893,10 @@ const Row = React.memo(function Row({ id, entry, thumb, selected, focused, top, 
         checked={selected}
         onClick={event => event.stopPropagation()}
         onCheckedChange={onToggle}
-        className={cn('pointer-fine:opacity-0 pointer-fine:group-hover:opacity-100', selected && 'pointer-fine:opacity-100')}
+        className={cn(
+          'pointer-fine:opacity-0 pointer-fine:group-hover:opacity-100',
+          selected && 'pointer-fine:opacity-100',
+        )}
       />
       <div className="flex min-w-0 items-center gap-3">
         <Thumb entry={entry} thumb={thumb} />
@@ -745,22 +905,30 @@ const Row = React.memo(function Row({ id, entry, thumb, selected, focused, top, 
             type="button"
             tabIndex={-1}
             onClick={event => {
+              // The name works like a link; the row's own double-click handles the second click of a double-click.
+              if (event.detail > 1) return
               event.stopPropagation()
               onOpen()
             }}
-            className="block max-w-full truncate text-left text-fg hover:text-accent-text hover:underline-offset-2">
+            className="text-fg hover:text-accent-text inline-block max-w-full truncate text-left align-middle">
             {entry.name}
           </button>
-          <div className="truncate text-xs text-fg-subtle md:hidden">
+          <div className="text-fg-subtle truncate text-xs md:hidden">
             {entry.kind === 'dir' ? 'Folder' : formatBytes(entry.size)}
             {entry.modified ? ` · ${formatRelative(entry.modified)}` : ''}
           </div>
         </div>
       </div>
-      <span className="text-right text-fg-subtle tabular max-md:hidden">
-        {entry.kind === 'dir' ? (entry.fileCount !== undefined ? `${entry.fileCount + (entry.dirCount ?? 0)} items` : '—') : formatBytes(entry.size)}
+      <span className="text-fg-subtle tabular text-right max-md:hidden">
+        {entry.kind === 'dir' ?
+          entry.fileCount !== undefined ?
+            countLabel(entry.fileCount + (entry.dirCount ?? 0), 'item')
+          : '—'
+        : formatBytes(entry.size)}
       </span>
-      <span className="truncate text-fg-subtle max-md:hidden" title={entry.modified ? formatDateTime(entry.modified) : undefined}>
+      <span
+        className="text-fg-subtle truncate max-md:hidden"
+        title={entry.modified ? formatDateTime(entry.modified) : undefined}>
         {entry.modified ? formatRelative(entry.modified) : '—'}
       </span>
       <div onClick={event => event.stopPropagation()}>{menu}</div>
@@ -768,7 +936,17 @@ const Row = React.memo(function Row({ id, entry, thumb, selected, focused, top, 
   )
 })
 
-const GridTile = React.memo(function GridTile({ id, entry, thumb, selected, focused, onClick, onOpen, onContext, menu }: ItemProps) {
+const GridTile = React.memo(function GridTile({
+  id,
+  entry,
+  thumb,
+  selected,
+  focused,
+  onClick,
+  onOpen,
+  onContext,
+  menu,
+}: ItemProps) {
   return (
     <div
       id={id}
@@ -778,17 +956,27 @@ const GridTile = React.memo(function GridTile({ id, entry, thumb, selected, focu
       onDoubleClick={onOpen}
       onContextMenu={onContext}
       className={cn(
-        'group relative flex h-[184px] cursor-default flex-col gap-2 rounded-card border border-line bg-surface-1 p-2 transition-colors hover:border-line-strong hover:bg-surface-2',
+        'group rounded-card border-line bg-surface-1 hover:border-line-strong hover:bg-surface-2 relative flex h-[184px] cursor-default select-none flex-col gap-2 border p-2 transition-colors',
         selected && 'border-accent-line bg-accent-soft hover:border-accent-line hover:bg-accent-soft',
         focused && 'shadow-[0_0_0_1px_var(--accent)]',
       )}>
       <Thumb entry={entry} thumb={thumb} large />
       <div className="flex min-w-0 items-start gap-1">
         <div className="min-w-0 flex-1">
-          <button type="button" tabIndex={-1} onClick={event => { event.stopPropagation(); onOpen() }} className="block max-w-full truncate text-left text-sm text-fg hover:text-accent-text">
+          <button
+            type="button"
+            tabIndex={-1}
+            onClick={event => {
+              if (event.detail > 1) return
+              event.stopPropagation()
+              onOpen()
+            }}
+            className="text-fg hover:text-accent-text inline-block max-w-full truncate text-left text-sm">
             {entry.name}
           </button>
-          <div className="truncate text-xs text-fg-subtle tabular">{entry.kind === 'dir' ? 'Folder' : formatBytes(entry.size)}</div>
+          <div className="text-fg-subtle tabular truncate text-xs">
+            {entry.kind === 'dir' ? 'Folder' : formatBytes(entry.size)}
+          </div>
         </div>
         <div onClick={event => event.stopPropagation()}>{menu}</div>
       </div>

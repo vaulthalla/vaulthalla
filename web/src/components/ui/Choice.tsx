@@ -29,9 +29,7 @@ export const Checkbox = React.forwardRef<HTMLInputElement, CheckboxProps>(({ cla
       onChange={event => onCheckedChange?.(event.target.checked)}
       className={cn(
         'grid size-4 shrink-0 cursor-pointer appearance-none place-items-center rounded-[5px] border border-line-strong bg-black/30 transition-colors hover:border-accent-line disabled:cursor-not-allowed disabled:opacity-50',
-        'checked:border-accent checked:bg-accent indeterminate:border-accent indeterminate:bg-accent',
-        "checked:bg-[url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.2l2.3 2.3 4.7-5' fill='none' stroke='%23031318' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E\")] checked:bg-center checked:bg-no-repeat",
-        "indeterminate:bg-[url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M3 6h6' stroke='%23031318' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E\")] indeterminate:bg-center indeterminate:bg-no-repeat",
+        'check-control',
         className,
       )}
       {...props}

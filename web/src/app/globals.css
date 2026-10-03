@@ -198,3 +198,20 @@
 @utility scrollbar-thin {
     scrollbar-width: thin;
 }
+
+/* Native checkbox styling (components/ui/Choice.tsx): the check glyphs are data URLs, which can't live in class names. */
+@layer components {
+    .check-control:checked,
+    .check-control:indeterminate {
+        border-color: var(--accent);
+        background-color: var(--accent);
+        background-position: center;
+        background-repeat: no-repeat;
+    }
+    .check-control:checked {
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.2l2.3 2.3 4.7-5' fill='none' stroke='%23031318' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");
+    }
+    .check-control:indeterminate {
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M3 6h6' stroke='%23031318' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");
+    }
+}
