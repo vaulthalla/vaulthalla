@@ -126,11 +126,13 @@ export const LedgerTable = ({
   ledger,
   vaultName,
   gateway = false,
+  showEmptyTable = false,
   empty,
 }: {
   ledger: LedgerEntry[]
   vaultName: (id: number | null) => string | null
   gateway?: boolean
+  showEmptyTable?: boolean
   empty?: React.ReactNode
 }) => {
   const columns: Column<LedgerEntry>[] = [
@@ -208,7 +210,7 @@ export const LedgerTable = ({
       ),
     },
   ]
-  if (ledger.length === 0)
+  if (ledger.length === 0 && !showEmptyTable)
     return (
       <EmptyRows>
         {empty
@@ -221,6 +223,7 @@ export const LedgerTable = ({
       columns={columns}
       rowKey={e => e.id ?? `${e.run_uuid}-${e.request_uuid}-${e.created_at}`}
       initialSort={{ key: 'when', dir: 'desc' }}
+      empty={empty}
     />
   )
 }

@@ -9,6 +9,20 @@ export async function gotoS3Gateway(page: Page) {
   await expect(page.getByTestId('s3-gateway-section-service')).toBeVisible()
 }
 
+// The page is tabbed (Keys, Buckets, Budgets, Client setup); credential details open in a side sheet.
+export async function openTab(page: Page, name: 'Keys' | 'Buckets' | 'Budgets' | 'Client setup') {
+  await closeSheet(page)
+  await page.getByRole('tab', { name, exact: true }).click()
+}
+
+async function closeSheet(page: Page) {
+  const dialog = page.getByRole('dialog')
+  if (await dialog.count()) {
+    await page.keyboard.press('Escape')
+    await expect(dialog).toHaveCount(0)
+  }
+}
+
 export async function ensureVaultAvailable(page: Page) {
   const vaultName = uniqueE2EName('pw-vault-seed')
   await createLocalBucket(page, vaultName)
@@ -23,10 +37,11 @@ export async function createCredential(
   vaultName?: string,
   enforceLocalBudget = false,
 ) {
+  await openTab(page, 'Keys')
   await page.getByTestId('s3-gateway-open-create-credential').click()
   await expect(page.getByTestId('s3-gateway-create-credential-modal')).toBeVisible()
   await page.getByTestId('s3-gateway-credential-name-input').fill(name)
-  await page.getByTestId('s3-gateway-credential-scope-select').selectOption(scope)
+  await page.getByTestId(`s3-gateway-credential-scope-${scope}`).click()
   if (scope !== 'user_access') {
     const roleSelect = page.getByTestId('s3-gateway-create-default-role-select')
     await roleSelect.selectOption({ label: 'reader' }).catch(async () => {
@@ -34,11 +49,11 @@ export async function createCredential(
     })
   }
   if (scope === 'vault_allowlist') {
-    const vaultSelect = page.getByTestId('s3-gateway-create-selected-vault-select')
+    const vaultList = page.getByTestId('s3-gateway-create-selected-vaults')
     if (vaultName) {
-      await vaultSelect.selectOption(await optionValueByText(vaultSelect, vaultName))
+      await vaultList.getByRole('checkbox', { name: vaultName }).check()
     } else {
-      await selectFirstNonEmptyOption(vaultSelect)
+      await vaultList.getByRole('checkbox').first().check()
     }
   }
   if (enforceLocalBudget) {
@@ -130,12 +145,16 @@ export async function hideSecret(page: Page) {
 }
 
 export async function selectCredential(page: Page, name: string) {
-  const row = page.locator('tbody tr').filter({ has: page.getByTestId('s3-gateway-credential-name').filter({ hasText: name }) }).first()
-  await expect(row).toBeVisible()
-  await row.getByRole('button', { name: /select/i }).click()
+  await openTab(page, 'Keys')
+  const cell = page.getByTestId('s3-gateway-credential-name').filter({ hasText: name }).first()
+  await expect(cell).toBeVisible()
+  await cell.click()
+  await expect(page.getByTestId('s3-gateway-section-credential-roles')).toBeVisible()
 }
 
 export async function createLocalBucket(page: Page, name: string) {
+  await openTab(page, 'Buckets')
+  await page.getByTestId('s3-gateway-open-local-bucket').click()
   await page.getByTestId('s3-gateway-local-bucket-name-input').fill(name)
   await page.getByTestId('s3-gateway-create-local-bucket').click()
   await expect(page.getByTestId('s3-gateway-bucket-name').filter({ hasText: name })).toBeVisible()
@@ -145,7 +164,7 @@ export async function saveKeyBudget(page: Page, amount: string, waitForPolicy = 
   await page.getByTestId('s3-gateway-key-budget-input').fill(amount)
   await page.getByTestId('s3-gateway-key-budget-save').click()
   if (waitForPolicy) {
-    await expect(page.getByTestId('s3-gateway-section-budgets')).toContainText('gateway_credential')
+    await expect(page.getByTestId('s3-gateway-key-budget-disable')).toBeEnabled()
   }
 }
 
@@ -162,5 +181,5 @@ export async function saveKeyVaultBudget(page: Page, amount: string, vaultName?:
   }
   await page.getByTestId('s3-gateway-key-vault-budget-input').fill(amount)
   await page.getByTestId('s3-gateway-key-vault-budget-save').click()
-  await expect(page.getByTestId('s3-gateway-section-budgets')).toContainText('gateway_credential_vault')
+  await expect(page.getByTestId('s3-gateway-key-vault-budget-disable')).toBeEnabled()
 }
