@@ -83,7 +83,7 @@ export const VaultsPage = () => {
     {
       key: 'created',
       header: 'Created',
-      hideBelow: 'md',
+      hideBelow: 'xl',
       sortValue: v => v.created_at,
       cell: v => <span className="text-fg-subtle tabular">{formatDate(v.created_at)}</span>,
     },
@@ -151,7 +151,7 @@ export const VaultsPage = () => {
 export const OwnerName = ({ id, name }: { id: number; name?: string }) => {
   if (!id) return <span className="text-fg-faint">No owner</span>
   if (!name) return <span className="text-fg-subtle tabular">User #{id}</span>
-  return <span className="text-fg-muted">{name}</span>
+  return <span className="block max-w-[11rem] truncate text-fg-muted" title={name}>{name}</span>
 }
 
 export default VaultsPage

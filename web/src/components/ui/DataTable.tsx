@@ -15,10 +15,10 @@ export interface Column<T> {
   className?: string
   headerClassName?: string
   // Hide below this breakpoint.
-  hideBelow?: 'sm' | 'md' | 'lg'
+  hideBelow?: 'sm' | 'md' | 'lg' | 'xl'
 }
 
-const hide = { sm: 'hidden sm:table-cell', md: 'hidden md:table-cell', lg: 'hidden lg:table-cell' }
+const hide = { sm: 'hidden sm:table-cell', md: 'hidden md:table-cell', lg: 'hidden lg:table-cell', xl: 'hidden xl:table-cell' }
 
 // A compact, sortable, filterable list. Big lists (thousands of rows) belong in a virtualized view instead.
 export function DataTable<T>({
