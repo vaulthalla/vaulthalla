@@ -3,12 +3,15 @@
 #include "db/query/identities/User.hpp"
 #include "db/query/vault/APIKey.hpp"
 #include "identities/User.hpp"
+#include "log/Registry.hpp"
 #include "rbac/resolver/admin/all.hpp"
 #include "runtime/Deps.hpp"
+#include "storage/Manager.hpp"
 #include "storage/s3/Controller.hpp"
 #include "vault/APIKeyManager.hpp"
 
 #include <paths.h>
+#include <pqxx/except>
 
 #include <algorithm>
 #include <utility>
@@ -80,11 +83,80 @@ APIKeyPtr create(const Actor& actor, const Create& req) {
     return requireKey(key->id);
 }
 
+APIKeyPtr update(const Actor& actor, const Ref& ref, const Update& req) {
+    requireActor(actor);
+    auto key = requireKey(ref);
+    if (!canOnKey(actor, KeyPerm::Edit, key->id)) throw Denied("you do not have permission to edit this API key");
+
+    if (req.name) key->name = *req.name;
+    if (req.provider) key->provider = *req.provider;
+    if (req.access_key) key->access_key = *req.access_key;
+    if (req.endpoint) key->endpoint = *req.endpoint;
+    if (req.region) key->region = req.region->empty() ? "auto" : *req.region;
+
+    std::vector<std::string> missing;
+    if (key->name.empty()) missing.emplace_back("name");
+    if (key->access_key.empty()) missing.emplace_back("access key");
+    if (key->endpoint.empty()) missing.emplace_back("endpoint");
+    if (!missing.empty()) {
+        std::string msg = "missing required";
+        for (const auto& m : missing) msg += " " + m + (m == missing.back() ? "" : ",");
+        throw Invalid(msg);
+    }
+
+    const bool newSecret = req.secret_access_key && !req.secret_access_key->empty();
+    if (!paths::testMode) {
+        auto probe = std::make_shared<vault::model::APIKey>(*key);
+        probe->secret_access_key = newSecret
+            ? *req.secret_access_key
+            : runtime::Deps::get().apiKeyManager->getAPIKey(key->id)->secret_access_key;
+        const auto [valid, errors] = storage::s3::Controller(probe, "").validateAPICredentials();
+        if (!valid) throw Invalid("API key validation failed:\n" + errors);
+    }
+    if (newSecret) key->secret_access_key = *req.secret_access_key;
+
+    try {
+        runtime::Deps::get().apiKeyManager->updateAPIKey(key);
+    } catch (const pqxx::unique_violation&) {
+        throw Conflict("another API key of this owner already has this name and access key");
+    }
+
+    // Vaults bound to the key keep their binding (same id); their live engines pick up the new credentials.
+    if (const auto& storage = runtime::Deps::get().storageManager) {
+        for (const auto& [vaultId, vaultName] : db::query::vault::APIKey::listVaultsUsingKey(key->id)) {
+            try {
+                storage->reloadEngine(vaultId);
+            } catch (const std::exception& e) {
+                log::Registry::storage()->warn("[ops::api_keys] API key {} updated, but reloading vault {} ({}) failed: {}",
+                                               key->id, vaultName, vaultId, e.what());
+            }
+        }
+    }
+    return requireKey(key->id);
+}
+
 APIKeyPtr remove(const Actor& actor, const Ref& ref) {
     requireActor(actor);
     auto key = requireKey(ref);
     if (!canOnKey(actor, KeyPerm::Remove, key->id)) throw Denied("you do not have permission to remove this API key");
-    runtime::Deps::get().apiKeyManager->removeAPIKey(key->id);
+
+    // Removing a key used to cascade into every vault's s3 row (bucket binding gone, silently). Refuse instead;
+    // the s3.api_key_id foreign key is ON DELETE RESTRICT (migration 099) for anything racing this check.
+    const auto refuseInUse = [&](const std::vector<std::pair<unsigned int, std::string>>& vaults) {
+        std::string names;
+        for (const auto& [id, name] : vaults) names += (names.empty() ? "" : ", ") + name;
+        throw Invalid("API key '" + key->name + "' is in use by " + std::to_string(vaults.size()) +
+                      (vaults.size() == 1 ? " vault: " : " vaults: ") + names +
+                      ". Move or remove those vaults first.");
+    };
+    if (const auto vaults = db::query::vault::APIKey::listVaultsUsingKey(key->id); !vaults.empty()) refuseInUse(vaults);
+
+    try {
+        runtime::Deps::get().apiKeyManager->removeAPIKey(key->id);
+    } catch (const pqxx::foreign_key_violation&) {
+        refuseInUse(db::query::vault::APIKey::listVaultsUsingKey(key->id));
+        throw;
+    }
     return key;
 }
 

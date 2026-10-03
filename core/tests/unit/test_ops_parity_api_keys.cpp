@@ -12,6 +12,7 @@
 #include "ops/APIKeys.hpp"
 #include "ops/Error.hpp"
 #include "ops/Roles.hpp"
+#include "ops/Users.hpp"
 #include "protocols/shell/Router.hpp"
 #include "protocols/shell/commands/all.hpp"
 #include "protocols/ws/Router.hpp"
@@ -30,6 +31,7 @@
 #include <paths.h>
 #include <pqxx/pqxx>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -125,6 +127,29 @@ protected:
                                                           "us-east-1", "https://s3.example.com");
         return runtime::Deps::get().apiKeyManager->addAPIKey(key);
     }
+
+    static unsigned int bindS3Vault(const UserPtr& owner, const unsigned int keyId, const std::string& bucket,
+                                    std::string name = {}) {
+        if (name.empty()) name = "ak_vault_" + keysTag();
+        return db::Transactions::exec("APIKeyParityTest::bindS3Vault", [&](pqxx::work& txn) {
+            const auto id = txn.exec(
+                "INSERT INTO vault (type, name, owner_id, mount_point, description) VALUES ('s3', $1, $2, $3, '') RETURNING id",
+                pqxx::params{name, owner->id, name.substr(0, 30)}).one_field().as<unsigned int>();
+            txn.exec("INSERT INTO s3 (vault_id, api_key_id, bucket) VALUES ($1, $2, $3)", pqxx::params{id, keyId, bucket});
+            txn.exec("WITH ins AS (INSERT INTO sync (vault_id, interval) VALUES ($1, 300) RETURNING id) "
+                     "INSERT INTO rsync (sync_id, strategy, conflict_policy) SELECT id, 'cache', 'keep_remote' FROM ins",
+                     pqxx::params{id});
+            return id;
+        });
+    }
+
+    // The key the vault's s3 row points at; 0 when the row is gone.
+    static unsigned int boundKey(const unsigned int vaultId) {
+        return db::Transactions::exec("APIKeyParityTest::boundKey", [&](pqxx::work& txn) -> unsigned int {
+            const auto res = txn.exec("SELECT api_key_id FROM s3 WHERE vault_id = $1", pqxx::params{vaultId});
+            return res.empty() ? 0u : res.one_field().as<unsigned int>();
+        });
+    }
 };
 
 TEST_F(APIKeyParityTest, CliAndWsCreateTheSameKeyForTheCaller) {
@@ -173,8 +198,89 @@ TEST_F(APIKeyParityTest, VisibilityMatchesAcrossSurfaces) {
     EXPECT_EQ(got.at("api_key").at("api_key_id").get<unsigned int>(), alicesKey);
     EXPECT_FALSE(got.dump().contains("secret-value")) << "get must not expose the secret";
 
-    const auto listed = json::parse(protocols::ws::handler::APIKeys::list(ws(bob)).at("keys").get<std::string>());
+    // #154: a real array, not the array JSON-encoded into a string.
+    const auto listed = protocols::ws::handler::APIKeys::list(ws(bob)).at("keys");
+    ASSERT_TRUE(listed.is_array());
     for (const auto& k : listed) EXPECT_NE(k.at("user_id").get<unsigned int>(), alice->id) << "bob sees alice's key";
+    const auto own = protocols::ws::handler::APIKeys::list(ws(alice)).at("keys");
+    ASSERT_TRUE(own.is_array());
+    EXPECT_TRUE(std::ranges::any_of(own, [&](const json& k) { return k.at("api_key_id").get<unsigned int>() == alicesKey; }));
+}
+
+// #137: an edit used to be delete + re-create, and the delete cascaded into every vault's s3 row.
+TEST_F(APIKeyParityTest, UpdateEditsInPlaceKeepingTheIdAndEveryVaultBinding) {
+    const auto keyId = seedKey(superUser);
+    const auto vaultId = bindS3Vault(alice, keyId, "ak-update-bucket");
+    const auto before = db::query::vault::APIKey::getAPIKey(keyId);
+
+    // Without keys.api edit (alice's self-only role has none) the edit is refused and nothing changes.
+    EXPECT_THROW((void)protocols::ws::handler::APIKeys::update(json{{"id", keyId}, {"name", "nope"}}, ws(alice)),
+                 ops::Denied);
+
+    const auto renamed = "ak_renamed_" + keysTag();
+    const auto updated = protocols::ws::handler::APIKeys::update(json{
+        {"id", keyId}, {"name", renamed}, {"provider", "Cloudflare R2"}, {"region", "auto"},
+        {"endpoint", "https://r2.example.com"}, {"access_key", "AKIAROTATED"}, {"secret_access_key", ""}}, ws(superUser));
+    EXPECT_EQ(updated.at("api_key").at("api_key_id").get<unsigned int>(), keyId);
+    EXPECT_FALSE(updated.dump().contains("secret-value"));
+
+    auto after = db::query::vault::APIKey::getAPIKey(keyId);
+    ASSERT_TRUE(after);
+    EXPECT_EQ(after->name, renamed);
+    EXPECT_EQ(after->provider, vault::model::S3Provider::CloudflareR2);
+    EXPECT_EQ(after->access_key, "AKIAROTATED");
+    EXPECT_EQ(after->endpoint, "https://r2.example.com");
+    // An empty secret keeps the sealed one.
+    EXPECT_EQ(after->encrypted_secret_access_key, before->encrypted_secret_access_key);
+    EXPECT_EQ(runtime::Deps::get().apiKeyManager->getAPIKey(keyId)->secret_access_key, "secret-value-0000000000000000000000000");
+    EXPECT_EQ(boundKey(vaultId), keyId) << "the vault lost its S3 binding";
+
+    // A new secret is re-sealed in place.
+    (void)protocols::ws::handler::APIKeys::update(json{{"id", keyId}, {"secret_access_key", "rotated-secret"}}, ws(superUser));
+    after = db::query::vault::APIKey::getAPIKey(keyId);
+    EXPECT_NE(after->encrypted_secret_access_key, before->encrypted_secret_access_key);
+    EXPECT_EQ(runtime::Deps::get().apiKeyManager->getAPIKey(keyId)->secret_access_key, "rotated-secret");
+    EXPECT_EQ(after->name, renamed) << "omitted fields keep their value";
+    EXPECT_EQ(boundKey(vaultId), keyId);
+
+    EXPECT_THROW((void)protocols::ws::handler::APIKeys::update(json{{"id", keyId}, {"name", ""}}, ws(superUser)), ops::Invalid);
+}
+
+TEST_F(APIKeyParityTest, RemoveRefusesWhileAVaultUsesTheKeyOnBothSurfaces) {
+    const auto keyId = seedKey(superUser);
+    const auto vaultName = "ak_bound_" + keysTag();
+    const auto vaultId = bindS3Vault(alice, keyId, "ak-remove-bucket", vaultName);
+
+    EXPECT_NE(cli("api-key delete " + std::to_string(keyId), superUser), 0);
+    try {
+        (void)protocols::ws::handler::APIKeys::remove(json{{"id", keyId}}, ws(superUser));
+        ADD_FAILURE() << "an in-use key was removed";
+    } catch (const ops::Invalid& e) {
+        EXPECT_TRUE(std::string(e.what()).contains(vaultName)) << e.what();
+    }
+    EXPECT_TRUE(db::query::vault::APIKey::getAPIKey(keyId));
+    EXPECT_EQ(boundKey(vaultId), keyId);
+
+    // The database refuses as well (migration 099: ON DELETE RESTRICT, was CASCADE).
+    EXPECT_THROW(db::Transactions::exec("APIKeyParityTest::rawDelete", [&](pqxx::work& txn) {
+        txn.exec("DELETE FROM api_keys WHERE id = $1", pqxx::params{keyId});
+    }), pqxx::foreign_key_violation);
+    EXPECT_EQ(boundKey(vaultId), keyId);
+
+    // Deleting the account that owns a key a surviving vault uses is refused up front, before anything changes.
+    const auto owner = createUser("ak_owner_" + keysTag(), "unprivileged");
+    const auto ownersKey = seedKey(owner);
+    const auto othersVault = bindS3Vault(alice, ownersKey, "ak-owner-bucket");
+    EXPECT_THROW((void)ops::users::remove(superUser, {.id = owner->id, .transfer_to = std::nullopt, .confirmed = true}), ops::Invalid);
+    EXPECT_TRUE(db::query::identities::User::getUserById(owner->id));
+    EXPECT_EQ(boundKey(othersVault), ownersKey);
+
+    // Once nothing uses it, the key goes.
+    db::Transactions::exec("APIKeyParityTest::unbind", [&](pqxx::work& txn) {
+        txn.exec("DELETE FROM vault WHERE id = $1", pqxx::params{vaultId});
+    });
+    EXPECT_EQ(cli("api-key delete " + std::to_string(keyId), superUser), 0);
+    EXPECT_FALSE(db::query::vault::APIKey::getAPIKey(keyId));
 }
 
 TEST_F(APIKeyParityTest, VaultUsingAConsumableKeyOfAnotherOwnerBuildsItsEngine) {

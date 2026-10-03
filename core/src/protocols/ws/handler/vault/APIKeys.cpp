@@ -3,11 +3,26 @@
 #include "identities/User.hpp"
 #include "protocols/ws/Session.hpp"
 #include "ops/APIKeys.hpp"
+#include "ops/Error.hpp"
 
 #include <nlohmann/json.hpp>
 
+#include <optional>
+#include <stdexcept>
+#include <string>
+
 using namespace vh::protocols::ws::handler;
 using json = nlohmann::json;
+
+namespace {
+
+std::optional<std::string> optionalApiKeyField(const json& payload, const char* field) {
+    if (!payload.contains(field) || payload.at(field).is_null()) return std::nullopt;
+    if (!payload.at(field).is_string()) throw vh::ops::Invalid(std::string(field) + " must be a string");
+    return payload.at(field).get<std::string>();
+}
+
+}
 
 json APIKeys::add(const json& payload, const std::shared_ptr<Session>& session) {
     std::optional<vh::ops::api_keys::Ref> owner;
@@ -25,14 +40,34 @@ json APIKeys::add(const json& payload, const std::shared_ptr<Session>& session) 
     return {{"api_key", key}};
 }
 
+json APIKeys::update(const json& payload, const std::shared_ptr<Session>& session) {
+    vh::ops::api_keys::Update req{
+        .name = optionalApiKeyField(payload, "name"),
+        .provider = std::nullopt,
+        .access_key = optionalApiKeyField(payload, "access_key"),
+        // Omitted, null or "" keeps the sealed secret (the console never has it to send back).
+        .secret_access_key = optionalApiKeyField(payload, "secret_access_key"),
+        .endpoint = optionalApiKeyField(payload, "endpoint"),
+        .region = optionalApiKeyField(payload, "region"),
+    };
+    if (const auto provider = optionalApiKeyField(payload, "provider")) {
+        try {
+            req.provider = vh::vault::model::s3_provider_from_string(*provider);
+        } catch (const std::invalid_argument&) {
+            throw vh::ops::Invalid("invalid provider '" + *provider + "'");
+        }
+    }
+    return {{"api_key", vh::ops::api_keys::update(session->user, payload.at("id").get<unsigned int>(), req)}};
+}
+
 json APIKeys::remove(const json& payload, const std::shared_ptr<Session>& session) {
     (void)vh::ops::api_keys::remove(session->user, payload.at("id").get<unsigned int>());
     return {};
 }
 
 json APIKeys::list(const std::shared_ptr<Session>& session) {
-    // The console parses `keys` as a JSON string (WebSocketCommandMap types it `string`).
-    return {{"keys", json(vh::ops::api_keys::list(session->user)).dump(4)}};
+    // A real array (it used to be the array JSON-encoded into a string).
+    return {{"keys", json(vh::ops::api_keys::list(session->user))}};
 }
 
 json APIKeys::get(const json& payload, const std::shared_ptr<Session>& session) {

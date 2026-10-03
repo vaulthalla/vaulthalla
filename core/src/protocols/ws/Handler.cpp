@@ -91,6 +91,7 @@ void Handler::registerStorageHandlers(const std::shared_ptr<Router>& r) {
 
 void Handler::registerAPIKeyHandlers(const std::shared_ptr<Router>& r) {
     r->registerPayload("storage.apiKey.add", &handler::APIKeys::add);
+    r->registerPayload("storage.apiKey.update", &handler::APIKeys::update);
     r->registerPayload("storage.apiKey.remove", &handler::APIKeys::remove);
     r->registerSessionOnlyHandler("storage.apiKey.list", &handler::APIKeys::list);
     r->registerPayload("storage.apiKey.get", &handler::APIKeys::get);

@@ -19,6 +19,16 @@ void vh::db::Connection::initPreparedAPIKeys() const {
                    "  created_at = CURRENT_TIMESTAMP "
                    "RETURNING id");
 
+    // In-place edit: the id (and so every vault's s3.api_key_id) stays.
+    conn_->prepare("update_api_key",
+                   "UPDATE api_keys SET name = $2, provider = $3, access_key = $4, "
+                   "encrypted_secret_access_key = $5, iv = $6, region = $7, endpoint = $8 "
+                   "WHERE id = $1");
+
+    conn_->prepare("list_api_key_vaults",
+                   "SELECT v.id, v.name FROM s3 JOIN vault v ON v.id = s3.vault_id "
+                   "WHERE s3.api_key_id = $1 ORDER BY v.name, v.id");
+
     conn_->prepare("remove_api_key",
                    "DELETE FROM api_keys WHERE id = $1");
 

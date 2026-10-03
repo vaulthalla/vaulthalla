@@ -3,6 +3,8 @@
 #include "db/model/ListQueryParams.hpp"
 
 #include <memory>
+#include <string>
+#include <utility>
 #include <vector>
 
 namespace vh::vault::model { struct APIKey; }
@@ -19,7 +21,13 @@ public:
 
     static unsigned int upsertAPIKey(const APIKeyPtr& key);
 
+    // Rewrites every column but user_id/created_at from `key` (encrypted secret included), keeping the id.
+    static void updateAPIKey(const APIKeyPtr& key);
+
     static void removeAPIKey(unsigned int keyId);
+
+    // (vault id, vault name) of every vault whose s3 binding uses the key.
+    static std::vector<std::pair<unsigned int, std::string>> listVaultsUsingKey(unsigned int keyId);
 
     static std::vector<APIKeyPtr> listAPIKeys(unsigned int userId, const model::ListQueryParams& params = {});
 
