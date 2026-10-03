@@ -235,9 +235,20 @@ class DebianInstallFlowContractTests(unittest.TestCase):
         for fragment in required:
             self.assertIn(fragment, readme)
 
-    def test_top_level_readme_matches_low_prompt_install_contract(self) -> None:
+    def test_install_docs_match_low_prompt_install_contract(self) -> None:
+        # The README is a brief front page (recommended installer + first sign-in + a docs pointer); the manual APT
+        # path, install opt-outs and post-install setup live in the installation guide.
         readme = (self._repo_root() / "README.md").read_text(encoding="utf-8")
-        required = (
+        guide = (self._repo_root() / "docs/getting-started/installation.md").read_text(encoding="utf-8")
+        for fragment in (
+            "curl -fsSL https://apt.vaulthalla.sh/install.sh | bash",
+            "https://vaulthalla.io/docs",
+            "/var/lib/vaulthalla/super_admin_initial_password",
+            "vh setup set-super-admin-password",
+            "sudo vh setup nginx --domain <domain> --certbot",
+        ):
+            self.assertIn(fragment, readme)
+        for fragment in (
             "sudo apt install vaulthalla",
             "sudo apt install --no-install-recommends vaulthalla",
             "VH_SKIP_DB_BOOTSTRAP=1 sudo -E apt install vaulthalla",
@@ -245,19 +256,12 @@ class DebianInstallFlowContractTests(unittest.TestCase):
             "vh setup db",
             "vh setup remote-db",
             "vh setup nginx",
-            "sudo vh setup nginx --domain <domain> --certbot",
             "vh teardown nginx",
-            "The CLI is the control plane.",
-        )
-        forbidden = (
-            "Debian Install Prompts",
-            "Initialize PostgreSQL database?",
-            "Super-admin Linux UID",
-        )
-        for fragment in required:
-            self.assertIn(fragment, readme)
-        for fragment in forbidden:
-            self.assertNotIn(fragment, readme)
+        ):
+            self.assertIn(fragment, guide)
+        for text in (readme, guide):
+            for fragment in ("Debian Install Prompts", "Initialize PostgreSQL database?", "Super-admin Linux UID"):
+                self.assertNotIn(fragment, text)
 
     def test_shell_usage_and_command_registry_include_setup_and_teardown(self) -> None:
         repo = self._repo_root()
