@@ -179,18 +179,21 @@ vh::rbac::role::Vault shareDownloadOnlyRole() {
     );
 }
 
-vh::rbac::role::Vault shareUploadDropboxRole() {
+vh::rbac::role::Vault uploadDropboxRoleTemplate() {
     namespace role = vh::rbac::role;
     namespace permission = vh::rbac::permission;
     namespace fs = vh::rbac::permission::vault::fs;
 
+    // Upload-only: recipients of a dropbox link must not see each other's submissions, so no directory List (it
+    // was granted before #151; installs seeded earlier keep their row, and their links are bounded by allowed_ops).
+    // Share uploads need nothing but Upload: the parent resolves as Write (directory Upload), the file as Write
+    // (file Upload). Touch stays for folder creation.
     auto files = fs::Files::Custom(
         static_cast<fs::Files::SetMask>(fs::FilePermissions::Upload),
         fs::Share::None(std::string{fs::Files::FLAG_PREFIX})
     );
     auto dirs = fs::Directories::Custom(
         static_cast<fs::Directories::SetMask>(
-            static_cast<fs::Directories::SetMask>(fs::DirectoryPermissions::List) |
             static_cast<fs::Directories::SetMask>(fs::DirectoryPermissions::Upload) |
             static_cast<fs::Directories::SetMask>(fs::DirectoryPermissions::Touch)
         ),
@@ -199,7 +202,7 @@ vh::rbac::role::Vault shareUploadDropboxRole() {
 
     return role::Vault::Custom(
         "share_upload_dropbox",
-        "Share-focused role template for directory dropbox uploads without download access.",
+        "Share-focused role template for upload-only dropbox links: no listing, preview or download.",
         role::vault::Base::Custom(
             permission::vault::Roles::None(),
             permission::vault::Sync::None(),
@@ -377,7 +380,7 @@ void vh::seed::initRoles() {
             "Share-focused role template for browsing, previewing, and downloading scoped content.",
             role::vault::Base::Reader()
         ),
-        shareUploadDropboxRole(),
+        uploadDropboxRoleTemplate(),
         role::Vault::Custom(
             "share_contributor_scoped",
             "Share-focused role template for scoped collaborative upload and download access.",
@@ -505,6 +508,8 @@ void vh::seed::initSystemUser() {
 }
 
 namespace vh::seed {
+
+rbac::role::Vault shareUploadDropboxRole() { return uploadDropboxRoleTemplate(); }
 
 static std::optional<unsigned int> loadPendingSuperAdminUid() {
     const std::filesystem::path uidFile{paths::getRuntimePath() / "superadmin_uid"};

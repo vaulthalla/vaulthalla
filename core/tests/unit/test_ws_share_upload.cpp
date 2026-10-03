@@ -7,8 +7,10 @@
 #include "protocols/ws/Session.hpp"
 #include "protocols/ws/handler/fs/Upload.hpp"
 #include "protocols/ws/handler/share/Upload.hpp"
+#include "rbac/fs/policy/Share.hpp"
 #include "rbac/role/Vault.hpp"
 #include "runtime/Deps.hpp"
+#include "seed/include/seed_db.hpp"
 #include "share/AuditEvent.hpp"
 #include "share/EmailChallenge.hpp"
 #include "share/Manager.hpp"
@@ -1129,3 +1131,54 @@ TEST_F(WsShareUploadTest, HttpUploadSessionTtlSlidesWithActivityUnderAHardCeilin
     EXPECT_EQ(httpUploadErrorOf([&] { (void)begin(trickle, "f1", 100); }), "Upload session not found");
 }
 
+// #151: a dropbox link is upload-only. Uploads need nothing but the upload op and the role's Upload bits; the
+// seeded share_upload_dropbox role no longer grants List, so recipients can't see each other's submissions.
+TEST_F(WsShareUploadTest, UploadOnlyDropboxUploadsWithoutListOrMetadata) {
+    namespace http_upload = vh::protocols::http::upload;
+
+    const auto created = create(vh::share::bit(vh::share::Operation::Upload));
+    auto dropbox = vh::seed::shareUploadDropboxRole();
+    dropbox.id = 99;
+    dropbox.assign(99, "public", 42);
+    store->vault_roles[created.link->id] = std::make_shared<vh::rbac::role::Vault>(dropbox);
+    auto opened = manager->openPublicSession(created.public_token);
+    auto principal = manager->resolvePrincipal(opened.session_token);
+    ASSERT_TRUE(principal->scoped_vault_role);
+    EXPECT_EQ(principal->scoped_vault_role->name, "share_upload_dropbox");
+    auto session = publicSession();
+    session->setSharePrincipal(std::move(principal), opened.session_token);
+    http_upload::Coordinator::setSessionResolverForTesting([session](const vh::protocols::http::request&) {
+        return session;
+    });
+
+    const auto batch = http_upload::Coordinator::instance().createSession(
+        httpRequest(vh::protocols::http::verb::post, "/upload/session?share=1"),
+        {{"files", nlohmann::json::array({{{"file_id", "f0"}, {"path", "/drop.txt"}, {"size_bytes", 4}}})}}
+    ).at("upload_id").get<std::string>();
+    auto stream = http_upload::Coordinator::instance().beginFile(
+        httpRequest(vh::protocols::http::verb::put, "/upload/" + batch + "/files/f0?share=1"), 4);
+    stream.write("drop", 4);
+    EXPECT_TRUE(stream.finish().at("complete").get<bool>());
+    (void)http_upload::Coordinator::instance().cancelSession(
+        httpRequest(vh::protocols::http::verb::delete_, "/upload/" + batch + "?share=1"), batch);
+
+    // The ws lane takes the same path.
+    const auto ws = WsShareUploadHandler::start({{"path", "/reports"}, {"filename", "ws-drop.txt"}, {"size_bytes", 2}}, session);
+    (void)WsShareUploadHandler::cancel({{"upload_id", ws.at("upload_id").get<std::string>()}}, session);
+
+    const auto actor = session->rbacActor();
+    EXPECT_FALSE(manager->authorize(actor, vh::share::Operation::List, "/reports", vh::share::TargetType::Directory, 42).allowed);
+    EXPECT_FALSE(manager->authorize(actor, vh::share::Operation::Metadata, "/reports", vh::share::TargetType::Directory, 42).allowed);
+    EXPECT_FALSE(manager->authorize(actor, vh::share::Operation::Download, "/reports/existing.txt", vh::share::TargetType::File, 42).allowed);
+
+    // Even a link that asks for list can't list through the seeded role.
+    const auto rbac = vh::rbac::fs::policy::Share::evaluate(*session->sharePrincipal(), {
+        .vault_id = 42,
+        .vault_path = "/reports",
+        .operation = vh::share::Operation::Upload,
+        .target_type = vh::share::TargetType::Directory,
+        .target_exists = true
+    });
+    EXPECT_TRUE(rbac.allowed);
+    EXPECT_FALSE(dropbox.fs.directories.canList());
+}
