@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { useWebSocketStore } from '@/stores/useWebSocket'
 import { WSCommandPayload } from '@/util/webSocketCommands'
-import { Group } from '@/models/group'
+import type { GroupRecord as Group } from '@/features/access/types'
 
 interface PermissionStore {
   groups: Group[]
