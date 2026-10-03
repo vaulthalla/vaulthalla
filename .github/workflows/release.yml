@@ -297,8 +297,11 @@ jobs:
           ref: ${{ github.event.inputs.ref || github.ref }}
           fetch-depth: 0
 
-      - name: Install vl-release
+      # vlr github-release drives the GitHub CLI; the self-hosted runner doesn't ship it.
+      - name: Install vl-release and gh
         uses: ./.github/actions/setup_valkyrianlabs_tools
+        with:
+          packages: vl-release gh
 
       - name: Prepare release history (deterministic re-run)
         run: vlr prepare

@@ -66,6 +66,10 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         self.assertIn("needs.github-release.result == 'success'", finalize)
         self.assertIn("vlr finalize --record release/meta/prepare.json", finalize)
 
+    def test_github_release_job_installs_the_github_cli(self) -> None:
+        # vlr github-release shells out to gh; the self-hosted runner has none (v1.8.0's first run failed there).
+        self.assertIn("packages: vl-release gh", self.jobs["github-release"])
+
     def test_docs_failure_cannot_block_or_fail_the_release_record(self) -> None:
         self.assertNotIn("docs-publish", _needs(self.jobs["finalize"]))
         self.assertNotIn("finalize", _needs(self.jobs["docs-publish"]))
