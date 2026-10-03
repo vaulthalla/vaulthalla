@@ -32,7 +32,7 @@ export const ShareDialog = ({ vaultId, target, onClose }: { vaultId: number; tar
   const [tab, setTab] = useState('new')
 
   const roles = useWs('roles.vault.list', null, { enabled: Boolean(target), staleTime: 5 * 60_000 })
-  const templates = useMemo(() => (roles.data?.roles ?? []).filter(r => r.type === 'vault'), [roles.data])
+  const templates = useMemo(() => roles.data?.roles ?? [], [roles.data])
   const presetRole = (p: SharePreset) => templates.find(r => r.name === PRESETS[p].role) ?? null
 
   useEffect(() => {

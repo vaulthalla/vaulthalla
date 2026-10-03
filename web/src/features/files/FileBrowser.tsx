@@ -63,6 +63,8 @@ export const listingKey = (source: FsSource, path: string) => ['fs', source.key,
 
 const ROW_HEIGHT = 52
 
+const countLabel = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`
+
 export function FileBrowser({ source, path, onNavigate, leading, onShare, className }: FileBrowserProps) {
   const current = normalizePath(path)
   const listing = useQuery<Listing>({
@@ -604,9 +606,7 @@ export function FileBrowser({ source, path, onNavigate, leading, onShare, classN
 
         {entries.length ? (
           <div className="flex items-center justify-between border-t border-line px-4 py-2 text-xs text-fg-subtle tabular">
-            <span>
-              {entries.filter(e => e.kind === 'dir').length} folders · {entries.filter(e => e.kind === 'file').length} files
-            </span>
+            <span>{countLabel(entries.filter(e => e.kind === 'dir').length, 'folder')} · {countLabel(entries.filter(e => e.kind === 'file').length, 'file')}</span>
             <span>{formatBytes(entries.reduce((sum, e) => sum + (e.kind === 'file' ? (e.size ?? 0) : 0), 0))}</span>
           </div>
         ) : null}
