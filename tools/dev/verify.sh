@@ -6,9 +6,10 @@
 #   changed     infer profiles from `git diff` + untracked files vs HEAD (default)
 #   core        meson compile + meson test in build/ (configures build/ if missing)
 #   web         pnpm typecheck + lint (VERIFY_STRICT_LINT=0 downgrades lint failures to warnings)
-#   release     tools.release check + release-tooling unittest suite
-#   packaging   packaging contract tests (orphaned from `unittest discover`; run by module)
-#   lifecycle   deploy/lifecycle unit tests
+#   release     vl-release contract: vlr check + vlr version check (release.toml, staged .release/ docs)
+#   packaging   product contracts (tools/contracts: Debian packaging, maintainer scripts, migrations,
+#               release workflow) + tools/lab tests, each with a minimum test count
+#   lifecycle   deploy/lifecycle unit tests (minimum test count)
 #   docs        payload-markdown checker on changed docs (or all docs) + pmdocs validate
 #   shell       bash -n on changed/all bin/ and debian maintainer scripts
 #   integration DESTRUCTIVE: make uninstall && make clean-full && make run_test (requires VERIFY_ALLOW_DESTRUCTIVE=1)
@@ -41,7 +42,11 @@ run_doctor() {
   [[ -f build/build.ninja ]] || warn "build/ not configured: meson setup build -Dbuild_unit_tests=true"
   [[ -d web/public/icons/fa ]] || warn "private web icons missing (web build will fail); see docs/contributors/development-setup.md"
   [[ -z "$(git status --porcelain)" ]] || warn "working tree is dirty"
-  python3 -m tools.release check >/dev/null && log "release-managed versions in sync ($(cat VERSION))" || warn "tools.release check failed"
+  if command -v vlr >/dev/null; then
+    vlr version check >/dev/null && log "release-managed versions in sync ($(cat VERSION))" || warn "vlr version check failed"
+  else
+    warn "vlr (vl-release) missing: the release profile needs it"
+  fi
 }
 
 run_core() {
@@ -73,22 +78,34 @@ run_web() {
   fi
 }
 
+# Runs a unittest suite and fails when fewer than <min> tests ran, so a suite silently dropped from discovery
+# (a missing __init__.py, a moved directory) can't pass as "OK". Raise the floors when adding tests.
+run_suite() {
+  local label="$1" min="$2" output rc=0 ran
+  shift 2
+  output="$(python3 -m unittest "$@" 2>&1)" || rc=$?
+  printf '%s\n' "$output" | tail -n 3
+  [[ "$rc" -eq 0 ]] || { printf '%s\n' "$output" | tail -n 40 >&2; die "$label failed"; }
+  ran="$(printf '%s\n' "$output" | sed -nE 's/^Ran ([0-9]+) tests?.*/\1/p' | tail -n1)"
+  (( ${ran:-0} >= min )) || die "$label: only ${ran:-0} test(s) ran, expected at least $min"
+}
+
 run_release() {
-  log "tools.release check"; python3 -m tools.release check
-  log "release-tooling unittest suite"
-  python3 -m unittest discover -s tools/release/tests -p 'test_*.py'
+  command -v vlr >/dev/null || die "vlr (vl-release) is not installed: apt install vl-release (apt.valkyrianlabs.com)"
+  log "vlr check"; vlr check
+  log "vlr version check"; vlr version check
 }
 
 run_packaging() {
-  local mods
-  mods=$(find tools/release/tests/packaging -maxdepth 1 -name 'test_*.py' | LC_ALL=C sort | sed 's|/|.|g; s|\.py$||')
-  log "packaging contract tests (by module)"
-  # shellcheck disable=SC2086
-  python3 -m unittest $mods
+  log "product contracts (tools/contracts)"
+  run_suite "tools/contracts" 101 discover -s tools/contracts -t .
+  log "lab tooling tests (tools/lab/tests)"
+  run_suite "tools/lab/tests" 22 discover -s tools/lab/tests -t .
 }
 
 run_lifecycle() {
-  log "deploy/lifecycle tests"; python3 -m unittest deploy.lifecycle.tests.test_main
+  log "deploy/lifecycle tests"
+  run_suite "deploy/lifecycle" 29 deploy.lifecycle.tests.test_main
 }
 
 run_docs() {
@@ -124,8 +141,8 @@ infer_profiles() {
   [[ -z "$files" ]] && { log "no changes vs HEAD"; return; }
   grep -qE '^core/|^meson\.build$|^meson\.options$'            <<<"$files" && echo core
   grep -qE '^web/'                                              <<<"$files" && echo web
-  grep -qE '^tools/release/|^VERSION$|^meson\.build$|^web/package\.json$|^debian/changelog$|^\.github/' <<<"$files" && echo release
-  grep -qE '^debian/|^deploy/(systemd|psql|nginx)/|^tools/release/(packaging|tests/packaging)/|^\.github/' <<<"$files" && echo packaging
+  grep -qE '^release\.toml$|^\.release/|^VERSION$|^meson\.build$|^web/package\.json$|^debian/changelog$|^RELEASE_NOTES\.md$|^\.github/' <<<"$files" && echo release
+  grep -qE '^debian/|^deploy/(systemd|psql|nginx)/|^core/seed/shipped_migrations\.lock$|^tools/(contracts|lab)/|^\.github/' <<<"$files" && echo packaging
   grep -qE '^deploy/lifecycle/'                                 <<<"$files" && echo lifecycle
   grep -qE '^docs/|^debian/README'                              <<<"$files" && echo docs
   grep -qE '^bin/|^web/bin/|^tools/.*\.sh$|^debian/(postinst|prerm|postrm)$'   <<<"$files" && echo shell

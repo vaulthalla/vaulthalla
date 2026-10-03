@@ -1,7 +1,7 @@
 # Shipped migration checksums for deploy/psql/*.sql.
 #
 # sha256 of the raw file bytes, exactly what SqlDeployer (core/seed/include/SqlDeployer.hpp) records in
-# schema_migrations.sha256. Enforced by tools/release/tests/packaging/test_migration_checksums_contract.py.
+# schema_migrations.sha256. Enforced by tools/contracts/test_migration_checksums_contract.py.
 #
 # Format: <status> <sha256> <filename> <note>
 #   current     the hash of the file as it is in this tree (exactly one per deploy/psql/*.sql file)

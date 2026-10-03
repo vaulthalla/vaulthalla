@@ -57,7 +57,7 @@ inline std::string sha256Hex(const std::string& s) {
 // Rules:
 //  - Never edit a shipped migration. Add the next-numbered forward migration instead.
 //  - This table is append-only and reviewed. It must match the "historical" lines of
-//    core/seed/shipped_migrations.lock; tools/release/tests/packaging/test_migration_checksums_contract.py
+//    core/seed/shipped_migrations.lock; tools/contracts/test_migration_checksums_contract.py
 //    enforces that and checks every released tag's deploy/psql against the lock when tags are available.
 struct HistoricalMigrationChecksum {
     std::string_view filename;

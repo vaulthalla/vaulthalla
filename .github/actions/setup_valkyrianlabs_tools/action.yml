@@ -1,0 +1,44 @@
+name: 'Setup ValkyrianLabs tools'
+description: 'Installs packages (vl-release, pmdocs) from the ValkyrianLabs APT repository.'
+
+inputs:
+  packages:
+    description: Space-separated package names to install.
+    required: false
+    default: vl-release
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install ${{ inputs.packages }}
+      shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+      run: |
+        set -euo pipefail
+        if ! command -v apt-get >/dev/null 2>&1; then
+          echo "::error::Expected an apt-based runner."
+          exit 1
+        fi
+        APT_PREFIX=""
+        if command -v sudo >/dev/null 2>&1; then
+          APT_PREFIX="sudo"
+        fi
+        if [ ! -f /etc/apt/sources.list.d/valkyrianlabs.list ]; then
+          ${APT_PREFIX} apt-get -o DPkg::Lock::Timeout=900 update
+          ${APT_PREFIX} apt-get -o DPkg::Lock::Timeout=900 install -y ca-certificates curl
+          ${APT_PREFIX} install -d -m 0755 /etc/apt/keyrings
+          ${APT_PREFIX} curl -fsSL https://apt.valkyrianlabs.com/pubkey.gpg -o /etc/apt/keyrings/valkyrianlabs.gpg
+          ${APT_PREFIX} chmod 0644 /etc/apt/keyrings/valkyrianlabs.gpg
+          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/valkyrianlabs.gpg] https://apt.valkyrianlabs.com stable main" \
+            | ${APT_PREFIX} tee /etc/apt/sources.list.d/valkyrianlabs.list > /dev/null
+        fi
+        ${APT_PREFIX} apt-get -o DPkg::Lock::Timeout=900 update
+        # shellcheck disable=SC2086 # word splitting is the package list
+        ${APT_PREFIX} apt-get -o DPkg::Lock::Timeout=900 install -y ${PACKAGES}
+        for package in ${PACKAGES}; do
+          case "$package" in
+            vl-release) vlr --version ;;
+            pmdocs) pmdocs --version ;;
+          esac
+        done
