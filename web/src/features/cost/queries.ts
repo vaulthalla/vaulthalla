@@ -2,9 +2,19 @@
 
 import { useMemo } from 'react'
 import { useWs, invalidate } from '@/lib/query'
+import { api } from '@/lib/session'
+import { notify } from '@/components/ui/Toast'
 import { useSession } from '@/lib/session'
 import { isSuperAdminUser } from '@/lib/permissions'
-import { toLedger, toNotification, toOverride, toStats, toStatus, type BudgetPolicy } from '@/features/cost/model'
+import {
+  toLedger,
+  toNotification,
+  toOverride,
+  toStats,
+  toStatus,
+  type BudgetPolicy,
+  type PriceNotification,
+} from '@/features/cost/model'
 
 // Core gates system-wide price budgets, operator email and settings on User::isSuperAdmin().
 export const useIsSuperAdmin = () => isSuperAdminUser(useSession(state => state.user))
@@ -81,4 +91,13 @@ export const findPolicy = (
       && (p.gateway_credential_id ?? null) === (target.gateway_credential_id ?? null),
   )
   return matches.find(p => p.is_active) ?? matches[0] ?? null
+}
+
+export const ackNotification = async (n: PriceNotification) => {
+  try {
+    await api.send('pricing.notifications.ack', { id: n.id, vault_id: n.vault_id })
+    await invalidate('pricing.notifications.list', 'stats.pricing.budget', 'pricing.budget.status')
+  } catch (error) {
+    notify.error(error, 'Could not acknowledge the alert')
+  }
 }

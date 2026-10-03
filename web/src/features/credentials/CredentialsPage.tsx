@@ -10,7 +10,6 @@ import { Badge } from '@/components/ui/Badge'
 import { DataTable, type Column } from '@/components/ui/DataTable'
 import { DropdownMenu } from '@/components/ui/Menu'
 import { EmptyState, QueryState } from '@/components/ui/State'
-import { Tooltip } from '@/components/ui/Tooltip'
 import { EllipsisIcon, KeySkeletonIcon, PenIcon, PlusIcon, TrashIcon } from '@/components/ui/icons'
 import { DASH, formatDate, formatRelative } from '@/lib/format'
 import { maskAccessKey, type ProviderCredential } from '@/features/credentials/types'
@@ -77,11 +76,11 @@ export const CredentialsPage = () => {
         const vaults = usage.get(row.api_key_id) ?? []
         if (vaults.length === 0) return <span className="text-fg-subtle">No vaults</span>
         return (
-          <Tooltip content={vaults.map(v => v.name).join(', ')}>
-            <span className="tabular text-fg-muted decoration-line-strong underline decoration-dotted underline-offset-4">
-              {vaults.length === 1 ? vaults[0].name : `${vaults.length} vaults`}
-            </span>
-          </Tooltip>
+          <span
+            title={vaults.map(v => v.name).join(', ')}
+            className="tabular text-fg-muted decoration-line-strong underline decoration-dotted underline-offset-4">
+            {vaults.length === 1 ? vaults[0].name : `${vaults.length} vaults`}
+          </span>
         )
       },
     },

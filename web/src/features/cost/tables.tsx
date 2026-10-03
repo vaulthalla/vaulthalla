@@ -4,7 +4,6 @@ import React from 'react'
 import { DataTable, type Column } from '@/components/ui/DataTable'
 import { Badge } from '@/components/ui/Badge'
 import { Meter } from '@/components/ui/Stat'
-import { Tooltip } from '@/components/ui/Tooltip'
 import { DASH, formatDateTime, formatPercent, formatRelative, titleCase } from '@/lib/format'
 import { providerLabel, scopeLabel, windowLabel, type BudgetTrend, type LedgerEntry } from '@/features/cost/model'
 import { EmptyRows, Money } from '@/features/cost/bits'
@@ -104,9 +103,9 @@ export const TrendTable = ({
       cell: t =>
         t.confidence && t.confidence !== 'none' ?
           <Badge>{titleCase(t.confidence)}</Badge>
-        : <Tooltip content="Not enough recorded spend to project this window yet.">
-            <span className="text-fg-faint">{DASH}</span>
-          </Tooltip>,
+        : <span className="text-fg-faint" title="Not enough recorded spend to project this window yet.">
+            {DASH}
+          </span>,
     },
   ]
   if (trends.length === 0)

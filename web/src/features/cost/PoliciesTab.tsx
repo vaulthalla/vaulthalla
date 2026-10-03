@@ -9,7 +9,8 @@ import { PenIcon } from '@/components/ui/icons'
 import { formatMoney } from '@/lib/format'
 import { BUDGET_PROVIDERS, type BudgetPolicy, type PolicyPayload } from '@/features/cost/model'
 import { findPolicy, refreshPricing, type VaultLite } from '@/features/cost/queries'
-import { PolicyDialog, type PolicyTarget } from '@/features/cost/PolicyDialog'
+import type { PolicyTarget } from '@/features/cost/PolicyDialog'
+import { LazyPolicyDialog } from '@/features/cost/LazyPolicyDialog'
 import { LimitsSummary, ModeBadge, Section } from '@/features/cost/bits'
 
 interface Row {
@@ -159,13 +160,15 @@ export const PoliciesTab = ({
         : <PolicyRows rows={vaultRows} onEdit={setEditing} />}
       </Section>
 
-      <PolicyDialog
-        target={editing?.target ?? null}
-        policy={editing?.policy ?? null}
-        onClose={() => setEditing(null)}
-        onSave={savePolicy}
-        onDisable={disablePolicy}
-      />
+      {editing ?
+        <LazyPolicyDialog
+          target={editing?.target ?? null}
+          policy={editing?.policy ?? null}
+          onClose={() => setEditing(null)}
+          onSave={savePolicy}
+          onDisable={disablePolicy}
+        />
+      : null}
     </div>
   )
 }

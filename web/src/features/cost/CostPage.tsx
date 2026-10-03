@@ -1,6 +1,7 @@
 'use client'
 
 import React from 'react'
+import dynamic from 'next/dynamic'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { PageHeader } from '@/components/ui/Panel'
 import { Button } from '@/components/ui/Button'
@@ -12,8 +13,6 @@ import { formatInt } from '@/lib/format'
 import { useIsFetching } from '@tanstack/react-query'
 import { Money, Section } from '@/features/cost/bits'
 import { AlertsSection, OverridesSection } from '@/features/cost/alerts'
-import { PoliciesTab } from '@/features/cost/PoliciesTab'
-import { PreflightTab } from '@/features/cost/PreflightTab'
 import { LedgerTable, TrendTable } from '@/features/cost/tables'
 import {
   refreshPricing,
@@ -23,6 +22,9 @@ import {
   useIsSuperAdmin,
   useVaultLookup,
 } from '@/features/cost/queries'
+
+const PoliciesTab = dynamic(() => import('@/features/cost/PoliciesTab').then(m => m.PoliciesTab), { ssr: false })
+const PreflightTab = dynamic(() => import('@/features/cost/PreflightTab').then(m => m.PreflightTab), { ssr: false })
 
 const TABS = ['overview', 'budgets', 'dry-run', 'ledger'] as const
 type Tab = (typeof TABS)[number]

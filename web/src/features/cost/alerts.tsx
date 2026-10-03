@@ -6,7 +6,8 @@ import { api } from '@/lib/session'
 import { DataTable, type Column } from '@/components/ui/DataTable'
 import { Badge, SeverityBadge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
-import { Switch, Label } from '@/components/ui/Field'
+import { Label } from '@/components/ui/Field'
+import { Switch } from '@/components/ui/Choice'
 import { QueryState } from '@/components/ui/State'
 import { confirm } from '@/components/ui/Confirm'
 import { notify } from '@/components/ui/Toast'
@@ -14,22 +15,13 @@ import { CheckIcon, XmarkIcon } from '@/components/ui/icons'
 import { DASH, formatDateTime, formatRelative, titleCase } from '@/lib/format'
 import type { Tone } from '@/lib/tone'
 import type { PriceNotification, PriceOverride } from '@/features/cost/model'
-import { refreshPricing, useNotifications, useOverrides } from '@/features/cost/queries'
+import { ackNotification, refreshPricing, useNotifications, useOverrides } from '@/features/cost/queries'
 import { EmptyRows, Money, Section } from '@/features/cost/bits'
 
 // Price notifications use info/warning/error/critical; the shared tone map knows all four.
 export const NotificationSeverity = ({ severity }: { severity: string | null }) => (
   <SeverityBadge severity={severity} label={severity ? titleCase(severity) : 'Unknown'} />
 )
-
-export const ackNotification = async (n: PriceNotification) => {
-  try {
-    await api.send('pricing.notifications.ack', { id: n.id, vault_id: n.vault_id })
-    await refreshPricing()
-  } catch (error) {
-    notify.error(error, 'Could not acknowledge the alert')
-  }
-}
 
 export const AlertsSection = ({
   enabled,
