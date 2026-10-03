@@ -24,9 +24,11 @@
 #include <nlohmann/json.hpp>
 #include <paths.h>
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <format>
+#include <functional>
 #include <iterator>
 #include <memory>
 #include <optional>
@@ -539,6 +541,7 @@ protected:
         vh::protocols::http::upload::Coordinator::resetShareManagerFactoryForTesting();
         vh::protocols::http::upload::Coordinator::resetShareResolverFactoryForTesting();
         vh::protocols::http::upload::Coordinator::resetEngineResolverForTesting();
+        vh::protocols::http::upload::Coordinator::resetClockForTesting();
         std::filesystem::remove_all(testRoot);
         vh::paths::backingPath = oldBackingPath;
         vh::paths::mountPath = oldMountPath;
@@ -1057,3 +1060,72 @@ TEST_F(WsShareUploadTest, RevokedSessionFailsClosedDuringChunkRevalidation) {
     EXPECT_THROW({ session->getUploadHandler()->handleBinaryFrame(buffer); }, std::runtime_error);
     EXPECT_EQ(store->getUpload(uploadId)->status, vh::share::UploadStatus::Failed);
 }
+
+namespace {
+std::string httpUploadErrorOf(const std::function<void()>& fn) {
+    try {
+        fn();
+    } catch (const std::exception& e) {
+        return e.what();
+    }
+    return {};
+}
+}
+
+// #142: sessions used to expire 30 minutes after creation, so any longer upload failed at finish ("Upload session
+// not found") and lost its staged parts. The TTL now slides with activity, under a hard ceiling.
+TEST_F(WsShareUploadTest, HttpUploadSessionTtlSlidesWithActivityUnderAHardCeiling) {
+    namespace http_upload = vh::protocols::http::upload;
+    using namespace std::chrono_literals;
+
+    auto now = std::make_shared<std::chrono::steady_clock::time_point>(std::chrono::steady_clock::now());
+    http_upload::Coordinator::setClockForTesting([now] { return *now; });
+
+    auto session = readySession();
+    http_upload::Coordinator::setSessionResolverForTesting([session](const vh::protocols::http::request&) {
+        return session;
+    });
+
+    const auto create = [&](const std::string& prefix, const uint64_t size) {
+        return http_upload::Coordinator::instance().createSession(
+            httpRequest(vh::protocols::http::verb::post, "/upload/session?share=1"),
+            {
+                {"files", nlohmann::json::array({
+                    {{"file_id", "f0"}, {"path", "/" + prefix + "-0.txt"}, {"size_bytes", size}},
+                    {{"file_id", "f1"}, {"path", "/" + prefix + "-1.txt"}, {"size_bytes", size}}
+                })}
+            }
+        ).at("upload_id").get<std::string>();
+    };
+    const auto begin = [&](const std::string& batchId, const std::string& fileId, const uint64_t size) {
+        return http_upload::Coordinator::instance().beginFile(
+            httpRequest(vh::protocols::http::verb::put, "/upload/" + batchId + "/files/" + fileId + "?share=1"), size);
+    };
+
+    // Active for well over 30 minutes since creation: every chunk and request keeps it alive.
+    const auto slow = create("slow", 4);
+    *now += 25min;
+    auto first = begin(slow, "f0", 4);
+    first.write("ab", 2);
+    *now += 20min;
+    first.write("cd", 2);
+    EXPECT_TRUE(first.finish().at("complete").get<bool>());
+    *now += 29min;  // 74 minutes after creation, 29 idle
+    auto second = begin(slow, "f1", 4);
+    second.write("efgh", 4);
+    EXPECT_TRUE(second.finish().at("complete").get<bool>());
+
+    // Idle past the TTL: gone.
+    *now += 31min;
+    EXPECT_EQ(httpUploadErrorOf([&] { (void)begin(slow, "f1", 4); }), "Upload session not found");
+
+    // A session that keeps trickling still ends at the hard ceiling.
+    const auto trickle = create("trickle", 100);
+    auto stream = begin(trickle, "f0", 100);
+    for (int i = 0; i < 73; ++i) {  // 24h20m of one byte every 20 minutes
+        *now += 20min;
+        stream.write("x", 1);
+    }
+    EXPECT_EQ(httpUploadErrorOf([&] { (void)begin(trickle, "f1", 100); }), "Upload session not found");
+}
+
