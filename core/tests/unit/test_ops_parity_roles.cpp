@@ -288,6 +288,35 @@ TEST_F(RoleParityTest, AssignmentsAndOverridesPersistAndUnassigningNothingFails)
                   member->name, superUser).first, 0);
     EXPECT_TRUE(db::query::rbac::permission::Override::listAssigned(assignment->assignment_id).empty());
 
+    // The same lifecycle over ws (role.vault.overrides.*) lands in the same rows.
+    const json target{{"vault_id", vaultId}, {"subject_type", "user"}, {"subject_id", member->id}};
+    json addPayload = target;
+    addPayload["pattern"] = "/secret/**";
+    addPayload["permissions"] = json::array({{{"qualified", "vault.fs.files.download"}, {"value", false}}});
+    const auto added = protocols::ws::handler::rbac::roles::Vault::addOverrides(addPayload, ws(superUser));
+    ASSERT_EQ(added.at("overrides").size(), 1u);
+    const auto wsStored = db::query::rbac::permission::Override::listAssigned(assignment->assignment_id);
+    ASSERT_EQ(wsStored.size(), 1u);
+    EXPECT_EQ(wsStored.front()->effect, rbac::permission::OverrideOpt::DENY);
+    EXPECT_EQ(wsStored.front()->glob_path(), "/secret/**");
+    EXPECT_EQ(protocols::ws::handler::rbac::roles::Vault::listOverrides(target, ws(superUser)).at("overrides").size(), 1u);
+
+    json updatePayload = target;
+    updatePayload["override_id"] = wsStored.front()->id;
+    updatePayload["effect"] = "allow";
+    updatePayload["enabled"] = false;
+    (void)protocols::ws::handler::rbac::roles::Vault::updateOverride(updatePayload, ws(superUser));
+    const auto wsUpdated = db::query::rbac::permission::Override::get(wsStored.front()->id);
+    EXPECT_EQ(wsUpdated->effect, rbac::permission::OverrideOpt::ALLOW);
+    EXPECT_FALSE(wsUpdated->enabled);
+    updatePayload["effect"] = "maybe";
+    EXPECT_THROW((void)protocols::ws::handler::rbac::roles::Vault::updateOverride(updatePayload, ws(superUser)), ops::Invalid);
+
+    json removePayload = target;
+    removePayload["override_id"] = wsStored.front()->id;
+    (void)protocols::ws::handler::rbac::roles::Vault::removeOverride(removePayload, ws(superUser));
+    EXPECT_TRUE(db::query::rbac::permission::Override::listAssigned(assignment->assignment_id).empty());
+
     // ws unassign of the same assignment, then nothing is left to remove on either surface.
     (void)protocols::ws::handler::rbac::roles::Vault::unassign(
         json{{"vault_id", vaultId}, {"subject_type", "user"}, {"subject_id", member->id}}, ws(superUser));

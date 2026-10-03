@@ -89,6 +89,31 @@ import {
   S3GatewayStatus,
 } from '@/models/s3Gateway'
 
+interface VaultCommonFields {
+  name: string
+  description?: string
+  quota?: number
+  owner_id?: number
+  slug?: string
+  fuse_name?: string | null
+}
+
+// One vault role assignment: the subject on a vault.
+interface VaultSubjectPayload {
+  vault_id: number
+  subject_type: 'user' | 'group'
+  subject_id: number
+}
+
+export interface VaultRoleOverrideDTO {
+  id: number
+  assignment_id: number
+  permission: { id?: number; qualified: string; description?: string; slug?: string }
+  effect: 'allow' | 'deny'
+  enabled: boolean
+  glob_path: string
+}
+
 export interface WebSocketCommandMap {
   // Auth
   'auth.login': { payload: { name: string; password: string }; response: { token: string; user: User } }
@@ -136,28 +161,37 @@ export interface WebSocketCommandMap {
 
   'storage.vault.list': { payload: null; response: { vaults: Vault[] } }
 
+  // owner_id, description and quota (bytes, 0 = unlimited) are optional on both types. There is no mount point
+  // input: the daemon picks a vault's backing directory itself.
   'storage.vault.add': {
     payload:
-      | { name: string; slug?: string; fuse_name?: string | null; type: 'local'; mount_point: string }
-      | {
-          name: string
-          slug?: string
-          fuse_name?: string | null
+      | (VaultCommonFields & { type: 'local' })
+      | (VaultCommonFields & {
           type: 's3'
           api_key_id: number
           bucket: string
           storage_tier_id?: string | null
           encrypt_upstream?: boolean
-          sync?: RemoteSyncPolicy
+          sync?: Partial<RemoteSyncPolicy>
           accept_encryption_waiver?: boolean
-        }
+        })
     response: { vault: LocalDiskVault | S3Vault }
   }
 
-  // A patch: fields left out keep their current values. A refusal with data.code 'encryption_waiver' means the
-  // bucket already holds data; resend with accept_encryption_waiver once the person accepts the message.
+  // A patch: fields left out keep their current values; a vault's type can never change. A refusal with data.code
+  // 'encryption_waiver' means the bucket already holds data; resend with accept_encryption_waiver once the person
+  // accepts the message.
   'storage.vault.update': {
-    payload: (LocalDiskVault | S3Vault) & { accept_encryption_waiver?: boolean }
+    payload: Partial<VaultCommonFields> & {
+      id: number
+      is_active?: boolean
+      api_key_id?: number
+      bucket?: string
+      storage_tier_id?: string | null
+      encrypt_upstream?: boolean
+      sync?: Partial<RemoteSyncPolicy>
+      accept_encryption_waiver?: boolean
+    }
     response: { vault: LocalDiskVault | S3Vault }
   }
 
@@ -207,13 +241,32 @@ export interface WebSocketCommandMap {
   'roles.vault.list.assigned': { payload: { id: number }; response: { assigned_roles: VaultRoleDTO[] } }
 
   'role.vault.assign': {
-    payload: { id: number; vault_id: number; subject_type: 'user' | 'group'; subject_id: number }
+    payload: VaultSubjectPayload & { id: number }
     response: { assignment: VaultRoleDTO }
   }
 
   'role.vault.unassign': {
-    payload: { vault_id: number; subject_type: 'user' | 'group'; subject_id: number }
+    payload: VaultSubjectPayload
     response: { unassigned: boolean }
+  }
+
+  // Path-scoped allow/deny overrides on one assignment (same ops as `vh vault role override ...`).
+  'role.vault.overrides.list': { payload: VaultSubjectPayload; response: { overrides: VaultRoleOverrideDTO[] } }
+
+  // permissions: value true = allow, false = deny. pattern is a vault-relative glob ("/docs/**").
+  'role.vault.overrides.add': {
+    payload: VaultSubjectPayload & { permissions: { qualified: string; value: boolean }[]; pattern: string; enabled?: boolean }
+    response: { overrides: VaultRoleOverrideDTO[] }
+  }
+
+  'role.vault.overrides.update': {
+    payload: VaultSubjectPayload & { override_id: number; effect?: 'allow' | 'deny'; pattern?: string; enabled?: boolean }
+    response: { override: VaultRoleOverrideDTO }
+  }
+
+  'role.vault.overrides.remove': {
+    payload: VaultSubjectPayload & { override_id: number }
+    response: { removed: boolean }
   }
 
   'permission.get': { payload: { id: number }; response: { permission: Permission } }
