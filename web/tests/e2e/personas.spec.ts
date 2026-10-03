@@ -16,14 +16,18 @@ test.beforeAll(async ({ browser }) => {
 
 const RUN = Date.now().toString(36)
 
+// No vowels: the daemon refuses passwords that contain dictionary words.
+const ALPHABET = 'BCDFGHJKLMNPQRSTVWXZbcdfghjkmnpqrstvwxz23456789!#%+'
+const strongPassword = () => Array.from(randomBytes(20), b => ALPHABET[b % ALPHABET.length]).join('') + 'Zq7!'
+
 const createPersona = async (page: Page, role: string) => {
   const name = `zz_${role}_${RUN}`.slice(0, 40)
-  const password = `${randomBytes(12).toString('base64url')}-Aa1!`
+  const password = strongPassword()
   await page.goto('/users/new')
-  await page.getByLabel('Username').fill(name)
-  await page.getByLabel('Password', { exact: true }).fill(password)
-  await page.getByLabel('Confirm password').fill(password)
-  await page.getByLabel('Admin role').selectOption(role)
+  await page.locator('#new-name').fill(name)
+  await page.locator('#new-password').fill(password)
+  await page.locator('#new-confirm').fill(password)
+  await page.locator('#new-role').selectOption(role)
   await page.getByRole('button', { name: 'Create user' }).click()
   await page.waitForURL(new RegExp(`/users/${name}$`), { timeout: 15_000 })
   return { name, password }
@@ -66,10 +70,17 @@ test.describe.serial('personas', () => {
       const { context, page: p, sent } = await asPersona(browser, persona)
       await expect(p).toHaveURL(/\/files/)
       expect(await navLabels(p)).toEqual(['Files', 'Shares'])
-      for (const route of ['/users', '/vaults', '/health', '/settings', '/cost', '/credentials', '/roles']) {
+      for (const route of ['/users', '/groups', '/roles', '/health', '/settings', '/cost', '/notifications']) {
         await p.goto(route)
         await expect(p.getByText(/you don.t have access to this/i), route).toBeVisible({ timeout: 15_000 })
         await expect(p.getByRole('status', { name: /loading/i }), route).toHaveCount(0)
+      }
+      // Lists the server scopes to what the user may see (their own vaults and keys): no create actions offered.
+      for (const [route, create] of [['/vaults', /new vault/i], ['/credentials', /add credential|new credential/i]] as const) {
+        await p.goto(route)
+        await expect(p.getByRole('heading', { level: 1 }).first(), route).toBeVisible({ timeout: 15_000 })
+        await expect(p.getByRole('status', { name: /loading/i }), route).toHaveCount(0, { timeout: 15_000 })
+        await expect(p.getByRole('link', { name: create }).or(p.getByRole('button', { name: create })), route).toHaveCount(0)
       }
       // No admin-only traffic and no client-invented error badge for this persona.
       expect(sent.filter(c => c.startsWith('stats.') || c === 'pricing.notifications.list')).toEqual([])
@@ -81,17 +92,23 @@ test.describe.serial('personas', () => {
     }
   })
 
-  test('a plain admin sees administration but not the super-admin areas', async ({ page, browser }) => {
+  test('a plain admin manages accounts and storage but not health or the super-admin areas', async ({ page, browser }) => {
+    // Core's isAdmin() (health/stats) needs "delete admins" + "remove admin vaults", which the built-in admin role
+    // lacks, and settings/email/price budgets are super-admin only (see #166). The console must match core exactly.
     const persona = await createPersona(page, 'admin')
     try {
-      const { context, page: p } = await asPersona(browser, persona)
+      const { context, page: p, sent } = await asPersona(browser, persona)
       const labels = await navLabels(p)
-      for (const label of ['Files', 'Vaults', 'Users', 'Health']) expect(labels, label).toContain(label)
-      for (const label of ['Settings', 'Cost control', 'Notifications']) expect(labels, label).not.toContain(label)
-      await p.goto('/health')
+      for (const label of ['Files', 'Shares', 'Vaults', 'Users', 'Groups', 'Roles', 'Provider credentials', 'S3 gateway']) expect(labels, label).toContain(label)
+      for (const label of ['Health', 'Settings', 'Cost control', 'Notifications']) expect(labels, label).not.toContain(label)
+      for (const route of ['/health', '/settings', '/cost']) {
+        await p.goto(route)
+        await expect(p.getByText(/you don.t have access to this/i), route).toBeVisible({ timeout: 15_000 })
+      }
+      await p.goto('/users')
       await expect(p.getByText(/you don.t have access to this/i)).toHaveCount(0)
-      await p.goto('/settings')
-      await expect(p.getByText(/you don.t have access to this/i)).toBeVisible({ timeout: 15_000 })
+      await expect(p.getByRole('table')).toBeVisible({ timeout: 15_000 })
+      expect(sent.filter(c => c.startsWith('stats.'))).toEqual([])
       await context.close()
     } finally {
       await deletePersona(page, persona.name)
@@ -100,12 +117,12 @@ test.describe.serial('personas', () => {
 
   test('an inactive user cannot sign in', async ({ page, browser }) => {
     const name = `zz_inactive_${RUN}`
-    const password = `${randomBytes(12).toString('base64url')}-Aa1!`
+    const password = strongPassword()
     await page.goto('/users/new')
-    await page.getByLabel('Username').fill(name)
-    await page.getByLabel('Password', { exact: true }).fill(password)
-    await page.getByLabel('Confirm password').fill(password)
-    await page.getByLabel('Admin role').selectOption('unprivileged')
+    await page.locator('#new-name').fill(name)
+    await page.locator('#new-password').fill(password)
+    await page.locator('#new-confirm').fill(password)
+    await page.locator('#new-role').selectOption('unprivileged')
     await page.getByRole('switch', { name: 'Active' }).click()
     await page.getByRole('button', { name: 'Create inactive user' }).click()
     await page.waitForURL(new RegExp(`/users/${name}$`), { timeout: 15_000 })
