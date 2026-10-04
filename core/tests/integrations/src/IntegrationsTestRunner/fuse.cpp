@@ -148,10 +148,19 @@ namespace vh::test::integration {
             .fn = [=] { return read_as(*ctx.admin->meta.linux_uid, ctx.root / "copied_tree" / ".git" / "config"); }
         });
 
+        // Bytes are ciphertext on disk; reads through the mount decrypt them (#173).
         builder.makeTestCase({
             .name = "FUSE read (admin)",
             .path = "fuse/read",
+            .must_contain = {"hello world!"},
             .fn = [=] { return read_as(*ctx.admin->meta.linux_uid, ctx.hello()); }
+        });
+
+        builder.makeTestCase({
+            .name = "FUSE stat reports the plaintext size (admin)",
+            .path = "fuse/stat",
+            .must_contain = {" size=13\n"},
+            .fn = [=] { return stat_size_as(*ctx.admin->meta.linux_uid, ctx.hello()); }
         });
 
         builder.makeTestCase({
@@ -159,6 +168,41 @@ namespace vh::test::integration {
             .path = "fuse/rename",
             .must_contain = {"OK mv"},
             .fn = [=]{ return mv_as(*ctx.admin->meta.linux_uid, ctx.hello(), ctx.base() / "hello2.txt"); }
+        });
+
+        builder.makeTestCase({
+            .name = "FUSE read after rename is still plaintext (admin)",
+            .path = "fuse/read",
+            .must_contain = {"hello world!"},
+            .fn = [=] { return read_as(*ctx.admin->meta.linux_uid, ctx.base() / "hello2.txt"); }
+        });
+
+        builder.makeTestCase({
+            .name = "FUSE overwrite with shorter content leaves no tail (admin)",
+            .path = "fuse/write",
+            .must_contain = {"OK write"},
+            .fn = [=]{ return write_as(*ctx.admin->meta.linux_uid, ctx.base() / "hello2.txt", "hi\n"); }
+        });
+
+        builder.makeTestCase({
+            .name = "FUSE stat after shorter overwrite (admin)",
+            .path = "fuse/stat",
+            .must_contain = {" size=3\n"},
+            .fn = [=] { return stat_size_as(*ctx.admin->meta.linux_uid, ctx.base() / "hello2.txt"); }
+        });
+
+        builder.makeTestCase({
+            .name = "FUSE truncate (admin)",
+            .path = "fuse/truncate",
+            .must_contain = {"OK truncate"},
+            .fn = [=] { return truncate_as(*ctx.admin->meta.linux_uid, ctx.base() / "hello2.txt", 1); }
+        });
+
+        builder.makeTestCase({
+            .name = "FUSE stat after truncate (admin)",
+            .path = "fuse/stat",
+            .must_contain = {" size=1\n"},
+            .fn = [=] { return stat_size_as(*ctx.admin->meta.linux_uid, ctx.base() / "hello2.txt"); }
         });
 
         builder.makeTestCase({

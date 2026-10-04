@@ -37,6 +37,12 @@ public:
     [[nodiscard]] std::vector<uint8_t> decrypt(const std::vector<uint8_t>& ciphertext,
                                  const std::string& b64_iv, unsigned int keyVersion) const;
 
+    // Streams a ciphertext file (AES-256-GCM body followed by its 16-byte tag) into a plaintext file. Nothing is
+    // left at plaintextPath unless the tag verifies.
+    void decryptFileToFile(const std::filesystem::path& ciphertextPath,
+                           const std::filesystem::path& plaintextPath,
+                           const std::string& b64_iv, unsigned int keyVersion) const;
+
     [[nodiscard]] std::vector<uint8_t> get_key(const std::string& callingFunctionName) const;
 
     [[nodiscard]] unsigned int get_key_version() const;
@@ -44,6 +50,9 @@ public:
     [[nodiscard]] bool rotation_in_progress() const;
 
 private:
+    // The key that decrypts data written under keyVersion (same rules as decrypt()).
+    [[nodiscard]] const std::vector<uint8_t>& keyFor(unsigned int keyVersion) const;
+
     std::unique_ptr<crypto::secrets::TPMKeyProvider> tpmKeyProvider_;
     std::atomic<bool> rotation_in_progress_;
     unsigned int vault_id_, version_{};

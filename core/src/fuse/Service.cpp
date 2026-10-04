@@ -1,5 +1,6 @@
 #include "fuse/Service.hpp"
 #include "fuse/Bridge.hpp"
+#include "fuse/WorkingCopies.hpp"
 #include "runtime/Manager.hpp"
 #include "runtime/Deps.hpp"
 #include "concurrency/ThreadPool.hpp"
@@ -232,6 +233,13 @@ void Service::runLoop() {
         free(opts.mountpoint);
         fuse_opt_free_args(&args);
         return;
+    }
+
+    // Working copies from a previous run hold plaintext and are no longer open anywhere.
+    try {
+        WorkingCopies::instance().clearStale();
+    } catch (const std::exception& e) {
+        log::Registry::fuse()->warn("[FUSE] Could not clear stale working copies: {}", e.what());
     }
 
     if (fuse_session_mount(session_, opts.mountpoint) != 0) {

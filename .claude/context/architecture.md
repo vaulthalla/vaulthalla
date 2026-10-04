@@ -130,6 +130,18 @@ prod fallback `127.0.0.1:36968`). `web/src/app/api/auth/session/route.ts` proxie
 - HTTP uploads stage `.upload-http-<id>-<file>.part` next to the target *through FUSE*, then rename
   from `fuse_from` to `fuse_to` (`http/upload/Coordinator.cpp`). This is intentional. Don't move staging out of
   FUSE to reduce sync churn; fix duplicate sync triggers or backing-path resolution instead.
+- **Vault bytes are always ciphertext at rest; the mount is the decrypting view (#173).** Every backing file (local
+  vaults and cloud vaults' local copies) is AES-256-GCM body‖16-byte tag, IV and key version in `files`, and
+  `files.size_bytes` is the *plaintext* size. FUSE `open` decrypts into a per-inode working copy
+  (`fuse/WorkingCopies`, 0600 under `<backing>/.fuse-plaintext`, shared by every handle on the inode); reads and
+  writes go to it; `flush` (so `close(2)` returns with the change on disk), `fsync` and the last `release` seal it
+  back (new IV, fsynced temp + rename). `setattr` size works on the copy. Copies that fail to seal move to
+  `.fuse-plaintext/unsaved/`; stale copies are deleted at mount. A same-vault rename only moves the bytes (no
+  re-encryption). `Filesystem::repairAtRest` (first sync pass per vault per start) seals plaintext left by older
+  builds and corrects ciphertext-length sizes.
+- The RBAC gate is unchanged in shape: `open` needs Read for readable handles and Write for writable or `O_TRUNC`
+  ones (both for `O_RDWR`); `write` and size changes check Write *before* touching the copy. A working copy is only
+  reachable through a handle that passed the resolver.
 
 ## Database
 

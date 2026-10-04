@@ -1,0 +1,297 @@
+#include "fuse/WorkingCopies.hpp"
+
+#include "crypto/util/hash.hpp"
+#include "db/query/fs/File.hpp"
+#include "fs/cache/Registry.hpp"
+#include "fs/metadata/Magic.hpp"
+#include "fs/model/File.hpp"
+#include "fs/ops/file.hpp"
+#include "log/Registry.hpp"
+#include "runtime/Deps.hpp"
+#include "storage/Engine.hpp"
+#include "storage/Manager.hpp"
+#include "vault/EncryptionManager.hpp"
+
+#include <paths.h>
+
+#include <fcntl.h>
+#include <unistd.h>
+
+#include <cerrno>
+#include <ctime>
+#include <system_error>
+
+namespace vh::fuse {
+
+namespace {
+
+[[noreturn]] void throwErrno(const char* what) {
+    throw std::system_error(errno, std::generic_category(), what);
+}
+
+// Creates an empty file only the daemon can read; fails if the name is taken.
+void createPrivateFile(const std::filesystem::path& path) {
+    const int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    if (fd < 0) throwErrno("create working copy");
+    ::close(fd);
+}
+
+void fsyncPath(const std::filesystem::path& path) {
+    const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+    if (fd < 0) throwErrno("open sealed file");
+    const int rc = ::fsync(fd);
+    const int err = errno;
+    ::close(fd);
+    if (rc < 0) {
+        errno = err;
+        throwErrno("fsync sealed file");
+    }
+}
+
+std::shared_ptr<storage::Engine> engineFor(const fs::model::File& file) {
+    if (!file.vault_id) throw std::runtime_error("File has no vault: " + file.path.string());
+    auto engine = runtime::Deps::get().storageManager->getEngine(static_cast<unsigned int>(*file.vault_id));
+    if (!engine || !engine->encryptionManager)
+        throw std::runtime_error("No encryption manager for vault " + std::to_string(*file.vault_id));
+    return engine;
+}
+
+WorkingCopyHooks runtimeHooks() {
+    return {
+        .materialize = [](const fs::model::File& file, const std::filesystem::path& to) {
+            if (!std::filesystem::exists(file.backing_path)) return;
+            if (std::filesystem::file_size(file.backing_path) == 0) return;
+            if (file.encryption_iv.empty()) {
+                std::filesystem::copy_file(file.backing_path, to, std::filesystem::copy_options::overwrite_existing);
+                return;
+            }
+            engineFor(file)->encryptionManager->decryptFileToFile(
+                file.backing_path, to, file.encryption_iv, file.encrypted_with_key_version);
+        },
+        .seal = [](const std::filesystem::path& from, const std::filesystem::path& to,
+                   const std::shared_ptr<fs::model::File>& staged) {
+            engineFor(*staged)->encryptionManager->encryptFileToFile(from, to, staged);
+        },
+        .current = [](const uint64_t ino) -> std::shared_ptr<fs::model::File> {
+            const auto entry = runtime::Deps::get().fsCache->getEntry(static_cast<fuse_ino_t>(ino));
+            if (!entry || entry->isDirectory() || entry->isSymlink()) return nullptr;
+            return std::static_pointer_cast<fs::model::File>(entry);
+        },
+        .saved = [](const std::shared_ptr<fs::model::File>& file) {
+            db::query::fs::File::updateFile(file);
+            const auto& cache = runtime::Deps::get().fsCache;
+            cache->updateEntry(file);
+            if (file->parent_id) cache->refreshDirStats(static_cast<unsigned int>(*file->parent_id));
+        },
+    };
+}
+
+}
+
+WorkingCopies::WorkingCopies(std::filesystem::path root, WorkingCopyHooks hooks)
+    : root_(std::move(root)), hooks_(std::move(hooks)) {
+    std::filesystem::create_directories(root_);
+    std::filesystem::permissions(root_, std::filesystem::perms::owner_all, std::filesystem::perm_options::replace);
+}
+
+WorkingCopies& WorkingCopies::instance() {
+    static WorkingCopies copies(paths::getBackingPath() / ".fuse-plaintext", runtimeHooks());
+    return copies;
+}
+
+void WorkingCopies::clearStale() const {
+    std::error_code ec;
+    for (const auto& item : std::filesystem::directory_iterator(root_, ec)) {
+        if (!item.is_regular_file()) continue;
+        std::filesystem::remove(item.path(), ec);
+        if (ec)
+            log::Registry::fuse()->warn("[WorkingCopies] Could not remove stale working copy {}: {}",
+                                        item.path().string(), ec.message());
+    }
+}
+
+void WorkingCopies::materialize(WorkingCopy& copy) const {
+    hooks_.materialize(*copy.opened, copy.path);
+    // A file stored in plaintext by an older build gets encrypted the next time this copy is sealed.
+    if (copy.opened->encryption_iv.empty() && std::filesystem::file_size(copy.path) > 0) copy.dirty = true;
+    copy.ready = true;
+}
+
+WorkingCopies::Handle WorkingCopies::open(const uint64_t ino, const std::shared_ptr<fs::model::File>& file,
+                                          const int flags) {
+    if (!file) throw std::system_error(ENOENT, std::generic_category(), "open working copy");
+
+    std::shared_ptr<WorkingCopy> copy;
+    {
+        std::scoped_lock lock(mutex_);
+        auto& slot = copies_[ino];
+        if (!slot) {
+            slot = std::make_shared<WorkingCopy>();
+            slot->ino = ino;
+            slot->opened = file;
+            slot->path = root_ / (std::to_string(ino) + "-" + fs::ops::generate_random_suffix(12) + ".plain");
+        }
+        copy = slot;
+        ++copy->refs;
+    }
+
+    try {
+        std::scoped_lock lock(copy->mutex);
+        if (!copy->ready) {
+            createPrivateFile(copy->path);
+            materialize(*copy);
+        }
+
+        const int access = flags & O_ACCMODE;
+        if ((flags & O_TRUNC) && access != O_RDONLY && std::filesystem::file_size(copy->path) > 0) {
+            std::filesystem::resize_file(copy->path, 0);
+            copy->dirty = true;
+        }
+
+        const int fd = ::open(copy->path.c_str(), access | (flags & O_APPEND) | O_CLOEXEC);
+        if (fd < 0) throwErrno("open working copy");
+        return {copy, fd};
+    } catch (...) {
+        Handle failed{copy, -1};
+        std::scoped_lock lock(mutex_);
+        if (--copy->refs == 0) {
+            if (const auto it = copies_.find(ino); it != copies_.end() && it->second == copy) copies_.erase(it);
+            std::error_code ec;
+            std::filesystem::remove(copy->path, ec);
+        }
+        throw;
+    }
+}
+
+ssize_t WorkingCopies::read(const Handle& handle, char* buf, const size_t size, const off_t off) const {
+    const auto res = ::pread(handle.fd, buf, size, off);
+    if (res < 0) throwErrno("read working copy");
+    return res;
+}
+
+ssize_t WorkingCopies::write(const Handle& handle, const char* buf, const size_t size, const off_t off,
+                             const std::optional<int32_t> userId) const {
+    std::scoped_lock lock(handle.copy->mutex);
+    const auto res = ::pwrite(handle.fd, buf, size, off);
+    if (res < 0) throwErrno("write working copy");
+    handle.copy->dirty = true;
+    if (userId) handle.copy->lastWriter = userId;
+    return res;
+}
+
+void WorkingCopies::truncate(const Handle& handle, const off_t size, const std::optional<int32_t> userId) const {
+    std::scoped_lock lock(handle.copy->mutex);
+    if (::ftruncate(handle.fd, size) < 0) throwErrno("truncate working copy");
+    handle.copy->dirty = true;
+    if (userId) handle.copy->lastWriter = userId;
+}
+
+void WorkingCopies::seal(WorkingCopy& copy) const {
+    if (!copy.dirty) return;
+
+    const auto entry = hooks_.current(copy.ino);
+    if (!entry) {
+        // Deleted while open: there is nothing left to write back to.
+        copy.dirty = false;
+        return;
+    }
+
+    const auto plainSize = std::filesystem::file_size(copy.path);
+    const auto staged = std::make_shared<fs::model::File>(*entry);
+    const auto sealed = entry->backing_path.parent_path() /
+                        (entry->backing_path.filename().string() + ".vh-seal-" + fs::ops::generate_random_suffix(8));
+
+    std::filesystem::create_directories(entry->backing_path.parent_path());
+    try {
+        if (plainSize == 0) {
+            createPrivateFile(sealed);
+            staged->encryption_iv.clear();
+            staged->encrypted_with_key_version = 0;
+        } else {
+            hooks_.seal(copy.path, sealed, staged);
+        }
+        fsyncPath(sealed);
+        std::filesystem::rename(sealed, entry->backing_path);
+    } catch (...) {
+        std::error_code ec;
+        std::filesystem::remove(sealed, ec);
+        throw;
+    }
+
+    entry->encryption_iv = staged->encryption_iv;
+    entry->encrypted_with_key_version = staged->encrypted_with_key_version;
+    entry->size_bytes = plainSize;
+    entry->content_hash = crypto::hash::blake2b(entry->backing_path);
+    if (plainSize > 0) entry->mime_type = fs::metadata::Magic::get_mime_type(copy.path.string());
+    if (copy.lastWriter) entry->last_modified_by = copy.lastWriter;
+    entry->updated_at = std::time(nullptr);
+    hooks_.saved(entry);
+    copy.dirty = false;
+}
+
+void WorkingCopies::persist(const Handle& handle) const {
+    std::scoped_lock lock(handle.copy->mutex);
+    seal(*handle.copy);
+}
+
+void WorkingCopies::release(Handle& handle) {
+    if (!handle.copy) return;
+    if (handle.fd >= 0) ::close(handle.fd);
+    handle.fd = -1;
+
+    const auto copy = std::move(handle.copy);
+    bool last = false;
+    {
+        std::scoped_lock lock(mutex_);
+        last = --copy->refs == 0;
+    }
+    if (!last) return;
+
+    std::exception_ptr failure;
+    {
+        std::scoped_lock lock(copy->mutex);
+        try {
+            seal(*copy);
+        } catch (...) {
+            failure = std::current_exception();
+        }
+    }
+
+    std::scoped_lock lock(mutex_);
+    if (copy->refs != 0) {
+        if (failure) std::rethrow_exception(failure);
+        return;  // reopened while sealing: the new handle keeps the copy
+    }
+    if (const auto it = copies_.find(copy->ino); it != copies_.end() && it->second == copy) copies_.erase(it);
+
+    std::error_code ec;
+    if (failure) {
+        const auto unsaved = root_ / "unsaved";
+        std::filesystem::create_directories(unsaved, ec);
+        const auto kept = unsaved / copy->path.filename();
+        std::filesystem::rename(copy->path, kept, ec);
+        log::Registry::fuse()->error(
+            "[WorkingCopies] Could not encrypt changes to inode {} back to disk; plaintext kept at {}",
+            copy->ino, ec ? copy->path.string() : kept.string());
+        std::rethrow_exception(failure);
+    }
+    std::filesystem::remove(copy->path, ec);
+}
+
+std::optional<uintmax_t> WorkingCopies::openSize(const uint64_t ino) const {
+    std::shared_ptr<WorkingCopy> copy;
+    {
+        std::scoped_lock lock(mutex_);
+        const auto it = copies_.find(ino);
+        if (it == copies_.end()) return std::nullopt;
+        copy = it->second;
+    }
+    std::scoped_lock lock(copy->mutex);
+    if (!copy->ready) return std::nullopt;
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(copy->path, ec);
+    if (ec) return std::nullopt;
+    return size;
+}
+
+}

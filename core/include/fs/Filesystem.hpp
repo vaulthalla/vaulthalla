@@ -94,6 +94,18 @@ public:
 
     static bool isPreviewable(const std::string& mimeType);
 
+    struct AtRestRepair {
+        unsigned int encrypted = 0;  // stored in plaintext, now sealed
+        unsigned int resized = 0;    // sealed, but the recorded size was not the plaintext size
+        unsigned int failed = 0;
+    };
+
+    // Brings a vault's files to the at-rest format the FUSE mount relies on (#173): ciphertext on disk, IV recorded,
+    // size_bytes the plaintext size. Older builds left files written through FUSE in plaintext and recorded the
+    // ciphertext length for files the rename path encrypted. Files open in FUSE are left to their own seal; files
+    // with no local bytes (cloud index-only) are skipped.
+    static AtRestRepair repairAtRest(const std::shared_ptr<storage::Engine>& engine);
+
 private:
     inline static std::mutex mutex_;
     inline static std::shared_ptr<storage::Manager> storageManager_ = nullptr;

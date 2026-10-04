@@ -27,6 +27,9 @@
 #include "storage/s3/Controller.hpp"
 #include "db/query/sync/RemoteObjectIndex.hpp"
 
+#include <mutex>
+#include <set>
+
 using namespace vh::sync;
 using namespace vh::sync::model;
 using namespace vh::storage;
@@ -117,6 +120,7 @@ void Local::processSharedOps() {
     struct NamedOp { const char* name; std::function<void()> fn; };
 
     const std::vector<NamedOp> ops = {
+        {"repairAtRest", [this]{ repairAtRestOnce(); }},
         {"processOperations", [this]{ processOperations(); }},
         {"removeTrashedFiles", [this]{ removeTrashedFiles(); }},
         {"handleVaultKeyRotation", [this]{ handleVaultKeyRotation(); }},
@@ -304,6 +308,18 @@ void Local::processOperations() const {
 
         scopedOp->stop();
     }
+}
+
+// Once per vault per daemon start: files older builds left in plaintext (or with ciphertext sizes) are brought to
+// the at-rest format before anything else reads them (#173).
+void Local::repairAtRestOnce() const {
+    static std::mutex mutex;
+    static std::set<unsigned int> repaired;
+    {
+        std::scoped_lock lock(mutex);
+        if (!repaired.insert(engine->vault->id).second) return;
+    }
+    (void)fs::Filesystem::repairAtRest(engine);
 }
 
 void Local::handleVaultKeyRotation() {

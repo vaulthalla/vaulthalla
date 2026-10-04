@@ -13,6 +13,7 @@
 #include "log/Registry.hpp"
 #include "fs/cache/Registry.hpp"
 #include "fuse/Resolver.hpp"
+#include "fuse/WorkingCopies.hpp"
 #include "fs/model/Symlink.hpp"
 #include "fs/model/File.hpp"
 
@@ -21,6 +22,7 @@
 #include <cstring>
 #include <mutex>
 #include <string_view>
+#include <system_error>
 #include <sys/statvfs.h>
 #include <unistd.h>
 
@@ -59,6 +61,19 @@ void recordOpenHandle() noexcept {
 
 void recordCloseHandle() noexcept {
     if (const auto& stats = runtime::Deps::get().fuseStats) stats->record_close_handle();
+}
+
+WorkingCopies::Handle workingHandle(const FileHandle& fh) { return {fh.copy, fh.fd}; }
+
+int errnoFrom(const std::exception& e) {
+    if (const auto* sys = dynamic_cast<const std::system_error*>(&e); sys && sys->code().value() > 0)
+        return sys->code().value();
+    return EIO;
+}
+
+std::optional<int32_t> userIdOf(const std::shared_ptr<identities::User>& user) {
+    if (!user) return std::nullopt;
+    return static_cast<int32_t>(user->id);
 }
 
 bool isHttpUploadTempPartName(const std::string_view name) noexcept {
@@ -123,7 +138,6 @@ void getattr(const fuse_req_t req, const fuse_ino_t ino, fuse_file_info* fi) {
 void setattr(const fuse_req_t req, const fuse_ino_t ino,
                          struct stat* attr, int to_set, fuse_file_info* fi) {
     ScopedFuseOpTimer timer(fuseStats(), FuseOperation::SetAttr);
-    (void)fi;
     log::Registry::fuse()->debug("[setattr] Called for inode: {}, to_set: {}", ino, to_set);
 
     const auto resolved = Resolver::resolve({
@@ -147,6 +161,33 @@ void setattr(const fuse_req_t req, const fuse_ino_t ino,
     if (to_set & (FUSE_SET_ATTR_MODE | FUSE_SET_ATTR_UID | FUSE_SET_ATTR_GID))
         warnSetattrMetadataNoOpOncePerMinute();
 
+    // truncate(2)/ftruncate(2): change the plaintext, then seal it like any other write.
+    if (to_set & FUSE_SET_ATTR_SIZE) {
+        if (resolved.entry->isDirectory()) {
+            replyError(req, timer, EISDIR);
+            return;
+        }
+        try {
+            auto& copies = WorkingCopies::instance();
+            if (const auto* fh = fi ? reinterpret_cast<FileHandle*>(fi->fh) : nullptr; fh && fh->copy) {
+                copies.truncate(workingHandle(*fh), attr->st_size, userIdOf(resolved.user));
+            } else {
+                auto handle = copies.open(ino, std::static_pointer_cast<File>(resolved.entry), O_RDWR);
+                try {
+                    copies.truncate(handle, attr->st_size, userIdOf(resolved.user));
+                } catch (...) {
+                    copies.release(handle);
+                    throw;
+                }
+                copies.release(handle);
+            }
+        } catch (const std::exception& e) {
+            log::Registry::fuse()->error("[setattr] Could not truncate {}: {}", resolved.entry->fuse_path.string(), e.what());
+            replyError(req, timer, errnoFrom(e));
+            return;
+        }
+    }
+
     timespec times[2]{};
     if (to_set & FUSE_SET_ATTR_ATIME) times[0] = attr->st_atim;
     else times[0].tv_nsec = UTIME_OMIT;
@@ -165,8 +206,7 @@ void setattr(const fuse_req_t req, const fuse_ino_t ino,
         return;
     }
 
-    auto sanitized = statFromEntry(resolved.entry, ino);
-    sanitized.st_size = st.st_size;
+    auto sanitized = statFromEntry(resolved.entry, ino);  // plaintext size, not the ciphertext's
     sanitized.st_atim = st.st_atim;
     sanitized.st_mtim = st.st_mtim;
     sanitized.st_ctim = st.st_ctim;
@@ -331,14 +371,17 @@ void create(const fuse_req_t req, const fuse_ino_t parent, const char* name, con
 
     const auto st = statFromEntry(newEntry, *newEntry->inode);
 
-    // open backing file immediately
-    const int fd = ::open(newEntry->backing_path.c_str(), O_CREAT | O_RDWR, mode);
-    if (fd < 0) {
-        replyError(req, timer, errno);
+    WorkingCopies::Handle handle;
+    try {
+        handle = WorkingCopies::instance().open(
+            *newEntry->inode, std::static_pointer_cast<File>(newEntry), fi->flags & ~(O_CREAT | O_EXCL));
+    } catch (const std::exception& e) {
+        log::Registry::fuse()->error("[create] Could not open {}: {}", newEntry->fuse_path.string(), e.what());
+        replyError(req, timer, errnoFrom(e));
         return;
     }
 
-    auto* fh = new FileHandle{newEntry->backing_path.string(), fd};
+    auto* fh = new FileHandle{newEntry->backing_path.string(), handle.fd, 0, handle.copy};
     fi->fh = reinterpret_cast<uint64_t>(fh);
 
     fi->direct_io = 1;
@@ -403,11 +446,19 @@ void open(const fuse_req_t req, const fuse_ino_t ino, fuse_file_info* fi) {
     ScopedFuseOpTimer timer(fuseStats(), FuseOperation::Open);
     log::Registry::fuse()->debug("[open] Called for inode: {}, flags: {}", ino, fi->flags);
 
+    // A handle that can modify the file needs Write; one that can read it needs Read (O_RDWR needs both).
+    const int access = fi->flags & O_ACCMODE;
+    const bool reads = access != O_WRONLY;
+    const bool writes = access != O_RDONLY || (fi->flags & O_TRUNC);
+    std::vector<permission::vault::FilesystemAction> also;
+    if (reads && writes) also.push_back(permission::vault::FilesystemAction::Write);
+
     const auto resolved = Resolver::resolve({
         .caller = "open",
         .fuseReq = req,
         .ino = ino,
-        .action = permission::vault::FilesystemAction::Read,
+        .action = reads ? permission::vault::FilesystemAction::Read : permission::vault::FilesystemAction::Write,
+        .actions = also,
         .target = resolver::Target::Entry
     });
 
@@ -420,14 +471,21 @@ void open(const fuse_req_t req, const fuse_ino_t ino, fuse_file_info* fi) {
         replyError(req, timer, ELOOP);
         return;
     }
-
-    const int fd = ::open(resolved.entry->backing_path.c_str(), fi->flags, 0644);
-    if (fd < 0) {
-        replyError(req, timer, errno);
+    if (resolved.entry->isDirectory()) {
+        replyError(req, timer, EISDIR);
         return;
     }
 
-    auto* fh = new FileHandle{resolved.entry->backing_path.string(), fd};
+    WorkingCopies::Handle handle;
+    try {
+        handle = WorkingCopies::instance().open(ino, std::static_pointer_cast<File>(resolved.entry), fi->flags);
+    } catch (const std::exception& e) {
+        log::Registry::fuse()->error("[open] Could not open {}: {}", resolved.entry->fuse_path.string(), e.what());
+        replyError(req, timer, errnoFrom(e));
+        return;
+    }
+
+    auto* fh = new FileHandle{resolved.entry->backing_path.string(), handle.fd, 0, handle.copy};
     fi->fh = reinterpret_cast<uint64_t>(fh);
 
     fi->direct_io = 1;
@@ -452,14 +510,7 @@ void write(const fuse_req_t req, const fuse_ino_t ino, const char* buf,
         return;
     }
 
-    log::Registry::fuse()->debug("[write] Writing to fd={} offset={} size={}", fh->fd, off, size);
-
-    const ssize_t res = ::pwrite(fh->fd, buf, size, off);
-    if (res < 0) {
-        replyError(req, timer, errno);
-        return;
-    }
-
+    // Check before anything is written: a refused write must not change the file.
     const auto resolved = Resolver::resolve({
         .caller = "write",
         .fuseReq = req,
@@ -473,8 +524,13 @@ void write(const fuse_req_t req, const fuse_ino_t ino, const char* buf,
         return;
     }
 
-    resolved.entry->size_bytes = std::filesystem::file_size(resolved.entry->backing_path);
-    runtime::Deps::get().fsCache->updateEntry(resolved.entry);
+    ssize_t res = 0;
+    try {
+        res = WorkingCopies::instance().write(workingHandle(*fh), buf, size, off, userIdOf(resolved.user));
+    } catch (const std::exception& e) {
+        replyError(req, timer, errnoFrom(e));
+        return;
+    }
 
     fuse_lowlevel_notify_inval_inode(runtime::Deps::get().fuseSession, ino, 0, 0);
     timer.success(0, static_cast<std::uint64_t>(res));
@@ -507,10 +563,11 @@ void read(const fuse_req_t req, const fuse_ino_t ino, const size_t size, const o
     }
 
     std::vector<char> buffer(size);
-    const ssize_t res = ::pread(fh->fd, buffer.data(), size, off);
-
-    if (res < 0) {
-        replyError(req, timer, errno);
+    ssize_t res = 0;
+    try {
+        res = WorkingCopies::instance().read(workingHandle(*fh), buffer.data(), size, off);
+    } catch (const std::exception& e) {
+        replyError(req, timer, errnoFrom(e));
         return;
     }
 
@@ -767,8 +824,17 @@ void flush(const fuse_req_t req, const fuse_ino_t ino, fuse_file_info* fi) {
     ScopedFuseOpTimer timer(fuseStats(), FuseOperation::Flush);
     log::Registry::fuse()->debug("[flush] Called for inode: {}, file handle: {}", ino, fi->fh);
 
-    // This can be a no-op unless something like sync(2) or call fsync(fd) is desired
-    // Likely no need finalize here since flush may be called multiple times per FD
+    // close(2) waits for flush: encrypt what changed now, so the file is complete on disk (and in the console)
+    // when close returns. Flush can come several times per handle; an unchanged copy is not re-sealed.
+    if (const auto* fh = reinterpret_cast<FileHandle*>(fi->fh); fh && fh->copy) {
+        try {
+            WorkingCopies::instance().persist(workingHandle(*fh));
+        } catch (const std::exception& e) {
+            log::Registry::fuse()->error("[flush] Could not encrypt inode {} to disk: {}", ino, e.what());
+            replyError(req, timer, errnoFrom(e));
+            return;
+        }
+    }
 
     replyOk(req, timer);
 }
@@ -784,8 +850,12 @@ void release(const fuse_req_t req, const fuse_ino_t ino, fuse_file_info* fi) {
         return;
     }
 
-    if (::close(fh->fd) < 0)
-        log::Registry::fuse()->debug("[release] Failed to close file handle: {}: {}", fh->path.string(), strerror(errno));
+    auto handle = workingHandle(*fh);
+    try {
+        WorkingCopies::instance().release(handle);
+    } catch (const std::exception& e) {
+        log::Registry::fuse()->error("[release] Could not encrypt inode {} to disk: {}", ino, e.what());
+    }
 
     delete fh;  // clean up heap allocation
     fi->fh = 0; // clear the kernel-side handle
@@ -821,9 +891,13 @@ void fsync(const fuse_req_t req, const fuse_ino_t ino, const int datasync, fuse_
         return;
     }
 
-    if (::fsync(fh->fd) < 0) {
-        log::Registry::fuse()->debug("[fsync] Failed to sync file handle: {}: {}", fh->fd, strerror(errno));
-        replyError(req, timer, errno);
+    // Durable means encrypted on disk: seal the working copy (the sealed file is fsynced before it replaces the
+    // backing file).
+    try {
+        WorkingCopies::instance().persist(workingHandle(*fh));
+    } catch (const std::exception& e) {
+        log::Registry::fuse()->error("[fsync] Could not encrypt inode {} to disk: {}", ino, e.what());
+        replyError(req, timer, errnoFrom(e));
         return;
     }
 
@@ -884,6 +958,9 @@ struct stat statFromEntry(const std::shared_ptr<Entry>& entry, const fuse_ino_t&
     else if (entry->isSymlink()) st.st_mode = S_IFLNK | 0777;
     else st.st_mode = S_IFREG | 0644;
     st.st_size = static_cast<off_t>(entry->size_bytes);
+    // While a file is open its working copy holds the newest plaintext.
+    if (!entry->isDirectory() && !entry->isSymlink())
+        if (const auto open = WorkingCopies::instance().openSize(ino)) st.st_size = static_cast<off_t>(*open);
     st.st_mtim.tv_sec = entry->updated_at;
     st.st_atim = st.st_ctim = st.st_mtim;
     st.st_nlink = 1;

@@ -3,6 +3,8 @@
 #include "config/Registry.hpp"
 
 #include <sodium.h>
+#include <openssl/evp.h>
+#include <algorithm>
 #include <stdexcept>
 #include <fstream>
 #include <cstring>
@@ -210,6 +212,72 @@ std::vector<uint8_t> decrypt_aes256_gcm(
 
     decrypted.resize(decrypted_len);
     return decrypted;
+}
+
+void decrypt_aes256_gcm_file(
+    const std::filesystem::path& ciphertextPath,
+    const std::filesystem::path& plaintextPath,
+    const std::vector<uint8_t>& key,
+    const std::vector<uint8_t>& iv) {
+    if (key.size() != AES_KEY_SIZE) throw std::invalid_argument("Invalid AES-256 key size");
+    if (iv.size() != AES_IV_SIZE) throw std::invalid_argument("Invalid AES-GCM IV size");
+
+    const auto total = std::filesystem::file_size(ciphertextPath);
+    if (total < AES_TAG_SIZE) throw std::runtime_error("Ciphertext shorter than its tag: " + ciphertextPath.string());
+    const auto bodySize = total - AES_TAG_SIZE;
+
+    std::ifstream in(ciphertextPath, std::ios::binary);
+    if (!in) throw std::runtime_error("Failed to open ciphertext file: " + ciphertextPath.string());
+    std::array<unsigned char, AES_TAG_SIZE> tag{};
+    in.seekg(static_cast<std::streamoff>(bodySize));
+    in.read(reinterpret_cast<char*>(tag.data()), static_cast<std::streamsize>(tag.size()));
+    if (!in) throw std::runtime_error("Failed to read AES-GCM tag: " + ciphertextPath.string());
+    in.seekg(0);
+
+    std::ofstream out(plaintextPath, std::ios::binary | std::ios::trunc);
+    if (!out) throw std::runtime_error("Failed to open plaintext file for decryption: " + plaintextPath.string());
+
+    EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
+    if (!ctx) throw std::runtime_error("Failed to allocate AES-GCM context");
+
+    try {
+        if (EVP_DecryptInit_ex(ctx, EVP_aes_256_gcm(), nullptr, nullptr, nullptr) != 1 ||
+            EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, static_cast<int>(iv.size()), nullptr) != 1 ||
+            EVP_DecryptInit_ex(ctx, nullptr, nullptr, key.data(), iv.data()) != 1)
+            throw std::runtime_error("AES-GCM initialization failed");
+
+        std::array<unsigned char, 64 * 1024> input{};
+        std::array<unsigned char, input.size() + AES_TAG_SIZE> output{};
+        uintmax_t remaining = bodySize;
+        while (remaining > 0) {
+            const auto chunk = static_cast<std::streamsize>(std::min<uintmax_t>(remaining, input.size()));
+            in.read(reinterpret_cast<char*>(input.data()), chunk);
+            if (in.gcount() != chunk) throw std::runtime_error("Short read decrypting: " + ciphertextPath.string());
+            remaining -= static_cast<uintmax_t>(chunk);
+
+            int outLen = 0;
+            if (EVP_DecryptUpdate(ctx, output.data(), &outLen, input.data(), static_cast<int>(chunk)) != 1)
+                throw std::runtime_error("AES-GCM file decryption failed");
+            if (outLen > 0) out.write(reinterpret_cast<const char*>(output.data()), outLen);
+            if (!out) throw std::runtime_error("Failed writing plaintext file: " + plaintextPath.string());
+        }
+
+        if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, static_cast<int>(tag.size()), tag.data()) != 1)
+            throw std::runtime_error("AES-GCM tag setup failed");
+        int finalLen = 0;
+        if (EVP_DecryptFinal_ex(ctx, output.data(), &finalLen) != 1)
+            throw std::runtime_error("AES-GCM authentication failed: " + ciphertextPath.string());
+        if (finalLen > 0) out.write(reinterpret_cast<const char*>(output.data()), finalLen);
+        out.close();
+        if (!out) throw std::runtime_error("Failed writing plaintext file: " + plaintextPath.string());
+        EVP_CIPHER_CTX_free(ctx);
+    } catch (...) {
+        EVP_CIPHER_CTX_free(ctx);
+        out.close();
+        std::error_code ec;
+        std::filesystem::remove(plaintextPath, ec);
+        throw;
+    }
 }
 
 std::vector<uint8_t> read_file(const std::filesystem::path& path) {

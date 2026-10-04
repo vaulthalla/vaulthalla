@@ -21,6 +21,14 @@ std::vector<uint8_t> decrypt_aes256_gcm(
     const std::vector<uint8_t>& key,
     const std::vector<uint8_t>& iv);
 
+// Streams a ciphertext file (AES-256-GCM body followed by its 16-byte tag) into plaintextPath, 64 KiB at a time.
+// Throws when the tag doesn't verify (or the input is truncated), and then leaves nothing at plaintextPath.
+void decrypt_aes256_gcm_file(
+    const std::filesystem::path& ciphertextPath,
+    const std::filesystem::path& plaintextPath,
+    const std::vector<uint8_t>& key,
+    const std::vector<uint8_t>& iv);
+
 std::vector<uint8_t> read_file(const std::filesystem::path& path);
 
 std::string b64_encode(const std::vector<uint8_t>& data);

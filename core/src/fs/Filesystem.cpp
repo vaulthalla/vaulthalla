@@ -14,6 +14,7 @@
 #include "vault/EncryptionManager.hpp"
 #include "fs/ops/file.hpp"
 #include "crypto/util/hash.hpp"
+#include "crypto/util/encrypt.hpp"
 #include "preview/thumbnail/Worker.hpp"
 #include "fs/metadata/Magic.hpp"
 #include "runtime/Deps.hpp"
@@ -25,8 +26,10 @@
 #include "db/encoding/u8.hpp"
 #include "identities/User.hpp"
 #include "identities/Group.hpp"
+#include "fuse/WorkingCopies.hpp"
 
 #include <ranges>
+#include <set>
 #include <fstream>
 #include <vector>
 #include <algorithm>
@@ -1160,7 +1163,7 @@ int Filesystem::handleRename(const RenameContext& ctx) {
 
                 writeFile(entry->backing_path, ciphertext);
 
-                f->size_bytes = std::filesystem::file_size(entry->backing_path);
+                f->size_bytes = buffer.size();  // the plaintext size, as everywhere else
                 f->mime_type = Magic::get_mime_type_from_buffer(buffer);
                 f->content_hash = hash::blake2b(entry->backing_path);
 
@@ -1209,10 +1212,73 @@ int Filesystem::handleRename(const RenameContext& ctx) {
     }
 }
 
+Filesystem::AtRestRepair Filesystem::repairAtRest(const std::shared_ptr<Engine>& engine) {
+    AtRestRepair result;
+    if (!engine || !engine->vault || !engine->encryptionManager) return result;
+
+    const auto& cache = runtime::Deps::get().fsCache;
+    std::set<unsigned int> touchedParents;
+
+    for (const auto& listed : db::query::fs::File::listFilesInDir(engine->vault->id, "/", true)) {
+        try {
+            const auto entry = std::dynamic_pointer_cast<File>(cache->getEntryById(listed->id));
+            if (!entry || !entry->inode) continue;
+            if (fuse::WorkingCopies::instance().openSize(*entry->inode)) continue;
+
+            std::error_code ec;
+            if (!std::filesystem::is_regular_file(entry->backing_path, ec)) continue;
+            const auto onDisk = std::filesystem::file_size(entry->backing_path);
+
+            if (entry->encryption_iv.empty()) {
+                if (onDisk == 0) continue;
+
+                const auto staged = std::make_shared<File>(*entry);
+                const auto sealed = entry->backing_path.parent_path() /
+                                    (entry->backing_path.filename().string() + ".vh-seal-" + generate_random_suffix(8));
+                try {
+                    engine->encryptionManager->encryptFileToFile(entry->backing_path, sealed, staged);
+                    std::filesystem::rename(sealed, entry->backing_path);
+                } catch (...) {
+                    std::filesystem::remove(sealed, ec);
+                    throw;
+                }
+                entry->encryption_iv = staged->encryption_iv;
+                entry->encrypted_with_key_version = staged->encrypted_with_key_version;
+                entry->size_bytes = onDisk;
+                entry->content_hash = hash::blake2b(entry->backing_path);
+                ++result.encrypted;
+            } else {
+                const auto plaintextSize = onDisk >= vh::crypto::util::AES_TAG_SIZE ? onDisk - vh::crypto::util::AES_TAG_SIZE : 0;
+                if (entry->size_bytes == plaintextSize) continue;
+                entry->size_bytes = plaintextSize;
+                ++result.resized;
+            }
+
+            db::query::fs::File::updateFile(entry);
+            cache->updateEntry(entry);
+            if (entry->parent_id) touchedParents.insert(static_cast<unsigned int>(*entry->parent_id));
+        } catch (const std::exception& e) {
+            ++result.failed;
+            log::Registry::fs()->warn("[Filesystem::repairAtRest] Vault {} file {}: {}",
+                                      engine->vault->id, listed->path.string(), e.what());
+        }
+    }
+
+    for (const auto id : touchedParents) cache->refreshDirStats(id);
+
+    if (result.encrypted || result.resized || result.failed)
+        log::Registry::fs()->info(
+            "[Filesystem::repairAtRest] Vault {}: encrypted {} plaintext file(s), corrected {} size(s), {} failed",
+            engine->vault->id, result.encrypted, result.resized, result.failed);
+    return result;
+}
+
+// Within a vault a rename only moves the bytes: they stay sealed with the same key and IV, so the files row needs no
+// new encryption metadata. Re-encrypting here once turned FUSE-written plaintext into ciphertext the mount then
+// served as-is (#173).
 bool Filesystem::canFastPath(const std::shared_ptr<Entry>& entry, const std::shared_ptr<Engine>& engine) {
     if (entry->isDirectory()) return false;
     const auto file = std::static_pointer_cast<File>(entry);
-    if (file->encryption_iv.empty()) return false;
     return file->vault_id == engine->vault->id;
 }
 

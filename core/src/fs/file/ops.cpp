@@ -7,6 +7,9 @@
 #include "log/Registry.hpp"
 #include "fs/cache/Registry.hpp"
 
+#include <fcntl.h>
+#include <unistd.h>
+
 #include <fstream>
 #include <filesystem>
 #include <vector>
@@ -64,8 +67,13 @@ std::filesystem::path writePlaintextToTemp(const std::vector<uint8_t>& plaintext
 
     fs::path tmp_file = fs::temp_directory_path() / ("vaulthalla_dec_" + generate_random_suffix() + ".tmp");
 
+    // Plaintext: only the daemon may read it, and never through a file someone else created first.
+    const int fd = ::open(tmp_file.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    if (fd < 0) throw std::runtime_error("Failed to create temp decrypted file: " + tmp_file.string());
+    ::close(fd);
+
     std::ofstream out(tmp_file, std::ios::binary | std::ios::trunc);
-    if (!out) throw std::runtime_error("Failed to create temp decrypted file: " + tmp_file.string());
+    if (!out) throw std::runtime_error("Failed to open temp decrypted file: " + tmp_file.string());
 
     out.write(reinterpret_cast<const char*>(plaintext.data()), static_cast<long>(plaintext.size()));
     out.close();
