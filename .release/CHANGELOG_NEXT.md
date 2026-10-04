@@ -99,7 +99,38 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
 - Add ws commands role.vault.overrides.{list,add,update,remove} for
   per-assignment, path-scoped vault permission overrides (the same ops and
   RBAC as vh vault role override ...).
+- pricing.notifications.list always returns summary {open_count,
+  worst_severity} over the caller's open (unacknowledged, unexpired) alerts,
+  from one aggregate query with the rows' vault visibility, independent of
+  limit; the cost-alerts bell requests limit 8 and badges from it. (#172)
 - Contract test: core ws registrations must match web WebSocketCommandMap.
+
+## FUSE
+- FUSE is the decrypting view of at-rest ciphertext (#173): open decrypts
+  each inode into a shared 0600 working copy under
+  <backing>/.fuse-plaintext; reads/writes/truncate use it; flush, fsync and
+  the last release seal it back (new IV, fsynced temp + rename) and record
+  the plaintext size_bytes. Copies that fail to seal move to unsaved/;
+  stale copies are removed at mount.
+- Same-vault renames only move the ciphertext (canFastPath no longer
+  requires an IV); the cross-vault path records the plaintext size.
+- Filesystem::repairAtRest (first sync pass per vault per start) seals
+  plaintext files left by older builds and corrects ciphertext-length sizes.
+- open requires Write for writable or O_TRUNC handles (Read and Write for
+  O_RDWR); write checks Write before writing; setattr size works.
+- Streaming AES-256-GCM file decryption (crypto::util::decrypt_aes256_gcm_file,
+  EncryptionManager::decryptFileToFile); decrypt_file_to_temp creates its
+  plaintext temp files O_EXCL 0600.
+
+## Auth
+- Refresh tokens (human and share) are stored as sha256:<hex> digests
+  instead of Argon2 hashes; verification accepts both and rewrites a legacy
+  row on its first successful check (conditional UPDATE). A session check
+  drops from ~0.57 s to well under a millisecond, which also speeds up HTTP
+  preview, download and upload auth. No migration. (#171)
+- Web middleware only checks that a refresh cookie exists; the websocket
+  session gate decides validity. Removed /api/auth/session and
+  src/lib/server/authCheck.ts. (#171)
 
 ## HTTP
 - Upload sessions use a sliding 30-minute idle TTL (refreshed by every

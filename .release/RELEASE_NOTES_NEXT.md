@@ -8,7 +8,7 @@ Everything after the title is the Markdown release body. Describe the resulting 
 for users and operators; keep it representative of what actually ships.
 -->
 
-# A rebuilt web console, correct times on non-UTC servers, safer API key edits
+# A rebuilt web console, readable files on the mount, correct times on non-UTC servers
 
 ## The web console, rebuilt
 
@@ -49,6 +49,44 @@ and the console only asks the daemon for what the page on screen needs.
   always empty before. Accounts whose password hasn't changed since the upgrade show no date.
 - Old console addresses (for example `/dashboard`, `/api-keys`, `/pricing-budget`, `/operator-email`) redirect to
   their new pages.
+
+## Files on the mount are always readable, and always encrypted on disk
+
+Vault files are stored encrypted on disk, and the mount at `/mnt/vaulthalla` is where you read them in plain form.
+Until now the mount handed out the stored bytes as they were. Any file uploaded through the web console, synced
+down from S3, or renamed or moved (on the mount or in the console) read back as **encrypted bytes** with `cat`,
+editors, `tar` or `rsync`. Files written through the mount were left **unencrypted** on disk until something renamed
+them. Web downloads were never affected.
+
+- The mount now decrypts files when they are opened and encrypts changes when they are closed or synced
+  (`fsync`). `close` returns once the change is encrypted on disk, so the console shows it right away. Renaming or
+  moving a file no longer re-encrypts it.
+- `ls -l`, `stat` and `du` report the real file size. They used to show 0 for files written through the mount and
+  the encrypted size (16 bytes more) for others, after a restart.
+- `truncate` works on the mount. It used to be silently ignored.
+- Opening a file for writing now needs write permission on it, and a refused write changes nothing. A user with
+  read-only access could open a file for writing, and a refused write had already been written to disk.
+- **On the first start after the upgrade** each vault's files are checked once: files left unencrypted are
+  encrypted, and wrong sizes are corrected. This takes longer on vaults with many files written through the
+  mount, and an S3 vault may upload those files once more. Nothing needs to be done by hand.
+- Temporary decrypted copies (for downloads and previews) are now readable only by the daemon.
+
+## Faster page loads, previews and downloads
+
+Every check of a signed-in session cost the daemon about half a second, because session tokens were stored with
+the same slow hash as passwords. A console page load paid that twice, and every preview, download and upload
+paid it once. Session tokens are now stored as a SHA-256 digest, which is the right tool for long random values
+the server mints itself, so the check takes well under a millisecond. Existing sessions keep working: each
+stored token is upgraded the first time it is used.
+
+The console also stopped asking the daemon about the session before loading every page. It only checks that you
+have a session cookie; the console then confirms the session over its connection, sends you to the login page if
+it was revoked, and shows its reconnecting state (not the login page) while the server is unreachable.
+
+The cost-alerts bell is lighter and more accurate. It fetches the 8 newest open alerts and a summary from the
+server instead of 50 alerts every minute, and its count and colour cover every open alert you can see, so an
+older critical alert is never hidden. When more alerts are open than shown, "View all N alerts" opens Cost
+control.
 
 ## Times on servers outside UTC
 
