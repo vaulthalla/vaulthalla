@@ -11,14 +11,16 @@ void vh::db::Connection::initPreparedFsEntries() const {
                    "JOIN directories d ON fs.id = d.fs_entry_id "
                    "WHERE fs.parent_id IS NULL AND fs.vault_id IS NULL AND fs.path = '/' AND fs.name = '/'");
 
+    // Root first, nearest parent last. Ordered by distance, not by parent_id: ids only grow with depth until an
+    // entry is moved under a directory created after it (#158).
     conn_->prepare("collect_parent_chain",
                    "WITH RECURSIVE parent_chain AS ("
-                   "    SELECT id, parent_id, name, base32_alias FROM fs_entry WHERE id = $1 "
+                   "    SELECT id, parent_id, name, base32_alias, 0 AS distance FROM fs_entry WHERE id = $1 "
                    "    UNION ALL "
-                   "    SELECT f.id, f.parent_id, f.name, f.base32_alias FROM fs_entry f "
+                   "    SELECT f.id, f.parent_id, f.name, f.base32_alias, pc.distance + 1 FROM fs_entry f "
                    "    JOIN parent_chain pc ON f.id = pc.parent_id "
                    ") "
-                   "SELECT * FROM parent_chain ORDER BY parent_id NULLS FIRST");
+                   "SELECT id, parent_id, name, base32_alias FROM parent_chain ORDER BY distance DESC");
 
     conn_->prepare("update_fs_entry_by_inode",
                    R"SQL(

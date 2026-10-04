@@ -42,6 +42,17 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
   quota check in freeSpace() (HTTP/share uploads, sync, key rotation) count
   only that vault; a missing tree is 0 and files vanishing mid-walk are
   skipped instead of throwing.
+- Keep directory subtree totals (size_bytes, file_count,
+  subdirectory_count) on both ancestor chains for fs.entry.move/rename
+  across directories (Directory::shiftSubtreeTotals), for deletes of empty
+  directories (Directory::deleteDirectoryTree) and for directories the
+  delete cleanup cascades; a shallow directory copy starts at zero; the fs
+  cache re-reads affected totals (Registry::refreshDirStats).
+- Filesystem::rename of a directory walks the directory's own subtree,
+  shallowest first (it walked the parent's, so any sibling aborted it with
+  EIO); collect_parent_chain orders ancestors by distance instead of
+  parent_id, which gave wrong fuse/backing paths for entries moved under a
+  newer directory.
 
 ## Database
 - Run every daemon DB session with TimeZone=UTC (recording the session's

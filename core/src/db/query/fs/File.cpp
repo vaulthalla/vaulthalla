@@ -329,9 +329,12 @@ void File::updateParentStatsAndCleanEmptyDirs(pqxx::work& txn,
         if (*parentId == stopAt) deleteDirs = false;
         if (deleteDirs && fsCount == 0) {
             const auto inode = txn.exec(pqxx::prepped{"get_fs_entry_inode"}, *parentId).one_field().as<ino_t>();
+            // Empty subdirectories still under it go with it (ON DELETE CASCADE); ancestors drop those too (#158).
+            const auto cascaded = txn.exec("SELECT subdirectory_count FROM directories WHERE fs_entry_id = $1",
+                                           pqxx::params{*parentId}).one_field().as<int>(0);
             txn.exec(pqxx::prepped{"delete_fs_entry"}, *parentId);
             runtime::Deps::get().fsCache->evictIno(inode);
-            --subDirsDeleted;
+            subDirsDeleted -= 1 + cascaded;
         }
         if (parentRes.empty()) break;
         parentId = parentRes.one_field().as<std::optional<unsigned int>>();

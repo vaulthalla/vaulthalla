@@ -93,6 +93,18 @@ time-zone-aware value.
 Path-scoped allow/deny overrides on a vault role assignment (for example "deny downloads under `/finance/**`")
 can now be listed, added, changed and removed from a vault's Access tab, not only with `vh vault role override`.
 
+## Folder sizes and item counts
+
+- Moving or renaming a file or folder into another folder now updates the size and item count of both folders
+  (and the folders above them), as uploads always did. A folder that received files by a move used to show
+  "0 items", and the folder they came from kept counting them. Copies and deletes update them too.
+- Moving or renaming a folder into another folder works again when the folder it leaves holds anything else. It
+  used to fail with an I/O error. Files inside a folder moved under a newer folder keep working: their location
+  on disk was worked out from the wrong folder order.
+- Deleting an empty folder (or one holding only empty folders) from the web console removes it. It used to stay
+  listed after its contents on disk were gone.
+- Counts that are already wrong on an existing install are not recomputed by this release.
+
 ## Vault sizes and quotas
 
 - Each vault now reports its own size. Every vault used to report the size of the whole storage directory,

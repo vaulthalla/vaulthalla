@@ -583,6 +583,23 @@ void Registry::evictPath(const std::filesystem::path& path) {
     evictIno(ino);
 }
 
+bool Registry::refreshDirStats(const unsigned int dirId) {
+    const auto rows = db::query::fs::Directory::collectParentStats(dirId);
+    if (rows.empty()) return false;
+    std::unique_lock lock(mutex_);
+    for (const auto& s : rows) {
+        const auto it = idToEntry_.find(s["id"].as<unsigned int>());
+        if (it == idToEntry_.end() || !it->second || !it->second->isDirectory()) continue;
+        const auto dir = std::static_pointer_cast<Directory>(it->second);
+        dir->size_bytes = s["size_bytes"].as<uintmax_t>();
+        dir->file_count = s["file_count"].as<unsigned int>();
+        dir->subdirectory_count = s["subdirectory_count"].as<unsigned int>();
+        if (!s["updated_at"].is_null())
+            dir->updated_at = db::encoding::parsePostgresTimestamp(s["updated_at"].as<std::string>());
+    }
+    return true;
+}
+
 std::vector<std::shared_ptr<Entry>> Registry::listDir(const unsigned int parentId, const bool recursive) const {
     const auto parent = db::query::fs::Entry::getFSEntryById(parentId);
     if (!parent->isDirectory()) throw std::runtime_error("Parent ID is not a directory");
