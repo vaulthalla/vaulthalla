@@ -17,8 +17,10 @@
 #include <cstdlib>
 #include <ctime>
 #include <filesystem>
+#include <fstream>
 #include <optional>
 #include <string>
+#include <unistd.h>
 
 namespace vh::test_db_timezone {
 
@@ -158,6 +160,38 @@ TEST_F(DbTimezoneTest, MigrationReadsNaiveValuesInTheRecordedZoneAndIsIdempotent
     EXPECT_EQ(epochOf(txn, "(SELECT stamp FROM sample WHERE id = 1)"), 1768503600);
     EXPECT_EQ(typeOf("viewed"), "timestamp without time zone");
     txn.abort();
+}
+
+// Found by the packaged 1.8.0 -> candidate upgrade: the daemon's UTC session recorded 099's schema_migrations row
+// as UTC wall time, then 100 read it as Denver time (+7h). A fresh install shifted every row 000-099 wrote the same way.
+TEST_F(DbTimezoneTest, RowsWrittenEarlierInTheSameDeployAreNotShifted) {
+    pqxx::connection conn(*conninfo);
+    db::Connection::configureSession(conn);
+
+    const auto dir = std::filesystem::temp_directory_path() / ("vh_tz_deploy_" + std::to_string(::getpid()));
+    std::filesystem::create_directories(dir);
+    {
+        std::ofstream(dir / "001_seed.sql") << "CREATE TABLE seeded (at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);\n"
+                                               "INSERT INTO seeded DEFAULT VALUES;\n";
+        std::ofstream(dir / "100_timestamptz.sql") << migrationSql();
+    }
+
+    pqxx::work txn(conn);
+    txn.exec("CREATE SCHEMA vh_tz_migration_deploy");
+    txn.exec("SET LOCAL search_path = vh_tz_migration_deploy");
+    db::seed::SqlDeployer::ensureMigrationsTable(txn);
+    const auto report = db::seed::SqlDeployer::applyDir(txn, dir);
+    std::filesystem::remove_all(dir);
+    ASSERT_EQ(report.applied.size(), 2u);
+
+    const auto now = std::time(nullptr);
+    EXPECT_LE(std::llabs(epochOf(txn, "(SELECT at FROM seeded)") - now), 5);
+    EXPECT_LE(std::llabs(epochOf(txn, "(SELECT applied_at FROM schema_migrations WHERE filename = '001_seed.sql')") - now), 5);
+    EXPECT_LE(std::llabs(epochOf(txn, "(SELECT applied_at FROM schema_migrations WHERE filename = '100_timestamptz.sql')") - now), 5);
+    txn.abort();
+
+    pqxx::nontransaction after(conn);
+    EXPECT_EQ(after.exec("SHOW TimeZone").one_field().as<std::string>(), "UTC") << "the deploy's zone is transaction-local";
 }
 
 TEST_F(DbTimezoneTest, MigrationFallsBackToTheSessionZoneWhenRunOutsideTheDaemon) {
