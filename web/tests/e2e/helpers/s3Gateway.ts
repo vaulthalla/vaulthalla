@@ -201,3 +201,42 @@ export async function deleteVault(page: Page, name: string) {
   await dialog.getByRole('button', { name: 'Delete vault' }).click()
   await page.waitForURL(/\/vaults$/)
 }
+
+// Price budget policies this run saved. Saving or disabling a policy raises a "S3 price budget policy <id> was
+// saved|disabled." alert that nothing else acknowledges, so the suite acknowledges its own in afterAll.
+export const createdBudgetPolicyIds = new Set<number>()
+
+// Records the id of every budget policy the console saves on this page (the policy.upsert responses on /ws).
+export function trackBudgetPolicies(page: Page) {
+  page.on('websocket', ws => {
+    if (!/\/ws$/.test(new URL(ws.url()).pathname)) return
+    ws.on('framereceived', frame => {
+      if (typeof frame.payload !== 'string' || !frame.payload.includes('budget.policy.upsert.response')) return
+      try {
+        const message = JSON.parse(frame.payload) as { status?: string; data?: { policy?: { id?: unknown } } }
+        const id = message.data?.policy?.id
+        if (message.status === 'OK' && typeof id === 'number') createdBudgetPolicyIds.add(id)
+      } catch {
+        // not a JSON command response
+      }
+    })
+  })
+}
+
+// Acknowledges, through the cost page's alert list, the open alerts raised for the given budget policies.
+export async function acknowledgeBudgetAlerts(page: Page, policyIds: Iterable<number>) {
+  const ids = [...policyIds]
+  if (!ids.length) return
+  await page.goto('/cost')
+  const section = page.locator('#budget-alerts')
+  await expect(section.getByRole('table').or(section.getByText('No open budget alerts.'))).toBeVisible()
+  for (const id of ids) {
+    const rows = section
+      .getByRole('row')
+      .filter({ hasText: new RegExp(`S3 price budget policy ${id} was (saved|disabled)\\.`) })
+    for (let open = await rows.count(); open > 0; open = await rows.count()) {
+      await rows.first().getByTestId('budget-alert-ack').click()
+      await expect(rows).toHaveCount(open - 1)
+    }
+  }
+}
