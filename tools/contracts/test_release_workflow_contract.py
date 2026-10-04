@@ -54,8 +54,28 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
     def test_artifacts_build_only_after_every_verification(self) -> None:
         self.assertEqual(
             _needs(self.jobs["release-artifacts"]),
-            {"release-check", "core-verify", "contracts-verify", "web-verify", "docs-validate"},
+            {"release-check", "contracts-verify", "web-verify", "docs-validate"},
         )
+
+    def test_release_builds_once_at_o3_and_never_reruns_the_test_suite(self) -> None:
+        # The required PR gate compiles and runs the C++ suite at -O0; a release builds the -O3 package once and
+        # validates it. No core-verify job, no second meson build, no meson test.
+        self.assertNotIn("core-verify", self.jobs)
+        for name, job in self.jobs.items():
+            self.assertNotRegex(job, r"uses: \./\.github/actions/(?:build|test)\s*\n", name)
+            self.assertNotIn("meson test", job, name)
+        artifacts = self.jobs["release-artifacts"]
+        self.assertLess(artifacts.index("vlr build-deb"),
+                        artifacts.index("python3 tools/dev/check_build_flags.py release/build-deb.log"))
+
+    def test_pr_gate_builds_at_o0_with_werror_and_runs_the_suite(self) -> None:
+        action = _read(".github/actions/build/action.yml")
+        self.assertRegex(action, r"build_type:\n(?:.*\n)*?    default: debug\n")
+        self.assertIn("--buildtype=${{ inputs.build_type }} -Dwerror=true -Dbuild_unit_tests=true", action)
+        runner = _read(".github/actions/runner/action.yml")
+        self.assertRegex(runner, r"uses: \./\.github/actions/build\n\s+with:\n\s+build_type: debug")
+        self.assertIn("meson test -C build", _read(".github/actions/test/action.yml"))
+        self.assertIn("test: 'true'", _read(".github/workflows/build_and_test.yml"))
 
     def test_publication_order_and_finalize_last(self) -> None:
         self.assertEqual(_needs(self.jobs["publish-debian"]), {"release-check", "release-artifacts"})

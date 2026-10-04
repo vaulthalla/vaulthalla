@@ -95,23 +95,6 @@ jobs:
             echo "publish_required=${publish_required}"
           } >> "$GITHUB_OUTPUT"
 
-  core-verify:
-    name: Core build and tests
-    runs-on: [self-hosted, Linux, X64, ubuntu-latest-lts]
-    needs: release-check
-    timeout-minutes: 90
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.inputs.ref || github.ref }}
-
-      - name: Build core
-        uses: ./.github/actions/build
-
-      - name: Run core tests
-        uses: ./.github/actions/test
-
   contracts-verify:
     name: Packaging contracts, lifecycle and lab tests, shellcheck
     runs-on: [self-hosted, Linux, X64, ubuntu-latest-lts]
@@ -185,7 +168,6 @@ jobs:
     runs-on: [self-hosted, Linux, X64, ubuntu-latest-lts]
     needs:
       - release-check
-      - core-verify
       - contracts-verify
       - web-verify
       - docs-validate
@@ -208,6 +190,11 @@ jobs:
 
       - name: Build Debian package and web tarball
         run: vlr build-deb
+
+      # The package is the only -O3 build in the release: no second build and no rerun of the test suite (the
+      # required PR CI gate compiled and ran it at -O0). Check that the shipped binaries got the intended flags.
+      - name: Check the package was compiled at -O3 with hardening and no warnings
+        run: python3 tools/dev/check_build_flags.py release/build-deb.log
 
       - name: Checksums and artifact validation
         run: |

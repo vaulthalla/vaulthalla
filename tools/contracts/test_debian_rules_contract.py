@@ -11,13 +11,42 @@ class DebianRulesContractTests(unittest.TestCase):
         rules = rules_path.read_text(encoding="utf-8")
 
         self.assertIn(
-            "dh_auto_configure -- -Dmanpage=true",
+            "dh_auto_configure -- -Doptimization=3 -Dwerror=true -Dmanpage=true",
             rules,
         )
         self.assertIn(
             "dh_auto_install --destdir=debian/tmp",
             rules,
         )
+
+    def test_shipped_binaries_build_at_o3_with_hardening(self) -> None:
+        # 1.8.x packages shipped -O0 and unhardened: a cpp_args default_option made meson ignore the flags
+        # dpkg-buildflags exported, and the build had no explicit optimization level.
+        repo_root = Path(__file__).resolve().parents[2]
+        rules = (repo_root / "debian" / "rules").read_text(encoding="utf-8")
+        self.assertIn("export DEB_BUILD_MAINT_OPTIONS = hardening=+all optimize=-lto", rules)
+        self.assertIn("export DEB_CXXFLAGS_MAINT_STRIP = -O2", rules)
+        meson = (repo_root / "meson.build").read_text(encoding="utf-8")
+        default_options = meson.split("default_options:", 1)[1].split("]", 1)[0]
+        self.assertNotIn("cpp_args", default_options)
+        self.assertNotIn("c_args", default_options)
+        self.assertIn("'buildtype=debug'", default_options)
+
+    def test_build_flag_checker_rejects_unoptimized_and_noisy_builds(self) -> None:
+        import importlib.util
+
+        repo_root = Path(__file__).resolve().parents[2]
+        spec = importlib.util.spec_from_file_location("check_build_flags", repo_root / "tools/dev/check_build_flags.py")
+        checker = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(checker)
+        good = ("c++ -Icore -O3 -g -Werror -fstack-protector-strong -D_FORTIFY_SOURCE=3 "
+                "-o x.o -c ../core/src/a.cpp")
+        self.assertEqual(checker.check(good), [])
+        self.assertTrue(checker.check(good.replace("-O3", "-O0")))
+        self.assertTrue(checker.check(good.replace(" -O3", "")))
+        self.assertTrue(checker.check(good.replace(" -D_FORTIFY_SOURCE=3", "")))
+        self.assertTrue(checker.check(good + "\n../core/src/a.cpp:1:2: warning: unused [-Wunused]"))
+        self.assertTrue(checker.check("dh_auto_build"), "no compile lines is a failure")
 
     def test_debian_rules_leaves_static_payloads_to_meson(self) -> None:
         repo_root = Path(__file__).resolve().parents[2]
