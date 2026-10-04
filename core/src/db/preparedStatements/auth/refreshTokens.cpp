@@ -22,6 +22,13 @@ void vh::db::Connection::initPreparedRefreshTokens() const {
     );
 
     conn_->prepare(
+        "rewrite_refresh_token_hash",
+        "UPDATE refresh_tokens "
+        "SET token_hash = $3 "
+        "WHERE jti = $1 AND token_hash = $2"
+    );
+
+    conn_->prepare(
         "touch_refresh_token_last_used",
         "UPDATE refresh_tokens "
         "SET last_used = NOW() "

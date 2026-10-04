@@ -138,8 +138,7 @@ void Validator::rehydrateFromStoredRefreshToken(const std::shared_ptr<Session>& 
 
     checkForDangerousDiversion(session->tokens->refreshToken, storedToken);
 
-    if (!crypto::hash::verifyPassword(rawToken, storedToken->hashedToken))
-        throw std::runtime_error("Refresh token hash mismatch");
+    verifyStoredRefreshTokenHash(rawToken, storedToken);
 
     const auto user = db::query::auth::RefreshToken::getUserByJti(claims->jti);
     if (!user) {
@@ -176,6 +175,27 @@ void Validator::rehydrateFromStoredRefreshToken(const std::shared_ptr<Session>& 
     storedToken->rawToken = rawToken;
     session->tokens->refreshToken = storedToken;
     session->setAuthenticatedUser(user);
+}
+
+void Validator::verifyStoredRefreshTokenHash(const std::string& rawToken, const std::shared_ptr<RefreshToken>& storedToken) {
+    if (!storedToken) throw std::runtime_error("No stored refresh token to verify against");
+
+    const auto match = crypto::hash::verifyToken(rawToken, storedToken->hashedToken);
+    if (match == crypto::hash::TokenMatch::Mismatch) throw std::runtime_error("Refresh token hash mismatch");
+    if (match != crypto::hash::TokenMatch::Legacy) return;
+
+    // Rows written before #171 hold an Argon2 hash; replace it so this token's later checks take the fast path.
+    const auto digest = crypto::hash::tokenDigest(rawToken);
+    try {
+        if (db::query::auth::RefreshToken::rewriteHash(storedToken->jti, storedToken->hashedToken, digest))
+            storedToken->hashedToken = digest;
+    } catch (const std::exception& ex) {
+        log::Registry::auth()->warn(
+            "[session::Validator] Could not rewrite legacy refresh token hash for JTI {}: {}",
+            storedToken->jti,
+            ex.what()
+        );
+    }
 }
 
 bool Validator::softValidateActiveSession(const std::shared_ptr<Session>& session) {

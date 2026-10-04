@@ -58,8 +58,7 @@ namespace {
     if (claims.subject != refreshTokenSubjectFromStoredToken(storedToken))
         throw std::runtime_error("Refresh token subject mismatch");
 
-    if (!crypto::hash::verifyPassword(rawToken, storedToken->hashedToken))
-        throw std::runtime_error("Refresh token hash mismatch");
+    Validator::verifyStoredRefreshTokenHash(rawToken, storedToken);
 
     const auto user = db::query::auth::RefreshToken::getUserByJti(claims.jti);
     if (!user) throw std::runtime_error("No user found for refresh token");
@@ -98,8 +97,7 @@ void hydrateShareRefreshToken(
     token->expiresAt = claims.expiresAt;
     token->userAgent = session->userAgent;
     token->ipAddress = session->ipAddress;
-    token->hashedToken = crypto::hash::password(rawToken);
-    if (token->hashedToken.empty()) throw std::runtime_error("Failed to hash share refresh token");
+    token->hashedToken = crypto::hash::tokenDigest(rawToken);
 
     session->tokens->shareRefreshToken = std::move(token);
 }
