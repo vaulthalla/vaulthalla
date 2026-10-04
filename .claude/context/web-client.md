@@ -59,8 +59,12 @@ Next 16 + React 19 alone are ~143 KB. Keep dialogs/editors/charts/menus behind `
 
 - `middleware.ts` gates page navigations with one upstream check (`src/lib/server/authCheck.ts` → daemon
   `GET /auth/session` on `VAULTHALLA_AUTH_ORIGIN` → `VAULTHALLA_PREVIEW_ORIGIN` → `http://127.0.0.1:36970`);
-  router prefetches skip it; a daemon outage lets the page load (it shows its reconnect state) instead of
-  redirecting to `/login`. `/api/auth/session` uses the same helper.
+  only document loads (`Sec-Fetch-Dest: document`, or no header) are checked. Next strips its own flight headers
+  (`RSC`, `Next-Router-Prefetch`) and `_rsc` before middleware runs, so RSC fetches (prefetches and client-side
+  navigations, `Sec-Fetch-Dest: empty`) are told apart by the fetch metadata; they carry no data. Each check is a
+  password-hash verify in the daemon (~0.57 s, #171), and dev installs skip it (`dev.enabled`), so measure on a
+  packaged install. A daemon outage lets the page load (it shows its reconnect state) instead of redirecting to
+  `/login`. `/api/auth/session` uses the same helper.
 - The WS URL is `ws(s)://<location.host>/ws` unless `NEXT_PUBLIC_VAULTHALLA_WS_ORIGIN` is set. The app expects a reverse
   proxy that routes `/ws` → 36969 and `/preview|/download|/upload` → 36970 (nginx in prod, `Caddyfile` in dev).
   HTTP uploads: `POST /upload/session[?share=1]` → `PUT /upload/<id>/files/<fileId>` → `POST /upload/<id>/finish`
