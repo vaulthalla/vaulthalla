@@ -28,7 +28,8 @@ Branch `web-overhaul`. Plan: `.claude/scratch/web_overhaul/goal.md` (Phase A ove
 - **Found and fixed:** every console page waited ~2.5 s and the route sweep hung. Next strips `Next-Router-Prefetch`
   before middleware runs, so "skip prefetches" never matched: each prefetch (5–9 per page) cost a ~0.57 s
   password-hash verify in the daemon, and they queued past the middleware's 2.5 s timeout. Middleware now checks only
-  `Sec-Fetch-Dest: document` loads (guard: console e2e "only page loads pay the upstream session check").
+  `Sec-Fetch-Dest: document` loads. Superseded by the #171 fix: the middleware now only checks that the refresh
+  cookie exists (guard: console e2e "middleware only checks for a refresh cookie").
 - **Found, not fixed (filed):** #173 (P0) FUSE serves ciphertext for web-uploaded and renamed files and reports wrong
   sizes after a restart (pre-existing: FUSE never decrypts, `createFile` and the rename slow path encrypt); #171 every
   refresh-token check is a password-hash verify, so a full page load still spends ~1 s on it; #172 the cost-alerts
@@ -73,12 +74,14 @@ chains loaded in the wrong order; empty directories survived delete) · #159 ove
 healthy; oldest_tx excluded the stats query's own transaction; expected errnos don't warn) · #161 every vault
 reported the shared backing root's size — and quota enforcement charged every vault for all the others · #163
 `password_changed_at` stored (migration 102, trigger on password_hash).
+#171: refresh tokens are stored as a `sha256:` digest (legacy Argon2 rows verify once and are rewritten), and the
+middleware only checks that the refresh cookie exists, so a page load no longer pays a ~0.57 s verify (twice).
 
 Still open: #160 stats payload problems (24 h trends, FS cache capacity, hrefs, money strings) · #162 vault delete
 leaves backing data (decision) · #164 settings the daemon never reads (decision) · #165 gateway ws handlers overload
 `id` · #166 built-in `admin` role can't see Health/stats (decision) · #167 directory copy is shallow / file copy has no
 bytes until sync · #168 deleting a file prunes the user's empty ancestor folders (decision) · #170 harness `FUSE deny: ls seed`
-· #171 refresh-token checks cost a password-hash verify (decision) · #172 cost-alerts bell payload · **#173 FUSE serves
+· #172 cost-alerts bell payload · **#173 FUSE serves
 ciphertext for web-uploaded/renamed files (P0, decision on the local at-rest model)**.
 
 `make run_test` ran on 2026-10-04: 71/72, the known `FUSE deny: ls seed` EACCES/ENOENT case (#170), as in Phase 2.

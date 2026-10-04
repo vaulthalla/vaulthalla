@@ -61,7 +61,7 @@ const gotoFiles = async (page: Page) => {
 
 test.describe.serial('console', () => {
   test('every console route renders without errors, endless spinners or denied states for a super admin', async ({ page }) => {
-    // Each route is bounded below; a packaged daemon spends ~1 s of each full page load verifying the session (#171).
+    // Each route's own waits are bounded below; this only caps the whole sweep.
     test.setTimeout(ROUTES.length * 10_000)
     const problems = watch(page)
     for (const route of ROUTES) {
@@ -89,17 +89,25 @@ test.describe.serial('console', () => {
     }
   })
 
-  test('only page loads pay the upstream session check; router fetches skip it', async ({ playwright, baseURL }) => {
-    // Next strips Next-Router-Prefetch/RSC before middleware runs; a check per prefetch is a password-hash verify in
-    // the daemon each, and on a packaged install they queued past the 2.5 s timeout on every page.
+  test('middleware only checks for a refresh cookie; the session gate turns a bogus one away', async ({ playwright, browser, baseURL }) => {
+    // #171: the middleware used to verify the cookie upstream on every page load (a password-hash verify in the
+    // daemon). Now it only checks presence, and the websocket session gate (auth.refresh) decides validity.
+    if (!baseURL) throw new Error('baseURL is not configured')
     const api = await playwright.request.newContext({ baseURL, ignoreHTTPSErrors: true })
-    const get = (dest: string) =>
-      api.get('/users', { maxRedirects: 0, headers: { cookie: 'refresh=not-a-session', 'sec-fetch-dest': dest } })
-    const page = await get('document')
-    expect(page.status()).toBe(307)
-    expect(page.headers().location).toMatch(/\/login\?next=%2Fusers$/)
-    expect((await get('empty')).status()).toBe(200)
+    const pageLoad = { 'sec-fetch-dest': 'document' }
+    const anonymous = await api.get('/users', { maxRedirects: 0, headers: pageLoad })
+    expect(anonymous.status()).toBe(307)
+    expect(anonymous.headers().location).toMatch(/\/login\?next=%2Fusers$/)
+    const bogus = await api.get('/users', { maxRedirects: 0, headers: { ...pageLoad, cookie: 'refresh=not-a-session' } })
+    expect(bogus.status()).toBe(200)
     await api.dispose()
+
+    const stranger = await browser.newContext({ baseURL, ignoreHTTPSErrors: true, storageState: undefined })
+    await stranger.addCookies([{ name: 'refresh', value: 'not-a-session', url: baseURL }])
+    const page = await stranger.newPage()
+    await page.goto('/files')
+    await page.waitForURL(/\/login\?next=%2Ffiles/, { timeout: 15_000 })
+    await stranger.close()
   })
 
   test('the websocket bootstrap stays small and pollers stop when you leave a page', async ({ page }) => {

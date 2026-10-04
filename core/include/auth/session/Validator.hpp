@@ -23,6 +23,10 @@ struct Validator {
     static bool hasUsableAccessToken(const std::shared_ptr<protocols::ws::Session>& session);
     static bool hasUsableRefreshToken(const std::shared_ptr<protocols::ws::Session>& session);
 
+    // Throws unless rawToken matches the stored hash (digest or legacy Argon2). A legacy match is rewritten to the
+    // digest form in the DB (and on storedToken); a failed rewrite is logged and never fails the auth.
+    static void verifyStoredRefreshTokenHash(const std::string& rawToken, const std::shared_ptr<model::RefreshToken>& storedToken);
+
     static void checkForDangerousDiversion(const std::shared_ptr<model::RefreshToken>& incomingToken, const std::shared_ptr<model::RefreshToken>& storedToken);
     static bool hasUsableRefreshContext(const std::shared_ptr<protocols::ws::Session>& session);
 

@@ -45,6 +45,9 @@ static std::string generateUUID() {
     return {uuidStr};
 }
 
+// Every token is an HS256 JWT: a fresh libuuid random jti plus a 256-bit HMAC-SHA256 signature keyed by the
+// daemon's JWT secret (64 CSPRNG characters, crypto::secrets::Manager). The signature makes refresh tokens
+// unguessable, so they are stored as a plain SHA-256 digest (crypto::hash::tokenDigest), not a password hash (#171).
 static void finalizeAndSignToken(
     const std::shared_ptr<Session>& session,
     const std::shared_ptr<model::Token>& t,
@@ -103,7 +106,7 @@ void Issuer::refreshToken(const std::shared_ptr<Session>& session) {
         std::chrono::days(vh::config::Registry::get().auth.refresh_token_expiry_days),
         refreshTokenKind()
     );
-    t->hashedToken = crypto::hash::password(t->rawToken);
+    t->hashedToken = crypto::hash::tokenDigest(t->rawToken);
 
     if (t->hashedToken.empty()) {
         log::Registry::auth()->error("[session::Issuer] Failed to hash refresh token for session {}: {}", session->uuid, "Hashing failed");
@@ -129,7 +132,7 @@ void Issuer::shareRefreshToken(const std::shared_ptr<Session>& session) {
         std::chrono::days(vh::config::Registry::get().auth.refresh_token_expiry_days),
         shareRefreshTokenKind()
     );
-    t->hashedToken = crypto::hash::password(t->rawToken);
+    t->hashedToken = crypto::hash::tokenDigest(t->rawToken);
 
     if (t->hashedToken.empty()) {
         log::Registry::auth()->error("[session::Issuer] Failed to hash share refresh token for session {}", session->uuid);

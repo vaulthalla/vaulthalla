@@ -22,8 +22,9 @@ export const SessionGate = ({ children }: { children: React.ReactNode }) => {
     if (connection === 'open' && useSession.getState().status === 'unknown') void refreshSession()
   }, [connection])
 
+  // The middleware only checks that a refresh cookie exists, so this is where a revoked or bogus one ends up.
   useEffect(() => {
-    if (status === 'unauthenticated') endSession(pathname ?? undefined)
+    if (status === 'unauthenticated') endSession(`${window.location.pathname}${window.location.search}`)
   }, [status, pathname])
 
   // Access tokens live ~60 minutes; refresh well before that, and right after the tab wakes up.

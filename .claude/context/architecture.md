@@ -113,11 +113,20 @@ whose UID is bound to `admin` (root/system/sudo refused). Startup `retireLegacyD
 `vh!adm1n` with a generated one (file written, admin's refresh tokens revoked). `vh setup nginx` (lifecycle Python)
 warns while generated + file present and offers rotate / delete file / continue / cancel; non-TTY warns and continues.
 
-### HTTP auth/session proxy
+### Refresh tokens and the web auth gate
 
-`web/middleware.ts` calls `/api/auth/session` on the internal web origin (`VAULTHALLA_WEB_INTERNAL_ORIGIN`,
-prod fallback `127.0.0.1:36968`). `web/src/app/api/auth/session/route.ts` proxies to
-`VAULTHALLA_AUTH_ORIGIN` → `VAULTHALLA_PREVIEW_ORIGIN` → fallback `http://127.0.0.1:36970`.
+Refresh tokens (human and share) are HS256 JWTs minted by `auth::session::Issuer`: a libuuid random `jti` plus an
+HMAC-SHA256 signature keyed by the daemon's JWT secret (64 CSPRNG characters). Because they are high-entropy and
+server-minted, `refresh_tokens.token_hash` stores `crypto::hash::tokenDigest()` = `sha256:<64 lowercase hex>`, not a
+password hash. `crypto::hash::verifyToken()` accepts that digest (constant-time compare) or a legacy libsodium Argon2
+string written before #171; `auth::session::Validator::verifyStoredRefreshTokenHash` (used by both the ws handshake
+and the HTTP `validateRawRefreshToken` path) rewrites a legacy row to the digest after a successful verify
+(conditional `UPDATE`, a failed rewrite only logs). Argon2 cost ~0.57 s per check, paid on every page load and every
+HTTP preview/download. User passwords still use `crypto::hash::password()` (Argon2). No migration: the column is
+`TEXT`. Guard: `RefreshTokenDigest*` unit tests.
+
+`web/middleware.ts` only checks that a `refresh` cookie is present (no upstream call); the websocket session gate
+decides validity (see `web-client.md`). The daemon's HTTP `GET /auth/session` remains for other clients.
 (`NEXT_PUBLIC_SERVER_ADDR` no longer exists.)
 
 ### FUSE

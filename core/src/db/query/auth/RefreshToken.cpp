@@ -65,6 +65,13 @@ namespace vh::db::query::auth {
         });
     }
 
+    bool RefreshToken::rewriteHash(const std::string& jti, const std::string& legacyHash, const std::string& digest) {
+        return Transactions::exec("RefreshToken::rewriteHash", [&](pqxx::work& txn) {
+            return txn.exec(pqxx::prepped{"rewrite_refresh_token_hash"}, pqxx::params{jti, legacyHash, digest})
+                       .affected_rows() > 0;
+        });
+    }
+
     void RefreshToken::touch(const std::string& jti) {
         Transactions::exec("RefreshToken::touchRefreshToken", [&](pqxx::work& txn) {
             txn.exec(pqxx::prepped{"touch_refresh_token_last_used"}, pqxx::params{jti});

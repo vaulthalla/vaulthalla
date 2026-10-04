@@ -35,8 +35,8 @@ Common repo surfaces:
 - `core/src/rbac/*`
 - `core/src/crypto/*`
 - `core/src/protocols/shell/*`
-- `web/src/app/api/auth/session/route.ts`
-- `web/src/stores/useWebSocket.ts`
+- `web/middleware.ts`
+- `web/src/lib/session.ts`
 - `debian/postinst`, `debian/prerm`, `debian/postrm`
 - `deploy/lifecycle/main.py`
 - `deploy/systemd/vaulthalla-swtpm.service.in`
