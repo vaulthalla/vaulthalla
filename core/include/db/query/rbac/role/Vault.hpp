@@ -1,13 +1,12 @@
 #pragma once
 
 #include "db/model/ListQueryParams.hpp"
+#include "rbac/Fwd.hpp"
 
 #include <memory>
 #include <vector>
 #include <string>
 #include <pqxx/pqxx>
-
-namespace vh::rbac::role { struct Vault; }
 
 namespace vh::db::query::rbac::role {
 

@@ -3,10 +3,9 @@
 #include "email/Provider.hpp"
 #include "email/Transport.hpp"
 #include "config/Config.hpp"
+#include "crypto/Fwd.hpp"
 
 #include <memory>
-
-namespace vh::crypto::secrets { class Manager; }
 
 namespace vh::email {
 

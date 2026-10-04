@@ -112,6 +112,22 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
   integration harness; a missing <ostream> hidden by unity; system() results
   checked. GCC builds force-include core/include/compat/gcc_variant.hpp for a
   libstdc++ <variant> -Wmaybe-uninitialized false positive via libpqxx.
+- Packages: binaries are built at -O3 with hardening=+all (FORTIFY_SOURCE=3,
+  stack protector, stack clash and CET protection, relro/now) and -Werror;
+  1.8.x shipped -O0 and unhardened because a cpp_args default_option made
+  meson drop dpkg-buildflags. The ABI define is now a project argument and the
+  default buildtype is explicitly debug. No LTO.
+- CI: the PR gate builds at -O0 with -Werror and runs the suite; release CI no
+  longer rebuilds and re-tests (core-verify removed) and checks the package's
+  compile lines with tools/dev/check_build_flags.py.
+- Compile time: unit-test objects build first (own target, linked whole) and
+  always at -O0; -O0 builds use precompiled headers; fmt 9's vformat_to<char>
+  is an extern template; fmt::format replaces std::format in the RBAC
+  templates; spdlog sinks, <regex>, shell argument helpers and all of asio left
+  widely included headers; heavy inline code moved to .cpp files.
+- Forward declarations: subsystem Fwd.hpp headers (identities, auth, storage,
+  vault, fs, rbac, share, sync, crypto, protocols/ws, protocols/shell) and
+  libpqxx's <pqxx/types> replace 355 repeated local declarations.
 
 ## FUSE
 - FUSE is the decrypting view of at-rest ciphertext (#173): open decrypts

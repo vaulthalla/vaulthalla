@@ -5,11 +5,9 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include "protocols/shell/Fwd.hpp"
 
 namespace vh::protocols::shell {
-
-class CommandUsage;
-struct CommandCall;
 
 std::shared_ptr<CommandUsage> resolveUsage(const std::vector<std::string>& path);
 void validatePositionals(const CommandCall& call, const std::shared_ptr<CommandUsage>& usage);

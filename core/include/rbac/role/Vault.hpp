@@ -7,7 +7,6 @@
 #include <string>
 #include <vector>
 #include <nlohmann/json_fwd.hpp>
-#include <regex>
 #include <memory>
 #include <optional>
 #include <unordered_map>
@@ -64,85 +63,25 @@ namespace vh::rbac::role {
 
         static Vault fromJson(const nlohmann::json &j);
 
-        static Vault ImplicitDeny() {
-            return make(
-                "implicit_deny",
-                "Role that denies all vault permissions.",
-                vault::Base::None()
-            );
-        }
+        static Vault ImplicitDeny();
 
-        static Vault Guest() {
-            return make(
-                "guest",
-                "Minimal access role for browsing and limited read-only interaction with vault content.",
-                vault::Base::BrowseOnly()
-            );
-        }
+        static Vault Guest();
 
-        static Vault Reader() {
-            return make(
-                "reader",
-                "Read-only vault role with access to browse and download content.",
-                vault::Base::Reader()
-            );
-        }
+        static Vault Reader();
 
-        static Vault Contributor() {
-            return make(
-                "contributor",
-                "Vault role for users who can add and update content without broader administrative control.",
-                vault::Base::Contributor()
-            );
-        }
+        static Vault Contributor();
 
-        static Vault Editor() {
-            return make(
-                "editor",
-                "Vault role for users who can fully edit and reorganize content within the vault.",
-                vault::Base::Editor()
-            );
-        }
+        static Vault Editor();
 
-        static Vault Manager() {
-            return make(
-                "manager",
-                "Vault manager role with content, sync, and limited role-management authority.",
-                vault::Base::Manager()
-            );
-        }
+        static Vault Manager();
 
-        static Vault PowerUser() {
-            return make(
-                "power_user",
-                "Advanced vault role with broad filesystem control, sync management, and strong collaborative authority.",
-                vault::Base::PowerUser()
-            );
-        }
+        static Vault PowerUser();
 
-        static Vault Full() {
-            return make(
-                "full",
-                "Unrestricted vault role with full permissions across filesystem, sync, and role management.",
-                vault::Base::Full()
-            );
-        }
+        static Vault Full();
 
-        static Vault RoleManager() {
-            return make(
-                "role_manager",
-                "Specialized vault role focused on managing vault role assignments and access governance.",
-                vault::Base::RoleManager()
-            );
-        }
+        static Vault RoleManager();
 
-        static Vault SyncOperator() {
-            return make(
-                "sync_operator",
-                "Specialized vault role focused on synchronization operations and configuration.",
-                vault::Base::SyncOperator()
-            );
-        }
+        static Vault SyncOperator();
 
         static Vault Custom(
             std::string name,

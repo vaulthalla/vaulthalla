@@ -1,14 +1,13 @@
 #pragma once
 
 #include "db/model/ListQueryParams.hpp"
+#include "identities/Fwd.hpp"
+#include "vault/Fwd.hpp"
 
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
-
-namespace vh::vault::model { struct APIKey; }
-namespace vh::identities { struct User; }
 
 namespace vh::db::query::vault {
 

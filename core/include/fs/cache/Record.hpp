@@ -6,11 +6,7 @@
 #include <vector>
 #include <nlohmann/json_fwd.hpp>
 #include <string>
-
-namespace pqxx {
-class row;
-class result;
-}
+#include <pqxx/types>
 
 namespace vh::fs::cache {
 

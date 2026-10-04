@@ -1,13 +1,12 @@
 #pragma once
 
 #include "share/Grant.hpp"
+#include "rbac/Fwd.hpp"
 
 #include <ctime>
 #include <memory>
 #include <optional>
 #include <string>
-
-namespace vh::rbac::role { struct Vault; }
 
 namespace vh::share {
 

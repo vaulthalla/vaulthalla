@@ -36,7 +36,7 @@ in-flight plans; promote durable facts into `.claude/context/`.
 ## Commands
 
 ```bash
-meson setup build -Dbuild_unit_tests=true && meson compile -C build   # core (unity build); `make build` is broken (conan)
+meson setup build -Dbuild_unit_tests=true && meson compile -C build   # core: unity, -O0 (= PR CI; packages are -O3); `make build` is broken (conan)
 meson test -C build --print-errorlogs                                 # unit tests (DB-backed: see testing.md)
 make run_test                                                         # integration harness on /tmp/vh_mount (destructive to local test env)
 pnpm --dir web typecheck && pnpm --dir web lint                       # web ("pnpm test" = the same two)
@@ -77,6 +77,8 @@ versions, cutting releases), `payload-markdown` + `payload-markdown-docs` (doc a
 ## Working conventions
 
 - Root-cause first: find where state diverges, fix it at the source, and add a regression guard (test or contract check).
+- Forward-declare through the subsystem's `Fwd.hpp` (e.g. `identities/Fwd.hpp`, `<pqxx/types>`), not ad hoc
+  `namespace vh::x { struct Y; }` blocks (see architecture.md, Build graph).
 - Run the proof for the surface you touched (`/verify`), and report exactly what ran, what passed, and what was skipped.
   Runtime/packaging changes aren't proven by unit tests alone. Say whether a lab install was done.
 - Keep `.claude/context/*` true. When code changes a fact recorded there, update the doc in the same change.

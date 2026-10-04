@@ -1,8 +1,7 @@
 #pragma once
 
 #include <nlohmann/json.hpp>
-
-namespace vh::protocols::ws { class Session; }
+#include "protocols/ws/Fwd.hpp"
 
 namespace vh::protocols::ws::model {
 

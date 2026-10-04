@@ -9,6 +9,45 @@
 
 namespace vh::log {
 
+namespace {
+
+// Kept so reopenMainLog()/reopenAuditLog() can swap them after rotation.
+std::shared_ptr<spdlog::sinks::stdout_color_sink_mt> console_sink_;
+std::shared_ptr<spdlog::sinks::rotating_file_sink_mt> main_file_sink_;
+std::shared_ptr<spdlog::sinks::basic_file_sink_mt> audit_file_sink_;
+
+// The main sink's parameters from init().
+constexpr size_t main_max_bytes_ = 10 * 1024 * 1024; // 10 MiB
+constexpr size_t main_max_files_ = 5;
+
+void replaceSinkEverywhere(
+    const std::shared_ptr<spdlog::sinks::sink>& old_sink,
+    const std::shared_ptr<spdlog::sinks::sink>& new_sink)
+{
+    // Swap on every registered logger that currently uses old_sink.
+    spdlog::apply_all([&](const std::shared_ptr<spdlog::logger>& lg) {
+        // Take a copy of sinks, replace in the copy, then set_sinks() atomically.
+        auto sinks_copy = lg->sinks();
+        bool touched = false;
+        for (auto &s : sinks_copy) {
+            if (s.get() == old_sink.get()) {
+                s = new_sink;
+                touched = true;
+            }
+        }
+        if (touched) {
+            // flush before swap to minimize dangling writes
+            lg->flush();
+            lg->sinks() = std::move(sinks_copy);
+        }
+    });
+
+    // old_sink will be destroyed when last ref goes away → file closed.
+}
+
+}
+
+
 void Registry::init() {
     if (initialized_) {
         spdlog::warn("[LogRegistry] Already initialized, ignoring second init()");
@@ -89,30 +128,6 @@ std::shared_ptr<spdlog::logger> Registry::get(const std::string& name) {
 bool Registry::isInitialized() { return initialized_; }
 
 // LogRegistry.cpp (add helper)
-void Registry::replaceSinkEverywhere_(
-    const std::shared_ptr<spdlog::sinks::sink>& old_sink,
-    const std::shared_ptr<spdlog::sinks::sink>& new_sink)
-{
-    // Swap on every registered logger that currently uses old_sink.
-    spdlog::apply_all([&](const std::shared_ptr<spdlog::logger>& lg) {
-        // Take a copy of sinks, replace in the copy, then set_sinks() atomically.
-        auto sinks_copy = lg->sinks();
-        bool touched = false;
-        for (auto &s : sinks_copy) {
-            if (s.get() == old_sink.get()) {
-                s = new_sink;
-                touched = true;
-            }
-        }
-        if (touched) {
-            // flush before swap to minimize dangling writes
-            lg->flush();
-            lg->sinks() = std::move(sinks_copy);
-        }
-    });
-
-    // old_sink will be destroyed when last ref goes away → file closed.
-}
 
 void Registry::reopenMainLog() {
     if (!initialized_) return;
@@ -125,7 +140,7 @@ void Registry::reopenMainLog() {
     fresh->set_level(main_file_sink_->level());
     fresh->set_pattern(FILE_LOG_FORMAT);
 
-    replaceSinkEverywhere_(main_file_sink_, fresh);
+    replaceSinkEverywhere(main_file_sink_, fresh);
     main_file_sink_ = std::move(fresh);
 }
 
@@ -139,7 +154,7 @@ void Registry::reopenAuditLog() {
     fresh->set_pattern(FILE_LOG_FORMAT);
 
     // Swap on the audit logger (and any others that might have it)
-    replaceSinkEverywhere_(audit_file_sink_, fresh);
+    replaceSinkEverywhere(audit_file_sink_, fresh);
     audit_file_sink_ = std::move(fresh);
 }
 

@@ -10,24 +10,11 @@
 #include <pqxx/pqxx>
 
 #include "fuse/resolver/Resolved.hpp"
-
-namespace vh::identities {
-struct Group;
-struct User;
-}
-
-namespace vh::storage {
-class Manager;
-struct Engine;
-}
+#include "fs/Fwd.hpp"
+#include "identities/Fwd.hpp"
+#include "storage/Fwd.hpp"
 
 namespace vh::fs {
-
-namespace model {
-struct Entry;
-struct File;
-struct Symlink;
-}
 
 struct RenameContext {
     std::filesystem::path from, to;

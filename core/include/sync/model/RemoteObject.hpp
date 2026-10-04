@@ -6,10 +6,8 @@
 #include <memory>
 #include <optional>
 #include <string>
-
-namespace pqxx { class row; }
-
-namespace vh::fs::model { struct File; }
+#include "fs/Fwd.hpp"
+#include <pqxx/types>
 
 namespace vh::sync::model {
 

@@ -285,7 +285,7 @@ bool Validator::hasUsableRefreshContext(const std::shared_ptr<Session>& session)
 }
 
 void Validator::checkForDangerousDiversion(const std::shared_ptr<RefreshToken>& incomingToken, const std::shared_ptr<RefreshToken>& storedToken) {
-    if (incomingToken->dangerousDivergence(storedToken)) {
+    if (incomingToken->divergesFrom(storedToken)) {
         const auto msg = fmt::format(
             "[session::Validator] Dangerous divergence detected for JTI: {}",
             incomingToken->jti

@@ -6,8 +6,7 @@
 #include <vector>
 
 #include <nlohmann/json_fwd.hpp>
-
-namespace pqxx { class row; }
+#include <pqxx/types>
 
 namespace vh::share {
 

@@ -4,9 +4,8 @@
 #include <memory>
 #include <string>
 #include <nlohmann/json_fwd.hpp>
-
-namespace vh::storage { struct Engine; }
-namespace vh::fs::model { struct Directory; }
+#include "fs/Fwd.hpp"
+#include "storage/Fwd.hpp"
 
 namespace vh::vault::model {
 

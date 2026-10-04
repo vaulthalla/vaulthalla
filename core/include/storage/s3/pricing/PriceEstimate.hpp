@@ -3,14 +3,13 @@
 #include "storage/s3/pricing/PriceBotClient.hpp"
 #include "storage/s3/pricing/PriceBotModels.hpp"
 #include "storage/s3/provider/StorageTier.hpp"
+#include "storage/Fwd.hpp"
+#include "sync/Fwd.hpp"
 
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
-
-namespace vh::storage { class CloudEngine; }
-namespace vh::sync::model { struct S3CostEstimate; }
 
 namespace vh::storage::s3::pricing {
 

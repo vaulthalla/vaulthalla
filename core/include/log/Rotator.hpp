@@ -5,7 +5,6 @@
 #include <filesystem>
 #include <functional>
 #include <optional>
-#include <regex>
 #include <string>
 #include <string_view>
 #include <mutex>
@@ -63,7 +62,6 @@ private:
     std::filesystem::path dir_;
     std::string base_;
     std::string ext_;
-    std::regex rotated_regex_;
     mutable std::mutex m_;
 
     // Helpers

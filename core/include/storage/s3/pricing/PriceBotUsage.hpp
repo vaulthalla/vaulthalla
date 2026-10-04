@@ -1,10 +1,9 @@
 #pragma once
 
 #include "storage/s3/pricing/PriceBotModels.hpp"
+#include "sync/Fwd.hpp"
 
 #include <optional>
-
-namespace vh::sync::model { struct S3CostEstimate; }
 
 namespace vh::storage::s3::pricing {
 

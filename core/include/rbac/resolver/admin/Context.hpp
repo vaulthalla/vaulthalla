@@ -3,8 +3,7 @@
 #include <memory>
 #include <optional>
 #include <type_traits>
-
-namespace vh::identities { struct User; }
+#include "identities/Fwd.hpp"
 
 namespace vh::rbac::resolver::admin {
 

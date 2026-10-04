@@ -1,10 +1,12 @@
 name: 'Build Project'
 description: 'Compiles the project.'
 
+# The PR correctness gate: the full test suite is compiled and run at -O0 (buildtype=debug) with -Werror. Release
+# packages are built once, at -O3, by debian/rules (vlr build-deb); release CI doesn't rebuild or re-test here.
 inputs:
   build_type:
-    description: Type of build to perform.
-    default: release
+    description: Meson buildtype (debug = -O0, the CI test configuration).
+    default: debug
     required: false
 
 runs:
@@ -46,7 +48,7 @@ runs:
       shell: bash
       working-directory: ${{ github.workspace }}
       run: |
-        meson setup build --buildtype=${{ inputs.build_type }} -Dbuild_unit_tests=true -Dinstall_data=false
+        meson setup build --buildtype=${{ inputs.build_type }} -Dwerror=true -Dbuild_unit_tests=true -Dinstall_data=false
         meson compile -C build
         sudo meson install -C build
         sudo ldconfig

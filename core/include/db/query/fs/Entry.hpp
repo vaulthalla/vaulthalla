@@ -5,10 +5,9 @@
 #include <vector>
 #include <optional>
 #include <pqxx/result>
+#include "fs/Fwd.hpp"
 
 namespace fs = std::filesystem;
-
-namespace vh::fs::model { struct Entry; }
 
 namespace vh::db::query::fs {
 

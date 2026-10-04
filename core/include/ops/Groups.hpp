@@ -2,6 +2,7 @@
 
 #include "ops/Actor.hpp"
 #include "db/model/ListQueryParams.hpp"
+#include "identities/Fwd.hpp"
 
 #include <memory>
 #include <optional>
@@ -10,7 +11,6 @@
 #include <vector>
 
 namespace vh::identities {
-struct Group;
 struct GroupMember;
 }
 

@@ -2,8 +2,7 @@
 
 #include <string>
 #include <memory>
-
-namespace vh::identities { struct User; }
+#include "identities/Fwd.hpp"
 
 namespace vh::auth::registration {
 

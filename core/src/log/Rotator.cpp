@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <iomanip>
+#include <regex>
 #include <sstream>
 #include <system_error>
 
@@ -25,13 +26,12 @@ Rotator::Rotator(Options opts)
     ext_  = opts_.active_path.extension().string(); // e.g. ".log"
 
     if (!opts_.rotated_filter) {
-        rotated_regex_ = std::regex(
-            std::string("^")
-            + escapeRx(base_) + R"(\.\d{8}-\d{6})" + escapeRx(ext_)
-            + R"((?:\.gz|\.zst)?)" + "$"
-        );
-        opts_.rotated_filter = [this](const std::filesystem::path& p) {
-            return std::regex_match(p.filename().string(), rotated_regex_);
+        opts_.rotated_filter = [rotated = std::regex(
+                                    std::string("^")
+                                    + escapeRx(base_) + R"(\.\d{8}-\d{6})" + escapeRx(ext_)
+                                    + R"((?:\.gz|\.zst)?)" + "$"
+                                )](const std::filesystem::path& p) {
+            return std::regex_match(p.filename().string(), rotated);
         };
     }
     if (!opts_.lock_dir) opts_.lock_dir = dir_;

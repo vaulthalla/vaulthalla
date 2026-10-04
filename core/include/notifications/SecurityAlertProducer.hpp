@@ -4,9 +4,8 @@
 #include <memory>
 #include <optional>
 #include <string>
-
-namespace vh::identities { struct User; }
-namespace vh::rbac::role { struct Admin; }
+#include "identities/Fwd.hpp"
+#include "rbac/Fwd.hpp"
 
 namespace vh::notifications {
 

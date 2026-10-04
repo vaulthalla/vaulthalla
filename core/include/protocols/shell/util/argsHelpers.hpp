@@ -4,6 +4,8 @@
 #include "rbac/permission/Override.hpp"
 #include "db/model/ListQueryParams.hpp"
 #include "rbac/fs/glob/model/Pattern.hpp"
+#include "identities/Fwd.hpp"
+#include "rbac/Fwd.hpp"
 
 #include <optional>
 #include <string>
@@ -12,15 +14,6 @@
 #include <utility>
 #include <memory>
 #include <regex>
-
-namespace vh::rbac::role {
-    struct Vault;
-    struct Admin;
-}
-
-namespace vh::identities {
-    struct User;
-}
 
 namespace vh::protocols::shell {
     template<typename T>

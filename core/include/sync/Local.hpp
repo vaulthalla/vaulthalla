@@ -2,6 +2,8 @@
 
 #include "concurrency/Task.hpp"
 #include "sync/model/Throughput.hpp"
+#include "storage/Fwd.hpp"
+#include "sync/Fwd.hpp"
 
 #include <memory>
 #include <chrono>
@@ -10,20 +12,11 @@
 #include <mutex>
 #include <vector>
 
-namespace vh::storage {
-struct Engine;
-}
-
 namespace vh::services {
 class SyncController;
 }
 
 namespace vh::sync {
-
-namespace model {
-struct Event;
-struct ScopedOp;
-}
 
 struct Stage {
     const char* name;

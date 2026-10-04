@@ -6,8 +6,7 @@
 
 #include <nlohmann/json_fwd.hpp>
 #include <utility>
-
-namespace pqxx { class result; }
+#include <pqxx/types>
 
 namespace vh::rbac::permission {
 

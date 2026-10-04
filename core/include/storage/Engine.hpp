@@ -4,35 +4,19 @@
 #include <vector>
 #include <memory>
 #include <shared_mutex>
+#include "fs/Fwd.hpp"
+#include "identities/Fwd.hpp"
+#include "sync/Fwd.hpp"
+#include "vault/Fwd.hpp"
 
 namespace vh::fs::model {
-    struct File;
-    struct Directory;
     struct Path;
 
-    namespace file {
-        struct Trashed;
-    }
 }
 
 namespace vh::vault {
     class EncryptionManager;
 
-    namespace model {
-        struct Vault;
-    }
-}
-
-namespace vh::sync::model {
-    struct Event;
-    struct Policy;
-}
-
-namespace vh::crypto {
-}
-
-namespace vh::identities {
-    struct User;
 }
 
 namespace vh::storage {

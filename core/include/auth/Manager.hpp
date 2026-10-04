@@ -1,18 +1,15 @@
 #pragma once
 
 #include "session/Manager.hpp"
+#include "auth/Fwd.hpp"
+#include "identities/Fwd.hpp"
+#include "protocols/ws/Fwd.hpp"
+#include "storage/Fwd.hpp"
 
 #include <memory>
 #include <string>
 
-namespace vh::identities { struct User; }
-namespace vh::protocols::ws { class Session; }
-namespace vh::storage { class Manager; }
-
 namespace vh::auth {
-
-namespace model { struct RefreshToken; }
-namespace session { class Manager; }
 
 class Manager {
 public:

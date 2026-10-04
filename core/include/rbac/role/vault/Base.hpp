@@ -5,8 +5,7 @@
 #include "rbac/permission/vault/Filesystem.hpp"
 
 #include <nlohmann/json_fwd.hpp>
-
-namespace pqxx { class row; class result; }
+#include <pqxx/types>
 
 namespace vh::rbac::role::vault {
 

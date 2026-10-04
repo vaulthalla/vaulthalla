@@ -7,7 +7,8 @@
 #include <string>
 #include <string_view>
 #include <vector>
-#include <spdlog/spdlog.h>
+#include <spdlog/common.h> // spdlog::level::level_enum only
+#include "compat/fmt_extern.hpp"
 #include <nlohmann/json_fwd.hpp>
 #include <chrono>
 
@@ -275,6 +276,15 @@ struct Config {
     DevConfig dev;
 
     LoggingConfig logging; // internal only
+
+    // Out of line (Config.cpp): the implicit versions were emitted in every translation unit that copied or
+    // destroyed a Config (~18 of them).
+    Config();
+    ~Config();
+    Config(const Config&);
+    Config(Config&&) noexcept;
+    Config& operator=(const Config&);
+    Config& operator=(Config&&) noexcept;
 
     void save() const;
 };

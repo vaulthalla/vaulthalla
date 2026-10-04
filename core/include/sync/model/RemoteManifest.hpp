@@ -7,8 +7,7 @@
 #include <optional>
 #include <string>
 #include <vector>
-
-namespace vh::fs::model { struct File; }
+#include "fs/Fwd.hpp"
 
 namespace vh::sync::model::remote_manifest {
 

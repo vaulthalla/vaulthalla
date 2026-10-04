@@ -1,20 +1,11 @@
 #pragma once
 
 #include "concurrency/Task.hpp"
+#include "fs/Fwd.hpp"
+#include "storage/Fwd.hpp"
+#include "sync/Fwd.hpp"
 
 #include <memory>
-
-namespace vh::storage {
-class CloudEngine;
-}
-
-namespace vh::fs::model {
-struct File;
-}
-
-namespace vh::sync::model {
-struct ScopedOp;
-}
 
 namespace vh::sync::tasks {
 

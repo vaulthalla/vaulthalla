@@ -9,17 +9,11 @@
 #include <unordered_map>
 #include <mutex>
 #include <nlohmann/json_fwd.hpp>
-
-namespace pqxx {
-    class row;
-    class result;
-}
+#include "identities/Fwd.hpp"
+#include "rbac/Fwd.hpp"
+#include <pqxx/types>
 
 namespace vh::rbac {
-    namespace role {
-        struct Admin;
-        struct Vault;
-    }
 
     namespace permission {
         struct Admin;
@@ -52,7 +46,6 @@ namespace vh::rbac {
 }
 
 namespace vh::identities {
-    struct Group;
 
     struct User : std::enable_shared_from_this<User> {
         struct RoleAssignments {

@@ -3,10 +3,7 @@
 #include "Artifact.hpp"
 
 #include <nlohmann/json_fwd.hpp>
-
-namespace pqxx {
-class result;
-}
+#include <pqxx/types>
 
 namespace vh::sync::model {
 

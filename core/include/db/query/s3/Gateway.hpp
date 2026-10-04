@@ -1,6 +1,7 @@
 #pragma once
 
 #include "rbac/permission/Override.hpp"
+#include "rbac/Fwd.hpp"
 
 #include <cstdint>
 #include <ctime>
@@ -10,8 +11,6 @@
 #include <optional>
 #include <string>
 #include <vector>
-
-namespace vh::rbac::role { struct Vault; }
 
 namespace vh::db::query::s3 {
 

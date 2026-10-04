@@ -93,6 +93,13 @@ server instead of 50 alerts every minute, and its count and colour cover every o
 older critical alert is never hidden. When more alerts are open than shown, "View all N alerts" opens Cost
 control.
 
+## An optimized, hardened daemon
+
+The daemon and CLI in the packages are now compiled with full optimization (`-O3`) and Debian's standard hardening:
+`_FORTIFY_SOURCE=3`, stack protector, stack clash protection, control-flow protection, and full RELRO. Packages up
+to 1.8.x shipped them unoptimized and without those protections, because of a build-configuration mistake, so this
+release is faster across the board (the server binary is also about 30% smaller).
+
 ## Times on servers outside UTC
 
 On a server whose PostgreSQL time zone isn't UTC, most times the daemon reported were off by the UTC offset: a

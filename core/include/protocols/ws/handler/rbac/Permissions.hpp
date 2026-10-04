@@ -2,8 +2,7 @@
 
 #include <nlohmann/json_fwd.hpp>
 #include <memory>
-
-namespace vh::protocols::ws { class Session; }
+#include "protocols/ws/Fwd.hpp"
 
 namespace vh::protocols::ws::handler::rbac {
 

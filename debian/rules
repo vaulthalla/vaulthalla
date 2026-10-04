@@ -1,10 +1,17 @@
 #!/usr/bin/make -f
 
+# Shipped binaries: -O3 with Debian's hardening flags (FORTIFY_SOURCE, stack protector, PIE, relro/bindnow) and
+# debug info for the dbgsym package. The optimization level is explicit: dpkg's -O2 is stripped and meson's
+# optimization=3 supplies -O3. No LTO. Warnings fail the build, as in development (-Werror).
+# Release CI checks the resulting compile lines (tools/dev/check_build_flags.py).
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all optimize=-lto
+export DEB_CXXFLAGS_MAINT_STRIP = -O2
+
 %:
 	dh $@ --buildsystem=meson
 
 override_dh_auto_configure:
-	dh_auto_configure -- -Dmanpage=true
+	dh_auto_configure -- -Doptimization=3 -Dwerror=true -Dmanpage=true
 
 override_dh_installsystemd:
 	dh_installsystemd --no-start --no-stop-on-upgrade

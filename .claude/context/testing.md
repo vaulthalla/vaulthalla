@@ -16,18 +16,27 @@
 
 ## Build dirs
 
-- `build/`: the working dev build (`meson setup build -Dbuild_unit_tests=true`) that CI also uses. `build-ci/`
-  and `build-ci-release/` are older local mirrors. `make clean-full` wipes the build dirs.
+- `build/`: the working dev build (`meson setup build -Dbuild_unit_tests=true`; the default buildtype is `debug`,
+  i.e. -O0, which is what PR CI builds and tests with `-Dwerror=true`). `make clean-full` wipes the build dirs.
+- Compile-time layout: unit-test objects are their own `vh_unit_test_objects` target ahead of the library (ninja
+  starts them first), always -O0, linked whole into `vh_unit_tests`. -O0 compiles use precompiled headers
+  (`core/pch/`): tests always, the library only when the buildtype is -O0. Optimized builds never use a PCH: GCC
+  drops `#pragma GCC diagnostic`/`push_options` state across one (see the header comments).
 - `make build` is **broken**: it calls `conan install . -r vaulthalla` but there is no conanfile. Use meson directly.
   `run-test` is declared `.PHONY` in the Makefile but has no recipe. Use `run_test`.
 - **Zero-warning bar (2026-10-04):** the tree builds with no output but `[n/N]` progress at `-O3 -Werror`, both unity
   (`meson setup build-o3 -Dbuildtype=release -Dwerror=true -Dbuild_unit_tests=true -Dintegration_tests=true`) and
-  per-file (the same plus `-Dunity=off`; `core/meson.build` forces `unity=on` on the core library, so drop that
+  per-file (the same plus `-Dunity=off`; `core/meson.build` forces `unity=on` on `lib_usage_native`, so drop that
   override in a scratch copy). Unity hides missing includes; check per-file before calling a warning fix done. The
   one suppression is `core/include/compat/gcc_variant.hpp` (force-included for GCC): a libstdc++ `<variant>`
   `-Wmaybe-uninitialized` false positive reached through `pqxx::params`. Fix warnings at the source; don't add flags.
 
 ## DB-backed unit tests
+
+- **Teardown hazard:** `make test`/`make run_test`/`make uninstall` run `bin/tests/uninstall_db.sh`, which executes
+  `DROP OWNED BY vaulthalla_test` in *every* database before dropping the role. A burner DB created with
+  `-O vaulthalla_test` (the usual way to give tests their own DB) is emptied, and the role drop then fails. Don't run
+  those targets while a burner owned by that role is in use; `install_db.sh` also rotates the role's password.
 
 1. `make test`. It uninstalls the test env, creates the test DB role and DB, and rewrites the generated `VH_TEST_DB_*`
    credentials into the ignored `deploy/vaulthalla.env`.

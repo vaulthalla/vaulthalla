@@ -9,11 +9,7 @@
 #include <cstdint>
 
 #include <nlohmann/json_fwd.hpp>
-
-namespace pqxx {
-    class row;
-    class result;
-}
+#include <pqxx/types>
 
 namespace vh::rbac::permission {
     enum class OverrideOpt {

@@ -1,8 +1,7 @@
 #pragma once
 
 #include <memory>
-
-namespace vh::protocols::shell { class Router; }
+#include "protocols/shell/Fwd.hpp"
 
 namespace vh::protocols::shell::commands {
 

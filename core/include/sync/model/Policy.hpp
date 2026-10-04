@@ -5,10 +5,9 @@
 #include <ctime>
 #include <pqxx/row>
 #include <nlohmann/json_fwd.hpp>
+#include "sync/Fwd.hpp"
 
 namespace vh::sync::model {
-
-struct Conflict;
 
 struct Policy {
     static constexpr std::chrono::seconds DEFAULT_SYNC_INTERVAL{300};

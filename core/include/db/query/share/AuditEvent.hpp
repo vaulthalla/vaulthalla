@@ -4,9 +4,9 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include "share/Fwd.hpp"
 
 namespace vh::db::model { struct ListQueryParams; }
-namespace vh::share { struct AuditEvent; }
 
 namespace vh::db::query::share {
 

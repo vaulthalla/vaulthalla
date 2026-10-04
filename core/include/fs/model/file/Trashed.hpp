@@ -4,11 +4,7 @@
 #include <optional>
 #include <vector>
 #include <boost/uuid/uuid.hpp>
-
-namespace pqxx {
-class row;
-class result;
-}
+#include <pqxx/types>
 
 namespace vh::fs::model::file {
 

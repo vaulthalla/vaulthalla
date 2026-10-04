@@ -4,8 +4,7 @@
 #include <memory>
 #include <string>
 #include <vector>
-
-namespace vh::share { struct EmailChallenge; }
+#include "share/Fwd.hpp"
 
 namespace vh::db::query::share {
 

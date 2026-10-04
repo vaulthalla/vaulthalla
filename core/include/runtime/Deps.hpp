@@ -4,21 +4,21 @@
 
 #include <fuse3/fuse_lowlevel.h>
 #include <memory>
+#include "auth/Fwd.hpp"
+#include "crypto/Fwd.hpp"
+#include "protocols/shell/Fwd.hpp"
+#include "storage/Fwd.hpp"
+#include "sync/Fwd.hpp"
 
-namespace vh::storage { class Manager; }
 namespace vh::fs::cache { class Registry; }
 namespace vh::vault { class APIKeyManager; }
 namespace vh::auth {
     class Manager;
-    namespace session { class Manager; }
 }
-namespace vh::protocols::shell { class UsageManager; }
 namespace vh::stats::model {
     struct CacheStats;
     class FuseStats;
 }
-namespace vh::sync { class Controller; }
-namespace vh::crypto::secrets { class Manager; }
 
 namespace vh::runtime {
 

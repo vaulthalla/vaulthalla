@@ -1,10 +1,9 @@
 #pragma once
 
 #include "nlohmann/json_fwd.hpp"
+#include "protocols/ws/Fwd.hpp"
 
 #include <memory>
-
-namespace vh::protocols::ws { class Session; }
 
 namespace vh::protocols::ws::handler::dashboard {
 

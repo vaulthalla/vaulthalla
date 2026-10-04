@@ -6,8 +6,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
-
-namespace pqxx { class row; }
+#include <pqxx/types>
 
 namespace vh::share {
 

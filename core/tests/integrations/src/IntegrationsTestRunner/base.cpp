@@ -33,13 +33,6 @@ using namespace vh::identities;
 using namespace vh::vault::model;
 using namespace vh::rbac;
 
-
-// forward decls so casts compile even if headers aren’t pulled here
-namespace vh::identities { struct User; struct Group; }
-namespace vh::vault::model { struct Vault; }
-namespace vh::rbac::role { struct Admin; struct Vault; }
-
-
 namespace vh::test::integration {
 
 // ---------- Small utilities

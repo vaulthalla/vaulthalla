@@ -1,14 +1,13 @@
 #pragma once
 
 #include "crypto/secrets/TPMKeyProvider.hpp"
+#include "vault/Fwd.hpp"
 #include <memory>
 #include <mutex>
 #include <unordered_map>
 #include <vector>
 
 namespace vh::vault {
-
-namespace model { struct APIKey; }
 
 class APIKeyManager {
 public:

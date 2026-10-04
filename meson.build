@@ -9,9 +9,14 @@ project('vaulthalla', 'cpp',
             'unity=on',
             'unity_size=9',
             'prefix=/usr',
-            'cpp_args=-D_GLIBCXX_USE_CXX11_ABI=1'
+            # Development, tests and PR CI build at -O0; release packages set optimization=3 explicitly (debian/rules).
+            'buildtype=debug',
         ]
 )
+
+# Not a cpp_args default: with meson 1.3, a cpp_args default_option makes meson drop the CFLAGS/CXXFLAGS the
+# environment provides (dpkg-buildflags), which left packaged binaries without -O and hardening flags.
+add_project_arguments('-D_GLIBCXX_USE_CXX11_ABI=1', language: 'cpp')
 
 fs = import('fs')
 

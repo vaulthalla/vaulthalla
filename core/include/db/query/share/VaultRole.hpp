@@ -5,9 +5,7 @@
 #include <optional>
 #include <string>
 #include <vector>
-
-namespace vh::rbac::role { struct Vault; }
-namespace vh::rbac::permission { struct Override; }
+#include "rbac/Fwd.hpp"
 
 namespace vh::db::query::share {
 

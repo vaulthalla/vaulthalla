@@ -3,10 +3,9 @@
 #include "rbac/resolver/ContextPolicy/Fwd.hpp"
 #include "rbac/resolver/admin/ResolvedContext.hpp"
 #include "rbac/resolver/admin/Context.hpp"
+#include "identities/Fwd.hpp"
 
 #include <memory>
-
-namespace vh::identities { struct User; struct Group; }
 
 namespace vh::rbac::resolver::admin {
 

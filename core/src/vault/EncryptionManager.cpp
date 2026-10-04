@@ -12,7 +12,7 @@
 #include <fstream>
 #include <stdexcept>
 #include <paths.h>
-#include <format>
+#include <fmt/format.h>
 
 using namespace vh::vault;
 using namespace vh::crypto;
@@ -50,7 +50,7 @@ void EncryptionManager::load_key() {
         version_ = key->version;
 
         key_ = std::move(vaultKey);
-        const auto msg = std::format("[VaultEncryptionManager] Created new sealed AES256-GCM key for vault {} with version {}",
+        const auto msg = fmt::format("[VaultEncryptionManager] Created new sealed AES256-GCM key for vault {} with version {}",
                                      vault_id_, version_);
         log::Registry::audit()->info(msg);
         log::Registry::crypto()->info(msg);

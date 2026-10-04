@@ -1,16 +1,13 @@
 #pragma once
 
 #include "concurrency/Task.hpp"
+#include "fs/Fwd.hpp"
+#include "storage/Fwd.hpp"
+#include "sync/Fwd.hpp"
 
 #include <cstddef>
 #include <memory>
 #include <vector>
-
-namespace vh::storage { struct Engine; class CloudEngine; }
-
-namespace vh::fs::model { struct File; }
-
-namespace vh::sync::model { struct RemotePolicy; }
 
 namespace vh::sync::tasks {
 

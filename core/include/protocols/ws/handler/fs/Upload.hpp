@@ -10,10 +10,9 @@
 #include <stdexcept>
 #include <vector>
 #include <boost/beast/core/flat_buffer.hpp>
-
-namespace vh::storage { struct Engine; }
-namespace vh::fs::model { struct File; }
-namespace vh::protocols::ws { class Session; }
+#include "fs/Fwd.hpp"
+#include "protocols/ws/Fwd.hpp"
+#include "storage/Fwd.hpp"
 
 namespace vh::protocols::ws::handler::fs {
 

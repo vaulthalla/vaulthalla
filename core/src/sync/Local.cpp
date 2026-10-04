@@ -89,10 +89,10 @@ void Local::runStages(const std::span<const Stage> stages) const {
             event->stall_reason = e.what();
             break;
         } catch (const std::exception& e) {
-            handleError(std::format("[FSTask:{}] {}", std::string(name), e.what()));
+            handleError(fmt::format("[FSTask:{}] {}", std::string(name), e.what()));
             break;
         } catch (...) {
-            handleError(std::format("[FSTask:{}] Unknown exception", std::string(name)));
+            handleError(fmt::format("[FSTask:{}] Unknown exception", std::string(name)));
             break;
         }
     }
@@ -143,7 +143,7 @@ void Local::processSharedOps() {
             event->stall_reason = e.what();
             break;
         } catch (const std::exception& e) {
-            handleError(std::format("[FSTask] Exception during {}: {}", name, e.what()));
+            handleError(fmt::format("[FSTask] Exception during {}: {}", name, e.what()));
             break;
         }
     }
@@ -219,7 +219,7 @@ void Local::processFutures() {
     if (failed > 0 && event && event->status != Event::Status::ERROR &&
         event->status != Event::Status::STALLED &&
         event->status != Event::Status::CANCELLED) {
-        handleError(std::format("{} async sync operation(s) failed", failed));
+        handleError(fmt::format("{} async sync operation(s) failed", failed));
     }
 }
 
@@ -267,7 +267,7 @@ void Local::processOperations() const {
         const auto absDest = engine->paths->absPath(op->destination_path, PathType::BACKING_VAULT_ROOT);
         if (absDest.has_parent_path())
             if (const auto err = Filesystem::mkdir({.path = absDest.parent_path()}); err)
-                handleError(std::format("[FSTask] Failed to create parent directory for '{}': {}", absDest.parent_path().string(), std::strerror(err)));
+                handleError(fmt::format("[FSTask] Failed to create parent directory for '{}': {}", absDest.parent_path().string(), std::strerror(err)));
 
         const auto f = db::query::fs::File::getFileByPath(engine->vault->id, op->destination_path);
         if (!f) {
@@ -432,7 +432,7 @@ void Local::removeTrashedFiles() {
         }
 
         if (failed > 0) {
-            handleError(std::format("{} trashed cloud file purge(s) failed", failed));
+            handleError(fmt::format("{} trashed cloud file purge(s) failed", failed));
             runningFlag = false;
         }
 

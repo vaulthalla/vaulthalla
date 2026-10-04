@@ -3,14 +3,10 @@
 #include <memory>
 #include <chrono>
 #include <string>
-
-namespace vh::protocols::ws { class Session; }
-
-namespace vh::auth::model { struct Token; struct RefreshToken; }
+#include "auth/Fwd.hpp"
+#include "protocols/ws/Fwd.hpp"
 
 namespace vh::auth::session {
-
-struct TokenClaims;
 
 struct Validator {
     static void validateRefreshToken(const std::shared_ptr<protocols::ws::Session>& session);

@@ -7,8 +7,8 @@
 #include <vector>
 #include <optional>
 
-namespace vh::fs::model { struct Entry; struct File; struct Directory; }
 #include <pqxx/pqxx>
+#include "fs/Fwd.hpp"
 
 namespace vh::db::query::fs {
 

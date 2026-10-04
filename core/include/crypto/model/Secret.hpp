@@ -4,10 +4,7 @@
 #include <vector>
 #include <ctime>
 #include <cstdint>
-
-namespace pqxx {
-    class row;
-}
+#include <pqxx/types>
 
 namespace vh::crypto::model {
 

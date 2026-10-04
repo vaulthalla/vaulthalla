@@ -1,11 +1,10 @@
 #pragma once
 
 #include "protocols/shell/types.hpp"
+#include "protocols/shell/Fwd.hpp"
 
 #include <memory>
 #include <regex>
-
-namespace vh::protocols::shell { class Router; }
 
 namespace vh::protocols::shell::commands::rbac {
     namespace permissions {

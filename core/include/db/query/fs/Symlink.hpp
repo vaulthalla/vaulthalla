@@ -4,8 +4,7 @@
 #include <memory>
 #include <string>
 #include <vector>
-
-namespace vh::fs::model { struct Symlink; }
+#include "fs/Fwd.hpp"
 
 namespace vh::db::query::fs {
 

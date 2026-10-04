@@ -1,8 +1,7 @@
 #pragma once
 
 #include <string_view>
-
-namespace vh::rbac::role { struct Vault; }
+#include "rbac/Fwd.hpp"
 
 namespace vh::seed {
 

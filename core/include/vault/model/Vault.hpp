@@ -8,10 +8,7 @@
 #include <vector>
 #include <nlohmann/json_fwd.hpp>
 #include <filesystem>
-
-namespace pqxx {
-class row;
-}
+#include <pqxx/types>
 
 namespace vh::vault::model {
 

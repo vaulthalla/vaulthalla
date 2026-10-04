@@ -1,12 +1,11 @@
 #pragma once
 
 #include "db/model/ListQueryParams.hpp"
+#include "rbac/Fwd.hpp"
 
 #include <memory>
 #include <vector>
 #include <string>
-
-namespace vh::rbac::role { struct Admin; }
 
 namespace vh::db::query::rbac::role {
 

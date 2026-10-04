@@ -6,11 +6,7 @@
 #include <ctime>
 #include <memory>
 #include <nlohmann/json_fwd.hpp>
-
-namespace pqxx {
-    class row;
-    class result;
-}
+#include <pqxx/types>
 
 namespace vh::sync::model {
 

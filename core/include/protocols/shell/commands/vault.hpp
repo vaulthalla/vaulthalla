@@ -4,6 +4,12 @@
 #include "protocols/shell/util/argsHelpers.hpp"
 #include "helpers.hpp"
 #include "ops/Vaults.hpp"
+#include "identities/Fwd.hpp"
+#include "protocols/shell/Fwd.hpp"
+#include "rbac/Fwd.hpp"
+#include "storage/Fwd.hpp"
+#include "sync/Fwd.hpp"
+#include "vault/Fwd.hpp"
 
 #include <functional>
 #include <string_view>
@@ -13,34 +19,8 @@
 #include <regex>
 #include <string>
 
-namespace vh::protocols::shell {
-    class Router;
-    class CommandUsage;
-}
-
-namespace vh::identities {
-    struct User;
-}
-
 namespace vh::rbac::role {
-    struct Vault;
     enum class OverrideOpt;
-}
-
-namespace vh::vault::model {
-    struct Vault;
-    struct S3Vault;
-    struct APIKey;
-    enum class VaultType;
-}
-
-namespace vh::sync::model {
-    struct Policy;
-    struct Waiver;
-}
-
-namespace vh::storage {
-    struct Engine;
 }
 
 namespace vh::protocols::shell::commands::vault {

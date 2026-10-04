@@ -1,8 +1,7 @@
 #pragma once
 
 #include <memory>
-
-namespace vh::sync::model { struct Policy; }
+#include "sync/Fwd.hpp"
 
 namespace vh::db::query::sync {
 

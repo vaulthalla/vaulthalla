@@ -6,6 +6,9 @@
 #include <boost/beast/websocket.hpp>
 
 #include "rbac/Actor.hpp"
+#include "identities/Fwd.hpp"
+#include "protocols/ws/Fwd.hpp"
+#include "share/Fwd.hpp"
 
 #include <atomic>
 #include <deque>
@@ -24,13 +27,9 @@ struct UploadContext {
 
 using RequestType = boost::beast::http::request<boost::beast::http::string_body>;
 
-namespace vh::identities { struct User; }
 namespace vh::auth::model { struct TokenPair; }
-namespace vh::share { struct Principal; }
 
 namespace vh::protocols::ws {
-
-class Router;
 
 namespace handler::fs { class Upload; }
 

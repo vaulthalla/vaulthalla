@@ -5,8 +5,7 @@
 #include <filesystem>
 #include <curl/curl.h>
 #include <map>
-
-namespace vh::vault::model { struct APIKey; }
+#include "vault/Fwd.hpp"
 
 namespace vh::storage::s3::curl {
 

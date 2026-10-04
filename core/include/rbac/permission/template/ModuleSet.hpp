@@ -3,6 +3,7 @@
 #include "rbac/permission/template/Module.hpp"
 #include "Description.hpp"
 
+#include <fmt/format.h>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -160,12 +161,12 @@ namespace vh::rbac::permission {
                 const auto dashed = std::string(qualifiedPrefix);
                 const auto slug = std::string(entry.slug);
 
-                flags.emplace_back(std::format("--{}-{}", shortPrefix, slug));
-                flags.emplace_back(std::format("--{}-{}-{}", ALLOW_FLAG_ALIAS, shortPrefix, slug));
-                flags.emplace_back(std::format("--{}-{}-{}", DENY_FLAG_ALIAS, shortPrefix, slug));
-                flags.emplace_back(std::format("--{}-{}", dashed, slug));
-                flags.emplace_back(std::format("--{}-{}-{}", ALLOW_FLAG_ALIAS, dashed, slug));
-                flags.emplace_back(std::format("--{}-{}-{}", DENY_FLAG_ALIAS, dashed, slug));
+                flags.emplace_back(fmt::format("--{}-{}", shortPrefix, slug));
+                flags.emplace_back(fmt::format("--{}-{}-{}", ALLOW_FLAG_ALIAS, shortPrefix, slug));
+                flags.emplace_back(fmt::format("--{}-{}-{}", DENY_FLAG_ALIAS, shortPrefix, slug));
+                flags.emplace_back(fmt::format("--{}-{}", dashed, slug));
+                flags.emplace_back(fmt::format("--{}-{}-{}", ALLOW_FLAG_ALIAS, dashed, slug));
+                flags.emplace_back(fmt::format("--{}-{}-{}", DENY_FLAG_ALIAS, dashed, slug));
 
                 Permission p;
                 p.bit_position = static_cast<uint32_t>(globalBit);
@@ -204,8 +205,8 @@ namespace vh::rbac::permission {
             std::ostringstream oss;
             bool first = true;
 
-            const auto allowFullPrefix = std::format("--{}-{}-", ALLOW_FLAG_ALIAS, flagPrefix());
-            const auto denyFullPrefix = std::format("--{}-{}-", DENY_FLAG_ALIAS, flagPrefix());
+            const auto allowFullPrefix = fmt::format("--{}-{}-", ALLOW_FLAG_ALIAS, flagPrefix());
+            const auto denyFullPrefix = fmt::format("--{}-{}-", DENY_FLAG_ALIAS, flagPrefix());
 
             for (const auto &entry: PermissionTraits<Enum>::entries) {
                 if (!first) oss << ' ';
@@ -239,9 +240,9 @@ namespace vh::rbac::permission {
         [[nodiscard]] std::vector<std::string> ownFlags() const {
             std::vector<std::string> flags;
 
-            const auto basePrefix = std::format("--{}-", flagPrefix()); // implicit allow
-            const auto allowFullPrefix = std::format("--{}-{}-", ALLOW_FLAG_ALIAS, flagPrefix());
-            const auto denyFullPrefix = std::format("--{}-{}-", DENY_FLAG_ALIAS, flagPrefix());
+            const auto basePrefix = fmt::format("--{}-", flagPrefix()); // implicit allow
+            const auto allowFullPrefix = fmt::format("--{}-{}-", ALLOW_FLAG_ALIAS, flagPrefix());
+            const auto denyFullPrefix = fmt::format("--{}-{}-", DENY_FLAG_ALIAS, flagPrefix());
 
             for (const auto &entry: PermissionTraits<Enum>::entries) {
                 flags.emplace_back(basePrefix + std::string(entry.slug));

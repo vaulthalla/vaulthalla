@@ -1,14 +1,13 @@
 #pragma once
 
 #include "db/model/ListQueryParams.hpp"
+#include "identities/Fwd.hpp"
 
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 #include <optional>
-
-namespace vh::identities { struct Group; }
 
 namespace vh::db::query::identities {
 

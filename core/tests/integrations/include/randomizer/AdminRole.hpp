@@ -1,11 +1,10 @@
 #pragma once
 
 #include "randomizer/Permission.hpp"
+#include "identities/Fwd.hpp"
+#include "rbac/Fwd.hpp"
 
 #include <memory>
-
-namespace vh::rbac::role { struct Admin; }
-namespace vh::identities { struct User; struct Group; }
 
 namespace vh::test::integration::randomizer {
     struct AdminRole {

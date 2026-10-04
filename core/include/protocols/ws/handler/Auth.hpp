@@ -3,9 +3,8 @@
 #include <nlohmann/json.hpp>
 #include <string>
 #include <memory>
-
-namespace vh::protocols::ws { class Session; }
-namespace vh::identities { struct User; }
+#include "identities/Fwd.hpp"
+#include "protocols/ws/Fwd.hpp"
 
 namespace vh::protocols::ws::handler {
 

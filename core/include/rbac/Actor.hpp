@@ -1,9 +1,8 @@
 #pragma once
 
 #include <memory>
-
-namespace vh::identities { struct User; }
-namespace vh::share { struct Principal; }
+#include "identities/Fwd.hpp"
+#include "share/Fwd.hpp"
 
 namespace vh::rbac {
 

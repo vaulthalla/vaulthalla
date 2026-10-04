@@ -8,9 +8,9 @@
 #include <filesystem>
 #include <vector>
 #include <fuse3/fuse_lowlevel.h>
+#include "fs/Fwd.hpp"
 
 namespace vh::stats::model { struct CacheStatsSnapshot; struct CacheStats; }
-namespace vh::fs::model { struct Entry; }
 
 namespace vh::fs::cache {
 

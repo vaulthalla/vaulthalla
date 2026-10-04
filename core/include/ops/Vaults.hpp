@@ -3,6 +3,7 @@
 #include "ops/Actor.hpp"
 #include "db/model/ListQueryParams.hpp"
 #include "vault/model/Vault.hpp"
+#include "sync/Fwd.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -11,8 +12,6 @@
 #include <string>
 #include <variant>
 #include <vector>
-
-namespace vh::sync::model { struct Policy; }
 
 // Vault lifecycle and sync policy shared by `vh vault ...` and the ws storage.vault.* commands. Every change goes
 // through storage::Manager so the live engine (which the RBAC resolver reads the owner from) never goes stale, and

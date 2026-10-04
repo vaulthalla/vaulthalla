@@ -4,9 +4,8 @@
 #include <optional>
 #include <unordered_map>
 #include <memory>
-
-namespace vh::storage { struct Engine; }
-namespace vh::fs::model { struct File; }
+#include "fs/Fwd.hpp"
+#include "storage/Fwd.hpp"
 
 namespace vh::protocols::http::model::preview {
 
@@ -42,6 +41,5 @@ struct Request {
         return std::to_string(scale.value());
     }
 };
-
 
 }

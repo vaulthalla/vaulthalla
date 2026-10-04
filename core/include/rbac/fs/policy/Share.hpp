@@ -5,6 +5,7 @@
 #include "rbac/permission/vault/Filesystem.hpp"
 #include "rbac/role/Vault.hpp"
 #include "share/Types.hpp"
+#include "share/Fwd.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -12,8 +13,6 @@
 
 namespace vh::share {
 struct Grant;
-struct Principal;
-struct ResolvedTarget;
 }
 
 namespace vh::rbac::fs::policy {

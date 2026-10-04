@@ -1,13 +1,12 @@
 #pragma once
 
 #include "db/model/ListQueryParams.hpp"
+#include "identities/Fwd.hpp"
 
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
-
-namespace vh::identities { struct User; }
 
 namespace vh::db::query::identities {
 

@@ -1,10 +1,9 @@
 #pragma once
 #include "protocols/TCPServer.hpp"
+#include "protocols/ws/Fwd.hpp"
 #include <memory>
 
 namespace vh::protocols::ws {
-
-class Router;
 
 namespace asio = boost::asio;
 using tcp = asio::ip::tcp;

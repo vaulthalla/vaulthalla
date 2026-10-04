@@ -1,13 +1,12 @@
 #pragma once
 
 #include "concurrency/AsyncService.hpp"
+#include "protocols/ws/Fwd.hpp"
 
 #include <chrono>
 #include <cstdint>
 
 namespace vh::protocols::ws {
-
-class Session;
 
 class ConnectionLifecycleManager final : public concurrency::AsyncService {
   public:

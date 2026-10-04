@@ -1,6 +1,9 @@
 #pragma once
 
 #include "protocols/http/model/preview/Response.hpp"
+#include "protocols/ws/Fwd.hpp"
+#include "share/Fwd.hpp"
+#include "storage/Fwd.hpp"
 
 #include <boost/beast/http.hpp>
 #include <boost/beast/http/file_body.hpp>
@@ -9,10 +12,6 @@
 #include <functional>
 #include <memory>
 #include <string>
-
-namespace vh::share { class Manager; class TargetResolver; }
-namespace vh::storage { struct Engine; }
-namespace vh::protocols::ws { class Session; }
 
 namespace vh::protocols::http {
     class Session;

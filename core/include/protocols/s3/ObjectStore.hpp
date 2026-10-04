@@ -4,6 +4,9 @@
 #include "db/query/s3/Gateway.hpp"
 #include "rbac/permission/vault/Filesystem.hpp"
 #include "rbac/s3/policy/Request.hpp"
+#include "fs/Fwd.hpp"
+#include "identities/Fwd.hpp"
+#include "storage/Fwd.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -12,10 +15,6 @@
 #include <optional>
 #include <string>
 #include <vector>
-
-namespace vh::identities { struct User; }
-namespace vh::storage { struct Engine; class CloudEngine; }
-namespace vh::fs::model { struct File; }
 
 namespace vh::protocols::s3 {
 

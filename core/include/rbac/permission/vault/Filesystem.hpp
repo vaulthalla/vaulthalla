@@ -8,11 +8,7 @@
 #include <cstdint>
 #include <nlohmann/json_fwd.hpp>
 #include <vector>
-
-namespace pqxx {
-    class row;
-    class result;
-}
+#include <pqxx/types>
 
 namespace vh::rbac::permission {
     namespace vault {

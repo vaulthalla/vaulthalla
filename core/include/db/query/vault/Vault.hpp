@@ -1,14 +1,13 @@
 #pragma once
 
 #include "db/model/ListQueryParams.hpp"
+#include "sync/Fwd.hpp"
+#include "vault/Fwd.hpp"
 
 #include <memory>
 #include <vector>
 #include <string>
 #include <optional>
-
-namespace vh::vault::model { struct Vault; enum class VaultType; }
-namespace vh::sync::model { struct Policy; }
 
 namespace vh::db::query::vault {
 

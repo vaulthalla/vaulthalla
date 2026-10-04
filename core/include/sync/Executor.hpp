@@ -2,14 +2,13 @@
 
 #include <memory>
 #include <vector>
+#include "sync/Fwd.hpp"
 
 namespace vh::sync {
 
 namespace model {
 struct Action;
 }
-
-struct Cloud;
 
 class Executor {
 public:

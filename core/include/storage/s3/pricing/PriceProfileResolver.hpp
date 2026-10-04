@@ -2,12 +2,11 @@
 
 #include "storage/s3/pricing/PriceBotModels.hpp"
 #include "storage/s3/provider/Provider.hpp"
+#include "vault/Fwd.hpp"
 
 #include <memory>
 #include <optional>
 #include <string>
-
-namespace vh::vault::model { struct APIKey; }
 
 namespace vh::storage::s3::pricing {
 

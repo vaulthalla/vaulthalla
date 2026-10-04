@@ -2,14 +2,13 @@
 
 #include "ops/Actor.hpp"
 #include "db/model/ListQueryParams.hpp"
+#include "rbac/Fwd.hpp"
 
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
-
-namespace vh::rbac::role { struct Admin; }
 
 // User accounts, shared by `vh user ...` and the ws auth.register / auth.user.* commands.
 //

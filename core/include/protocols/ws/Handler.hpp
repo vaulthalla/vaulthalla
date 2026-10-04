@@ -1,10 +1,9 @@
 #pragma once
 
 #include <memory>
+#include "protocols/ws/Fwd.hpp"
 
 namespace vh::protocols::ws {
-
-class Router;
 
 class Handler {
   public:
