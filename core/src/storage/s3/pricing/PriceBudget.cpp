@@ -8,6 +8,7 @@
 #include "vault/model/APIKey.hpp"
 
 #include <algorithm>
+#include <array>
 #include <boost/multiprecision/cpp_dec_float.hpp>
 #include <cctype>
 #include <chrono>
@@ -19,6 +20,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <unordered_set>
+#include <utility>
 
 namespace vh::storage::s3::pricing {
 namespace {
@@ -747,6 +749,21 @@ PriceBudgetNotification makeDecisionNotification(
     return notification;
 }
 
+// operator_notification.severity values (094 CHECK) by rank; the SQL summary and the C++ merge both rank from here.
+constexpr std::array<std::pair<std::string_view, int>, 4> kNotificationSeverityRanks{{
+    {"info", 1},
+    {"warning", 2},
+    {"error", 3},
+    {"critical", 4},
+}};
+
+std::string notificationSeverityRankSql() {
+    std::string sql = "CASE severity";
+    for (const auto& [name, rank] : kNotificationSeverityRanks)
+        sql += " WHEN '" + std::string(name) + "' THEN " + std::to_string(rank);
+    return sql + " ELSE 0 END";
+}
+
 } // namespace
 
 std::string toString(const PriceBudgetMode mode) {
@@ -818,6 +835,20 @@ PriceBudgetWindow priceBudgetWindowFromString(const std::string_view value) {
     if (normalized == "daily" || normalized == "day") return PriceBudgetWindow::Daily;
     if (normalized == "monthly" || normalized == "month") return PriceBudgetWindow::Monthly;
     throw std::invalid_argument("unknown price budget window: " + normalized);
+}
+
+int priceBudgetNotificationSeverityRank(const std::string_view severity) {
+    for (const auto& [name, rank] : kNotificationSeverityRanks)
+        if (name == severity) return rank;
+    return 0;
+}
+
+void mergePriceBudgetNotificationSummary(PriceBudgetNotificationSummary& into, const PriceBudgetNotificationSummary& add) {
+    into.open_count += add.open_count;
+    if (!add.worst_severity) return;
+    if (!into.worst_severity
+        || priceBudgetNotificationSeverityRank(*add.worst_severity) > priceBudgetNotificationSeverityRank(*into.worst_severity))
+        into.worst_severity = add.worst_severity;
 }
 
 bool isSupportedPriceBudgetProvider(const std::string_view providerKey) {
@@ -1454,6 +1485,32 @@ std::vector<PriceBudgetNotification> PriceBudgetService::listNotifications(
     });
 }
 
+std::vector<PriceBudgetNotificationVaultSummary> PriceBudgetService::summarizeOpenNotifications(
+    const std::optional<std::uint32_t>& vaultId) const {
+    return db::Transactions::exec("PriceBudgetService::summarizeOpenNotifications", [&](pqxx::work& txn) {
+        // Same open-row predicate as listNotifications(includeAcknowledged = false).
+        auto where = std::string{"WHERE acknowledged_at IS NULL AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP) "};
+        if (vaultId) where += "AND vault_id = " + std::to_string(*vaultId) + " ";
+        const auto result = txn.exec(
+            "SELECT vault_id, COUNT(*) AS open_count, "
+            "(ARRAY_AGG(severity ORDER BY " + notificationSeverityRankSql() + " DESC, created_at DESC, id DESC))[1] "
+            "AS worst_severity "
+            "FROM operator_notification " + where +
+            "GROUP BY vault_id");
+        std::vector<PriceBudgetNotificationVaultSummary> groups;
+        groups.reserve(result.size());
+        for (const auto& row : result)
+            groups.push_back({
+                .vault_id = optionalUInt(row, "vault_id"),
+                .summary = {
+                    .open_count = row["open_count"].as<std::uint32_t>(),
+                    .worst_severity = optionalString(row, "worst_severity")
+                }
+            });
+        return groups;
+    });
+}
+
 PriceBudgetNotification PriceBudgetService::acknowledgeNotification(
     const std::uint32_t notificationId,
     const std::uint32_t userId) const {
@@ -1957,6 +2014,13 @@ void to_json(nlohmann::json& j, const PriceBudgetNotification& notification) {
         {"acknowledged_by", notification.acknowledged_by ? nlohmann::json(*notification.acknowledged_by) : nlohmann::json(nullptr)},
         {"created_at", notification.created_at},
         {"expires_at", notification.expires_at ? nlohmann::json(*notification.expires_at) : nlohmann::json(nullptr)}
+    };
+}
+
+void to_json(nlohmann::json& j, const PriceBudgetNotificationSummary& summary) {
+    j = {
+        {"open_count", summary.open_count},
+        {"worst_severity", summary.worst_severity ? nlohmann::json(*summary.worst_severity) : nlohmann::json(nullptr)}
     };
 }
 

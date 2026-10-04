@@ -148,6 +148,20 @@ struct PriceBudgetNotification {
     std::optional<std::string> expires_at;
 };
 
+// Open operator notifications (unacknowledged, not expired), aggregated in SQL so a short page of rows can't hide
+// the count or an older, worse alert. worst_severity is the highest-ranked severity
+// (priceBudgetNotificationSeverityRank) among them; nullopt when nothing is open.
+struct PriceBudgetNotificationSummary {
+    std::uint32_t open_count{0};
+    std::optional<std::string> worst_severity;
+};
+
+// One summary per vault_id (nullopt: rows that aren't vault-scoped), so callers can apply per-vault visibility.
+struct PriceBudgetNotificationVaultSummary {
+    std::optional<std::uint32_t> vault_id;
+    PriceBudgetNotificationSummary summary;
+};
+
 struct PriceBudgetOverride {
     std::uint32_t id{0};
     std::optional<std::string> run_uuid;
@@ -233,6 +247,12 @@ struct PriceBudgetDashboardStats {
     const PriceBudgetDecision& decision,
     const PriceBudgetPreflightRequest& request);
 
+// The severities operator_notification accepts (094 CHECK), ranked info 1 < warning 2 < error 3 < critical 4;
+// anything else is 0. The SQL summary ranks with the same table.
+[[nodiscard]] int priceBudgetNotificationSeverityRank(std::string_view severity);
+// Adds `add` into `into`: counts sum, the worse severity wins.
+void mergePriceBudgetNotificationSummary(PriceBudgetNotificationSummary& into, const PriceBudgetNotificationSummary& add);
+
 class PriceBudgetService {
 public:
     [[nodiscard]] PriceBudgetDecision preflight(const PriceBudgetPreflightRequest& request) const;
@@ -267,6 +287,10 @@ public:
         std::uint32_t limit = 50,
         const std::optional<std::uint32_t>& vaultId = std::nullopt,
         bool includeAcknowledged = false) const;
+    // One aggregate query over the open notifications listNotifications would scan (same expiry rule, same vault
+    // filter), grouped by vault_id and independent of any page limit.
+    [[nodiscard]] std::vector<PriceBudgetNotificationVaultSummary> summarizeOpenNotifications(
+        const std::optional<std::uint32_t>& vaultId = std::nullopt) const;
     [[nodiscard]] PriceBudgetNotification acknowledgeNotification(
         std::uint32_t notificationId,
         std::uint32_t userId) const;
@@ -290,6 +314,7 @@ void to_json(nlohmann::json& j, const PriceBudgetWindowCheck& check);
 void to_json(nlohmann::json& j, const PriceBudgetDecision& decision);
 void to_json(nlohmann::json& j, const PriceBudgetLedgerEntry& entry);
 void to_json(nlohmann::json& j, const PriceBudgetNotification& notification);
+void to_json(nlohmann::json& j, const PriceBudgetNotificationSummary& summary);
 void to_json(nlohmann::json& j, const PriceBudgetOverride& budgetOverride);
 void to_json(nlohmann::json& j, const PriceBudgetTrendStats& stats);
 void to_json(nlohmann::json& j, const PriceBudgetDashboardStats& stats);
