@@ -7,6 +7,7 @@
 #include <optional>
 #include <cstddef>
 #include <fmt/format.h>
+#include "compat/fmt_extern.hpp"
 
 namespace vh::protocols::shell {
 

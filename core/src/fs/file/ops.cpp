@@ -17,7 +17,7 @@
 #include <random>
 #include <array>
 #include <cmath>
-#include <format>
+#include <fmt/format.h>
 
 using namespace vh::fs::model;
 
@@ -153,8 +153,8 @@ std::string bytesToSize(uintmax_t bytes) {
     // - no decimals for KB+ when it's an integer-ish
     // - 1 decimal for non-integers (looks nicer)
     if (value >= 100.0 || std::fabs(value - std::round(value)) < 0.05)
-        return std::format("{:.0f}{}", value, suffix[unit]);
-    return std::format("{:.1f}{}", value, suffix[unit]);
+        return fmt::format("{:.0f}{}", value, suffix[unit]);
+    return fmt::format("{:.1f}{}", value, suffix[unit]);
 }
 
 }

@@ -107,6 +107,27 @@ endforeach
 
 # ╭──────────────────────────────── LIBRARIES ───────────────────────────────────╮
 
+# Unit-test objects are their own target, defined before libvaulthalla: ninja starts ready work in build.ninja order,
+# and the test chunks are the longest single jobs, so starting them first keeps one of them from becoming the
+# build's tail. They are always compiled at -O0 (the CI test configuration) whatever the buildtype, so an -O3
+# build that includes tests doesn't spend optimization time on test code. vh_unit_tests links them whole (link_whole)
+# so every gtest registration survives.
+if get_option('build_unit_tests')
+    unit_test_sources = []
+    foreach f : run_command('sh', '-c', 'find "$1" -type f -name "*.cpp" | LC_ALL=C sort', 'find-cpp', tests_src, check: true).stdout().strip().split('\n')
+        unit_test_sources += files(f)
+    endforeach
+
+    unit_test_objects = static_library(
+        'vh_unit_test_objects',
+        unit_test_sources,
+        include_directories: inc,
+        dependencies: test_deps,
+        install: false,
+        override_options: ['optimization=0'],
+    )
+endif
+
 lib_core = static_library(
     'vaulthalla',
     sources,
@@ -205,14 +226,9 @@ if get_option('build_unit_tests')
     unit_test_env = environment()
     unit_test_env.set('VH_PATH_TO_CONFIG', join_paths(repo_root, 'deploy/config/config.yaml'))
 
-    unit_test_sources = []
-    foreach f : run_command('sh', '-c', 'find "$1" -type f -name "*.cpp" | LC_ALL=C sort', 'find-cpp', tests_src, check: true).stdout().strip().split('\n')
-        unit_test_sources += files(f)
-    endforeach
-
     vh_unit_tests = executable(
         'vh_unit_tests',
-        unit_test_sources,
+        link_whole: unit_test_objects,
         link_with: [lib_core, lib_seed, lib_usage],
         include_directories: inc,
         dependencies: test_deps,

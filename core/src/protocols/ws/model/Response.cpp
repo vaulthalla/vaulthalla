@@ -1,7 +1,7 @@
 #include "protocols/ws/model/Response.hpp"
 #include "protocols/ws/Session.hpp"
 
-#include <format>
+#include <fmt/format.h>
 
 using namespace vh::protocols::ws::model;
 
@@ -12,7 +12,7 @@ void Response::operator()(const std::shared_ptr<Session>& session) {
     if (!session) return;
 
     json response = {
-        {"command", std::format("{}.response", cmd)},
+        {"command", fmt::format("{}.response", cmd)},
         {"status", to_string(status)},
     };
 

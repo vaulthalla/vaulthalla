@@ -4,7 +4,7 @@
 #include "share/Principal.hpp"
 #include "share/Token.hpp"
 
-#include <format>
+#include <fmt/format.h>
 #include <optional>
 #include <string>
 
@@ -100,25 +100,25 @@ constexpr RateLimitPolicy kLoginSustainedPolicy{.max_attempts = 30, .window = st
     if (command == "auth.login") {
         // Keyed by IP *and* account: behind the nginx proxy every client shares 127.0.0.1, and an IP-only key
         // would let one guesser lock every user out of login.
-        return std::format("{}|ip:{}|user:{}", command, ip, optionalString(payload, "name"));
+        return fmt::format("{}|ip:{}|user:{}", command, ip, optionalString(payload, "name"));
     }
 
     if (command == "share.session.open") {
-        return std::format("{}|ip:{}|{}", command, ip, tokenLookupKey(payload, "public_token", TokenKind::PublicShare));
+        return fmt::format("{}|ip:{}|{}", command, ip, tokenLookupKey(payload, "public_token", TokenKind::PublicShare));
     }
 
     if (command == "share.email.challenge.start") {
-        return std::format("{}|ip:{}|{}", command, ip, shareSessionComponent(session, payload));
+        return fmt::format("{}|ip:{}|{}", command, ip, shareSessionComponent(session, payload));
     }
 
     if (command == "share.email.challenge.confirm") {
         const auto challengeId = optionalString(payload, "challenge_id");
-        return std::format("{}|ip:{}|{}|challenge:{}", command, ip, shareSessionComponent(session, payload),
+        return fmt::format("{}|ip:{}|{}|challenge:{}", command, ip, shareSessionComponent(session, payload),
                            challengeId.empty() ? "none" : challengeId);
     }
 
     if (command == "share.download.chunk" || command == "fs.download.chunk") {
-        return std::format("{}|ip:{}|session:{}", command, ip,
+        return fmt::format("{}|ip:{}|session:{}", command, ip,
                            session.shareSessionId().empty() ? "unknown" : session.shareSessionId());
     }
 
@@ -134,10 +134,10 @@ constexpr RateLimitPolicy kLoginSustainedPolicy{.max_attempts = 30, .window = st
         const auto principal = session.sharePrincipal();
         const auto share = principal && !principal->share_id.empty() ? principal->share_id : "unknown";
         const auto shareSession = !session.shareSessionId().empty() ? session.shareSessionId() : "unknown";
-        return std::format("{}|ip:{}|share:{}|session:{}", command, ip, share, shareSession);
+        return fmt::format("{}|ip:{}|share:{}|session:{}", command, ip, share, shareSession);
     }
 
-    return std::format("{}|ip:{}", command, ip);
+    return fmt::format("{}|ip:{}", command, ip);
 }
 }
 
@@ -161,7 +161,7 @@ vh::share::RateLimitDecision ShareRateLimit::check(
         // is capped per quarter hour, so a client that keeps hitting the minute limit is shut out much longer.
         // Only failures count (see recordLoginFailure), so gate here without recording.
         const auto sustained = limiter_.peek(
-            std::format("auth.login.sustained|ip:{}|user:{}", clientIp(session), optionalString(payloadOf(message), "name")),
+            fmt::format("auth.login.sustained|ip:{}|user:{}", clientIp(session), optionalString(payloadOf(message), "name")),
             kLoginSustainedPolicy, now);
         if (!sustained.allowed) return sustained;
         return limiter_.peek(keyFor(command, message, session), *policy, now);
@@ -174,9 +174,9 @@ void ShareRateLimit::recordLoginFailure(const std::string_view accountName, cons
                                         const Clock::time_point now) {
     const auto ip = clientIp(session);
     const auto name = std::string(accountName);
-    (void)limiter_.check(std::format("auth.login.sustained|ip:{}|user:{}", ip, name), kLoginSustainedPolicy, now);
+    (void)limiter_.check(fmt::format("auth.login.sustained|ip:{}|user:{}", ip, name), kLoginSustainedPolicy, now);
     if (const auto policy = policyFor("auth.login"))
-        (void)limiter_.check(std::format("auth.login|ip:{}|user:{}", ip, name), *policy, now);
+        (void)limiter_.check(fmt::format("auth.login|ip:{}|user:{}", ip, name), *policy, now);
 }
 
 ShareRateLimit& ShareRateLimit::instance() {

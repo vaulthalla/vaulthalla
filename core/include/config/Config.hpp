@@ -8,6 +8,7 @@
 #include <string_view>
 #include <vector>
 #include <spdlog/spdlog.h>
+#include "compat/fmt_extern.hpp"
 #include <nlohmann/json_fwd.hpp>
 #include <chrono>
 

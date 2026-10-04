@@ -1,7 +1,7 @@
 #pragma once
 
 #include <concepts>
-#include <format>
+#include <fmt/format.h>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -26,9 +26,9 @@ namespace vh::rbac::permission {
         if constexpr (HasDescriptionContext<std::remove_cvref_t<T> >) {
             const std::string_view ctx = object.descriptionObject();
 
-            result = std::vformat(
+            result = fmt::vformat(
                 std::string(description),
-                std::make_format_args(ctx)
+                fmt::make_format_args(ctx)
             );
         } else {
             result = std::string(description);

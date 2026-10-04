@@ -93,7 +93,7 @@ void Cloud::operator()() {
         event->error_message.clear();
     } catch (const std::exception& e) {
         if (cloud) event->applyS3RequestMetrics(cloud->s3RequestMetrics());
-        handleError(std::format("[CloudSync] {}", e.what()));
+        handleError(fmt::format("[CloudSync] {}", e.what()));
     } catch (...) {
         if (cloud) event->applyS3RequestMetrics(cloud->s3RequestMetrics());
         handleError("[CloudSync] Unknown exception");

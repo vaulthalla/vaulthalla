@@ -8,7 +8,7 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <format>
+#include <fmt/format.h>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -81,9 +81,9 @@ namespace vh::rbac::permission {
             std::vector<FlagBinding<Enum> > bindings;
             bindings.reserve(PermissionTraits<Enum>::entries.size() * 3);
 
-            const auto basePrefix = std::format("--{}-", flagPrefix());
-            const auto allowFullPrefix = std::format("--{}-{}-", ALLOW_FLAG_ALIAS, flagPrefix());
-            const auto denyFullPrefix = std::format("--{}-{}-", DENY_FLAG_ALIAS, flagPrefix());
+            const auto basePrefix = fmt::format("--{}-", flagPrefix());
+            const auto allowFullPrefix = fmt::format("--{}-{}-", ALLOW_FLAG_ALIAS, flagPrefix());
+            const auto denyFullPrefix = fmt::format("--{}-{}-", DENY_FLAG_ALIAS, flagPrefix());
 
             for (const auto &entry: PermissionTraits<Enum>::entries) {
                 bindings.push_back({
@@ -142,8 +142,8 @@ namespace vh::rbac::permission {
             std::ostringstream oss;
             bool first = true;
 
-            const auto allowFullPrefix = std::format("--{}-{}-", ALLOW_FLAG_ALIAS, flagPrefix());
-            const auto denyFullPrefix = std::format("--{}-{}-", DENY_FLAG_ALIAS, flagPrefix());
+            const auto allowFullPrefix = fmt::format("--{}-{}-", ALLOW_FLAG_ALIAS, flagPrefix());
+            const auto denyFullPrefix = fmt::format("--{}-{}-", DENY_FLAG_ALIAS, flagPrefix());
 
             for (const auto &entry: PermissionTraits<Enum>::entries) {
                 if (!first) oss << ' ';
@@ -189,12 +189,12 @@ namespace vh::rbac::permission {
                 const auto dashed = std::string(qualifiedPrefix);
                 const auto slug = std::string(entry.slug);
 
-                flags.emplace_back(std::format("--{}-{}", shortPrefix, slug));
-                flags.emplace_back(std::format("--{}-{}-{}", ALLOW_FLAG_ALIAS, shortPrefix, slug));
-                flags.emplace_back(std::format("--{}-{}-{}", DENY_FLAG_ALIAS, shortPrefix, slug));
-                flags.emplace_back(std::format("--{}-{}", dashed, slug));
-                flags.emplace_back(std::format("--{}-{}-{}", ALLOW_FLAG_ALIAS, dashed, slug));
-                flags.emplace_back(std::format("--{}-{}-{}", DENY_FLAG_ALIAS, dashed, slug));
+                flags.emplace_back(fmt::format("--{}-{}", shortPrefix, slug));
+                flags.emplace_back(fmt::format("--{}-{}-{}", ALLOW_FLAG_ALIAS, shortPrefix, slug));
+                flags.emplace_back(fmt::format("--{}-{}-{}", DENY_FLAG_ALIAS, shortPrefix, slug));
+                flags.emplace_back(fmt::format("--{}-{}", dashed, slug));
+                flags.emplace_back(fmt::format("--{}-{}-{}", ALLOW_FLAG_ALIAS, dashed, slug));
+                flags.emplace_back(fmt::format("--{}-{}-{}", DENY_FLAG_ALIAS, dashed, slug));
 
                 Permission p;
                 p.bit_position = static_cast<uint32_t>(globalBit);
