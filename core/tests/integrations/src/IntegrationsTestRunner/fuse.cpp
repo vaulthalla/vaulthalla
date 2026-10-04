@@ -21,6 +21,9 @@
 
 #include "rbac/role/Vault.hpp"
 
+#include <fstream>
+#include <unistd.h>
+
 using namespace vh::test::integration::fuse;
 using namespace vh::rbac;
 using namespace vh::identities;
@@ -161,6 +164,18 @@ namespace vh::test::integration {
             .path = "fuse/stat",
             .must_contain = {" size=13\n"},
             .fn = [=] { return stat_size_as(*ctx.admin->meta.linux_uid, ctx.hello()); }
+        });
+
+        // The kernel forgetting every inode (as under memory pressure) must not make the vault unreachable.
+        builder.makeTestCase({
+            .name = "FUSE vault reachable after the kernel forgets its inodes (admin)",
+            .path = "fuse/read",
+            .must_contain = {"hello world!"},
+            .fn = [=] {
+                ::sync();
+                std::ofstream("/proc/sys/vm/drop_caches") << "2\n";
+                return read_as(*ctx.admin->meta.linux_uid, ctx.hello());
+            }
         });
 
         builder.makeTestCase({

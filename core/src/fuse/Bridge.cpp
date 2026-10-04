@@ -664,23 +664,9 @@ void forget(const fuse_req_t req, const fuse_ino_t ino, const uint64_t nlookup) 
     ScopedFuseOpTimer timer(fuseStats(), FuseOperation::Forget);
     log::Registry::fuse()->debug("[forget] Called for inode: {}, nlookup: {}", ino, nlookup);
 
-    const auto resolved = Resolver::resolve({
-        .caller = "forget",
-        .fuseReq = req,
-        .ino = ino,
-        .target = resolver::Target::EntryForPath
-    });
-
-    if (!resolved.ok()) {
-        log::Registry::fuse()->debug("[forget] No entry found for inode {}: {}", ino, resolved.errnum);
-        timer.success();
-        fuse_reply_none(req); // still need to reply to avoid hanging the kernel, even if we have nothing to evict
-        return;
-    }
-
-    runtime::Deps::get().fsCache->evictIno(ino);
-
-    log::Registry::fuse()->debug("[forget] Evicted inode {}", ino);
+    // The kernel dropping its lookup references says nothing about our metadata: the cache is seeded at startup
+    // and kept current by every daemon-side change. Evicting here broke path resolution once a vault root was
+    // forgotten (memory pressure, `echo 2 > /proc/sys/vm/drop_caches`): the whole vault answered ENOENT until restart.
     timer.success();
     fuse_reply_none(req); // no return value
 }
