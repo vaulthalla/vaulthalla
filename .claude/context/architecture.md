@@ -148,6 +148,8 @@ decides validity (see `web-client.md`). The daemon's HTTP `GET /auth/session` re
   `.fuse-plaintext/unsaved/`; stale copies are deleted at mount. A same-vault rename only moves the bytes (no
   re-encryption). `Filesystem::repairAtRest` (first sync pass per vault per start) seals plaintext left by older
   builds and corrects ciphertext-length sizes.
+- No writeback cache (`FUSE_CAP_WRITEBACK_CACHE` off): with it the kernel owns `i_size` and ignores getattr sizes,
+  so out-of-band changes showed stale `stat` sizes. Handles are `direct_io` anyway.
 - `forget` does not evict the metadata cache (it is seeded at startup and updated by the daemon's own changes);
   evicting a vault root used to make the whole vault ENOENT until restart.
 - The RBAC gate is unchanged in shape: `open` needs Read for readable handles and Write for writable or `O_TRUNC`

@@ -124,6 +124,9 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
   requires an IV); the cross-vault path records the plaintext size.
 - Filesystem::repairAtRest (first sync pass per vault per start) seals
   plaintext files left by older builds and corrects ciphertext-length sizes.
+- Stop requesting FUSE_CAP_WRITEBACK_CACHE: with it the kernel ignored
+  getattr sizes, so out-of-band changes kept stale st_size; every handle is
+  direct_io, so it cached no data.
 - FUSE forget no longer evicts metadata cache entries: evicting a vault root
   made path lookups under it fail with ENOENT until restart.
 - open requires Write for writable or O_TRUNC handles (Read and Write for

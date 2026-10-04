@@ -143,7 +143,11 @@ void fuse_ll_init(void* userdata, fuse_conn_info* conn) {
     constexpr uintmax_t MB = 1024 * 1024;
 
     conn->want |= FUSE_CAP_ASYNC_READ;
-    conn->want |= FUSE_CAP_WRITEBACK_CACHE;
+    // No writeback cache: with it the kernel owns a regular file's size and ignores the size in getattr replies, so
+    // anything that changes a file outside the mount (web uploads, sync downloads, the at-rest repair) left `stat`
+    // reporting the old size until the kernel dropped the inode. Every handle is direct_io, so it cached no data
+    // anyway; it also made the kernel turn O_WRONLY opens into O_RDWR, asking write-only users for Read.
+    conn->want &= ~FUSE_CAP_WRITEBACK_CACHE;
     conn->max_readahead = MB;
     conn->max_write = MB;
 
