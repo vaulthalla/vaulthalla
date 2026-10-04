@@ -3,6 +3,7 @@
 #include "protocols/ws/Session.hpp"
 #include "rbac/resolver/vault/all.hpp"
 #include "fs/model/Path.hpp"
+#include "share/Fwd.hpp"
 
 #include <filesystem>
 #include <functional>
@@ -10,11 +11,6 @@
 #include <nlohmann/json.hpp>
 #include <stdexcept>
 #include <string_view>
-
-namespace vh::share {
-class Manager;
-class TargetResolver;
-}
 
 namespace vh::protocols::ws::handler::fs {
 

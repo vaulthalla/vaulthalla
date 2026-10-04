@@ -5,15 +5,10 @@
 #include <string>
 #include <unordered_map>
 #include <array>
-
-namespace vh::identities { struct User; struct Group; }
-namespace vh::rbac::role { struct Admin; struct Vault; }
-namespace vh::vault::model { struct Vault; struct APIKey; }
-
-namespace vh::protocols::shell {
-class CommandUsage;
-class UsageManager;
-}
+#include "identities/Fwd.hpp"
+#include "protocols/shell/Fwd.hpp"
+#include "rbac/Fwd.hpp"
+#include "vault/Fwd.hpp"
 
 namespace vh::test::integration { enum class EntityType; }
 

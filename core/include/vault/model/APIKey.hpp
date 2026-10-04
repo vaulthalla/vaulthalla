@@ -4,15 +4,11 @@
 #include <string>
 #include <vector>
 #include <ctime>
-
-namespace pqxx {
-    class row;
-    class result;
-}
+#include "vault/Fwd.hpp"
+#include <pqxx/types>
 
 namespace vh::vault::model {
 
-struct Vault;
 class Key;
 
 enum class S3Provider {

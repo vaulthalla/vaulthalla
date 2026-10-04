@@ -5,14 +5,8 @@
 #include <string>
 #include <random>
 #include <memory>
-
-namespace vh::storage {
-struct Engine;
-}
-
-namespace vh::fs::model {
-struct File;
-}
+#include "fs/Fwd.hpp"
+#include "storage/Fwd.hpp"
 
 namespace vh::fs::ops {
 

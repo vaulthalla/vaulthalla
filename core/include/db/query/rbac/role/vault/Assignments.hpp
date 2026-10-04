@@ -4,8 +4,7 @@
 #include <memory>
 #include <string>
 #include <vector>
-
-namespace vh::rbac::role { struct Vault; }
+#include "rbac/Fwd.hpp"
 
 namespace vh::db::query::rbac::role::vault {
 

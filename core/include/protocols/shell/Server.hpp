@@ -1,6 +1,7 @@
 #pragma once
 
 #include "concurrency/AsyncService.hpp"
+#include "protocols/shell/Fwd.hpp"
 
 #include <sys/types.h>
 
@@ -15,8 +16,6 @@
 #include <thread>
 
 namespace vh::protocols::shell {
-
-class Router;
 
 // Serves `vh` over /run/vaulthalla/cli.sock. Each client runs on its own thread (bounded by
 // kMaxConcurrentClients), so a slow command, a DB stall, or a user sitting at an interactive prompt never blocks

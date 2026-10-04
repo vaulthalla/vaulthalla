@@ -5,16 +5,10 @@
 #include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
-
-namespace vh::fs::model { struct File; }
-namespace vh::identities { struct User; }
-namespace vh::protocols::ws { class Session; }
-
-namespace vh::share {
-class Manager;
-class TargetResolver;
-struct ResolvedTarget;
-}
+#include "fs/Fwd.hpp"
+#include "identities/Fwd.hpp"
+#include "protocols/ws/Fwd.hpp"
+#include "share/Fwd.hpp"
 
 namespace vh::protocols::ws::handler::share {
 

@@ -7,9 +7,8 @@
 #include <unordered_map>
 #include <vector>
 #include <boost/asio/ip/tcp.hpp>
-
-namespace vh::protocols::ws { class Session; class Router; }
-namespace vh::identities { struct User; }
+#include "identities/Fwd.hpp"
+#include "protocols/ws/Fwd.hpp"
 
 namespace vh::auth::session {
 

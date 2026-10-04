@@ -3,20 +3,14 @@
 #include "sync/model/Policy.hpp"
 #include "sync/model/Action.hpp"
 #include "storage/s3/Controller.hpp"
+#include "fs/Fwd.hpp"
+#include "sync/Fwd.hpp"
 
 #include <string>
 #include <optional>
 #include <chrono>
 #include <nlohmann/json_fwd.hpp>
 #include <memory>
-
-namespace vh::sync {
-struct Cloud;
-}
-
-namespace vh::fs::model {
-struct File;
-}
 
 namespace vh::sync::model {
 

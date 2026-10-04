@@ -4,14 +4,13 @@
 #include <unordered_map>
 #include <cstdint>
 #include <pqxx/pqxx>
+#include "identities/Fwd.hpp"
+#include "rbac/Fwd.hpp"
 
 namespace vh {
     namespace rbac {
-        namespace role { struct Vault; }
         namespace permission::admin { struct VaultGlobals; }
     }
-
-    namespace identities { struct User; struct Group; }
 
     namespace db::query::identities {
         std::shared_ptr<vh::identities::User> hydrateUser(pqxx::work& txn, const pqxx::row& userRow);

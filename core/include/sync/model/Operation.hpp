@@ -1,6 +1,7 @@
 #pragma once
 
 #include "sync/model/Throughput.hpp"
+#include "fs/Fwd.hpp"
 
 #include <string>
 #include <optional>
@@ -8,15 +9,7 @@
 #include <filesystem>
 #include <memory>
 #include <nlohmann/json_fwd.hpp>
-
-namespace pqxx {
-class row;
-class result;
-}
-
-namespace vh::fs::model {
-struct Entry;
-}
+#include <pqxx/types>
 
 namespace vh::sync::model {
 

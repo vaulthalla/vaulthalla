@@ -1,6 +1,7 @@
 #pragma once
 
 #include "share/RateLimiter.hpp"
+#include "protocols/ws/Fwd.hpp"
 
 #include <chrono>
 #include <nlohmann/json.hpp>
@@ -9,8 +10,6 @@
 #include <string_view>
 
 namespace vh::protocols::ws {
-
-class Session;
 
 class ShareRateLimit {
 public:

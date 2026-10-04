@@ -2,17 +2,15 @@
 
 #include <protocols/shell/types.hpp>
 #include "protocols/shell/SocketIO.hpp"
+#include "identities/Fwd.hpp"
+#include "protocols/shell/Fwd.hpp"
 
 #include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
 
-namespace vh::identities { struct User; }
-
 namespace vh::protocols::shell {
-
-class CommandUsage;
 
 class Router {
 public:

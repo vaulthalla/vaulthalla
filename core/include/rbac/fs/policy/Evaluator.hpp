@@ -4,18 +4,13 @@
 #include "rbac/fs/policy/Decision.hpp"
 #include "rbac/fs/policy/Request.hpp"
 #include "rbac/permission/vault/Filesystem.hpp"
+#include "identities/Fwd.hpp"
+#include "storage/Fwd.hpp"
 
 #include <filesystem>
 #include <optional>
 #include <string>
 #include <vector>
-
-namespace vh::identities {
-    struct User;
-    struct Group;
-}
-
-namespace vh::storage { struct Engine; }
 
 namespace vh::rbac::fs::policy {
     struct Evaluator {

@@ -1,6 +1,8 @@
 #pragma once
 
 #include "concurrency/AsyncService.hpp"
+#include "storage/Fwd.hpp"
+#include "sync/Fwd.hpp"
 
 #include <condition_variable>
 #include <memory>
@@ -9,11 +11,8 @@
 #include <mutex>
 #include <shared_mutex>
 
-namespace vh::storage { struct Engine; }
-
 namespace vh::sync {
 
-struct Cloud;
 struct Local;
 
 struct FSTaskCompare {

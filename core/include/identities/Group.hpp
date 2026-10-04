@@ -8,13 +8,12 @@
 #include <vector>
 #include <unordered_map>
 #include <nlohmann/json_fwd.hpp>
-
-namespace pqxx { class row; class result; }
-namespace vh::rbac::role { struct Vault; }
+#include "identities/Fwd.hpp"
+#include "rbac/Fwd.hpp"
+#include <pqxx/types>
 
 namespace vh::identities {
 
-struct User;
 struct Volume;
 
 struct GroupMember {

@@ -3,9 +3,8 @@
 #include <functional>
 #include <memory>
 #include <nlohmann/json_fwd.hpp>
-
-namespace vh::protocols::ws { class Session; }
-namespace vh::share { class Manager; }
+#include "protocols/ws/Fwd.hpp"
+#include "share/Fwd.hpp"
 
 namespace vh::protocols::ws::handler::share {
 

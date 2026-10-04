@@ -1,12 +1,11 @@
 #pragma once
 
 #include "db/model/ListQueryParams.hpp"
+#include "rbac/Fwd.hpp"
 
 #include <memory>
 #include <string>
 #include <vector>
-
-namespace vh::rbac::permission { struct Override; }
 
 namespace vh::db::query::rbac::permission {
 

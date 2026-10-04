@@ -1,6 +1,7 @@
 #pragma once
 
 #include "log/Registry.hpp"
+#include "sync/Fwd.hpp"
 
 #include <atomic>
 #include <csignal>
@@ -24,7 +25,6 @@ namespace vh::fuse { class Service; }
 namespace vh::log { class RotationService; }
 namespace vh::notifications { class OperatorEmailService; }
 namespace vh::stats { class SnapshotService; }
-namespace vh::sync { class Controller; }
 
 namespace vh::runtime {
 

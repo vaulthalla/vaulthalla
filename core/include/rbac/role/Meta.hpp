@@ -5,10 +5,7 @@
 #include <optional>
 #include <string_view>
 #include <nlohmann/json_fwd.hpp>
-
-namespace pqxx {
-    class row;
-}
+#include <pqxx/types>
 
 namespace vh::rbac::role {
     struct BasicMeta {

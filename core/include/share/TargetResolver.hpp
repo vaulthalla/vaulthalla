@@ -1,6 +1,7 @@
 #pragma once
 
 #include "share/Principal.hpp"
+#include "fs/Fwd.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -9,7 +10,6 @@
 #include <string_view>
 #include <vector>
 
-namespace vh::fs::model { struct Entry; }
 namespace vh::rbac { class Actor; }
 
 namespace vh::share {

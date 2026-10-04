@@ -2,6 +2,7 @@
 
 #include "ops/Actor.hpp"
 #include "db/model/ListQueryParams.hpp"
+#include "rbac/Fwd.hpp"
 
 #include <memory>
 #include <optional>
@@ -10,9 +11,6 @@
 #include <utility>
 #include <variant>
 #include <vector>
-
-namespace vh::rbac::role { struct Admin; struct Vault; }
-namespace vh::rbac::permission { struct Override; }
 
 // Role and permission mutation shared by `vh role ...` / `vh vault role ...` and the ws role.* commands.
 // Every permission change, from either surface, goes through one representation (PermissionEdit) and one

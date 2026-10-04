@@ -1,6 +1,9 @@
 #pragma once
 
 #include "protocols/http/Router.hpp"
+#include "protocols/ws/Fwd.hpp"
+#include "share/Fwd.hpp"
+#include "storage/Fwd.hpp"
 
 #include <boost/beast/http.hpp>
 #include <chrono>
@@ -12,19 +15,6 @@
 #include <optional>
 #include <string>
 #include <string_view>
-
-namespace vh::share {
-class Manager;
-class TargetResolver;
-}
-
-namespace vh::storage {
-struct Engine;
-}
-
-namespace vh::protocols::ws {
-class Session;
-}
 
 namespace vh::protocols::http::upload {
 

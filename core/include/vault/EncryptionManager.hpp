@@ -1,14 +1,13 @@
 #pragma once
 
 #include "crypto/secrets/TPMKeyProvider.hpp"
+#include "fs/Fwd.hpp"
 
 #include <string>
 #include <vector>
 #include <memory>
 #include <atomic>
 #include <filesystem>
-
-namespace vh::fs::model { struct File; }
 
 namespace vh::vault {
 

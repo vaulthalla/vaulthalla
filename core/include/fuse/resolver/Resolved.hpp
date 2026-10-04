@@ -7,11 +7,11 @@
 #include <memory>
 #include <optional>
 #include <vector>
+#include "fs/Fwd.hpp"
+#include "identities/Fwd.hpp"
+#include "storage/Fwd.hpp"
 
 namespace vh {
-    namespace identities { struct User; struct Group; }
-    namespace fs::model { struct Entry; }
-    namespace storage { struct Engine; }
 
     namespace fuse::resolver {
         enum class Status {

@@ -2,6 +2,9 @@
 
 #include "TestCase.hpp"
 #include "types/Type.hpp"
+#include "identities/Fwd.hpp"
+#include "rbac/Fwd.hpp"
+#include "storage/Fwd.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -9,11 +12,8 @@
 #include <vector>
 
 namespace vh {
-    namespace identities { struct User; struct Group; }
-    namespace storage { struct Engine; }
     namespace rbac {
-        namespace permission { struct Override; enum class OverrideOpt; }
-        namespace role { struct Vault; struct Admin; }
+        namespace permission { enum class OverrideOpt; }
     }
 }
 

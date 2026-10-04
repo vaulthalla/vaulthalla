@@ -2,6 +2,7 @@
 
 #include "crypto/secrets/TPMKeyProvider.hpp"
 #include "db/query/s3/Gateway.hpp"
+#include "identities/Fwd.hpp"
 
 #include <memory>
 #include <optional>
@@ -9,7 +10,6 @@
 #include <ctime>
 #include <vector>
 
-namespace vh::identities { struct User; }
 namespace vh::protocols::s3 {
 
 struct GatewaySecret {

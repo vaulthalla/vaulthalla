@@ -9,6 +9,7 @@
 #include "share/Scope.hpp"
 #include "share/Session.hpp"
 #include "share/Upload.hpp"
+#include "share/Fwd.hpp"
 
 #include <ctime>
 #include <functional>
@@ -21,9 +22,6 @@
 
 namespace vh::share {
 namespace rbac_role = vh::rbac::role;
-
-struct AuditEvent;
-struct EmailChallenge;
 
 struct AuthorizationDecision {
     bool allowed{false};

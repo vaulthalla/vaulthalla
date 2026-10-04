@@ -1,6 +1,7 @@
 #pragma once
 
 #include "sync/model/Throughput.hpp"
+#include "sync/Fwd.hpp"
 
 #include <ctime>
 #include <cstdint>
@@ -13,14 +14,10 @@
 
 #include <nlohmann/json_fwd.hpp>
 
-namespace pqxx { class row; class result; }
 namespace vh::storage::s3 { struct S3RequestMetrics; }
 namespace vh::storage::s3::pricing { struct PriceEstimateReport; }
 
 namespace vh::sync::model {
-
-struct S3CostEstimate;
-struct Conflict;
 
 class SyncStalled final : public std::runtime_error {
 public:

@@ -3,23 +3,14 @@
 #include "Local.hpp"
 #include "sync/tasks/Delete.hpp"
 #include "model/helpers.hpp"
+#include "fs/Fwd.hpp"
+#include "storage/Fwd.hpp"
+#include "sync/Fwd.hpp"
 
 #include <memory>
 #include <unordered_map>
 #include <string>
 #include <vector>
-
-namespace vh::fs::model {
-    struct File;
-}
-
-namespace vh::sync::model {
-    struct Conflict;
-}
-
-namespace vh::storage {
-    class CloudEngine;
-}
 
 namespace vh::sync {
     struct Cloud final : Local {
@@ -32,13 +23,11 @@ namespace vh::sync {
         explicit Cloud(const std::shared_ptr<storage::Engine> &engine) : Local(engine) {
         }
 
-
         // ##########################################
         // ########### FSTask Overrides #############
         // ##########################################
 
         void operator()() override;
-
 
         // ##########################################
         // ############# Sync Operations ############
@@ -49,7 +38,6 @@ namespace vh::sync {
         void initBins();
 
         void clearBins();
-
 
         // ##########################################
         // ########### File Operations #############
@@ -64,7 +52,6 @@ namespace vh::sync {
         void remove(const std::shared_ptr<fs::model::File> &file,
                     const tasks::Delete::Type &type = tasks::Delete::Type::PURGE);
 
-
         // ##########################################
         // ############ Internal Helpers ############
         // ##########################################
@@ -74,7 +61,6 @@ namespace vh::sync {
         std::vector<model::EntryKey> allKeysSorted() const;
 
         void ensureDirectoriesFromRemote();
-
 
         // ##########################################
         // ########### Conflict Handling ############
@@ -88,7 +74,6 @@ namespace vh::sync {
                                                             const std::shared_ptr<fs::model::File> &upstream) const;
 
         bool handleConflict(const std::shared_ptr<model::Conflict> &c) const;
-
 
         // ##########################################
         // ########### Static Helpers ###############

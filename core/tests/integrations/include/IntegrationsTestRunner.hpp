@@ -3,6 +3,8 @@
 #include "cli/Config.hpp"
 #include "rbac/permission/Override.hpp"
 #include "TestStage.hpp"
+#include "identities/Fwd.hpp"
+#include "protocols/shell/Fwd.hpp"
 
 #include <memory>
 #include <string>
@@ -10,9 +12,6 @@
 #include <vector>
 #include <atomic>
 #include <optional>
-
-namespace vh::protocols::shell { class UsageManager; }
-namespace vh::identities { struct User; }
 
 namespace vh::test::integration {
     struct TestCase;

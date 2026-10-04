@@ -5,9 +5,8 @@
 #include <chrono>
 #include <string>
 #include <string_view>
-
-namespace vh::auth::model { struct Token; struct RefreshToken; }
-namespace vh::protocols::ws { class Session; }
+#include "auth/Fwd.hpp"
+#include "protocols/ws/Fwd.hpp"
 
 namespace vh::auth::session {
 

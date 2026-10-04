@@ -6,8 +6,7 @@
 #include <string>
 
 #include <nlohmann/json_fwd.hpp>
-
-namespace vh::sync::model { struct Event; }
+#include "sync/Fwd.hpp"
 
 namespace vh::stats::model {
 

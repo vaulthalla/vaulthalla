@@ -1,12 +1,11 @@
 #pragma once
 
 #include "storage/s3/pricing/PriceEstimate.hpp"
+#include "storage/Fwd.hpp"
 
 #include <cstdint>
 #include <optional>
 #include <string>
-
-namespace vh::storage { class CloudEngine; }
 
 namespace vh::storage::s3::pricing {
 

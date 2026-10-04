@@ -1,13 +1,12 @@
 #pragma once
 
 #include "rbac/permission/vault/Filesystem.hpp"
+#include "fs/Fwd.hpp"
+#include "identities/Fwd.hpp"
 
 #include <filesystem>
 #include <optional>
 #include <string_view>
-
-namespace vh::fs::model { struct Entry; }
-namespace vh::identities { struct User; }
 
 namespace vh::rbac::fs::policy {
     struct Request {

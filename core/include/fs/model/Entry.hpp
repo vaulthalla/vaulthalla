@@ -10,16 +10,10 @@
 #include <vector>
 #include <memory>
 #include <boost/uuid/uuid.hpp>
-
-namespace pqxx {
-    class row;
-    class result;
-}
+#include "fs/Fwd.hpp"
+#include <pqxx/types>
 
 namespace vh::fs::model {
-    struct File;
-    struct Directory;
-    struct Symlink;
 
     struct Entry {
         uint32_t id{};

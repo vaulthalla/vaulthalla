@@ -5,8 +5,7 @@
 #include <memory>
 #include <optional>
 #include <string>
-
-namespace vh::identities { struct User; }
+#include "identities/Fwd.hpp"
 
 namespace vh::rbac::s3::policy {
 

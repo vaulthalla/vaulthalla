@@ -3,9 +3,8 @@
 #include <memory>
 #include <string>
 #include <vector>
-
-namespace vh::auth::model { struct RefreshToken; }
-namespace vh::identities { struct User; }
+#include "auth/Fwd.hpp"
+#include "identities/Fwd.hpp"
 
 namespace vh::db::query::auth {
 

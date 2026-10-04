@@ -3,10 +3,9 @@
 #define FUSE_USE_VERSION 35
 
 #include "concurrency/AsyncService.hpp"
+#include "storage/Fwd.hpp"
 
 #include <fuse_lowlevel.h>
-
-namespace vh::storage { class Manager; }
 
 namespace vh::fuse {
 

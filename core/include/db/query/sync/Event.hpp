@@ -2,8 +2,7 @@
 
 #include <memory>
 #include <vector>
-
-namespace vh::sync::model { struct Event; }
+#include "sync/Fwd.hpp"
 
 namespace vh::db::query::sync {
 

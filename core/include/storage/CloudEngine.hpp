@@ -3,29 +3,14 @@
 #include "storage/Engine.hpp"
 #include "sync/model/Action.hpp"
 #include "storage/s3/provider/Provider.hpp"
+#include "fs/Fwd.hpp"
+#include "sync/Fwd.hpp"
+#include "vault/Fwd.hpp"
 
 #include <unordered_map>
 #include <memory>
 #include <optional>
 #include <vector>
-
-namespace vh::vault::model {
-    struct S3Vault;
-    struct APIKey;
-}
-
-namespace vh::sync::model {
-    struct RemotePolicy;
-}
-
-namespace vh::fs::model {
-    struct File;
-    struct Directory;
-
-    namespace file {
-        struct Trashed;
-    }
-}
 
 namespace vh::storage {
     namespace s3 {

@@ -10,14 +10,6 @@
 #include <type_traits>
 #include <ostream>
 
-namespace vh::identities {
-    struct User;
-}
-
-namespace vh::fs::model {
-    struct Entry;
-}
-
 namespace vh::rbac::resolver::vault {
     template<typename EnumT>
     struct Context {

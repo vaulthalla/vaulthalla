@@ -9,8 +9,7 @@
 #include <mutex>
 #include <optional>
 #include <unordered_map>
-
-namespace vh::fs::model { struct File; }
+#include "fs/Fwd.hpp"
 
 namespace vh::fuse {
 

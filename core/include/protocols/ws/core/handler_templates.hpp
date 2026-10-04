@@ -3,6 +3,7 @@
 #include "protocols/ws/Router.hpp"
 #include "protocols/ws/model/Response.hpp"
 #include "ops/Error.hpp"
+#include "protocols/ws/Fwd.hpp"
 
 #include <functional>
 #include <memory>
@@ -12,10 +13,6 @@
 #include <utility>
 
 using json = nlohmann::json;
-
-namespace vh::protocols::ws {
-    class Session;
-}
 
 namespace vh::protocols::ws::core {
     // What an ERROR response carries for the exception being handled (call only inside a catch block). An ops

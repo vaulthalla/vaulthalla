@@ -8,14 +8,12 @@
 #include <filesystem>
 #include <unordered_map>
 #include <fuse3/fuse_lowlevel.h>
-
-namespace vh::identities { struct User; }
-namespace vh::vault::model { struct Vault; }
-namespace vh::sync::model { struct Policy; }
+#include "identities/Fwd.hpp"
+#include "storage/Fwd.hpp"
+#include "sync/Fwd.hpp"
+#include "vault/Fwd.hpp"
 
 namespace vh::storage {
-
-struct Engine;
 
 class Manager {
 public:

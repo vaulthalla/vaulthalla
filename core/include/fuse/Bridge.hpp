@@ -5,10 +5,7 @@
 #include <filesystem>
 #include <fuse3/fuse_lowlevel.h>
 #include <memory>
-
-namespace vh::fs::model {
-    struct Entry;
-}
+#include "fs/Fwd.hpp"
 
 namespace vh::fuse {
     struct WorkingCopy;

@@ -1,10 +1,8 @@
 #pragma once
 
 #include "auth/model/Token.hpp"
-
-namespace pqxx { class row; }
-
-namespace vh::protocols::ws { class Session; }
+#include "protocols/ws/Fwd.hpp"
+#include <pqxx/types>
 
 namespace vh::auth::model {
 

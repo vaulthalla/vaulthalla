@@ -4,16 +4,8 @@
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <vector>
-
-namespace vh::protocols::ws {
-class Session;
-}
-
-namespace vh::share {
-class Manager;
-class TargetResolver;
-struct ResolvedTarget;
-}
+#include "protocols/ws/Fwd.hpp"
+#include "share/Fwd.hpp"
 
 namespace vh::protocols::ws::handler::share {
 

@@ -1,10 +1,9 @@
 #pragma once
 
 #include "ops/Error.hpp"
+#include "identities/Fwd.hpp"
 
 #include <memory>
-
-namespace vh::identities { struct User; }
 
 namespace vh::ops {
 

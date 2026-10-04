@@ -1,14 +1,14 @@
 #pragma once
 
 #include "protocols/shell/SocketIO.hpp"
+#include "identities/Fwd.hpp"
+#include "protocols/shell/Fwd.hpp"
 
 #include <functional>
 #include <string>
 #include <nlohmann/json.hpp>
 #include <unordered_set>
 #include <sstream>
-
-namespace vh::identities { struct User; }
 
 namespace vh::protocols::shell {
 
@@ -64,8 +64,6 @@ struct CommandResult {
 };
 
 using CommandHandler = std::function<CommandResult(const CommandCall&)>;
-
-class CommandUsage;
 
 struct CommandInfo {
     std::string description;                 // own

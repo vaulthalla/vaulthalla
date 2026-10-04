@@ -1,10 +1,9 @@
 #pragma once
 
 #include "helpers.hpp"
+#include "fs/Fwd.hpp"
 
 #include <memory>
-
-namespace vh::fs::model { struct File; }
 
 namespace vh::sync::model {
 

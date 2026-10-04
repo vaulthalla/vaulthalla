@@ -7,12 +7,9 @@
 #include <vector>
 #include <optional>
 #include <pqxx/pqxx>
+#include "fs/Fwd.hpp"
 
 namespace vh::fs::model {
-struct Entry;
-struct File;
-struct Directory;
-namespace file { struct Trashed; }
 namespace stats { struct Extension; }
 }
 

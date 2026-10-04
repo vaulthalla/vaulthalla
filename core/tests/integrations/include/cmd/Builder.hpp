@@ -7,15 +7,11 @@
 #include "rbac/role/Vault.hpp"
 #include "updateAliases.hpp"
 #include "UsageManager.hpp"
+#include "protocols/shell/Fwd.hpp"
 
 #include <memory>
 #include <string>
 #include <fmt/format.h>
-
-namespace vh::protocols::shell {
-class CommandUsage;
-class UsageManager;
-}
 
 namespace vh::test::integration::cmd {
 

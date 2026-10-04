@@ -3,10 +3,7 @@
 #include "rbac/role/vault/Global.hpp"
 
 #include <nlohmann/json_fwd.hpp>
-
-namespace pqxx {
-    class result;
-}
+#include <pqxx/types>
 
 namespace vh::rbac::permission::admin {
     struct VaultGlobals {

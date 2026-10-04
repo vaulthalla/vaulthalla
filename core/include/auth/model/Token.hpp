@@ -4,10 +4,9 @@
 #include <string>
 #include <optional>
 #include <memory>
-
-namespace pqxx { class row; }
-namespace vh::protocols::ws { class Session; }
-namespace vh::auth::session { struct TokenClaims; }
+#include "auth/Fwd.hpp"
+#include "protocols/ws/Fwd.hpp"
+#include <pqxx/types>
 
 namespace vh::auth::model {
 

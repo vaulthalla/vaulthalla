@@ -3,8 +3,7 @@
 #include <cstdint>
 #include <memory>
 #include <vector>
-
-namespace vh::rbac::role { struct Admin; }
+#include "rbac/Fwd.hpp"
 
 namespace vh::db::query::rbac::role::admin {
 

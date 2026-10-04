@@ -5,8 +5,7 @@
 #include <optional>
 #include <string>
 #include <vector>
-
-namespace pqxx { class row; }
+#include <pqxx/types>
 
 namespace vh::email {
 

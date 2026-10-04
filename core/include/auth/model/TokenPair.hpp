@@ -1,10 +1,8 @@
 #pragma once
 #include <memory>
+#include "auth/Fwd.hpp"
 
 namespace vh::auth::model {
-
-struct Token;
-struct RefreshToken;
 
 struct TokenPair {
     std::shared_ptr<Token> accessToken{nullptr};

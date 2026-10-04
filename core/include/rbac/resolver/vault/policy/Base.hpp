@@ -3,13 +3,9 @@
 #include "rbac/resolver/ContextPolicy/Fwd.hpp"
 #include "rbac/resolver/vault/ResolvedContext.hpp"
 #include "rbac/resolver/vault/Context.hpp"
+#include "identities/Fwd.hpp"
 
 #include <memory>
-
-namespace vh::identities {
-    struct User;
-    struct Group;
-}
 
 namespace vh::rbac::resolver::vault {
     template<typename EnumT>

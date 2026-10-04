@@ -4,20 +4,9 @@
 #include <string>
 #include <variant>
 #include <cstdint>
-
-namespace vh::vault::model {
-    struct APIKey;
-    struct S3Vault;
-}
-
-namespace vh::identities {
-    struct User;
-}
-
-namespace vh::rbac::role {
-    struct Vault;
-    struct Admin;
-}
+#include "identities/Fwd.hpp"
+#include "rbac/Fwd.hpp"
+#include "vault/Fwd.hpp"
 
 namespace vh::sync::model {
     struct Waiver {

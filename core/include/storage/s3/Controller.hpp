@@ -1,6 +1,7 @@
 #pragma once
 
 #include "curl/wrappers.hpp"
+#include "vault/Fwd.hpp"
 
 #include <filesystem>
 #include <map>
@@ -13,10 +14,6 @@
 #include <vector>
 #include <curl/curl.h>
 #include <unordered_map>
-
-namespace vh::vault::model {
-    struct APIKey;
-}
 
 namespace vh::storage {
     class ScopedS3RequestUsageCapture;

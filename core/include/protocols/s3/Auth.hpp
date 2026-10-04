@@ -2,13 +2,12 @@
 
 #include "protocols/s3/CredentialManager.hpp"
 #include "protocols/s3/SigV4.hpp"
+#include "identities/Fwd.hpp"
 
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
-
-namespace vh::identities { struct User; }
 
 namespace vh::protocols::s3 {
 

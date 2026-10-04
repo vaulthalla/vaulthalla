@@ -7,10 +7,9 @@
 #include <string_view>
 #include <unordered_map>
 #include <utility>
+#include "protocols/ws/Fwd.hpp"
 
 namespace vh::protocols::ws {
-
-class Session;
 
 using json = nlohmann::json;
 
