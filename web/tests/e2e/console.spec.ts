@@ -93,7 +93,8 @@ test.describe.serial('console', () => {
     // #171: the middleware used to verify the cookie upstream on every page load (a password-hash verify in the
     // daemon). Now it only checks presence, and the websocket session gate (auth.refresh) decides validity.
     if (!baseURL) throw new Error('baseURL is not configured')
-    const api = await playwright.request.newContext({ baseURL, ignoreHTTPSErrors: true })
+    // The runner applies this spec's storageState to request contexts too: start from an empty jar.
+    const api = await playwright.request.newContext({ baseURL, ignoreHTTPSErrors: true, storageState: { cookies: [], origins: [] } })
     const pageLoad = { 'sec-fetch-dest': 'document' }
     const anonymous = await api.get('/users', { maxRedirects: 0, headers: pageLoad })
     expect(anonymous.status()).toBe(307)

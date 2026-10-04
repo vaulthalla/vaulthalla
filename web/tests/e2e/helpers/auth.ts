@@ -2,7 +2,9 @@ import { expect, type Browser, type Page } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
-export const authStatePath = 'test-results/.auth/s3-gateway.json'
+// One file per worker: spec files run in parallel workers and each signs in from beforeAll; a shared file was
+// overwritten while other workers were loading it, leaving their tests on the login page.
+export const authStatePath = `test-results/.auth/state-${process.env.TEST_PARALLEL_INDEX ?? '0'}.json`
 
 export function explicitSkipRequested() {
   return process.env.VAULTHALLA_E2E_SKIP === '1' ||

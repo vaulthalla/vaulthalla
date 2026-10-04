@@ -133,7 +133,8 @@ test.describe.serial('personas', () => {
       await p.getByLabel('Username').fill(name)
       await p.getByLabel('Password').fill(password)
       await p.getByRole('button', { name: /^sign in$/i }).click()
-      await expect(p.getByRole('alert')).toBeVisible({ timeout: 15_000 })
+      // Next's route announcer is also role=alert (and empty): match the sign-in error.
+      await expect(p.getByRole('alert').filter({ hasText: /\S/ })).toBeVisible({ timeout: 15_000 })
       await expect(p).toHaveURL(/\/login/)
       await context.close()
     } finally {
