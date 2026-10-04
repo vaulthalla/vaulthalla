@@ -53,12 +53,17 @@ The build needs the private icons (`$VAULTHALLA_WEB_ICON_SRC`, default `~/vaulth
 
 ## GitHub workflows
 
-- `build_and_test.yml` (push/PR to main): `build` (composite `runner`: core build → tests → web) and `tooling`
-  (installs `vl-release`, `bash tools/dev/verify.sh release packaging lifecycle`, shellcheck).
+- **Build modes (2026-10-04):** the PR gate compiles and runs the C++ suite at **-O0** (`buildtype=debug`, the meson
+  default) with `-Werror`; release packages are the only **-O3** build (`debian/rules`: `optimization=3`,
+  `-Dwerror=true`, `hardening=+all`, dpkg's `-O2` stripped, no LTO). A release never rebuilds or reruns the suite;
+  `tools/dev/check_build_flags.py` checks the package's compile lines (-O3, hardening, -Werror, no diagnostics).
+  1.8.x packages shipped -O0 and unhardened: a `cpp_args` default_option made meson drop dpkg-buildflags.
+- `build_and_test.yml` (push/PR to main): `build` (composite `runner`: core build at -O0 with -Werror → tests → web)
+  and `tooling` (installs `vl-release`, `bash tools/dev/verify.sh release packaging lifecycle`, shellcheck).
 - `release.yml` (tag `v*`, or `workflow_dispatch` with `ref` + `publish: dry-run|publish`):
-  `release-check` (`vlr check --release --tag`, `vlr version check`) → `core-verify`, `contracts-verify`,
-  `web-verify`, `docs-validate` → `release-artifacts` (`vlr prepare --record release/meta/prepare.json`,
-  `build-deb`, `checksums`, `validate-artifacts`; uploads `release/`) → `publish-debian` → `github-release` →
+  `release-check` (`vlr check --release --tag`, `vlr version check`) → `contracts-verify`, `web-verify`,
+  `docs-validate` → `release-artifacts` (`vlr prepare --record release/meta/prepare.json`, `build-deb`,
+  `check_build_flags.py release/build-deb.log`, `checksums`, `validate-artifacts`; uploads `release/`) → `publish-debian` → `github-release` →
   `finalize`; `docs-publish` needs only `docs-validate` + `publish-debian`.
   - Every downstream job re-runs `vlr prepare` (deterministic: dates come from the release commit) and downloads the
     artifact; `finalize` passes `--record` so it persists exactly what was built and published.

@@ -36,7 +36,7 @@ in-flight plans; promote durable facts into `.claude/context/`.
 ## Commands
 
 ```bash
-meson setup build -Dbuild_unit_tests=true && meson compile -C build   # core (unity build); `make build` is broken (conan)
+meson setup build -Dbuild_unit_tests=true && meson compile -C build   # core: unity, -O0 (= PR CI; packages are -O3); `make build` is broken (conan)
 meson test -C build --print-errorlogs                                 # unit tests (DB-backed: see testing.md)
 make run_test                                                         # integration harness on /tmp/vh_mount (destructive to local test env)
 pnpm --dir web typecheck && pnpm --dir web lint                       # web ("pnpm test" = the same two)
