@@ -1221,7 +1221,9 @@ Filesystem::AtRestRepair Filesystem::repairAtRest(const std::shared_ptr<Engine>&
 
     for (const auto& listed : db::query::fs::File::listFilesInDir(engine->vault->id, "/", true)) {
         try {
-            const auto entry = std::dynamic_pointer_cast<File>(cache->getEntryById(listed->id));
+            // By inode: a miss loads and caches the entry (with its backing path) without the by-id miss warning.
+            if (!listed->inode) continue;
+            const auto entry = std::dynamic_pointer_cast<File>(cache->getEntry(static_cast<fuse_ino_t>(*listed->inode)));
             if (!entry || !entry->inode) continue;
             if (fuse::WorkingCopies::instance().openSize(*entry->inode)) continue;
 
