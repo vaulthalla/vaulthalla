@@ -143,7 +143,9 @@ TEST_F(DashboardSeverityTest, DbCardTonesNeverFakeHealth) {
     bool sawOldestTx = false;
     bool sawSlowQueries = false;
     for (const auto& metric : card.metrics) {
-        if (metric.value == "unknown") EXPECT_EQ(metric.tone, "unknown") << metric.key;
+        if (metric.value == "unknown") {
+            EXPECT_EQ(metric.tone, "unknown") << metric.key;
+        }
         if (metric.key == "oldest_tx") {
             sawOldestTx = true;
             EXPECT_EQ(metric.tone, "healthy") << metric.value;
