@@ -120,6 +120,9 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
 - CI: the PR gate builds at -O0 with -Werror and runs the suite; release CI no
   longer rebuilds and re-tests (core-verify removed) and checks the package's
   compile lines with tools/dev/check_build_flags.py.
+- Release CI: APT publication verification waits up to 30 minutes (Nexus
+  can take longer than the 10-minute default to reindex), and the tooling
+  setup retries an APT index signed seconds ahead of the runner's clock.
 - Compile time: unit-test objects build first (own target, linked whole) and
   always at -O0; -O0 builds use precompiled headers; fmt 9's vformat_to<char>
   is an extern template; fmt::format replaces std::format in the RBAC
