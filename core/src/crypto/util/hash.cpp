@@ -5,6 +5,7 @@
 #include <sstream>
 #include <iomanip>
 #include <stdexcept>
+#include <array>
 
 constexpr std::size_t OPSLIMIT = crypto_pwhash_OPSLIMIT_MODERATE;
 constexpr std::size_t MEMLIMIT = crypto_pwhash_MEMLIMIT_MODERATE;
@@ -46,6 +47,62 @@ std::string password(const std::string& password) {
 
 bool verifyPassword(const std::string& password, const std::string& hash) {
     return crypto_pwhash_str_verify(hash.c_str(), password.c_str(), password.size()) == 0;
+}
+
+namespace {
+constexpr std::string_view kTokenDigestPrefix = "sha256:";
+constexpr std::size_t kTokenDigestHexLen = crypto_hash_sha256_BYTES * 2;
+
+void ensureSodium() {
+    static const bool ready = sodium_init() >= 0;
+    if (!ready) throw std::runtime_error("libsodium failed to initialize");
+}
+
+bool isLowerHex(const std::string_view s) {
+    for (const char c : s)
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+    return true;
+}
+
+bool isPwhashString(const std::string& stored) {
+    return stored.size() < crypto_pwhash_STRBYTES &&
+           (stored.starts_with("$argon2id$") || stored.starts_with("$argon2i$"));
+}
+}
+
+std::string tokenDigest(const std::string_view token) {
+    ensureSodium();
+
+    std::array<unsigned char, crypto_hash_sha256_BYTES> digest{};
+    crypto_hash_sha256(digest.data(), reinterpret_cast<const unsigned char*>(token.data()), token.size());
+
+    std::array<char, kTokenDigestHexLen + 1> hex{};
+    sodium_bin2hex(hex.data(), hex.size(), digest.data(), digest.size());
+
+    std::string out;
+    out.reserve(kTokenDigestPrefix.size() + kTokenDigestHexLen);
+    out.append(kTokenDigestPrefix);
+    out.append(hex.data(), kTokenDigestHexLen);
+    return out;
+}
+
+TokenMatch verifyToken(const std::string_view token, const std::string& stored) {
+    if (stored.starts_with(kTokenDigestPrefix)) {
+        const auto hex = std::string_view(stored).substr(kTokenDigestPrefix.size());
+        if (hex.size() != kTokenDigestHexLen || !isLowerHex(hex)) return TokenMatch::Mismatch;
+
+        const auto expected = tokenDigest(token);
+        return sodium_memcmp(expected.data(), stored.data(), expected.size()) == 0
+                   ? TokenMatch::Digest
+                   : TokenMatch::Mismatch;
+    }
+
+    if (isPwhashString(stored)) {
+        ensureSodium();
+        if (crypto_pwhash_str_verify(stored.c_str(), token.data(), token.size()) == 0) return TokenMatch::Legacy;
+    }
+
+    return TokenMatch::Mismatch;
 }
 
 std::string generate_secure_password(const size_t length) {
