@@ -44,13 +44,20 @@ Branch `web-overhaul`. Plan: `.claude/scratch/web_overhaul/goal.md` (Phase A ove
 
 ## Bugs found and filed (open)
 
-#157 timestamps off by the UTC offset (fixed on this branch: UTC sessions + migration 100) ·
-#158 directory counters not updated on move · #159 overview severities report unknown as healthy ·
-#160 stats payload problems (24 h trends, FS cache capacity, hrefs, money strings) · #161 every vault reports the
-default vault's size · #162 vault delete leaves backing data (decision) · #163 `password_changed_at` never stored ·
-#164 settings the daemon never reads (decision) · #165 gateway ws handlers overload `id` · #166 built-in `admin`
-role can't see Health/stats (decision).
-(#158/#159/#161/#163 are being fixed on `web-overhaul-core-fixes` at the time of writing.)
+Fixed on this branch (with regression tests): #157 timestamps off by the UTC offset (UTC sessions + migration 100) ·
+#158 directory totals on move/rename/copy/delete (also: renaming a directory with siblings failed with EIO; ancestor
+chains loaded in the wrong order; empty directories survived delete) · #159 overview severities (unknown is never
+healthy; oldest_tx excluded the stats query's own transaction; expected errnos don't warn) · #161 every vault
+reported the shared backing root's size — and quota enforcement charged every vault for all the others · #163
+`password_changed_at` stored (migration 102, trigger on password_hash).
+
+Still open: #160 stats payload problems (24 h trends, FS cache capacity, hrefs, money strings) · #162 vault delete
+leaves backing data (decision) · #164 settings the daemon never reads (decision) · #165 gateway ws handlers overload
+`id` · #166 built-in `admin` role can't see Health/stats (decision) · #167 directory copy is shallow / file copy has no
+bytes until sync · #168 deleting a file prunes the user's empty ancestor folders (decision).
+
+The #158 fix touches FUSE rename and path loading: `make run_test` (destructive to the local test env) is the stronger
+proof and wasn't run.
 
 ## How to re-run
 
