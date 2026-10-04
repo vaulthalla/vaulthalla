@@ -9,6 +9,20 @@ export async function gotoS3Gateway(page: Page) {
   await expect(page.getByTestId('s3-gateway-section-service')).toBeVisible()
 }
 
+// The page is tabbed (Keys, Buckets, Budgets, Client setup); credential details open in a side sheet.
+export async function openTab(page: Page, name: 'Keys' | 'Buckets' | 'Budgets' | 'Client setup') {
+  await closeSheet(page)
+  await page.getByRole('tab', { name, exact: true }).click()
+}
+
+async function closeSheet(page: Page) {
+  const dialog = page.getByRole('dialog')
+  if (await dialog.count()) {
+    await page.keyboard.press('Escape')
+    await expect(dialog).toHaveCount(0)
+  }
+}
+
 export async function ensureVaultAvailable(page: Page) {
   const vaultName = uniqueE2EName('pw-vault-seed')
   await createLocalBucket(page, vaultName)
@@ -23,10 +37,11 @@ export async function createCredential(
   vaultName?: string,
   enforceLocalBudget = false,
 ) {
+  await openTab(page, 'Keys')
   await page.getByTestId('s3-gateway-open-create-credential').click()
   await expect(page.getByTestId('s3-gateway-create-credential-modal')).toBeVisible()
   await page.getByTestId('s3-gateway-credential-name-input').fill(name)
-  await page.getByTestId('s3-gateway-credential-scope-select').selectOption(scope)
+  await page.getByTestId(`s3-gateway-credential-scope-${scope}`).click()
   if (scope !== 'user_access') {
     const roleSelect = page.getByTestId('s3-gateway-create-default-role-select')
     await roleSelect.selectOption({ label: 'reader' }).catch(async () => {
@@ -34,11 +49,11 @@ export async function createCredential(
     })
   }
   if (scope === 'vault_allowlist') {
-    const vaultSelect = page.getByTestId('s3-gateway-create-selected-vault-select')
+    const vaultList = page.getByTestId('s3-gateway-create-selected-vaults')
     if (vaultName) {
-      await vaultSelect.selectOption(await optionValueByText(vaultSelect, vaultName))
+      await vaultList.getByRole('checkbox', { name: vaultName }).check()
     } else {
-      await selectFirstNonEmptyOption(vaultSelect)
+      await vaultList.getByRole('checkbox').first().check()
     }
   }
   if (enforceLocalBudget) {
@@ -130,12 +145,20 @@ export async function hideSecret(page: Page) {
 }
 
 export async function selectCredential(page: Page, name: string) {
-  const row = page.locator('tbody tr').filter({ has: page.getByTestId('s3-gateway-credential-name').filter({ hasText: name }) }).first()
-  await expect(row).toBeVisible()
-  await row.getByRole('button', { name: /select/i }).click()
+  await openTab(page, 'Keys')
+  const cell = page.getByTestId('s3-gateway-credential-name').filter({ hasText: name }).first()
+  await expect(cell).toBeVisible()
+  await cell.click()
+  await expect(page.getByTestId('s3-gateway-section-credential-roles')).toBeVisible()
 }
 
+// Every vault this suite creates, so afterAll can delete them (each run used to leave five behind).
+export const createdVaults: string[] = []
+
 export async function createLocalBucket(page: Page, name: string) {
+  createdVaults.push(name)
+  await openTab(page, 'Buckets')
+  await page.getByTestId('s3-gateway-open-local-bucket').click()
   await page.getByTestId('s3-gateway-local-bucket-name-input').fill(name)
   await page.getByTestId('s3-gateway-create-local-bucket').click()
   await expect(page.getByTestId('s3-gateway-bucket-name').filter({ hasText: name })).toBeVisible()
@@ -145,7 +168,7 @@ export async function saveKeyBudget(page: Page, amount: string, waitForPolicy = 
   await page.getByTestId('s3-gateway-key-budget-input').fill(amount)
   await page.getByTestId('s3-gateway-key-budget-save').click()
   if (waitForPolicy) {
-    await expect(page.getByTestId('s3-gateway-section-budgets')).toContainText('gateway_credential')
+    await expect(page.getByTestId('s3-gateway-key-budget-disable')).toBeEnabled()
   }
 }
 
@@ -162,5 +185,58 @@ export async function saveKeyVaultBudget(page: Page, amount: string, vaultName?:
   }
   await page.getByTestId('s3-gateway-key-vault-budget-input').fill(amount)
   await page.getByTestId('s3-gateway-key-vault-budget-save').click()
-  await expect(page.getByTestId('s3-gateway-section-budgets')).toContainText('gateway_credential_vault')
+  await expect(page.getByTestId('s3-gateway-key-vault-budget-disable')).toBeEnabled()
+}
+
+// Deletes a vault through the console: Vaults → the vault → Settings → Delete vault (typed confirmation).
+export async function deleteVault(page: Page, name: string) {
+  await page.goto('/vaults')
+  // The row link's name also carries the vault's description.
+  await page.getByRole('link').filter({ hasText: name }).first().click()
+  await page.waitForURL(/\/vaults\/\d+$/)
+  await page.goto(`${new URL(page.url()).pathname}/settings`)
+  await page.getByRole('button', { name: 'Delete vault' }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByLabel(`Type ${name} to confirm`).fill(name)
+  await dialog.getByRole('button', { name: 'Delete vault' }).click()
+  await page.waitForURL(/\/vaults$/)
+}
+
+// Price budget policies this run saved. Saving or disabling a policy raises a "S3 price budget policy <id> was
+// saved|disabled." alert that nothing else acknowledges, so the suite acknowledges its own in afterAll.
+export const createdBudgetPolicyIds = new Set<number>()
+
+// Records the id of every budget policy the console saves on this page (the policy.upsert responses on /ws).
+export function trackBudgetPolicies(page: Page) {
+  page.on('websocket', ws => {
+    if (!/\/ws$/.test(new URL(ws.url()).pathname)) return
+    ws.on('framereceived', frame => {
+      if (typeof frame.payload !== 'string' || !frame.payload.includes('budget.policy.upsert.response')) return
+      try {
+        const message = JSON.parse(frame.payload) as { status?: string; data?: { policy?: { id?: unknown } } }
+        const id = message.data?.policy?.id
+        if (message.status === 'OK' && typeof id === 'number') createdBudgetPolicyIds.add(id)
+      } catch {
+        // not a JSON command response
+      }
+    })
+  })
+}
+
+// Acknowledges, through the cost page's alert list, the open alerts raised for the given budget policies.
+export async function acknowledgeBudgetAlerts(page: Page, policyIds: Iterable<number>) {
+  const ids = [...policyIds]
+  if (!ids.length) return
+  await page.goto('/cost')
+  const section = page.locator('#budget-alerts')
+  await expect(section.getByRole('table').or(section.getByText('No open budget alerts.'))).toBeVisible()
+  for (const id of ids) {
+    const rows = section
+      .getByRole('row')
+      .filter({ hasText: new RegExp(`S3 price budget policy ${id} was (saved|disabled)\\.`) })
+    for (let open = await rows.count(); open > 0; open = await rows.count()) {
+      await rows.first().getByTestId('budget-alert-ack').click()
+      await expect(rows).toHaveCount(open - 1)
+    }
+  }
 }

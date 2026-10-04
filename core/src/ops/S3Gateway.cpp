@@ -798,7 +798,7 @@ Bucket createLocalBucket(const Actor& actor, const CreateLocalBucket& req) {
         .quota = req.quota,
         .sync = {.conflict_policy = std::string{"keep_both"}}
     });
-    return bindNewVault(vault, req.bucket_name.value_or(vault->slug), config::Registry::get().s3_gateway.default_api_exclusive,
+    return bindNewVault(vault, req.bucket_name.value_or(vault->slug), vh::config::Registry::get().s3_gateway.default_api_exclusive,
                         "local", actor);
 }
 

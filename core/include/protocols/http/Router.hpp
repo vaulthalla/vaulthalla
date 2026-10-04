@@ -74,6 +74,9 @@ namespace vh::protocols::http {
                                                              const std::string &mime_type,
                                                              const std::string &filename);
 
+        // RFC 6266: `attachment; filename="<ASCII fallback>"; filename*=UTF-8''<RFC 5987 pct-encoded UTF-8 name>`.
+        static std::string attachmentContentDisposition(const std::string &filename);
+
         static std::string authenticateRequest(const request &req);
 
         static void setPreviewSessionResolverForTesting(PreviewSessionResolver resolver);

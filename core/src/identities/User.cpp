@@ -264,6 +264,59 @@ namespace vh::identities {
         }
     }
 
+    nlohmann::json to_list_json(const std::vector<std::shared_ptr<User> > &users) {
+        // A role's identity without its permission set: listing 100 users used to ship every user's full admin
+        // permission array with descriptions (~13 KB each).
+        const auto roleSummary = [](const vh::rbac::role::Meta &role, const char *type) {
+            return nlohmann::json{
+                {"id", role.id},
+                {"name", role.name},
+                {"description", role.description},
+                {"type", type},
+                {"assigned_at", role.assigned_at},
+            };
+        };
+
+        nlohmann::json out = nlohmann::json::array();
+        for (const auto &user: users) {
+            if (!user) continue;
+            const auto &u = *user;
+            nlohmann::json j = {
+                {"id", u.id},
+                {"name", u.name},
+                {"email", u.email},
+                {"is_protected", u.isProtected},
+                {"system_only", u.systemOnly},
+                {"created_at", timestampToString(u.meta.created_at)},
+                {"updated_at", timestampToString(u.meta.updated_at)},
+                {"is_active", u.meta.is_active},
+                {"last_login", u.meta.last_login ? nlohmann::json(timestampToString(*u.meta.last_login)) : nlohmann::json(nullptr)},
+                {"password_changed_at", u.meta.password_changed_at
+                                            ? nlohmann::json(timestampToString(*u.meta.password_changed_at))
+                                            : nlohmann::json(nullptr)},
+                {"deactivated_at", u.meta.deactivated_at
+                                       ? nlohmann::json(timestampToString(*u.meta.deactivated_at))
+                                       : nlohmann::json(nullptr)},
+            };
+            if (u.meta.linux_uid) j["linux_uid"] = *u.meta.linux_uid;
+            if (u.meta.created_by) j["created_by"] = *u.meta.created_by;
+            if (u.meta.updated_by) j["updated_by"] = *u.meta.updated_by;
+
+            std::scoped_lock lock(u.mutex_);
+            j["admin_role"] = u.roles.admin ? roleSummary(*u.roles.admin, "admin") : nlohmann::json(nullptr);
+            nlohmann::json vaultRoles = nlohmann::json::array();
+            for (const auto &[_, role]: u.roles.vaults) {
+                if (!role) continue;
+                auto summary = roleSummary(*role, "vault");
+                if (role->assignment) summary["assignment"] = *role->assignment;
+                vaultRoles.push_back(std::move(summary));
+            }
+            j["vault_roles"] = std::move(vaultRoles);
+            out.push_back(std::move(j));
+        }
+        return out;
+    }
+
     void from_json(const nlohmann::json &j, User &u) {
         u.id = j.at("id").get<uint32_t>();
         u.name = j.at("name").get<std::string>();

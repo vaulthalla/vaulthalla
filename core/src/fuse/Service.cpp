@@ -1,5 +1,6 @@
 #include "fuse/Service.hpp"
 #include "fuse/Bridge.hpp"
+#include "fuse/WorkingCopies.hpp"
 #include "runtime/Manager.hpp"
 #include "runtime/Deps.hpp"
 #include "concurrency/ThreadPool.hpp"
@@ -49,10 +50,9 @@ static void lazyUmount(const stdfs::path& p) {
     // 1) Try kernel lazy detach
     if (::umount2(p.c_str(), MNT_DETACH) == 0) return;
 
-    // 2) Fallbacks (some distros prefer fusermount3)
-    (void)std::system(std::string("fusermount3 -uz " + p.string() + " >/dev/null 2>&1").c_str());
-    (void)std::system(std::string("fusermount  -uz " + p.string() + " >/dev/null 2>&1").c_str());
-    (void)std::system(std::string("umount     -l  " + p.string() + " >/dev/null 2>&1").c_str());
+    // 2) Fallbacks (some distros prefer fusermount3), stopping at the first that works
+    for (const auto* command : {"fusermount3 -uz ", "fusermount -uz ", "umount -l "})
+        if (std::system((command + p.string() + " >/dev/null 2>&1").c_str()) == 0) return;
 }
 
 static void waitUnmounted(const stdfs::path& p, std::chrono::milliseconds timeout = std::chrono::milliseconds(1500)) {
@@ -143,7 +143,11 @@ void fuse_ll_init(void* userdata, fuse_conn_info* conn) {
     constexpr uintmax_t MB = 1024 * 1024;
 
     conn->want |= FUSE_CAP_ASYNC_READ;
-    conn->want |= FUSE_CAP_WRITEBACK_CACHE;
+    // No writeback cache: with it the kernel owns a regular file's size and ignores the size in getattr replies, so
+    // anything that changes a file outside the mount (web uploads, sync downloads, the at-rest repair) left `stat`
+    // reporting the old size until the kernel dropped the inode. Every handle is direct_io, so it cached no data
+    // anyway; it also made the kernel turn O_WRONLY opens into O_RDWR, asking write-only users for Read.
+    conn->want &= ~FUSE_CAP_WRITEBACK_CACHE;
     conn->max_readahead = MB;
     conn->max_write = MB;
 
@@ -232,6 +236,13 @@ void Service::runLoop() {
         free(opts.mountpoint);
         fuse_opt_free_args(&args);
         return;
+    }
+
+    // Working copies from a previous run hold plaintext and are no longer open anywhere.
+    try {
+        WorkingCopies::instance().clearStale();
+    } catch (const std::exception& e) {
+        log::Registry::fuse()->warn("[FUSE] Could not clear stale working copies: {}", e.what());
     }
 
     if (fuse_session_mount(session_, opts.mountpoint) != 0) {

@@ -1,21 +1,27 @@
 import { expect, test } from '@playwright/test'
 import { authStatePath, authenticateAndSaveState, explicitSkipRequested } from './helpers/auth'
 import {
+  acknowledgeBudgetAlerts,
   addDefaultCredentialOverride,
   addCredentialOverride,
   addSelectedVault,
   assignVaultRole,
   createCredential,
   createLocalBucket,
+  createdBudgetPolicyIds,
+  createdVaults,
+  deleteVault,
   ensureVaultAvailable,
   gotoS3Gateway,
   hideSecret,
+  openTab,
   removeCredentialOverride,
   revokeVaultRole,
   saveKeyBudget,
   saveKeyVaultBudget,
   selectCredential,
   setDefaultVaultRole,
+  trackBudgetPolicies,
   uniqueE2EName,
 } from './helpers/s3Gateway'
 
@@ -28,6 +34,19 @@ let vaultAllowCredential = ''
 
 test.beforeAll(async ({ browser }) => {
   await authenticateAndSaveState(browser, authStatePath)
+})
+
+test.beforeEach(({ page }) => trackBudgetPolicies(page))
+
+test.afterAll(async ({ browser }) => {
+  const context = await browser.newContext({ storageState: authStatePath, ignoreHTTPSErrors: true })
+  const page = await context.newPage()
+  // Acknowledge the budget alerts this run raised (before deleting vaults: a vault's alerts go with it), so they
+  // don't pile up in the bell across runs.
+  await acknowledgeBudgetAlerts(page, createdBudgetPolicyIds)
+  createdBudgetPolicyIds.clear()
+  for (const name of createdVaults.splice(0)) await deleteVault(page, name)
+  await context.close()
 })
 
 async function ensureUserCredential(page: Parameters<typeof gotoS3Gateway>[0]) {
@@ -43,10 +62,13 @@ test('admin can navigate to S3 Gateway page', async ({ page }) => {
   await gotoS3Gateway(page)
   await expect(page.getByTestId('s3-gateway-section-service')).toBeVisible()
   await expect(page.getByTestId('s3-gateway-section-credentials')).toBeVisible()
+  await openTab(page, 'Buckets')
   await expect(page.getByTestId('s3-gateway-section-bucket-bindings-routing')).toBeVisible()
-  await expect(page.getByTestId('s3-gateway-section-budgets')).toBeVisible()
-  await expect(page.getByTestId('s3-gateway-section-client-setup')).toBeVisible()
   await expect(page.getByTestId('s3-gateway-bucket-routing-note')).toContainText(/do not grant access/i)
+  await openTab(page, 'Budgets')
+  await expect(page.getByTestId('s3-gateway-section-budget-overview')).toBeVisible()
+  await openTab(page, 'Client setup')
+  await expect(page.getByTestId('s3-gateway-section-client-setup')).toBeVisible()
 })
 
 test('admin can create a user_access credential and hide the secret', async ({ page }) => {
@@ -159,6 +181,8 @@ test('admin can disable a key budget policy', async ({ page }) => {
   await saveKeyBudget(page, '0.37')
   await expect(page.getByTestId('s3-gateway-key-budget-disable')).toBeEnabled()
   await page.getByTestId('s3-gateway-key-budget-disable').click()
+  // Disabling a budget is destructive, so it asks first (#150).
+  await page.getByRole('button', { name: 'Disable budget' }).click()
   await expect(page.getByTestId('s3-gateway-key-budget-disable')).toBeDisabled()
 })
 

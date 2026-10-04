@@ -2,6 +2,8 @@
 #include "protocols/ws/Session.hpp"
 #include "ops/Roles.hpp"
 #include "rbac/role/Vault.hpp"
+#include "rbac/permission/Override.hpp"
+#include "ops/Error.hpp"
 
 using namespace vh::rbac;
 
@@ -26,6 +28,15 @@ namespace vh::protocols::ws::handler::rbac::roles {
         return {.vault_id = payload.at("vault_id").get<uint32_t>(),
                 .subject = {.type = payload.at("subject_type").get<std::string>(),
                             .id = payload.at("subject_id").get<uint32_t>()}};
+    }
+
+    // "allow" / "deny" (the stored effect names); anything else is refused rather than guessed.
+    std::optional<bool> overridePayloadAllow(const json& payload) {
+        if (!payload.contains("effect") || payload.at("effect").is_null()) return std::nullopt;
+        const auto effect = payload.at("effect").get<std::string>();
+        if (effect == "allow") return true;
+        if (effect == "deny") return false;
+        throw ops::Invalid("override effect must be 'allow' or 'deny', got '" + effect + "'");
     }
     }
 
@@ -80,6 +91,44 @@ namespace vh::protocols::ws::handler::rbac::roles {
     json Vault::unassign(const json &payload, const std::shared_ptr<Session> &session) {
         (void)ops::roles::unassignVaultRole(session->user, vaultRolePayloadTarget(payload));
         return {{"unassigned", true}};
+    }
+
+    // Per-assignment, path-scoped permission overrides. Same ops (and RBAC) as `vh vault role override ...`.
+
+    json Vault::listOverrides(const json& payload, const std::shared_ptr<Session>& session) {
+        return {{"overrides", ops::roles::listVaultRoleOverrides(session->user, vaultRolePayloadTarget(payload))}};
+    }
+
+    json Vault::addOverrides(const json& payload, const std::shared_ptr<Session>& session) {
+        // permissions: [{qualified, value}], value true = allow, false = deny (the role payload shape).
+        auto permissions = vaultRolePayloadPermissions(payload);
+        permissions.complete = false;
+        const auto created = ops::roles::addVaultRoleOverrides(session->user, {
+            .target = vaultRolePayloadTarget(payload),
+            .permissions = std::move(permissions),
+            .pattern = payload.at("pattern").get<std::string>(),
+            .enabled = payload.value("enabled", true)
+        });
+        return {{"overrides", created}};
+    }
+
+    json Vault::updateOverride(const json& payload, const std::shared_ptr<Session>& session) {
+        const auto updated = ops::roles::updateVaultRoleOverride(session->user, {
+            .target = vaultRolePayloadTarget(payload),
+            .override_id = payload.at("override_id").get<uint32_t>(),
+            .allow = overridePayloadAllow(payload),
+            .pattern = vaultRolePayloadString(payload, "pattern"),
+            .enabled = payload.contains("enabled") && !payload.at("enabled").is_null()
+                           ? std::optional<bool>(payload.at("enabled").get<bool>())
+                           : std::nullopt
+        });
+        return {{"override", updated}};
+    }
+
+    json Vault::removeOverride(const json& payload, const std::shared_ptr<Session>& session) {
+        ops::roles::removeVaultRoleOverride(session->user, vaultRolePayloadTarget(payload),
+                                            payload.at("override_id").get<uint32_t>());
+        return {{"removed", true}};
     }
 
 }

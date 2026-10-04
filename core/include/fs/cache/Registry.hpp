@@ -38,6 +38,10 @@ public:
     void evictId(unsigned int id);
     void evictPath(const std::filesystem::path& path);
 
+    // Re-reads the subtree totals of directory `dirId` and its ancestors into the cached entries (fs.dir.list serves
+    // them from here) after the database changed them. False when the directory no longer exists.
+    bool refreshDirStats(unsigned int dirId);
+
     std::vector<std::shared_ptr<fs::model::Entry>> listDir(unsigned int parentId, bool recursive = false) const;
 
     std::shared_ptr<stats::model::CacheStatsSnapshot> stats() const;

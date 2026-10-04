@@ -19,6 +19,7 @@
 #include <openssl/evp.h>
 #include <openssl/md5.h>
 #include <openssl/sha.h>
+#include "crypto/util/digest.hpp"
 #include <paths.h>
 #include <sstream>
 #include <stdexcept>
@@ -171,27 +172,22 @@ struct BodyDigest {
 };
 
 struct BodyHash {
-    SHA256_CTX shaCtx{};
-    MD5_CTX md5Ctx{};
+    crypto::util::EvpDigest sha{EVP_sha256()};
+    crypto::util::EvpDigest md5{EVP_md5()};
     uLong crc = crc32(0L, Z_NULL, 0);
-
-    BodyHash() {
-        SHA256_Init(&shaCtx);
-        MD5_Init(&md5Ctx);
-    }
 
     void update(const char* data, const std::size_t size) {
         if (size == 0) return;
-        SHA256_Update(&shaCtx, data, size);
-        MD5_Update(&md5Ctx, data, size);
+        sha.update(data, size);
+        md5.update(data, size);
         crc = crc32(crc, reinterpret_cast<const Bytef*>(data), static_cast<uInt>(size));
     }
 
     BodyDigest finish() {
-        unsigned char shaDigest[SHA256_DIGEST_LENGTH];
-        SHA256_Final(shaDigest, &shaCtx);
-        unsigned char md5Digest[MD5_DIGEST_LENGTH];
-        MD5_Final(md5Digest, &md5Ctx);
+        const auto shaBytes = sha.finish();
+        const auto md5Bytes = md5.finish();
+        const auto* shaDigest = shaBytes.data();
+        const auto* md5Digest = md5Bytes.data();
 
         return {
             .sha256_hex = sha256Hex(shaDigest),

@@ -329,13 +329,41 @@ TEST_F(UserParityTest, ListShowsWhatTheActorMayViewOnBothSurfaces) {
     for (const auto& u : listed) {
         wsNames.insert(u.at("name").get<std::string>());
         const auto acct = db::query::identities::User::getUserById(u.at("id").get<unsigned int>());
-        if (acct->id != viewer->id) EXPECT_FALSE(ops::users::isAdminIdentity(*acct->roles.admin)) << acct->name;
+        if (acct->id != viewer->id) {
+            EXPECT_FALSE(ops::users::isAdminIdentity(*acct->roles.admin)) << acct->name;
+        }
     }
     EXPECT_TRUE(wsNames.contains(viewer->name));
 
     const auto [code, out] = cli("user list", viewer);
     ASSERT_EQ(code, 0) << out;
     for (const auto& name : wsNames) EXPECT_NE(out.find(name), std::string::npos) << name;
+
+    // #146: the list is a slim projection (no permission sets); the single-user read keeps the full role.
+    for (const auto& u : listed) {
+        const auto& role = u.at("admin_role");
+        EXPECT_FALSE(role.contains("permissions")) << u.at("name");
+        EXPECT_FALSE(role.contains("s3_gateway")) << u.at("name");
+        EXPECT_TRUE(role.at("id").is_number());
+        EXPECT_TRUE(role.at("name").is_string());
+        EXPECT_TRUE(role.contains("description"));
+        EXPECT_EQ(role.at("type"), "admin");
+        ASSERT_TRUE(u.at("vault_roles").is_array());
+        for (const auto& vr : u.at("vault_roles")) EXPECT_FALSE(vr.contains("permissions"));
+    }
+    const auto single = protocols::ws::handler::Auth::getUser(json{{"id", viewer->id}}, ws(superUser)).at("user");
+    EXPECT_TRUE(single.at("admin_role").contains("permissions"));
+
+    // The session payload (login / refresh / isAuthenticated) keeps every permission but only {qualified, value}.
+    const auto session = protocols::ws::handler::Auth::sessionUser(*viewer);
+    const auto& perms = session.at("admin_role").at("permissions");
+    ASSERT_TRUE(perms.is_array());
+    EXPECT_EQ(perms.size(), single.at("admin_role").at("permissions").size());
+    for (const auto& p : perms) {
+        EXPECT_EQ(p.size(), 2u) << p.dump();
+        EXPECT_TRUE(p.at("qualified").is_string());
+        EXPECT_TRUE(p.at("value").is_boolean());
+    }
 
     // Nobody without a view permission lists anything.
     EXPECT_NE(cli("user list", seedUser("up_blind", "unprivileged")).first, 0);

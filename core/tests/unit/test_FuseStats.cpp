@@ -1,5 +1,6 @@
 #include "runtime/Deps.hpp"
 #include "stats/model/DashboardOverview.hpp"
+#include "stats/model/DbStats.hpp"
 #include "stats/model/FuseStats.hpp"
 
 #include <cerrno>
@@ -31,6 +32,13 @@ const DashboardCardSummary* findCard(const DashboardOverview& overview, const st
         if (card.id == id) return &card;
     }
     return nullptr;
+}
+
+std::optional<std::string> metricTone(const DashboardCardSummary& card, const std::string& key) {
+    for (const auto& metric : card.metrics) {
+        if (metric.key == key) return metric.tone;
+    }
+    return std::nullopt;
 }
 
 std::optional<double> metricValue(const DashboardCardSummary& card, const std::string& key) {
@@ -217,4 +225,92 @@ TEST(FuseStatsTest, DashboardWarnsAndErrorsOnAlertableFuseErrors) {
     EXPECT_TRUE(errorCard->warnings.empty());
     ASSERT_TRUE(metricValue(*errorCard, "alertable_error_rate"));
     EXPECT_DOUBLE_EQ(*metricValue(*errorCard, "alertable_error_rate"), 0.11);
+}
+
+// #159: an errno that only ever came back where it is expected (lookup ENOENT, statfs EACCES) is not a warning.
+TEST(FuseStatsTest, ErrnoTypesCountOnlyAlertableOccurrencesAsAlertable) {
+    FuseStats stats;
+    stats.record_error(FuseOperation::Lookup, ENOENT, 10);
+    stats.record_error(FuseOperation::Lookup, ENOENT, 10);
+    stats.record_error(FuseOperation::Unlink, ENOENT, 10);
+    stats.record_error(FuseOperation::StatFs, EACCES, 10);
+
+    const auto snapshot = stats.snapshot();
+    ASSERT_EQ(snapshot.topErrors.size(), 2u);
+    EXPECT_EQ(snapshot.alertableErrnoTypes, 1u);
+    for (const auto& err : snapshot.topErrors) {
+        if (err.errnoValue == ENOENT) {
+            EXPECT_EQ(err.count, 3u);
+            EXPECT_EQ(err.alertableCount, 1u);
+        } else {
+            EXPECT_EQ(err.errnoValue, EACCES);
+            EXPECT_EQ(err.alertableCount, 0u);
+        }
+    }
+}
+
+TEST(FuseStatsTest, DashboardErrnoTypesDoNotWarnOnExpectedErrnos) {
+    auto stats = std::make_shared<FuseStats>();
+    for (int i = 0; i < 50; ++i) stats->record_error(FuseOperation::Lookup, ENOENT, 10);
+    for (int i = 0; i < 5; ++i) stats->record_error(FuseOperation::StatFs, EACCES, 10);
+    FuseStatsDepsGuard guard(stats);
+
+    const auto overview = DashboardOverview::snapshot(fuseCardRequest());
+    const auto* card = findCard(overview, "system.fuse");
+    ASSERT_NE(card, nullptr);
+    EXPECT_EQ(metricTone(*card, "errno_types"), "info");
+    EXPECT_TRUE(card->warnings.empty());
+}
+
+TEST(FuseStatsTest, DashboardErrnoTypesFollowCardSeverityOnAlertableErrnos) {
+    auto stats = std::make_shared<FuseStats>();
+    for (int i = 0; i < 97; ++i) stats->record_success(FuseOperation::Read, 10);
+    for (int i = 0; i < 3; ++i) stats->record_error(FuseOperation::Read, EIO, 10);
+    FuseStatsDepsGuard guard(stats);
+
+    const auto overview = DashboardOverview::snapshot(fuseCardRequest());
+    const auto* card = findCard(overview, "system.fuse");
+    ASSERT_NE(card, nullptr);
+    EXPECT_EQ(card->severity, "warning");
+    EXPECT_EQ(metricTone(*card, "errno_types"), "warning");
+
+    // Below the alertable-rate threshold an alertable errno is visible but not a warning.
+    auto quiet = std::make_shared<FuseStats>();
+    for (int i = 0; i < 999; ++i) quiet->record_success(FuseOperation::Read, 10);
+    quiet->record_error(FuseOperation::Read, EIO, 10);
+    vh::runtime::Deps::get().fuseStats = quiet;
+    const auto quietOverview = DashboardOverview::snapshot(fuseCardRequest());
+    const auto* quietCard = findCard(quietOverview, "system.fuse");
+    ASSERT_NE(quietCard, nullptr);
+    EXPECT_EQ(metricTone(*quietCard, "errno_types"), "info");
+}
+
+// #159: unmeasured values are unknown, never healthy; oldest_tx compares the age with real thresholds.
+TEST(DashboardToneTest, UnmeasuredCountsAreUnknownNotHealthy) {
+    namespace tone = vh::stats::model::dashboard_tone;
+    EXPECT_EQ(tone::zeroIsHealthy(std::nullopt), "unknown");
+    EXPECT_EQ(tone::zeroIsHealthy(0u), "healthy");
+    EXPECT_EQ(tone::zeroIsHealthy(3u), "warning");
+    EXPECT_EQ(tone::zeroIsHealthy(3u, "error"), "error");
+}
+
+TEST(DashboardToneTest, OldestTransactionUsesThresholdsAndIsUnknownWhenUnmeasured) {
+    namespace tone = vh::stats::model::dashboard_tone;
+    using vh::stats::model::kDbOldestTransactionCriticalSeconds;
+    using vh::stats::model::kDbOldestTransactionWarningSeconds;
+    EXPECT_EQ(tone::dbOldestTransaction(false, std::nullopt), "unknown");
+    EXPECT_EQ(tone::dbOldestTransaction(false, 0u), "unknown");
+    EXPECT_EQ(tone::dbOldestTransaction(true, std::nullopt), "healthy");
+    EXPECT_EQ(tone::dbOldestTransaction(true, 0u), "healthy");
+    EXPECT_EQ(tone::dbOldestTransaction(true, kDbOldestTransactionWarningSeconds - 1), "healthy");
+    EXPECT_EQ(tone::dbOldestTransaction(true, kDbOldestTransactionWarningSeconds), "warning");
+    EXPECT_EQ(tone::dbOldestTransaction(true, kDbOldestTransactionCriticalSeconds), "error");
+}
+
+TEST(DashboardToneTest, ErrnoTypesToneOnlyEscalatesOnAlertableErrnos) {
+    namespace tone = vh::stats::model::dashboard_tone;
+    EXPECT_EQ(tone::fuseErrnoTypes(0, 0, "healthy"), "healthy");
+    EXPECT_EQ(tone::fuseErrnoTypes(2, 0, "info"), "info");
+    EXPECT_EQ(tone::fuseErrnoTypes(2, 1, "warning"), "warning");
+    EXPECT_EQ(tone::fuseErrnoTypes(2, 1, "error"), "error");
 }

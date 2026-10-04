@@ -15,6 +15,13 @@ project('vaulthalla', 'cpp',
 
 fs = import('fs')
 
+# See core/include/compat/gcc_variant.hpp: a GCC-only false positive inside libstdc++'s <variant> (via libpqxx) that
+# has to be handled before any other header includes <variant>.
+if meson.get_compiler('cpp').get_id() == 'gcc'
+    add_project_arguments('-include', meson.project_source_root() / 'core/include/compat/gcc_variant.hpp',
+                          language: 'cpp')
+endif
+
 subdir('core')
 
 if get_option('install_data')

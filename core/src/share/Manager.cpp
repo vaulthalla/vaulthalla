@@ -1174,7 +1174,7 @@ void Manager::recordUploadChunk(const Principal& principal, const std::string& u
 
     auto audit = auditEvent(std::string(kUploadChunk), AuditStatus::Success, link->id, session->id);
     attachPrincipal(*audit, principal);
-    audit->target_entry_id = upload->target_parent_entry_id;
+    if (upload->target_parent_entry_id) audit->target_entry_id = upload->target_parent_entry_id;
     audit->target_path = upload->target_path;
     audit->bytes_transferred = bytes;
 
@@ -1224,7 +1224,7 @@ void Manager::cancelUpload(const Principal& principal, const std::string& upload
 
     auto audit = auditEvent(std::string(kUploadCancel), AuditStatus::Success, link->id, session->id);
     attachPrincipal(*audit, principal);
-    audit->target_entry_id = upload->target_parent_entry_id;
+    if (upload->target_parent_entry_id) audit->target_entry_id = upload->target_parent_entry_id;
     audit->target_path = upload->target_path;
     audit->bytes_transferred = upload->received_size_bytes;
 
@@ -1242,7 +1242,7 @@ void Manager::failUpload(const Principal& principal, const std::string& uploadId
     auto upload = requireUploadForPrincipal(*store_, principal, uploadId);
     auto audit = auditEvent(std::string(kUploadFail), AuditStatus::Failed, principal.share_id, principal.share_session_id);
     attachPrincipal(*audit, principal);
-    audit->target_entry_id = upload->target_parent_entry_id;
+    if (upload->target_parent_entry_id) audit->target_entry_id = upload->target_parent_entry_id;
     audit->target_path = upload->target_path;
     audit->bytes_transferred = upload->received_size_bytes;
     audit->error_code = "share_upload_failed";
@@ -1268,7 +1268,7 @@ StaleUploadSweepResult Manager::sweepStaleUploads(StaleUploadSweepRequest reques
         if (!upload || upload->isTerminal()) continue;
 
         auto audit = auditEvent(std::string(kUploadStaleSweep), AuditStatus::Failed, upload->share_id, upload->share_session_id);
-        audit->target_entry_id = upload->target_parent_entry_id;
+        if (upload->target_parent_entry_id) audit->target_entry_id = upload->target_parent_entry_id;
         audit->target_path = upload->target_path;
         audit->bytes_transferred = upload->received_size_bytes;
         audit->error_code = "stale_upload_sweep";

@@ -16,3 +16,9 @@ runs:
       shell: bash
       working-directory: ${{ github.workspace }}/web
       run: pnpm build
+
+    # Hard gate: per-route first-load JavaScript budgets (web/perf-budgets.json).
+    - name: Check web performance budgets
+      shell: bash
+      working-directory: ${{ github.workspace }}/web
+      run: pnpm budgets

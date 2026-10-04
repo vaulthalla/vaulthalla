@@ -23,6 +23,8 @@ export default defineConfig({
   },
   use: {
     baseURL,
+    // Local installs behind nginx/Caddy use self-signed certificates.
+    ignoreHTTPSErrors: localHosts.has(parsedBaseURL.hostname),
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',

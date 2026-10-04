@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -7,7 +8,7 @@
 #include <optional>
 
 namespace vh::fs::model { struct Entry; struct File; struct Directory; }
-namespace pqxx { class result; }
+#include <pqxx/pqxx>
 
 namespace vh::db::query::fs {
 
@@ -40,6 +41,31 @@ public:
     static void deleteEmptyDirectory(unsigned int id);
 
     [[nodiscard]] static bool isDirectoryEmpty(unsigned int id);
+
+    // Directory size_bytes / file_count / subdirectory_count are subtree totals kept on every ancestor (#158).
+    struct SubtreeTotals {
+        int64_t size_bytes = 0;
+        int64_t files = 0;
+        int64_t subdirs = 0;
+    };
+
+    // What entry `id` contributes to each ancestor: a directory its own totals plus itself, a file or symlink its
+    // size and one entry. nullopt when the entry doesn't exist.
+    [[nodiscard]] static std::optional<SubtreeTotals> subtreeTotalsOf(pqxx::work& txn, unsigned int id);
+
+    [[nodiscard]] static std::optional<unsigned int> parentIdOf(pqxx::work& txn, unsigned int id);
+
+    // The ids of entry `id`'s ancestors, nearest first.
+    [[nodiscard]] static std::vector<unsigned int> ancestorsOf(unsigned int id);
+
+    // Moves `totals` off oldParentId and its ancestors onto newParentId and its ancestors; ancestors both chains
+    // share are left alone. A no-op when the parents are the same.
+    static void shiftSubtreeTotals(pqxx::work& txn, std::optional<unsigned int> oldParentId,
+                                   std::optional<unsigned int> newParentId, const SubtreeTotals& totals);
+
+    // Deletes directory `id` and everything still under it, taking its totals off its ancestors. A no-op when the
+    // directory is already gone.
+    static void deleteDirectoryTree(unsigned int id);
 };
 
 }

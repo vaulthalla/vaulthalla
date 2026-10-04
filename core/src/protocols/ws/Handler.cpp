@@ -91,6 +91,7 @@ void Handler::registerStorageHandlers(const std::shared_ptr<Router>& r) {
 
 void Handler::registerAPIKeyHandlers(const std::shared_ptr<Router>& r) {
     r->registerPayload("storage.apiKey.add", &handler::APIKeys::add);
+    r->registerPayload("storage.apiKey.update", &handler::APIKeys::update);
     r->registerPayload("storage.apiKey.remove", &handler::APIKeys::remove);
     r->registerSessionOnlyHandler("storage.apiKey.list", &handler::APIKeys::list);
     r->registerPayload("storage.apiKey.get", &handler::APIKeys::get);
@@ -114,6 +115,10 @@ void Handler::registerRoleHandlers(const std::shared_ptr<Router>& r) {
 
     r->registerPayload("role.vault.assign", &handler::rbac::roles::Vault::assign);
     r->registerPayload("role.vault.unassign", &handler::rbac::roles::Vault::unassign);
+    r->registerPayload("role.vault.overrides.list", &handler::rbac::roles::Vault::listOverrides);
+    r->registerPayload("role.vault.overrides.add", &handler::rbac::roles::Vault::addOverrides);
+    r->registerPayload("role.vault.overrides.update", &handler::rbac::roles::Vault::updateOverride);
+    r->registerPayload("role.vault.overrides.remove", &handler::rbac::roles::Vault::removeOverride);
 }
 
 void Handler::registerPermissionsHandlers(const std::shared_ptr<Router>& r) {
@@ -208,6 +213,7 @@ void Handler::registerStatHandlers(const std::shared_ptr<Router>& r) {
     r->registerPayload("stats.vault.trends", &handler::Stats::vaultTrends);
     r->registerPayload("stats.vault.security", &handler::Stats::vaultSecurity);
     r->registerPayload("stats.dashboard.overview", &handler::Stats::dashboardOverview);
+    r->registerSessionOnlyHandler("stats.dashboard.severity", &handler::Stats::dashboardSeverity);
     r->registerSessionOnlyHandler("stats.system.health", &handler::Stats::systemHealth);
     r->registerSessionOnlyHandler("stats.system.threadpools", &handler::Stats::systemThreadPools);
     r->registerSessionOnlyHandler("stats.system.fuse", &handler::Stats::systemFuse);

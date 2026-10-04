@@ -11,10 +11,14 @@ namespace vh::fs::model {
 }
 
 namespace vh::fuse {
+    struct WorkingCopy;
+
+    // An open file. fd is on the inode's decrypted working copy (see WorkingCopies), never on the backing file.
     struct FileHandle {
         std::filesystem::path path;
         int fd;
         size_t size = 0;
+        std::shared_ptr<WorkingCopy> copy;
     };
 
     void getattr(fuse_req_t req, fuse_ino_t ino, fuse_file_info *fi);

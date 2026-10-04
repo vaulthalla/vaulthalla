@@ -2,7 +2,9 @@
 
 #include "ops/Roles.hpp"
 #include "ops/Vaults.hpp"
+#include "db/query/vault/APIKey.hpp"
 #include "db/query/vault/Vault.hpp"
+#include "vault/model/APIKey.hpp"
 #include "vault/model/Vault.hpp"
 #include "auth/Bootstrap.hpp"
 #include "auth/Manager.hpp"
@@ -233,6 +235,21 @@ UserPtr remove(const Actor& actor, const Remove& req) {
     }
 
     const auto owned = db::query::vault::Vault::listUserVaults(target->id);
+
+    // The account's API keys go with it (api_keys.user_id cascades), and a key still bound to a vault that survives
+    // the deletion blocks it (s3.api_key_id is ON DELETE RESTRICT; it used to cascade and silently drop the vault's
+    // S3 binding). Refuse up front, before anything changes.
+    std::string blocked;
+    for (const auto& key : db::query::vault::APIKey::listAPIKeys(target->id)) {
+        for (const auto& [vaultId, vaultName] : db::query::vault::APIKey::listVaultsUsingKey(key->id)) {
+            const bool destroyed = !heir && std::ranges::any_of(owned, [&](const auto& v) { return v->id == vaultId; });
+            if (!destroyed) blocked += (blocked.empty() ? "" : ", ") + vaultName + " (API key " + key->name + ")";
+        }
+    }
+    if (!blocked.empty())
+        throw Invalid(target->name + " owns API keys still used by vaults: " + blocked +
+                      ". Move those vaults to another API key or remove them first.");
+
     if (!req.confirmed) {
         std::string text = USER_DELETE_CONFIRMATION;
         if (!owned.empty()) {

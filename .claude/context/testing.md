@@ -20,6 +20,12 @@
   and `build-ci-release/` are older local mirrors. `make clean-full` wipes the build dirs.
 - `make build` is **broken**: it calls `conan install . -r vaulthalla` but there is no conanfile. Use meson directly.
   `run-test` is declared `.PHONY` in the Makefile but has no recipe. Use `run_test`.
+- **Zero-warning bar (2026-10-04):** the tree builds with no output but `[n/N]` progress at `-O3 -Werror`, both unity
+  (`meson setup build-o3 -Dbuildtype=release -Dwerror=true -Dbuild_unit_tests=true -Dintegration_tests=true`) and
+  per-file (the same plus `-Dunity=off`; `core/meson.build` forces `unity=on` on the core library, so drop that
+  override in a scratch copy). Unity hides missing includes; check per-file before calling a warning fix done. The
+  one suppression is `core/include/compat/gcc_variant.hpp` (force-included for GCC): a libstdc++ `<variant>`
+  `-Wmaybe-uninitialized` false positive reached through `pqxx::params`. Fix warnings at the source; don't add flags.
 
 ## DB-backed unit tests
 

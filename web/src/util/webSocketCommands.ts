@@ -6,10 +6,9 @@ import { VaultSecurity } from '@/models/stats/vaultSecurity'
 import { VaultShareStats } from '@/models/stats/vaultShareStats'
 import { VaultSyncHealth } from '@/models/stats/vaultSyncHealth'
 import { APIKey, S3APIKey } from '@/models/apiKey'
-import { User } from '@/models/user'
-import { AdminRolePayload, VaultRolePayload, Permission } from '@/models/role'
-import { Settings } from '@/models/settings'
-import { Group } from '@/models/group'
+import type { GroupRecord, UserRecord } from '@/features/access/types'
+import { Permission } from '@/models/role'
+import { Settings, SettingsSection } from '@/models/settings'
 import { File, IFileUpload } from '@/models/file'
 import { Directory } from '@/models/directory'
 import {
@@ -19,7 +18,7 @@ import {
 } from '@/models/dashboard/dashboardPreferences'
 import { CacheStats } from '@/models/stats/cacheStats'
 import { ConnectionStats } from '@/models/stats/connectionStats'
-import { DashboardOverview, DashboardOverviewRequest } from '@/models/stats/dashboardOverview'
+import { DashboardOverview, DashboardOverviewRequest, type DashboardSeverity } from '@/models/stats/dashboardOverview'
 import { DbStats } from '@/models/stats/dbStats'
 import { FuseStats } from '@/models/stats/fuseStats'
 import { OperationStats } from '@/models/stats/operationStats'
@@ -65,7 +64,7 @@ import {
   PriceBudgetStatus,
 } from '@/models/pricing/priceBudget'
 import { PriceBudgetLedgerEntry } from '@/models/pricing/priceBudgetLedger'
-import { PriceNotification } from '@/models/pricing/priceNotification'
+import { PriceNotification, type PriceNotificationSummary } from '@/models/pricing/priceNotification'
 import { PriceOverride, PriceOverrideRequestPayload } from '@/models/pricing/priceOverride'
 import { PricingBudgetStats } from '@/models/stats/pricingBudgetStats'
 import {
@@ -89,35 +88,81 @@ import {
   S3GatewayStatus,
 } from '@/models/s3Gateway'
 
+interface VaultCommonFields {
+  name: string
+  description?: string
+  quota?: number
+  owner_id?: number
+  slug?: string
+  fuse_name?: string | null
+}
+
+// One vault role assignment: the subject on a vault.
+interface VaultSubjectPayload {
+  vault_id: number
+  subject_type: 'user' | 'group'
+  subject_id: number
+}
+
+export interface VaultRoleOverrideDTO {
+  id: number
+  assignment_id: number
+  permission: { id?: number; qualified: string; description?: string; slug?: string }
+  effect: 'allow' | 'deny'
+  enabled: boolean
+  glob_path: string
+}
+
+export interface RolePermissionValue {
+  qualified: string
+  value: boolean
+}
+
+export interface RoleCreatePayload {
+  name: string
+  description?: string
+  permissions: RolePermissionValue[]
+}
+
+export interface RoleUpdatePayload {
+  id: number
+  name?: string
+  description?: string
+  permissions?: RolePermissionValue[]
+}
+
 export interface WebSocketCommandMap {
   // Auth
-  'auth.login': { payload: { name: string; password: string }; response: { token: string; user: User } }
+  'auth.login': { payload: { name: string; password: string }; response: { token: string; user: UserRecord } }
 
   'auth.register': {
+    // role: an admin role name or id. The password is required here (only the CLI can generate one).
     payload: { name: string; email?: string; password: string; is_active?: boolean; role: string }
-    response: { user: User }
+    response: { user: UserRecord }
   }
 
-  // A patch. Role changes and deactivation end the account's sessions.
+  // A patch. Role changes and deactivation end the account's sessions. Never send server-owned fields: core refuses
+  // linux_uid, updated_by, protected, is_protected and system_only, and passwords go through change_password.
   'auth.user.update': {
-    payload: { id: number; name?: string; email?: string | null; password?: string; role?: string; is_active?: boolean }
-    response: { user: User }
+    payload: { id: number; name?: string; email?: string | null; role?: string; is_active?: boolean }
+    response: { user: UserRecord }
   }
 
   'auth.user.change_password': {
     payload: { id: number; old_password?: string; new_password: string }
-    response: { user: User }
+    response: { user: UserRecord }
   }
 
-  'auth.isAuthenticated': { payload: { token: string }; response: { isAuthenticated: boolean; user?: User } }
+  'auth.isAuthenticated': { payload: { token: string }; response: { isAuthenticated: boolean; user?: UserRecord } }
 
-  'auth.refresh': { payload: null; response: { token: string; user: User } }
+  'auth.refresh': { payload: null; response: { token: string; user: UserRecord } }
 
   'auth.logout': { payload: null; response: { success: boolean } }
 
-  'auth.users.list': { payload: null; response: { users: User[] } }
+  // May carry slim users (admin_role without permissions): use only the role's id and name from it.
+  'auth.users.list': { payload: null; response: { users: UserRecord[] } }
 
-  'auth.user.get': { payload: { id: number }; response: { user: User } }
+  'auth.user.get': { payload: { id: number }; response: { user: UserRecord } }
 
   // Without confirm the reply is an error with data.code 'user_delete' and the question to ask. The user's vaults
   // are destroyed unless transfer_to names who gets them.
@@ -126,7 +171,7 @@ export interface WebSocketCommandMap {
     response: { user_id: number }
   }
 
-  'auth.user.get.byName': { payload: { name: string }; response: { user: User } }
+  'auth.user.get.byName': { payload: { name: string }; response: { user: UserRecord } }
 
   // Security posture for the signed-in account: the super admin's initial password file while its generated
   // password is still in use and the file is still on disk, else null. A warning, never a gate.
@@ -136,28 +181,37 @@ export interface WebSocketCommandMap {
 
   'storage.vault.list': { payload: null; response: { vaults: Vault[] } }
 
+  // owner_id, description and quota (bytes, 0 = unlimited) are optional on both types. There is no mount point
+  // input: the daemon picks a vault's backing directory itself.
   'storage.vault.add': {
     payload:
-      | { name: string; slug?: string; fuse_name?: string | null; type: 'local'; mount_point: string }
-      | {
-          name: string
-          slug?: string
-          fuse_name?: string | null
+      | (VaultCommonFields & { type: 'local' })
+      | (VaultCommonFields & {
           type: 's3'
           api_key_id: number
           bucket: string
           storage_tier_id?: string | null
           encrypt_upstream?: boolean
-          sync?: RemoteSyncPolicy
+          sync?: Partial<RemoteSyncPolicy>
           accept_encryption_waiver?: boolean
-        }
+        })
     response: { vault: LocalDiskVault | S3Vault }
   }
 
-  // A patch: fields left out keep their current values. A refusal with data.code 'encryption_waiver' means the
-  // bucket already holds data; resend with accept_encryption_waiver once the person accepts the message.
+  // A patch: fields left out keep their current values; a vault's type can never change. A refusal with data.code
+  // 'encryption_waiver' means the bucket already holds data; resend with accept_encryption_waiver once the person
+  // accepts the message.
   'storage.vault.update': {
-    payload: (LocalDiskVault | S3Vault) & { accept_encryption_waiver?: boolean }
+    payload: Partial<VaultCommonFields> & {
+      id: number
+      is_active?: boolean
+      api_key_id?: number
+      bucket?: string
+      storage_tier_id?: string | null
+      encrypt_upstream?: boolean
+      sync?: Partial<RemoteSyncPolicy>
+      accept_encryption_waiver?: boolean
+    }
     response: { vault: LocalDiskVault | S3Vault }
   }
 
@@ -169,20 +223,40 @@ export interface WebSocketCommandMap {
 
   // API Key commands
 
-  'storage.apiKey.list': { payload: null; response: { keys: string } }
-
+  // Older daemons send `keys` as a JSON-encoded string, newer ones as an array: parse with parseApiKeyList()
+  // (features/credentials/types.ts).
+  'storage.apiKey.list': { payload: null; response: { keys: string | APIKey[] } }
 
   'storage.apiKey.add': { payload: Partial<S3APIKey>; response: { api_key: APIKey } }
 
-  'storage.apiKey.remove': { payload: { id: number }; response: null }
+  // Edit in place: same id, so vaults bound to the key keep their binding. Fields left out keep their value; an
+  // empty or missing secret_access_key keeps the stored secret. Daemons before 1.9 answer "Unknown command".
+  'storage.apiKey.update': {
+    payload: {
+      id: number
+      name?: string
+      provider?: string
+      region?: string
+      endpoint?: string
+      access_key?: string
+      secret_access_key?: string
+    }
+    response: { api_key: APIKey }
+  }
+
+  // Refused (data.code 'invalid') while any vault still uses the key.
+  'storage.apiKey.remove': { payload: { id: number }; response: Record<string, never> | null }
 
   'storage.apiKey.get': { payload: { id: number }; response: { api_key: APIKey } }
 
   // Roles and Permissions
 
-  'role.admin.add': { payload: AdminRolePayload; response: { role: AdminRoleDTO } }
+  // permissions is a complete snapshot: every admin permission as {qualified, value}, or core refuses the edit.
+  'role.admin.add': { payload: RoleCreatePayload; response: { role: AdminRoleDTO } }
 
-  'role.admin.update': { payload: AdminRolePayload; response: { role: AdminRoleDTO } }
+  // A patch for name/description; permissions, when present, is a complete snapshot. Core refuses edits to
+  // super_admin and to the actor's own role, and grants beyond the actor's own permissions.
+  'role.admin.update': { payload: RoleUpdatePayload; response: { role: AdminRoleDTO } }
 
   'role.admin.delete': { payload: { id: number }; response: { role: number } }
 
@@ -192,9 +266,10 @@ export interface WebSocketCommandMap {
 
   'roles.admin.list': { payload: null; response: { roles: AdminRoleDTO[] } }
 
-  'role.vault.add': { payload: VaultRolePayload; response: { role: VaultRoleDTO } }
+  // Role definitions only; assigning a role to a subject on a vault is role.vault.assign.
+  'role.vault.add': { payload: RoleCreatePayload; response: { role: VaultRoleDTO } }
 
-  'role.vault.update': { payload: VaultRolePayload; response: { role: VaultRoleDTO } }
+  'role.vault.update': { payload: RoleUpdatePayload; response: { role: VaultRoleDTO } }
 
   'role.vault.delete': { payload: { id: number }; response: { role_id: number } }
 
@@ -207,13 +282,32 @@ export interface WebSocketCommandMap {
   'roles.vault.list.assigned': { payload: { id: number }; response: { assigned_roles: VaultRoleDTO[] } }
 
   'role.vault.assign': {
-    payload: { id: number; vault_id: number; subject_type: 'user' | 'group'; subject_id: number }
+    payload: VaultSubjectPayload & { id: number }
     response: { assignment: VaultRoleDTO }
   }
 
   'role.vault.unassign': {
-    payload: { vault_id: number; subject_type: 'user' | 'group'; subject_id: number }
+    payload: VaultSubjectPayload
     response: { unassigned: boolean }
+  }
+
+  // Path-scoped allow/deny overrides on one assignment (same ops as `vh vault role override ...`).
+  'role.vault.overrides.list': { payload: VaultSubjectPayload; response: { overrides: VaultRoleOverrideDTO[] } }
+
+  // permissions: value true = allow, false = deny. pattern is a vault-relative glob ("/docs/**").
+  'role.vault.overrides.add': {
+    payload: VaultSubjectPayload & { permissions: { qualified: string; value: boolean }[]; pattern: string; enabled?: boolean }
+    response: { overrides: VaultRoleOverrideDTO[] }
+  }
+
+  'role.vault.overrides.update': {
+    payload: VaultSubjectPayload & { override_id: number; effect?: 'allow' | 'deny'; pattern?: string; enabled?: boolean }
+    response: { override: VaultRoleOverrideDTO }
+  }
+
+  'role.vault.overrides.remove': {
+    payload: VaultSubjectPayload & { override_id: number }
+    response: { removed: boolean }
   }
 
   'permission.get': { payload: { id: number }; response: { permission: Permission } }
@@ -225,7 +319,8 @@ export interface WebSocketCommandMap {
   // Settings
   'settings.get': { payload: null; response: { settings: Settings } }
 
-  'settings.update': { payload: Partial<Settings>; response: { settings: Settings } }
+  // A JSON merge patch (RFC 7386) onto the current config: send only what changed; null removes an optional key.
+  'settings.update': { payload: Partial<Record<keyof Settings, SettingsSection>>; response: { settings: Settings } }
 
   // Operator email administration
   'email.config.get': { payload: null; response: OperatorEmailConfigResponse }
@@ -276,7 +371,8 @@ export interface WebSocketCommandMap {
 
   'pricing.notifications.list': {
     payload: { vault_id?: number | null; limit?: number; include_acknowledged?: boolean } | null
-    response: { notifications: PriceNotification[] }
+    // `summary` always covers every open alert in scope, whatever `limit` and `include_acknowledged` are.
+    response: { notifications: PriceNotification[]; summary: PriceNotificationSummary }
   }
 
   'pricing.notifications.ack': {
@@ -435,30 +531,35 @@ export interface WebSocketCommandMap {
 
   'group.add': {
     payload: { name: string; description?: string; linux_gid?: number }
-    response: { name: string; group: Group }
+    response: { name: string; group: GroupRecord }
   }
 
   'group.remove': { payload: { id: number }; response: { id: number } }
 
-  'group.update': { payload: Partial<Group> & { id: number }; response: { id: number; name: string; group: Group } }
+  // A patch: name, description and linux_gid are each optional.
+  'group.update': {
+    payload: { id: number; name?: string; description?: string; linux_gid?: number }
+    response: { id: number; name: string; group: GroupRecord }
+  }
 
-  'group.get': { payload: { id: number }; response: { group: Group } }
+  'group.get': { payload: { id: number }; response: { group: GroupRecord } }
 
-  'groups.list': { payload: null; response: { groups: Group[] } }
+  // Every group for group viewers; otherwise only the caller's own groups.
+  'groups.list': { payload: null; response: { groups: GroupRecord[] } }
 
   'group.member.add': {
     payload: { group_id: number; user_id: number }
-    response: { group: Group; group_id: number; user_id: number }
+    response: { group: GroupRecord; group_id: number; user_id: number }
   }
 
   'group.member.remove': {
     payload: { group_id: number; user_id: number }
-    response: { group: Group; group_id: number; user_id: number }
+    response: { group: GroupRecord; group_id: number; user_id: number }
   }
 
-  'group.get.byName': { payload: { name: string }; response: { group: Group } }
+  'group.get.byName': { payload: { name: string }; response: { group: GroupRecord } }
 
-  'groups.list.byUser': { payload: { user_id: number }; response: { groups: Group[] } }
+  'groups.list.byUser': { payload: { user_id: number }; response: { groups: GroupRecord[] } }
 
 
   // FS commands
@@ -589,6 +690,20 @@ export interface WebSocketCommandMap {
   'stats.vault.pricing': { payload: { vault_id: number }; response: { stats: PricingBudgetStats } }
 
   'stats.dashboard.overview': { payload: DashboardOverviewRequest | null; response: { stats: DashboardOverview } }
+
+  // Cheap admin-only rollup of the default overview cards (no cards, sections or series). Daemons before 1.9 answer
+  // "Unknown command".
+  'stats.dashboard.severity': {
+    payload: null
+    response: {
+      stats: {
+        overall_status: DashboardSeverity
+        error_count: number
+        warning_count: number
+        checked_at: number | string | null
+      }
+    }
+  }
 
   'stats.pricing.budget': { payload: { vault_id?: number | null } | null; response: { stats: PricingBudgetStats } }
 

@@ -38,6 +38,7 @@
 #include <iterator>
 #include <nlohmann/json.hpp>
 #include <openssl/md5.h>
+#include "crypto/util/digest.hpp"
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -259,9 +260,8 @@ std::vector<uint8_t> readFileBytesForGatewayBackfill(const std::filesystem::path
 }
 
 std::string md5EtagForGatewayBackfill(const std::vector<uint8_t>& bytes) {
-    unsigned char digest[MD5_DIGEST_LENGTH];
-    MD5(bytes.data(), bytes.size(), digest);
-    return "\"" + hexDigest(digest, MD5_DIGEST_LENGTH) + "\"";
+    const auto digest = crypto::util::EvpDigest::of(EVP_md5(), bytes.data(), bytes.size());
+    return "\"" + hexDigest(digest.data(), digest.size()) + "\"";
 }
 
 std::vector<uint8_t> plaintextForGatewayBackfill(

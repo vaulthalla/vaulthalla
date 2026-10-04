@@ -396,6 +396,28 @@ namespace vh::test::integration::fuse {
         return 0;
     }
 
+    // Prints the size stat(2) reports: through the mount that must be the plaintext size (#173).
+    inline int stat_size_path(const std::filesystem::path& p) {
+        struct stat st {};
+        if (::stat(p.c_str(), &st) != 0) return errno;
+        std::string out = "OK stat ";
+        detail::append_path(out, p);
+        detail::append_text(out, " size=");
+        detail::append_u64(out, static_cast<uint64_t>(st.st_size));
+        out.push_back('\n');
+        detail::emit_ok(out);
+        return 0;
+    }
+
+    inline int truncate_path(const std::filesystem::path& p, const off_t size) {
+        if (::truncate(p.c_str(), size) != 0) return errno;
+        std::string out = "OK truncate ";
+        detail::append_path(out, p);
+        out.push_back('\n');
+        detail::emit_ok(out);
+        return 0;
+    }
+
     inline ExecResult mkdir_as(const uid_t uid, const gid_t gid, const std::filesystem::path& p, const mode_t mode = 0755) {
         return run_as_user(uid, gid, [=] { return mkdirp(p, mode); });
     }
@@ -432,6 +454,14 @@ namespace vh::test::integration::fuse {
 
     inline ExecResult stat_mode_as(const uid_t uid, const gid_t gid, const std::filesystem::path& p, const mode_t expected) {
         return run_as_user(uid, gid, [=] { return stat_mode_path(p, expected); });
+    }
+
+    inline ExecResult stat_size_as(const uid_t uid, const std::filesystem::path& p) {
+        return run_as_user(uid, uid, [=] { return stat_size_path(p); });
+    }
+
+    inline ExecResult truncate_as(const uid_t uid, const std::filesystem::path& p, const off_t size) {
+        return run_as_user(uid, uid, [=] { return truncate_path(p, size); });
     }
 
     // Back-compat overloads while you migrate callers.

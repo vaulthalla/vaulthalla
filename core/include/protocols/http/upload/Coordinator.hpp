@@ -3,6 +3,7 @@
 #include "protocols/http/Router.hpp"
 
 #include <boost/beast/http.hpp>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -38,6 +39,7 @@ public:
     using ShareManagerFactory = std::function<std::shared_ptr<vh::share::Manager>()>;
     using ShareResolverFactory = std::function<std::shared_ptr<vh::share::TargetResolver>()>;
     using EngineResolver = std::function<std::shared_ptr<vh::storage::Engine>(uint32_t)>;
+    using Clock = std::function<std::chrono::steady_clock::time_point()>;
 
     class FileStream {
     public:
@@ -79,6 +81,9 @@ public:
     static void resetShareResolverFactoryForTesting();
     static void setEngineResolverForTesting(EngineResolver resolver);
     static void resetEngineResolverForTesting();
+    // Session expiry (sliding idle TTL + hard ceiling) reads this clock.
+    static void setClockForTesting(Clock clock);
+    static void resetClockForTesting();
     static void clearForTesting();
 
 private:

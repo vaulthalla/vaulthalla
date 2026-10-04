@@ -14,6 +14,7 @@
 #include "vault/EncryptionManager.hpp"
 #include "fs/ops/file.hpp"
 #include "crypto/util/hash.hpp"
+#include "crypto/util/encrypt.hpp"
 #include "preview/thumbnail/Worker.hpp"
 #include "fs/metadata/Magic.hpp"
 #include "runtime/Deps.hpp"
@@ -25,8 +26,10 @@
 #include "db/encoding/u8.hpp"
 #include "identities/User.hpp"
 #include "identities/Group.hpp"
+#include "fuse/WorkingCopies.hpp"
 
 #include <ranges>
+#include <set>
 #include <fstream>
 #include <vector>
 #include <algorithm>
@@ -589,6 +592,11 @@ int Filesystem::copy(const std::filesystem::path& from,
             copied->inode = cache->getOrAssignInode(to);
             copied->is_hidden = !copied->name.empty() && copied->name.front() == '.' && !copied->name.starts_with("..");
             copied->is_system = false;
+            // Only the directory row is copied, not what is under it, so it starts empty: carrying the source's
+            // totals would claim files it doesn't have (#158).
+            copied->size_bytes = 0;
+            copied->file_count = 0;
+            copied->subdirectory_count = 0;
 
             copied->id = db::query::fs::Directory::upsertDirectory(copied);
             cache->cacheEntry(copied);
@@ -616,16 +624,22 @@ void Filesystem::remove(const std::filesystem::path& path, const unsigned int us
     const auto entry = cache->getEntry(path);
     if (!entry) throw std::runtime_error("[Filesystem] Path does not exist in cache: " + path.string());
     if (!entry->vault_id) throw std::runtime_error("[Filesystem] Entry has no associated vault ID: " + path.string());
+    const auto ancestors = db::query::fs::Directory::ancestorsOf(entry->id);
 
     // !!! DO NOT CALL THIS FUNCTION DIRECTLY FROM FUSE CALLBACKS - WEBSOCKET OR INTERNAL ONLY !!!
     // This function recursively marks files as trashed in the database and deletes their backing paths
     // which is incompatible with how FUSE expects unlink/rmdir to behave.
 
-    if (entry->isDirectory())
+    if (entry->isDirectory()) {
         for (const auto& file : db::query::fs::File::listFilesInDir(*entry->vault_id, entry->path, true)) {
             db::query::fs::File::markFileAsTrashed(userId, file->id);
             cache->evictPath(file->fuse_path);
         }
+        // Trashing the last file removes a directory that ends up empty, but an empty directory (or one holding
+        // only empty directories or symlinks) is still there: delete what is left, off its ancestors' totals.
+        db::query::fs::Directory::deleteDirectoryTree(entry->id);
+        cache->evictPath(path);
+    }
     else if (entry->isSymlink()) {
         db::query::fs::Symlink::deleteSymlink(std::static_pointer_cast<Symlink>(entry));
         cache->evictPath(path);
@@ -638,6 +652,11 @@ void Filesystem::remove(const std::filesystem::path& path, const unsigned int us
     if (entry->isSymlink()) {
         if (symlinkStatusExists(entry->backing_path)) std::filesystem::remove(entry->backing_path);
     } else if (std::filesystem::exists(entry->backing_path)) std::filesystem::remove_all(entry->backing_path);
+
+    // fs.dir.list reads directory totals from the cache: refresh what the delete changed (#158), from the nearest
+    // ancestor that still exists (cleanup may have removed folders the delete left without files).
+    for (const auto id : ancestors)
+        if (cache->refreshDirStats(id)) break;
 }
 
 std::shared_ptr<File> Filesystem::createFile(const NewFileContext& ctx) {
@@ -928,10 +947,14 @@ int Filesystem::rename(const std::filesystem::path& oldPath,
         const auto oldBackingPath = entry->backing_path;
 
         int rc = 0;
+        std::optional<unsigned int> previousParentId;
 
         db::Transactions::exec("Filesystem::rename", [&](pqxx::work& txn) {
             std::vector<uint8_t> buffer;
 
+            // Everything under a directory moves with it. Take the directory's own subtree (it used to walk its
+            // parent's, so any sibling aborted the rename), shallowest first so each child's new parent exists.
+            std::vector<std::shared_ptr<Entry>> descendants;
             if (entry->isDirectory()) {
                 if (!entry->parent_id) {
                     log::Registry::fs()->error(
@@ -941,23 +964,15 @@ int Filesystem::rename(const std::filesystem::path& oldPath,
                     return;
                 }
 
-                for (const auto& item : runtime::Deps::get().fsCache->listDir(*entry->parent_id, true)) {
-                    rc = handleRename({
-                        .from = item->fuse_path,
-                        .to = updateSubdirPath(oldPath, newPath, item->fuse_path),
-                        .buffer = buffer,
-                        .user = user,
-                        .engine = engine,
-                        .entry = item,
-                        .txn = txn
-                    });
-
-                    if (rc != 0)
-                        return;
-
-                    buffer.clear();
-                }
+                descendants = runtime::Deps::get().fsCache->listDir(entry->id, true);
+                std::ranges::stable_sort(descendants, {}, [](const std::shared_ptr<Entry>& e) {
+                    return std::ranges::distance(e->fuse_path.begin(), e->fuse_path.end());
+                });
             }
+
+            // The subtree totals the entry carries to its ancestors, taken before anything changes (#158).
+            const auto totals = db::query::fs::Directory::subtreeTotalsOf(txn, entry->id);
+            const auto oldParentId = db::query::fs::Directory::parentIdOf(txn, entry->id);
 
             rc = handleRename({
                 .from = oldPath,
@@ -971,6 +986,27 @@ int Filesystem::rename(const std::filesystem::path& oldPath,
 
             if (rc != 0)
                 return;
+
+            for (const auto& item : descendants) {
+                buffer.clear();
+                rc = handleRename({
+                    .from = item->fuse_path,
+                    .to = updateSubdirPath(oldPath, newPath, item->fuse_path),
+                    .buffer = buffer,
+                    .user = user,
+                    .engine = engine,
+                    .entry = item,
+                    .txn = txn
+                });
+
+                if (rc != 0)
+                    return;
+            }
+
+            if (totals)
+                db::query::fs::Directory::shiftSubtreeTotals(
+                    txn, oldParentId, db::query::fs::Directory::parentIdOf(txn, entry->id), *totals);
+            previousParentId = oldParentId;
 
             txn.commit();
 
@@ -990,7 +1026,8 @@ int Filesystem::rename(const std::filesystem::path& oldPath,
 
         runtime::Deps::get().fsCache->evictPath(oldPath);
         runtime::Deps::get().fsCache->evictPath(newPath);
-        runtime::Deps::get().fsCache->cacheEntry(entry);
+        runtime::Deps::get().fsCache->cacheEntry(entry); // also refreshes the new parent chain's totals
+        if (previousParentId) runtime::Deps::get().fsCache->refreshDirStats(*previousParentId);
 
         log::Registry::fs()->debug("[Filesystem::rename] Successfully renamed {} to {}", oldPath.string(), newPath.string());
         return 0;
@@ -1126,7 +1163,7 @@ int Filesystem::handleRename(const RenameContext& ctx) {
 
                 writeFile(entry->backing_path, ciphertext);
 
-                f->size_bytes = std::filesystem::file_size(entry->backing_path);
+                f->size_bytes = buffer.size();  // the plaintext size, as everywhere else
                 f->mime_type = Magic::get_mime_type_from_buffer(buffer);
                 f->content_hash = hash::blake2b(entry->backing_path);
 
@@ -1175,10 +1212,75 @@ int Filesystem::handleRename(const RenameContext& ctx) {
     }
 }
 
+Filesystem::AtRestRepair Filesystem::repairAtRest(const std::shared_ptr<Engine>& engine) {
+    AtRestRepair result;
+    if (!engine || !engine->vault || !engine->encryptionManager) return result;
+
+    const auto& cache = runtime::Deps::get().fsCache;
+    std::set<unsigned int> touchedParents;
+
+    for (const auto& listed : db::query::fs::File::listFilesInDir(engine->vault->id, "/", true)) {
+        try {
+            // By inode: a miss loads and caches the entry (with its backing path) without the by-id miss warning.
+            if (!listed->inode) continue;
+            const auto entry = std::dynamic_pointer_cast<File>(cache->getEntry(static_cast<fuse_ino_t>(*listed->inode)));
+            if (!entry || !entry->inode) continue;
+            if (fuse::WorkingCopies::instance().openSize(*entry->inode)) continue;
+
+            std::error_code ec;
+            if (!std::filesystem::is_regular_file(entry->backing_path, ec)) continue;
+            const auto onDisk = std::filesystem::file_size(entry->backing_path);
+
+            if (entry->encryption_iv.empty()) {
+                if (onDisk == 0) continue;
+
+                const auto staged = std::make_shared<File>(*entry);
+                const auto sealed = entry->backing_path.parent_path() /
+                                    (entry->backing_path.filename().string() + ".vh-seal-" + generate_random_suffix(8));
+                try {
+                    engine->encryptionManager->encryptFileToFile(entry->backing_path, sealed, staged);
+                    std::filesystem::rename(sealed, entry->backing_path);
+                } catch (...) {
+                    std::filesystem::remove(sealed, ec);
+                    throw;
+                }
+                entry->encryption_iv = staged->encryption_iv;
+                entry->encrypted_with_key_version = staged->encrypted_with_key_version;
+                entry->size_bytes = onDisk;
+                entry->content_hash = hash::blake2b(entry->backing_path);
+                ++result.encrypted;
+            } else {
+                const auto plaintextSize = onDisk >= vh::crypto::util::AES_TAG_SIZE ? onDisk - vh::crypto::util::AES_TAG_SIZE : 0;
+                if (entry->size_bytes == plaintextSize) continue;
+                entry->size_bytes = plaintextSize;
+                ++result.resized;
+            }
+
+            db::query::fs::File::updateFile(entry);
+            cache->updateEntry(entry);
+            if (entry->parent_id) touchedParents.insert(static_cast<unsigned int>(*entry->parent_id));
+        } catch (const std::exception& e) {
+            ++result.failed;
+            log::Registry::fs()->warn("[Filesystem::repairAtRest] Vault {} file {}: {}",
+                                      engine->vault->id, listed->path.string(), e.what());
+        }
+    }
+
+    for (const auto id : touchedParents) cache->refreshDirStats(id);
+
+    if (result.encrypted || result.resized || result.failed)
+        log::Registry::fs()->info(
+            "[Filesystem::repairAtRest] Vault {}: encrypted {} plaintext file(s), corrected {} size(s), {} failed",
+            engine->vault->id, result.encrypted, result.resized, result.failed);
+    return result;
+}
+
+// Within a vault a rename only moves the bytes: they stay sealed with the same key and IV, so the files row needs no
+// new encryption metadata. Re-encrypting here once turned FUSE-written plaintext into ciphertext the mount then
+// served as-is (#173).
 bool Filesystem::canFastPath(const std::shared_ptr<Entry>& entry, const std::shared_ptr<Engine>& engine) {
     if (entry->isDirectory()) return false;
     const auto file = std::static_pointer_cast<File>(entry);
-    if (file->encryption_iv.empty()) return false;
     return file->vault_id == engine->vault->id;
 }
 

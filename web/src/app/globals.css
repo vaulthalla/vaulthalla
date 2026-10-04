@@ -1,213 +1,217 @@
 @import "tailwindcss";
 
+/*
+ * Vaulthalla design tokens. Dark only: the near-black canvas with one cyan accent is the product's identity.
+ * Components use these through the Tailwind theme below (bg-surface-1, text-fg-muted, border-line, text-accent,
+ * bg-ok-soft, ...). Raw palette classes outside src/components/ui are linted against.
+ */
 :root {
-    /* Base UI */
-    --background: #0a0a0a;        /* deep void */
-    --foreground: #e5e7eb;        /* zinc-200 */
+    color-scheme: dark;
 
-    /* Primary: Cyan Glimmer */
-    --primary: #0ff4f2;           /* radiant cyan */
-    --primary-foreground: #000000;
+    --bg: #05080d;
+    --bg-raised: #0a0f16;
 
-    /* Secondary: Obsidian Steel */
-    --secondary: #1e293b;         /* slate-800 */
-    --secondary-foreground: #f1f5f9;
+    /* Content surfaces: translucent steps over the canvas. */
+    --surface-1: rgb(255 255 255 / 0.028);
+    --surface-2: rgb(255 255 255 / 0.05);
+    --surface-3: rgb(255 255 255 / 0.08);
+    --surface-solid: #0b1119;
 
-    /* Destructive: Blood of the Betrayer */
-    --destructive: #dc2626;       /* red-600 */
-    --destructive-foreground: #ffffff;
+    --line: rgb(255 255 255 / 0.08);
+    --line-strong: rgb(255 255 255 / 0.15);
 
-    /* Accent: Rune Energy */
-    --accent: #0f766e;            /* teal-700 */
-    --accent-foreground: #ecfeff;
+    --fg: #e6edf5;
+    --fg-muted: rgb(230 237 245 / 0.72);
+    --fg-subtle: rgb(230 237 245 / 0.52);
+    --fg-faint: rgb(230 237 245 / 0.34);
 
-    /* Muted: For Subtle Borders, Dividers */
-    --muted: #334155;             /* slate-700 */
-    --muted-foreground: #94a3b8;  /* slate-400 */
+    /* The one brand cyan. Text uses accent-text (higher contrast); fills use accent with accent-ink on top. */
+    --accent: #22d3ee;
+    --accent-text: #67e8f9;
+    --accent-ink: #031318;
+    --accent-soft: rgb(34 211 238 / 0.12);
+    --accent-line: rgb(34 211 238 / 0.36);
+    --accent-glow: rgb(34 211 238 / 0.35);
 
-    /* Border / Ring / Input */
-    --border: #1f2937;            /* gray-800 */
-    --input: #1f2937;
-    --ring: #7dd3fc;              /* sky-300 */
+    /* Status tones. Only the backend decides which one applies; unknown is never green. */
+    --ok: #34d399;
+    --ok-soft: rgb(52 211 153 / 0.12);
+    --ok-line: rgb(52 211 153 / 0.34);
+    --info: #38bdf8;
+    --info-soft: rgb(56 189 248 / 0.12);
+    --info-line: rgb(56 189 248 / 0.34);
+    --warn: #fbbf24;
+    --warn-soft: rgb(251 191 36 / 0.12);
+    --warn-line: rgb(251 191 36 / 0.36);
+    --danger: #f87171;
+    --danger-strong: #dc2626;
+    --danger-soft: rgb(248 113 113 / 0.12);
+    --danger-line: rgb(248 113 113 / 0.38);
+    --unknown: #94a3b8;
+    --unknown-soft: rgb(148 163 184 / 0.12);
+    --unknown-line: rgb(148 163 184 / 0.3);
 
-    /* Warning / Caution */
-    --warning: #facc15;           /* yellow-400 */
-    --warning-foreground: #000000;
-
-    /* Success / Verified */
-    --success: #22c55e;           /* green-500 */
-    --success-foreground: #000000;
-
-    /* Glow FX (for glows, shadows, overlays) */
-    --glow-cyan: #0ff4f288;
-    --glow-red: #dc262688;
-    --glow-green: #22c55e88;
-    --glow-yellow: #facc1588;
-    --glow-orange: rgba(255, 107, 0, 0.9);
-
-    /* Font */
-    --font-sans: var(--font-geist-sans, 'Geist Sans', sans-serif);
-    --font-mono: var(--font-geist-mono, 'Geist Mono', monospace);
+    scrollbar-color: rgb(255 255 255 / 0.16) transparent;
 }
 
 @theme inline {
-    --color-background: var(--background);
-    --color-foreground: var(--foreground);
+    --color-bg: var(--bg);
+    --color-bg-raised: var(--bg-raised);
+    --color-surface-1: var(--surface-1);
+    --color-surface-2: var(--surface-2);
+    --color-surface-3: var(--surface-3);
+    --color-surface-solid: var(--surface-solid);
+    --color-line: var(--line);
+    --color-line-strong: var(--line-strong);
 
-    --color-primary: var(--primary);
-    --color-primary-foreground: var(--primary-foreground);
-
-    --color-secondary: var(--secondary);
-    --color-secondary-foreground: var(--secondary-foreground);
-
-    --color-destructive: var(--destructive);
-    --color-destructive-foreground: var(--destructive-foreground);
+    --color-fg: var(--fg);
+    --color-fg-muted: var(--fg-muted);
+    --color-fg-subtle: var(--fg-subtle);
+    --color-fg-faint: var(--fg-faint);
 
     --color-accent: var(--accent);
-    --color-accent-foreground: var(--accent-foreground);
+    --color-accent-text: var(--accent-text);
+    --color-accent-ink: var(--accent-ink);
+    --color-accent-soft: var(--accent-soft);
+    --color-accent-line: var(--accent-line);
 
-    --color-muted: var(--muted);
-    --color-muted-foreground: var(--muted-foreground);
+    --color-ok: var(--ok);
+    --color-ok-soft: var(--ok-soft);
+    --color-ok-line: var(--ok-line);
+    --color-info: var(--info);
+    --color-info-soft: var(--info-soft);
+    --color-info-line: var(--info-line);
+    --color-warn: var(--warn);
+    --color-warn-soft: var(--warn-soft);
+    --color-warn-line: var(--warn-line);
+    --color-danger: var(--danger);
+    --color-danger-strong: var(--danger-strong);
+    --color-danger-soft: var(--danger-soft);
+    --color-danger-line: var(--danger-line);
+    --color-unknown: var(--unknown);
+    --color-unknown-soft: var(--unknown-soft);
+    --color-unknown-line: var(--unknown-line);
 
-    --color-border: var(--border);
-    --color-input: var(--input);
-    --color-ring: var(--ring);
+    /* Decorative tints (file types, chart series). Never status. */
+    --color-violet: #c4b5fd;
+    --color-pink: #f0abfc;
 
-    --color-warning: var(--warning);
-    --color-warning-foreground: var(--warning-foreground);
+    --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+    --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, monospace;
 
-    --color-success: var(--success);
-    --color-success-foreground: var(--success-foreground);
+    --radius-control: 0.5rem;
+    --radius-card: 0.875rem;
+    --radius-panel: 1.25rem;
 
-    --color-glow-cyan: var(--glow-cyan);
-    --color-glow-red: var(--glow-red);
-    --color-glow-green: var(--glow-green);
-    --color-glow-yellow: var(--glow-yellow);
-    --color-glow-orange: var(--glow-orange);
+    --shadow-glow: 0 0 0 1px var(--accent-line), 0 0 24px -6px var(--accent-glow);
+    --shadow-pop: 0 18px 50px -18px rgb(0 0 0 / 0.75), 0 0 0 1px var(--line-strong);
 
-    --font-sans: var(--font-sans);
-    --font-mono: var(--font-mono);
-}
+    --animate-fade-in: fade-in 140ms ease-out;
+    --animate-pop-in: pop-in 160ms cubic-bezier(0.2, 0.9, 0.3, 1.2);
+    --animate-shimmer: shimmer 1.6s linear infinite;
 
-@media (prefers-color-scheme: dark) {
-    :root {
-        --background: #0a0a0a;
-        --foreground: #ededed;
+    @keyframes fade-in {
+        from { opacity: 0; }
+        to { opacity: 1; }
+    }
+    @keyframes pop-in {
+        from { opacity: 0; transform: translateY(4px) scale(0.98); }
+        to { opacity: 1; transform: none; }
+    }
+    @keyframes shimmer {
+        from { background-position: -200% 0; }
+        to { background-position: 200% 0; }
     }
 }
 
-@media (prefers-color-scheme: light) {
-    :root {
-        --background: #f9fafb;
-        --foreground: #111827;
+@layer base {
+    html {
+        background: var(--bg);
+    }
 
-        --primary: #0e7490;
-        --primary-foreground: #ffffff;
+    body {
+        min-height: 100dvh;
+        color: var(--fg);
+        font-family: var(--font-sans);
+        background:
+            radial-gradient(1100px 520px at 12% -12%, rgb(34 211 238 / 0.075), transparent 62%),
+            radial-gradient(900px 480px at 100% -8%, rgb(56 189 248 / 0.04), transparent 60%),
+            var(--bg);
+        background-attachment: fixed;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+    }
 
-        --secondary: #e5e7eb;
-        --secondary-foreground: #111827;
+    ::selection {
+        background: rgb(34 211 238 / 0.3);
+    }
 
-        --destructive: #ef4444;
-        --destructive-foreground: #ffffff;
+    :focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+    }
 
-        --accent: #06b6d4;
-        --accent-foreground: #000000;
-
-        --muted: #e5e7eb;
-        --muted-foreground: #6b7280;
-
-        --border: #d1d5db;
-        --input: #e5e7eb;
-        --ring: #0ea5e9;
-
-        --warning: #eab308;
-        --warning-foreground: #000000;
-
-        --success: #16a34a;
-        --success-foreground: #ffffff;
+    @media (prefers-reduced-motion: reduce) {
+        *, ::before, ::after {
+            animation-duration: 0.01ms !important;
+            transition-duration: 0.01ms !important;
+        }
     }
 }
 
-body {
-    background: var(--background);
-    color: var(--foreground);
-    font-family: Arial, Helvetica, sans-serif;
+/* Translucent chrome: the shell, overlays, the health hero. Never stacked on itself. */
+@utility glass {
+    background: linear-gradient(180deg, rgb(255 255 255 / 0.055), rgb(255 255 255 / 0.022));
+    backdrop-filter: blur(18px) saturate(140%);
+    -webkit-backdrop-filter: blur(18px) saturate(140%);
+    border: 1px solid var(--line);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.05), 0 12px 32px -16px rgb(0 0 0 / 0.65);
 }
 
-.icon-duo-bluewhite .fa-secondary {
-    fill: #60a5fa; /* Tailwind blue-400 */
+@utility glass-strong {
+    background: rgb(10 15 22 / 0.86);
+    backdrop-filter: blur(22px) saturate(150%);
+    -webkit-backdrop-filter: blur(22px) saturate(150%);
+    border: 1px solid var(--line-strong);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06), var(--shadow-pop);
 }
 
-.icon-duo-bluewhite .fa-primary {
-    fill: #ffffff; /* White */
+/* Content panel: solid enough to read dense tables on, with a faint rim light. */
+@utility panel {
+    background: linear-gradient(180deg, rgb(255 255 255 / 0.035), rgb(255 255 255 / 0.018));
+    border: 1px solid var(--line);
+    border-radius: var(--radius-card);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.04);
 }
 
-.icon-duo-redyellow .fa-secondary {
-    fill: #facc15; /* yellow-400 */
+@utility tabular {
+    font-variant-numeric: tabular-nums;
 }
 
-.icon-duo-redyellow .fa-primary {
-    fill: #dc2626; /* red-600 */
+@utility skeleton {
+    background: linear-gradient(90deg, rgb(255 255 255 / 0.04) 25%, rgb(255 255 255 / 0.09) 37%, rgb(255 255 255 / 0.04) 63%);
+    background-size: 400% 100%;
+    animation: var(--animate-shimmer);
+    border-radius: 0.375rem;
 }
 
-@keyframes spin-slow {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
+@utility scrollbar-thin {
+    scrollbar-width: thin;
 }
 
-.animate-spin-slow {
-    animation: spin-slow 3s linear infinite;
-}
-
-.card-glass {
-    @apply bg-gradient-to-br from-gray-600/10 to-gray-200/10 border border-gray-200 rounded-xl shadow-lg backdrop-blur;
-}
-
-.text-glow-cyan {
-    color: #67e8f9;
-    text-shadow:
-            0 0 8px rgba(103, 232, 249, 0.45),
-            0 0 18px rgba(34, 211, 238, 0.25);
-}
-
-.text-glow-blue {
-    color: #60a5fa;
-    text-shadow:
-            0 0 8px rgba(96, 165, 250, 0.45),
-            0 0 18px rgba(59, 130, 246, 0.25);
-}
-
-.text-glow-green {
-    color: #4ade80;
-    text-shadow:
-            0 0 8px rgba(74, 222, 128, 0.45),
-            0 0 18px rgba(34, 197, 94, 0.25);
-}
-
-.text-glow-yellow {
-    color: #fde047;
-    text-shadow:
-            0 0 8px rgba(253, 224, 71, 0.45),
-            0 0 18px rgba(250, 204, 21, 0.25);
-}
-
-.text-glow-red {
-    color: #f87171;
-    text-shadow:
-            0 0 8px rgba(248, 113, 113, 0.45),
-            0 0 18px rgba(220, 38, 38, 0.25);
-}
-
-.text-glow-violet {
-    color: #a78bfa;
-    text-shadow:
-            0 0 8px rgba(167, 139, 250, 0.45),
-            0 0 18px rgba(139, 92, 246, 0.25);
-}
-
-.text-glow-orange {
-    color: #ff8a3d;
-    text-shadow:
-            0 0 8px rgba(255, 138, 61, 0.45),
-            0 0 18px rgba(255, 107, 0, 0.28);
+/* Native checkbox styling (components/ui/Choice.tsx): the check glyphs are data URLs, which can't live in class names. */
+@layer components {
+    .check-control:checked,
+    .check-control:indeterminate {
+        border-color: var(--accent);
+        background-color: var(--accent);
+        background-position: center;
+        background-repeat: no-repeat;
+    }
+    .check-control:checked {
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.2l2.3 2.3 4.7-5' fill='none' stroke='%23031318' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");
+    }
+    .check-control:indeterminate {
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M3 6h6' stroke='%23031318' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");
+    }
 }

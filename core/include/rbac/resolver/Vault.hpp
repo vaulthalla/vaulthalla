@@ -28,6 +28,7 @@
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
+#include <algorithm>
 #include <vector>
 
 namespace vh::rbac::resolver {
@@ -58,11 +59,11 @@ namespace vh::rbac::resolver {
             static_assert(std::is_enum_v<EnumT>,
                           "vh::rbac::resolver::Vault::collectPermissions(): EnumT must be an enum type");
 
-            std::vector<EnumT> out;
-            out.reserve((ctx.permission.has_value() ? 1u : 0u) + ctx.permissions.size());
-
-            if (ctx.permission) out.push_back(*ctx.permission);
-            out.insert(out.end(), ctx.permissions.begin(), ctx.permissions.end());
+            // One allocation, filled in place (growing after reserve() trips GCC's -O3 -Wfree-nonheap-object).
+            std::vector<EnumT> out((ctx.permission ? 1u : 0u) + ctx.permissions.size());
+            auto next = out.begin();
+            if (ctx.permission) *next++ = *ctx.permission;
+            std::ranges::copy(ctx.permissions, next);
 
             if (out.empty())
                 throw std::invalid_argument(

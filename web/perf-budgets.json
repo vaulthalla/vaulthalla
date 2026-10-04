@@ -1,0 +1,10 @@
+{
+  "$comment": "First-load JavaScript per route, gzip KB, from `pnpm build` (polyfills excluded: legacy browsers only). Enforced by bin/check-budgets.mjs as a hard CI gate. Next 16 + React 19 alone are ~143 KB. Raise a budget only with a reason in the commit message.",
+  "default": 240,
+  "routes": {
+    "/": 150,
+    "/login": 170,
+    "/files/[[...slug]]": 230,
+    "/share/[token]/[[...path]]": 220
+  }
+}

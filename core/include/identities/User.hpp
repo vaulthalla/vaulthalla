@@ -155,6 +155,11 @@ namespace vh::identities {
 
     nlohmann::json to_json(const std::vector<std::shared_ptr<User> > &users);
 
+    // The list projection (auth.users.list): the user fields of to_json, with admin_role and each vault role reduced
+    // to {id, name, description, type, assigned_at} (+ a vault role's assignment). No permission sets; the single
+    // user reads (auth.user.get, auth.isAuthenticated) keep them.
+    nlohmann::json to_list_json(const std::vector<std::shared_ptr<User> > &users);
+
     nlohmann::json to_json(const std::shared_ptr<User> &user);
 
     std::string to_string(const std::shared_ptr<User> &user);

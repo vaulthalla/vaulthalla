@@ -226,9 +226,10 @@ protected:
             EXPECT_EQ(ws.ok, expected) << where << ": ws verdict vs permission oracle. " << ws.detail;
             EXPECT_EQ(cli.state, ws.state) << where << ": resulting state differs.\n cli: " << cli.state.dump()
                                            << "\n ws:  " << ws.state.dump();
-            if (cli.ok && ws.ok)
+            if (cli.ok && ws.ok) {
                 EXPECT_EQ(cli.shown, ws.shown) << where << ": surfaces showed different results.\n cli: "
                                                << cli.shown.dump() << "\n ws:  " << ws.shown.dump();
+            }
         }
     }
 };

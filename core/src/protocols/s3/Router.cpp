@@ -28,6 +28,7 @@
 #include <openssl/evp.h>
 #include <openssl/md5.h>
 #include <openssl/sha.h>
+#include "crypto/util/digest.hpp"
 #include <optional>
 #include <ranges>
 #include <sstream>
@@ -162,10 +163,9 @@ std::vector<uint8_t> bodyBytes(const Router::Request& request, const Router::Bod
 }
 
 std::string routerMd5Base64(const std::vector<uint8_t>& bytes) {
-    unsigned char digest[MD5_DIGEST_LENGTH];
-    MD5(bytes.data(), bytes.size(), digest);
+    const auto digest = crypto::util::EvpDigest::of(EVP_md5(), bytes.data(), bytes.size());
     std::array<unsigned char, EVP_ENCODE_LENGTH(MD5_DIGEST_LENGTH)> encoded{};
-    const auto len = EVP_EncodeBlock(encoded.data(), digest, MD5_DIGEST_LENGTH);
+    const auto len = EVP_EncodeBlock(encoded.data(), digest.data(), static_cast<int>(digest.size()));
     return {reinterpret_cast<char*>(encoded.data()), static_cast<std::size_t>(len)};
 }
 
@@ -866,10 +866,9 @@ Router::Router()
     : auth_(config::Registry::get().s3_gateway.require_sigv4) {}
 
 std::string Router::checksumSha256Base64(const std::vector<uint8_t>& bytes) {
-    unsigned char digest[SHA256_DIGEST_LENGTH];
-    SHA256(bytes.data(), bytes.size(), digest);
+    const auto digest = crypto::util::EvpDigest::of(EVP_sha256(), bytes.data(), bytes.size());
     std::array<unsigned char, EVP_ENCODE_LENGTH(SHA256_DIGEST_LENGTH)> encoded{};
-    const auto len = EVP_EncodeBlock(encoded.data(), digest, SHA256_DIGEST_LENGTH);
+    const auto len = EVP_EncodeBlock(encoded.data(), digest.data(), static_cast<int>(digest.size()));
     return {reinterpret_cast<char*>(encoded.data()), static_cast<std::size_t>(len)};
 }
 

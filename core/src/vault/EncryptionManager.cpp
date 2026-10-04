@@ -7,6 +7,7 @@
 
 #include <sodium.h>
 #include <openssl/evp.h>
+#include <algorithm>
 #include <array>
 #include <fstream>
 #include <stdexcept>
@@ -244,12 +245,12 @@ void EncryptionManager::encryptFileToFile(
     f->encrypted_with_key_version = version_;
 }
 
-std::vector<uint8_t> EncryptionManager::decrypt(const std::vector<uint8_t>& ciphertext, const std::string& b64_iv, const unsigned int keyVersion) const {
+const std::vector<uint8_t>& EncryptionManager::keyFor(const unsigned int keyVersion) const {
     if (rotation_in_progress_.load()) {
         if (key_.empty() || old_key_.empty()) throw std::runtime_error("Key rotation in progress but keys are not set");
 
-        if (keyVersion == version_) return decrypt_aes256_gcm(ciphertext, key_, b64_decode(b64_iv));
-        if (keyVersion == version_ - 1) return decrypt_aes256_gcm(ciphertext, old_key_, b64_decode(b64_iv));
+        if (keyVersion == version_) return key_;
+        if (keyVersion == version_ - 1) return old_key_;
 
         if (keyVersion < version_ - 1)
             log::Registry::crypto()->warn("[VaultEncryptionManager] Key version {} is too old for vault {}, using new key",
@@ -258,7 +259,7 @@ std::vector<uint8_t> EncryptionManager::decrypt(const std::vector<uint8_t>& ciph
             log::Registry::crypto()->warn("[VaultEncryptionManager] Key version {} is newer than current version {} for vault {}, using new key",
                                         keyVersion, version_, vault_id_);
 
-        return decrypt_aes256_gcm(ciphertext, key_, b64_decode(b64_iv));
+        return key_;
     }
 
     if (keyVersion != version_) {
@@ -267,7 +268,19 @@ std::vector<uint8_t> EncryptionManager::decrypt(const std::vector<uint8_t>& ciph
         throw std::runtime_error("Key version mismatch");
     }
 
-    return decrypt_aes256_gcm(ciphertext, key_, b64_decode(b64_iv));
+    return key_;
+}
+
+std::vector<uint8_t> EncryptionManager::decrypt(const std::vector<uint8_t>& ciphertext, const std::string& b64_iv, const unsigned int keyVersion) const {
+    return decrypt_aes256_gcm(ciphertext, keyFor(keyVersion), b64_decode(b64_iv));
+}
+
+void EncryptionManager::decryptFileToFile(
+    const std::filesystem::path& ciphertextPath,
+    const std::filesystem::path& plaintextPath,
+    const std::string& b64_iv,
+    const unsigned int keyVersion) const {
+    decrypt_aes256_gcm_file(ciphertextPath, plaintextPath, keyFor(keyVersion), b64_decode(b64_iv));
 }
 
 std::vector<uint8_t> EncryptionManager::get_key(const std::string& callingFunctionName) const {

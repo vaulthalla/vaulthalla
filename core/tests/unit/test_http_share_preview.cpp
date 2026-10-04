@@ -866,7 +866,7 @@ TEST_F(HttpSharePreviewTest, ShareFileDownloadReadsShareRefreshCookieAndIgnoresH
 
     EXPECT_EQ(status::ok, responseStatus(response));
     EXPECT_EQ("", vectorBody(response));
-    EXPECT_EQ("attachment; filename=\"report.jpg\"", responseHeader(response, field::content_disposition));
+    EXPECT_EQ("attachment; filename=\"report.jpg\"; filename*=UTF-8''report.jpg", responseHeader(response, field::content_disposition));
     EXPECT_FALSE(session->user);
     ASSERT_FALSE(store->audits.empty());
     EXPECT_TRUE(std::ranges::any_of(store->audits, [](const auto& audit) {
@@ -954,7 +954,7 @@ TEST_F(HttpSharePreviewTest, ShareDirectoryArchiveContainsScopedRelativeEntries)
     EXPECT_NE(std::string::npos, archive.find("nested/empty.txt"));
     EXPECT_EQ(std::string::npos, archive.find("/secret.txt"));
     EXPECT_EQ(std::string::npos, archive.find(".."));
-    EXPECT_EQ("attachment; filename=\"shared.zip\"", responseHeader(response, field::content_disposition));
+    EXPECT_EQ("attachment; filename=\"shared.zip\"; filename*=UTF-8''shared.zip", responseHeader(response, field::content_disposition));
 }
 
 TEST_F(HttpSharePreviewTest, ShareDownloadSanitizesContentDispositionFilename) {
@@ -966,7 +966,20 @@ TEST_F(HttpSharePreviewTest, ShareDownloadSanitizesContentDispositionFilename) {
     auto response = Router::handleDownload(previewRequest("/download?share=1&path=%2Freport.jpg"));
 
     EXPECT_EQ(status::ok, responseStatus(response));
-    EXPECT_EQ("attachment; filename=\"bad__name.txt\"", responseHeader(response, field::content_disposition));
+    EXPECT_EQ("attachment; filename=\"bad__name.txt\"; filename*=UTF-8''bad%22%3Bname.txt", responseHeader(response, field::content_disposition));
+}
+
+// #143: non-ASCII names went raw into filename="" and leading dots were stripped (".env" downloaded as "env").
+TEST(HttpContentDisposition, CarriesUtf8FilenameStarAndAsciiFallbackAndKeepsLeadingDots) {
+    EXPECT_EQ("attachment; filename=\"na_ve __.pdf\"; filename*=UTF-8''na%C3%AFve%20%E6%97%A5%E6%9C%AC.pdf",
+              Router::attachmentContentDisposition("na\xC3\xAFve \xE6\x97\xA5\xE6\x9C\xAC.pdf"));
+    EXPECT_EQ("attachment; filename=\".env\"; filename*=UTF-8''.env", Router::attachmentContentDisposition(".env"));
+    EXPECT_EQ("attachment; filename=\"..hidden\"; filename*=UTF-8''..hidden",
+              Router::attachmentContentDisposition("dir/..hidden"));
+    EXPECT_EQ("attachment; filename=\"download\"; filename*=UTF-8''download", Router::attachmentContentDisposition(".."));
+    EXPECT_EQ("attachment; filename=\"download\"; filename*=UTF-8''download", Router::attachmentContentDisposition("  "));
+    EXPECT_EQ("attachment; filename=\"a__b.txt\"; filename*=UTF-8''a__b.txt",
+              Router::attachmentContentDisposition("a\r\nb.txt"));
 }
 
 }

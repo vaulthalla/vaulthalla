@@ -30,10 +30,25 @@ struct Create {
     std::optional<Ref> owner{};       // defaults to the actor
 };
 
+// An in-place edit: the key keeps its id, so every vault bound to it keeps its S3 binding (the web used to delete
+// and re-create, which cascaded into the vaults' s3 rows). Unset fields keep their value; an unset or empty secret
+// keeps the sealed secret.
+struct Update {
+    std::optional<std::string> name{};
+    std::optional<vault::model::S3Provider> provider{};
+    std::optional<std::string> access_key{};
+    std::optional<std::string> secret_access_key{};
+    std::optional<std::string> endpoint{};
+    std::optional<std::string> region{};
+};
+
 // Creates the key after checking the credentials against the provider (skipped in test mode). Never returns the
 // secret.
 [[nodiscard]] APIKeyPtr create(const Actor& actor, const Create& req);
-// Returns the removed key's metadata.
+// Edits the key in place (admin keys.api edit) and re-checks the resulting credentials against the provider like
+// create (skipped in test mode). Live engines of the vaults using the key are rebuilt with the new credentials.
+[[nodiscard]] APIKeyPtr update(const Actor& actor, const Ref& key, const Update& req);
+// Returns the removed key's metadata. Refused (Invalid, naming the vaults) while any vault is bound to the key.
 APIKeyPtr remove(const Actor& actor, const Ref& key);
 // Metadata only; the secret stays sealed.
 [[nodiscard]] APIKeyPtr get(const Actor& actor, const Ref& key);

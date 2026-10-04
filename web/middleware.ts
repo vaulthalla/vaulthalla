@@ -4,28 +4,15 @@ export const config = {
   matcher: ['/((?!api|_next|favicon.ico|robots.txt|sitemap.xml).*)'],
 }
 
-const WEB_ORIGIN_FALLBACK = 'http://127.0.0.1:36968'
-const FETCH_TIMEOUT_MS = 2500
-
 const PUBLIC_PATH_PREFIXES = ['/login', '/share']
 const PUBLIC_FILES = new Set(['/favicon.ico', '/robots.txt', '/sitemap.xml'])
 const STATIC_ASSET_PATTERN = /\.(?:avif|css|gif|ico|jpeg|jpg|js|json|map|png|svg|txt|webmanifest|webp|woff|woff2)$/i
 
-const getInternalWebOrigin = (req: NextRequest) => {
-  return (
-    process.env.VAULTHALLA_WEB_INTERNAL_ORIGIN ??
-    process.env.NEXT_PRIVATE_WEB_INTERNAL_ORIGIN ??
-    (process.env.NODE_ENV === 'production' ? WEB_ORIGIN_FALLBACK : req.nextUrl.origin)
-  ).replace(/\/+$/, '')
-}
-
-const shouldBypassAuth = (req: NextRequest) => {
+const isPublic = (req: NextRequest) => {
   const { pathname } = req.nextUrl
-
   if (PUBLIC_FILES.has(pathname)) return true
   if (pathname.startsWith('/_next') || pathname.startsWith('/api')) return true
   if (PUBLIC_PATH_PREFIXES.some(path => pathname === path || pathname.startsWith(`${path}/`))) return true
-
   return STATIC_ASSET_PATTERN.test(pathname)
 }
 
@@ -35,29 +22,11 @@ const redirectToLogin = (req: NextRequest) => {
   return NextResponse.redirect(redir)
 }
 
-export async function middleware(req: NextRequest) {
-  if (shouldBypassAuth(req)) return NextResponse.next()
-
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
-
-  try {
-    const url = new URL('/api/auth/session', getInternalWebOrigin(req))
-
-    const res = await fetch(url, {
-      method: 'GET',
-      headers: {
-        cookie: req.headers.get('cookie') ?? '',
-      },
-      cache: 'no-store',
-      signal: controller.signal,
-    })
-
-    if (!res.ok) return redirectToLogin(req)
-    return NextResponse.next()
-  } catch {
-    return redirectToLogin(req)
-  } finally {
-    clearTimeout(timeout)
-  }
+// Presence only: no refresh cookie means login. Whether the cookie is still valid is the websocket session gate's
+// call (SessionGate → auth.refresh), which sends a refused session to /login and shows its reconnect state when the
+// daemon is down. Pages carry no data (everything loads over the socket after the gate), so there is nothing to
+// protect here, and an upstream check per navigation only added a round trip (#171).
+export function middleware(req: NextRequest) {
+  if (isPublic(req) || req.cookies.get('refresh')?.value) return NextResponse.next()
+  return redirectToLogin(req)
 }

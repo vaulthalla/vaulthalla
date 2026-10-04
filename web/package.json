@@ -2,6 +2,9 @@
   "name": "vaulthalla-web",
   "version": "1.8.1",
   "private": true,
+  "sideEffects": [
+    "**/*.css"
+  ],
   "scripts": {
     "dev": "next dev --turbopack",
     "dev:e2e": "NEXT_PUBLIC_VAULTHALLA_WS_ORIGIN=${NEXT_PUBLIC_VAULTHALLA_WS_ORIGIN:-ws://127.0.0.1:36969} VAULTHALLA_AUTH_ORIGIN=${VAULTHALLA_AUTH_ORIGIN:-http://127.0.0.1:36970} VAULTHALLA_PREVIEW_ORIGIN=${VAULTHALLA_PREVIEW_ORIGIN:-http://127.0.0.1:36970} next dev --turbopack --hostname ${VAULTHALLA_E2E_WEB_HOST:-127.0.0.1} --port ${VAULTHALLA_E2E_WEB_PORT:-3000}",
@@ -9,26 +12,31 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts,.tsx,.js,.jsx",
-    "test": "pnpm run typecheck && pnpm run lint",
+    "test": "pnpm run typecheck && pnpm run lint && pnpm run colors",
     "test:e2e": "playwright test",
     "test:e2e:s3-gateway": "playwright test tests/e2e/s3-gateway.spec.ts",
-    "playwright:install": "playwright install"
+    "playwright:install": "playwright install",
+    "budgets": "node bin/check-budgets.mjs",
+    "colors": "node bin/check-colors.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
+    "@radix-ui/react-dialog": "^1.1.23",
+    "@radix-ui/react-dropdown-menu": "^2.1.24",
+    "@radix-ui/react-popover": "^1.1.23",
     "@radix-ui/react-slot": "^1.2.4",
+    "@radix-ui/react-tabs": "^1.1.21",
+    "@tanstack/react-query": "^5.104.1",
+    "@tanstack/react-virtual": "^3.14.13",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "echarts": "^6.0.0",
-    "motion": "^12.38.0",
+    "cmdk": "^1.1.1",
     "next": "^16.2.4",
-    "next-themes": "^0.4.6",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "react-hook-form": "^7.73.1",
+    "sonner": "^2.0.8",
     "tailwind-merge": "^3.5.0",
-    "use-debounce": "^10.1.1",
-    "uuid": "^11.1.0",
     "zod": "^3.25.76",
     "zustand": "^5.0.12"
   },

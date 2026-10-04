@@ -113,11 +113,20 @@ whose UID is bound to `admin` (root/system/sudo refused). Startup `retireLegacyD
 `vh!adm1n` with a generated one (file written, admin's refresh tokens revoked). `vh setup nginx` (lifecycle Python)
 warns while generated + file present and offers rotate / delete file / continue / cancel; non-TTY warns and continues.
 
-### HTTP auth/session proxy
+### Refresh tokens and the web auth gate
 
-`web/middleware.ts` calls `/api/auth/session` on the internal web origin (`VAULTHALLA_WEB_INTERNAL_ORIGIN`,
-prod fallback `127.0.0.1:36968`). `web/src/app/api/auth/session/route.ts` proxies to
-`VAULTHALLA_AUTH_ORIGIN` → `VAULTHALLA_PREVIEW_ORIGIN` → fallback `http://127.0.0.1:36970`.
+Refresh tokens (human and share) are HS256 JWTs minted by `auth::session::Issuer`: a libuuid random `jti` plus an
+HMAC-SHA256 signature keyed by the daemon's JWT secret (64 CSPRNG characters). Because they are high-entropy and
+server-minted, `refresh_tokens.token_hash` stores `crypto::hash::tokenDigest()` = `sha256:<64 lowercase hex>`, not a
+password hash. `crypto::hash::verifyToken()` accepts that digest (constant-time compare) or a legacy libsodium Argon2
+string written before #171; `auth::session::Validator::verifyStoredRefreshTokenHash` (used by both the ws handshake
+and the HTTP `validateRawRefreshToken` path) rewrites a legacy row to the digest after a successful verify
+(conditional `UPDATE`, a failed rewrite only logs). Argon2 cost ~0.57 s per check, paid on every page load and every
+HTTP preview/download. User passwords still use `crypto::hash::password()` (Argon2). No migration: the column is
+`TEXT`. Guard: `RefreshTokenDigest*` unit tests.
+
+`web/middleware.ts` only checks that a `refresh` cookie is present (no upstream call); the websocket session gate
+decides validity (see `web-client.md`). The daemon's HTTP `GET /auth/session` remains for other clients.
 (`NEXT_PUBLIC_SERVER_ADDR` no longer exists.)
 
 ### FUSE
@@ -130,10 +139,26 @@ prod fallback `127.0.0.1:36968`). `web/src/app/api/auth/session/route.ts` proxie
 - HTTP uploads stage `.upload-http-<id>-<file>.part` next to the target *through FUSE*, then rename
   from `fuse_from` to `fuse_to` (`http/upload/Coordinator.cpp`). This is intentional. Don't move staging out of
   FUSE to reduce sync churn; fix duplicate sync triggers or backing-path resolution instead.
+- **Vault bytes are always ciphertext at rest; the mount is the decrypting view (#173).** Every backing file (local
+  vaults and cloud vaults' local copies) is AES-256-GCM body‖16-byte tag, IV and key version in `files`, and
+  `files.size_bytes` is the *plaintext* size. FUSE `open` decrypts into a per-inode working copy
+  (`fuse/WorkingCopies`, 0600 under `<backing>/.fuse-plaintext`, shared by every handle on the inode); reads and
+  writes go to it; `flush` (so `close(2)` returns with the change on disk), `fsync` and the last `release` seal it
+  back (new IV, fsynced temp + rename). `setattr` size works on the copy. Copies that fail to seal move to
+  `.fuse-plaintext/unsaved/`; stale copies are deleted at mount. A same-vault rename only moves the bytes (no
+  re-encryption). `Filesystem::repairAtRest` (first sync pass per vault per start) seals plaintext left by older
+  builds and corrects ciphertext-length sizes.
+- No writeback cache (`FUSE_CAP_WRITEBACK_CACHE` off): with it the kernel owns `i_size` and ignores getattr sizes,
+  so out-of-band changes showed stale `stat` sizes. Handles are `direct_io` anyway.
+- `forget` does not evict the metadata cache (it is seeded at startup and updated by the daemon's own changes);
+  evicting a vault root used to make the whole vault ENOENT until restart.
+- The RBAC gate is unchanged in shape: `open` needs Read for readable handles and Write for writable or `O_TRUNC`
+  ones (both for `O_RDWR`); `write` and size changes check Write *before* touching the copy. A working copy is only
+  reachable through a handle that passed the resolver.
 
 ## Database
 
-- PostgreSQL via libpqxx. The schema is `deploy/psql/000…097_*.sql`, applied in order (all in ONE transaction by `core/seed/include/SqlDeployer.hpp`) and installed to `/usr/share/vaulthalla/psql`.
+- PostgreSQL via libpqxx. The schema is `deploy/psql/000…102_*.sql`, applied in order (all in ONE transaction by `core/seed/include/SqlDeployer.hpp`) and installed to `/usr/share/vaulthalla/psql`.
   New migrations take the next number and must be idempotent against upgraded installs. SqlDeployer records sha256(raw bytes)
   per file and refuses to start on a mismatch, so **never edit a shipped migration**: 020/060/082 were edited in place and
   bricked upgrades (1.5.x→1.6.x crash loop on 060). Reviewed exceptions live in `kHistoricalMigrationChecksums` (accepted, recorded
@@ -147,6 +172,11 @@ prod fallback `127.0.0.1:36968`). `web/src/app/api/auth/session/route.ts` proxie
   reconnects and retries once only when BEGIN fails on a dead connection (before `fn` runs); later failures
   surface. Pool state is in `SystemHealth.database` (`vh status`, stats ws, watchdog). Queries live in
   `core/src/db/query/<domain>/`, prepared statements in `core/src/db/preparedStatements/`.
+- **Time zones (#157):** every daemon session runs with `TimeZone=UTC` (`db::Connection::configureSession`, on connect
+  and reconnect) and records the zone it started in as `vaulthalla.database_timezone`. Migration 100 converted every
+  `timestamp` column to `timestamptz`, reading old values in that recorded zone (manual psql runs fall back to the
+  session zone); columns a view depends on are skipped with a warning. New columns must be `TIMESTAMPTZ`. Text output
+  is `YYYY-MM-DD HH:MM:SS[.ffffff]+00`, which `db::encoding::parsePostgresTimestamp` handles. Guard: `DbTimezoneTest`.
 - `db::Janitor` handles sweeps. Stats rollups read from `file_activity`, `files_trashed`, `operations`, `share_*`.
 
 ## Subsystem directory map (`core/src`, mirrored in `core/include`)
@@ -167,8 +197,10 @@ validates, persists, and returns domain objects. Refusals are typed `ops::Error`
 `Conflict`, and `NeedsConfirmation{code}` for "a person must accept this first", e.g. the encryption waiver). The CLI
 handler parses with `CommandUsage` and calls the op through `shell::runOp`, which maps `ops::Error` to exit 2 (CLI
 waiver prompts go through `shell::commands::vault::runWithWaiver`). The ws handler maps its payload to the request,
-and `makePayloadHandler` turns the exception into an `ERROR` response (`NeedsConfirmation` adds `data.code`; the web
-asks and resends with `accept_encryption_waiver`). Rules: RBAC for an operation lives in the op, never in the frontend as well; code beneath
+and every ws handler template (`protocols/ws/core/handler_templates.hpp`, `describeCurrentError`) turns the exception into
+an `ERROR` response whose `data.code` is stable: `denied`, `not_found`, `invalid`, `conflict`, or the `NeedsConfirmation`
+code (the web asks and resends with `accept_encryption_waiver`); a non-`ops::Error` fault has no code. Handler-level
+gates (stats/settings/email/pricing admin checks, share upload scope) throw `ops::Denied` so they carry `denied`. Rules: RBAC for an operation lives in the op, never in the frontend as well; code beneath
 `ops::` (managers, `db::query`) never authorizes; internal callers use those primitives directly, not ops; no
 registry, base class or transport abstraction. Parity is proven by `test_ops_parity_groups.cpp`, which runs each
 group operation through both surfaces for every seeded admin role and compares verdicts and DB state.
@@ -184,6 +216,11 @@ Rules the families hold (keep them in ops, never re-add them in a handler):
   system stats), picks admins.* vs users.* identity permissions. The ceiling applies to assignment *and* to managing an
   account above you (edit, delete, reset password). Deletion, deactivation, role change and password reset call
   `auth::Manager::revokeSessions` (refresh tokens revoked, live sessions invalidated). `auth::Manager` has no user cache.
+- **API keys:** `update` edits in place (keeps the id, so `s3` rows survive; an empty secret keeps the sealed one;
+  `KeyPerm::Edit`), re-validates credentials outside test mode and reloads the engines of the vaults using the key
+  (`storage::Manager::reloadEngine`). `remove` refuses (`Invalid`, naming the vaults) while any `s3` row references the
+  key, and `ops::users::remove` refuses up front when a surviving vault uses one of the account's keys. Backed by
+  `s3.api_key_id ... ON DELETE RESTRICT` (migration 099; it was CASCADE and silently dropped bindings).
 - **Vaults:** every change goes through `storage::Manager::updateVault` so the live engine (RBAC's source of the owner)
   follows; owner reassignment needs Create for the new owner; a key change needs Consume; sync settings need vault
   `sync.config.edit`.
@@ -204,7 +241,8 @@ a permission if its target trait (`TargetTraits.hpp`) or context policy (`policy
 is visible; `test_role_permissions.cpp` round-trips every exported permission so a missing trait can't silently
 no-op again. `ops::roles` enforces the escalation ceiling: nobody grants an admin permission they do not hold
 (`permissionsBeyondActor`). Vault-role overrides persist through `db::query::rbac::permission::Override` on the
-subject's assignment.
+subject's assignment; both `vh vault role override ...` and ws `role.vault.overrides.{list,add,update,remove}` call
+`ops::roles::*VaultRoleOverride*` (parity in `test_ops_parity_roles.cpp`).
 
 ## Subsystem invariants (enforced in code, keep them)
 
@@ -214,10 +252,13 @@ subject's assignment.
 - If email is disabled, the server must still report healthy. Security alerts are enqueued only after a successful DB write
   and never block the mutation. `Manager::startWatchdog()` stays restart-only.
 
-**Stats / dashboards** (22 `stats.*` ws commands, `dashboard.preferences.*`)
+**Stats / dashboards** (26 `stats.*` ws commands, `dashboard.preferences.*`)
 - The backend owns severity, warning, and error truth. Never show fake integrity, recoverability, or latency badges; report
   unavailable values as `null` / `"not_available"`.
 - Stats commands are read-only, and snapshots are background-only. Preferences are scoped to `session->user->id`.
+- `stats.dashboard.severity` (nav badge) returns `{stats: {overall_status, error_count, warning_count, checked_at}}` from
+  `DashboardOverview::severity()`: the same default cards and aggregation as the overview, without trend series or
+  sections, and without serializing cards.
 - Rationale history: `history/stats-dashboard.md`.
 
 **S3 pricing / cost estimates** (`core/{include,src}/storage/s3/pricing/`)
@@ -230,6 +271,11 @@ subject's assignment.
 - Config: `pricing.storage_rates_api` (`base_url: https://storage-rates-api.vaulthalla.cloud`,
   `remote_refresh_enabled: false` in the shipped config, `fail_open: true`, 12h cache/refresh). A local dev price bot
   runs on `127.0.0.1:36933`.
+- Alerts live in `operator_notification` (severity `info < warning < error < critical`, the 094 CHECK; ranked by
+  `priceBudgetNotificationSeverityRank`). ws `pricing.notifications.list` returns the page (`limit`, newest first) plus
+  `summary: {open_count, worst_severity|null}` over every OPEN (unacknowledged, unexpired) alert the caller can see,
+  from one `GROUP BY vault_id` aggregate (`PriceBudgetService::summarizeOpenNotifications`) filtered by the same vault
+  visibility as the rows, so it never depends on `limit` (#172). The console bell reads its badge from it.
 - Invariant: never trust unsigned or unverified price artifacts. Estimates are guidance and `fail_open`; enforcement modes act on
   them, so a pricing outage must not wedge sync.
 

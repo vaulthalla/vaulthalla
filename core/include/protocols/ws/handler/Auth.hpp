@@ -5,12 +5,15 @@
 #include <memory>
 
 namespace vh::protocols::ws { class Session; }
+namespace vh::identities { struct User; }
 
 namespace vh::protocols::ws::handler {
 
 using json = nlohmann::json;
 
 struct Auth {
+    // The signed-in user for session payloads (login, refresh, isAuthenticated): role permissions as {qualified, value}.
+    static json sessionUser(const identities::User& user);
     static json login(const json& payload, const std::shared_ptr<Session>& session);
     static json registerUser(const json& payload, const std::shared_ptr<Session>& session);
     static json deleteUser(const json& payload, const std::shared_ptr<Session>& session);

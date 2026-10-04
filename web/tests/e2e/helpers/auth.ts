@@ -2,7 +2,9 @@ import { expect, type Browser, type Page } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
-export const authStatePath = 'test-results/.auth/s3-gateway.json'
+// One file per worker: spec files run in parallel workers and each signs in from beforeAll; a shared file was
+// overwritten while other workers were loading it, leaving their tests on the login page.
+export const authStatePath = `test-results/.auth/state-${process.env.TEST_PARALLEL_INDEX ?? '0'}.json`
 
 export function explicitSkipRequested() {
   return process.env.VAULTHALLA_E2E_SKIP === '1' ||
@@ -20,19 +22,26 @@ export function e2eCredentials() {
   return { user, password }
 }
 
+// The console's sign-in form (labelled fields; the session cookie is HttpOnly, the access token lives in memory).
+export async function signIn(page: Page, user: string, password: string) {
+  await page.goto('/login')
+  await expect(page.getByRole('heading', { name: /sign in to vaulthalla/i })).toBeVisible()
+  await page.getByLabel('Username').fill(user)
+  await page.getByLabel('Password').fill(password)
+  await page.getByRole('button', { name: /^sign in$/i }).click()
+  await page.waitForURL(url => !url.pathname.endsWith('/login'), { timeout: 15_000 })
+}
+
 export async function loginThroughUi(page: Page) {
   const { user, password } = e2eCredentials()
-  await page.goto('/login')
-  await expect(page.getByRole('heading', { name: /login to vaulthalla/i })).toBeVisible()
-  await page.getByPlaceholder('Enter your username').fill(user)
-  await page.getByPlaceholder('Enter your password').fill(password)
-  await page.getByRole('button', { name: /^login$/i }).click()
-  await page.waitForURL(url => !url.pathname.endsWith('/login'), { timeout: 15_000 })
+  await signIn(page, user, password)
 }
 
 export async function authenticateAndSaveState(browser: Browser, storageStatePath = authStatePath) {
   await mkdir(dirname(storageStatePath), { recursive: true })
-  const context = await browser.newContext({ storageState: undefined })
+  const base = new URL(process.env.VAULTHALLA_E2E_BASE_URL ?? 'http://127.0.0.1:3000')
+  const local = ['localhost', '127.0.0.1', '::1'].includes(base.hostname)
+  const context = await browser.newContext({ storageState: undefined, ignoreHTTPSErrors: local })
   const page = await context.newPage()
   try {
     await loginThroughUi(page)

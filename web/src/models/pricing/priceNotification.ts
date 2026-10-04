@@ -10,6 +10,13 @@ import {
 
 export type PriceNotificationSeverity = 'info' | 'warning' | 'error' | 'critical'
 
+// pricing.notifications.list `summary`: the OPEN alerts (unacknowledged, not expired) the caller can see, counted
+// in core independently of `limit`. worst_severity is core's highest-ranked open severity, null when none are open.
+export interface PriceNotificationSummary {
+  open_count: number
+  worst_severity: PriceNotificationSeverity | null
+}
+
 function asSeverity(value: unknown): PriceNotificationSeverity {
   return value === 'warning' || value === 'error' || value === 'critical' ? value : 'info'
 }

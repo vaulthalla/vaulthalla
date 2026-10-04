@@ -25,6 +25,10 @@ class Connection {
 
     void initPrepared();
 
+    // Forces the session to TimeZone=UTC and records the zone it started in as the custom setting
+    // vaulthalla.database_timezone. Run on every new session (connect and reconnect).
+    static void configureSession(pqxx::connection& conn);
+
   private:
     std::unique_ptr<crypto::secrets::TPMKeyProvider> tpmKeyProvider_;
     std::string DB_CONNECTION_STR;

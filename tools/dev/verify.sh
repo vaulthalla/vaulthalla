@@ -5,7 +5,8 @@
 #   doctor      toolchain + repo sanity (no builds)
 #   changed     infer profiles from `git diff` + untracked files vs HEAD (default)
 #   core        meson compile + meson test in build/ (configures build/ if missing)
-#   web         pnpm typecheck + lint (VERIFY_STRICT_LINT=0 downgrades lint failures to warnings)
+#   web         pnpm typecheck + lint (VERIFY_STRICT_LINT=0 downgrades lint failures to warnings);
+#               VERIFY_WEB_BUILD=1 also builds and enforces the first-load JS budgets (web/perf-budgets.json)
 #   release     vl-release contract: vlr check + vlr version check (release.toml, staged .release/ docs)
 #   packaging   product contracts (tools/contracts: Debian packaging, maintainer scripts, migrations,
 #               release workflow) + tools/lab tests, each with a minimum test count
@@ -76,6 +77,13 @@ run_web() {
     [[ "${VERIFY_STRICT_LINT:-1}" == "1" ]] && die "web lint failed"
     warn "web lint failed (VERIFY_STRICT_LINT=0, continuing)"
   fi
+  # Performance budgets need a production build (slow): VERIFY_WEB_BUILD=1 builds and enforces them, as CI does.
+  if [[ "${VERIFY_WEB_BUILD:-0}" == "1" ]]; then
+    log "web production build"; pnpm --dir web build
+    log "web performance budgets"; pnpm --dir web budgets
+  else
+    log "web budgets skipped (set VERIFY_WEB_BUILD=1 to build and enforce them)"
+  fi
 }
 
 # Runs a unittest suite and fails when fewer than <min> tests ran, so a suite silently dropped from discovery
@@ -98,7 +106,7 @@ run_release() {
 
 run_packaging() {
   log "product contracts (tools/contracts)"
-  run_suite "tools/contracts" 102 discover -s tools/contracts -t .
+  run_suite "tools/contracts" 105 discover -s tools/contracts -t .
   log "lab tooling tests (tools/lab/tests)"
   run_suite "tools/lab/tests" 22 discover -s tools/lab/tests -t .
 }

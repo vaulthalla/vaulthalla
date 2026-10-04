@@ -1,4 +1,5 @@
 #include "protocols/ws/handler/Auth.hpp"
+#include "ops/Error.hpp"
 #include "runtime/Deps.hpp"
 #include "auth/Bootstrap.hpp"
 #include "auth/Manager.hpp"
@@ -23,6 +24,26 @@ const std::shared_ptr<User>& requireSessionUser(const std::shared_ptr<vh::protoc
 
 }
 
+// The signed-in user as the console session needs it: role permissions reduced to {qualified, value}. The full
+// permission records (descriptions, slugs, bit positions) are ~13 KB per user and are served by auth.user.get and
+// roles.*; the session payload is sent on every page load.
+json Auth::sessionUser(const User& user) {
+    json j = user;
+    const auto slim = [](json& permissions) {
+        if (!permissions.is_array()) return;
+        json out = json::array();
+        for (const auto& p : permissions)
+            out.push_back({{"qualified", p.value("qualified", std::string{})}, {"value", p.value("value", false)}});
+        permissions = std::move(out);
+    };
+    if (j.contains("admin_role") && j["admin_role"].is_object() && j["admin_role"].contains("permissions"))
+        slim(j["admin_role"]["permissions"]);
+    if (j.contains("vault_roles") && j["vault_roles"].is_array())
+        for (auto& role : j["vault_roles"])
+            if (role.is_object() && role.contains("permissions")) slim(role["permissions"]);
+    return j;
+}
+
 json Auth::login(const json &payload, const std::shared_ptr<Session> &session) {
     const auto username = payload.at("name").get<std::string>();
     const auto password = payload.at("password").get<std::string>();
@@ -38,7 +59,7 @@ json Auth::login(const json &payload, const std::shared_ptr<Session> &session) {
         "Failed to validate session after login");
 
     session->sendAccessTokenOnNextResponse();
-    return {{"user", *session->user}};
+    return {{"user", Auth::sessionUser(*session->user)}};
 }
 
 json Auth::registerUser(const json &payload, const std::shared_ptr<Session> &session) {
@@ -56,7 +77,7 @@ json Auth::registerUser(const json &payload, const std::shared_ptr<Session> &ses
 json Auth::refreshToken(const std::string &token, const std::shared_ptr<Session> &session) {
     runtime::Deps::get().sessionManager->renewAccessToken(session, token);
     if (!session->user) throw std::runtime_error("Failed to resolve user during token refresh");
-    return {{"user", *session->user}};
+    return {{"user", Auth::sessionUser(*session->user)}};
 }
 
 json Auth::deleteUser(const json &payload, const std::shared_ptr<Session> &session) {
@@ -74,7 +95,7 @@ json Auth::updateUser(const json &payload, const std::shared_ptr<Session> &sessi
 
     // CLI identity is bound by Linux UID; rebinding it is an operator action on the local CLI only.
     if (payload.contains("linux_uid"))
-        throw std::runtime_error("linux_uid can only be changed by an administrator through the local CLI");
+        throw vh::ops::Denied("linux_uid can only be changed by an administrator through the local CLI");
     if (payload.contains("updated_by") || payload.contains("protected") || payload.contains("is_protected") ||
         payload.contains("system_only"))
         throw std::runtime_error("Unsupported field in user update");
@@ -119,13 +140,14 @@ json Auth::logout(const std::shared_ptr<Session> &session) {
 }
 
 json Auth::listUsers(const std::shared_ptr<Session> &session) {
-    return {{"users", to_json(ops::users::list(requireSessionUser(session)))}};
+    // The slim list projection; auth.user.get keeps the full role with its permissions.
+    return {{"users", vh::identities::to_list_json(ops::users::list(requireSessionUser(session)))}};
 }
 
 json Auth::isUserAuthenticated(const std::string &token, const std::shared_ptr<Session> &session) {
     const bool isAuthenticated = runtime::Deps::get().sessionManager->validate(session, token);
     json data = {{"isAuthenticated", isAuthenticated}};
-    if (isAuthenticated) data["user"] = *session->user;
+    if (isAuthenticated) data["user"] = Auth::sessionUser(*session->user);
     return data;
 }
 

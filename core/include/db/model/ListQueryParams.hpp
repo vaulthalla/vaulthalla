@@ -13,11 +13,11 @@ namespace vh::db::model {
 enum class SortDirection { ASC, DESC };
 
 struct ListQueryParams {
-    std::optional<std::string> sort;
-    std::optional<SortDirection> direction;
-    std::optional<std::string> filter;
-    std::optional<uint64_t> limit;
-    std::optional<uint64_t> page;
+    std::optional<std::string> sort{};
+    std::optional<SortDirection> direction{};
+    std::optional<std::string> filter{};
+    std::optional<uint64_t> limit{};
+    std::optional<uint64_t> page{};
 };
 
 inline std::string to_string(const std::optional<SortDirection>& order) {

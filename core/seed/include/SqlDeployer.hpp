@@ -177,6 +177,13 @@ struct SqlDeployer {
             return a.filename().string() < b.filename().string();
         });
 
+        // Until migration 100 converts them, naive `timestamp` columns hold wall time in the database's own zone, and
+        // 100 reads them in that zone. Rows this run writes before 100 (schema_migrations, seed data) must land in
+        // the same zone, not the daemon's UTC session (db::Connection::configureSession): run the whole deploy in it.
+        // Local to this transaction; timestamptz columns are absolute either way.
+        txn.exec("SELECT set_config('TimeZone', COALESCE(NULLIF(current_setting('vaulthalla.database_timezone', true), "
+                 "''), current_setting('TimeZone')), true)");
+
         SqlDeployReport report;
 
         for (const auto& p : files) {

@@ -88,6 +88,6 @@ Run Playwright, local smoke, remote R2/S3 smoke, and merge-ready validation for 
 
 ## Related Docs
 
-- [S3 Gateway Administration](/admin/s3-gateway) focuses on the Admin -> S3 Gateway web console and CLI management surface.
+- [S3 Gateway Administration](/admin/s3-gateway) focuses on the web console's S3 gateway page and the CLI management surface.
 - [Vaults Exposed Through S3 Gateway](/vaults/s3-gateway) explains the vault mapping model without duplicating the gateway guide.
 - [S3 And R2 Vaults](/vaults/s3-r2-vaults) covers upstream provider storage used by Vaulthalla as a vault backend.

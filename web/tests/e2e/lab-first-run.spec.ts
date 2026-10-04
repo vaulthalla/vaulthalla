@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test } from '@playwright/test'
+import { signIn } from './helpers/auth'
 
 // Real-host first-run checks for a packaged install (e.g. vh-storage), driven through nginx.
 // Opt-in only:
@@ -24,14 +25,7 @@ function passwordFrom(variable: string, minLength: number) {
 const initialAdminPassword = () => passwordFrom('VAULTHALLA_E2E_LAB_INITIAL_ADMIN_PASSWORD_FILE', 32)
 const newAdminPassword = () => passwordFrom('VAULTHALLA_E2E_LAB_NEW_ADMIN_PASSWORD_FILE', 12)
 
-async function login(page: Page, user: string, password: string) {
-  await page.goto('/login')
-  await expect(page.getByRole('heading', { name: /login to vaulthalla/i })).toBeVisible()
-  await page.getByPlaceholder('Enter your username').fill(user)
-  await page.getByPlaceholder('Enter your password').fill(password)
-  await page.getByRole('button', { name: /^login$/i }).click()
-  await page.waitForURL(url => !url.pathname.endsWith('/login'), { timeout: 15_000 })
-}
+const login = signIn
 
 test.describe.serial('packaged install first run (lab)', () => {
   test.skip(!labEnabled, 'set VAULTHALLA_E2E_LAB=1 to run against a real packaged host')
@@ -40,7 +34,7 @@ test.describe.serial('packaged install first run (lab)', () => {
     const response = await page.goto('/login')
     expect(response?.status()).toBe(200)
     await expect(page).not.toHaveTitle(/welcome to nginx/i)
-    await expect(page.getByRole('heading', { name: /login to vaulthalla/i })).toBeVisible()
+    await expect(page.getByRole('heading', { name: /sign in to vaulthalla/i })).toBeVisible()
   })
 
   test('the generated password signs in to a normal session that only warns', async ({ page }) => {
@@ -58,7 +52,7 @@ test.describe.serial('packaged install first run (lab)', () => {
     const initial = initialAdminPassword()
     const replacement = newAdminPassword()
     await login(page, 'admin', initial)
-    await page.goto('/users/admin/change-password')
+    await page.goto('/account')
 
     await page.locator('input[autocomplete="current-password"]').fill(initial)
     await page.locator('input[autocomplete="new-password"]').nth(0).fill(replacement)
@@ -74,7 +68,7 @@ test.describe.serial('packaged install first run (lab)', () => {
 
   test('admin pages render live data over the websocket', async ({ page }) => {
     await login(page, 'admin', newAdminPassword())
-    for (const path of ['/vaults', '/users', '/groups', '/roles', '/api-keys', '/settings']) {
+    for (const path of ['/files', '/vaults', '/users', '/groups', '/roles', '/credentials', '/settings', '/health']) {
       const response = await page.goto(path)
       expect(response?.status(), path).toBeLessThan(400)
       await expect(page.getByText(/unauthori[sz]ed|internal error|something went wrong/i), path).toHaveCount(0)

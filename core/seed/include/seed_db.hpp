@@ -2,6 +2,8 @@
 
 #include <string_view>
 
+namespace vh::rbac::role { struct Vault; }
+
 namespace vh::seed {
 
 static constexpr std::string_view ADMIN_DEFAULT_VAULT_NAME = "Admin Default Vault";
@@ -19,6 +21,9 @@ void reconcileSystemPrincipals();
 // (every scope defaulted to "self", and roles loaded by name carried no preset). Give them their built-in role's
 // preset. Accounts that already have admin/user rows are left alone. Idempotent; runs at every start.
 void reconcileGlobalVaultPolicies();
+
+// The `share_upload_dropbox` vault role template new installs seed (upload-only: no List). Exposed for tests.
+rbac::role::Vault shareUploadDropboxRole();
 
 // dev
 void cleanupDevR2TestBucket();

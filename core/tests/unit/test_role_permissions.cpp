@@ -96,8 +96,11 @@ TEST(RolePermissions, GrantingEverySuperAdminPermissionReproducesSuperAdmin) {
     using Resolver = rbac::resolver::PermissionResolverEnumPack<std::shared_ptr<rbac::role::Admin>>::type;
     const auto super = std::make_shared<rbac::role::Admin>(rbac::role::Admin::SuperAdmin());
     auto staged = std::make_shared<rbac::role::Admin>(rbac::role::Admin::None());
-    for (const auto& p : super->toPermissions())
-        if (Resolver::has(super, p)) ASSERT_TRUE(Resolver::apply(staged, p, PermissionOperation::Grant)) << p.qualified_name;
+    for (const auto& p : super->toPermissions()) {
+        if (Resolver::has(super, p)) {
+            ASSERT_TRUE(Resolver::apply(staged, p, PermissionOperation::Grant)) << p.qualified_name;
+        }
+    }
 
     EXPECT_EQ(staged->identities.toBitString(), super->identities.toBitString());
     EXPECT_EQ(staged->vaults.toBitString(), super->vaults.toBitString());

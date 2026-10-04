@@ -272,33 +272,64 @@ constexpr uint16_t kZipDateJanOne1980 = 33;
     return params.at("path");
 }
 
-[[nodiscard]] std::string safeAttachmentFilename(std::string value, const std::string& fallback) {
+// The basename to offer, UTF-8 kept: control bytes and separators become '_', surrounding whitespace is trimmed.
+// Leading dots stay (".env" downloads as ".env"; it used to become "env").
+[[nodiscard]] std::string attachmentBasename(std::string value, const std::string& fallback) {
     value = std::filesystem::path(value).filename().string();
-    if (value.empty() || value == "." || value == "..") value = fallback;
 
     std::string out;
     out.reserve(value.size());
     for (const unsigned char c : value) {
-        if (c < 0x20 || c == 0x7f || c == '"' || c == '\\' || c == '/' || c == ';')
-            out.push_back('_');
+        if (c < 0x20 || c == 0x7f || c == '\\' || c == '/') out.push_back('_');
         else out.push_back(static_cast<char>(c));
     }
 
-    while (!out.empty() && (out.front() == '.' || std::isspace(static_cast<unsigned char>(out.front()))))
-        out.erase(out.begin());
-    while (!out.empty() && std::isspace(static_cast<unsigned char>(out.back())))
-        out.pop_back();
-    return out.empty() ? fallback : out;
+    while (!out.empty() && std::isspace(static_cast<unsigned char>(out.front()))) out.erase(out.begin());
+    while (!out.empty() && std::isspace(static_cast<unsigned char>(out.back()))) out.pop_back();
+    if (out.empty() || out == "." || out == "..") return fallback;
+    return out;
+}
+
+// The quoted-string `filename=` fallback for clients without RFC 5987 support: printable ASCII only. Each non-ASCII
+// UTF-8 sequence becomes one '_', and so do '"', '\' and ';'.
+[[nodiscard]] std::string asciiAttachmentFilename(const std::string& name) {
+    std::string out;
+    out.reserve(name.size());
+    for (const unsigned char c : name) {
+        if (c >= 0x80) {
+            if ((c & 0xC0) != 0x80) out.push_back('_');  // a lead byte; continuation bytes add nothing
+        } else if (c == '"' || c == '\\' || c == ';') {
+            out.push_back('_');
+        } else {
+            out.push_back(static_cast<char>(c));
+        }
+    }
+    return out;
+}
+
+// RFC 5987 ext-value: attr-char stays, every other byte is %XX.
+[[nodiscard]] std::string rfc5987Encode(const std::string& value) {
+    static constexpr char kHex[] = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(value.size() * 3);
+    for (const unsigned char c : value) {
+        const bool alnum = (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+        if (alnum || c == '!' || c == '#' || c == '$' || c == '&' || c == '+' || c == '-' || c == '.' ||
+            c == '^' || c == '_' || c == '`' || c == '|' || c == '~') {
+            out.push_back(static_cast<char>(c));
+        } else {
+            out.push_back('%');
+            out.push_back(kHex[c >> 4]);
+            out.push_back(kHex[c & 0x0F]);
+        }
+    }
+    return out;
 }
 
 [[nodiscard]] std::string archiveFilenameFor(const std::string& value) {
-    auto filename = safeAttachmentFilename(value, "download");
+    auto filename = attachmentBasename(value, "download");
     if (!filename.ends_with(".zip")) filename += ".zip";
     return filename;
-}
-
-[[nodiscard]] std::string contentDispositionValue(const std::string& filename) {
-    return "attachment; filename=\"" + safeAttachmentFilename(filename, "download") + "\"";
 }
 
 [[nodiscard]] std::string normalizedVaultPath(const std::string& value) {
@@ -1391,6 +1422,11 @@ Response Router::makeJsonResponse(const request& req, const nlohmann::json& j) {
     return res;
 }
 
+std::string Router::attachmentContentDisposition(const std::string& filename) {
+    const auto name = attachmentBasename(filename, "download");
+    return "attachment; filename=\"" + asciiAttachmentFilename(name) + "\"; filename*=UTF-8''" + rfc5987Encode(name);
+}
+
 Response Router::makeDownloadResponse(
     const request& req,
     std::vector<uint8_t>&& data,
@@ -1406,7 +1442,7 @@ Response Router::makeDownloadResponse(
     };
 
     res.set(field::content_type, mime_type.empty() ? "application/octet-stream" : mime_type);
-    res.set(field::content_disposition, contentDispositionValue(filename));
+    res.set(field::content_disposition, attachmentContentDisposition(filename));
     res.set(field::cache_control, "no-store");
     res.content_length(size);
     res.keep_alive(req.keep_alive());

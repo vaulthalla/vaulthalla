@@ -81,7 +81,7 @@ struct DatabaseHealth {
     // already failed, so on their own an idle daemon reads healthy while PostgreSQL is down.
     bool reachable = false;
     long long probeLatencyMs = 0;
-    std::string probeError;
+    std::string probeError{};
 };
 
 struct HealthSummary {

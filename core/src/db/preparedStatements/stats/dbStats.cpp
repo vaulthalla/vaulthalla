@@ -27,6 +27,7 @@ void vh::db::Connection::initPreparedDbStats() const {
                     FROM pg_stat_activity
                     WHERE datname = current_database()
                       AND xact_start IS NOT NULL
+                      AND pid <> pg_backend_pid()
                 ) AS oldest_transaction_age_seconds;
         )SQL"
     );
