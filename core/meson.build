@@ -107,6 +107,11 @@ endforeach
 
 # ╭──────────────────────────────── LIBRARIES ───────────────────────────────────╮
 
+# Precompiled headers only where nothing is optimized: GCC doesn't keep #pragma GCC diagnostic state in a PCH,
+# which would undo compat/gcc_variant.hpp, and the warning it handles (-Wmaybe-uninitialized) needs optimization.
+# Test objects are always -O0; the library only in -O0 builds (development, tests, PR CI).
+core_pch = get_option('optimization') == '0' ? ['pch/vaulthalla_pch.hpp'] : []
+
 # Unit-test objects are their own target, defined before libvaulthalla: ninja starts ready work in build.ninja order,
 # and the test chunks are the longest single jobs, so starting them first keeps one of them from becoming the
 # build's tail. They are always compiled at -O0 (the CI test configuration) whatever the buildtype, so an -O3
@@ -125,12 +130,14 @@ if get_option('build_unit_tests')
         dependencies: test_deps,
         install: false,
         override_options: ['optimization=0'],
+        cpp_pch: 'pch/vaulthalla_tests_pch.hpp',
     )
 endif
 
 lib_core = static_library(
     'vaulthalla',
     sources,
+    cpp_pch: core_pch,
     include_directories: inc,
     dependencies: deps,
     install: true
