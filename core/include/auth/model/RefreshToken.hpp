@@ -21,7 +21,9 @@ struct RefreshToken final : Token {
 
     void hardInvalidate();
 
-    [[nodiscard]] bool dangerousDivergence(const std::shared_ptr<RefreshToken>& other) const;
+    // Same stored hash but different metadata than `other` (a copy of one token that no longer matches its row).
+    // Not an overload of Token::dangerousDivergence(claims), which validates claims and is virtual.
+    [[nodiscard]] bool divergesFrom(const std::shared_ptr<RefreshToken>& other) const;
 
     [[nodiscard]] Type type() const override { return Type::Refresh; }
 

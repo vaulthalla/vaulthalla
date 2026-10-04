@@ -40,7 +40,7 @@ bool RefreshToken::isValid() const {
     return true;
 }
 
-bool RefreshToken::dangerousDivergence(const std::shared_ptr<RefreshToken>& other) const {
+bool RefreshToken::divergesFrom(const std::shared_ptr<RefreshToken>& other) const {
     if (!other) return false; // No divergence if the other token doesn't exist
     return hashedToken == other->hashedToken && (
         jti != other->jti || userAgent != other->userAgent ||
