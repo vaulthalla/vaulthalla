@@ -9,6 +9,7 @@
 #include "db/query/vault/Vault.hpp"
 #include "db/query/sync/Policy.hpp"
 #include "db/query/vault/APIKey.hpp"
+#include "db/query/identities/User.hpp"
 #include "db/encoding/interval.hpp"
 #include "storage/Manager.hpp"
 #include "storage/Engine.hpp"
@@ -30,6 +31,7 @@
 #include <chrono>
 #include <mutex>
 #include <sstream>
+#include <unordered_map>
 
 using namespace vh::protocols::ws::handler;
 using namespace vh::vault::model;
@@ -204,7 +206,21 @@ json Vaults::get(const json &payload, const std::shared_ptr<Session> &session) {
 }
 
 json Vaults::list(const std::shared_ptr<Session> &session) {
-    return json{{"vaults", vh::ops::vaults::list(session->user)}};
+    // Each row also carries the owner's name (as storage.vault.get does), so a list needs no per-owner user lookup,
+    // which a caller allowed to see a vault may not be allowed to make (#161).
+    json rows = vh::ops::vaults::list(session->user);
+    std::unordered_map<uint32_t, std::string> owners;
+    for (auto& row : rows) {
+        const auto ownerId = row.at("owner_id").get<uint32_t>();
+        auto it = owners.find(ownerId);
+        if (it == owners.end()) {
+            const auto owner = vh::db::query::identities::User::getUserById(ownerId);
+            // Same as storage.vault.get: an owner that no longer resolves is "".
+            it = owners.emplace(ownerId, owner ? owner->name : std::string{}).first;
+        }
+        row["owner"] = it->second;
+    }
+    return json{{"vaults", std::move(rows)}};
 }
 
 json Vaults::sync(const json &payload, const std::shared_ptr<Session> &session) {

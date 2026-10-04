@@ -93,6 +93,17 @@ time-zone-aware value.
 Path-scoped allow/deny overrides on a vault role assignment (for example "deny downloads under `/finance/**`")
 can now be listed, added, changed and removed from a vault's Access tab, not only with `vh vault role override`.
 
+## Vault sizes and quotas
+
+- Each vault now reports its own size. Every vault used to report the size of the whole storage directory,
+  which is mostly the default vault's data, so an empty vault (or an S3 vault with nothing cached locally) showed
+  the default vault's usage in the vault overview, the Health storage view and `stats.vault`.
+- Vault quotas are checked against that vault's own data. A vault with a quota used to be charged for every other
+  vault's files and the preview cache, so uploads and syncs into it could be refused as over quota while it was
+  nearly empty.
+- For an S3 vault the reported size is what is stored on this server (the local cache), not the bucket's total.
+- The vault list now includes each vault's owner name.
+
 ## Idle CPU
 
 The daemon no longer keeps one CPU core busy while it waits for the next vault sync. A background loop

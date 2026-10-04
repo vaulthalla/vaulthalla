@@ -36,6 +36,13 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
   sleeps until the earliest sync is due, a sync is queued, or the service
   stops.
 
+- Engine::getVaultSize walks the vault's own backing tree
+  (backingPath/<mount_point>) instead of the shared backing root, so
+  stats.vault physical_size, stats.system.storage vault_size_bytes and the
+  quota check in freeSpace() (HTTP/share uploads, sync, key rotation) count
+  only that vault; a missing tree is 0 and files vanishing mid-walk are
+  skipped instead of throwing.
+
 ## Database
 - Run every daemon DB session with TimeZone=UTC (recording the session's
   original zone as vaulthalla.database_timezone) so naive timestamps are no
@@ -64,6 +71,8 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
 - auth.users.list returns a slim projection: admin and vault roles without
   their permission sets; auth.login, auth.refresh and auth.isAuthenticated
   return the session user's permissions as {qualified, value} only.
+- storage.vault.list rows carry owner (the owner's name, as
+  storage.vault.get does) next to owner_id.
 - Add stats.dashboard.severity (overall status and counts without the
   dashboard cards) for the console's status badge.
 - Dashboard metric tones never report an unmeasured value as healthy
