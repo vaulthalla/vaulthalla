@@ -44,6 +44,9 @@ and the console only asks the daemon for what the page on screen needs.
   no longer fails; any admin role can be assigned; "Last login" shows "Never" instead of 1969; the version in the
   sidebar is the real one; vault owners show on the vault list; light-mode browsers no longer get an unreadable
   login page.
+- **Password age is recorded.** The daemon now stores when each account's password was last set (by the user,
+  by an admin reset, on the CLI or with `vh setup set-super-admin-password`), so the console can show it. It was
+  always empty before. Accounts whose password hasn't changed since the upgrade show no date.
 - Old console addresses (for example `/dashboard`, `/api-keys`, `/pricing-budget`, `/operator-email`) redirect to
   their new pages.
 

@@ -15,12 +15,15 @@
 #include "runtime/Deps.hpp"
 #include "seed/include/init_db_tables.hpp"
 #include "seed/include/seed_db.hpp"
+#include "seed/include/SqlDeployer.hpp"
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 #include <paths.h>
 
 #include <cstdlib>
+#include <filesystem>
+#include <optional>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -131,6 +134,23 @@ protected:
         return vh::db::query::identities::User::getUserById(id);
     }
 };
+// #163: password_changed_at had no column, so it was null after every reload.
+void backdatePasswordChange(const unsigned int userId) {
+    vh::db::Transactions::exec("AuthPasswordChangeTest::backdate", [&](pqxx::work& txn) {
+        txn.exec("UPDATE users SET password_changed_at = NOW() - INTERVAL '30 days' WHERE id = $1", pqxx::params{userId});
+    });
+}
+
+// Seconds since the stored password_changed_at, or nullopt when it is NULL.
+std::optional<double> passwordChangedSecondsAgo(const unsigned int userId) {
+    return vh::db::Transactions::exec("AuthPasswordChangeTest::changedAgo", [&](pqxx::work& txn) {
+        return txn.exec("SELECT EXTRACT(EPOCH FROM (NOW() - password_changed_at))::double precision FROM users WHERE id = $1",
+                        pqxx::params{userId}).one_field().as<std::optional<double>>();
+    });
+}
+
+bool justNow(const std::optional<double>& secondsAgo) { return secondsAgo && *secondsAgo >= 0.0 && *secondsAgo < 120.0; }
+
 TEST(AuthPasswordPermissionTest, ResetPasswordBitIsAdditiveAndSeededOnlyForOrgAndSuperAdmins) {
     using P = vh::rbac::permission::admin::identities::IdentityPermissions;
 
@@ -357,6 +377,61 @@ TEST_F(AuthPasswordChangeTest, UpdateUserRequiresEditPermissionForOthers) {
     EXPECT_THROW(vh::protocols::ws::handler::Auth::updateUser(
         json{{"id", other->id}, {"name", "upd_hijacked"}}, sessionFor(plain)), std::runtime_error);
     EXPECT_EQ(vh::db::query::identities::User::getUserById(other->id)->name, "upd_plain_victim");
+}
+
+TEST_F(AuthPasswordChangeTest, NewAccountsRecordWhenTheirPasswordWasSet) {
+    const auto user = createUser("pwd_changed_new", "first-password");
+    EXPECT_TRUE(justNow(passwordChangedSecondsAgo(user->id)));
+    ASSERT_TRUE(user->meta.password_changed_at) << "loaded with the user";
+}
+
+TEST_F(AuthPasswordChangeTest, SelfChangeAndAdminResetPersistPasswordChangedAt) {
+    auto manager = std::make_shared<vh::auth::Manager>();
+    ScopedRuntimeAuthManager scoped(manager);
+
+    const auto user = createUser("pwd_changed_self", "old-password");
+    backdatePasswordChange(user->id);
+    ASSERT_FALSE(justNow(passwordChangedSecondsAgo(user->id)));
+
+    const auto response = vh::protocols::ws::handler::Auth::changePassword(
+        json{{"id", user->id}, {"old_password", "old-password"}, {"new_password", "new-password"}},
+        sessionFor(user));
+    EXPECT_TRUE(justNow(passwordChangedSecondsAgo(user->id)));
+    EXPECT_FALSE(response.at("user").at("password_changed_at").is_null());
+    const auto reloaded = vh::db::query::identities::User::getUserById(user->id);
+    ASSERT_TRUE(reloaded->meta.password_changed_at) << "survives a reload (and so a restart)";
+
+    const auto actor = createUser("pwd_changed_actor", "actor-password", "admin");
+    const auto target = createUser("pwd_changed_target", "old-password");
+    backdatePasswordChange(target->id);
+    (void)vh::protocols::ws::handler::Auth::changePassword(json{{"id", target->id}, {"new_password", "new-password"}},
+                                                           sessionFor(actor));
+    EXPECT_TRUE(justNow(passwordChangedSecondsAgo(target->id)));
+}
+
+TEST_F(AuthPasswordChangeTest, UpdatesThatKeepThePasswordKeepPasswordChangedAt) {
+    const auto user = createUser("pwd_changed_keep", "same-password");
+    backdatePasswordChange(user->id);
+
+    auto reloaded = vh::db::query::identities::User::getUserById(user->id);
+    reloaded->email = "pwd_changed_keep_new@vaulthalla.test";
+    vh::db::query::identities::User::updateUser(reloaded);
+
+    const auto ago = passwordChangedSecondsAgo(user->id);
+    ASSERT_TRUE(ago);
+    EXPECT_GT(*ago, 29.0 * 86400.0);
+}
+
+// Migration 102 runs on upgraded installs and may meet itself again: re-running it changes nothing.
+TEST_F(AuthPasswordChangeTest, PasswordChangedAtMigrationIsIdempotent) {
+    const auto user = createUser("pwd_changed_rerun", "some-password");
+    backdatePasswordChange(user->id);
+    const auto sql = vh::db::seed::readFileToString(
+        std::filesystem::path(VH_PSQL_TEST_SCHEMAS_PATH) / "102_password_changed_at.sql");
+    vh::db::Transactions::exec("AuthPasswordChangeTest::rerun102", [&](pqxx::work& txn) { txn.exec(sql); });
+    const auto ago = passwordChangedSecondsAgo(user->id);
+    ASSERT_TRUE(ago);
+    EXPECT_GT(*ago, 29.0 * 86400.0);
 }
 
 } // namespace vh::auth::test_password_change

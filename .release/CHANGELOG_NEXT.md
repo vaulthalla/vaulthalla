@@ -64,6 +64,12 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
   depends on with a warning, and avoids the table rewrite when the zone is
   UTC.
 
+- Migration 102 adds users.password_changed_at (TIMESTAMPTZ, NULL for
+  existing rows) and a trigger that stamps it whenever password_hash
+  changes (or on insert with a password), covering ws self change, admin
+  reset, CLI, set-super-admin-password, bootstrap and seed; loaded with
+  the user, so auth.user.get no longer returns null after a reload.
+
 ## API keys
 - Add storage.apiKey.update: edits a key in place (same id, so vault s3
   bindings survive), keeps the sealed secret when none is given, re-checks
