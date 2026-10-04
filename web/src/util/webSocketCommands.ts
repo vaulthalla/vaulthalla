@@ -64,7 +64,7 @@ import {
   PriceBudgetStatus,
 } from '@/models/pricing/priceBudget'
 import { PriceBudgetLedgerEntry } from '@/models/pricing/priceBudgetLedger'
-import { PriceNotification } from '@/models/pricing/priceNotification'
+import { PriceNotification, type PriceNotificationSummary } from '@/models/pricing/priceNotification'
 import { PriceOverride, PriceOverrideRequestPayload } from '@/models/pricing/priceOverride'
 import { PricingBudgetStats } from '@/models/stats/pricingBudgetStats'
 import {
@@ -371,7 +371,8 @@ export interface WebSocketCommandMap {
 
   'pricing.notifications.list': {
     payload: { vault_id?: number | null; limit?: number; include_acknowledged?: boolean } | null
-    response: { notifications: PriceNotification[] }
+    // `summary` always covers every open alert in scope, whatever `limit` and `include_acknowledged` are.
+    response: { notifications: PriceNotification[]; summary: PriceNotificationSummary }
   }
 
   'pricing.notifications.ack': {
