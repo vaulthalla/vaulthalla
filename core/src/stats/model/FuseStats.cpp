@@ -64,6 +64,9 @@ FuseStats::FuseStats() noexcept {
     for (auto& counter : errnoCounts_) {
         counter.store(0, std::memory_order_relaxed);
     }
+    for (auto& counter : alertableErrnoCounts_) {
+        counter.store(0, std::memory_order_relaxed);
+    }
 }
 
 std::size_t FuseStats::opIndex(const FuseOperation op) noexcept {
@@ -101,7 +104,8 @@ void FuseStats::record_error(const FuseOperation op, const int errnum, const std
     auto& counters = ops_[opIndex(op)];
     counters.count.v.fetch_add(1, std::memory_order_relaxed);
     counters.errors.v.fetch_add(1, std::memory_order_relaxed);
-    if (isExpectedError(op, errnum)) {
+    const bool expected = isExpectedError(op, errnum);
+    if (expected) {
         counters.expectedErrors.v.fetch_add(1, std::memory_order_relaxed);
     } else {
         counters.alertableErrors.v.fetch_add(1, std::memory_order_relaxed);
@@ -111,6 +115,7 @@ void FuseStats::record_error(const FuseOperation op, const int errnum, const std
 
     if (errnum >= 0 && errnum < kErrnoBucketCount) {
         errnoCounts_[static_cast<std::size_t>(errnum)].fetch_add(1, std::memory_order_relaxed);
+        if (!expected) alertableErrnoCounts_[static_cast<std::size_t>(errnum)].fetch_add(1, std::memory_order_relaxed);
     } else {
         unknownErrnoCount_.v.fetch_add(1, std::memory_order_relaxed);
     }
@@ -176,19 +181,25 @@ FuseStatsSnapshot FuseStats::snapshot() const {
     for (std::size_t i = 0; i < errnoCounts_.size(); ++i) {
         const auto count = errnoCounts_[i].load(std::memory_order_relaxed);
         if (count == 0) continue;
+        const auto alertableCount = alertableErrnoCounts_[i].load(std::memory_order_relaxed);
+        if (alertableCount > 0) ++out.alertableErrnoTypes;
         out.topErrors.push_back({
             .errnoValue = static_cast<int>(i),
             .name = errnoName(static_cast<int>(i)),
-            .count = count
+            .count = count,
+            .alertableCount = alertableCount
         });
     }
 
+    // An out-of-range errno is never on the expected list, so every occurrence is alertable.
     const auto unknownErrnoCount = unknownErrnoCount_.v.load(std::memory_order_relaxed);
     if (unknownErrnoCount > 0) {
+        ++out.alertableErrnoTypes;
         out.topErrors.push_back({
             .errnoValue = -1,
             .name = "ERRNO_UNKNOWN",
-            .count = unknownErrnoCount
+            .count = unknownErrnoCount,
+            .alertableCount = unknownErrnoCount
         });
     }
 
@@ -312,6 +323,7 @@ void to_json(nlohmann::json& j, const FuseErrnoStatsSnapshot& stats) {
         {"errno_value", stats.errnoValue},
         {"name", stats.name},
         {"count", stats.count},
+        {"alertable_count", stats.alertableCount},
     };
 }
 
@@ -331,6 +343,7 @@ void to_json(nlohmann::json& j, const FuseStatsSnapshot& stats) {
         {"open_handles_peak", stats.openHandlesPeak},
         {"ops", stats.ops},
         {"top_errors", stats.topErrors},
+        {"alertable_errno_types", stats.alertableErrnoTypes},
         {"checked_at", stats.checkedAt},
     };
 }

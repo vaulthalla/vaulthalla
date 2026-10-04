@@ -100,13 +100,27 @@ namespace vh::storage {
     }
 
     uintmax_t Engine::getDirectorySize(const fs::path &path) {
+        // A vault that has not stored anything yet (a new or S3 vault) has no directory: that is 0 bytes, not an
+        // error. Files that vanish mid-walk (uploads, eviction) are skipped rather than failing the whole sum.
+        std::error_code ec;
+        if (!fs::exists(path, ec) || ec) return 0;
+
         uintmax_t total = 0;
-        for (auto &p: fs::recursive_directory_iterator(path, fs::directory_options::skip_permission_denied))
-            if (fs::is_regular_file(p.status())) total += fs::file_size(p);
+        fs::recursive_directory_iterator it(path, fs::directory_options::skip_permission_denied, ec);
+        if (ec) return 0;
+        for (const fs::recursive_directory_iterator end; it != end; it.increment(ec)) {
+            if (ec) break;
+            std::error_code entryEc;
+            if (!it->is_regular_file(entryEc) || entryEc) continue;
+            const auto size = it->file_size(entryEc);
+            if (!entryEc) total += size;
+        }
         return total;
     }
 
-    uintmax_t Engine::getVaultSize() const { return getDirectorySize(paths->backingRoot); }
+    // This vault's own backing tree (backingPath/<mount_point>), not the shared backing root that holds every vault
+    // and the cache (#161: every vault used to report, and be quota-checked against, the sum of all of them).
+    uintmax_t Engine::getVaultSize() const { return getDirectorySize(paths->backingVaultRoot); }
     uintmax_t Engine::getCacheSize() const { return getDirectorySize(paths->cacheRoot); }
     uintmax_t Engine::getVaultAndCacheTotalSize() const { return getVaultSize() + getCacheSize(); }
     uintmax_t Engine::freeSpace() const {

@@ -35,6 +35,23 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
   sync was scheduled in the future (always, once a vault had synced): it now
   sleeps until the earliest sync is due, a sync is queued, or the service
   stops.
+- Engine::getVaultSize walks the vault's own backing tree
+  (backingPath/<mount_point>) instead of the shared backing root, so
+  stats.vault physical_size, stats.system.storage vault_size_bytes and the
+  quota check in freeSpace() (HTTP/share uploads, sync, key rotation) count
+  only that vault; a missing tree is 0 and files vanishing mid-walk are
+  skipped instead of throwing.
+- Keep directory subtree totals (size_bytes, file_count,
+  subdirectory_count) on both ancestor chains for fs.entry.move/rename
+  across directories (Directory::shiftSubtreeTotals), for deletes of empty
+  directories (Directory::deleteDirectoryTree) and for directories the
+  delete cleanup cascades; a shallow directory copy starts at zero; the fs
+  cache re-reads affected totals (Registry::refreshDirStats).
+- Filesystem::rename of a directory walks the directory's own subtree,
+  shallowest first (it walked the parent's, so any sibling aborted it with
+  EIO); collect_parent_chain orders ancestors by distance instead of
+  parent_id, which gave wrong fuse/backing paths for entries moved under a
+  newer directory.
 
 ## Database
 - Run every daemon DB session with TimeZone=UTC (recording the session's
@@ -45,6 +62,11 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
   runs); idempotent, keeps defaults and indexes, skips columns a view
   depends on with a warning, and avoids the table rewrite when the zone is
   UTC.
+- Migration 102 adds users.password_changed_at (TIMESTAMPTZ, NULL for
+  existing rows) and a trigger that stamps it whenever password_hash
+  changes (or on insert with a password), covering ws self change, admin
+  reset, CLI, set-super-admin-password, bootstrap and seed; loaded with
+  the user, so auth.user.get no longer returns null after a reload.
 
 ## API keys
 - Add storage.apiKey.update: edits a key in place (same id, so vault s3
@@ -64,8 +86,16 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
 - auth.users.list returns a slim projection: admin and vault roles without
   their permission sets; auth.login, auth.refresh and auth.isAuthenticated
   return the session user's permissions as {qualified, value} only.
+- storage.vault.list rows carry owner (the owner's name, as
+  storage.vault.get does) next to owner_id.
 - Add stats.dashboard.severity (overall status and counts without the
   dashboard cards) for the console's status badge.
+- Dashboard metric tones never report an unmeasured value as healthy
+  (slow_queries, connections errors_24h -> unknown); oldest_tx compares
+  the age with the DbStats thresholds (warning >= 1 h, error >= 24 h) and
+  excludes the stats query's own transaction; errno_types warns only for
+  errnos with alertable occurrences (FuseStats now tracks alertable_count
+  per errno and alertable_errno_types).
 - Add ws commands role.vault.overrides.{list,add,update,remove} for
   per-assignment, path-scoped vault permission overrides (the same ops and
   RBAC as vh vault role override ...).

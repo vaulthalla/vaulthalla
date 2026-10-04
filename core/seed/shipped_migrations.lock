@@ -50,6 +50,7 @@ current    22bc5dfcd12b4d5b160b7a7f1ec72a830a2b8da40bce7d2d7e74a35193a7bd7a  098
 current    e2aea033e919277fb8493131c7a2329fcb7e1df4898b925f0c5e038e3106c671  099_s3_api_key_restrict.sql  unreleased
 current    2c333bdc64c18dd00135372be0f72ca2e23a17e623028c4e4f2f9e3088fe2314  100_timestamptz.sql  unreleased
 current    a47c021ed16871e55ae0bf3501bfd09976da66681e4934814abf3332aa83f2ec  101_share_upload_parent_set_null.sql  unreleased
+current    45c438117fd8d0d1aa7b82b859d6efcfc819f51edb120dc4e891062b6945c657  102_password_changed_at.sql  unreleased
 historical 64170212eb3f9fbe0f7c949791b953f0376a1f2bcf66b3dec7afc5db6325d570  020_vaults.sql  v0.28.0-alpha..v1.5.0
 historical c154cd7e10f7931f29c12b9221c90f66d6b953cfb5e3dc15ea50f0940e5d4220  060_acl.sql  v0.28.0-alpha..v1.5.1
 historical 720caaa27c0d51635fe3f459a8426f019d3f0dbdc0b7ae176d283309933a7f53  082_stats_metric_samples.sql  v1.2.4..v1.2.5

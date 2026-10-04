@@ -4,8 +4,10 @@
 #include "db/encoding/u8.hpp"
 #include "fs/model/Path.hpp"
 
+#include <algorithm>
 #include <optional>
 #include <ctime>
+#include <vector>
 
 namespace vh::db::query::fs {
 
@@ -116,6 +118,80 @@ void Directory::moveDirectory(const DirPtr& directory, const std::filesystem::pa
             parentId = nextRow["parent_id"].as<std::optional<unsigned int>>();
             path = nextRow["path"].as<std::string>();
         }
+    });
+}
+
+std::optional<Directory::SubtreeTotals> Directory::subtreeTotalsOf(pqxx::work& txn, const unsigned int id) {
+    const auto res = txn.exec(R"SQL(
+        SELECT
+            (d.fs_entry_id IS NOT NULL) AS is_dir,
+            COALESCE(d.size_bytes, f.size_bytes, octet_length(s.target)::bigint, 0) AS size_bytes,
+            COALESCE(d.file_count, 0) AS file_count,
+            COALESCE(d.subdirectory_count, 0) AS subdirectory_count
+        FROM fs_entry e
+        LEFT JOIN directories d ON d.fs_entry_id = e.id
+        LEFT JOIN files f ON f.fs_entry_id = e.id
+        LEFT JOIN symlinks s ON s.fs_entry_id = e.id
+        WHERE e.id = $1
+    )SQL", pqxx::params{id});
+    if (res.empty()) return std::nullopt;
+
+    const auto row = res.one_row();
+    const auto size = row["size_bytes"].as<int64_t>();
+    if (row["is_dir"].as<bool>())
+        return SubtreeTotals{.size_bytes = size, .files = row["file_count"].as<int64_t>(),
+                             .subdirs = row["subdirectory_count"].as<int64_t>() + 1};
+    return SubtreeTotals{.size_bytes = size, .files = 1, .subdirs = 0};
+}
+
+std::optional<unsigned int> Directory::parentIdOf(pqxx::work& txn, const unsigned int id) {
+    const auto res = txn.exec(pqxx::prepped{"get_fs_entry_parent_id"}, pqxx::params{id});
+    if (res.empty()) return std::nullopt;
+    return res.one_field().as<std::optional<unsigned int>>();
+}
+
+namespace {
+
+std::vector<unsigned int> ancestorChain(pqxx::work& txn, std::optional<unsigned int> id) {
+    std::vector<unsigned int> chain;
+    while (id) {
+        if (std::ranges::find(chain, *id) != chain.end()) break; // defensive: never loop on a corrupt tree
+        chain.push_back(*id);
+        id = Directory::parentIdOf(txn, *id);
+    }
+    return chain;
+}
+
+void addToDirStats(pqxx::work& txn, const unsigned int dirId, const Directory::SubtreeTotals& t, const int sign) {
+    txn.exec(pqxx::prepped{"update_dir_stats"},
+             pqxx::params{dirId, sign * t.size_bytes, sign * t.files, sign * t.subdirs});
+}
+
+}
+
+std::vector<unsigned int> Directory::ancestorsOf(const unsigned int id) {
+    return Transactions::exec("Directory::ancestorsOf", [&](pqxx::work& txn) {
+        return ancestorChain(txn, parentIdOf(txn, id));
+    });
+}
+
+void Directory::shiftSubtreeTotals(pqxx::work& txn, const std::optional<unsigned int> oldParentId,
+                                   const std::optional<unsigned int> newParentId, const SubtreeTotals& totals) {
+    if (oldParentId == newParentId) return;
+    const auto oldChain = ancestorChain(txn, oldParentId);
+    const auto newChain = ancestorChain(txn, newParentId);
+    for (const auto id : oldChain)
+        if (std::ranges::find(newChain, id) == newChain.end()) addToDirStats(txn, id, totals, -1);
+    for (const auto id : newChain)
+        if (std::ranges::find(oldChain, id) == oldChain.end()) addToDirStats(txn, id, totals, 1);
+}
+
+void Directory::deleteDirectoryTree(const unsigned int id) {
+    Transactions::exec("Directory::deleteDirectoryTree", [&](pqxx::work& txn) {
+        const auto totals = subtreeTotalsOf(txn, id);
+        if (!totals) return;
+        for (const auto ancestor : ancestorChain(txn, parentIdOf(txn, id))) addToDirStats(txn, ancestor, *totals, -1);
+        txn.exec(pqxx::prepped{"delete_fs_entry"}, pqxx::params{id}); // children cascade
     });
 }
 

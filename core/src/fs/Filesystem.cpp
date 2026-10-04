@@ -589,6 +589,11 @@ int Filesystem::copy(const std::filesystem::path& from,
             copied->inode = cache->getOrAssignInode(to);
             copied->is_hidden = !copied->name.empty() && copied->name.front() == '.' && !copied->name.starts_with("..");
             copied->is_system = false;
+            // Only the directory row is copied, not what is under it, so it starts empty: carrying the source's
+            // totals would claim files it doesn't have (#158).
+            copied->size_bytes = 0;
+            copied->file_count = 0;
+            copied->subdirectory_count = 0;
 
             copied->id = db::query::fs::Directory::upsertDirectory(copied);
             cache->cacheEntry(copied);
@@ -616,16 +621,22 @@ void Filesystem::remove(const std::filesystem::path& path, const unsigned int us
     const auto entry = cache->getEntry(path);
     if (!entry) throw std::runtime_error("[Filesystem] Path does not exist in cache: " + path.string());
     if (!entry->vault_id) throw std::runtime_error("[Filesystem] Entry has no associated vault ID: " + path.string());
+    const auto ancestors = db::query::fs::Directory::ancestorsOf(entry->id);
 
     // !!! DO NOT CALL THIS FUNCTION DIRECTLY FROM FUSE CALLBACKS - WEBSOCKET OR INTERNAL ONLY !!!
     // This function recursively marks files as trashed in the database and deletes their backing paths
     // which is incompatible with how FUSE expects unlink/rmdir to behave.
 
-    if (entry->isDirectory())
+    if (entry->isDirectory()) {
         for (const auto& file : db::query::fs::File::listFilesInDir(*entry->vault_id, entry->path, true)) {
             db::query::fs::File::markFileAsTrashed(userId, file->id);
             cache->evictPath(file->fuse_path);
         }
+        // Trashing the last file removes a directory that ends up empty, but an empty directory (or one holding
+        // only empty directories or symlinks) is still there: delete what is left, off its ancestors' totals.
+        db::query::fs::Directory::deleteDirectoryTree(entry->id);
+        cache->evictPath(path);
+    }
     else if (entry->isSymlink()) {
         db::query::fs::Symlink::deleteSymlink(std::static_pointer_cast<Symlink>(entry));
         cache->evictPath(path);
@@ -638,6 +649,11 @@ void Filesystem::remove(const std::filesystem::path& path, const unsigned int us
     if (entry->isSymlink()) {
         if (symlinkStatusExists(entry->backing_path)) std::filesystem::remove(entry->backing_path);
     } else if (std::filesystem::exists(entry->backing_path)) std::filesystem::remove_all(entry->backing_path);
+
+    // fs.dir.list reads directory totals from the cache: refresh what the delete changed (#158), from the nearest
+    // ancestor that still exists (cleanup may have removed folders the delete left without files).
+    for (const auto id : ancestors)
+        if (cache->refreshDirStats(id)) break;
 }
 
 std::shared_ptr<File> Filesystem::createFile(const NewFileContext& ctx) {
@@ -928,10 +944,14 @@ int Filesystem::rename(const std::filesystem::path& oldPath,
         const auto oldBackingPath = entry->backing_path;
 
         int rc = 0;
+        std::optional<unsigned int> previousParentId;
 
         db::Transactions::exec("Filesystem::rename", [&](pqxx::work& txn) {
             std::vector<uint8_t> buffer;
 
+            // Everything under a directory moves with it. Take the directory's own subtree (it used to walk its
+            // parent's, so any sibling aborted the rename), shallowest first so each child's new parent exists.
+            std::vector<std::shared_ptr<Entry>> descendants;
             if (entry->isDirectory()) {
                 if (!entry->parent_id) {
                     log::Registry::fs()->error(
@@ -941,23 +961,15 @@ int Filesystem::rename(const std::filesystem::path& oldPath,
                     return;
                 }
 
-                for (const auto& item : runtime::Deps::get().fsCache->listDir(*entry->parent_id, true)) {
-                    rc = handleRename({
-                        .from = item->fuse_path,
-                        .to = updateSubdirPath(oldPath, newPath, item->fuse_path),
-                        .buffer = buffer,
-                        .user = user,
-                        .engine = engine,
-                        .entry = item,
-                        .txn = txn
-                    });
-
-                    if (rc != 0)
-                        return;
-
-                    buffer.clear();
-                }
+                descendants = runtime::Deps::get().fsCache->listDir(entry->id, true);
+                std::ranges::stable_sort(descendants, {}, [](const std::shared_ptr<Entry>& e) {
+                    return std::ranges::distance(e->fuse_path.begin(), e->fuse_path.end());
+                });
             }
+
+            // The subtree totals the entry carries to its ancestors, taken before anything changes (#158).
+            const auto totals = db::query::fs::Directory::subtreeTotalsOf(txn, entry->id);
+            const auto oldParentId = db::query::fs::Directory::parentIdOf(txn, entry->id);
 
             rc = handleRename({
                 .from = oldPath,
@@ -971,6 +983,27 @@ int Filesystem::rename(const std::filesystem::path& oldPath,
 
             if (rc != 0)
                 return;
+
+            for (const auto& item : descendants) {
+                buffer.clear();
+                rc = handleRename({
+                    .from = item->fuse_path,
+                    .to = updateSubdirPath(oldPath, newPath, item->fuse_path),
+                    .buffer = buffer,
+                    .user = user,
+                    .engine = engine,
+                    .entry = item,
+                    .txn = txn
+                });
+
+                if (rc != 0)
+                    return;
+            }
+
+            if (totals)
+                db::query::fs::Directory::shiftSubtreeTotals(
+                    txn, oldParentId, db::query::fs::Directory::parentIdOf(txn, entry->id), *totals);
+            previousParentId = oldParentId;
 
             txn.commit();
 
@@ -990,7 +1023,8 @@ int Filesystem::rename(const std::filesystem::path& oldPath,
 
         runtime::Deps::get().fsCache->evictPath(oldPath);
         runtime::Deps::get().fsCache->evictPath(newPath);
-        runtime::Deps::get().fsCache->cacheEntry(entry);
+        runtime::Deps::get().fsCache->cacheEntry(entry); // also refreshes the new parent chain's totals
+        if (previousParentId) runtime::Deps::get().fsCache->refreshDirStats(*previousParentId);
 
         log::Registry::fs()->debug("[Filesystem::rename] Successfully renamed {} to {}", oldPath.string(), newPath.string());
         return 0;

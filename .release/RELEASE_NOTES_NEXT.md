@@ -31,6 +31,10 @@ and the console only asks the daemon for what the page on screen needs.
   and groups, plus path-scoped permission overrides), shares, sync & cost, gateway and settings.
 - **Health** (formerly the dashboard) shows only what the daemon reports: when a value is unknown or the daemon
   is unreachable it says so, and never shows green. Polling stops when you leave the page or hide the tab.
+  The daemon's own health ratings were corrected too: a value it can't measure (slow queries without
+  `pg_stat_statements`, connection errors) is rated unknown instead of healthy, the oldest database transaction
+  warns only after an hour (it used to warn on every idle install), and FUSE errors that are part of normal
+  operation (a lookup of a name that doesn't exist yet) no longer raise a warning.
 - **Shares.** Recipients get the same file browser, with paths in the address. The new "Upload dropbox" preset
   lets people send files into a folder without seeing what's already there. Rotating or revoking a link asks first.
 - **Safer by default.** Every destructive action asks for confirmation. Logging out clears everything the browser
@@ -40,6 +44,9 @@ and the console only asks the daemon for what the page on screen needs.
   no longer fails; any admin role can be assigned; "Last login" shows "Never" instead of 1969; the version in the
   sidebar is the real one; vault owners show on the vault list; light-mode browsers no longer get an unreadable
   login page.
+- **Password age is recorded.** The daemon now stores when each account's password was last set (by the user,
+  by an admin reset, on the CLI or with `vh setup set-super-admin-password`), so the console can show it. It was
+  always empty before. Accounts whose password hasn't changed since the upgrade show no date.
 - Old console addresses (for example `/dashboard`, `/api-keys`, `/pricing-budget`, `/operator-email`) redirect to
   their new pages.
 
@@ -88,6 +95,29 @@ time-zone-aware value.
 
 Path-scoped allow/deny overrides on a vault role assignment (for example "deny downloads under `/finance/**`")
 can now be listed, added, changed and removed from a vault's Access tab, not only with `vh vault role override`.
+
+## Folder sizes and item counts
+
+- Moving or renaming a file or folder into another folder now updates the size and item count of both folders
+  (and the folders above them), as uploads always did. A folder that received files by a move used to show
+  "0 items", and the folder they came from kept counting them. Copies and deletes update them too.
+- Moving or renaming a folder into another folder now works when the folder it leaves holds anything else. It
+  used to fail with an I/O error. Files inside a folder moved under a newer folder keep working: their location
+  on disk was worked out from the wrong folder order.
+- Deleting an empty folder (or one holding only empty folders) from the web console removes it. It used to stay
+  listed after its contents on disk were gone.
+- Counts that are already wrong on an existing install are not recomputed by this release.
+
+## Vault sizes and quotas
+
+- Each vault now reports its own size. Every vault used to report the size of the whole storage directory,
+  which is mostly the default vault's data, so an empty vault (or an S3 vault with nothing cached locally) showed
+  the default vault's usage in the vault overview, the Health storage view and `stats.vault`.
+- Vault quotas are checked against that vault's own data. A vault with a quota used to be charged for every other
+  vault's files and the preview cache, so uploads and syncs into it could be refused as over quota while it was
+  nearly empty.
+- For an S3 vault the reported size is what is stored on this server (the local cache), not the bucket's total.
+- The vault list now includes each vault's owner name.
 
 ## Idle CPU
 

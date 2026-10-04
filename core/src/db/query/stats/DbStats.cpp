@@ -92,9 +92,11 @@ std::string classify(const vh::stats::model::DbStats& stats) {
         if (ratio >= 0.80) return "warning";
     }
 
-    if (stats.oldestTransactionAgeSeconds && *stats.oldestTransactionAgeSeconds >= 86400) return "critical";
+    using vh::stats::model::kDbOldestTransactionCriticalSeconds;
+    using vh::stats::model::kDbOldestTransactionWarningSeconds;
+    if (stats.oldestTransactionAgeSeconds && *stats.oldestTransactionAgeSeconds >= kDbOldestTransactionCriticalSeconds) return "critical";
     if (stats.deadlocks > 0) return "warning";
-    if (stats.oldestTransactionAgeSeconds && *stats.oldestTransactionAgeSeconds >= 3600) return "warning";
+    if (stats.oldestTransactionAgeSeconds && *stats.oldestTransactionAgeSeconds >= kDbOldestTransactionWarningSeconds) return "warning";
     if (stats.cacheHitRatio && *stats.cacheHitRatio > 0.0 && *stats.cacheHitRatio < 0.80) return "warning";
 
     return "healthy";
