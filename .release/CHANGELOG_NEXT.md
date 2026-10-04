@@ -35,7 +35,6 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
   sync was scheduled in the future (always, once a vault had synced): it now
   sleeps until the earliest sync is due, a sync is queued, or the service
   stops.
-
 - Engine::getVaultSize walks the vault's own backing tree
   (backingPath/<mount_point>) instead of the shared backing root, so
   stats.vault physical_size, stats.system.storage vault_size_bytes and the
@@ -63,7 +62,6 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
   runs); idempotent, keeps defaults and indexes, skips columns a view
   depends on with a warning, and avoids the table rewrite when the zone is
   UTC.
-
 - Migration 102 adds users.password_changed_at (TIMESTAMPTZ, NULL for
   existing rows) and a trigger that stamps it whenever password_hash
   changes (or on insert with a password), covering ws self change, admin
