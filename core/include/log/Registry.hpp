@@ -3,10 +3,6 @@
 #include <memory>
 #include <string>
 #include <spdlog/spdlog.h>
-#include <spdlog/sinks/sink.h>
-#include <spdlog/sinks/stdout_color_sinks.h>
-#include <spdlog/sinks/rotating_file_sink.h>
-#include <spdlog/sinks/basic_file_sink.h>
 #include "compat/fmt_extern.hpp"
 #include <filesystem>
 
@@ -53,18 +49,7 @@ private:
     static inline std::filesystem::path main_log_path_;
     static inline std::filesystem::path audit_log_path_;
 
-    // keep the shared sinks so we can swap them later
-    static inline std::shared_ptr<spdlog::sinks::stdout_color_sink_mt> console_sink_;
-    static inline std::shared_ptr<spdlog::sinks::rotating_file_sink_mt> main_file_sink_;
-    static inline std::shared_ptr<spdlog::sinks::basic_file_sink_mt>    audit_file_sink_;
-
-    // remember main sink params you used in init()
-    static inline size_t main_max_bytes_ = 10 * 1024 * 1024; // 10 MiB
-    static inline size_t main_max_files_ = 5;
-
-    static void replaceSinkEverywhere_(const std::shared_ptr<spdlog::sinks::sink>& old_sink,
-                                       const std::shared_ptr<spdlog::sinks::sink>& new_sink);
-
+    // The shared sinks live in Registry.cpp: callers only need loggers, not spdlog's sink headers.
 };
 
 }

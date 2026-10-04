@@ -220,4 +220,85 @@ namespace vh::rbac::role {
     }
 
     std::string to_string(const Vault &role) { return role.toString(0); }
+
+Vault Vault::ImplicitDeny() {
+    return make(
+        "implicit_deny",
+        "Role that denies all vault permissions.",
+        vault::Base::None()
+    );
+}
+
+Vault Vault::Guest() {
+    return make(
+        "guest",
+        "Minimal access role for browsing and limited read-only interaction with vault content.",
+        vault::Base::BrowseOnly()
+    );
+}
+
+Vault Vault::Reader() {
+    return make(
+        "reader",
+        "Read-only vault role with access to browse and download content.",
+        vault::Base::Reader()
+    );
+}
+
+Vault Vault::Contributor() {
+    return make(
+        "contributor",
+        "Vault role for users who can add and update content without broader administrative control.",
+        vault::Base::Contributor()
+    );
+}
+
+Vault Vault::Editor() {
+    return make(
+        "editor",
+        "Vault role for users who can fully edit and reorganize content within the vault.",
+        vault::Base::Editor()
+    );
+}
+
+Vault Vault::Manager() {
+    return make(
+        "manager",
+        "Vault manager role with content, sync, and limited role-management authority.",
+        vault::Base::Manager()
+    );
+}
+
+Vault Vault::PowerUser() {
+    return make(
+        "power_user",
+        "Advanced vault role with broad filesystem control, sync management, and strong collaborative authority.",
+        vault::Base::PowerUser()
+    );
+}
+
+Vault Vault::Full() {
+    return make(
+        "full",
+        "Unrestricted vault role with full permissions across filesystem, sync, and role management.",
+        vault::Base::Full()
+    );
+}
+
+Vault Vault::RoleManager() {
+    return make(
+        "role_manager",
+        "Specialized vault role focused on managing vault role assignments and access governance.",
+        vault::Base::RoleManager()
+    );
+}
+
+Vault Vault::SyncOperator() {
+    return make(
+        "sync_operator",
+        "Specialized vault role focused on synchronization operations and configuration.",
+        vault::Base::SyncOperator()
+    );
+}
+
 }

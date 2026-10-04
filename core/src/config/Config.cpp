@@ -12,6 +12,13 @@
 #include <nlohmann/json.hpp>
 
 namespace vh::config {
+
+Config::Config() = default;
+Config::~Config() = default;
+Config::Config(const Config&) = default;
+Config::Config(Config&&) noexcept = default;
+Config& Config::operator=(const Config&) = default;
+Config& Config::operator=(Config&&) noexcept = default;
     template<typename T>
     T getOrDefault(const YAML::Node &node, const std::string &key, const T &def) {
         return node[key] ? node[key].as<T>() : def;

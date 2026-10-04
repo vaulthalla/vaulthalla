@@ -136,7 +136,8 @@ lib_core = static_library(
     install: true
 )
 
-lib_seed = static_library('vhseed', files(join_paths(core_root, 'seed/src/seed_db.cpp')),
+lib_seed = static_library('vhseed', files(join_paths(core_root, 'seed/src/seed_db.cpp'),
+                                         join_paths(core_root, 'seed/src/SqlDeployer.cpp')),
                           include_directories: include_directories('seed/include', 'include', 'vendor'),
                           link_with: lib_core
 )
