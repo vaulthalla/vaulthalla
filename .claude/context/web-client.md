@@ -32,8 +32,13 @@
   `bin/check-colors.mjs` fails on raw palette/arbitrary colors outside `components/ui`. `/dev/ui` (development
   builds only) renders every primitive.
 - **Shell:** `src/components/shell/*` — permission-filtered rail (collapsible), top bar (⌘K command palette, health
-  dot from `stats.dashboard.severity`, transfers, user menu), session gate (reconnecting state, never an endless
-  spinner), initial-password warning (`data-testid="initial-password-warning"`).
+  dot from `stats.dashboard.severity`, transfers, cost-alerts bell, user menu), session gate (reconnecting state, never
+  an endless spinner), initial-password warning (`data-testid="initial-password-warning"`).
+- **Cost-alerts bell** (`features/cost/NotificationsBell.tsx`, super admins only): `pricing.notifications.list`
+  `{limit: 8, include_acknowledged: false}` every 60 s (paused in hidden tabs). The badge count (capped "9+") and tone
+  come from the response's `summary` (`open_count`, `worst_severity`), which core computes over every open alert in
+  scope, never from the shown rows (#172); "View all N alerts" links to `/cost#budget-alerts` when more are open. The
+  cost page's alert list (`useNotifications`, limit 50, optional acknowledged rows) is separate.
 - **Features:** `src/features/<area>/*`; route files in `src/app/**/page.tsx` are thin and render a feature
   component. Areas: `files` (FileBrowser over an `FsSource` adapter — vault or share — with capability-driven UI,
   URL-addressed paths, virtualized list/grid, transfer manager), `shares`, `share` (anonymous recipient page),
@@ -85,7 +90,9 @@ FontAwesome Pro icons aren't in git (`/web/public/icons/fa/` is ignored). `web/b
 `tests/e2e/console.spec.ts` is the console dogfood suite (route sweep, redirects, ws budget and poller shutdown,
 file lifecycle, multi-item drop, shares incl. upload-only dropbox, logout hygiene); run it against a reverse-proxied
 install (`VAULTHALLA_E2E_BASE_URL=https://localhost VAULTHALLA_E2E_NO_WEB_SERVER=1`). `lab-first-run.spec.ts` is the
-packaged-install proof; `s3-gateway.spec.ts` drives the gateway page by `data-testid`.
+packaged-install proof; `s3-gateway.spec.ts` drives the gateway page by `data-testid`, records the budget policies it
+saves (from the `*.budget.policy.upsert` responses on `/ws`) and in `afterAll` acknowledges their "policy <id> was
+saved|disabled" alerts on `/cost` before deleting the vaults it created.
 
 ## Packaging
 

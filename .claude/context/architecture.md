@@ -246,6 +246,11 @@ subject's assignment; both `vh vault role override ...` and ws `role.vault.overr
 - Config: `pricing.storage_rates_api` (`base_url: https://storage-rates-api.vaulthalla.cloud`,
   `remote_refresh_enabled: false` in the shipped config, `fail_open: true`, 12h cache/refresh). A local dev price bot
   runs on `127.0.0.1:36933`.
+- Alerts live in `operator_notification` (severity `info < warning < error < critical`, the 094 CHECK; ranked by
+  `priceBudgetNotificationSeverityRank`). ws `pricing.notifications.list` returns the page (`limit`, newest first) plus
+  `summary: {open_count, worst_severity|null}` over every OPEN (unacknowledged, unexpired) alert the caller can see,
+  from one `GROUP BY vault_id` aggregate (`PriceBudgetService::summarizeOpenNotifications`) filtered by the same vault
+  visibility as the rows, so it never depends on `limit` (#172). The console bell reads its badge from it.
 - Invariant: never trust unsigned or unverified price artifacts. Estimates are guidance and `fail_open`; enforcement modes act on
   them, so a pricing outage must not wedge sync.
 
