@@ -152,7 +152,11 @@ export async function selectCredential(page: Page, name: string) {
   await expect(page.getByTestId('s3-gateway-section-credential-roles')).toBeVisible()
 }
 
+// Every vault this suite creates, so afterAll can delete them (each run used to leave five behind).
+export const createdVaults: string[] = []
+
 export async function createLocalBucket(page: Page, name: string) {
+  createdVaults.push(name)
   await openTab(page, 'Buckets')
   await page.getByTestId('s3-gateway-open-local-bucket').click()
   await page.getByTestId('s3-gateway-local-bucket-name-input').fill(name)
@@ -182,4 +186,18 @@ export async function saveKeyVaultBudget(page: Page, amount: string, vaultName?:
   await page.getByTestId('s3-gateway-key-vault-budget-input').fill(amount)
   await page.getByTestId('s3-gateway-key-vault-budget-save').click()
   await expect(page.getByTestId('s3-gateway-key-vault-budget-disable')).toBeEnabled()
+}
+
+// Deletes a vault through the console: Vaults → the vault → Settings → Delete vault (typed confirmation).
+export async function deleteVault(page: Page, name: string) {
+  await page.goto('/vaults')
+  // The row link's name also carries the vault's description.
+  await page.getByRole('link').filter({ hasText: name }).first().click()
+  await page.waitForURL(/\/vaults\/\d+$/)
+  await page.goto(`${new URL(page.url()).pathname}/settings`)
+  await page.getByRole('button', { name: 'Delete vault' }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByLabel(`Type ${name} to confirm`).fill(name)
+  await dialog.getByRole('button', { name: 'Delete vault' }).click()
+  await page.waitForURL(/\/vaults$/)
 }

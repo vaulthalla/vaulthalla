@@ -7,6 +7,8 @@ import {
   assignVaultRole,
   createCredential,
   createLocalBucket,
+  createdVaults,
+  deleteVault,
   ensureVaultAvailable,
   gotoS3Gateway,
   hideSecret,
@@ -29,6 +31,13 @@ let vaultAllowCredential = ''
 
 test.beforeAll(async ({ browser }) => {
   await authenticateAndSaveState(browser, authStatePath)
+})
+
+test.afterAll(async ({ browser }) => {
+  const context = await browser.newContext({ storageState: authStatePath, ignoreHTTPSErrors: true })
+  const page = await context.newPage()
+  for (const name of createdVaults.splice(0)) await deleteVault(page, name)
+  await context.close()
 })
 
 async function ensureUserCredential(page: Parameters<typeof gotoS3Gateway>[0]) {
