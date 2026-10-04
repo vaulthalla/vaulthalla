@@ -9,6 +9,7 @@ import { isSuperAdminUser } from '@/lib/permissions'
 import {
   toLedger,
   toNotification,
+  toNotificationSummary,
   toOverride,
   toStats,
   toStatus,
@@ -46,11 +47,27 @@ export const useOverrides = (enabled: boolean) =>
     { enabled, select: data => (data.overrides ?? []).map(toOverride) },
   )
 
-export const useNotifications = (enabled: boolean, includeAcknowledged = false, refetchInterval?: number) =>
+export const useNotifications = (enabled: boolean, includeAcknowledged = false) =>
   useWs(
     'pricing.notifications.list',
     { limit: 50, include_acknowledged: includeAcknowledged },
-    { enabled, refetchInterval, select: data => (data.notifications ?? []).map(toNotification) },
+    { enabled, select: data => (data.notifications ?? []).map(toNotification) },
+  )
+
+// The newest `limit` open alerts plus core's summary of all of them: the badge count and tone come from the summary,
+// so a short page never hides an older, worse alert (#172).
+export const useOpenAlerts = (enabled: boolean, limit: number, refetchInterval?: number) =>
+  useWs(
+    'pricing.notifications.list',
+    { limit, include_acknowledged: false },
+    {
+      enabled,
+      refetchInterval,
+      select: data => ({
+        items: (data.notifications ?? []).map(toNotification),
+        summary: toNotificationSummary(data.summary),
+      }),
+    },
   )
 
 export interface VaultLite {

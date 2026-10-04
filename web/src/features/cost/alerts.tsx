@@ -94,7 +94,11 @@ export const AlertsSection = ({
               rowActions={n =>
                 n.acknowledged_at ?
                   <span className="text-fg-faint px-2 text-xs">Acknowledged</span>
-                : <Button size="sm" variant="ghost" onClick={() => void ackNotification(n)}>
+                : <Button
+                    size="sm"
+                    variant="ghost"
+                    data-testid="budget-alert-ack"
+                    onClick={() => void ackNotification(n)}>
                     <CheckIcon aria-hidden />
                     Ack
                   </Button>

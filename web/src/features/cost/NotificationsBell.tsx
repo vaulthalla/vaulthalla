@@ -9,29 +9,25 @@ import { severityTone, toneClasses } from '@/lib/tone'
 import { Button } from '@/components/ui/Button'
 import { Popover } from '@/components/ui/Popover'
 import { BellIcon, CheckIcon } from '@/components/ui/icons'
-import { ackNotification, useNotifications } from '@/features/cost/queries'
-import type { PriceNotification } from '@/features/cost/model'
+import { ackNotification, useOpenAlerts } from '@/features/cost/queries'
 
-const RANK: Record<string, number> = { critical: 4, error: 3, warning: 2, info: 1 }
-
-// The worst open alert sets the badge tone; the severity comes from the backend.
-const worst = (items: PriceNotification[]) =>
-  items.reduce<string | null>(
-    (acc, n) => ((RANK[n.severity ?? ''] ?? 0) > (RANK[acc ?? ''] ?? 0) ? n.severity : acc),
-    null,
-  )
+// The popover lists the newest few open alerts; the badge count and tone come from core's summary of all of them.
+const SHOWN = 8
 
 // Top-bar bell for open budget/pricing alerts. Super admins only (core gates price budgets on isSuperAdmin);
 // renders nothing for everyone else.
 export const NotificationsBell = () => {
   const isAdmin = useCan({ superAdmin: true })
   const [open, setOpen] = useState(false)
-  const alerts = useNotifications(isAdmin, false, 60_000)
+  const alerts = useOpenAlerts(isAdmin, SHOWN, 60_000)
   if (!isAdmin) return null
 
-  const items = alerts.data ?? []
-  const count = items.length
-  const tone = severityTone(worst(items))
+  const items = alerts.data?.items ?? []
+  const summary = alerts.data?.summary ?? null
+  // The severity ranking is the backend's (worst_severity); the badge never derives it from the shown page.
+  const count = summary?.open_count ?? 0
+  const tone = severityTone(summary?.worst_severity)
+  const hidden = summary ? summary.open_count - items.length : 0
   const label =
     alerts.error ? 'Cost alerts unavailable'
     : count ? `${count} open cost alert${count === 1 ? '' : 's'}`
@@ -97,6 +93,17 @@ export const NotificationsBell = () => {
           </ul>
         }
       </div>
+      {hidden > 0 ?
+        <div className="border-line border-t px-4 py-2.5 text-center">
+          <Link
+            href="/cost#budget-alerts"
+            onClick={() => setOpen(false)}
+            data-testid="cost-alerts-view-all"
+            className="text-accent-text text-xs hover:underline">
+            View all {count} alerts
+          </Link>
+        </div>
+      : null}
     </Popover>
   )
 }

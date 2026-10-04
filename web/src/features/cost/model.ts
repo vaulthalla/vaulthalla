@@ -233,6 +233,19 @@ export const toNotification = (input: unknown): PriceNotification => {
   }
 }
 
+// The open-alert summary core computes for pricing.notifications.list (independent of the page's limit). A missing or
+// malformed summary is null (unknown), never "0 open".
+export interface NotificationSummary {
+  open_count: number
+  worst_severity: string | null
+}
+
+export const toNotificationSummary = (input: unknown): NotificationSummary | null => {
+  const d = rec(input)
+  const openCount = num(d.open_count)
+  return openCount === null ? null : { open_count: openCount, worst_severity: str(d.worst_severity) }
+}
+
 export interface PriceOverride {
   id: number
   run_uuid: string | null

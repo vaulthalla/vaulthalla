@@ -1,12 +1,14 @@
 import { expect, test } from '@playwright/test'
 import { authStatePath, authenticateAndSaveState, explicitSkipRequested } from './helpers/auth'
 import {
+  acknowledgeBudgetAlerts,
   addDefaultCredentialOverride,
   addCredentialOverride,
   addSelectedVault,
   assignVaultRole,
   createCredential,
   createLocalBucket,
+  createdBudgetPolicyIds,
   createdVaults,
   deleteVault,
   ensureVaultAvailable,
@@ -19,6 +21,7 @@ import {
   saveKeyVaultBudget,
   selectCredential,
   setDefaultVaultRole,
+  trackBudgetPolicies,
   uniqueE2EName,
 } from './helpers/s3Gateway'
 
@@ -33,9 +36,15 @@ test.beforeAll(async ({ browser }) => {
   await authenticateAndSaveState(browser, authStatePath)
 })
 
+test.beforeEach(({ page }) => trackBudgetPolicies(page))
+
 test.afterAll(async ({ browser }) => {
   const context = await browser.newContext({ storageState: authStatePath, ignoreHTTPSErrors: true })
   const page = await context.newPage()
+  // Acknowledge the budget alerts this run raised (before deleting vaults: a vault's alerts go with it), so they
+  // don't pile up in the bell across runs.
+  await acknowledgeBudgetAlerts(page, createdBudgetPolicyIds)
+  createdBudgetPolicyIds.clear()
   for (const name of createdVaults.splice(0)) await deleteVault(page, name)
   await context.close()
 })

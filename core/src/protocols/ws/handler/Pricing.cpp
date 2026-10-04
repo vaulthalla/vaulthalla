@@ -33,8 +33,10 @@
 namespace vh::protocols::ws::handler {
 namespace {
 
+using vh::storage::s3::pricing::PriceBudgetNotificationSummary;
 using vh::storage::s3::pricing::PriceBudgetScope;
 using vh::storage::s3::pricing::PriceBudgetService;
+using vh::storage::s3::pricing::mergePriceBudgetNotificationSummary;
 using vh::storage::s3::pricing::priceBudgetModeFromString;
 using vh::storage::s3::pricing::priceBudgetScopeFromString;
 
@@ -284,6 +286,10 @@ json Pricing::notificationsList(const json& payload, const std::shared_ptr<Sessi
     const auto includeAcknowledged = body.value("include_acknowledged", false);
     PriceBudgetService service;
 
+    // `summary` always describes the OPEN alerts the caller can see (same scoping as the rows), computed by one
+    // aggregate query instead of from the returned page, so `limit` never hides the count or the worst severity.
+    PriceBudgetNotificationSummary summary;
+
     if (!session->user->isSuperAdmin()) {
         if (!vaultId) {
             auto notifications = service.listNotifications(500, std::nullopt, includeAcknowledged);
@@ -291,13 +297,18 @@ json Pricing::notificationsList(const json& payload, const std::shared_ptr<Sessi
                 return !notification.vault_id || !canViewVaultBudget(session, *notification.vault_id);
             });
             if (notifications.size() > limit) notifications.resize(limit);
-            return {{"notifications", notifications}};
+            for (const auto& group : service.summarizeOpenNotifications())
+                if (group.vault_id && canViewVaultBudget(session, *group.vault_id))
+                    mergePriceBudgetNotificationSummary(summary, group.summary);
+            return {{"notifications", notifications}, {"summary", summary}};
         }
         requireVaultBudgetView(session, *vaultId);
     } else if (vaultId) {
         requireVaultBudgetView(session, *vaultId);
     }
-    return {{"notifications", service.listNotifications(limit, vaultId, includeAcknowledged)}};
+    for (const auto& group : service.summarizeOpenNotifications(vaultId))
+        mergePriceBudgetNotificationSummary(summary, group.summary);
+    return {{"notifications", service.listNotifications(limit, vaultId, includeAcknowledged)}, {"summary", summary}};
 }
 
 json Pricing::notificationsAck(const json& payload, const std::shared_ptr<Session>& session) {
