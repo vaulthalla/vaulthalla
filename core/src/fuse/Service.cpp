@@ -50,10 +50,9 @@ static void lazyUmount(const stdfs::path& p) {
     // 1) Try kernel lazy detach
     if (::umount2(p.c_str(), MNT_DETACH) == 0) return;
 
-    // 2) Fallbacks (some distros prefer fusermount3)
-    (void)std::system(std::string("fusermount3 -uz " + p.string() + " >/dev/null 2>&1").c_str());
-    (void)std::system(std::string("fusermount  -uz " + p.string() + " >/dev/null 2>&1").c_str());
-    (void)std::system(std::string("umount     -l  " + p.string() + " >/dev/null 2>&1").c_str());
+    // 2) Fallbacks (some distros prefer fusermount3), stopping at the first that works
+    for (const auto* command : {"fusermount3 -uz ", "fusermount -uz ", "umount -l "})
+        if (std::system((command + p.string() + " >/dev/null 2>&1").c_str()) == 0) return;
 }
 
 static void waitUnmounted(const stdfs::path& p, std::chrono::milliseconds timeout = std::chrono::milliseconds(1500)) {

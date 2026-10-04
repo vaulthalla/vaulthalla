@@ -105,6 +105,14 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
   limit; the cost-alerts bell requests limit 8 and badges from it. (#172)
 - Contract test: core ws registrations must match web WebSocketCommandMap.
 
+## Build
+- The core builds with no compiler output but progress at -O3 -Werror,
+  unity and per-file: OpenSSL 3 EVP digests replace the deprecated MD5_* /
+  SHA256_* calls; default member initializers; uninitialized fds in the
+  integration harness; a missing <ostream> hidden by unity; system() results
+  checked. GCC builds force-include core/include/compat/gcc_variant.hpp for a
+  libstdc++ <variant> -Wmaybe-uninitialized false positive via libpqxx.
+
 ## FUSE
 - FUSE is the decrypting view of at-rest ciphertext (#173): open decrypts
   each inode into a shared 0600 working copy under
@@ -116,6 +124,8 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
   requires an IV); the cross-vault path records the plaintext size.
 - Filesystem::repairAtRest (first sync pass per vault per start) seals
   plaintext files left by older builds and corrects ciphertext-length sizes.
+- FUSE forget no longer evicts metadata cache entries: evicting a vault root
+  made path lookups under it fail with ENOENT until restart.
 - open requires Write for writable or O_TRUNC handles (Read and Write for
   O_RDWR); write checks Write before writing; setattr size works.
 - Streaming AES-256-GCM file decryption (crypto::util::decrypt_aes256_gcm_file,

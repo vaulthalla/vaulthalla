@@ -29,7 +29,7 @@ struct Decision {
     Reason reason{Reason::PrincipalRbacDenied};
     bool principal_allowed{false};
     bool credential_allowed{false};
-    std::optional<fs::policy::Decision> credential_decision;
+    std::optional<fs::policy::Decision> credential_decision{};
 
     [[nodiscard]] std::string toString() const;
 };

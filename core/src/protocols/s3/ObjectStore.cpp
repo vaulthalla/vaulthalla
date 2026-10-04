@@ -34,6 +34,7 @@
 #include <fstream>
 #include <iomanip>
 #include <openssl/md5.h>
+#include "crypto/util/digest.hpp"
 #include <set>
 #include <sstream>
 #include <utility>
@@ -61,9 +62,8 @@ std::string toHex(const unsigned char* bytes, const std::size_t n) {
 }
 
 std::vector<uint8_t> md5Raw(const std::vector<uint8_t>& bytes) {
-    std::vector<uint8_t> digest(MD5_DIGEST_LENGTH);
-    MD5(bytes.data(), bytes.size(), digest.data());
-    return digest;
+    const auto digest = crypto::util::EvpDigest::of(EVP_md5(), bytes.data(), bytes.size());
+    return {digest.begin(), digest.end()};
 }
 
 std::vector<uint8_t> readFileBytes(const std::filesystem::path& path) {
@@ -76,17 +76,15 @@ std::string objectMd5FileHex(const std::filesystem::path& path) {
     std::ifstream in(path, std::ios::binary);
     if (!in) throw std::runtime_error("Failed to read object source file: " + path.string());
 
-    MD5_CTX ctx{};
-    MD5_Init(&ctx);
+    crypto::util::EvpDigest md5(EVP_md5());
     std::array<char, 64 * 1024> buffer{};
     while (in) {
         in.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
         const auto count = in.gcount();
-        if (count > 0) MD5_Update(&ctx, buffer.data(), static_cast<std::size_t>(count));
+        if (count > 0) md5.update(buffer.data(), static_cast<std::size_t>(count));
     }
-    unsigned char digest[MD5_DIGEST_LENGTH];
-    MD5_Final(digest, &ctx);
-    return toHex(digest, MD5_DIGEST_LENGTH);
+    const auto digest = md5.finish();
+    return toHex(digest.data(), digest.size());
 }
 
 std::vector<uint8_t> readPlaintext(const std::shared_ptr<storage::Engine>& engine, const std::shared_ptr<fs::model::File>& file) {
@@ -445,20 +443,18 @@ BucketEmptyResult ObjectStore::bucketIsEmpty(const ResolvedBucket& bucket) const
     const auto objects = db::query::s3::Gateway::listObjectStates(bucket.vault_id, params);
 
     auto result = db::Transactions::exec("S3Gateway::bucketIsEmpty", [&](pqxx::work& txn) {
+        const auto row = txn.exec(
+            "SELECT (SELECT COUNT(*) FROM s3_gateway_object WHERE vault_id = $1), "
+            "       (SELECT COUNT(*) FROM fs_entry e JOIN files f ON f.fs_entry_id = e.id "
+            "         WHERE e.vault_id = $1 AND e.path <> '/'), "
+            "       (SELECT COUNT(*) FROM remote_object_index WHERE vault_id = $1), "
+            "       (SELECT COUNT(*) FROM files_trashed WHERE vault_id = $1 AND deleted_at IS NULL)",
+            pqxx::params{bucket.vault_id}).one_row();
         BucketEmptyResult out;
-        out.gateway_objects = txn.exec(
-            "SELECT COUNT(*) FROM s3_gateway_object WHERE vault_id = $1",
-            pqxx::params{bucket.vault_id}).one_field().as<uint64_t>();
-        out.fs_entries = txn.exec(
-            "SELECT COUNT(*) FROM fs_entry e JOIN files f ON f.fs_entry_id = e.id "
-            "WHERE e.vault_id = $1 AND e.path <> '/'",
-            pqxx::params{bucket.vault_id}).one_field().as<uint64_t>();
-        out.remote_index_objects = txn.exec(
-            "SELECT COUNT(*) FROM remote_object_index WHERE vault_id = $1",
-            pqxx::params{bucket.vault_id}).one_field().as<uint64_t>();
-        out.active_tombstones = txn.exec(
-            "SELECT COUNT(*) FROM files_trashed WHERE vault_id = $1 AND deleted_at IS NULL",
-            pqxx::params{bucket.vault_id}).one_field().as<uint64_t>();
+        out.gateway_objects = row[0].as<uint64_t>();
+        out.fs_entries = row[1].as<uint64_t>();
+        out.remote_index_objects = row[2].as<uint64_t>();
+        out.active_tombstones = row[3].as<uint64_t>();
         return out;
     });
 

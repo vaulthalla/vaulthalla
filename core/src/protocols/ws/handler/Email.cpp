@@ -34,13 +34,6 @@ void requireSuperAdmin(const std::shared_ptr<Session>& session) {
         throw vh::ops::Denied("Permission denied: operator email administration requires super-admin");
 }
 
-std::string lower(std::string value) {
-    std::ranges::transform(value, value.begin(), [](const unsigned char c) {
-        return static_cast<char>(std::tolower(c));
-    });
-    return value;
-}
-
 std::string instanceName() {
     char host[256]{};
     if (::gethostname(host, sizeof(host) - 1) == 0 && host[0] != '\0')

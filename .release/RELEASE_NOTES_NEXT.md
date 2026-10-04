@@ -70,6 +70,9 @@ them. Web downloads were never affected.
   encrypted, and wrong sizes are corrected. This takes longer on vaults with many files written through the
   mount, and an S3 vault may upload those files once more. Nothing needs to be done by hand.
 - Temporary decrypted copies (for downloads and previews) are now readable only by the daemon.
+- A vault no longer disappears from the mount when the kernel frees cached directory entries (under memory
+  pressure, or `echo 2 > /proc/sys/vm/drop_caches`). The vault and everything in it used to answer "No such file or
+  directory" until the daemon restarted.
 
 ## Faster page loads, previews and downloads
 

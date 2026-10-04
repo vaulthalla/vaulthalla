@@ -329,7 +329,9 @@ TEST_F(UserParityTest, ListShowsWhatTheActorMayViewOnBothSurfaces) {
     for (const auto& u : listed) {
         wsNames.insert(u.at("name").get<std::string>());
         const auto acct = db::query::identities::User::getUserById(u.at("id").get<unsigned int>());
-        if (acct->id != viewer->id) EXPECT_FALSE(ops::users::isAdminIdentity(*acct->roles.admin)) << acct->name;
+        if (acct->id != viewer->id) {
+            EXPECT_FALSE(ops::users::isAdminIdentity(*acct->roles.admin)) << acct->name;
+        }
     }
     EXPECT_TRUE(wsNames.contains(viewer->name));
 

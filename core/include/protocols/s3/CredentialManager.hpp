@@ -22,14 +22,14 @@ using CredentialVaultAccessShorthand = db::query::s3::CredentialVaultAccessShort
 struct CredentialCreateOptions {
     uint32_t created_by{};
     uint32_t principal_user_id{};
-    std::string name;
+    std::string name{};
     std::string scope_mode{"user_access"};
-    std::optional<std::string> description;
-    std::optional<std::time_t> expires_at;
-    std::optional<uint32_t> default_vault_role_id;
-    std::vector<uint32_t> selected_vault_ids;
-    std::vector<vh::rbac::permission::Override> default_role_overrides;
-    std::vector<CredentialVaultAccessShorthand> vault_scopes;
+    std::optional<std::string> description{};
+    std::optional<std::time_t> expires_at{};
+    std::optional<uint32_t> default_vault_role_id{};
+    std::vector<uint32_t> selected_vault_ids{};
+    std::vector<vh::rbac::permission::Override> default_role_overrides{};
+    std::vector<CredentialVaultAccessShorthand> vault_scopes{};
     bool enforce_budget_for_local_requests{false};
 };
 

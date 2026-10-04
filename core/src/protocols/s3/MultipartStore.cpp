@@ -14,6 +14,7 @@
 #include <fstream>
 #include <iomanip>
 #include <openssl/md5.h>
+#include "crypto/util/digest.hpp"
 #include <paths.h>
 #include <sstream>
 
@@ -65,17 +66,15 @@ std::string md5FileHex(const std::filesystem::path& path) {
     std::ifstream in(path, std::ios::binary);
     if (!in) throw invalidArgument("Unable to read multipart part file", path.string());
 
-    MD5_CTX ctx{};
-    MD5_Init(&ctx);
+    crypto::util::EvpDigest md5(EVP_md5());
     std::array<char, 64 * 1024> buffer{};
     while (in) {
         in.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
         const auto count = in.gcount();
-        if (count > 0) MD5_Update(&ctx, buffer.data(), static_cast<std::size_t>(count));
+        if (count > 0) md5.update(buffer.data(), static_cast<std::size_t>(count));
     }
-    unsigned char digest[MD5_DIGEST_LENGTH];
-    MD5_Final(digest, &ctx);
-    return multipartHex(digest, MD5_DIGEST_LENGTH);
+    const auto digest = md5.finish();
+    return multipartHex(digest.data(), digest.size());
 }
 
 std::string objectKeyFor(const std::string& key) {

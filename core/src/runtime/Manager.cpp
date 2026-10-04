@@ -298,11 +298,13 @@ void Manager::startWatchdog() {
                 log::Registry::runtime()->warn("[Watchdog] {} is down, restarting...", name);
 
                 if (name == "FUSE")
-                    system(fmt::format(
-                        "fusermount3 -u {} > /dev/null 2>&1 || fusermount -u {} > /dev/null 2>&1",
-                        paths::getMountPath().string(),
-                        paths::getMountPath().string()
-                    ).c_str());
+                    if (const int rc = std::system(fmt::format(
+                            "fusermount3 -u {} > /dev/null 2>&1 || fusermount -u {} > /dev/null 2>&1",
+                            paths::getMountPath().string(),
+                            paths::getMountPath().string()
+                        ).c_str()); rc != 0)
+                        log::Registry::runtime()->warn("[Watchdog] Unmounting {} before restarting FUSE failed (status {})",
+                                                       paths::getMountPath().string(), rc);
 
                 restartService(name);
             }

@@ -1,5 +1,8 @@
 #pragma once
 
+// Beast's status.ipp streams a string_view and needs std::ostream complete; don't rely on an earlier include.
+#include <ostream>
+
 #include <boost/beast/http/status.hpp>
 #include <stdexcept>
 #include <string>
