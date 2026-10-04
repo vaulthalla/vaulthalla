@@ -33,6 +33,11 @@
 
 ## DB-backed unit tests
 
+- **Teardown hazard:** `make test`/`make run_test`/`make uninstall` run `bin/tests/uninstall_db.sh`, which executes
+  `DROP OWNED BY vaulthalla_test` in *every* database before dropping the role. A burner DB created with
+  `-O vaulthalla_test` (the usual way to give tests their own DB) is emptied, and the role drop then fails. Don't run
+  those targets while a burner owned by that role is in use; `install_db.sh` also rotates the role's password.
+
 1. `make test`. It uninstalls the test env, creates the test DB role and DB, and rewrites the generated `VH_TEST_DB_*`
    credentials into the ignored `deploy/vaulthalla.env`.
 2. `set -a; source ./deploy/vaulthalla.env; set +a`
