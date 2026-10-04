@@ -61,6 +61,8 @@ const gotoFiles = async (page: Page) => {
 
 test.describe.serial('console', () => {
   test('every console route renders without errors, endless spinners or denied states for a super admin', async ({ page }) => {
+    // Each route is bounded below; a packaged daemon spends ~1 s of each full page load verifying the session (#171).
+    test.setTimeout(ROUTES.length * 10_000)
     const problems = watch(page)
     for (const route of ROUTES) {
       const response = await page.goto(route)
@@ -85,6 +87,19 @@ test.describe.serial('console', () => {
       await page.goto(from)
       await expect(page, from).toHaveURL(to)
     }
+  })
+
+  test('only page loads pay the upstream session check; router fetches skip it', async ({ playwright, baseURL }) => {
+    // Next strips Next-Router-Prefetch/RSC before middleware runs; a check per prefetch is a password-hash verify in
+    // the daemon each, and on a packaged install they queued past the 2.5 s timeout on every page.
+    const api = await playwright.request.newContext({ baseURL, ignoreHTTPSErrors: true })
+    const get = (dest: string) =>
+      api.get('/users', { maxRedirects: 0, headers: { cookie: 'refresh=not-a-session', 'sec-fetch-dest': dest } })
+    const page = await get('document')
+    expect(page.status()).toBe(307)
+    expect(page.headers().location).toMatch(/\/login\?next=%2Fusers$/)
+    expect((await get('empty')).status()).toBe(200)
+    await api.dispose()
   })
 
   test('the websocket bootstrap stays small and pollers stop when you leave a page', async ({ page }) => {
