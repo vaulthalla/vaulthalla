@@ -77,6 +77,8 @@ versions, cutting releases), `payload-markdown` + `payload-markdown-docs` (doc a
 ## Working conventions
 
 - Root-cause first: find where state diverges, fix it at the source, and add a regression guard (test or contract check).
+- Forward-declare through the subsystem's `Fwd.hpp` (e.g. `identities/Fwd.hpp`, `<pqxx/types>`), not ad hoc
+  `namespace vh::x { struct Y; }` blocks (see architecture.md, Build graph).
 - Run the proof for the surface you touched (`/verify`), and report exactly what ran, what passed, and what was skipped.
   Runtime/packaging changes aren't proven by unit tests alone. Say whether a lab install was done.
 - Keep `.claude/context/*` true. When code changes a fact recorded there, update the doc in the same change.

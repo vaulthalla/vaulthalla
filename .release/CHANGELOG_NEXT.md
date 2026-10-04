@@ -125,6 +125,9 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
   is an extern template; fmt::format replaces std::format in the RBAC
   templates; spdlog sinks, <regex>, shell argument helpers and all of asio left
   widely included headers; heavy inline code moved to .cpp files.
+- Forward declarations: subsystem Fwd.hpp headers (identities, auth, storage,
+  vault, fs, rbac, share, sync, crypto, protocols/ws, protocols/shell) and
+  libpqxx's <pqxx/types> replace 355 repeated local declarations.
 
 ## FUSE
 - FUSE is the decrypting view of at-rest ciphertext (#173): open decrypts

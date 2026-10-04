@@ -27,6 +27,14 @@ CI-only `reference to 'Vault' is ambiguous` failures came from filesystem-order-
   A newer one is at `db/query/sync/RemoteObjectIndex.cpp:13`.
 - Never weaken the unity, warning, or werror settings to get a build green.
 
+**Forward declarations.** Each subsystem that other code refers to by pointer or reference has a declaration-only
+`Fwd.hpp` (`identities/`, `auth/`, `storage/`, `vault/`, `fs/`, `rbac/`, `share/`, `sync/`, `crypto/`,
+`protocols/ws/`, `protocols/shell/`; earlier: `rbac/resolver/*/Fwd.hpp`). Include the narrowest one instead of
+writing `namespace vh::x { struct Y; }` again, and `<pqxx/types>` for libpqxx classes. Keep them declarations only:
+no includes of definitions, no aliases, one subsystem each (no global fwd header). Add a type to its subsystem's
+Fwd.hpp once it's forward-declared in more than one place. The `vh_usage` library (`core/usage`) can't see
+`core/include` and keeps its own declarations.
+
 ## Process model
 
 `core/main/main.cpp` boot sequence: config + log registries → DB init + prepared statements +
