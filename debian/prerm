@@ -21,6 +21,10 @@ NGINX_DEFAULT_DISABLED_MARKER="/var/lib/vaulthalla/nginx_default_site_disabled"
 LEGACY_PENDING_SUPERADMIN_UID_FILE="/run/vaulthalla/superadmin_uid"
 PENDING_DB_PASS_FILE="/run/vaulthalla/db_password"
 TPM_BACKEND_OVERRIDE_FILE="/etc/systemd/system/vaulthalla.service.d/tpm-backend.conf"
+# Same log as postinst (root-owned /var/log, never the daemon-owned /var/log/vaulthalla). Routine steps
+# go only there (and to the terminal with VH_PACKAGE_VERBOSE=1); warnings always reach the terminal.
+PACKAGE_LOG="/var/log/vaulthalla-package.log"
+PACKAGE_LOG_SINK="/dev/null"
 
 has_command() {
     command -v "$1" >/dev/null 2>&1
@@ -40,9 +44,38 @@ systemd_running() {
     has_command systemctl && [ -d /run/systemd/system ]
 }
 
+open_package_log() {
+    PACKAGE_LOG_SINK="/dev/null"
+    if [ -L "$PACKAGE_LOG" ] || { [ -e "$PACKAGE_LOG" ] && [ ! -f "$PACKAGE_LOG" ]; }; then
+        return 0
+    fi
+    if ( umask 027; : >> "$PACKAGE_LOG" ) 2>/dev/null; then
+        PACKAGE_LOG_SINK="$PACKAGE_LOG"
+        log_line "==== $(date -u '+%Y-%m-%dT%H:%M:%SZ') ${PKG} prerm $* ===="
+    fi
+}
+
+log_line() {
+    if [ "$PACKAGE_LOG_SINK" != "/dev/null" ]; then
+        printf '%s\n' "$*" >> "$PACKAGE_LOG_SINK" 2>/dev/null || true
+    fi
+}
+
+detail() {
+    log_line "$*"
+    case "${VH_PACKAGE_VERBOSE:-}" in
+        1|true|TRUE|yes|YES|on|ON) echo "[${PKG}] $*" ;;
+    esac
+}
+
+warn() {
+    log_line "WARNING: $*"
+    echo "[${PKG}] WARNING: $*" >&2
+}
+
 log_systemctl_unavailable_once() {
     if [ "$SYSTEMCTL_UNAVAILABLE_LOGGED" = "0" ]; then
-        echo "[${PKG}] systemd not running or systemctl unavailable; skipping systemd teardown actions."
+        detail "systemd not running or systemctl unavailable; skipping systemd teardown actions."
         SYSTEMCTL_UNAVAILABLE_LOGGED="1"
     fi
 }
@@ -60,7 +93,7 @@ safe_systemctl() {
         return 0
     fi
     if ! run_systemctl_quiet "$@"; then
-        echo "[${PKG}] WARNING: systemctl --system $* failed; continuing."
+        warn "systemctl --system $* failed; continuing."
     fi
     return 0
 }
@@ -108,9 +141,9 @@ stop_service_bounded() {
         return 0
     fi
 
-    echo "[${PKG}] Stopping ${unit} (bounded wait: ${SYSTEMCTL_STOP_WAIT_SECONDS}s)..."
+    detail "Stopping ${unit} (bounded wait: ${SYSTEMCTL_STOP_WAIT_SECONDS}s)..."
     if ! run_systemctl_quiet stop --no-block "$unit"; then
-        echo "[${PKG}] WARNING: Failed to submit stop job for ${unit}; continuing."
+        warn "Failed to submit stop job for ${unit}; continuing."
     fi
 
     if wait_for_unit_stopped "$unit" "$SYSTEMCTL_STOP_WAIT_SECONDS"; then
@@ -118,10 +151,10 @@ stop_service_bounded() {
     fi
 
     # Cgroup-scoped kill of this unit only; never kill by process name.
-    echo "[${PKG}] WARNING: ${unit} did not stop within ${SYSTEMCTL_STOP_WAIT_SECONDS}s; sending SIGKILL to the unit cgroup and continuing removal."
+    warn "${unit} did not stop within ${SYSTEMCTL_STOP_WAIT_SECONDS}s; sending SIGKILL to the unit cgroup and continuing removal."
     safe_systemctl kill -s KILL "$unit"
     if ! wait_for_unit_stopped "$unit" "$SYSTEMCTL_KILL_SETTLE_SECONDS"; then
-        echo "[${PKG}] WARNING: ${unit} still has state '$(unit_property "$unit" ActiveState)' after SIGKILL; continuing."
+        warn "${unit} still has state '$(unit_property "$unit" ActiveState)' after SIGKILL; continuing."
     fi
     safe_systemctl reset-failed "$unit"
     return 0
@@ -143,7 +176,7 @@ restore_nginx_default_site_if_disabled() {
     fi
     if [ ! -e "$NGINX_DEFAULT_SITE_ENABLED" ] && [ ! -L "$NGINX_DEFAULT_SITE_ENABLED" ] && [ -f "$NGINX_DEFAULT_SITE_AVAIL" ]; then
         if ln -s "$default_target" "$NGINX_DEFAULT_SITE_ENABLED" 2>/dev/null; then
-            echo "[${PKG}] Restored nginx default site: ${NGINX_DEFAULT_SITE_ENABLED}"
+            detail "Restored nginx default site: ${NGINX_DEFAULT_SITE_ENABLED}"
         fi
     fi
     rm -f "$NGINX_DEFAULT_DISABLED_MARKER" || true
@@ -159,18 +192,19 @@ disable_nginx_site_link_if_package_path() {
     case "$site_target" in
         "$NGINX_SITE_AVAIL"|../sites-available/vaulthalla)
             rm -f "$NGINX_SITE_ENABLED"
-            echo "[${PKG}] Disabled nginx site symlink: ${NGINX_SITE_ENABLED}"
+            detail "Disabled nginx site symlink: ${NGINX_SITE_ENABLED}"
             restore_nginx_default_site_if_disabled
             reload_nginx_if_valid
             ;;
         *)
-            echo "[${PKG}] Leaving nginx symlink untouched; target is not package site path."
+            detail "Leaving nginx symlink untouched; target is not package site path."
             ;;
     esac
 }
 
 case "$1" in
     remove|deconfigure)
+        open_package_log "$@"
         # Stop the frontend first to drain websocket traffic before the backend (which owns the CLI socket) stops.
         stop_service_bounded "$WEB_SYSTEMD_UNIT"
         stop_service_bounded "$CORE_SYSTEMD_UNIT"
@@ -183,6 +217,7 @@ case "$1" in
         rm -f "$LEGACY_PENDING_SUPERADMIN_UID_FILE" "$PENDING_DB_PASS_FILE"
         rm -f "$TPM_BACKEND_OVERRIDE_FILE"
         disable_nginx_site_link_if_package_path
+        echo "[${PKG}] Stopped and disabled Vaulthalla services. Log: ${PACKAGE_LOG}"
         ;;
 esac
 

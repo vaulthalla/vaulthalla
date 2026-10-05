@@ -47,6 +47,18 @@ python3-certbot-dns-cloudflare`. Build-Depends mirror `core/meson.build` pkg-con
 `super_admin_initial_password` (the generated web `admin` password, written once by the daemon on a new database,
 0600 daemon user; never recreated; removed on rotation; postinst's summary points at it when present).
 
+## Output policy (`/var/log/vaulthalla-package.log`)
+
+Terminal output is operator status. postinst/prerm route every step through `detail` (log only; terminal with
+`VH_PACKAGE_VERBOSE=1`), `say` (log + stdout), `warn_nonfatal`/`report_error` (log + stderr). The log is root-owned in
+`/var/log` (never the daemon-owned `/var/log/vaulthalla`: a planted symlink would redirect root's appends), refused
+if it is a symlink, rotated to `.1` past 1 MiB, removed on purge. systemctl transition/enable output goes there too.
+A clean upgrade prints `Upgraded A -> B: services restarted, daemon healthy. Log: …` plus an `Action:` line only when
+the generated admin password file still exists. `mark_degraded` (core expected up but not active, CLI socket missing,
+TPM deferred, DB bootstrap failed/deferred, config missing/failed) prints an ERROR line and the full summary; fresh
+and reinstall always print the summary. prerm remove prints one line. Pinned by `PostinstOutputPolicyTests` and the
+raw-`echo "[${PKG}]` guard in `test_maintainer_script_safety`.
+
 ## `preinst`
 
 `install <old-version>` (only when reinstalling over config-files state after `apt remove`) writes

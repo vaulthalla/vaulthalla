@@ -196,7 +196,7 @@ Purge package-managed config:
 sudo apt purge vaulthalla
 ```
 
-Purge removes `/etc/vaulthalla/config.yaml`, `/var/log/vaulthalla`, the web cache, and the contents of `/var/lib/vaulthalla`, including the sealed secrets. If `/var/lib/vaulthalla` is a mount point, such as a dedicated data disk, purge empties it without crossing into other filesystems and keeps the directory. Operator-provided certbot credentials under `/etc/vaulthalla/certbot/` are kept because certbot renewal still references them.
+Purge removes `/etc/vaulthalla/config.yaml`, `/var/log/vaulthalla`, `/var/log/vaulthalla-package.log`, the web cache, and the contents of `/var/lib/vaulthalla`, including the sealed secrets. If `/var/lib/vaulthalla` is a mount point, such as a dedicated data disk, purge empties it without crossing into other filesystems and keeps the directory. Operator-provided certbot credentials under `/etc/vaulthalla/certbot/` are kept because certbot renewal still references them.
 
 Package purge does not silently destroy a preserved database. Interactive purge flows may offer database cleanup. Noninteractive purge preserves database state. `vh` is gone after purge, so remove a preserved database with:
 

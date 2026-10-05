@@ -55,6 +55,26 @@ Fresh installs bind the websocket (36969) and HTTP preview (36970) servers to
 127.0.0.1; browsers reach them through nginx (`/ws`, `/preview`, `/download`,
 `/upload`). An existing `/etc/vaulthalla/config.yaml` is never modified.
 
+Install and upgrade output
+==========================
+
+Maintainer-script output is operator status, not diagnostics. Every step,
+the full status summary, and the output of systemctl transitions are appended
+to `/var/log/vaulthalla-package.log` (root:adm 0640, outside the daemon-owned
+`/var/log/vaulthalla`; rotated to `.1` past 1 MiB; removed on purge).
+
+- A clean upgrade prints one line (old -> new version, services restarted and
+  healthy, log path), plus one `Action:` line only when something is pending
+  for the operator (for example the generated admin password file still exists).
+- Warnings always reach the terminal, one line each.
+- A hard failure (the daemon not running after the upgrade restart, a missing
+  CLI socket, no TPM backend, a failed or deferred DB bootstrap, a missing
+  config) prints an ERROR line and the full summary.
+- Fresh installs and reinstalls print the full summary, including the database,
+  TPM, nginx and web console next steps.
+- `VH_PACKAGE_VERBOSE=1` prints every step and the full summary, for example
+  `sudo env VH_PACKAGE_VERBOSE=1 dpkg-reconfigure vaulthalla`.
+
 APT upgrade service restart boundary
 ====================================
 

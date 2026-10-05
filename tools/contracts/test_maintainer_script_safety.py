@@ -43,6 +43,27 @@ class MaintainerScriptSafetyTests(unittest.TestCase):
         end = script.index("\n}\n", start)
         return script[start:end]
 
+    def test_upgrade_path_terminal_output_goes_through_the_log_helpers(self) -> None:
+        # Routine configure/remove output is log-only (detail); only the helpers and the end-of-run
+        # status line may write "[vaulthalla] ..." to the terminal directly.
+        allowed = {
+            "postinst": ('echo "[${PKG}] $*"', 'echo "[${PKG}] $*" >&2'),
+            "prerm": ('echo "[${PKG}] $*"', 'echo "[${PKG}] WARNING: $*" >&2',
+                      'echo "[${PKG}] Stopped and disabled Vaulthalla services. Log: ${PACKAGE_LOG}"'),
+        }
+        for name, ok in allowed.items():
+            for number, raw in enumerate(self._script(name).splitlines(), start=1):
+                stripped = raw.strip()
+                if stripped.startswith('echo "[${PKG}]') and stripped not in ok and not stripped.startswith("1|true"):
+                    self.fail(f"{name}:{number}: raw terminal output bypasses the package log: {stripped}")
+
+    def test_package_log_is_root_owned_and_symlink_safe(self) -> None:
+        for name in ("postinst", "prerm"):
+            script = self._script(name)
+            self.assertIn('PACKAGE_LOG="/var/log/vaulthalla-package.log"', script, name)
+            self.assertIn('[ -L "$PACKAGE_LOG" ]', script, name)
+        self.assertIn('rm -f "$package_log"', self._script("postrm"))
+
     def test_scripts_are_posix_sh_with_errexit(self) -> None:
         for name in SCRIPTS:
             text = self._script(name)

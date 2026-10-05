@@ -569,3 +569,132 @@ class PostinstUpgradeRestartBehaviorTests(unittest.TestCase):
         out = self._upgrade("inactive")
         self.assertNotIn("--system start vaulthalla.service", out)
         self.assertIn("try-restart vaulthalla.service", out)
+
+
+class PostinstOutputPolicyTests(unittest.TestCase):
+    """Terminal output is operator status: a clean upgrade prints one line (two with a pending action), a hard
+    failure or a fresh install prints the full summary, and every detail is in the package log either way."""
+
+    def setUp(self) -> None:
+        self.h = _Harness("postinst")
+        self.addCleanup(self.h.cleanup)
+        self.package_log = self.h.tmp / "vaulthalla-package.log"
+
+    def _configure(self, body: str, mode: str = "upgrade", env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+        preamble = f"""
+        PACKAGE_LOG="{self.package_log}"
+        INITIAL_PASSWORD_FILE="{self.h.state}/super_admin_initial_password"
+        POSTINST_ACTION=configure
+        INSTALL_MODE={mode}
+        LAST_CONFIGURED_VERSION=1.9.1-1
+        systemd_running() {{ return 0; }}
+        installed_package_version() {{ printf '%s' 1.9.2-1; }}
+        open_package_log
+        CONFIG_STATUS="preserved existing /etc/vaulthalla/config.yaml"
+        DB_BOOTSTRAP_STATUS="reused (sealed DB credential present)"
+        TPM_BACKEND_STATUS="hardware (device-backed TPM detected)"
+        SERVICE_STATUS="restarted active units"
+        CLI_SOCKET_STATUS="/run/vaulthalla/cli.sock bound by vaulthalla.service"
+        NGINX_CONFIG_STATUS="done (verified)"
+        """
+        result = self.h.run(preamble + textwrap.dedent(body), env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result
+
+    def _log(self) -> str:
+        return self.package_log.read_text(encoding="utf-8") if self.package_log.exists() else ""
+
+    def test_clean_upgrade_prints_one_line_and_logs_the_details(self) -> None:
+        result = self._configure("""
+        detail "TPM backend: hardware TPM detected (/dev/tpmrm0 or /dev/tpm0)."
+        CORE_EXPECTED_UP=1
+        report_configure_outcome
+        """)
+        lines = result.stdout.splitlines()
+        self.assertEqual(len(lines), 1, result.stdout)
+        self.assertEqual(
+            lines[0],
+            f"[vaulthalla] Upgraded 1.9.1-1 -> 1.9.2-1: services restarted, daemon healthy. Log: {self.package_log}",
+        )
+        self.assertEqual(result.stderr, "")
+        log = self._log()
+        self.assertIn("postinst configure (mode upgrade, previous '1.9.1-1')", log)
+        self.assertIn("TPM backend: hardware TPM detected", log)
+        self.assertIn("Install summary (upgrade):", log)
+        self.assertIn("  DB bootstrap: reused", log)
+
+    def test_clean_upgrade_with_a_pending_action_prints_two_lines(self) -> None:
+        (self.h.state / "super_admin_initial_password").write_text("s3cr3t-value\n", encoding="utf-8")
+        result = self._configure("CORE_EXPECTED_UP=1\nreport_configure_outcome\n")
+        lines = result.stdout.splitlines()
+        self.assertEqual(len(lines), 2, result.stdout)
+        self.assertTrue(lines[1].startswith("[vaulthalla] Action: the generated web 'admin' password"), lines[1])
+        self.assertNotIn("s3cr3t-value", result.stdout + self._log())
+
+    def test_operator_stopped_daemon_is_reported_not_flagged(self) -> None:
+        result = self._configure("report_configure_outcome\n")
+        self.assertIn("vaulthalla.service was not running and was left stopped", result.stdout)
+        self.assertEqual(len(result.stdout.splitlines()), 1)
+
+    def test_hard_failure_prints_the_full_summary(self) -> None:
+        result = self._configure("""
+        CORE_EXPECTED_UP=1
+        unit_active_state() { printf '%s' failed; }
+        verify_cli_socket_owned_by_daemon
+        report_configure_outcome
+        """)
+        self.assertIn("ERROR: configure finished with problems: vaulthalla.service is 'failed'", result.stderr)
+        self.assertIn("[vaulthalla] Install summary (upgrade):", result.stdout)
+        self.assertIn("[vaulthalla]   CLI socket: not checked", result.stdout)
+        self.assertIn(f"[vaulthalla] Full log: {self.package_log}", result.stdout)
+        self.assertIn("DEGRADED: vaulthalla.service is 'failed'", self._log())
+
+    def test_failed_db_bootstrap_is_a_hard_failure(self) -> None:
+        result = self._configure("""
+        DB_BOOTSTRAP_STATUS="failed (could not create PostgreSQL role 'vaulthalla')"
+        report_configure_outcome
+        """)
+        self.assertIn("DB bootstrap: failed", result.stderr)
+        self.assertIn("[vaulthalla] Install summary (upgrade):", result.stdout)
+
+    def test_warnings_reach_the_terminal_without_the_summary(self) -> None:
+        result = self._configure("""
+        CORE_EXPECTED_UP=1
+        warn_nonfatal "nginx: site active, but the web upstream is not answering yet"
+        report_configure_outcome
+        """)
+        self.assertIn("[vaulthalla] WARNING: nginx: site active", result.stderr)
+        self.assertEqual(len(result.stdout.splitlines()), 1, result.stdout)
+        self.assertIn("WARNING: nginx: site active", self._log())
+
+    def test_verbose_upgrade_prints_details_and_the_summary(self) -> None:
+        result = self._configure(
+            """
+            detail "FUSE config: user_allow_other already enabled"
+            CORE_EXPECTED_UP=1
+            report_configure_outcome
+            """,
+            env={"VH_PACKAGE_VERBOSE": "1"},
+        )
+        self.assertIn("[vaulthalla] FUSE config: user_allow_other already enabled", result.stdout)
+        self.assertIn("[vaulthalla] Install summary (upgrade):", result.stdout)
+
+    def test_fresh_install_prints_the_summary_and_next_steps(self) -> None:
+        result = self._configure("CORE_EXPECTED_UP=1\nreport_configure_outcome\n", mode="fresh")
+        self.assertIn("[vaulthalla] Install summary (fresh):", result.stdout)
+        self.assertIn("Web console: the generated password for 'admin' is written to", result.stdout)
+        self.assertIn("Super-admin ownership: deferred to first CLI use", result.stdout)
+
+    def test_package_log_refuses_a_symlink(self) -> None:
+        target = self.h.tmp / "elsewhere"
+        target.write_text("", encoding="utf-8")
+        self.package_log.symlink_to(target)
+        result = self._configure('detail "secret-free detail"\necho "SINK=$PACKAGE_LOG_SINK"\n')
+        self.assertIn("SINK=/dev/null", result.stdout)
+        self.assertEqual(target.read_text(encoding="utf-8"), "")
+
+    def test_package_log_rotates_when_large(self) -> None:
+        self.package_log.write_text("old\n", encoding="utf-8")
+        self._configure("PACKAGE_LOG_MAX_BYTES=1\nopen_package_log\n")
+        self.assertTrue((self.h.tmp / "vaulthalla-package.log.1").read_text(encoding="utf-8").startswith("old\n"))
+        self.assertNotIn("old", self._log())

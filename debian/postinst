@@ -82,6 +82,12 @@ CONFIG_STATUS="unchanged"
 SERVICE_STATUS="not changed"
 CLI_SOCKET_STATUS="not checked (systemd is not running)"
 LEGACY_CLI_UNITS_RETIRED="0"
+# Expected to be running once configure finishes (it was running, failed, or was started here).
+CORE_EXPECTED_UP="0"
+DEGRADED_REASONS=""
+PACKAGE_LOG="/var/log/vaulthalla-package.log"
+PACKAGE_LOG_MAX_BYTES=1048576
+PACKAGE_LOG_SINK="/dev/null"
 POSTINST_ACTION="${1:-}"
 LAST_CONFIGURED_VERSION="${2:-}"
 
@@ -101,8 +107,76 @@ create_dir() {
     install -d -m "$2" -o "$3" -g "$4" "$1"
 }
 
+# Terminal output is operator status, not telemetry. Every step is appended to ${PACKAGE_LOG};
+# detail() reaches the terminal only with VH_PACKAGE_VERBOSE=1, say()/warnings/errors always do,
+# and the full summary is printed on fresh installs/reinstalls, after a hard failure
+# (mark_degraded), or when verbose. A clean upgrade prints one status line, plus one when the
+# operator has something to do.
+package_verbose() {
+    env_flag_enabled "${VH_PACKAGE_VERBOSE:-}"
+}
+
+open_package_log() {
+    # The log lives in root-owned /var/log, never under the daemon-owned ${LOG_DIR}: a symlink planted
+    # there would redirect root's appends. Logging is best effort and never fails configure.
+    PACKAGE_LOG_SINK="/dev/null"
+    if [ -L "$PACKAGE_LOG" ] || { [ -e "$PACKAGE_LOG" ] && [ ! -f "$PACKAGE_LOG" ]; }; then
+        return 0
+    fi
+    log_size="$(stat -c %s "$PACKAGE_LOG" 2>/dev/null || echo 0)"
+    if [ "${log_size:-0}" -gt "$PACKAGE_LOG_MAX_BYTES" ]; then
+        mv -f "$PACKAGE_LOG" "${PACKAGE_LOG}.1" 2>/dev/null || true
+    fi
+    if ! ( umask 027; : >> "$PACKAGE_LOG" ) 2>/dev/null; then
+        return 0
+    fi
+    chgrp adm "$PACKAGE_LOG" 2>/dev/null || true
+    chmod 0640 "$PACKAGE_LOG" 2>/dev/null || true
+    PACKAGE_LOG_SINK="$PACKAGE_LOG"
+    log_line "==== $(date -u '+%Y-%m-%dT%H:%M:%SZ') ${PKG} postinst ${POSTINST_ACTION} (mode ${INSTALL_MODE}, previous '${LAST_CONFIGURED_VERSION}') ===="
+}
+
+log_line() {
+    if [ "$PACKAGE_LOG_SINK" != "/dev/null" ]; then
+        printf '%s\n' "$*" >> "$PACKAGE_LOG_SINK" 2>/dev/null || true
+    fi
+}
+
+log_stdin() {
+    while IFS= read -r log_stdin_line; do
+        log_line "$log_stdin_line"
+    done
+}
+
+detail() {
+    log_line "$*"
+    if package_verbose; then
+        echo "[${PKG}] $*"
+    fi
+}
+
+say() {
+    log_line "$*"
+    echo "[${PKG}] $*"
+}
+
+say_err() {
+    log_line "$*"
+    echo "[${PKG}] $*" >&2
+}
+
 warn_nonfatal() {
-    echo "[${PKG}] WARNING: $*" >&2
+    say_err "WARNING: $*"
+}
+
+report_error() {
+    say_err "ERROR: $*"
+}
+
+mark_degraded() {
+    # A hard failure the operator must see: the full summary is printed at the end of configure.
+    log_line "DEGRADED: $*"
+    DEGRADED_REASONS="${DEGRADED_REASONS:+${DEGRADED_REASONS}; }$*"
 }
 
 is_upgrade() {
@@ -145,7 +219,7 @@ safe_systemctl_unit_files() {
     if ! has_command systemctl; then
         return 0
     fi
-    run_systemctl_quiet "$@" || true
+    run_bounded "$SYSTEMCTL_COMMAND_TIMEOUT_SECONDS" systemctl --system "$@" >>"$PACKAGE_LOG_SINK" 2>&1 || true
 }
 
 unit_active_state() {
@@ -186,7 +260,7 @@ transition_unit_bounded() {
         run_systemctl_quiet reset-failed "$unit" || true
     fi
 
-    if run_bounded "$SERVICE_TRANSITION_TIMEOUT_SECONDS" systemctl --system "$verb" "$unit" >/dev/null 2>&1; then
+    if run_bounded "$SERVICE_TRANSITION_TIMEOUT_SECONDS" systemctl --system "$verb" "$unit" >>"$PACKAGE_LOG_SINK" 2>&1; then
         return 0
     else
         rc=$?
@@ -238,17 +312,17 @@ ensure_mount_root() {
     group="$4"
 
     if is_mountpoint "$path"; then
-        echo "[${PKG}] Mount root ${path}: mounted; leaving owner/mode unchanged."
+        detail "Mount root ${path}: mounted; leaving owner/mode unchanged."
         return 0
     fi
 
     if [ -d "$path" ]; then
-        echo "[${PKG}] Mount root ${path}: exists; leaving owner/mode unchanged."
+        detail "Mount root ${path}: exists; leaving owner/mode unchanged."
         return 0
     fi
 
     if create_dir "$path" "$mode" "$owner" "$group"; then
-        echo "[${PKG}] Mount root ${path}: created."
+        detail "Mount root ${path}: created."
         return 0
     fi
 
@@ -300,9 +374,9 @@ postgresql_server_ready() {
 
 ensure_tss_group_and_user_added() {
     if getent group tss > /dev/null; then
-        echo "[${PKG}] Ensuring '${DB_USER}' is a member of the existing 'tss' group."
+        detail "Ensuring '${DB_USER}' is a member of the existing 'tss' group."
     else
-        echo "[${PKG}] No 'tss' group found; creating one."
+        detail "No 'tss' group found; creating one."
         if ! addgroup --system tss; then
             warn_nonfatal "Failed to create 'tss' group; continuing without package-time TPM group membership."
             return 0
@@ -359,7 +433,7 @@ install_default_config_if_missing() {
         warn_nonfatal "Packaged default config ${packaged_config} is missing; ${CONFIG_FILE} was not created."
     elif install_file_atomically "$packaged_config" "$CONFIG_FILE"; then
         CONFIG_STATUS="installed default ${CONFIG_FILE}"
-        echo "[${PKG}] Config: installed default ${CONFIG_FILE} from ${packaged_config}."
+        detail "Config: installed default ${CONFIG_FILE} from ${packaged_config}."
     else
         CONFIG_STATUS="failed installing default ${CONFIG_FILE}"
         warn_nonfatal "Could not install ${CONFIG_FILE}; continuing."
@@ -384,7 +458,7 @@ ensure_fuse_allow_other() {
     fi
 
     if grep -Eq '^[[:space:]]*user_allow_other([[:space:]]*(#.*)?)?$' "$fuse_conf"; then
-        echo "[${PKG}] FUSE config: user_allow_other already enabled"
+        detail "FUSE config: user_allow_other already enabled"
         return 0
     fi
 
@@ -393,7 +467,7 @@ ensure_fuse_allow_other() {
             warn_nonfatal "Could not update ${fuse_conf}; skipping FUSE allow_other configuration."
             return 0
         fi
-        echo "[${PKG}] FUSE config: enabled user_allow_other in /etc/fuse.conf"
+        detail "FUSE config: enabled user_allow_other in /etc/fuse.conf"
         return 0
     fi
 
@@ -401,17 +475,17 @@ ensure_fuse_allow_other() {
         warn_nonfatal "Could not append to ${fuse_conf}; skipping FUSE allow_other configuration."
         return 0
     fi
-    echo "[${PKG}] FUSE config: enabled user_allow_other in /etc/fuse.conf"
+    detail "FUSE config: enabled user_allow_other in /etc/fuse.conf"
 }
 
 require_runtime_assets() {
     if [ ! -d "$PSQL_DEPLOY_DIR" ]; then
-        echo "[${PKG}] ERROR: Required SQL deploy directory is missing: ${PSQL_DEPLOY_DIR}" >&2
+        report_error "Required SQL deploy directory is missing: ${PSQL_DEPLOY_DIR}"
         exit 1
     fi
 
     if ! find "$PSQL_DEPLOY_DIR" -maxdepth 1 -type f -name '*.sql' | grep -q .; then
-        echo "[${PKG}] ERROR: SQL deploy directory is empty: ${PSQL_DEPLOY_DIR}" >&2
+        report_error "SQL deploy directory is empty: ${PSQL_DEPLOY_DIR}"
         exit 1
     fi
 }
@@ -504,12 +578,12 @@ configure_swtpm_apparmor_override_if_possible() {
     APPARMOR_OVERRIDE_CHANGED="0"
 
     if [ ! -d /sys/module/apparmor ]; then
-        echo "[${PKG}] WARNING: AppArmor module not detected; skipping swtpm AppArmor override handling."
+        detail "AppArmor module not detected; skipping swtpm AppArmor override handling."
         return 1
     fi
 
     if ! find_swtpm_apparmor_profile; then
-        echo "[${PKG}] WARNING: swtpm AppArmor profile not found; skipping local override."
+        detail "swtpm AppArmor profile not found; skipping local override."
         return 1
     fi
     resolve_swtpm_apparmor_local_override "$APPARMOR_SWTPM_PROFILE"
@@ -524,22 +598,22 @@ configure_swtpm_apparmor_override_if_possible() {
     append_unique_line "$APPARMOR_SWTPM_LOCAL_OVERRIDE" "${SWTPM_STATE_DIR}/** rwk,"
 
     if [ "$APPARMOR_OVERRIDE_CHANGED" = "1" ]; then
-        echo "[${PKG}] Installed swtpm AppArmor local override at ${APPARMOR_SWTPM_LOCAL_OVERRIDE}."
+        detail "Installed swtpm AppArmor local override at ${APPARMOR_SWTPM_LOCAL_OVERRIDE}."
     else
-        echo "[${PKG}] swtpm AppArmor local override already includes Vaulthalla state rules."
+        detail "swtpm AppArmor local override already includes Vaulthalla state rules."
     fi
 
     if ! has_command apparmor_parser; then
-        echo "[${PKG}] WARNING: apparmor_parser is unavailable; cannot reload swtpm AppArmor profile." >&2
+        warn_nonfatal "apparmor_parser is unavailable; cannot reload swtpm AppArmor profile."
         return 1
     fi
 
     if ! run_bounded 60 apparmor_parser -r "$APPARMOR_SWTPM_PROFILE" >/dev/null 2>&1; then
-        echo "[${PKG}] WARNING: Failed to reload AppArmor profile: ${APPARMOR_SWTPM_PROFILE}" >&2
+        warn_nonfatal "Failed to reload AppArmor profile: ${APPARMOR_SWTPM_PROFILE}"
         return 1
     fi
 
-    echo "[${PKG}] Reloaded AppArmor profile: ${APPARMOR_SWTPM_PROFILE}."
+    detail "Reloaded AppArmor profile: ${APPARMOR_SWTPM_PROFILE}."
     return 0
 }
 
@@ -561,6 +635,7 @@ defer_tpm_backend() {
     # daemon is left stopped (it cannot seal secrets), and a marker remembers to finish
     # provisioning on the next configure run.
     TPM_BACKEND_STATUS="deferred ($1)"
+    mark_degraded "TPM backend unavailable ($1)"
     TPM_BACKEND_READY="0"
     printf '%s\n' "reason=$1" > "$TPM_DEFERRED_MARKER" 2>/dev/null || true
     warn_nonfatal "TPM backend unavailable: $1."
@@ -577,7 +652,7 @@ configure_tpm_backend_if_safe() {
 
     if has_hardware_tpm; then
         TPM_BACKEND_STATUS="hardware (device-backed TPM detected)"
-        echo "[${PKG}] TPM backend: hardware TPM detected (/dev/tpmrm0 or /dev/tpm0)."
+        detail "TPM backend: hardware TPM detected (/dev/tpmrm0 or /dev/tpm0)."
         clear_tpm_backend_override
         safe_systemctl stop "$SWTPM_SYSTEMD_UNIT"
         safe_systemctl_unit_files disable "$SWTPM_SYSTEMD_UNIT"
@@ -586,7 +661,7 @@ configure_tpm_backend_if_safe() {
         return 0
     fi
 
-    echo "[${PKG}] TPM backend: no hardware TPM detected; provisioning Vaulthalla swtpm backend."
+    detail "TPM backend: no hardware TPM detected; provisioning Vaulthalla swtpm backend."
 
     if ! has_command swtpm; then
         defer_tpm_backend "no hardware TPM and swtpm not installed"
@@ -599,13 +674,13 @@ configure_tpm_backend_if_safe() {
 
     if is_upgrade && [ "$tpm_was_deferred" = "0" ]; then
         TPM_BACKEND_STATUS="swtpm configured (upgrade; active unit restart handled separately)"
-        echo "[${PKG}] TPM backend: swtpm fallback prepared; active unit restart is handled by configure_systemd_units."
+        detail "TPM backend: swtpm fallback prepared; active unit restart is handled by configure_systemd_units."
         return 0
     fi
 
     if ! systemd_running; then
         TPM_BACKEND_STATUS="swtpm configured (systemd not running; runtime activation not verified)"
-        echo "[${PKG}] WARNING: systemd is not running; cannot verify ${SWTPM_SYSTEMD_UNIT} runtime state."
+        detail "systemd is not running; cannot verify ${SWTPM_SYSTEMD_UNIT} runtime state."
         rm -f "$TPM_DEFERRED_MARKER"
         return 0
     fi
@@ -617,31 +692,31 @@ configure_tpm_backend_if_safe() {
 
     if start_and_validate_swtpm_service; then
         TPM_BACKEND_STATUS="swtpm (managed fallback active)"
-        echo "[${PKG}] TPM backend: managed swtpm fallback active."
+        detail "TPM backend: managed swtpm fallback active."
         rm -f "$TPM_DEFERRED_MARKER"
         TPM_BACKEND_RECOVERED="$tpm_was_deferred"
         return 0
     fi
 
-    echo "[${PKG}] WARNING: ${SWTPM_SYSTEMD_UNIT} failed initial start; checking AppArmor local override path."
+    detail "${SWTPM_SYSTEMD_UNIT} failed initial start; checking AppArmor local override path."
 
     if configure_swtpm_apparmor_override_if_possible; then
         run_systemctl_quiet reset-failed "$SWTPM_SYSTEMD_UNIT" || true
         if start_and_validate_swtpm_service; then
             TPM_BACKEND_STATUS="swtpm (managed fallback active; AppArmor local override applied)"
-            echo "[${PKG}] TPM backend: managed swtpm fallback active after AppArmor override reload."
+            detail "TPM backend: managed swtpm fallback active after AppArmor override reload."
             rm -f "$TPM_DEFERRED_MARKER"
             TPM_BACKEND_RECOVERED="$tpm_was_deferred"
             return 0
         fi
     fi
 
-    echo "[${PKG}] WARNING: Check logs with: journalctl -u ${SWTPM_SYSTEMD_UNIT}" >&2
+    warn_nonfatal "Check logs with: journalctl -u ${SWTPM_SYSTEMD_UNIT}"
     if [ -n "$APPARMOR_SWTPM_LOCAL_OVERRIDE" ]; then
-        echo "[${PKG}] WARNING: Check AppArmor local override: ${APPARMOR_SWTPM_LOCAL_OVERRIDE}" >&2
+        warn_nonfatal "Check AppArmor local override: ${APPARMOR_SWTPM_LOCAL_OVERRIDE}"
     fi
-    echo "[${PKG}] WARNING: Last-resort debug command (not default packaging behavior):" >&2
-    echo "[${PKG}] WARNING:   sudo aa-complain swtpm || sudo aa-complain /usr/bin/swtpm" >&2
+    warn_nonfatal "Last-resort debug command (not default packaging behavior):"
+    warn_nonfatal "  sudo aa-complain swtpm || sudo aa-complain /usr/bin/swtpm"
     defer_tpm_backend "failed to start ${SWTPM_SYSTEMD_UNIT}"
     return 0
 }
@@ -811,7 +886,7 @@ EOF
         fi
         ROLE_EXISTS="1"
         role_created="1"
-        echo "[${PKG}] Created PostgreSQL role '${DB_USER}'."
+        detail "Created PostgreSQL role '${DB_USER}'."
     fi
 
     if [ "$DB_EXISTS" != "1" ]; then
@@ -821,7 +896,7 @@ EOF
             return 1
         fi
         DB_EXISTS="1"
-        echo "[${PKG}] Created PostgreSQL database '${DB_NAME}'."
+        detail "Created PostgreSQL database '${DB_NAME}'."
     elif [ "$role_created" = "1" ]; then
         psql_q "ALTER DATABASE ${DB_NAME} OWNER TO ${DB_USER}" >/dev/null 2>&1 || true
     fi
@@ -867,11 +942,11 @@ print_existing_db_resolution_commands() {
 }
 
 print_adopt_key_warning() {
-    echo "[${PKG}] WARNING: Adopting an existing Vaulthalla database without its sealed secrets." >&2
-    echo "[${PKG}] WARNING: Users, vault metadata and settings are kept, but vault encryption keys and" >&2
-    echo "[${PKG}] WARNING: stored provider API keys in that database are only recoverable if the original" >&2
-    echo "[${PKG}] WARNING: ${STATE_DIR}/.sealed_*.blob files AND the same TPM are restored. Without them," >&2
-    echo "[${PKG}] WARNING: encrypted vault content and stored API keys cannot be decrypted." >&2
+    warn_nonfatal "Adopting an existing Vaulthalla database without its sealed secrets."
+    warn_nonfatal "Users, vault metadata and settings are kept, but vault encryption keys and"
+    warn_nonfatal "stored provider API keys in that database are only recoverable if the original"
+    warn_nonfatal "${STATE_DIR}/.sealed_*.blob files AND the same TPM are restored. Without them,"
+    warn_nonfatal "encrypted vault content and stored API keys cannot be decrypted."
 }
 
 adopt_existing_local_db() {
@@ -882,7 +957,7 @@ adopt_existing_local_db() {
     print_adopt_key_warning
     if converge_local_db "$(generate_db_password)" 0; then
         DB_BOOTSTRAP_STATUS="done (adopted existing DB; rotated role password and seeded ${PENDING_DB_PASS_FILE})"
-        echo "[${PKG}] Adopted existing PostgreSQL database '${DB_NAME}' (role password rotated)."
+        say "Adopted existing PostgreSQL database '${DB_NAME}' (role password rotated)."
     fi
     return 0
 }
@@ -914,10 +989,10 @@ drop_local_db_and_role() {
 }
 
 overwrite_existing_local_db() {
-    echo "[${PKG}] Dropping existing PostgreSQL database/role '${DB_NAME}' before a fresh bootstrap."
+    say "Dropping existing PostgreSQL database/role '${DB_NAME}' before a fresh bootstrap."
     if ! drop_local_db_and_role; then
         DB_BOOTSTRAP_STATUS="failed (could not drop existing PostgreSQL database '${DB_NAME}')"
-        echo "[${PKG}] ERROR: Failed to drop the existing Vaulthalla database; nothing else was changed." >&2
+        report_error "Failed to drop the existing Vaulthalla database; nothing else was changed."
         print_existing_db_resolution_commands >&2
         exit 1
     fi
@@ -930,14 +1005,15 @@ overwrite_existing_local_db() {
 
 abort_for_existing_db() {
     reason="$1"
-    echo "[${PKG}] ERROR: An existing Vaulthalla PostgreSQL database was found (role/database '${DB_NAME}')," >&2
-    echo "[${PKG}] ERROR: but this host has no sealed credential for it (${SEALED_DB_SECRET_DIR})" >&2
-    echo "[${PKG}] ERROR: and no pending ${PENDING_DB_PASS_FILE}. This usually means Vaulthalla was purged" >&2
-    echo "[${PKG}] ERROR: and reinstalled. Configuration stopped (${reason}); PostgreSQL was not changed." >&2
-    echo "[${PKG}] Resolve it with one of:" >&2
+    report_error "An existing Vaulthalla PostgreSQL database was found (role/database '${DB_NAME}'),"
+    report_error "but this host has no sealed credential for it (${SEALED_DB_SECRET_DIR})"
+    report_error "and no pending ${PENDING_DB_PASS_FILE}. This usually means Vaulthalla was purged"
+    report_error "and reinstalled. Configuration stopped (${reason}); PostgreSQL was not changed."
+    say_err "Resolve it with one of:"
     print_existing_db_resolution_commands >&2
-    echo "[${PKG}] Adopting keeps users and vault metadata, but vault encryption keys and stored API keys" >&2
-    echo "[${PKG}] are only recoverable if the original ${STATE_DIR}/.sealed_*.blob files and TPM are restored." >&2
+    print_existing_db_resolution_commands | log_stdin
+    say_err "Adopting keeps users and vault metadata, but vault encryption keys and stored API keys"
+    say_err "are only recoverable if the original ${STATE_DIR}/.sealed_*.blob files and TPM are restored."
     exit 1
 }
 
@@ -1008,7 +1084,7 @@ handle_orphan_local_db() {
     detect_local_db_data_state
 
     if [ "$DB_DATA_STATE" = "empty" ] && [ -z "${VH_EXISTING_DB_ACTION:-}" ]; then
-        echo "[${PKG}] Existing Vaulthalla PostgreSQL role/database contain no Vaulthalla data (interrupted install); adopting it."
+        detail "Existing Vaulthalla PostgreSQL role/database contain no Vaulthalla data (interrupted install); adopting it."
         if converge_local_db "$(generate_db_password)" 0; then
             DB_BOOTSTRAP_STATUS="done (adopted empty DB left by an interrupted install; runtime password seeded)"
         fi
@@ -1104,7 +1180,7 @@ setup_web_runtime_cache() {
     CACHE_LINK_TARGET=""
 
     if [ ! -d "${WEB_ROOT}/.next" ]; then
-        echo "[${PKG}] Web cache: skipped (${WEB_ROOT}/.next not present)."
+        detail "Web cache: skipped (${WEB_ROOT}/.next not present)."
         return 0
     fi
 
@@ -1116,11 +1192,11 @@ setup_web_runtime_cache() {
     if [ -L "$CACHE_LINK" ]; then
         CACHE_LINK_TARGET="$(readlink "$CACHE_LINK" 2>/dev/null || true)"
         if [ "$CACHE_LINK_TARGET" != "$CACHE_DIR" ]; then
-            echo "[${PKG}] WARNING: Web cache link exists with unexpected target; leaving unchanged: ${CACHE_LINK} -> ${CACHE_LINK_TARGET}"
+            warn_nonfatal "Web cache link exists with unexpected target; leaving unchanged: ${CACHE_LINK} -> ${CACHE_LINK_TARGET}"
             return 0
         fi
     elif [ -e "$CACHE_LINK" ]; then
-        echo "[${PKG}] WARNING: Web cache path exists and is not a symlink; leaving unchanged: ${CACHE_LINK}"
+        warn_nonfatal "Web cache path exists and is not a symlink; leaving unchanged: ${CACHE_LINK}"
         return 0
     else
         if ! ln -s "$CACHE_DIR" "$CACHE_LINK"; then
@@ -1133,7 +1209,7 @@ setup_web_runtime_cache() {
         chown -h "$DB_USER:$DB_USER" "$CACHE_LINK" 2>/dev/null || true
     fi
 
-    echo "[${PKG}] Web cache: ${CACHE_LINK} -> ${CACHE_DIR}"
+    detail "Web cache: ${CACHE_LINK} -> ${CACHE_DIR}"
 }
 
 nginx_installed() {
@@ -1229,7 +1305,7 @@ disable_stock_nginx_default_site() {
     fi
     printf '%s\n' "target=${default_target}" > "$NGINX_DEFAULT_DISABLED_MARKER" 2>/dev/null || true
     DISABLED_DEFAULT_SITE="true"
-    echo "[${PKG}] nginx: disabled the unmodified distro default site (${NGINX_DEFAULT_SITE_ENABLED}); it is restored on remove/purge or 'vh teardown nginx'."
+    say "nginx: disabled the unmodified distro default site (${NGINX_DEFAULT_SITE_ENABLED}); it is restored on remove/purge or 'vh teardown nginx'."
 }
 
 restore_nginx_default_site_if_disabled() {
@@ -1397,6 +1473,7 @@ configure_nginx_if_safe() {
         restore_nginx_default_site_if_disabled
     fi
     NGINX_CONFIG_STATUS="skipped (nginx config test failed; reverted site enablement)"
+    warn_nonfatal "nginx: 'nginx -t' failed; Vaulthalla site left disabled. Check: sudo nginx -t"
     return 0
 }
 
@@ -1480,7 +1557,7 @@ retire_legacy_cli_units() {
     if ! legacy_cli_units_present; then
         return 0
     fi
-    echo "[${PKG}] Retiring legacy ${LEGACY_CLI_UNITS} (vaulthalla.service owns ${CLI_SOCKET_PATH})."
+    detail "Retiring legacy ${LEGACY_CLI_UNITS} (vaulthalla.service owns ${CLI_SOCKET_PATH})."
     LEGACY_CLI_UNITS_RETIRED="1"
 
     if systemd_running; then
@@ -1509,8 +1586,12 @@ verify_cli_socket_owned_by_daemon() {
     if ! systemd_running; then
         return 0
     fi
-    if [ "$(unit_active_state "$CORE_SYSTEMD_UNIT")" != "active" ]; then
+    core_state="$(unit_active_state "$CORE_SYSTEMD_UNIT")"
+    if [ "$core_state" != "active" ]; then
         CLI_SOCKET_STATUS="not checked (${CORE_SYSTEMD_UNIT} is not active)"
+        if [ "$CORE_EXPECTED_UP" = "1" ]; then
+            mark_degraded "${CORE_SYSTEMD_UNIT} is '${core_state}' after configure (check: journalctl -u ${CORE_SYSTEMD_UNIT})"
+        fi
         return 0
     fi
     waited=0
@@ -1524,6 +1605,7 @@ verify_cli_socket_owned_by_daemon() {
     done
     CLI_SOCKET_STATUS="${CLI_SOCKET_PATH} missing ${CLI_SOCKET_WAIT_SECONDS}s after ${CORE_SYSTEMD_UNIT} started; 'vh' cannot connect (check: journalctl -u ${CORE_SYSTEMD_UNIT})"
     warn_nonfatal "$CLI_SOCKET_STATUS"
+    mark_degraded "CLI socket missing"
 }
 
 core_start_blocker() {
@@ -1542,9 +1624,14 @@ configure_systemd_units() {
     safe_systemctl daemon-reload
 
     if is_upgrade; then
-        echo "[${PKG}] Systemd: upgrade detected; restarting active Vaulthalla units only (bounded to ${SERVICE_TRANSITION_TIMEOUT_SECONDS}s each)."
+        detail "Systemd: upgrade detected; restarting active Vaulthalla units only (bounded to ${SERVICE_TRANSITION_TIMEOUT_SECONDS}s each)."
         # Capture 'failed' before the try-restarts below (transition_unit_bounded resets failed units).
         failed_before=""
+        case "$(unit_active_state "$CORE_SYSTEMD_UNIT")" in
+            active|activating|reloading)
+                CORE_EXPECTED_UP="1"
+                ;;
+        esac
         for unit in "$CORE_SYSTEMD_UNIT" "$WEB_SYSTEMD_UNIT"; do
             if [ "$(unit_active_state "$unit")" = "failed" ]; then
                 failed_before="${failed_before} ${unit}"
@@ -1565,8 +1652,11 @@ configure_systemd_units() {
                 if [ "$unit" = "$CORE_SYSTEMD_UNIT" ] && [ -n "$(core_start_blocker)" ]; then
                     continue
                 fi
-                echo "[${PKG}] Systemd: ${unit} was in failed state; starting it."
+                detail "Systemd: ${unit} was in failed state; starting it."
                 transition_unit_bounded start "$unit"
+                if [ "$unit" = "$CORE_SYSTEMD_UNIT" ]; then
+                    CORE_EXPECTED_UP="1"
+                fi
                 restarted_failed="${restarted_failed:+${restarted_failed}, }${unit}"
             fi
         done
@@ -1574,15 +1664,16 @@ configure_systemd_units() {
             SERVICE_STATUS="restarted active units; started previously failed ${restarted_failed}"
         fi
         if [ "$TPM_BACKEND_RECOVERED" = "1" ] && [ -z "$(core_start_blocker)" ]; then
-            echo "[${PKG}] Systemd: TPM backend is now available; starting ${CORE_SYSTEMD_UNIT}."
+            detail "Systemd: TPM backend is now available; starting ${CORE_SYSTEMD_UNIT}."
             transition_unit_bounded start "$CORE_SYSTEMD_UNIT"
+            CORE_EXPECTED_UP="1"
             SERVICE_STATUS="restarted active units; started ${CORE_SYSTEMD_UNIT} after TPM backend recovery"
         fi
         return 0
     fi
 
     if [ "$INSTALL_MODE" = "reinstall" ]; then
-        echo "[${PKG}] Systemd: reinstall over removed package; restoring enabled/started units."
+        detail "Systemd: reinstall over removed package; restoring enabled/started units."
     fi
 
     safe_systemctl_unit_files enable "$CORE_SYSTEMD_UNIT"
@@ -1599,6 +1690,7 @@ configure_systemd_units() {
         warn_nonfatal "${CORE_SYSTEMD_UNIT} not started: ${blocker}."
     else
         transition_unit_bounded start "$CORE_SYSTEMD_UNIT"
+        CORE_EXPECTED_UP="1"
         # Report what actually happened: a daemon that exits during startup is "activating"
         # (auto-restart) or "failed" a few seconds later, not "active".
         sleep 3
@@ -1626,14 +1718,94 @@ readopt_operator_testing_dir() {
         return 0
     fi
     if chgrp -hR "$DB_USER" "$testing_dir" >/dev/null 2>&1; then
-        echo "[${PKG}] Re-adopted ${testing_dir} for group '${DB_USER}' (previous group id ${dir_gid} no longer exists)."
+        detail "Re-adopted ${testing_dir} for group '${DB_USER}' (previous group id ${dir_gid} no longer exists)."
     else
         warn_nonfatal "could not re-adopt ${testing_dir} for group '${DB_USER}'"
     fi
 }
 
+summary_lines() {
+    printf '%s\n' "Install summary (${INSTALL_MODE}):"
+    printf '%s\n' "  Config: ${CONFIG_STATUS}"
+    printf '%s\n' "  DB bootstrap: ${DB_BOOTSTRAP_STATUS}"
+    printf '%s\n' "  TPM backend: ${TPM_BACKEND_STATUS}"
+    printf '%s\n' "  Services: ${SERVICE_STATUS}"
+    printf '%s\n' "  CLI socket: ${CLI_SOCKET_STATUS}"
+    printf '%s\n' "  nginx config: ${NGINX_CONFIG_STATUS}"
+    printf '%s\n' "  Super-admin ownership: deferred to first CLI use ('vh' or 'vaulthalla')."
+    # The daemon generates the web 'admin' password once, on a new database (no universal default); never on upgrade.
+    if [ -f "$INITIAL_PASSWORD_FILE" ]; then
+        printf '%s\n' "  Web console: sign in as 'admin' with the generated password in ${INITIAL_PASSWORD_FILE} (root-readable). Change it with 'vh setup set-super-admin-password', or keep it and delete the file."
+    elif [ "$INSTALL_MODE" = "fresh" ]; then
+        printf '%s\n' "  Web console: the generated password for 'admin' is written to ${INITIAL_PASSWORD_FILE} when the service first starts with a new database."
+    fi
+}
+
+installed_package_version() {
+    run_bounded 10 dpkg-query -W -f='${Version}' "$PKG" 2>/dev/null || true
+}
+
+upgrade_status_line() {
+    # One line for a clean upgrade: what changed and that the services came back.
+    new_version="$(installed_package_version)"
+    if [ -z "$new_version" ] || [ "$new_version" = "$LAST_CONFIGURED_VERSION" ]; then
+        outcome="Reconfigured ${LAST_CONFIGURED_VERSION}"
+    else
+        outcome="Upgraded ${LAST_CONFIGURED_VERSION} -> ${new_version}"
+    fi
+    if ! systemd_running; then
+        services="services not restarted (systemd is not running)"
+    elif [ "$CORE_EXPECTED_UP" = "1" ]; then
+        services="services restarted, daemon healthy"
+    else
+        services="${CORE_SYSTEMD_UNIT} was not running and was left stopped"
+    fi
+    case "$SERVICE_STATUS" in
+        *"started previously failed"*)
+            services="${services} (recovered previously failed units)"
+            ;;
+        *"after TPM backend recovery"*)
+            services="${services} (started after TPM backend recovery)"
+            ;;
+    esac
+    printf '%s' "${outcome}: ${services}. Log: ${PACKAGE_LOG}"
+}
+
+report_configure_outcome() {
+    if [ "$LEGACY_CLI_UNITS_RETIRED" = "1" ]; then
+        CLI_SOCKET_STATUS="${CLI_SOCKET_STATUS}; legacy vaulthalla-cli.socket/.service stopped and purged"
+    fi
+    case "$CONFIG_STATUS" in
+        missing*|failed*) mark_degraded "config: ${CONFIG_STATUS}" ;;
+    esac
+    case "$DB_BOOTSTRAP_STATUS" in
+        failed*|deferred*) mark_degraded "DB bootstrap: ${DB_BOOTSTRAP_STATUS}" ;;
+    esac
+
+    if [ "$INSTALL_MODE" = "upgrade" ] && [ -z "$DEGRADED_REASONS" ] && ! package_verbose; then
+        summary_lines | log_stdin
+        say "$(upgrade_status_line)"
+        if [ -f "$INITIAL_PASSWORD_FILE" ]; then
+            say "Action: the generated web 'admin' password is still in ${INITIAL_PASSWORD_FILE}; change it with 'sudo vh setup set-super-admin-password' or delete the file."
+        fi
+        return 0
+    fi
+
+    if [ -n "$DEGRADED_REASONS" ]; then
+        say_err "ERROR: configure finished with problems: ${DEGRADED_REASONS}"
+    fi
+    summary_lines | while IFS= read -r summary_line; do
+        say "${summary_line}"
+    done
+    if [ "$PACKAGE_LOG_SINK" != "/dev/null" ]; then
+        say "Full log: ${PACKAGE_LOG}"
+    fi
+}
+
 case "$1" in
   configure)
+    open_package_log
+
     if ! id "$DB_USER" >/dev/null 2>&1; then
         adduser --quiet --system --group --home /nonexistent --no-create-home --shell /usr/sbin/nologin "$DB_USER"
     fi
@@ -1676,23 +1848,7 @@ case "$1" in
 
     rm -f "$REINSTALL_MARKER"
 
-    echo "[${PKG}] Install summary (${INSTALL_MODE}):"
-    echo "[${PKG}]   Config: ${CONFIG_STATUS}"
-    echo "[${PKG}]   DB bootstrap: ${DB_BOOTSTRAP_STATUS}"
-    echo "[${PKG}]   TPM backend: ${TPM_BACKEND_STATUS}"
-    echo "[${PKG}]   Services: ${SERVICE_STATUS}"
-    if [ "$LEGACY_CLI_UNITS_RETIRED" = "1" ]; then
-        CLI_SOCKET_STATUS="${CLI_SOCKET_STATUS}; legacy vaulthalla-cli.socket/.service stopped and purged"
-    fi
-    echo "[${PKG}]   CLI socket: ${CLI_SOCKET_STATUS}"
-    echo "[${PKG}]   nginx config: ${NGINX_CONFIG_STATUS}"
-    echo "[${PKG}]   Super-admin ownership: deferred to first CLI use ('vh' or 'vaulthalla')."
-    # The daemon generates the web 'admin' password once, on a new database (no universal default); never on upgrade.
-    if [ -f "$INITIAL_PASSWORD_FILE" ]; then
-        echo "[${PKG}]   Web console: sign in as 'admin' with the generated password in ${INITIAL_PASSWORD_FILE} (root-readable). Change it with 'vh setup set-super-admin-password', or keep it and delete the file."
-    elif [ "$INSTALL_MODE" = "fresh" ]; then
-        echo "[${PKG}]   Web console: the generated password for 'admin' is written to ${INITIAL_PASSWORD_FILE} when the service first starts with a new database."
-    fi
+    report_configure_outcome
     ;;
 
   abort-upgrade|abort-remove|abort-deconfigure)

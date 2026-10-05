@@ -49,6 +49,13 @@ sudo apt update
 apt-cache policy vaulthalla
 ```
 
+Package install and upgrade steps are logged to `/var/log/vaulthalla-package.log`. A clean upgrade prints a single status line; the log has every step and the full summary. To see everything on the terminal, rerun configuration verbosely:
+
+```bash
+sudo tail -n 60 /var/log/vaulthalla-package.log
+sudo env VH_PACKAGE_VERBOSE=1 dpkg-reconfigure vaulthalla
+```
+
 If the package is partially configured:
 
 ```bash

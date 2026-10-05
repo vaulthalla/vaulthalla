@@ -14,6 +14,7 @@ DB_USER="vaulthalla"
 DB_NAME="vaulthalla"
 STATE_DIR="/var/lib/vaulthalla"
 LOG_DIR="/var/log/vaulthalla"
+PACKAGE_LOG="/var/log/vaulthalla-package.log"
 RUNTIME_DIR="/run/vaulthalla"
 MOUNT_ROOT="/mnt/vaulthalla"
 CONFIG_DIR="/etc/vaulthalla"
@@ -453,6 +454,12 @@ purge_package_state() {
     rmdir "$SWTPM_BASE_DIR" 2>/dev/null || true
     purge_tree "$STATE_DIR"
     purge_tree "$LOG_DIR"
+    # The maintainer-script log (root-owned, outside the daemon's log dir); only regular files are removed.
+    for package_log in "$PACKAGE_LOG" "${PACKAGE_LOG}.1"; do
+        if [ -f "$package_log" ] && [ ! -L "$package_log" ]; then
+            rm -f "$package_log" || true
+        fi
+    done
     purge_tree "$RUNTIME_DIR"
     detach_mount_root
     if ! is_mountpoint "$MOUNT_ROOT"; then
