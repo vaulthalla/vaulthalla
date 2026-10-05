@@ -1590,6 +1590,7 @@ verify_cli_socket_owned_by_daemon() {
     if [ "$core_state" != "active" ]; then
         CLI_SOCKET_STATUS="not checked (${CORE_SYSTEMD_UNIT} is not active)"
         if [ "$CORE_EXPECTED_UP" = "1" ]; then
+            SERVICE_STATUS="${SERVICE_STATUS}; ${CORE_SYSTEMD_UNIT} is '${core_state}'"
             mark_degraded "${CORE_SYSTEMD_UNIT} is '${core_state}' after configure (check: journalctl -u ${CORE_SYSTEMD_UNIT})"
         fi
         return 0

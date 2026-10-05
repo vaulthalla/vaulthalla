@@ -646,6 +646,7 @@ class PostinstOutputPolicyTests(unittest.TestCase):
         self.assertIn("ERROR: configure finished with problems: vaulthalla.service is 'failed'", result.stderr)
         self.assertIn("[vaulthalla] Install summary (upgrade):", result.stdout)
         self.assertIn("[vaulthalla]   CLI socket: not checked", result.stdout)
+        self.assertIn("[vaulthalla]   Services: restarted active units; vaulthalla.service is 'failed'", result.stdout)
         self.assertIn(f"[vaulthalla] Full log: {self.package_log}", result.stdout)
         self.assertIn("DEGRADED: vaulthalla.service is 'failed'", self._log())
 
