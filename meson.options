@@ -48,3 +48,10 @@ option(
     value: false,
     description: 'Source installs only: also install the gitignored repo-root config.yaml into sysconfdir/vaulthalla (never enabled for package builds)'
 )
+
+option(
+    'preview_media',
+    type: 'feature',
+    value: 'auto',
+    description: 'Build the optional vaulthalla-preview-media helper (links libavformat/libavcodec/libswscale/libswresample)'
+)

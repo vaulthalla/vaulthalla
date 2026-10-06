@@ -196,6 +196,9 @@ vh_usage = executable('vh_usage', main_usage,
                       install: false
 )
 
+# Optional out-of-process preview helpers (never linked into the daemon).
+subdir('tools')
+
 
 # ╭──────────────────────────────── MANPAGE GENERATION ───────────────────────────────╮
 
