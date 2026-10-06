@@ -546,18 +546,10 @@ ObjectBody ObjectStore::getObject(
     if (range) {
         if (bytes.empty()) throw invalidRange(key);
 
-        uint64_t first = 0;
-        uint64_t last = bytes.size() - 1;
-        if (range->first) {
-            first = *range->first;
-            if (range->last) last = std::min<uint64_t>(*range->last, bytes.size() - 1);
-        } else if (range->last) {
-            const auto suffixLength = *range->last;
-            if (suffixLength == 0) throw invalidRange(key);
-            first = suffixLength >= bytes.size() ? 0 : bytes.size() - suffixLength;
-        }
-
-        if (first >= bytes.size() || last < first) throw invalidRange(key);
+        const auto resolved = protocols::http::range::resolve(*range, bytes.size());
+        if (!resolved) throw invalidRange(key);
+        const auto first = resolved->first;
+        const auto last = resolved->last;
         bytes = std::vector<uint8_t>(bytes.begin() + static_cast<std::ptrdiff_t>(first),
                                      bytes.begin() + static_cast<std::ptrdiff_t>(last + 1));
         actualRange = std::make_pair(first, last);

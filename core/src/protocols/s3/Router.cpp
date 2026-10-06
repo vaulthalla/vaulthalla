@@ -334,18 +334,6 @@ PutObjectOptions copyOptionsFromRequest(const Router::Request& request) {
     throw invalidArgument("Unsupported x-amz-metadata-directive", directive);
 }
 
-uint64_t parseRangeNumber(const std::string& value, const Router::Request& request) {
-    if (value.empty() || !std::ranges::all_of(value, [](const unsigned char c) {
-            return std::isdigit(c);
-        }))
-        throw invalidRange(std::string(request.target()));
-    try {
-        return std::stoull(value);
-    } catch (const std::exception&) {
-        throw invalidRange(std::string(request.target()));
-    }
-}
-
 uint32_t parsePartNumber(const std::map<std::string, std::string>& query) {
     const auto it = query.find("partNumber");
     if (it == query.end() || it->second.empty() || !std::ranges::all_of(it->second, [](const unsigned char c) {
@@ -367,21 +355,10 @@ uint32_t parsePartNumber(const std::map<std::string, std::string>& query) {
 std::optional<ByteRange> parseRange(const Router::Request& request) {
     const auto raw = headerOr(request, http::field::range);
     if (raw.empty()) return std::nullopt;
-    if (!raw.starts_with("bytes=")) throw invalidRange(std::string(request.target()));
-    if (raw.find(',', 6) != std::string::npos)
-        throw notImplemented("Multipart byte ranges are not supported", std::string(request.target()));
-    const auto dash = raw.find('-', 6);
-    if (dash == std::string::npos) throw invalidRange(std::string(request.target()));
-
-    const auto firstRaw = raw.substr(6, dash - 6);
-    const auto lastRaw = raw.substr(dash + 1);
-    if (firstRaw.empty() && lastRaw.empty()) throw invalidRange(std::string(request.target()));
-
-    ByteRange range;
-    if (!firstRaw.empty()) range.first = parseRangeNumber(firstRaw, request);
-    if (!lastRaw.empty()) range.last = parseRangeNumber(lastRaw, request);
-    if (range.first && range.last && *range.last < *range.first) throw invalidRange(std::string(request.target()));
-    return range;
+    const auto parsed = protocols::http::range::parse(raw);
+    if (parsed.multi) throw notImplemented("Multipart byte ranges are not supported", std::string(request.target()));
+    if (parsed.malformed || !parsed.spec) throw invalidRange(std::string(request.target()));
+    return parsed.spec;
 }
 
 uint32_t parseMaxKeys(const std::map<std::string, std::string>& query) {

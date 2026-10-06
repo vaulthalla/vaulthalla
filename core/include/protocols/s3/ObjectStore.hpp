@@ -1,5 +1,6 @@
 #pragma once
 
+#include "protocols/http/Range.hpp"
 #include "protocols/s3/Auth.hpp"
 #include "db/query/s3/Gateway.hpp"
 #include "rbac/permission/vault/Filesystem.hpp"
@@ -53,10 +54,7 @@ struct PutObjectOptions {
     std::optional<std::string> etag_override;
 };
 
-struct ByteRange {
-    std::optional<uint64_t> first;
-    std::optional<uint64_t> last;
-};
+using ByteRange = protocols::http::range::Spec;
 
 struct ObjectBody {
     db::query::s3::ObjectState state;
