@@ -123,7 +123,7 @@ export const PreviewSheet = ({
                 : 'This access doesn’t include previews.'
               }
             />
-          : <Renderer key={entry.key} source={source} entry={entry} plan={plan} onDownload={download ?? (() => undefined)} setDirty={setDirty} />}
+          : <Renderer key={entry.key} source={source} entry={entry} plan={plan} onDownload={download} setDirty={setDirty} />}
         </div>
 
         {files.length > 1 ?

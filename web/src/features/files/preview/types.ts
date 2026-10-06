@@ -6,7 +6,8 @@ export interface RendererProps {
   source: FsSource
   entry: Entry
   plan: PreviewPlan
-  onDownload: () => void
+  // Null when the source can't download (the renderer then offers no download fallback).
+  onDownload: (() => void) | null
   // Renderers holding unsaved work report it; the sheet asks before switching files or closing.
   setDirty: (dirty: boolean) => void
 }

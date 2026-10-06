@@ -18,6 +18,8 @@ const loading = () => (
 
 const PdfRenderer = dynamic(() => import('@/features/files/preview/PdfRenderer'), { ssr: false, loading })
 const ModelRenderer = dynamic(() => import('@/features/files/preview/ModelRenderer'), { ssr: false, loading })
+const VideoRenderer = dynamic(() => import('@/features/files/preview/MediaRenderer').then(m => m.VideoRenderer), { ssr: false, loading })
+const AudioRenderer = dynamic(() => import('@/features/files/preview/MediaRenderer').then(m => m.AudioRenderer), { ssr: false, loading })
 
 type Renderer = React.ComponentType<RendererProps>
 
@@ -26,6 +28,8 @@ const RENDERERS: Record<string, Renderer> = {
   svg: NativeImageRenderer,
   'image-native': NativeImageRenderer,
   pdf: PdfRenderer,
+  video: VideoRenderer,
+  audio: AudioRenderer,
 }
 
 export const rendererFor = (name: string): Renderer | null => {
