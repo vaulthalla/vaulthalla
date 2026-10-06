@@ -1,5 +1,6 @@
 #include "vault/EncryptionManager.hpp"
 #include "crypto/util/encrypt.hpp"
+#include "crypto/util/Gcm.hpp"
 #include "log/Registry.hpp"
 #include "db/query/vault/Key.hpp"
 #include "vault/model/Key.hpp"
@@ -26,45 +27,69 @@ EncryptionManager::EncryptionManager(const unsigned int vault_id)
     load_key();
 }
 
-unsigned int EncryptionManager::get_key_version() const { return version_; }
+EncryptionManager::EncryptionManager(ForTesting, const unsigned int vault_id, const std::span<const uint8_t> key,
+                                     const unsigned int version, const std::span<const uint8_t> oldKey)
+    : vault_id_(vault_id), version_(version), key_(std::make_shared<const SecretKey>(key)) {
+    if (!oldKey.empty()) {
+        old_key_ = std::make_shared<const SecretKey>(oldKey);
+        rotation_in_progress_.store(true);
+    }
+}
+
+unsigned int EncryptionManager::get_key_version() const {
+    std::shared_lock lock(keyMutex_);
+    return version_;
+}
+
 bool EncryptionManager::rotation_in_progress() const { return rotation_in_progress_.load(); }
 
+EncryptionManager::CurrentKey EncryptionManager::currentKey() const {
+    std::shared_lock lock(keyMutex_);
+    if (!key_) throw std::runtime_error("Vault key is not initialized");
+    return {key_, version_};
+}
+
 void EncryptionManager::load_key() {
-    rotation_in_progress_.store(db::query::vault::Key::keyRotationInProgress(vault_id_));
+    if (!tpmKeyProvider_) throw std::logic_error("load_key requires a TPM-backed EncryptionManager");
+    const bool rotating = db::query::vault::Key::keyRotationInProgress(vault_id_);
     const auto rec = db::query::vault::Key::getVaultKey(vault_id_);
     const auto masterKey = tpmKeyProvider_->getMasterKey();
 
     if (!rec) {
         // First time: generate and seal new vault key
-        std::vector<uint8_t> vaultKey(AES_KEY_SIZE);
-        randombytes_buf(vaultKey.data(), AES_KEY_SIZE);
+        const auto vaultKey = SecretKey::random();
+        const std::vector<uint8_t> raw(vaultKey->bytes().begin(), vaultKey->bytes().end());
 
         std::vector<uint8_t> iv;
-        const auto enc_key = encrypt_aes256_gcm(vaultKey, masterKey, iv);
+        const auto enc_key = encrypt_aes256_gcm(raw, masterKey, iv);
 
         const auto key = std::make_shared<vault::model::Key>();
         key->vaultId = vault_id_;
         key->encrypted_key = enc_key;
         key->iv = iv;
         key->version = db::query::vault::Key::addVaultKey(key);
-        version_ = key->version;
 
-        key_ = std::move(vaultKey);
+        {
+            std::unique_lock lock(keyMutex_);
+            version_ = key->version;
+            key_ = vaultKey;
+            old_key_.reset();
+        }
+        rotation_in_progress_.store(false);
         const auto msg = fmt::format("[VaultEncryptionManager] Created new sealed AES256-GCM key for vault {} with version {}",
-                                     vault_id_, version_);
+                                     vault_id_, key->version);
         log::Registry::audit()->info(msg);
         log::Registry::crypto()->info(msg);
         return;
     }
 
-    version_ = rec->version;
+    auto rawKey = decrypt_aes256_gcm(rec->encrypted_key, masterKey, rec->iv);
+    if (rawKey.size() != AES_KEY_SIZE) throw std::runtime_error("Vault key must be 32 bytes (AES-256)");
+    auto current = std::make_shared<const SecretKey>(rawKey);
+    sodium_memzero(rawKey.data(), rawKey.size());
 
-    // Decrypt existing vault key
-    key_ = decrypt_aes256_gcm(rec->encrypted_key, masterKey, rec->iv);
-    if (key_.size() != AES_KEY_SIZE)
-        throw std::runtime_error("Vault key must be 32 bytes (AES-256)");
-
-    if (rotation_in_progress_) {
+    SecretKeyPtr previous;
+    if (rotating) {
         const auto oldKey = db::query::vault::Key::getRotationInProgressOldKey(vault_id_);
         if (!oldKey) {
             log::Registry::crypto()->error("[VaultEncryptionManager] No old key found for rotation in progress for vault {}",
@@ -72,18 +97,28 @@ void EncryptionManager::load_key() {
             throw std::runtime_error("No old key found for rotation in progress");
         }
 
-        old_key_ = decrypt_aes256_gcm(oldKey->encrypted_key, masterKey, oldKey->iv);
-        if (key_.size() != AES_KEY_SIZE) {
+        auto rawOld = decrypt_aes256_gcm(oldKey->encrypted_key, masterKey, oldKey->iv);
+        if (rawOld.size() != AES_KEY_SIZE) {
             log::Registry::crypto()->error("[VaultEncryptionManager] Old vault key must be 32 bytes (AES-256), got {} bytes",
-                                         key_.size());
+                                         rawOld.size());
             throw std::runtime_error("Old vault key must be 32 bytes (AES-256)");
         }
-
+        previous = std::make_shared<const SecretKey>(rawOld);
+        sodium_memzero(rawOld.data(), rawOld.size());
         log::Registry::crypto()->debug("[VaultEncryptionManager] Loaded old key for vault {} during rotation", vault_id_);
     }
+
+    {
+        std::unique_lock lock(keyMutex_);
+        version_ = rec->version;
+        key_ = std::move(current);
+        old_key_ = std::move(previous);
+    }
+    rotation_in_progress_.store(rotating);
 }
 
 void EncryptionManager::prepare_key_rotation() {
+    if (!tpmKeyProvider_) throw std::logic_error("prepare_key_rotation requires a TPM-backed EncryptionManager");
     if (db::query::vault::Key::keyRotationInProgress(vault_id_)) {
         log::Registry::crypto()->warn("[VaultEncryptionManager] Key rotation already in progress for vault {}", vault_id_);
         return;
@@ -91,23 +126,27 @@ void EncryptionManager::prepare_key_rotation() {
 
     log::Registry::crypto()->debug("[VaultEncryptionManager] Preparing key rotation for vault {}", vault_id_);
 
-    old_key_ = std::move(key_);
-    key_.clear();
-    key_.resize(AES_KEY_SIZE);
-    randombytes_buf(key_.data(), AES_KEY_SIZE);
+    const auto next = SecretKey::random();
+    const std::vector<uint8_t> raw(next->bytes().begin(), next->bytes().end());
 
     std::vector<uint8_t> iv;
     const auto key = std::make_shared<vault::model::Key>();
     key->vaultId = vault_id_;
-    key->encrypted_key = encrypt_aes256_gcm(key_, tpmKeyProvider_->getMasterKey(), iv);
+    key->encrypted_key = encrypt_aes256_gcm(raw, tpmKeyProvider_->getMasterKey(), iv);
     key->iv = std::move(iv);
+    // Persist first: if this throws, the in-memory keys are untouched.
     key->version = db::query::vault::Key::rotateVaultKey(key);
 
-    version_ = key->version;
-    rotation_in_progress_.store(true);
+    {
+        std::unique_lock lock(keyMutex_);
+        old_key_ = key_;
+        key_ = next;
+        version_ = key->version;
+        rotation_in_progress_.store(true);
+    }
 
     const auto msg = fmt::format("[VaultEncryptionManager] Prepared key rotation for vault {} with new version {}",
-                                         vault_id_, version_);
+                                         vault_id_, key->version);
     log::Registry::audit()->info(msg);
     log::Registry::crypto()->info(msg);
 }
@@ -118,26 +157,39 @@ void EncryptionManager::finish_key_rotation() {
         return;
     }
 
-    old_key_.clear();
-
     db::query::vault::Key::markKeyRotationFinished(vault_id_);
-    rotation_in_progress_.store(false);
+    unsigned int version = 0;
+    {
+        std::unique_lock lock(keyMutex_);
+        old_key_.reset();  // wiped once the last in-flight snapshot is released
+        rotation_in_progress_.store(false);
+        version = version_;
+    }
 
     const auto msg = fmt::format("[VaultEncryptionManager] Finished key rotation for vault {} with version {}",
-                                         vault_id_, version_);
+                                         vault_id_, version);
     log::Registry::audit()->info(msg);
     log::Registry::crypto()->info(msg);
 }
 
 std::vector<uint8_t> EncryptionManager::rotateDecryptEncrypt(const std::vector<uint8_t>& ciphertext, const std::shared_ptr<File>& f) const {
     try {
-        if (f->encrypted_with_key_version == version_) {
+        SecretKeyPtr oldKey, newKey;
+        unsigned int version = 0;
+        {
+            std::shared_lock lock(keyMutex_);
+            oldKey = old_key_;
+            newKey = key_;
+            version = version_;
+        }
+
+        if (f->encrypted_with_key_version == version) {
             log::Registry::crypto()->debug("[VaultEncryptionManager] Key version {} is current for vault {}, no rotation needed",
                                          f->encrypted_with_key_version, vault_id_);
             return ciphertext;
         }
 
-        if (!rotation_in_progress_.load()) {
+        if (!rotation_in_progress_.load() || !oldKey) {
             const auto msg = fmt::format(
                 "[VaultEncryptionManager] Key rotation not in progress for vault {}, but key version {} is not current",
                 vault_id_, f->encrypted_with_key_version);
@@ -146,14 +198,17 @@ std::vector<uint8_t> EncryptionManager::rotateDecryptEncrypt(const std::vector<u
             throw std::runtime_error("Key rotation not in progress, cannot rotate key");
         }
 
-        if (f->encrypted_with_key_version != version_ - 1)
-            log::Registry::crypto()->warn("[VaultEncryptionManager] Key version {} is not the previous version {}, using new key",
-                                        f->encrypted_with_key_version, version_);
+        if (f->encrypted_with_key_version != version - 1)
+            log::Registry::crypto()->warn("[VaultEncryptionManager] Key version {} is not the previous version {}, using the previous key",
+                                        f->encrypted_with_key_version, version - 1);
 
-        const auto decrypted = decrypt_aes256_gcm(ciphertext, old_key_, b64_decode(f->encryption_iv));
+        const std::vector<uint8_t> oldRaw(oldKey->bytes().begin(), oldKey->bytes().end());
+        const std::vector<uint8_t> newRaw(newKey->bytes().begin(), newKey->bytes().end());
+        auto decrypted = decrypt_aes256_gcm(ciphertext, oldRaw, b64_decode(f->encryption_iv));
 
         std::vector<uint8_t> iv;
-        const auto encrypted = encrypt_aes256_gcm(decrypted, key_, iv);
+        const auto encrypted = encrypt_aes256_gcm(decrypted, newRaw, iv);
+        sodium_memzero(decrypted.data(), decrypted.size());
 
         if (encrypted.size() != ciphertext.size()) {
             log::Registry::crypto()->error("[VaultEncryptionManager] Encrypted data size mismatch after key rotation");
@@ -161,7 +216,7 @@ std::vector<uint8_t> EncryptionManager::rotateDecryptEncrypt(const std::vector<u
         }
 
         f->encryption_iv = b64_encode(iv);
-        f->encrypted_with_key_version = version_;
+        f->encrypted_with_key_version = version;
 
         return encrypted;
     } catch (const std::exception& e) {
@@ -171,11 +226,12 @@ std::vector<uint8_t> EncryptionManager::rotateDecryptEncrypt(const std::vector<u
 }
 
 std::vector<uint8_t> EncryptionManager::encrypt(const std::vector<uint8_t>& plaintext, const std::shared_ptr<File>& f) const {
+    const auto [key, version] = currentKey();
+    const std::vector<uint8_t> raw(key->bytes().begin(), key->bytes().end());
     std::vector<uint8_t> iv;
-
-    auto ciphertext = encrypt_aes256_gcm(plaintext, key_, iv);
+    auto ciphertext = encrypt_aes256_gcm(plaintext, raw, iv);
     f->encryption_iv = b64_encode(iv);
-    f->encrypted_with_key_version = version_;
+    f->encrypted_with_key_version = version;
     return ciphertext;
 }
 
@@ -184,10 +240,7 @@ void EncryptionManager::encryptFileToFile(
     const std::filesystem::path& ciphertextPath,
     const std::shared_ptr<File>& f) const {
     if (!f) throw std::invalid_argument("Cannot encrypt file without file metadata");
-    if (key_.size() != AES_KEY_SIZE) {
-        log::Registry::crypto()->error("[VaultEncryptionManager] Invalid AES-256 key size: {} bytes", key_.size());
-        throw std::invalid_argument("Invalid AES-256 key size");
-    }
+    const auto [key, version] = currentKey();
 
     std::ifstream in(plaintextPath, std::ios::binary);
     if (!in) throw std::runtime_error("Failed to open plaintext file for encryption: " + plaintextPath.string());
@@ -196,70 +249,46 @@ void EncryptionManager::encryptFileToFile(
     std::ofstream out(ciphertextPath, std::ios::binary | std::ios::trunc);
     if (!out) throw std::runtime_error("Failed to open ciphertext file for encryption: " + ciphertextPath.string());
 
-    std::vector<uint8_t> iv(AES_IV_SIZE);
+    std::array<uint8_t, AES_IV_SIZE> iv{};
     randombytes_buf(iv.data(), iv.size());
 
-    EVP_CIPHER_CTX* rawCtx = EVP_CIPHER_CTX_new();
-    if (!rawCtx) throw std::runtime_error("Failed to allocate AES-GCM context");
-
-    try {
-        if (EVP_EncryptInit_ex(rawCtx, EVP_aes_256_gcm(), nullptr, nullptr, nullptr) != 1)
-            throw std::runtime_error("AES-GCM initialization failed");
-        if (EVP_CIPHER_CTX_ctrl(rawCtx, EVP_CTRL_GCM_SET_IVLEN, static_cast<int>(iv.size()), nullptr) != 1)
-            throw std::runtime_error("AES-GCM IV length initialization failed");
-        if (EVP_EncryptInit_ex(rawCtx, nullptr, nullptr, key_.data(), iv.data()) != 1)
-            throw std::runtime_error("AES-GCM key initialization failed");
-
-        std::array<unsigned char, 64 * 1024> input{};
-        std::array<unsigned char, input.size() + AES_TAG_SIZE> output{};
-        while (in) {
-            in.read(reinterpret_cast<char*>(input.data()), static_cast<std::streamsize>(input.size()));
-            const auto read = in.gcount();
-            if (read <= 0) break;
-
-            int outLen = 0;
-            if (EVP_EncryptUpdate(rawCtx, output.data(), &outLen, input.data(), static_cast<int>(read)) != 1)
-                throw std::runtime_error("AES-GCM file encryption failed");
-            if (outLen > 0) out.write(reinterpret_cast<const char*>(output.data()), outLen);
-            if (!out) throw std::runtime_error("Failed writing ciphertext file: " + ciphertextPath.string());
-        }
-
-        int finalLen = 0;
-        if (EVP_EncryptFinal_ex(rawCtx, output.data(), &finalLen) != 1)
-            throw std::runtime_error("AES-GCM finalization failed");
-        if (finalLen > 0) out.write(reinterpret_cast<const char*>(output.data()), finalLen);
-
-        std::array<unsigned char, AES_TAG_SIZE> tag{};
-        if (EVP_CIPHER_CTX_ctrl(rawCtx, EVP_CTRL_GCM_GET_TAG, static_cast<int>(tag.size()), tag.data()) != 1)
-            throw std::runtime_error("AES-GCM tag extraction failed");
-        out.write(reinterpret_cast<const char*>(tag.data()), static_cast<std::streamsize>(tag.size()));
-        if (!out) throw std::runtime_error("Failed writing AES-GCM tag: " + ciphertextPath.string());
-
-        EVP_CIPHER_CTX_free(rawCtx);
-    } catch (...) {
-        EVP_CIPHER_CTX_free(rawCtx);
-        throw;
+    GcmStreamEncryptor encryptor(key->bytes(), iv);
+    std::array<unsigned char, 64 * 1024> input{};
+    std::array<unsigned char, input.size()> output{};
+    while (in) {
+        in.read(reinterpret_cast<char*>(input.data()), static_cast<std::streamsize>(input.size()));
+        const auto read = in.gcount();
+        if (read <= 0) break;
+        const auto n = static_cast<std::size_t>(read);
+        encryptor.update({input.data(), n}, {output.data(), n});
+        out.write(reinterpret_cast<const char*>(output.data()), read);
+        if (!out) throw std::runtime_error("Failed writing ciphertext file: " + ciphertextPath.string());
     }
+    if (in.bad()) throw std::runtime_error("Failed reading plaintext file: " + plaintextPath.string());
 
-    f->encryption_iv = b64_encode(iv);
-    f->encrypted_with_key_version = version_;
+    const auto tag = encryptor.finish();
+    out.write(reinterpret_cast<const char*>(tag.data()), static_cast<std::streamsize>(tag.size()));
+    out.close();
+    if (!out) throw std::runtime_error("Failed writing AES-GCM tag: " + ciphertextPath.string());
+    sodium_memzero(input.data(), input.size());
+
+    f->encryption_iv = b64_encode(std::vector<uint8_t>(iv.begin(), iv.end()));
+    f->encrypted_with_key_version = version;
 }
 
-const std::vector<uint8_t>& EncryptionManager::keyFor(const unsigned int keyVersion) const {
+SecretKeyPtr EncryptionManager::keySnapshot(const unsigned int keyVersion) const {
+    std::shared_lock lock(keyMutex_);
+    if (!key_) throw std::runtime_error("Vault key is not initialized");
+
     if (rotation_in_progress_.load()) {
-        if (key_.empty() || old_key_.empty()) throw std::runtime_error("Key rotation in progress but keys are not set");
+        if (!old_key_) throw std::runtime_error("Key rotation in progress but keys are not set");
 
         if (keyVersion == version_) return key_;
-        if (keyVersion == version_ - 1) return old_key_;
+        if (keyVersion + 1 == version_) return old_key_;
 
-        if (keyVersion < version_ - 1)
-            log::Registry::crypto()->warn("[VaultEncryptionManager] Key version {} is too old for vault {}, using new key",
-                                        keyVersion, vault_id_);
-        else if (keyVersion > version_)
-            log::Registry::crypto()->warn("[VaultEncryptionManager] Key version {} is newer than current version {} for vault {}, using new key",
-                                        keyVersion, version_, vault_id_);
-
-        return key_;
+        log::Registry::crypto()->warn("[VaultEncryptionManager] Key version {} is not resolvable during rotation to {} for vault {}",
+                                      keyVersion, version_, vault_id_);
+        throw std::runtime_error("Key version mismatch");
     }
 
     if (keyVersion != version_) {
@@ -272,7 +301,9 @@ const std::vector<uint8_t>& EncryptionManager::keyFor(const unsigned int keyVers
 }
 
 std::vector<uint8_t> EncryptionManager::decrypt(const std::vector<uint8_t>& ciphertext, const std::string& b64_iv, const unsigned int keyVersion) const {
-    return decrypt_aes256_gcm(ciphertext, keyFor(keyVersion), b64_decode(b64_iv));
+    const auto key = keySnapshot(keyVersion);
+    const std::vector<uint8_t> raw(key->bytes().begin(), key->bytes().end());
+    return decrypt_aes256_gcm(ciphertext, raw, b64_decode(b64_iv));
 }
 
 void EncryptionManager::decryptFileToFile(
@@ -280,19 +311,18 @@ void EncryptionManager::decryptFileToFile(
     const std::filesystem::path& plaintextPath,
     const std::string& b64_iv,
     const unsigned int keyVersion) const {
-    decrypt_aes256_gcm_file(ciphertextPath, plaintextPath, keyFor(keyVersion), b64_decode(b64_iv));
+    const auto key = keySnapshot(keyVersion);
+    const std::vector<uint8_t> raw(key->bytes().begin(), key->bytes().end());
+    decrypt_aes256_gcm_file(ciphertextPath, plaintextPath, raw, b64_decode(b64_iv));
 }
 
 std::vector<uint8_t> EncryptionManager::get_key(const std::string& callingFunctionName) const {
-    if (key_.empty()) {
-        log::Registry::crypto()->error("[VaultEncryptionManager] Key is empty in function: {}", callingFunctionName);
-        throw std::runtime_error("Vault key is not initialized");
-    }
+    const auto key = currentKey().key;
 
     const auto msg = fmt::format("[VaultEncryptionManager] Returning key for vault {} in function: {}",
                            vault_id_, callingFunctionName);
     log::Registry::crypto()->debug(msg);
     log::Registry::audit()->debug(msg);
 
-    return key_;
+    return {key->bytes().begin(), key->bytes().end()};
 }
