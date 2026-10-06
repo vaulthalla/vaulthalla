@@ -2,6 +2,7 @@ import React from 'react'
 import { cn } from '@/util/cn'
 import { categoryOf, type Entry, type FileCategory } from '@/features/files/entries'
 import {
+  CubeIcon,
   FileAudioIcon,
   FileCodeIcon,
   FileIcon as FileGenericIcon,
@@ -19,6 +20,7 @@ const ICONS: Record<FileCategory, React.ComponentType<React.SVGProps<SVGSVGEleme
   video: FileVideoIcon,
   audio: FileAudioIcon,
   pdf: FilePdfIcon,
+  model: CubeIcon,
   archive: FileZipperIcon,
   code: FileCodeIcon,
   text: FileLinesIcon,
@@ -31,6 +33,7 @@ const TINTS: Record<FileCategory, string> = {
   video: 'text-violet',
   audio: 'text-pink',
   pdf: 'text-danger',
+  model: 'text-accent',
   archive: 'text-warn',
   code: 'text-ok',
   text: 'text-fg-muted',
