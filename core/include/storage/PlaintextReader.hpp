@@ -33,7 +33,7 @@ struct Generation {
 };
 
 // The generation of a file as currently recorded (no I/O beyond the model).
-[[nodiscard]] Generation generationOf(const fs::model::File& file);
+[[nodiscard]] Generation generationOf(const ::vh::fs::model::File& file);   // ::vh: storage/Engine.hpp aliases storage::fs
 
 // Thrown when the bytes of a generation fail authentication (GCM tag mismatch), including mid-stream: an
 // optimistic reader may already have released some bytes before verification completed.
