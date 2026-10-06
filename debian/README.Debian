@@ -35,6 +35,16 @@ Package metadata policy
 This keeps `apt install vaulthalla` helpful by default while preserving lean
 installs via `--no-install-recommends`.
 
+- optional preview converters are `Suggests` (separate binary packages, each
+  shipping one sandboxed helper under `/usr/lib/vaulthalla/helpers/`):
+  - `vaulthalla-preview-cad`: STEP/STP models -> glTF (Open CASCADE)
+  - `vaulthalla-preview-media`: video posters and transcodes (FFmpeg libraries)
+
+The daemon never links these libraries; it runs a helper only when its package
+is installed and reports the preview as unavailable otherwise. Install them with
+`apt install vaulthalla-preview-cad vaulthalla-preview-media`; no restart or
+configuration is needed. Limits live under `preview.derive` in config.yaml.
+
 `nodejs` is unversioned on purpose: the web console (Next.js 16) officially
 wants Node.js >= 20.9, but Ubuntu 24.04 ships 18.19. A versioned dependency would
 make the package uninstallable there, so the distro Node.js is accepted as-is.

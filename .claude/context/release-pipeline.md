@@ -43,7 +43,8 @@ starts `release.yml`. Never without the maintainer's instruction: a `v*` tag pub
 `vaulthalla-web_<VERSION>_next-standalone.tar.gz`), copies the work tree to `build/deb/src` (minus `build_excludes`:
 local secrets/overrides, stale build dirs, `.claude`), runs `dpkg-buildpackage -us -uc -b` there, and collects the
 `.deb`, `.buildinfo`, `.changes` and the web tarball into `release/`. `vlr checksums` writes `release/SHA256SUMS`;
-`vlr validate-artifacts` checks it plus the `[[debian.packages]]` contract (required/forbidden paths incl. the retired
+`vlr validate-artifacts` checks it plus the `[[debian.packages]]` contracts (one per built .deb: `vaulthalla`,
+`vaulthalla-preview-cad`, `vaulthalla-preview-media`) (required/forbidden paths incl. the retired
 `vaulthalla-cli.{socket,service}` (#110), `any_of` groups, the shipped `config.yaml` byte-identical to
 `deploy/config/config.yaml`, prepared version, and the changelog in the package).
 

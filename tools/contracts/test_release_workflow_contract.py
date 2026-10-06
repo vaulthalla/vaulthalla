@@ -165,9 +165,30 @@ class ReleaseTomlContractTests(unittest.TestCase):
         targets = {(t["kind"], t["path"]) for t in self.config["version"]["targets"]}
         self.assertEqual(targets, {("meson", "meson.build"), ("package_json", "web/package.json")})
 
+    def _packages(self) -> dict[str, dict]:
+        return {package["name"]: package for package in self.config["debian"]["packages"]}
+
+    def test_every_binary_package_has_a_contract(self) -> None:
+        # vlr validate-artifacts requires a contract per built .deb and vice versa; debian/control is the list.
+        control = _read("debian/control")
+        built = set(re.findall(r"(?m)^Package: (\S+)$", control))
+        self.assertEqual(set(self._packages()), built)
+        self.assertEqual(built, {"vaulthalla", "vaulthalla-preview-cad", "vaulthalla-preview-media"})
+
+    def test_helper_packages_carry_only_their_helper(self) -> None:
+        packages = self._packages()
+        self.assertIn("usr/lib/vaulthalla/helpers/*", packages["vaulthalla"]["forbidden_paths"])
+        for name in ("vaulthalla-preview-cad", "vaulthalla-preview-media"):
+            with self.subTest(package=name):
+                package = packages[name]
+                self.assertEqual(package["architecture"], "amd64")
+                self.assertIn(f"usr/lib/vaulthalla/helpers/{name}", package["required_paths"])
+                for path in ("usr/bin/*", "etc/*", "lib/systemd/*", "usr/share/vaulthalla/*"):
+                    self.assertIn(path, package["forbidden_paths"])
+
     def test_package_contract_keeps_the_product_invariants(self) -> None:
-        (package,) = self.config["debian"]["packages"]
-        self.assertEqual(package["name"], "vaulthalla")
+        package = self._packages()["vaulthalla"]
+        self.assertEqual(self.config["debian"]["packages"][0]["name"], "vaulthalla")
         for path in ("usr/bin/vh", "usr/lib/vaulthalla/lifecycle", "usr/share/vaulthalla-web/server.js",
                      "usr/share/vaulthalla/psql/000_schema.sql", "lib/systemd/system/vaulthalla.service"):
             self.assertIn(path, package["required_paths"])
