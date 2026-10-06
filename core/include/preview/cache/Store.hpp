@@ -91,6 +91,15 @@ public:
     static void purgeFile(const std::shared_ptr<storage::Engine>& engine, uint32_t fileId);
     static void purgeVault(const std::shared_ptr<storage::Engine>& engine);
 
+    // After key rotation finishes: drops artifacts sealed under any key version other than the current one.
+    static std::size_t purgeRetiredKeys(const std::shared_ptr<storage::Engine>& engine);
+
+    // Startup/janitor sweep for one vault: deletes legacy plaintext thumbnails, artifact directories of files
+    // that no longer exist, and interrupted temp writes.
+    static std::size_t sweep(const std::shared_ptr<storage::Engine>& engine);
+
+    static void setFailureTtl(std::chrono::seconds ttl);
+
     // Evicts least-recently-used artifacts (all vaults) until the total is within maxBytes, and drops artifacts
     // unused for longer than maxIdle. Returns bytes freed.
     static uint64_t evict(uint64_t maxBytes, std::optional<std::chrono::seconds> maxIdle = std::nullopt);

@@ -6,6 +6,8 @@
 #include <filesystem>
 #include <vector>
 #include <optional>
+#include <string>
+#include <cstdint>
 
 namespace vh::db::query::fs {
 
@@ -33,6 +35,20 @@ public:
     [[nodiscard]] static unsigned int countCacheIndices(unsigned int vaultId, const std::optional<R::Type>& type = std::nullopt);
 
     [[nodiscard]] static bool cacheIndexExists(unsigned int vaultId, const std::filesystem::path& relPath);
+
+    // Derived artifacts (type 'derived'), see preview::cache::Store.
+    static void upsertDerivedArtifact(const RecordPtr& record);
+    [[nodiscard]] static RecordPtr getDerivedArtifact(unsigned int fileId, const std::string& kind, const std::string& variant);
+    static void touchDerivedArtifact(unsigned int id);
+    // Deletes the row only if it still describes sourceId (a concurrent regeneration wins).
+    static bool deleteDerivedArtifactIfUnchanged(unsigned int id, const std::string& sourceId);
+    [[nodiscard]] static Records listDerivedArtifactsByFile(unsigned int fileId);
+    [[nodiscard]] static Records listDerivedArtifactsByVault(unsigned int vaultId);
+    [[nodiscard]] static uint64_t derivedArtifactsTotalSize();
+    [[nodiscard]] static Records listDerivedArtifactsLru(unsigned int limit);
+    [[nodiscard]] static Records listDerivedArtifactsIdle(uint64_t idleSeconds, unsigned int limit);
+    [[nodiscard]] static Records listDerivedArtifactsWithStaleKey(unsigned int vaultId, unsigned int currentKeyVersion);
+    [[nodiscard]] static std::vector<unsigned int> listDerivedFileIdsByVault(unsigned int vaultId);
 };
 
 }

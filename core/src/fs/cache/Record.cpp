@@ -15,7 +15,20 @@ Record::Record(const pqxx::row& row)
       type(typeFromString(row.at("type").as<std::string>())),
       size(row.at("size").as<uintmax_t>()),
       last_accessed(parsePostgresTimestamp(row.at("last_accessed").as<std::string>())),
-      created_at(parsePostgresTimestamp(row.at("created_at").as<std::string>())) {}
+      created_at(parsePostgresTimestamp(row.at("created_at").as<std::string>())) {
+    const auto text = [&row](const char* column) -> std::string {
+        const auto field = row[column];
+        return field.is_null() ? std::string{} : field.as<std::string>();
+    };
+    kind = text("kind");
+    variant = text("variant");
+    source_id = text("source_id");
+    artifact_iv = text("artifact_iv");
+    failure_reason = text("failure_reason");
+    if (!row["generator_version"].is_null()) generator_version = row["generator_version"].as<unsigned int>();
+    if (!row["artifact_key_version"].is_null()) artifact_key_version = row["artifact_key_version"].as<unsigned int>();
+    status = text("status") == "failed" ? Status::Failed : Status::Ready;
+}
 
 void vh::fs::cache::to_json(nlohmann::json& j, const Record& index) {
     j = {
@@ -26,7 +39,10 @@ void vh::fs::cache::to_json(nlohmann::json& j, const Record& index) {
         {"type", to_string(index.type)},
         {"size", index.size},
         {"last_accessed", timestampToString(index.last_accessed)},
-        {"created_at", timestampToString(index.created_at)}
+        {"created_at", timestampToString(index.created_at)},
+        {"kind", index.kind},
+        {"variant", index.variant},
+        {"status", index.status == Record::Status::Failed ? "failed" : "ready"}
     };
 }
 
@@ -45,6 +61,7 @@ std::string vh::fs::cache::to_string(const Record::Type& type) {
     switch (type) {
         case Record::Type::File: return "file";
         case Record::Type::Thumbnail: return "thumbnail";
+        case Record::Type::Derived: return "derived";
         default: throw std::invalid_argument("Unknown CacheIndex type");
     }
 }
@@ -52,6 +69,7 @@ std::string vh::fs::cache::to_string(const Record::Type& type) {
 Record::Type vh::fs::cache::typeFromString(const std::string& str) {
     if (str == "file") return Record::Type::File;
     if (str == "thumbnail") return Record::Type::Thumbnail;
+    if (str == "derived") return Record::Type::Derived;
     throw std::invalid_argument("Unknown CacheIndex type: " + str);
 }
 

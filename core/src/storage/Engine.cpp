@@ -182,7 +182,13 @@ namespace vh::storage {
     // This vault's own backing tree (backingPath/<mount_point>), not the shared backing root that holds every vault
     // and the cache (#161: every vault used to report, and be quota-checked against, the sum of all of them).
     uintmax_t Engine::getVaultSize() const { return getDirectorySize(paths->backingVaultRoot); }
-    uintmax_t Engine::getCacheSize() const { return getDirectorySize(paths->cacheRoot); }
+    // Derived preview artifacts (<cacheRoot>/derived) are disposable, non-authoritative and bounded globally by
+    // caching.max_size_mb, so they are not charged to the vault's quota.
+    uintmax_t Engine::getCacheSize() const {
+        const auto total = getDirectorySize(paths->cacheRoot);
+        const auto derived = getDirectorySize(paths->cacheRoot / "derived");
+        return total > derived ? total - derived : 0;
+    }
     uintmax_t Engine::getVaultAndCacheTotalSize() const { return getVaultSize() + getCacheSize(); }
     uintmax_t Engine::freeSpace() const {
         if (!vault) return 0;

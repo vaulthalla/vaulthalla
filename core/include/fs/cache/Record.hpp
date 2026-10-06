@@ -6,18 +6,28 @@
 #include <vector>
 #include <nlohmann/json_fwd.hpp>
 #include <string>
+#include <optional>
 #include <pqxx/types>
 
 namespace vh::fs::cache {
 
 struct Record {
-    enum class Type { File, Thumbnail };
+    enum class Type { File, Thumbnail, Derived };
+    enum class Status { Ready, Failed };
 
     unsigned int id{}, vault_id{}, file_id{};
-    std::filesystem::path path{};
-    Type type{Type::Thumbnail};
+    std::filesystem::path path{};   // relative to the vault's cache root
+    Type type{Type::Derived};
     uintmax_t size{};
     std::time_t last_accessed{}, created_at{};
+
+    // Derived artifacts (type Derived): identity, validity and sealing metadata (see preview::cache::Store).
+    std::string kind{}, variant{}, source_id{};
+    unsigned int generator_version{1};
+    std::string artifact_iv{};
+    unsigned int artifact_key_version{};
+    Status status{Status::Ready};
+    std::string failure_reason{};
 
     Record() = default;
     explicit Record(const pqxx::row& row);

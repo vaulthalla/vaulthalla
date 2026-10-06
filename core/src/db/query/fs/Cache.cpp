@@ -112,4 +112,92 @@ unsigned int Cache::countCacheIndices(unsigned int vaultId, const std::optional<
     });
 }
 
+
+void Cache::upsertDerivedArtifact(const RecordPtr& r) {
+    if (!r) throw std::invalid_argument("Derived artifact record cannot be null");
+    Transactions::exec("Cache::upsertDerivedArtifact", [&](pqxx::work& txn) {
+        pqxx::params p;
+        p.append(r->vault_id);
+        p.append(r->file_id);
+        p.append(encoding::to_utf8_string(r->path.u8string()));
+        p.append(static_cast<int64_t>(r->size));
+        p.append(r->kind);
+        p.append(r->variant);
+        p.append(r->source_id);
+        p.append(r->generator_version);
+        if (r->artifact_iv.empty()) p.append(); else p.append(r->artifact_iv);
+        if (r->artifact_iv.empty()) p.append(); else p.append(r->artifact_key_version);
+        p.append(std::string(r->status == R::Status::Failed ? "failed" : "ready"));
+        if (r->failure_reason.empty()) p.append(); else p.append(r->failure_reason);
+        txn.exec(pqxx::prepped{"upsert_derived_artifact"}, p);
+    });
+}
+
+std::shared_ptr<Record> Cache::getDerivedArtifact(const unsigned int fileId, const std::string& kind, const std::string& variant) {
+    return Transactions::exec("Cache::getDerivedArtifact", [&](pqxx::work& txn) -> std::shared_ptr<Record> {
+        const auto res = txn.exec(pqxx::prepped{"get_derived_artifact"}, pqxx::params{fileId, kind, variant});
+        if (res.empty()) return nullptr;
+        return std::make_shared<Record>(res[0]);
+    });
+}
+
+void Cache::touchDerivedArtifact(const unsigned int id) {
+    Transactions::exec("Cache::touchDerivedArtifact", [&](pqxx::work& txn) {
+        txn.exec(pqxx::prepped{"touch_derived_artifact"}, pqxx::params{id});
+    });
+}
+
+bool Cache::deleteDerivedArtifactIfUnchanged(const unsigned int id, const std::string& sourceId) {
+    return Transactions::exec("Cache::deleteDerivedArtifactIfUnchanged", [&](pqxx::work& txn) {
+        return txn.exec(pqxx::prepped{"delete_derived_artifact_if_unchanged"}, pqxx::params{id, sourceId}).affected_rows() > 0;
+    });
+}
+
+std::vector<std::shared_ptr<Record>> Cache::listDerivedArtifactsByFile(const unsigned int fileId) {
+    return Transactions::exec("Cache::listDerivedArtifactsByFile", [&](pqxx::work& txn) {
+        return cache_indices_from_pq_res(txn.exec(pqxx::prepped{"list_derived_artifacts_by_file"}, pqxx::params{fileId}));
+    });
+}
+
+std::vector<std::shared_ptr<Record>> Cache::listDerivedArtifactsByVault(const unsigned int vaultId) {
+    return Transactions::exec("Cache::listDerivedArtifactsByVault", [&](pqxx::work& txn) {
+        return cache_indices_from_pq_res(txn.exec(pqxx::prepped{"list_derived_artifacts_by_vault"}, pqxx::params{vaultId}));
+    });
+}
+
+uint64_t Cache::derivedArtifactsTotalSize() {
+    return Transactions::exec("Cache::derivedArtifactsTotalSize", [&](pqxx::work& txn) {
+        return txn.exec(pqxx::prepped{"derived_artifacts_total_size"}).one_row()["total"].as<uint64_t>();
+    });
+}
+
+std::vector<std::shared_ptr<Record>> Cache::listDerivedArtifactsLru(const unsigned int limit) {
+    return Transactions::exec("Cache::listDerivedArtifactsLru", [&](pqxx::work& txn) {
+        return cache_indices_from_pq_res(txn.exec(pqxx::prepped{"list_derived_artifacts_lru"}, pqxx::params{limit}));
+    });
+}
+
+std::vector<std::shared_ptr<Record>> Cache::listDerivedArtifactsIdle(const uint64_t idleSeconds, const unsigned int limit) {
+    return Transactions::exec("Cache::listDerivedArtifactsIdle", [&](pqxx::work& txn) {
+        return cache_indices_from_pq_res(txn.exec(pqxx::prepped{"list_derived_artifacts_idle"},
+                                                  pqxx::params{static_cast<int64_t>(idleSeconds), limit}));
+    });
+}
+
+std::vector<std::shared_ptr<Record>> Cache::listDerivedArtifactsWithStaleKey(const unsigned int vaultId, const unsigned int currentKeyVersion) {
+    return Transactions::exec("Cache::listDerivedArtifactsWithStaleKey", [&](pqxx::work& txn) {
+        return cache_indices_from_pq_res(txn.exec(pqxx::prepped{"list_derived_artifacts_stale_key"},
+                                                  pqxx::params{vaultId, currentKeyVersion}));
+    });
+}
+
+std::vector<unsigned int> Cache::listDerivedFileIdsByVault(const unsigned int vaultId) {
+    return Transactions::exec("Cache::listDerivedFileIdsByVault", [&](pqxx::work& txn) {
+        std::vector<unsigned int> ids;
+        for (const auto& row : txn.exec(pqxx::prepped{"list_derived_file_ids_by_vault"}, pqxx::params{vaultId}))
+            ids.push_back(row["file_id"].as<unsigned int>());
+        return ids;
+    });
+}
+
 }
