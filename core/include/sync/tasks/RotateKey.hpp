@@ -2,8 +2,7 @@
 
 #include "concurrency/Task.hpp"
 #include "fs/Fwd.hpp"
-#include "storage/Fwd.hpp"
-#include "sync/Fwd.hpp"
+#include "sync/rotation/Rotation.hpp"
 
 #include <cstddef>
 #include <memory>
@@ -11,39 +10,23 @@
 
 namespace vh::sync::tasks {
 
+// Rotates files[begin, end) on the sync pool (see sync/rotation/Rotation.hpp for the protocol). Every file is
+// attempted; `result` says what happened to each, and is complete once the future is ready. The future's value is
+// true when no file failed.
 struct RotateKey final : concurrency::PromisedTask {
-    std::shared_ptr<storage::Engine> engine;
-    std::shared_ptr<storage::CloudEngine> cloud{nullptr};
-    std::vector<std::shared_ptr<fs::model::File>> files;
+    using Files = std::vector<std::shared_ptr<fs::model::File>>;
+
+    std::shared_ptr<const rotation::Deps> deps;
+    std::shared_ptr<const Files> files;
     std::size_t begin{};
     std::size_t end{};
+    rotation::BatchResult result;
 
-    RotateKey(std::shared_ptr<storage::Engine> eng,
-                  const std::vector<std::shared_ptr<fs::model::File>>& f,
-                  std::size_t begin_, std::size_t end_);
+    RotateKey(std::shared_ptr<const rotation::Deps> deps_,
+              std::shared_ptr<const Files> files_,
+              std::size_t begin_, std::size_t end_);
 
     void operator()() override;
-
-private:
-    using FileSP = std::shared_ptr<fs::model::File>;
-    using RemotePolicySP = std::shared_ptr<model::RemotePolicy>;
-
-    [[nodiscard]] bool shouldSkipLocalWriteInCacheMode(const RemotePolicySP& policy, std::size_t ciphertextSize) const;
-
-    [[nodiscard]] std::vector<uint8_t> produceCiphertext(const FileSP& file,
-                                           const std::vector<uint8_t>& buffer,
-                                           bool bufferIsEncrypted) const;
-
-    void hydrateIvAndVersionForRemoteEncrypted(const FileSP& file) const;
-
-    void maybeWriteLocal(const RemotePolicySP& policy,
-                         const FileSP& file,
-                         const std::vector<uint8_t>& ciphertext) const;
-
-    void rotateLocalFile(const FileSP& file) const;
-
-    void rotateCloudFile(const RemotePolicySP& remotePolicy,
-                         const FileSP& file) const;
 };
 
 }

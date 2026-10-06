@@ -156,6 +156,17 @@ decides validity (see `web-client.md`). The daemon's HTTP `GET /auth/session` re
   `.fuse-plaintext/unsaved/`; stale copies are deleted at mount. A same-vault rename only moves the bytes (no
   re-encryption). `Filesystem::repairAtRest` (first sync pass per vault per start) seals plaintext left by older
   builds and corrects ciphertext-length sizes.
+- **Vault key rotation is failure- and crash-safe (`sync/rotation/`).** `vh vault keys rotate` only prepares a new
+  key; the sync pass re-encrypts. Per file: new ciphertext → `<backing>.vh-rotate` (O_EXCL, fsync file + dir) →
+  (cloud, encrypt upstream) PUT with its own IV/version metadata → compare-and-set the `files` row on the old
+  IV/version → rename over the backing file + dir fsync → fs cache refreshed. Recovery (each pass, and once per vault
+  per start before `repairAtRest`) keeps whichever of sidecar/backing authenticates under the row (streaming GCM
+  verify, no plaintext written) and leaves both if neither does. Remote-only files are re-encrypted remotely, never
+  written locally; an uploaded-but-uncommitted object is adopted from its metadata. The rotation finishes (old key
+  dropped) only when no file failed, no sidecar is unresolved and re-querying `getFilesOlderThanKeyVersion` (rows
+  with an IV only: empty/legacy-plaintext files are excluded) is empty; otherwise both keys stay loaded and the next
+  pass retries. Files open in FUSE are deferred. `fs::ops::replaceFileAtomic`/`writeFileAtomic` (temp + fsync +
+  rename + dir fsync) back `Filesystem::createFile`'s overwrite branch.
 - No writeback cache (`FUSE_CAP_WRITEBACK_CACHE` off): with it the kernel owns `i_size` and ignores getattr sizes,
   so out-of-band changes showed stale `stat` sizes. Handles are `direct_io` anyway.
 - `forget` does not evict the metadata cache (it is seeded at startup and updated by the daemon's own changes);

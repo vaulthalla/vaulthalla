@@ -250,11 +250,24 @@ void vh::db::Connection::initPreparedFiles() const {
          AND fs.vault_id = $1
          AND fs.path = $2)");
 
+    // Key rotation commits a file's new IV only if the row still describes the ciphertext that was re-encrypted.
+    conn_->prepare("compare_and_set_file_encryption_iv_and_version",
+                   R"(UPDATE files f
+       SET encryption_iv = $3, encrypted_with_key_version = $4
+       FROM fs_entry fs
+       WHERE f.fs_entry_id = fs.id
+         AND fs.vault_id = $1
+         AND fs.path = $2
+         AND f.encryption_iv IS NOT DISTINCT FROM $5
+         AND f.encrypted_with_key_version IS NOT DISTINCT FROM $6)");
+
+    // Empty files and legacy plaintext have no IV: nothing sealed, nothing for a key rotation to re-encrypt.
     conn_->prepare("get_files_older_than_key_version",
                    "SELECT fs.*, f.* "
                    "FROM files f "
                    "JOIN fs_entry fs ON f.fs_entry_id = fs.id "
-                   "WHERE fs.vault_id = $1 AND f.encrypted_with_key_version < $2");
+                   "WHERE fs.vault_id = $1 AND f.encrypted_with_key_version < $2 "
+                   "AND f.encryption_iv IS NOT NULL AND f.encryption_iv <> ''");
 
     conn_->prepare("get_n_largest_files",
                    "SELECT fs.*, f.* "
