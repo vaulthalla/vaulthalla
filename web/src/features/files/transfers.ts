@@ -5,7 +5,7 @@ import { queryClient } from '@/lib/query'
 import { onSessionReset } from '@/lib/session'
 import { randomId } from '@/lib/randomId'
 import { formatBytes } from '@/lib/format'
-import { normalizePath, parentOf } from '@/features/files/entries'
+import { normalizePath, parentOf } from '@/features/files/paths'
 import type { FsSource } from '@/features/files/source'
 
 export interface PickedFile {

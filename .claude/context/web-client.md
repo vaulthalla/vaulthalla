@@ -48,9 +48,11 @@
 
 - **The server decides.** Every file entry carries `preview: {kind, renderer, requires, thumbnail, derived?}`
   (`IPreviewPlan` in `models/file.ts`; normalized to `Entry.plan` in `features/files/entries.ts`, `derived` always a
-  list). `planOf(entry)` falls back to the old MIME rules (server JPEG for `image/*` and PDF) only when a daemon
-  sends no plan; `hasThumbnail` asks `/preview/batch` only for `plan.thumbnail` entries. `categoryOf` maps renderers
-  to icons (`model` → cube).
+  list). `planOf(entry)` (`preview/plan.ts`, lazy side) falls back to the old MIME rules (server JPEG for `image/*`
+  and PDF) only when a daemon sends no plan; `hasThumbnail` asks `/preview/batch` only for `plan.thumbnail`
+  entries. `categoryOf` maps renderers to icons (`model` → cube). Path helpers live in `features/files/paths.ts`
+  (re-exported by `entries.ts`): the shell's transfer manager imports only those, so `entries.ts` stays out of
+  every console route's first-load JS.
 - **Capability gate (PreviewSheet).** `requires: 'preview'` needs `caps.preview` (lossy server renders only);
   `requires: 'download'` needs `caps.download` (original bytes: native media, SVG/WebP, text, 3D, derived
   artifacts). Otherwise the sheet shows "Preview not available with this link's permissions" plus metadata and
@@ -61,7 +63,7 @@
   `PreviewSheet`. Inside them, CodeMirror (`TextEditor.tsx`, per-extension language chunks), react-markdown
   (`MarkdownView.tsx`) and the 3D engine (`ModelViewer.tsx`, the only module allowed to import `@babylonjs/*`)
   are lazy again. Nothing under `preview/` may be imported statically from `FileBrowser`, `entries.ts`, `FileIcon`
-  or the share page (first-load headroom is ~5 KB on `/files`, ~7 KB on `/share`).
+  or the share page (first-load headroom is ~5 KB on `/files`, ~6.5 KB on `/share`).
 - **HTTP per renderer** (all same-origin with the cookie; `FsSource` builds the URLs, `share=1&path=` on links):
   image `GET /preview?size=1024`; PDF `GET /preview?page=N&size=1536|2048` → blob URL, page count from
   `X-Vaulthalla-Page-Count`; SVG/WebP/video/audio `src=/download/content?disposition=inline` (Range is the

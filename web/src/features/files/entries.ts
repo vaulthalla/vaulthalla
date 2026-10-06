@@ -1,5 +1,9 @@
 import { parseDate } from '@/lib/format'
 import type { PreviewCapability, PreviewKind } from '@/models/file'
+import { baseName, joinPath, normalizePath } from '@/features/files/paths'
+
+// Path helpers live in paths.ts so the console shell (transfers) doesn't pull this module into every route.
+export { baseName, joinPath, normalizePath, parentOf, pathSegments } from '@/features/files/paths'
 
 // One normalized filesystem entry for both the authenticated browser and public shares.
 export interface Entry {
@@ -13,7 +17,7 @@ export interface Entry {
   modified: number // epoch ms, 0 when unknown
   fileCount?: number
   dirCount?: number
-  // The server's preview plan (absent from older daemons: then `planOf` falls back to the MIME rules below).
+  // The server's preview plan (absent from older daemons: then preview/plan.ts falls back to isPreviewable).
   plan?: PreviewPlan
 }
 
@@ -25,25 +29,6 @@ export interface PreviewPlan {
   thumbnail: boolean
   derived: string[]
 }
-
-export const normalizePath = (value?: string | null) => {
-  if (!value || value === '.') return '/'
-  const parts = (value.startsWith('/') ? value : `/${value}`).split('/').filter(Boolean)
-  if (parts.some(part => part === '.' || part === '..')) throw new Error('Invalid path')
-  return parts.length ? `/${parts.join('/')}` : '/'
-}
-
-export const joinPath = (base: string, name: string) => normalizePath(`${normalizePath(base)}/${name}`)
-
-export const parentOf = (path: string) => {
-  const parts = normalizePath(path).split('/').filter(Boolean)
-  parts.pop()
-  return parts.length ? `/${parts.join('/')}` : '/'
-}
-
-export const baseName = (path: string) => normalizePath(path).split('/').filter(Boolean).at(-1) ?? ''
-
-export const pathSegments = (path: string) => normalizePath(path).split('/').filter(Boolean)
 
 const num = (value: unknown): number | null => (typeof value === 'number' && Number.isFinite(value) ? value : null)
 
@@ -101,16 +86,6 @@ const IMAGE = /^image\//
 // Fallback only (older daemons send no plan): the server renders images and PDFs as JPEG.
 export const isPreviewable = (entry: Entry) =>
   entry.kind === 'file' && Boolean(entry.mime) && (IMAGE.test(entry.mime as string) || entry.mime === 'application/pdf')
-
-const NO_PREVIEW: PreviewPlan = { kind: 'unsupported', renderer: 'none', requires: 'preview', thumbnail: false, derived: [] }
-
-// The plan to render: the server's, or the pre-plan behaviour (server JPEG renders of images and PDFs) when absent.
-export const planOf = (entry: Entry): PreviewPlan => {
-  if (entry.kind !== 'file') return NO_PREVIEW
-  if (entry.plan) return entry.plan
-  if (!isPreviewable(entry)) return NO_PREVIEW
-  return { kind: 'rendered_image', renderer: entry.mime === 'application/pdf' ? 'pdf' : 'image', requires: 'preview', thumbnail: true, derived: [] }
-}
 
 // Whether the grid/list should ask `/preview/batch` for a thumbnail.
 export const hasThumbnail = (entry: Entry) => entry.kind === 'file' && (entry.plan ? entry.plan.thumbnail : isPreviewable(entry))

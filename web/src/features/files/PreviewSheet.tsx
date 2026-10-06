@@ -7,10 +7,11 @@ import { DefinitionList } from '@/components/ui/Panel'
 import { confirm } from '@/components/ui/Confirm'
 import { ChevronLeftIcon, ChevronRightIcon, DownloadIcon, LockIcon, ShareNodesIcon } from '@/components/ui/icons'
 import { formatBytes, formatDateTime } from '@/lib/format'
-import { planOf, type Entry } from '@/features/files/entries'
+import type { Entry } from '@/features/files/entries'
 import { FileIcon } from '@/features/files/FileIcon'
 import type { FsSource } from '@/features/files/source'
 import { Notice, Stage } from '@/features/files/preview/Frame'
+import { planOf } from '@/features/files/preview/plan'
 import { rendererFor, wideRenderer } from '@/features/files/preview/registry'
 
 // Keys typed into an editor, a media element's controls or a 3D canvas belong to that element, not to file navigation.
