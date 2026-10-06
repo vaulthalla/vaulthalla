@@ -66,6 +66,14 @@ public:
 
     static void setEncryptionIVAndVersion(const FilePtr& f);
 
+    // Compare-and-set: records f's IV and key version only while the row (same vault and path) still holds
+    // expectedIv / expectedVersion. False when it no longer does (rewritten, moved or deleted meanwhile).
+    [[nodiscard]] static bool compareAndSetEncryptionIVAndVersion(const F& f,
+                                                                  const std::string& expectedIv,
+                                                                  unsigned int expectedVersion);
+
+    // Encrypted files (non-empty IV) sealed with a key version older than keyVersion: what a key rotation still has
+    // to re-encrypt. Empty files and legacy plaintext carry no IV and are not included.
     static std::vector<FilePtr> getFilesOlderThanKeyVersion(unsigned int vaultId, unsigned int keyVersion);
 
     [[nodiscard]] static std::string getContentHash(unsigned int vaultId, const std::filesystem::path& relPath);
