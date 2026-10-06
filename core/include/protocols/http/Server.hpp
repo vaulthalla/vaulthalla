@@ -11,6 +11,8 @@ class Server final : public TCPServer {
 public:
     Server(net::io_context& ioc, const tcp::endpoint& endpoint);
 
+    [[nodiscard]] static unsigned int activeConnectionCount();
+
 private:
     std::string_view serverName() const noexcept override { return "HttpServer"; }
     void onAccept(tcp::socket socket) override;
