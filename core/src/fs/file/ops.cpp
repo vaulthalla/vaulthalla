@@ -8,7 +8,11 @@
 #include "fs/cache/Registry.hpp"
 
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
+
+#include <cerrno>
+#include <system_error>
 
 #include <fstream>
 #include <filesystem>
@@ -58,6 +62,117 @@ void writeFile(const std::filesystem::path& absPath, const std::vector<uint8_t>&
     if (!out) throw std::runtime_error("Failed to write encrypted file: " + absPath.string());
     out.write(reinterpret_cast<const char*>(ciphertext.data()), static_cast<long>(ciphertext.size()));
     out.close();
+}
+
+namespace {
+
+[[noreturn]] void throwErrnoAt(const int err, const std::string& what, const std::filesystem::path& path) {
+    throw std::system_error(err, std::generic_category(), what + ": " + path.string());
+}
+
+void fsyncOpened(const std::filesystem::path& path, const int flags, const char* what) {
+    const int fd = ::open(path.c_str(), flags | O_CLOEXEC);
+    if (fd < 0) throwErrnoAt(errno, std::string("open for ") + what, path);
+    const int rc = ::fsync(fd);
+    const int err = errno;
+    ::close(fd);
+    if (rc < 0) throwErrnoAt(err, what, path);
+}
+
+// Permission bits a replacement keeps: the existing file's, or owner-only for a new file.
+mode_t replacementMode(const std::filesystem::path& path) {
+    struct stat st{};
+    if (::stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode)) return st.st_mode & 07777;
+    return 0600;
+}
+
+void createPrivateExclusive(const std::filesystem::path& path) {
+    const int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    if (fd < 0) throwErrnoAt(errno, "create", path);
+    ::close(fd);
+}
+
+void writeAllToFd(const int fd, std::span<const uint8_t> bytes, const std::filesystem::path& path) {
+    while (!bytes.empty()) {
+        const auto written = ::write(fd, bytes.data(), bytes.size());
+        if (written < 0) {
+            if (errno == EINTR) continue;
+            throwErrnoAt(errno, "write", path);
+        }
+        bytes = bytes.subspan(static_cast<std::size_t>(written));
+    }
+}
+
+}
+
+void fsyncFile(const std::filesystem::path& path) { fsyncOpened(path, O_RDONLY, "fsync"); }
+
+void fsyncDirectory(const std::filesystem::path& dir) {
+    fsyncOpened(dir.empty() ? std::filesystem::path(".") : dir, O_RDONLY | O_DIRECTORY, "fsync directory");
+}
+
+void writeFileExclusive(const std::filesystem::path& absPath, const std::span<const uint8_t> bytes, const mode_t mode) {
+    const int fd = ::open(absPath.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, mode);
+    if (fd < 0) throwErrnoAt(errno, "create", absPath);
+    try {
+        writeAllToFd(fd, bytes, absPath);
+        // The umask may have narrowed the create mode: set exactly what was asked for.
+        if (::fchmod(fd, mode) < 0) throwErrnoAt(errno, "chmod", absPath);
+        if (::fsync(fd) < 0) throwErrnoAt(errno, "fsync", absPath);
+    } catch (...) {
+        ::close(fd);
+        std::error_code ec;
+        std::filesystem::remove(absPath, ec);
+        throw;
+    }
+    if (::close(fd) < 0) {
+        const int err = errno;
+        std::error_code ec;
+        std::filesystem::remove(absPath, ec);
+        throwErrnoAt(err, "close", absPath);
+    }
+}
+
+void replaceFileAtomic(const std::filesystem::path& absPath,
+                       const std::function<void(const std::filesystem::path& tempPath)>& produce) {
+    if (absPath.empty() || !absPath.has_filename()) throw std::invalid_argument("replaceFileAtomic: no file name");
+
+    const auto dir = absPath.parent_path();
+    const auto mode = replacementMode(absPath);
+    const auto temp = dir / (absPath.filename().string() + ".vh-tmp-" + generate_random_suffix(12));
+
+    createPrivateExclusive(temp);
+    try {
+        produce(temp);
+        if (::chmod(temp.c_str(), mode) < 0) throwErrnoAt(errno, "chmod", temp);
+        fsyncFile(temp);
+        std::filesystem::rename(temp, absPath);
+    } catch (...) {
+        std::error_code ec;
+        std::filesystem::remove(temp, ec);
+        throw;
+    }
+
+    try {
+        fsyncDirectory(dir);
+    } catch (const std::exception& e) {
+        log::Registry::fs()->error("[replaceFileAtomic] Replaced {} but could not fsync its directory: {}",
+                                   absPath.string(), e.what());
+    }
+}
+
+void writeFileAtomic(const std::filesystem::path& absPath, const std::span<const uint8_t> bytes) {
+    replaceFileAtomic(absPath, [&](const std::filesystem::path& temp) {
+        const int fd = ::open(temp.c_str(), O_WRONLY | O_TRUNC | O_CLOEXEC);
+        if (fd < 0) throwErrnoAt(errno, "open", temp);
+        try {
+            writeAllToFd(fd, bytes, temp);
+        } catch (...) {
+            ::close(fd);
+            throw;
+        }
+        if (::close(fd) < 0) throwErrnoAt(errno, "close", temp);
+    });
 }
 
 std::filesystem::path writePlaintextToTemp(const std::vector<uint8_t>& plaintext) {

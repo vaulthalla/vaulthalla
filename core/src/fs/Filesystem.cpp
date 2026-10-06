@@ -694,29 +694,37 @@ std::shared_ptr<File> Filesystem::createFile(const NewFileContext& ctx) {
         const auto f = std::static_pointer_cast<File>(entry);
         std::filesystem::create_directories(entry->backing_path.parent_path());
 
+        // The new bytes replace the old ones atomically (fsynced temp + rename + directory fsync), sealed into a
+        // staged copy of the row: the cached entry keeps describing the bytes on disk until they have been replaced,
+        // so a failed or interrupted write leaves the old ciphertext, its IV and the cache consistent.
+        const auto staged = std::make_shared<File>(*f);
         if (ctx.source_path) {
             const auto plaintextSize = std::filesystem::file_size(*ctx.source_path);
             if (plaintextSize == 0) {
-                std::ofstream(entry->backing_path, std::ios::binary | std::ios::trunc).close();
-                f->encryption_iv.clear();
-                f->encrypted_with_key_version = 0;
+                writeFileAtomic(entry->backing_path, {});
+                staged->encryption_iv.clear();
+                staged->encrypted_with_key_version = 0;
             } else {
-                engine->encryptionManager->encryptFileToFile(*ctx.source_path, entry->backing_path, f);
+                replaceFileAtomic(entry->backing_path, [&](const std::filesystem::path& temp) {
+                    engine->encryptionManager->encryptFileToFile(*ctx.source_path, temp, staged);
+                });
             }
             f->size_bytes = plaintextSize;
             f->mime_type = mimeTypeFromSourceFile(*ctx.source_path, ctx.path);
         } else if (!ctx.buffer.empty()) {
-            const auto ciphertext = engine->encryptionManager->encrypt(ctx.buffer, f);
-            writeFile(entry->backing_path, ciphertext);
+            const auto ciphertext = engine->encryptionManager->encrypt(ctx.buffer, staged);
+            writeFileAtomic(entry->backing_path, ciphertext);
             f->size_bytes = ctx.buffer.size();
             f->mime_type = Magic::get_mime_type_from_buffer(ctx.buffer);
         } else {
-            std::ofstream(entry->backing_path, std::ios::binary | std::ios::trunc).close();
-            f->encryption_iv.clear();
-            f->encrypted_with_key_version = 0;
+            writeFileAtomic(entry->backing_path, {});
+            staged->encryption_iv.clear();
+            staged->encrypted_with_key_version = 0;
             f->size_bytes = 0;
             f->mime_type = inferMimeTypeFromPath(ctx.path);
         }
+        f->encryption_iv = staged->encryption_iv;
+        f->encrypted_with_key_version = staged->encrypted_with_key_version;
 
         f->content_hash = hash::blake2b(entry->backing_path);
         f->last_modified_by = userIdFor(ctx.user);
