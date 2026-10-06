@@ -48,3 +48,17 @@ option(
     value: false,
     description: 'Source installs only: also install the gitignored repo-root config.yaml into sysconfdir/vaulthalla (never enabled for package builds)'
 )
+
+option(
+    'preview_cad',
+    type: 'feature',
+    value: 'auto',
+    description: 'Build the optional vaulthalla-preview-cad converter helper (STEP/STP -> GLB; needs OCCT and libseccomp)'
+)
+
+option(
+    'preview_media',
+    type: 'feature',
+    value: 'auto',
+    description: 'Build the optional vaulthalla-preview-media converter helper (posters/transcodes; needs libav* and libseccomp)'
+)

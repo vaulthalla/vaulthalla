@@ -83,6 +83,13 @@ deps = [
 test_deps = deps + dependency('gtest', required: true, main: false)
 
 
+# ╭───────────────────────────── CONVERTER HELPERS ─────────────────────────────╮
+
+# Optional out-of-process preview converters (core/tools): their own targets and packages. The daemon never links
+# OCCT, libav* or libseccomp; preview::derive::Runner finds the helpers at runtime (preview.derive.helper_dir).
+subdir('tools')
+
+
 # ╭────────────────────────────────   FILES   ──────────────────────────────────╮
 
 inc         = include_directories('include', 'vendor', 'usage/include')
@@ -123,11 +130,34 @@ if get_option('build_unit_tests')
         unit_test_sources += files(f)
     endforeach
 
+    # A protocol-speaking fake converter for the preview::derive::Runner tests (never installed).
+    fake_derive_helper = executable(
+        'vh_fake_derive_helper',
+        files(join_paths(core_root, 'tests/helpers/fake_derive_helper.cpp')),
+        include_directories: include_directories('vendor'),
+        install: false,
+    )
+    unit_test_helper_targets = [fake_derive_helper]
+    cad_helper_path = ''
+    if is_variable('preview_cad_helper')
+        cad_helper_path = preview_cad_helper.full_path()
+        unit_test_helper_targets += preview_cad_helper
+    endif
+    if is_variable('preview_media_helper')
+        unit_test_helper_targets += preview_media_helper
+    endif
+    unit_test_defines = [
+        '-DVH_TEST_FAKE_HELPER="' + fake_derive_helper.full_path() + '"',
+        '-DVH_TEST_CAD_HELPER="' + cad_helper_path + '"',
+        '-DVH_TEST_ASSETS_DIR="' + join_paths(core_root, 'test-assets') + '"',
+    ]
+
     unit_test_objects = static_library(
         'vh_unit_test_objects',
         unit_test_sources,
         include_directories: inc,
         dependencies: test_deps,
+        cpp_args: unit_test_defines,
         install: false,
         override_options: ['optimization=0'],
         cpp_pch: 'pch/vaulthalla_tests_pch.hpp',
@@ -244,7 +274,8 @@ if get_option('build_unit_tests')
     )
 
     # DB-backed suites make one run take several minutes (#123); 120s always timed out.
-    test('vh_unit_tests', vh_unit_tests, env: unit_test_env, workdir: meson.current_build_dir(), timeout: 1800)
+    test('vh_unit_tests', vh_unit_tests, env: unit_test_env, workdir: meson.current_build_dir(), timeout: 1800,
+         depends: unit_test_helper_targets)
 endif
 
 if get_option('integration_tests')
