@@ -1,3 +1,5 @@
+import type { IPreviewPlan } from '@/models/file'
+
 export type ShareTargetType = 'file' | 'directory'
 export type ShareLinkType = 'download' | 'upload' | 'access'
 export type ShareAccessMode = 'public' | 'email_validated'
@@ -165,6 +167,7 @@ export interface ShareEntry {
   file_count?: number
   subdirectory_count?: number
   mime_type?: string | null
+  preview?: IPreviewPlan
 }
 
 export interface ShareMetadataResponse {

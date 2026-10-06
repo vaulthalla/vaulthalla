@@ -1,11 +1,12 @@
 'use client'
 
 import { useEffect, useRef, useSyncExternalStore } from 'react'
-import { isPreviewable, type Entry } from '@/features/files/entries'
+import { hasThumbnail, type Entry } from '@/features/files/entries'
 import type { FsSource } from '@/features/files/source'
 
 // Thumbnails for the rows on screen only. Requests go out in batches of at most 100; only items the server reports
-// as still rendering are polled again, with backoff.
+// as still rendering are polled again, with backoff. Only entries whose server plan says a thumbnail exists are asked
+// for (MIME rules when an older daemon sends no plan).
 type ThumbState = { status: 'ready' | 'queued' | 'missing' | 'unsupported' | 'error'; url: string | null }
 
 const cache = new Map<string, ThumbState>()
@@ -48,7 +49,7 @@ async function request(source: FsSource, entries: Entry[], attempt: number) {
       }
     }
     emit()
-    if (requeue.length && attempt < MAX_POLLS) setTimeout(() => void request(source, requeue, attempt + 1), Math.min(5000, 600 * (attempt + 1)))
+    if (requeue.length && attempt < MAX_POLLS) setTimeout(() => void request(source, requeue, attempt + 1), Math.min(5000, 250 * 2 ** attempt))
   } catch {
     // Fall back to the direct preview URL for these rows.
     for (const sig of sigs) if (!cache.has(sig)) cache.set(sig, { status: 'error', url: null })
@@ -59,7 +60,7 @@ async function request(source: FsSource, entries: Entry[], attempt: number) {
 }
 
 export const useThumbnails = (source: FsSource, visible: Entry[], enabled: boolean) => {
-  const wanted = enabled && source.caps.preview ? visible.filter(isPreviewable) : []
+  const wanted = enabled && source.caps.preview ? visible.filter(hasThumbnail) : []
   // A string key keeps the effect stable across renders that show the same rows.
   const wantedKey = wanted.map(entry => signature(source, entry)).join('\n')
   const latest = useRef(wanted)
@@ -87,7 +88,7 @@ export const useThumbnails = (source: FsSource, visible: Entry[], enabled: boole
   )
 
   return (entry: Entry): string | null => {
-    if (!source.caps.preview || !isPreviewable(entry)) return null
+    if (!source.caps.preview || !hasThumbnail(entry)) return null
     const state = cache.get(signature(source, entry))
     if (!state) return null
     if (state.status === 'ready') return state.url

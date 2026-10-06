@@ -12,8 +12,9 @@ export interface Listing {
 
 export interface Capabilities {
   list: boolean
-  preview: boolean
-  download: boolean
+  preview: boolean // lossy server renders (JPEG thumbnails, image/PDF pages)
+  download: boolean // original bytes: downloads, native media, 3D, text, derived interactive artifacts
+  edit: boolean // save text files in place (the server still enforces RBAC)
   upload: boolean
   folders: boolean // upload nested folders / create directories
   mutate: boolean // rename, move, copy, delete
@@ -33,8 +34,14 @@ export interface FsSource {
   move: (from: string, to: string) => Promise<void>
   copy: (from: string, to: string) => Promise<void>
   remove: (path: string) => Promise<void>
-  previewUrl: (path: string, size?: number) => string
+  previewUrl: (path: string, size?: number, page?: number) => string
   downloadUrl: (path: string) => string
+  // Range-capable original bytes for in-browser viewers.
+  contentUrl: (path: string, disposition?: 'inline' | 'attachment') => string
+  // A server-derived artifact (STEP → GLB, transcodes): 200 bytes, 202 queued, 422 failed, 503 helper missing.
+  derivedUrl: (path: string, kind: string) => string
+  // Text save target (`PUT` with If-Match); null where editing isn't offered.
+  textSaveUrl: ((path: string) => string) | null
   uploadQuery: string
   uploadSessionBody: (vaultFields: { path: string; filename: string; size: number; mime: string | null; fileId: string }[]) => unknown
 }
@@ -46,7 +53,7 @@ export const authSource = (vault: { id: number; name: string }): FsSource => ({
   mode: 'auth',
   vaultId: vault.id,
   rootLabel: vault.name,
-  caps: { list: true, preview: true, download: true, upload: true, folders: true, mutate: true, share: true },
+  caps: { list: true, preview: true, download: true, edit: true, upload: true, folders: true, mutate: true, share: true },
   list: async (path, signal) => {
     const res = await api.send('fs.dir.list', { vault_id: vault.id, path: normalizePath(path) }, { signal })
     const listed = normalizePath(res.path ?? path)
@@ -71,8 +78,11 @@ export const authSource = (vault: { id: number; name: string }): FsSource => ({
   remove: async path => {
     await api.send('fs.entry.delete', { vault_id: vault.id, path })
   },
-  previewUrl: (path, size = 128) => `/preview?${query({ vault_id: vault.id, path, size })}`,
+  previewUrl: (path, size = 128, page) => `/preview?${query({ vault_id: vault.id, path, size, ...(page ? { page } : {}) })}`,
   downloadUrl: path => `/download?${query({ vault_id: vault.id, path })}`,
+  contentUrl: (path, disposition = 'inline') => `/download/content?${query({ vault_id: vault.id, path, disposition })}`,
+  derivedUrl: (path, kind) => `/preview/derived?${query({ vault_id: vault.id, path, kind })}`,
+  textSaveUrl: path => `/upload/text?${query({ vault_id: vault.id, path })}`,
   uploadQuery: '',
   uploadSessionBody: files => ({
     vault_id: vault.id,
@@ -95,6 +105,7 @@ export const shareSource = (publicToken: string, share: PublicShare): FsSource =
       list: ops.has('list'),
       preview: ops.has('preview'),
       download: ops.has('download'),
+      edit: false, // no share editing yet
       upload: ops.has('upload'),
       folders: ops.has('mkdir'),
       mutate: false,
@@ -121,8 +132,11 @@ export const shareSource = (publicToken: string, share: PublicShare): FsSource =
     move: notInShares,
     copy: notInShares,
     remove: notInShares,
-    previewUrl: (path, size = 128) => `/preview?${query({ share: 1, path: normalizePath(path), size })}`,
+    previewUrl: (path, size = 128, page) => `/preview?${query({ share: 1, path: normalizePath(path), size, ...(page ? { page } : {}) })}`,
     downloadUrl: path => `/download?${query({ share: 1, path: normalizePath(path) })}`,
+    contentUrl: (path, disposition = 'inline') => `/download/content?${query({ share: 1, path: normalizePath(path), disposition })}`,
+    derivedUrl: (path, kind) => `/preview/derived?${query({ share: 1, path: normalizePath(path), kind })}`,
+    textSaveUrl: null,
     uploadQuery: '?share=1',
     uploadSessionBody: files => ({
       files: files.map(f => ({ file_id: f.fileId, mime_type: f.mime, duplicate_policy: 'reject', path: normalizePath(f.path), filename: f.filename, size_bytes: f.size })),
