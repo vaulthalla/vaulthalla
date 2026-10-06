@@ -8,6 +8,7 @@
 #include "identities/Fwd.hpp"
 #include "sync/Fwd.hpp"
 #include "vault/Fwd.hpp"
+#include "storage/PlaintextReader.hpp"
 
 namespace vh::fs::model {
     struct Path;
@@ -46,6 +47,11 @@ namespace vh::storage {
         [[nodiscard]] bool isDirectory(const fs::path &rel_path) const;
 
         [[nodiscard]] bool isFile(const fs::path &rel_path) const;
+
+        // Positioned plaintext access to f's current generation (see storage/PlaintextReader.hpp). Local backing
+        // bytes are read in place; a cloud file without a local copy follows ReaderOptions::remote.
+        [[nodiscard]] std::unique_ptr<PlaintextReader> openPlaintextReader(
+            const std::shared_ptr<vh::fs::model::File> &f, ReaderOptions options = {}) const;
 
         [[nodiscard]] std::vector<uint8_t> decrypt(const std::shared_ptr<vh::fs::model::File> &f) const;
 
@@ -90,5 +96,13 @@ namespace vh::storage {
         [[nodiscard]] std::filesystem::path vaultPathToFusePath(const std::filesystem::path &vPath) const;
 
         [[nodiscard]] std::filesystem::path fusePathToVaultPath(const std::filesystem::path &fPath) const;
+
+    protected:
+        // The backing file is absent. Local vaults: not found. CloudEngine: hydrate / ranged / off.
+        [[nodiscard]] virtual std::unique_ptr<PlaintextReader> openMissingReader(
+            const std::shared_ptr<vh::fs::model::File> &f, const ReaderOptions &options) const;
+
+        [[nodiscard]] std::unique_ptr<PlaintextReader> openLocalReader(
+            const std::shared_ptr<vh::fs::model::File> &f, const ReaderOptions &options) const;
     };
 } // namespace vh::storage

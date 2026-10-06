@@ -33,7 +33,7 @@ struct Generation {
 };
 
 // The generation of a file as currently recorded (no I/O beyond the model).
-[[nodiscard]] Generation generationOf(const fs::model::File& file);
+[[nodiscard]] Generation generationOf(const ::vh::fs::model::File& file);
 
 // Thrown when the bytes of a generation fail authentication (GCM tag mismatch), including mid-stream: an
 // optimistic reader may already have released some bytes before verification completed.
@@ -55,7 +55,7 @@ enum class IntegrityPolicy {
     Strict       // verify the whole message before releasing any byte
 };
 
-enum class RemotePolicy {
+enum class RemoteFetchPolicy {
     FromConfig,  // preview.media.remote
     Hydrate,     // fetch the whole object once (metered, budgeted), verify, keep the local ciphertext copy
     Ranged,      // opt-in: metered ranged GETs bound to the object version (If-Match); no per-range authentication
@@ -64,7 +64,7 @@ enum class RemotePolicy {
 
 struct ReaderOptions {
     IntegrityPolicy integrity{IntegrityPolicy::FromConfig};
-    RemotePolicy remote{RemotePolicy::FromConfig};
+    RemoteFetchPolicy remote{RemoteFetchPolicy::FromConfig};
 };
 
 // Positioned plaintext access to one file generation, without materializing plaintext anywhere but the caller's
@@ -81,10 +81,14 @@ public:
     virtual std::size_t read(uint64_t offset, std::span<uint8_t> out) = 0;
 
     [[nodiscard]] virtual const Generation& generation() const = 0;
+
+    // The whole content, authenticated before it is returned when the format allows it (one pass, no
+    // separate verification read). Throws std::length_error over maxBytes. Default: sequential read().
+    [[nodiscard]] virtual std::vector<uint8_t> readAllAuthenticated(uint64_t maxBytes);
 };
 
 // Reads the whole content into memory, refusing (std::length_error) anything larger than maxBytes. For small
-// inputs only (thumbnail sources, text documents, converter inputs with their own caps).
+// inputs only (thumbnail sources, text documents, converter inputs with their own caps). Authenticated.
 [[nodiscard]] std::vector<uint8_t> readAll(PlaintextReader& reader, uint64_t maxBytes);
 
 }

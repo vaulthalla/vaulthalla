@@ -18,6 +18,10 @@
 #include "fs/model/file/Trashed.hpp"
 #include "fs/model/File.hpp"
 #include "identities/User.hpp"
+#include "storage/GcmFileReader.hpp"
+#include "fs/cache/Registry.hpp"
+#include "runtime/Deps.hpp"
+#include "crypto/util/encrypt.hpp"
 
 #include <system_error>
 
@@ -70,6 +74,63 @@ namespace vh::storage {
 
     bool Engine::isFile(const fs::path &rel_path) const {
         return db::query::fs::File::isFile(vault->id, rel_path);
+    }
+
+    namespace {
+        class EngineEmptyReader final : public PlaintextReader {
+        public:
+            explicit EngineEmptyReader(Generation g) : generation_(std::move(g)) {}
+            [[nodiscard]] uint64_t size() const override { return 0; }
+            std::size_t read(uint64_t, std::span<uint8_t>) override { return 0; }
+            [[nodiscard]] const Generation &generation() const override { return generation_; }
+        private:
+            Generation generation_;
+        };
+    }
+
+    std::unique_ptr<PlaintextReader> Engine::openPlaintextReader(const std::shared_ptr<File> &f,
+                                                                 const ReaderOptions options) const {
+        if (!f) throw std::invalid_argument("Cannot read a null file");
+        auto generation = generationOf(*f);
+        if (vault) generation.vault_id = vault->id;
+        if (f->size_bytes == 0) return std::make_unique<EngineEmptyReader>(std::move(generation));
+
+        std::error_code ec;
+        if (!fs::exists(f->backing_path, ec)) return openMissingReader(f, options);
+        return openLocalReader(f, options);
+    }
+
+    std::unique_ptr<PlaintextReader> Engine::openMissingReader(const std::shared_ptr<File> &f,
+                                                               const ReaderOptions &) const {
+        throw std::runtime_error("File content not found: " + f->path.string());
+    }
+
+    std::unique_ptr<PlaintextReader> Engine::openLocalReader(const std::shared_ptr<File> &f,
+                                                             const ReaderOptions &options) const {
+        GcmFileReader::Params params;
+        params.path = f->backing_path;
+        params.plaintextSize = f->size_bytes;
+        params.generation = generationOf(*f);
+        if (vault) params.generation.vault_id = vault->id;
+        params.integrityDomain = "file:" + std::to_string(params.generation.vault_id) + ":" + std::to_string(f->id);
+        params.strict = resolveIntegrityPolicy(options.integrity) == IntegrityPolicy::Strict;
+
+        if (!f->encryption_iv.empty()) {
+            if (!encryptionManager) throw std::runtime_error("Vault has no encryption key loaded");
+            const auto iv = crypto::util::b64_decode(f->encryption_iv);
+            if (iv.size() != params.iv.size()) throw std::runtime_error("Invalid stored IV for " + f->path.string());
+            std::ranges::copy(iv, params.iv.begin());
+            params.key = encryptionManager->keySnapshot(f->encrypted_with_key_version);
+
+            // On a tag mismatch: was the file resealed (new IV) while we read the old one? Then it's a race.
+            params.stillCurrent = [fusePath = f->fuse_path, iv = f->encryption_iv]() {
+                const auto& cache = runtime::Deps::get().fsCache;
+                if (!cache || fusePath.empty()) return true;
+                const auto entry = std::dynamic_pointer_cast<File>(cache->getEntry(fusePath));
+                return entry && entry->encryption_iv == iv;
+            };
+        }
+        return std::make_unique<GcmFileReader>(std::move(params));
     }
 
     std::vector<uint8_t> Engine::decrypt(const std::shared_ptr<File> &f) const {
