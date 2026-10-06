@@ -18,3 +18,13 @@ for users and operators; keep it representative of what actually ships.
 Install `vaulthalla-preview-cad` to preview STEP and STP CAD models: the server converts each model to glTF once, and the web console shows it in the 3D viewer. Conversion runs in a separate, sandboxed helper process, never inside the daemon: it gets the file's bytes over a private channel (nothing decrypted is written to disk), cannot open files for writing, reach the network or start programs, and is killed if it exceeds its memory, CPU-time, wall-clock or output limits (`preview.derive.*` in `config.yaml`). A malformed or hostile model fails that one conversion and nothing else.
 
 `vaulthalla-preview-cad` and `vaulthalla-preview-media` are separate packages that `vaulthalla` only suggests, so the core package still installs without Open CASCADE or FFmpeg's libraries. Every new `preview.*` setting is optional; the shipped `config.yaml` lists them, commented out, with their defaults.
+
+### Optional media helper (`vaulthalla-preview-media`)
+
+- A new optional helper probes video and audio files (container, codecs, duration, and whether Chrome, Firefox
+  and Safari can play them directly), renders poster frames, and transcodes to browser-safe H.264/AAC as
+  fragmented MP4 or HLS. It runs out of process, reads plaintext only through the daemon's range channel (no
+  plaintext temp files, and MP4 files with the index at the end are read in place), and sandboxes itself before
+  touching input. Output size, duration, dimensions and wall time are capped.
+- Hardware encoding (`preview.media.hwaccel`: VAAPI, Quick Sync, NVENC) is probed and falls back to software on
+  any failure. Hardware paths have not yet been validated on real GPUs; software (libx264) is the tested path.
