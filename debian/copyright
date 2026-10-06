@@ -2,6 +2,13 @@ Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Source: https://github.com/vaulthalla/vaulthalla-core
 Upstream-Name: Vaulthalla
 Upstream-Contact: Cooper Larson <cooper@valkyrianlabs.com>
+Comment:
+ The optional helper packages link system libraries dynamically and bundle
+ none of them: vaulthalla-preview-cad uses Open CASCADE (LGPL-2.1 with
+ exception) and libseccomp (LGPL-2.1); vaulthalla-preview-media uses
+ FFmpeg's libraries as built by the distribution (Ubuntu's libavcodec is
+ GPL-2+ because it enables x264/x265) and libseccomp. GPL-2+ is compatible
+ with the AGPL-3.0+ helpers that link it.
 
 Files: *
 Copyright:

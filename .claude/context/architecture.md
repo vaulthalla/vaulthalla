@@ -203,10 +203,24 @@ decides validity (see `web-client.md`). The daemon's HTTP `GET /auth/session` re
 `auth` sessions/tokens · `concurrency` thread pools · `config` YAML registry · `crypto` AES-GCM, TPM2/swtpm
 key provider, secrets · `db` · `email` providers (Resend, SES v2) · `fs` · `fuse` · `identities` users/groups ·
 `log` spdlog registries + rotation · `notifications` operator emails · `preview` thumbnails (pdfium,
-turbojpeg) · `protocols` · `rbac` roles/permissions/resolver/actor · `runtime` Manager · `share` link
+turbojpeg), `preview::derive` converter-helper runner (below) · `protocols` · `rbac` roles/permissions/resolver/actor · `runtime` Manager · `share` link
 sharing · `stats` dashboard telemetry + snapshots · `storage` local + S3 backends, remote index · `sync`
 controller, strategies `cache|sync|mirror`, cost guardrails · `vault` vault model, slugs, FUSE names ·
 `ops` actor-authorized operations shared by the CLI and ws handlers (below).
+
+### Converter helpers (`core/tools`, `preview::derive`)
+
+Hostile-file converters never run in the daemon. `core/tools/` builds separate executables (own meson targets,
+options `preview_cad`/`preview_media`, packages `vaulthalla-preview-{cad,media}`, installed to
+`/usr/lib/vaulthalla/helpers/`); `core/tools/common` (protocol + Landlock/seccomp sandbox, libseccomp) links only
+into them. `preview::derive::Runner` (`core/{include,src}/preview/derive/`) spawns one helper per job: fork
+(`_Fork`) + async-signal-safe child setup (setsid, PDEATHSIG, NO_NEW_PRIVS, rlimits AS/CPU/FSIZE=0/NOFILE/CORE, fds
+0-4 only, empty env), a poll loop that serves range-pull requests on fd 3 from a `storage::PlaintextReader`,
+streams fd 1 to a sink, enforces the output cap and wall timeout (SIGKILL of the process group) and reaps.
+Helper exit/JSON contract: `core/tools/common/protocol.hpp`. Config: `preview.derive.*`. RLIMIT_NPROC is not
+set (per-UID; the daemon's threads would count): process creation is denied by the helper's seccomp filter.
+Tests: `test_derive_runner.cpp` (fake helper `core/tests/helpers/fake_derive_helper.cpp`),
+`test_preview_cad_helper.cpp` (real helper, skipped when not built).
 
 ### `ops/`: shared command operations
 

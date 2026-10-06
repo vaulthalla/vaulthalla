@@ -7,11 +7,19 @@
 export DEB_BUILD_MAINT_OPTIONS = hardening=+all optimize=-lto
 export DEB_CXXFLAGS_MAINT_STRIP = -O2
 
+# Optional converter helpers ship as their own binary packages (vaulthalla-preview-cad, vaulthalla-preview-media).
+# A package build requires their libraries (enabled, not auto: a missing -dev package fails the build instead of
+# producing an empty helper package); the build profiles pkg.vaulthalla.nocad / pkg.vaulthalla.nomedia drop a helper
+# and its package. The daemon itself never links OCCT, libav* or libseccomp.
+VH_PREVIEW_CAD = $(if $(filter pkg.vaulthalla.nocad,$(DEB_BUILD_PROFILES)),disabled,enabled)
+VH_PREVIEW_MEDIA = $(if $(filter pkg.vaulthalla.nomedia,$(DEB_BUILD_PROFILES)),disabled,enabled)
+
 %:
 	dh $@ --buildsystem=meson
 
 override_dh_auto_configure:
-	dh_auto_configure -- -Doptimization=3 -Dwerror=true -Dmanpage=true
+	dh_auto_configure -- -Doptimization=3 -Dwerror=true -Dmanpage=true \
+		-Dpreview_cad=$(VH_PREVIEW_CAD) -Dpreview_media=$(VH_PREVIEW_MEDIA)
 
 override_dh_installsystemd:
 	dh_installsystemd --no-start --no-stop-on-upgrade

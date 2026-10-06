@@ -82,6 +82,8 @@ forbidden_paths = [
   "usr/lib/systemd/system/vaulthalla-cli.service",
   "usr/lib/systemd/system/vaulthalla-cli.socket",
   "etc/vaulthalla/config.yaml",
+  # Converter helpers ship in their own optional packages (below); the core never carries OCCT or libav code.
+  "usr/lib/vaulthalla/helpers/*",
 ]
 any_of = [
   # dh_compress may gzip supplementary docs.
@@ -95,6 +97,39 @@ any_of = [
 # override.
 identical_files = [
   { member = "usr/share/vaulthalla/config/config.yaml", source = "deploy/config/config.yaml" },
+]
+
+# Optional out-of-process preview converters (core/tools): one executable each, nothing else of the core.
+[[debian.packages]]
+name = "vaulthalla-preview-cad"
+architecture = "amd64"
+required_paths = [
+  "usr/lib/vaulthalla/helpers/vaulthalla-preview-cad",
+  "usr/share/doc/vaulthalla-preview-cad/copyright",
+]
+forbidden_paths = [
+  "usr/bin/*",
+  "etc/*",
+  "lib/systemd/*",
+  "usr/lib/systemd/*",
+  "usr/share/vaulthalla/*",
+  "usr/lib/vaulthalla/helpers/vaulthalla-preview-media",
+]
+
+[[debian.packages]]
+name = "vaulthalla-preview-media"
+architecture = "amd64"
+required_paths = [
+  "usr/lib/vaulthalla/helpers/vaulthalla-preview-media",
+  "usr/share/doc/vaulthalla-preview-media/copyright",
+]
+forbidden_paths = [
+  "usr/bin/*",
+  "etc/*",
+  "lib/systemd/*",
+  "usr/lib/systemd/*",
+  "usr/share/vaulthalla/*",
+  "usr/lib/vaulthalla/helpers/vaulthalla-preview-cad",
 ]
 
 [publish.apt]

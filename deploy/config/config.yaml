@@ -152,6 +152,30 @@ caching:
     expiry_days: 30
 
 
+# === 🎞️ Rich previews ===
+# Every key is optional; the values below are the built-in defaults. Uncomment only what you change.
+# STEP/STP models and video posters/transcodes are produced by optional, sandboxed helper programs from the
+# vaulthalla-preview-cad and vaulthalla-preview-media packages; without them those previews are unavailable.
+#preview:
+#  max_render_pixels: 100000000      # Refuse server renders (images, PDF pages) larger than this many pixels
+#  media:
+#    integrity: optimistic           # optimistic: stream at once, verify in the background | strict: verify first
+#    remote: hydrate                 # Remote-only files: hydrate (fetch once, metered) | ranged | off
+#    hwaccel: auto                   # Transcoding: auto | software | vaapi | qsv | nvenc
+#    transcode: on_demand            # off | on_demand
+#  derive:
+#    helper_dir: /usr/lib/vaulthalla/helpers
+#    max_concurrency: 2              # Conversions running at once
+#    max_queue: 64                   # Conversions waiting; more are refused until the queue drains
+#    max_ram_mb: 2048                # Address-space limit per conversion
+#    max_cpu_seconds: 300            # CPU-time limit per conversion
+#    wall_timeout_seconds: 600       # A conversion still running after this is killed
+#    max_output_mb: 512              # Largest derived artifact (e.g. a GLB)
+#    failure_ttl_hours: 24           # A failed conversion is not retried for this long (or until the file changes)
+#  text:
+#    max_edit_bytes: 2097152         # Largest text file the web editor saves (2 MiB)
+
+
 # === ⚖️ Auditing ===
 # Auditing settings manage log rotation, encryption waivers, and trashed files.
 # Logs are rotated to prevent excessive disk usage.

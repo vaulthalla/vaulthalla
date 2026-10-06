@@ -77,6 +77,42 @@ struct CachingConfig {
     ThumbnailsConfig thumbnails;
 };
 
+// preview.* (all optional; a missing key keeps its default).
+enum class PreviewIntegrityMode { Optimistic, Strict };
+enum class PreviewRemoteMode { Hydrate, Ranged, Off };
+enum class PreviewHwaccel { Auto, Software, Vaapi, Qsv, Nvenc };
+enum class PreviewTranscodeMode { Off, OnDemand };
+
+struct PreviewMediaConfig {
+    PreviewIntegrityMode integrity = PreviewIntegrityMode::Optimistic;
+    PreviewRemoteMode remote = PreviewRemoteMode::Hydrate;
+    PreviewHwaccel hwaccel = PreviewHwaccel::Auto;
+    PreviewTranscodeMode transcode = PreviewTranscodeMode::OnDemand;
+};
+
+// Out-of-process converters (preview::derive). Helpers are separate executables in optional packages.
+struct PreviewDeriveConfig {
+    std::filesystem::path helper_dir = "/usr/lib/vaulthalla/helpers";
+    uint32_t max_concurrency = 2;
+    uint32_t max_queue = 64;
+    uint32_t max_ram_mb = 2048;            // RLIMIT_AS per helper
+    uint32_t max_cpu_seconds = 300;        // RLIMIT_CPU per helper
+    uint32_t wall_timeout_seconds = 600;   // SIGKILL of the helper's process group
+    uint32_t max_output_mb = 512;          // artifact size cap
+    uint32_t failure_ttl_hours = 24;       // negative-cache lifetime (or until the source changes)
+};
+
+struct PreviewTextConfig {
+    uint64_t max_edit_bytes = 2ull * 1024 * 1024;
+};
+
+struct PreviewConfig {
+    PreviewMediaConfig media;
+    PreviewDeriveConfig derive;
+    PreviewTextConfig text;
+    uint64_t max_render_pixels = 100'000'000;
+};
+
 struct DatabaseConfig {
     std::string host = "localhost";
     uint16_t port = 5432;
@@ -263,6 +299,7 @@ struct Config {
     HttpPreviewConfig http_preview;
     S3GatewayConfig s3_gateway;
     CachingConfig caching;
+    PreviewConfig preview;
     DatabaseConfig database;
     AuthConfig auth;
     SyncConfig sync;
@@ -292,6 +329,15 @@ struct Config {
 Config loadConfig(const std::string& path);
 std::string emailProviderKindToString(EmailProviderKind kind);
 EmailProviderKind emailProviderKindFromString(std::string_view value);
+// Lowercase config spellings; the parsers throw std::invalid_argument on an unknown value.
+std::string previewIntegrityModeToString(PreviewIntegrityMode mode);
+PreviewIntegrityMode previewIntegrityModeFromString(std::string_view value);
+std::string previewRemoteModeToString(PreviewRemoteMode mode);
+PreviewRemoteMode previewRemoteModeFromString(std::string_view value);
+std::string previewHwaccelToString(PreviewHwaccel hwaccel);
+PreviewHwaccel previewHwaccelFromString(std::string_view value);
+std::string previewTranscodeModeToString(PreviewTranscodeMode mode);
+PreviewTranscodeMode previewTranscodeModeFromString(std::string_view value);
 void to_json(nlohmann::json& j, const Config& c);
 void from_json(const nlohmann::json& j, Config& c);
 void to_json(nlohmann::json& j, const WebsocketConfig& c);
@@ -314,6 +360,14 @@ void to_json(nlohmann::json& j, const ThumbnailsConfig& c);
 void from_json(const nlohmann::json& j, ThumbnailsConfig& c);
 void to_json(nlohmann::json& j, const CachingConfig& c);
 void from_json(const nlohmann::json& j, CachingConfig& c);
+void to_json(nlohmann::json& j, const PreviewMediaConfig& c);
+void from_json(const nlohmann::json& j, PreviewMediaConfig& c);
+void to_json(nlohmann::json& j, const PreviewDeriveConfig& c);
+void from_json(const nlohmann::json& j, PreviewDeriveConfig& c);
+void to_json(nlohmann::json& j, const PreviewTextConfig& c);
+void from_json(const nlohmann::json& j, PreviewTextConfig& c);
+void to_json(nlohmann::json& j, const PreviewConfig& c);
+void from_json(const nlohmann::json& j, PreviewConfig& c);
 void to_json(nlohmann::json& j, const DatabaseConfig& c);
 void from_json(const nlohmann::json& j, DatabaseConfig& c);
 void to_json(nlohmann::json& j, const AuthConfig& c);
