@@ -94,8 +94,17 @@ inline std::filesystem::path updateSubdirPath(const std::filesystem::path& oldBa
 
 inline std::string inferMimeTypeFromPath(const std::filesystem::path& path) {
     static const std::unordered_map<std::string, std::string> mimeMap = {
-        {".jpg", "image/jpeg"}, {".jpeg", "image/jpeg"}, {".png", "image/png"},
-        {".pdf", "application/pdf"}, {".txt", "text/plain"}, {".html", "text/html"},
+        {".jpg", "image/jpeg"}, {".jpeg", "image/jpeg"}, {".png", "image/png"}, {".gif", "image/gif"},
+        {".webp", "image/webp"}, {".avif", "image/avif"}, {".svg", "image/svg+xml"}, {".bmp", "image/bmp"},
+        {".pdf", "application/pdf"}, {".txt", "text/plain"}, {".html", "text/html"}, {".md", "text/markdown"},
+        {".json", "application/json"}, {".yaml", "application/yaml"}, {".yml", "application/yaml"},
+        {".toml", "application/toml"}, {".csv", "text/csv"}, {".xml", "application/xml"},
+        {".mp4", "video/mp4"}, {".m4v", "video/mp4"}, {".webm", "video/webm"}, {".mov", "video/quicktime"},
+        {".mkv", "video/x-matroska"}, {".ogv", "video/ogg"}, {".mp3", "audio/mpeg"}, {".m4a", "audio/mp4"},
+        {".aac", "audio/aac"}, {".ogg", "audio/ogg"}, {".oga", "audio/ogg"}, {".opus", "audio/opus"},
+        {".wav", "audio/wav"}, {".flac", "audio/flac"}, {".glb", "model/gltf-binary"},
+        {".gltf", "model/gltf+json"}, {".stl", "model/stl"}, {".obj", "model/obj"}, {".step", "model/step"},
+        {".stp", "model/step"},
     };
 
     std::string ext = path.extension().string();
