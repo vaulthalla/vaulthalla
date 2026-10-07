@@ -13,6 +13,7 @@
 
 import { DracoDecoder } from '@babylonjs/core/Meshes/Compression/dracoDecoder'
 import { MeshoptCompression } from '@babylonjs/core/Meshes/Compression/meshoptCompression'
+import { allowUrl } from './urlGate'
 
 let draco: Promise<void> | null = null
 let meshopt: Promise<void> | null = null
@@ -25,6 +26,9 @@ export const ensureDraco = () => {
       if (!response.ok) throw new Error(`Draco decoder unavailable (${response.status})`)
       return response.arrayBuffer()
     })
+    // Babylon loads the decoder script by URL (a same-origin /_next/static asset): let it past the URL gate.
+    allowUrl(scriptUrl.href)
+    allowUrl(wasmUrl.href)
     DracoDecoder.ResetDefault()
     DracoDecoder.DefaultConfiguration = {
       wasmUrl: scriptUrl.href,

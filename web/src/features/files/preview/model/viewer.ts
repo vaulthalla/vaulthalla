@@ -21,14 +21,18 @@ import type { AssetContainer } from '@babylonjs/core/assetContainer'
 import type { ModelStats } from '../ModelViewer'
 import {
   MODEL_LIMITS,
+  ModelLimitError,
   ModelUnsupportedError,
   UNSUPPORTED_REQUIRED_GLTF_EXTENSIONS,
+  decodeModelText,
   rewriteMtlTextures,
-  rewriteObjMtl,
+  sanitizeObjText,
   scanModel,
+  withObjMtllib,
   type ModelFormat,
   type ModelScan,
 } from './scan'
+import { allowUrl, installUrlGate, isAllowedUrl } from './urlGate'
 
 /** No WebGL at all (or the context could not be created); the message is user-facing. */
 export class ModelWebGLError extends Error {
@@ -39,10 +43,12 @@ export class ModelWebGLError extends Error {
 // the viewer needs is bundled (see decoders.ts). Any code path that still asks Babylon for a CDN script
 // (cdn.babylonjs.com: KTX2/Basis transcoders, glTF validator) or a CDN asset (assets.babylonjs.com: area-light LUT,
 // blue-noise texture) is rewritten to this same-origin path, which 404s instead of reaching a third-party host.
+// The URL gate (urlGate.ts) refuses those rewritten URLs as well, so they fail locally without a request.
 const NO_CDN = '/_next/static/vh-babylon-cdn-disabled'
 SceneLoaderFlags.ShowLoadingScreen = false
 Tools.ScriptBaseUrl = NO_CDN
 Tools.AssetBaseUrl = NO_CDN
+installUrlGate()
 
 const MAX_DPR = 2
 const GLB_MAGIC = 0x46546c67 // "glTF"
@@ -100,9 +106,32 @@ const normalizeRef = (uri: string) => {
 /** Absolute and scheme-qualified references are never fetched: a model must not make the browser call other hosts. */
 const isExternalRef = (uri: string) => /^[a-z][a-z0-9+.-]*:/i.test(uri) || uri.startsWith('//') || uri.startsWith('/')
 
-export interface ViewerOptions {
-  resolveResource?: (uri: string) => Promise<ArrayBuffer>
+export interface ResolveInit {
+  /** Aborted when the viewer is disposed or the load fails; pass it to every request. */
+  signal: AbortSignal
+  /** Refuse a body larger than this (what is left of the model's total byte budget) by throwing a RangeError. */
+  maxBytes: number
+  /** Report bytes received so far for this file; the viewer aborts every request once the total is over budget. */
+  onProgress: (loaded: number) => void
 }
+
+export interface ViewerOptions {
+  resolveResource?: (uri: string, init: ResolveInit) => Promise<ArrayBuffer>
+}
+
+const formatMiB = (bytes: number) => `${Math.round(bytes / 1024 / 1024)} MB`
+
+const tooManyResources = () =>
+  new ModelLimitError(
+    `This model references more than ${MODEL_LIMITS.maxResources} separate files, more than the browser viewer loads. Download it to open it in a desktop app.`,
+  )
+
+const tooManyBytes = () =>
+  new ModelLimitError(
+    `This model and the files it references add up to more than ${formatMiB(MODEL_LIMITS.maxTotalBytes)}, more than the browser viewer loads. Download it to open it in a desktop app.`,
+  )
+
+const abortError = () => new DOMException('The viewer was closed.', 'AbortError')
 
 export interface Viewer {
   load: (data: ArrayBuffer, format: ModelFormat, fileName: string) => Promise<ModelStats>
@@ -149,6 +178,7 @@ export const createViewer = (canvas: HTMLCanvasElement, options: ViewerOptions):
   caps.maxTextureSize = Math.min(caps.maxTextureSize, MODEL_LIMITS.maxTextureSize)
   caps.maxCubemapTextureSize = Math.min(caps.maxCubemapTextureSize, MODEL_LIMITS.maxTextureSize)
 
+  installUrlGate()
   const scene = new Scene(engine)
   scene.clearColor = cssColor('--surface-solid', [0.043, 0.067, 0.098, 1])
   scene.skipPointerMovePicking = true
@@ -175,17 +205,22 @@ export const createViewer = (canvas: HTMLCanvasElement, options: ViewerOptions):
     scene.defaultMaterial = neutral
   }
 
-  const objectUrls: string[] = []
-  const toObjectUrl = (bytes: ArrayBuffer, name: string) => {
-    const url = URL.createObjectURL(new Blob([bytes], { type: mimeFor(name) }))
-    objectUrls.push(url)
-    return url
-  }
-
   let container: AssetContainer | null = null
   let grid: LinesMesh | null = null
   let gridVisible = true
   let disposed = false
+  // Aborts every side-file request still running when the viewer goes away.
+  const lifetime = new AbortController()
+
+  // Object URLs for resolved side files: the only blob: URLs the URL gate lets Babylon load. Revoked (and removed
+  // from the gate) on dispose; never created once the viewer is gone, so nothing outlives it.
+  const objectUrls: { url: string; release: () => void }[] = []
+  const toObjectUrl = (bytes: BlobPart, name: string) => {
+    if (disposed) throw abortError()
+    const url = URL.createObjectURL(new Blob([bytes], { type: mimeFor(name) }))
+    objectUrls.push({ url, release: allowUrl(url) })
+    return url
+  }
   // The model's bounding sphere, used for framing and the per-frame clip planes.
   let center = Vector3.Zero()
   let radius = 1
@@ -275,35 +310,90 @@ export const createViewer = (canvas: HTMLCanvasElement, options: ViewerOptions):
   }
   canvas.addEventListener('webglcontextlost', onContextLost)
 
-  const resolveRef = async (uri: string): Promise<ArrayBuffer> => {
+  // One load's side-file budget: at most MODEL_LIMITS.maxResources files and MODEL_LIMITS.maxTotalBytes in all
+  // (the model included). Over budget, every request of the load is aborted and the load fails with `limit`.
+  interface LoadBudget {
+    signal: AbortSignal
+    count: number
+    bytes: number
+    limit: ModelLimitError | null
+    exceed: (error: ModelLimitError) => ModelLimitError
+    cancel: () => void
+  }
+
+  const startBudget = (modelBytes: number): LoadBudget => {
+    const controller = new AbortController()
+    const stop = () => controller.abort(lifetime.signal.reason)
+    lifetime.signal.addEventListener('abort', stop, { once: true })
+    const budget: LoadBudget = {
+      signal: controller.signal,
+      count: 0,
+      bytes: modelBytes,
+      limit: null,
+      exceed: error => {
+        budget.limit ??= error
+        controller.abort(budget.limit)
+        return budget.limit
+      },
+      cancel: () => {
+        lifetime.signal.removeEventListener('abort', stop)
+        controller.abort(abortError())
+      },
+    }
+    if (modelBytes > MODEL_LIMITS.maxTotalBytes) budget.exceed(tooManyBytes())
+    return budget
+  }
+
+  const resolveRef = async (uri: string, budget: LoadBudget): Promise<ArrayBuffer> => {
     const ref = normalizeRef(uri)
     if (!ref || isExternalRef(ref))
-      throw new Error(`it references a file on another host (${uri}), which is never fetched`)
+      throw new Error(`it references a file on another host (${uri.slice(0, 120)}), which is never fetched`)
     if (!options.resolveResource) throw new Error(`it needs a separate file (${ref}) that is not available here`)
+    if (budget.limit) throw budget.limit
+    if (budget.signal.aborted) throw budget.signal.reason
+    if (++budget.count > MODEL_LIMITS.maxResources) throw budget.exceed(tooManyResources())
+    let counted = 0
+    const count = (loaded: number) => {
+      budget.bytes += loaded - counted
+      counted = loaded
+      if (budget.bytes > MODEL_LIMITS.maxTotalBytes) budget.exceed(tooManyBytes())
+    }
     try {
-      return await options.resolveResource(ref)
+      const bytes = await options.resolveResource(ref, {
+        signal: budget.signal,
+        maxBytes: Math.max(0, MODEL_LIMITS.maxTotalBytes - budget.bytes),
+        onProgress: count,
+      })
+      count(bytes.byteLength)
+      if (budget.limit) throw budget.limit
+      return bytes
     } catch (error) {
+      if (budget.limit) throw budget.limit
+      if (error instanceof RangeError) throw budget.exceed(tooManyBytes())
+      if (budget.signal.aborted) throw budget.signal.reason
       const reason = error instanceof Error && error.message ? `: ${error.message}` : ''
       throw new Error(`it needs a separate file (${ref}) that could not be read${reason}`)
     }
   }
 
-  const gltfOptions = (scan: ModelScan) => {
+  const gltfOptions = (scan: ModelScan, budget: LoadBudget) => {
     const used = new Set(scan.gltf?.extensionsUsed ?? [])
     const images = new Set(scan.gltf?.imageUris ?? [])
     return {
       // Draw the model as authored; inspection does not need animation playback to start.
       animationStartMode: 0,
-      // data: URIs are decoded by the loader before this runs; everything else goes through the caller. A texture
-      // that can't be resolved (missing, or on another host) becomes a white pixel so the geometry still shows;
-      // a missing buffer fails the load.
+      // Every URI the glTF loader would load passes here (base64 data: URIs are decoded before). data: URIs and the
+      // viewer's own object URLs load as they are; everything else is a sibling file resolved through the caller,
+      // never a URL of the model's choosing (a `blob:` or absolute URI is refused like any other external one). A
+      // texture that can't be resolved becomes a white pixel so the geometry still shows; a missing buffer, the
+      // budget running out or the viewer closing fails the load.
       preprocessUrlAsync: async (url: string) => {
-        if (url.startsWith('data:') || url.startsWith('blob:')) return url
+        if (isAllowedUrl(url)) return url
         try {
-          return toObjectUrl(await resolveRef(url), url)
+          return toObjectUrl(await resolveRef(url, budget), url)
         } catch (error) {
-          if (!images.has(url)) throw error
-          console.warn(`[model] texture ${url} skipped: ${error instanceof Error ? error.message : error}`)
+          if (!images.has(url) || budget.limit || budget.signal.aborted) throw error
+          console.warn(`[model] texture ${url.slice(0, 120)} skipped: ${error instanceof Error ? error.message : error}`)
           return PLACEHOLDER_TEXTURE
         }
       },
@@ -328,35 +418,40 @@ export const createViewer = (canvas: HTMLCanvasElement, options: ViewerOptions):
     }
   }
 
-  const prepareObj = async (data: ArrayBuffer, scan: ModelScan): Promise<Uint8Array<ArrayBuffer>> => {
+  // The OBJ as Babylon will load it. Every material-library statement is removed from the text (whatever its case or
+  // whitespace; see sanitizeObjText). If the one Babylon would have used resolves to a sibling file, the material
+  // library is rewritten so each texture is an object URL (or dropped), and one `mtllib <object URL>` line is
+  // appended; otherwise the loader is told to skip materials altogether.
+  const prepareObj = async (data: ArrayBuffer, budget: LoadBudget): Promise<{ source: BlobPart; skipMaterials: boolean }> => {
     await import('@babylonjs/loaders/OBJ/objFileLoader')
-    const ref = scan.objMtl
-    if (!ref) return new Uint8Array(data)
-    // Resolve the material library and its textures up front, then point the OBJ at object URLs: the loader would
-    // otherwise request them relative to the page.
+    const decoded = decodeModelText(new Uint8Array(data))
+    const { text, mtllib } = sanitizeObjText(decoded)
+    const source = text ?? data
+    if (!mtllib || !options.resolveResource) return { source, skipMaterials: true }
     let mtlUrl: string | null = null
-    if (options.resolveResource) {
-      try {
-        const mtl = new TextDecoder().decode(await resolveRef(ref.name))
-        const textures = new Map<string, Promise<string | null>>()
-        const rewritten = await rewriteMtlTextures(mtl, name => {
-          if (!textures.has(name))
-            textures.set(
-              name,
-              resolveRef(name).then(
-                bytes => toObjectUrl(bytes, name),
-                () => null,
-              ),
-            )
-          return textures.get(name)!
-        })
-        mtlUrl = toObjectUrl(new TextEncoder().encode(rewritten).buffer as ArrayBuffer, 'materials.mtl')
-      } catch {
-        mtlUrl = null // untextured, default material
-      }
+    try {
+      const mtl = decodeModelText(new Uint8Array(await resolveRef(mtllib, budget)))
+      const textures = new Map<string, Promise<string | null>>()
+      const rewritten = await rewriteMtlTextures(mtl, name => {
+        if (!textures.has(name))
+          textures.set(
+            name,
+            resolveRef(name, budget).then(
+              bytes => toObjectUrl(bytes, name),
+              () => null,
+            ),
+          )
+        return textures.get(name)!
+      })
+      if (budget.limit) throw budget.limit
+      mtlUrl = toObjectUrl(rewritten, 'materials.mtl')
+    } catch (error) {
+      if (budget.limit || budget.signal.aborted) throw error
+      mtlUrl = null // untextured, default material
     }
-    return rewriteObjMtl(data, ref, mtlUrl)
+    return mtlUrl ? { source: withObjMtllib(text ?? decoded, mtlUrl), skipMaterials: false } : { source, skipMaterials: true }
   }
+
 
   const computeStats = (): ModelStats => {
     const meshes = modelMeshes()
@@ -389,46 +484,66 @@ export const createViewer = (canvas: HTMLCanvasElement, options: ViewerOptions):
 
   const load = async (data: ArrayBuffer, format: ModelFormat, fileName: string): Promise<ModelStats> => {
     const scan = scanModel(data, format)
+    const budget = startBudget(data.byteLength)
     // How the loader gets the bytes from memory: binary glTF as a buffer view; JSON glTF through the glTF plugin's
     // direct-load path (a `data:` string, the only way it accepts JSON from memory); STL and OBJ as a File, since
     // those plugins don't take buffer views. Trust the bytes over the name for glTF.
     let source: string | File | Uint8Array<ArrayBuffer>
     let pluginExtension = `.${format}`
-    if (format === 'glb' || format === 'gltf') {
-      await prepareGltf(scan)
-      const binary = data.byteLength >= 4 && new DataView(data).getUint32(0, true) === GLB_MAGIC
-      pluginExtension = binary ? '.glb' : '.gltf'
-      source = binary ? new Uint8Array(data) : `data:${new TextDecoder().decode(data)}`
-    } else if (format === 'stl') {
-      await Promise.all([import('@babylonjs/loaders/STL/stlFileLoader'), applyNeutralMaterial()])
-      source = new File([data], fileName || 'model.stl')
-    } else {
-      const [obj] = await Promise.all([prepareObj(data, scan), applyNeutralMaterial()])
-      source = new File([obj], fileName || 'model.obj')
-    }
-    if (disposed) throw new Error('disposed')
-
+    let skipMaterials = true
     let loaded: AssetContainer
     try {
-      loaded = await LoadAssetContainerAsync(source, scene, {
-        pluginExtension,
-        name: fileName,
-        rootUrl: '',
-        pluginOptions: { gltf: gltfOptions(scan), obj: { materialLoadingFailsSilently: true } } as never,
-      })
+      if (budget.limit) throw budget.limit
+      if (format === 'glb' || format === 'gltf') {
+        await prepareGltf(scan)
+        const binary = data.byteLength >= 4 && new DataView(data).getUint32(0, true) === GLB_MAGIC
+        pluginExtension = binary ? '.glb' : '.gltf'
+        source = binary ? new Uint8Array(data) : `data:${new TextDecoder().decode(data)}`
+      } else if (format === 'stl') {
+        await Promise.all([import('@babylonjs/loaders/STL/stlFileLoader'), applyNeutralMaterial()])
+        source = new File([data], fileName || 'model.stl')
+      } else {
+        const [obj] = await Promise.all([prepareObj(data, budget), applyNeutralMaterial()])
+        source = new File([obj.source], fileName || 'model.obj')
+        skipMaterials = obj.skipMaterials
+      }
+      if (disposed) throw abortError()
+
+      try {
+        loaded = await LoadAssetContainerAsync(source, scene, {
+          pluginExtension,
+          name: fileName,
+          rootUrl: '',
+          pluginOptions: {
+            gltf: gltfOptions(scan, budget),
+            // `encoding: 'auto'` is the decoding prepareObj mirrored; with nothing resolved there is no material
+            // library to load, so the loader is told not to look for one at all.
+            obj: { materialLoadingFailsSilently: true, skipMaterials, encoding: 'auto' },
+          } as never,
+        })
+      } catch (error) {
+        if (budget.limit) throw budget.limit
+        // Babylon prefixes "Unable to load from <source>: " (the source being the whole JSON for glTF from memory).
+        const what =
+          typeof source === 'string' ? source
+          : source instanceof File ? `file:${source.name}`
+          : 'binary data'
+        const message = error instanceof Error ? error.message : String(error)
+        const prefix = `Unable to load from ${what}: `
+        throw new Error(message.startsWith(prefix) ? message.slice(prefix.length) : message, { cause: error })
+      }
+      if (budget.limit) {
+        loaded.dispose()
+        throw budget.limit
+      }
     } catch (error) {
-      // Babylon prefixes "Unable to load from <source>: " (the source being the whole JSON for glTF from memory).
-      const what =
-        typeof source === 'string' ? source
-        : source instanceof File ? `file:${source.name}`
-        : 'binary data'
-      const message = error instanceof Error ? error.message : String(error)
-      const prefix = `Unable to load from ${what}: `
-      throw new Error(message.startsWith(prefix) ? message.slice(prefix.length) : message, { cause: error })
+      // Nothing of a failed load keeps downloading.
+      budget.cancel()
+      throw error
     }
     if (disposed) {
       loaded.dispose()
-      throw new Error('disposed')
+      throw abortError()
     }
     container = loaded
     // STL normals are frequently zero or wrong (exporters leave them out); recompute flat ones from the geometry.
@@ -472,7 +587,11 @@ export const createViewer = (canvas: HTMLCanvasElement, options: ViewerOptions):
       container?.dispose()
       scene.dispose()
       engine.dispose()
-      for (const url of objectUrls) URL.revokeObjectURL(url)
+      lifetime.abort(abortError())
+      for (const { url, release } of objectUrls) {
+        release()
+        URL.revokeObjectURL(url)
+      }
       objectUrls.length = 0
     },
   }
