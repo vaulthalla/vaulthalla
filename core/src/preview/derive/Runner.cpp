@@ -492,6 +492,10 @@ void Session::serve() {
 
         const auto now = Clock::now();
         if (drainDeadline && now >= *drainDeadline) break;
+        if (!exited_ && !killed_ && request_.stop.stop_requested()) {
+            if (result_.error.empty()) result_.error = "cancelled";
+            killGroup();
+        }
         if (!exited_ && now >= deadline && !result_.timedOut) {
             result_.timedOut = true;
             killGroup();
@@ -516,7 +520,8 @@ void Session::serve() {
 
         auto wait = std::chrono::duration_cast<std::chrono::milliseconds>(
             (drainDeadline ? *drainDeadline : (result_.timedOut ? deadline + kReapGrace : deadline)) - now);
-        if (!pidfd_.open() && !exited_) wait = std::min(wait, std::chrono::duration_cast<std::chrono::milliseconds>(kPollTick));
+        if ((!pidfd_.open() || request_.stop.stop_possible()) && !exited_)
+            wait = std::min(wait, std::chrono::duration_cast<std::chrono::milliseconds>(kPollTick));
         wait = std::max(wait, std::chrono::milliseconds(1));
         const int ready = ::poll(fds.data(), fds.size(), static_cast<int>(wait.count()));
         if (ready < 0 && errno != EINTR) throw sysError("poll");
@@ -580,6 +585,7 @@ std::string RunResult::failureReason() const {
     if (ok()) return "";
     if (timedOut) return "timeout";
     if (outputLimitExceeded) return "limit_exceeded";
+    if (error == "cancelled") return "cancelled";
     if (!error.empty()) return error.starts_with("protocol:") ? "protocol" : "internal";
     if (signal) return *signal == SIGXCPU || *signal == SIGXFSZ ? "limit_exceeded" : "crashed";
     if (result.is_object()) {
