@@ -123,7 +123,8 @@ while IFS= read -r name; do
   esac
 done < <(compgen -e)
 env_args+=(--env CI=true --env HOME=/home/ci --env GITHUB_WORKSPACE=/workspace
-  --env npm_config_store_dir=/cache/pnpm-store --env NPM_CONFIG_CACHE=/cache/npm)
+  --env npm_config_store_dir=/cache/pnpm-store --env pnpm_config_store_dir=/cache/pnpm-store
+  --env NPM_CONFIG_CACHE=/cache/npm)
 # As container root (stock images have no /home/ci), root's own home.
 if $root_user; then env_args+=(--env HOME=/root); fi
 
