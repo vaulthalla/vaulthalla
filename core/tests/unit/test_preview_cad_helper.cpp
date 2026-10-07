@@ -99,9 +99,11 @@ TEST_F(PreviewCadHelperTest, ConvertsAStepAssemblyToGlb) {
     EXPECT_EQ(j["output_bytes"].get<uint64_t>(), output_.size());
     EXPECT_EQ(res.outputBytes, output_.size());
     ASSERT_TRUE(j.contains("sandbox"));
-    EXPECT_TRUE(j["sandbox"]["seccomp"].get<bool>());
-    EXPECT_EQ(j["sandbox"]["landlock"].get<bool>(), j["sandbox"]["landlock_abi"].get<int>() > 0)
-        << j["sandbox"].dump();
+    // A helper only ever succeeds fully confined (it refuses to run otherwise).
+    EXPECT_TRUE(j["sandbox"]["seccomp"].get<bool>()) << j["sandbox"].dump();
+    EXPECT_TRUE(j["sandbox"]["landlock"].get<bool>()) << j["sandbox"].dump();
+    EXPECT_GT(j["sandbox"]["landlock_abi"].get<int>(), 0) << j["sandbox"].dump();
+    EXPECT_TRUE(j["sandbox"]["threads_denied"].get<bool>()) << j["sandbox"].dump();   // single-threaded helper
 }
 
 TEST_F(PreviewCadHelperTest, TriangleCapIsALimitFailure) {
@@ -193,19 +195,37 @@ TEST_F(PreviewCadHelperTest, SandboxForbidsWritesSocketsProcessesAndSignals) {
     ASSERT_TRUE(res.ok()) << res.failureMessage() << "\nstderr: " << res.stderrTail;
 
     const auto& t = res.result["selftest"];
-    EXPECT_TRUE(t["open_write"]["blocked"].get<bool>()) << t.dump();
-    EXPECT_TRUE(t["socket_inet"]["blocked"].get<bool>()) << t.dump();
-    EXPECT_TRUE(t["socket_unix"]["blocked"].get<bool>()) << t.dump();
-    EXPECT_TRUE(t["fork"]["blocked"].get<bool>()) << t.dump();
-    EXPECT_TRUE(t["execve"]["blocked"].get<bool>()) << t.dump();
-    EXPECT_TRUE(t["signal_parent"]["blocked"].get<bool>()) << t.dump();
-    EXPECT_FALSE(t["open_read_usr"]["blocked"].get<bool>()) << t.dump();
-    if (res.result["sandbox"]["landlock"].get<bool>()) {
-        EXPECT_TRUE(t["open_read_outside"]["blocked"].get<bool>()) << t.dump();
+    ASSERT_TRUE(res.result["sandbox"]["landlock"].get<bool>()) << res.result["sandbox"].dump();
+    // Every vector a compromised helper (same uid as the daemon, the daemon as its parent) could use.
+    for (const char* vector : {"open_write", "open_read_outside", "socket_inet", "socket_unix", "fork", "execve",
+                               "signal_parent", "open_proc_parent", "prlimit_parent", "setpriority_parent",
+                               "sched_setaffinity_parent", "ioprio_set_parent", "fcntl_setown_parent", "fcntl_setsig",
+                               "fcntl_setown_ex_parent", "ioctl_fiosetown", "ioctl_siocspgrp", "shmget", "semget",
+                               "mq_open", "thread", "fcntl_setown_high_bits", "ioctl_fiosetown_high_bits"}) {
+        ASSERT_TRUE(t.contains(vector)) << vector << ": " << t.dump();
+        EXPECT_TRUE(t[vector]["blocked"].get<bool>()) << vector << ": " << t.dump();
     }
+    // ...while what the helper itself needs keeps working.
+    EXPECT_FALSE(t["open_read_usr"]["blocked"].get<bool>()) << t.dump();
+    EXPECT_FALSE(t["prlimit_self"]["blocked"].get<bool>()) << t.dump();
     EXPECT_FALSE(fs::exists(target));
 
     fs::remove_all(dir);
+}
+
+// Without Landlock (old kernel, LSM not enabled; simulated here) the helper refuses instead of running on seccomp
+// alone, and never touches the input.
+TEST_F(PreviewCadHelperTest, RefusesToRunWithoutLandlock) {
+    const auto res = convert(fixture(), {"--sandbox-test-no-landlock", "1"});
+    EXPECT_FALSE(res.ok());
+    EXPECT_EQ(res.exitCode, 5) << res.stderrTail;
+    EXPECT_EQ(res.failureReason(), "sandbox_unavailable");
+    ASSERT_TRUE(res.result.is_object());
+    EXPECT_EQ(res.result["error"], "sandbox_unavailable");
+    EXPECT_FALSE(res.result["sandbox"]["landlock"].get<bool>());
+    EXPECT_TRUE(res.result["sandbox"]["seccomp"].get<bool>());
+    EXPECT_EQ(res.inputBytesServed, 0u);
+    EXPECT_TRUE(output_.empty());
 }
 
 TEST_F(PreviewCadHelperTest, UnknownCommandIsUnsupported) {

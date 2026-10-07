@@ -663,6 +663,32 @@ TEST_F(PreviewMediaHelper, CapabilitiesReportsEncodersAndHardware) {
     EXPECT_EQ(run.result["hardware_validated"], false);
 }
 
+// Hardware devices are opened inside the sandbox (driver threads must not escape Landlock): capabilities, which
+// probes every accelerator, runs confined with the GPU allowance (render nodes opened read-write via Landlock).
+TEST_F(PreviewMediaHelper, CapabilitiesProbesHardwareInsideTheSandbox) {
+    const auto run = runHelper({}, "capabilities", {});
+    ASSERT_EQ(run.exitCode, 0) << run.err;
+    const auto& sandbox = run.result["sandbox"];
+    EXPECT_TRUE(sandbox["landlock"].get<bool>()) << sandbox.dump();
+    EXPECT_TRUE(sandbox["seccomp"].get<bool>()) << sandbox.dump();
+    EXPECT_FALSE(sandbox["open_write_denied"].get<bool>()) << sandbox.dump();   // GPU allowance, left to Landlock
+    EXPECT_FALSE(sandbox["threads_denied"].get<bool>()) << sandbox.dump();
+
+    // Software transcodes get no device allowance at all.
+    const auto sw = runHelper(media("moov_end.mp4"), "transcode", {"--profile", "h264-480", "--hwaccel", "software"});
+    ASSERT_EQ(sw.exitCode, 0) << sw.err << sw.result.dump();
+    EXPECT_TRUE(sw.result["sandbox"]["open_write_denied"].get<bool>()) << sw.result["sandbox"].dump();
+}
+
+TEST_F(PreviewMediaHelper, RefusesToRunWithoutLandlock) {
+    const auto run = runHelper(media("moov_end.mp4"), "probe", {"--sandbox-test-no-landlock", "1"});
+    EXPECT_EQ(run.exitCode, 5) << run.err;
+    EXPECT_EQ(run.result["error"], "sandbox_unavailable");
+    EXPECT_FALSE(run.result["sandbox"]["landlock"].get<bool>());
+    EXPECT_EQ(run.requests, 0u);
+    EXPECT_TRUE(run.out.empty());
+}
+
 TEST_F(PreviewMediaHelper, UnknownCommandIsUnsupported) {
     const auto run = runHelper(media("moov_end.mp4"), "frobnicate", {});
     EXPECT_EQ(run.exitCode, 4);

@@ -1,5 +1,7 @@
 // vaulthalla-preview-media — out-of-process media helper (derive seam). See Commands.hpp and the protocol in
-// common/protocol.hpp. FFmpeg and hardware devices are initialised here, before runMain applies the sandbox.
+// common/protocol.hpp. Hardware devices are opened only after runMain has applied the sandbox: drivers start
+// threads, and landlock_restrict_self confines only the thread that calls it (seccomp's TSYNC would cover them,
+// Landlock would not). The GPU allowance (render nodes, sysfs) is granted per invocation by sandboxFor.
 
 #include "Commands.hpp"
 #include "Ffmpeg.hpp"
@@ -12,17 +14,25 @@ namespace vh::media {
 
 namespace main_detail {
 
-std::string argValue(const int argc, char** argv, const std::string_view key, std::string fallback) {
-    const std::string flag = "--" + std::string(key);
-    for (int i = 2; i < argc; ++i) {
-        const std::string_view arg = argv[i];
-        if (arg == flag && i + 1 < argc) return argv[i + 1];
-        if (arg.starts_with(flag + "=")) return std::string(arg.substr(flag.size() + 1));
+// The --hwaccel a command opens devices for: capabilities probes everything, transcode/hls their own choice.
+std::string hwaccelFor(const helpers::Args& args) {
+    if (args.command == "capabilities") return "auto";
+    if (args.command == "transcode" || args.command == "hls") {
+        const auto hwaccel = args.str("hwaccel", "software");
+        if (hw::validHwaccel(hwaccel)) return hwaccel;
     }
-    return fallback;
+    return "software";
+}
+
+helpers::sandbox::Options sandboxFor(const helpers::Args& args) {
+    helpers::sandbox::Options options;
+    options.allowGpuDevices = hwaccelFor(args) != "software";
+    return options;
 }
 
 nlohmann::json dispatch(const helpers::Args& args, helpers::RangeClient& range, helpers::OutputSink& sink) {
+    // Sandboxed by now: driver libraries load from /usr, render nodes open through the Landlock GPU allowance.
+    if (const auto hwaccel = hwaccelFor(args); hwaccel != "software") hw::prepare(hwaccel);
     if (args.command == "probe") return probe(args, range, sink);
     if (args.command == "poster") return poster(args, range, sink);
     if (args.command == "transcode") return transcode(args, range, sink);
@@ -37,15 +47,5 @@ nlohmann::json dispatch(const helpers::Args& args, helpers::RangeClient& range, 
 
 int main(int argc, char** argv) {
     av_log_set_level(AV_LOG_ERROR);
-
-    // Pre-sandbox: hardware device contexts load their driver libraries and open render nodes now.
-    const std::string_view command = argc > 1 ? argv[1] : "";
-    if (command == "capabilities") {
-        vh::media::hw::prepare("auto");
-    } else if (command == "transcode" || command == "hls") {
-        const std::string hwaccel = vh::media::main_detail::argValue(argc, argv, "hwaccel", "software");
-        if (vh::media::hw::validHwaccel(hwaccel)) vh::media::hw::prepare(hwaccel);
-    }
-
-    return vh::helpers::runMain(argc, argv, &vh::media::main_detail::dispatch);
+    return vh::helpers::runMain(argc, argv, &vh::media::main_detail::dispatch, &vh::media::main_detail::sandboxFor);
 }

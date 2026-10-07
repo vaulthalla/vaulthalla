@@ -235,19 +235,23 @@ int runMain(const int argc, char** argv,
 
     sandbox::Report report;
     try {
-        report = sandbox::apply(sandboxFor ? sandboxFor(args) : defaultSandboxOptions(args));
+        auto options = sandboxFor ? sandboxFor(args) : defaultSandboxOptions(args);
+        options.simulateNoLandlock = args.options.contains("sandbox-test-no-landlock");
+        report = sandbox::apply(options);
     } catch (const std::exception& e) {
         report.detail += std::string("sandbox setup threw: ") + e.what();
     }
     const nlohmann::json sandboxJson = {
         {"landlock", report.landlock}, {"landlock_abi", report.landlockAbi}, {"seccomp", report.seccomp},
-        {"open_write_denied", report.openWriteDenied}, {"detail", report.detail},
+        {"open_write_denied", report.openWriteDenied}, {"threads_denied", report.threadsDenied},
+        {"detail", report.detail},
     };
-    if (!report.seccomp) {
-        auto result = failure("internal", "sandbox unavailable: " + report.detail);
+    // Both or nothing: seccomp alone leaves the daemon's files and /proc/<daemon>/mem (same uid) readable.
+    if (!report.seccomp || !report.landlock) {
+        auto result = failure("sandbox_unavailable", "sandbox unavailable: " + report.detail);
         result["sandbox"] = sandboxJson;
         writeResult(result);
-        return static_cast<int>(ExitCode::Internal);
+        return static_cast<int>(ExitCode::SandboxUnavailable);
     }
 
     const auto fail = [&](const ExitCode code, const std::string& error, const std::string& message) {
