@@ -1,6 +1,7 @@
 // Cheap pre-scan of model bytes before Babylon touches them: refuse models that would freeze the tab, find the glTF
-// extensions that need a decoder, and locate OBJ material references. No Babylon imports here, nothing allocates in
-// proportion to the model beyond one pass over its bytes.
+// extensions that need a decoder, and neutralize OBJ/MTL file references before Babylon could follow them. No Babylon
+// imports here. The binary scans allocate nothing in proportion to the model; the OBJ/MTL text rewrites decode the text
+// once, as the loader itself does.
 
 export type ModelFormat = 'glb' | 'gltf' | 'stl' | 'obj'
 
@@ -15,6 +16,10 @@ export const MODEL_LIMITS = {
   maxGltfJsonBytes: 64 * 1024 * 1024,
   /** Textures larger than this are downscaled on upload. */
   maxTextureSize: 4096,
+  /** Separate files one model may pull in (glTF buffers and images, OBJ material library and textures). */
+  maxResources: 256,
+  /** The model plus every file it pulls in, in bytes. */
+  maxTotalBytes: 512 * 1024 * 1024,
 } as const
 
 /** The model is over a safety limit; the message is user-facing. */
@@ -34,18 +39,10 @@ export interface GltfInfo {
   imageUris: string[]
 }
 
-export interface ObjMtlRef {
-  /** Byte range of every `mtllib` line (without the line break). Babylon only loads the last one. */
-  lines: { start: number; end: number }[]
-  /** The material library the loader would request (last `mtllib` line, trimmed). */
-  name: string
-}
-
 export interface ModelScan {
   triangles: number
   vertices: number
   gltf?: GltfInfo
-  objMtl?: ObjMtlRef
 }
 
 const GLB_MAGIC = 0x46546c67 // "glTF"
@@ -207,13 +204,11 @@ const scanObj = (data: ArrayBuffer): ModelScan => {
   const n = bytes.length
   let triangles = 0
   let vertices = 0
-  const mtl: { start: number; end: number }[] = []
 
   let i = 0
   while (i < n) {
     // At a line start: skip indentation.
     while (i < n && (bytes[i] === SPACE || bytes[i] === TAB)) i++
-    const start = i
     const c0 = bytes[i]
     const c1 = i + 1 < n ? bytes[i + 1] : LF
     if (c0 === 0x76 /* v */ && (c1 === SPACE || c1 === TAB)) {
@@ -230,81 +225,102 @@ const scanObj = (data: ArrayBuffer): ModelScan => {
       triangles += Math.max(0, corners - 2)
       i++
       continue
-    } else if (
-      c0 === 0x6d /* m */
-      && bytes[i + 1] === 0x74
-      && bytes[i + 2] === 0x6c
-      && bytes[i + 3] === 0x6c
-      && bytes[i + 4] === 0x69
-      && bytes[i + 5] === 0x62
-      && bytes[i + 6] === SPACE
-    ) {
-      let end = i
-      while (end < n && bytes[end] !== LF) end++
-      mtl.push({ start, end: end > start && bytes[end - 1] === CR ? end - 1 : end })
-      i = end + 1
-      continue
     }
     while (i < n && bytes[i] !== LF) i++
     i++
   }
 
-  const scan: ModelScan = { triangles, vertices }
-  if (mtl.length) {
-    const last = mtl[mtl.length - 1]
-    const name = new TextDecoder().decode(bytes.subarray(last.start + 7, last.end)).trim()
-    if (name) scan.objMtl = { lines: mtl, name }
-  }
-  return enforce(scan)
+  return enforce({ triangles, vertices })
 }
 
+// ------------------------------------------------------------------------------------------- OBJ/MTL references
+//
+// Babylon's OBJ loader requests the file named by the last `mtllib` line and every texture the material library
+// names, relative to the page. A model must not be able to make the browser fetch anything, so before Babylon sees an
+// OBJ or MTL, every statement that could ever make it load a file is removed or replaced by an object URL the viewer
+// created. The matching mirrors Babylon 9's own tokenisation (@babylonjs/loaders OBJ/objFileLoader, solidParser,
+// mtlFileLoader) and errs on the side of removing more; the engine-wide URL gate (urlGate.ts) is the backstop.
+
 /**
- * Rewrites the OBJ's `mtllib` lines: the last one points at `replacement` (an object URL of the rewritten material
- * library), the others become comments. With `replacement === null` every `mtllib` line becomes a comment, so the
- * loader never requests a sibling file on its own (it would resolve against the page URL). Returns a new buffer.
+ * Decodes OBJ/MTL bytes exactly as Babylon's OBJ loader does with `encoding: "auto"`: a UTF-16 byte-order mark wins,
+ * then strict UTF-8, then GB18030. The rewrites below must see the same text the loader will.
  */
-export const rewriteObjMtl = (
-  data: ArrayBuffer,
-  ref: ObjMtlRef,
-  replacement: string | null,
-): Uint8Array<ArrayBuffer> => {
-  const source = new Uint8Array(data)
-  const last = ref.lines[ref.lines.length - 1]
-  const line = replacement === null ? null : new TextEncoder().encode(`mtllib ${replacement}`)
-  const delta = line ? line.length - (last.end - last.start) : 0
-  const out = new Uint8Array(source.length + delta)
-  out.set(source.subarray(0, last.start), 0)
-  if (line) out.set(line, last.start)
-  else out.set(source.subarray(last.start, last.end), last.start)
-  out.set(source.subarray(last.end), last.end + delta)
-  for (const { start } of replacement === null ? ref.lines : ref.lines.slice(0, -1)) out[start] = 0x23 // '#'
-  return out
+export const decodeModelText = (bytes: Uint8Array): string => {
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) return new TextDecoder('utf-16le').decode(bytes)
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) return new TextDecoder('utf-16be').decode(bytes)
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  } catch {
+    return new TextDecoder('gb18030').decode(bytes)
+  }
 }
 
-/** Texture statements Babylon's MTL loader reads; the file name is the last token (options come first). */
-const MTL_TEXTURE_KEYS = new Set(['map_ka', 'map_kd', 'map_ks', 'map_bump', 'bump', 'map_d'])
+// Babylon strips `#…` comments (to the next line terminator), splits on "\n", trims each line (all JS whitespace and
+// line terminators) and collapses whitespace pairs, then treats a line matching /^mtllib / as the material library.
+// This matches every stretch that could end up at the start of such a line: after any line terminator (\n, \r,
+// U+2028, U+2029, which `^` in multiline mode also honours), any horizontal whitespace, `mtllib` in any case, and
+// the rest up to the next terminator. Leading whitespace excludes terminators so the scan stays linear.
+const OBJ_MTLLIB = /^[^\S\n\r\u2028\u2029]*mtllib[^\n\r\u2028\u2029]*/gim
+
+/** Babylon's view of one `mtllib` line: the file name it would request, or null if it would ignore the line. */
+const babylonMtllibName = (line: string): string | null => {
+  let view = line.replace(/#.*$/, '')
+  for (let pass = 0; pass < 2; pass++) view = view.trim().replace(/\s\s/g, ' ')
+  if (!/^mtllib /.test(view)) return null
+  return view.substring(7).trim() || null
+}
+
+export interface ObjSanitized {
+  /** The OBJ text with every material-library statement removed; null when there was none (load the bytes as is). */
+  text: string | null
+  /** The material library Babylon would have requested (the last valid `mtllib`), as written. */
+  mtllib: string | null
+}
+
+/** Removes every `mtllib` statement from OBJ text (see OBJ_MTLLIB) and reports the one Babylon would have loaded. */
+export const sanitizeObjText = (text: string): ObjSanitized => {
+  let mtllib: string | null = null
+  let found = false
+  const out = text.replace(OBJ_MTLLIB, line => {
+    found = true
+    mtllib = babylonMtllibName(line) ?? mtllib
+    return ''
+  })
+  return { text: found ? out : null, mtllib }
+}
 
 /**
- * Rewrites a material library so every texture it names is an object URL produced by `resolve` (or dropped when it
- * can't be resolved). Returns the new MTL text.
+ * The OBJ text Babylon should load: sanitized text with one trailing `mtllib` line pointing at `url`. Babylon loads
+ * the material library after parsing and uses the last statement, so its position doesn't matter.
+ */
+export const withObjMtllib = (text: string, url: string) => `${text}\nmtllib ${url}\n`
+
+/** Texture statements Babylon's MTL loader reads (map_Ns is parsed but ignored). The file name is the last token. */
+const MTL_TEXTURE_KEYS = new Set(['map_ka', 'map_kd', 'map_ks', 'map_bump', 'map_d'])
+
+/**
+ * Rewrites a material library so every texture statement Babylon would load points at an object URL produced by
+ * `resolve`, or is dropped when it can't be resolved. Lines are classified exactly as Babylon does (split on "\n",
+ * trim, key = up to the first space, lowercased); every other line is kept as is, so Babylon's reading of the result
+ * has no texture statement the viewer didn't write.
  */
 export const rewriteMtlTextures = async (mtl: string, resolve: (name: string) => Promise<string | null>) => {
-  const lines = mtl.split(/\r?\n/)
   const out: string[] = []
-  for (const raw of lines) {
+  for (const raw of mtl.split('\n')) {
     const line = raw.trim()
-    const tokens = line.split(/\s+/)
-    const key = tokens[0]?.toLowerCase()
-    if (!key || !MTL_TEXTURE_KEYS.has(key) || tokens.length < 2) {
+    const space = line.indexOf(' ')
+    const key = (space >= 0 ? line.substring(0, space) : line).toLowerCase()
+    if (!line || line.charAt(0) === '#' || !MTL_TEXTURE_KEYS.has(key)) {
       out.push(raw)
       continue
     }
-    const name = tokens[tokens.length - 1]
-    const url = await resolve(name)
+    if (space < 0) continue // no file name: Babylon would load nothing, keep nothing
+    const tokens = line.substring(space + 1).trim().split(/\s+/)
+    const url = await resolve(tokens[tokens.length - 1])
     if (!url) continue
     // Keep a bump multiplier (-bm x): Babylon reads it from the same line.
     const bm = tokens.indexOf('-bm')
-    out.push(bm > 0 && bm + 1 < tokens.length - 1 ? `${tokens[0]} -bm ${tokens[bm + 1]} ${url}` : `${tokens[0]} ${url}`)
+    out.push(bm >= 0 && bm + 1 < tokens.length - 1 ? `${key} -bm ${tokens[bm + 1]} ${url}` : `${key} ${url}`)
   }
   return out.join('\n')
 }

@@ -9,6 +9,8 @@ import { parentOf } from '@/features/files/entries'
 import { Notice, Stage } from '@/features/files/preview/Frame'
 import { describeStatus, errorText, isAbort, pollDerived, PreviewHttpError, readBytes } from '@/features/files/preview/http'
 import type { RendererProps } from '@/features/files/preview/types'
+// Type-only (erased): the viewer module itself is only ever loaded through the dynamic import below.
+import type { ResolveInit } from '@/features/files/preview/ModelViewer'
 
 // The 3D engine lives only in ModelViewer (and preview/model/**). This loader is the only way in, and it runs only
 // after the model bytes are in hand, so no other preview ever downloads the engine.
@@ -106,13 +108,21 @@ export default function ModelRenderer({ source, entry, plan, onDownload }: Rende
   }, [source, entry.path, entry.size, format, derivedKind, plan.renderer])
 
   // Side files (glTF buffers/textures, OBJ materials) come from the same folder through the same authorized route.
+  // The viewer aborts `signal` when it closes (or the load fails) and caps the bytes left for the model as a whole.
   const resolveResource = useCallback(
-    async (uri: string): Promise<ArrayBuffer> => {
-      if (uri.startsWith('data:')) return (await fetch(uri)).arrayBuffer()
+    async (uri: string, { signal, maxBytes, onProgress }: ResolveInit): Promise<ArrayBuffer> => {
       const path = resolveSibling(parentOf(entry.path), uri)
-      const response = await fetch(source.contentUrl(path, 'inline'), { credentials: 'same-origin' })
-      if (!response.ok) throw new Error(`${uri}: ${describeStatus(response.status, 'this resource')}`)
-      return readBytes(response, MAX_MODEL_BYTES)
+      const response = await fetch(source.contentUrl(path, 'inline'), { credentials: 'same-origin', signal })
+      if (!response.ok) {
+        void response.body?.cancel().catch(() => undefined)
+        throw new Error(`${uri}: ${describeStatus(response.status, 'this resource')}`)
+      }
+      try {
+        return await readBytes(response, Math.min(maxBytes, MAX_MODEL_BYTES), loaded => onProgress(loaded))
+      } catch (error) {
+        if (error instanceof PreviewHttpError && error.code === 'too_large') throw new RangeError(`${uri} is over the model’s size budget`)
+        throw error
+      }
     },
     [source, entry.path],
   )

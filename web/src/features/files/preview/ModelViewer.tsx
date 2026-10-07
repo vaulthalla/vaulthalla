@@ -18,7 +18,7 @@ import {
 } from '@/components/ui/icons'
 import { formatCompact, formatInt } from '@/lib/format'
 import { cn } from '@/util/cn'
-import { createViewer, ModelWebGLError, type Viewer } from './model/viewer'
+import { createViewer, ModelWebGLError, type ResolveInit, type Viewer } from './model/viewer'
 import { ModelLimitError, ModelUnsupportedError } from './model/scan'
 
 export interface ModelStats {
@@ -37,12 +37,17 @@ export interface ModelViewerProps {
    * Fetches a file the model references: glTF external buffers/textures, OBJ material libraries and their textures.
    * Receives the reference as written in the model, percent-decoded, backslashes turned into slashes and a leading
    * `./` removed (so it is relative to the model's folder). Absolute and scheme-qualified references (`https:`,
-   * `/x`, `//host`) are never passed and never fetched; `data:` URIs are decoded by the loader itself.
+   * `/x`, `//host`, `blob:`) are never passed and never fetched; `data:` URIs are decoded by the loader itself.
+   * `init.signal` is aborted when the viewer closes; a body over `init.maxBytes` (what is left of the model's total
+   * budget) must be refused with a RangeError, and `init.onProgress` should see the bytes as they arrive. The engine
+   * itself never fetches anything else (see model/urlGate.ts).
    */
-  resolveResource?: (uri: string) => Promise<ArrayBuffer>
+  resolveResource?: (uri: string, init: ResolveInit) => Promise<ArrayBuffer>
   onStats?: (stats: ModelStats) => void
   onError?: (error: Error) => void
 }
+
+export type { ResolveInit }
 
 /** Stable marker in the viewer's chunk: bin/check-budgets.mjs finds the lazy model-viewer chunks by it. */
 export const MODEL_VIEWER_MARKER = 'vh-model-viewer'
@@ -90,7 +95,8 @@ export default function ModelViewer({ data, format, fileName, resolveResource, o
     let viewer: Viewer
     try {
       viewer = createViewer(canvas, {
-        resolveResource: callbacks.current.resolveResource ? uri => callbacks.current.resolveResource!(uri) : undefined,
+        resolveResource:
+          callbacks.current.resolveResource ? (uri, init) => callbacks.current.resolveResource!(uri, init) : undefined,
       })
     } catch (error) {
       fail(error, false)

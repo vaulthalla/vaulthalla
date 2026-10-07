@@ -71,7 +71,11 @@
   `GET /preview/derived?kind=transcode-*` with `Range: bytes=0-0` (202 + Retry-After backoff, 503
   `converter_unavailable`, 422 `reason`); 3D `GET /download/content` (≤ 512 MiB, streamed progress) or
   `/preview/derived?kind=model-glb` for STEP, glTF/OBJ side files resolved to sibling paths (never above the vault
-  or share root); text `GET /download/content` with `cache: 'no-store'` (≤ 2 MiB, no NUL, strict UTF-8) and the
+  or share root; ≤ 256 files and 512 MiB with the model, aborted when the viewer closes). Babylon itself never
+  fetches: OBJ `mtllib`/MTL texture statements are rewritten to object URLs or removed (`model/scan.ts`, matching
+  Babylon's own tokenisation and text decoding), and `model/urlGate.ts` gates every Babylon URL hook
+  (`Tools.PreprocessUrl`, `ScriptPreprocessUrl`, `WebRequest.CustomRequestModifiers`) to `data:` plus URLs the
+  viewer registered; text `GET /download/content` with `cache: 'no-store'` (≤ 2 MiB, no NUL, strict UTF-8) and the
   `ETag`, saved with `PUT /upload/text` + `If-Match` (412 → conflict dialog: reload / overwrite against the current
   ETag / copy; 403 → read-only).
 - **Keys and unsaved work.** The sheet's ←/→ file navigation ignores keys owned by inputs, editors, media and

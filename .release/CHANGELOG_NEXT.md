@@ -78,3 +78,9 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
   and asset URLs redirected to a same-origin dead path.
 - Web: bin/check-budgets.mjs fails when Babylon code reaches any route's first load and budgets the model viewer's
   lazy chunks (perf-budgets.json lazy.modelViewer 325 KB on open, lazy.modelViewerReachable 1840 KB).
+- Web: the 3D viewer can no longer be made to fetch a URL chosen by the model: OBJ `mtllib` and MTL texture
+  statements are matched the way Babylon tokenises and decodes them (any case/whitespace, CR/U+2028 line starts,
+  UTF-16/GB18030) and rewritten to viewer-created object URLs or removed (materials skipped when none resolve), and an
+  engine-wide URL gate (Tools.PreprocessUrl, ScriptPreprocessUrl, WebRequest modifiers) only lets Babylon load data:
+  URLs and URLs the viewer registered; glTF blob:/absolute URIs are refused. Side-file requests are aborted and object
+  URLs revoked when the viewer closes, and a model may pull in at most 256 side files and 512 MiB including itself.
