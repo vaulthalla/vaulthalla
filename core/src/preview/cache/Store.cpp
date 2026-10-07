@@ -441,11 +441,17 @@ uint64_t Store::evict(const uint64_t maxBytes, const std::optional<std::chrono::
     while (total > maxBytes) {
         const auto batch = db::query::fs::Cache::listDerivedArtifactsLru(200);
         if (batch.empty()) break;
+        auto remaining = total;
         for (const auto& record : batch) {
-            if (total <= maxBytes) break;
+            if (remaining <= maxBytes) break;
             drop(record);
-            total = total > record->size ? total - record->size : 0;
+            remaining = remaining > record->size ? remaining - record->size : 0;
         }
+        // Re-read the real total: rows that could not be deleted (a concurrent regeneration) must not make this loop
+        // spin over the same batch.
+        const auto after = db::query::fs::Cache::derivedArtifactsTotalSize();
+        if (after >= total) break;
+        total = after;
     }
     if (const auto& stats = runtime::Deps::get().httpCacheStats) {
         stats->set_used(total);
