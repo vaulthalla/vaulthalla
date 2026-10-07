@@ -8,6 +8,12 @@ importers:
 
   .:
     dependencies:
+      '@babylonjs/core':
+        specifier: 9.29.0
+        version: 9.29.0
+      '@babylonjs/loaders':
+        specifier: 9.29.0
+        version: 9.29.0(@babylonjs/core@9.29.0)(babylonjs-gltf2interface@9.29.0)
       '@hookform/resolvers':
         specifier: ^5.2.2
         version: 5.2.2(react-hook-form@7.73.1(react@19.2.5))
@@ -41,6 +47,12 @@ importers:
       cmdk:
         specifier: ^1.1.1
         version: 1.1.1(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
+      draco3dgltf:
+        specifier: 1.5.7
+        version: 1.5.7
+      meshoptimizer:
+        specifier: 1.3.0
+        version: 1.3.0
       next:
         specifier: ^16.2.4
         version: 16.2.4(@babel/core@7.29.0)(@playwright/test@1.60.0)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
@@ -662,6 +674,15 @@ packages:
   '@babel/types@7.29.0':
     resolution: {integrity: sha512-LwdZHpScM4Qz8Xw2iKSzS+cfglZzJGvofQICy7W7v4caru4EaAmyUuO6BGrbyQ2mYV11W0U8j5mBhd14dd3B0A==}
     engines: {node: '>=6.9.0'}
+
+  '@babylonjs/core@9.29.0':
+    resolution: {integrity: sha512-qWrtTRsZF0DO6IouYTEZrcQtUEJzlKbc3i/7Ek2T1INFJ+zp9fxO+CIRJ9HRInOG6HYjQl1i6RhxXVyUbx8yxQ==}
+
+  '@babylonjs/loaders@9.29.0':
+    resolution: {integrity: sha512-jShGlI0W6vJN6Nqe5ZiwdAzOGloaKbfz0Yj6CLprFJJmb8jTElQrMfIXTLMiGFxLqIu+MOjZ3IZpkHKfTCL90Q==}
+    peerDependencies:
+      '@babylonjs/core': ^9.0.0
+      babylonjs-gltf2interface: ^9.0.0
 
   '@emnapi/core@1.10.0':
     resolution: {integrity: sha512-yq6OkJ4p82CAfPl0u9mQebQHKPJkY7WrIuk205cTYnYe+k2Z8YBh11FrbRG/H6ihirqcacOgl2BIO8oyMQLeXw==}
@@ -1799,6 +1820,9 @@ packages:
     peerDependencies:
       '@babel/core': ^7.4.0 || ^8.0.0-0 <8.0.0
 
+  babylonjs-gltf2interface@9.29.0:
+    resolution: {integrity: sha512-DwC84cWAP8hJ/BdyOjczey2xz3ahIDcYWpf4lvoPop2oV089GdX0+F+qEG/Pe3xKe9w5lLaPmtakPj8leivyag==}
+
   balanced-match@1.0.2:
     resolution: {integrity: sha512-3oSeUO0TMV67hN1AmbXsK4yaqU7tjiHlbxRDZOpH0KW9+CeX4bRAaX0Anxt0tx2MrpRpWwQaPwIlISEJhYU5Pw==}
 
@@ -2001,6 +2025,9 @@ packages:
 
   dot-case@3.0.4:
     resolution: {integrity: sha512-Kv5nKlh6yRrdrGvxeJ2e5y2eRUpkUosIW4A2AS38zwSz27zu7ufDwQPi5Jhs3XAlGNetl3bmnGhQsMtkKJnj3w==}
+
+  draco3dgltf@1.5.7:
+    resolution: {integrity: sha512-LeqcpmoHIyYUi0z70/H3tMkGj8QhqVxq6FJGPjlzR24BNkQ6jyMheMvFKJBI0dzGZrEOUyQEmZ8axM1xRrbRiw==}
 
   dunder-proto@1.0.1:
     resolution: {integrity: sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A==}
@@ -2637,6 +2664,9 @@ packages:
   merge2@1.4.1:
     resolution: {integrity: sha512-8q7VEgMJW4J8tcfVPy8g09NcQwZdbwFEqhe/WZkoIzjn/3TGDwtOCYtXGxA3O8tPzpczCCDgv+P2P5y00ZJOOg==}
     engines: {node: '>= 8'}
+
+  meshoptimizer@1.3.0:
+    resolution: {integrity: sha512-2oZqMAcEEiCtXWUjIGtZ71oPx1B0ZxYGTqIKsXB1wzWFhleNsCFxQuUJzgCV706bRcwPWtMGf1odmQvAcqKkIw==}
 
   micromatch@4.0.8:
     resolution: {integrity: sha512-PXwfBhYu0hBCPw8Dn0E+WDYb7af3dSLVWKi3HGv84IdF4TyFoC0ysxFd0Goxw7nSv4T/PzEJQxsYsEiFCKo2BA==}
@@ -4046,6 +4076,13 @@ snapshots:
       '@babel/helper-string-parser': 7.27.1
       '@babel/helper-validator-identifier': 7.28.5
 
+  '@babylonjs/core@9.29.0': {}
+
+  '@babylonjs/loaders@9.29.0(@babylonjs/core@9.29.0)(babylonjs-gltf2interface@9.29.0)':
+    dependencies:
+      '@babylonjs/core': 9.29.0
+      babylonjs-gltf2interface: 9.29.0
+
   '@emnapi/core@1.10.0':
     dependencies:
       '@emnapi/wasi-threads': 1.2.1
@@ -5119,6 +5156,8 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  babylonjs-gltf2interface@9.29.0: {}
+
   balanced-match@1.0.2: {}
 
   balanced-match@4.0.4: {}
@@ -5327,6 +5366,8 @@ snapshots:
     dependencies:
       no-case: 3.0.4
       tslib: 2.8.1
+
+  draco3dgltf@1.5.7: {}
 
   dunder-proto@1.0.1:
     dependencies:
@@ -6076,6 +6117,8 @@ snapshots:
   mdn-data@2.0.30: {}
 
   merge2@1.4.1: {}
+
+  meshoptimizer@1.3.0: {}
 
   micromatch@4.0.8:
     dependencies:
