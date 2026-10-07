@@ -494,7 +494,7 @@ TEST_F(PreviewConfigTest, MissingSectionKeepsEveryDefault) {
     EXPECT_EQ(p.derive.max_output_mb, 512u);
     EXPECT_EQ(p.derive.failure_ttl_hours, 24u);
     EXPECT_EQ(p.text.max_edit_bytes, 2u * 1024u * 1024u);
-    EXPECT_EQ(p.max_render_pixels, 100'000'000u);
+    EXPECT_EQ(p.max_render_pixels, 64'000'000u);
 }
 
 TEST_F(PreviewConfigTest, PartialSectionOverridesOnlyTheGivenKeys) {
