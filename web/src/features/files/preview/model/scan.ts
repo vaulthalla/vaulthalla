@@ -200,7 +200,11 @@ const scanStl = (data: ArrayBuffer): ModelScan => {
 
 const scanObj = (data: ArrayBuffer): ModelScan => {
   if (data.byteLength > MODEL_LIMITS.maxTextBytes) throw tooLargeText(data.byteLength)
-  const bytes = new Uint8Array(data)
+  const raw = new Uint8Array(data)
+  // UTF-16 OBJs (Babylon honours a byte-order mark) would hide every 'v'/'f' from a byte scan: count the text the
+  // loader will actually parse.
+  const utf16 = (raw[0] === 0xff && raw[1] === 0xfe) || (raw[0] === 0xfe && raw[1] === 0xff)
+  const bytes = utf16 ? new TextEncoder().encode(decodeModelText(raw)) : raw
   const n = bytes.length
   let triangles = 0
   let vertices = 0
