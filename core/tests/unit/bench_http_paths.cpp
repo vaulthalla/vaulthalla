@@ -134,6 +134,12 @@ request get(const std::string& target, const verb method = verb::get) {
 class DISABLED_HttpBench : public ::testing::Test {
 protected:
     inline static bool skip = false;
+    inline static std::filesystem::path root;
+
+    static void TearDownTestSuite() {
+        std::error_code ec;
+        if (!root.empty()) std::filesystem::remove_all(root, ec);  // test vault backing (encrypted files up to 300 MiB)
+    }
     inline static std::shared_ptr<identities::User> admin;
     inline static std::shared_ptr<storage::Engine> engine;
 
@@ -143,7 +149,7 @@ protected:
             return;
         }
         paths::enableTestMode();
-        const auto root = std::filesystem::temp_directory_path() / ("vh_bench_" + std::to_string(::getpid()));
+        root = std::filesystem::temp_directory_path() / ("vh_bench_" + std::to_string(::getpid()));
         paths::backingPath = root / "backing";
         paths::mountPath = root / "mount";
         std::filesystem::create_directories(paths::backingPath);

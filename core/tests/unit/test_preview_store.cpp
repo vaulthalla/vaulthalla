@@ -51,6 +51,12 @@ bool contains(const std::vector<uint8_t>& haystack, const std::string& needle) {
 class PreviewStoreDbTest : public ::testing::Test {
 protected:
     inline static bool skipTests = false;
+    inline static std::filesystem::path root;
+
+    static void TearDownTestSuite() {
+        std::error_code ec;
+        if (!root.empty()) std::filesystem::remove_all(root, ec);  // test vault backing (encrypted files up to 300 MiB)
+    }
     inline static std::shared_ptr<identities::User> admin;
 
     std::shared_ptr<storage::Engine> engine;
@@ -63,7 +69,7 @@ protected:
             return;
         }
         paths::enableTestMode();
-        const auto root = std::filesystem::temp_directory_path() / ("vh_preview_store_" + tag());
+        root = std::filesystem::temp_directory_path() / ("vh_preview_store_" + tag());
         paths::backingPath = root / "backing";
         paths::mountPath = root / "mount";
         std::filesystem::create_directories(paths::backingPath);

@@ -144,6 +144,12 @@ std::size_t plaintextTempFiles() {
 class HttpAccessDbTest : public ::testing::Test {
 protected:
     inline static bool skipTests = false;
+    inline static std::filesystem::path root;
+
+    static void TearDownTestSuite() {
+        std::error_code ec;
+        if (!root.empty()) std::filesystem::remove_all(root, ec);  // test vault backing (encrypted files up to 300 MiB)
+    }
     inline static UserPtr admin, reader, plain;
     inline static std::shared_ptr<storage::Engine> vaultA, vaultB;
     inline static std::vector<uint8_t> big;
@@ -155,7 +161,7 @@ protected:
             return;
         }
         paths::enableTestMode();
-        const auto root = std::filesystem::temp_directory_path() / ("vh_http_access_" + tag());
+        root = std::filesystem::temp_directory_path() / ("vh_http_access_" + tag());
         paths::backingPath = root / "backing";
         paths::mountPath = root / "mount";
         std::filesystem::create_directories(paths::backingPath);
