@@ -41,7 +41,8 @@ This is the contributor-facing map of the repo. It is not a full internal design
 | Web/admin client | Next.js app for admin and filesystem flows, backed by websocket requests and a refresh-cookie login gate | `web/src/app/*`, `web/src/components/*`, `web/src/lib/*`, `web/middleware.ts` | Open for small polish, coordinate for flow changes | `cd web && pnpm test`, manual local UI checks when possible |
 | Database and query layer | Owns schema files, prepared statements, and DB access for auth, FS metadata, RBAC, sync, and vault state | `deploy/psql/*`, `core/src/db/*`, `core/include/db/*` | Maintainer-guided | PostgreSQL-backed validation, integration tests, schema review |
 | Storage providers | Manages storage engine abstractions and S3-compatible provider behavior | `core/src/storage/*`, `core/include/storage/*`, `core/src/vault/model/*`, `core/include/vault/*` | Coordinate before implementing | Linux/runtime validation, storage-provider-specific checks, honest test notes if remote credentials were not available |
-| Preview and thumbnail pipeline | Generates previews and thumbnails for supported content types and feeds the filesystem UI | `core/src/preview/*`, `core/include/preview/*`, `web/src/components/fs/FilePreviewModal.tsx`, `web/src/components/fs/Thumb.tsx` | Coordinate before implementing | Targeted file-format testing, UI preview checks, core build |
+| HTTP byte lanes (previews, downloads, media, text saves) | Authenticates and authorizes every `/preview`, `/download` and `/upload/text` request, then streams plaintext from encrypted files with Range support | `core/src/protocols/http/*` (`Access.cpp`, `handler/*`, `Session.cpp`, `Server.cpp`), `core/src/storage/{PlaintextReader,GcmFileReader}.cpp`, `core/src/crypto/IntegrityRegistry.cpp` | Security-sensitive | Focused unit tests (`test_http_access`, `test_http_session`, `test_gcm_range_reader`), core build, threat-aware review |
+| Preview, thumbnail and derived-artifact pipeline | Classifies files into preview plans, renders thumbnails and PDF pages in memory, caches every derived artifact encrypted, and runs converters out of process | `core/src/preview/*` (`Plan.cpp`, `render/*`, `cache/Store.cpp`, `derive/*`), `core/tools/*`, `web/src/features/files/PreviewSheet.tsx`, `web/src/features/files/preview/*` | Coordinate before implementing | Targeted file-format testing, `test_preview_store`, `test_derive_runner`, helper tests, `web/tests/e2e/preview.spec.ts` |
 | Sync engine | Plans and executes upload, download, delete, conflict, and key-rotation work | `core/src/sync/*`, `core/include/sync/*` | Maintainer-guided | Integration-style validation, repro steps, manual data-safety checks |
 | RBAC and permission model | Defines admin and vault permissions, glob/path policy logic, role templates, and permission resolution | `core/src/rbac/*`, `core/include/rbac/*`, `deploy/psql/060_acl.sql` | Security-sensitive | Maintainer approval first, focused tests, threat-aware review |
 | Auth, session, and secret handling | Manages token issuance, refresh/session validation, secret storage, and auth-related protocol behavior | `core/src/auth/*`, `core/include/auth/*`, `core/src/crypto/*`, `core/include/crypto/*`, `web/src/stores/useWebSocket.ts` | Security-sensitive | Maintainer approval first, focused tests, no hand-wavy validation |
@@ -69,9 +70,21 @@ The web client is a real contributor surface, but it is still wired into auth an
 
 One practical caveat: the CI web build syncs private icon assets from `~/vaulthalla-web-icons` in `.github/actions/build_web/action.yml`. If you are touching web UI and hit build failures related to missing private icons, coordinate with the maintainer rather than stubbing fake assets into the repo.
 
+### Previews, downloads and the byte-serving spine
+
+Every byte the HTTP lanes hand out (downloads, media playback, 3D models, text, thumbnails, converter input) goes through one funnel, `storage::Engine::openPlaintextReader`, which returns a `storage::PlaintextReader` over one exact file version:
+
+- `GcmFileReader` serves positioned reads from the AES-256-GCM ciphertext by `pread`ing only the requested region and decrypting it with the GCM counter keystream. No plaintext is written anywhere.
+- `crypto::IntegrityRegistry` authenticates each file version's GCM tag once and shares the verdict with every reader of that version. `preview.media.integrity: optimistic` serves immediately and aborts every live reader if verification fails; `strict` verifies before the first byte. A failed version stays refused until the file changes.
+- `protocols/http/Access.cpp` is the only place a route's need (Preview, Download, Overwrite) is mapped onto RBAC: vault filesystem permissions for signed-in users, `share::TargetResolver` for share links. Handlers in `protocols/http/handler/` only see resolved targets and serve them with conditional GET, single Range, HEAD and chunked streaming. Each connection runs on its own thread, capped by `http_preview_server.max_connections`, with real read/write deadlines.
+- `preview::cache::Store` holds every derived artifact (thumbnails, page renders, posters, GLB from STEP, transcodes) as a `VHDERIV1` file sealed with the vault key, with the artifact's identity bound into the GCM associated data and keyed to the source file's version, indexed in `cache_index` (migration 103). It is disposable: evicted by size and age and regenerated on demand.
+- `preview::derive::Runner` spawns the optional converter helpers (`core/tools/preview-cad`, `core/tools/preview-media`) as separate sandboxed processes that pull plaintext over a socketpair. Their libraries (Open CASCADE, FFmpeg, libseccomp) are never linked into the daemon.
+
+Read [Security-Sensitive Work](/contributors/security-sensitive-work#preview-and-download-invariants) before changing any of this.
+
 ### Database and schema
 
-`deploy/psql/000_schema.sql` through `deploy/psql/060_acl.sql` define the installed schema surface. Schema work is sharp because it crosses packaging, bootstrap, runtime queries, retention, and upgrade safety.
+`deploy/psql/000_schema.sql` through the highest-numbered `deploy/psql/NNN_*.sql` define the installed schema surface; new migrations take the next number. Schema work is sharp because it crosses packaging, bootstrap, runtime queries, retention, and upgrade safety.
 
 ### Packaging and lifecycle
 

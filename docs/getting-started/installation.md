@@ -95,6 +95,29 @@ The repository helper also accepts install-time controls:
 ./bin/vh/install.sh --skip-admin-assign
 ```
 
+## Optional Preview Packages
+
+Two converter packages add previews that need heavy third-party libraries. `vaulthalla` only **Suggests** them, so a normal or lean install never pulls them in, and the core package installs and runs without Open CASCADE or FFmpeg's libraries:
+
+| Package | Adds | Built on |
+| --- | --- | --- |
+| `vaulthalla-preview-cad` | STEP and STP models in the web console's 3D viewer (converted to glTF on the server) | Open CASCADE |
+| `vaulthalla-preview-media` | Probing video and audio, poster frames, and **Convert for playback** for media the browser can't decode (H.264/AAC transcodes, including hardware encoders) | FFmpeg libraries |
+
+Install either or both at any time:
+
+```bash
+sudo apt install vaulthalla-preview-cad vaulthalla-preview-media
+```
+
+Each package installs one helper program under `/usr/lib/vaulthalla/helpers/` and must match the installed `vaulthalla` version exactly. No restart or configuration is needed. The daemon never loads these libraries itself: it runs the helper as a separate process for each conversion, hands it the file's bytes over a private channel (nothing decrypted is written to disk), and the helper sandboxes itself so it cannot open files for writing, reach the network or start programs. Memory, CPU-time, wall-clock and output limits come from `preview.derive.*` in [Configuration](/reference/configuration#rich-previews).
+
+Without the packages, STEP files are listed and downloadable but have no 3D preview, and browser-playable media still streams; the console explains that the converter isn't installed.
+
+:::callout[Hardware video encoding is unvalidated]{variant="warning"}
+`vaulthalla-preview-media` detects VAAPI, Intel Quick Sync and NVENC automatically (`preview.media.hwaccel: auto`) and falls back to software encoding (libx264) whenever a hardware encoder is missing or fails. The hardware paths have not yet been validated on real GPUs in this release; software encoding is the tested path.
+:::
+
 ## What The Package Creates
 
 The package installs these main runtime pieces:
@@ -167,6 +190,8 @@ sudo vh setup nginx --domain vaulthalla.dev --s3-domain s3.vaulthalla.dev --cert
 On a fresh install, the unmodified distro default site (`/etc/nginx/sites-enabled/default`) would shadow the Vaulthalla site on port 80, so setup disables that symlink and records it. `apt remove`, `apt purge`, and `vh teardown nginx` restore it. A modified default site is never touched. Setup then requests `http://127.0.0.1/` and reports whether the console actually answers. Upgrades never re-enable a site you removed.
 
 The web console reaches the daemon through Nginx. Fresh installs bind the websocket (36969) and preview (36970) servers to `127.0.0.1`.
+
+The managed site turns off Nginx proxy buffering on `/preview` and `/download`, so decrypted downloads and media streams pass straight through and are never spooled to Nginx's temporary files. Upgrades never rewrite an existing site; on upgraded hosts streaming still works without buffering because the daemon sends `X-Accel-Buffering: no` on every streamed response.
 
 The Certbot option validates prerequisites and uses rollback behavior if certificate setup fails. The Cloudflare DNS-01 option issues a certificate without requiring an inbound HTTP challenge endpoint and renders a dedicated HTTPS S3 host.
 

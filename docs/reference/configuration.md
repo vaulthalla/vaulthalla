@@ -36,7 +36,11 @@ http_preview_server:
   enabled: true
   host: 127.0.0.1
   port: 36970
+  max_connections: 512
+  max_preview_size_mb: 512
 ```
+
+`http_preview_server` serves previews, downloads, media playback and text saves behind Nginx's `/preview`, `/download` and `/upload` routes. `max_connections` caps concurrent connections (each runs on its own thread, so a long video stream never blocks other requests); over the cap, new connections get `503` with `Retry-After`. `max_preview_size_mb` is the largest source file the server will render into an image or PDF preview (the shipped file sets 512; without the key the built-in default is 100). See [Rich Previews](#rich-previews).
 
 The web service itself is managed by `vaulthalla-web.service` and normally listens on localhost for Nginx proxying.
 
@@ -168,16 +172,71 @@ stats_snapshots:
 
 Dashboard backup/recovery readiness indicators should be treated as policy/status signals, not proof that backup work has run.
 
-## Cache And Preview Settings
+## Rich Previews
 
-Cache and thumbnail settings affect web preview behavior and local cache size:
+Every key in this section is optional. Existing installs need no edits: a missing key keeps the default shown here, and upgrades never rewrite `/etc/vaulthalla/config.yaml`. The shipped default config lists the `preview` keys commented out. The daemon reads them at startup, so restart `vaulthalla.service` after changing one.
+
+### Derived Cache And Thumbnails
 
 ```yaml
 caching:
-  max_size_mb: 1024
+  max_size_mb: 10240
+  thumbnails:
+    sizes: [128, 256, 512]
+    expiry_days: 30
 ```
 
-If previews fail but downloads work, check preview service health, file type support, and cache capacity.
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `caching.max_size_mb` | `10240` | Total size of the derived-artifact cache across all vaults: thumbnails, rendered PDF pages and image previews, video posters, converted STEP models and media transcodes. Least-recently-used artifacts are evicted past this size and regenerated on demand. Derived artifacts are encrypted with the vault key and are not charged to vault quotas. |
+| `caching.thumbnails.sizes` | `[128, 256, 512]` | File-list thumbnail sizes in pixels. All sizes are rendered from one decode of the source; sizes outside 16 to 2048 are ignored. |
+| `caching.thumbnails.expiry_days` | `30` | Derived artifacts not used for this many days are deleted (and regenerated if needed again). |
+
+`caching.thumbnails.formats` is still accepted but no longer consulted: which files get thumbnails is decided per file type by the daemon (raster images and PDFs).
+
+### Preview Settings
+
+```yaml
+preview:
+  max_render_pixels: 100000000
+  media:
+    integrity: optimistic      # optimistic | strict
+    remote: hydrate            # hydrate | ranged | off
+    hwaccel: auto              # auto | software | vaapi | qsv | nvenc
+    transcode: on_demand       # off | on_demand
+  derive:
+    helper_dir: /usr/lib/vaulthalla/helpers
+    max_concurrency: 2
+    max_queue: 64
+    max_ram_mb: 2048
+    max_cpu_seconds: 300
+    wall_timeout_seconds: 600
+    max_output_mb: 512
+    failure_ttl_hours: 24
+  text:
+    max_edit_bytes: 2097152
+```
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `preview.max_render_pixels` | `100000000` | Largest image or PDF page (in pixels, checked from the file header before decoding) the server renders. Allowed range 1,000,000 to 1,000,000,000. |
+| `preview.media.integrity` | `optimistic` | How streamed bytes (downloads, media, models, text) are authenticated. `optimistic` starts serving at once and verifies the whole file's AES-GCM tag once per file version in the background; if verification fails, every stream of that version is cut off and later requests are refused until the file changes. `strict` verifies before the first byte is sent, which delays the start of large files. |
+| `preview.media.remote` | `hydrate` | How the HTTP lanes read a file in an S3/R2 vault whose bytes are not stored locally. `hydrate` fetches the whole object once (counted against the vault's request and price budgets), verifies it and keeps the encrypted local copy. `ranged` fetches only the requested ranges, pinned to the object version; those bytes are not authenticated per range. `off` never fetches: such files answer "content unavailable". File-list thumbnails never fetch remote content under any setting. |
+| `preview.media.hwaccel` | `auto` | Encoder for media transcodes. `auto` tries VAAPI, Quick Sync (`qsv`) and NVENC and falls back to software (libx264) on any failure; `software` never uses hardware; `vaapi`, `qsv` and `nvenc` prefer that encoder and still fall back to software. Hardware encoding has not been validated on real GPUs in this release. |
+| `preview.media.transcode` | `on_demand` | `on_demand` lets users convert media their browser can't play (needs `vaulthalla-preview-media`). `off` disables server-side transcoding. |
+| `preview.derive.helper_dir` | `/usr/lib/vaulthalla/helpers` | Where the optional converter helpers (`vaulthalla-preview-cad`, `vaulthalla-preview-media`) are installed. A missing helper makes that conversion report "converter unavailable". |
+| `preview.derive.max_concurrency` | `2` | Conversions running at once (1 to 64). |
+| `preview.derive.max_queue` | `64` | Conversions waiting to run (1 to 100000). Past this, new requests get "busy" until the queue drains. |
+| `preview.derive.max_ram_mb` | `2048` | Address-space limit per conversion process (256 MiB minimum). |
+| `preview.derive.max_cpu_seconds` | `300` | CPU-time limit per conversion process. |
+| `preview.derive.wall_timeout_seconds` | `600` | A conversion still running after this many seconds is killed. |
+| `preview.derive.max_output_mb` | `512` | Largest artifact a conversion may produce (for example a GLB or a transcode). |
+| `preview.derive.failure_ttl_hours` | `24` | A failed conversion is not retried for this long, or until the file changes (0 to 8760). |
+| `preview.text.max_edit_bytes` | `2097152` | Largest text file (and save body) the text editor may save, in bytes (1 KiB to 256 MiB). The web console opens text files up to 2 MiB regardless. |
+
+Numeric values outside their allowed range are clamped. An unknown value for one of the `preview.media` choices is a configuration error, and the daemon refuses to start until it is fixed.
+
+The converters run as separate, sandboxed processes from optional packages; see [Optional Preview Packages](/getting-started/installation#optional-preview-packages). If previews fail but downloads work, see [General Troubleshooting](/troubleshooting/general-troubleshooting#previews-and-media).
 
 ## Operator Email
 
