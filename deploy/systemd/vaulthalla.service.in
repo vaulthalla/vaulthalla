@@ -24,6 +24,11 @@ KillSignal=SIGTERM
 FinalKillSignal=SIGKILL
 SendSIGKILL=yes
 LimitNOFILE=65535
+# No core dumps: the daemon holds vault keys and transient plaintext (previews, media ranges) in memory.
+# Mount-namespace hardening (PrivateTmp, ProtectSystem, ProtectHome) would hide the FUSE mount from the host, and
+# NoNewPrivileges would break the setuid fusermount3 the mount relies on; hostile-file parsers instead run in the
+# separately sandboxed helper processes (preview::derive).
+LimitCORE=0
 SyslogIdentifier=vaulthalla
 WorkingDirectory=/var/lib/vaulthalla
 
