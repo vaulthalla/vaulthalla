@@ -52,7 +52,7 @@ constexpr std::array<std::string_view, 8> kTextMimes{
 constexpr std::array<std::string_view, 3> kStepExts{".step", ".stp", ".p21"};
 
 [[nodiscard]] PreviewPlan plan(const PreviewKind kind, std::string renderer, const Capability capability,
-                               const bool thumbnail = false, std::optional<std::string> derived = std::nullopt) {
+                               const bool thumbnail = false, std::vector<std::string> derived = {}) {
     return PreviewPlan{
         .kind = kind,
         .renderer = std::move(renderer),
@@ -82,15 +82,18 @@ PreviewPlan classify(const std::string_view name, const std::optional<std::strin
                           mime == "application/octet-stream"))
         return plan(PreviewKind::ClientModel, "model:obj", Capability::Download);
     if (oneOf(ext, kStepExts) || mime == "model/step" || mime == "application/step")
-        return plan(PreviewKind::DerivedArtifact, "derived:step-glb", Capability::Download, false, "model-glb");
+        return plan(PreviewKind::DerivedArtifact, "derived:step-glb", Capability::Download, false, {"model-glb"});
 
     if (mime == "image/svg+xml" || ext == ".svg") return plan(PreviewKind::NativeMedia, "svg", Capability::Download);
     if (oneOf(mime, kNativeImageMimes)) return plan(PreviewKind::NativeMedia, "image-native", Capability::Download);
     if (oneOf(mime, kRenderedImageMimes)) return plan(PreviewKind::RenderedImage, "image", Capability::Preview, true);
     if (mime == "application/pdf") return plan(PreviewKind::RenderedImage, "pdf", Capability::Preview, true);
 
-    if (mime.starts_with("video/")) return plan(PreviewKind::NativeMedia, "video", Capability::Download, false, "poster-jpg");
-    if (mime.starts_with("audio/")) return plan(PreviewKind::NativeMedia, "audio", Capability::Download);
+    if (mime.starts_with("video/"))
+        return plan(PreviewKind::NativeMedia, "video", Capability::Download, false,
+                    {"poster-jpg", "probe-json", "transcode-h264-720", "transcode-h264-1080", "transcode-h264-480"});
+    if (mime.starts_with("audio/"))
+        return plan(PreviewKind::NativeMedia, "audio", Capability::Download, false, {"probe-json", "transcode-h264-480"});
 
     if (oneOf(ext, kMarkdownExts) && (mime.empty() || mime.starts_with("text/") || mime == "application/octet-stream"))
         return plan(PreviewKind::TextDocument, "markdown", Capability::Download);
@@ -131,7 +134,7 @@ void to_json(nlohmann::json& j, const PreviewPlan& p) {
         {"requires", to_string(p.capability)},
         {"thumbnail", p.thumbnail}
     };
-    if (p.derived) j["derived"] = *p.derived;
+    if (!p.derived.empty()) j["derived"] = p.derived;
 }
 
 }

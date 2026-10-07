@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace vh::preview {
 
@@ -30,7 +31,7 @@ struct PreviewPlan {
     std::string renderer{"none"};
     Capability capability{Capability::Preview};
     bool thumbnail{false};
-    std::optional<std::string> derived;
+    std::vector<std::string> derived;  // derived artifact kinds this file can have (first = primary)
 };
 
 [[nodiscard]] PreviewPlan classify(const fs::model::File& file);
