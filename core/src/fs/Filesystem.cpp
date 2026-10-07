@@ -15,7 +15,9 @@
 #include "fs/ops/file.hpp"
 #include "crypto/util/hash.hpp"
 #include "crypto/util/encrypt.hpp"
-#include "preview/thumbnail/Worker.hpp"
+#include "preview/render/Service.hpp"
+#include <array>
+#include "storage/PlaintextReader.hpp"
 #include "fs/metadata/Magic.hpp"
 #include "runtime/Deps.hpp"
 #include "db/Transactions.hpp"
@@ -659,6 +661,11 @@ void Filesystem::remove(const std::filesystem::path& path, const unsigned int us
         if (cache->refreshDirStats(id)) break;
 }
 
+std::mutex& Filesystem::contentWriteMutex(const std::filesystem::path& fusePath) {
+    static std::array<std::mutex, 64> stripes;
+    return stripes[std::hash<std::string>{}(fusePath.string()) % stripes.size()];
+}
+
 std::shared_ptr<File> Filesystem::createFile(const NewFileContext& ctx) {
     if (!ctx.user) throw std::runtime_error("[Filesystem] File creation requires a user");
 
@@ -692,6 +699,16 @@ std::shared_ptr<File> Filesystem::createFile(const NewFileContext& ctx) {
         }
 
         const auto f = std::static_pointer_cast<File>(entry);
+
+        // Overwrites of one file are serialized, so a conditional write (expected_source_id) is a true
+        // compare-and-swap against concurrent web/API overwrites.
+        std::scoped_lock contentLock(contentWriteMutex(ctx.fuse_path));
+        if (ctx.expected_source_id) {
+            if (storage::generationOf(*f).sourceId() != *ctx.expected_source_id)
+                throw ContentConflict("The file changed since it was read");
+            if (f->inode && fuse::WorkingCopies::instance().openSize(*f->inode))
+                throw ContentConflict("The file is open through the mounted filesystem");
+        }
         std::filesystem::create_directories(entry->backing_path.parent_path());
 
         // The new bytes replace the old ones atomically (fsynced temp + rename + directory fsync), sealed into a
@@ -730,6 +747,10 @@ std::shared_ptr<File> Filesystem::createFile(const NewFileContext& ctx) {
         f->last_modified_by = userIdFor(ctx.user);
         f->updated_at = std::time(nullptr);
         db::query::fs::File::updateFile(f);
+
+        // The new IV is a new source generation: earlier thumbnails no longer match it and are regenerated.
+        if (f->size_bytes > 0 && f->mime_type && isPreviewable(*f->mime_type))
+            preview::render::enqueueThumbnails(engine, f, ctx.buffer);
 
         return f;
     }
@@ -782,7 +803,7 @@ std::shared_ptr<File> Filesystem::createFile(const NewFileContext& ctx) {
     cache->cacheEntry(f);
 
     if (f->size_bytes > 0 && f->mime_type && isPreviewable(*f->mime_type))
-        preview::thumbnail::Worker::enqueue(engine, ctx.buffer, f);
+        preview::render::enqueueThumbnails(engine, f, ctx.buffer);
 
     log::Registry::fs()->debug("Successfully created file at path: {}", ctx.path.string());
     return f;
@@ -1176,7 +1197,7 @@ int Filesystem::handleRename(const RenameContext& ctx) {
                 f->content_hash = hash::blake2b(entry->backing_path);
 
                 if (f->size_bytes > 0 && f->mime_type && isPreviewable(*f->mime_type))
-                    preview::thumbnail::Worker::enqueue(ctx.engine, buffer, f);
+                    preview::render::enqueueThumbnails(ctx.engine, f, buffer);
 
                 updateFile(ctx.txn, f);
             }

@@ -71,6 +71,8 @@ public:
     void cancel() noexcept;
 
     static void cancelAllActive() noexcept;
+    // Defaults: 20 s keep-alive idle, 60 s read/write inactivity.
+    static void setTimeoutsForTesting(std::chrono::milliseconds idle, std::chrono::milliseconds io);
     // True once every session object (and so every socket) is gone; false if the timeout passed first.
     [[nodiscard]] static bool waitUntilNoneAlive(std::chrono::milliseconds timeout);
 
@@ -78,7 +80,7 @@ private:
     bool read_one();
     bool handle_buffered_request(boost::beast::http::request_parser<boost::beast::http::buffer_body>& parser);
     bool handle_streaming_upload(boost::beast::http::request_parser<boost::beast::http::buffer_body>& parser);
-    bool write_response(model::preview::Response&& response);
+    bool write_response(model::preview::Response&& response, bool headRequest = false);
     bool write_stream(model::preview::StreamResponse&& response);
     void do_close();
 

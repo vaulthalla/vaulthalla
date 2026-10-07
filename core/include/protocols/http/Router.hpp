@@ -85,6 +85,8 @@ namespace vh::protocols::http {
         static void setSharePreviewResolverFactoryForTesting(SharePreviewResolverFactory factory);
         static void resetSharePreviewResolverFactoryForTesting();
         static void setPreviewEngineResolverForTesting(PreviewEngineResolver resolver);
+        // Socket-level session tests: answer every request with this handler instead of the routes.
+        static void setRouteOverrideForTesting(std::function<model::preview::Response(request&&)> handler);
         static void resetPreviewEngineResolverForTesting();
     };
 }

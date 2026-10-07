@@ -24,9 +24,9 @@ constexpr std::size_t kMaxBufferedBodyBytes = 16u * 1024u * 1024u;
 constexpr std::size_t kStreamChunkBytes = 256u * 1024u;
 // Keep-alive wait for the next request, and per-operation inactivity limits once a request is in flight. A slow
 // but progressing client (media over a weak uplink) is fine; a stalled one is dropped and frees its thread.
-constexpr std::chrono::seconds kIdleTimeout{20};
-constexpr std::chrono::seconds kReadTimeout{60};
-constexpr std::chrono::seconds kWriteTimeout{60};
+std::atomic<int64_t> idleTimeoutMs{20'000};
+std::atomic<int64_t> readTimeoutMs{60'000};
+std::atomic<int64_t> writeTimeoutMs{60'000};
 
 [[nodiscard]] SessionLifetimes& sessionLifetimes() {
     static SessionLifetimes value;
@@ -112,6 +112,12 @@ std::size_t TimedStream::io(const bool reading, const std::function<std::size_t(
     }
 }
 
+void Session::setTimeoutsForTesting(const std::chrono::milliseconds idle, const std::chrono::milliseconds io) {
+    idleTimeoutMs.store(idle.count());
+    readTimeoutMs.store(io.count());
+    writeTimeoutMs.store(io.count());
+}
+
 Session::Session(tcp::socket socket) : lifetime_(sessionLifetimes()), socket_(std::move(socket)) {
     buffer_.max_size(8192);
     nativeHandle_.store(socket_.native_handle(), std::memory_order_release);
@@ -180,11 +186,11 @@ bool Session::read_one() {
     parser.body_limit(std::numeric_limits<uint64_t>::max());
 
     beast::error_code ec;
-    stream_.setTimeout(kIdleTimeout);
+    stream_.setTimeout(std::chrono::milliseconds(idleTimeoutMs.load()));
     boost::beast::http::read_header(stream_, buffer_, parser, ec);
     if (ec == boost::beast::http::error::end_of_stream || ec == boost::asio::error::eof ||
         ec == boost::asio::error::timed_out) return false;
-    stream_.setTimeout(kReadTimeout);
+    stream_.setTimeout(std::chrono::milliseconds(readTimeoutMs.load()));
     if (ec) {
         if (!stopRequested_.load(std::memory_order_acquire))
             log::Registry::http()->error("[Session] Header read error: {}", ec.message());
@@ -234,8 +240,9 @@ bool Session::handle_buffered_request(
 
     auto req = make_request_from_parser(parser, std::move(body));
     const auto keepAlive = req.keep_alive();
+    const bool head = req.method() == verb::head;
     auto response = Router::route(std::move(req));
-    return write_response(std::move(response)) && keepAlive;
+    return write_response(std::move(response), head) && keepAlive;
 }
 
 bool Session::handle_streaming_upload(
@@ -282,17 +289,25 @@ bool Session::handle_streaming_upload(
     }
 }
 
-bool Session::write_response(model::preview::Response&& response) {
+bool Session::write_response(model::preview::Response&& response, const bool headRequest) {
     if (stopRequested_.load(std::memory_order_acquire)) return false;
 
     if (auto* streaming = std::get_if<model::preview::StreamResponse>(&response))
         return write_stream(std::move(*streaming));
 
-    stream_.setTimeout(kWriteTimeout);
+    stream_.setTimeout(std::chrono::milliseconds(writeTimeoutMs.load()));
     beast::error_code ec;
-    std::visit([this, &ec](auto&& res) {
-        if constexpr (!std::is_same_v<std::decay_t<decltype(res)>, model::preview::StreamResponse>)
-            boost::beast::http::write(stream_, res, ec);
+    std::visit([this, &ec, headRequest](auto&& res) {
+        using T = std::decay_t<decltype(res)>;
+        if constexpr (!std::is_same_v<T, model::preview::StreamResponse>) {
+            if (headRequest) {
+                // HEAD: the same status and headers (including Content-Length) as GET, no body.
+                boost::beast::http::serializer<false, typename T::body_type, typename T::fields_type> sr{res};
+                boost::beast::http::write_header(stream_, sr, ec);
+            } else {
+                boost::beast::http::write(stream_, res, ec);
+            }
+        }
     }, response);
 
     if (ec) {
@@ -319,17 +334,18 @@ bool Session::write_stream(model::preview::StreamResponse&& response) {
     const auto length = response.length;
     const auto headOnly = response.headOnly;
     const bool keepAlive = response.keepAlive;
+    const bool omitLength = response.omitContentLength;
 
     bhttp::response<bhttp::buffer_body> res{std::move(static_cast<bhttp::response_header<>&>(response))};
     res.keep_alive(keepAlive);
     const bool hasBody = !headOnly && reader && length > 0;
-    if (res.result() != status::not_modified) res.content_length(length);
+    if (res.result() != status::not_modified && !omitLength) res.content_length(length);
     res.body().data = nullptr;
     res.body().size = 0;
     res.body().more = hasBody;
 
     bhttp::response_serializer<bhttp::buffer_body> serializer{res};
-    stream_.setTimeout(kWriteTimeout);
+    stream_.setTimeout(std::chrono::milliseconds(writeTimeoutMs.load()));
     beast::error_code ec;
 
     if (!hasBody) {

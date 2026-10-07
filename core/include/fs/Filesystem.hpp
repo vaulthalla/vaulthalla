@@ -4,6 +4,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 #include <utility>
@@ -34,6 +35,13 @@ struct NewFileContext {
     std::shared_ptr<identities::Group> group = nullptr;
     mode_t mode = 0644;
     bool overwrite = false;
+    // Conditional overwrite: only replace the content if it is still this generation (storage::Generation::sourceId)
+    // and not open through FUSE; otherwise ContentConflict.
+    std::optional<std::string> expected_source_id{};
+};
+
+struct ContentConflict final : std::runtime_error {
+    using std::runtime_error::runtime_error;
 };
 
 struct MkdirContext {
@@ -95,6 +103,7 @@ public:
 
 private:
     inline static std::mutex mutex_;
+    static std::mutex& contentWriteMutex(const std::filesystem::path& fusePath);
     inline static std::shared_ptr<storage::Manager> storageManager_ = nullptr;
 
     static int handleRename(const RenameContext& ctx);

@@ -1,0 +1,436 @@
+#include "protocols/http/Access.hpp"
+
+#include "auth/session/Manager.hpp"
+#include "fs/cache/Registry.hpp"
+#include "fs/model/Entry.hpp"
+#include "fs/model/File.hpp"
+#include "identities/User.hpp"
+#include "log/Registry.hpp"
+#include "protocols/cookie.hpp"
+#include "protocols/http/AccessHooks.hpp"
+#include "protocols/ws/Session.hpp"
+#include "rbac/PolicyEpoch.hpp"
+#include "rbac/permission/vault/Filesystem.hpp"
+#include "rbac/resolver/Vault.hpp"
+#include "runtime/Deps.hpp"
+#include "share/Manager.hpp"
+#include "share/Principal.hpp"
+#include "share/Scope.hpp"
+#include "share/TargetResolver.hpp"
+#include "storage/Engine.hpp"
+#include "storage/Manager.hpp"
+#include "storage/PlaintextReader.hpp"
+#include "vault/model/Vault.hpp"
+
+#include <sodium.h>
+
+#include <array>
+#include <charconv>
+#include <chrono>
+#include <limits>
+#include <mutex>
+
+namespace vh::protocols::http::access {
+
+namespace {
+
+using Clock = std::chrono::steady_clock;
+using FsAction = rbac::permission::vault::FilesystemAction;
+
+constexpr auto kPrincipalTtl = std::chrono::seconds(15);
+constexpr auto kAuditWindow = std::chrono::minutes(30);
+
+[[nodiscard]] std::string digest(const std::string_view value) {
+    std::array<unsigned char, crypto_generichash_BYTES> out{};
+    crypto_generichash(out.data(), out.size(), reinterpret_cast<const unsigned char*>(value.data()), value.size(),
+                       nullptr, 0);
+    static constexpr char kHex[] = "0123456789abcdef";
+    std::string hex;
+    hex.reserve(out.size() * 2);
+    for (const auto b : out) {
+        hex.push_back(kHex[b >> 4]);
+        hex.push_back(kHex[b & 0x0f]);
+    }
+    return hex;
+}
+
+struct CachedPrincipal {
+    std::shared_ptr<share::Principal> principal;
+    Clock::time_point at;
+    uint64_t epoch{};
+};
+
+std::mutex& cacheMutex() {
+    static std::mutex m;
+    return m;
+}
+
+std::unordered_map<std::string, CachedPrincipal>& principals() {
+    static std::unordered_map<std::string, CachedPrincipal> map;
+    return map;
+}
+
+std::unordered_map<std::string, Clock::time_point>& recentAccess() {
+    static std::unordered_map<std::string, Clock::time_point> map;
+    return map;
+}
+
+void pruneLocked(const Clock::time_point now) {
+    auto& access = recentAccess();
+    if (access.size() > 4096)
+        std::erase_if(access, [now](const auto& item) { return now - item.second > kAuditWindow; });
+    auto& cached = principals();
+    if (cached.size() > 4096)
+        std::erase_if(cached, [now](const auto& item) { return now - item.second.at > kPrincipalTtl; });
+}
+
+// True the first time `key` is seen within the window (and records it).
+[[nodiscard]] bool firstInWindow(const std::string& key) {
+    const auto now = Clock::now();
+    std::scoped_lock lock(cacheMutex());
+    pruneLocked(now);
+    auto& access = recentAccess();
+    if (const auto it = access.find(key); it != access.end() && now - it->second < kAuditWindow) return false;
+    access[key] = now;
+    return true;
+}
+
+void forgetAccess(const std::string& key) {
+    std::scoped_lock lock(cacheMutex());
+    recentAccess().erase(key);
+}
+
+[[nodiscard]] std::string urlDecode(const std::string_view value) {
+    std::string out;
+    out.reserve(value.size());
+    for (std::size_t i = 0; i < value.size(); ++i) {
+        const char c = value[i];
+        if (c == '%') {
+            if (i + 2 >= value.size()) throw BadRequest("Invalid percent-encoding in URL");
+            unsigned int byte = 0;
+            const auto [ptr, ec] = std::from_chars(value.data() + i + 1, value.data() + i + 3, byte, 16);
+            if (ec != std::errc{} || ptr != value.data() + i + 3) throw BadRequest("Invalid percent-encoding in URL");
+            out.push_back(static_cast<char>(byte));
+            i += 2;
+        } else if (c == '+') {
+            out.push_back(' ');
+        } else {
+            out.push_back(c);
+        }
+    }
+    return out;
+}
+
+[[nodiscard]] uint32_t parseVaultId(const Params& params) {
+    const auto it = params.find("vault_id");
+    if (it == params.end() || it->second.empty()) throw BadRequest("Missing required parameter: vault_id");
+    uint32_t value = 0;
+    const auto& raw = it->second;
+    const auto [ptr, ec] = std::from_chars(raw.data(), raw.data() + raw.size(), value);
+    if (ec != std::errc{} || ptr != raw.data() + raw.size()) throw BadRequest("Invalid numeric parameter: vault_id");
+    return value;
+}
+
+[[nodiscard]] std::string pathParam(const Params& params) {
+    const auto it = params.find("path");
+    return it == params.end() || it->second.empty() ? std::string{"/"} : it->second;
+}
+
+[[nodiscard]] std::shared_ptr<share::Principal> sharePrincipal(const Caller& caller,
+                                                               const std::shared_ptr<share::Manager>& manager) {
+    const auto& session = caller.session;
+    const auto token = session->shareSessionToken();
+    if (token.empty()) throw Unauthorized("Share session token is missing");
+
+    const auto key = digest(token);
+    const auto now = Clock::now();
+    const auto epoch = rbac::policyEpoch();
+    {
+        std::scoped_lock lock(cacheMutex());
+        if (const auto it = principals().find(key); it != principals().end() && it->second.epoch == epoch &&
+                                                    now - it->second.at < kPrincipalTtl && it->second.principal &&
+                                                    it->second.principal->isActive(std::time(nullptr))) {
+            session->setSharePrincipal(it->second.principal, token);
+            return it->second.principal;
+        }
+    }
+
+    std::shared_ptr<share::Principal> principal;
+    try {
+        principal = manager->resolvePrincipal(
+            token,
+            session->ipAddress.empty() ? std::nullopt : std::make_optional(session->ipAddress),
+            session->userAgent.empty() ? std::nullopt : std::make_optional(session->userAgent));
+    } catch (const std::exception& e) {
+        throw Forbidden(std::string("Share access denied: ") + e.what());
+    }
+    if (!principal) throw Forbidden("Share access denied");
+    session->setSharePrincipal(principal, token);
+    {
+        std::scoped_lock lock(cacheMutex());
+        pruneLocked(now);
+        principals()[key] = CachedPrincipal{principal, now, epoch};
+    }
+    return principal;
+}
+
+[[nodiscard]] share::Operation shareOperationFor(const Need need) {
+    switch (need) {
+        case Need::Preview: return share::Operation::Preview;
+        case Need::Download: return share::Operation::Download;
+        case Need::Overwrite: return share::Operation::Overwrite;
+    }
+    return share::Operation::Preview;
+}
+
+void requireHuman(const Caller& caller, const std::shared_ptr<storage::Engine>& engine,
+                  const std::filesystem::path& vaultPath, const FsAction action) {
+    if (!caller.session || !caller.session->user) throw Unauthorized("Request requires a user session");
+    if (!engine || !engine->vault) throw NotFound("Storage engine is unavailable");
+    if (!rbac::resolver::Vault::has<FsAction>({
+            .user = caller.session->user,
+            .permission = action,
+            .vault_id = engine->vault->id,
+            .path = engine->vaultPathToFusePath(vaultPath)
+        }))
+        throw Forbidden("Permission denied");
+}
+
+void requireHumanNeed(const Caller& caller, const std::shared_ptr<storage::Engine>& engine,
+                      const std::shared_ptr<fs::model::Entry>& entry, const Need need) {
+    switch (need) {
+        case Need::Preview:
+        case Need::Download:
+            requireHuman(caller, engine, entry->path, FsAction::Read);
+            if (entry->isDirectory()) requireHuman(caller, engine, entry->path, FsAction::List);
+            return;
+        case Need::Overwrite:
+            requireHuman(caller, engine, entry->path, FsAction::Overwrite);
+            return;
+    }
+}
+
+void checkExpect(const std::shared_ptr<fs::model::Entry>& entry, const Expect expect) {
+    if (expect == Expect::File && entry->isDirectory()) throw BadRequest("Target is a directory");
+    if (expect == Expect::Directory && !entry->isDirectory()) throw BadRequest("Target is not a directory");
+}
+
+[[nodiscard]] Target fromEntry(std::shared_ptr<storage::Engine> engine, std::shared_ptr<fs::model::Entry> entry,
+                               const uint32_t vaultId, std::string vaultPath) {
+    Target target;
+    target.engine = std::move(engine);
+    target.file = std::dynamic_pointer_cast<fs::model::File>(entry);
+    target.entry = std::move(entry);
+    target.vaultId = vaultId;
+    target.vaultPath = std::move(vaultPath);
+    return target;
+}
+
+}
+
+Params parseQuery(const std::string_view target) {
+    Params params;
+    const auto pos = target.find('?');
+    if (pos == std::string_view::npos) return params;
+    auto query = target.substr(pos + 1);
+    while (!query.empty()) {
+        const auto amp = query.find('&');
+        const auto pair = query.substr(0, amp);
+        if (const auto eq = pair.find('='); eq != std::string_view::npos)
+            params[urlDecode(pair.substr(0, eq))] = urlDecode(pair.substr(eq + 1));
+        if (amp == std::string_view::npos) break;
+        query.remove_prefix(amp + 1);
+    }
+    return params;
+}
+
+bool isShareLane(const Params& params) {
+    const auto it = params.find("share");
+    return it != params.end() && it->second == "1";
+}
+
+Caller authenticate(const Request& req, const Params& params) {
+    Caller caller;
+    caller.share = isShareLane(params);
+    try {
+        caller.session = hooks::sessionResolver()(req);
+    } catch (const std::exception& e) {
+        throw Unauthorized(std::string("Unauthorized: ") + e.what());
+    }
+    if (!caller.session) throw Unauthorized("Unauthorized: no session");
+    if (caller.share) {
+        if (!caller.session->isShareMode() || caller.session->user)
+            throw Unauthorized("Unauthorized: requires a ready share session");
+    } else if (!caller.session->user) {
+        throw Unauthorized("Unauthorized: requires a user session");
+    }
+    return caller;
+}
+
+Target resolvePath(const Caller& caller, const uint32_t vaultId, const std::string& rawPath, const Need need,
+                   const Expect expect) {
+    if (caller.share) throw BadRequest("Share requests address paths relative to the share");
+    if (!share::Scope::contains("/", rawPath)) throw BadRequest("Path escapes the vault");
+    const auto vaultPath = share::Scope::normalizeVaultPath(rawPath);
+
+    const auto engine = hooks::engineResolver()(vaultId);
+    if (!engine) throw NotFound("Not found");
+
+    const auto& cache = runtime::Deps::get().fsCache;
+    const auto entry = cache ? cache->getEntry(engine->vaultPathToFusePath(vaultPath)) : nullptr;
+    if (!entry) {
+        // Same answer whether the path is missing or the caller may not see the vault (no existence oracle).
+        throw NotFound("Not found");
+    }
+    requireHumanNeed(caller, engine, entry, need);
+    checkExpect(entry, expect);
+    return fromEntry(engine, entry, vaultId, vaultPath);
+}
+
+Target resolve(const Caller& caller, const Params& params, const Need need, const Expect expect) {
+    if (!caller.share) return resolvePath(caller, parseVaultId(params), pathParam(params), need, expect);
+    if (need == Need::Overwrite) throw Forbidden("Editing through share links is not supported");
+
+    const auto manager = hooks::shareManager()();
+    const auto resolver = hooks::shareResolver()();
+    if (!manager || !resolver) throw std::runtime_error("Share services are unavailable");
+    const auto principal = sharePrincipal(caller, manager);
+    const auto actor = caller.session->rbacActor();
+    const auto sharePath = pathParam(params);
+
+    share::ResolvedTarget resolved;
+    try {
+        resolved = resolver->resolve(actor, {
+            .path = sharePath,
+            .operation = shareOperationFor(need),
+            .path_mode = share::TargetPathMode::ShareRelative,
+            .expected_target_type = expect == Expect::File ? std::make_optional(share::TargetType::File)
+                                    : expect == Expect::Directory ? std::make_optional(share::TargetType::Directory)
+                                                                  : std::nullopt
+        });
+        if (resolved.target_type == share::TargetType::Directory)
+            (void)resolver->resolve(actor, {
+                .path = sharePath,
+                .operation = share::Operation::List,
+                .path_mode = share::TargetPathMode::ShareRelative,
+                .expected_target_type = share::TargetType::Directory
+            });
+    } catch (const std::exception& e) {
+        const std::string message = e.what();
+        if (message.find("not found") != std::string::npos) throw NotFound("Not found");
+        throw Forbidden(message);
+    }
+    if (!resolved.entry) throw NotFound("Not found");
+
+    const auto engine = hooks::engineResolver()(resolved.vault_id);
+    if (!engine) throw NotFound("Not found");
+    auto target = fromEntry(engine, resolved.entry, resolved.vault_id, resolved.vault_path);
+    const auto sharePathResolved = resolved.share_path;
+    target.share = ShareContext{.manager = manager,
+                                .resolver = resolver,
+                                .principal = principal,
+                                .resolved = std::make_shared<share::ResolvedTarget>(std::move(resolved)),
+                                .sharePath = sharePathResolved};
+    return target;
+}
+
+void requireHumanChild(const Caller& caller, const Target& root, const std::shared_ptr<fs::model::Entry>& child) {
+    if (!child) throw NotFound("Archive child is unavailable");
+    requireHumanNeed(caller, root.engine, child, Need::Download);
+}
+
+bool recordShareAccess(const Target& target, const std::string_view eventType, const bool countsAsDownload,
+                       const std::optional<uint64_t> bytes) {
+    if (!target.share || !target.share->principal || !target.share->manager || !target.entry) return true;
+    const auto& principal = *target.share->principal;
+    const auto generation = target.file ? storage::generationOf(*target.file).sourceId() : std::string{"dir"};
+    const auto key = std::string(eventType) + "|" + principal.share_session_id + "|" +
+                     std::to_string(target.entry->id) + "|" + generation;
+    if (!firstInWindow(key)) return true;
+
+    if (countsAsDownload && !target.share->manager->consumeDownload(principal)) {
+        forgetAccess(key);
+        return false;
+    }
+    try {
+        target.share->manager->appendAccessAuditEvent(principal, {
+            .event_type = std::string(eventType),
+            .target = {
+                .vault_id = target.vaultId,
+                .target_entry_id = target.entry->id,
+                .target_path = target.vaultPath
+            },
+            .status = share::AuditStatus::Success,
+            .bytes_transferred = bytes,
+            .error_code = std::nullopt,
+            .error_message = std::nullopt
+        });
+    } catch (const std::exception& e) {
+        log::Registry::http()->warn("[HttpAccess] Share audit write failed: {}", e.what());
+    }
+    return true;
+}
+
+void recordHumanAccess(const Caller& caller, const Target& target, const std::string_view eventType) {
+    if (!caller.session || !caller.session->user || !target.entry) return;
+    const auto generation = target.file ? storage::generationOf(*target.file).sourceId() : std::string{"dir"};
+    const auto key = std::string(eventType) + "|u" + std::to_string(caller.session->user->id) + "|" +
+                     std::to_string(target.entry->id) + "|" + generation;
+    if (!firstInWindow(key)) return;
+    log::Registry::audit()->info("[http] {} user={} vault={} entry={} path={}", eventType, caller.session->user->id,
+                                 target.vaultId, target.entry->id, target.vaultPath);
+}
+
+void clearCachesForTesting() {
+    std::scoped_lock lock(cacheMutex());
+    principals().clear();
+    recentAccess().clear();
+}
+
+namespace hooks {
+
+namespace {
+std::shared_ptr<ws::Session> defaultSessionResolver(const Request& req) {
+    if (isShareLane(parseQuery(std::string_view(req.target().data(), req.target().size())))) {
+        const auto token = protocols::extractCookie(req, "share_refresh");
+        if (token.empty()) throw std::runtime_error("Share refresh token not set");
+        return runtime::Deps::get().sessionManager->validateRawShareRefreshToken(token);
+    }
+    const auto token = protocols::extractCookie(req, "refresh");
+    if (token.empty()) throw std::runtime_error("Refresh token not set");
+    return runtime::Deps::get().sessionManager->validateRawRefreshToken(token);
+}
+}
+
+SessionResolver& sessionResolver() {
+    static SessionResolver value = defaultSessionResolver;
+    return value;
+}
+
+ShareManagerFactory& shareManager() {
+    static ShareManagerFactory value = [] { return std::make_shared<share::Manager>(); };
+    return value;
+}
+
+ShareResolverFactory& shareResolver() {
+    static ShareResolverFactory value = [] { return std::make_shared<share::TargetResolver>(); };
+    return value;
+}
+
+EngineResolver& engineResolver() {
+    static EngineResolver value = [](const uint32_t vaultId) {
+        return runtime::Deps::get().storageManager->getEngine(vaultId);
+    };
+    return value;
+}
+
+void resetSessionResolver() { sessionResolver() = defaultSessionResolver; }
+void resetShareManager() { shareManager() = [] { return std::make_shared<share::Manager>(); }; }
+void resetShareResolver() { shareResolver() = [] { return std::make_shared<share::TargetResolver>(); }; }
+void resetEngineResolver() {
+    engineResolver() = [](const uint32_t vaultId) { return runtime::Deps::get().storageManager->getEngine(vaultId); };
+}
+
+}
+
+}

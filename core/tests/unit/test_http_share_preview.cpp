@@ -7,6 +7,7 @@
 #include "auth/session/Manager.hpp"
 #include "config/Registry.hpp"
 #include "identities/User.hpp"
+#include "protocols/http/Access.hpp"
 #include "protocols/http/Router.hpp"
 #include "protocols/ws/Session.hpp"
 #include "runtime/Deps.hpp"
@@ -17,6 +18,7 @@
 #include "share/Token.hpp"
 #include "stats/model/CacheStats.hpp"
 #include "storage/Engine.hpp"
+#include "storage/PlaintextReader.hpp"
 #include "vault/model/Vault.hpp"
 #include "protocols/ws/Router.hpp"
 
@@ -132,7 +134,9 @@ public:
     void revokeLink(const std::string&, uint32_t) override {}
     void rotateLinkToken(const std::string&, const std::string&, const std::vector<uint8_t>&, uint32_t) override {}
     void touchLinkAccess(const std::string&) override {}
-    void incrementDownload(const std::string&) override {}
+    void incrementDownload(const std::string& id) override {
+        if (links.contains(id)) ++links.at(id)->download_count;
+    }
 
     void upsertVaultRoleForShare(
         const std::string& shareId,
@@ -272,7 +276,14 @@ protected:
         file->vault_id = static_cast<int32_t>(kVaultId);
         file->path = "/shared/report.jpg";
         file->mime_type = "image/jpeg";
-        file->size_bytes = 128;
+        file->backing_path = testRoot / "backing" / "report.jpg";
+        std::filesystem::create_directories(file->backing_path.parent_path());
+        {
+            const auto png = tinyPng();  // stb decodes it whatever the stored MIME says
+            std::ofstream(file->backing_path, std::ios::binary)
+                .write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
+            file->size_bytes = png.size();
+        }
 
         provider->byId[root->id] = root;
         provider->byPath[root->path.string()] = root;
@@ -280,9 +291,6 @@ protected:
         provider->byPath[file->path.string()] = file;
         provider->children[root->id].push_back(file);
 
-        const auto thumbDir = engine->paths->thumbnailRoot / file->base32_alias;
-        std::filesystem::create_directories(thumbDir);
-        std::ofstream(thumbDir / (std::to_string(previewSize) + ".jpg"), std::ios::binary) << "cached-thumbnail";
     }
 
     void TearDown() override {
@@ -437,16 +445,32 @@ std::string stringBody(const vh::protocols::http::model::preview::Response& resp
     return {};
 }
 
-std::string vectorBody(const vh::protocols::http::model::preview::Response& response) {
-    const auto* res = std::get_if<vector_response>(&response);
-    if (!res) return {};
-    return {res->body().begin(), res->body().end()};
+// The bytes a client would receive: buffered bodies as-is, streamed bodies drained from their reader.
+std::vector<uint8_t> vectorBodyBytes(const vh::protocols::http::model::preview::Response& response) {
+    if (const auto* res = std::get_if<vector_response>(&response)) return res->body();
+    if (const auto* stream = std::get_if<vh::protocols::http::model::preview::StreamResponse>(&response)) {
+        if (!stream->reader || stream->headOnly) return {};
+        std::vector<uint8_t> out(static_cast<std::size_t>(stream->length));
+        std::size_t done = 0;
+        while (done < out.size()) {
+            const auto n = stream->reader->read(stream->offset + done, std::span<uint8_t>(out.data() + done, out.size() - done));
+            if (n == 0) break;
+            done += n;
+        }
+        out.resize(done);
+        return out;
+    }
+    return {};
 }
 
-std::vector<uint8_t> vectorBodyBytes(const vh::protocols::http::model::preview::Response& response) {
-    const auto* res = std::get_if<vector_response>(&response);
-    if (!res) return {};
-    return res->body();
+std::string vectorBody(const vh::protocols::http::model::preview::Response& response) {
+    const auto bytes = vectorBodyBytes(response);
+    return {bytes.begin(), bytes.end()};
+}
+
+bool isJpeg(const vh::protocols::http::model::preview::Response& response) {
+    const auto bytes = vectorBodyBytes(response);
+    return bytes.size() > 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF;
 }
 
 std::string responseHeader(
@@ -496,7 +520,7 @@ TEST_F(HttpSharePreviewTest, SharePreviewReadsShareRefreshCookieAndIgnoresHumanR
     auto response = Router::handlePreview(std::move(req));
 
     EXPECT_EQ(status::ok, responseStatus(response));
-    EXPECT_EQ("cached-thumbnail", vectorBody(response));
+    EXPECT_TRUE(isJpeg(response));
     EXPECT_FALSE(session->user);
 }
 
@@ -591,7 +615,7 @@ TEST_F(HttpSharePreviewTest, AllowsReadyShareSessionWithPreviewGrant) {
         "/preview?share=1&path=%2Freport.jpg&size=" + std::to_string(previewSize)));
 
     EXPECT_EQ(status::ok, responseStatus(response));
-    EXPECT_EQ("cached-thumbnail", vectorBody(response));
+    EXPECT_TRUE(isJpeg(response));
     EXPECT_FALSE(session->user);
     ASSERT_TRUE(session->sharePrincipal());
     EXPECT_TRUE(session->sharePrincipal()->scoped_vault_role);
@@ -601,7 +625,8 @@ TEST_F(HttpSharePreviewTest, AllowsReadyShareSessionWithPreviewGrant) {
     }));
 }
 
-TEST_F(HttpSharePreviewTest, SharePreviewServesSvgDirectly) {
+TEST_F(HttpSharePreviewTest, SharePreviewRefusesSvgOriginals) {
+    // D9: an SVG is original bytes, not a lossy render. A preview-only link must not receive it through /preview.
     auto session = readySession(vh::share::bit(vh::share::Operation::Preview));
     installSharePreviewHooks(session);
     addSvgFile();
@@ -609,25 +634,58 @@ TEST_F(HttpSharePreviewTest, SharePreviewServesSvgDirectly) {
     auto response = Router::handlePreview(previewRequest(
         "/preview?share=1&path=%2Fvector.svg&size=" + std::to_string(previewSize)));
 
+    EXPECT_EQ(status::unsupported_media_type, responseStatus(response));
+    EXPECT_TRUE(vectorBody(response).empty());
+}
+
+TEST_F(HttpSharePreviewTest, ShareContentDeniesOriginalsToPreviewOnlyLinks) {
+    auto session = readySession(vh::share::bit(vh::share::Operation::Preview));
+    installSharePreviewHooks(session);
+    addSvgFile();
+
+    auto response = Router::handleDownload(previewRequest("/download/content?share=1&path=%2Fvector.svg"));
+    EXPECT_EQ(status::forbidden, responseStatus(response));
+    EXPECT_TRUE(vectorBody(response).empty());
+}
+
+TEST_F(HttpSharePreviewTest, ShareContentServesSvgInlineWithSandboxCspToDownloadLinks) {
+    auto session = readySession(vh::share::bit(vh::share::Operation::Download));
+    installSharePreviewHooks(session);
+    addSvgFile();
+
+    auto response = Router::handleDownload(previewRequest("/download/content?share=1&path=%2Fvector.svg"));
+
     EXPECT_EQ(status::ok, responseStatus(response));
     EXPECT_EQ(svgBody(), vectorBody(response));
     EXPECT_EQ("image/svg+xml", responseHeader(response, field::content_type));
     EXPECT_EQ("nosniff", responseHeader(response, "X-Content-Type-Options"));
-    EXPECT_NE(std::string::npos, responseHeader(response, "Content-Security-Policy").find("script-src 'none'"));
+    EXPECT_NE(std::string::npos, responseHeader(response, "Content-Security-Policy").find("sandbox"));
+    EXPECT_EQ("no", responseHeader(response, "X-Accel-Buffering"));
+    EXPECT_EQ(0u, responseHeader(response, field::content_disposition).find("inline"));
 }
 
-TEST_F(HttpSharePreviewTest, SharePreviewServesWebpDirectly) {
+TEST_F(HttpSharePreviewTest, SharePreviewRefusesWebpOriginals) {
     auto session = readySession(vh::share::bit(vh::share::Operation::Preview));
     installSharePreviewHooks(session);
     addWebpFile();
 
     auto response = Router::handlePreview(previewRequest(
         "/preview?share=1&path=%2Fpicture.webp&size=" + std::to_string(previewSize)));
+    EXPECT_EQ(status::unsupported_media_type, responseStatus(response));
 
+    auto content = Router::handleDownload(previewRequest("/download/content?share=1&path=%2Fpicture.webp"));
+    EXPECT_EQ(status::forbidden, responseStatus(content));
+}
+
+TEST_F(HttpSharePreviewTest, ShareContentServesWebpToDownloadLinks) {
+    auto session = readySession(vh::share::bit(vh::share::Operation::Download));
+    installSharePreviewHooks(session);
+    addWebpFile();
+
+    auto response = Router::handleDownload(previewRequest("/download/content?share=1&path=%2Fpicture.webp"));
     EXPECT_EQ(status::ok, responseStatus(response));
     EXPECT_EQ(tinyWebp(), vectorBodyBytes(response));
     EXPECT_EQ("image/webp", responseHeader(response, field::content_type));
-    EXPECT_TRUE(responseHeader(response, "Content-Security-Policy").empty());
 }
 
 TEST_F(HttpSharePreviewTest, SharePreviewBatchReportsReadyUnsupportedAndMissingItems) {
@@ -657,49 +715,30 @@ TEST_F(HttpSharePreviewTest, SharePreviewBatchReportsReadyUnsupportedAndMissingI
     ASSERT_EQ(status::ok, responseStatus(response));
     const auto body = nlohmann::json::parse(stringBody(response));
     ASSERT_EQ(3u, body.at("items").size());
-    EXPECT_EQ("ready", body.at("items").at(0).at("status"));
-    EXPECT_NE(std::string::npos, body.at("items").at(0).at("url").get<std::string>().find("/preview?share=1"));
+    EXPECT_EQ("queued", body.at("items").at(0).at("status"));  // renderable, not cached yet
+    EXPECT_FALSE(body.at("items").at(0).contains("url"));
     EXPECT_EQ("unsupported", body.at("items").at(1).at("status"));
     EXPECT_EQ("missing", body.at("items").at(2).at("status"));
 }
 
-TEST_F(HttpSharePreviewTest, SharePreviewBatchReportsSvgReadyWithoutThumbnailCache) {
+TEST_F(HttpSharePreviewTest, SharePreviewBatchNeverOffersSvgOrWebpOriginals) {
     auto session = readySession(vh::share::bit(vh::share::Operation::Preview));
     installSharePreviewHooks(session);
     addSvgFile();
-    std::filesystem::remove_all(engine->paths->thumbnailRoot / "vector-alias");
-
-    auto response = Router::handlePreviewBatch(previewBatchRequest({
-        {"size", previewSize},
-        {"items", nlohmann::json::array({{{"key", "svg"}, {"path", "/vector.svg"}}})}
-    }));
-
-    ASSERT_EQ(status::ok, responseStatus(response));
-    const auto body = nlohmann::json::parse(stringBody(response));
-    ASSERT_EQ(1u, body.at("items").size());
-    EXPECT_EQ("ready", body.at("items").at(0).at("status"));
-    EXPECT_NE(std::string::npos, body.at("items").at(0).at("url").get<std::string>().find("/preview?share=1"));
-    EXPECT_NE(std::string::npos, body.at("items").at(0).at("url").get<std::string>().find("vector.svg"));
-}
-
-TEST_F(HttpSharePreviewTest, SharePreviewBatchReportsWebpReadyWithoutThumbnailCache) {
-    auto session = readySession(vh::share::bit(vh::share::Operation::Preview));
-    installSharePreviewHooks(session);
     addWebpFile();
-    std::filesystem::remove_all(engine->paths->thumbnailRoot / "webp-alias");
 
     auto response = Router::handlePreviewBatch(previewBatchRequest({
         {"size", previewSize},
-        {"items", nlohmann::json::array({{{"key", "webp"}, {"path", "/picture.webp"}}})}
+        {"items", nlohmann::json::array({{{"key", "svg"}, {"path", "/vector.svg"}}, {{"key", "webp"}, {"path", "/picture.webp"}}})}
     }));
 
     ASSERT_EQ(status::ok, responseStatus(response));
     const auto body = nlohmann::json::parse(stringBody(response));
-    ASSERT_EQ(1u, body.at("items").size());
-    EXPECT_EQ("ready", body.at("items").at(0).at("status"));
-    EXPECT_NE(std::string::npos, body.at("items").at(0).at("url").get<std::string>().find("/preview?share=1"));
-    EXPECT_NE(std::string::npos, body.at("items").at(0).at("url").get<std::string>().find("picture.webp"));
-    EXPECT_FALSE(std::filesystem::exists(engine->paths->thumbnailRoot / "webp-alias" / (std::to_string(previewSize) + ".jpg")));
+    ASSERT_EQ(2u, body.at("items").size());
+    for (const auto& item : body.at("items")) {
+        EXPECT_EQ("unsupported", item.at("status"));
+        EXPECT_FALSE(item.contains("url"));
+    }
 }
 
 TEST_F(HttpSharePreviewTest, SharePreviewBatchNormalizesSmallRequestedSizeToConfiguredCacheSize) {
@@ -719,9 +758,7 @@ TEST_F(HttpSharePreviewTest, SharePreviewBatchNormalizesSmallRequestedSizeToConf
     ASSERT_EQ(1u, body.at("items").size());
     EXPECT_EQ(previewSize, body.at("size"));
     EXPECT_EQ(previewSize, body.at("items").at(0).at("size"));
-    EXPECT_EQ("ready", body.at("items").at(0).at("status"));
-    EXPECT_NE(std::string::npos, body.at("items").at(0).at("url").get<std::string>().find(
-        "size=" + std::to_string(previewSize)));
+    EXPECT_EQ("queued", body.at("items").at(0).at("status"));
 }
 
 TEST_F(HttpSharePreviewTest, SharePreviewBatchClampsLargeRequestedSizeToConfiguredCacheSize) {
@@ -732,9 +769,6 @@ TEST_F(HttpSharePreviewTest, SharePreviewBatchClampsLargeRequestedSizeToConfigur
     installSharePreviewHooks(session);
 
     const auto expectedSize = *std::ranges::max_element(configuredSizes);
-    const auto thumbDir = engine->paths->thumbnailRoot / file->base32_alias;
-    std::filesystem::create_directories(thumbDir);
-    std::ofstream(thumbDir / (std::to_string(expectedSize) + ".jpg"), std::ios::binary) << "cached-thumbnail";
 
     auto response = Router::handlePreviewBatch(previewBatchRequest({
         {"size", expectedSize + 512},
@@ -746,8 +780,6 @@ TEST_F(HttpSharePreviewTest, SharePreviewBatchClampsLargeRequestedSizeToConfigur
     ASSERT_EQ(1u, body.at("items").size());
     EXPECT_EQ(expectedSize, body.at("size"));
     EXPECT_EQ(expectedSize, body.at("items").at(0).at("size"));
-    EXPECT_NE(std::string::npos, body.at("items").at(0).at("url").get<std::string>().find(
-        "size=" + std::to_string(expectedSize)));
 }
 
 TEST_F(HttpSharePreviewTest, SharePreviewBatchReportsMalformedItemsWithoutFailingRoute) {
@@ -767,7 +799,7 @@ TEST_F(HttpSharePreviewTest, SharePreviewBatchReportsMalformedItemsWithoutFailin
     ASSERT_EQ(2u, body.at("items").size());
     EXPECT_EQ("error", body.at("items").at(0).at("status"));
     EXPECT_TRUE(body.at("items").at(0).contains("error"));
-    EXPECT_EQ("ready", body.at("items").at(1).at("status"));
+    EXPECT_EQ("queued", body.at("items").at(1).at("status"));
 }
 
 TEST_F(HttpSharePreviewTest, SharePreviewBatchQueuesConfiguredCacheMisses) {
@@ -817,7 +849,7 @@ TEST_F(HttpSharePreviewTest, DeniesReadyShareSessionWithoutPreviewGrant) {
     auto response = Router::handlePreview(previewRequest(
         "/preview?share=1&path=%2Freport.jpg&size=" + std::to_string(previewSize)));
 
-    EXPECT_EQ(status::bad_request, responseStatus(response));
+    EXPECT_EQ(status::forbidden, responseStatus(response));
     EXPECT_FALSE(session->user);
     EXPECT_NE(std::string::npos, stringBody(response).find("denied"));
 }
@@ -829,7 +861,7 @@ TEST_F(HttpSharePreviewTest, DeniesTraversalOutsideShareScope) {
     auto response = Router::handlePreview(previewRequest(
         "/preview?share=1&path=%2F..%2Fsecret.jpg&size=" + std::to_string(previewSize)));
 
-    EXPECT_EQ(status::bad_request, responseStatus(response));
+    EXPECT_EQ(status::forbidden, responseStatus(response));
     EXPECT_FALSE(session->user);
     EXPECT_NE(std::string::npos, stringBody(response).find("escapes share root"));
 }
@@ -874,6 +906,35 @@ TEST_F(HttpSharePreviewTest, ShareFileDownloadReadsShareRefreshCookieAndIgnoresH
     }));
 }
 
+TEST_F(HttpSharePreviewTest, MaxDownloadsCountsLogicalDownloadsNotRangeRequests) {
+    auto session = readySession(vh::share::bit(vh::share::Operation::Download));
+    store->links.at("share-1")->max_downloads = 1;
+    installSharePreviewHooks(session);
+
+    // One logical download, however many range requests a player issues for it.
+    for (int i = 0; i < 3; ++i) {
+        auto req = previewRequest("/download/content?share=1&path=%2Freport.jpg");
+        req.set(field::range, "bytes=" + std::to_string(i) + "-");
+        EXPECT_EQ(status::partial_content, responseStatus(Router::handleDownload(std::move(req))));
+    }
+    EXPECT_EQ(1u, store->links.at("share-1")->download_count);
+    EXPECT_EQ(1, std::ranges::count_if(store->audits, [](const auto& audit) {
+        return audit && audit->event_type == "share.content.http";
+    }));
+
+    // HEAD never counts.
+    EXPECT_EQ(status::ok, responseStatus(Router::handleDownload(
+        request{verb::head, "/download/content?share=1&path=%2Freport.jpg", 11})));
+    EXPECT_EQ(1u, store->links.at("share-1")->download_count);
+
+    // A new logical download past the limit is refused.
+    vh::protocols::http::access::clearCachesForTesting();
+    auto refused = Router::handleDownload(previewRequest("/download?share=1&path=%2Freport.jpg"));
+    EXPECT_EQ(status::forbidden, responseStatus(refused));
+    EXPECT_NE(std::string::npos, stringBody(refused).find("max_downloads_reached"));
+    EXPECT_EQ(1u, store->links.at("share-1")->download_count);
+}
+
 TEST_F(HttpSharePreviewTest, ShareFileDownloadDeniesMissingGrant) {
     file->size_bytes = 0;
     auto session = readySession(vh::share::bit(vh::share::Operation::Metadata));
@@ -891,7 +952,7 @@ TEST_F(HttpSharePreviewTest, ShareDownloadDeniesTraversalOutsideScope) {
 
     auto response = Router::handleDownload(previewRequest("/download?share=1&path=%2F..%2Fsecret.txt"));
 
-    EXPECT_EQ(status::bad_request, responseStatus(response));
+    EXPECT_EQ(status::forbidden, responseStatus(response));
     EXPECT_FALSE(session->user);
     EXPECT_NE(std::string::npos, stringBody(response).find("escapes share root"));
 }
