@@ -791,10 +791,8 @@ void ObjectStore::purgeLocalObjectState(
     }
 
     if (file) {
-        engine->purgeThumbnails(vaultPath);
+        engine->purgeDerivedArtifacts(oldId);
         removeIfExists(oldBacking);
-        removeIfExists(engine->paths->absPath(vaultPath, PathType::CACHE_ROOT));
-        removeIfExists(engine->paths->absPath(vaultPath, PathType::FILE_CACHE_ROOT));
     }
 }
 

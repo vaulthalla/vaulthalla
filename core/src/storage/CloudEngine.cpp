@@ -694,23 +694,25 @@ CloudEngine::RemoteEncryptionContext CloudEngine::resolveRemoteEncryptionContext
 
 void CloudEngine::purge(const fs::path& rel_path) const {
     removeLocally(rel_path);
-    removeRemotely(rel_path, true);
+    removeRemotely(rel_path);
 }
 
 void CloudEngine::purge(const std::shared_ptr<file::Trashed>& f) const {
     removeLocally(f);
-    removeRemotely(f, true);
+    removeRemotely(f);
 }
 
-void CloudEngine::removeRemotely(const fs::path& rel_path, const bool rmThumbnails) const {
+void CloudEngine::removeRemotely(const fs::path& rel_path) const {
     s3Provider_->deleteObject(stripLeadingSlash(rel_path));
-    if (rmThumbnails) purgeThumbnails(rel_path);
+    // The file may still be indexed (remote-only removal); its derived artifacts go with the remote copy, as the
+    // path-keyed thumbnails did. After removeLocally the row (and its artifacts) are already gone.
+    if (const auto file = db::query::fs::File::getFileByPath(vault->id, makeAbsolute(rel_path)))
+        purgeDerivedArtifacts(file->id);
 }
 
-void CloudEngine::removeRemotely(const std::shared_ptr<file::Trashed>& f, bool rmThumbnails) const {
-    const auto vaultPath = makeAbsolute(f->path);
-    s3Provider_->deleteObject(stripLeadingSlash(vaultPath));
-    if (rmThumbnails) purgeThumbnails(vaultPath);
+void CloudEngine::removeRemotely(const std::shared_ptr<file::Trashed>& f) const {
+    // Trashing ended the file id and dropped its derived artifacts.
+    s3Provider_->deleteObject(stripLeadingSlash(makeAbsolute(f->path)));
 }
 
 std::shared_ptr<vh::vault::model::S3Vault> CloudEngine::s3Vault() const { return std::static_pointer_cast<vh::vault::model::S3Vault>(vault); }

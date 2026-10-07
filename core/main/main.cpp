@@ -12,6 +12,10 @@
 #include "storage/Manager.hpp"
 #include "fs/Filesystem.hpp"
 
+// Previews
+#include "preview/cache/Maintenance.hpp"
+#include "preview/derive/Queue.hpp"
+
 // Seed
 #include "seed/include/seed_db.hpp"
 #include "seed/include/init_db_tables.hpp"
@@ -94,6 +98,10 @@ void initDeps() {
 void wireStorage() {
     Filesystem::init(vh::runtime::Deps::get().storageManager);
     vh::runtime::Deps::get().storageManager->initStorageEngines();
+
+    // Every start (so every upgraded install): legacy plaintext thumbnails and orphaned artifacts go away before
+    // anything can serve them.
+    vh::preview::cache::sweepAtStartup(vh::runtime::Deps::get().storageManager->getEngines());
 }
 
 // --- Runtime ---
@@ -112,6 +120,9 @@ void startVaulthalla() {
     const auto log = vh::log::Registry::vaulthalla();
 
     ThreadPoolManager::instance().init();
+
+    // Reader policies (preview.media.*) and the derived-artifact negative-cache TTL.
+    vh::preview::cache::applyConfig();
 
     log->info("[*] Initializing database...");
     initDB();
@@ -134,6 +145,9 @@ void shutdownVaulthalla() {
     log->info("[*] Shutting down Vaulthalla services...");
 
     stopRuntime();
+    // No request can enqueue any more: SIGKILL running converter helpers and join the derive workers while the
+    // storage engines and the DB pool they use are still up.
+    vh::preview::derive::Queue::instance().shutdown();
     ThreadPoolManager::instance().shutdown();
 
     log->info("[✓] Vaulthalla services shut down cleanly.");

@@ -19,6 +19,16 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
   process creation, ptrace, signals to other processes, mounts, opens for writing); a helper without seccomp
   refuses to run.
 - New optional config keys preview.{media.*,derive.*,text.max_edit_bytes,max_render_pixels} with defaults.
+- preview::derive::Queue: bounded (preview.derive.max_queue), deduplicating derive queue with
+  preview.derive.max_concurrency workers in front of the helpers (model-glb, poster-jpg, probe-json,
+  transcode-h264-{480,720,1080}); results are sealed into the derived-artifact cache, deterministic failures
+  negatively cached, transient ones (remote/budget refusals, I/O) never; a source rewritten mid-job caches
+  nothing; missing helper packages report converter_unavailable; daemon stop kills running helpers.
+- Derived-artifact cache lifecycle: every start sweeps legacy plaintext thumbnails and orphaned artifacts per
+  vault; the janitor evicts to caching.max_size_mb / caching.thumbnails.expiry_days every 15 minutes; file
+  delete/trash/purge (web, CLI, FUSE, S3 gateway) and vault removal drop the file's artifacts; finished key
+  rotations drop artifacts sealed under the retired key. preview.media.integrity/remote now set the reader
+  defaults at startup. The path-keyed thumbnail move/copy/purge helpers are removed.
 
 ## Packaging
 - New binary packages vaulthalla-preview-cad (STEP/STP -> GLB, Open CASCADE) and vaulthalla-preview-media

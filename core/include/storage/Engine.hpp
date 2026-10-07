@@ -87,11 +87,10 @@ namespace vh::storage {
 
         [[nodiscard]] virtual StorageType type() const { return StorageType::Local; }
 
-        void purgeThumbnails(const fs::path &rel_path) const;
-
-        void moveThumbnails(const fs::path &from, const fs::path &to) const;
-
-        void copyThumbnails(const fs::path &from, const fs::path &to) const;
+        // Drops every derived preview artifact of a file (preview::cache::Store::purgeFile). Best effort: the cache
+        // is non-authoritative, so a failure is logged, never thrown. Artifacts are keyed by file id, so rename and
+        // move need nothing; call this wherever a file id stops existing (delete, trash, purge).
+        void purgeDerivedArtifacts(unsigned int fileId) const;
 
         [[nodiscard]] std::filesystem::path vaultPathToFusePath(const std::filesystem::path &vPath) const;
 

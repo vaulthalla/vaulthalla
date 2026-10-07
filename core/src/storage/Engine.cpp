@@ -22,6 +22,7 @@
 #include "fs/cache/Registry.hpp"
 #include "runtime/Deps.hpp"
 #include "crypto/util/encrypt.hpp"
+#include "preview/cache/Store.hpp"
 
 #include <system_error>
 
@@ -206,54 +207,13 @@ namespace vh::storage {
         return vault->quota > usedWithReserve ? vault->quota - usedWithReserve : 0;
     }
 
-    void Engine::purgeThumbnails(const fs::path &rel_path) const {
-        for (const auto &size: Registry::get().caching.thumbnails.sizes)
-            if (const auto thumbnailPath = paths->absPath(rel_path, PathType::THUMBNAIL_ROOT) / std::to_string(size);
-                fs::exists(thumbnailPath))
-                fs::remove(thumbnailPath);
-    }
-
-    void Engine::moveThumbnails(const std::filesystem::path &from, const std::filesystem::path &to) const {
-        for (const auto &size: Registry::get().caching.thumbnails.sizes) {
-            auto fromPath = paths->absPath(from, PathType::THUMBNAIL_ROOT) / std::to_string(size);
-            auto toPath = paths->absPath(to, PathType::THUMBNAIL_ROOT) / std::to_string(size);
-
-            if (fromPath.extension() != ".jpg" && fromPath.extension() != ".jpeg") {
-                fromPath += ".jpg";
-                toPath += ".jpg";
-            }
-
-            if (!fs::exists(fromPath)) {
-                log::Registry::storage()->warn("[StorageEngine] Thumbnail does not exist: {}", fromPath.string());
-                continue;
-            }
-
-            if (const auto err = Filesystem::mkdir({.path = toPath.parent_path()}); err)
-                throw std::runtime_error("Failed to create thumbnail directory: " + toPath.parent_path().string() + " Error: " + std::to_string(err));
-
-            fs::rename(fromPath, toPath);
-        }
-    }
-
-    void Engine::copyThumbnails(const std::filesystem::path &from, const std::filesystem::path &to) const {
-        for (const auto &size: Registry::get().caching.thumbnails.sizes) {
-            auto fromPath = paths->absPath(from, PathType::THUMBNAIL_ROOT) / std::to_string(size);
-            auto toPath = paths->absPath(to, PathType::THUMBNAIL_ROOT) / std::to_string(size);
-
-            if (fromPath.extension() != ".jpg" && fromPath.extension() != ".jpeg") {
-                fromPath += ".jpg";
-                toPath += ".jpg";
-            }
-
-            if (!fs::exists(fromPath)) {
-                log::Registry::storage()->warn("[StorageEngine] Thumbnail does not exist: {}", fromPath.string());
-                continue;
-            }
-
-            if (const auto err = Filesystem::mkdir({.path = toPath.parent_path()}); err)
-                throw std::runtime_error("Failed to create thumbnail directory: " + toPath.parent_path().string() + " Error: " + std::to_string(err));
-
-            fs::copy_file(fromPath, toPath, fs::copy_options::overwrite_existing);
+    void Engine::purgeDerivedArtifacts(const unsigned int fileId) const {
+        if (fileId == 0) return;
+        try {
+            preview::cache::Store::purgeFile(std::const_pointer_cast<Engine>(shared_from_this()), fileId);
+        } catch (const std::exception &e) {
+            log::Registry::storage()->warn("[StorageEngine] Failed to purge derived artifacts of file {}: {}", fileId,
+                                           e.what());
         }
     }
 
@@ -293,9 +253,9 @@ namespace vh::storage {
 
     void Engine::removeLocally(const fs::path &rel_path) const {
         const auto path = rel_path.string().front() != '/' ? fs::path("/" / rel_path) : rel_path;
-        purgeThumbnails(path);
         const auto file = db::query::fs::File::getFileByPath(vault->id, path);
         db::query::fs::File::deleteFile(vault->owner_id, file);
+        if (file) purgeDerivedArtifacts(file->id);
 
         if (const auto absPath = paths->absPath(path, PathType::BACKING_VAULT_ROOT); fs::exists(absPath))
             fs::remove(absPath);
@@ -335,15 +295,8 @@ namespace vh::storage {
 
             absPath = parent;
         }
-
-        const auto vaultPath = makeAbsolute(f->path);
-
-        for (const auto &size: Registry::get().caching.thumbnails.sizes) {
-            const auto thumbPath = paths->absPath(vaultPath, PathType::THUMBNAIL_ROOT) / std::to_string(size);
-            fs::remove(thumbPath, ec);
-        }
-
-        fs::remove(paths->absPath(vaultPath, PathType::CACHE_ROOT), ec);
+        // Derived artifacts were dropped when the file was trashed (its file id ended there); the startup sweep
+        // collects anything an interrupted trash left behind.
     }
 
     std::filesystem::path Engine::vaultPathToFusePath(const std::filesystem::path &vPath) const {

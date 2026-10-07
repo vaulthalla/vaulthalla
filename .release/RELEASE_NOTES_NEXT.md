@@ -29,6 +29,18 @@ Install `vaulthalla-preview-cad` to preview STEP and STP CAD models: the server 
 - Hardware encoding (`preview.media.hwaccel`: VAAPI, Quick Sync, NVENC) is probed and falls back to software on
   any failure. Hardware paths have not yet been validated on real GPUs; software (libx264) is the tested path.
 
+### Converted previews are cached encrypted
+
+- Converted models, posters and transcodes are produced once per file version by a small background queue
+  (`preview.derive.max_concurrency` at a time, at most `preview.derive.max_queue` waiting) and stored encrypted
+  with the vault key. Editing a file makes the old conversion invalid automatically; deleting a file (moving it
+  to the trash included) or removing a vault deletes its conversions; a finished key rotation drops conversions
+  sealed under the old key. A file that cannot be converted is not retried until it changes (or for
+  `preview.derive.failure_ttl_hours`).
+- The cache stays within `caching.max_size_mb`, and conversions unused for `caching.thumbnails.expiry_days` are
+  removed. On the first start after upgrading, thumbnails that older versions stored unencrypted are deleted;
+  they are regenerated, encrypted, when next viewed.
+
 ## Web console
 ### Previews in the web console
 

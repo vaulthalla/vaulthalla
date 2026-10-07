@@ -367,10 +367,10 @@ TEST_F(FsCacheDeleteTest, GatewayPurgeLocalObjectStateClearsStaleCacheAndBacking
     engine->vault = vault;
     engine->paths = std::make_shared<vh::fs::model::Path>("/cache_vault", "cache_delete_vault");
 
-    const auto cachePath = engine->paths->absPath(file->path, vh::fs::model::PathType::CACHE_ROOT);
-    const auto fileCachePath = engine->paths->absPath(file->path, vh::fs::model::PathType::FILE_CACHE_ROOT);
-    std::filesystem::create_directories(cachePath);
-    std::filesystem::create_directories(fileCachePath);
+    // Derived artifacts are keyed by file id (preview::cache::Store), never by path.
+    const auto derivedDir = engine->paths->cacheRoot / "derived" / std::to_string(file->id);
+    std::filesystem::create_directories(derivedDir);
+    std::ofstream(derivedDir / "thumbnail.128.vhd") << "sealed";
 
     const auto oldInode = file->inode;
     const auto oldId = file->id;
@@ -384,8 +384,7 @@ TEST_F(FsCacheDeleteTest, GatewayPurgeLocalObjectStateClearsStaleCacheAndBacking
     EXPECT_EQ(vh::runtime::Deps::get().fsCache->getEntryById(oldId), nullptr);
     EXPECT_EQ(vh::db::query::fs::File::getFileByPath(ids.vaultId, "/s3-delete-me.txt"), nullptr);
     EXPECT_FALSE(std::filesystem::exists(file->backing_path));
-    EXPECT_FALSE(std::filesystem::exists(cachePath));
-    EXPECT_FALSE(std::filesystem::exists(fileCachePath));
+    EXPECT_FALSE(std::filesystem::exists(derivedDir));
 }
 
 TEST_F(FsCacheDeleteTest, CachedNewFileAndDirectoryHaveNonZeroTimestamps) {
