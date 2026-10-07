@@ -22,7 +22,7 @@ Opening a file in **Files** (double-click or Enter), or on a share link, shows i
 
 | File type | How it is shown | Needs |
 | --- | --- | --- |
-| Photos and raster images (JPEG, PNG, GIF, BMP, PNM, PSD) | Server-rendered JPEG preview, plus thumbnails in the file list | Preview |
+| Photos and raster images (JPEG, PNG, GIF, BMP, PNM) | Server-rendered JPEG preview, plus thumbnails in the file list | Preview |
 | PDF | Server-rendered pages: Previous/Next buttons or PageUp/PageDown, fit to page or width | Preview |
 | SVG, WebP, AVIF, ICO | The original image, shown as is | Download |
 | Video (`video/*`) | Native browser player with seeking, never autoplays | Download |
@@ -79,7 +79,7 @@ See [Sharing](/sharing) for download counting and link limits.
 
 ## Downloads
 
-Downloading a file streams it directly at any size; the console checks the download with a lightweight request first instead of starting it twice. Folders download as a ZIP, built in memory and limited to 256 MiB of file content and 4096 entries; download larger folders file by file or through the mount.
+Downloading a file streams it directly at any size; the console checks the download with a lightweight request first instead of starting it twice. Folders download as a ZIP, built in memory and limited to 256 MiB of file content and 4096 entries, with at most two folder downloads prepared at once (others are asked to retry); download larger folders file by file or through the mount.
 
 ## When A Preview Fails
 

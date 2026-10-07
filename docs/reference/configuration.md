@@ -198,7 +198,7 @@ caching:
 
 ```yaml
 preview:
-  max_render_pixels: 100000000
+  max_render_pixels: 64000000
   media:
     integrity: optimistic      # optimistic | strict
     remote: hydrate            # hydrate | ranged | off
@@ -219,7 +219,7 @@ preview:
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `preview.max_render_pixels` | `100000000` | Largest image or PDF page (in pixels, checked from the file header before decoding) the server renders. Allowed range 1,000,000 to 1,000,000,000. |
+| `preview.max_render_pixels` | `64000000` | Largest image or PDF page (source pixels, checked from the file header before decoding) the server renders. Progressive JPEGs get half this budget, because their decoder buffers the full resolution. Allowed range 1,000,000 to 1,000,000,000. |
 | `preview.media.integrity` | `optimistic` | How streamed bytes (downloads, media, models, text) are authenticated. `optimistic` starts serving at once and verifies the whole file's AES-GCM tag once per file version in the background; if verification fails, every stream of that version is cut off and later requests are refused until the file changes. `strict` verifies before the first byte is sent, which delays the start of large files. |
 | `preview.media.remote` | `hydrate` | How the HTTP lanes read a file in an S3/R2 vault whose bytes are not stored locally. `hydrate` fetches the whole object once (counted against the vault's request and price budgets), verifies it and keeps the encrypted local copy. `ranged` fetches only the requested ranges, pinned to the object version; those bytes are not authenticated per range. `off` never fetches: such files answer "content unavailable". File-list thumbnails never fetch remote content under any setting. |
 | `preview.media.hwaccel` | `auto` | Encoder for media transcodes. `auto` tries VAAPI, Quick Sync (`qsv`) and NVENC and falls back to software (libx264) on any failure; `software` never uses hardware; `vaapi`, `qsv` and `nvenc` prefer that encoder and still fall back to software. Hardware encoding has not been validated on real GPUs in this release. |
