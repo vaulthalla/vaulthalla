@@ -49,7 +49,13 @@ private:
     // Human refresh tokens re-validated against the database within the last kRevalidateAfter, by jti. Dropped
     // with the session's indexes (logout, invalidation, revokeSessions), so revocation takes effect immediately;
     // otherwise HTTP range bursts (media seeking) would cost one DB round trip per request.
-    std::unordered_map<std::string, std::chrono::steady_clock::time_point> validatedAt_;
+    // Also keyed to rbac::policyEpoch(): a role/override/membership change re-runs the full validation (which
+    // reloads the user's roles and groups) on the next request.
+    struct ValidatedStamp {
+        std::chrono::steady_clock::time_point at;
+        uint64_t epoch{};
+    };
+    std::unordered_map<std::string, ValidatedStamp> validatedAt_;
 
     void eraseSessionIndexesLocked(
         const std::shared_ptr<protocols::ws::Session>& session,

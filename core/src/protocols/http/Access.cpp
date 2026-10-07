@@ -28,6 +28,7 @@
 #include <charconv>
 #include <chrono>
 #include <limits>
+#include <future>
 #include <mutex>
 
 namespace vh::protocols::http::access {
@@ -75,6 +76,18 @@ std::unordered_map<std::string, Clock::time_point>& recentAccess() {
     return map;
 }
 
+// Share accounting decisions, single-flight per key: concurrent first requests for the same logical download wait
+// for (and share) the one atomic max_downloads decision instead of each assuming it was counted.
+struct ShareAccessSlot {
+    Clock::time_point at;
+    std::shared_future<bool> allowed;
+};
+
+std::unordered_map<std::string, ShareAccessSlot>& shareAccess() {
+    static std::unordered_map<std::string, ShareAccessSlot> map;
+    return map;
+}
+
 void pruneLocked(const Clock::time_point now) {
     auto& access = recentAccess();
     if (access.size() > 4096)
@@ -82,6 +95,9 @@ void pruneLocked(const Clock::time_point now) {
     auto& cached = principals();
     if (cached.size() > 4096)
         std::erase_if(cached, [now](const auto& item) { return now - item.second.at > kPrincipalTtl; });
+    auto& shares = shareAccess();
+    if (shares.size() > 4096)
+        std::erase_if(shares, [now](const auto& item) { return now - item.second.at > kAuditWindow; });
 }
 
 // True the first time `key` is seen within the window (and records it).
@@ -95,10 +111,7 @@ void pruneLocked(const Clock::time_point now) {
     return true;
 }
 
-void forgetAccess(const std::string& key) {
-    std::scoped_lock lock(cacheMutex());
-    recentAccess().erase(key);
-}
+
 
 [[nodiscard]] std::string urlDecode(const std::string_view value) {
     std::string out;
@@ -211,7 +224,11 @@ void requireHumanNeed(const Caller& caller, const std::shared_ptr<storage::Engin
 }
 
 void checkExpect(const std::shared_ptr<fs::model::Entry>& entry, const Expect expect) {
-    if (expect == Expect::File && entry->isDirectory()) throw BadRequest("Target is a directory");
+    const bool isFile = static_cast<bool>(std::dynamic_pointer_cast<fs::model::File>(entry));
+    // Symlinks (and anything else that is neither a file nor a directory) are never HTTP targets: the handlers
+    // dereference the File they are given.
+    if (!isFile && !entry->isDirectory()) throw BadRequest("Target is not a regular file or directory");
+    if (expect == Expect::File && !isFile) throw BadRequest("Target is not a regular file");
     if (expect == Expect::Directory && !entry->isDirectory()) throw BadRequest("Target is not a directory");
 }
 
@@ -348,29 +365,56 @@ bool recordShareAccess(const Target& target, const std::string_view eventType, c
     const auto generation = target.file ? storage::generationOf(*target.file).sourceId() : std::string{"dir"};
     const auto key = std::string(eventType) + "|" + principal.share_session_id + "|" +
                      std::to_string(target.entry->id) + "|" + generation;
-    if (!firstInWindow(key)) return true;
 
-    if (countsAsDownload && !target.share->manager->consumeDownload(principal)) {
-        forgetAccess(key);
-        return false;
+    std::promise<bool> decision;
+    std::shared_future<bool> pending;
+    {
+        const auto now = Clock::now();
+        std::scoped_lock lock(cacheMutex());
+        pruneLocked(now);
+        auto& shares = shareAccess();
+        if (const auto it = shares.find(key); it != shares.end() && now - it->second.at < kAuditWindow) {
+            pending = it->second.allowed;
+        } else {
+            shares[key] = ShareAccessSlot{now, decision.get_future().share()};
+        }
     }
+    if (pending.valid()) {
+        // Another request owns this logical download's decision; follow it (fail closed if it never settles).
+        return pending.wait_for(std::chrono::seconds(30)) == std::future_status::ready && pending.get();
+    }
+
+    bool allowed = true;
     try {
-        target.share->manager->appendAccessAuditEvent(principal, {
-            .event_type = std::string(eventType),
-            .target = {
-                .vault_id = target.vaultId,
-                .target_entry_id = target.entry->id,
-                .target_path = target.vaultPath
-            },
-            .status = share::AuditStatus::Success,
-            .bytes_transferred = bytes,
-            .error_code = std::nullopt,
-            .error_message = std::nullopt
-        });
+        if (countsAsDownload) allowed = target.share->manager->consumeDownload(principal);
     } catch (const std::exception& e) {
-        log::Registry::http()->warn("[HttpAccess] Share audit write failed: {}", e.what());
+        log::Registry::http()->warn("[HttpAccess] Share download accounting failed (refusing): {}", e.what());
+        allowed = false;
     }
-    return true;
+    if (allowed) {
+        try {
+            target.share->manager->appendAccessAuditEvent(principal, {
+                .event_type = std::string(eventType),
+                .target = {
+                    .vault_id = target.vaultId,
+                    .target_entry_id = target.entry->id,
+                    .target_path = target.vaultPath
+                },
+                .status = share::AuditStatus::Success,
+                .bytes_transferred = bytes,
+                .error_code = std::nullopt,
+                .error_message = std::nullopt
+            });
+        } catch (const std::exception& e) {
+            log::Registry::http()->warn("[HttpAccess] Share audit write failed: {}", e.what());
+        }
+    }
+    decision.set_value(allowed);
+    if (!allowed) {
+        std::scoped_lock lock(cacheMutex());
+        shareAccess().erase(key);  // a refused download is decided again next time (the limit may have been raised)
+    }
+    return allowed;
 }
 
 void recordHumanAccess(const Caller& caller, const Target& target, const std::string_view eventType) {
@@ -387,6 +431,7 @@ void clearCachesForTesting() {
     std::scoped_lock lock(cacheMutex());
     principals().clear();
     recentAccess().clear();
+    shareAccess().clear();
 }
 
 namespace hooks {

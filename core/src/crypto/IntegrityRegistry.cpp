@@ -104,16 +104,15 @@ void IntegrityRegistry::clearForTesting() {
 
 void IntegrityRegistry::evictLocked() {
     // Bounded memory: drop the oldest settled verdicts. Live readers keep their ticket alive through their own
-    // shared_ptr; an evicted generation is simply verified again by its next new reader.
-    while (tickets_.size() > capacity_ && !order_.empty()) {
+    // shared_ptr; an evicted generation is simply verified again by its next new reader. In-flight verifications are
+    // kept, so one pass visits each entry at most once (the map may briefly exceed capacity while all are in flight).
+    for (auto budget = order_.size(); tickets_.size() > capacity_ && budget > 0 && !order_.empty(); --budget) {
         const auto oldest = order_.front();
         order_.pop_front();
         const auto it = tickets_.find(oldest);
         if (it == tickets_.end()) continue;
-        const auto s = it->second->state();
-        if (s == IntegrityState::Verifying) {
-            order_.push_back(oldest);  // in flight: keep
-            if (order_.size() <= 1) break;
+        if (it->second->state() == IntegrityState::Verifying) {
+            order_.push_back(oldest);
             continue;
         }
         tickets_.erase(it);

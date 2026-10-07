@@ -1,4 +1,5 @@
 #include "auth/session/Manager.hpp"
+#include "rbac/PolicyEpoch.hpp"
 
 #include "auth/model/RefreshToken.hpp"
 #include "auth/model/TokenPair.hpp"
@@ -450,13 +451,15 @@ std::shared_ptr<Session> Manager::validateRawRefreshToken(const std::string& ref
     {
         std::lock_guard lock(sessionMutex_);
         const auto it = validatedAt_.find(claims->jti);
-        fresh = it != validatedAt_.end() && now - it->second < kRevalidateAfter &&
+        fresh = it != validatedAt_.end() && now - it->second.at < kRevalidateAfter &&
+                it->second.epoch == rbac::policyEpoch() &&
                 sessionsByRefreshJti_.contains(claims->jti);
     }
     if (!fresh || !session->tokens->refreshToken->isValid()) {
         Validator::validateRefreshToken(session);
         std::lock_guard lock(sessionMutex_);
-        if (sessionsByRefreshJti_.contains(claims->jti)) validatedAt_[claims->jti] = now;
+        if (sessionsByRefreshJti_.contains(claims->jti))
+            validatedAt_[claims->jti] = ValidatedStamp{.at = now, .epoch = rbac::policyEpoch()};
     }
     if (!session->user || session->isShareSession())
         throw std::invalid_argument("Refresh token did not resolve to a human session");

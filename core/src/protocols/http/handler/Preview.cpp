@@ -113,6 +113,7 @@ model::preview::Response preview(request&& req) {
         res.set(field::etag, etag);
         res.set(field::cache_control, "private, max-age=0, must-revalidate");
         res.set("X-Content-Type-Options", "nosniff");
+        res.set("X-Accel-Buffering", "no");  // a decrypted render must not land in nginx temp files either
         if (result.pageCount) res.set("X-Vaulthalla-Page-Count", std::to_string(*result.pageCount));
         res.set("X-Vaulthalla-Cache", result.cacheHit ? "hit" : "miss");
         res.content_length(size);

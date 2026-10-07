@@ -124,11 +124,12 @@ namespace vh::storage {
             params.key = encryptionManager->keySnapshot(f->encrypted_with_key_version);
 
             // On a tag mismatch: was the file resealed (new IV) while we read the old one? Then it's a race.
-            params.stillCurrent = [fusePath = f->fuse_path, iv = f->encryption_iv]() {
+            // Looked up by id (stable across rename/move): only a new IV means the bytes were legitimately replaced.
+            params.stillCurrent = [id = f->id, iv = f->encryption_iv]() {
                 const auto& cache = runtime::Deps::get().fsCache;
-                if (!cache || fusePath.empty()) return true;
-                const auto entry = std::dynamic_pointer_cast<File>(cache->getEntry(fusePath));
-                return entry && entry->encryption_iv == iv;
+                if (!cache || id == 0) return true;
+                const auto entry = std::dynamic_pointer_cast<File>(cache->getEntryById(id));
+                return !entry || entry->encryption_iv == iv;
             };
         }
         return std::make_unique<GcmFileReader>(std::move(params));

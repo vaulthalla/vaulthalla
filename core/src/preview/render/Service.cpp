@@ -197,9 +197,12 @@ std::optional<Result> cached(const std::shared_ptr<storage::Engine>& engine,
     return result;
 }
 
-Result render(const std::shared_ptr<storage::Engine>& engine, const std::shared_ptr<fs::model::File>& file,
+Result render(const std::shared_ptr<storage::Engine>& engine, const std::shared_ptr<fs::model::File>& liveFile,
               Request request, const storage::RemoteFetchPolicy remote) {
-    if (!engine || !file) throw std::invalid_argument("Nothing to render");
+    if (!engine || !liveFile) throw std::invalid_argument("Nothing to render");
+    // One immutable snapshot for the whole render: the cache key and the reader must describe the same generation.
+    // (Overwrites mutate the cached File in place; a key taken from it after reading could label old pixels as new.)
+    const auto file = std::make_shared<fs::model::File>(*liveFile);
     if (classify(*file).kind != PreviewKind::RenderedImage) throw InvalidInput("This file type has no server render");
     request.size = normalizeSize(request.size);
     if (auto hit = cached(engine, file, request); hit && (!isPdf(*file) || hit->pageCount)) return std::move(*hit);
@@ -223,9 +226,10 @@ Result render(const std::shared_ptr<storage::Engine>& engine, const std::shared_
     return result;
 }
 
-void generateThumbnails(const std::shared_ptr<storage::Engine>& engine, const std::shared_ptr<fs::model::File>& file,
+void generateThumbnails(const std::shared_ptr<storage::Engine>& engine, const std::shared_ptr<fs::model::File>& liveFile,
                         const std::span<const uint8_t> plaintext) {
-    if (!engine || !file || file->size_bytes == 0) return;
+    if (!engine || !liveFile || liveFile->size_bytes == 0) return;
+    const auto file = std::make_shared<fs::model::File>(*liveFile);  // see render(): key and bytes from one generation
     const auto plan = classify(*file);
     if (!plan.thumbnail) return;
 
@@ -272,7 +276,9 @@ void enqueueThumbnails(const std::shared_ptr<storage::Engine>& engine, const std
         }
         auto task = std::make_shared<ThumbnailTask>();
         task->engine = engine;
-        task->file = file;
+        // Snapshot now: the plaintext handed in belongs to this generation, and the file may be overwritten before
+        // the task runs (thumbnails of old bytes must never be stored under a newer source id).
+        task->file = std::make_shared<fs::model::File>(*file);
         task->dedupeKey = key;
         if (!plaintext.empty() && plaintext.size() == file->size_bytes && plaintext.size() <= kKeepUploadBufferBytes)
             task->plaintext.assign(plaintext.begin(), plaintext.end());
