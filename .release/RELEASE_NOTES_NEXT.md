@@ -7,7 +7,34 @@ Format: the first line is "# <release title>" WITHOUT a version number (vlr adds
 Everything after the title is the Markdown release body. Describe the resulting behavior
 for users and operators; keep it representative of what actually ships.
 -->
-# Rich previews and safer key rotation
+# Rich previews, streaming downloads and safer key rotation
+
+## Security fixes in previews and share links
+
+- **Previews now follow vault permissions.** Rendered previews require the same vault access as downloads, and
+  someone who cannot read a vault can no longer tell which paths exist in it.
+- **Preview-only share links stay preview-only.** They show rendered images and PDF pages, but never hand out a
+  file's original bytes (or a converted copy of something only a download link should get).
+- **Nothing decrypted is left on disk for previews.** PDF and image previews render in memory, cached previews are
+  encrypted with the vault key (old unencrypted thumbnails are deleted on upgrade and regenerate), and the daemon
+  tells nginx not to buffer decrypted responses to disk. New installs also disable proxy buffering in the nginx
+  site; an existing site file is not modified and relies on that header.
+- **Hostile images and PDFs are bounded:** oversized images are refused from their header before decoding
+  (`preview.max_render_pixels`, 64 MP by default), at most four renders run at once, and a file that fails to
+  render is not retried until it changes.
+- **A crash restarts the daemon instead of hanging the mount.** A race in file-type detection could crash the
+  daemon under concurrent uploads; it is fixed, and a crash now exits and restarts cleanly rather than leaving
+  `/mnt/vaulthalla` (and `apt`) stuck.
+
+## Downloads stream, with seeking and no size cap
+
+Downloads are streamed straight from the encrypted vault instead of being decrypted into memory first: the first
+byte arrives immediately, memory use no longer grows with file size, and the old 256 MiB download limit is gone
+(folder downloads as ZIP are still limited). Range requests, `HEAD`, ETags and conditional requests work, so
+video and audio seek, resumable download tools resume, and the browser can revalidate instead of refetching.
+Integrity is still checked: each file version is authenticated once before ranged reads are served from it.
+Busy servers answer new HTTP connections beyond `http_preview_server.max_connections` with a retryable 503
+instead of slowing everyone down.
 
 ## Safer vault key rotation
 

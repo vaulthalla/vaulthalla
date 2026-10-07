@@ -7,8 +7,46 @@ Format: one "- " bullet per change (concise, technical). Indent continuation lin
 Optional "## Section" headings group bullets; if used, every bullet must be under one.
 One level of nested "  - " detail bullets is allowed. Consolidate; don't paste commit logs.
 -->
+## Security
+- HTTP previews (`/preview`) enforce vault RBAC like downloads; share links distinguish Preview from Download:
+  a preview-only link gets rendered previews (images, PDF pages) but never original bytes, conversions of
+  downloadable kinds, or the text/media/3D lanes. Callers who cannot read a vault get the same 404 for existing
+  and missing paths.
+- No plaintext on disk for previews: PDF/image rendering decrypts in memory (the decrypt-to-temp-file helper is
+  removed), thumbnails/renders are cached encrypted with the vault key, and `/preview` and `/download` responses
+  carry `X-Accel-Buffering: no` so nginx never spools decrypted bodies (fresh nginx sites also set
+  `proxy_buffering off` and `proxy_max_temp_file_size 0`; existing sites are left alone and rely on the header).
+- Hostile-input bounds for in-process rendering: 64 MP source cap (`preview.max_render_pixels`; progressive JPEGs
+  half), read from the header before decoding; at most 4 renders at once; PDFium serialized behind one lock;
+  failed sources negatively cached per file version.
+- Pre-authentication request bodies are refused/bounded; HTTP connections get real read/write deadlines.
+
 ## Data safety
 - Key rotation: finish only when every file rotated and a re-query of rows on older key versions is empty (failed files no longer orphaned on a dropped key); per-file sidecar (`<backing>.vh-rotate`, fsynced) + compare-and-set IV commit + rename, with authentication-based crash recovery each pass and at startup; Cache-mode local copies rewritten (inverted check fixed), remote-only files never written locally; empty/IV-less files excluded and one failure no longer aborts its range; single-file rotation no longer divides by zero; `createFile` overwrite replaces ciphertext atomically (temp + fsync + rename + dir fsync).
+
+## HTTP and downloads
+- One access layer for every HTTP lane (session cookie, share token, RBAC, share scope) and one RFC 9110
+  byte-range parser shared with the S3 gateway.
+- Streaming responses with GET/HEAD, single Range (206/416), strong ETags per file version, If-None-Match,
+  strong-only If-Range, `Content-Disposition` inline/attachment and `nosniff`/sandbox hardening for original bytes.
+- New `/download/content` lane for inline original bytes (media seeking, 3D, text); `/download` streams files of
+  any size (the 256 MiB in-memory cap is gone; folder ZIPs are still built in memory, two at a time).
+- `PUT /upload/text` saves text edits with `If-Match` (412 on conflict, 428 without a validator,
+  `preview.text.max_edit_bytes`).
+- `storage::PlaintextReader` over AES-256-GCM vault files: positioned reads via CTR after the file version is
+  authenticated once (integrity registry keyed by IV, key version and inode identity; strict mode for derivation);
+  no change to the on-disk file format.
+- Capped thread-per-connection HTTP server (`http_preview_server.max_connections`, 503 + `Retry-After` beyond it).
+- Hot path: validated sessions and share principals are cached briefly and invalidated by an RBAC/share policy
+  epoch (revocations apply immediately); share access audit rows are coalesced; `max_downloads` is consumed
+  atomically in SQL.
+- Crypto: OpenSSL AES-256-GCM primitives (streaming encrypt/verify, CTR reads), zeroized key snapshots and a
+  thread-safe EncryptionManager.
+
+## Database
+- Migration 103: `files.encryption_format`; `cache_index` gains the `derived` type with kind/variant/source
+  generation/generator version/artifact IV and key version/status columns, a unique derived identity and an LRU
+  index. Legacy thumbnail/file cache rows are dropped (thumbnails regenerate encrypted).
 
 ## Runtime
 - Crash safety: MIME detection (libmagic) no longer shares an unlocked cookie across threads (concurrent FUSE
@@ -49,11 +87,13 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
   defaults at startup. The path-keyed thumbnail move/copy/purge helpers are removed.
 
 ## Packaging
+- vaulthalla.service: `LimitCORE=0`; the unit documents why mount-namespace hardening and NoNewPrivileges stay
+  off (they hide the FUSE mount / break setuid fusermount3). Fresh nginx sites disable proxy buffering on
+  `/preview` and `/download`.
 - New binary packages vaulthalla-preview-cad (STEP/STP -> GLB, Open CASCADE) and vaulthalla-preview-media
   (libav*), each Depends: vaulthalla (= ${binary:Version}); vaulthalla Suggests both and links neither.
   Build-Depends gain libseccomp-dev, libocct-*-dev and libav*/libswresample-dev/libswscale-dev behind the build
   profiles pkg.vaulthalla.nocad / pkg.vaulthalla.nomedia; meson options preview_cad / preview_media (feature, auto).
-
 - preview-media: add the optional `vaulthalla-preview-media` helper (meson feature `preview_media`, links
   libavformat/libavcodec/libswscale/libswresample; never linked by the daemon) with `probe`, `poster`,
   `transcode` (fragmented MP4, H.264 + AAC stereo), `hls` (framed fMP4 segments, VOD playlist last) and
