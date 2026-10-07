@@ -1,4 +1,5 @@
 #include "fuse/WorkingCopies.hpp"
+#include "storage/CloudEngine.hpp"
 
 #include "crypto/util/hash.hpp"
 #include "db/query/fs/File.hpp"
@@ -59,14 +60,27 @@ std::shared_ptr<storage::Engine> engineFor(const fs::model::File& file) {
 WorkingCopyHooks runtimeHooks() {
     return {
         .materialize = [](const fs::model::File& file, const std::filesystem::path& to) {
-            if (!std::filesystem::exists(file.backing_path)) return;
-            if (std::filesystem::file_size(file.backing_path) == 0) return;
-            if (file.encryption_iv.empty()) {
-                std::filesystem::copy_file(file.backing_path, to, std::filesystem::copy_options::overwrite_existing);
+            const fs::model::File* source = &file;
+            std::shared_ptr<fs::model::File> hydrated;
+            if (!std::filesystem::exists(file.backing_path)) {
+                if (file.size_bytes == 0) return;
+                // An index-only cloud file (Cache strategy): its bytes live in the bucket. Fetch them (price-gated,
+                // verified, kept as local ciphertext) instead of presenting an empty file, whose first write would be
+                // sealed over the real content.
+                const auto cloud = std::dynamic_pointer_cast<storage::CloudEngine>(engineFor(file));
+                if (!cloud) throw std::runtime_error("Backing bytes are missing for " + file.path.string());
+                hydrated = cloud->hydrate(std::make_shared<fs::model::File>(file));
+                if (!hydrated || !std::filesystem::exists(hydrated->backing_path))
+                    throw std::runtime_error("Remote content is unavailable for " + file.path.string());
+                source = hydrated.get();
+            }
+            if (std::filesystem::file_size(source->backing_path) == 0) return;
+            if (source->encryption_iv.empty()) {
+                std::filesystem::copy_file(source->backing_path, to, std::filesystem::copy_options::overwrite_existing);
                 return;
             }
-            engineFor(file)->encryptionManager->decryptFileToFile(
-                file.backing_path, to, file.encryption_iv, file.encrypted_with_key_version);
+            engineFor(*source)->encryptionManager->decryptFileToFile(
+                source->backing_path, to, source->encryption_iv, source->encrypted_with_key_version);
         },
         .seal = [](const std::filesystem::path& from, const std::filesystem::path& to,
                    const std::shared_ptr<fs::model::File>& staged) {
@@ -137,13 +151,20 @@ WorkingCopies::Handle WorkingCopies::open(const uint64_t ino, const std::shared_
 
     try {
         std::scoped_lock lock(copy->mutex);
+        const int access = flags & O_ACCMODE;
+        const bool truncating = (flags & O_TRUNC) && access != O_RDONLY;
         if (!copy->ready) {
             createPrivateFile(copy->path);
-            materialize(*copy);
+            if (truncating) {
+                // The content is about to be discarded: don't decrypt (or, for a remote-only file, download) it.
+                copy->ready = true;
+                copy->dirty = true;
+            } else {
+                materialize(*copy);
+            }
         }
 
-        const int access = flags & O_ACCMODE;
-        if ((flags & O_TRUNC) && access != O_RDONLY && std::filesystem::file_size(copy->path) > 0) {
+        if (truncating && std::filesystem::file_size(copy->path) > 0) {
             std::filesystem::resize_file(copy->path, 0);
             copy->dirty = true;
         }

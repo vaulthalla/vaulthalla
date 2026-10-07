@@ -53,6 +53,7 @@ protected:
     int saves = 0;
     unsigned int seals = 0;
     std::unique_ptr<fuse::WorkingCopies> copies;
+    int materializations = 0;
 
     void SetUp() override {
         dir = stdfs::temp_directory_path() / ("vh_wc_" + std::to_string(::getpid()) + "_" +
@@ -68,7 +69,8 @@ protected:
         file->backing_path = dir / "backing" / "ALIAS";
 
         copies = std::make_unique<fuse::WorkingCopies>(dir / "plain", fuse::WorkingCopyHooks{
-            .materialize = [](const fs::model::File& f, const stdfs::path& to) {
+            .materialize = [this](const fs::model::File& f, const stdfs::path& to) {
+                ++materializations;
                 if (!stdfs::exists(f.backing_path) || stdfs::file_size(f.backing_path) == 0) return;
                 const auto bytes = slurp(f.backing_path);
                 spit(to, f.encryption_iv.empty() ? bytes : fakeOpen(bytes));
@@ -179,6 +181,16 @@ TEST_F(WorkingCopiesTest, OTruncEmptiesWritableOpensOnly) {
     ASSERT_EQ(copies->write(wo, "new", 3, 0, std::nullopt), 3);
     copies->release(wo);
     EXPECT_EQ(fakeOpen(slurp(file->backing_path)), "new") << "no stale tail from the longer old content";
+}
+
+TEST_F(WorkingCopiesTest, ATruncatingOpenNeverMaterializesTheOldContentButStillPersistsTheTruncation) {
+    // For a remote-only cloud file materializing means downloading it; O_TRUNC discards it anyway.
+    storeSealed("old content that would have been fetched");
+    auto wo = copies->open(42, file, O_WRONLY | O_TRUNC);
+    EXPECT_EQ(materializations, 0);
+    copies->release(wo);
+    EXPECT_EQ(saves, 1) << "an O_TRUNC open with no writes still empties the file";
+    EXPECT_EQ(fakeOpen(slurp(file->backing_path)), "");
 }
 
 TEST_F(WorkingCopiesTest, TruncateShrinksAndGrowsThePlaintext) {
