@@ -20,6 +20,7 @@
 #include "runtime/Deps.hpp"
 #include "storage/CloudEngine.hpp"
 #include "storage/Manager.hpp"
+#include "storage/PlaintextReader.hpp"
 #include "storage/s3/Controller.hpp"
 #include "sync/model/Action.hpp"
 #include "sync/model/LocalPolicy.hpp"
@@ -66,12 +67,6 @@ std::vector<uint8_t> md5Raw(const std::vector<uint8_t>& bytes) {
     return {digest.begin(), digest.end()};
 }
 
-std::vector<uint8_t> readFileBytes(const std::filesystem::path& path) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) throw std::runtime_error("Failed to read object backing file: " + path.string());
-    return {std::istreambuf_iterator<char>(in), {}};
-}
-
 std::string objectMd5FileHex(const std::filesystem::path& path) {
     std::ifstream in(path, std::ios::binary);
     if (!in) throw std::runtime_error("Failed to read object source file: " + path.string());
@@ -85,14 +80,6 @@ std::string objectMd5FileHex(const std::filesystem::path& path) {
     }
     const auto digest = md5.finish();
     return toHex(digest.data(), digest.size());
-}
-
-std::vector<uint8_t> readPlaintext(const std::shared_ptr<storage::Engine>& engine, const std::shared_ptr<fs::model::File>& file) {
-    if (!file) return {};
-    if (file->size_bytes == 0) return {};
-    if (file->encryption_iv.empty() || file->encrypted_with_key_version == 0)
-        return readFileBytes(file->backing_path);
-    return engine->decrypt(file);
 }
 
 std::string metadataEtagForFile(const std::shared_ptr<fs::model::File>& file) {
@@ -515,7 +502,13 @@ ObjectBody ObjectStore::getObject(
     if (isDirectoryMarker(key)) {
         bytes = {};
     } else if (const auto file = db::query::fs::File::getFileByPath(bucket.vault_id, vaultPath)) {
-        bytes = readPlaintext(bucket.engine, file);
+        auto body = readFileObject(bucket.engine, file, key, range);
+        return {
+            .state = std::move(state),
+            .metadata = std::move(metadata),
+            .bytes = std::move(body.bytes),
+            .content_range = body.content_range
+        };
     } else if (const auto cloud = cloudEngine(bucket)) {
         auto remotePayload = cloud->downloadToBuffer(vaultPath);
         bytes = cloud->decryptRemotePayload(vaultPath, remotePayload);
@@ -942,6 +935,44 @@ bool ObjectStore::credentialAllowsAdmin(const ResolvedBucket& bucket) {
 bool ObjectStore::isRemoteBacked(const ResolvedBucket& bucket) {
     return bucket.mode == "remote_cache" || bucket.mode == "remote_proxy" ||
            (bucket.engine && bucket.engine->type() == storage::StorageType::Cloud);
+}
+
+FileObjectBody ObjectStore::readFileObject(
+    const std::shared_ptr<storage::Engine>& engine,
+    const std::shared_ptr<fs::model::File>& file,
+    const std::string& key,
+    const std::optional<ByteRange> range) {
+    if (!engine || !file) throw noSuchKey(key);
+
+    FileObjectBody body;
+    const auto size = file->size_bytes;
+    try {
+        if (range) {
+            if (size == 0) throw invalidRange(key);
+            const auto resolved = protocols::http::range::resolve(*range, size);
+            if (!resolved) throw invalidRange(key);
+
+            const auto reader = engine->openPlaintextReader(file);
+            const auto length = resolved->last - resolved->first + 1;
+            body.bytes.resize(static_cast<std::size_t>(length));
+            std::size_t done = 0;
+            while (done < body.bytes.size()) {
+                const auto got = reader->read(resolved->first + done,
+                                              std::span<uint8_t>(body.bytes.data() + done, body.bytes.size() - done));
+                if (got == 0) throw storage::IntegrityError("Object content is shorter than its metadata: " + key);
+                done += got;
+            }
+            body.content_range = std::make_pair(resolved->first, resolved->last);
+            return body;
+        }
+
+        if (size == 0) return body;
+        const auto reader = engine->openPlaintextReader(file);
+        body.bytes = storage::readAll(*reader, size);
+        return body;
+    } catch (const storage::ContentUnavailable& e) {
+        throw S3Error{"ServiceUnavailable", e.what(), http::status::service_unavailable, key};
+    }
 }
 
 bool ObjectStore::isDirectoryMarker(const std::string& key) {

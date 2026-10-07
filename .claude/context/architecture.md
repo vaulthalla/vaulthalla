@@ -312,7 +312,37 @@ subject's assignment; both `vh vault role override ...` and ws `role.vault.overr
 - Invariant: never trust unsigned or unverified price artifacts. Estimates are guidance and `fail_open`; enforcement modes act on
   them, so a pricing outage must not wedge sync.
 
-**S3 cost safety** (sync + S3 gateway)
+**S3 cost safety** (sync + S3 gateway + remote-only reads)
 - Request budgets (LIST/HEAD/GET/PUT/COPY/DELETE/bytes) and price budgets (`off|report|warn|enforce`,
   global/provider/vault) are separate systems. Don't merge them.
+- Usage captures (`ScopedS3RequestUsageCapture`) are thread-local and nest: every capture active on the thread is
+  checked and records each request (`Controller::recordRequest`), so a hydrate's own cap inside a gateway request
+  is still visible to the gateway's capture. `Controller::streamObject` is the metered streaming GET (optional
+  signed `Range` and `If-Match`; 412 → `ConditionalRequestFailed`; the GET is metered before it is sent, body
+  bytes as they arrive); fakes override the protected `transportGet` seam and keep the metering.
+- **Prefer the local ciphertext copy (D11).** Anything that reads a vault file's bytes goes through
+  `Engine::openPlaintextReader`: a cloud file with a backing file reads it in place (zero S3 requests). The ws share
+  download/preview lanes and the S3 gateway's file reads (`ObjectStore::readFileObject`, ranges read only their
+  bytes) do; the HTTP `/download` lane is the lead's rewrite. `CloudEngine::downloadToBuffer/decryptRemotePayload`
+  remain only for HTTP `Router.cpp`, rotation, and gateway objects with no `files` row.
+- **Remote-only files (`CloudEngine::openMissingReader`, `preview.media.remote`, process default
+  `storage::setDefaultRemotePolicy`):**
+  - `hydrate` (default): price preflight (`RemoteFetchGate`, default `priceBudgetRemoteFetchGate`: the
+    BudgetConservative estimate + `PriceBudgetService::preflight` sync uses, operation `preview_hydrate`; a refusal
+    or a failed preflight → `ContentUnavailable`, nothing sent) → per-hydrate request cap (1 HEAD, 1 GET, object
+    bytes) → HEAD (ETag, length, `vh-iv`/`vh-key-version`; a length that disagrees with `files.size_bytes` is
+    refused, not fetched) → one GET with `If-Match` streamed into an `O_TMPFILE` next to the backing path (named
+    0600 `O_EXCL` `.vh-hydrate-*` sibling where unsupported) → `gcmVerifyFd` over the whole message (failure:
+    `IntegrityError`, nothing kept) → fsync → if the IV changes (plaintext-upstream objects are sealed on the fly
+    under a fresh IV; an encrypted object normally keeps the row's IV, `indexAndDeleteFile` copied it) the files
+    row is compare-and-set *first*, then the copy is linked in without replacing anything (`linkat`, EEXIST: a
+    writer won) and the directory fsynced. A crash leaves either no copy (re-hydrated next read) or a verified one.
+    Concurrent readers of one file share a single fetch (`hydrating_` futures). The reservation is committed with
+    the actual usage. The copy stays: the Cache strategy has no eviction yet.
+  - `ranged` (opt-in): `RemoteRangedReader`, aligned 4 MiB windows, LRU of 4, every GET `If-Match` the open-time
+    ETag (412 → `IntegrityError`), CTR-decrypt with the *remote* IV, per-reader caps (default 2·windows+8 GETs,
+    2·(size+window) bytes; past them `ContentUnavailable`), worst case price-reserved at open and actual usage
+    committed on close. Positioned reads are **unauthenticated** (a hostile bucket can flip plaintext bits);
+    `readAllAuthenticated` fetches the whole object and checks the tag. Chunked AEAD is the eventual fix.
+  - `off`: `ContentUnavailable`.
 - Dev R2 dogfooding hits a real bucket. With `dev.init_r2_test_vault`, initdb clears the `VAULTHALLA_TEST_R2_*` bucket.

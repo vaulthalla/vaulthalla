@@ -11,6 +11,14 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
 - Key rotation: finish only when every file rotated and a re-query of rows on older key versions is empty (failed files no longer orphaned on a dropped key); per-file sidecar (`<backing>.vh-rotate`, fsynced) + compare-and-set IV commit + rename, with authentication-based crash recovery each pass and at startup; Cache-mode local copies rewritten (inverted check fixed), remote-only files never written locally; empty/IV-less files excluded and one failure no longer aborts its range; single-file rotation no longer divides by zero; `createFile` overwrite replaces ciphertext atomically (temp + fsync + rename + dir fsync).
 
 ## Runtime
+- Cloud vaults: reads prefer the local ciphertext copy; the ws share download/preview lanes and S3 gateway GETs no
+  longer fetch the object from S3 when it is stored locally, and gateway Range GETs read only the range.
+- Remote-only (Cache index-only) files are readable: hydrate-first by default (price-preflighted, request-capped,
+  one If-Match GET streamed to an unnamed temp file, whole-message GCM verification, kept as local ciphertext;
+  plaintext-upstream objects are sealed on the way in), opt-in metered ranged reads (`preview.media.remote: ranged`,
+  unauthenticated per range), or `off`. Concurrent readers share one fetch; refusals are ContentUnavailable.
+  - S3 controller: metered streaming GET with signed Range/If-Match and stall timeouts; nested usage captures all
+    see each request.
 - preview::derive::Runner: runs out-of-process converter helpers from preview.derive.helper_dir
   (/usr/lib/vaulthalla/helpers): fork + exec with setsid, PDEATHSIG, NO_NEW_PRIVS, rlimits (AS, CPU, FSIZE=0,
   NOFILE=64, CORE=0), only fds 0-4, empty environment; plaintext served over a range-pull socketpair (never on
