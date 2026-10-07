@@ -238,9 +238,8 @@ Tests: `test_derive_runner.cpp` (fake helper `core/tests/helpers/fake_derive_hel
   `Engine::{purge,move,copy}Thumbnails` helpers are gone; don't reintroduce path-keyed cache files.
 - `preview::derive::Queue` (`Queue.cpp`) sits in front of Runner + Store: `request(engine, file, kind)` never blocks
   on conversion. Kind table (helper, command, args, generator version) is `queue_impl::kKinds`; bump a kind's
-  generator version when its output changes. Flow: kind known + applicable (`model-glb` only for STEP plans, media
-  kinds for audio/video, transcodes video only and not with `preview.media.transcode: off`, variant `v1`) else
-  Unsupported → helper executable else Unavailable → `Store::lookup` Ready/Failed → in-flight key ⇒ Queued →
+  generator version when its output changes. Flow: kind known + listed in the file's `PreviewPlan::derived` (transcodes
+  not with `preview.media.transcode: off`, variant `v1`) else Unsupported → helper executable else Unavailable → `Store::lookup` Ready/Failed → in-flight key ⇒ Queued →
   `preview.derive.max_queue` pending ⇒ Busy → enqueue. `max_concurrency` `std::jthread` workers start lazily.
   A job re-checks the DB generation before opening, streams `openPlaintextReader` into the helper and the helper
   into a `Store::Writer`, and commits only if the generation is still current. Deterministic failures

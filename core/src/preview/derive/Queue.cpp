@@ -40,26 +40,23 @@ constexpr std::string_view kDefaultVariant = "v1";
 constexpr std::string_view kMaxTriangles = "2000000";
 constexpr std::string_view kPosterMaxWidth = "1280";
 
-// Which source files a kind applies to.
-enum class Applies { Step, Media, Video };
-
 struct KindSpec {
     std::string_view kind;
     std::string_view helper;
     std::string_view command;
     uint32_t generatorVersion;   // bump when a helper's output for the same input changes: old artifacts go stale
-    Applies applies;
     bool transcode;              // subject to preview.media.transcode
 };
 
-// The one table of derived kinds: helper, command and generator version per kind.
+// The one table of derived kinds: helper, command and generator version per kind. Which files a kind applies to is
+// the preview plan's business (PreviewPlan::derived).
 constexpr std::array<KindSpec, 6> kKinds{{
-    {"model-glb", kCadHelper, "convert-step", 1, Applies::Step, false},
-    {"poster-jpg", kMediaHelper, "poster", 1, Applies::Media, false},
-    {"probe-json", kMediaHelper, "probe", 1, Applies::Media, false},
-    {"transcode-h264-480", kMediaHelper, "transcode", 1, Applies::Video, true},
-    {"transcode-h264-720", kMediaHelper, "transcode", 1, Applies::Video, true},
-    {"transcode-h264-1080", kMediaHelper, "transcode", 1, Applies::Video, true},
+    {"model-glb", kCadHelper, "convert-step", 1, false},
+    {"poster-jpg", kMediaHelper, "poster", 1, false},
+    {"probe-json", kMediaHelper, "probe", 1, false},
+    {"transcode-h264-480", kMediaHelper, "transcode", 1, true},
+    {"transcode-h264-720", kMediaHelper, "transcode", 1, true},
+    {"transcode-h264-1080", kMediaHelper, "transcode", 1, true},
 }};
 
 [[nodiscard]] const KindSpec* specFor(const std::string_view kind) {
@@ -69,12 +66,7 @@ constexpr std::array<KindSpec, 6> kKinds{{
 
 [[nodiscard]] bool applicable(const KindSpec& spec, const fs::model::File& file) {
     const auto plan = classify(file);
-    switch (spec.applies) {
-        case Applies::Step: return plan.derived && *plan.derived == "model-glb";
-        case Applies::Media: return plan.renderer == "video" || plan.renderer == "audio";
-        case Applies::Video: return plan.renderer == "video";
-    }
-    return false;
+    return std::ranges::find(plan.derived, spec.kind) != plan.derived.end();
 }
 
 [[nodiscard]] std::vector<std::string> argsFor(const KindSpec& spec) {

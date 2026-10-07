@@ -4,6 +4,7 @@
 #include "db/Transactions.hpp"
 #include "db/query/identities/User.hpp"
 #include "fs/Filesystem.hpp"
+#include "fs/cache/Registry.hpp"
 #include "fs/model/File.hpp"
 #include "fs/model/Path.hpp"
 #include "identities/User.hpp"

@@ -372,10 +372,17 @@ TEST_F(DeriveQueueDbTest, KindsApplyOnlyToTheirSourcesAndTranscodesFollowConfig)
     EXPECT_TRUE(text.starts_with("CMD transcode ")) << text;
     EXPECT_NE(text.find("--profile h264-720 --hwaccel software"), std::string::npos) << text;
 
-    const auto poster = settle(song, "poster-jpg");
+    const auto poster = settle(clip, "poster-jpg");
     ASSERT_EQ(poster.status, DeriveStatus::Ready) << poster.reason;
     EXPECT_NE(artifactText(*poster.artifact).find("CMD poster --input-size"), std::string::npos);
     EXPECT_NE(artifactText(*poster.artifact).find("--max-width 1280"), std::string::npos);
+
+    // Audio: whatever the plan lists (probe, the audio-only transcode), nothing else.
+    EXPECT_EQ(Queue::instance().request(engine, song, "poster-jpg").status, DeriveStatus::Unsupported);
+    const auto probe = settle(song, "probe-json");
+    ASSERT_EQ(probe.status, DeriveStatus::Ready) << probe.reason;
+    EXPECT_TRUE(artifactText(*probe.artifact).starts_with("CMD probe --input-size"));
+    EXPECT_EQ(Queue::instance().request(engine, song, "transcode-h264-480").status, DeriveStatus::Queued);
 }
 
 TEST_F(DeriveQueueDbTest, TrashingAFileDropsItsArtifacts) {
