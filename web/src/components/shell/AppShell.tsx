@@ -19,7 +19,6 @@ import { ConnectionIndicator } from '@/components/shell/ConnectionIndicator'
 import { TopBarExtras } from '@/components/shell/TopBarExtras'
 import { InitialPasswordWarning } from '@/components/shell/InitialPasswordWarning'
 import Logo from '@/public/vaulthalla-logo.png'
-import pkg from '../../../package.json'
 
 // cmdk loads the first time the palette opens.
 const CommandPalette = dynamic(() => import('@/components/shell/CommandPalette').then(m => m.CommandPalette), { ssr: false })
@@ -97,7 +96,7 @@ const Rail = () => {
       </div>
       <div className={cn('flex items-center justify-between border-t border-line px-3 py-2.5', collapsed && 'flex-col gap-2 px-0')}>
         <span className="font-mono text-[11px] text-fg-faint" title="Web console version">
-          v{pkg.version}
+          v{process.env.NEXT_PUBLIC_VAULTHALLA_VERSION}
         </span>
         <IconButton
           label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}

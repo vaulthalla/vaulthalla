@@ -5,7 +5,6 @@ import { usePathname } from 'next/navigation'
 import * as RD from '@radix-ui/react-dialog'
 import { useVisibleNav } from '@/components/shell/useVisibleNav'
 import { Brand, NavSections } from '@/components/shell/AppShell'
-import pkg from '../../../package.json'
 
 export const MobileNavSheet = ({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) => {
   const sections = useVisibleNav()
@@ -25,7 +24,7 @@ export const MobileNavSheet = ({ open, onOpenChange }: { open: boolean; onOpenCh
           <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
             <NavSections sections={sections} collapsed={false} onNavigate={() => onOpenChange(false)} />
           </div>
-          <div className="border-t border-line px-4 py-3 font-mono text-[11px] text-fg-faint">v{pkg.version}</div>
+          <div className="border-t border-line px-4 py-3 font-mono text-[11px] text-fg-faint">v{process.env.NEXT_PUBLIC_VAULTHALLA_VERSION}</div>
         </RD.Content>
       </RD.Portal>
     </RD.Root>

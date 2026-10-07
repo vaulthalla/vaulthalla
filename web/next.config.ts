@@ -1,10 +1,14 @@
 import type { NextConfig } from 'next'
+import pkg from './package.json'
 
 const isTurbo = process.env.NEXT_TURBO === 'true'
 
 const nextConfig: NextConfig = {
   output: 'standalone',
   devIndicators: false,
+  // The console shows its version; inlining just this string keeps package.json (every dependency name) out of
+  // first-load JS.
+  env: { NEXT_PUBLIC_VAULTHALLA_VERSION: pkg.version },
   allowedDevOrigins: ['vh.home.arpa'],
   images: { localPatterns: [{ pathname: '/preview**' }] },
 
