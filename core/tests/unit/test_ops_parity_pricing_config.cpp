@@ -203,6 +203,11 @@ TEST_F(PricingConfigParityTest, SettingsWritesAreValidatedOnEverySurface) {
         (void)protocols::ws::handler::Email::updateConfig(
             json{{"operator_emails", {{"weekly_digest", {{"hour_local", 30}}}}}}, ws(superUser));
     }));
+    // settings.update could point the daemon at any executable directory as the converter helpers.
+    EXPECT_FALSE(wsOk([&] {
+        (void)protocols::ws::handler::Settings::update(
+            json{{"preview", {{"derive", {{"helper_dir", "/tmp"}}}}}}, ws(superUser));
+    }));
     EXPECT_NE(cli("email alerting set health-poll-seconds 5", superUser), 0);
     EXPECT_NE(cli("email weekly set hour 30", superUser), 0);
     EXPECT_EQ(json(config::Registry::get()), before) << "a refused write changed the settings";

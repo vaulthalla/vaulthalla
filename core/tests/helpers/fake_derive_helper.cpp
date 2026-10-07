@@ -13,10 +13,13 @@
 //   exit        exit with --code without a result
 //   stderr      write --bytes of stderr, then succeed
 //   stall-read  pull one range and then stop reading replies while the daemon has more to send
+//   stderr-flood  write to stderr forever from --writers threads (a 1 MiB pipe when the kernel allows it)
+//   threads     start --count threads that never return, then block
 
 #include <nlohmann/json.hpp>
 
 #include <dirent.h>
+#include <fcntl.h>
 #include <sys/prctl.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
@@ -31,6 +34,7 @@
 #include <cstring>
 #include <random>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -160,8 +164,8 @@ int main(int argc, char** argv) {
 
     // Stand-ins for the real converter commands (preview::derive::Queue tests). Behaviour follows the input's first
     // line: "FAKE-INVALID" (invalid_input, exit 2), "FAKE-INTERNAL" (internal, exit 1), "FAKE-CRASH" (SIGSEGV),
-    // "FAKE-SLEEP <ms>" (pause, then succeed); anything else succeeds. Success writes "CMD <argv[1..]>\n" and then
-    // the whole input to stdout.
+    // "FAKE-NOSANDBOX" (sandbox_unavailable, exit 5), "FAKE-SLEEP <ms>" (pause, then succeed); anything else
+    // succeeds. Success writes "CMD <argv[1..]>\n" and then the whole input to stdout.
     if (command == "convert-step" || command == "poster" || command == "probe" || command == "transcode") {
         std::vector<uint8_t> input;
         for (uint64_t offset = 0; offset < inputSize;) {
@@ -178,6 +182,11 @@ int main(int argc, char** argv) {
         if (head.starts_with("FAKE-INTERNAL")) {
             result({{"ok", false}, {"error", "internal"}, {"message", "transient trouble"}});
             return 1;
+        }
+        if (head.starts_with("FAKE-NOSANDBOX")) {   // what a real helper reports on a host without Landlock
+            result({{"ok", false}, {"error", "sandbox_unavailable"}, {"message", "sandbox unavailable: test"},
+                    {"sandbox", {{"landlock", false}, {"seccomp", true}, {"detail", "test"}}}});
+            return 5;
         }
         if (head.starts_with("FAKE-CRASH")) {
             ::raise(SIGSEGV);
@@ -277,6 +286,27 @@ int main(int argc, char** argv) {
         writeAll(2, tail, sizeof tail - 1);
         result({{"ok", true}});
         return 0;
+    }
+    if (command == "stderr-flood") {
+        (void)::fcntl(2, F_SETPIPE_SZ, 1 << 20);
+        const auto flood = [] {
+            std::vector<char> block(1u << 16, 'f');
+            while (true) writeAll(2, block.data(), block.size());
+        };
+        for (uint64_t i = 1; i < u64("writers", 4); ++i) std::thread(flood).detach();
+        flood();
+    }
+    if (command == "threads") {
+        const uint64_t count = u64("count", 100);
+        uint64_t started = 0;
+        for (; started < count; ++started) {
+            try {
+                std::thread([] { while (true) ::pause(); }).detach();
+            } catch (const std::exception&) {
+                break;
+            }
+        }
+        while (true) ::pause();
     }
     if (command == "stall-read") {
         sendRequest(0, 4u << 20);   // a reply larger than the socket buffer, never read

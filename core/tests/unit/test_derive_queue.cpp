@@ -260,6 +260,18 @@ TEST_F(DeriveQueueDbTest, CrashesAreCachedButTransientFailuresAreNot) {
     EXPECT_EQ(Queue::instance().request(engine, flaky, "model-glb").status, DeriveStatus::Queued);
 }
 
+// A helper that refuses to run unconfined (no Landlock on this host) is the converter being unavailable: reported
+// as such to pollers, never negatively cached against the file.
+TEST_F(DeriveQueueDbTest, AHelperWithoutItsSandboxIsConverterUnavailable) {
+    const auto file = write("/nosandbox.step", "FAKE-NOSANDBOX\n");
+    const auto r = settle(file, "model-glb");
+    EXPECT_EQ(r.status, DeriveStatus::Unavailable) << r.reason;
+    EXPECT_EQ(r.reason, "converter_unavailable");
+    EXPECT_EQ(r.helper, std::string(kCadHelper));
+    EXPECT_EQ(cache::Store::lookup(engine, keyFor(*file, "model-glb")).status, cache::LookupStatus::Missing);
+    EXPECT_TRUE(db::query::fs::Cache::listDerivedArtifactsByFile(file->id).empty());
+}
+
 TEST_F(DeriveQueueDbTest, MissingHelperIsUnavailableWithoutEnqueueing) {
     configure([this](config::Config& c) { c.preview.derive.helper_dir = noHelpers; });
     const auto file = write("/part.step", "ISO-10303-21;\n");

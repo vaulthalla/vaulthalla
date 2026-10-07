@@ -3,6 +3,8 @@
 #include "config/Registry.hpp"
 #include "log/Registry.hpp"
 
+#include <paths.h>
+
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/prctl.h>
@@ -14,13 +16,16 @@
 #include <unistd.h>
 
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <csignal>
 #include <cstring>
 #include <exception>
+#include <functional>
 #include <mutex>
 #include <set>
+#include <string_view>
 #include <system_error>
 #include <thread>
 #include <utility>
@@ -36,12 +41,29 @@ constexpr std::size_t kPipeChunk = 64 * 1024;
 constexpr std::size_t kRangeRequestBytes = 16;
 constexpr int kChildFdCount = 6;                       // 0..4 protocol fds, 5 = exec status (close-on-exec)
 constexpr int kChildHighFdBase = 16;
-constexpr auto kPollTick = std::chrono::milliseconds(50);
+constexpr auto kPollTick = std::chrono::milliseconds(20);   // stop requests and the thread-count watchdog
+constexpr std::size_t kOutputChunksPerTick = 16;           // 1 MiB of artifact per poll iteration
 constexpr auto kDrainGrace = std::chrono::seconds(2);  // pipes after the helper exited
 constexpr auto kReapGrace = std::chrono::seconds(10);  // exit after SIGKILL (uninterruptible sleep)
 constexpr uint64_t kCpuHardSlackSeconds = 5;
 
 using Clock = std::chrono::steady_clock;
+
+std::atomic<bool> gTrustChecksSkippedForTesting{false};
+
+bool trustChecksEnforced() { return !(paths::testMode && gTrustChecksSkippedForTesting.load()); }
+
+// Logs once per key for the daemon's lifetime: the queue runs the same helper for every job.
+void logOnce(const std::string& key, const std::function<void()>& emit) {
+    static std::mutex mutex;
+    static std::set<std::string> logged;
+    if (!log::Registry::isInitialized()) return;
+    {
+        const std::scoped_lock lock(mutex);
+        if (!logged.insert(key).second) return;
+    }
+    emit();
+}
 
 class Fd {
 public:
@@ -93,6 +115,37 @@ uint64_t getLe(const uint8_t* in, const std::size_t bytes) {
     uint64_t value = 0;
     for (std::size_t i = bytes; i > 0; --i) value = (value << 8) | in[i - 1];
     return value;
+}
+
+// Threads in pid's thread group (/proc/<pid>/stat field 20), or -1 when it cannot be read (exited, no procfs).
+long threadCount(const pid_t pid) {
+    const std::string path = "/proc/" + std::to_string(pid) + "/stat";
+    const Fd fd(::open(path.c_str(), O_RDONLY | O_CLOEXEC));
+    if (!fd.open()) return -1;
+    std::array<char, 4096> buf{};
+    ssize_t n = 0;
+    do n = ::read(fd.get(), buf.data(), buf.size());
+    while (n < 0 && errno == EINTR);
+    if (n <= 0) return -1;
+    std::string_view stat(buf.data(), static_cast<std::size_t>(n));
+    // comm (field 2) may contain spaces and parentheses: fields 3.. start after the last ')'.
+    const auto close = stat.rfind(')');
+    if (close == std::string_view::npos) return -1;
+    stat.remove_prefix(close + 1);
+    for (int field = 3; field < 20; ++field) {
+        const auto start = stat.find_first_not_of(' ');
+        if (start == std::string_view::npos) return -1;
+        const auto end = stat.find(' ', start);
+        if (end == std::string_view::npos) return -1;
+        stat.remove_prefix(end);
+    }
+    const auto start = stat.find_first_not_of(' ');
+    if (start == std::string_view::npos) return -1;
+    long value = 0;
+    bool any = false;
+    for (auto i = start; i < stat.size() && stat[i] >= '0' && stat[i] <= '9'; ++i, any = true)
+        value = value * 10 + (stat[i] - '0');
+    return any ? value : -1;
 }
 
 // Everything the child needs, prepared before fork: after fork the child may only make async-signal-safe calls.
@@ -201,6 +254,7 @@ private:
     void readStderr();
     void readResult();
     void readRangeRequest();
+    void checkThreads();
     void writeRangeReply();
     void handleRangeRequest();
     void protocolViolation(const std::string& message);
@@ -336,9 +390,10 @@ void Session::protocolViolation(const std::string& message) {
     killGroup();
 }
 
+// At most kOutputChunksPerTick chunks per poll iteration (see readStderr).
 void Session::readOutput() {
     std::array<uint8_t, kPipeChunk> buf{};
-    while (out_.open()) {
+    for (std::size_t chunk = 0; chunk < kOutputChunksPerTick && out_.open(); ++chunk) {
         const ssize_t n = ::read(out_.get(), buf.data(), buf.size());
         if (n < 0) {
             if (errno == EINTR) continue;
@@ -367,12 +422,14 @@ void Session::readOutput() {
     }
 }
 
+// One chunk per poll iteration: a helper flooding stderr must not keep serve() from its deadline checks.
 void Session::readStderr() {
     std::array<char, kPipeChunk> buf{};
-    while (err_.open()) {
-        const ssize_t n = ::read(err_.get(), buf.data(), buf.size());
+    if (err_.open()) {
+        ssize_t n = 0;
+        do n = ::read(err_.get(), buf.data(), buf.size());
+        while (n < 0 && errno == EINTR);
         if (n < 0) {
-            if (errno == EINTR) continue;
             if (errno != EAGAIN) err_.reset();
             return;
         }
@@ -386,12 +443,14 @@ void Session::readStderr() {
     }
 }
 
+// One chunk per poll iteration (see readStderr).
 void Session::readResult() {
     std::array<char, 4096> buf{};
-    while (res_.open()) {
-        const ssize_t n = ::read(res_.get(), buf.data(), buf.size());
+    if (res_.open()) {
+        ssize_t n = 0;
+        do n = ::read(res_.get(), buf.data(), buf.size());
+        while (n < 0 && errno == EINTR);
         if (n < 0) {
-            if (errno == EINTR) continue;
             if (errno != EAGAIN) res_.reset();
             return;
         }
@@ -401,6 +460,15 @@ void Session::readResult() {
         }
         const auto room = kResultCap - std::min(kResultCap, result_line_.size());
         result_line_.append(buf.data(), std::min(room, static_cast<std::size_t>(n)));
+    }
+}
+
+void Session::checkThreads() {
+    if (exited_ || killed_ || request_.limits.maxThreads == 0) return;
+    const long threads = threadCount(pid_);
+    if (threads > 0 && static_cast<uint64_t>(threads) > request_.limits.maxThreads) {
+        result_.threadLimitExceeded = true;
+        killGroup();
     }
 }
 
@@ -520,8 +588,8 @@ void Session::serve() {
 
         auto wait = std::chrono::duration_cast<std::chrono::milliseconds>(
             (drainDeadline ? *drainDeadline : (result_.timedOut ? deadline + kReapGrace : deadline)) - now);
-        if ((!pidfd_.open() || request_.stop.stop_possible()) && !exited_)
-            wait = std::min(wait, std::chrono::duration_cast<std::chrono::milliseconds>(kPollTick));
+        // The thread watchdog (and stop requests, and exit detection without a pidfd) need a regular tick.
+        if (!exited_) wait = std::min(wait, std::chrono::duration_cast<std::chrono::milliseconds>(kPollTick));
         wait = std::max(wait, std::chrono::milliseconds(1));
         const int ready = ::poll(fds.data(), fds.size(), static_cast<int>(wait.count()));
         if (ready < 0 && errno != EINTR) throw sysError("poll");
@@ -536,6 +604,7 @@ void Session::serve() {
         readStderr();
         readResult();
         if (!exited_) pollExited();
+        checkThreads();
     }
 }
 
@@ -549,19 +618,21 @@ void Session::finish() {
         if (!parsed.is_discarded() && parsed.is_object()) result_.result = std::move(parsed);
     }
 
-    // A helper that runs unconfined by Landlock (old kernel, LSM disabled) is worth one warning per binary.
-    if (result_.result.is_object()) {
-        const auto sandbox = result_.result.find("sandbox");
-        if (sandbox != result_.result.end() && sandbox->is_object() && !sandbox->value("landlock", false) &&
-            log::Registry::isInitialized()) {
-            static std::mutex mutex;
-            static std::set<std::string> warned;
-            const std::scoped_lock lock(mutex);
-            if (warned.insert(request_.executable.string()).second)
-                log::Registry::thumb()->warn("[preview::derive] {} runs without Landlock (seccomp {}): {}",
-                                             request_.executable.string(), sandbox->value("seccomp", false),
-                                             sandbox->value("detail", std::string{}));
+    // A helper that refused to run unconfined (no Landlock or no seccomp on this host) is an operator problem worth
+    // one error per binary; every job with it reports converter_unavailable.
+    if (result_.failureReason() == "sandbox_unavailable") {
+        std::string detail = "no detail";
+        if (result_.result.is_object()) {
+            const auto sandbox = result_.result.find("sandbox");
+            if (sandbox != result_.result.end() && sandbox->is_object())
+                detail = sandbox->value("detail", std::string{});
         }
+        const auto exe = request_.executable.string();
+        logOnce("sandbox:" + exe, [&] {
+            log::Registry::thumb()->error(
+                "[preview::derive] {} refuses to run: its sandbox is unavailable on this host ({}); conversions "
+                "report converter_unavailable until Landlock and seccomp are available", exe, detail);
+        });
     }
 }
 
@@ -584,14 +655,15 @@ bool RunResult::ok() const {
 std::string RunResult::failureReason() const {
     if (ok()) return "";
     if (timedOut) return "timeout";
-    if (outputLimitExceeded) return "limit_exceeded";
+    if (outputLimitExceeded || threadLimitExceeded) return "limit_exceeded";
     if (error == "cancelled") return "cancelled";
     if (!error.empty()) return error.starts_with("protocol:") ? "protocol" : "internal";
     if (signal) return *signal == SIGXCPU || *signal == SIGXFSZ ? "limit_exceeded" : "crashed";
     if (result.is_object()) {
         if (const auto it = result.find("error"); it != result.end() && it->is_string()) {
             const auto reason = it->get<std::string>();
-            if (reason == "invalid_input" || reason == "limit_exceeded" || reason == "unsupported" || reason == "internal")
+            if (reason == "invalid_input" || reason == "limit_exceeded" || reason == "unsupported" ||
+                reason == "sandbox_unavailable" || reason == "internal")
                 return reason;
         }
     }
@@ -599,6 +671,7 @@ std::string RunResult::failureReason() const {
         case 2: return "invalid_input";
         case 3: return "limit_exceeded";
         case 4: return "unsupported";
+        case 5: return "sandbox_unavailable";
         default: return "internal";
     }
 }
@@ -609,6 +682,7 @@ std::string RunResult::failureMessage() const {
     std::string detail;
     if (timedOut) detail = "wall-clock timeout";
     else if (outputLimitExceeded) detail = "output limit exceeded";
+    else if (threadLimitExceeded) detail = "thread limit exceeded";
     else if (!error.empty()) detail = error;
     else if (signal) detail = std::string("killed by signal ") + std::to_string(*signal) + " (" + ::strsignal(*signal) + ")";
     else if (result.is_object() && result.contains("message") && result["message"].is_string())
@@ -622,8 +696,24 @@ std::string RunResult::failureMessage() const {
 RunResult Runner::run(const RunRequest& request) {
     if (!isExecutable(request.executable))
         throw HelperUnavailable("converter helper not available: " + request.executable.string());
+    RunRequest resolved = request;
+    if (runner_impl::trustChecksEnforced()) {
+        // Resolve once, check that, execute that: every component of the canonical path is root-owned and not
+        // group/world-writable, so it cannot change between the check and the exec (a symlink could).
+        std::error_code ec;
+        resolved.executable = std::filesystem::canonical(request.executable, ec);
+        if (ec) throw HelperUnavailable("converter helper not available: " + request.executable.string());
+        if (const auto problem = helperTrustProblem(resolved.executable); !problem.empty()) {
+            const auto exe = request.executable.string();
+            runner_impl::logOnce("trust:" + exe, [&] {
+                log::Registry::thumb()->error("[preview::derive] refusing to run converter helper {}: {}", exe,
+                                              problem);
+            });
+            throw HelperUnavailable("converter helper not trusted: " + exe + ": " + problem);
+        }
+    }
     RunResult result;
-    runner_impl::Session session(request, result);
+    runner_impl::Session session(resolved, result);
     session.run();
     return result;
 }
@@ -636,13 +726,42 @@ std::filesystem::path Runner::helperPath(const std::string_view name) {
 }
 
 bool Runner::helperAvailable(const std::string_view name) {
-    return isExecutable(helperPath(name));
+    const auto path = helperPath(name);
+    return isExecutable(path) && (!runner_impl::trustChecksEnforced() || helperTrustProblem(path).empty());
 }
 
 bool Runner::isExecutable(const std::filesystem::path& path) {
     struct stat st{};
     return ::stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode) &&
            ::faccessat(AT_FDCWD, path.c_str(), X_OK, AT_EACCESS) == 0;
+}
+
+std::string Runner::helperTrustProblem(const std::filesystem::path& path, const uid_t alsoTrustedOwner) {
+    std::error_code ec;
+    const auto canonical = std::filesystem::canonical(path, ec);
+    if (ec) return "cannot resolve " + path.string() + ": " + ec.message();
+
+    const auto check = [alsoTrustedOwner](const std::filesystem::path& p, const bool directory) -> std::string {
+        struct stat st{};
+        if (::lstat(p.c_str(), &st) != 0) return "cannot stat " + p.string() + ": " + std::strerror(errno);
+        if (directory ? !S_ISDIR(st.st_mode) : !S_ISREG(st.st_mode))
+            return p.string() + (directory ? " is not a directory" : " is not a regular file");
+        if (st.st_uid != 0 && (alsoTrustedOwner == 0 || st.st_uid != alsoTrustedOwner))
+            return p.string() + " is owned by uid " + std::to_string(st.st_uid) + ", not root";
+        if ((st.st_mode & (S_IWGRP | S_IWOTH)) != 0) return p.string() + " is writable by group or others";
+        return {};
+    };
+
+    if (auto problem = check(canonical, false); !problem.empty()) return problem;
+    for (auto dir = canonical.parent_path();; dir = dir.parent_path()) {
+        if (auto problem = check(dir, true); !problem.empty()) return problem;
+        if (dir.parent_path() == dir) break;   // "/"
+    }
+    return {};
+}
+
+void Runner::setTrustChecksForTesting(const bool enforce) {
+    if (paths::testMode) runner_impl::gTrustChecksSkippedForTesting.store(!enforce);
 }
 
 }
