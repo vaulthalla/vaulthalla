@@ -279,7 +279,9 @@ Target resolvePath(const Caller& caller, const uint32_t vaultId, const std::stri
     const auto& cache = runtime::Deps::get().fsCache;
     const auto entry = cache ? cache->getEntry(engine->vaultPathToFusePath(vaultPath)) : nullptr;
     if (!entry) {
-        // Same answer whether the path is missing or the caller may not see the vault (no existence oracle).
+        // Only a caller who can read the vault learns that a path doesn't exist; anyone else gets the same 403 an
+        // existing path would give (no existence oracle).
+        requireHuman(caller, engine, "/", FsAction::Read);
         throw NotFound("Not found");
     }
     requireHumanNeed(caller, engine, entry, need);

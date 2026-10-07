@@ -247,6 +247,9 @@ TEST_F(HttpAccessDbTest, HumanPreviewEnforcesFilesystemRbacBeforeAnyWork) {
     as(reader);
     const auto other = "/preview?vault_id=" + std::to_string(vaultB->vault->id) + "&path=%2Fother.jpg&size=128";
     EXPECT_EQ(statusOf(Router::route(get(other))), status::forbidden);
+    // No existence oracle: a missing path in a vault the caller can't read is also 403, not 404.
+    const auto missingOther = "/preview?vault_id=" + std::to_string(vaultB->vault->id) + "&path=%2Fnope.jpg";
+    EXPECT_EQ(statusOf(Router::route(get(missingOther))), status::forbidden);
     EXPECT_EQ(statusOf(Router::route(get("/preview?vault_id=999999&path=%2Fpic.jpg"))), status::not_found);
     EXPECT_EQ(statusOf(Router::route(get(inA("/preview", "%2Fmissing.jpg")))), status::not_found);
     EXPECT_EQ(statusOf(Router::route(get(inA("/preview", "%2F..%2F..%2Fetc%2Fpasswd")))), status::bad_request);
