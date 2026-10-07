@@ -6,6 +6,8 @@
 #include "fs/model/File.hpp"
 #include "fuse/WorkingCopies.hpp"
 
+#include "fs/ops/file.hpp"
+
 #include <gtest/gtest.h>
 #include <sodium.h>
 
@@ -82,7 +84,9 @@ protected:
                 staged->encrypted_with_key_version = 3;
             },
             .current = [this](uint64_t) { return deleted ? nullptr : file; },
+            .commit = {},
             .saved = [this](const std::shared_ptr<fs::model::File>&) { ++saves; },
+            .lock = {},
         });
     }
 
@@ -191,6 +195,54 @@ TEST_F(WorkingCopiesTest, ATruncatingOpenNeverMaterializesTheOldContentButStillP
     copies->release(wo);
     EXPECT_EQ(saves, 1) << "an O_TRUNC open with no writes still empties the file";
     EXPECT_EQ(fakeOpen(slurp(file->backing_path)), "");
+}
+
+TEST_F(WorkingCopiesTest, TheRowIsCommittedBeforeTheSealedBytesReplaceTheBackingFile) {
+    storeSealed("old");
+    const auto before = slurp(file->backing_path);
+    bool committed = false;
+    copies = std::make_unique<fuse::WorkingCopies>(dir / "plain", fuse::WorkingCopyHooks{
+        .materialize = [](const fs::model::File& f, const stdfs::path& to) { spit(to, fakeOpen(slurp(f.backing_path))); },
+        .seal = [](const stdfs::path& from, const stdfs::path& to, const std::shared_ptr<fs::model::File>& staged) {
+            spit(to, fakeSeal(slurp(from)));
+            staged->encryption_iv = "iv-new";
+        },
+        .current = [this](uint64_t) { return file; },
+        .commit = [&](const std::shared_ptr<fs::model::File>& staged) {
+            committed = true;
+            EXPECT_EQ(staged->encryption_iv, "iv-new");
+            EXPECT_EQ(slurp(file->backing_path), before) << "the old bytes are still in place when the row is written";
+            EXPECT_TRUE(stdfs::exists(fs::ops::contentSidecarPath(file->backing_path)));
+        },
+        .saved = [](const std::shared_ptr<fs::model::File>&) {},
+        .lock = {},
+    });
+    auto h = copies->open(42, file, O_WRONLY | O_TRUNC);
+    ASSERT_EQ(copies->write(h, "new", 3, 0, std::nullopt), 3);
+    copies->release(h);
+    EXPECT_TRUE(committed);
+    EXPECT_EQ(fakeOpen(slurp(file->backing_path)), "new");
+    EXPECT_FALSE(stdfs::exists(fs::ops::contentSidecarPath(file->backing_path)));
+}
+
+TEST_F(WorkingCopiesTest, AFailedRowCommitKeepsTheOldBytesAndNoSidecar) {
+    storeSealed("old");
+    const auto before = slurp(file->backing_path);
+    copies = std::make_unique<fuse::WorkingCopies>(dir / "plain", fuse::WorkingCopyHooks{
+        .materialize = [](const fs::model::File& f, const stdfs::path& to) { spit(to, fakeOpen(slurp(f.backing_path))); },
+        .seal = [](const stdfs::path& from, const stdfs::path& to, const std::shared_ptr<fs::model::File>&) {
+            spit(to, fakeSeal(slurp(from)));
+        },
+        .current = [this](uint64_t) { return file; },
+        .commit = [](const std::shared_ptr<fs::model::File>&) { throw std::runtime_error("database unavailable"); },
+        .saved = [](const std::shared_ptr<fs::model::File>&) {},
+        .lock = {},
+    });
+    auto h = copies->open(42, file, O_WRONLY | O_TRUNC);
+    ASSERT_EQ(copies->write(h, "new", 3, 0, std::nullopt), 3);
+    EXPECT_THROW(copies->release(h), std::runtime_error);
+    EXPECT_EQ(slurp(file->backing_path), before);
+    EXPECT_FALSE(stdfs::exists(fs::ops::contentSidecarPath(file->backing_path)));
 }
 
 TEST_F(WorkingCopiesTest, TruncateShrinksAndGrowsThePlaintext) {

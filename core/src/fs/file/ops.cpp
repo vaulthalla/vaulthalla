@@ -272,4 +272,11 @@ std::string bytesToSize(uintmax_t bytes) {
     return fmt::format("{:.1f}{}", value, suffix[unit]);
 }
 
+
+std::filesystem::path contentSidecarPath(const std::filesystem::path& backing) {
+    auto sidecar = backing;
+    sidecar += std::string(kContentSidecarSuffix);
+    return sidecar;
+}
+
 }

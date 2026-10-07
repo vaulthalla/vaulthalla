@@ -186,9 +186,8 @@ Outcome rotateRemoteObject(const FileSP& file, const EncryptionState& expected, 
 }
 
 std::filesystem::path sidecarPathFor(const std::filesystem::path& backing) {
-    auto sidecar = backing;
-    sidecar += std::string(kSidecarSuffix);
-    return sidecar;
+    static_assert(kSidecarSuffix == fs::ops::kContentSidecarSuffix);
+    return fs::ops::contentSidecarPath(backing);
 }
 
 bool isSidecar(const std::filesystem::path& path) {
@@ -225,6 +224,13 @@ Outcome rotateFile(const FileSP& file, const Deps& deps) {
     // Empty files and legacy plaintext have no IV: nothing is sealed, so there is nothing to re-key (and decrypting
     // them fails on the IV size). Filesystem::repairAtRest seals legacy plaintext with the current key.
     if (!expected.encrypted() || expected.key_version >= current) return Outcome::Skipped;
+
+    std::unique_lock<std::mutex> contentLock;
+    if (deps.catalog.lock) contentLock = deps.catalog.lock(file);
+    if (deps.catalog.current) {
+        // Rewritten since it was listed: the next pass re-lists it with its new state.
+        if (const auto stored = deps.catalog.current(file); !stored || !(*stored == expected)) return Outcome::Conflict;
+    }
     if (deps.catalog.busy && deps.catalog.busy(file)) return Outcome::Deferred;
 
     const auto& backing = file->backing_path;

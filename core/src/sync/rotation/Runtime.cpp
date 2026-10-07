@@ -1,4 +1,5 @@
 #include "sync/rotation/Runtime.hpp"
+#include "fs/Filesystem.hpp"
 
 #include "crypto/util/encrypt.hpp"
 #include "crypto/util/verify.hpp"
@@ -121,8 +122,15 @@ Deps runtimeDeps(const std::shared_ptr<storage::Engine>& engine) {
         return db::query::fs::File::compareAndSetEncryptionIVAndVersion(file, expected.iv_b64, expected.key_version);
     };
     deps.catalog.committed = [](const FileSP& file) { refreshCachedEncryption(file); };
+    deps.catalog.lock = [](const FileSP& file) { return std::unique_lock(fs::Filesystem::contentWriteMutex(file->id)); };
+    deps.catalog.current = [](const FileSP& file) -> std::optional<EncryptionState> {
+        const auto stored = db::query::fs::File::getEncryptionIVAndVersion(
+            static_cast<unsigned int>(file->vault_id.value_or(0)), file->path);
+        if (!stored) return std::nullopt;
+        return EncryptionState{.iv_b64 = stored->first, .key_version = stored->second};
+    };
     deps.catalog.busy = [](const FileSP& file) {
-        return file->inode && fuse::WorkingCopies::instance().openSize(*file->inode).has_value();
+        return file->inode && fuse::WorkingCopies::instance().isOpen(*file->inode);
     };
 
     deps.remote = remoteFor(engine);

@@ -1,4 +1,5 @@
 #include "fuse/WorkingCopies.hpp"
+#include "fs/Filesystem.hpp"
 #include "storage/CloudEngine.hpp"
 
 #include "crypto/util/hash.hpp"
@@ -91,12 +92,13 @@ WorkingCopyHooks runtimeHooks() {
             if (!entry || entry->isDirectory() || entry->isSymlink()) return nullptr;
             return std::static_pointer_cast<fs::model::File>(entry);
         },
+        .commit = [](const std::shared_ptr<fs::model::File>& staged) { db::query::fs::File::updateFile(staged); },
         .saved = [](const std::shared_ptr<fs::model::File>& file) {
-            db::query::fs::File::updateFile(file);
             const auto& cache = runtime::Deps::get().fsCache;
             cache->updateEntry(file);
             if (file->parent_id) cache->refreshDirStats(static_cast<unsigned int>(*file->parent_id));
         },
+        .lock = [](const uint32_t fileId) { return std::unique_lock(fs::Filesystem::contentWriteMutex(fileId)); },
     };
 }
 
@@ -217,12 +219,18 @@ void WorkingCopies::seal(WorkingCopy& copy) const {
         return;
     }
 
+    std::unique_lock<std::mutex> contentLock;
+    if (hooks_.lock) contentLock = hooks_.lock(entry->id);
+
     const auto plainSize = std::filesystem::file_size(copy.path);
     const auto staged = std::make_shared<fs::model::File>(*entry);
-    const auto sealed = entry->backing_path.parent_path() /
-                        (entry->backing_path.filename().string() + ".vh-seal-" + fs::ops::generate_random_suffix(8));
+    // The shared content sidecar: overwrites and key rotation use the same name and the same order (sealed bytes,
+    // then the row, then the rename), so startup recovery settles any of them the same way.
+    const auto sealed = fs::ops::contentSidecarPath(entry->backing_path);
 
     std::filesystem::create_directories(entry->backing_path.parent_path());
+    std::error_code ec;
+    std::filesystem::remove(sealed, ec);
     try {
         if (plainSize == 0) {
             createPrivateFile(sealed);
@@ -232,20 +240,27 @@ void WorkingCopies::seal(WorkingCopy& copy) const {
             hooks_.seal(copy.path, sealed, staged);
         }
         fsyncPath(sealed);
-        std::filesystem::rename(sealed, entry->backing_path);
+
+        staged->size_bytes = plainSize;
+        staged->content_hash = crypto::hash::blake2b(sealed);
+        if (plainSize > 0) staged->mime_type = fs::metadata::Magic::get_mime_type(copy.path.string());
+        if (copy.lastWriter) staged->last_modified_by = copy.lastWriter;
+        staged->updated_at = std::time(nullptr);
+        if (hooks_.commit) hooks_.commit(staged);  // row first: a crash after this leaves a promotable sidecar
     } catch (...) {
-        std::error_code ec;
         std::filesystem::remove(sealed, ec);
         throw;
     }
+    std::filesystem::rename(sealed, entry->backing_path);
+    fs::ops::fsyncDirectory(entry->backing_path.parent_path());
 
     entry->encryption_iv = staged->encryption_iv;
     entry->encrypted_with_key_version = staged->encrypted_with_key_version;
-    entry->size_bytes = plainSize;
-    entry->content_hash = crypto::hash::blake2b(entry->backing_path);
-    if (plainSize > 0) entry->mime_type = fs::metadata::Magic::get_mime_type(copy.path.string());
-    if (copy.lastWriter) entry->last_modified_by = copy.lastWriter;
-    entry->updated_at = std::time(nullptr);
+    entry->size_bytes = staged->size_bytes;
+    entry->content_hash = staged->content_hash;
+    entry->mime_type = staged->mime_type;
+    entry->last_modified_by = staged->last_modified_by;
+    entry->updated_at = staged->updated_at;
     hooks_.saved(entry);
     copy.dirty = false;
 }
@@ -297,6 +312,11 @@ void WorkingCopies::release(Handle& handle) {
         std::rethrow_exception(failure);
     }
     std::filesystem::remove(copy->path, ec);
+}
+
+bool WorkingCopies::isOpen(const uint64_t ino) const {
+    std::scoped_lock lock(mutex_);
+    return copies_.contains(ino);
 }
 
 std::optional<uintmax_t> WorkingCopies::openSize(const uint64_t ino) const {

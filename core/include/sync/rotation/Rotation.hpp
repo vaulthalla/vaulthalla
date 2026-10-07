@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <mutex>
 #include <memory>
 #include <optional>
 #include <string>
@@ -74,6 +75,11 @@ struct Catalog {
     std::function<void(const FileSP& file)> committed;
     // A writer holds the file open (FUSE working copy); its seal would race the rename. Optional.
     std::function<bool(const FileSP& file)> busy;
+    // The file's content lock (fs::Filesystem::contentWriteMutex), held for the whole per-file rotation so an
+    // overwrite or FUSE seal can't land between reading the old bytes and renaming the re-keyed ones. Optional.
+    std::function<std::unique_lock<std::mutex>(const FileSP& file)> lock;
+    // The row's encryption state as stored right now; checked under the lock. Optional.
+    std::function<std::optional<EncryptionState>(const FileSP& file)> current;
 };
 
 // Cloud vaults only.

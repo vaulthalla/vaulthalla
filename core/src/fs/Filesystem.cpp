@@ -669,9 +669,9 @@ void Filesystem::remove(const std::filesystem::path& path, const unsigned int us
         if (cache->refreshDirStats(id)) break;
 }
 
-std::mutex& Filesystem::contentWriteMutex(const std::filesystem::path& fusePath) {
-    static std::array<std::mutex, 64> stripes;
-    return stripes[std::hash<std::string>{}(fusePath.string()) % stripes.size()];
+std::mutex& Filesystem::contentWriteMutex(const uint32_t fileId) {
+    static std::array<std::mutex, 128> stripes;
+    return stripes[fileId % stripes.size()];
 }
 
 std::shared_ptr<File> Filesystem::createFile(const NewFileContext& ctx) {
@@ -708,53 +708,79 @@ std::shared_ptr<File> Filesystem::createFile(const NewFileContext& ctx) {
 
         const auto f = std::static_pointer_cast<File>(entry);
 
-        // Overwrites of one file are serialized, so a conditional write (expected_source_id) is a true
-        // compare-and-swap against concurrent web/API overwrites.
-        std::scoped_lock contentLock(contentWriteMutex(ctx.fuse_path));
+        // Overwrites, FUSE seals and key rotation of one file are serialized (one lock per file id), so a conditional
+        // write (expected_source_id) is a true compare-and-swap and rotation can't rename stale bytes over new ones.
+        std::scoped_lock contentLock(contentWriteMutex(f->id));
+        if (cache->getEntry(ctx.fuse_path) != entry)
+            throw ContentConflict("The file was replaced while it was being saved");
         if (ctx.expected_source_id) {
             if (storage::generationOf(*f).sourceId() != *ctx.expected_source_id)
                 throw ContentConflict("The file changed since it was read");
-            if (f->inode && fuse::WorkingCopies::instance().openSize(*f->inode))
+            if (f->inode && fuse::WorkingCopies::instance().isOpen(*f->inode))
                 throw ContentConflict("The file is open through the mounted filesystem");
         }
         std::filesystem::create_directories(entry->backing_path.parent_path());
 
-        // The new bytes replace the old ones atomically (fsynced temp + rename + directory fsync), sealed into a
-        // staged copy of the row: the cached entry keeps describing the bytes on disk until they have been replaced,
-        // so a failed or interrupted write leaves the old ciphertext, its IV and the cache consistent.
+        // Crash-safe order: new ciphertext -> sidecar (fsynced), row updated, sidecar renamed over the backing file.
+        // A crash before the row update leaves the old bytes and row; after it, recovery promotes the sidecar (it
+        // authenticates under the row). A failed row update removes the sidecar: old bytes, old row, cache untouched.
         const auto staged = std::make_shared<File>(*f);
-        if (ctx.source_path) {
-            const auto plaintextSize = std::filesystem::file_size(*ctx.source_path);
-            if (plaintextSize == 0) {
-                writeFileAtomic(entry->backing_path, {});
+        const auto sidecar = contentSidecarPath(entry->backing_path);
+        std::error_code ec;
+        const auto existing = std::filesystem::status(entry->backing_path, ec);
+        const auto mode = static_cast<mode_t>(
+            ec || !std::filesystem::exists(existing) ? 0600 : static_cast<unsigned>(existing.permissions()) & 0777u);
+        ec.clear();
+        std::filesystem::remove(sidecar, ec);  // a leftover is settled by startup recovery; we hold the file's lock
+        try {
+            if (ctx.source_path) {
+                const auto plaintextSize = std::filesystem::file_size(*ctx.source_path);
+                if (plaintextSize == 0) {
+                    writeFileExclusive(sidecar, {}, mode);
+                    staged->encryption_iv.clear();
+                    staged->encrypted_with_key_version = 0;
+                } else {
+                    engine->encryptionManager->encryptFileToFile(*ctx.source_path, sidecar, staged);
+                    std::filesystem::permissions(sidecar, static_cast<std::filesystem::perms>(mode),
+                                                 std::filesystem::perm_options::replace);
+                    fsyncFile(sidecar);
+                }
+                staged->size_bytes = plaintextSize;
+                staged->mime_type = mimeTypeFromSourceFile(*ctx.source_path, ctx.path);
+            } else if (!ctx.buffer.empty()) {
+                const auto ciphertext = engine->encryptionManager->encrypt(ctx.buffer, staged);
+                writeFileExclusive(sidecar, ciphertext, mode);
+                staged->size_bytes = ctx.buffer.size();
+                staged->mime_type = Magic::get_mime_type_from_buffer(ctx.buffer);
+            } else {
+                writeFileExclusive(sidecar, {}, mode);
                 staged->encryption_iv.clear();
                 staged->encrypted_with_key_version = 0;
-            } else {
-                replaceFileAtomic(entry->backing_path, [&](const std::filesystem::path& temp) {
-                    engine->encryptionManager->encryptFileToFile(*ctx.source_path, temp, staged);
-                });
+                staged->size_bytes = 0;
+                staged->mime_type = inferMimeTypeFromPath(ctx.path);
             }
-            f->size_bytes = plaintextSize;
-            f->mime_type = mimeTypeFromSourceFile(*ctx.source_path, ctx.path);
-        } else if (!ctx.buffer.empty()) {
-            const auto ciphertext = engine->encryptionManager->encrypt(ctx.buffer, staged);
-            writeFileAtomic(entry->backing_path, ciphertext);
-            f->size_bytes = ctx.buffer.size();
-            f->mime_type = Magic::get_mime_type_from_buffer(ctx.buffer);
-        } else {
-            writeFileAtomic(entry->backing_path, {});
-            staged->encryption_iv.clear();
-            staged->encrypted_with_key_version = 0;
-            f->size_bytes = 0;
-            f->mime_type = inferMimeTypeFromPath(ctx.path);
+            fsyncDirectory(entry->backing_path.parent_path());
+
+            staged->content_hash = hash::blake2b(sidecar);
+            staged->last_modified_by = userIdFor(ctx.user);
+            staged->updated_at = std::time(nullptr);
+            db::query::fs::File::updateFile(staged);
+        } catch (...) {
+            std::filesystem::remove(sidecar, ec);
+            throw;
         }
+
+        // The row describes the sidecar now; a failed rename leaves it for recovery to promote.
+        std::filesystem::rename(sidecar, entry->backing_path);
+        fsyncDirectory(entry->backing_path.parent_path());
+
         f->encryption_iv = staged->encryption_iv;
         f->encrypted_with_key_version = staged->encrypted_with_key_version;
-
-        f->content_hash = hash::blake2b(entry->backing_path);
-        f->last_modified_by = userIdFor(ctx.user);
-        f->updated_at = std::time(nullptr);
-        db::query::fs::File::updateFile(f);
+        f->size_bytes = staged->size_bytes;
+        f->mime_type = staged->mime_type;
+        f->content_hash = staged->content_hash;
+        f->last_modified_by = staged->last_modified_by;
+        f->updated_at = staged->updated_at;
 
         // The new IV is a new source generation: earlier thumbnails no longer match it and are regenerated.
         if (f->size_bytes > 0 && f->mime_type && isPreviewable(*f->mime_type))

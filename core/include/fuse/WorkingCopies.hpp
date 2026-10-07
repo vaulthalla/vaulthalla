@@ -40,8 +40,12 @@ struct WorkingCopyHooks {
                        const std::shared_ptr<fs::model::File>& staged)> seal;
     // The live entry for an inode (renames move it), or null once it has been deleted.
     std::function<std::shared_ptr<fs::model::File>(uint64_t ino)> current;
-    // Records a sealed entry: files row, cache, directory totals.
+    // Records the staged row (the files table only) BEFORE the sealed bytes are renamed into place. Optional.
+    std::function<void(const std::shared_ptr<fs::model::File>& staged)> commit;
+    // Records a sealed entry after the rename: cache, directory totals (and the row, if `commit` is not set).
     std::function<void(const std::shared_ptr<fs::model::File>& file)> saved;
+    // Serializes content replacement of one file with every other writer (fs::Filesystem::contentWriteMutex).
+    std::function<std::unique_lock<std::mutex>(uint32_t fileId)> lock;
 };
 
 class WorkingCopies {
@@ -77,6 +81,9 @@ public:
 
     // Plaintext size of an open copy, for getattr while writes are in flight.
     [[nodiscard]] std::optional<uintmax_t> openSize(uint64_t ino) const;
+    // Whether a working copy exists for the inode. Registry lock only (never a copy's mutex), so it is safe to call
+    // while holding fs::Filesystem::contentWriteMutex (seal takes copy mutex -> content lock).
+    [[nodiscard]] bool isOpen(uint64_t ino) const;
 
     [[nodiscard]] const std::filesystem::path& root() const { return root_; }
 

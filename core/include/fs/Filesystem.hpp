@@ -89,6 +89,10 @@ public:
 
     static bool isPreviewable(const std::string& mimeType);
 
+    // Serializes content replacement of one file across every writer (web/API overwrite, FUSE seal, key rotation).
+    // Striped by file id; never held while taking mutex_.
+    static std::mutex& contentWriteMutex(uint32_t fileId);
+
     struct AtRestRepair {
         unsigned int encrypted = 0;  // stored in plaintext, now sealed
         unsigned int resized = 0;    // sealed, but the recorded size was not the plaintext size
@@ -103,7 +107,6 @@ public:
 
 private:
     inline static std::mutex mutex_;
-    static std::mutex& contentWriteMutex(const std::filesystem::path& fusePath);
     inline static std::shared_ptr<storage::Manager> storageManager_ = nullptr;
 
     static int handleRename(const RenameContext& ctx);

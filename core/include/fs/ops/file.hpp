@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <string_view>
 #include <functional>
 #include <span>
 #include <vector>
@@ -21,6 +22,12 @@ std::string readFileToString(const std::filesystem::path& path);
 void writeFile(const std::filesystem::path& absPath, const std::vector<uint8_t>& ciphertext);
 
 // fsync(2) a file, or a directory (so a rename or create in it is durable). Throw std::system_error.
+// Every content replacement (overwrite, FUSE seal, key rotation) stages the new ciphertext here, commits the row,
+// then renames it over the backing file; startup recovery settles a leftover by keeping whichever copy authenticates
+// under the row (sync::rotation::recoverVault).
+inline constexpr std::string_view kContentSidecarSuffix = ".vh-rotate";
+[[nodiscard]] std::filesystem::path contentSidecarPath(const std::filesystem::path& backing);
+
 void fsyncFile(const std::filesystem::path& path);
 void fsyncDirectory(const std::filesystem::path& dir);
 

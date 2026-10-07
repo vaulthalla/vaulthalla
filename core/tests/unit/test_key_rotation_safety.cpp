@@ -400,6 +400,32 @@ TEST_F(KeyRotationSafetyTest, ARowChangedMidRotationWinsAndTheSidecarIsDropped) 
     EXPECT_EQ(rows["/a"].key_version, 2u) << "the writer sealed it with the current key";
 }
 
+TEST_F(KeyRotationSafetyTest, UnderTheContentLockAStaleListingIsAConflictAndNothingIsWritten) {
+    addFile("/a", 256);
+    keys.prepare();
+    auto d = deps();
+    const auto listed = fileFor("/a");  // what the pending-files query returned
+    std::mutex fileLock;
+    bool locked = false;
+    d.catalog.lock = [&](const FileSP&) {
+        locked = true;
+        return std::unique_lock(fileLock);
+    };
+    // An overwrite (holding the same lock in production) re-sealed the file after the listing.
+    const auto writer = fileFor("/a");
+    plaintextOf["/a"] = randomBytes(64);
+    spitBytes(backingOf["/a"], keys.seal(plaintextOf["/a"], writer));
+    rows["/a"] = rotation::stateOf(*writer);
+    d.catalog.current = [this](const FileSP&) -> std::optional<EncryptionState> { return rows.at("/a"); };
+    const auto after = slurpBytes(backingOf["/a"]);
+
+    EXPECT_EQ(rotation::rotateFile(listed, d), Outcome::Conflict);
+    EXPECT_TRUE(locked);
+    EXPECT_EQ(slurpBytes(backingOf["/a"]), after) << "the overwrite's bytes are never replaced with the stale listing";
+    EXPECT_EQ(sidecarsUnder(dir / "vault"), 0u);
+    expectLocalDecryptable("/a");
+}
+
 TEST_F(KeyRotationSafetyTest, SplitRangesCoversEveryCountIncludingOne) {
     // The old range helper divided by zero for a single file.
     EXPECT_TRUE(rotation::splitRanges(0, 8).empty());
