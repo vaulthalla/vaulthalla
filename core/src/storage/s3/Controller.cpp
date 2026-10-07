@@ -18,10 +18,6 @@ namespace vh::storage::s3 {
     namespace {
         thread_local std::vector<ScopedS3RequestUsageCapture*> requestUsageCaptures;
 
-        ScopedS3RequestUsageCapture* activeRequestUsageCapture() {
-            return requestUsageCaptures.empty() ? nullptr : requestUsageCaptures.back();
-        }
-
         bool isNoSuchKeyDeleteResponse(const HttpResponse& resp) {
             if (resp.curl != CURLE_OK || resp.http != 404) return false;
             return resp.body.find("NoSuchKey") != std::string::npos ||
@@ -73,7 +69,10 @@ namespace vh::storage::s3 {
     }
 
     void Controller::recordRequest(const RequestKind kind, const uint64_t amount) const {
-        if (auto* capture = activeRequestUsageCapture()) {
+        // Every capture active on this thread sees the request: a nested capture (a preview hydrate's own cap
+        // inside an S3 gateway request) must not hide it from the outer one. All captures and the engine-wide
+        // budget are checked before anything is recorded.
+        const auto checkCapture = [&](const ScopedS3RequestUsageCapture* capture) {
             switch (kind) {
             case RequestKind::List:
                 capture->checkList(amount);
@@ -97,7 +96,34 @@ namespace vh::storage::s3 {
                 capture->checkDownloadBytes(amount);
                 break;
             }
-        }
+        };
+        const auto recordCapture = [&](ScopedS3RequestUsageCapture* capture) {
+            switch (kind) {
+            case RequestKind::List:
+                capture->recordList(amount);
+                break;
+            case RequestKind::Head:
+                capture->recordHead(amount);
+                break;
+            case RequestKind::Get:
+                capture->recordGet(amount);
+                break;
+            case RequestKind::Put:
+                capture->recordPut(amount);
+                break;
+            case RequestKind::Copy:
+                capture->recordCopy(amount);
+                break;
+            case RequestKind::Delete:
+                capture->recordDelete(amount);
+                break;
+            case RequestKind::DownloadBytes:
+                capture->recordDownloadBytes(amount);
+                break;
+            }
+        };
+
+        for (auto it = requestUsageCaptures.rbegin(); it != requestUsageCaptures.rend(); ++it) checkCapture(*it);
 
         std::scoped_lock lock(metricsMutex_);
 
@@ -134,31 +160,7 @@ namespace vh::storage::s3 {
             break;
         }
 
-        if (auto* capture = activeRequestUsageCapture()) {
-            switch (kind) {
-            case RequestKind::List:
-                capture->recordList(amount);
-                break;
-            case RequestKind::Head:
-                capture->recordHead(amount);
-                break;
-            case RequestKind::Get:
-                capture->recordGet(amount);
-                break;
-            case RequestKind::Put:
-                capture->recordPut(amount);
-                break;
-            case RequestKind::Copy:
-                capture->recordCopy(amount);
-                break;
-            case RequestKind::Delete:
-                capture->recordDelete(amount);
-                break;
-            case RequestKind::DownloadBytes:
-                capture->recordDownloadBytes(amount);
-                break;
-            }
-        }
+        for (auto* capture : requestUsageCaptures) recordCapture(capture);
     }
 
     void Controller::recordUploadBytes(const uint64_t amount) const {
@@ -167,8 +169,7 @@ namespace vh::storage::s3 {
             std::scoped_lock lock(metricsMutex_);
             metrics_.uploaded_bytes += amount;
         }
-        if (auto* capture = activeRequestUsageCapture())
-            capture->recordUploadBytes(amount);
+        for (auto* capture : requestUsageCaptures) capture->recordUploadBytes(amount);
     }
 
     void Controller::deleteObject(const fs::path& key) const {

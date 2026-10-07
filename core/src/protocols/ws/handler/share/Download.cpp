@@ -6,9 +6,9 @@
 #include "share/Manager.hpp"
 #include "share/Principal.hpp"
 #include "share/TargetResolver.hpp"
-#include "storage/CloudEngine.hpp"
 #include "storage/Engine.hpp"
 #include "storage/Manager.hpp"
+#include "storage/PlaintextReader.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -51,6 +51,8 @@ struct TransferContext {
 
 class DefaultDownloadReader final : public DownloadReader {
 public:
+    explicit DefaultDownloadReader(ShareEngineResolver resolver) : resolver_(std::move(resolver)) {}
+
     std::vector<uint8_t> readFile(const vh::share::ResolvedTarget& target) const override {
         if (!target.entry || target.target_type != vh::share::TargetType::File)
             throw std::runtime_error("Share download target is not a file");
@@ -58,19 +60,25 @@ public:
         auto file = std::dynamic_pointer_cast<vh::fs::model::File>(target.entry);
         if (!file) throw std::runtime_error("Share download target file is unavailable");
         if (file->size_bytes == 0) return {};
+        // Refuse before any read (or remote fetch) rather than after buffering it.
+        if (file->size_bytes > kMaxTransferSize)
+            throw std::runtime_error("Share download exceeds maximum in-memory transfer size");
 
-        auto engine = runtime::Deps::get().storageManager->getEngine(target.vault_id);
+        const auto engine = resolver_ ? resolver_(target.vault_id)
+                                      : runtime::Deps::get().storageManager->getEngine(target.vault_id);
         if (!engine) throw std::runtime_error("Share download storage engine is unavailable");
 
-        if (engine->type() == vh::storage::StorageType::Cloud) {
-            auto cloud = std::dynamic_pointer_cast<vh::storage::CloudEngine>(engine);
-            if (!cloud) throw std::runtime_error("Share download cloud engine is unavailable");
-            auto payload = cloud->downloadToBuffer(file->path);
-            return cloud->decryptRemotePayload(file->path, payload, file, {});
+        // The local ciphertext copy when there is one; a remote-only file follows preview.media.remote.
+        const auto reader = engine->openPlaintextReader(file);
+        try {
+            return vh::storage::readAll(*reader, kMaxTransferSize);
+        } catch (const std::length_error&) {
+            throw std::runtime_error("Share download exceeds maximum in-memory transfer size");
         }
-
-        return engine->decrypt(file);
     }
+
+private:
+    ShareEngineResolver resolver_;
 };
 
 std::mutex& transferMutex() {
@@ -92,7 +100,7 @@ std::unordered_map<std::string, TransferContext>& transfers() {
 }
 
 [[nodiscard]] std::shared_ptr<DownloadReader> defaultReader() {
-    return std::make_shared<DefaultDownloadReader>();
+    return std::make_shared<DefaultDownloadReader>(ShareEngineResolver{});
 }
 
 [[nodiscard]] Download::ManagerFactory& managerFactory() {
@@ -466,6 +474,10 @@ void revalidateTransferTarget(
 }
 }
 namespace dl_detail = share_download_handler_detail;
+
+std::shared_ptr<DownloadReader> makeDefaultDownloadReader(ShareEngineResolver resolver) {
+    return std::make_shared<dl_detail::DefaultDownloadReader>(std::move(resolver));
+}
 
 json Download::start(const json& payload, const std::shared_ptr<Session>& session) {
     return dl_detail::startImpl(payload, session, dl_detail::CommandSurface::Compatibility);

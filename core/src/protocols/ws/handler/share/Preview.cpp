@@ -8,9 +8,9 @@
 #include "share/Manager.hpp"
 #include "share/Principal.hpp"
 #include "share/TargetResolver.hpp"
-#include "storage/CloudEngine.hpp"
 #include "storage/Engine.hpp"
 #include "storage/Manager.hpp"
+#include "storage/PlaintextReader.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -29,6 +29,8 @@ constexpr unsigned kMaxPreviewSize = 2048;
 
 class DefaultPreviewReader final : public PreviewReader {
 public:
+    explicit DefaultPreviewReader(SharePreviewEngineResolver resolver) : resolver_(std::move(resolver)) {}
+
     std::vector<uint8_t> readFile(const vh::share::ResolvedTarget& target) const override {
         if (!target.entry || target.target_type != vh::share::TargetType::File)
             throw std::runtime_error("Share preview target is not a file");
@@ -36,19 +38,24 @@ public:
         auto file = std::dynamic_pointer_cast<vh::fs::model::File>(target.entry);
         if (!file) throw std::runtime_error("Share preview target file is unavailable");
         if (file->size_bytes == 0) return {};
+        if (file->size_bytes > kMaxPreviewInputBytes)
+            throw std::runtime_error("Share preview source exceeds maximum render size");
 
-        auto engine = runtime::Deps::get().storageManager->getEngine(target.vault_id);
+        const auto engine = resolver_ ? resolver_(target.vault_id)
+                                      : runtime::Deps::get().storageManager->getEngine(target.vault_id);
         if (!engine) throw std::runtime_error("Share preview storage engine is unavailable");
 
-        if (engine->type() == vh::storage::StorageType::Cloud) {
-            auto cloud = std::dynamic_pointer_cast<vh::storage::CloudEngine>(engine);
-            if (!cloud) throw std::runtime_error("Share preview cloud engine is unavailable");
-            auto payload = cloud->downloadToBuffer(file->path);
-            return cloud->decryptRemotePayload(file->path, payload, file, {});
+        // The local ciphertext copy when there is one; a remote-only file follows preview.media.remote.
+        const auto reader = engine->openPlaintextReader(file);
+        try {
+            return vh::storage::readAll(*reader, kMaxPreviewInputBytes);
+        } catch (const std::length_error&) {
+            throw std::runtime_error("Share preview source exceeds maximum render size");
         }
-
-        return engine->decrypt(file);
     }
+
+private:
+    SharePreviewEngineResolver resolver_;
 };
 
 [[nodiscard]] std::shared_ptr<vh::share::Manager> defaultManager() {
@@ -60,7 +67,7 @@ public:
 }
 
 [[nodiscard]] std::shared_ptr<PreviewReader> defaultReader() {
-    return std::make_shared<DefaultPreviewReader>();
+    return std::make_shared<DefaultPreviewReader>(SharePreviewEngineResolver{});
 }
 
 [[nodiscard]] Preview::ManagerFactory& managerFactory() {
@@ -175,6 +182,10 @@ void requireShareMode(const std::shared_ptr<Session>& session) {
 }
 }
 namespace preview_detail = share_preview_handler_detail;
+
+std::shared_ptr<PreviewReader> makeDefaultPreviewReader(SharePreviewEngineResolver resolver) {
+    return std::make_shared<preview_detail::DefaultPreviewReader>(std::move(resolver));
+}
 
 json Preview::get(const json& payload, const std::shared_ptr<Session>& session) {
     preview_detail::requireShareMode(session);

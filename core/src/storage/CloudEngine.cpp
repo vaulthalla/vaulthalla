@@ -692,6 +692,56 @@ CloudEngine::RemoteEncryptionContext CloudEngine::resolveRemoteEncryptionContext
     return {};
 }
 
+std::optional<CloudEngine::RemoteObjectHead> CloudEngine::headRemoteObject(const fs::path& rel_path) const {
+    const auto head = s3Provider_->getHeadObject(stripLeadingSlash(rel_path));
+    if (!head) return std::nullopt;
+
+    RemoteObjectHead out;
+    if (const auto etag = header_value(*head, "ETag")) out.etag = *etag;
+    if (const auto length = header_value(*head, "Content-Length")) {
+        try {
+            out.content_length = std::stoull(*length);
+        } catch (const std::exception&) {
+            out.content_length.reset();
+        }
+    }
+
+    std::optional<std::pair<std::string, unsigned int>> payload;
+    try {
+        payload = encryption_payload_from_headers(*head);
+    } catch (const std::exception&) {
+        payload.reset();  // an unparsable key version is no usable encryption context
+    }
+    std::optional<bool> flag;
+    if (const auto value = header_value(*head, META_VH_ENCRYPTED)) flag = parse_encrypted_flag(*value);
+    // Objects Vaulthalla writes always carry vh-encrypted; an object without any vh metadata is plaintext.
+    out.encrypted = flag ? *flag : payload.has_value();
+    if (out.encrypted && payload) {
+        out.iv_b64 = payload->first;
+        out.key_version = payload->second;
+    }
+
+    if (auto storageClass = header_value(*head, "x-amz-storage-class")) {
+        std::ranges::transform(*storageClass, storageClass->begin(), [](unsigned char c) {
+            return static_cast<char>(std::toupper(c));
+        });
+        if (*storageClass == "GLACIER" || *storageClass == "DEEP_ARCHIVE") {
+            const auto restore = header_value(*head, "x-amz-restore");
+            out.requires_restore = !restore || !contains_case_insensitive(*restore, "ongoing-request=\"false\"");
+        }
+    }
+    if (const auto archiveStatus = header_value(*head, "x-amz-archive-status"); archiveStatus && !archiveStatus->empty())
+        out.requires_restore = true;
+
+    return out;
+}
+
+void CloudEngine::setRemoteFetchGate(RemoteFetchGate gate) { fetchGate_ = std::move(gate); }
+
+void CloudEngine::setRangedReadLimits(const RangedReadLimits& limits) { rangedLimits_ = limits; }
+
+void CloudEngine::setHydrateCatalogCommitForTesting(HydrateCatalogCommit commit) { catalogCommit_ = std::move(commit); }
+
 void CloudEngine::purge(const fs::path& rel_path) const {
     removeLocally(rel_path);
     removeRemotely(rel_path, true);

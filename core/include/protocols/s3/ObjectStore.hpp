@@ -63,6 +63,12 @@ struct ObjectBody {
     std::optional<std::pair<uint64_t, uint64_t>> content_range;
 };
 
+// A vault file's object body (whole, or the bytes of one resolved range).
+struct FileObjectBody {
+    std::vector<uint8_t> bytes;
+    std::optional<std::pair<uint64_t, uint64_t>> content_range;
+};
+
 struct BucketEmptyResult {
     bool empty{true};
     uint64_t gateway_objects{};
@@ -142,6 +148,14 @@ public:
                                  rbac::permission::vault::FilesystemAction action);
     static bool credentialAllowsAdmin(const ResolvedBucket& bucket);
     static bool isRemoteBacked(const ResolvedBucket& bucket);
+    // Reads a vault file's body through Engine::openPlaintextReader: its local ciphertext copy when there is one
+    // (a cloud vault's local copy costs no upstream GET), a remote-only file per preview.media.remote (hydrate by
+    // default). A range reads only its own bytes; the whole object is read authenticated. ContentUnavailable maps
+    // to 503 ServiceUnavailable.
+    static FileObjectBody readFileObject(const std::shared_ptr<storage::Engine>& engine,
+                                         const std::shared_ptr<fs::model::File>& file,
+                                         const std::string& key,
+                                         std::optional<ByteRange> range);
     static std::shared_ptr<storage::CloudEngine> cloudEngine(const ResolvedBucket& bucket);
 
 private:
