@@ -44,7 +44,7 @@ No static libs or headers ship (`debian/not-installed` satisfies `dh_missing --f
 `debian/control`: Depends `adduser nodejs openssl fuse3 python3`. `nodejs` stays unversioned: Next 16 wants
 >= 20.9, but noble ships 18.19. Recommends: `postgresql nginx swtpm swtpm-tools certbot python3-certbot-nginx
 python3-certbot-dns-cloudflare`. Suggests: `vaulthalla-preview-cad vaulthalla-preview-media`. Build-Depends mirror `core/meson.build` pkg-config deps (verified with
-`dpkg-checkbuilddeps` on the dev VM; CI runners must have the same packages).
+`dpkg-checkbuilddeps` on the dev VM; the CI image `ci/Containerfile` must carry the same packages).
 
 ## State markers under `/var/lib/vaulthalla`
 

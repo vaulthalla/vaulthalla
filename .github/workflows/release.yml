@@ -36,14 +36,23 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+# Runners: the VPS runner (gh-vaulthalla, labels vaulthalla + vps-ci). Every run step executes in the disposable CI
+# container (ci/run-ci, rootless Podman, ci/Containerfile), which carries vl-release, pmdocs, gh, shellcheck, Node/pnpm
+# and the build dependencies: no host sudo, apt or Docker. The licensed icon store is mounted read-only.
 env:
   RELEASE_REF: ${{ github.event.inputs.ref || github.ref }}
   DOCS_SYNC_ENDPOINT: ${{ vars.DOCS_SYNC_ENDPOINT || 'https://vaulthalla.io/api/documentation/sync' }}
+  CI_CACHE_NAMES: ccache
+  CI_RO_MOUNTS: /home/gh-vaulthalla/vaulthalla-web-icons:/opt/vaulthalla-web-icons
+  VAULTHALLA_WEB_ICON_SRC: /opt/vaulthalla-web-icons
 
 jobs:
   release-check:
     name: Release check
-    runs-on: [self-hosted, Linux, X64, ubuntu-latest-lts]
+    runs-on: [self-hosted, Linux, X64, vaulthalla, vps-ci]
+    defaults:
+      run:
+        shell: bash ./ci/run-ci bash -euo pipefail {0}
     timeout-minutes: 20
     outputs:
       version: ${{ steps.state.outputs.version }}
@@ -56,14 +65,8 @@ jobs:
           ref: ${{ github.event.inputs.ref || github.ref }}
           fetch-depth: 0
 
-      - name: Install vl-release and pmdocs
-        uses: ./.github/actions/setup_valkyrianlabs_tools
-        with:
-          packages: vl-release pmdocs
-
       - name: Check the release contract
         id: state
-        shell: bash
         env:
           DISPATCH_PUBLISH: ${{ github.event.inputs.publish || 'dry-run' }}
         run: |
@@ -97,7 +100,10 @@ jobs:
 
   contracts-verify:
     name: Packaging contracts, lifecycle and lab tests, shellcheck
-    runs-on: [self-hosted, Linux, X64, ubuntu-latest-lts]
+    runs-on: [self-hosted, Linux, X64, vaulthalla, vps-ci]
+    defaults:
+      run:
+        shell: bash ./ci/run-ci bash -euo pipefail {0}
     needs: release-check
     timeout-minutes: 20
     steps:
@@ -107,17 +113,6 @@ jobs:
           ref: ${{ github.event.inputs.ref || github.ref }}
           fetch-depth: 0
 
-      - name: Install vl-release
-        uses: ./.github/actions/setup_valkyrianlabs_tools
-
-      - name: Install shellcheck
-        shell: bash
-        run: |
-          set -euo pipefail
-          if ! command -v shellcheck >/dev/null 2>&1; then
-            sudo apt-get -o DPkg::Lock::Timeout=900 install -y shellcheck || { sudo apt-get -o DPkg::Lock::Timeout=900 update && sudo apt-get -o DPkg::Lock::Timeout=900 install -y shellcheck; }
-          fi
-
       - name: Release contract, packaging contracts, lifecycle and lab tests
         run: bash tools/dev/verify.sh release packaging lifecycle
 
@@ -126,7 +121,10 @@ jobs:
 
   web-verify:
     name: Web build and checks
-    runs-on: [self-hosted, Linux, X64, ubuntu-latest-lts]
+    runs-on: [self-hosted, Linux, X64, vaulthalla, vps-ci]
+    defaults:
+      run:
+        shell: bash ./ci/run-ci bash -euo pipefail {0}
     needs: release-check
     timeout-minutes: 45
     steps:
@@ -146,7 +144,10 @@ jobs:
 
   docs-validate:
     name: Documentation validation
-    runs-on: [self-hosted, Linux, X64, ubuntu-latest-lts]
+    runs-on: [self-hosted, Linux, X64, vaulthalla, vps-ci]
+    defaults:
+      run:
+        shell: bash ./ci/run-ci bash -euo pipefail {0}
     needs: release-check
     timeout-minutes: 15
     steps:
@@ -155,17 +156,15 @@ jobs:
         with:
           ref: ${{ github.event.inputs.ref || github.ref }}
 
-      - name: Install pmdocs
-        uses: ./.github/actions/setup_valkyrianlabs_tools
-        with:
-          packages: pmdocs
-
       - name: Validate documentation package
         run: pmdocs validate --source docs
 
   release-artifacts:
     name: Prepare, build and validate release artifacts
-    runs-on: [self-hosted, Linux, X64, ubuntu-latest-lts]
+    runs-on: [self-hosted, Linux, X64, vaulthalla, vps-ci]
+    defaults:
+      run:
+        shell: bash ./ci/run-ci bash -euo pipefail {0}
     needs:
       - release-check
       - contracts-verify
@@ -178,12 +177,6 @@ jobs:
         with:
           ref: ${{ github.event.inputs.ref || github.ref }}
           fetch-depth: 0
-
-      - name: Install vl-release
-        uses: ./.github/actions/setup_valkyrianlabs_tools
-
-      - name: Setup web toolchain
-        uses: ./.github/actions/setup_web
 
       - name: Prepare release history (work tree only)
         run: vlr prepare --record release/meta/prepare.json
@@ -219,7 +212,10 @@ jobs:
 
   publish-debian:
     name: Publish Debian package
-    runs-on: [self-hosted, Linux, X64, ubuntu-latest-lts]
+    runs-on: [self-hosted, Linux, X64, vaulthalla, vps-ci]
+    defaults:
+      run:
+        shell: bash ./ci/run-ci bash -euo pipefail {0}
     needs:
       - release-check
       - release-artifacts
@@ -236,9 +232,6 @@ jobs:
         with:
           ref: ${{ github.event.inputs.ref || github.ref }}
           fetch-depth: 0
-
-      - name: Install vl-release
-        uses: ./.github/actions/setup_valkyrianlabs_tools
 
       - name: Prepare release history (deterministic re-run)
         run: vlr prepare
@@ -266,7 +259,10 @@ jobs:
 
   github-release:
     name: GitHub release
-    runs-on: [self-hosted, Linux, X64, ubuntu-latest-lts]
+    runs-on: [self-hosted, Linux, X64, vaulthalla, vps-ci]
+    defaults:
+      run:
+        shell: bash ./ci/run-ci bash -euo pipefail {0}
     needs:
       - release-check
       - publish-debian
@@ -284,12 +280,7 @@ jobs:
           ref: ${{ github.event.inputs.ref || github.ref }}
           fetch-depth: 0
 
-      # vlr github-release drives the GitHub CLI; the self-hosted runner doesn't ship it.
-      - name: Install vl-release and gh
-        uses: ./.github/actions/setup_valkyrianlabs_tools
-        with:
-          packages: vl-release gh
-
+      # vlr github-release drives the GitHub CLI, which the CI container image carries (ci/Containerfile).
       - name: Prepare release history (deterministic re-run)
         run: vlr prepare
 
@@ -309,7 +300,10 @@ jobs:
 
   finalize:
     name: Record the release on main
-    runs-on: [self-hosted, Linux, X64, ubuntu-latest-lts]
+    runs-on: [self-hosted, Linux, X64, vaulthalla, vps-ci]
+    defaults:
+      run:
+        shell: bash ./ci/run-ci bash -euo pipefail {0}
     needs:
       - release-check
       - publish-debian
@@ -333,9 +327,6 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_FINALIZE_TOKEN || github.token }}
 
-      - name: Install vl-release
-        uses: ./.github/actions/setup_valkyrianlabs_tools
-
       - name: Download release artifacts
         uses: actions/download-artifact@v4
         with:
@@ -358,7 +349,10 @@ jobs:
     # Independent of finalize: a docs failure never marks a live APT release as failed. Retry with
     # "Re-run failed jobs".
     name: Publish docs
-    runs-on: [self-hosted, Linux, X64, ubuntu-latest-lts]
+    runs-on: [self-hosted, Linux, X64, vaulthalla, vps-ci]
+    defaults:
+      run:
+        shell: bash ./ci/run-ci bash -euo pipefail {0}
     needs:
       - release-check
       - docs-validate
@@ -380,17 +374,15 @@ jobs:
           ref: ${{ github.event.inputs.ref || github.ref }}
 
       - name: Verify pmdocs
-        shell: bash
         run: |
           set -euo pipefail
           if ! command -v pmdocs >/dev/null 2>&1; then
-            echo "::error::pmdocs is missing. docs-publish avoids apt refreshes; docs-validate installs pmdocs on this runner pool."
+            echo "::error::pmdocs is missing from the CI container image (ci/Containerfile)."
             exit 1
           fi
           pmdocs --version
 
       - name: Validate and push docs
-        shell: bash
         run: |
           set -euo pipefail
           pmdocs validate --source docs

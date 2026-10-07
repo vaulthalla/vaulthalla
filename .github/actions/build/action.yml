@@ -1,14 +1,15 @@
 name: 'Build Project'
 description: 'Compiles the project.'
-
 # The PR correctness gate: the full test suite is compiled and run at -O0 (buildtype=debug) with -Werror. Release
 # packages are built once, at -O3, by debian/rules (vlr build-deb); release CI doesn't rebuild or re-test here.
+# Every step runs in the disposable CI container (ci/run-ci, ci/Containerfile): the build dependencies are baked
+# into the image, ccache lives in the runner's persistent cache (CI_CACHE_NAMES=ccache, /cache/ccache), and
+# `sudo meson install` only touches the container.
 inputs:
   build_type:
     description: Meson buildtype (debug = -O0, the CI test configuration).
     default: debug
     required: false
-
 runs:
   using: "composite"
   # No checkout here: callers already checked out the ref under test (release.yml honors the
@@ -16,37 +17,14 @@ runs:
   steps:
     - name: Sync private web icons
       uses: ./.github/actions/sync_web_icons
-
     - name: Make clean
-      shell: bash
-      working-directory: ${{ github.workspace }}
+      shell: bash ./ci/run-ci bash -euo pipefail {0}
       run: make clean || true
-
-    - name: Set PATH
-      shell: bash
-      run: echo "PATH=$HOME/.local/bin:$PATH" >> $GITHUB_ENV
-
     - name: Show ccache stats
-      shell: bash
+      shell: bash ./ci/run-ci bash -euo pipefail {0}
       run: ccache -s
-
-    - name: Cache ccache
-      uses: actions/cache@v4
-      with:
-        path: /home/gh-runner/.cache/ccache
-        key: ${{ runner.os }}-ccache-${{ github.sha }}
-        restore-keys: |
-          ${{ runner.os }}-ccache-
-
-    - name: Install Dependencies
-      shell: bash
-      working-directory: ${{ github.workspace }}
-      run: |
-        ./bin/setup/install_deps.sh
-
     - name: Build
-      shell: bash
-      working-directory: ${{ github.workspace }}
+      shell: bash ./ci/run-ci bash -euo pipefail {0}
       run: |
         meson setup build --buildtype=${{ inputs.build_type }} -Dwerror=true -Dbuild_unit_tests=true -Dinstall_data=false
         meson compile -C build

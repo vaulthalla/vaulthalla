@@ -1,24 +1,17 @@
 name: 'Build Web'
 description: 'Builds the web frontend.'
-
 runs:
   using: "composite"
   steps:
     - name: Sync private web icons
       uses: ./.github/actions/sync_web_icons
-
     - name: Install dependencies
-      shell: bash
-      working-directory: ${{ github.workspace }}/web
-      run: pnpm install --frozen-lockfile
-
+      shell: bash ./ci/run-ci bash -euo pipefail {0}
+      run: cd web && pnpm install --frozen-lockfile
     - name: Build web
-      shell: bash
-      working-directory: ${{ github.workspace }}/web
-      run: pnpm build
-
+      shell: bash ./ci/run-ci bash -euo pipefail {0}
+      run: cd web && pnpm build
     # Hard gate: per-route first-load JavaScript budgets (web/perf-budgets.json).
     - name: Check web performance budgets
-      shell: bash
-      working-directory: ${{ github.workspace }}/web
-      run: pnpm budgets
+      shell: bash ./ci/run-ci bash -euo pipefail {0}
+      run: cd web && pnpm budgets

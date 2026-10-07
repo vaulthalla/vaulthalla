@@ -1,0 +1,75 @@
+# CI build/test environment for Vaulthalla (core C++ build and tests, web build and checks,
+# release tooling, Debian package build). Built and run by ci/run-ci; nothing here touches the
+# host, and CI steps may sudo freely inside the container.
+#
+# Packages: every debian/control Build-Depends (including the CAD/media preview helpers' libraries: the release
+# builds all three packages, and the PR gate compiles the helpers too; tools/contracts checks the list), the
+# runtime tools of bin/setup/install_deps.sh that tests use (swtpm, tpm2-tools), g++ 14 as the default `cc`/`c++`
+# (the previous runner's compiler; meson and dh pick `c++`, which tools/dev/check_build_flags.py expects) + ccache,
+# Node (web/.nvmrc) + pnpm (web/package.json packageManager), Debian packaging tools, shellcheck, and
+# vl-release, pmdocs and gh. libpqxx-dev and libpdfium-dev come from apt.vaulthalla.sh.
+FROM docker.io/library/ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55
+
+ARG NODE_VERSION=24.13.1
+ARG PNPM_VERSION=11.0.8
+# Newest vl-release / pmdocs in the ValkyrianLabs APT index when ci/run-ci built the image; part
+# of the image tag, so a new tool release rebuilds the image.
+ARG VALKYRIANLABS_TOOLS=""
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    COREPACK_HOME=/usr/local/share/corepack \
+    COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+    CCACHE_DIR=/cache/ccache \
+    CCACHE_MAXSIZE=10G \
+    HOME=/home/ci \
+    CI=true
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
+ && install -d -m 0755 /etc/apt/keyrings \
+ && curl -fsSL https://apt.vaulthalla.sh/pubkey.gpg | gpg --dearmor -o /etc/apt/keyrings/vaulthalla.gpg \
+ && curl -fsSL https://apt.valkyrianlabs.com/pubkey.gpg -o /etc/apt/keyrings/valkyrianlabs.gpg \
+ && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli.gpg \
+ && chmod 0644 /etc/apt/keyrings/*.gpg \
+ && echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/vaulthalla.gpg] https://apt.vaulthalla.sh stable main" > /etc/apt/sources.list.d/vaulthalla.list \
+ && echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/valkyrianlabs.gpg] https://apt.valkyrianlabs.com stable main" > /etc/apt/sources.list.d/valkyrianlabs.list \
+ && echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/githubcli.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends \
+      sudo git jq xz-utils file make python3 shellcheck ccache gcc-14 g++-14 build-essential \
+      debhelper devscripts dpkg-dev fakeroot \
+      meson ninja-build pkg-config pandoc \
+      libfuse3-dev libsodium-dev libcurl4-openssl-dev libboost-filesystem-dev libboost-system-dev \
+      libpqxx-dev libpdfium-dev libmagic-dev libmagic1 libyaml-cpp-dev libjpeg-dev libturbojpeg0-dev \
+      libpugixml-dev uuid-dev libspdlog-dev libfmt-dev libtss2-dev libssl-dev zlib1g-dev libgtest-dev \
+      libseccomp-dev libocct-data-exchange-dev libocct-foundation-dev libocct-modeling-algorithms-dev \
+      libocct-modeling-data-dev libocct-ocaf-dev \
+      libavcodec-dev libavformat-dev libavutil-dev libswresample-dev libswscale-dev \
+      swtpm swtpm-tools tpm2-tools \
+      gh vl-release pmdocs \
+ && echo 'ALL ALL=(ALL:ALL) NOPASSWD: ALL' > /etc/sudoers.d/ci \
+ && chmod 0440 /etc/sudoers.d/ci \
+ && rm -rf /var/lib/apt/lists/* \
+ && echo "tools: ${VALKYRIANLABS_TOOLS}" && vlr --version && pmdocs --version && gh --version | head -1 \
+ && update-alternatives --install /usr/bin/cc cc /usr/bin/gcc-14 100 \
+ && update-alternatives --install /usr/bin/c++ c++ /usr/bin/g++-14 100 \
+ && c++ --version | head -1
+
+# Node from nodejs.org, verified against the release's SHASUMS256.txt; pnpm through corepack.
+# COREPACK_HOME stays writable so a packageManager bump on a branch still resolves in-container.
+RUN set -eux; \
+    cd /tmp; \
+    file="node-v${NODE_VERSION}-linux-x64.tar.xz"; \
+    curl -fsSLO "https://nodejs.org/dist/v${NODE_VERSION}/${file}"; \
+    curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt" | grep " ${file}\$" | sha256sum -c -; \
+    tar -xJf "$file" -C /usr/local --strip-components=1 --no-same-owner; \
+    rm -f "$file"; \
+    corepack enable; \
+    corepack prepare "pnpm@${PNPM_VERSION}" --activate; \
+    chmod -R a+rwX "$COREPACK_HOME"; \
+    node --version; pnpm --version
+
+# HOME for whichever host uid ci/run-ci maps in (--userns=keep-id).
+RUN install -d -m 1777 /home/ci
+
+WORKDIR /workspace

@@ -1,10 +1,8 @@
 name: 'Test Web'
 description: 'Runs web frontend CI checks.'
-
 runs:
   using: "composite"
   steps:
     - name: Test web
-      shell: bash
-      working-directory: ${{ github.workspace }}/web
-      run: pnpm test
+      shell: bash ./ci/run-ci bash -euo pipefail {0}
+      run: cd web && pnpm test
