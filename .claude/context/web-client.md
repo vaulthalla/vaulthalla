@@ -94,6 +94,12 @@ sync, gateway, settings), `/users` (+ `/new`, `/[name]`), `/groups`, `/roles` (+
 layout/page entry chunks; dynamic imports and legacy polyfills excluded) from the production build and fails over
 budget. CI runs it after `pnpm build` (hard gate); `tools/dev/verify.sh web` runs it with `VERIFY_WEB_BUILD=1`.
 Next 16 + React 19 alone are ~143 KB. Keep dialogs/editors/charts/menus behind `next/dynamic` or lazy primitives.
+The same script fails if Babylon.js code (content markers `BABYLON.`, `ArcRotateCamera`, `babylonjs.com`,
+`@babylonjs/core/`) lands in any route's first load, and budgets the 3D model viewer's lazy chunks separately
+(`lazy.modelViewer`: the `next/dynamic` group of the chunk carrying the `vh-model-viewer` marker, ~282 KB on open;
+`lazy.modelViewerReachable`: everything it can load on demand, an over-counting ceiling). Babylon is imported only
+in `features/files/preview/ModelViewer.tsx` and `preview/model/**`; Draco/meshopt decoders are bundled (Draco's
+wasm + wrapper emitted to `/_next/static/media` via `new URL(..., import.meta.url)`), never fetched from a CDN.
 
 ## Wiring and env
 
