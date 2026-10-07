@@ -24,8 +24,15 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
   NOFILE=64, CORE=0), only fds 0-4, empty environment; plaintext served over a range-pull socketpair (never on
   disk); output cap and wall-clock timeout kill the process group; crashes are reported, never thrown.
 - Helpers self-confine with Landlock (read-only system paths, ABI-aware) and a seccomp denylist (sockets, exec,
-  process creation, ptrace, signals to other processes, mounts, opens for writing); a helper without seccomp
-  refuses to run.
+  process creation, ptrace, signals to other processes, mounts, opens for writing); a helper without Landlock or
+  seccomp refuses to run (exit 5 sandbox_unavailable, reported as converter_unavailable and logged once).
+- Helper sandbox hardening: seccomp limits prlimit64/setpriority/ioprio_set/sched_set*/move_pages/migrate_pages
+  to the helper itself and denies fcntl F_SETOWN/F_SETOWN_EX/F_SETSIG/F_SETLEASE, ioctl FIOSETOWN/SIOCSPGRP, SysV
+  IPC and POSIX mqueues (a same-uid helper could lower the daemon's RLIMIT_NOFILE or arm SIGKILL at it); the CAD
+  helper denies threads, and the runner SIGKILLs helpers above 64 threads; media hardware devices open after the
+  sandbox; the runner reads pipes in bounded chunks per poll (stderr floods no longer starve the wall timeout);
+  only root-owned, non-group/world-writable helpers (and directories) run, and preview.derive.helper_dir is no
+  longer writable through settings.update or the CLI.
 - New optional config keys preview.{media.*,derive.*,text.max_edit_bytes,max_render_pixels} with defaults.
 - preview::derive::Queue: bounded (preview.derive.max_queue), deduplicating derive queue with
   preview.derive.max_concurrency workers in front of the helpers (model-glb, poster-jpg, probe-json,
@@ -41,8 +48,8 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
 ## Packaging
 - New binary packages vaulthalla-preview-cad (STEP/STP -> GLB, Open CASCADE) and vaulthalla-preview-media
   (libav*), each Depends: vaulthalla (= ${binary:Version}); vaulthalla Suggests both and links neither.
-  Build-Depends gain libseccomp-dev, libocct-*-dev and libav*/libswscale-dev behind the build profiles
-  pkg.vaulthalla.nocad / pkg.vaulthalla.nomedia; meson options preview_cad / preview_media (feature, auto).
+  Build-Depends gain libseccomp-dev, libocct-*-dev and libav*/libswresample-dev/libswscale-dev behind the build
+  profiles pkg.vaulthalla.nocad / pkg.vaulthalla.nomedia; meson options preview_cad / preview_media (feature, auto).
 
 - preview-media: add the optional `vaulthalla-preview-media` helper (meson feature `preview_media`, links
   libavformat/libavcodec/libswscale/libswresample; never linked by the daemon) with `probe`, `poster`,
@@ -50,8 +57,8 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
   `capabilities`, over the derive-seam range-pull protocol with a custom seekable AVIOContext.
   - Limits: demuxer whitelist, nested opens refused, probesize/analyzeduration caps, dimension/stream/channel
     caps, deadline interrupt, --max-output-bytes; corrupt input exits 2 (invalid_input), caps exit 3.
-  - `--hwaccel auto|software|vaapi|qsv|nvenc`: devices are created before the sandbox and every hardware path
-    falls back to libx264; hardware encoding is unvalidated.
+  - `--hwaccel auto|software|vaapi|qsv|nvenc`: devices are created inside the sandbox (GPU allowance) and every
+    hardware path falls back to libx264; hardware encoding is unvalidated.
 
 ## Web console
 - Web console: render file previews from the server's preview plan (`preview` on file entries; MIME

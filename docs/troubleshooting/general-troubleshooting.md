@@ -87,7 +87,15 @@ sudo apt install vaulthalla-preview-media    # Convert for playback, posters, me
 ls -l /usr/lib/vaulthalla/helpers/
 ```
 
-If the package is installed, check that `preview.derive.helper_dir` (default `/usr/lib/vaulthalla/helpers`) points at it and that its version matches `vaulthalla` exactly.
+If the package is installed, check that `preview.derive.helper_dir` (default `/usr/lib/vaulthalla/helpers`) points at it and that its version matches `vaulthalla` exactly. The daemon also reports a helper as unavailable, and logs why once, when:
+
+- The helper, or any directory above it, is not owned by root or is writable by group or others. Packaged helpers always pass; a hand-copied helper may not.
+- The helper refused to run because it could not sandbox itself. Helpers require Landlock and seccomp; on a kernel without Landlock (or with it left out of the `lsm=` boot parameter) every conversion reports `converter_unavailable`.
+
+```bash
+journalctl -u vaulthalla.service | grep -E 'refusing to run converter helper|refuses to run'
+cat /sys/kernel/security/lsm    # must list landlock
+```
 
 ### STEP Conversion Or Media Transcode Failed
 
