@@ -27,6 +27,7 @@
 #include "sync/tasks/Delete.hpp"
 #include "storage/s3/Controller.hpp"
 #include "db/query/sync/RemoteObjectIndex.hpp"
+#include "preview/cache/Store.hpp"
 
 #include <algorithm>
 #include <mutex>
@@ -300,14 +301,12 @@ void Local::processOperations() const {
         writeFile(absDest, ciphertext);
         db::query::fs::File::setEncryptionIVAndVersion(f);
 
-        const auto& move = [&]() {
+        // Derived artifacts are keyed by file id and content generation, not path: a move keeps them (the reseal
+        // above already made them stale), a copy is a new file id that derives its own on demand.
+        if (op->operation == Operation::Op::Move || op->operation == Operation::Op::Rename) {
             if (std::filesystem::exists(absSrc)) std::filesystem::remove(absSrc);
-            engine->moveThumbnails(op->source_path, op->destination_path);
-        };
-
-        if (op->operation == Operation::Op::Copy) engine->copyThumbnails(op->source_path, op->destination_path);
-        else if (op->operation == Operation::Op::Move || op->operation == Operation::Op::Rename) move();
-        else throw std::runtime_error("Unknown operation type: " + std::to_string(static_cast<int>(op->operation)));
+        } else if (op->operation != Operation::Op::Copy)
+            throw std::runtime_error("Unknown operation type: " + std::to_string(static_cast<int>(op->operation)));
 
         scopedOp->stop();
     }
@@ -404,6 +403,16 @@ void Local::handleVaultKeyRotation() {
                 "[FSTask] Vault key rotation finished for vault '{}' (key version {}): {} file(s) re-encrypted, {} "
                 "rotation sidecar(s) recovered",
                 vaultId, result.keyVersion, result.batch.rotated, result.recovery.promoted + result.recovery.discarded);
+            // Derived artifacts sealed under the retired key can never be opened again: drop them now rather than
+            // one lookup at a time.
+            try {
+                if (const auto purged = vh::preview::cache::Store::purgeRetiredKeys(engine); purged > 0)
+                    log::Registry::sync()->info("[FSTask] Dropped {} derived artifact(s) sealed under a retired key "
+                                                "of vault '{}'", purged, vaultId);
+            } catch (const std::exception& e) {
+                log::Registry::sync()->warn("[FSTask] Failed to drop retired-key derived artifacts of vault '{}': {}",
+                                            vaultId, e.what());
+            }
             return;
         }
 

@@ -22,6 +22,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <csignal>
@@ -157,6 +158,41 @@ int main(int argc, char** argv) {
     };
     const uint64_t inputSize = u64("input-size", 0);
 
+    // Stand-ins for the real converter commands (preview::derive::Queue tests). Behaviour follows the input's first
+    // line: "FAKE-INVALID" (invalid_input, exit 2), "FAKE-INTERNAL" (internal, exit 1), "FAKE-CRASH" (SIGSEGV),
+    // "FAKE-SLEEP <ms>" (pause, then succeed); anything else succeeds. Success writes "CMD <argv[1..]>\n" and then
+    // the whole input to stdout.
+    if (command == "convert-step" || command == "poster" || command == "probe" || command == "transcode") {
+        std::vector<uint8_t> input;
+        for (uint64_t offset = 0; offset < inputSize;) {
+            const auto chunk = pull(offset, 1u << 20);
+            if (chunk.empty()) break;
+            input.insert(input.end(), chunk.begin(), chunk.end());
+            offset += chunk.size();
+        }
+        const std::string head(input.begin(), input.begin() + static_cast<std::ptrdiff_t>(std::min<std::size_t>(input.size(), 64)));
+        if (head.starts_with("FAKE-INVALID")) {
+            result({{"ok", false}, {"error", "invalid_input"}, {"message", "not a model"}});
+            return 2;
+        }
+        if (head.starts_with("FAKE-INTERNAL")) {
+            result({{"ok", false}, {"error", "internal"}, {"message", "transient trouble"}});
+            return 1;
+        }
+        if (head.starts_with("FAKE-CRASH")) {
+            ::raise(SIGSEGV);
+            return 99;
+        }
+        if (head.starts_with("FAKE-SLEEP ")) ::usleep(static_cast<useconds_t>(std::strtoul(head.c_str() + 11, nullptr, 10) * 1000));
+
+        std::string line = "CMD";
+        for (int i = 1; i < argc; ++i) line += std::string(" ") + argv[i];
+        line += "\n";
+        writeAll(1, line.data(), line.size());
+        writeAll(1, input.data(), input.size());
+        result({{"ok", true}, {"bytes", input.size()}});
+        return 0;
+    }
     if (command == "echo") {
         uint64_t total = 0;
         for (uint64_t offset = 0; offset < inputSize;) {

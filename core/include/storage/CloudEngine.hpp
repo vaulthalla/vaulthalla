@@ -52,9 +52,9 @@ namespace vh::storage {
 
         void purge(const std::shared_ptr<vh::fs::model::file::Trashed> &f) const;
 
-        void removeRemotely(const std::filesystem::path &rel_path, bool rmThumbnails = true) const;
+        void removeRemotely(const std::filesystem::path &rel_path) const;
 
-        void removeRemotely(const std::shared_ptr<vh::fs::model::file::Trashed> &f, bool rmThumbnails = true) const;
+        void removeRemotely(const std::shared_ptr<vh::fs::model::file::Trashed> &f) const;
 
         void upload(const std::shared_ptr<vh::fs::model::File> &f) const;
 

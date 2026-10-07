@@ -38,7 +38,8 @@ Fwd.hpp once it's forward-declared in more than one place. The `vh_usage` librar
 ## Process model
 
 `core/main/main.cpp` boot sequence: config + log registries → DB init + prepared statements +
-optional seed → runtime deps → storage wiring → `runtime::Manager` start → wait for SIGINT/SIGTERM.
+optional seed → runtime deps → storage wiring (+ derived-cache startup sweep) → `runtime::Manager` start → wait
+for SIGINT/SIGTERM. Shutdown: `Manager::stopAll` → `preview::derive::Queue::shutdown()` → thread pools.
 
 `core/src/runtime/Manager.cpp` owns the service lifecycle. It runs a watchdog every 2s and restarts
 a service after 500ms. Start order:
@@ -281,7 +282,8 @@ bytes, inline by default), `GET|HEAD /download` (files stream with no size cap; 
   `timestamp` column to `timestamptz`, reading old values in that recorded zone (manual psql runs fall back to the
   session zone); columns a view depends on are skipped with a warning. New columns must be `TIMESTAMPTZ`. Text output
   is `YYYY-MM-DD HH:MM:SS[.ffffff]+00`, which `db::encoding::parsePostgresTimestamp` handles. Guard: `DbTimezoneTest`.
-- `db::Janitor` handles sweeps. Stats rollups read from `file_activity`, `files_trashed`, `operations`, `share_*`.
+- `db::Janitor` handles sweeps (DB cleanup every `services.db_sweeper.sweep_interval_minutes`, derived-artifact
+  eviction every 15 min). Stats rollups read from `file_activity`, `files_trashed`, `operations`, `share_*`.
 
 ## Subsystem directory map (`core/src`, mirrored in `core/include`)
 
@@ -307,6 +309,37 @@ Helper exit/JSON contract: `core/tools/common/protocol.hpp`. Config: `preview.de
 set (per-UID; the daemon's threads would count): process creation is denied by the helper's seccomp filter.
 Tests: `test_derive_runner.cpp` (fake helper `core/tests/helpers/fake_derive_helper.cpp`),
 `test_preview_cad_helper.cpp` (real helper, skipped when not built).
+`RunRequest::stop` (a `std::stop_token`) SIGKILLs the process group on request (`failureReason() == "cancelled"`).
+
+### Derived-artifact cache and derive queue (`preview::cache`, `preview::derive::Queue`)
+
+- One encrypted cache for every derived artifact (thumbnails, page renders, posters, GLB, transcodes):
+  `preview::cache::Store`, files `<cacheRoot>/derived/<file_id>/<kind>.<variant>.vhd` (VHDERIV1 header + AES-256-GCM
+  under the vault key, identity bound as AAD), rows in `cache_index` (`type='derived'`, migration 103) keyed by
+  `(file_id, kind, variant)` and valid only for the source generation (`Generation::sourceId()`, the file IV) and
+  generator version. `status='failed'` rows are the negative cache (`preview.derive.failure_ttl_hours`).
+- Artifacts are keyed by **file id**, never by path: rename/move need nothing; a file id that ends (delete, trash,
+  purge, S3 gateway delete, FUSE unlink) calls `Engine::purgeDerivedArtifacts(fileId)` (best effort, logs); a vault
+  removal calls `Store::purgeVault` (`storage::Manager::removeVault`). The old path-keyed
+  `Engine::{purge,move,copy}Thumbnails` helpers are gone; don't reintroduce path-keyed cache files.
+- `preview::derive::Queue` (`Queue.cpp`) sits in front of Runner + Store: `request(engine, file, kind)` never blocks
+  on conversion. Kind table (helper, command, args, generator version) is `queue_impl::kKinds`; bump a kind's
+  generator version when its output changes. Flow: kind known + listed in the file's `PreviewPlan::derived` (transcodes
+  not with `preview.media.transcode: off`, variant `v1`) else Unsupported → helper executable else Unavailable → `Store::lookup` Ready/Failed → in-flight key ⇒ Queued →
+  `preview.derive.max_queue` pending ⇒ Busy → enqueue. `max_concurrency` `std::jthread` workers start lazily.
+  A job re-checks the DB generation before opening, streams `openPlaintextReader` into the helper and the helper
+  into a `Store::Writer`, and commits only if the generation is still current. Deterministic failures
+  (invalid_input, limit_exceeded, unsupported, crashed, timeout) are negatively cached; transient ones
+  (content_unavailable, integrity, internal, protocol, cancelled, helper missing) are only remembered for 30 s so
+  pollers see Failed instead of polling forever. `Queue::shutdown()` (main, after `stopRuntime`) cancels running
+  helpers via the stop token and joins.
+- Lifecycle hooks (`preview/cache/Maintenance.hpp`): `applyConfig()` at boot (reader integrity/remote defaults,
+  failure TTL); `sweepAtStartup()` after `initStorageEngines()` on every start (deletes legacy plaintext
+  `<cacheRoot>/thumbnails`, orphan artifact dirs, temp files); `db::Janitor` runs `evictPeriodic()` every 15 min
+  (LRU to `caching.max_size_mb`, idle expiry `caching.thumbnails.expiry_days`) independent of its DB sweep cadence;
+  a finished key rotation (`sync::Local::handleVaultKeyRotation`) calls `Store::purgeRetiredKeys`.
+- Tests: `test_preview_store.cpp`, `test_derive_queue.cpp` (DB-backed, fake helper symlinked under both helper
+  names; real CAD helper when built).
 
 ### `ops/`: shared command operations
 

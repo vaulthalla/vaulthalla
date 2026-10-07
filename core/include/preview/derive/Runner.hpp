@@ -32,6 +32,7 @@
 #include <optional>
 #include <span>
 #include <stdexcept>
+#include <stop_token>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -59,6 +60,7 @@ struct RunRequest {
     storage::PlaintextReader* input = nullptr;        // range-pull source; nullptr = empty input
     Limits limits;
     std::function<void(std::span<const uint8_t>)> sink;   // artifact bytes in order; may throw (aborts the run)
+    std::stop_token stop;                             // stop requested: SIGKILL the process group ("cancelled")
 };
 
 struct RunResult {
@@ -73,7 +75,8 @@ struct RunResult {
     std::string error;                    // daemon-side failure: exec failure, protocol violation
 
     [[nodiscard]] bool ok() const;
-    // "" when ok(), else timeout | limit_exceeded | invalid_input | unsupported | crashed | protocol | internal.
+    // "" when ok(), else timeout | limit_exceeded | invalid_input | unsupported | crashed | protocol | cancelled |
+    // internal.
     [[nodiscard]] std::string failureReason() const;
     // Short human-readable reason for logs and the negative cache.
     [[nodiscard]] std::string failureMessage() const;

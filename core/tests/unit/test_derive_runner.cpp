@@ -20,6 +20,7 @@
 #include <fstream>
 #include <random>
 #include <stdexcept>
+#include <stop_token>
 #include <string>
 #include <thread>
 #include <vector>
@@ -163,6 +164,24 @@ TEST_F(DeriveRunnerTest, WallClockTimeoutKillsTheProcessGroup) {
     EXPECT_EQ(res.signal, SIGKILL);
     EXPECT_EQ(res.failureReason(), "timeout");
     EXPECT_LT(elapsed, std::chrono::seconds(5));
+    expectNoChildren();
+}
+
+TEST_F(DeriveRunnerTest, AStopRequestKillsTheProcessGroupLongBeforeTheTimeout) {
+    std::stop_source stop;
+    auto r = request("sleep");
+    r.stop = stop.get_token();
+    std::jthread canceller([&stop] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        stop.request_stop();
+    });
+    const auto start = std::chrono::steady_clock::now();
+    const auto res = Runner::run(r);
+    EXPECT_LT(std::chrono::steady_clock::now() - start, std::chrono::seconds(5));   // wall timeout is 30 s
+    EXPECT_FALSE(res.ok());
+    EXPECT_FALSE(res.timedOut);
+    EXPECT_EQ(res.signal, SIGKILL);
+    EXPECT_EQ(res.failureReason(), "cancelled");
     expectNoChildren();
 }
 

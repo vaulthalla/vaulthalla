@@ -632,10 +632,17 @@ void Filesystem::remove(const std::filesystem::path& path, const unsigned int us
     // This function recursively marks files as trashed in the database and deletes their backing paths
     // which is incompatible with how FUSE expects unlink/rmdir to behave.
 
+    // Trashing ends a file id (its cache_index rows cascade): its sealed derived artifacts go with it.
+    const auto engine = storageManager_ ? storageManager_->getEngine(*entry->vault_id) : nullptr;
+    const auto purgeDerived = [&engine](const unsigned int fileId) {
+        if (engine) engine->purgeDerivedArtifacts(fileId);
+    };
+
     if (entry->isDirectory()) {
         for (const auto& file : db::query::fs::File::listFilesInDir(*entry->vault_id, entry->path, true)) {
             db::query::fs::File::markFileAsTrashed(userId, file->id);
             cache->evictPath(file->fuse_path);
+            purgeDerived(file->id);
         }
         // Trashing the last file removes a directory that ends up empty, but an empty directory (or one holding
         // only empty directories or symlinks) is still there: delete what is left, off its ancestors' totals.
@@ -649,6 +656,7 @@ void Filesystem::remove(const std::filesystem::path& path, const unsigned int us
     else {
         db::query::fs::File::markFileAsTrashed(userId, *entry->vault_id, entry->path);
         cache->evictPath(path);
+        purgeDerived(entry->id);
     }
 
     if (entry->isSymlink()) {

@@ -16,6 +16,7 @@
 #include "seed/include/seed_db.hpp"
 #include "crypto/id/Generator.hpp"
 #include "sync/model/LocalPolicy.hpp"
+#include "preview/cache/Store.hpp"
 
 #include <paths.h>
 #include <string>
@@ -238,6 +239,21 @@ void Manager::reloadEngine(const unsigned int vaultId) {
 }
 
 void Manager::removeVault(const unsigned int vaultId) {
+    std::shared_ptr<Engine> removed;
+    {
+        std::scoped_lock lock(mutex_);
+        if (const auto it = vaultToEngine_.find(vaultId); it != vaultToEngine_.end()) removed = it->second;
+    }
+    // The vault's sealed derived artifacts (thumbnails, renders, GLB, transcodes) go with it; the rows cascade.
+    if (removed) {
+        try {
+            preview::cache::Store::purgeVault(removed);
+        } catch (const std::exception& e) {
+            log::Registry::storage()->warn("[StorageManager] Failed to purge derived artifacts of vault {}: {}", vaultId,
+                                           e.what());
+        }
+    }
+
     std::scoped_lock lock(mutex_);
     const auto oldEngineIt = vaultToEngine_.find(vaultId);
     if (oldEngineIt != vaultToEngine_.end()) eraseEnginePathEntry(engines_, oldEngineIt->second);
