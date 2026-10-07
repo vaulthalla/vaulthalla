@@ -55,6 +55,8 @@ Typical actions include:
 
 If an action is missing or denied, check the user's vault role and any path overrides.
 
+See [File Previews](/web-console/previews) for what opens in the browser (images, PDFs, video and audio, 3D models, text and Markdown editing) and what preview-only share links allow.
+
 ## Vault Management
 
 The Vaults page supports local and S3/R2 vault creation. For S3/R2 vaults, the form includes:

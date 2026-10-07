@@ -35,11 +35,23 @@ Common repo surfaces:
 - `core/src/rbac/*`
 - `core/src/crypto/*`
 - `core/src/protocols/shell/*`
+- `core/src/protocols/http/*`, `core/src/storage/{PlaintextReader,GcmFileReader}.cpp`, `core/src/preview/*`, `core/tools/*`
 - `web/middleware.ts`
 - `web/src/lib/session.ts`
 - `debian/postinst`, `debian/prerm`, `debian/postrm`
 - `deploy/lifecycle/main.py`
 - `deploy/systemd/vaulthalla-swtpm.service.in`
+
+## Preview And Download Invariants
+
+The HTTP preview, download and text-save lanes hand out decrypted vault content, so changes there are security-sensitive even when they look like plumbing. These rules hold today and need maintainer approval to change:
+
+- **No plaintext at rest from these lanes.** Previews, downloads, playback and conversions decrypt vault content only into process memory, pipes and socketpairs (the FUSE mount's per-file working copies are a separate, existing mechanism). No temporary plaintext files, no plaintext caches: every derived artifact (thumbnail, page render, poster, GLB, transcode) is encrypted with the vault key before it touches disk. Legacy plaintext thumbnail directories are deleted at startup. Nginx must not spool `/preview` or `/download` responses to disk (`proxy_buffering off` on fresh installs, `X-Accel-Buffering: no` from the daemon everywhere).
+- **Preview is not Download.** The `preview` capability only ever returns lossy server renders (JPEG thumbnails, PDF pages, posters). Anything that gives the browser original bytes or a full-fidelity reconstruction (SVG/WebP originals, media, 3D models, text, GLB from STEP, transcodes) requires `download`. The daemon decides this per file type in `preview::classify`; the web console only follows it.
+- **RBAC is authoritative and lives in one place.** `protocols/http/Access.cpp` maps each route's need onto filesystem RBAC (signed-in users) or the share operation (share links), before any cache lookup, decryption or rendering. Nothing beneath a handler authorizes. `HEAD` runs exactly the same checks as `GET`. Callers who can't read a vault learn nothing about which paths exist in it.
+- **Text saves are conditional.** `PUT /upload/text` requires `If-Match` on the version the editor opened and filesystem Overwrite, and re-seals through the normal filesystem path. Share links can't edit.
+- **Converters never run in the daemon.** STEP and media parsing happen in separate helper executables from optional packages, under resource limits, Landlock and a seccomp filter, fed through a range-pull channel. Their libraries are never linked into `vaulthalla-server`.
+- **Integrity failures stop streams.** A file version whose AES-GCM tag fails is aborted for every reader and refused afterwards; don't add paths that read ciphertext without going through `storage::PlaintextReader`.
 
 ## Decide Which Path To Use
 
