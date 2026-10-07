@@ -1,15 +1,19 @@
 #pragma once
 
 #include "storage/Engine.hpp"
+#include "storage/RemoteFetch.hpp"
 #include "sync/model/Action.hpp"
 #include "storage/s3/provider/Provider.hpp"
 #include "fs/Fwd.hpp"
 #include "sync/Fwd.hpp"
 #include "vault/Fwd.hpp"
 
+#include <future>
+#include <mutex>
 #include <unordered_map>
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace vh::storage {
@@ -111,7 +115,48 @@ namespace vh::storage {
         void setS3ControllerForTesting(std::shared_ptr<s3::Controller> s3Provider);
         void setS3ProviderProfileForTesting(s3::provider::ProfilePtr profile);
 
+        // Fetches a remote-only file's object once and keeps it as the local *ciphertext* copy at f->backing_path
+        // (never plaintext on disk). Price-preflighted (RemoteFetchGate) before any body is fetched, metered and
+        // capped (one HEAD, one GET, exactly the object's bytes), bound to the HEAD's ETag with If-Match, and
+        // authenticated (whole GCM message) before the copy becomes visible. An object stored in plaintext
+        // (encrypt_upstream off) is sealed on the fly under a fresh IV, recorded in the files row by
+        // compare-and-set before the copy is linked in. Concurrent callers for one file share a single fetch.
+        // Returns the file as it now reads locally (IV and key version of the stored copy). Throws ContentUnavailable
+        // (refused by a budget, archived, missing or changed remotely, or the row changed meanwhile), IntegrityError
+        // (the object failed authentication: nothing is kept), or std::runtime_error/std::system_error.
+        // The copy stays local afterwards: the Cache strategy has no eviction yet.
+        std::shared_ptr<vh::fs::model::File> hydrate(const std::shared_ptr<vh::fs::model::File> &f) const;
+
+        // Price preflight for remote reads (default: priceBudgetRemoteFetchGate).
+        void setRemoteFetchGate(RemoteFetchGate gate);
+        // Per-reader request caps for the opt-in ranged reader.
+        void setRangedReadLimits(const RangedReadLimits &limits);
+        [[nodiscard]] const RangedReadLimits &rangedReadLimits() const { return rangedLimits_; }
+        // Test seam for the files-row compare-and-set a hydrate needs when the stored IV changes.
+        void setHydrateCatalogCommitForTesting(HydrateCatalogCommit commit);
+
+    protected:
+        // Remote-only file: preview.media.remote (ReaderOptions::remote) hydrate (default) | ranged | off.
+        [[nodiscard]] std::unique_ptr<PlaintextReader> openMissingReader(
+            const std::shared_ptr<vh::fs::model::File> &f, const ReaderOptions &options) const override;
+
     private:
+        // What one HEAD says about a remote object.
+        struct RemoteObjectHead {
+            std::string etag;
+            std::optional<uint64_t> content_length;
+            bool encrypted{};
+            std::string iv_b64;           // empty when the object carries none (or is plaintext)
+            unsigned int key_version{};
+            bool requires_restore{};      // archive tier without a completed restore
+        };
+
+        [[nodiscard]] std::optional<RemoteObjectHead> headRemoteObject(const std::filesystem::path &rel_path) const;
+        [[nodiscard]] std::shared_ptr<vh::fs::model::File> hydrateNow(const std::shared_ptr<vh::fs::model::File> &f) const;
+        [[nodiscard]] std::unique_ptr<PlaintextReader> openRangedReader(
+            const std::shared_ptr<vh::fs::model::File> &f) const;
+        [[nodiscard]] std::unique_ptr<RemoteFetchReservation> reserveRemoteFetch(const RemoteFetchRequest &request) const;
+
         struct RemoteEncryptionContext {
             bool encrypted{};
             std::optional<std::pair<std::string, unsigned int>> payload;
@@ -121,6 +166,13 @@ namespace vh::storage {
         std::shared_ptr<s3::Controller> s3Provider_;
         s3::provider::ProfilePtr s3Profile_;
         std::optional<s3::provider::StorageTier> storageTier_;
+
+        RemoteFetchGate fetchGate_;
+        HydrateCatalogCommit catalogCommit_;
+        RangedReadLimits rangedLimits_;
+        // One in-flight hydrate per backing path; waiters share its outcome.
+        mutable std::mutex hydrateMutex_;
+        mutable std::unordered_map<std::string, std::shared_future<std::shared_ptr<vh::fs::model::File>>> hydrating_;
 
         std::shared_ptr<vault::model::S3Vault> s3Vault() const;
         void resolveS3ProviderConfiguration();
