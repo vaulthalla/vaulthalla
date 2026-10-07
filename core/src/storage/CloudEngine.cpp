@@ -12,7 +12,10 @@
 #include "db/query/identities/User.hpp"
 #include "db/query/sync/RemoteObjectIndex.hpp"
 #include "fs/ops/file.hpp"
-#include "preview/thumbnail/Worker.hpp"
+#include "preview/render/Service.hpp"
+#include "log/Registry.hpp"
+#include "concurrency/ThreadPoolManager.hpp"
+#include "concurrency/ThreadPool.hpp"
 #include "fs/Filesystem.hpp"
 #include "runtime/Deps.hpp"
 #include "vault/APIKeyManager.hpp"
@@ -127,14 +130,14 @@ std::unordered_map<std::string, std::string> CloudEngine::getMetaMapFromFile(con
     return meta;
 }
 
-CloudEngine::CloudEngine(const std::shared_ptr<S3Vault>& vault)
+CloudEngine::CloudEngine(const std::shared_ptr<vh::vault::model::S3Vault>& vault)
     : Engine(vault),
       key_(runtime::Deps::get().apiKeyManager->getAPIKey(vault->api_key_id)),
       s3Provider_(std::make_shared<s3::Controller>(key_, vault->bucket)) {
     resolveS3ProviderConfiguration();
 }
 
-CloudEngine::CloudEngine(const std::shared_ptr<S3Vault>& vault, std::shared_ptr<s3::Controller> s3Provider)
+CloudEngine::CloudEngine(const std::shared_ptr<vh::vault::model::S3Vault>& vault, std::shared_ptr<s3::Controller> s3Provider)
     : Engine(vault),
       key_(runtime::Deps::get().apiKeyManager->getAPIKey(vault->api_key_id)),
       s3Provider_(std::move(s3Provider)) {
@@ -324,7 +327,7 @@ std::shared_ptr<File> CloudEngine::downloadFileWithRemoteMetadata(
             .overwrite = true
         });
 
-    preview::thumbnail::Worker::enqueue(shared_from_this(), buffer, f);
+    preview::render::enqueueThumbnails(shared_from_this(), f, buffer);
 
     return f;
 }
@@ -710,13 +713,13 @@ void CloudEngine::removeRemotely(const std::shared_ptr<file::Trashed>& f, bool r
     if (rmThumbnails) purgeThumbnails(vaultPath);
 }
 
-std::shared_ptr<S3Vault> CloudEngine::s3Vault() const { return std::static_pointer_cast<S3Vault>(vault); }
+std::shared_ptr<vh::vault::model::S3Vault> CloudEngine::s3Vault() const { return std::static_pointer_cast<vh::vault::model::S3Vault>(vault); }
 
 void CloudEngine::resolveS3ProviderConfiguration() {
     s3Profile_.reset();
     storageTier_.reset();
 
-    const auto s3 = std::dynamic_pointer_cast<S3Vault>(vault);
+    const auto s3 = std::dynamic_pointer_cast<vh::vault::model::S3Vault>(vault);
     if (!s3) return;
 
     if (key_) s3Profile_ = s3::provider::resolve(key_->provider);
@@ -773,7 +776,7 @@ void CloudEngine::setS3ProviderProfileForTesting(s3::provider::ProfilePtr profil
     s3Profile_ = std::move(profile);
     storageTier_.reset();
 
-    const auto s3 = std::dynamic_pointer_cast<S3Vault>(vault);
+    const auto s3 = std::dynamic_pointer_cast<vh::vault::model::S3Vault>(vault);
     if (!s3 || !s3Profile_) return;
 
     const auto resolution = s3Profile_->normalizeStorageTier(s3->storage_tier_id);
