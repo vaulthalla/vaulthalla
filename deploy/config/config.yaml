@@ -157,7 +157,7 @@ caching:
 # STEP/STP models and video posters/transcodes are produced by optional, sandboxed helper programs from the
 # vaulthalla-preview-cad and vaulthalla-preview-media packages; without them those previews are unavailable.
 #preview:
-#  max_render_pixels: 100000000      # Refuse server renders (images, PDF pages) larger than this many pixels
+#  max_render_pixels: 64000000       # Refuse server renders (images, PDF pages) larger than this many pixels
 #  media:
 #    integrity: optimistic           # optimistic: stream at once, verify in the background | strict: verify first
 #    remote: hydrate                 # Remote-only files: hydrate (fetch once, metered) | ranged | off

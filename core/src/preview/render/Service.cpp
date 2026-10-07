@@ -31,7 +31,7 @@ constexpr uint64_t kKeepUploadBufferBytes = 64ull * 1024 * 1024;
 
 [[nodiscard]] std::counting_semaphore<>& renderGate() {
     static std::counting_semaphore<> gate(
-        static_cast<std::ptrdiff_t>(std::clamp(std::thread::hardware_concurrency() / 2, 2u, 8u)));
+        static_cast<std::ptrdiff_t>(std::clamp(std::thread::hardware_concurrency() / 4, 1u, 4u)));
     return gate;
 }
 
@@ -89,6 +89,19 @@ struct GateSlot {
         return {};
     }
 }
+
+[[nodiscard]] cache::ArtifactKey failureKey(const std::shared_ptr<storage::Engine>& engine, const fs::model::File& file) {
+    auto key = keyFor(engine, file, {.size = 0, .page = 0});
+    key.kind = "render-failure";
+    key.variant = "v1";
+    return key;
+}
+
+// A source that failed to decode (invalid, or over a limit) is not decoded again for this generation, whatever
+// size or page is asked next: hostile files can't turn every request into a fresh decode.
+void throwIfKnownBad(const std::shared_ptr<storage::Engine>& engine, const fs::model::File& file);
+void rememberFailure(const std::shared_ptr<storage::Engine>& engine, const fs::model::File& file,
+                     const std::exception& e);
 
 [[nodiscard]] std::optional<std::vector<uint8_t>> readArtifact(const std::shared_ptr<storage::Engine>& engine,
                                                                const cache::ArtifactKey& key) {
@@ -157,6 +170,23 @@ std::unordered_set<std::string>& inflight() {
     return s;
 }
 
+void throwIfKnownBad(const std::shared_ptr<storage::Engine>& engine, const fs::model::File& file) {
+    const auto lookup = safeLookup(engine, failureKey(engine, file));
+    if (lookup.status != cache::LookupStatus::Failed) return;
+    if (lookup.failure.starts_with("limit:")) throw LimitExceeded(lookup.failure.substr(6));
+    throw InvalidInput(lookup.failure.starts_with("invalid:") ? lookup.failure.substr(8) : lookup.failure);
+}
+
+void rememberFailure(const std::shared_ptr<storage::Engine>& engine, const fs::model::File& file,
+                     const std::exception& e) {
+    const bool limit = dynamic_cast<const LimitExceeded*>(&e) != nullptr;
+    try {
+        cache::Store::putFailure(engine, failureKey(engine, file), std::string(limit ? "limit:" : "invalid:") + e.what());
+    } catch (const std::exception& err) {
+        log::Registry::thumb()->debug("[Render] Could not record render failure: {}", err.what());
+    }
+}
+
 struct ThumbnailTask final : concurrency::Task {
     std::shared_ptr<storage::Engine> engine;
     std::shared_ptr<fs::model::File> file;
@@ -209,10 +239,23 @@ Result render(const std::shared_ptr<storage::Engine>& engine, const std::shared_
 
     const auto started = std::chrono::steady_clock::now();
     const auto limits = limitsFromConfig();
+    throwIfKnownBad(engine, *file);
     GateSlot slot;
-    const auto bytes = sourceBytes(engine, file, remote, limits);
     std::optional<uint32_t> pageCount;
-    const auto raster = fit(rasterize(*file, bytes, request.size, request.page, limits, pageCount), request.size);
+    Raster raster;
+    try {
+        const auto bytes = sourceBytes(engine, file, remote, limits);
+        raster = fit(rasterize(*file, bytes, request.size, request.page, limits, pageCount), request.size);
+    } catch (const InvalidInput& e) {
+        // A page past the end is the caller's mistake, not a property of the file.
+        if (std::string_view(e.what()).find("page out of range") == std::string_view::npos &&
+            std::string_view(e.what()).find("single page") == std::string_view::npos)
+            rememberFailure(engine, *file, e);
+        throw;
+    } catch (const LimitExceeded& e) {
+        rememberFailure(engine, *file, e);
+        throw;
+    }
     Result result{.jpeg = encodeJpeg(raster), .cacheHit = false, .pageCount = pageCount};
 
     storeQuietly(engine, keyFor(engine, *file, request), result.jpeg);
@@ -243,6 +286,7 @@ void generateThumbnails(const std::shared_ptr<storage::Engine>& engine, const st
     if (sizes.empty()) return;
 
     const auto limits = limitsFromConfig();
+    throwIfKnownBad(engine, *file);
     GateSlot slot;
     std::vector<uint8_t> owned;
     std::span<const uint8_t> bytes = plaintext;
@@ -253,7 +297,16 @@ void generateThumbnails(const std::shared_ptr<storage::Engine>& engine, const st
 
     // One decode at the largest size, then each smaller size is resized from the previous one.
     std::optional<uint32_t> pageCount;
-    auto current = fit(rasterize(*file, bytes, sizes.front(), 0, limits, pageCount), sizes.front());
+    Raster current;
+    try {
+        current = fit(rasterize(*file, bytes, sizes.front(), 0, limits, pageCount), sizes.front());
+    } catch (const InvalidInput& e) {
+        rememberFailure(engine, *file, e);
+        throw;
+    } catch (const LimitExceeded& e) {
+        rememberFailure(engine, *file, e);
+        throw;
+    }
     for (const auto size : sizes) {
         current = fit(current, size);
         storeQuietly(engine, keyFor(engine, *file, {.size = size, .page = 0}), encodeJpeg(current));

@@ -110,7 +110,7 @@ struct PreviewConfig {
     PreviewMediaConfig media;
     PreviewDeriveConfig derive;
     PreviewTextConfig text;
-    uint64_t max_render_pixels = 100'000'000;
+    uint64_t max_render_pixels = 64'000'000;  // source pixels (progressive JPEGs: half)
 };
 
 struct DatabaseConfig {

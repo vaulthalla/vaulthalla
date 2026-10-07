@@ -1,5 +1,12 @@
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_RESIZE_IMPLEMENTATION
+// Only the formats the server renders; every other stb parser (HDR, PSD, PIC, TGA...) stays out of the daemon.
+#define STBI_ONLY_PNG
+#define STBI_ONLY_GIF
+#define STBI_ONLY_BMP
+#define STBI_ONLY_PNM
+#define STBI_ONLY_JPEG  // never reached (JPEG goes to TurboJPEG); keeps stb's shared helpers referenced
+#define STBI_MAX_DIMENSIONS 32768
 #include "preview/render/Raster.hpp"
 
 #include "config/Registry.hpp"
@@ -31,6 +38,26 @@ using TjHandle = std::unique_ptr<void, TjDeleter>;
 
 [[nodiscard]] uint64_t pixels(const uint64_t w, const uint64_t h) { return w * h; }
 
+// Progressive (SOF2) JPEGs keep a full-resolution coefficient buffer (about 2 bytes per pixel per component)
+// whatever the DCT output scale, so their source dimensions are what costs memory.
+[[nodiscard]] bool isProgressiveJpeg(const std::span<const uint8_t> b) {
+    std::size_t i = 2;
+    while (i + 4 <= b.size()) {
+        if (b[i] != 0xFF) return false;
+        const auto marker = b[i + 1];
+        if (marker == 0xD8 || marker == 0x01 || (marker >= 0xD0 && marker <= 0xD7)) {
+            i += 2;
+            continue;
+        }
+        if (marker == 0xDA) return false;  // start of scan without a progressive frame header
+        if (marker == 0xC2 || marker == 0xC6 || marker == 0xCA || marker == 0xCE) return true;
+        const std::size_t len = (static_cast<std::size_t>(b[i + 2]) << 8) | b[i + 3];
+        if (len < 2) return false;
+        i += 2 + len;
+    }
+    return false;
+}
+
 void checkSource(const std::span<const uint8_t> bytes, const Limits& limits) {
     if (bytes.empty()) throw InvalidInput("Empty image");
     if (bytes.size() > limits.maxSourceBytes) throw LimitExceeded("Source exceeds the preview size limit");
@@ -45,6 +72,10 @@ void checkSource(const std::span<const uint8_t> bytes, const Limits& limits) {
     if (tjDecompressHeader3(tj.get(), bytes.data(), static_cast<unsigned long>(bytes.size()), &width, &height, &subsamp,
                             &colorspace) != 0 || width <= 0 || height <= 0)
         throw InvalidInput("Invalid JPEG header");
+
+    // Bound the SOURCE before decoding (a 65500x65500 progressive JPEG is a few MB but needs gigabytes).
+    const auto sourceCap = isProgressiveJpeg(bytes) ? limits.maxPixels / 2 : limits.maxPixels;
+    if (pixels(width, height) > sourceCap) throw LimitExceeded("Image exceeds the pixel limit");
 
     // Smallest DCT scale whose longest edge still covers the target (so the final resize only ever shrinks).
     int count = 0;

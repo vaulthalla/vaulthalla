@@ -28,9 +28,9 @@ template<std::size_t N>
 }
 
 // Decodable by the server render path (stb_image / TurboJPEG).
-constexpr std::array<std::string_view, 9> kRenderedImageMimes{
+constexpr std::array<std::string_view, 8> kRenderedImageMimes{
     "image/jpeg", "image/pjpeg", "image/png", "image/gif", "image/bmp", "image/x-ms-bmp",
-    "image/x-portable-anymap", "image/x-portable-pixmap", "image/vnd.adobe.photoshop"};
+    "image/x-portable-anymap", "image/x-portable-pixmap"};
 
 // Displayed by browsers from the original bytes (never re-encoded by the server).
 constexpr std::array<std::string_view, 3> kNativeImageMimes{"image/webp", "image/avif", "image/x-icon"};
