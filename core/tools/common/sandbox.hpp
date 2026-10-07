@@ -16,6 +16,21 @@
 // truncate), and open/openat/creat with write/create/truncate flags (EACCES; openat2 -> ENOSYS because its flags
 // cannot be inspected). With allowGpuDevices AND an active Landlock the open-for-write rule is left to Landlock
 // (render nodes are opened O_RDWR); without Landlock it stays, so GPU access fails instead of the sandbox weakening.
+//
+// The daemon runs as the same uid (and is the helper's parent), so everything that acts on another process by pid
+// is limited to the helper itself: prlimit64 only with pid 0; setpriority only (PRIO_PROCESS, 0); ioprio_set only
+// (IOPRIO_WHO_PROCESS, 0); sched_setaffinity/setscheduler/setparam/setattr and migrate_pages/move_pages only with
+// pid 0; process_madvise/process_mrelease denied. No fd can be made to signal another process: fcntl F_SETOWN,
+// F_SETOWN_EX, F_SETSIG and F_SETLEASE and ioctl FIOSETOWN/SIOCSPGRP are denied. SysV IPC (shm*/msg*/sem*) and
+// POSIX message queues (mq_*) are denied, so nothing the helper creates outlives it. Reading another process's
+// /proc/<pid> (and ptrace-class access such as /proc/<pid>/mem) is Landlock's job: only /proc/self is allowed and
+// Landlock denies ptrace access to processes outside the domain.
+//
+// Threads: with allowThreads=false (the CAD helper, which is single-threaded) clone is denied outright. Helpers that
+// need threads (FFmpeg) are bounded by the daemon instead (Limits::maxThreads, see preview/derive/Sandbox.hpp).
+//
+// A helper without Landlock or without seccomp refuses to run (protocol.hpp, runMain): seccomp alone cannot stop a
+// same-uid process from reading the daemon's files or /proc/<daemon>/mem.
 
 #include <string>
 #include <vector>
@@ -24,6 +39,9 @@ namespace vh::helpers::sandbox {
 
 struct Options {
     bool allowGpuDevices = false;
+    bool allowThreads = true;          // false: clone is denied outright (single-threaded helpers)
+    bool simulateNoLandlock = false;   // tests: behave as on a kernel without Landlock (only ever weakens the
+                                       // outcome to a refusal; seccomp is still installed)
     std::vector<std::string> extraReadOnlyPaths;
 };
 
@@ -32,11 +50,13 @@ struct Report {
     int landlockAbi = 0;        // kernel ABI (0 = unavailable), even when restricting failed
     bool seccomp = false;
     bool openWriteDenied = false;   // seccomp open-for-write rule installed (false only for GPU + Landlock)
+    bool threadsDenied = false;     // clone denied outright (allowThreads=false)
     std::string detail;             // why something is off, for the daemon's log
 };
 
 // Landlock read-only allowlist + seccomp denylist; never weakens on failure: if Landlock is unavailable it reports
-// landlock=false (logged by the daemon). Sets PR_SET_NO_NEW_PRIVS. Call once, before any thread is started.
+// landlock=false and the caller refuses to run. Sets PR_SET_NO_NEW_PRIVS. Call once, before any thread is started
+// and before any device or driver initialisation (landlock_restrict_self only confines the calling thread).
 Report apply(const Options& options);
 
 }

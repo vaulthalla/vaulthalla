@@ -223,6 +223,9 @@ struct Queue::Impl {
             }
             reason = result.failureReason();
             message = result.failureMessage();
+            // The helper refused to run unconfined (no Landlock/seccomp on this host; Runner logs it once): to the
+            // caller that is the converter being unavailable, never a property of the file.
+            if (reason == "sandbox_unavailable") reason = "converter_unavailable";
         } catch (const HelperUnavailable& e) {
             reason = "converter_unavailable";
             message = e.what();
@@ -340,8 +343,13 @@ DeriveResult Queue::request(const std::shared_ptr<storage::Engine>& engine,
     }
     if (const auto it = s.transient.find(id); it != s.transient.end()) {
         if (queue_impl::Clock::now() < it->second.second) {
-            out.status = DeriveStatus::Failed;
             out.reason = it->second.first;
+            if (out.reason == "converter_unavailable") {   // helper vanished, untrusted or without a sandbox
+                out.status = DeriveStatus::Unavailable;
+                out.helper = std::string(spec->helper);
+            } else {
+                out.status = DeriveStatus::Failed;
+            }
             return out;
         }
         s.transient.erase(it);

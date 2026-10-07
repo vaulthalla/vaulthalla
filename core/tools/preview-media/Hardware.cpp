@@ -28,7 +28,7 @@ std::array<Slot, 4>& slots() {
 
 Slot& slot(const Accel accel) { return slots()[static_cast<std::size_t>(accel)]; }
 
-// Listed once, before the sandbox hides /dev.
+// Listed once (the sandbox exposes /dev/dri only with the GPU allowance).
 const std::vector<std::string>& renderNodes() {
     static const std::vector<std::string> nodes = [] {
         std::vector<std::string> found;

@@ -11,7 +11,11 @@
 //   fd 3   range-pull socketpair: request frame (16 bytes, little endian) u64 offset, u32 length, u32 reserved=0;
 //          reply u32 n followed by n bytes (n < length only at EOF; n = 0 means EOF)
 //   fd 4   result: exactly one JSON line
-//   exit   0 ok, 1 internal, 2 invalid_input, 3 limit_exceeded, 4 unsupported; a signal is a crash
+//   exit   0 ok, 1 internal, 2 invalid_input, 3 limit_exceeded, 4 unsupported, 5 sandbox_unavailable (the helper
+//          refused to run because Landlock or seccomp could not be applied); a signal is a crash
+//
+// Hidden option, every command: --sandbox-test-no-landlock 1 makes the helper behave as on a kernel without Landlock
+// (it then refuses with sandbox_unavailable). Tests use it; it can only turn a run into a refusal.
 
 #include "sandbox.hpp"
 
@@ -37,7 +41,9 @@ constexpr uint32_t kRangeChunk = 1u << 20;
 constexpr uint32_t kMaxRangeRequest = 8u << 20;
 constexpr std::size_t kRangeRequestSize = 16;
 
-enum class ExitCode : int { Ok = 0, Internal = 1, InvalidInput = 2, LimitExceeded = 3, Unsupported = 4 };
+enum class ExitCode : int {
+    Ok = 0, Internal = 1, InvalidInput = 2, LimitExceeded = 3, Unsupported = 4, SandboxUnavailable = 5
+};
 
 struct LimitExceeded : std::runtime_error { using std::runtime_error::runtime_error; };
 struct InvalidInput  : std::runtime_error { using std::runtime_error::runtime_error; };
@@ -107,9 +113,10 @@ struct Args {
 // Parses --input-size/--max-output-bytes, moves the artifact stream off fd 1, applies the sandbox, runs body and
 // maps its outcome to ExitCode + result JSON (ok results get "ok": true; every result carries "sandbox").
 // sandboxFor picks the sandbox options per invocation; without it, allowGpuDevices is set when a --hwaccel option
-// other than "software" is present (hardware device contexts must be created in main() before runMain).
-// A helper that cannot install its seccomp filter refuses to run (internal, exit 1): it never parses hostile
-// input unconfined. A missing Landlock is reported, not fatal.
+// other than "software" is present. Hardware devices must be opened inside body (after the sandbox), never before:
+// landlock_restrict_self confines only the calling thread, so threads a driver starts earlier would escape it.
+// A helper that cannot install both Landlock and its seccomp filter refuses to run (error "sandbox_unavailable",
+// exit 5): it never parses hostile input without either.
 int runMain(int argc, char** argv,
             const std::function<nlohmann::json(const Args&, RangeClient&, OutputSink&)>& body,
             const std::function<sandbox::Options(const Args&)>& sandboxFor = {});

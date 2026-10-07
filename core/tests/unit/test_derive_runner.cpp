@@ -1,5 +1,7 @@
 #include "config/Config.hpp"
 #include "config/Registry.hpp"
+#include "ops/Config.hpp"
+#include "ops/Error.hpp"
 #include "preview/derive/Runner.hpp"
 #include "preview/derive/Sandbox.hpp"
 #include "storage/PlaintextReader.hpp"
@@ -277,7 +279,8 @@ TEST_F(DeriveRunnerTest, AHelperThatStopsReadingRepliesCannotWedgeTheDaemon) {
 
 TEST_F(DeriveRunnerTest, ExitCodesWithoutAResultMapToReasons) {
     const std::vector<std::pair<std::string, std::string>> cases{
-        {"2", "invalid_input"}, {"3", "limit_exceeded"}, {"4", "unsupported"}, {"1", "internal"}, {"0", "internal"}};
+        {"2", "invalid_input"}, {"3", "limit_exceeded"}, {"4", "unsupported"}, {"5", "sandbox_unavailable"},
+        {"1", "internal"}, {"0", "internal"}};
     for (const auto& [code, reason] : cases) {
         auto r = request("exit");
         r.args = {"--code", code};
@@ -295,6 +298,100 @@ TEST_F(DeriveRunnerTest, StderrIsCapturedAndTruncatedToTheTail) {
     EXPECT_TRUE(res.ok()) << res.failureMessage();
     EXPECT_EQ(res.stderrTail.size(), 64u * 1024u);
     EXPECT_TRUE(res.stderrTail.ends_with("END-OF-STDERR\n"));
+}
+
+// A helper writing stderr as fast as it can (several threads, a 1 MiB pipe) used to keep readStderr looping until
+// EAGAIN, so serve() never got back to its deadline check.
+TEST_F(DeriveRunnerTest, AStderrFloodCannotOutrunTheWallTimeout) {
+    auto r = request("stderr-flood");
+    r.args = {"--writers", "8"};
+    r.limits.wallTimeout = std::chrono::milliseconds(300);
+    const auto start = std::chrono::steady_clock::now();
+    const auto res = Runner::run(r);
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    EXPECT_TRUE(res.timedOut);
+    EXPECT_EQ(res.failureReason(), "timeout");
+    EXPECT_LT(elapsed, std::chrono::seconds(5));
+    EXPECT_LE(res.stderrTail.size(), 64u * 1024u);
+    expectNoChildren();
+}
+
+TEST_F(DeriveRunnerTest, AThreadBombIsKilledAtTheThreadCap) {
+    auto r = request("threads");
+    r.args = {"--count", "500"};
+    r.limits.maxThreads = 16;
+    r.limits.wallTimeout = std::chrono::seconds(20);
+    const auto start = std::chrono::steady_clock::now();
+    const auto res = Runner::run(r);
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    EXPECT_TRUE(res.threadLimitExceeded);
+    EXPECT_FALSE(res.timedOut);
+    EXPECT_EQ(res.signal, SIGKILL);
+    EXPECT_EQ(res.failureReason(), "limit_exceeded");
+    EXPECT_NE(res.failureMessage().find("thread limit"), std::string::npos) << res.failureMessage();
+    EXPECT_LT(elapsed, std::chrono::seconds(5));
+    expectNoChildren();
+
+    // Within the cap nothing fires (the run ends at its wall timeout instead).
+    r.args = {"--count", "4"};
+    r.limits.wallTimeout = std::chrono::milliseconds(400);
+    const auto calm = Runner::run(r);
+    EXPECT_FALSE(calm.threadLimitExceeded);
+    EXPECT_TRUE(calm.timedOut);
+    expectNoChildren();
+}
+
+// gtest_main switches the trust checks off for build-tree helpers; this test turns them back on.
+class TrustChecksOn {
+public:
+    TrustChecksOn() { Runner::setTrustChecksForTesting(true); }
+    ~TrustChecksOn() { Runner::setTrustChecksForTesting(false); }
+    TrustChecksOn(const TrustChecksOn&) = delete;
+    TrustChecksOn& operator=(const TrustChecksOn&) = delete;
+};
+
+TEST_F(DeriveRunnerTest, HelpersMustBeRootOwnedAndNotWritableByOthers) {
+    const TrustChecksOn on;
+    const auto dir = fs::temp_directory_path() / ("vh-derive-trust-" + std::to_string(::getpid()));
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    fs::permissions(dir, fs::perms::owner_all);
+
+    // Root-owned binary in root-owned directories: trusted, also behind a symlink (the canonical path is checked
+    // and executed).
+    ASSERT_TRUE(fs::is_regular_file("/usr/bin/true"));
+    EXPECT_EQ(Runner::helperTrustProblem("/usr/bin/true"), "");
+    fs::create_symlink("/usr/bin/true", dir / "true-link");
+    EXPECT_EQ(Runner::helperTrustProblem(dir / "true-link"), "");
+
+    // The developer's build tree is not root-owned: refused by run() and by helperAvailable().
+    if (::geteuid() != 0) {
+        const auto problem = Runner::helperTrustProblem(helper_);
+        EXPECT_NE(problem.find("not root"), std::string::npos) << problem;
+        EXPECT_THROW(Runner::run(request("echo")), HelperUnavailable);
+        const auto saved = config::Registry::get();
+        auto cfg = saved;
+        cfg.preview.derive.helper_dir = helper_.parent_path();
+        config::Registry::set(cfg);
+        EXPECT_FALSE(Runner::helperAvailable("vh_fake_derive_helper"));
+        config::Registry::set(saved);
+    }
+
+    // Permission checks, trusting this test's uid for ownership: a group/world-writable file or ancestor directory
+    // (here the sticky, world-writable temp directory) is refused.
+    const auto file = dir / "helper";
+    std::ofstream(file) << "#!/bin/sh\nexit 0\n";
+    fs::permissions(file, fs::perms::owner_all | fs::perms::group_read | fs::perms::group_exec);
+    auto problem = Runner::helperTrustProblem(file, ::geteuid());
+    EXPECT_NE(problem.find("writable by group or others"), std::string::npos) << problem;
+    EXPECT_EQ(problem.find(file.string()), std::string::npos) << "the file itself is fine: " << problem;
+    fs::permissions(file, fs::perms::group_write, fs::perm_options::add);
+    problem = Runner::helperTrustProblem(file, ::geteuid());
+    EXPECT_EQ(problem, file.string() + " is writable by group or others");
+    EXPECT_NE(Runner::helperTrustProblem(dir / "missing"), "");
+    EXPECT_NE(Runner::helperTrustProblem(dir), "");   // not a regular file
+
+    fs::remove_all(dir);
 }
 
 TEST_F(DeriveRunnerTest, MissingOrNonExecutableHelpersAreUnavailable) {
@@ -419,6 +516,18 @@ TEST_F(PreviewConfigTest, PartialSectionOverridesOnlyTheGivenKeys) {
     EXPECT_EQ(p.derive.max_concurrency, 1u);   // clamped
     EXPECT_EQ(p.derive.max_queue, 64u);
     EXPECT_EQ(p.text.max_edit_bytes, 2u * 1024u * 1024u);
+}
+
+// settings.update (console) and the CLI settings writes go through ops::config::validateSettings: which helper
+// executables the daemon runs is config.yaml-only.
+TEST_F(PreviewConfigTest, HelperDirIsReadOnlyThroughSettingsWrites) {
+    nlohmann::json doc = config::Registry::get();
+    EXPECT_NO_THROW(ops::config::validateSettings(doc));
+    doc["preview"]["derive"]["helper_dir"] = "/tmp/elsewhere";
+    EXPECT_THROW(ops::config::validateSettings(doc), ops::Invalid);
+    nlohmann::json other = config::Registry::get();
+    other["preview"]["derive"]["max_concurrency"] = 3;   // the rest of the section stays editable
+    EXPECT_NO_THROW(ops::config::validateSettings(other));
 }
 
 TEST_F(PreviewConfigTest, UnknownEnumValuesAreRejected) {

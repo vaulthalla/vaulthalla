@@ -79,7 +79,7 @@ class PreviewHelperPackagesContractTests(unittest.TestCase):
         for package in ("libocct-data-exchange-dev", "libocct-foundation-dev", "libocct-modeling-algorithms-dev",
                         "libocct-modeling-data-dev", "libocct-ocaf-dev"):
             self.assertIn(f"{package} <!pkg.vaulthalla.nocad>", build_depends)
-        for package in ("libavcodec-dev", "libavformat-dev", "libavutil-dev", "libswscale-dev"):
+        for package in ("libavcodec-dev", "libavformat-dev", "libavutil-dev", "libswresample-dev", "libswscale-dev"):
             self.assertIn(f"{package} <!pkg.vaulthalla.nomedia>", build_depends)
         self.assertIn("libseccomp-dev <!pkg.vaulthalla.nocad> <!pkg.vaulthalla.nomedia>", build_depends)
         self.assertNotIn("cmake", build_depends)   # OCCT is located without its CMake config

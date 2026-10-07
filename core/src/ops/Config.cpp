@@ -100,7 +100,12 @@ void validateSettings(const nlohmann::json& settings) {
     requireNonEmpty(settings, {"email", "resend", "endpoint"}, "email.resend.endpoint");
     requireNonEmpty(settings, {"email", "ses", "region"}, "email.ses.region");
     try {
-        validateEmail(Config(settings));
+        const Config next(settings);
+        validateEmail(next);
+        // Which executables the daemon runs is not a console/CLI setting: the operator edits config.yaml (and the
+        // runner only executes root-owned helpers in root-owned directories either way).
+        if (next.preview.derive.helper_dir != vh::config::Registry::get().preview.derive.helper_dir)
+            throw Invalid("preview.derive.helper_dir cannot be changed here; set it in /etc/vaulthalla/config.yaml");
     } catch (const Error&) {
         throw;
     } catch (const std::exception& e) {

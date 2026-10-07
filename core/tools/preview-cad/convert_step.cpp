@@ -31,7 +31,16 @@
 #include <XCAFDoc_DocumentTool.hxx>
 #include <XCAFDoc_ShapeTool.hxx>
 
+#include <linux/sockios.h>
+#include <pthread.h>
+#include <sched.h>
+#include <sys/ioctl.h>
+#include <sys/ipc.h>
+#include <sys/resource.h>
+#include <sys/sem.h>
+#include <sys/shm.h>
 #include <sys/socket.h>
+#include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -400,6 +409,102 @@ nlohmann::json selftestSandbox(const Args& args) {
         const int err = errno;
         if (fd >= 0) ::close(fd);
         report["open_read_usr"] = attempt(fd >= 0, err);
+    }
+
+    // Vectors against the parent (the daemon, same uid). Each one is attempted so that it changes nothing even
+    // if the sandbox let it through: reads, or writes of the value just read.
+    const pid_t parent = ::getppid();
+    {
+        const std::string path = "/proc/" + std::to_string(parent) + "/status";
+        const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+        const int err = errno;
+        if (fd >= 0) ::close(fd);
+        report["open_proc_parent"] = attempt(fd >= 0, err);
+    }
+    {
+        rlimit current{};
+        const int rc = ::prlimit(parent, RLIMIT_NOFILE, nullptr, &current);
+        report["prlimit_parent"] = attempt(rc == 0, errno);
+    }
+    {
+        rlimit current{};
+        const int rc = ::prlimit(0, RLIMIT_NOFILE, nullptr, &current);
+        report["prlimit_self"] = attempt(rc == 0, errno);   // getrlimit itself must keep working
+    }
+    {
+        errno = 0;
+        const int nice = ::getpriority(PRIO_PROCESS, static_cast<id_t>(parent));
+        const int rc = errno != 0 ? -1 : ::setpriority(PRIO_PROCESS, static_cast<id_t>(parent), nice);
+        report["setpriority_parent"] = attempt(rc == 0, errno);
+    }
+    {
+        cpu_set_t mask;
+        CPU_ZERO(&mask);
+        int rc = ::sched_getaffinity(parent, sizeof mask, &mask);
+        if (rc == 0) rc = ::sched_setaffinity(parent, sizeof mask, &mask);
+        report["sched_setaffinity_parent"] = attempt(rc == 0, errno);
+    }
+    {
+        constexpr int kIoprioWhoProcess = 1;
+        long rc = ::syscall(SYS_ioprio_get, kIoprioWhoProcess, parent);
+        if (rc >= 0) rc = ::syscall(SYS_ioprio_set, kIoprioWhoProcess, parent, rc);
+        report["ioprio_set_parent"] = attempt(rc >= 0, errno);
+    }
+    {
+        // Pointing an fd at the parent is the first half of F_SETOWN + F_SETSIG(SIGKILL) + O_ASYNC; without
+        // O_ASYNC nothing is ever signalled.
+        int fds[2] = {-1, -1};
+        if (::pipe2(fds, O_CLOEXEC) == 0) {
+            int rc = ::fcntl(fds[1], F_SETOWN, parent);
+            report["fcntl_setown_parent"] = attempt(rc == 0, errno);
+            rc = ::fcntl(fds[1], F_SETSIG, SIGKILL);
+            report["fcntl_setsig"] = attempt(rc == 0, errno);
+            f_owner_ex owner{F_OWNER_PID, parent};
+            rc = ::fcntl(fds[1], F_SETOWN_EX, &owner);
+            report["fcntl_setown_ex_parent"] = attempt(rc == 0, errno);
+            // The kernel reads the command as a 32-bit int: garbage in the upper half must not slip past the filter.
+            constexpr unsigned long kHighBits = 1ul << 32;
+            const long raw = ::syscall(SYS_fcntl, fds[1], kHighBits | F_SETOWN, static_cast<long>(parent));
+            report["fcntl_setown_high_bits"] = attempt(raw == 0, errno);
+            ::close(fds[0]);
+            ::close(fds[1]);
+        }
+        // Socket owner ioctls, on the range socket (fd 3, unused by this command), naming the helper itself.
+        int self = ::getpid();
+        int rc = ::ioctl(kRangeFd, FIOSETOWN, &self);
+        report["ioctl_fiosetown"] = attempt(rc == 0, errno);
+        rc = ::ioctl(kRangeFd, SIOCSPGRP, &self);
+        report["ioctl_siocspgrp"] = attempt(rc == 0, errno);
+        const long raw = ::syscall(SYS_ioctl, kRangeFd, (1ul << 32) | FIOSETOWN, &self);
+        report["ioctl_fiosetown_high_bits"] = attempt(raw == 0, errno);
+    }
+    {
+        const int id = ::shmget(IPC_PRIVATE, 4096, IPC_CREAT | 0600);
+        const int err = errno;
+        if (id >= 0) ::shmctl(id, IPC_RMID, nullptr);
+        report["shmget"] = attempt(id >= 0, err);
+    }
+    {
+        const int id = ::semget(IPC_PRIVATE, 1, IPC_CREAT | 0600);
+        const int err = errno;
+        if (id >= 0) ::semctl(id, 0, IPC_RMID);
+        report["semget"] = attempt(id >= 0, err);
+    }
+    {
+        const std::string name = "vaulthalla-selftest-" + std::to_string(::getpid());
+        const long fd = ::syscall(SYS_mq_open, name.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0600, nullptr);
+        const int err = errno;
+        if (fd >= 0) {
+            ::close(static_cast<int>(fd));
+            ::syscall(SYS_mq_unlink, name.c_str());
+        }
+        report["mq_open"] = attempt(fd >= 0, err);
+    }
+    {
+        pthread_t thread{};
+        const int rc = ::pthread_create(&thread, nullptr, [](void*) -> void* { return nullptr; }, nullptr);
+        if (rc == 0) ::pthread_join(thread, nullptr);
+        report["thread"] = attempt(rc == 0, rc);
     }
 
     return {{"ok", true}, {"selftest", report}};

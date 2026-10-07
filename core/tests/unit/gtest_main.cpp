@@ -5,6 +5,7 @@
 
 #include "config/Registry.hpp"
 #include "log/Registry.hpp"
+#include "preview/derive/Runner.hpp"
 
 namespace fs = std::filesystem;
 
@@ -13,6 +14,9 @@ int main(int argc, char** argv) {
 
     try {
         vh::paths::enableTestMode();
+        // Converter helpers run from the build tree (owned by the developer, not root); the trust checks have
+        // their own tests, which re-enable them.
+        vh::preview::derive::Runner::setTrustChecksForTesting(false);
         if (const auto* configPath = std::getenv("VH_PATH_TO_CONFIG")) {
             vh::paths::configPath = configPath;
         }

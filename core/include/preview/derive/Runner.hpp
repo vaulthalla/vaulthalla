@@ -15,16 +15,28 @@
 //   fd 1  artifact bytes, handed to the sink in order.
 //   fd 4  one JSON line: {"ok":true,...} or {"ok":false,"error":"invalid_input|limit_exceeded|unsupported|internal",
 //         "message":...}; helpers also report their confinement under "sandbox".
-//   exit  0 ok, 1 internal, 2 invalid_input, 3 limit_exceeded, 4 unsupported; a signal is a crash.
+//   exit  0 ok, 1 internal, 2 invalid_input, 3 limit_exceeded, 4 unsupported, 5 sandbox_unavailable; a signal is a
+//         crash.
 //
-// The daemon enforces the output cap and the wall-clock timeout itself (SIGKILL of the process group), always
-// reaps the child, and never lets a helper failure throw: crashes, kills and protocol violations come back in the
-// RunResult. A failed run may already have handed partial output to the sink; callers discard it unless ok().
+// The daemon enforces the output cap, the thread cap and the wall-clock timeout itself (SIGKILL of the process
+// group), always reaps the child, and never lets a helper failure throw: crashes, kills and protocol violations
+// come back in the RunResult. A failed run may already have handed partial output to the sink; callers discard it
+// unless ok(). Each poll iteration reads at most a bounded amount from each pipe, so a helper flooding stderr or
+// stdout cannot keep the loop from checking its deadline.
+//
+// Trust: a helper runs only if it and every directory above it (after resolving symlinks) are owned by root and
+// not writable by group or others (helperTrustProblem); otherwise it is HelperUnavailable. The canonical path is
+// what gets executed. preview.derive.helper_dir is read-only at runtime (config.yaml only, never settings.update).
+// Helpers that cannot confine themselves (no Landlock or no seccomp) refuse to run: failureReason()
+// "sandbox_unavailable" (exit 5), which the queue reports as converter_unavailable and the runner logs once per
+// binary.
 
 #include "preview/derive/Sandbox.hpp"
 #include "storage/PlaintextReader.hpp"
 
 #include <nlohmann/json.hpp>
+
+#include <sys/types.h>
 
 #include <cstdint>
 #include <filesystem>
@@ -46,8 +58,8 @@ inline constexpr int kRangeFd = 3;
 inline constexpr int kResultFd = 4;
 inline constexpr uint32_t kMaxRangeRequest = 8u << 20;   // larger requests are a protocol violation
 
-// The helper executable is missing or not executable (package not installed): HTTP maps this to 503
-// converter_unavailable.
+// The helper executable is missing, not executable (package not installed) or not trusted (ownership/permissions):
+// HTTP maps this to 503 converter_unavailable.
 class HelperUnavailable final : public std::runtime_error {
 public:
     using std::runtime_error::runtime_error;
@@ -68,6 +80,7 @@ struct RunResult {
     std::optional<int> signal;
     bool timedOut = false;                // wall-clock timeout: the process group was SIGKILLed
     bool outputLimitExceeded = false;     // the daemon-side output cap fired: the process group was SIGKILLed
+    bool threadLimitExceeded = false;     // more than Limits::maxThreads threads: the process group was SIGKILLed
     nlohmann::json result;                // the fd-4 JSON object, or null when none/invalid
     std::string stderrTail;               // last 64 KiB of stderr
     uint64_t outputBytes = 0;             // bytes handed to the sink
@@ -76,7 +89,7 @@ struct RunResult {
 
     [[nodiscard]] bool ok() const;
     // "" when ok(), else timeout | limit_exceeded | invalid_input | unsupported | crashed | protocol | cancelled |
-    // internal.
+    // sandbox_unavailable | internal.
     [[nodiscard]] std::string failureReason() const;
     // Short human-readable reason for logs and the negative cache.
     [[nodiscard]] std::string failureMessage() const;
@@ -85,15 +98,24 @@ struct RunResult {
 class Runner {
 public:
     // Spawns the helper and serves it until it exits. Throws HelperUnavailable when request.executable is not an
-    // executable file, std::system_error when the pipes/fork fail. Exceptions from the reader (IntegrityError,
-    // ContentUnavailable, std::system_error) or the sink are rethrown after the helper is killed and reaped.
+    // executable file or not trusted (helperTrustProblem), std::system_error when the pipes/fork fail. Exceptions
+    // from the reader (IntegrityError, ContentUnavailable, std::system_error) or the sink are rethrown after the
+    // helper is killed and reaped.
     static RunResult run(const RunRequest& request);
 
     // <preview.derive.helper_dir>/<name>; name must be a plain file name (std::invalid_argument otherwise).
     [[nodiscard]] static std::filesystem::path helperPath(std::string_view name);
-    // helperPath(name) exists, is a regular file and is executable by the daemon.
+    // helperPath(name) exists, is a regular file, is executable by the daemon and is trusted.
     [[nodiscard]] static bool helperAvailable(std::string_view name);
     [[nodiscard]] static bool isExecutable(const std::filesystem::path& path);
+
+    // Why path may not run as a helper, "" when it may: after resolving symlinks the file and every directory above
+    // it must be owned by root (or by alsoTrustedOwner, for tests; 0 = root only) and not writable by group or
+    // others, so only root can replace what gets executed.
+    [[nodiscard]] static std::string helperTrustProblem(const std::filesystem::path& path, uid_t alsoTrustedOwner = 0);
+
+    // Test hook, honoured only in paths::testMode: false skips the trust checks so build-tree helpers can run.
+    static void setTrustChecksForTesting(bool enforce);
 };
 
 }

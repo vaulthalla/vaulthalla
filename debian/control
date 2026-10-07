@@ -37,6 +37,7 @@ Build-Depends:
  libavcodec-dev <!pkg.vaulthalla.nomedia>,
  libavformat-dev <!pkg.vaulthalla.nomedia>,
  libavutil-dev <!pkg.vaulthalla.nomedia>,
+ libswresample-dev <!pkg.vaulthalla.nomedia>,
  libswscale-dev <!pkg.vaulthalla.nomedia>
 Standards-Version: 4.6.2
 Homepage: https://github.com/vaulthalla/vaulthalla-core

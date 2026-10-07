@@ -306,7 +306,18 @@ into them. `preview::derive::Runner` (`core/{include,src}/preview/derive/`) spaw
 0-4 only, empty env), a poll loop that serves range-pull requests on fd 3 from a `storage::PlaintextReader`,
 streams fd 1 to a sink, enforces the output cap and wall timeout (SIGKILL of the process group) and reaps.
 Helper exit/JSON contract: `core/tools/common/protocol.hpp`. Config: `preview.derive.*`. RLIMIT_NPROC is not
-set (per-UID; the daemon's threads would count): process creation is denied by the helper's seccomp filter.
+set (per-UID; the daemon's threads would count): process creation is denied by the helper's seccomp filter, the
+CAD helper denies clone outright, and the runner SIGKILLs a helper whose thread count (/proc/<pid>/stat, sampled
+every 20 ms poll tick) exceeds `Limits::maxThreads` (64; limit_exceeded). Each poll iteration reads a bounded
+amount per pipe (stderr/result one chunk, stdout 1 MiB), so a flooding helper cannot starve the deadline checks.
+Helpers refuse to run (exit 5, `sandbox_unavailable`, queue reports `converter_unavailable`) without BOTH Landlock
+and seccomp; the seccomp filter also limits pid-taking syscalls (prlimit64, setpriority, ioprio_set, sched_set*,
+move/migrate_pages) to self, denies fcntl F_SETOWN/F_SETOWN_EX/F_SETSIG/F_SETLEASE and ioctl FIOSETOWN/SIOCSPGRP
+(low-32-bit masked), SysV IPC and POSIX mqueues; the CAD `selftest-sandbox` command exercises every vector. Media
+hardware devices are opened only after the sandbox (Landlock is per-thread). Trust: `Runner` executes only
+root-owned, non-group/world-writable helpers in such directories (canonical path checked and executed;
+`setTrustChecksForTesting(false)` in gtest_main, honoured only in testMode); `preview.derive.helper_dir` is
+read-only through `ops::config::validateSettings` (settings.update/CLI).
 Tests: `test_derive_runner.cpp` (fake helper `core/tests/helpers/fake_derive_helper.cpp`),
 `test_preview_cad_helper.cpp` (real helper, skipped when not built).
 `RunRequest::stop` (a `std::stop_token`) SIGKILLs the process group on request (`failureReason() == "cancelled"`).
