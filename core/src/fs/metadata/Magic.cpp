@@ -1,4 +1,5 @@
 #include "fs/metadata/Magic.hpp"
+#include <mutex>
 #include <stdexcept>
 #include <magic.h>
 
@@ -23,6 +24,7 @@ Magic::~Magic() {
 std::string Magic::mime_type(const std::string& path) const {
     if (path.empty()) throw std::invalid_argument("Cannot detect MIME type of empty path");
 
+    std::scoped_lock lock(mutex_);
     const char* result = magic_file(cookie, path.c_str());
     if (!result) {
         const std::string err = magic_error(cookie) ? magic_error(cookie) : "Unknown error";
@@ -34,6 +36,7 @@ std::string Magic::mime_type(const std::string& path) const {
 std::string Magic::mime_type_buffer(const std::string& buffer) const {
     if (buffer.empty()) throw std::invalid_argument("Cannot detect MIME type from empty buffer");
 
+    std::scoped_lock lock(mutex_);
     const char* result = magic_buffer(cookie, buffer.data(), buffer.size());
     if (!result) {
         std::string err = magic_error(cookie) ? magic_error(cookie) : "Unknown error";

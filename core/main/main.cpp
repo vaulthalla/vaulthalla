@@ -22,7 +22,9 @@
 
 // Misc
 #include "config/Registry.hpp"
+#include <cerrno>
 #include <cstdio>
+#include <cstring>
 #include "concurrency/ThreadPoolManager.hpp"
 #include "log/Registry.hpp"
 
@@ -31,6 +33,9 @@
 #include <chrono>
 #include <csignal>
 #include <thread>
+#include <execinfo.h>
+#include <sys/prctl.h>
+#include <unistd.h>
 #include <pdfium/fpdfview.h>
 
 using namespace vh::config;
@@ -47,6 +52,38 @@ void signalHandler(const int signum) {
         std::to_string(signum)
     );
     shouldExit = true;
+}
+
+// A crashing FUSE daemon must die at once. A core dump first waits for every thread to stop, but a thread in close()
+// on a file of our own mount (HTTP upload staging goes through FUSE) waits for a FUSE reply this process can no
+// longer send: the dump never finishes, the mount hangs and so does everything touching it, apt included, while
+// Restart=on-failure never fires. Not being dumpable skips the dump (and keeps decrypted bytes out of cores, as
+// LimitCORE=0 intends), so the kernel kills the process, the mount aborts and systemd restarts the daemon. The
+// handler leaves a backtrace in the journal in place of the core.
+void fatalSignalHandler(const int signum) {
+    static constexpr char kHeader[] = "[vaulthalla] fatal signal, backtrace:\n";
+    (void)!::write(STDERR_FILENO, kHeader, sizeof(kHeader) - 1);
+    void* frames[64];
+    const int depth = ::backtrace(frames, 64);
+    ::backtrace_symbols_fd(frames, depth, STDERR_FILENO);
+    // SA_RESETHAND restored the default action: re-raise to terminate with the original signal.
+    ::raise(signum);
+}
+
+void installCrashGuard() {
+    if (::prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0)
+        std::fprintf(stderr, "[vaulthalla] could not disable core dumps: %s\n", std::strerror(errno));
+
+    // backtrace() loads libgcc on first use, which allocates: do it now, never from a handler on a broken heap.
+    void* warm[1];
+    (void)::backtrace(warm, 1);
+
+    struct sigaction action{};
+    action.sa_handler = fatalSignalHandler;
+    action.sa_flags = SA_RESETHAND | SA_NODEFER;
+    sigemptyset(&action.sa_mask);
+    for (const int sig : {SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT})
+        ::sigaction(sig, &action, nullptr);
 }
 
 void registerSignalHandlers() {
@@ -155,6 +192,8 @@ void shutdownVaulthalla() {
 }
 
 int main() {
+    installCrashGuard();
+
     try {
         Registry::init();
         vh::log::Registry::init();

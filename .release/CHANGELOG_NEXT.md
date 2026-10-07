@@ -11,6 +11,9 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
 - Key rotation: finish only when every file rotated and a re-query of rows on older key versions is empty (failed files no longer orphaned on a dropped key); per-file sidecar (`<backing>.vh-rotate`, fsynced) + compare-and-set IV commit + rename, with authentication-based crash recovery each pass and at startup; Cache-mode local copies rewritten (inverted check fixed), remote-only files never written locally; empty/IV-less files excluded and one failure no longer aborts its range; single-file rotation no longer divides by zero; `createFile` overwrite replaces ciphertext atomically (temp + fsync + rename + dir fsync).
 
 ## Runtime
+- Crash safety: MIME detection (libmagic) no longer shares an unlocked cookie across threads (concurrent FUSE
+  writes/uploads corrupted the heap); the daemon is non-dumpable and logs a backtrace on a fatal signal, so a crash
+  exits and restarts instead of hanging its own FUSE mount (and `apt`) in an unfinishable core dump.
 - Cloud vaults: reads prefer the local ciphertext copy; the ws share download/preview lanes and S3 gateway GETs no
   longer fetch the object from S3 when it is stored locally, and gateway Range GETs read only the range.
 - Remote-only (Cache index-only) files are readable: hydrate-first by default (price-preflighted, request-capped,

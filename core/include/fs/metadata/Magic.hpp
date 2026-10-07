@@ -4,9 +4,12 @@
 #include <magic.h>
 #include <vector>
 #include <cstdint>
+#include <mutex>
 
 namespace vh::fs::metadata {
 
+// A magic_t cookie is not thread-safe: every call on one cookie is serialized (concurrent FUSE seals and uploads
+// shared the static cookies unguarded and corrupted the heap).
 class Magic {
 public:
     Magic();
@@ -21,6 +24,7 @@ public:
 
 private:
     magic_t cookie;
+    mutable std::mutex mutex_;
 };
 
 }
