@@ -200,12 +200,19 @@ std::shared_ptr<vh::fs::model::File> CloudEngine::hydrate(const std::shared_ptr<
     if (!f) throw std::invalid_argument("Cannot hydrate a null file");
     if (f->backing_path.empty()) throw std::runtime_error("File has no backing path: " + f->path.string());
 
+    constexpr auto kHydrateFailureBackoff = std::chrono::minutes(2);
     const auto key = f->backing_path.lexically_normal().string();
+    const auto failureKey = key + "|" + f->encryption_iv + "|" + std::to_string(f->encrypted_with_key_version);
     std::promise<std::shared_ptr<vh::fs::model::File>> promise;
     std::shared_future<std::shared_ptr<vh::fs::model::File>> outcome;
     bool leader = false;
     {
         std::scoped_lock lock(hydrateMutex_);
+        const auto now = std::chrono::steady_clock::now();
+        std::erase_if(hydrateFailures_, [now](const auto& item) { return now - item.second.at > std::chrono::minutes(2); });
+        if (const auto it = hydrateFailures_.find(failureKey); it != hydrateFailures_.end() &&
+                                                              now - it->second.at < kHydrateFailureBackoff)
+            std::rethrow_exception(it->second.error);
         if (const auto it = hydrating_.find(key); it != hydrating_.end()) {
             outcome = it->second;
         } else {
@@ -220,6 +227,8 @@ std::shared_ptr<vh::fs::model::File> CloudEngine::hydrate(const std::shared_ptr<
         promise.set_value(hydrateNow(f));
     } catch (...) {
         promise.set_exception(std::current_exception());
+        std::scoped_lock lock(hydrateMutex_);
+        hydrateFailures_[failureKey] = HydrateFailure{std::chrono::steady_clock::now(), std::current_exception()};
     }
     {
         std::scoped_lock lock(hydrateMutex_);
@@ -228,9 +237,12 @@ std::shared_ptr<vh::fs::model::File> CloudEngine::hydrate(const std::shared_ptr<
     return outcome.get();
 }
 
-std::shared_ptr<vh::fs::model::File> CloudEngine::hydrateNow(const std::shared_ptr<vh::fs::model::File>& f) const {
+std::shared_ptr<vh::fs::model::File> CloudEngine::hydrateNow(const std::shared_ptr<vh::fs::model::File>& live) const {
     namespace detail = cloud_remote_read_detail;
     using FileModel = detail::FileModel;
+    // One immutable snapshot of the row: every decision below (expected size, IV, the final compare-and-set) is
+    // made against the same values, even if rotation or a writer updates the shared cached row meanwhile.
+    const auto f = std::make_shared<FileModel>(*live);
 
     std::error_code ec;
     if (std::filesystem::exists(f->backing_path, ec)) return detail::currentRowOf(f);  // stored meanwhile
@@ -279,6 +291,16 @@ std::shared_ptr<vh::fs::model::File> CloudEngine::hydrateNow(const std::shared_p
         crypto::SecretKeyPtr key;
         std::array<uint8_t, crypto::util::AES_IV_SIZE> iv{};
         std::optional<crypto::util::GcmStreamEncryptor> sealer;
+        const bool rowEncrypted = !f->encryption_iv.empty();
+        const auto s3v = std::dynamic_pointer_cast<vh::vault::model::S3Vault>(vault);
+        if (!head->encrypted && (rowEncrypted || (s3v && s3v->encrypt_upstream)))
+            // A bucket that now claims plaintext for an encrypted file is a downgrade, not a format we accept.
+            throw IntegrityError("Remote object is unencrypted but the file is stored encrypted: " + f->path.string());
+        if (head->encrypted && rowEncrypted && !head->iv_b64.empty() &&
+            (head->iv_b64 != f->encryption_iv || head->key_version != f->encrypted_with_key_version))
+            // Index-only rows carry the remote object's IV. A different one is another object version (a rollback, a
+            // copied object, or a change sync hasn't indexed yet): never serve it under this row.
+            throw ContentUnavailable("Remote object no longer matches the index; sync the vault: " + f->path.string());
         if (head->encrypted) {
             // Index-only rows carry the remote IV (indexAndDeleteFile); the object's own metadata wins when present.
             ivB64 = head->iv_b64.empty() ? f->encryption_iv : head->iv_b64;
@@ -333,7 +355,9 @@ std::shared_ptr<vh::fs::model::File> CloudEngine::hydrateNow(const std::shared_p
         auto hydrated = std::make_shared<FileModel>(*f);
         hydrated->encryption_iv = ivB64;
         hydrated->encrypted_with_key_version = keyVersion;
-        if (ivB64 != f->encryption_iv || keyVersion != f->encrypted_with_key_version) {
+        {
+            // Always conditional, even when the IV is unchanged: the row must still be the generation this hydrate
+            // fetched (rotation may have re-keyed the object and moved the row on meanwhile).
             const auto& commit = catalogCommit_ ? catalogCommit_ : HydrateCatalogCommit(detail::commitHydratedEncryption);
             if (!commit(*hydrated, f->encryption_iv, f->encrypted_with_key_version))
                 throw ContentUnavailable("File changed while it was being fetched; retry: " + f->path.string());

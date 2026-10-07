@@ -190,7 +190,11 @@ struct Queue::Impl {
         std::optional<cache::Store::Writer> writer;
         std::string reason, message;
         try {
-            const auto reader = job.engine->openPlaintextReader(job.file);
+            // Persisted artifacts are served as authentic for this generation, so their input must be authenticated
+            // first: strict integrity (the whole GCM message verified before the helper sees a byte) and never the
+            // per-range-unauthenticated remote mode (a remote-only source is hydrated and verified instead).
+            const auto reader = job.engine->openPlaintextReader(
+                job.file, {.integrity = storage::IntegrityPolicy::Strict, .remote = storage::RemoteFetchPolicy::Hydrate});
             writer.emplace(cache::Store::begin(job.engine, key, limits.maxOutputBytes));
 
             RunRequest request;

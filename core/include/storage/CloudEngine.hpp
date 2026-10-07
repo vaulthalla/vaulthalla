@@ -10,6 +10,8 @@
 
 #include <future>
 #include <mutex>
+#include <chrono>
+#include <exception>
 #include <unordered_map>
 #include <memory>
 #include <optional>
@@ -173,6 +175,13 @@ namespace vh::storage {
         // One in-flight hydrate per backing path; waiters share its outcome.
         mutable std::mutex hydrateMutex_;
         mutable std::unordered_map<std::string, std::shared_future<std::shared_ptr<vh::fs::model::File>>> hydrating_;
+        // Recent failures (by backing path + row IV): a tampered, mismatched or refused object is not fetched again
+        // on every request; it is retried after kHydrateFailureBackoff or as soon as the row changes.
+        struct HydrateFailure {
+            std::chrono::steady_clock::time_point at;
+            std::exception_ptr error;
+        };
+        mutable std::unordered_map<std::string, HydrateFailure> hydrateFailures_;
 
         std::shared_ptr<vault::model::S3Vault> s3Vault() const;
         void resolveS3ProviderConfiguration();

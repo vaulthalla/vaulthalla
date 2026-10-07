@@ -93,8 +93,19 @@ public:
     }
 
     void mutate(const std::string& key, const std::function<void(Object&)>& fn) {
+        Object copy;
+        {
+            std::scoped_lock lock(mutex_);
+            copy = objects_.at(key);
+        }
+        fn(copy);
         std::scoped_lock lock(mutex_);
-        fn(objects_.at(key));
+        objects_[key] = std::move(copy);
+    }
+
+    void peek(const std::string& key, Object& out) const {
+        std::scoped_lock lock(mutex_);
+        out = objects_.at(key);
     }
 
     [[nodiscard]] std::vector<Get> gets() const {
@@ -340,7 +351,9 @@ TEST_F(CloudRemoteReadTest, HydrateKeepsAuthenticatedCiphertextAndServesRangesLo
     struct stat st{};
     ASSERT_EQ(0, ::stat(file->backing_path.c_str(), &st));
     EXPECT_EQ(0600u, st.st_mode & 0777);
-    EXPECT_TRUE(catalogCommits_.empty()) << "the remote IV already matched the row";
+    // Even with the same IV the publish is conditional on the row still being this generation (rotation may have
+    // re-keyed the object and moved the row on while the GET ran).
+    ASSERT_EQ(1u, catalogCommits_.size());
 
     // Metered and settled: the price gate saw the plan, the reservation got the actual usage.
     ASSERT_EQ(1u, gateRequests());
@@ -409,6 +422,45 @@ TEST_F(CloudRemoteReadTest, TamperedRemoteObjectFailsAndKeepsNothing) {
     EXPECT_EQ(1u, bucket_->gets().size());
     ASSERT_EQ(1u, commits().size());  // the GET happened: it is charged
     EXPECT_EQ(1u, commits()[0].get_requests);
+}
+
+TEST_F(CloudRemoteReadTest, AFailedHydrateIsNotRefetchedOnEveryRequest) {
+    const auto plaintext = randomBytes(70'000, 31);
+    const auto file = remoteEncrypted("/media/bad.bin", plaintext);
+    bucket_->mutate("media/bad.bin", [](FakeBucket::Object& o) { o.body[17] ^= 0x01; });
+    EXPECT_THROW((void)engine_->openPlaintextReader(file, kHydrateStrict), IntegrityError);
+    EXPECT_THROW((void)engine_->openPlaintextReader(file, kHydrateStrict), IntegrityError);
+    EXPECT_THROW((void)engine_->openPlaintextReader(file, kHydrateStrict), IntegrityError);
+    EXPECT_EQ(1u, bucket_->gets().size()) << "the failure is remembered instead of downloading again";
+}
+
+TEST_F(CloudRemoteReadTest, AnUnencryptedRemoteForAnEncryptedFileIsADowngradeAndRefused) {
+    const auto plaintext = randomBytes(5'000, 32);
+    const auto file = remoteEncrypted("/media/downgrade.bin", plaintext);
+    bucket_->mutate("media/downgrade.bin", [&](FakeBucket::Object& o) {
+        o.body = plaintext;
+        o.meta = {{"x-amz-meta-vh-encrypted", "false"}};
+    });
+    EXPECT_THROW((void)engine_->openPlaintextReader(file, kHydrateStrict), IntegrityError);
+    EXPECT_FALSE(std::filesystem::exists(file->backing_path));
+    EXPECT_TRUE(bucket_->gets().empty());
+}
+
+TEST_F(CloudRemoteReadTest, ARemoteObjectWithAnotherIvIsNotServedUnderThisRow) {
+    const auto plaintext = randomBytes(5'000, 33);
+    const auto file = remoteEncrypted("/media/rollback.bin", plaintext);
+    const auto other = remoteEncrypted("/media/other.bin", randomBytes(5'000, 34));
+    // Same size, another object's bytes and IV (a rollback or a copied object).
+    bucket_->mutate("media/rollback.bin", [&](FakeBucket::Object& o) {
+        FakeBucket::Object copy;
+        bucket_->peek("media/other.bin", copy);
+        o.body = copy.body;
+        o.meta = copy.meta;
+    });
+    EXPECT_THROW((void)engine_->openPlaintextReader(file, kHydrateStrict), ContentUnavailable);
+    EXPECT_FALSE(std::filesystem::exists(file->backing_path));
+    EXPECT_TRUE(bucket_->gets().empty());
+    (void)other;
 }
 
 TEST_F(CloudRemoteReadTest, PriceRefusalIsContentUnavailableBeforeAnyRequest) {
