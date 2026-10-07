@@ -63,6 +63,14 @@ public:
     ) = 0;
     virtual void touchLinkAccess(const std::string& id) = 0;
     virtual void incrementDownload(const std::string& id) = 0;
+    // Counts a download unless the link reached max_downloads (atomic in the database store).
+    virtual bool consumeDownload(const std::string& id) {
+        const auto link = getLink(id);
+        if (!link) return false;
+        if (link->max_downloads && link->download_count >= *link->max_downloads) return false;
+        incrementDownload(id);
+        return true;
+    }
     virtual void incrementUpload(const std::string&) { throw std::logic_error("Share upload store is unavailable"); }
     virtual void upsertVaultRoleForShare(const std::string&, uint32_t, const std::shared_ptr<rbac_role::Vault>&) {}
     virtual std::shared_ptr<rbac_role::Vault> getVaultRoleForShare(const std::string&) { return nullptr; }
@@ -370,6 +378,8 @@ public:
     );
     void appendAccessAuditEvent(const Principal& principal, ShareAccessAuditRequest request);
     void incrementDownloadCount(const Principal& principal);
+    // One logical download against max_downloads; false (and a denied audit event) once the limit is reached.
+    [[nodiscard]] bool consumeDownload(const Principal& principal);
 
     [[nodiscard]] StartUploadResult startUpload(StartUploadRequest request);
     void recordUploadChunk(const Principal& principal, const std::string& uploadId, uint64_t bytes);

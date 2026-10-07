@@ -22,6 +22,8 @@ struct Link {
     static void rotateToken(const std::string& id, const std::string& lookup_id, const std::vector<uint8_t>& token_hash, uint32_t updated_by);
     static void touchAccess(const std::string& id);
     static void incrementDownload(const std::string& id);
+    // Counts one download only while the link is under its max_downloads; false when the limit is reached.
+    [[nodiscard]] static bool consumeDownload(const std::string& id);
     static void incrementUpload(const std::string& id);
 };
 

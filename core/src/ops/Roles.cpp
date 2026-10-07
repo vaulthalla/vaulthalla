@@ -1,4 +1,5 @@
 #include "ops/Roles.hpp"
+#include "rbac/PolicyEpoch.hpp"
 
 #include "db/query/identities/Group.hpp"
 #include "db/query/identities/User.hpp"
@@ -30,6 +31,13 @@
 #include <utility>
 
 namespace vh::ops::roles {
+
+namespace {
+// Authorization caches key on rbac::policyEpoch(); any vault role mutation (successful or not) invalidates them.
+struct PolicyEpochBump {
+    ~PolicyEpochBump() { rbac::bumpPolicyEpoch(); }
+};
+}
 
 namespace {
 
@@ -276,6 +284,7 @@ VaultRolePtr createVaultRole(const Actor& actor, const CreateRole& req) {
 }
 
 VaultRolePtr updateVaultRole(const Actor& actor, const UpdateRole& req) {
+    const PolicyEpochBump bumpOnExit;
     requireActor(actor);
     if (!actor->vaultRolePerms().canEdit()) throw Denied("you do not have permission to edit vault roles");
 
@@ -297,6 +306,7 @@ VaultRolePtr updateVaultRole(const Actor& actor, const UpdateRole& req) {
 }
 
 VaultRolePtr removeVaultRole(const Actor& actor, const Ref& ref) {
+    const PolicyEpochBump bumpOnExit;
     requireActor(actor);
     if (!actor->vaultRolePerms().canDelete()) throw Denied("you do not have permission to delete vault roles");
 
@@ -323,6 +333,7 @@ std::vector<VaultRolePtr> listVaultRoles(const Actor& actor, db::model::ListQuer
 // ---------------------------------------------------------------------------------------------- assignments
 
 VaultRolePtr assignVaultRole(const Actor& actor, const AssignVaultRole& req) {
+    const PolicyEpochBump bumpOnExit;
     requireActor(actor);
     requireVaultRolePermission(actor, req.target, RolePerm::Assign,
                                "you do not have permission to assign vault roles to this subject on this vault");
@@ -337,6 +348,7 @@ VaultRolePtr assignVaultRole(const Actor& actor, const AssignVaultRole& req) {
 }
 
 VaultRolePtr unassignVaultRole(const Actor& actor, const VaultSubject& target) {
+    const PolicyEpochBump bumpOnExit;
     requireActor(actor);
     requireVaultRolePermission(actor, target, RolePerm::Revoke,
                                "you do not have permission to remove vault roles from this subject on this vault");
@@ -362,6 +374,7 @@ std::vector<VaultRolePtr> listVaultRoleAssignments(const Actor& actor, const std
 // ---------------------------------------------------------------------------------------------- overrides
 
 std::vector<rbac::permission::Override> addVaultRoleOverrides(const Actor& actor, const AddOverrides& req) {
+    const PolicyEpochBump bumpOnExit;
     requireActor(actor);
     requireVaultRolePermission(actor, req.target, RolePerm::AssignOverride,
                                "you do not have permission to add overrides for this subject on this vault");
@@ -404,6 +417,7 @@ std::vector<rbac::permission::Override> addVaultRoleOverrides(const Actor& actor
 }
 
 rbac::permission::Override updateVaultRoleOverride(const Actor& actor, const UpdateOverride& req) {
+    const PolicyEpochBump bumpOnExit;
     requireActor(actor);
     requireVaultRolePermission(actor, req.target, RolePerm::AssignOverride,
                                "you do not have permission to change overrides for this subject on this vault");
@@ -423,6 +437,7 @@ rbac::permission::Override updateVaultRoleOverride(const Actor& actor, const Upd
 }
 
 void removeVaultRoleOverride(const Actor& actor, const VaultSubject& target, const unsigned int overrideId) {
+    const PolicyEpochBump bumpOnExit;
     requireActor(actor);
     requireVaultRolePermission(actor, target, RolePerm::RevokeOverride,
                                "you do not have permission to remove overrides for this subject on this vault");

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <chrono>
+
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -44,6 +46,10 @@ private:
     std::unordered_map<std::string, std::shared_ptr<protocols::ws::Session>> shareSessionsByRefreshJti_;
     std::unordered_multimap<uint32_t, std::shared_ptr<protocols::ws::Session>> sessionsByUserId_;
     std::mutex sessionMutex_;
+    // Human refresh tokens re-validated against the database within the last kRevalidateAfter, by jti. Dropped
+    // with the session's indexes (logout, invalidation, revokeSessions), so revocation takes effect immediately;
+    // otherwise HTTP range bursts (media seeking) would cost one DB round trip per request.
+    std::unordered_map<std::string, std::chrono::steady_clock::time_point> validatedAt_;
 
     void eraseSessionIndexesLocked(
         const std::shared_ptr<protocols::ws::Session>& session,
