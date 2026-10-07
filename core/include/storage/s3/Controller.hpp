@@ -4,10 +4,12 @@
 #include "vault/Fwd.hpp"
 
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -75,6 +77,23 @@ namespace vh::storage::s3 {
     public:
         explicit ObjectNotFound(const std::string& message) : std::runtime_error(message) {}
     };
+
+    // A streamed GET (Controller::streamObject).
+    struct GetObjectOptions {
+        std::optional<std::pair<uint64_t, uint64_t>> range;  // inclusive byte range, sent as a signed Range header
+        std::optional<std::string> if_match;                 // signed If-Match: the bytes come from that version only
+        std::optional<uint64_t> max_body_bytes;              // abort once the body would exceed this many bytes
+    };
+
+    struct GetObjectResult {
+        long http_status{};
+        uint64_t body_bytes{};
+        std::optional<std::string> etag;
+        std::optional<std::string> content_range;
+    };
+
+    // Receives the body in order; throwing aborts the transfer (the exception propagates from streamObject).
+    using BodySink = std::function<void(std::span<const uint8_t>)>;
 
     class Controller {
     public:
@@ -155,6 +174,14 @@ namespace vh::storage::s3 {
 
         virtual void downloadToBuffer(const fs::path &key, std::vector<uint8_t> &outBuffer) const;
 
+        // Streams an object, or one byte range of it, into sink without buffering the body. One GET is metered
+        // before the request is sent and every received body byte as it arrives (recordRequest: the engine-wide
+        // budget plus every active per-thread usage capture), so a refusal happens before any body is fetched or
+        // mid-stream. Throws ObjectNotFound (404), ConditionalRequestFailed (412: If-Match no longer matches),
+        // RequestBudgetExceeded, or std::runtime_error (transport failure, other HTTP status, a Range the server
+        // ignored, or a body over max_body_bytes).
+        GetObjectResult streamObject(const fs::path &key, const GetObjectOptions &options, const BodySink &sink) const;
+
         // #########################################################################
         // ######################## MULTIPART UPLOADS ##############################
         // #########################################################################
@@ -206,6 +233,22 @@ namespace vh::storage::s3 {
         [[nodiscard]] virtual std::u8string listObjects(const fs::path &prefix = {}) const;
 
     protected:
+        struct TransportResponse {
+            bool transport_ok{true};
+            std::string transport_error;
+            long http_status{};
+            std::string headers;  // raw response header lines
+        };
+
+        // (HTTP status, body bytes) -> false aborts the transfer.
+        using TransportBodyFn = std::function<bool(long, std::span<const uint8_t>)>;
+
+        // The signed GET behind streamObject; extraHeaders are lower-case and included in the SigV4 signature.
+        // Test seam: fakes override this and keep streamObject's metering and status handling.
+        virtual TransportResponse transportGet(const fs::path &key,
+                                               const std::map<std::string, std::string> &extraHeaders,
+                                               const TransportBodyFn &onBody) const;
+
         enum class RequestKind { List, Head, Get, Put, Copy, Delete, DownloadBytes };
         void recordRequest(RequestKind kind, uint64_t amount = 1) const;
         void recordUploadBytes(uint64_t amount) const;
