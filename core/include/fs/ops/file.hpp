@@ -48,11 +48,11 @@ void writeFileAtomic(const std::filesystem::path& absPath, std::span<const uint8
 
 std::string generate_random_suffix(size_t length = 8);
 
-std::filesystem::path decrypt_file_to_temp(unsigned int vault_id,
+std::vector<uint8_t> decrypt_file_to_memory(unsigned int vault_id,
                                            const std::filesystem::path& rel_path,
                                            const std::shared_ptr<storage::Engine>& engine);
 
-std::filesystem::path decrypt_file_to_temp(const std::shared_ptr<model::File>& file,
+std::vector<uint8_t> decrypt_file_to_memory(const std::shared_ptr<model::File>& file,
                                            const std::shared_ptr<storage::Engine>& engine);
 
 bool isProbablyEncrypted(const std::filesystem::path& path);

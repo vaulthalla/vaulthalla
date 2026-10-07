@@ -10,6 +10,9 @@
 #include "storage/PlaintextReader.hpp"
 
 #include <nlohmann/json.hpp>
+#include <sodium.h>
+
+#include <array>
 
 namespace vh::protocols::http::handler {
 
@@ -78,8 +81,20 @@ model::preview::Response derived(request&& req) {
 
         const auto artifact = *result.artifact;
         const auto engine = target.engine;
-        auto etag = storage::generationOf(*target.file).etag();
-        etag.insert(etag.size() - 1, "-" + kind + "-" + variant + "-g" + std::to_string(artifact.key.generator_version));
+        // The artifact's own identity (source generation, kind, variant, generator) is the validator.
+        std::string etag;
+        {
+            const auto canonical = artifact.key.canonical();
+            std::array<unsigned char, crypto_hash_sha256_BYTES> digest{};
+            crypto_hash_sha256(digest.data(), reinterpret_cast<const unsigned char*>(canonical.data()), canonical.size());
+            static constexpr char kHex[] = "0123456789abcdef";
+            etag = "\"d" + std::to_string(artifact.key.file_id) + "-";
+            for (std::size_t i = 0; i < 8; ++i) {
+                etag.push_back(kHex[digest[i] >> 4]);
+                etag.push_back(kHex[digest[i] & 0x0f]);
+            }
+            etag.push_back('"');
+        }
 
         ServeSpec spec;
         spec.size = artifact.size;

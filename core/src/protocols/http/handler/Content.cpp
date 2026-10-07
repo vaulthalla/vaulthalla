@@ -8,6 +8,9 @@
 #include "storage/Engine.hpp"
 #include "storage/PlaintextReader.hpp"
 
+#include <chrono>
+#include <semaphore>
+
 namespace vh::protocols::http::handler {
 
 namespace {
@@ -39,6 +42,17 @@ namespace {
         return res;
     }
 
+    // ZIPs are still built in memory (up to 256 MiB of source + 320 MiB output): bound how many at once.
+    static std::counting_semaphore<> archiveSlots(2);
+    if (!archiveSlots.try_acquire_for(std::chrono::seconds(10))) {
+        auto busy = jsonError(req, status::service_unavailable, "busy", "Too many archive downloads in progress");
+        std::get<string_response>(busy).set(field::retry_after, "10");
+        return busy;
+    }
+    struct Release {
+        ~Release() { archiveSlots.release(); }
+    } release;
+
     if (target.share && !access::recordShareAccess(target, "share.download.http", true, std::nullopt))
         return jsonError(req, status::forbidden, "max_downloads_reached", "This link's download limit was reached");
     if (!target.share) access::recordHumanAccess(caller, target, "download.archive");
@@ -65,7 +79,9 @@ model::preview::Response content(request&& req) {
             return directory(req, caller, resolved);
         }
 
-        const auto& file = resolved.file;
+        // One snapshot for the validators and the bytes: the reader authenticates exactly this generation, so an
+        // overwrite landing mid-request fails the read instead of mislabelling new bytes with an old ETag.
+        const auto file = std::make_shared<fs::model::File>(*resolved.file);
         const bool inlineDisposition = wantsInline(params, contentLane);
         const auto generation = storage::generationOf(*file);
         const auto mime = file->mime_type.value_or("application/octet-stream");

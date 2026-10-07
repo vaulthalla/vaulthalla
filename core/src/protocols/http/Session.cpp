@@ -1,5 +1,6 @@
 #include "protocols/http/Session.hpp"
 
+#include "config/Registry.hpp"
 #include "log/Registry.hpp"
 #include "protocols/http/Router.hpp"
 #include "protocols/http/upload/Coordinator.hpp"
@@ -20,7 +21,19 @@
 namespace vh::protocols::http {
 namespace {
 constexpr std::size_t kReadBufferBytes = 64u * 1024u;
-constexpr std::size_t kMaxBufferedBodyBytes = 16u * 1024u * 1024u;
+// Buffered (non-upload-stream) bodies: batch JSON, upload-session JSON, text saves. Never more than these need.
+[[nodiscard]] std::size_t maxBufferedBodyBytes() {
+    const auto text = static_cast<std::size_t>(config::Registry::get().preview.text.max_edit_bytes);
+    return std::max<std::size_t>(4u * 1024u * 1024u, text + 64u * 1024u);
+}
+
+// Every route that takes a body needs a session; refuse cookieless bodies before reading a byte of them.
+[[nodiscard]] bool carriesSessionCookie(const boost::beast::http::request_parser<boost::beast::http::buffer_body>& parser) {
+    const auto it = parser.get().find(boost::beast::http::field::cookie);
+    if (it == parser.get().end()) return false;
+    const std::string_view cookies(it->value().data(), it->value().size());
+    return cookies.find("refresh=") != std::string_view::npos;  // also matches share_refresh=
+}
 constexpr std::size_t kStreamChunkBytes = 256u * 1024u;
 // Keep-alive wait for the next request, and per-operation inactivity limits once a request is in flight. A slow
 // but progressing client (media over a weak uplink) is fine; a stalled one is dropped and frees its thread.
@@ -202,6 +215,22 @@ bool Session::read_one() {
     try {
         if (upload::Coordinator::isUploadFileRequest(parser.get().method(), parser.get().target()))
             return handle_streaming_upload(parser);
+        const bool hasBody = parser.chunked() || (parser.content_length() && *parser.content_length() > 0);
+        if (hasBody && !carriesSessionCookie(parser)) {
+            auto req = make_request_from_parser(parser);
+            auto response = Router::makeErrorResponse(req, "Unauthorized: requires a session", status::unauthorized);
+            std::visit([](auto& res) { res.keep_alive(false); }, response);
+            (void)write_response(std::move(response));
+            return false;
+        }
+        if (parser.content_length() && *parser.content_length() > maxBufferedBodyBytes()) {
+            auto req = make_request_from_parser(parser);
+            auto response = Router::makeErrorResponse(req, "Request body exceeds maximum buffered size",
+                                                      status::payload_too_large);
+            std::visit([](auto& res) { res.keep_alive(false); }, response);
+            (void)write_response(std::move(response));
+            return false;
+        }
         return handle_buffered_request(parser);
     } catch (const std::exception& e) {
         if (stopRequested_.load(std::memory_order_acquire)) return false;
@@ -225,7 +254,7 @@ bool Session::handle_buffered_request(
 
         const auto used = storage.size() - parser.get().body().size;
         if (used > 0) {
-            if (body.size() > kMaxBufferedBodyBytes - used)
+            if (body.size() + used > maxBufferedBodyBytes())
                 throw std::runtime_error("Request body exceeds maximum buffered size");
             body.append(storage.data(), used);
         }

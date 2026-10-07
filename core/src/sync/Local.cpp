@@ -288,8 +288,7 @@ void Local::processOperations() const {
             continue;
         }
 
-        const auto tmpPath = decrypt_file_to_temp(vaultId(), op->source_path, engine);
-        const auto buffer = readFileToVector(tmpPath);
+        auto buffer = decrypt_file_to_memory(vaultId(), op->source_path, engine);
 
         if (buffer.empty()) {
             log::Registry::sync()->error("[FSTask] Empty file buffer for operation: {}", op->source_path);

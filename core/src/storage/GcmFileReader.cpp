@@ -50,6 +50,16 @@ GcmFileReader::GcmFileReader(Params params) : params_(std::move(params)) {
         throw std::system_error(err, std::generic_category(), "fstat " + params_.path.string());
     }
 
+    if (!params_.expectedHeader.empty()) {
+        std::vector<uint8_t> header(params_.expectedHeader.size());
+        const auto got = ::pread(fd_, header.data(), header.size(), 0);
+        if (got != static_cast<ssize_t>(header.size()) || header != params_.expectedHeader) {
+            ::close(fd_);
+            fd_ = -1;
+            throw IntegrityError("Content changed while it was being opened");
+        }
+    }
+
     const auto expected = params_.dataOffset + params_.plaintextSize + (params_.key ? crypto::util::AES_TAG_SIZE : 0);
     if (static_cast<uint64_t>(st.st_size) != expected) {
         ::close(fd_);

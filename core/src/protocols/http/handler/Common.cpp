@@ -150,10 +150,9 @@ model::preview::Response serve(const request& req, ServeSpec spec) {
     if (const auto rangeHeader = headerValue(req, field::range); !rangeHeader.empty()) {
         bool honour = true;
         if (const auto ifRange = trimmed(headerValue(req, field::if_range)); !ifRange.empty()) {
-            if (ifRange.starts_with("\"") || ifRange.starts_with("W/"))
-                honour = ifRange == spec.etag;  // strong comparison only
-            else
-                honour = spec.lastModified > 0 && ifRange == httpDate(spec.lastModified);
+            // Strong ETag comparison only. An HTTP-date validator has one-second resolution, so two writes within a
+            // second could splice ranges of different contents: such requests get the full representation.
+            honour = ifRange.starts_with("\"") && ifRange == spec.etag;
         }
         const auto parsed = range::parse(rangeHeader);
         if (honour && parsed.spec) {

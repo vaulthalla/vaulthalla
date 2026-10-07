@@ -20,6 +20,17 @@ using namespace vh::crypto;
 using namespace vh::crypto::util;
 using namespace vh::fs::model;
 
+namespace {
+// The one-shot crypto helpers take std::vector keys; this copy is wiped as soon as it goes out of scope.
+struct WipedKeyCopy {
+    explicit WipedKeyCopy(const SecretKeyPtr& key) : bytes(key->bytes().begin(), key->bytes().end()) {}
+    ~WipedKeyCopy() { sodium_memzero(bytes.data(), bytes.size()); }
+    WipedKeyCopy(const WipedKeyCopy&) = delete;
+    WipedKeyCopy& operator=(const WipedKeyCopy&) = delete;
+    std::vector<uint8_t> bytes;
+};
+}
+
 EncryptionManager::EncryptionManager(const unsigned int vault_id)
     : vault_id_(vault_id) {
     tpmKeyProvider_ = std::make_unique<secrets::TPMKeyProvider>(paths::testMode ? "test_vault_master" : "vault_master");
@@ -58,10 +69,10 @@ void EncryptionManager::load_key() {
     if (!rec) {
         // First time: generate and seal new vault key
         const auto vaultKey = SecretKey::random();
-        const std::vector<uint8_t> raw(vaultKey->bytes().begin(), vaultKey->bytes().end());
+        const WipedKeyCopy raw(vaultKey);
 
         std::vector<uint8_t> iv;
-        const auto enc_key = encrypt_aes256_gcm(raw, masterKey, iv);
+        const auto enc_key = encrypt_aes256_gcm(raw.bytes, masterKey, iv);
 
         const auto key = std::make_shared<vault::model::Key>();
         key->vaultId = vault_id_;
@@ -127,12 +138,12 @@ void EncryptionManager::prepare_key_rotation() {
     log::Registry::crypto()->debug("[VaultEncryptionManager] Preparing key rotation for vault {}", vault_id_);
 
     const auto next = SecretKey::random();
-    const std::vector<uint8_t> raw(next->bytes().begin(), next->bytes().end());
+    const WipedKeyCopy raw(next);
 
     std::vector<uint8_t> iv;
     const auto key = std::make_shared<vault::model::Key>();
     key->vaultId = vault_id_;
-    key->encrypted_key = encrypt_aes256_gcm(raw, tpmKeyProvider_->getMasterKey(), iv);
+    key->encrypted_key = encrypt_aes256_gcm(raw.bytes, tpmKeyProvider_->getMasterKey(), iv);
     key->iv = std::move(iv);
     // Persist first: if this throws, the in-memory keys are untouched.
     key->version = db::query::vault::Key::rotateVaultKey(key);
@@ -202,12 +213,12 @@ std::vector<uint8_t> EncryptionManager::rotateDecryptEncrypt(const std::vector<u
             log::Registry::crypto()->warn("[VaultEncryptionManager] Key version {} is not the previous version {}, using the previous key",
                                         f->encrypted_with_key_version, version - 1);
 
-        const std::vector<uint8_t> oldRaw(oldKey->bytes().begin(), oldKey->bytes().end());
-        const std::vector<uint8_t> newRaw(newKey->bytes().begin(), newKey->bytes().end());
-        auto decrypted = decrypt_aes256_gcm(ciphertext, oldRaw, b64_decode(f->encryption_iv));
+        const WipedKeyCopy oldRaw(oldKey);
+        const WipedKeyCopy newRaw(newKey);
+        auto decrypted = decrypt_aes256_gcm(ciphertext, oldRaw.bytes, b64_decode(f->encryption_iv));
 
         std::vector<uint8_t> iv;
-        const auto encrypted = encrypt_aes256_gcm(decrypted, newRaw, iv);
+        const auto encrypted = encrypt_aes256_gcm(decrypted, newRaw.bytes, iv);
         sodium_memzero(decrypted.data(), decrypted.size());
 
         if (encrypted.size() != ciphertext.size()) {
@@ -227,9 +238,9 @@ std::vector<uint8_t> EncryptionManager::rotateDecryptEncrypt(const std::vector<u
 
 std::vector<uint8_t> EncryptionManager::encrypt(const std::vector<uint8_t>& plaintext, const std::shared_ptr<File>& f) const {
     const auto [key, version] = currentKey();
-    const std::vector<uint8_t> raw(key->bytes().begin(), key->bytes().end());
+    const WipedKeyCopy raw(key);
     std::vector<uint8_t> iv;
-    auto ciphertext = encrypt_aes256_gcm(plaintext, raw, iv);
+    auto ciphertext = encrypt_aes256_gcm(plaintext, raw.bytes, iv);
     f->encryption_iv = b64_encode(iv);
     f->encrypted_with_key_version = version;
     return ciphertext;
@@ -301,9 +312,8 @@ SecretKeyPtr EncryptionManager::keySnapshot(const unsigned int keyVersion) const
 }
 
 std::vector<uint8_t> EncryptionManager::decrypt(const std::vector<uint8_t>& ciphertext, const std::string& b64_iv, const unsigned int keyVersion) const {
-    const auto key = keySnapshot(keyVersion);
-    const std::vector<uint8_t> raw(key->bytes().begin(), key->bytes().end());
-    return decrypt_aes256_gcm(ciphertext, raw, b64_decode(b64_iv));
+    const WipedKeyCopy raw(keySnapshot(keyVersion));
+    return decrypt_aes256_gcm(ciphertext, raw.bytes, b64_decode(b64_iv));
 }
 
 void EncryptionManager::decryptFileToFile(
@@ -311,9 +321,8 @@ void EncryptionManager::decryptFileToFile(
     const std::filesystem::path& plaintextPath,
     const std::string& b64_iv,
     const unsigned int keyVersion) const {
-    const auto key = keySnapshot(keyVersion);
-    const std::vector<uint8_t> raw(key->bytes().begin(), key->bytes().end());
-    decrypt_aes256_gcm_file(ciphertextPath, plaintextPath, raw, b64_decode(b64_iv));
+    const WipedKeyCopy raw(keySnapshot(keyVersion));
+    decrypt_aes256_gcm_file(ciphertextPath, plaintextPath, raw.bytes, b64_decode(b64_iv));
 }
 
 std::vector<uint8_t> EncryptionManager::get_key(const std::string& callingFunctionName) const {

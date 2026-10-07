@@ -175,26 +175,6 @@ void writeFileAtomic(const std::filesystem::path& absPath, const std::span<const
     });
 }
 
-std::filesystem::path writePlaintextToTemp(const std::vector<uint8_t>& plaintext) {
-    namespace fs = std::filesystem;
-
-    if (plaintext.empty()) throw std::runtime_error("Decryption failed or returned empty data");
-
-    fs::path tmp_file = fs::temp_directory_path() / ("vaulthalla_dec_" + generate_random_suffix() + ".tmp");
-
-    // Plaintext: only the daemon may read it, and never through a file someone else created first.
-    const int fd = ::open(tmp_file.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
-    if (fd < 0) throw std::runtime_error("Failed to create temp decrypted file: " + tmp_file.string());
-    ::close(fd);
-
-    std::ofstream out(tmp_file, std::ios::binary | std::ios::trunc);
-    if (!out) throw std::runtime_error("Failed to open temp decrypted file: " + tmp_file.string());
-
-    out.write(reinterpret_cast<const char*>(plaintext.data()), static_cast<long>(plaintext.size()));
-    out.close();
-
-    return tmp_file;
-}
 
 std::string generate_random_suffix(const size_t length) {
     static constexpr char charset[] =
@@ -210,23 +190,23 @@ std::string generate_random_suffix(const size_t length) {
     return result;
 }
 
-std::filesystem::path decrypt_file_to_temp(const unsigned int /*vault_id*/,
-                                                  const std::filesystem::path& rel_path,
-                                                  const std::shared_ptr<storage::Engine>& engine) {
+std::vector<uint8_t> decrypt_file_to_memory(const unsigned int /*vault_id*/,
+                                            const std::filesystem::path& rel_path,
+                                            const std::shared_ptr<storage::Engine>& engine) {
     const auto abs_path = engine->vaultPathToFusePath(rel_path);
     const auto entry = runtime::Deps::get().fsCache->getEntry(abs_path);
     if (!entry) {
-        log::Registry::storage()->error("[decrypt_file_to_temp] Entry not found for path: {}", abs_path.string());
+        log::Registry::storage()->error("[decrypt_file_to_memory] Entry not found for path: {}", abs_path.string());
         throw std::runtime_error("Entry not found for path: " + abs_path.string());
     }
 
     const auto file = std::dynamic_pointer_cast<File>(entry);
     if (!file) throw std::runtime_error("Entry is not a file: " + abs_path.string());
-    return decrypt_file_to_temp(file, engine);
+    return decrypt_file_to_memory(file, engine);
 }
 
-std::filesystem::path decrypt_file_to_temp(const std::shared_ptr<File>& file,
-                                           const std::shared_ptr<storage::Engine>& engine) {
+std::vector<uint8_t> decrypt_file_to_memory(const std::shared_ptr<File>& file,
+                                            const std::shared_ptr<storage::Engine>& engine) {
     if (!file) throw std::invalid_argument("Cannot decrypt a null file");
     if (!engine) throw std::invalid_argument("Cannot decrypt file without storage engine");
 
@@ -237,7 +217,7 @@ std::filesystem::path decrypt_file_to_temp(const std::shared_ptr<File>& file,
         if (!file->encryption_iv.empty()) throw;
         plaintext = readFileToVector(file->backing_path);
     }
-    return writePlaintextToTemp(plaintext);
+    return plaintext;
 }
 
 bool isProbablyEncrypted(const std::filesystem::path& path) {

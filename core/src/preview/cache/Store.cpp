@@ -182,6 +182,7 @@ std::unique_ptr<storage::PlaintextReader> Store::open(const std::shared_ptr<stor
     params.key = engine->encryptionManager->keySnapshot(header->keyVersion);
     params.iv = header->iv;
     params.aad = aadFor(header->raw, artifact.key);
+    params.expectedHeader.assign(header->raw.begin(), header->raw.end());
     params.generation = storage::Generation{
         .vault_id = artifact.key.vault_id,
         .file_id = artifact.key.file_id,

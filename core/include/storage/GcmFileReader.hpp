@@ -27,6 +27,9 @@ public:
         crypto::SecretKeyPtr key;            // null ⇒ unencrypted legacy bytes, passed through
         std::array<uint8_t, 12> iv{};
         std::vector<uint8_t> aad;
+        // When set: the first expectedHeader.size() bytes of the file, as the caller parsed them (IV, key version).
+        // Checked on this reader's own descriptor, so a file replaced between the caller's parse and this open fails.
+        std::vector<uint8_t> expectedHeader;
         Generation generation;
         std::string integrityDomain;
         bool strict{false};

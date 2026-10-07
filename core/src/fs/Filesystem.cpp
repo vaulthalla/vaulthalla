@@ -1200,8 +1200,7 @@ int Filesystem::handleRename(const RenameContext& ctx) {
             auto buffer = ctx.buffer;
 
             if (!f->encryption_iv.empty()) {
-                const auto tmp = decrypt_file_to_temp(ctx.engine->vault->id, oldVaultPath, ctx.engine);
-                buffer = readFileToVector(tmp);
+                buffer = decrypt_file_to_memory(ctx.engine->vault->id, oldVaultPath, ctx.engine);
             } else {
                 buffer = readFileToVector(oldBackingPath);
             }

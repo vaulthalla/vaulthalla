@@ -296,9 +296,12 @@ Target resolvePath(const Caller& caller, const uint32_t vaultId, const std::stri
     const auto& cache = runtime::Deps::get().fsCache;
     const auto entry = cache ? cache->getEntry(engine->vaultPathToFusePath(vaultPath)) : nullptr;
     if (!entry) {
-        // Only a caller who can read the vault learns that a path doesn't exist; anyone else gets the same 403 an
-        // existing path would give (no existence oracle).
-        requireHuman(caller, engine, "/", FsAction::Read);
+        // Only a caller who can read the nearest existing ancestor learns that a path doesn't exist there; anyone
+        // else gets the same 403 an existing path would give (no existence oracle under denied subtrees).
+        std::filesystem::path ancestor = std::filesystem::path(vaultPath).parent_path();
+        while (cache && ancestor != ancestor.root_path() && !cache->getEntry(engine->vaultPathToFusePath(ancestor)))
+            ancestor = ancestor.parent_path();
+        requireHuman(caller, engine, ancestor.empty() ? std::filesystem::path("/") : ancestor, FsAction::Read);
         throw NotFound("Not found");
     }
     requireHumanNeed(caller, engine, entry, need);
