@@ -27,8 +27,8 @@ using namespace vh::protocols::ws;
 namespace vh::auth {
 namespace {
 void validateNewPassword(const std::string& newPassword) {
-    if (!registration::Validator::isValidPassword(newPassword))
-        throw std::runtime_error("New password does not meet password policy");
+    if (const auto violation = registration::Validator::passwordPolicyViolation(newPassword))
+        throw std::runtime_error("New password does not meet password policy: " + *violation);
 }
 
 std::string hashNewPassword(const std::string& newPassword) {
