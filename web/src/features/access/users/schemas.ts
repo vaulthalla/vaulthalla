@@ -1,7 +1,8 @@
 import { z } from 'zod'
 
 // Client-side checks mirror core's registration Validator (names 3–50, emails with '@' and '.', passwords 8–128 with
-// a letter and a digit). Strength, dictionary and breach checks stay on the server; its message is shown as-is.
+// a letter and a digit below 20 characters). Strength, dictionary and breach checks stay on the server; its message is
+// shown as-is.
 
 export const nameSchema = z
   .string()
@@ -17,7 +18,8 @@ export const emailSchema = z
 export const passwordRule = (value: string): string | null => {
   if (value.length < 8) return 'At least 8 characters'
   if (value.length > 128) return 'At most 128 characters'
-  if (!/[0-9]/.test(value) || !/[A-Za-z]/.test(value)) return 'Use letters and at least one digit'
+  if (value.length < 20 && (!/[0-9]/.test(value) || !/[A-Za-z]/.test(value)))
+    return 'Use letters and at least one digit, or 20+ characters'
   return null
 }
 

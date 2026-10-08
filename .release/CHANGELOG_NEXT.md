@@ -21,6 +21,15 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
   failed sources negatively cached per file version.
 - Pre-authentication request bodies are refused/bounded; HTTP connections get real read/write deadlines.
 
+## Authentication
+- The password dictionary check matched any >=3-letter word as a substring,
+  refusing most long random passwords (the longer, the likelier). It now refuses
+  only a password that is a dictionary word after trimming leading/trailing
+  non-letters. One policy (Validator::passwordPolicyViolation) serves
+  registration and password change; passwords of 20+ characters no longer need
+  a digit; refusals name the violated rule. Drops a leaked curl handle per
+  breach lookup. Regression test: test_password_policy.
+
 ## Data safety
 - Key rotation: finish only when every file rotated and a re-query of rows on older key versions is empty (failed files no longer orphaned on a dropped key); per-file sidecar (`<backing>.vh-rotate`, fsynced) + compare-and-set IV commit + rename, with authentication-based crash recovery each pass and at startup; Cache-mode local copies rewritten (inverted check fixed), remote-only files never written locally; empty/IV-less files excluded and one failure no longer aborts its range; single-file rotation no longer divides by zero; `createFile` overwrite replaces ciphertext atomically (temp + fsync + rename + dir fsync).
 

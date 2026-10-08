@@ -26,6 +26,25 @@ for users and operators; keep it representative of what actually ships.
   daemon under concurrent uploads; it is fixed, and a crash now exits and restarts cleanly rather than leaving
   `/mnt/vaulthalla` (and `apt`) stuck.
 
+## Long generated passwords are accepted again
+
+Changing a password (including the first-login change of the `admin` password) refused most long, randomly
+generated passwords with "New password does not meet password policy". The dictionary check rejected any
+password that contained a common word of three or more letters anywhere inside it, so a 64-character password
+from a password manager almost always failed on some fragment like `doc` or `bet`, and the longer the password,
+the more likely it was to be refused.
+
+The dictionary check now refuses a password only when the password itself is a dictionary word, ignoring case
+and any digits or symbols around it (`Sunshine2024!` is still refused). Registration and password changes now
+apply the same policy:
+
+- 8 to 128 characters.
+- Passwords shorter than 20 characters need at least one letter and one digit. Longer passwords and
+  passphrases (`correct-horse-battery-staple`) don't.
+- Not a dictionary word, not on the common-password lists, and not found in public breaches.
+
+When a password is refused, the error now says which rule it broke.
+
 ## Downloads stream, with seeking and no size cap
 
 Downloads are streamed straight from the encrypted vault instead of being decrypted into memory first: the first

@@ -40,13 +40,17 @@ unsigned short Strength::passwordStrengthCheck(const std::string& password) {
     return score;
 }
 
-bool Strength::containsDictionaryWord(const std::string& password) {
+bool Strength::isDictionaryWord(const std::string& password) {
     if (dictionaryWords_.empty()) return false; // fallback if not loaded
 
-    std::string lowerPw = password;
-    std::ranges::transform(lowerPw.begin(), lowerPw.end(), lowerPw.begin(), ::tolower);
+    const auto isLetter = [](const unsigned char c) { return std::isalpha(c) != 0; };
+    const auto first = std::ranges::find_if(password, isLetter);
+    if (first == password.end()) return false;
+    const auto last = std::ranges::find_if(password.rbegin(), password.rend(), isLetter).base();
 
-    return std::ranges::any_of(dictionaryWords_, [&](const auto& word) { return lowerPw.contains(word); });
+    std::string core(first, last);
+    std::ranges::transform(core.begin(), core.end(), core.begin(), ::tolower);
+    return dictionaryWords_.contains(core);
 }
 
 bool Strength::isCommonWeakPassword(const std::string& password) {
@@ -68,9 +72,6 @@ bool Strength::isPwnedPassword(const std::string& password) {
 
     const std::string url = "https://api.pwnedpasswords.com/range/" + prefix;
 
-    CURL* curl = curl_easy_init();
-    if (!curl) return false;
-
     const auto response = downloadURL(url);
 
     std::istringstream stream(response);
@@ -90,17 +91,19 @@ void Strength::loadCommonWeakPasswordsFromURLs(const std::vector<std::string>& u
     commonWeakPasswords_.clear();
 
     for (const auto& url : urls) {
-        std::string data = downloadURL(url);
+        std::istringstream stream(downloadURL(url));
+        loadCommonWeakPasswords(stream);
+    }
+}
 
-        std::istringstream stream(data);
-        std::string password;
-        while (std::getline(stream, password)) {
-            password.erase(0, password.find_first_not_of(" \t\r\n"));
-            password.erase(password.find_last_not_of(" \t\r\n") + 1);
-            if (!password.empty()) {
-                std::transform(password.begin(), password.end(), password.begin(), ::tolower);
-                commonWeakPasswords_.insert(password);
-            }
+void Strength::loadCommonWeakPasswords(std::istream& passwords) {
+    std::string password;
+    while (std::getline(passwords, password)) {
+        password.erase(0, password.find_first_not_of(" \t\r\n"));
+        password.erase(password.find_last_not_of(" \t\r\n") + 1);
+        if (!password.empty()) {
+            std::transform(password.begin(), password.end(), password.begin(), ::tolower);
+            commonWeakPasswords_.insert(password);
         }
     }
 }
@@ -108,11 +111,13 @@ void Strength::loadCommonWeakPasswordsFromURLs(const std::vector<std::string>& u
 void Strength::loadDictionaryFromURL(const std::string& url) {
     dictionaryWords_.clear();
 
-    std::string data = downloadURL(url);
+    std::istringstream stream(downloadURL(url));
+    loadDictionary(stream);
+}
 
-    std::istringstream stream(data);
+void Strength::loadDictionary(std::istream& words) {
     std::string word;
-    while (std::getline(stream, word)) {
+    while (std::getline(words, word)) {
         word.erase(0, word.find_first_not_of(" \t\r\n"));
         word.erase(word.find_last_not_of(" \t\r\n") + 1);
         if (!word.empty() && word.length() >= 3) {
