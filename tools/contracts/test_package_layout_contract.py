@@ -180,6 +180,18 @@ class PackageLayoutContractTests(unittest.TestCase):
         self.assertLess(configure.index("#DEBHELPER#"), configure.index("reconcile_swtpm_unit_enablement"))
         self.assertLess(configure.index("#DEBHELPER#"), configure.index("configure_systemd_units"))
 
+    def test_daemon_crash_exits_instead_of_wedging_its_mount(self) -> None:
+        # A core dump waits for every thread, and a thread closing a file on the daemon's own FUSE mount waits for a
+        # reply the crashing daemon cannot send: the dump, the mount and apt hang forever. The daemon must be
+        # non-dumpable from the first line of main() so a crash exits and Restart=on-failure recovers it.
+        main = self._read("core/main/main.cpp")
+        self.assertIn("prctl(PR_SET_DUMPABLE, 0", main)
+        body = main.split("int main() {", 1)[1]
+        self.assertLess(body.index("installCrashGuard();"), body.index("try {"))
+        unit = self._read("deploy/systemd/vaulthalla.service.in")
+        self.assertRegex(unit, r"(?m)^Restart=on-failure$")
+        self.assertRegex(unit, r"(?m)^LimitCORE=0$")
+
 
 if __name__ == "__main__":
     unittest.main()

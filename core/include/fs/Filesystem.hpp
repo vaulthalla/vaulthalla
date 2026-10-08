@@ -4,6 +4,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 #include <utility>
@@ -34,6 +35,13 @@ struct NewFileContext {
     std::shared_ptr<identities::Group> group = nullptr;
     mode_t mode = 0644;
     bool overwrite = false;
+    // Conditional overwrite: only replace the content if it is still this generation (storage::Generation::sourceId)
+    // and not open through FUSE; otherwise ContentConflict.
+    std::optional<std::string> expected_source_id{};
+};
+
+struct ContentConflict final : std::runtime_error {
+    using std::runtime_error::runtime_error;
 };
 
 struct MkdirContext {
@@ -80,6 +88,10 @@ public:
     static std::pair<int, std::shared_ptr<model::Symlink>> createSymlink(const FuseCreateSymlinkContext& ctx);
 
     static bool isPreviewable(const std::string& mimeType);
+
+    // Serializes content replacement of one file across every writer (web/API overwrite, FUSE seal, key rotation).
+    // Striped by file id; never held while taking mutex_.
+    static std::mutex& contentWriteMutex(uint32_t fileId);
 
     struct AtRestRepair {
         unsigned int encrypted = 0;  // stored in plaintext, now sealed

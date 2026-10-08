@@ -5,7 +5,7 @@ import { queryClient } from '@/lib/query'
 import { onSessionReset } from '@/lib/session'
 import { randomId } from '@/lib/randomId'
 import { formatBytes } from '@/lib/format'
-import { normalizePath, parentOf } from '@/features/files/entries'
+import { normalizePath, parentOf } from '@/features/files/paths'
 import type { FsSource } from '@/features/files/source'
 
 export interface PickedFile {
@@ -92,6 +92,15 @@ class HttpError extends Error {
 const readError = async (response: Response, fallback: string) => {
   const text = (await response.text().catch(() => '')).trim()
   return new HttpError(response.status, text.length && text.length < 400 ? text : fallback)
+}
+
+const headRefusal = (status: number) => {
+  if (status === 401) return 'Your session has ended. Sign in again to download.'
+  if (status === 403) return 'You don’t have permission to download this.'
+  if (status === 404) return 'This item no longer exists.'
+  if (status === 413) return 'This is too large to download as one archive.'
+  if (status === 429 || status === 503) return 'The server is busy. Try again in a moment.'
+  return `Download failed (HTTP ${status})`
 }
 
 const friendly = (error: unknown) => {
@@ -286,8 +295,9 @@ export const startUpload = (source: FsSource, targetDir: string, files: PickedFi
   return id
 }
 
-// Asks the server first, so a refusal (too large, gone, no permission) becomes a failed task instead of the browser
-// navigating to an error page; then hands the URL to the browser's own download manager.
+// Asks the server first with a HEAD (same URL, same authorization, no body), so a refusal (too large, gone, no
+// permission) becomes a failed task instead of the browser navigating to an error page; then hands the URL to the
+// browser's own download manager, which the server streams to (files have no size cap).
 export const startDownload = async (source: FsSource, path: string, label: string, isDir: boolean) => {
   const id = randomId()
   const url = source.downloadUrl(path)
@@ -306,12 +316,11 @@ export const startDownload = async (source: FsSource, path: string, label: strin
     error: null,
     sourceKey: source.key,
   })
-  const controller = new AbortController()
   try {
-    const probe = await fetch(url, { credentials: 'same-origin', signal: controller.signal })
-    if (!probe.ok) throw await readError(probe, `Download failed (HTTP ${probe.status})`)
+    const probe = await fetch(url, { method: 'HEAD', credentials: 'same-origin', cache: 'no-store' })
+    // A HEAD carries no body: name the refusal from the status alone.
+    if (!probe.ok) throw new HttpError(probe.status, headRefusal(probe.status))
     const size = Number(probe.headers.get('content-length') ?? '')
-    controller.abort()
     const anchor = document.createElement('a')
     anchor.href = url
     anchor.download = isDir ? `${label}.zip` : label

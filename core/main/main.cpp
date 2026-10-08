@@ -12,13 +12,19 @@
 #include "storage/Manager.hpp"
 #include "fs/Filesystem.hpp"
 
+// Previews
+#include "preview/cache/Maintenance.hpp"
+#include "preview/derive/Queue.hpp"
+
 // Seed
 #include "seed/include/seed_db.hpp"
 #include "seed/include/init_db_tables.hpp"
 
 // Misc
 #include "config/Registry.hpp"
+#include <cerrno>
 #include <cstdio>
+#include <cstring>
 #include "concurrency/ThreadPoolManager.hpp"
 #include "log/Registry.hpp"
 
@@ -27,6 +33,9 @@
 #include <chrono>
 #include <csignal>
 #include <thread>
+#include <execinfo.h>
+#include <sys/prctl.h>
+#include <unistd.h>
 #include <pdfium/fpdfview.h>
 
 using namespace vh::config;
@@ -43,6 +52,38 @@ void signalHandler(const int signum) {
         std::to_string(signum)
     );
     shouldExit = true;
+}
+
+// A crashing FUSE daemon must die at once. A core dump first waits for every thread to stop, but a thread in close()
+// on a file of our own mount (HTTP upload staging goes through FUSE) waits for a FUSE reply this process can no
+// longer send: the dump never finishes, the mount hangs and so does everything touching it, apt included, while
+// Restart=on-failure never fires. Not being dumpable skips the dump (and keeps decrypted bytes out of cores, as
+// LimitCORE=0 intends), so the kernel kills the process, the mount aborts and systemd restarts the daemon. The
+// handler leaves a backtrace in the journal in place of the core.
+void fatalSignalHandler(const int signum) {
+    static constexpr char kHeader[] = "[vaulthalla] fatal signal, backtrace:\n";
+    (void)!::write(STDERR_FILENO, kHeader, sizeof(kHeader) - 1);
+    void* frames[64];
+    const int depth = ::backtrace(frames, 64);
+    ::backtrace_symbols_fd(frames, depth, STDERR_FILENO);
+    // SA_RESETHAND restored the default action: re-raise to terminate with the original signal.
+    ::raise(signum);
+}
+
+void installCrashGuard() {
+    if (::prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0)
+        std::fprintf(stderr, "[vaulthalla] could not disable core dumps: %s\n", std::strerror(errno));
+
+    // backtrace() loads libgcc on first use, which allocates: do it now, never from a handler on a broken heap.
+    void* warm[1];
+    (void)::backtrace(warm, 1);
+
+    struct sigaction action{};
+    action.sa_handler = fatalSignalHandler;
+    action.sa_flags = SA_RESETHAND | SA_NODEFER;
+    sigemptyset(&action.sa_mask);
+    for (const int sig : {SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT})
+        ::sigaction(sig, &action, nullptr);
 }
 
 void registerSignalHandlers() {
@@ -94,6 +135,10 @@ void initDeps() {
 void wireStorage() {
     Filesystem::init(vh::runtime::Deps::get().storageManager);
     vh::runtime::Deps::get().storageManager->initStorageEngines();
+
+    // Every start (so every upgraded install): legacy plaintext thumbnails and orphaned artifacts go away before
+    // anything can serve them.
+    vh::preview::cache::sweepAtStartup(vh::runtime::Deps::get().storageManager->getEngines());
 }
 
 // --- Runtime ---
@@ -112,6 +157,9 @@ void startVaulthalla() {
     const auto log = vh::log::Registry::vaulthalla();
 
     ThreadPoolManager::instance().init();
+
+    // Reader policies (preview.media.*) and the derived-artifact negative-cache TTL.
+    vh::preview::cache::applyConfig();
 
     log->info("[*] Initializing database...");
     initDB();
@@ -134,6 +182,9 @@ void shutdownVaulthalla() {
     log->info("[*] Shutting down Vaulthalla services...");
 
     stopRuntime();
+    // No request can enqueue any more: SIGKILL running converter helpers and join the derive workers while the
+    // storage engines and the DB pool they use are still up.
+    vh::preview::derive::Queue::instance().shutdown();
     ThreadPoolManager::instance().shutdown();
 
     log->info("[✓] Vaulthalla services shut down cleanly.");
@@ -141,6 +192,8 @@ void shutdownVaulthalla() {
 }
 
 int main() {
+    installCrashGuard();
+
     try {
         Registry::init();
         vh::log::Registry::init();

@@ -1,4 +1,5 @@
 #include "share/Manager.hpp"
+#include "rbac/PolicyEpoch.hpp"
 
 #include "db/query/share/AuditEvent.hpp"
 #include "db/query/share/EmailChallenge.hpp"
@@ -84,6 +85,7 @@ public:
     void touchLinkAccess(const std::string& id) override { db::query::share::Link::touchAccess(id); }
 
     void incrementDownload(const std::string& id) override { db::query::share::Link::incrementDownload(id); }
+    bool consumeDownload(const std::string& id) override { return db::query::share::Link::consumeDownload(id); }
 
     void incrementUpload(const std::string& id) override { db::query::share::Link::incrementUpload(id); }
 
@@ -828,6 +830,7 @@ std::shared_ptr<Link> Manager::updateLink(const rbac::Actor& actor, UpdateLinkRe
         if (request.public_role) persistPublicAssignment(*store_, *updated, request.public_role);
         if (request.recipients) replaceRecipientAssignments(*store_, *updated, *request.recipients);
         auto saved = store_->updateLink(updated);
+        rbac::bumpPolicyEpoch();
         store_->appendAuditEvent(audit);
         return saved;
     } catch (...) {
@@ -845,6 +848,7 @@ void Manager::revokeLink(const rbac::Actor& actor, const std::string& id) {
 
     const auto user = humanUser(actor);
     store_->revokeLink(link->id, user ? user->id : 0);
+    rbac::bumpPolicyEpoch();
     store_->revokeSessionsForShare(link->id);
     store_->removeVaultRoleForShare(link->id);
     store_->appendAuditEvent(audit);
@@ -859,6 +863,7 @@ RotateLinkTokenResult Manager::rotateLinkToken(const rbac::Actor& actor, const s
     const auto user = humanUser(actor);
     const auto token = Token::generate(TokenKind::PublicShare);
     store_->rotateLinkToken(link->id, token.lookup_id, token.hash, user ? user->id : 0);
+    rbac::bumpPolicyEpoch();
     store_->revokeSessionsForShare(link->id);
     auto rotated = requirePtr(store_->getLink(link->id), "Share link not found after token rotation");
     store_->appendAuditEvent(audit);
@@ -1119,6 +1124,19 @@ void Manager::appendAccessAuditEvent(const Principal& principal, ShareAccessAudi
     audit->ip_address = principal.ip_address;
     audit->user_agent = principal.user_agent;
     store_->appendAuditEvent(audit);
+}
+
+bool Manager::consumeDownload(const Principal& principal) {
+    if (principal.share_id.empty()) throw std::runtime_error("Share principal has no share id");
+    if (store_->consumeDownload(principal.share_id)) return true;
+    auto audit = auditEvent("share.download.limit", AuditStatus::Denied);
+    audit->share_id = principal.share_id;
+    audit->share_session_id = principal.share_session_id;
+    audit->error_code = "max_downloads_reached";
+    audit->ip_address = principal.ip_address;
+    audit->user_agent = principal.user_agent;
+    store_->appendAuditEvent(audit);
+    return false;
 }
 
 void Manager::incrementDownloadCount(const Principal& principal) {

@@ -1,11 +1,10 @@
 name: 'Run C++ Tests'
 description: 'Runs compiled binary tests.'
-
 runs:
   using: "composite"
   steps:
     - name: Run Tests
-      shell: bash
+      shell: bash ./ci/run-ci bash -euo pipefail {0}
       run: |
         export PATH_TO_TEST_DATA="$GITHUB_WORKSPACE/test-assets"
         echo "Using test data path $PATH_TO_TEST_DATA"

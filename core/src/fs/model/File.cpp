@@ -1,4 +1,5 @@
 #include "fs/model/File.hpp"
+#include "preview/Plan.hpp"
 #include "log/Registry.hpp"
 #include "db/query/fs/Entry.hpp"
 #include "sync/model/RemoteManifest.hpp"
@@ -55,6 +56,9 @@ void vh::fs::model::to_json(nlohmann::json& j, const File& f) {
 
     if (f.mime_type) j["mime_type"] = f.mime_type.value();
     else j["mime_type"] = nullptr;
+
+    // Server-authoritative consumption plan: the console renders this instead of re-deriving it from MIME.
+    j["preview"] = preview::classify(f);
 }
 
 void vh::fs::model::from_json(const nlohmann::json& j, File& f) {

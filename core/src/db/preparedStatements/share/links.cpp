@@ -53,5 +53,9 @@ void vh::db::Connection::initPreparedShareLinks() const {
     conn_->prepare("share_link_rotate_token", "UPDATE share_link SET token_lookup_id = $2, token_hash = $3, updated_by = $4 WHERE id = $1 RETURNING id");
     conn_->prepare("share_link_touch_access", "UPDATE share_link SET last_accessed_at = CURRENT_TIMESTAMP, access_count = access_count + 1 WHERE id = $1 RETURNING id");
     conn_->prepare("share_link_increment_download", "UPDATE share_link SET download_count = download_count + 1 WHERE id = $1 RETURNING id");
+    // Atomic check-and-count: concurrent downloads cannot overshoot max_downloads.
+    conn_->prepare("share_link_consume_download",
+                   "UPDATE share_link SET download_count = download_count + 1 "
+                   "WHERE id = $1 AND (max_downloads IS NULL OR download_count < max_downloads) RETURNING id");
     conn_->prepare("share_link_increment_upload", "UPDATE share_link SET upload_count = upload_count + 1 WHERE id = $1 RETURNING id");
 }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "crypto/SecretKey.hpp"
 #include "crypto/secrets/TPMKeyProvider.hpp"
 #include "fs/Fwd.hpp"
 
@@ -7,13 +8,31 @@
 #include <vector>
 #include <memory>
 #include <atomic>
+#include <span>
 #include <filesystem>
+#include <shared_mutex>
 
 namespace vh::vault {
 
 class EncryptionManager {
 public:
     explicit EncryptionManager(unsigned int vault_id);
+
+    // Test-only: a manager over an in-memory key, no TPM or database (optionally mid-rotation with oldKey).
+    struct ForTesting {};
+    EncryptionManager(ForTesting, unsigned int vault_id, std::span<const uint8_t> key, unsigned int version,
+                      std::span<const uint8_t> oldKey = {});
+
+    // The current key and its version, read together (never a torn pair while rotation swaps them).
+    struct CurrentKey {
+        crypto::SecretKeyPtr key;
+        unsigned int version{};
+    };
+    [[nodiscard]] CurrentKey currentKey() const;
+
+    // The key that decrypts data written under keyVersion (same rules as decrypt()). The snapshot stays valid
+    // (and wiped only when released) even if rotation finishes meanwhile.
+    [[nodiscard]] crypto::SecretKeyPtr keySnapshot(unsigned int keyVersion) const;
 
     // Must be called before encrypt/decrypt
     void load_key();
@@ -49,13 +68,15 @@ public:
     [[nodiscard]] bool rotation_in_progress() const;
 
 private:
-    // The key that decrypts data written under keyVersion (same rules as decrypt()).
-    [[nodiscard]] const std::vector<uint8_t>& keyFor(unsigned int keyVersion) const;
-
     std::unique_ptr<crypto::secrets::TPMKeyProvider> tpmKeyProvider_;
-    std::atomic<bool> rotation_in_progress_;
-    unsigned int vault_id_, version_{};
-    std::vector<uint8_t> key_, old_key_;
+    std::atomic<bool> rotation_in_progress_{false};
+    unsigned int vault_id_;
+
+    // Guards version_, key_ and old_key_ as one unit. Readers copy the shared_ptr snapshots under a shared lock;
+    // rotation replaces them under an exclusive lock. Key bytes are immutable and wiped on last release.
+    mutable std::shared_mutex keyMutex_;
+    unsigned int version_{};
+    crypto::SecretKeyPtr key_, old_key_;
 };
 
 }

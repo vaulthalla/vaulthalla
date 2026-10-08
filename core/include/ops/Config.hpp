@@ -20,7 +20,8 @@ Config saveSettings(const Actor& actor, const nlohmann::json& settings);
 // `vh s3-gateway enable|disable`: admin.s3_gateway.manage_service.
 Config setGatewayEnabled(const Actor& actor, bool enabled);
 
-// Refuses an invalid document (throws ops::Invalid) without touching anything.
+// Refuses an invalid document (throws ops::Invalid) without touching anything. preview.derive.helper_dir is
+// read-only: a document that changes it is invalid (config.yaml only).
 void validateSettings(const nlohmann::json& settings);
 
 }

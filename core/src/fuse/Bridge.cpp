@@ -1,5 +1,6 @@
 #include "fuse/Bridge.hpp"
 #include "storage/Manager.hpp"
+#include "storage/Engine.hpp"
 #include "identities/User.hpp"
 #include "fs/model/Entry.hpp"
 #include "config/Registry.hpp"
@@ -774,6 +775,9 @@ void unlink(const fuse_req_t req, const fuse_ino_t parent, const char* name) {
 
     if (::unlink(entry->backing_path.c_str()) < 0)
         log::Registry::fuse()->debug("[unlink] Failed to remove backing file: {}: {}", entry->backing_path.string(), strerror(errno));
+
+    // The file id ended with the trash: drop its sealed derived artifacts (best effort, never throws).
+    if (resolved.engine) resolved.engine->purgeDerivedArtifacts(entry->id);
 
     runtime::Deps::get().fsCache->evictPath(entry->fuse_path);
     replyOk(req, timer);

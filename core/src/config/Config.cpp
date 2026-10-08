@@ -53,6 +53,7 @@ Config& Config::operator=(Config&&) noexcept = default;
         if (auto node = root["http_preview_server"]) YAML::convert<HttpPreviewConfig>::decode(node, cfg.http_preview);
         if (auto node = root["s3_gateway"]) YAML::convert<S3GatewayConfig>::decode(node, cfg.s3_gateway);
         if (auto node = root["caching"]) YAML::convert<CachingConfig>::decode(node, cfg.caching);
+        if (auto node = root["preview"]) YAML::convert<PreviewConfig>::decode(node, cfg.preview);
         if (auto node = root["database"]) YAML::convert<DatabaseConfig>::decode(node, cfg.database);
         if (auto node = root["auth"]) YAML::convert<AuthConfig>::decode(node, cfg.auth);
         if (auto node = root["sync"]) YAML::convert<SyncConfig>::decode(node, cfg.sync);
@@ -101,6 +102,7 @@ Config& Config::operator=(Config&&) noexcept = default;
         put("email", email);
         put("operator_emails", operator_emails);
         put("caching", caching);
+        put("preview", preview);
         put("auditing", auditing);
         put("logging", logging);
         put("dev", dev);
@@ -123,6 +125,7 @@ Config& Config::operator=(Config&&) noexcept = default;
             {"http_preview_server", c.http_preview},
             {"s3_gateway", c.s3_gateway},
             {"caching", c.caching},
+            {"preview", c.preview},
             {"database", c.database},
             {"auth", c.auth},
             {"sync", c.sync},
@@ -143,6 +146,7 @@ Config& Config::operator=(Config&&) noexcept = default;
         j.at("http_preview_server").get_to(c.http_preview);
         if (j.contains("s3_gateway")) j.at("s3_gateway").get_to(c.s3_gateway);
         j.at("caching").get_to(c.caching);
+        if (j.contains("preview")) j.at("preview").get_to(c.preview);
         j.at("database").get_to(c.database);
         j.at("auth").get_to(c.auth);
         j.at("sync").get_to(c.sync);
@@ -356,6 +360,140 @@ Config& Config::operator=(Config&&) noexcept = default;
     void from_json(const nlohmann::json &j, CachingConfig &c) {
         j.at("thumbnails").get_to(c.thumbnails);
         c.max_size_mb = j.value("max_size_mb", 10240);
+    }
+
+    namespace {
+        std::string lowercasePreviewValue(const std::string_view value) {
+            std::string normalized(value);
+            std::ranges::transform(normalized, normalized.begin(), [](const unsigned char ch) {
+                return static_cast<char>(std::tolower(ch));
+            });
+            return normalized;
+        }
+    }
+
+    std::string previewIntegrityModeToString(const PreviewIntegrityMode mode) {
+        return mode == PreviewIntegrityMode::Strict ? "strict" : "optimistic";
+    }
+
+    PreviewIntegrityMode previewIntegrityModeFromString(const std::string_view value) {
+        const auto v = lowercasePreviewValue(value);
+        if (v == "optimistic") return PreviewIntegrityMode::Optimistic;
+        if (v == "strict") return PreviewIntegrityMode::Strict;
+        throw std::invalid_argument("preview.media.integrity must be optimistic|strict, got '" + v + "'");
+    }
+
+    std::string previewRemoteModeToString(const PreviewRemoteMode mode) {
+        switch (mode) {
+            case PreviewRemoteMode::Hydrate: return "hydrate";
+            case PreviewRemoteMode::Ranged: return "ranged";
+            case PreviewRemoteMode::Off: return "off";
+        }
+        return "hydrate";
+    }
+
+    PreviewRemoteMode previewRemoteModeFromString(const std::string_view value) {
+        const auto v = lowercasePreviewValue(value);
+        if (v == "hydrate") return PreviewRemoteMode::Hydrate;
+        if (v == "ranged") return PreviewRemoteMode::Ranged;
+        if (v == "off") return PreviewRemoteMode::Off;
+        throw std::invalid_argument("preview.media.remote must be hydrate|ranged|off, got '" + v + "'");
+    }
+
+    std::string previewHwaccelToString(const PreviewHwaccel hwaccel) {
+        switch (hwaccel) {
+            case PreviewHwaccel::Auto: return "auto";
+            case PreviewHwaccel::Software: return "software";
+            case PreviewHwaccel::Vaapi: return "vaapi";
+            case PreviewHwaccel::Qsv: return "qsv";
+            case PreviewHwaccel::Nvenc: return "nvenc";
+        }
+        return "auto";
+    }
+
+    PreviewHwaccel previewHwaccelFromString(const std::string_view value) {
+        const auto v = lowercasePreviewValue(value);
+        if (v == "auto") return PreviewHwaccel::Auto;
+        if (v == "software") return PreviewHwaccel::Software;
+        if (v == "vaapi") return PreviewHwaccel::Vaapi;
+        if (v == "qsv") return PreviewHwaccel::Qsv;
+        if (v == "nvenc") return PreviewHwaccel::Nvenc;
+        throw std::invalid_argument("preview.media.hwaccel must be auto|software|vaapi|qsv|nvenc, got '" + v + "'");
+    }
+
+    std::string previewTranscodeModeToString(const PreviewTranscodeMode mode) {
+        return mode == PreviewTranscodeMode::Off ? "off" : "on_demand";
+    }
+
+    PreviewTranscodeMode previewTranscodeModeFromString(const std::string_view value) {
+        const auto v = lowercasePreviewValue(value);
+        if (v == "off") return PreviewTranscodeMode::Off;
+        if (v == "on_demand") return PreviewTranscodeMode::OnDemand;
+        throw std::invalid_argument("preview.media.transcode must be off|on_demand, got '" + v + "'");
+    }
+
+    void to_json(nlohmann::json &j, const PreviewMediaConfig &c) {
+        j = {
+            {"integrity", previewIntegrityModeToString(c.integrity)},
+            {"remote", previewRemoteModeToString(c.remote)},
+            {"hwaccel", previewHwaccelToString(c.hwaccel)},
+            {"transcode", previewTranscodeModeToString(c.transcode)}
+        };
+    }
+
+    void from_json(const nlohmann::json &j, PreviewMediaConfig &c) {
+        if (j.contains("integrity")) c.integrity = previewIntegrityModeFromString(j.at("integrity").get<std::string>());
+        if (j.contains("remote")) c.remote = previewRemoteModeFromString(j.at("remote").get<std::string>());
+        if (j.contains("hwaccel")) c.hwaccel = previewHwaccelFromString(j.at("hwaccel").get<std::string>());
+        if (j.contains("transcode")) c.transcode = previewTranscodeModeFromString(j.at("transcode").get<std::string>());
+    }
+
+    void to_json(nlohmann::json &j, const PreviewDeriveConfig &c) {
+        j = {
+            {"helper_dir", c.helper_dir.string()},
+            {"max_concurrency", c.max_concurrency},
+            {"max_queue", c.max_queue},
+            {"max_ram_mb", c.max_ram_mb},
+            {"max_cpu_seconds", c.max_cpu_seconds},
+            {"wall_timeout_seconds", c.wall_timeout_seconds},
+            {"max_output_mb", c.max_output_mb},
+            {"failure_ttl_hours", c.failure_ttl_hours}
+        };
+    }
+
+    void from_json(const nlohmann::json &j, PreviewDeriveConfig &c) {
+        c.helper_dir = j.value("helper_dir", c.helper_dir.string());
+        c.max_concurrency = j.value("max_concurrency", c.max_concurrency);
+        c.max_queue = j.value("max_queue", c.max_queue);
+        c.max_ram_mb = j.value("max_ram_mb", c.max_ram_mb);
+        c.max_cpu_seconds = j.value("max_cpu_seconds", c.max_cpu_seconds);
+        c.wall_timeout_seconds = j.value("wall_timeout_seconds", c.wall_timeout_seconds);
+        c.max_output_mb = j.value("max_output_mb", c.max_output_mb);
+        c.failure_ttl_hours = j.value("failure_ttl_hours", c.failure_ttl_hours);
+    }
+
+    void to_json(nlohmann::json &j, const PreviewTextConfig &c) {
+        j = {{"max_edit_bytes", c.max_edit_bytes}};
+    }
+
+    void from_json(const nlohmann::json &j, PreviewTextConfig &c) {
+        c.max_edit_bytes = j.value("max_edit_bytes", c.max_edit_bytes);
+    }
+
+    void to_json(nlohmann::json &j, const PreviewConfig &c) {
+        j = {
+            {"media", c.media},
+            {"derive", c.derive},
+            {"text", c.text},
+            {"max_render_pixels", c.max_render_pixels}
+        };
+    }
+
+    void from_json(const nlohmann::json &j, PreviewConfig &c) {
+        if (j.contains("media")) j.at("media").get_to(c.media);
+        if (j.contains("derive")) j.at("derive").get_to(c.derive);
+        if (j.contains("text")) j.at("text").get_to(c.text);
+        c.max_render_pixels = j.value("max_render_pixels", c.max_render_pixels);
     }
 
     void to_json(nlohmann::json &j, const DatabaseConfig &c) {

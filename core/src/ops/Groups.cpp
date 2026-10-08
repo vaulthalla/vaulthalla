@@ -1,4 +1,5 @@
 #include "ops/Groups.hpp"
+#include "rbac/PolicyEpoch.hpp"
 
 #include "auth/registration/Validator.hpp"
 #include "db/query/identities/Group.hpp"
@@ -96,6 +97,7 @@ GroupPtr create(const Actor& actor, const Create& req) {
 }
 
 GroupPtr update(const Actor& actor, const Update& req) {
+    const struct EpochOnExit { ~EpochOnExit() { rbac::bumpPolicyEpoch(); } } bumpPolicyEpochOnExit{};
     if (!perms(actor).canEdit()) throw Denied("you do not have permission to update groups");
 
     const auto group = requireGroup(req.group);
@@ -116,6 +118,7 @@ GroupPtr update(const Actor& actor, const Update& req) {
 }
 
 GroupPtr remove(const Actor& actor, const Ref& ref) {
+    const struct EpochOnExit { ~EpochOnExit() { rbac::bumpPolicyEpoch(); } } bumpPolicyEpochOnExit{};
     if (!perms(actor).canDelete()) throw Denied("you do not have permission to delete groups");
 
     auto group = requireGroup(ref);
@@ -140,6 +143,7 @@ std::vector<GroupPtr> listForUser(const Actor& actor, const unsigned int userId)
 }
 
 GroupPtr addMember(const Actor& actor, const Membership& req) {
+    const struct EpochOnExit { ~EpochOnExit() { rbac::bumpPolicyEpoch(); } } bumpPolicyEpochOnExit{};
     if (!perms(actor).canAddMember()) throw Denied("you do not have permission to add users to groups");
 
     const auto group = requireGroup(req.group);
@@ -149,6 +153,7 @@ GroupPtr addMember(const Actor& actor, const Membership& req) {
 }
 
 GroupPtr removeMember(const Actor& actor, const Membership& req) {
+    const struct EpochOnExit { ~EpochOnExit() { rbac::bumpPolicyEpoch(); } } bumpPolicyEpochOnExit{};
     if (!perms(actor).canRemoveMember()) throw Denied("you do not have permission to remove users from groups");
 
     const auto group = requireGroup(req.group);

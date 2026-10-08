@@ -23,6 +23,7 @@
 #include "share/TargetResolver.hpp"
 #include "sync/model/Operation.hpp"
 #include "log/Registry.hpp"
+#include "preview/Plan.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -167,6 +168,8 @@ void requireShareMode(const std::shared_ptr<vh::protocols::ws::Session>& session
     } else {
         const auto& file = static_cast<const vh::fs::model::File&>(entry);
         out["mime_type"] = file.mime_type ? json(*file.mime_type) : json(nullptr);
+        // The same server-authoritative plan human listings carry; the share's capabilities still gate each lane.
+        out["preview"] = vh::preview::classify(file);
     }
     return out;
 }

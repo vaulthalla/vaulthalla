@@ -18,6 +18,11 @@
 #include "fs/model/file/Trashed.hpp"
 #include "fs/model/File.hpp"
 #include "identities/User.hpp"
+#include "storage/GcmFileReader.hpp"
+#include "fs/cache/Registry.hpp"
+#include "runtime/Deps.hpp"
+#include "crypto/util/encrypt.hpp"
+#include "preview/cache/Store.hpp"
 
 #include <system_error>
 
@@ -72,6 +77,64 @@ namespace vh::storage {
         return db::query::fs::File::isFile(vault->id, rel_path);
     }
 
+    namespace {
+        class EngineEmptyReader final : public PlaintextReader {
+        public:
+            explicit EngineEmptyReader(Generation g) : generation_(std::move(g)) {}
+            [[nodiscard]] uint64_t size() const override { return 0; }
+            std::size_t read(uint64_t, std::span<uint8_t>) override { return 0; }
+            [[nodiscard]] const Generation &generation() const override { return generation_; }
+        private:
+            Generation generation_;
+        };
+    }
+
+    std::unique_ptr<PlaintextReader> Engine::openPlaintextReader(const std::shared_ptr<File> &f,
+                                                                 const ReaderOptions options) const {
+        if (!f) throw std::invalid_argument("Cannot read a null file");
+        auto generation = generationOf(*f);
+        if (vault) generation.vault_id = vault->id;
+        if (f->size_bytes == 0) return std::make_unique<EngineEmptyReader>(std::move(generation));
+
+        std::error_code ec;
+        if (!fs::exists(f->backing_path, ec)) return openMissingReader(f, options);
+        return openLocalReader(f, options);
+    }
+
+    std::unique_ptr<PlaintextReader> Engine::openMissingReader(const std::shared_ptr<File> &f,
+                                                               const ReaderOptions &) const {
+        throw std::runtime_error("File content not found: " + f->path.string());
+    }
+
+    std::unique_ptr<PlaintextReader> Engine::openLocalReader(const std::shared_ptr<File> &f,
+                                                             const ReaderOptions &options) const {
+        GcmFileReader::Params params;
+        params.path = f->backing_path;
+        params.plaintextSize = f->size_bytes;
+        params.generation = generationOf(*f);
+        if (vault) params.generation.vault_id = vault->id;
+        params.integrityDomain = "file:" + std::to_string(params.generation.vault_id) + ":" + std::to_string(f->id);
+        params.strict = resolveIntegrityPolicy(options.integrity) == IntegrityPolicy::Strict;
+
+        if (!f->encryption_iv.empty()) {
+            if (!encryptionManager) throw std::runtime_error("Vault has no encryption key loaded");
+            const auto iv = crypto::util::b64_decode(f->encryption_iv);
+            if (iv.size() != params.iv.size()) throw std::runtime_error("Invalid stored IV for " + f->path.string());
+            std::ranges::copy(iv, params.iv.begin());
+            params.key = encryptionManager->keySnapshot(f->encrypted_with_key_version);
+
+            // On a tag mismatch: was the file resealed (new IV) while we read the old one? Then it's a race.
+            // Looked up by id (stable across rename/move): only a new IV means the bytes were legitimately replaced.
+            params.stillCurrent = [id = f->id, iv = f->encryption_iv]() {
+                const auto& cache = runtime::Deps::get().fsCache;
+                if (!cache || id == 0) return true;
+                const auto entry = std::dynamic_pointer_cast<File>(cache->getEntryById(id));
+                return !entry || entry->encryption_iv == iv;
+            };
+        }
+        return std::make_unique<GcmFileReader>(std::move(params));
+    }
+
     std::vector<uint8_t> Engine::decrypt(const std::shared_ptr<File> &f) const {
         const auto context = db::query::fs::File::getEncryptionIVAndVersion(vault->id, f->path);
         if (!context) throw std::runtime_error("No encryption IV found for file: " + f->path.string());
@@ -121,7 +184,13 @@ namespace vh::storage {
     // This vault's own backing tree (backingPath/<mount_point>), not the shared backing root that holds every vault
     // and the cache (#161: every vault used to report, and be quota-checked against, the sum of all of them).
     uintmax_t Engine::getVaultSize() const { return getDirectorySize(paths->backingVaultRoot); }
-    uintmax_t Engine::getCacheSize() const { return getDirectorySize(paths->cacheRoot); }
+    // Derived preview artifacts (<cacheRoot>/derived) are disposable, non-authoritative and bounded globally by
+    // caching.max_size_mb, so they are not charged to the vault's quota.
+    uintmax_t Engine::getCacheSize() const {
+        const auto total = getDirectorySize(paths->cacheRoot);
+        const auto derived = getDirectorySize(paths->cacheRoot / "derived");
+        return total > derived ? total - derived : 0;
+    }
     uintmax_t Engine::getVaultAndCacheTotalSize() const { return getVaultSize() + getCacheSize(); }
     uintmax_t Engine::freeSpace() const {
         if (!vault) return 0;
@@ -139,54 +208,13 @@ namespace vh::storage {
         return vault->quota > usedWithReserve ? vault->quota - usedWithReserve : 0;
     }
 
-    void Engine::purgeThumbnails(const fs::path &rel_path) const {
-        for (const auto &size: Registry::get().caching.thumbnails.sizes)
-            if (const auto thumbnailPath = paths->absPath(rel_path, PathType::THUMBNAIL_ROOT) / std::to_string(size);
-                fs::exists(thumbnailPath))
-                fs::remove(thumbnailPath);
-    }
-
-    void Engine::moveThumbnails(const std::filesystem::path &from, const std::filesystem::path &to) const {
-        for (const auto &size: Registry::get().caching.thumbnails.sizes) {
-            auto fromPath = paths->absPath(from, PathType::THUMBNAIL_ROOT) / std::to_string(size);
-            auto toPath = paths->absPath(to, PathType::THUMBNAIL_ROOT) / std::to_string(size);
-
-            if (fromPath.extension() != ".jpg" && fromPath.extension() != ".jpeg") {
-                fromPath += ".jpg";
-                toPath += ".jpg";
-            }
-
-            if (!fs::exists(fromPath)) {
-                log::Registry::storage()->warn("[StorageEngine] Thumbnail does not exist: {}", fromPath.string());
-                continue;
-            }
-
-            if (const auto err = Filesystem::mkdir({.path = toPath.parent_path()}); err)
-                throw std::runtime_error("Failed to create thumbnail directory: " + toPath.parent_path().string() + " Error: " + std::to_string(err));
-
-            fs::rename(fromPath, toPath);
-        }
-    }
-
-    void Engine::copyThumbnails(const std::filesystem::path &from, const std::filesystem::path &to) const {
-        for (const auto &size: Registry::get().caching.thumbnails.sizes) {
-            auto fromPath = paths->absPath(from, PathType::THUMBNAIL_ROOT) / std::to_string(size);
-            auto toPath = paths->absPath(to, PathType::THUMBNAIL_ROOT) / std::to_string(size);
-
-            if (fromPath.extension() != ".jpg" && fromPath.extension() != ".jpeg") {
-                fromPath += ".jpg";
-                toPath += ".jpg";
-            }
-
-            if (!fs::exists(fromPath)) {
-                log::Registry::storage()->warn("[StorageEngine] Thumbnail does not exist: {}", fromPath.string());
-                continue;
-            }
-
-            if (const auto err = Filesystem::mkdir({.path = toPath.parent_path()}); err)
-                throw std::runtime_error("Failed to create thumbnail directory: " + toPath.parent_path().string() + " Error: " + std::to_string(err));
-
-            fs::copy_file(fromPath, toPath, fs::copy_options::overwrite_existing);
+    void Engine::purgeDerivedArtifacts(const unsigned int fileId) const {
+        if (fileId == 0) return;
+        try {
+            preview::cache::Store::purgeFile(std::const_pointer_cast<Engine>(shared_from_this()), fileId);
+        } catch (const std::exception &e) {
+            log::Registry::storage()->warn("[StorageEngine] Failed to purge derived artifacts of file {}: {}", fileId,
+                                           e.what());
         }
     }
 
@@ -226,9 +254,9 @@ namespace vh::storage {
 
     void Engine::removeLocally(const fs::path &rel_path) const {
         const auto path = rel_path.string().front() != '/' ? fs::path("/" / rel_path) : rel_path;
-        purgeThumbnails(path);
         const auto file = db::query::fs::File::getFileByPath(vault->id, path);
         db::query::fs::File::deleteFile(vault->owner_id, file);
+        if (file) purgeDerivedArtifacts(file->id);
 
         if (const auto absPath = paths->absPath(path, PathType::BACKING_VAULT_ROOT); fs::exists(absPath))
             fs::remove(absPath);
@@ -268,15 +296,8 @@ namespace vh::storage {
 
             absPath = parent;
         }
-
-        const auto vaultPath = makeAbsolute(f->path);
-
-        for (const auto &size: Registry::get().caching.thumbnails.sizes) {
-            const auto thumbPath = paths->absPath(vaultPath, PathType::THUMBNAIL_ROOT) / std::to_string(size);
-            fs::remove(thumbPath, ec);
-        }
-
-        fs::remove(paths->absPath(vaultPath, PathType::CACHE_ROOT), ec);
+        // Derived artifacts were dropped when the file was trashed (its file id ended there); the startup sweep
+        // collects anything an interrupted trash left behind.
     }
 
     std::filesystem::path Engine::vaultPathToFusePath(const std::filesystem::path &vPath) const {

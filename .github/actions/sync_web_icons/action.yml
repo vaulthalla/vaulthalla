@@ -1,9 +1,10 @@
 name: 'Sync Web Icons'
 description: 'Copies consumed private web icons from the runner into web/public/icons.'
-
+# The licensed icon store is mounted read-only into the CI container (CI_RO_MOUNTS) and found through
+# VAULTHALLA_WEB_ICON_SRC; it never enters the repository or the workspace beyond the icons web/src imports.
 runs:
   using: "composite"
   steps:
     - name: Sync private web icons
-      shell: bash
-      run: bash "${{ github.workspace }}/web/bin/sync_private_icons.sh"
+      shell: bash ./ci/run-ci bash -euo pipefail {0}
+      run: bash "$GITHUB_WORKSPACE/web/bin/sync_private_icons.sh"

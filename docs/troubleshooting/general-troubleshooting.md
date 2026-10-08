@@ -63,23 +63,62 @@ sudo nginx -t
 
 If the dashboard loads but filesystem or vault data does not, check the user's admin role, vault role, and group membership.
 
-## Preview Or Download Fails
+## Previews And Media
 
-Check:
+Start with the basics:
 
-- The user or share has `preview` or `download` permission.
-- The preview HTTP server is enabled.
-- The core daemon can read the vault object.
-- The Nginx preview route is proxying correctly.
-- The file type can be previewed.
+- The user's vault role (or the share link's operations) allows what the file needs. Image and PDF previews need `preview`; originals, video and audio, 3D models, text and STEP models need `download`. A preview-only share link refuses those by design. See [File Previews](/web-console/previews).
+- `http_preview_server.enabled` is true and Nginx proxies `/preview`, `/download` and `/upload` to it (`sudo nginx -t`).
+- The daemon can read the file: try downloading it as a user with known vault access.
 
-Fallback test:
+Then search the daemon log for the failing request:
 
 ```bash
-vh vault sync info <vault>
+journalctl -u vaulthalla.service -n 500 | grep -Ei 'HttpHandler|IntegrityRegistry|DerivedStore|HttpServer'
 ```
 
-Then try downloading the file through a user with known vault access.
+### Converter Unavailable
+
+The console says "The 3D converter isn't installed" or "Server-side conversion isn't available", and the HTTP response is `503` with `"code": "converter_unavailable"` and the helper it needs. Install the optional package; no restart is needed:
+
+```bash
+sudo apt install vaulthalla-preview-cad      # STEP/STP models
+sudo apt install vaulthalla-preview-media    # Convert for playback, posters, media probing
+ls -l /usr/lib/vaulthalla/helpers/
+```
+
+If the package is installed, check that `preview.derive.helper_dir` (default `/usr/lib/vaulthalla/helpers`) points at it and that its version matches `vaulthalla` exactly. The daemon also reports a helper as unavailable, and logs why once, when:
+
+- The helper, or any directory above it, is not owned by root or is writable by group or others. Packaged helpers always pass; a hand-copied helper may not.
+- The helper refused to run because it could not sandbox itself. Helpers require Landlock and seccomp; on a kernel without Landlock (or with it left out of the `lsm=` boot parameter) every conversion reports `converter_unavailable`.
+
+```bash
+journalctl -u vaulthalla.service | grep -E 'refusing to run converter helper|refuses to run'
+cat /sys/kernel/security/lsm    # must list landlock
+```
+
+### STEP Conversion Or Media Transcode Failed
+
+"This model could not be converted" or "The conversion failed" (HTTP `422`, `"code": "conversion_failed"` with a reason) means the helper rejected the file, ran out of a limit, or crashed. The failure is cached: the same file version is not retried until it changes or `preview.derive.failure_ttl_hours` (24 by default) passes, so a malformed or hostile file can't cause a retry storm. Typical reasons are a malformed or unsupported file, or a `preview.derive` limit (memory, CPU time, wall clock, output size) that a large model or long video exceeded. Raise the specific limit if the file is legitimate, then save a new version of the file or wait for the failure to expire.
+
+"The server is busy" (HTTP `503` with `Retry-After`) means the conversion queue (`preview.derive.max_queue`), the render slots, or `http_preview_server.max_connections` are full. It clears on its own.
+
+### Content Unavailable For Cloud Files
+
+A file in an S3/R2 vault whose bytes are only in the bucket (not cached locally) answers `503` with `"code": "content_unavailable"` when the server may not fetch it: `preview.media.remote` is `off`, or the vault's request or price budget refused the fetch. Check the budgets with `vh vault sync info <vault>` and `vh pricing budget status`, or change `preview.media.remote`. File-list thumbnails never fetch remote-only files, so those rows simply have no thumbnail.
+
+### Integrity Failures
+
+Vault files are authenticated with AES-GCM. A stream that fails the check stops, and the log shows `AES-GCM verification FAILED for file:<vault id>:<file id> — streams aborted` (and `Integrity failure serving …` for the request, which answers `500` with `"code": "integrity_failed"`).
+
+- With `preview.media.integrity: optimistic` (the default), a stream starts at once and the whole file is verified once in the background; a failure cuts off every stream of that file version, so a browser may have received part of the file before it stopped.
+- With `strict`, nothing is sent until the file has verified, so a corrupt file never starts streaming.
+
+Either way, once a file version has failed, the daemon refuses it until the file changes (a restart verifies it again from scratch). A failure means the stored ciphertext does not match its key and IV: disk corruption, an out-of-band edit of the backing file, or a restore that mixed files and database rows from different points in time. Do not overwrite it blindly; restore the file from a backup and see [Backup And Recovery](/vaults/backup-and-recovery).
+
+### Nginx Buffering On Upgraded Hosts
+
+The managed Nginx site on fresh installs sets `proxy_buffering off` and `proxy_max_temp_file_size 0` on `/preview` and `/download`. Upgrades never rewrite an existing site, so older sites don't have those lines; streaming still works because the daemon sends `X-Accel-Buffering: no` on every streamed response, which tells Nginx not to buffer it. If you run a hand-written site or a different proxy, make sure it doesn't buffer `/download` and `/preview` responses to disk, since those contain decrypted file content.
 
 ## S3/R2 Vault Cannot Connect
 

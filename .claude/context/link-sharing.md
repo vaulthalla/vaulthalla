@@ -12,8 +12,10 @@ for archaeology, because parts of it are stale (for example, it says uploads sta
   per-assignment filesystem overrides (`072_share_vault_role_assignments.sql`).
   `link_share_vault_role` is legacy and read-only.
 - Core: `core/include/share/*`: `Manager`, `TargetResolver`, `PrincipalResolver`, `Scope`, `RateLimiter`.
-- Web: `/share/[token]` renders the regular `components/fs` path. `vaultShareStore` holds **only**
-  bootstrap, session, and email state, while `fsStore.ts` owns filesystem state. Share ws is in `useShareWebSocket.ts`.
+- Web: `/share/[token]/[[...path]]` renders `features/share/SharePage.tsx`, which reuses the console
+  `features/files/FileBrowser` with a share `FsSource` (`features/files/source.ts`: share caps, `share=1` URLs, no
+  `edit`). `features/share/shareSession.ts` (zustand) holds **only** bootstrap, session and email-challenge state and
+  its own `WsClient`.
 
 ## Invariants
 
@@ -22,9 +24,10 @@ for archaeology, because parts of it are stale (for example, it says uploads sta
 - Link creation (`canGrant`) requires the human creator to hold every delegated filesystem permission.
 - **Overwrite goes through filesystem RBAC `FilesystemAction::Overwrite`** and must never become a
   share-only boolean or shortcut (`Grant.cpp`).
-- Public preview and download use `/preview?share=1` and `/download?share=1` with the `Secure` `share_refresh` cookie.
+- Public preview, download, media and derived requests use `/preview*?share=1` and `/download*?share=1` with the
+  `Secure` `share_refresh` cookie.
   Raw tokens never go in URLs. Manual QA therefore needs the HTTPS origin (Caddy, `https://vh.home.arpa:8443`).
-- Uploads use the HTTP lane `/upload/session?share=1` (`fsStore.ts`, `http/upload/Coordinator.cpp`).
+- Uploads use the HTTP lane `/upload/session?share=1` (`features/files/transfers.ts`, `http/upload/Coordinator.cpp`).
 - Directory thumbnails use scoped HTTP preview, never per-row ws preview.
 - Upload-only ("dropbox") shares never list or preview beyond what they were granted. A share upload needs only the
   `upload` op (parent resolves as Write → directory Upload, the file as Write → file Upload); no `metadata`/`list`.
@@ -34,8 +37,25 @@ for archaeology, because parts of it are stale (for example, it says uploads sta
 - HTTP upload sessions (`http/upload/Coordinator.cpp`) expire 30 minutes after the owning session's last request or
   body chunk (sliding), with a 24 h ceiling; `Coordinator::setClockForTesting` drives the tests.
 - Download `Content-Disposition` is `attachment; filename="<ASCII fallback>"; filename*=UTF-8''<pct-encoded>`
-  (`Router::attachmentContentDisposition`); leading dots are kept. Single-file downloads are still buffered in RAM
-  (256 MiB cap): files are sealed as one AES-256-GCM blob, so streaming needs a chunked at-rest format first.
+  (`Router::attachmentContentDisposition`); leading dots are kept. Single-file downloads stream with no size cap:
+  positioned reads decrypt only the requested ciphertext with the GCM CTR keystream, and the whole message is
+  authenticated once per file version (`IntegrityRegistry`, see `architecture.md` "Byte-serving spine"). Folder ZIPs
+  are still buffered (≤ 256 MiB source, 4096 entries). A chunked AEAD at-rest format would only be needed for
+  *authenticated* random access to remote-only objects (`preview.media.remote: ranged`).
+- **Preview ≠ Download.** The share op `preview` gets only lossy server renders (`/preview` JPEGs, PDF pages,
+  `poster-jpg`); `download` gets original bytes and full-fidelity derivatives (`/download`, `/download/content`
+  inline media/models/text, SVG/WebP originals, `/preview/derived` `model-glb`/`transcode-*`/`probe-json`). The
+  capability per file comes from the server's preview plan (`preview::classify`, `"requires"`); the web shows
+  "Preview not available with this link's permissions" instead of fetching. Share editing (`PUT /upload/text`) is
+  refused (403) for every share session.
+- **Accounting and `max_downloads`.** `http::access::recordShareAccess` coalesces per share session × entry × source id
+  × event type (`share.preview.http`, `share.content.http`, `share.download.http`, `share.derived.http`) per 30 min:
+  one audit event, and for Download-capability accesses one `max_downloads` unit via `share::Manager::consumeDownload`
+  (a single conditional UPDATE; previously stored but never enforced). Over the limit: HTTP 403
+  `max_downloads_reached` and a `share.download.limit` Denied audit. HEAD, 304 and further ranges of the same
+  playback don't count. The resolved share principal is cached 15 s keyed to `rbac::policyEpoch()`, which share link
+  update/revoke/rotation bump. The console share dialog doesn't set `max_downloads` (ws `share.link.create/update`
+  accept it).
 
 ## Open items (verified 2026-09-30)
 

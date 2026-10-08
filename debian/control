@@ -27,7 +27,18 @@ Build-Depends:
  libtss2-dev,
  libssl-dev (>= 3.0),
  zlib1g-dev,
- libgtest-dev
+ libgtest-dev,
+ libseccomp-dev <!pkg.vaulthalla.nocad> <!pkg.vaulthalla.nomedia>,
+ libocct-data-exchange-dev <!pkg.vaulthalla.nocad>,
+ libocct-foundation-dev <!pkg.vaulthalla.nocad>,
+ libocct-modeling-algorithms-dev <!pkg.vaulthalla.nocad>,
+ libocct-modeling-data-dev <!pkg.vaulthalla.nocad>,
+ libocct-ocaf-dev <!pkg.vaulthalla.nocad>,
+ libavcodec-dev <!pkg.vaulthalla.nomedia>,
+ libavformat-dev <!pkg.vaulthalla.nomedia>,
+ libavutil-dev <!pkg.vaulthalla.nomedia>,
+ libswresample-dev <!pkg.vaulthalla.nomedia>,
+ libswscale-dev <!pkg.vaulthalla.nomedia>
 Standards-Version: 4.6.2
 Homepage: https://github.com/vaulthalla/vaulthalla-core
 #Vcs-Browser: https://salsa.debian.org/debian/vaulthalla
@@ -52,9 +63,44 @@ Recommends:
  python3-certbot-dns-cloudflare,
  swtpm,
  swtpm-tools
+Suggests:
+ vaulthalla-preview-cad,
+ vaulthalla-preview-media
 Description: Self-hosted cloud platform with native FUSE and S3 sync
  Vaulthalla is a modern self-hosted cloud storage platform designed as
  a high-performance alternative to Nextcloud. It features a C++ core
  daemon, native Linux filesystem via FUSE, S3-compatible object storage,
  PostgreSQL indexing, and a secure web frontend. Vaulthalla emphasizes
  speed, sovereignty, and deep system integration for power users.
+
+Package: vaulthalla-preview-cad
+Architecture: any
+Build-Profiles: <!pkg.vaulthalla.nocad>
+Depends:
+ vaulthalla (= ${binary:Version}),
+ ${shlibs:Depends},
+ ${misc:Depends}
+Description: Vaulthalla STEP/STP preview converter
+ Optional helper for the Vaulthalla daemon that converts STEP and STP CAD
+ models into binary glTF (GLB) for the web console's 3D viewer. Built on
+ Open CASCADE.
+ .
+ The daemon runs it out of process, one process per conversion, under
+ resource limits, Landlock and a seccomp filter. Without this package
+ STEP files are listed and downloadable but have no 3D preview.
+
+Package: vaulthalla-preview-media
+Architecture: any
+Build-Profiles: <!pkg.vaulthalla.nomedia>
+Depends:
+ vaulthalla (= ${binary:Version}),
+ ${shlibs:Depends},
+ ${misc:Depends}
+Description: Vaulthalla video and audio preview converter
+ Optional helper for the Vaulthalla daemon that probes media files and
+ produces poster frames and browser-playable transcodes with FFmpeg's
+ libraries.
+ .
+ The daemon runs it out of process under resource limits, Landlock and a
+ seccomp filter. Without this package media that browsers can play natively
+ still streams; posters and transcodes are unavailable.

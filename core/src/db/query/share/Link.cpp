@@ -225,6 +225,13 @@ void Link::incrementDownload(const std::string& id) {
     });
 }
 
+bool Link::consumeDownload(const std::string& id) {
+    link_query_detail::require_uuid(id, "id");
+    return Transactions::exec("share::Link::consumeDownload", [&](pqxx::work& txn) {
+        return !txn.exec(pqxx::prepped{"share_link_consume_download"}, id).empty();
+    });
+}
+
 void Link::incrementUpload(const std::string& id) {
     link_query_detail::require_uuid(id, "id");
     Transactions::exec("share::Link::incrementUpload", [&](pqxx::work& txn) {

@@ -51,6 +51,17 @@ backends (repeated, concurrent), mid-transaction loss, exhaustion timeout, and a
 wiring `database.pool_size`, a database line in the watchdog email body, and TCP keepalives or a statement timeout
 for a server that hangs instead of dropping the session.
 
+### Fixed on feat/rich-preview-platform: a crash wedged the daemon instead of restarting it
+
+Found on the dev VM (2026-10-06). `fs::metadata::Magic` shared one libmagic cookie per static instance across
+threads with no lock. Concurrent FUSE seals and uploads corrupted the heap, and a SIGSEGV hit `malloc` in
+`WorkingCopies::seal`. The kernel core dump then waited forever: two daemon threads were in `close()` on files of
+its own mount, waiting for a FUSE reply. Ports accepted but never answered, `gdb` attach hung, and
+`Restart=on-failure` never fired. Fixes: `Magic` serializes each cookie (`test_magic_concurrency`, which is red
+under ASan without it), and `main()` sets `PR_SET_DUMPABLE 0` plus a backtrace-to-journal fatal handler
+(contract `test_daemon_crash_exits_instead_of_wedging_its_mount`). To recover a host wedged in `coredump_wait`,
+write `1` to `/sys/fs/fuse/connections/<minor>/abort` (the minor comes from `/proc/self/mountinfo`).
+
 ### P0-2: maintainer scripts can block indefinitely on the FUSE mount
 
 `debian/postinst` `is_mountpoint()` (~L67) runs `mountpoint -q "$path"` with no timeout, and there may be other

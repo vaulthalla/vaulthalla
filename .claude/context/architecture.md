@@ -38,7 +38,8 @@ Fwd.hpp once it's forward-declared in more than one place. The `vh_usage` librar
 ## Process model
 
 `core/main/main.cpp` boot sequence: config + log registries → DB init + prepared statements +
-optional seed → runtime deps → storage wiring → `runtime::Manager` start → wait for SIGINT/SIGTERM.
+optional seed → runtime deps → storage wiring (+ derived-cache startup sweep) → `runtime::Manager` start → wait
+for SIGINT/SIGTERM. Shutdown: `Manager::stopAll` → `preview::derive::Queue::shutdown()` → thread pools.
 
 `core/src/runtime/Manager.cpp` owns the service lifecycle. It runs a watchdog every 2s and restarts
 a service after 500ms. Start order:
@@ -56,7 +57,7 @@ ShellServer is not created in test mode (`paths::testMode`).
 | Surface | Code | Default bind (shipped `deploy/config/config.yaml`) |
 |---|---|---|
 | WebSocket `/ws` | `ws/Server.cpp`, `ws/Router.cpp`, `ws/Handler.cpp`, `ws/handler/*`, `ws/Session.cpp` | `0.0.0.0:36969` |
-| HTTP preview/download/upload/auth | `http/Server.cpp`, `http/Router.cpp`, `http/upload/Coordinator.cpp` | `0.0.0.0:36970` |
+| HTTP preview/download/upload/auth | `http/Server.cpp`, `http/Session.cpp`, `http/Router.cpp`, `http/Access.cpp`, `http/handler/*`, `http/upload/Coordinator.cpp` | `0.0.0.0:36970` (fresh installs: `127.0.0.1`) |
 | S3 gateway (SigV4, multipart) | `s3/*` (`GatewayService`, `SigV4`, `ObjectStore`, `MultipartStore`, `CredentialManager`) | `0.0.0.0:39000`, disabled by default |
 | Shell/CLI control | `shell/Server.cpp`, `shell/Router.cpp`, `shell/commands/*` | unix socket `/run/vaulthalla/cli.sock` |
 
@@ -129,13 +130,95 @@ server-minted, `refresh_tokens.token_hash` stores `crypto::hash::tokenDigest()` 
 password hash. `crypto::hash::verifyToken()` accepts that digest (constant-time compare) or a legacy libsodium Argon2
 string written before #171; `auth::session::Validator::verifyStoredRefreshTokenHash` (used by both the ws handshake
 and the HTTP `validateRawRefreshToken` path) rewrites a legacy row to the digest after a successful verify
-(conditional `UPDATE`, a failed rewrite only logs). Argon2 cost ~0.57 s per check, paid on every page load and every
-HTTP preview/download. User passwords still use `crypto::hash::password()` (Argon2). No migration: the column is
-`TEXT`. Guard: `RefreshTokenDigest*` unit tests.
+(conditional `UPDATE`, a failed rewrite only logs). (Argon2 used to cost ~0.57 s per check on every page load and
+every HTTP preview/download.) User passwords still use `crypto::hash::password()` (Argon2). No migration: the column
+is `TEXT`. Guard: `RefreshTokenDigest*` unit tests.
+
+**HTTP auth hot path.** Media seeking fires many small requests, so `session::Manager` skips the refresh-token DB
+lookup for 30 s after a successful validation of the same in-memory session (`validatedAt_` keyed by jti, dropped
+with the session's indexes on logout/invalidation/`revokeSessions`, so revocation stays immediate).
+`rbac::policyEpoch()` is bumped by share link update/revoke/token rotation and every vault role template,
+assignment and override mutation; short-lived authz caches treat an older epoch as a miss. The HTTP access layer
+caches a resolved share principal for 15 s under that epoch.
 
 `web/middleware.ts` only checks that a `refresh` cookie is present (no upstream call); the websocket session gate
 decides validity (see `web-client.md`). The daemon's HTTP `GET /auth/session` remains for other clients.
 (`NEXT_PUBLIC_SERVER_ADDR` no longer exists.)
+
+### HTTP lanes (`protocols/http/`)
+
+Routes (nginx prefixes `/preview`, `/download`, `/upload` only; never add prefixes), all cookie-authenticated
+(`refresh`, or `share_refresh` with `?share=1`; no tokens in URLs): `GET /preview?vault_id&path&size&page`
+(RenderedImage plans only, JPEG; `size` clamped 16-2048, default 1024; `page` 0-based; `X-Vaulthalla-Page-Count`
+for PDFs; `scale` accepted and ignored), `POST /preview/batch` (≤ 200 items, per-item RBAC,
+`ready|queued|missing|unsupported|error`, never fetches remote-only files), `GET|HEAD /download/content` (original
+bytes, inline by default), `GET|HEAD /download` (files stream with no size cap; directories are a buffered ZIP,
+≤ 256 MiB source / 4096 entries), `GET /preview/derived?kind=&variant=` (200 artifact | 202 queued + Retry-After |
+415 | 422 `conversion_failed` | 503 `converter_unavailable`/`busy`), `PUT /upload/text`.
+- **Server.** One thread per connection, capped by `http_preview_server.max_connections` (over the cap: raw `503` +
+  `Retry-After: 1`). `TimedStream` polls a non-blocking socket against real deadlines (idle keep-alive 20 s,
+  read/write inactivity 60 s); `SO_RCVTIMEO` was ignored by Asio. Long streams never occupy a shared pool slot.
+- **Access layer** (`Access.cpp`) is the only place a route's `Need` (Preview, Download, Overwrite) maps onto RBAC:
+  humans via the vault resolver (Preview and Download → filesystem Read, + List for directory ZIPs; Overwrite →
+  `FilesystemAction::Overwrite`), shares via `share::TargetResolver` with the share op. Runs before any cache lookup,
+  decrypt or render; HEAD = GET. Typed `Unauthorized/Forbidden/NotFound/BadRequest` → 401/403/404/400 (no
+  status-by-substring). A missing path is 404 only for callers with Read on the vault root, else 403 (no existence
+  oracle). Share accounting (`recordShareAccess`) is coalesced: one audit event, and for Download needs one
+  `max_downloads` unit (`share::Manager::consumeDownload`, a conditional UPDATE; refusals audited as
+  `share.download.limit`, HTTP 403 `max_downloads_reached`), per share session × entry × source id × event type per
+  30 min. HEAD and 304 never count. Human accesses go to the audit log channel, coalesced the same way.
+- **Serving** (`handler/Common.cpp` `serve`): strong generation ETag
+  (`"g<file_id>-<hex16(sha256(sourceId|key_version|size))>"`), 304, one Range (206/416, `If-Range`; multi-range or
+  malformed → 200 full), open-ended ranges capped at 16 MiB for inline media, HEAD writes headers only and never opens
+  the reader. Bodies are `StreamResponse`s pulled in 256 KiB chunks from a `PlaintextReader` (TCP backpressure; a
+  write error stops decryption; an integrity failure mid-body truncates and closes). Every original-bytes response
+  sets `X-Accel-Buffering: no`, `nosniff`, a sandbox CSP and `Cross-Origin-Resource-Policy: same-origin`; non-media
+  originals are served inline as `application/octet-stream`. Fresh nginx sites also set `proxy_buffering off` +
+  `proxy_max_temp_file_size 0` on `/preview` and `/download`; upgrades keep the old site and rely on the header.
+- **Text saves** (`handler/Text.cpp`): human only (shares 403), TextDocument plans only, `If-Match` required (428
+  without, 412 + current ETag on mismatch), UTF-8 without NUL, ≤ `preview.text.max_edit_bytes` (413). Re-seals through
+  `Filesystem::createFile(overwrite, expected_source_id)`, which takes a per-file content lock
+  (`contentWriteMutex(fuse_path)`) so the check is a true CAS, and throws `ContentConflict` (→ 412) when the source id
+  moved or the file has an open FUSE working copy.
+
+### Byte-serving spine, integrity and derived artifacts
+
+- **Positioned reads.** `storage::Engine::openPlaintextReader(file, ReaderOptions)` is the single funnel for every
+  byte consumer (HTTP, media, models, text, thumbnails, converter input). `storage::Generation` identifies one content
+  version: `sourceId()` = IV (changes on every write; rename/move keep it), `plain:<size>:<updated_at>` for
+  unencrypted legacy/empty files. `GcmFileReader` preads only the requested ciphertext and decrypts with the GCM CTR
+  keystream (`crypto::util::gcmCtrDecryptAt`: plaintext offset o ↔ ciphertext offset o, counter IV‖BE32(2+o/16)).
+  Keys come from `EncryptionManager::keySnapshot(version)` (immutable `crypto::SecretKey`, mlocked, wiped; rotation
+  swaps pointers under a shared_mutex). `readAll()` does one authenticated pass and records the verdict.
+- **Verify-once integrity.** `crypto::IntegrityRegistry` keys a verdict on (domain, IV, key version, dev, ino, size,
+  mtime_ns) and runs one streaming tag check per key on 2 workers (capacity 8192 settled verdicts). `optimistic`
+  (default, `preview.media.integrity`) serves at once and every live reader throws `IntegrityError` on its next read
+  after a failed verdict; `strict` waits for the verdict. Failure is sticky for that key (later opens fail fast;
+  logged on the crypto channel); a replacement during verification is `Superseded`, not corruption.
+- **Remote-only files** (cloud vaults without a local copy) follow `preview.media.remote`: `hydrate` (default: whole
+  object once, metered/budgeted, verified, local ciphertext kept), `ranged` (opt-in metered ranged GETs pinned to the
+  object version, no per-range authentication), `off` (`storage::ContentUnavailable` → HTTP 503
+  `content_unavailable`). Grid thumbnails always use `off`. Chunked AEAD at rest would only be needed for
+  *authenticated* random access to remote-only objects.
+- **Derived cache** (`preview::cache::Store`, `cache_index` rows `type='derived'`, migration 103). One encrypted,
+  disposable cache for thumbnails (`thumbnail`/`<size>`), sheet and PDF page renders (`render`/`p<page>-s<size>`),
+  posters, probes, GLB, transcodes. File: `<cacheRoot>/derived/<file_id>/<kind>.<variant>.vhd` = 64-byte header
+  (`VHDERIV1`, header version, key version, IV) ‖ AES-256-GCM(vault key, fresh IV, AAD = header ‖
+  `"<vault>/<file>/<kind>/<variant>/<source_id>/<generator_version>"`) ‖ tag; 0600 temp, fsync, rename. Valid only
+  for the current source id, generator version and a resolvable key version; anything else is deleted on sight.
+  Failures are negative-cached (`preview.derive.failure_ttl_hours`, or until the source changes). LRU eviction to
+  `caching.max_size_mb`, idle expiry `caching.thumbnails.expiry_days`, per-file/vault purge, retired-key purge after
+  rotation, startup sweep. Not charged to vault quotas (`Engine::getCacheSize` excludes `derived/`); never synced,
+  never visible over FUSE.
+- **Render pipeline** (`preview::render::{Raster,Service}`). Header-checked decodes against
+  `preview.max_render_pixels` and `http_preview_server.max_preview_size_mb`; TurboJPEG DCT-scaled decode, stb from
+  memory otherwise; PDF pages behind one process-wide PDFium lock; output edges ≤ 2048, never upscaled. Thumbnails
+  decode once and resize down a chain for every `caching.thumbnails.sizes` entry (16-2048). A render gate bounds CPU
+  (`render::Busy` → 503 + Retry-After). Uploads hand their in-memory plaintext to thumbnailing. A derived-cache outage
+  degrades to uncached renders. Preview plans (`preview::classify`, file JSON `"preview"`, see `web-client.md`) decide
+  which files render at all; `caching.thumbnails.formats` is no longer read.
+- **Derive queue** (`preview::derive::Queue`, HTTP `/preview/derived`): bounded (`preview.derive.max_queue`),
+  `max_concurrency` workers, deduplicated per artifact key, feeding `Runner` (below) into a `Store::Writer`.
 
 ### FUSE
 
@@ -149,13 +232,27 @@ decides validity (see `web-client.md`). The daemon's HTTP `GET /auth/session` re
   FUSE to reduce sync churn; fix duplicate sync triggers or backing-path resolution instead.
 - **Vault bytes are always ciphertext at rest; the mount is the decrypting view (#173).** Every backing file (local
   vaults and cloud vaults' local copies) is AES-256-GCM body‖16-byte tag, IV and key version in `files`, and
-  `files.size_bytes` is the *plaintext* size. FUSE `open` decrypts into a per-inode working copy
+  `files.size_bytes` is the *plaintext* size. Derived preview artifacts are encrypted too (`VHDERIV1`, see
+  "Byte-serving spine"); the legacy plaintext `<cacheRoot>/thumbnails` and `<cacheRoot>/files` trees are deleted by
+  `preview::cache::Store::sweep` at startup. The HTTP lanes never write plaintext. FUSE `open` decrypts into a
+  per-inode working copy
   (`fuse/WorkingCopies`, 0600 under `<backing>/.fuse-plaintext`, shared by every handle on the inode); reads and
   writes go to it; `flush` (so `close(2)` returns with the change on disk), `fsync` and the last `release` seal it
   back (new IV, fsynced temp + rename). `setattr` size works on the copy. Copies that fail to seal move to
   `.fuse-plaintext/unsaved/`; stale copies are deleted at mount. A same-vault rename only moves the bytes (no
   re-encryption). `Filesystem::repairAtRest` (first sync pass per vault per start) seals plaintext left by older
   builds and corrects ciphertext-length sizes.
+- **Vault key rotation is failure- and crash-safe (`sync/rotation/`).** `vh vault keys rotate` only prepares a new
+  key; the sync pass re-encrypts. Per file: new ciphertext → `<backing>.vh-rotate` (O_EXCL, fsync file + dir) →
+  (cloud, encrypt upstream) PUT with its own IV/version metadata → compare-and-set the `files` row on the old
+  IV/version → rename over the backing file + dir fsync → fs cache refreshed. Recovery (each pass, and once per vault
+  per start before `repairAtRest`) keeps whichever of sidecar/backing authenticates under the row (streaming GCM
+  verify, no plaintext written) and leaves both if neither does. Remote-only files are re-encrypted remotely, never
+  written locally; an uploaded-but-uncommitted object is adopted from its metadata. The rotation finishes (old key
+  dropped) only when no file failed, no sidecar is unresolved and re-querying `getFilesOlderThanKeyVersion` (rows
+  with an IV only: empty/legacy-plaintext files are excluded) is empty; otherwise both keys stay loaded and the next
+  pass retries. Files open in FUSE are deferred. `fs::ops::replaceFileAtomic`/`writeFileAtomic` (temp + fsync +
+  rename + dir fsync) back `Filesystem::createFile`'s overwrite branch.
 - No writeback cache (`FUSE_CAP_WRITEBACK_CACHE` off): with it the kernel owns `i_size` and ignores getattr sizes,
   so out-of-band changes showed stale `stat` sizes. Handles are `direct_io` anyway.
 - `forget` does not evict the metadata cache (it is seeded at startup and updated by the daemon's own changes);
@@ -166,7 +263,7 @@ decides validity (see `web-client.md`). The daemon's HTTP `GET /auth/session` re
 
 ## Database
 
-- PostgreSQL via libpqxx. The schema is `deploy/psql/000…102_*.sql`, applied in order (all in ONE transaction by `core/seed/include/SqlDeployer.hpp`) and installed to `/usr/share/vaulthalla/psql`.
+- PostgreSQL via libpqxx. The schema is `deploy/psql/000…103_*.sql`, applied in order (all in ONE transaction by `core/seed/include/SqlDeployer.hpp`) and installed to `/usr/share/vaulthalla/psql`.
   New migrations take the next number and must be idempotent against upgraded installs. SqlDeployer records sha256(raw bytes)
   per file and refuses to start on a mismatch, so **never edit a shipped migration**: 020/060/082 were edited in place and
   bricked upgrades (1.5.x→1.6.x crash loop on 060). Reviewed exceptions live in `kHistoricalMigrationChecksums` (accepted, recorded
@@ -185,17 +282,75 @@ decides validity (see `web-client.md`). The daemon's HTTP `GET /auth/session` re
   `timestamp` column to `timestamptz`, reading old values in that recorded zone (manual psql runs fall back to the
   session zone); columns a view depends on are skipped with a warning. New columns must be `TIMESTAMPTZ`. Text output
   is `YYYY-MM-DD HH:MM:SS[.ffffff]+00`, which `db::encoding::parsePostgresTimestamp` handles. Guard: `DbTimezoneTest`.
-- `db::Janitor` handles sweeps. Stats rollups read from `file_activity`, `files_trashed`, `operations`, `share_*`.
+- `db::Janitor` handles sweeps (DB cleanup every `services.db_sweeper.sweep_interval_minutes`, derived-artifact
+  eviction every 15 min). Stats rollups read from `file_activity`, `files_trashed`, `operations`, `share_*`.
 
 ## Subsystem directory map (`core/src`, mirrored in `core/include`)
 
 `auth` sessions/tokens · `concurrency` thread pools · `config` YAML registry · `crypto` AES-GCM, TPM2/swtpm
 key provider, secrets · `db` · `email` providers (Resend, SES v2) · `fs` · `fuse` · `identities` users/groups ·
-`log` spdlog registries + rotation · `notifications` operator emails · `preview` thumbnails (pdfium,
-turbojpeg) · `protocols` · `rbac` roles/permissions/resolver/actor · `runtime` Manager · `share` link
+`log` spdlog registries + rotation · `notifications` operator emails · `preview` plans (`Plan.cpp`), in-memory
+renders (`render/`: pdfium, turbojpeg, stb), the encrypted derived cache (`cache/Store.cpp`) and the
+converter-helper runner/queue (`derive/`, below) · `protocols` · `rbac` roles/permissions/resolver/actor · `runtime` Manager · `share` link
 sharing · `stats` dashboard telemetry + snapshots · `storage` local + S3 backends, remote index · `sync`
 controller, strategies `cache|sync|mirror`, cost guardrails · `vault` vault model, slugs, FUSE names ·
 `ops` actor-authorized operations shared by the CLI and ws handlers (below).
+
+### Converter helpers (`core/tools`, `preview::derive`)
+
+Hostile-file converters never run in the daemon. `core/tools/` builds separate executables (own meson targets,
+options `preview_cad`/`preview_media`, packages `vaulthalla-preview-{cad,media}`, installed to
+`/usr/lib/vaulthalla/helpers/`); `core/tools/common` (protocol + Landlock/seccomp sandbox, libseccomp) links only
+into them. `preview::derive::Runner` (`core/{include,src}/preview/derive/`) spawns one helper per job: fork
+(`_Fork`) + async-signal-safe child setup (setsid, PDEATHSIG, NO_NEW_PRIVS, rlimits AS/CPU/FSIZE=0/NOFILE/CORE, fds
+0-4 only, empty env), a poll loop that serves range-pull requests on fd 3 from a `storage::PlaintextReader`,
+streams fd 1 to a sink, enforces the output cap and wall timeout (SIGKILL of the process group) and reaps.
+Helper exit/JSON contract: `core/tools/common/protocol.hpp`. Config: `preview.derive.*`. RLIMIT_NPROC is not
+set (per-UID; the daemon's threads would count): process creation is denied by the helper's seccomp filter, the
+CAD helper denies clone outright, and the runner SIGKILLs a helper whose thread count (/proc/<pid>/stat, sampled
+every 20 ms poll tick) exceeds `Limits::maxThreads` (64; limit_exceeded). Each poll iteration reads a bounded
+amount per pipe (stderr/result one chunk, stdout 1 MiB), so a flooding helper cannot starve the deadline checks.
+Helpers refuse to run (exit 5, `sandbox_unavailable`, queue reports `converter_unavailable`) without BOTH Landlock
+and seccomp; the seccomp filter also limits pid-taking syscalls (prlimit64, setpriority, ioprio_set, sched_set*,
+move/migrate_pages) to self, denies fcntl F_SETOWN/F_SETOWN_EX/F_SETSIG/F_SETLEASE and ioctl FIOSETOWN/SIOCSPGRP
+(low-32-bit masked), SysV IPC and POSIX mqueues; the CAD `selftest-sandbox` command exercises every vector. Media
+hardware devices are opened only after the sandbox (Landlock is per-thread). Trust: `Runner` executes only
+root-owned, non-group/world-writable helpers in such directories (canonical path checked and executed;
+`setTrustChecksForTesting(false)` in gtest_main, honoured only in testMode); `preview.derive.helper_dir` is
+read-only through `ops::config::validateSettings` (settings.update/CLI).
+Tests: `test_derive_runner.cpp` (fake helper `core/tests/helpers/fake_derive_helper.cpp`),
+`test_preview_cad_helper.cpp` (real helper, skipped when not built).
+`RunRequest::stop` (a `std::stop_token`) SIGKILLs the process group on request (`failureReason() == "cancelled"`).
+
+### Derived-artifact cache and derive queue (`preview::cache`, `preview::derive::Queue`)
+
+- One encrypted cache for every derived artifact (thumbnails, page renders, posters, GLB, transcodes):
+  `preview::cache::Store`, files `<cacheRoot>/derived/<file_id>/<kind>.<variant>.vhd` (VHDERIV1 header + AES-256-GCM
+  under the vault key, identity bound as AAD), rows in `cache_index` (`type='derived'`, migration 103) keyed by
+  `(file_id, kind, variant)` and valid only for the source generation (`Generation::sourceId()`, the file IV) and
+  generator version. `status='failed'` rows are the negative cache (`preview.derive.failure_ttl_hours`).
+- Artifacts are keyed by **file id**, never by path: rename/move need nothing; a file id that ends (delete, trash,
+  purge, S3 gateway delete, FUSE unlink) calls `Engine::purgeDerivedArtifacts(fileId)` (best effort, logs); a vault
+  removal calls `Store::purgeVault` (`storage::Manager::removeVault`). The old path-keyed
+  `Engine::{purge,move,copy}Thumbnails` helpers are gone; don't reintroduce path-keyed cache files.
+- `preview::derive::Queue` (`Queue.cpp`) sits in front of Runner + Store: `request(engine, file, kind)` never blocks
+  on conversion. Kind table (helper, command, args, generator version) is `queue_impl::kKinds`; bump a kind's
+  generator version when its output changes. Flow: kind known + listed in the file's `PreviewPlan::derived` (transcodes
+  not with `preview.media.transcode: off`, variant `v1`) else Unsupported → helper executable else Unavailable → `Store::lookup` Ready/Failed → in-flight key ⇒ Queued →
+  `preview.derive.max_queue` pending ⇒ Busy → enqueue. `max_concurrency` `std::jthread` workers start lazily.
+  A job re-checks the DB generation before opening, streams `openPlaintextReader` into the helper and the helper
+  into a `Store::Writer`, and commits only if the generation is still current. Deterministic failures
+  (invalid_input, limit_exceeded, unsupported, crashed, timeout) are negatively cached; transient ones
+  (content_unavailable, integrity, internal, protocol, cancelled, helper missing) are only remembered for 30 s so
+  pollers see Failed instead of polling forever. `Queue::shutdown()` (main, after `stopRuntime`) cancels running
+  helpers via the stop token and joins.
+- Lifecycle hooks (`preview/cache/Maintenance.hpp`): `applyConfig()` at boot (reader integrity/remote defaults,
+  failure TTL); `sweepAtStartup()` after `initStorageEngines()` on every start (deletes legacy plaintext
+  `<cacheRoot>/thumbnails`, orphan artifact dirs, temp files); `db::Janitor` runs `evictPeriodic()` every 15 min
+  (LRU to `caching.max_size_mb`, idle expiry `caching.thumbnails.expiry_days`) independent of its DB sweep cadence;
+  a finished key rotation (`sync::Local::handleVaultKeyRotation`) calls `Store::purgeRetiredKeys`.
+- Tests: `test_preview_store.cpp`, `test_derive_queue.cpp` (DB-backed, fake helper symlinked under both helper
+  names; real CAD helper when built).
 
 ### `ops/`: shared command operations
 
@@ -287,7 +442,37 @@ subject's assignment; both `vh vault role override ...` and ws `role.vault.overr
 - Invariant: never trust unsigned or unverified price artifacts. Estimates are guidance and `fail_open`; enforcement modes act on
   them, so a pricing outage must not wedge sync.
 
-**S3 cost safety** (sync + S3 gateway)
+**S3 cost safety** (sync + S3 gateway + remote-only reads)
 - Request budgets (LIST/HEAD/GET/PUT/COPY/DELETE/bytes) and price budgets (`off|report|warn|enforce`,
   global/provider/vault) are separate systems. Don't merge them.
+- Usage captures (`ScopedS3RequestUsageCapture`) are thread-local and nest: every capture active on the thread is
+  checked and records each request (`Controller::recordRequest`), so a hydrate's own cap inside a gateway request
+  is still visible to the gateway's capture. `Controller::streamObject` is the metered streaming GET (optional
+  signed `Range` and `If-Match`; 412 → `ConditionalRequestFailed`; the GET is metered before it is sent, body
+  bytes as they arrive); fakes override the protected `transportGet` seam and keep the metering.
+- **Prefer the local ciphertext copy (D11).** Anything that reads a vault file's bytes goes through
+  `Engine::openPlaintextReader`: a cloud file with a backing file reads it in place (zero S3 requests). The ws share
+  download/preview lanes and the S3 gateway's file reads (`ObjectStore::readFileObject`, ranges read only their
+  bytes) do; the HTTP `/download` lane is the lead's rewrite. `CloudEngine::downloadToBuffer/decryptRemotePayload`
+  remain only for HTTP `Router.cpp`, rotation, and gateway objects with no `files` row.
+- **Remote-only files (`CloudEngine::openMissingReader`, `preview.media.remote`, process default
+  `storage::setDefaultRemotePolicy`):**
+  - `hydrate` (default): price preflight (`RemoteFetchGate`, default `priceBudgetRemoteFetchGate`: the
+    BudgetConservative estimate + `PriceBudgetService::preflight` sync uses, operation `preview_hydrate`; a refusal
+    or a failed preflight → `ContentUnavailable`, nothing sent) → per-hydrate request cap (1 HEAD, 1 GET, object
+    bytes) → HEAD (ETag, length, `vh-iv`/`vh-key-version`; a length that disagrees with `files.size_bytes` is
+    refused, not fetched) → one GET with `If-Match` streamed into an `O_TMPFILE` next to the backing path (named
+    0600 `O_EXCL` `.vh-hydrate-*` sibling where unsupported) → `gcmVerifyFd` over the whole message (failure:
+    `IntegrityError`, nothing kept) → fsync → if the IV changes (plaintext-upstream objects are sealed on the fly
+    under a fresh IV; an encrypted object normally keeps the row's IV, `indexAndDeleteFile` copied it) the files
+    row is compare-and-set *first*, then the copy is linked in without replacing anything (`linkat`, EEXIST: a
+    writer won) and the directory fsynced. A crash leaves either no copy (re-hydrated next read) or a verified one.
+    Concurrent readers of one file share a single fetch (`hydrating_` futures). The reservation is committed with
+    the actual usage. The copy stays: the Cache strategy has no eviction yet.
+  - `ranged` (opt-in): `RemoteRangedReader`, aligned 4 MiB windows, LRU of 4, every GET `If-Match` the open-time
+    ETag (412 → `IntegrityError`), CTR-decrypt with the *remote* IV, per-reader caps (default 2·windows+8 GETs,
+    2·(size+window) bytes; past them `ContentUnavailable`), worst case price-reserved at open and actual usage
+    committed on close. Positioned reads are **unauthenticated** (a hostile bucket can flip plaintext bits);
+    `readAllAuthenticated` fetches the whole object and checks the tag. Chunked AEAD is the eventual fix.
+  - `off`: `ContentUnavailable`.
 - Dev R2 dogfooding hits a real bucket. With `dev.init_r2_test_vault`, initdb clears the `VAULTHALLA_TEST_R2_*` bucket.

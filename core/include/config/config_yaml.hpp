@@ -262,6 +262,105 @@ struct convert<CachingConfig> {
 };
 
 template<>
+struct convert<PreviewMediaConfig> {
+    static Node encode(const PreviewMediaConfig& rhs) {
+        Node node;
+        node["integrity"] = previewIntegrityModeToString(rhs.integrity);
+        node["remote"] = previewRemoteModeToString(rhs.remote);
+        node["hwaccel"] = previewHwaccelToString(rhs.hwaccel);
+        node["transcode"] = previewTranscodeModeToString(rhs.transcode);
+        return node;
+    }
+
+    static bool decode(const Node& node, PreviewMediaConfig& rhs) {
+        if (!node.IsMap()) return false;
+        const PreviewMediaConfig defaults;
+        rhs.integrity = node["integrity"]
+            ? previewIntegrityModeFromString(node["integrity"].as<std::string>()) : defaults.integrity;
+        rhs.remote = node["remote"] ? previewRemoteModeFromString(node["remote"].as<std::string>()) : defaults.remote;
+        rhs.hwaccel = node["hwaccel"] ? previewHwaccelFromString(node["hwaccel"].as<std::string>()) : defaults.hwaccel;
+        rhs.transcode = node["transcode"]
+            ? previewTranscodeModeFromString(node["transcode"].as<std::string>()) : defaults.transcode;
+        return true;
+    }
+};
+
+template<>
+struct convert<PreviewDeriveConfig> {
+    static Node encode(const PreviewDeriveConfig& rhs) {
+        Node node;
+        node["helper_dir"] = rhs.helper_dir.string();
+        node["max_concurrency"] = rhs.max_concurrency;
+        node["max_queue"] = rhs.max_queue;
+        node["max_ram_mb"] = rhs.max_ram_mb;
+        node["max_cpu_seconds"] = rhs.max_cpu_seconds;
+        node["wall_timeout_seconds"] = rhs.wall_timeout_seconds;
+        node["max_output_mb"] = rhs.max_output_mb;
+        node["failure_ttl_hours"] = rhs.failure_ttl_hours;
+        return node;
+    }
+
+    static bool decode(const Node& node, PreviewDeriveConfig& rhs) {
+        if (!node.IsMap()) return false;
+        const PreviewDeriveConfig d;
+        const auto clamped = [&node](const char* key, const uint32_t fallback, const uint32_t lo, const uint32_t hi) {
+            return std::clamp(node[key].as<uint32_t>(fallback), lo, hi);
+        };
+        rhs.helper_dir = node["helper_dir"].as<std::string>(d.helper_dir.string());
+        if (rhs.helper_dir.empty()) rhs.helper_dir = d.helper_dir;
+        rhs.max_concurrency = clamped("max_concurrency", d.max_concurrency, 1u, 64u);
+        rhs.max_queue = clamped("max_queue", d.max_queue, 1u, 100000u);
+        rhs.max_ram_mb = clamped("max_ram_mb", d.max_ram_mb, 256u, 1024u * 1024u);
+        rhs.max_cpu_seconds = clamped("max_cpu_seconds", d.max_cpu_seconds, 1u, 86400u);
+        rhs.wall_timeout_seconds = clamped("wall_timeout_seconds", d.wall_timeout_seconds, 1u, 86400u);
+        rhs.max_output_mb = clamped("max_output_mb", d.max_output_mb, 1u, 1024u * 1024u);
+        rhs.failure_ttl_hours = clamped("failure_ttl_hours", d.failure_ttl_hours, 0u, 24u * 365u);
+        return true;
+    }
+};
+
+template<>
+struct convert<PreviewTextConfig> {
+    static Node encode(const PreviewTextConfig& rhs) {
+        Node node;
+        node["max_edit_bytes"] = rhs.max_edit_bytes;
+        return node;
+    }
+
+    static bool decode(const Node& node, PreviewTextConfig& rhs) {
+        if (!node.IsMap()) return false;
+        const PreviewTextConfig d;
+        rhs.max_edit_bytes = std::clamp<uint64_t>(node["max_edit_bytes"].as<uint64_t>(d.max_edit_bytes), 1024,
+                                                  256ull * 1024 * 1024);
+        return true;
+    }
+};
+
+template<>
+struct convert<PreviewConfig> {
+    static Node encode(const PreviewConfig& rhs) {
+        Node node;
+        node["media"] = rhs.media;
+        node["derive"] = rhs.derive;
+        node["text"] = rhs.text;
+        node["max_render_pixels"] = rhs.max_render_pixels;
+        return node;
+    }
+
+    // Every subsection and key is optional: a missing one keeps its default.
+    static bool decode(const Node& node, PreviewConfig& rhs) {
+        if (!node.IsMap()) return false;
+        const PreviewConfig d;
+        if (const auto media = node["media"]) convert<PreviewMediaConfig>::decode(media, rhs.media);
+        if (const auto derive = node["derive"]) convert<PreviewDeriveConfig>::decode(derive, rhs.derive);
+        if (const auto text = node["text"]) convert<PreviewTextConfig>::decode(text, rhs.text);
+        rhs.max_render_pixels = std::clamp<uint64_t>(node["max_render_pixels"].as<uint64_t>(d.max_render_pixels),
+                                                     1'000'000, 1'000'000'000);
+        return true;
+    }
+};
+
+template<>
 struct convert<DatabaseConfig> {
     static Node encode(const DatabaseConfig& rhs) {
         Node node;

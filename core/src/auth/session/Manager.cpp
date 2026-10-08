@@ -1,4 +1,5 @@
 #include "auth/session/Manager.hpp"
+#include "rbac/PolicyEpoch.hpp"
 
 #include "auth/model/RefreshToken.hpp"
 #include "auth/model/TokenPair.hpp"
@@ -248,6 +249,7 @@ void Manager::eraseSessionIndexesLocked(
     const std::shared_ptr<Session>& session,
     std::optional<std::string> jti
 ) {
+    if (jti) validatedAt_.erase(*jti);
     if (!session) return;
 
     sessionsByUUID_.erase(session->uuid);
@@ -443,7 +445,22 @@ std::shared_ptr<Session> Manager::validateRawRefreshToken(const std::string& ref
     else if (session->tokens->refreshToken->rawToken != refreshToken)
         throw std::invalid_argument("Refresh token mismatch for validation");
 
-    Validator::validateRefreshToken(session);
+    constexpr auto kRevalidateAfter = std::chrono::seconds(30);
+    const auto now = std::chrono::steady_clock::now();
+    bool fresh = false;
+    {
+        std::lock_guard lock(sessionMutex_);
+        const auto it = validatedAt_.find(claims->jti);
+        fresh = it != validatedAt_.end() && now - it->second.at < kRevalidateAfter &&
+                it->second.epoch == rbac::policyEpoch() &&
+                sessionsByRefreshJti_.contains(claims->jti);
+    }
+    if (!fresh || !session->tokens->refreshToken->isValid()) {
+        Validator::validateRefreshToken(session);
+        std::lock_guard lock(sessionMutex_);
+        if (sessionsByRefreshJti_.contains(claims->jti))
+            validatedAt_[claims->jti] = ValidatedStamp{.at = now, .epoch = rbac::policyEpoch()};
+    }
     if (!session->user || session->isShareSession())
         throw std::invalid_argument("Refresh token did not resolve to a human session");
     if (session->user->systemOnly)

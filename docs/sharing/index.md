@@ -56,7 +56,28 @@ Use the Shares page to review active shares, rotate URLs, disable access, or ins
 
 When a recipient opens a share link, the web UI switches into share mode. Only the share's allowed operations are available. For example, a download-only share should not expose upload or mkdir actions.
 
-Preview availability depends on file type, preview service health, and the share role. If preview is not available but download is permitted, recipients may need to download the file.
+## Preview Versus Download
+
+`preview` and `download` are separate operations, and the server enforces the difference on every request:
+
+| Operation | What recipients receive |
+| --- | --- |
+| `preview` | Lossy, server-rendered JPEGs only: image previews, PDF pages and thumbnails. Never the original bytes. |
+| `download` | Original bytes: file downloads, SVG/WebP and other images shown as they are, video and audio playback, 3D models (including STEP models converted by the server), and text and Markdown views. |
+
+A preview-only link is therefore safe for "look but don't take" sharing of photos and documents, but recipients can't play media, open 3D models or read text files through it; the web console tells them the link's permissions don't allow it. To let recipients play or view those, include `download` (the **Browse & download** preset does).
+
+See [File Previews](/web-console/previews) for what each file type looks like in the browser.
+
+## Download Counting And Limits
+
+Share access is recorded once per **logical** access, not per HTTP request: one audit event per share session, file version and kind of access (viewing in the browser, downloading, a server conversion, or a preview) within 30 minutes. Every access that needs `download` also uses one unit of the link's download count, including playing a video or viewing a text file in the browser; previews never do. Playing and seeking through a video issues many small range requests, and those count once; the `HEAD` checks the console makes before a download don't count at all. Changing the file starts a new count for it.
+
+A link's `max_downloads` limit, when one is set through the share API (the console's share dialog sets an expiry but no download limit), is enforced atomically: the download that would exceed it is refused with "This link's download limit was reached", and the refusal is audited. The **Shares** page shows each link's opens, downloads and uploads.
+
+## Editing
+
+Share links never edit files in place. Text editing in the preview sheet is a console feature for signed-in users with **Overwrite** permission; share recipients get a read-only view (with `download`). Uploads into a share follow the link's `upload` and `overwrite` operations as before.
 
 ## Operator Email Dependency
 

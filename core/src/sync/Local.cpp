@@ -17,18 +17,22 @@
 #include "fs/Filesystem.hpp"
 #include "runtime/Deps.hpp"
 #include "log/Registry.hpp"
-#include "concurrency/taskOpRanges.hpp"
 #include "sync/model/Event.hpp"
 #include "sync/model/Throughput.hpp"
 #include "sync/model/ScopedOp.hpp"
 #include "db/query/sync/Policy.hpp"
 #include "sync/tasks/RotateKey.hpp"
+#include "sync/rotation/Rotation.hpp"
+#include "sync/rotation/Runtime.hpp"
 #include "sync/tasks/Delete.hpp"
 #include "storage/s3/Controller.hpp"
 #include "db/query/sync/RemoteObjectIndex.hpp"
+#include "preview/cache/Store.hpp"
 
+#include <algorithm>
 #include <mutex>
 #include <set>
+#include <thread>
 
 using namespace vh::sync;
 using namespace vh::sync::model;
@@ -284,8 +288,7 @@ void Local::processOperations() const {
             continue;
         }
 
-        const auto tmpPath = decrypt_file_to_temp(vaultId(), op->source_path, engine);
-        const auto buffer = readFileToVector(tmpPath);
+        auto buffer = decrypt_file_to_memory(vaultId(), op->source_path, engine);
 
         if (buffer.empty()) {
             log::Registry::sync()->error("[FSTask] Empty file buffer for operation: {}", op->source_path);
@@ -297,14 +300,12 @@ void Local::processOperations() const {
         writeFile(absDest, ciphertext);
         db::query::fs::File::setEncryptionIVAndVersion(f);
 
-        const auto& move = [&]() {
+        // Derived artifacts are keyed by file id and content generation, not path: a move keeps them (the reseal
+        // above already made them stale), a copy is a new file id that derives its own on demand.
+        if (op->operation == Operation::Op::Move || op->operation == Operation::Op::Rename) {
             if (std::filesystem::exists(absSrc)) std::filesystem::remove(absSrc);
-            engine->moveThumbnails(op->source_path, op->destination_path);
-        };
-
-        if (op->operation == Operation::Op::Copy) engine->copyThumbnails(op->source_path, op->destination_path);
-        else if (op->operation == Operation::Op::Move || op->operation == Operation::Op::Rename) move();
-        else throw std::runtime_error("Unknown operation type: " + std::to_string(static_cast<int>(op->operation)));
+        } else if (op->operation != Operation::Op::Copy)
+            throw std::runtime_error("Unknown operation type: " + std::to_string(static_cast<int>(op->operation)));
 
         scopedOp->stop();
     }
@@ -319,28 +320,118 @@ void Local::repairAtRestOnce() const {
         std::scoped_lock lock(mutex);
         if (!repaired.insert(engine->vault->id).second) return;
     }
+
+    // Settle what an interrupted key rotation left behind (`<backing>.vh-rotate`) before anything reads those files.
+    if (engine->encryptionManager) {
+        try {
+            (void)rotation::recoverVault(engine, rotation::runtimeDeps(engine));
+        } catch (const std::exception& e) {
+            log::Registry::sync()->error("[FSTask] Key rotation sidecar recovery failed for vault '{}': {}",
+                                         engine->vault->id, e.what());
+        }
+    }
+
     (void)fs::Filesystem::repairAtRest(engine);
 }
 
+namespace {
+
+// Rotates files on the sync pool, one RotateKey task per contiguous range, and waits for all of them.
+vh::sync::rotation::BatchResult rotateFilesOnSyncPool(const std::shared_ptr<const vh::sync::rotation::Deps>& deps,
+                                                     const std::vector<std::shared_ptr<File>>& files) {
+    const auto shared = std::make_shared<const vh::sync::tasks::RotateKey::Files>(files);
+    const std::size_t workers = std::max(1u, std::thread::hardware_concurrency());
+    const auto ranges = vh::sync::rotation::splitRanges(files.size(), std::min(workers, std::max<std::size_t>(1, files.size() / 2)));
+
+    std::vector<std::shared_ptr<vh::sync::tasks::RotateKey>> tasks;
+    std::vector<std::future<ExpectedFuture>> pending;
+    tasks.reserve(ranges.size());
+    pending.reserve(ranges.size());
+    for (const auto& [begin, end] : ranges) {
+        auto task = std::make_shared<vh::sync::tasks::RotateKey>(deps, shared, begin, end);
+        pending.push_back(task->getFuture().value());
+        tasks.push_back(task);
+        ThreadPoolManager::instance().syncPool()->submit(task);
+    }
+
+    vh::sync::rotation::BatchResult total;
+    for (std::size_t i = 0; i < tasks.size(); ++i) {
+        try {
+            (void)pending[i].get();
+            total.merge(tasks[i]->result);
+        } catch (const std::exception& e) {
+            total.failures.push_back({{}, std::string("rotation task did not report: ") + e.what()});
+        }
+    }
+    return total;
+}
+
+}
+
+// A rotation finishes (and the previous key is dropped) only when every file on an older key version was re-encrypted
+// and committed, nothing an interrupted pass left behind is unresolved, and re-querying the files table finds none
+// left. Anything less keeps the rotation in progress with both keys loaded, so every file stays readable, and the
+// next sync pass retries (see sync/rotation/Rotation.hpp for the per-file protocol and crash recovery).
 void Local::handleVaultKeyRotation() {
     try {
-        if (!engine->encryptionManager->rotation_in_progress()) return;
+        const auto em = engine->encryptionManager;
+        if (!em || !em->rotation_in_progress()) return;
 
-        const auto filesToRotate = db::query::fs::File::getFilesOlderThanKeyVersion(engine->vault->id, engine->encryptionManager->get_key_version());
-        if (filesToRotate.empty()) {
-            log::Registry::audit()->info("[FSTask] No files to rotate for vault '{}'", engine->vault->id);
-            engine->encryptionManager->finish_key_rotation();
+        const auto vaultId = engine->vault->id;
+        const auto deps = std::make_shared<const rotation::Deps>(rotation::runtimeDeps(engine));
+
+        rotation::PassDeps pass;
+        pass.inProgress = [&em] { return em->rotation_in_progress(); };
+        pass.keyVersion = [&em] { return em->get_key_version(); };
+        pass.recover = [this, &deps] { return rotation::recoverVault(engine, *deps); };
+        pass.pending = [vaultId](const unsigned int keyVersion) {
+            return db::query::fs::File::getFilesOlderThanKeyVersion(vaultId, keyVersion);
+        };
+        pass.rotateAll = [&deps](const std::vector<std::shared_ptr<File>>& files) {
+            return rotateFilesOnSyncPool(deps, files);
+        };
+        if (engine->type() == StorageType::Cloud)
+            pass.reconcile = [this, &em] { rotation::reconcileRemoteIndex(engine, em->get_key_version()); };
+        pass.finish = [&em] { em->finish_key_rotation(); };
+
+        const auto result = rotation::runPass(pass);
+        if (result.status == rotation::PassStatus::Idle) return;
+
+        if (result.status == rotation::PassStatus::Finished) {
+            log::Registry::audit()->info(
+                "[FSTask] Vault key rotation finished for vault '{}' (key version {}): {} file(s) re-encrypted, {} "
+                "rotation sidecar(s) recovered",
+                vaultId, result.keyVersion, result.batch.rotated, result.recovery.promoted + result.recovery.discarded);
+            // Derived artifacts sealed under the retired key can never be opened again: drop them now rather than
+            // one lookup at a time.
+            try {
+                if (const auto purged = vh::preview::cache::Store::purgeRetiredKeys(engine); purged > 0)
+                    log::Registry::sync()->info("[FSTask] Dropped {} derived artifact(s) sealed under a retired key "
+                                                "of vault '{}'", purged, vaultId);
+            } catch (const std::exception& e) {
+                log::Registry::sync()->warn("[FSTask] Failed to drop retired-key derived artifacts of vault '{}': {}",
+                                            vaultId, e.what());
+            }
             return;
         }
 
-        for (const auto& [begin, end] : getTaskOperationRanges(filesToRotate.size()))
-            push(std::make_shared<tasks::RotateKey>(engine, filesToRotate, begin, end));
+        const auto message = fmt::format(
+            "Vault key rotation for vault '{}' is not finished (key version {}): {} of {} file(s) re-encrypted, {} "
+            "failed, {} deferred (open), {} changed mid-rotation, {} still on an older key, {} unresolved rotation "
+            "sidecar(s){}{}. The previous key stays loaded, so every file remains readable; the next sync pass retries.",
+            vaultId, result.keyVersion, result.batch.rotated, result.attempted, result.batch.failures.size(),
+            result.batch.deferred, result.batch.conflicts, result.remaining, result.recovery.unresolved,
+            result.batch.aborted ? ", stopped early (S3 request budget)" : "",
+            result.reconcileError.empty() ? "" : ", remote index not updated: " + result.reconcileError);
 
-        processFutures();
+        if (result.batch.failures.empty() && result.recovery.unresolved == 0 && result.reconcileError.empty() &&
+            !result.batch.aborted) {
+            log::Registry::sync()->warn("[FSTask] {}", message);
+            return;
+        }
 
-        engine->encryptionManager->finish_key_rotation();
-
-        log::Registry::audit()->info("[FSTask] Vault key rotation finished for vault '{}'", engine->vault->id);
+        log::Registry::audit()->warn("[FSTask] {}", message);
+        handleError(message);
     } catch (const std::exception& e) {
         log::Registry::sync()->error("[FSTask] Exception during vault key rotation for vault '{}': {}", engine->vault->id, e.what());
         runningFlag = false;

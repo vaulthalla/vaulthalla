@@ -44,6 +44,45 @@
   URL-addressed paths, virtualized list/grid, transfer manager), `shares`, `share` (anonymous recipient page),
   `health`, `vaults`, `access`, `account`, `credentials`, `cost`, `gateway`, `notifications`, `settings`, `auth`.
 
+## File previews (renderer registry)
+
+- **The server decides.** Every file entry carries `preview: {kind, renderer, requires, thumbnail, derived?}`
+  (`IPreviewPlan` in `models/file.ts`; normalized to `Entry.plan` in `features/files/entries.ts`, `derived` always a
+  list). `planOf(entry)` (`preview/plan.ts`, lazy side) falls back to the old MIME rules (server JPEG for `image/*`
+  and PDF) only when a daemon sends no plan; `hasThumbnail` asks `/preview/batch` only for `plan.thumbnail`
+  entries. `categoryOf` maps renderers to icons (`model` → cube). Path helpers live in `features/files/paths.ts`
+  (re-exported by `entries.ts`): the shell's transfer manager imports only those, so `entries.ts` stays out of
+  every console route's first-load JS.
+- **Capability gate (PreviewSheet).** `requires: 'preview'` needs `caps.preview` (lossy server renders only);
+  `requires: 'download'` needs `caps.download` (original bytes: native media, SVG/WebP, text, 3D, derived
+  artifacts). Otherwise the sheet shows "Preview not available with this link's permissions" plus metadata and
+  never requests original bytes. `caps.edit` (console only) + `FsSource.textSaveUrl` enable text editing.
+- **Registry** (`features/files/preview/registry.tsx`): `image` and `svg`/`image-native` ship with the sheet
+  (`ImageRenderers.tsx`); `pdf`, `video`/`audio` (`MediaRenderer.tsx`), `text`/`markdown` (`TextRenderer.tsx`) and
+  `model:*`/`derived:step-glb` (`ModelRenderer.tsx`) are nested `next/dynamic` chunks under the already-lazy
+  `PreviewSheet`. Inside them, CodeMirror (`TextEditor.tsx`, per-extension language chunks), react-markdown
+  (`MarkdownView.tsx`) and the 3D engine (`ModelViewer.tsx`, the only module allowed to import `@babylonjs/*`)
+  are lazy again. Nothing under `preview/` may be imported statically from `FileBrowser`, `entries.ts`, `FileIcon`
+  or the share page (first-load headroom is ~5 KB on `/files`, ~6.5 KB on `/share`).
+- **HTTP per renderer** (all same-origin with the cookie; `FsSource` builds the URLs, `share=1&path=` on links):
+  image `GET /preview?size=1024`; PDF `GET /preview?page=N&size=1536|2048` → blob URL, page count from
+  `X-Vaulthalla-Page-Count`; SVG/WebP/video/audio `src=/download/content?disposition=inline` (Range is the
+  browser's); media error → `HEAD` the same URL to tell refusals from codecs; "Convert for playback" polls
+  `GET /preview/derived?kind=transcode-*` with `Range: bytes=0-0` (202 + Retry-After backoff, 503
+  `converter_unavailable`, 422 `reason`); 3D `GET /download/content` (≤ 512 MiB, streamed progress) or
+  `/preview/derived?kind=model-glb` for STEP, glTF/OBJ side files resolved to sibling paths (never above the vault
+  or share root; ≤ 256 files and 512 MiB with the model, aborted when the viewer closes). Babylon itself never
+  fetches: OBJ `mtllib`/MTL texture statements are rewritten to object URLs or removed (`model/scan.ts`, matching
+  Babylon's own tokenisation and text decoding), and `model/urlGate.ts` gates every Babylon URL hook
+  (`Tools.PreprocessUrl`, `ScriptPreprocessUrl`, `WebRequest.CustomRequestModifiers`) to `data:` plus URLs the
+  viewer registered; text `GET /download/content` with `cache: 'no-store'` (≤ 2 MiB, no NUL, strict UTF-8) and the
+  `ETag`, saved with `PUT /upload/text` + `If-Match` (412 → conflict dialog: reload / overwrite against the current
+  ETag / copy; 403 → read-only).
+- **Keys and unsaved work.** The sheet's ←/→ file navigation ignores keys owned by inputs, editors, media and
+  canvases; PDF pages use PageUp/PageDown. Renderers report unsaved edits through `setDirty`; the sheet confirms
+  before switching files or closing, and the text renderer adds a `beforeunload` guard.
+- Media elements are released on switch/close (pause, remove `src`, `load()`), so the ranged connection closes.
+
 ## Routes
 
 `/login`, `/files/[vaultId]/[...path]`, `/shares`, `/vaults` (+ `/new`, `/[id]` tabs: overview, access, shares,
@@ -59,6 +98,12 @@ sync, gateway, settings), `/users` (+ `/new`, `/[name]`), `/groups`, `/roles` (+
 layout/page entry chunks; dynamic imports and legacy polyfills excluded) from the production build and fails over
 budget. CI runs it after `pnpm build` (hard gate); `tools/dev/verify.sh web` runs it with `VERIFY_WEB_BUILD=1`.
 Next 16 + React 19 alone are ~143 KB. Keep dialogs/editors/charts/menus behind `next/dynamic` or lazy primitives.
+The same script fails if Babylon.js code (content markers `BABYLON.`, `ArcRotateCamera`, `babylonjs.com`,
+`@babylonjs/core/`) lands in any route's first load, and budgets the 3D model viewer's lazy chunks separately
+(`lazy.modelViewer`: the `next/dynamic` group of the chunk carrying the `vh-model-viewer` marker, ~282 KB on open;
+`lazy.modelViewerReachable`: everything it can load on demand, an over-counting ceiling). Babylon is imported only
+in `features/files/preview/ModelViewer.tsx` and `preview/model/**`; Draco/meshopt decoders are bundled (Draco's
+wasm + wrapper emitted to `/_next/static/media` via `new URL(..., import.meta.url)`), never fetched from a CDN.
 
 ## Wiring and env
 
@@ -74,7 +119,7 @@ Next 16 + React 19 alone are ~143 KB. Keep dialogs/editors/charts/menus behind `
   proxy that routes `/ws` → 36969 and `/preview|/download|/upload` → 36970 (nginx in prod, `Caddyfile` in dev).
   HTTP uploads: `POST /upload/session[?share=1]` → `PUT /upload/<id>/files/<fileId>` → `POST /upload/<id>/finish`
   (`DELETE` on failure); the client splits large drops into several sessions. Downloads are preflighted with a
-  `fetch` before handing the URL to the browser.
+  `HEAD` of the same `/download` URL (status → failed-task message) before handing the URL to the browser.
 - `next.config.ts`: SVGR loader (webpack + `turbopack.rules`), `images.localPatterns /preview**`, redirects,
   `devIndicators: false`. `package.json` `sideEffects: ["**/*.css"]`.
 
@@ -92,7 +137,11 @@ file lifecycle, multi-item drop, shares incl. upload-only dropbox, logout hygien
 install (`VAULTHALLA_E2E_BASE_URL=https://localhost VAULTHALLA_E2E_NO_WEB_SERVER=1`). `lab-first-run.spec.ts` is the
 packaged-install proof; `s3-gateway.spec.ts` drives the gateway page by `data-testid`, records the budget policies it
 saves (from the `*.budget.policy.upsert` responses on `/ws`) and in `afterAll` acknowledges their "policy <id> was
-saved|disabled" alerts on `/cost` before deleting the vaults it created.
+saved|disabled" alerts on `/cost` before deleting the vaults it created. `preview.spec.ts` covers the rich previews (plans in the listing,
+PDF paging, ranged video/seek, audio, codec fallback, text edit/save and 412 conflict, markdown safety, 3D canvases,
+no 3D engine chunk on an image preview, preview-only vs download share links) with fixtures from
+`tests/e2e/fixtures/preview/generate.mjs`; a preview-only link is made by rewriting the `share.link.create` frame
+(`page.routeWebSocket`), since the share dialog only offers presets.
 
 ## Packaging
 

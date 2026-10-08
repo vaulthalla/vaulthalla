@@ -22,10 +22,11 @@ Use this reference when backing up, troubleshooting, or verifying package layout
 | --- | --- |
 | `/etc/vaulthalla/config.yaml` | Main runtime configuration. |
 | `/run/vaulthalla` | Runtime sockets and transient secrets. |
-| `/var/lib/vaulthalla` | Vaulthalla state, local vault bodies, cache/index state, and sealed blobs. |
+| `/var/lib/vaulthalla` | Vaulthalla state, local vault bodies, cache/index state (including the encrypted preview cache), and sealed blobs. |
 | `/var/log/vaulthalla` | Log location where file logging is configured. |
 | `/mnt/vaulthalla` | FUSE filesystem mount. |
 | `/usr/share/vaulthalla/psql` | Packaged SQL schema and migration assets. |
+| `/usr/lib/vaulthalla/helpers` | Optional preview converter helpers from `vaulthalla-preview-cad` and `vaulthalla-preview-media` (`preview.derive.helper_dir`). |
 | `/usr/share/vaulthalla-web` | Packaged web runtime. |
 | `/var/cache/vaulthalla-web` | Web runtime cache. |
 

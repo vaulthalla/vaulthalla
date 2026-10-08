@@ -537,6 +537,11 @@ TEST_F(WsShareFsTest, MetadataReturnsSafeShareRelativeEntry) {
     EXPECT_EQ(entry.at("path").get<std::string>(), "/q1.pdf");
     EXPECT_EQ(entry.at("type").get<std::string>(), "file");
     EXPECT_EQ(entry.at("mime_type").get<std::string>(), "application/pdf");
+    // Share recipients get the same preview plan as console listings (without it the sheet could only fall back to
+    // MIME and showed "no preview" for media, 3D and text even on download-capable links).
+    ASSERT_TRUE(entry.contains("preview"));
+    EXPECT_EQ(entry.at("preview").at("renderer").get<std::string>(), "pdf");
+    EXPECT_EQ(entry.at("preview").at("requires").get<std::string>(), "preview");
     expectNoSecretOrInternalFields(response);
 }
 
@@ -552,6 +557,8 @@ TEST_F(WsShareFsTest, ListReturnsSafeChildrenUnderShareRoot) {
     ASSERT_EQ(response.at("entries").size(), 2u);
     EXPECT_EQ(response.at("entries").at(0).at("path").get<std::string>(), "/q1.pdf");
     EXPECT_EQ(response.at("entries").at(1).at("path").get<std::string>(), "/team");
+    EXPECT_TRUE(response.at("entries").at(0).contains("preview"));
+    EXPECT_FALSE(response.at("entries").at(1).contains("preview"));
     expectNoSecretOrInternalFields(response);
 }
 

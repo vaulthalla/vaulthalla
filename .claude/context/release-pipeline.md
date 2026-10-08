@@ -43,7 +43,8 @@ starts `release.yml`. Never without the maintainer's instruction: a `v*` tag pub
 `vaulthalla-web_<VERSION>_next-standalone.tar.gz`), copies the work tree to `build/deb/src` (minus `build_excludes`:
 local secrets/overrides, stale build dirs, `.claude`), runs `dpkg-buildpackage -us -uc -b` there, and collects the
 `.deb`, `.buildinfo`, `.changes` and the web tarball into `release/`. `vlr checksums` writes `release/SHA256SUMS`;
-`vlr validate-artifacts` checks it plus the `[[debian.packages]]` contract (required/forbidden paths incl. the retired
+`vlr validate-artifacts` checks it plus the `[[debian.packages]]` contracts (one per built .deb: `vaulthalla`,
+`vaulthalla-preview-cad`, `vaulthalla-preview-media`) (required/forbidden paths incl. the retired
 `vaulthalla-cli.{socket,service}` (#110), `any_of` groups, the shipped `config.yaml` byte-identical to
 `deploy/config/config.yaml`, prepared version, and the changelog in the package).
 
@@ -83,7 +84,17 @@ The build needs the private icons (`$VAULTHALLA_WEB_ICON_SRC`, default `~/vaulth
     visible to jobs that declare `environment: Production`.
 - Composite actions (`.github/actions/`): `runner`, `build`, `test`, `setup_web`, `build_web`, `sync_web_icons`
   (calls `web/bin/sync_private_icons.sh`), `test_web`, `setup_valkyrianlabs_tools` (vl-release, pmdocs from apt).
-  Runners are self-hosted (`[self-hosted, Linux, X64, ubuntu-latest-lts]`) because they need the private icon dir.
+  Runners (since 2026-10-07): the VPS runner `vps` (user `gh-vaulthalla`, labels `vaulthalla`, `vps-ci`; shared
+  `ci.slice` CPU/memory pool with the ValkyrianLabs runner). CI targets `[self-hosted, Linux, X64, vaulthalla, vps-ci]`
+  (fork PRs: `ubuntu-latest`, which has no icon store); release jobs target the same labels. Every step runs in the
+  disposable CI container (`ci/run-ci`, rootless Podman, `ci/Containerfile` with the Build-Depends, g++ 14, ccache,
+  Node/pnpm, vl-release, pmdocs, gh, shellcheck) as the job's default shell, composite actions included: no host
+  sudo/apt/Docker, `sudo meson install` only touches the container. Caches persist on the runner in
+  `~gh-vaulthalla/.cache/vaulthalla-ci/{ccache,pnpm-store,npm}`; the licensed icon store
+  (`~gh-vaulthalla/vaulthalla-web-icons`) is mounted read-only (`CI_RO_MOUNTS`, `VAULTHALLA_WEB_ICON_SRC`).
+  `setup_valkyrianlabs_tools` is no longer used by the workflows. The old home-server runner
+  (`vaulthalla-ci-sentinel-4044`, labels `ubuntu-latest-lts`) stays registered as the rollback: reverting the
+  workflow commit retargets it.
 
 ### Re-run rules
 

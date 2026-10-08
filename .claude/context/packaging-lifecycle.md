@@ -1,6 +1,13 @@
 # Deploy assets + Debian package lifecycle
 
-Single binary package: **`vaulthalla`**. Maintainer scripts are the lifecycle source of truth:
+Core binary package: **`vaulthalla`**, plus two optional helper packages, **`vaulthalla-preview-cad`** (STEP/STP ->
+GLB, Open CASCADE) and **`vaulthalla-preview-media`** (libav*). Each ships one executable in
+`/usr/lib/vaulthalla/helpers/`, `Depends: vaulthalla (= ${binary:Version})`, has no maintainer scripts, and is
+dropped by the build profile `pkg.vaulthalla.nocad` / `pkg.vaulthalla.nomedia` (debian/rules then passes
+`-Dpreview_*=disabled`; otherwise `enabled`, so a missing -dev package fails the build). The core only `Suggests:`
+them (after the pinned Recommends) and never links OCCT/libav/libseccomp; helper shlibs land on the helper packages.
+Pinned by `tools/contracts/test_preview_helper_packages_contract.py` and release.toml's per-package contracts.
+Maintainer scripts are the lifecycle source of truth:
 `debian/preinst`, `debian/postinst`, `debian/prerm`, `debian/postrm`. The `bin/` scripts are source/dev helpers, and their
 semantics do **not** match `apt remove/purge`. Operator-facing detail lives in `debian/README.Debian`.
 
@@ -36,8 +43,8 @@ No static libs or headers ship (`debian/not-installed` satisfies `dh_missing --f
 
 `debian/control`: Depends `adduser nodejs openssl fuse3 python3`. `nodejs` stays unversioned: Next 16 wants
 >= 20.9, but noble ships 18.19. Recommends: `postgresql nginx swtpm swtpm-tools certbot python3-certbot-nginx
-python3-certbot-dns-cloudflare`. Build-Depends mirror `core/meson.build` pkg-config deps (verified with
-`dpkg-checkbuilddeps` on the dev VM; CI runners must have the same packages).
+python3-certbot-dns-cloudflare`. Suggests: `vaulthalla-preview-cad vaulthalla-preview-media`. Build-Depends mirror `core/meson.build` pkg-config deps (verified with
+`dpkg-checkbuilddeps` on the dev VM; the CI image `ci/Containerfile` must carry the same packages).
 
 ## State markers under `/var/lib/vaulthalla`
 

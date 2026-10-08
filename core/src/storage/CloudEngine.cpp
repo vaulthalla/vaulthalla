@@ -12,7 +12,10 @@
 #include "db/query/identities/User.hpp"
 #include "db/query/sync/RemoteObjectIndex.hpp"
 #include "fs/ops/file.hpp"
-#include "preview/thumbnail/Worker.hpp"
+#include "preview/render/Service.hpp"
+#include "log/Registry.hpp"
+#include "concurrency/ThreadPoolManager.hpp"
+#include "concurrency/ThreadPool.hpp"
 #include "fs/Filesystem.hpp"
 #include "runtime/Deps.hpp"
 #include "vault/APIKeyManager.hpp"
@@ -127,14 +130,14 @@ std::unordered_map<std::string, std::string> CloudEngine::getMetaMapFromFile(con
     return meta;
 }
 
-CloudEngine::CloudEngine(const std::shared_ptr<S3Vault>& vault)
+CloudEngine::CloudEngine(const std::shared_ptr<vh::vault::model::S3Vault>& vault)
     : Engine(vault),
       key_(runtime::Deps::get().apiKeyManager->getAPIKey(vault->api_key_id)),
       s3Provider_(std::make_shared<s3::Controller>(key_, vault->bucket)) {
     resolveS3ProviderConfiguration();
 }
 
-CloudEngine::CloudEngine(const std::shared_ptr<S3Vault>& vault, std::shared_ptr<s3::Controller> s3Provider)
+CloudEngine::CloudEngine(const std::shared_ptr<vh::vault::model::S3Vault>& vault, std::shared_ptr<s3::Controller> s3Provider)
     : Engine(vault),
       key_(runtime::Deps::get().apiKeyManager->getAPIKey(vault->api_key_id)),
       s3Provider_(std::move(s3Provider)) {
@@ -324,7 +327,7 @@ std::shared_ptr<File> CloudEngine::downloadFileWithRemoteMetadata(
             .overwrite = true
         });
 
-    preview::thumbnail::Worker::enqueue(shared_from_this(), buffer, f);
+    preview::render::enqueueThumbnails(shared_from_this(), f, buffer);
 
     return f;
 }
@@ -689,34 +692,86 @@ CloudEngine::RemoteEncryptionContext CloudEngine::resolveRemoteEncryptionContext
     return {};
 }
 
+std::optional<CloudEngine::RemoteObjectHead> CloudEngine::headRemoteObject(const fs::path& rel_path) const {
+    const auto head = s3Provider_->getHeadObject(stripLeadingSlash(rel_path));
+    if (!head) return std::nullopt;
+
+    RemoteObjectHead out;
+    if (const auto etag = header_value(*head, "ETag")) out.etag = *etag;
+    if (const auto length = header_value(*head, "Content-Length")) {
+        try {
+            out.content_length = std::stoull(*length);
+        } catch (const std::exception&) {
+            out.content_length.reset();
+        }
+    }
+
+    std::optional<std::pair<std::string, unsigned int>> payload;
+    try {
+        payload = encryption_payload_from_headers(*head);
+    } catch (const std::exception&) {
+        payload.reset();  // an unparsable key version is no usable encryption context
+    }
+    std::optional<bool> flag;
+    if (const auto value = header_value(*head, META_VH_ENCRYPTED)) flag = parse_encrypted_flag(*value);
+    // Objects Vaulthalla writes always carry vh-encrypted; an object without any vh metadata is plaintext.
+    out.encrypted = flag ? *flag : payload.has_value();
+    if (out.encrypted && payload) {
+        out.iv_b64 = payload->first;
+        out.key_version = payload->second;
+    }
+
+    if (auto storageClass = header_value(*head, "x-amz-storage-class")) {
+        std::ranges::transform(*storageClass, storageClass->begin(), [](unsigned char c) {
+            return static_cast<char>(std::toupper(c));
+        });
+        if (*storageClass == "GLACIER" || *storageClass == "DEEP_ARCHIVE") {
+            const auto restore = header_value(*head, "x-amz-restore");
+            out.requires_restore = !restore || !contains_case_insensitive(*restore, "ongoing-request=\"false\"");
+        }
+    }
+    if (const auto archiveStatus = header_value(*head, "x-amz-archive-status"); archiveStatus && !archiveStatus->empty())
+        out.requires_restore = true;
+
+    return out;
+}
+
+void CloudEngine::setRemoteFetchGate(RemoteFetchGate gate) { fetchGate_ = std::move(gate); }
+
+void CloudEngine::setRangedReadLimits(const RangedReadLimits& limits) { rangedLimits_ = limits; }
+
+void CloudEngine::setHydrateCatalogCommitForTesting(HydrateCatalogCommit commit) { catalogCommit_ = std::move(commit); }
+
 void CloudEngine::purge(const fs::path& rel_path) const {
     removeLocally(rel_path);
-    removeRemotely(rel_path, true);
+    removeRemotely(rel_path);
 }
 
 void CloudEngine::purge(const std::shared_ptr<file::Trashed>& f) const {
     removeLocally(f);
-    removeRemotely(f, true);
+    removeRemotely(f);
 }
 
-void CloudEngine::removeRemotely(const fs::path& rel_path, const bool rmThumbnails) const {
+void CloudEngine::removeRemotely(const fs::path& rel_path) const {
     s3Provider_->deleteObject(stripLeadingSlash(rel_path));
-    if (rmThumbnails) purgeThumbnails(rel_path);
+    // The file may still be indexed (remote-only removal); its derived artifacts go with the remote copy, as the
+    // path-keyed thumbnails did. After removeLocally the row (and its artifacts) are already gone.
+    if (const auto file = db::query::fs::File::getFileByPath(vault->id, makeAbsolute(rel_path)))
+        purgeDerivedArtifacts(file->id);
 }
 
-void CloudEngine::removeRemotely(const std::shared_ptr<file::Trashed>& f, bool rmThumbnails) const {
-    const auto vaultPath = makeAbsolute(f->path);
-    s3Provider_->deleteObject(stripLeadingSlash(vaultPath));
-    if (rmThumbnails) purgeThumbnails(vaultPath);
+void CloudEngine::removeRemotely(const std::shared_ptr<file::Trashed>& f) const {
+    // Trashing ended the file id and dropped its derived artifacts.
+    s3Provider_->deleteObject(stripLeadingSlash(makeAbsolute(f->path)));
 }
 
-std::shared_ptr<S3Vault> CloudEngine::s3Vault() const { return std::static_pointer_cast<S3Vault>(vault); }
+std::shared_ptr<vh::vault::model::S3Vault> CloudEngine::s3Vault() const { return std::static_pointer_cast<vh::vault::model::S3Vault>(vault); }
 
 void CloudEngine::resolveS3ProviderConfiguration() {
     s3Profile_.reset();
     storageTier_.reset();
 
-    const auto s3 = std::dynamic_pointer_cast<S3Vault>(vault);
+    const auto s3 = std::dynamic_pointer_cast<vh::vault::model::S3Vault>(vault);
     if (!s3) return;
 
     if (key_) s3Profile_ = s3::provider::resolve(key_->provider);
@@ -773,7 +828,7 @@ void CloudEngine::setS3ProviderProfileForTesting(s3::provider::ProfilePtr profil
     s3Profile_ = std::move(profile);
     storageTier_.reset();
 
-    const auto s3 = std::dynamic_pointer_cast<S3Vault>(vault);
+    const auto s3 = std::dynamic_pointer_cast<vh::vault::model::S3Vault>(vault);
     if (!s3 || !s3Profile_) return;
 
     const auto resolution = s3Profile_->normalizeStorageTier(s3->storage_tier_id);

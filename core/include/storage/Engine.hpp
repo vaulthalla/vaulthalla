@@ -8,6 +8,7 @@
 #include "identities/Fwd.hpp"
 #include "sync/Fwd.hpp"
 #include "vault/Fwd.hpp"
+#include "storage/PlaintextReader.hpp"
 
 namespace vh::fs::model {
     struct Path;
@@ -47,6 +48,11 @@ namespace vh::storage {
 
         [[nodiscard]] bool isFile(const fs::path &rel_path) const;
 
+        // Positioned plaintext access to f's current generation (see storage/PlaintextReader.hpp). Local backing
+        // bytes are read in place; a cloud file without a local copy follows ReaderOptions::remote.
+        [[nodiscard]] std::unique_ptr<PlaintextReader> openPlaintextReader(
+            const std::shared_ptr<vh::fs::model::File> &f, ReaderOptions options = {}) const;
+
         [[nodiscard]] std::vector<uint8_t> decrypt(const std::shared_ptr<vh::fs::model::File> &f) const;
 
         [[nodiscard]] std::vector<uint8_t> decrypt(const std::shared_ptr<vh::fs::model::File> &f,
@@ -81,14 +87,21 @@ namespace vh::storage {
 
         [[nodiscard]] virtual StorageType type() const { return StorageType::Local; }
 
-        void purgeThumbnails(const fs::path &rel_path) const;
-
-        void moveThumbnails(const fs::path &from, const fs::path &to) const;
-
-        void copyThumbnails(const fs::path &from, const fs::path &to) const;
+        // Drops every derived preview artifact of a file (preview::cache::Store::purgeFile). Best effort: the cache
+        // is non-authoritative, so a failure is logged, never thrown. Artifacts are keyed by file id, so rename and
+        // move need nothing; call this wherever a file id stops existing (delete, trash, purge).
+        void purgeDerivedArtifacts(unsigned int fileId) const;
 
         [[nodiscard]] std::filesystem::path vaultPathToFusePath(const std::filesystem::path &vPath) const;
 
         [[nodiscard]] std::filesystem::path fusePathToVaultPath(const std::filesystem::path &fPath) const;
+
+    protected:
+        // The backing file is absent. Local vaults: not found. CloudEngine: hydrate / ranged / off.
+        [[nodiscard]] virtual std::unique_ptr<PlaintextReader> openMissingReader(
+            const std::shared_ptr<vh::fs::model::File> &f, const ReaderOptions &options) const;
+
+        [[nodiscard]] std::unique_ptr<PlaintextReader> openLocalReader(
+            const std::shared_ptr<vh::fs::model::File> &f, const ReaderOptions &options) const;
     };
 } // namespace vh::storage

@@ -13,6 +13,9 @@ import unittest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DISPATCH_REF = "${{ github.event.inputs.ref || github.ref }}"
+# Every CI step runs in the disposable CI container (ci/run-ci, ci/Containerfile) on the VPS runner, never on the host.
+CONTAINER_SHELL = "bash ./ci/run-ci bash -euo pipefail {0}"
+VPS_RUNNER = "[self-hosted, Linux, X64, vaulthalla, vps-ci]"
 
 
 def _read(relative: str) -> str:
@@ -23,6 +26,11 @@ def _jobs(workflow: str) -> dict[str, str]:
     body = workflow.split("\njobs:\n", 1)[1]
     parts = re.split(r"(?m)^  ([a-z0-9-]+):\n", body)
     return {parts[i]: parts[i + 1] for i in range(1, len(parts), 2)}
+
+
+def _code(text: str) -> str:
+    """The text without its comment lines."""
+    return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
 
 
 def _needs(job: str) -> set[str]:
@@ -86,9 +94,45 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         self.assertIn("needs.github-release.result == 'success'", finalize)
         self.assertIn("vlr finalize --record release/meta/prepare.json", finalize)
 
-    def test_github_release_job_installs_the_github_cli(self) -> None:
-        # vlr github-release shells out to gh; the self-hosted runner has none (v1.8.0's first run failed there).
-        self.assertIn("packages: vl-release gh", self.jobs["github-release"])
+    def test_github_release_job_has_the_github_cli(self) -> None:
+        # vlr github-release shells out to gh; the self-hosted runner host has none (v1.8.0's first run failed there).
+        # The job runs in the CI container, whose image installs gh (with vl-release and pmdocs).
+        self.assertIn(f"shell: {CONTAINER_SHELL}", self.jobs["github-release"])
+        image = _read("ci/Containerfile")
+        for package in ("gh", "vl-release", "pmdocs", "shellcheck"):
+            self.assertRegex(image, rf"(?m)^\s+.*\b{re.escape(package)}\b", package)
+
+    def test_every_release_job_runs_on_the_vps_runner_in_the_ci_container(self) -> None:
+        for name, job in self.jobs.items():
+            with self.subTest(job=name):
+                self.assertIn(f"runs-on: {VPS_RUNNER}\n    defaults:\n      run:\n        shell: {CONTAINER_SHELL}\n", job)
+                self.assertNotRegex(job, r"(?m)^\s+shell: (?!bash \./ci/run-ci )")
+                self.assertNotIn("sudo", _code(job))
+
+    def test_ci_image_carries_every_build_dependency(self) -> None:
+        # vlr build-deb runs dpkg-checkbuilddeps in the CI container: a Build-Depends missing from the image fails
+        # the release (the helper packages' libraries were missing on the old runner).
+        control = _read("debian/control")
+        block = re.search(r"(?ms)^Build-Depends:\n(.*?)^\S", control).group(1)
+        names = {re.split(r"[\s(<]", line.strip().rstrip(","))[0] for line in block.splitlines() if line.strip()}
+        image = _read("ci/Containerfile")
+        self.assertIn("build-essential", image)
+        for name in sorted(names - {"debhelper-compat"}):
+            with self.subTest(package=name):
+                self.assertRegex(image, rf"(?m)^\s+.*(?<![\w.+-]){re.escape(name)}(?![\w.+-])")
+        self.assertIn("debhelper", image)
+
+    def test_ci_and_its_composite_actions_run_in_the_ci_container(self) -> None:
+        ci = _read(".github/workflows/build_and_test.yml")
+        self.assertEqual(ci.count(f"shell: {CONTAINER_SHELL}"), 2)
+        self.assertEqual(ci.count('"self-hosted","Linux","X64","vaulthalla","vps-ci"'), 2)
+        self.assertNotIn("sudo", _code(ci))
+        for action in ("build", "test", "setup_web", "build_web", "test_web", "sync_web_icons"):
+            text = _read(f".github/actions/{action}/action.yml")
+            with self.subTest(action=action):
+                shells = re.findall(r"(?m)^\s+shell: (.+)$", text)
+                self.assertTrue(shells or "uses: ./.github/actions/" in text)
+                self.assertEqual(set(shells) - {CONTAINER_SHELL}, set())
 
     def test_docs_failure_cannot_block_or_fail_the_release_record(self) -> None:
         self.assertNotIn("docs-publish", _needs(self.jobs["finalize"]))
@@ -165,9 +209,30 @@ class ReleaseTomlContractTests(unittest.TestCase):
         targets = {(t["kind"], t["path"]) for t in self.config["version"]["targets"]}
         self.assertEqual(targets, {("meson", "meson.build"), ("package_json", "web/package.json")})
 
+    def _packages(self) -> dict[str, dict]:
+        return {package["name"]: package for package in self.config["debian"]["packages"]}
+
+    def test_every_binary_package_has_a_contract(self) -> None:
+        # vlr validate-artifacts requires a contract per built .deb and vice versa; debian/control is the list.
+        control = _read("debian/control")
+        built = set(re.findall(r"(?m)^Package: (\S+)$", control))
+        self.assertEqual(set(self._packages()), built)
+        self.assertEqual(built, {"vaulthalla", "vaulthalla-preview-cad", "vaulthalla-preview-media"})
+
+    def test_helper_packages_carry_only_their_helper(self) -> None:
+        packages = self._packages()
+        self.assertIn("usr/lib/vaulthalla/helpers/*", packages["vaulthalla"]["forbidden_paths"])
+        for name in ("vaulthalla-preview-cad", "vaulthalla-preview-media"):
+            with self.subTest(package=name):
+                package = packages[name]
+                self.assertEqual(package["architecture"], "amd64")
+                self.assertIn(f"usr/lib/vaulthalla/helpers/{name}", package["required_paths"])
+                for path in ("usr/bin/*", "etc/*", "lib/systemd/*", "usr/share/vaulthalla/*"):
+                    self.assertIn(path, package["forbidden_paths"])
+
     def test_package_contract_keeps_the_product_invariants(self) -> None:
-        (package,) = self.config["debian"]["packages"]
-        self.assertEqual(package["name"], "vaulthalla")
+        package = self._packages()["vaulthalla"]
+        self.assertEqual(self.config["debian"]["packages"][0]["name"], "vaulthalla")
         for path in ("usr/bin/vh", "usr/lib/vaulthalla/lifecycle", "usr/share/vaulthalla-web/server.js",
                      "usr/share/vaulthalla/psql/000_schema.sql", "lib/systemd/system/vaulthalla.service"):
             self.assertIn(path, package["required_paths"])
