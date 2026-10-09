@@ -23,6 +23,10 @@ authorized penetration-test fixture, plus the open log-hygiene and API-consisten
 - **The mount no longer confirms that hidden paths exist.** Inside a vault, a path you have no permission to see now
   consistently answers `No such file or directory`, whichever operation reaches the daemon first. Paths you can see
   but can't act on still answer `Permission denied`.
+- **The mount no longer serves cached metadata across users.** The kernel caches lookups and file attributes for all
+  users of the mount, so a user without access could `stat` a path another user had just opened (for up to a minute
+  after it was created). Every lookup and `stat` is now checked for the calling user. Files you may download are now
+  also visible to you in lookups and directory listings even when your role grants no preview.
 
 ### Accounts
 
@@ -44,10 +48,12 @@ authorized penetration-test fixture, plus the open log-hygiene and API-consisten
   failed refresh-token check logs its reason.
 - Stopping or upgrading the package no longer marks `vaulthalla-web.service` as failed.
 
-### Breaking: S3 gateway WebSocket payloads
+### Breaking: S3 gateway and pricing WebSocket payloads
 
 - `s3.gateway.credentials.*` commands no longer accept a bare `id`. Name the credential with `credential_id` (or
   `access_key` / `name`), a role override with `override_id`, and a permission with `permission_id` (or
   `permission_qualified` / `permission_name`). A payload that carries `id` is refused with an `invalid` error naming
   the expected field. The bundled web console already sends the explicit fields. `vh s3-gateway creds role override
   remove` also takes `--override-id`.
+- The same rule now applies to pricing: `pricing.budget.override.approve` / `.deny` take `override_id` and
+  `pricing.notifications.ack` takes `notification_id`. A bare `id` (or a missing field) is refused with `invalid`.

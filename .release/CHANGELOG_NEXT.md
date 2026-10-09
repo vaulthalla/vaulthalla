@@ -14,6 +14,11 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
   - rbac: the filesystem evaluator denies an entry from another vault (EntryVaultMismatch).
 - fuse: denials answer ENOENT when the caller cannot Lookup the target (the parent for creates) and EACCES
   otherwise, regardless of which op reaches the daemon first; replaces the vault-root-only rule (#170).
+- fuse: entry/attr timeouts are 0 on every reply (kKernelMetadataTimeout), so each lookup/getattr is authorized for
+  the calling uid; a denied uid could stat paths another uid had resolved, up to 60 s after a create (#183).
+  - rbac: a denied file Lookup falls back to the Read decision (a download-only grant is visible and listed).
+- pricing ws: override approve/deny read `override_id`, notifications ack reads `notification_id`; a bare or missing
+  id is a typed `invalid` (#184). Breaking for ws clients sending `id`.
 - s3 gateway ws: refuse a bare `id` on `s3.gateway.credentials.*` with `invalid`, naming credential_id /
   override_id / permission_id; missing references are typed `invalid` (#165). Breaking for ws clients sending `id`.
 
@@ -32,4 +37,6 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
 ## Tests
 - VaultLifecycleRegressionTest (share subpaths, cross-vault paths, user delete, vault name reuse and rename),
   FuseDenial, WsRefusalLog, WsS3GatewayPayloads; harness gains cache-warm FUSE deny cases.
-- contracts: no printf placeholders in core log calls; the web unit treats exit 143 as success.
+- FsPolicyLookup, WsPricingPayloads; harness gains cache-warm stat deny cases (#183).
+- contracts: no printf placeholders in core log calls; the web unit treats exit 143 as success; FUSE reply timeouts
+  are the zero constant.

@@ -265,12 +265,17 @@ bytes, inline by default), `GET|HEAD /download` (files stream with no size cap; 
   reachable through a handle that passed the resolver.
 - **Denied means hidden unless visible (#170).** `fuse::resolver::deniedErrno` answers a denial with ENOENT when the
   caller cannot Lookup the target (the parent for a create of a new name) and EACCES when it can see it but lacks
-  the action; the mount root is never hidden. The answer must not depend on which op reaches the daemon first: the
-  kernel dentry/attr cache is shared across uids (lookup 0.1 s, mkdir/symlink/setattr 1 s, **create 60 s**), so a
-  denied uid can walk dentries another uid resolved and hit getattr/readdir/open directly. Within those windows a
-  denied uid can `stat` a cached path (existence + attrs, no data: open/readdir are always checked). An ENOENT
-  answer to a revalidating lookup (or unlink) also makes the kernel invalidate that shared dentry, so allowed users
-  re-look it up, and a process whose cwd was that dentry gets ENOENT from getcwd.
+  the action; the mount root is never hidden. The answer must not depend on which op reaches the daemon first.
+  An ENOENT answer to a revalidating lookup (or unlink) makes the kernel invalidate that shared dentry, so allowed
+  users re-look it up, and a process whose cwd was that dentry gets ENOENT from getcwd.
+- **No kernel metadata caching (#183).** The kernel dentry/attr cache is shared across uids and the mount has no
+  `default_permissions`, so anything cached is answered for any caller without the daemon. Every reply uses
+  `kKernelMetadataTimeout` = 0 (Bridge.cpp; pinned by `tools/contracts/test_fuse_cache_timeout_contract.py`), so each
+  lookup/getattr is authorized for the calling uid. Before, a denied uid could `stat` a path another uid had just
+  resolved (up to 60 s after a create). Size coherence doesn't need kernel caching: `statFromEntry` reports an open
+  working copy's size. The harness passing "override allow: read secret" had relied on that cache: a file Lookup
+  maps to Preview, so a download-only grant was hidden; `Evaluator::resolveStage` now lets a denied file Lookup fall
+  back to the Read decision (seeing a file is implied by being allowed to download it).
 
 ## Database
 

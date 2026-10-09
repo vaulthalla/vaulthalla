@@ -85,7 +85,7 @@ make uninstall && make clean-full && make run_test   # destructive to local dev/
 ```
 
 This runs `core/tests/integrations/main.cpp` in test mode: it wipes, inits, and seeds the DB, starts FUSE + shell, and runs the CLI and FUSE suites
-against **`/tmp/vh_mount`**. The last known result was 81/81 (2026-10-09, after #170). It's isolated from systemd/prod state.
+against **`/tmp/vh_mount`**. The last known result was 83/83 (2026-10-09, after #170 and #183). It's isolated from systemd/prod state.
 If `apt-get update` fails in `bin/setup/install_deps.sh` on an unrelated host apt source (e.g. a Caddy Cloudsmith
 `402 Payment Required`), run the remaining steps directly: `bin/tests/uninstall.sh`, `bin/setup/install_users.sh`,
 `bin/tests/install_dirs.sh`, `bin/tests/install_db.sh`, `bin/tests/install_core.sh --run`.
