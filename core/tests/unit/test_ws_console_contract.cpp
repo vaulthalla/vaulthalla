@@ -7,6 +7,7 @@
 #include "protocols/ws/Router.hpp"
 #include "protocols/ws/Session.hpp"
 #include "protocols/ws/core/handler_templates.hpp"
+#include "protocols/ws/handler/Pricing.hpp"
 #include "protocols/ws/handler/S3Gateway.hpp"
 #include "protocols/ws/handler/Settings.hpp"
 #include "protocols/ws/handler/Stats.hpp"
@@ -83,6 +84,44 @@ TEST(WsErrorCodes, AdminGatesRefuseWithDenied) {
     EXPECT_THROW((void)protocols::ws::handler::Stats::systemHealth(s), ops::Denied);
     EXPECT_THROW((void)protocols::ws::handler::Stats::systemTrends(json::object(), s), ops::Denied);
     EXPECT_THROW((void)protocols::ws::handler::Settings::get(s), ops::Denied);
+}
+
+// #184: pricing.* reads explicit override_id / notification_id, refuses a bare `id` as "invalid" naming the field,
+// and a missing field is "invalid" too (it used to escape as an untyped json out_of_range). DB-free: the refusal
+// fires before any lookup.
+TEST(WsPricingPayloads, BareOrMissingIdIsRefusedAsInvalidNamingTheExplicitField) {
+    using protocols::ws::handler::Pricing;
+    auto admin = powerlessUser();
+    admin->roles.admin = std::make_shared<rbac::role::Admin>(rbac::role::Admin::SuperAdmin());
+    ASSERT_TRUE(admin->isSuperAdmin());
+    const auto s = sessionFor(admin);
+
+    using Handler = json (*)(const json&, const std::shared_ptr<protocols::ws::Session>&);
+    const auto refusal = [&](const Handler handler, const json& payload) -> std::string {
+        try {
+            (void)handler(payload, s);
+        } catch (const ops::Invalid& e) {
+            EXPECT_EQ(replyFor(e).data, (json{{"code", "invalid"}}));
+            return e.what();
+        } catch (const std::exception& e) {
+            ADD_FAILURE() << "expected ops::Invalid, got: " << e.what();
+            return {};
+        }
+        ADD_FAILURE() << "payload was accepted: " << payload.dump();
+        return {};
+    };
+
+    for (const auto& [handler, field] : {std::pair<Handler, std::string>{&Pricing::overrideApprove, "override_id"},
+                                         std::pair<Handler, std::string>{&Pricing::overrideDeny, "override_id"},
+                                         std::pair<Handler, std::string>{&Pricing::notificationsAck, "notification_id"}}) {
+        const auto bare = refusal(handler, json{{"id", 7}, {"vault_id", 1}});
+        EXPECT_NE(bare.find("bare 'id'"), std::string::npos) << bare;
+        EXPECT_NE(bare.find(field), std::string::npos) << bare;
+        // Even next to the explicit field, so a stray id can't be silently ignored.
+        EXPECT_NE(refusal(handler, json{{field, 7}, {"id", 7}}).find(field), std::string::npos);
+        EXPECT_NE(refusal(handler, json{{"vault_id", 1}}).find(field), std::string::npos);
+        EXPECT_NE(refusal(handler, json{{field, "7"}}).find(field), std::string::npos);
+    }
 }
 
 // #165: s3.gateway.* never guesses what a bare `id` means (credential, role override or permission). The refusal is

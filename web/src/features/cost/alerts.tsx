@@ -121,7 +121,7 @@ const approve = async (o: PriceOverride, vaultName: string | null) => {
   })
   if (!ok) return
   try {
-    await api.send('pricing.budget.override.approve', { id: o.id })
+    await api.send('pricing.budget.override.approve', { override_id: o.id })
     await refreshPricing()
     notify.success('Override approved')
   } catch (error) {
@@ -137,7 +137,7 @@ const deny = async (o: PriceOverride, vaultName: string | null) => {
   })
   if (!ok) return
   try {
-    await api.send('pricing.budget.override.deny', { id: o.id })
+    await api.send('pricing.budget.override.deny', { override_id: o.id })
     await refreshPricing()
     notify.success('Override denied')
   } catch (error) {
