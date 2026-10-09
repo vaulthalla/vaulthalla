@@ -323,7 +323,10 @@ export interface S3GatewayCredentialVaultAccessShorthandPayload {
   can_admin?: boolean
 }
 
+// s3.gateway.credentials.* payloads name every id explicitly (credential_id, override_id, permission_id). The
+// server refuses a bare `id` with an `invalid` error (#165), so these types deliberately have no `id` field.
 export interface S3GatewayCredentialScopeUpdatePayload {
+  credential_id?: number
   access_key?: string
   name?: string
   principal_user_id?: number | null
@@ -369,7 +372,6 @@ export interface S3GatewayCredentialDefaultVaultRoleOverridePayload {
   name?: string
   credential_name?: string
   override_id?: number
-  id?: number
   permission_id?: number
   permission_name?: string
   permission_qualified?: string
@@ -405,7 +407,6 @@ export interface S3GatewayCredentialVaultRoleOverridePayload {
   vault_name?: string
   vault?: string
   override_id?: number
-  id?: number
   permission_id?: number
   permission_name?: string
   permission_qualified?: string

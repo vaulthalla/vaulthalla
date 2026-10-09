@@ -6,6 +6,7 @@
 #include "db/query/vault/APIKey.hpp"
 #include "db/query/vault/Vault.hpp"
 #include "identities/User.hpp"
+#include "ops/Error.hpp"
 #include "ops/S3Gateway.hpp"
 #include "protocols/ws/Session.hpp"
 #include "rbac/permission/Override.hpp"
@@ -205,13 +206,27 @@ json bucketJson(const db::query::s3::BucketBinding& bucket) {
 
 // ------------------------------------------------------------------------------------------------- payload
 
-// The credential a payload names: credential_id, then id, then an access key or name.
+// s3.gateway.* never reads a bare `id`: it used to mean a credential, a role override or a permission depending
+// on the command (#165). A payload that carries one is refused (ops::Invalid, ws code "invalid") naming the
+// explicit field(s) the command takes, instead of being guessed at.
+constexpr const char* kCredentialField = "'credential_id' (or access_key / name)";
+constexpr const char* kCredentialAndPermissionFields =
+    "'credential_id' (or access_key / name) for the credential and 'permission_id' "
+    "(or permission_qualified / permission_name) for the permission";
+constexpr const char* kCredentialAndOverrideFields =
+    "'credential_id' (or access_key / name) for the credential and 'override_id' for the override";
+
+void refuseBareId(const json& payload, const char* expected) {
+    if (payload.is_object() && payload.contains("id"))
+        throw ::vh::ops::Invalid(std::string("bare 'id' is not accepted by S3 gateway commands; send ") + expected);
+}
+
+// The credential a payload names: credential_id, then an access key or name.
 gw::Ref credentialRefFromPayload(const json& payload) {
     if (const auto id = optionalUInt(payload, "credential_id")) return *id;
-    if (const auto id = optionalUInt(payload, "id")) return *id;
     for (const auto* key : {"access_key", "credential_access_key", "name", "credential_name", "credential"})
         if (const auto value = optionalString(payload, key)) return *value;
-    throw std::runtime_error("credential_id, access_key or name is required");
+    throw ::vh::ops::Invalid("credential_id, access_key or name is required");
 }
 
 gw::Credential credentialFromPayload(const std::shared_ptr<Session>& session, const json& payload) {
@@ -293,7 +308,6 @@ std::optional<std::time_t> expiresFromPayload(const json& payload) {
 gw::OverrideSpec overrideSpecFromPayload(const json& payload) {
     gw::OverrideSpec spec;
     if (const auto id = optionalUInt(payload, "permission_id")) spec.permission = std::to_string(*id);
-    else if (const auto legacyId = optionalUInt(payload, "id")) spec.permission = std::to_string(*legacyId);
     else
         for (const auto* key : {"permission_qualified", "permission_name", "permission"})
             if (const auto value = optionalString(payload, key)) {
@@ -308,8 +322,7 @@ gw::OverrideSpec overrideSpecFromPayload(const json& payload) {
 
 std::uint32_t overrideIdFromPayload(const json& payload) {
     if (const auto id = optionalUInt(payload, "override_id")) return *id;
-    if (const auto id = optionalUInt(payload, "id")) return *id;
-    throw std::runtime_error("override_id is required");
+    throw ::vh::ops::Invalid("override_id is required");
 }
 
 gw::BudgetScope budgetScopeFromPayload(const json& payload) {
@@ -394,13 +407,15 @@ json S3Gateway::credentialsList(const json& payload, const std::shared_ptr<Sessi
 }
 
 json S3Gateway::credentialsRevoke(const json& payload, const std::shared_ptr<Session>& session) {
+    refuseBareId(payload, "'access_key' or 'name'");
     const auto value = payload.value("access_key", payload.value("name", std::string{}));
-    if (value.empty()) throw std::runtime_error("access_key or name is required");
+    if (value.empty()) throw ::vh::ops::Invalid("access_key or name is required");
     (void)gw::revokeCredential(gwActor(session), gw::Ref{value});
     return {{"revoked", true}};
 }
 
 json S3Gateway::credentialsScopeUpdate(const json& payload, const std::shared_ptr<Session>& session) {
+    refuseBareId(payload, kCredentialField);
     gw::ScopeUpdate req;
     req.scope_mode = optionalString(payload, "scope_mode");
     req.principal_id = optionalUInt(payload, "principal_user_id");
@@ -415,6 +430,7 @@ json S3Gateway::credentialsScopeUpdate(const json& payload, const std::shared_pt
 }
 
 json S3Gateway::credentialsDefaultRoleGet(const json& payload, const std::shared_ptr<Session>& session) {
+    refuseBareId(payload, kCredentialField);
     const auto credential = credentialFromPayload(session, payload);
     return {
         {"credential", credentialJson(credential)},
@@ -423,6 +439,7 @@ json S3Gateway::credentialsDefaultRoleGet(const json& payload, const std::shared
 }
 
 json S3Gateway::credentialsDefaultRoleSet(const json& payload, const std::shared_ptr<Session>& session) {
+    refuseBareId(payload, kCredentialField);
     const auto credential = credentialFromPayload(session, payload);
     const auto saved = gw::setDefaultRole(gwActor(session), credential.id, vaultRoleIdFromPayload(payload),
                                           payload.value("enabled", true));
@@ -430,6 +447,7 @@ json S3Gateway::credentialsDefaultRoleSet(const json& payload, const std::shared
 }
 
 json S3Gateway::credentialsDefaultRoleClear(const json& payload, const std::shared_ptr<Session>& session) {
+    refuseBareId(payload, kCredentialField);
     const auto credential = credentialFromPayload(session, payload);
     return {
         {"cleared", gw::clearDefaultRole(gwActor(session), credential.id)},
@@ -438,12 +456,14 @@ json S3Gateway::credentialsDefaultRoleClear(const json& payload, const std::shar
 }
 
 json S3Gateway::credentialsSelectedVaultsList(const json& payload, const std::shared_ptr<Session>& session) {
+    refuseBareId(payload, kCredentialField);
     const auto credential = credentialFromPayload(session, payload);
     const auto rows = selectedVaultsJson(gw::listSelectedVaults(gwActor(session), credential.id));
     return {{"credential", credentialJson(credential)}, {"selected_vaults", rows}, {"vaults", rows}};
 }
 
 json S3Gateway::credentialsSelectedVaultsReplace(const json& payload, const std::shared_ptr<Session>& session) {
+    refuseBareId(payload, kCredentialField);
     const auto credential = credentialFromPayload(session, payload);
     const auto rows = selectedVaultsJson(
         gw::replaceSelectedVaults(gwActor(session), credential.id, selectedVaultIdsFromPayload(payload)));
@@ -451,6 +471,7 @@ json S3Gateway::credentialsSelectedVaultsReplace(const json& payload, const std:
 }
 
 json S3Gateway::credentialsSelectedVaultsAdd(const json& payload, const std::shared_ptr<Session>& session) {
+    refuseBareId(payload, kCredentialField);
     const auto credential = credentialFromPayload(session, payload);
     const auto selected = gw::addSelectedVault(gwActor(session), credential.id, vaultIdFromPayload(session, payload),
                                                payload.value("enabled", true));
@@ -458,6 +479,7 @@ json S3Gateway::credentialsSelectedVaultsAdd(const json& payload, const std::sha
 }
 
 json S3Gateway::credentialsSelectedVaultsRemove(const json& payload, const std::shared_ptr<Session>& session) {
+    refuseBareId(payload, kCredentialField);
     const auto credential = credentialFromPayload(session, payload);
     const auto vaultId = vaultIdFromPayload(session, payload);
     gw::removeVault(gwActor(session), credential.id, vaultId);
@@ -465,6 +487,7 @@ json S3Gateway::credentialsSelectedVaultsRemove(const json& payload, const std::
 }
 
 json S3Gateway::credentialsDefaultRoleOverridesList(const json& payload, const std::shared_ptr<Session>& session) {
+    refuseBareId(payload, kCredentialField);
     const auto credential = credentialFromPayload(session, payload);
     json rows = json::array();
     for (const auto& overrideRule : gw::listDefaultRoleOverrides(gwActor(session), credential.id))
@@ -477,18 +500,21 @@ json S3Gateway::credentialsDefaultRoleOverridesList(const json& payload, const s
 }
 
 json S3Gateway::credentialsDefaultRoleOverridesAdd(const json& payload, const std::shared_ptr<Session>& session) {
+    refuseBareId(payload, kCredentialAndPermissionFields);
     const auto credential = credentialFromPayload(session, payload);
     const auto saved = gw::addDefaultRoleOverride(gwActor(session), credential.id, overrideSpecFromPayload(payload));
     return {{"override", defaultOverrideJson(credential, saved)}};
 }
 
 json S3Gateway::credentialsDefaultRoleOverridesRemove(const json& payload, const std::shared_ptr<Session>& session) {
+    refuseBareId(payload, kCredentialAndOverrideFields);
     const auto credential = credentialFromPayload(session, payload);
     gw::removeDefaultRoleOverride(gwActor(session), credential.id, overrideIdFromPayload(payload));
     return {{"removed", true}, {"credential", credentialJson(credential)}};
 }
 
 json S3Gateway::credentialsRolesList(const json& payload, const std::shared_ptr<Session>& session) {
+    refuseBareId(payload, kCredentialField);
     const auto credential = credentialFromPayload(session, payload);
     json rows = json::array();
     for (const auto& assignment : gw::listRoleAssignments(gwActor(session), credential.id))
@@ -497,6 +523,7 @@ json S3Gateway::credentialsRolesList(const json& payload, const std::shared_ptr<
 }
 
 json S3Gateway::credentialsRolesAssign(const json& payload, const std::shared_ptr<Session>& session) {
+    refuseBareId(payload, kCredentialField);
     const auto credential = credentialFromPayload(session, payload);
     const auto assignment = gw::assignRole(gwActor(session), credential.id, vaultIdFromPayload(session, payload),
                                            vaultRoleIdFromPayload(payload), payload.value("enabled", true));
@@ -505,6 +532,7 @@ json S3Gateway::credentialsRolesAssign(const json& payload, const std::shared_pt
 }
 
 json S3Gateway::credentialsRolesRevoke(const json& payload, const std::shared_ptr<Session>& session) {
+    refuseBareId(payload, kCredentialField);
     const auto credential = credentialFromPayload(session, payload);
     const auto vaultId = vaultIdFromPayload(session, payload);
     gw::revokeRole(gwActor(session), credential.id, vaultId);
@@ -512,6 +540,7 @@ json S3Gateway::credentialsRolesRevoke(const json& payload, const std::shared_pt
 }
 
 json S3Gateway::credentialsRoleOverridesList(const json& payload, const std::shared_ptr<Session>& session) {
+    refuseBareId(payload, kCredentialField);
     const auto credential = credentialFromPayload(session, payload);
     const auto vaultId = vaultIdFromPayload(session, payload);
     const auto vault = vaultJson(vaultId);
@@ -522,6 +551,7 @@ json S3Gateway::credentialsRoleOverridesList(const json& payload, const std::sha
 }
 
 json S3Gateway::credentialsRoleOverridesAdd(const json& payload, const std::shared_ptr<Session>& session) {
+    refuseBareId(payload, kCredentialAndPermissionFields);
     const auto credential = credentialFromPayload(session, payload);
     const auto vaultId = vaultIdFromPayload(session, payload);
     const auto saved = gw::addRoleOverride(gwActor(session), credential.id, vaultId, overrideSpecFromPayload(payload));
@@ -529,6 +559,7 @@ json S3Gateway::credentialsRoleOverridesAdd(const json& payload, const std::shar
 }
 
 json S3Gateway::credentialsRoleOverridesRemove(const json& payload, const std::shared_ptr<Session>& session) {
+    refuseBareId(payload, kCredentialAndOverrideFields);
     const auto credential = credentialFromPayload(session, payload);
     const auto vaultId = vaultIdFromPayload(session, payload);
     gw::removeRoleOverride(gwActor(session), credential.id, vaultId, overrideIdFromPayload(payload));
