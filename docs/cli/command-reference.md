@@ -33,10 +33,12 @@ sudo vh setup db
 sudo vh setup remote-db --host <host> --port 5432 --user <user> --database <name> --password-file <path>
 sudo vh setup nginx --domain vault.example.com
 sudo vh setup nginx --domain vault.example.com --certbot
-sudo vh setup nginx --domain vaulthalla.dev --s3-domain s3.vaulthalla.dev --certbot-dns-cloudflare --cloudflare-credentials /etc/vaulthalla/certbot/cloudflare.ini
+sudo vh setup nginx --domain vaulthalla.dev --s3-domain s3.vaulthalla.dev --certbot-dns-cloudflare /etc/vaulthalla/certbot/cloudflare.ini
 sudo vh teardown nginx
 sudo vh teardown db
 ```
+
+The `--s3-domain` form needs a Cloudflare API token in a root-only credentials file (`dns_cloudflare_api_token = <token>`). See [S3 Gateway Setup](/s3-gateway/setup#create-the-credentials-file).
 
 `setup assign-admin` and `setup set-super-admin-password` are normal CLI commands. `setup set-super-admin-password` changes the web console password of the built-in `admin` account; only the Linux user bound as the super admin may run it, without `sudo`, and it removes the generated initial password file. The database, remote database, Nginx, and teardown commands are privileged lifecycle commands and should be run with `sudo`.
 

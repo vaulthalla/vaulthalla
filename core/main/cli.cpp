@@ -159,6 +159,10 @@ static bool has_flag(const std::vector<std::string>& argv_norm, std::string_view
     return std::ranges::any_of(argv_norm, [&](const std::string& a){ return a == flag; });
 }
 
+static bool is_help_request(const std::vector<std::string>& argv_norm) {
+    return has_flag(argv_norm, "--help") || has_flag(argv_norm, "--h") || has_flag(argv_norm, "-h") || has_flag(argv_norm, "?");
+}
+
 static bool is_interactive_allowed(const std::vector<std::string>& argv_norm) {
     // Hard opt-out via env or flags
     if (const char* env = std::getenv("VAULTHALLA_NONINTERACTIVE")) {
@@ -286,11 +290,7 @@ static int run_lifecycle_command(const std::vector<std::string>& argv_norm) {
 static bool should_append_status_systemd_summary(const std::vector<std::string>& argv_norm) {
     if (argv_norm.empty() || argv_norm[0] != "status") return false;
     if (::geteuid() != 0) return false;
-    const auto hasHelpFlag = has_flag(argv_norm, "--help")
-                          || has_flag(argv_norm, "--h")
-                          || has_flag(argv_norm, "-h")
-                          || has_flag(argv_norm, "?");
-    return !hasHelpFlag;
+    return !is_help_request(argv_norm);
 }
 
 static std::string shell_quote(const std::string& s) {
@@ -463,7 +463,10 @@ int main(const int argc, char** argv) {
         return 0;
     }
 
-    if (is_lifecycle_command(argv_norm)) {
+    // Help for a lifecycle command comes from the usage book like any other command, so it needs no sudo. Only when
+    // the daemon is unreachable (e.g. before `setup db`) does root fall back to the lifecycle utility's own --help.
+    const bool lifecycleHelp = is_lifecycle_command(argv_norm) && is_help_request(argv_norm);
+    if (is_lifecycle_command(argv_norm) && !lifecycleHelp) {
         if (::geteuid() != 0)
             return lifecycle_sudo_required(argv_norm);
         return run_lifecycle_command(argv_norm);
@@ -486,6 +489,7 @@ int main(const int argc, char** argv) {
     if (::connect(s, reinterpret_cast<sockaddr*>(&addr), sizeof(sa_family_t) + std::strlen(addr.sun_path) + 1) != 0) {
         const int err = errno;
         ::close(s);
+        if (lifecycleHelp && ::geteuid() == 0) return run_lifecycle_command(argv_norm);
         return report_connect_error(err, timeoutSeconds);
     }
 

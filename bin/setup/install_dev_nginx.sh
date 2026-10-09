@@ -101,7 +101,6 @@ echo "delete the file first."
 "$LIFECYCLE" setup nginx \
   --domain "$VH_DEV_WEB_DOMAIN" \
   --s3-domain "$VH_DEV_S3_DOMAIN" \
-  --certbot-dns-cloudflare \
-  --cloudflare-credentials "$VH_DEV_CLOUDFLARE_CREDENTIALS"
+  --certbot-dns-cloudflare "$VH_DEV_CLOUDFLARE_CREDENTIALS"
 
 clear_dev_web_runtime_flags

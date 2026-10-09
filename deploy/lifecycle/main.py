@@ -1053,9 +1053,28 @@ def ensure_certbot_dns_cloudflare_prereqs() -> None:
         )
 
 
+def dns_cloudflare_credentials_arg(args: argparse.Namespace) -> str | None:
+    """Credentials path for Cloudflare DNS-01 mode, "" when the mode is on without a path, None when it is off.
+
+    The path normally rides on the flag itself (`--certbot-dns-cloudflare <path>`). `--cloudflare-credentials <path>`
+    is the older spelling: kept for existing scripts, and on its own it also turns the mode on.
+    """
+    inline = getattr(args, "certbot_dns_cloudflare", None)
+    legacy = getattr(args, "cloudflare_credentials", None)
+    if inline is None and legacy is None:
+        return None
+    if inline and legacy and inline != legacy:
+        raise LifecycleError(
+            "conflicting Cloudflare credentials paths: --certbot-dns-cloudflare and --cloudflare-credentials differ"
+        )
+    return inline or legacy or ""
+
+
 def validate_cloudflare_credentials_file(path: str | None) -> Path:
     if not path:
-        raise LifecycleError("--certbot-dns-cloudflare requires --cloudflare-credentials <path>")
+        raise LifecycleError(
+            "--certbot-dns-cloudflare requires the Cloudflare credentials file path: --certbot-dns-cloudflare <path>"
+        )
 
     credentials = Path(path)
     if not credentials.exists():
@@ -1381,8 +1400,10 @@ def setup_nginx(args: argparse.Namespace) -> int:
     existing_s3_domain = extract_managed_nginx_s3_domain()
     domain = requested_domain or existing_domain
     s3_domain = requested_s3_domain or existing_s3_domain
+    cloudflare_credentials = dns_cloudflare_credentials_arg(args)
+    dns_cloudflare = cloudflare_credentials is not None
 
-    if args.certbot and args.certbot_dns_cloudflare:
+    if args.certbot and dns_cloudflare:
         raise LifecycleError("choose only one certificate mode: --certbot or --certbot-dns-cloudflare")
 
     if domain and not is_likely_domain(domain):
@@ -1394,8 +1415,8 @@ def setup_nginx(args: argparse.Namespace) -> int:
     if domain and s3_domain and domain == s3_domain:
         raise LifecycleError("--domain and --s3-domain must be different hostnames")
     if args.certbot and s3_domain:
-        raise LifecycleError("--s3-domain requires --certbot-dns-cloudflare for managed HTTPS routing")
-    if (args.certbot or args.certbot_dns_cloudflare) and not domain:
+        raise LifecycleError("--s3-domain requires --certbot-dns-cloudflare <credentials> for managed HTTPS routing")
+    if (args.certbot or dns_cloudflare) and not domain:
         raise LifecycleError(
             "certificate setup requires --domain <domain> unless an existing managed nginx site already has a domain"
         )
@@ -1428,9 +1449,9 @@ def setup_nginx(args: argparse.Namespace) -> int:
     projection = load_config_projection(config_path())
     cert_name = None
     certbot_mode = None
-    if args.certbot_dns_cloudflare:
+    if dns_cloudflare:
         ensure_certbot_dns_cloudflare_prereqs()
-        credentials = validate_cloudflare_credentials_file(args.cloudflare_credentials)
+        credentials = validate_cloudflare_credentials_file(cloudflare_credentials)
         certbot_mode = request_dns_cloudflare_certificate(domain or "", s3_domain, credentials)
         install_nginx_renewal_deploy_hook()
         cert_name = domain
@@ -1510,7 +1531,7 @@ def setup_nginx(args: argparse.Namespace) -> int:
                 raise LifecycleError(format_failure(f"certbot --nginx --domain {domain}", issue))
         reload_status = validate_and_reload_nginx()
 
-    if not args.certbot and not args.certbot_dns_cloudflare:
+    if not args.certbot and not dns_cloudflare:
         print("setup nginx: Vaulthalla nginx integration configured")
         print(
             "  site file: "
@@ -1525,7 +1546,7 @@ def setup_nginx(args: argparse.Namespace) -> int:
         print(f"  config source: {config_path()}")
         print(f"  domain: {domain if domain else 'default catch-all (_)' }")
         if s3_domain:
-            print(f"  s3 domain: {s3_domain} (HTTPS route not rendered without --certbot-dns-cloudflare)")
+            print(f"  s3 domain: {s3_domain} (HTTPS route not rendered without --certbot-dns-cloudflare <credentials>)")
         print(f"  web upstream: {WEB_UPSTREAM_HOST}:{WEB_UPSTREAM_PORT} (runtime convention)")
         print(f"  reload: {reload_status}")
         return 0
@@ -1543,7 +1564,7 @@ def setup_nginx(args: argparse.Namespace) -> int:
         print(f"  certbot s3 domain: {s3_domain}")
     print(f"  certbot domain source: {'--domain' if requested_domain else 'existing managed nginx site'}")
     print(f"  certbot mode: {certbot_mode}")
-    if args.certbot_dns_cloudflare:
+    if dns_cloudflare:
         print(f"  renewal deploy hook: {NGINX_RENEWAL_DEPLOY_HOOK}")
     print(f"  reload: {reload_status}")
     return 0
@@ -1661,12 +1682,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     setup_ng.add_argument(
         "--certbot-dns-cloudflare",
-        action="store_true",
-        help="Request/renew a DNS-01 certificate with the Certbot Cloudflare plugin and render HTTPS nginx.",
+        nargs="?",
+        const="",
+        metavar="CREDENTIALS",
+        help=(
+            "Request/renew a DNS-01 certificate with the Certbot Cloudflare plugin and render HTTPS nginx. "
+            "CREDENTIALS is a root-owned 0600 file containing 'dns_cloudflare_api_token = <token>'."
+        ),
     )
     setup_ng.add_argument(
         "--cloudflare-credentials",
-        help="Path to a 0600 Certbot Cloudflare credentials file for --certbot-dns-cloudflare.",
+        help="Older spelling of the --certbot-dns-cloudflare credentials path; on its own it enables that mode.",
     )
     setup_ng.add_argument(
         "--domain",

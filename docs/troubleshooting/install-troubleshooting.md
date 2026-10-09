@@ -193,8 +193,10 @@ If Certbot was requested:
 
 ```bash
 sudo vh setup nginx --domain vault.example.com --certbot
-sudo vh setup nginx --domain vaulthalla.dev --s3-domain s3.vaulthalla.dev --certbot-dns-cloudflare --cloudflare-credentials /etc/vaulthalla/certbot/cloudflare.ini
+sudo vh setup nginx --domain vaulthalla.dev --s3-domain s3.vaulthalla.dev --certbot-dns-cloudflare /etc/vaulthalla/certbot/cloudflare.ini
 ```
+
+For `--s3-domain` and Cloudflare credentials errors, see [S3 Gateway Setup](/s3-gateway/setup#troubleshooting).
 
 Check for conflicting sites before rerunning. The lifecycle command manages the Vaulthalla site and should roll back failed low-risk changes.
 

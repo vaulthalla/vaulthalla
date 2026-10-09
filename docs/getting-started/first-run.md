@@ -93,10 +93,12 @@ Runtime lifecycle commands modify host services or privileged configuration and 
 sudo vh setup db
 sudo vh setup remote-db --host <host> --user <user> --database <name> --password-file <path>
 sudo vh setup nginx --domain vault.example.com
-sudo vh setup nginx --domain vaulthalla.dev --s3-domain s3.vaulthalla.dev --certbot-dns-cloudflare --cloudflare-credentials /etc/vaulthalla/certbot/cloudflare.ini
+sudo vh setup nginx --domain vaulthalla.dev --s3-domain s3.vaulthalla.dev --certbot-dns-cloudflare /etc/vaulthalla/certbot/cloudflare.ini
 sudo vh teardown nginx
 sudo vh teardown db
 ```
+
+The `--s3-domain` form needs a Cloudflare API token in a root-only credentials file (`dns_cloudflare_api_token = <token>`). See [S3 Gateway Setup](/s3-gateway/setup#create-the-credentials-file).
 
 Most day-to-day commands, such as `vh vaults`, `vh user`, `vh api-key`, and `vh vault sync`, are normal CLI commands that use the local control socket.
 
@@ -120,8 +122,10 @@ For managed TLS:
 
 ```bash
 sudo vh setup nginx --domain vault.example.com --certbot
-sudo vh setup nginx --domain vaulthalla.dev --s3-domain s3.vaulthalla.dev --certbot-dns-cloudflare --cloudflare-credentials /etc/vaulthalla/certbot/cloudflare.ini
+sudo vh setup nginx --domain vaulthalla.dev --s3-domain s3.vaulthalla.dev --certbot-dns-cloudflare /etc/vaulthalla/certbot/cloudflare.ini
 ```
+
+The `--s3-domain` form needs a Cloudflare API token in a root-only credentials file (`dns_cloudflare_api_token = <token>`). See [S3 Gateway Setup](/s3-gateway/setup#create-the-credentials-file).
 
 Then check:
 

@@ -82,26 +82,86 @@ Keep SigV4 enabled for real client validation. Downstream clients should general
 
 ## Managed Nginx S3-Domain Endpoint
 
-Managed Nginx can publish a dedicated public S3 hostname:
+Managed Nginx can publish the gateway on its own HTTPS hostname, next to the web console:
 
 ```bash
 sudo vh setup nginx \
   --domain vaulthalla.example.com \
   --s3-domain s3.vaulthalla.example.com \
-  --certbot
-```
-
-For local or lab hosts using Cloudflare DNS-01 certificates:
-
-```bash
-sudo vh setup nginx \
-  --domain vaulthalla.dev \
-  --s3-domain s3.vaulthalla.dev \
-  --certbot-dns-cloudflare \
-  --cloudflare-credentials /etc/vaulthalla/certbot/cloudflare.ini
+  --certbot-dns-cloudflare /etc/vaulthalla/certbot/cloudflare.ini
 ```
 
 The S3 domain proxies requests to the direct gateway listener and preserves the signed URI. It marks requests as path-style-only so the router does not interpret `s3.vaulthalla.example.com` as a virtual-hosted bucket.
+
+### Why The S3 Domain Needs Cloudflare DNS-01
+
+`--s3-domain` works only with `--certbot-dns-cloudflare <credentials>`. `--certbot` is refused with `--s3-domain requires --certbot-dns-cloudflare <credentials> for managed HTTPS routing`.
+
+With an S3 domain, Vaulthalla writes both HTTPS server blocks itself, so it needs one certificate that covers both hostnames before Nginx is reloaded. The only certificate mode that issues that certificate is `certbot certonly` with Certbot's Cloudflare DNS plugin. `--certbot` hands the HTTPS block to Certbot's Nginx plugin, which edits the site for `--domain` only and has no S3 host to add.
+
+DNS-01 proves domain ownership by writing a temporary TXT record through the Cloudflare API. Let's Encrypt never connects to the host, so the S3 domain works on LAN, lab, and firewalled hosts that have no inbound port 80. The Cloudflare credentials file is where Certbot gets the API token for those TXT records.
+
+### Prerequisites
+
+:::steps
+1. Put the DNS zones for both hostnames on Cloudflare. They can be the same zone, as in `vaulthalla.example.com` and `s3.vaulthalla.example.com`.
+2. Point both hostnames at the host (`A`/`AAAA` records, or local DNS for LAN-only hosts). Issuance does not need this, but clients do.
+3. Install the Certbot plugin: `sudo apt install certbot python3-certbot-dns-cloudflare`. The package recommends it, so it is usually present already.
+4. Create a Cloudflare API token: in the Cloudflare dashboard, open **My Profile → API Tokens → Create Token**, choose the **Edit zone DNS** template, and set **Zone Resources** to the zone or zones above. The token needs the **Zone → DNS → Edit** permission.
+:::
+
+### Create The Credentials File
+
+The file is a Certbot `dns-cloudflare` credentials file. It holds one setting:
+
+```ini
+# /etc/vaulthalla/certbot/cloudflare.ini
+dns_cloudflare_api_token = <your Cloudflare API token>
+```
+
+`dns_cloudflare_api_token` is the variable name. Certbot also accepts the legacy pair `dns_cloudflare_email` plus `dns_cloudflare_api_key` (the account-wide Global API Key), but a scoped token is safer. Do not put both forms in the file.
+
+Create it root-owned and private, without echoing the token into shell history:
+
+```bash
+sudo install -d -m 0700 -o root -g root /etc/vaulthalla/certbot
+sudo install -m 0600 -o root -g root /dev/null /etc/vaulthalla/certbot/cloudflare.ini
+sudoedit /etc/vaulthalla/certbot/cloudflare.ini
+```
+
+`vh setup nginx` refuses the file if it is missing, is not a regular file, or is readable by group or others. Any path works. `/etc/vaulthalla/certbot/cloudflare.ini` is the convention used in these docs. Pass it as the value of `--certbot-dns-cloudflare`. The older two-flag form, `--certbot-dns-cloudflare --cloudflare-credentials <path>`, still works.
+
+:::callout{theme="warning" title="Leave the file in place after setup"}
+Certbot records the credentials path in `/etc/letsencrypt/renewal/<domain>.conf` and reads it on every renewal. Moving or deleting the file, or revoking the token, makes the next renewal fail. Package purge keeps `/etc/vaulthalla/certbot/` for this reason.
+:::
+
+### Run Setup
+
+```bash
+sudo vh setup nginx \
+  --domain vaulthalla.example.com \
+  --s3-domain s3.vaulthalla.example.com \
+  --certbot-dns-cloudflare /etc/vaulthalla/certbot/cloudflare.ini
+```
+
+Setup then:
+
+- requests one certificate named after `--domain` that covers both hostnames, or reuses it when it is current and already covers both;
+- installs a Certbot deploy hook that reloads Nginx after renewal;
+- renders an HTTP to HTTPS redirect for both hostnames, the web console on `--domain`, and the S3 gateway on `--s3-domain`.
+
+The S3 domain is recorded in the managed site, so later runs of `sudo vh setup nginx --certbot-dns-cloudflare <path>` keep it without repeating `--s3-domain`.
+
+### Troubleshooting
+
+| Message | Fix |
+|---|---|
+| `--s3-domain requires --certbot-dns-cloudflare <credentials> for managed HTTPS routing` | Replace `--certbot` with `--certbot-dns-cloudflare <path>`. |
+| `--certbot-dns-cloudflare requires the Cloudflare credentials file path` | Put the file path right after the flag: `--certbot-dns-cloudflare <path>`. |
+| `Cloudflare credentials file must not be group/world accessible` | `sudo chmod 0600 <path>` |
+| `certbot Cloudflare DNS plugin is not installed` | `sudo apt install python3-certbot-dns-cloudflare` |
+| Certbot reports `Either dns_cloudflare_api_token (recommended), or dns_cloudflare_email and dns_cloudflare_api_key are required` | The file has no usable setting. Check the variable name and the `=`. |
+| Certbot reports a Cloudflare authentication or zone error | The token is wrong, expired, or lacks **Zone → DNS → Edit** on the zone of one of the hostnames. |
 
 ## Path-Style And SigV4
 

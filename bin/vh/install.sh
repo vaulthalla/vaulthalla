@@ -545,7 +545,7 @@ print_summary() {
     log "  vh setup remote-db"
     log "  vh setup nginx"
     log "  vh setup nginx --certbot --domain <domain>"
-    log "  vh setup nginx --domain vaulthalla.dev --s3-domain s3.vaulthalla.dev --certbot-dns-cloudflare --cloudflare-credentials /etc/vaulthalla/certbot/cloudflare.ini"
+    log "  vh setup nginx --domain vaulthalla.dev --s3-domain s3.vaulthalla.dev --certbot-dns-cloudflare /etc/vaulthalla/certbot/cloudflare.ini"
 }
 
 main() {

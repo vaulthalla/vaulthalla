@@ -184,7 +184,7 @@ Package setup can configure Nginx when the host has Nginx active and the lifecyc
 ```bash
 sudo vh setup nginx --domain vault.example.com
 sudo vh setup nginx --domain vault.example.com --certbot
-sudo vh setup nginx --domain vaulthalla.dev --s3-domain s3.vaulthalla.dev --certbot-dns-cloudflare --cloudflare-credentials /etc/vaulthalla/certbot/cloudflare.ini
+sudo vh setup nginx --domain vaulthalla.dev --s3-domain s3.vaulthalla.dev --certbot-dns-cloudflare /etc/vaulthalla/certbot/cloudflare.ini
 ```
 
 On a fresh install, the unmodified distro default site (`/etc/nginx/sites-enabled/default`) would shadow the Vaulthalla site on port 80, so setup disables that symlink and records it. `apt remove`, `apt purge`, and `vh teardown nginx` restore it. A modified default site is never touched. Setup then requests `http://127.0.0.1/` and reports whether the console actually answers. Upgrades never re-enable a site you removed.
@@ -193,7 +193,7 @@ The web console reaches the daemon through Nginx. Fresh installs bind the websoc
 
 The managed site turns off Nginx proxy buffering on `/preview` and `/download`, so decrypted downloads and media streams pass straight through and are never spooled to Nginx's temporary files. Upgrades never rewrite an existing site; on upgraded hosts streaming still works without buffering because the daemon sends `X-Accel-Buffering: no` on every streamed response.
 
-The Certbot option validates prerequisites and uses rollback behavior if certificate setup fails. The Cloudflare DNS-01 option issues a certificate without requiring an inbound HTTP challenge endpoint and renders a dedicated HTTPS S3 host.
+The Certbot option validates prerequisites and uses rollback behavior if certificate setup fails. The Cloudflare DNS-01 option issues a certificate without requiring an inbound HTTP challenge endpoint and renders a dedicated HTTPS S3 host. It is the only mode that supports `--s3-domain`, and it needs a Cloudflare API token in a root-only credentials file (`dns_cloudflare_api_token = <token>`). See [S3 Gateway Setup](/s3-gateway/setup#create-the-credentials-file).
 
 ## Verify The Install
 
