@@ -7,6 +7,7 @@
 #include "protocols/ws/Router.hpp"
 #include "protocols/ws/Session.hpp"
 #include "protocols/ws/core/handler_templates.hpp"
+#include "protocols/ws/handler/S3Gateway.hpp"
 #include "protocols/ws/handler/Settings.hpp"
 #include "protocols/ws/handler/Stats.hpp"
 #include "rbac/role/Admin.hpp"
@@ -82,6 +83,67 @@ TEST(WsErrorCodes, AdminGatesRefuseWithDenied) {
     EXPECT_THROW((void)protocols::ws::handler::Stats::systemHealth(s), ops::Denied);
     EXPECT_THROW((void)protocols::ws::handler::Stats::systemTrends(json::object(), s), ops::Denied);
     EXPECT_THROW((void)protocols::ws::handler::Settings::get(s), ops::Denied);
+}
+
+// #165: s3.gateway.* never guesses what a bare `id` means (credential, role override or permission). The refusal is
+// typed "invalid" and names the explicit field the command takes; it fires before any DB or RBAC lookup.
+TEST(WsS3GatewayPayloads, BareIdIsRefusedAsInvalidNamingTheExplicitField) {
+    using protocols::ws::handler::S3Gateway;
+    const auto s = sessionFor(powerlessUser());
+
+    const auto messageFor = [](auto&& call) -> std::string {
+        try {
+            (void)call();
+        } catch (const ops::Invalid& e) {
+            EXPECT_EQ(replyFor(e).data, (json{{"code", "invalid"}}));
+            return e.what();
+        } catch (const std::exception& e) {
+            ADD_FAILURE() << "expected ops::Invalid, got: " << e.what();
+            return {};
+        }
+        ADD_FAILURE() << "a bare id was accepted";
+        return {};
+    };
+    const auto names = [](const std::string& message, const std::string& field) {
+        return message.find("bare 'id'") != std::string::npos && message.find(field) != std::string::npos;
+    };
+
+    // The credential-scoped commands: a bare id used to be read as the credential id.
+    using Handler = json (*)(const json&, const std::shared_ptr<protocols::ws::Session>&);
+    for (const Handler handler : {&S3Gateway::credentialsScopeUpdate,
+                                  &S3Gateway::credentialsDefaultRoleGet,
+                                  &S3Gateway::credentialsDefaultRoleSet,
+                                  &S3Gateway::credentialsDefaultRoleClear,
+                                  &S3Gateway::credentialsSelectedVaultsList,
+                                  &S3Gateway::credentialsSelectedVaultsReplace,
+                                  &S3Gateway::credentialsSelectedVaultsAdd,
+                                  &S3Gateway::credentialsSelectedVaultsRemove,
+                                  &S3Gateway::credentialsDefaultRoleOverridesList,
+                                  &S3Gateway::credentialsRolesList,
+                                  &S3Gateway::credentialsRolesAssign,
+                                  &S3Gateway::credentialsRolesRevoke,
+                                  &S3Gateway::credentialsRoleOverridesList}) {
+        EXPECT_TRUE(names(messageFor([&] { return handler(json{{"id", 7}, {"vault_id", 1}}, s); }), "credential_id"));
+    }
+
+    // Override add: a bare id used to be the permission id, even next to an explicit credential_id.
+    for (const Handler handler : {&S3Gateway::credentialsDefaultRoleOverridesAdd,
+                                  &S3Gateway::credentialsRoleOverridesAdd}) {
+        const auto message = messageFor([&] {
+            return handler(json{{"credential_id", 3}, {"vault_id", 1}, {"id", 9}, {"effect", "deny"}, {"glob_path", "/x/**"}}, s);
+        });
+        EXPECT_TRUE(names(message, "permission_id")) << message;
+    }
+
+    // Override remove: a bare id used to be both the credential and the override.
+    for (const Handler handler : {&S3Gateway::credentialsDefaultRoleOverridesRemove,
+                                  &S3Gateway::credentialsRoleOverridesRemove}) {
+        EXPECT_TRUE(names(messageFor([&] { return handler(json{{"id", 7}, {"vault_id", 1}}, s); }), "override_id"));
+        EXPECT_TRUE(names(messageFor([&] { return handler(json{{"credential_id", 3}, {"vault_id", 1}, {"id", 7}}, s); }),
+                          "override_id"));
+    }
+
+    EXPECT_TRUE(names(messageFor([&] { return S3Gateway::credentialsRevoke(json{{"id", 7}}, s); }), "access_key"));
 }
 
 class DashboardSeverityTest : public ::testing::Test {

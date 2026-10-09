@@ -200,8 +200,9 @@ std::shared_ptr<CommandUsage> creds(const std::weak_ptr<CommandUsage>& parent) {
     overrideRemove->description = "Remove a path override by ID.";
     overrideRemove->positionals = {credentialPos};
     overrideRemove->required = {roleVaultOpt};
-    overrideRemove->optional = {Optional::ManyToOne("id", "Override ID (or pass it as the second positional)", {"id"}, "id")};
-    overrideRemove->examples = {{"vh s3-gateway creds role override remove backup --vault photos --id 7", "Remove override 7."}};
+    overrideRemove->optional = {Optional::ManyToOne("override_id", "Override ID (or pass it as the second positional); --id is an alias",
+                                                    {"override-id", "id"}, "override_id")};
+    overrideRemove->examples = {{"vh s3-gateway creds role override remove backup --vault photos --override-id 7", "Remove override 7."}};
 
     roleOverride->subcommands = {overrideList, overrideAdd, overrideRemove};
     role->subcommands = {roleList, roleAssign, roleRevoke, roleOverride};
