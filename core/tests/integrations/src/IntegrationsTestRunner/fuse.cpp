@@ -385,6 +385,30 @@ namespace vh::test::integration {
             }
         });
 
+        // #183: the kernel answers stat from its dentry/attr cache, shared across uids, without asking the daemon. Any
+        // non-zero entry/attr timeout let a denied uid read the metadata of a path another uid had just resolved
+        // (60 s after a create).
+        builder.makeTestCase({
+            .name = "FUSE deny: stat secret right after admin stat'd it",
+            .path = "fuse/stat",
+            .expect_exit = ENOENT,
+            .fn = [=]{
+                (void)stat_size_as(*ctx.admin->meta.linux_uid, ctx.secret());
+                return stat_size_as(subj.uid, ctx.secret());
+            }
+        });
+
+        builder.makeTestCase({
+            .name = "FUSE deny: stat a file right after admin created it",
+            .path = "fuse/stat",
+            .expect_exit = ENOENT,
+            .fn = [=]{
+                const auto fresh = ctx.docs() / "created-by-admin.txt";
+                (void)write_as(*ctx.admin->meta.linux_uid, fresh, "fresh\n");
+                return stat_size_as(subj.uid, fresh);
+            }
+        });
+
         builder.makeTestCase({
             .name = "FUSE deny: write hax",
             .path = "fuse/write",
