@@ -1,4 +1,5 @@
 #include "fuse/Resolver.hpp"
+#include "fuse/resolver/Denial.hpp"
 #include "db/query/identities/User.hpp"
 #include "db/query/identities/Group.hpp"
 #include "identities/User.hpp"
@@ -19,6 +20,7 @@
 #include "fs/model/Path.hpp"
 
 #include <algorithm>
+#include <cerrno>
 
 namespace vh::fuse {
     using resolver::Request;
@@ -192,16 +194,41 @@ namespace vh::fuse {
         }
 
         [[nodiscard]]
-        bool deniedRootLookupShouldLookMissing(
-            const Request& req,
-            const Resolved& out,
-            const rbac::permission::vault::FilesystemAction action
+        bool canSeeEntry(
+            const std::shared_ptr<identities::User>& user,
+            const std::shared_ptr<fs::model::Entry>& entry
         ) {
-            return req.parentIno &&
-                   *req.parentIno == FUSE_ROOT_ID &&
-                   action == rbac::permission::vault::FilesystemAction::Lookup &&
-                   isVaultRootEntry(out.entry);
+            using Action = rbac::permission::vault::FilesystemAction;
+            if (isMountRootEntry(entry)) return true;
+
+            // Only asked after a denial; failing to evaluate visibility hides the entry rather than confirming it.
+            try {
+                if (isVaultRootEntry(entry)) return canExposeVaultRoot(user, entry, Action::Lookup);
+                return hasVaultPermission(user, Action::Lookup, entry);
+            } catch (const std::exception& e) {
+                log::Registry::auth()->warn(
+                    "[fuse::Resolver] Failed to evaluate visibility of {} after a denial: {}",
+                    entry ? entry->fuse_path.string() : std::string("null"),
+                    e.what()
+                );
+                return false;
+            }
         }
+    }
+
+    int resolver::deniedErrno(
+        const rbac::permission::vault::FilesystemAction denied,
+        const std::shared_ptr<fs::model::Entry>& entry,
+        const std::shared_ptr<fs::model::Entry>& parentEntry,
+        const CanSeeEntry& canSee
+    ) {
+        const auto& subject = entry ? entry : parentEntry;
+        if (!subject || isMountRootEntry(subject)) return EACCES;
+
+        // Lookup is the visibility check itself: a denied Lookup on the entry already means it is hidden.
+        if (entry && denied == rbac::permission::vault::FilesystemAction::Lookup) return ENOENT;
+
+        return canSee && canSee(subject) ? EACCES : ENOENT;
     }
 
     Resolved Resolver::resolve(const Request& req) {
@@ -432,11 +459,15 @@ namespace vh::fuse {
         const bool checkEntry = needsEntry(req);
         const bool checkPath = needsPath(req);
 
+        // Status stays AccessDenied even when the caller is told ENOENT: callers that special-case a genuinely
+        // missing entry (unlink of an HTTP upload temp part) must not treat a hidden one as already gone.
         auto deny = [&](const rbac::permission::vault::FilesystemAction action) {
-            if (deniedRootLookupShouldLookMissing(req, out, action))
-                out.setStatus(Status::MissingEntry, ENOENT);
-            else
-                out.setStatus(Status::AccessDenied, EACCES);
+            out.setStatus(Status::AccessDenied, resolver::deniedErrno(
+                action,
+                out.entry,
+                out.parentEntry,
+                [&](const std::shared_ptr<fs::model::Entry>& subject) { return canSeeEntry(out.user, subject); }
+            ));
         };
 
         if (req.action && (checkEntry || checkPath) && !enforcePermission(out.user, *req.action, out.entry, out.path)) {
