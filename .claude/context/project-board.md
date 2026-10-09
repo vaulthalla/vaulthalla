@@ -60,7 +60,8 @@ cannot carry labels, so `migrate` skips them.
 
 Schema v1 is live on #4 since 2026-10-09 (rehearsed first on a since-deleted sandbox copy).
 Pre-rollout snapshot: `.claude/scratch/board/prod-4-pre-rollout-2026-10-09.json` (gitignored;
-holds the deleted Domain/Subsystem/Contributor Fit/Estimate values). Open triage left by the
-migration (see `board.py lint`): most open issues lack an issue type; #96 is Ready at XL;
-#118 is Claimed without Agent; #156 needs a blocked-by link and sub-issues. View group/sort/
+holds the deleted Domain/Subsystem/Contributor Fit/Estimate values). Post-migration triage done the
+same day: `board.py lint` reports 0 problems; bug-labeled issues typed Bug; #96 and #118 moved to
+Triaged with a Handoff line; the dogfood findings #157–#168 and #170–#173 are sub-issues of #156;
+`needs:decision` marks #118, #162, #164, #166 and #168. View group/sort/
 column settings by hand: #181 (Parked, low priority while there are no outside contributors).
