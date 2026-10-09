@@ -14,6 +14,7 @@
 #include "fs/model/Entry.hpp"
 #include "identities/User.hpp"
 #include "protocols/shell/Router.hpp"
+#include "protocols/shell/commands/rbac.hpp"
 #include "protocols/shell/commands/vault.hpp"
 #include "rbac/Actor.hpp"
 #include "runtime/Deps.hpp"
@@ -88,6 +89,7 @@ protected:
         if (!runtime::Deps::get().shellUsageManager)
             runtime::Deps::get().shellUsageManager = std::make_shared<protocols::shell::UsageManager>();
         router = std::make_shared<protocols::shell::Router>();
+        protocols::shell::commands::rbac::registerCommands(router);
         protocols::shell::commands::vault::registerCommands(router);
 
         superUser = createUser("vl_super_" + tag(), "super_admin");
@@ -97,12 +99,18 @@ protected:
         if (skipTests) GTEST_SKIP() << "Skipping db tests due to missing environment variables.";
     }
 
-    static int cli(const std::string& line, const UserPtr& user) {
+    static void assignVaultRole(const unsigned int vaultId, const std::string& role, const UserPtr& user) {
+        std::string out;
+        int code = 1;
         try {
-            return router->executeLine(line, user, nullptr).exit_code;
-        } catch (const std::exception&) {
-            return 1;
+            const auto res = router->executeLine(
+                "vault role assign " + std::to_string(vaultId) + " " + role + " -u " + user->name, superUser, nullptr);
+            code = res.exit_code;
+            out = res.stdout_text + res.stderr_text;
+        } catch (const std::exception& e) {
+            out = e.what();
         }
+        ASSERT_EQ(code, 0) << out;
     }
 
     static std::shared_ptr<vault::model::Vault> addVault(const std::string& name, const UserPtr& owner) {
@@ -159,7 +167,7 @@ TEST_F(VaultLifecycleRegressionTest, ShareLinkCanTargetASubfolderButNotAMismatch
     ASSERT_TRUE(docs && vaultRoot);
 
     auto sharer = createUser("vl_sharer_" + tag(), "unprivileged");
-    ASSERT_EQ(cli("vault role assign " + std::to_string(vault->id) + " full -u " + sharer->name, superUser), 0);
+    ASSERT_NO_FATAL_FAILURE(assignVaultRole(vault->id, "power_user", sharer));
     sharer = db::query::identities::User::getUserById(sharer->id);
     const auto outsider = createUser("vl_outsider_" + tag(), "unprivileged");
 
@@ -189,7 +197,7 @@ TEST_F(VaultLifecycleRegressionTest, AVaultPathNamingAnotherVaultsFuseRootIsNotJ
     ASSERT_TRUE(bRoot);
 
     auto sharer = createUser("vl_cross_sharer_" + tag(), "unprivileged");
-    ASSERT_EQ(cli("vault role assign " + std::to_string(a->id) + " full -u " + sharer->name, superUser), 0);
+    ASSERT_NO_FATAL_FAILURE(assignVaultRole(a->id, "power_user", sharer));
     sharer = db::query::identities::User::getUserById(sharer->id);
 
     share::Manager manager;
@@ -207,7 +215,7 @@ TEST_F(VaultLifecycleRegressionTest, DeletingAUserWithShareAndUploadHistorySucce
     ASSERT_TRUE(drop);
 
     auto leaver = createUser("vl_leaver_" + tag(), "unprivileged");
-    ASSERT_EQ(cli("vault role assign " + std::to_string(vault->id) + " full -u " + leaver->name, superUser), 0);
+    ASSERT_NO_FATAL_FAILURE(assignVaultRole(vault->id, "power_user", leaver));
     leaver = db::query::identities::User::getUserById(leaver->id);
 
     share::Manager manager;
