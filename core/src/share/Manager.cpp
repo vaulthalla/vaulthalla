@@ -1,6 +1,7 @@
 #include "share/Manager.hpp"
 #include "rbac/PolicyEpoch.hpp"
 
+#include "db/query/fs/Entry.hpp"
 #include "db/query/share/AuditEvent.hpp"
 #include "db/query/share/EmailChallenge.hpp"
 #include "db/query/share/Link.hpp"
@@ -8,10 +9,14 @@
 #include "db/query/share/Upload.hpp"
 #include "db/query/share/VaultRole.hpp"
 #include "db/query/rbac/role/Vault.hpp"
+#include "fs/model/Entry.hpp"
 #include "identities/User.hpp"
 #include "rbac/fs/policy/Share.hpp"
 #include "rbac/permission/vault/Filesystem.hpp"
 #include "rbac/resolver/vault/all.hpp"
+#include "runtime/Deps.hpp"
+#include "storage/Engine.hpp"
+#include "storage/Manager.hpp"
 #include "share/AuditEvent.hpp"
 #include "share/EmailChallenge.hpp"
 #include "share/PrincipalResolver.hpp"
@@ -20,6 +25,7 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -275,17 +281,29 @@ public:
     return actor.user();
 }
 
+// Share roots are vault-relative; the filesystem evaluator takes FUSE paths (as every other caller passes them).
+// Evaluating the raw vault path resolved "/x" against the FUSE root, so only "/" ever matched (#178).
+[[nodiscard]] std::optional<std::filesystem::path> fusePathFor(const uint32_t vaultId, const std::string& vaultPath) {
+    const auto& storage = runtime::Deps::get().storageManager;
+    if (!storage) return std::nullopt;
+    const auto engine = storage->getEngine(vaultId);
+    if (!engine) return std::nullopt;
+    return engine->vaultPathToFusePath(std::filesystem::path{Scope::normalizeVaultPath(vaultPath)});
+}
+
 [[nodiscard]] bool hasFsPermission(
     const std::shared_ptr<identities::User>& user,
     const uint32_t vaultId,
     const std::string& path,
     const FilesystemAction action
 ) {
+    const auto fusePath = fusePathFor(vaultId, path);
+    if (!fusePath) return false;
     return rbac::resolver::Vault::has<FilesystemAction>({
         .user = user,
         .permission = action,
         .vault_id = vaultId,
-        .path = std::filesystem::path{Scope::normalizeVaultPath(path)}
+        .path = *fusePath
     });
 }
 
@@ -294,18 +312,20 @@ public:
     const uint32_t vaultId,
     const std::string& path
 ) {
+    const auto fusePath = fusePathFor(vaultId, path);
+    if (!fusePath) return false;
     return rbac::resolver::Vault::hasAny(
         rbac::resolver::vault::Context<FilesystemAction>{
             .user = user,
             .permission = FilesystemAction::Lookup,
             .vault_id = vaultId,
-            .path = std::filesystem::path{Scope::normalizeVaultPath(path)}
+            .path = *fusePath
         },
         rbac::resolver::vault::Context<FilesystemAction>{
             .user = user,
             .permission = FilesystemAction::Preview,
             .vault_id = vaultId,
-            .path = std::filesystem::path{Scope::normalizeVaultPath(path)}
+            .path = *fusePath
         }
     );
 }
@@ -326,10 +346,24 @@ public:
     return true;
 }
 
+// The create payload names the root twice (root_entry_id and root_path). A link only resolves while both name the
+// same durable entry (TargetResolver re-checks on every access), so a mismatch is refused when it is created.
+[[nodiscard]] AuthorizationDecision shareRootEntryMatchesLink(const Link& link) {
+    const auto entry = db::query::fs::Entry::getFSEntryById(link.root_entry_id);
+    if (!entry || !entry->vault_id || static_cast<uint32_t>(*entry->vault_id) != link.vault_id)
+        return deny("root_entry_not_in_vault");
+    if (Scope::normalizeVaultPath(entry->path.string()) != Scope::normalizeVaultPath(link.root_path))
+        return deny("root_entry_path_mismatch");
+    const auto type = entry->isDirectory() ? TargetType::Directory : TargetType::File;
+    if (type != link.target_type) return deny("root_entry_type_mismatch");
+    return allow();
+}
+
 class DefaultShareAuthorizer final : public ShareAuthorizer {
 public:
     AuthorizationDecision canCreateLink(const rbac::Actor& actor, const Link& link) const override {
-        return canGrant(actor, link);
+        if (auto granted = canGrant(actor, link); !granted.allowed) return granted;
+        return shareRootEntryMatchesLink(link);
     }
 
     AuthorizationDecision canUpdateLink(

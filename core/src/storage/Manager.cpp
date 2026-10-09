@@ -41,6 +41,17 @@ void eraseEnginePathEntry(
     engines.erase(enginePathKey(engine));
 }
 
+std::filesystem::path fuseRootOf(const std::shared_ptr<Engine>& engine) {
+    if (!engine || !engine->paths) return {};
+    return engine->paths->absRelToRoot(engine->paths->vaultRoot, PathType::FUSE_ROOT);
+}
+
+// The FSCache is keyed by FUSE path; a vault's entries must not outlive it or survive into a vault that reuses its
+// FUSE name (#180). They re-hydrate from the DB on the next lookup.
+void evictCachedVault(const unsigned int vaultId, const std::filesystem::path& fuseRoot) {
+    if (const auto& cache = vh::runtime::Deps::get().fsCache) cache->evictVault(vaultId, fuseRoot);
+}
+
 }
 
 Manager::Manager() = default;
@@ -166,6 +177,9 @@ std::shared_ptr<Vault> Manager::addVault(std::shared_ptr<Vault> vault,
     vault->mount_point = id::Generator({ .namespace_token = vault->name }).generate();
     vault->id = db::query::vault::Vault::upsertVault(vault, sync);
     vault = db::query::vault::Vault::getVault(vault->id);
+    // Before the engine creates and caches the new root: a deleted vault's entries at this FUSE name must not leak
+    // into it (the root itself can only be cached by mkVault, so this can't run afterwards).
+    evictCachedVault(vault->id, makeAbsolute(vault->effectiveFuseName()));
     std::shared_ptr<Engine> engine;
     if (vault->type == VaultType::S3) {
         engine = std::make_shared<CloudEngine>(std::static_pointer_cast<S3Vault>(vault));
@@ -208,6 +222,9 @@ void Manager::updateVault(const std::shared_ptr<Vault>& vault) {
 
     const auto newFuseRoot = engine->paths->absRelToRoot(engine->paths->vaultRoot, PathType::FUSE_ROOT);
     if (oldFuseRoot != newFuseRoot) {
+        // Cached descendants still carry the old FUSE paths; drop them along with anything stale at the new name.
+        evictCachedVault(refreshed->id, oldFuseRoot);
+        evictCachedVault(refreshed->id, newFuseRoot);
         if (auto root = db::query::fs::Entry::getFSEntryByPath(refreshed->id, "/")) {
             root->name = refreshed->effectiveFuseName();
             root->base32_alias = refreshed->mount_point.string();
@@ -261,6 +278,7 @@ void Manager::removeVault(const unsigned int vaultId) {
     db::query::vault::Vault::removeVault(vaultId);
 
     vaultToEngine_.erase(vaultId);
+    evictCachedVault(vaultId, fuseRootOf(removed));
     log::Registry::storage()->info("[StorageManager] Removed vault with ID: {}", vaultId);
 }
 

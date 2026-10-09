@@ -343,6 +343,15 @@ std::optional<Decision> Evaluator::resolveTarget(const Request &req, TargetConte
                     ? req.entry
                     : runtime::Deps::get().fsCache->getEntry(out.fusePath);
 
+    // An entry from another vault must never be judged under this vault's roles (e.g. a vault-relative path
+    // mistaken for a FUSE path that names a different vault's root).
+    if (out.entry && out.entry->vault_id && out.engine->vault && static_cast<uint32_t>(*out.entry->vault_id) != out.engine->vault->id)
+        return Decision{
+            .allowed = false,
+            .reason = Decision::Reason::EntryVaultMismatch,
+            .evaluated_path = out.fusePath
+        };
+
     out.exists = !!out.entry;
     out.isDir = out.entry
                     ? out.entry->isDirectory()
