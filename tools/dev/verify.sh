@@ -9,7 +9,7 @@
 #               VERIFY_WEB_BUILD=1 also builds and enforces the first-load JS budgets (web/perf-budgets.json)
 #   release     vl-release contract: vlr check + vlr version check (release.toml, staged .release/ docs)
 #   packaging   product contracts (tools/contracts: Debian packaging, maintainer scripts, migrations,
-#               release workflow) + tools/lab tests, each with a minimum test count
+#               release workflow) + tools/lab and tools/project tests, each with a minimum test count
 #   lifecycle   deploy/lifecycle unit tests (minimum test count)
 #   docs        payload-markdown checker on changed docs (or all docs) + pmdocs validate
 #   shell       bash -n on changed/all bin/ and debian maintainer scripts
@@ -109,6 +109,8 @@ run_packaging() {
   run_suite "tools/contracts" 135 discover -s tools/contracts -t .
   log "lab tooling tests (tools/lab/tests)"
   run_suite "tools/lab/tests" 22 discover -s tools/lab/tests -t .
+  log "project board tooling tests (tools/project/tests)"
+  run_suite "tools/project/tests" 22 discover -s tools/project/tests -t .
 }
 
 run_lifecycle() {
@@ -150,7 +152,7 @@ infer_profiles() {
   grep -qE '^core/|^meson\.build$|^meson\.options$'            <<<"$files" && echo core
   grep -qE '^web/'                                              <<<"$files" && echo web
   grep -qE '^release\.toml$|^\.release/|^VERSION$|^meson\.build$|^web/package\.json$|^debian/changelog$|^RELEASE_NOTES\.md$|^\.github/' <<<"$files" && echo release
-  grep -qE '^debian/|^deploy/(systemd|psql|nginx)/|^core/seed/shipped_migrations\.lock$|^tools/(contracts|lab)/|^\.github/' <<<"$files" && echo packaging
+  grep -qE '^debian/|^deploy/(systemd|psql|nginx)/|^core/seed/shipped_migrations\.lock$|^tools/(contracts|lab|project)/|^\.github/' <<<"$files" && echo packaging
   grep -qE '^deploy/lifecycle/'                                 <<<"$files" && echo lifecycle
   grep -qE '^docs/|^debian/README'                              <<<"$files" && echo docs
   grep -qE '^bin/|^web/bin/|^tools/.*\.sh$|^debian/(postinst|prerm|postrm)$'   <<<"$files" && echo shell

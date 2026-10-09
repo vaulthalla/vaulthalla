@@ -23,6 +23,7 @@ live P0 (the DB pool wedges after a PostgreSQL restart, which hangs FUSE and `ap
 | `docs/` | operator docs (Payload Markdown, published by `pmdocs`) | `.claude/context/docs-authoring.md` |
 | `tools/{smoke,e2e,dev}` | S3 gateway smoke, Playwright env, share preview smoke, `dev/verify.sh` (shared verification entrypoint) | `.claude/context/testing.md` |
 | `tools/contracts/` | product contracts (Debian packaging, maintainer scripts, shipped migrations, release workflow) | `.claude/context/packaging-lifecycle.md` |
+| `.github/project/`, `tools/project/` | Roadmap board schema (fields, `area:*` labels, views, Ready gate) + `board.py` reconcile/migrate/lint | `.claude/context/project-board.md` |
 | `tools/lab/` | real-host tooling: ws client, CLI↔web parity smoke, ws churn, `lab_smoke` (real-apt upgrade check), TEST-ONLY S3/R2 credential scaffold | `.claude/context/phase1-results.md` |
 
 Phase 1 (packaging/upgrade/release hardening) results and how candidates are proven on the lab: `.claude/context/phase1-results.md`.

@@ -1,0 +1,363 @@
+# Vaulthalla Roadmap board schema (GitHub Projects v2, org project #4).
+#
+# This file is the source of truth for what every board field, option, area label and view
+# means. Agents read it to decide what an issue needs before work starts (where the code lives,
+# which hard rules apply, how to prove the change, whether to work unattended). Humans read it
+# for the same reason. `tools/project/board.py apply` reconciles a project to it idempotently.
+#
+# Layering:
+#   - Intrinsic properties live on the issue and travel with it: Issue Type (org-level),
+#     sub-issues, blocked-by, and `area:*` / `needs:*` labels. Labels are also the only
+#     board-adjacent state GitHub Actions can trigger on (`issues: labeled`); project field
+#     changes (`projects_v2_item`) reach org webhooks and Apps only.
+#   - Workflow state lives on the board: the fields below.
+#
+# Editing rules:
+#   - Rename an option or field by adding the old name to `renamed_from`; the option id is
+#     kept, so item values survive. Never delete-and-recreate an option.
+#   - Retiring an option: move it to `retire_options` with a `to` target. `apply` keeps a retired
+#     option while any item still uses it; `migrate` moves those items, the next `apply` drops it.
+#   - Retiring a field: list it in `retire_fields`. Only `apply --delete-retired` deletes it.
+#   - Multi-select fields use an explicit `none` option: empty means "not assessed yet",
+#     `none` means "assessed, nothing applies". Unknown is never presented as safe.
+
+version: 1
+owner: vaulthalla
+repo: vaulthalla/vaulthalla
+project: 4  # production board; board.py refuses to mutate it without --production
+
+# Org-level issue types (managed in org settings; `apply` only checks that they exist).
+issue_types:
+  Bug: Unexpected behavior or regression
+  Feature: New user-visible capability
+  Task: Concrete implementation or maintenance work
+  Docs: Documentation, content, or site work
+  Packaging: Install, release, distribution, or system integration work
+  Security: Vulnerability, hardening, auth, or secret-handling concern
+  Research: Investigation, spike, or design work before implementation is clear
+
+fields:
+  - name: Status
+    type: single_select
+    options:
+      - {name: Inbox, color: PINK, description: "Untriaged. Nothing below is trustworthy yet."}
+      - {name: Triaged, color: ORANGE, description: "Fields set, but not startable: needs info (needs:* label), a blocker (blocked-by), or a decision."}
+      - {name: Ready, color: GREEN, description: "Meets the Ready gate: type, area label, Size, Clarity, Autonomy, Hazards, Proof, acceptance criteria."}
+      - {name: Claimed, renamed_from: [In progress], color: YELLOW, description: "Someone (human or agent) holds it. Agent + Last touched say who and how fresh."}
+      - {name: In review, renamed_from: [Review], color: BLUE, description: "PR open or result awaiting maintainer review. Merges need Cooper."}
+      - {name: Parked, renamed_from: [On Hold], color: GRAY, description: "Real but deliberately not queued (bandwidth, sequencing, waiting on design)."}
+      - {name: Done, color: PURPLE, description: "Completed and proven per the Proof field."}
+    retire_options:
+      Blocked: {to: Triaged, note: "replace with a blocked-by link on the issue"}
+      Needs Repro: {to: Triaged, labels: ["needs:repro"]}
+
+  - name: Priority
+    type: single_select
+    options:
+      - {name: P0, color: RED, description: "Breaks install, runtime, auth, data safety, or a critical operator flow. Drop other work."}
+      - {name: P1, color: ORANGE, description: "Important stabilization or high-impact bug."}
+      - {name: P2, color: YELLOW, description: "Roadmap feature or meaningful improvement."}
+      - {name: P3, renamed_from: [p3], color: GREEN, description: "Polish, docs, cleanup, low-risk improvement."}
+
+  - name: Size
+    type: single_select
+    options:
+      - {name: XS, color: GREEN, description: "One file, mechanical. One short agent session."}
+      - {name: S, color: BLUE, description: "One subsystem, one PR, no design decisions."}
+      - {name: M, color: YELLOW, description: "One PR across several subsystems, or one with a design decision."}
+      - {name: L, color: ORANGE, description: "Several PRs. Must have sub-issues before it can be Ready."}
+      - {name: XL, color: RED, description: "Initiative. Must be split into sub-issues; never Claimed directly."}
+    retire_options:
+      Epic: {to: XL, note: "split into sub-issues"}
+
+  - name: Clarity
+    renamed_from: [Confidence]
+    type: single_select
+    options:
+      - {name: Known fix, color: GREEN, description: "Root cause and fix are known. Implement."}
+      - {name: Likely fix, color: YELLOW, description: "Probable path; implementation may reveal details."}
+      - {name: Needs investigation, color: ORANGE, description: "Diagnose first. The first deliverable is a findings comment, not a PR."}
+      - {name: Needs design, renamed_from: [Research required], color: RED, description: "Design or research before code. Deliverable is a proposal for review."}
+
+  - name: Autonomy
+    type: single_select
+    options:
+      - {name: Autonomous, color: GREEN, description: "An agent may branch, implement, run Proof, and open a PR without check-ins."}
+      - {name: Checkpointed, color: YELLOW, description: "An agent proceeds, but stops for approval on its plan and before any Hazard action."}
+      - {name: Assist only, color: ORANGE, description: "An agent investigates and drafts; a human decides and implements."}
+      - {name: Human only, color: RED, description: "No agent work beyond reading."}
+
+  - name: Hazards
+    type: multi_select
+    options:
+      - {name: none, color: GREEN, description: "Assessed: no hard-rule hazards apply."}
+      - {name: vh-storage, color: RED, max_autonomy: Checkpointed, description: "Needs real-host proof on vh-storage (production lab). Every mutation there needs explicit approval."}
+      - {name: release-publish, color: RED, max_autonomy: Checkpointed, description: "Tags, pushes, releases, or workflow dispatch. A v* tag publishes to the real APT repo."}
+      - {name: migration, color: ORANGE, description: "New deploy/psql/NNN_*.sql: next number, safe on upgraded installs."}
+      - {name: maintainer-script, color: ORANGE, description: "debian/ maintainer scripts: idempotent, never block, never reset config/DB/TPM."}
+      - {name: crypto-secrets, color: ORANGE, max_autonomy: Checkpointed, description: "Keys, TPM sealing, secrets on disk. Never print or commit secrets."}
+      - {name: auth-rbac-share, color: ORANGE, description: "Authorization or share scoping (review hotspot). Share overwrite goes through filesystem RBAC."}
+      - {name: fuse-blocking, color: YELLOW, description: "Can wedge /mnt/vaulthalla or the DB pool. Use timeouts; prefer mountinfo/fusectl."}
+      - {name: destructive-local, color: YELLOW, description: "Proof wipes the local dev install/test DB (make run_test etc.). Give a heads-up."}
+
+  - name: Proof
+    type: multi_select
+    options:
+      - {name: core, color: BLUE, description: "verify.sh core: meson compile + meson test."}
+      - {name: web, color: BLUE, description: "verify.sh web: pnpm typecheck + lint (VERIFY_WEB_BUILD=1 for budgets)."}
+      - {name: web-e2e, color: BLUE, description: "Playwright suites under tools/e2e."}
+      - {name: release, color: PURPLE, description: "verify.sh release: vlr check + vlr version check."}
+      - {name: packaging, color: PURPLE, description: "verify.sh packaging: tools/contracts + tools/lab tests."}
+      - {name: lifecycle, color: PURPLE, description: "verify.sh lifecycle: deploy/lifecycle unit tests."}
+      - {name: docs, color: GREEN, description: "verify.sh docs: payload-markdown checker + pmdocs validate."}
+      - {name: shell, color: GREEN, description: "verify.sh shell: bash -n on bin/ and maintainer scripts."}
+      - {name: integration, color: ORANGE, implies_hazards: [destructive-local], description: "verify.sh integration: make run_test on /tmp/vh_mount (destructive)."}
+      - {name: lab-smoke, color: RED, implies_hazards: [vh-storage], description: "Real-apt install/upgrade proof on vh-storage (tools/lab/lab_smoke). Released packages only."}
+
+  - name: Agent
+    type: text
+    description: "Who holds the claim: agent/session name or GitHub handle. Cleared on release."
+
+  - name: Handoff
+    type: text
+    description: "One line: the next action, or a link to the handoff comment (Outcome/Scope/Validation/Risks/Next action)."
+
+  - name: Last touched
+    type: date
+    description: "Last time the claim holder made progress. Stale claims (>7 days) can be reclaimed."
+
+# Fields that `apply --delete-retired` removes once `migrate` has carried their data over.
+# guard area_label: refuse while an open item has a value here but no area:* label.
+retire_fields:
+  Domain: {reason: "replaced by area:* labels (areas carry a domain)", guard: area_label}
+  Subsystem: {reason: "replaced by area:* labels", guard: area_label}
+  Contributor Fit: {reason: "replaced by Autonomy plus the `good first issue` label"}
+  Estimate: {reason: "replaced by Size"}
+
+# Area labels: `area:<key>`. An issue carries one or more. Each area says where the code lives,
+# what to read first, and seeds Hazards/Proof at triage (triage may add or remove).
+label_color: "1d76db"
+areas:
+  fuse:
+    domain: core
+    description: FUSE mount, kernel bridge, mount lifecycle
+    paths: [core/src/fuse, core/include/fuse]
+    context: [.claude/context/architecture.md]
+    hazards: [fuse-blocking]
+    proof: [core, integration]
+  filesystem:
+    domain: core
+    description: Vault filesystem model, metadata, FS cache, local storage engine
+    paths: [core/src/fs, core/src/storage/Engine.cpp, core/src/storage/Manager.cpp]
+    context: [.claude/context/architecture.md]
+    hazards: [fuse-blocking]
+    proof: [core, integration]
+  sync:
+    domain: core
+    description: Local/remote sync engine and tasks
+    paths: [core/src/sync, core/src/vault/task]
+    context: [.claude/context/architecture.md]
+    hazards: [fuse-blocking]
+    proof: [core, integration]
+  storage-s3:
+    domain: core
+    description: S3/R2 storage backend, remote reads, cost guardrails and usage capture
+    paths: [core/src/storage/s3, core/src/storage/CloudEngine.cpp, core/src/storage/RemoteFetch.cpp]
+    context: [.claude/context/architecture.md]
+    hazards: []
+    proof: [core]
+  s3-gateway:
+    domain: core
+    description: S3-compatible gateway (protocol, credentials, ops)
+    paths: [core/src/protocols/s3, core/src/ops/S3Gateway.cpp]
+    context: [.claude/context/architecture.md, .claude/context/testing.md]
+    hazards: [auth-rbac-share]
+    proof: [core]
+  db:
+    domain: core
+    description: PostgreSQL pool, queries, migrations
+    paths: [core/src/db, deploy/psql]
+    context: [.claude/context/architecture.md, .claude/context/production-hardening.md]
+    hazards: [migration, fuse-blocking]
+    proof: [core, packaging]
+  rbac:
+    domain: core
+    description: Roles, groups, users, permission evaluation
+    paths: [core/src/rbac, core/src/identities, core/src/ops/Roles.cpp, core/src/ops/Groups.cpp, core/src/ops/Users.cpp]
+    context: [.claude/context/architecture.md]
+    hazards: [auth-rbac-share]
+    proof: [core]
+  auth:
+    domain: core
+    description: Authentication, sessions, API keys (daemon and web login)
+    paths: [core/src/auth, core/src/vault/APIKeyManager.cpp, core/src/ops/APIKeys.cpp, web/middleware.ts]
+    context: [.claude/context/architecture.md, .claude/context/web-client.md]
+    hazards: [auth-rbac-share, crypto-secrets]
+    proof: [core, web]
+  share:
+    domain: core
+    description: Link sharing (grants, tokens, sessions, uploads, audit)
+    paths: [core/src/share]
+    context: [.claude/context/link-sharing.md]
+    hazards: [auth-rbac-share]
+    proof: [core, web-e2e]
+  crypto:
+    domain: core
+    description: Vault encryption, key management, TPM2/swtpm sealing
+    paths: [core/src/crypto, core/src/vault/EncryptionManager.cpp]
+    context: [.claude/context/architecture.md]
+    hazards: [crypto-secrets]
+    proof: [core, integration]
+  ws:
+    domain: core
+    description: WebSocket protocol, handlers, WebSocketCommandMap parity with the web client
+    paths: [core/src/protocols/ws, web/src/lib]
+    context: [.claude/context/architecture.md, .claude/context/web-client.md]
+    hazards: []
+    proof: [core, web]
+  http:
+    domain: core
+    description: HTTP protocol (downloads, uploads, previews)
+    paths: [core/src/protocols/http]
+    context: [.claude/context/architecture.md]
+    hazards: []
+    proof: [core]
+  cli:
+    domain: core
+    description: vh CLI, unix-socket shell protocol, usage/help/manpages
+    paths: [core/src/protocols/shell, core/usage]
+    context: [.claude/context/architecture.md]
+    hazards: []
+    proof: [core]
+  runtime:
+    domain: core
+    description: Daemon runtime, config, concurrency, stats, logging, notifications
+    paths: [core/src/runtime, core/src/config, core/src/concurrency, core/src/stats, core/src/log, core/src/notifications]
+    context: [.claude/context/architecture.md]
+    hazards: []
+    proof: [core]
+  preview:
+    domain: core
+    description: Preview pipeline and sandboxed helpers (vaulthalla-preview-{cad,media})
+    paths: [core/src/preview, core/tools]
+    context: [.claude/context/architecture.md]
+    hazards: []
+    proof: [core, packaging]
+  web-ui:
+    domain: web
+    description: Next.js console UI, design system, data layer, JS budgets
+    paths: [web/src]
+    context: [.claude/context/web-client.md]
+    hazards: []
+    proof: [web, web-e2e]
+  packaging:
+    domain: packaging
+    description: Debian package, maintainer scripts, systemd, nginx/certbot, lifecycle (vh setup/teardown)
+    paths: [debian, deploy/systemd, deploy/nginx, deploy/lifecycle]
+    context: [.claude/context/packaging-lifecycle.md]
+    hazards: [maintainer-script]
+    proof: [packaging, lifecycle, shell]
+  release:
+    domain: packaging
+    description: vl-release contract, staged release docs, APT publication, release workflow
+    paths: [release.toml, .release, .github/workflows/release.yml]
+    context: [.claude/context/release-pipeline.md]
+    hazards: [release-publish]
+    proof: [release, packaging]
+  ci:
+    domain: infra
+    description: CI workflows, composite actions, self-hosted runners, dev tooling
+    paths: [.github/workflows, .github/actions, tools/dev]
+    context: [.claude/context/release-pipeline.md, .claude/context/environment.md]
+    hazards: []
+    proof: [shell]
+  docs:
+    domain: docs
+    description: Operator docs (Payload Markdown, published by pmdocs)
+    paths: [docs]
+    context: [.claude/context/docs-authoring.md]
+    hazards: []
+    proof: [docs]
+
+# Non-area labels the schema owns. Existing labels are updated in place, never deleted.
+labels:
+  "needs:repro": {color: "d93f0b", description: "Cannot proceed without a reproduction"}
+  "needs:decision": {color: "fbca04", description: "Waiting on a maintainer decision"}
+
+# Views: matched by name. `apply` sets filter, layout (on create) and visible fields. Group-by,
+# sort and board column field are not settable through the API; `ui` lists what to set by hand.
+# Filter token `{areas:<domain>}` expands to label:"area:a","area:b",... for that domain.
+views:
+  - name: Backlog
+    layout: table
+    filter: ""
+    fields: [Title, Assignees, Status, Priority, Size, Clarity, Labels, Linked pull requests, Sub-issues progress, Iteration, Target date]
+    ui: {group_by: Status}
+  - name: Triage
+    layout: board
+    filter: "is:open status:Inbox,Triaged"
+    fields: [Title, Assignees, Status, Labels, Priority, Size, Clarity, Autonomy, Hazards]
+    ui: {column_field: Status, sort: Priority asc}
+  - name: Agent queue
+    layout: table
+    filter: "is:open status:Ready autonomy:Autonomous,Checkpointed"
+    fields: [Title, Priority, Size, Clarity, Autonomy, Hazards, Proof, Labels, Sub-issues progress]
+    ui: {sort: Priority asc}
+  - name: In flight
+    layout: table
+    filter: "is:open status:Claimed,\"In review\""
+    fields: [Title, Status, Agent, Last touched, Handoff, Linked pull requests, Assignees]
+    ui: {sort: Last touched asc}
+  - name: Needs info
+    layout: table
+    filter: "is:open label:\"needs:repro\",\"needs:decision\""
+    fields: [Title, Status, Labels, Priority, Assignees]
+  - name: Current iteration
+    layout: board
+    filter: "iteration:@current"
+    fields: [Title, Assignees, Status, Linked pull requests, Sub-issues progress]
+    ui: {column_field: Status, group_by: Priority}
+  - name: Roadmap
+    layout: roadmap
+    filter: ""
+    fields: [Title, Assignees, Status]
+  - name: My items
+    layout: table
+    filter: "assignee:@me"
+    fields: [Title, Status, Linked pull requests, Sub-issues progress, Priority, Size, Clarity, Iteration]
+  - name: Contributors
+    layout: board
+    filter: "is:open status:Ready label:\"good first issue\""
+    fields: [Title, Assignees, Status, Labels, Linked pull requests, Sub-issues progress]
+    ui: {column_field: Status}
+  - name: Bugs
+    layout: board
+    filter: "type:bug OR label:\"bug\""
+    fields: [Title, Assignees, Status, Labels, Linked pull requests, Sub-issues progress]
+    ui: {column_field: Status}
+  - name: Core
+    layout: board
+    filter: "{areas:core}"
+    fields: [Title, Assignees, Status, Labels, Linked pull requests, Sub-issues progress]
+    ui: {column_field: Status}
+  - name: Web
+    layout: board
+    filter: "{areas:web}"
+    fields: [Title, Assignees, Status, Labels, Linked pull requests, Sub-issues progress]
+    ui: {column_field: Status}
+  - name: Packaging
+    layout: board
+    filter: "{areas:packaging},\"area:ci\""
+    fields: [Title, Assignees, Status, Labels, Linked pull requests, Sub-issues progress]
+    ui: {column_field: Status}
+
+# The Ready gate, checked by `board.py lint`.
+ready_gate:
+  require_issue_type: true
+  require_area_label: true
+  require_fields: [Priority, Size, Clarity, Autonomy, Hazards, Proof]
+  forbid_sizes: [XL]
+  require_sub_issues_for_sizes: [L]
+  forbid_labels: ["needs:repro", "needs:decision"]
+  forbid_open_blockers: true
+  require_body_heading_any: [Acceptance, Done when]  # markdown heading starting with one of these
