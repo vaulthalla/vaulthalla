@@ -76,6 +76,21 @@ class PackageLayoutContractTests(unittest.TestCase):
         self.assertNotIn("demo.vaulthalla.io", unit)
         self.assertRegex(unit, r"(?m)^StartLimitBurst=\d+")
 
+    def test_web_unit_treats_sigterm_exit_as_success(self) -> None:
+        # #136: node exits 143 (128 + SIGTERM) when systemd stops it, so every package stop/upgrade left
+        # vaulthalla-web.service "failed" unless 143 counts as a clean exit.
+        units = sorted((self._repo_root() / "deploy/systemd").glob("vaulthalla-web.service*"))
+        self.assertTrue(units, "no vaulthalla-web unit found under deploy/systemd")
+        for path in units:
+            unit = path.read_text(encoding="utf-8")
+            service = unit.split("[Service]", 1)[1].split("\n[", 1)[0] if "[Service]" in unit else ""
+            statuses = re.findall(r"(?m)^SuccessExitStatus=(.*)$", service)
+            self.assertTrue(
+                # The exit *code* 143, not the signal name: node handles SIGTERM and exits normally with 143.
+                any("143" in value.split() for value in statuses),
+                f"{path.name}: [Service] needs SuccessExitStatus=143",
+            )
+
     def test_config_is_not_a_conffile(self) -> None:
         repo = self._repo_root()
         install = self._read("debian/install")

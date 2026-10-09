@@ -18,6 +18,7 @@
 #include "db/query/rbac/role/Admin.hpp"
 #include "db/query/rbac/role/admin/Assignments.hpp"
 #include "identities/User.hpp"
+#include "log/Registry.hpp"
 #include "ops/Error.hpp"
 #include "ops/Roles.hpp"
 #include "protocols/shell/Router.hpp"
@@ -29,6 +30,7 @@
 #include "protocols/ws/ConnectionLifecycleManager.hpp"
 #include "auth/model/RefreshToken.hpp"
 #include "protocols/ws/LogRedaction.hpp"
+#include "protocols/ws/RefusalLogThrottle.hpp"
 #include "protocols/ws/ShareRateLimit.hpp"
 #include "protocols/ws/Router.hpp"
 #include "protocols/ws/Session.hpp"
@@ -41,6 +43,7 @@
 #include "UsageManager.hpp"
 
 #include <gtest/gtest.h>
+#include <spdlog/sinks/ringbuffer_sink.h>
 #include <nlohmann/json.hpp>
 #include <paths.h>
 
@@ -51,6 +54,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdlib>
@@ -60,6 +64,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -323,6 +328,39 @@ TEST(SecretOutputFiles, WrittenOwnerOnlyEvenOverAnExistingLooseFile) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// Captures one subsystem logger's lines at `level` and above for the life of the scope.
+struct ScopedLogCapture {
+    std::shared_ptr<spdlog::logger> logger;
+    std::shared_ptr<spdlog::sinks::ringbuffer_sink_mt> sink = std::make_shared<spdlog::sinks::ringbuffer_sink_mt>(4096);
+    spdlog::level::level_enum previous;
+
+    explicit ScopedLogCapture(std::shared_ptr<spdlog::logger> lg, const spdlog::level::level_enum level = spdlog::level::warn)
+        : logger(std::move(lg)), previous(logger->level()) {
+        sink->set_level(level);
+        sink->set_pattern("[%l] %v");
+        logger->sinks().push_back(sink);
+        if (previous > level) logger->set_level(level);
+    }
+
+    ~ScopedLogCapture() {
+        auto& sinks = logger->sinks();
+        std::erase(sinks, std::static_pointer_cast<spdlog::sinks::sink>(sink));
+        logger->set_level(previous);
+    }
+
+    ScopedLogCapture(const ScopedLogCapture&) = delete;
+    ScopedLogCapture& operator=(const ScopedLogCapture&) = delete;
+
+    [[nodiscard]] std::vector<std::string> lines() const { return sink->last_formatted(); }
+
+    [[nodiscard]] std::size_t count(const std::string_view needle) const {
+        return static_cast<std::size_t>(std::ranges::count_if(lines(), [&](const std::string& line) {
+            return line.find(needle) != std::string::npos;
+        }));
+    }
+};
+
+// ---------------------------------------------------------------------------------------------------------------
 // DB-backed: RBAC and crash regressions
 
 class CliRbacDbTest : public ::testing::Test {
@@ -482,6 +520,24 @@ TEST_F(CliRbacDbTest, BuiltInAndOwnRolesAreProtected) {
     EXPECT_THROW((void)ops::roles::removeAdminRole(admin, std::string("admin"), "test"), ops::Denied);
 }
 
+// #136: an ops refusal thrown inside a transaction on purpose was logged as "[error] Exception in transaction
+// context", indistinguishable from a real DB failure. Refusals stay quiet; unexpected exceptions still log error.
+// Both rethrow unchanged.
+TEST_F(CliRbacDbTest, TransactionRefusalsAreNotLoggedAsErrors) {
+    const ScopedLogCapture dbLog(log::Registry::db());
+
+    EXPECT_THROW(db::Transactions::exec("test.refusal.denied", [](pqxx::work&) { throw ops::Denied("nope"); }),
+                 ops::Denied);
+    EXPECT_THROW(db::Transactions::exec("test.refusal.notfound", [](pqxx::work&) -> int { throw ops::NotFound("gone"); }),
+                 ops::NotFound);
+    EXPECT_EQ(dbLog.count("[error]"), 0u);
+    EXPECT_EQ(dbLog.lines().size(), 0u) << "a refusal produced a warning-or-worse db log line";
+
+    EXPECT_THROW(db::Transactions::exec("test.refusal.fault", [](pqxx::work&) { throw std::runtime_error("boom"); }),
+                 std::runtime_error);
+    EXPECT_EQ(dbLog.count("Exception in transaction context 'test.refusal.fault'"), 1u);
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Issue #103: default admin password enforced server-side, and auth.login rate limited.
 
@@ -630,6 +686,125 @@ TEST(WsAuthHandlers, NullSessionUserIsAnErrorNotACrash) {
     EXPECT_THROW((void)Auth::registerUser(json::object(), session), std::exception);
     EXPECT_THROW((void)Auth::updateUser(json::object(), session), std::exception);
     EXPECT_THROW((void)Auth::getUserByName(json{{"name", "admin"}}, session), std::exception);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// #135: every refused ws request (rate limited, unauthorized) logged a warning, so any client reaching /ws could
+// write to the daemon log as fast as it could send. Refusals now warn once per client/command window and count
+// the rest; the limiter's message names the limiter ("share" only for share traffic).
+
+std::shared_ptr<protocols::ws::Session> refusalSession(const std::shared_ptr<protocols::ws::Router>& router,
+                                                       const std::string& ip) {
+    auto session = std::make_shared<protocols::ws::Session>(router);
+    session->ipAddress = ip;
+    session->close();
+    return session;
+}
+
+TEST(WsRefusalLog, RateLimitedBurstLogsOnceWithTheRightLabel) {
+    auto& limiter = protocols::ws::ShareRateLimit::instance();
+    limiter.reset();
+    auto router = std::make_shared<protocols::ws::Router>();
+    int opened = 0, logins = 0;
+    router->registerHandler("share.session.open", [&](json&&, const auto&) { ++opened; });
+    router->registerHandler("auth.login", [&](json&&, const auto&) { ++logins; });
+    const auto session = refusalSession(router, "192.0.2.41");
+
+    const ScopedLogCapture ws(log::Registry::ws());
+
+    // share.session.open allows 12 per 5 minutes: the other 188 are refused.
+    for (int i = 0; i < 200; ++i) router->routeMessage(routed("share.session.open"), session);
+    EXPECT_EQ(opened, 12);
+    EXPECT_EQ(ws.count("[warning]"), 1u) << "one warning per window, not one per refused request";
+    EXPECT_EQ(ws.count("[warning] [Router] Share rate limited 'share.session.open' for client 192.0.2.41 (retry in "), 1u);
+
+    // auth.login is the same limiter but not share traffic.
+    for (int i = 0; i < 10; ++i) limiter.recordLoginFailure("alice", *session);
+    const json login{{"command", "auth.login"}, {"payload", {{"name", "alice"}, {"password", "x"}}}, {"token", ""}};
+    for (int i = 0; i < 200; ++i) router->routeMessage(json(login), session);
+    EXPECT_EQ(logins, 0);
+    EXPECT_EQ(ws.count("[warning]"), 2u);
+    EXPECT_EQ(ws.count("[warning] [Router] Rate limited 'auth.login' for client 192.0.2.41 (retry in "), 1u);
+    EXPECT_EQ(ws.count("Share rate limited 'auth.login'"), 0u);
+    EXPECT_EQ(ws.count("Share command rate limited"), 0u);
+
+    limiter.reset();
+}
+
+TEST(WsRefusalLog, UnauthorizedFloodIsBounded) {
+    const ScopedWsTokenAuth tokenAuth;
+    auto router = std::make_shared<protocols::ws::Router>();
+    int reached = 0;
+    router->registerHandler("storage.vault.list", [&](json&&, const auto&) { ++reached; });
+
+    const ScopedLogCapture ws(log::Registry::ws());
+
+    // Deny: an unauthenticated socket, registered and client-invented commands.
+    const auto anonymous = refusalSession(router, "192.0.2.42");
+    for (int i = 0; i < 200; ++i) router->routeMessage(routed("storage.vault.list"), anonymous);
+    for (int i = 0; i < 200; ++i)
+        router->routeMessage(routed("made.up.command." + std::to_string(i) + "\n[error] forged"), anonymous);
+    EXPECT_EQ(ws.count("[warning]"), 2u) << "invented command names must not mint a warning each";
+    EXPECT_EQ(ws.count("Unauthorized access attempt for 'storage.vault.list' from client 192.0.2.42"), 1u);
+    EXPECT_EQ(ws.count("Unauthorized access attempt for an unregistered command from client 192.0.2.42"), 1u);
+    EXPECT_EQ(ws.count("forged"), 0u) << "the client-supplied name reached a warning line";
+
+    // RequireHumanAuth that fails token validation.
+    const auto human = closedSessionWith(router, userWithPassword("irrelevant-for-routing"));
+    human->ipAddress = "192.0.2.43";
+    (void)ScopedWsTokenAuth::issue(human);
+    for (int i = 0; i < 200; ++i) router->routeMessage(routed("storage.vault.list", "not-a-token"), human);
+    EXPECT_EQ(reached, 0);
+    EXPECT_EQ(ws.count("[warning]"), 3u);
+    EXPECT_EQ(ws.count("Unauthorized access attempt for 'storage.vault.list' from client 192.0.2.43"), 1u);
+}
+
+TEST(WsRefusalLog, ThrottleSummarizesTheClosedWindow) {
+    using Throttle = protocols::ws::RefusalLogThrottle;
+    Throttle throttle(60s, 16);
+    const auto t0 = Throttle::Clock::now();
+
+    const auto first = throttle.record("Rate limited 'auth.login' for client 10.0.0.11", t0);
+    EXPECT_TRUE(first.warn);
+    EXPECT_TRUE(first.summaries.empty());
+    for (int i = 1; i <= 195; ++i) {
+        const auto d = throttle.record("Rate limited 'auth.login' for client 10.0.0.11", t0 + std::chrono::milliseconds(150 * i));
+        EXPECT_FALSE(d.warn);
+        EXPECT_TRUE(d.summaries.empty());
+    }
+    // Another label has its own window.
+    EXPECT_TRUE(throttle.record("Rate limited 'auth.login' for client 10.0.0.12", t0 + 1s).warn);
+
+    // Seen again after the window: one summary with the exact count, and a fresh warning.
+    const auto next = throttle.record("Rate limited 'auth.login' for client 10.0.0.11", t0 + 61s);
+    EXPECT_TRUE(next.warn);
+    ASSERT_EQ(next.summaries.size(), 1u);
+    EXPECT_EQ(next.summaries[0].label, "Rate limited 'auth.login' for client 10.0.0.11");
+    EXPECT_EQ(next.summaries[0].suppressed, 195u);
+    EXPECT_EQ(next.summaries[0].span, 30s) << "first to last refusal: 195 x 150ms, rounded up";
+    // The other label had nothing suppressed: it is retired without a summary.
+    EXPECT_EQ(throttle.size(), 1u);
+}
+
+TEST(WsRefusalLog, ThrottleMemoryAndWarningsStayBounded) {
+    using Throttle = protocols::ws::RefusalLogThrottle;
+    Throttle throttle(60s, 4);
+    const auto t0 = Throttle::Clock::now();
+
+    std::size_t warnings = 0;
+    for (int i = 0; i < 10'000; ++i)
+        if (throttle.record("Unauthorized access attempt from client 198.51.100." + std::to_string(i), t0).warn)
+            ++warnings;
+    EXPECT_EQ(throttle.size(), 4u) << "the label map grew past its cap";
+    EXPECT_EQ(warnings, 5u) << "4 tracked labels plus one overflow warning per window";
+
+    // The next window reports the overflow count once, and the expired labels free their slots.
+    const auto later = throttle.record("Unauthorized access attempt from client 203.0.113.1", t0 + 61s);
+    EXPECT_TRUE(later.warn);
+    ASSERT_EQ(later.summaries.size(), 1u);
+    EXPECT_EQ(later.summaries[0].label, Throttle::kOverflowLabel);
+    EXPECT_EQ(later.summaries[0].suppressed, 10'000u - 5u);
+    EXPECT_EQ(throttle.size(), 1u);
 }
 
 TEST(LoginRateLimit, BurstThenSustainedLimitsPerIpAndAccount) {

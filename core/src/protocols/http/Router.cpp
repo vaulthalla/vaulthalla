@@ -177,7 +177,8 @@ Response Router::handleAuthSession(request&& req) {
 
         return makeJsonResponse(req, j);
     } catch (const std::exception& e) {
-        log::Registry::http()->warn("[Router]: Invalid refresh token: %s", e.what());
+        // The reason only: never the cookie value.
+        log::Registry::http()->warn("[Router] Invalid refresh token: {}", e.what());
         return makeErrorResponse(req, std::string("Unauthorized: ") + e.what(), status::unauthorized);
     }
 }
