@@ -108,7 +108,7 @@ run_packaging() {
   log "product contracts (tools/contracts)"
   run_suite "tools/contracts" 135 discover -s tools/contracts -t .
   log "lab tooling tests (tools/lab/tests)"
-  run_suite "tools/lab/tests" 22 discover -s tools/lab/tests -t .
+  run_suite "tools/lab/tests" 34 discover -s tools/lab/tests -t .
   log "project board tooling tests (tools/project/tests)"
   python3 -c 'import yaml' 2>/dev/null || die "tools/project needs PyYAML: apt install python3-yaml"
   run_suite "tools/project/tests" 22 discover -s tools/project/tests -t .

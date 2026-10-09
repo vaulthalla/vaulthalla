@@ -24,7 +24,7 @@ live P0 (the DB pool wedges after a PostgreSQL restart, which hangs FUSE and `ap
 | `tools/{smoke,e2e,dev}` | S3 gateway smoke, Playwright env, share preview smoke, `dev/verify.sh` (shared verification entrypoint) | `.claude/context/testing.md` |
 | `tools/contracts/` | product contracts (Debian packaging, maintainer scripts, shipped migrations, release workflow) | `.claude/context/packaging-lifecycle.md` |
 | `.github/project/`, `tools/project/` | Roadmap board schema (fields, `area:*` labels, views, Ready gate) + `board.py` reconcile/migrate/lint | `.claude/context/project-board.md` |
-| `tools/lab/` | real-host tooling: ws client, CLI↔web parity smoke, ws churn, `lab_smoke` (real-apt upgrade check), TEST-ONLY S3/R2 credential scaffold | `.claude/context/phase1-results.md` |
+| `tools/lab/` | real-host tooling: ws client, CLI↔web parity smoke, ws churn, `lab_smoke` (real-apt upgrade check), TEST-ONLY S3/R2 credential scaffold, `pentest/` (seed/verify/publish/reset a synthetic authorized-pentest fixture; seeding mutates the lab) | `.claude/context/phase1-results.md` |
 
 Phase 1 (packaging/upgrade/release hardening) results and how candidates are proven on the lab: `.claude/context/phase1-results.md`.
 Phase 2 (one CLI/web operation layer, security fixes, v1.8.0 candidate) lab matrix and open items: `.claude/context/phase2-results.md`.
