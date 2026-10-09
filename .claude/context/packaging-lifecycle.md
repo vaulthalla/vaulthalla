@@ -27,7 +27,8 @@ semantics do **not** match `apt remove/purge`. Operator-facing detail lives in `
 - `nginx/vaulthalla.conf` → `/usr/share/vaulthalla/nginx/vaulthalla` (template; proxies to 127.0.0.1).
 - `lifecycle/` (Python `main.py` + tests) → `/usr/lib/vaulthalla/lifecycle`: backs `vh setup/teardown`
   host operations. `vh` (cli.cpp) passes argv straight through, so new flags need no C++ change (but
-  `core/usage` help text is separate).
+  `core/usage` help text is separate). Exception: `--help`/`-h` on a lifecycle command goes to the daemon's usage
+  book (no sudo needed); only root with the daemon unreachable falls back to the utility's argparse help.
 - `vaulthalla.env`, `bashrc` are **gitignored local secret files**. Never print or commit them.
 
 ## Installed payload (key paths)
@@ -39,7 +40,7 @@ logs `/var/log/vaulthalla` · mount `/mnt/vaulthalla` · web `/usr/share/vaultha
 udev `/usr/lib/udev/rules.d/60-vaulthalla-tpm.rules` (only one; `dh_installudev` is overridden) · tmpfiles
 `/usr/lib/tmpfiles.d/vaulthalla.conf` · needrestart policy conf (the only dpkg conffile) · `vh.1` manpage.
 No static libs or headers ship (`debian/not-installed` satisfies `dh_missing --fail-missing`).
-`vh setup nginx --certbot-dns-cloudflare` installs `/etc/letsencrypt/renewal-hooks/deploy/vaulthalla-nginx-reload.sh`.
+`vh setup nginx --certbot-dns-cloudflare <credentials>` installs `/etc/letsencrypt/renewal-hooks/deploy/vaulthalla-nginx-reload.sh`.
 
 `debian/control`: Depends `adduser nodejs openssl fuse3 python3`. `nodejs` stays unversioned: Next 16 wants
 >= 20.9, but noble ships 18.19. Recommends: `postgresql nginx swtpm swtpm-tools certbot python3-certbot-nginx

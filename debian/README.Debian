@@ -340,7 +340,7 @@ If package-time automation skipped optional integration steps, admins can run:
 - `vh setup remote-db --host <host> --user <user> --database <name> --password-file <path>`
 - `vh setup nginx`
 - `vh setup nginx --certbot --domain <fqdn>`
-- `vh setup nginx --domain <fqdn> --s3-domain <s3-fqdn> --certbot-dns-cloudflare --cloudflare-credentials <path>`
+- `vh setup nginx --domain <fqdn> --s3-domain <s3-fqdn> --certbot-dns-cloudflare <path>`
 - `vh teardown nginx`
 
 These commands are explicit integration actions and are intended for controlled
@@ -404,10 +404,20 @@ For a dedicated public S3 host without an inbound HTTP challenge endpoint, use
 Cloudflare DNS-01 certificate handling:
 
 ```text
-vh setup nginx --domain vaulthalla.dev --s3-domain s3.vaulthalla.dev --certbot-dns-cloudflare --cloudflare-credentials /etc/vaulthalla/certbot/cloudflare.ini
+vh setup nginx --domain vaulthalla.dev --s3-domain s3.vaulthalla.dev --certbot-dns-cloudflare /etc/vaulthalla/certbot/cloudflare.ini
 ```
 
-The Cloudflare credentials file must be a regular file with mode `0600`.
+The Cloudflare credentials file is a Certbot dns-cloudflare credentials file:
+a root-owned regular file with mode `0600` containing
+
+```text
+dns_cloudflare_api_token = <Cloudflare API token>
+```
+
+The token needs Zone > DNS > Edit on the zones of both hostnames. Certbot
+reads the file again on every renewal, so keep it in place. `--s3-domain` is
+refused with `--certbot` because only the DNS-01 mode issues one certificate
+covering both hostnames before Vaulthalla renders their HTTPS server blocks.
 The generated managed site redirects HTTP to HTTPS and serves S3 only from the
 dedicated S3 hostname.
 

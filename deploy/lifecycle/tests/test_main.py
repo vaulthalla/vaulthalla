@@ -254,6 +254,32 @@ class DispatchTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         handler.assert_called_once_with(args)
 
+    def test_certbot_dns_cloudflare_takes_credentials_path_inline(self) -> None:
+        parser = main.build_parser()
+        path = "/etc/vaulthalla/certbot/cloudflare.ini"
+        inline = parser.parse_args(["setup", "nginx", "--certbot-dns-cloudflare", path, "--domain", "vault.example.com"])
+        self.assertEqual(main.dns_cloudflare_credentials_arg(inline), path)
+        self.assertEqual(inline.domain, "vault.example.com")
+
+        # Older two-flag spelling, and the credentials flag on its own, still select DNS-01 mode.
+        legacy = parser.parse_args(["setup", "nginx", "--certbot-dns-cloudflare", "--cloudflare-credentials", path])
+        self.assertEqual(main.dns_cloudflare_credentials_arg(legacy), path)
+        alone = parser.parse_args(["setup", "nginx", "--cloudflare-credentials", path])
+        self.assertEqual(main.dns_cloudflare_credentials_arg(alone), path)
+
+        bare = parser.parse_args(["setup", "nginx", "--certbot-dns-cloudflare"])
+        self.assertEqual(main.dns_cloudflare_credentials_arg(bare), "")
+        with self.assertRaises(main.LifecycleError):
+            main.validate_cloudflare_credentials_file(main.dns_cloudflare_credentials_arg(bare))
+
+        self.assertIsNone(main.dns_cloudflare_credentials_arg(parser.parse_args(["setup", "nginx", "--certbot"])))
+
+        conflicting = parser.parse_args(
+            ["setup", "nginx", "--certbot-dns-cloudflare", path, "--cloudflare-credentials", "/root/other.ini"]
+        )
+        with self.assertRaises(main.LifecycleError):
+            main.dns_cloudflare_credentials_arg(conflicting)
+
     def test_teardown_nginx_dispatches(self) -> None:
         parser = main.build_parser()
         args = parser.parse_args(["teardown", "nginx"])
