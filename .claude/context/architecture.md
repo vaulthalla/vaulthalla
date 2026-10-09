@@ -274,7 +274,7 @@ bytes, inline by default), `GET|HEAD /download` (files stream with no size cap; 
 
 ## Database
 
-- PostgreSQL via libpqxx. The schema is `deploy/psql/000…103_*.sql`, applied in order (all in ONE transaction by `core/seed/include/SqlDeployer.hpp`) and installed to `/usr/share/vaulthalla/psql`.
+- PostgreSQL via libpqxx. The schema is `deploy/psql/000…104_*.sql`, applied in order (all in ONE transaction by `core/seed/include/SqlDeployer.hpp`) and installed to `/usr/share/vaulthalla/psql`.
   New migrations take the next number and must be idempotent against upgraded installs. SqlDeployer records sha256(raw bytes)
   per file and refuses to start on a mismatch, so **never edit a shipped migration**: 020/060/082 were edited in place and
   bricked upgrades (1.5.x→1.6.x crash loop on 060). Reviewed exceptions live in `kHistoricalMigrationChecksums` (accepted, recorded
@@ -419,6 +419,19 @@ subject's assignment; both `vh vault role override ...` and ws `role.vault.overr
 `ops::roles::*VaultRoleOverride*` (parity in `test_ops_parity_roles.cpp`).
 
 ## Subsystem invariants (enforced in code, keep them)
+
+**Filesystem RBAC paths, FS cache and account deletion** (#178–#180, `VaultLifecycleRegressionTest`)
+- `rbac::resolver::vault::Context::path` (and `fs::policy::Request::path`) is a **FUSE** path. Callers holding a vault
+  path convert it with `engine->vaultPathToFusePath()` first; `share::Manager` once didn't, so only share root `/`
+  ever passed and a vault path equal to another vault's FUSE root resolved to that vault. The evaluator refuses an
+  entry whose `vault_id` differs from the request's vault (`EntryVaultMismatch`).
+- The FS cache is keyed by FUSE path and can only re-hydrate a vault root through `mkVault` (or the rename path in
+  `storage::Manager::updateVault`). `storage::Manager` calls `fs::cache::Registry::evictVault` on remove, on rename
+  (old and new root, then re-caches the root) and in `addVault` *before* the engine creates the root. Evicting after
+  `mkVault` would drop the fresh root and the whole vault would answer ENOENT.
+- Every `users(id)` reference has a delete action (migration 104): attribution/audit columns `SET NULL`, while
+  `file_locks.locked_by` and `share_link.created_by` `CASCADE` (a deleted account's public links die with it). New
+  tables referencing `users` must pick one; a bare `REFERENCES users` blocks `vh user delete`.
 
 **Operator email** (`email/`, `notifications/`, `085_operator_notifications.sql`, `vh email …`)
 - Provider secrets are encrypted in `internal_secrets` and entered by hidden prompt. They never go in `.env` or files, and are never logged or rendered.
