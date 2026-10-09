@@ -260,6 +260,14 @@ bytes, inline by default), `GET|HEAD /download` (files stream with no size cap; 
 - The RBAC gate is unchanged in shape: `open` needs Read for readable handles and Write for writable or `O_TRUNC`
   ones (both for `O_RDWR`); `write` and size changes check Write *before* touching the copy. A working copy is only
   reachable through a handle that passed the resolver.
+- **Denied means hidden unless visible (#170).** `fuse::resolver::deniedErrno` answers a denial with ENOENT when the
+  caller cannot Lookup the target (the parent for a create of a new name) and EACCES when it can see it but lacks
+  the action; the mount root is never hidden. The answer must not depend on which op reaches the daemon first: the
+  kernel dentry/attr cache is shared across uids (lookup 0.1 s, mkdir/symlink/setattr 1 s, **create 60 s**), so a
+  denied uid can walk dentries another uid resolved and hit getattr/readdir/open directly. Within those windows a
+  denied uid can `stat` a cached path (existence + attrs, no data: open/readdir are always checked). An ENOENT
+  answer to a revalidating lookup (or unlink) also makes the kernel invalidate that shared dentry, so allowed users
+  re-look it up, and a process whose cwd was that dentry gets ENOENT from getcwd.
 
 ## Database
 

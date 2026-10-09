@@ -57,8 +57,9 @@ with it) and delete the role.
   (`protocols/SessionLifetimes.hpp`); past a 10s deadline it is kept for the process lifetime and an error is logged.
 - `make run_test` is 71/72 on this branch and on `642b02b4` alike: "FUSE deny: ls seed" gets EACCES where it expects
   ENOENT (an unprivileged user is denied below the vault root instead of the root looking missing). The other deny
-  cases hold. Not investigated further; candidates are the 0.1s kernel entry cache shared across uids after the allow
-  stage, or the expectation itself.
+  cases hold. Root-caused 2026-10-09 (#170): the kernel dentry cache is shared across uids, so right after the admin
+  seeded the tree the denied user's `ls` skipped LOOKUP of the vault root and the daemon first saw readdir on `seed`
+  (or getattr), which answered EACCES. Fixed by `fuse::resolver::deniedErrno` (hidden = ENOENT for every op); see architecture.md, FUSE.
 - Replaced (2026-10-02): the universal default password `vh!adm1n` and its gate. The gate was split-brained: the ws
   Router refused every non-allowlisted command for *any* session whose own password verified against the default,
   while the web's RequireAuth asked an unauthenticated lifecycle command whether the *admin* account had it and
