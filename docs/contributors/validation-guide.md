@@ -23,7 +23,7 @@ bash tools/dev/verify.sh doctor      # toolchain and version-pin sanity
 bash tools/dev/verify.sh             # infer checks from your uncommitted changes
 bash tools/dev/verify.sh web         # typecheck + lint
 bash tools/dev/verify.sh release     # version drift + release-tooling tests
-bash tools/dev/verify.sh packaging   # Debian packaging contract tests
+bash tools/dev/verify.sh packaging   # packaging contracts, lab and board tooling tests (needs python3-yaml)
 bash tools/dev/verify.sh all         # everything except the destructive integration harness
 ```
 

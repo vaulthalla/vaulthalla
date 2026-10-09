@@ -36,7 +36,7 @@ RUN apt-get update \
  && echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/githubcli.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
  && apt-get update \
  && apt-get install -y --no-install-recommends \
-      sudo git jq xz-utils file make python3 shellcheck ccache gcc-14 g++-14 build-essential \
+      sudo git jq xz-utils file make python3 python3-yaml shellcheck ccache gcc-14 g++-14 build-essential \
       debhelper devscripts dpkg-dev fakeroot \
       meson ninja-build pkg-config pandoc \
       libfuse3-dev libsodium-dev libcurl4-openssl-dev libboost-filesystem-dev libboost-system-dev \
