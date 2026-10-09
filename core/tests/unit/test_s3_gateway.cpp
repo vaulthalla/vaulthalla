@@ -2017,6 +2017,14 @@ TEST_F(S3GatewayDbTest, S3GatewayWebSocketRoleAssignmentAndOverrideEndpointsWork
     ASSERT_EQ(1u, overrides.at("overrides").size());
     EXPECT_EQ(overrideId, overrides.at("overrides").front().at("id").get<uint32_t>());
 
+    // #165: a bare `id` no longer stands in for override_id (or credential_id); the override survives the refusal.
+    EXPECT_THROW((void)vh::protocols::ws::handler::S3Gateway::credentialsRoleOverridesRemove({
+        {"credential_id", credential.id},
+        {"vault_id", vaultId},
+        {"id", overrideId}
+    }, session), vh::ops::Invalid);
+    EXPECT_EQ(1u, vh::db::query::s3::Gateway::listCredentialVaultRoleOverrides(credential.id, vaultId).size());
+
     const auto removedOverride = vh::protocols::ws::handler::S3Gateway::credentialsRoleOverridesRemove({
         {"credential_id", credential.id},
         {"vault_id", vaultId},
@@ -2100,6 +2108,12 @@ TEST_F(S3GatewayDbTest, S3GatewayWebSocketDefaultRoleSelectedVaultAndDefaultOver
     ASSERT_TRUE(listedOverrides.contains("overrides"));
     ASSERT_EQ(1u, listedOverrides.at("overrides").size());
     EXPECT_EQ(overrideId, listedOverrides.at("overrides").front().at("id").get<uint32_t>());
+
+    EXPECT_THROW((void)vh::protocols::ws::handler::S3Gateway::credentialsDefaultRoleOverridesRemove({
+        {"credential_id", credential.id},
+        {"id", overrideId}
+    }, session), vh::ops::Invalid);
+    EXPECT_EQ(1u, vh::db::query::s3::Gateway::listCredentialDefaultVaultRoleOverrides(credential.id).size());
 
     const auto removedOverride = vh::protocols::ws::handler::S3Gateway::credentialsDefaultRoleOverridesRemove({
         {"credential_id", credential.id},

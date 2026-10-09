@@ -8,6 +8,8 @@ StartLimitBurst=10
 ExecStart=@BINDIR@/node /usr/share/vaulthalla-web/server.js
 Restart=always
 RestartSec=5
+# Node exits 128+SIGTERM when systemd stops it; that is a clean stop, not a failure (#136).
+SuccessExitStatus=143
 User=vaulthalla
 Group=vaulthalla
 WorkingDirectory=/usr/share/vaulthalla-web

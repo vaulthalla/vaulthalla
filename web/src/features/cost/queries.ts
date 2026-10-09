@@ -112,7 +112,7 @@ export const findPolicy = (
 
 export const ackNotification = async (n: PriceNotification) => {
   try {
-    await api.send('pricing.notifications.ack', { id: n.id, vault_id: n.vault_id })
+    await api.send('pricing.notifications.ack', { notification_id: n.id, vault_id: n.vault_id })
     await invalidate('pricing.notifications.list', 'stats.pricing.budget', 'pricing.budget.status')
   } catch (error) {
     notify.error(error, 'Could not acknowledge the alert')

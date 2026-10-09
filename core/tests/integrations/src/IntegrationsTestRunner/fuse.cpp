@@ -356,11 +356,57 @@ namespace vh::test::integration {
             .fn = [=]{ return ls_as(subj.uid, ctx.base()); }
         });
 
+        // #170: the kernel's dentry/attr cache is shared across uids, so right after the admin resolves a path the
+        // denied user's ls skips LOOKUP and the daemon first sees readdir/open. Hidden must still look missing.
+        builder.makeTestCase({
+            .name = "FUSE deny: ls seed right after admin resolved it",
+            .path = "fuse/ls",
+            .expect_exit = ENOENT,
+            .fn = [=]{
+                (void)ls_as(*ctx.admin->meta.linux_uid, ctx.base());
+                return ls_as(subj.uid, ctx.base());
+            }
+        });
+
         builder.makeTestCase({
             .name = "FUSE deny: read secret",
             .path = "fuse/read",
             .expect_exit = ENOENT,
             .fn = [=]{ return read_as(subj.uid, ctx.secret()); }
+        });
+
+        builder.makeTestCase({
+            .name = "FUSE deny: read secret right after admin read it",
+            .path = "fuse/read",
+            .expect_exit = ENOENT,
+            .fn = [=]{
+                (void)read_as(*ctx.admin->meta.linux_uid, ctx.secret());
+                return read_as(subj.uid, ctx.secret());
+            }
+        });
+
+        // #183: the kernel answers stat from its dentry/attr cache, shared across uids, without asking the daemon. Any
+        // non-zero entry/attr timeout let a denied uid read the metadata of a path another uid had just resolved
+        // (60 s after a create).
+        builder.makeTestCase({
+            .name = "FUSE deny: stat secret right after admin stat'd it",
+            .path = "fuse/stat",
+            .expect_exit = ENOENT,
+            .fn = [=]{
+                (void)stat_size_as(*ctx.admin->meta.linux_uid, ctx.secret());
+                return stat_size_as(subj.uid, ctx.secret());
+            }
+        });
+
+        builder.makeTestCase({
+            .name = "FUSE deny: stat a file right after admin created it",
+            .path = "fuse/stat",
+            .expect_exit = ENOENT,
+            .fn = [=]{
+                const auto fresh = ctx.docs() / "created-by-admin.txt";
+                (void)write_as(*ctx.admin->meta.linux_uid, fresh, "fresh\n");
+                return stat_size_as(subj.uid, fresh);
+            }
         });
 
         builder.makeTestCase({
@@ -416,10 +462,12 @@ namespace vh::test::integration {
             .fn = [=]{ return read_as(subj.uid, ctx.secret()); }
         });
 
+        // note.txt matches no override and the base role grants no preview, so the user cannot see it: hidden, not
+        // denied (#170). The parent stays visible through traversal toward docs/*.txt, so rm -rf below is EACCES.
         builder.makeTestCase({
             .name = "FUSE deny: read note",
             .path = "fuse/read",
-            .expect_exit = EACCES,
+            .expect_exit = ENOENT,
             .fn = [=]{ return read_as(subj.uid, ctx.note()); }
         });
 
@@ -651,10 +699,11 @@ namespace vh::test::integration {
             .fn = [=]{ return read_as(subj.uid, ctx.secret()); }
         });
 
+        // Implicit deny with no preview on note.txt: the user cannot see it, so it looks missing (#170).
         builder.makeTestCase({
             .name = "FUSE implicit deny: read note",
             .path = "fuse/read",
-            .expect_exit = EACCES,
+            .expect_exit = ENOENT,
             .fn = [=]{ return read_as(subj.uid, ctx.note()); }
         });
 

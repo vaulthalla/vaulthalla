@@ -38,6 +38,13 @@ namespace vh::fuse {
 
 namespace {
 
+// Entry and attr timeouts for every reply (#183). The kernel's dentry/attr cache is shared across uids and the mount
+// doesn't use default_permissions, so anything cached is answered for *any* caller without asking the daemon: a
+// non-zero timeout let a denied uid stat a path another uid had just resolved (60 s after a create). With 0, every
+// lookup and getattr reaches the resolver and is authorized for the calling uid. Sizes stay coherent mid-write
+// because statFromEntry reports an open working copy's size (writeback cache is off, handles are direct_io).
+constexpr double kKernelMetadataTimeout = 0.0;
+
 using stats::model::FuseOperation;
 using stats::model::ScopedFuseOpTimer;
 
@@ -133,7 +140,7 @@ void getattr(const fuse_req_t req, const fuse_ino_t ino, fuse_file_info* fi) {
 
     const auto st = statFromEntry(resolved.entry, ino);
     timer.success();
-    fuse_reply_attr(req, &st, 0.1); // match attr_timeout from lookup()
+    fuse_reply_attr(req, &st, kKernelMetadataTimeout);
 }
 
 void setattr(const fuse_req_t req, const fuse_ino_t ino,
@@ -213,7 +220,7 @@ void setattr(const fuse_req_t req, const fuse_ino_t ino,
     sanitized.st_ctim = st.st_ctim;
 
     timer.success();
-    fuse_reply_attr(req, &sanitized, 1.0);
+    fuse_reply_attr(req, &sanitized, kKernelMetadataTimeout);
 }
 
 void readdir(const fuse_req_t req, const fuse_ino_t ino, const size_t size, const off_t off, fuse_file_info* fi) {
@@ -302,8 +309,8 @@ void lookup(const fuse_req_t req, const fuse_ino_t parent, const char* name) {
 
     fuse_entry_param e{};
     e.ino = *resolved.ino;
-    e.attr_timeout = 0.1;
-    e.entry_timeout = 0.1;
+    e.attr_timeout = kKernelMetadataTimeout;
+    e.entry_timeout = kKernelMetadataTimeout;
     e.attr = statFromEntry(resolved.entry, *resolved.ino);
 
     timer.success();
@@ -391,8 +398,8 @@ void create(const fuse_req_t req, const fuse_ino_t parent, const char* name, con
     fuse_entry_param e{};
     e.ino           = *newEntry->inode;
     e.attr          = st;
-    e.attr_timeout  = 60.0;
-    e.entry_timeout = 60.0;
+    e.attr_timeout  = kKernelMetadataTimeout;
+    e.entry_timeout = kKernelMetadataTimeout;
 
     runtime::Deps::get().storageManager->registerOpenHandle(*newEntry->inode);
     recordOpenHandle();
@@ -436,8 +443,8 @@ void symlink(const fuse_req_t req, const char* link, const fuse_ino_t parent, co
     fuse_entry_param e{};
     e.ino = static_cast<fuse_ino_t>(*newEntry->inode);
     e.attr = statFromEntry(newEntry, e.ino);
-    e.attr_timeout = 1.0;
-    e.entry_timeout = 1.0;
+    e.attr_timeout = kKernelMetadataTimeout;
+    e.entry_timeout = kKernelMetadataTimeout;
 
     timer.success();
     fuse_reply_entry(req, &e);
@@ -616,8 +623,8 @@ void mkdir(const fuse_req_t req, const fuse_ino_t parent, const char* name, cons
 
     fuse_entry_param e{};
     e.ino = finalInode;
-    e.attr_timeout = 1.0;
-    e.entry_timeout = 1.0;
+    e.attr_timeout = kKernelMetadataTimeout;
+    e.entry_timeout = kKernelMetadataTimeout;
     e.attr = statFromEntry(newEntry, finalInode);
 
     timer.success();

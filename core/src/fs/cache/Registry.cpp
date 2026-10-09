@@ -583,6 +583,56 @@ void Registry::evictPath(const std::filesystem::path& path) {
     evictIno(ino);
 }
 
+void Registry::evictVault(const unsigned int vaultId, const std::filesystem::path& fuseRoot) {
+    const bool matchPaths = !fuseRoot.empty() && makeAbsolute(fuseRoot) != "/";
+    const auto inVault = [&](const std::shared_ptr<Entry>& e) {
+        if (!e) return false;
+        if (e->vault_id && static_cast<unsigned int>(*e->vault_id) == vaultId) return true;
+        return matchPaths && !e->fuse_path.empty() && pathContains(fuseRoot, e->fuse_path);
+    };
+    const auto underRoot = [&](const std::filesystem::path& path) {
+        return matchPaths && pathContains(fuseRoot, path);
+    };
+
+    std::unique_lock lock(mutex_);
+
+    std::unordered_set<unsigned int> ids;
+    std::unordered_set<fuse_ino_t> inodes;
+    uint64_t removedSize = 0;
+
+    for (const auto& [id, e] : idToEntry_) {
+        if (!inVault(e)) continue;
+        ids.insert(id);
+        if (e->inode) inodes.insert(*e->inode);
+        removedSize = addClamp(removedSize, safeSizeBytes(e));
+    }
+    for (const auto& [ino, e] : inodeToEntry_)
+        if (inVault(e)) inodes.insert(ino);
+    for (const auto& [ino, id] : inodeToId_)
+        if (ids.contains(id)) inodes.insert(ino);
+    for (const auto& [path, ino] : pathToInode_)
+        if (underRoot(path)) inodes.insert(ino);
+    inodes.erase(FUSE_ROOT_ID);
+
+    if (ids.empty() && inodes.empty()) return;
+
+    std::erase_if(pathToInode_, [&](const auto& kv) { return inodes.contains(kv.second) || underRoot(kv.first); });
+    std::erase_if(pathToEntry_, [&](const auto& kv) {
+        return underRoot(kv.first) || inVault(kv.second) || (kv.second && ids.contains(kv.second->id));
+    });
+    std::erase_if(inodeToPath_, [&](const auto& kv) { return inodes.contains(kv.first); });
+    std::erase_if(inodeToEntry_, [&](const auto& kv) { return inodes.contains(kv.first); });
+    std::erase_if(inodeToId_, [&](const auto& kv) { return inodes.contains(kv.first) || ids.contains(kv.second); });
+    std::erase_if(idToEntry_, [&](const auto& kv) { return ids.contains(kv.first); });
+    std::erase_if(childToParent_, [&](const auto& kv) { return ids.contains(kv.first); });
+
+    stats_->set_used(subClamp(stats_->snapshot().used_bytes, removedSize));
+    stats_->record_invalidation();
+
+    log::Registry::fs()->debug("[FSCache] Evicted {} entries and {} inodes of vault {} ({})",
+                               ids.size(), inodes.size(), vaultId, fuseRoot.string());
+}
+
 bool Registry::refreshDirStats(const unsigned int dirId) {
     const auto rows = db::query::fs::Directory::collectParentStats(dirId);
     if (rows.empty()) return false;
@@ -602,6 +652,7 @@ bool Registry::refreshDirStats(const unsigned int dirId) {
 
 std::vector<std::shared_ptr<Entry>> Registry::listDir(const unsigned int parentId, const bool recursive) const {
     const auto parent = db::query::fs::Entry::getFSEntryById(parentId);
+    if (!parent) throw std::runtime_error("Parent ID does not exist");
     if (!parent->isDirectory()) throw std::runtime_error("Parent ID is not a directory");
 
     const auto parentDir = std::static_pointer_cast<Directory>(parent);
@@ -613,6 +664,8 @@ std::vector<std::shared_ptr<Entry>> Registry::listDir(const unsigned int parentI
     }
 
     std::vector<std::shared_ptr<Entry>> entries;
+    // The maps are mutated by concurrent FUSE/ws callers; read them under the lock (released before the DB fallback).
+    std::shared_lock lock(mutex_);
     entries.reserve(childToParent_.size()); // cheap upper bound
 
     auto append_children = [&](const unsigned int pid) {
@@ -638,6 +691,8 @@ std::vector<std::shared_ptr<Entry>> Registry::listDir(const unsigned int parentI
             append_children(eid);
         }
     }
+
+    lock.unlock();
 
     if (entries.size() != numEntries) {
         log::Registry::fs()->warn("[FSCache] Expected {} entries, but found {}", numEntries, entries.size());

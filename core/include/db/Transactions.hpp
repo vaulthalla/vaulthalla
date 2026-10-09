@@ -2,6 +2,7 @@
 
 #include "DBPool.hpp"
 #include "log/Registry.hpp"
+#include "ops/Error.hpp"
 
 #include <memory>
 #include <optional>
@@ -65,6 +66,12 @@ namespace vh::db {
                     log::Registry::db()->trace("[Transactions::exec] Transaction committed: {}", ctx);
                     return result;
                 }
+            } catch (const ops::Error& e) {
+                // A typed refusal (ops::Denied, NotFound, Invalid, ...) thrown inside the transaction on purpose
+                // is the caller's answer, not a database fault: roll back quietly and let it propagate.
+                log::Registry::db()->debug(
+                    "[Transactions::exec] Refusal in transaction context '{}', rolling back: {}", ctx, e.what());
+                throw;
             } catch (...) {
                 log::Registry::db()->error(
                     "[Transactions::exec] Exception in transaction context '{}', rolling back",

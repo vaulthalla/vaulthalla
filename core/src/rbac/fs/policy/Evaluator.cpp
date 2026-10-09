@@ -343,6 +343,15 @@ std::optional<Decision> Evaluator::resolveTarget(const Request &req, TargetConte
                     ? req.entry
                     : runtime::Deps::get().fsCache->getEntry(out.fusePath);
 
+    // An entry from another vault must never be judged under this vault's roles (e.g. a vault-relative path
+    // mistaken for a FUSE path that names a different vault's root).
+    if (out.entry && out.entry->vault_id && out.engine->vault && static_cast<uint32_t>(*out.entry->vault_id) != out.engine->vault->id)
+        return Decision{
+            .allowed = false,
+            .reason = Decision::Reason::EntryVaultMismatch,
+            .evaluated_path = out.fusePath
+        };
+
     out.exists = !!out.entry;
     out.isDir = out.entry
                     ? out.entry->isDirectory()
@@ -390,19 +399,32 @@ Evaluator::StageResult Evaluator::resolveStage(
     const TargetContext &target,
     const permission::vault::FilesystemAction action
 ) {
-    if (const auto overrides = resolveOverrides(perms.overrides, target.vaultPath.string(), action);
-        overrides.matched)
-        return overrides;
+    const auto resolve = [&](const permission::vault::FilesystemAction a) -> StageResult {
+        if (const auto overrides = resolveOverrides(perms.overrides, target.vaultPath.string(), a); overrides.matched)
+            return overrides;
 
-    const bool allowed = allowedByBase(perms, target.isDir, action);
-
-    return {
-        .matched = true,
-        .allowed = allowed,
-        .reason = allowed
-                      ? Decision::Reason::AllowedByBasePermissions
-                      : Decision::Reason::DeniedByBasePermissions
+        const bool allowed = allowedByBase(perms, target.isDir, a);
+        return {
+            .matched = true,
+            .allowed = allowed,
+            .reason = allowed
+                          ? Decision::Reason::AllowedByBasePermissions
+                          : Decision::Reason::DeniedByBasePermissions
+        };
     };
+
+    auto stage = resolve(action);
+
+    // Seeing a file is implied by being allowed to download it. A file Lookup (Preview) that is denied falls back to
+    // the Read decision, so a download-only grant (e.g. an allow override on vault.fs.files.download) is reachable
+    // and listed through FUSE. It used to work only while another uid's walk had left the dentries cached (#183).
+    if (action == permission::vault::FilesystemAction::Lookup && !target.isDir && target.exists &&
+        stage.allowed.has_value() && !*stage.allowed) {
+        if (auto read = resolve(permission::vault::FilesystemAction::Read); read.allowed.value_or(false))
+            return read;
+    }
+
+    return stage;
 }
 
 Evaluator::StageResult Evaluator::resolveOverrides(

@@ -27,6 +27,7 @@ namespace vh::rbac::fs::policy {
             case Decision::Reason::StorageEngineNotFound: return "StorageEngineNotFound";
             case Decision::Reason::UnableToResolvePaths: return "UnableToResolvePaths";
             case Decision::Reason::LowRiskOpRequiredForOverrideTraversal: return "LowRiskOpRequiredForOverrideTraversal";
+            case Decision::Reason::EntryVaultMismatch: return "EntryVaultMismatch";
         }
         return "unknown reason";
     }

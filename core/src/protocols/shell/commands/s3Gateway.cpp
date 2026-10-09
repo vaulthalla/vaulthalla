@@ -693,7 +693,8 @@ CommandResult handleCredsRoleOverrideAdd(const CommandCall& call) {
 CommandResult handleCredsRoleOverrideRemove(const CommandCall& call) {
     if (call.positionals.empty()) return usage(call.constructFullArgs());
     const auto vaultId = requiredVaultOption(call, "s3-gateway creds role override remove");
-    const auto overrideValue = optVal(call, "id").value_or(call.positionals.size() >= 2 ? call.positionals[1] : "");
+    const auto overrideValue = optVal(call, std::vector<std::string>{"override-id", "id"})
+                                   .value_or(call.positionals.size() >= 2 ? call.positionals[1] : "");
     if (overrideValue.empty()) return invalid("s3-gateway creds role override remove: override id is required");
     const auto overrideId = parseUInt(overrideValue);
     if (!overrideId) return invalid("s3-gateway creds role override remove: override id must be a positive integer");

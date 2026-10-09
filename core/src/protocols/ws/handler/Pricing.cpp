@@ -25,6 +25,7 @@
 #include "vault/model/Vault.hpp"
 
 #include <algorithm>
+#include <limits>
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <set>
@@ -39,6 +40,20 @@ using vh::storage::s3::pricing::PriceBudgetService;
 using vh::storage::s3::pricing::mergePriceBudgetNotificationSummary;
 using vh::storage::s3::pricing::priceBudgetModeFromString;
 using vh::storage::s3::pricing::priceBudgetScopeFromString;
+
+// Pricing payloads name an override, a notification, a vault and policies; a bare `id` would have to mean one of
+// them by command, so each command reads only its explicit field and refuses `id` (#184, the #165 rule).
+std::uint32_t requiredPricingRefId(const json& payload, const char* field) {
+    if (!payload.is_object()) throw ::vh::ops::Invalid(std::string(field) + " is required");
+    if (payload.contains("id"))
+        throw ::vh::ops::Invalid(std::string("bare 'id' is not accepted by pricing commands; send '") + field + "'");
+    const auto it = payload.find(field);
+    if (it == payload.end() || !it->is_number_unsigned()) throw ::vh::ops::Invalid(std::string(field) + " is required");
+    const auto value = it->get<std::uint64_t>();
+    if (value == 0 || value > std::numeric_limits<std::uint32_t>::max())
+        throw ::vh::ops::Invalid(std::string(field) + " is out of range");
+    return static_cast<std::uint32_t>(value);
+}
 
 std::optional<std::uint32_t> optionalVaultId(const json& payload) {
     if (!payload.is_object() || !payload.contains("vault_id") || payload.at("vault_id").is_null()) return std::nullopt;
@@ -256,13 +271,13 @@ json Pricing::overrideRequest(const json& payload, const std::shared_ptr<Session
 
 json Pricing::overrideApprove(const json& payload, const std::shared_ptr<Session>& session) {
     requireSuperAdmin(session, "Only super-admins may approve S3 price budget overrides.");
-    return {{"override", PriceBudgetService{}.approveOverride(payload.at("id").get<std::uint32_t>(), session->user->id)}};
+    return {{"override", PriceBudgetService{}.approveOverride(requiredPricingRefId(payload, "override_id"), session->user->id)}};
 }
 
 json Pricing::overrideDeny(const json& payload, const std::shared_ptr<Session>& session) {
     requireSuperAdmin(session, "Only super-admins may deny S3 price budget overrides.");
     return {{"override", PriceBudgetService{}.denyOverride(
-        payload.at("id").get<std::uint32_t>(),
+        requiredPricingRefId(payload, "override_id"),
         session->user->id,
         optionalStringPayload(payload, "reason"))}};
 }
@@ -312,7 +327,7 @@ json Pricing::notificationsList(const json& payload, const std::shared_ptr<Sessi
 }
 
 json Pricing::notificationsAck(const json& payload, const std::shared_ptr<Session>& session) {
-    const auto id = payload.at("id").get<std::uint32_t>();
+    const auto id = requiredPricingRefId(payload, "notification_id");
     const auto vaultId = optionalVaultId(payload);
     PriceBudgetService service;
 

@@ -38,6 +38,11 @@ public:
     void evictId(unsigned int id);
     void evictPath(const std::filesystem::path& path);
 
+    // Drops every cached entry, inode and path of vault `vaultId`, and anything cached under `fuseRoot` (the vault's
+    // FUSE root; empty or "/" matches no paths). Used when a vault is removed, renamed or created, so a reused FUSE
+    // name never resolves to a deleted vault's entries (#180). Entries re-hydrate from the DB on the next lookup.
+    void evictVault(unsigned int vaultId, const std::filesystem::path& fuseRoot);
+
     // Re-reads the subtree totals of directory `dirId` and its ancestors into the cached entries (fs.dir.list serves
     // them from here) after the database changed them. False when the directory no longer exists.
     bool refreshDirStats(unsigned int dirId);

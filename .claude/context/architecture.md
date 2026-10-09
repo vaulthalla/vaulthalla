@@ -106,6 +106,9 @@ read once per page load) returns the initial password file path for `admin` whil
 and the file exists; the web shows `InitialPasswordWarning`. Credential lifecycle: `core/auth/Bootstrap.hpp`
 (see "Super-admin initial credential" below). `auth.login` is rate-limited per IP + account
 (`ShareRateLimit.cpp`). The Router's debug log redacts credentials (`LogRedaction.cpp`); never log a raw ws message.
+Refused requests (unauthorized, rate limited) warn once per client + command per 60s and count the rest
+(`RefusalLogThrottle`, bounded map + overflow bucket, summary "suppressed N more in Ns"); per-request detail is
+debug only, and client-invented command names share one label so they can't mint a warning each (#135).
 See `link-sharing.md`.
 
 ### Super-admin initial credential
@@ -260,10 +263,23 @@ bytes, inline by default), `GET|HEAD /download` (files stream with no size cap; 
 - The RBAC gate is unchanged in shape: `open` needs Read for readable handles and Write for writable or `O_TRUNC`
   ones (both for `O_RDWR`); `write` and size changes check Write *before* touching the copy. A working copy is only
   reachable through a handle that passed the resolver.
+- **Denied means hidden unless visible (#170).** `fuse::resolver::deniedErrno` answers a denial with ENOENT when the
+  caller cannot Lookup the target (the parent for a create of a new name) and EACCES when it can see it but lacks
+  the action; the mount root is never hidden. The answer must not depend on which op reaches the daemon first.
+  An ENOENT answer to a revalidating lookup (or unlink) makes the kernel invalidate that shared dentry, so allowed
+  users re-look it up, and a process whose cwd was that dentry gets ENOENT from getcwd.
+- **No kernel metadata caching (#183).** The kernel dentry/attr cache is shared across uids and the mount has no
+  `default_permissions`, so anything cached is answered for any caller without the daemon. Every reply uses
+  `kKernelMetadataTimeout` = 0 (Bridge.cpp; pinned by `tools/contracts/test_fuse_cache_timeout_contract.py`), so each
+  lookup/getattr is authorized for the calling uid. Before, a denied uid could `stat` a path another uid had just
+  resolved (up to 60 s after a create). Size coherence doesn't need kernel caching: `statFromEntry` reports an open
+  working copy's size. The harness passing "override allow: read secret" had relied on that cache: a file Lookup
+  maps to Preview, so a download-only grant was hidden; `Evaluator::resolveStage` now lets a denied file Lookup fall
+  back to the Read decision (seeing a file is implied by being allowed to download it).
 
 ## Database
 
-- PostgreSQL via libpqxx. The schema is `deploy/psql/000…103_*.sql`, applied in order (all in ONE transaction by `core/seed/include/SqlDeployer.hpp`) and installed to `/usr/share/vaulthalla/psql`.
+- PostgreSQL via libpqxx. The schema is `deploy/psql/000…104_*.sql`, applied in order (all in ONE transaction by `core/seed/include/SqlDeployer.hpp`) and installed to `/usr/share/vaulthalla/psql`.
   New migrations take the next number and must be idempotent against upgraded installs. SqlDeployer records sha256(raw bytes)
   per file and refuses to start on a mismatch, so **never edit a shipped migration**: 020/060/082 were edited in place and
   bricked upgrades (1.5.x→1.6.x crash loop on 060). Reviewed exceptions live in `kHistoricalMigrationChecksums` (accepted, recorded
@@ -408,6 +424,19 @@ subject's assignment; both `vh vault role override ...` and ws `role.vault.overr
 `ops::roles::*VaultRoleOverride*` (parity in `test_ops_parity_roles.cpp`).
 
 ## Subsystem invariants (enforced in code, keep them)
+
+**Filesystem RBAC paths, FS cache and account deletion** (#178–#180, `VaultLifecycleRegressionTest`)
+- `rbac::resolver::vault::Context::path` (and `fs::policy::Request::path`) is a **FUSE** path. Callers holding a vault
+  path convert it with `engine->vaultPathToFusePath()` first; `share::Manager` once didn't, so only share root `/`
+  ever passed and a vault path equal to another vault's FUSE root resolved to that vault. The evaluator refuses an
+  entry whose `vault_id` differs from the request's vault (`EntryVaultMismatch`).
+- The FS cache is keyed by FUSE path and can only re-hydrate a vault root through `mkVault` (or the rename path in
+  `storage::Manager::updateVault`). `storage::Manager` calls `fs::cache::Registry::evictVault` on remove, on rename
+  (old and new root, then re-caches the root) and in `addVault` *before* the engine creates the root. Evicting after
+  `mkVault` would drop the fresh root and the whole vault would answer ENOENT.
+- Every `users(id)` reference has a delete action (migration 104): attribution/audit columns `SET NULL`, while
+  `file_locks.locked_by` and `share_link.created_by` `CASCADE` (a deleted account's public links die with it). New
+  tables referencing `users` must pick one; a bare `REFERENCES users` blocks `vh user delete`.
 
 **Operator email** (`email/`, `notifications/`, `085_operator_notifications.sql`, `vh email …`)
 - Provider secrets are encrypted in `internal_secrets` and entered by hidden prompt. They never go in `.env` or files, and are never logged or rendered.

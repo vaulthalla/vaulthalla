@@ -360,9 +360,12 @@ export interface WebSocketCommandMap {
 
   'pricing.budget.override.request': { payload: PriceOverrideRequestPayload; response: { override: PriceOverride } }
 
-  'pricing.budget.override.approve': { payload: { id: number }; response: { override: PriceOverride } }
+  'pricing.budget.override.approve': { payload: { override_id: number }; response: { override: PriceOverride } }
 
-  'pricing.budget.override.deny': { payload: { id: number; reason?: string | null }; response: { override: PriceOverride } }
+  'pricing.budget.override.deny': {
+    payload: { override_id: number; reason?: string | null }
+    response: { override: PriceOverride }
+  }
 
   'pricing.budget.override.list': {
     payload: { vault_id?: number | null; limit?: number; include_expired?: boolean } | null
@@ -376,7 +379,7 @@ export interface WebSocketCommandMap {
   }
 
   'pricing.notifications.ack': {
-    payload: { id: number; vault_id?: number | null }
+    payload: { notification_id: number; vault_id?: number | null }
     response: { notification: PriceNotification }
   }
 
