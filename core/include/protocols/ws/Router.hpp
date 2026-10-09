@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include <utility>
 #include "protocols/ws/Fwd.hpp"
+#include "protocols/ws/RefusalLogThrottle.hpp"
 
 namespace vh::protocols::ws {
 
@@ -196,7 +197,13 @@ class Router {
     }
 
   private:
+    // Refusals (unauthorized, rate limited) log at debug per request, and at warning once per client/command
+    // window with a suppressed-count summary (#135). `detail` (client-supplied text) only reaches the debug line.
+    void logRefusal(const std::string& label, std::string_view suffix, std::string_view detail);
+    [[nodiscard]] std::string commandForLog(std::string_view command) const;
+
     std::unordered_map<std::string, Handler> handlers_;
+    RefusalLogThrottle refusalLog_;
 };
 
 }

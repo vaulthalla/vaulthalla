@@ -23,7 +23,8 @@ semantics do **not** match `apt remove/purge`. Operator-facing detail lives in `
   `Restart=on-failure`, `RestartSec=10`, `StartLimitIntervalSec=600`/`StartLimitBurst=10`, `TimeoutStopSec=30s`,
   ExecStopPost lazy `fusermount3 -uz` guarded by `findmnt`; the daemon owns `/run/vaulthalla/cli.sock` and rebinds
   it within ~1s), `vaulthalla-web.service.in` (`node
-  /usr/share/vaulthalla-web/server.js`, StartLimit too), `vaulthalla-swtpm.service.in` (software TPM fallback).
+  /usr/share/vaulthalla-web/server.js`, StartLimit too, `SuccessExitStatus=143` so node's SIGTERM exit on
+  stop/upgrade isn't recorded as failed, pinned by `test_package_layout_contract.py`), `vaulthalla-swtpm.service.in` (software TPM fallback).
 - `nginx/vaulthalla.conf` → `/usr/share/vaulthalla/nginx/vaulthalla` (template; proxies to 127.0.0.1).
 - `lifecycle/` (Python `main.py` + tests) → `/usr/lib/vaulthalla/lifecycle`: backs `vh setup/teardown`
   host operations. `vh` (cli.cpp) passes argv straight through, so new flags need no C++ change (but

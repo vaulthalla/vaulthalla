@@ -116,6 +116,6 @@ the host. Evidence schema `vaulthalla.release.lab_smoke.v1`.
 
 `bash tools/dev/verify.sh release packaging lifecycle` (CI uses the same): `vlr check` + `vlr version check`;
 `tools/contracts` (Debian install flow, rules, maintainer script safety/behavior, package layout, shipped migration
-checksums, release workflow + `release.toml` contract), `tools/lab/tests`, `deploy/lifecycle/tests`, each with a
+checksums, release workflow + `release.toml` contract, ws command map, no printf placeholders in core log calls), `tools/lab/tests`, `deploy/lifecycle/tests`, each with a
 minimum test count (`run_suite` in verify.sh) so a suite dropped from discovery fails. Raise the floors when adding
 tests.

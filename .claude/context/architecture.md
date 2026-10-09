@@ -106,6 +106,9 @@ read once per page load) returns the initial password file path for `admin` whil
 and the file exists; the web shows `InitialPasswordWarning`. Credential lifecycle: `core/auth/Bootstrap.hpp`
 (see "Super-admin initial credential" below). `auth.login` is rate-limited per IP + account
 (`ShareRateLimit.cpp`). The Router's debug log redacts credentials (`LogRedaction.cpp`); never log a raw ws message.
+Refused requests (unauthorized, rate limited) warn once per client + command per 60s and count the rest
+(`RefusalLogThrottle`, bounded map + overflow bucket, summary "suppressed N more in Ns"); per-request detail is
+debug only, and client-invented command names share one label so they can't mint a warning each (#135).
 See `link-sharing.md`.
 
 ### Super-admin initial credential
