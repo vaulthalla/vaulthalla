@@ -2,12 +2,17 @@
 
 #include "ops/Users.hpp"
 
+#include "config/util.hpp"
 #include "db/query/identities/User.hpp"
+#include "db/encoding/timestamp.hpp"
 #include "db/query/sync/Policy.hpp"
 #include "db/query/vault/APIKey.hpp"
+#include "db/query/vault/Deletion.hpp"
+#include "db/query/vault/Key.hpp"
 #include "db/query/vault/Vault.hpp"
 #include "db/query/vault/Waiver.hpp"
 #include "identities/User.hpp"
+#include "log/Registry.hpp"
 #include "rbac/resolver/admin/all.hpp"
 #include "rbac/resolver/vault/all.hpp"
 #include "runtime/Deps.hpp"
@@ -21,13 +26,17 @@
 #include "sync/model/RemotePolicy.hpp"
 #include "sync/model/Waiver.hpp"
 #include "vault/APIKeyManager.hpp"
+#include "vault/Retention.hpp"
 #include "vault/model/APIKey.hpp"
+#include "vault/model/Deletion.hpp"
+#include "vault/model/Key.hpp"
 #include "vault/model/S3Vault.hpp"
 #include "vault/terms/waiver.hpp"
 
 #include <paths.h>
 
 #include <algorithm>
+#include <cctype>
 #include <mutex>
 #include <utility>
 
@@ -159,6 +168,38 @@ void pushSyncToEngine(const unsigned int vaultId, const PolicyPtr& policy) {
     if (runtime::Deps::get().syncController) runtime::Deps::get().syncController->refreshEngines();
 }
 
+// A deleted vault has no engine: RBAC takes the owner the deletion recorded (#162).
+bool canRemoveDeleted(const Actor& actor, const vault::model::Deletion& d) {
+    auto v = std::make_shared<vault::model::Vault>();
+    v->id = d.vault_id;
+    v->name = d.vault_name;
+    v->owner_id = d.owner_id.value_or(0);
+    v->type = d.vault_type;
+    return rbac::resolver::Admin::has<VaultPerm>({.user = actor, .permission = VaultPerm::Remove, .vault = v});
+}
+
+std::string when(const std::time_t t) { return db::encoding::timestampToString(t); }
+
+std::string duration(const std::chrono::seconds d) { return vh::config::durationToString(d); }
+
+// The S3 data-loss gate: encrypted objects stay upstream, and no export of the key that decrypts them was recorded.
+void requireKeyLossAccepted(const bool atRisk, const bool accepted, const std::string& vaultName, const std::string& bucket,
+                            const std::string& exportCommand, const std::chrono::seconds keyWindow) {
+    if (!atRisk || accepted) return;
+    throw NeedsConfirmation(VAULT_UPSTREAM_KEY_LOSS,
+        "The objects vault '" + vaultName + "' keeps in bucket '" + bucket + "' are encrypted with its key, and that key "
+        "has never been exported. Without the key the upstream data can never be decrypted again. Export it first:\n  " +
+        exportCommand + "\nThe key stays exportable with the same command for " + duration(keyWindow) +
+        " after the deletion; after that it is destroyed.");
+}
+
+void requireNowConfirmed(const bool confirmed, const std::string& vaultName) {
+    if (confirmed) return;
+    throw NeedsConfirmation(VAULT_DELETE_NOW,
+        "Delete '" + vaultName + "' now? Its data is removed within moments and it cannot be restored. Its sealed "
+        "encryption key is still kept for the full key retention window.");
+}
+
 PolicyPtr currentPolicy(const unsigned int vaultId) {
     if (const auto engine = runtime::Deps::get().storageManager->getEngine(vaultId)) {
         std::shared_lock lock(engine->mutex);
@@ -177,14 +218,28 @@ VaultPtr create(const Actor& actor, const Create& req) {
     if (!db::query::identities::User::getUserById(ownerId)) throw NotFound("owner not found: " + std::to_string(ownerId));
     if (!canCreateFor(actor, ownerId)) throw Denied("you do not have permission to create vaults for this owner");
     if (req.name.empty()) throw Invalid("vault name is required");
-    if (db::query::vault::Vault::vaultExists(req.name, ownerId))
+    if (db::query::vault::Vault::vaultExists(req.name, ownerId)) {
+        // The name of a deleted vault stays reserved until its purge (#162).
+        if (const auto deleted = db::query::vault::Deletion::findByName(req.name, ownerId);
+            deleted && deleted->state != vault::model::DeletionState::Purged)
+            throw Conflict("the name '" + req.name + "' belongs to deleted vault " + std::to_string(deleted->vault_id) +
+                           ", reserved until it is purged (" + when(deleted->purge_after) + "): restore it with `vh vault "
+                           "restore " + std::to_string(deleted->vault_id) + "`, or purge it now with `vh vault delete " +
+                           std::to_string(deleted->vault_id) + " --now`");
         throw Conflict("a vault named '" + req.name + "' already exists for this owner");
+    }
 
     VaultPtr vault;
     if (req.type == VaultType::S3) {
         if (!req.s3) throw Invalid("S3 vaults need an API key and a bucket");
         if (req.s3->bucket.empty()) throw Invalid("bucket is required for S3 vaults");
         requireConsume(actor, req.s3->api_key_id);
+        // A deleted vault keeps its bucket until it is purged (its upstream purge may still need it).
+        if (const auto owner = db::query::vault::Vault::bucketOwner(req.s3->api_key_id, req.s3->bucket); owner && owner->deleted)
+            throw Conflict("bucket '" + req.s3->bucket + "' still belongs to deleted vault '" + owner->vault_name + "' (ID " +
+                           std::to_string(owner->vault_id) + "), pending purge: restore it with `vh vault restore " +
+                           std::to_string(owner->vault_id) + "`, or purge it now with `vh vault delete " +
+                           std::to_string(owner->vault_id) + " --now`");
         auto s3 = std::make_shared<S3Vault>(req.name, req.s3->api_key_id, req.s3->bucket);
         s3->storage_tier_id = normalizedTier(req.s3->api_key_id, req.s3->storage_tier);
         s3->encrypt_upstream = req.s3->encrypt_upstream.value_or(true);
@@ -315,12 +370,122 @@ void requireRemovable(const Actor& actor, const unsigned int vaultId) {
     if (!canOnVault(actor, VaultPerm::Remove, vaultId)) throw Denied("you do not have permission to remove vault " + vault->name);
 }
 
-VaultPtr remove(const Actor& actor, const unsigned int vaultId) {
+DeletionPtr remove(const Actor& actor, const Remove& req) {
     requireActor(actor);
-    if (!canOnVault(actor, VaultPerm::Remove, vaultId)) throw Denied("you do not have permission to remove this vault");
-    auto vault = requireVault(vaultId);
-    runtime::Deps::get().storageManager->removeVault(vaultId);
-    return vault;
+    if (req.id == 0) throw Invalid("vault ID must be a positive integer");
+    const auto live = runtime::Deps::get().storageManager->getVault(req.id);
+
+    if (!live) {
+        // Already deleted: only "now" (purge it on the next pass) means anything.
+        const auto pending = db::query::vault::Deletion::get(req.id);
+        if (!pending || pending->state == vault::model::DeletionState::Purged)
+            throw NotFound("vault not found: " + std::to_string(req.id));
+        if (!canRemoveDeleted(actor, *pending)) throw Denied("you do not have permission to remove this vault");
+        if (!req.now)
+            throw Conflict("vault '" + pending->vault_name + "' is already deleted (purge after " + when(pending->purge_after) +
+                           "): restore it with `vh vault restore " + std::to_string(req.id) + "`, or purge it now with --now");
+        const bool deleteUpstream = pending->isS3() && req.delete_upstream.value_or(pending->delete_upstream);
+        if (req.delete_upstream && *req.delete_upstream && !pending->isS3())
+            throw Invalid("only S3 vaults have upstream data to delete");
+        if (pending->isS3() && pending->upstream_purged_at && !deleteUpstream)
+            throw Conflict("the upstream data of vault '" + pending->vault_name + "' is already deleted");
+        // The delete already answered the key question; only switching to "keep upstream" asks it again.
+        requireKeyLossAccepted(pending->isS3() && pending->encrypt_upstream.value_or(true) && pending->delete_upstream &&
+                                   !deleteUpstream && !pending->keyExported(),
+                               req.accept_key_loss, pending->vault_name, pending->bucket.value_or(""),
+                               vault::model::keyExportCommand(req.id),
+                               std::chrono::seconds(pending->key_retain_until - pending->deleted_at));
+        requireNowConfirmed(req.confirm_now, pending->vault_name);
+        if (!vault::retention::expedite(req.id, pending->isS3() ? std::optional<bool>(deleteUpstream) : std::nullopt))
+            throw Conflict("vault '" + pending->vault_name + "' was purged meanwhile");
+        log::Registry::audit()->info("[ops::vaults] {} expedited the purge of deleted vault {} ('{}')", actor->name, req.id,
+                                     pending->vault_name);
+        return db::query::vault::Deletion::get(req.id);
+    }
+
+    if (!canOnVault(actor, VaultPerm::Remove, req.id)) throw Denied("you do not have permission to remove this vault");
+    const bool isS3 = live->type == VaultType::S3;
+    if (req.delete_upstream && *req.delete_upstream && !isS3) throw Invalid("only S3 vaults have upstream data to delete");
+    const bool deleteUpstream = isS3 && req.delete_upstream.value_or(false);
+
+    if (isS3) {
+        const auto s3 = std::static_pointer_cast<S3Vault>(live);
+        requireKeyLossAccepted(s3->encrypt_upstream && !deleteUpstream &&
+                                   !db::query::vault::Key::currentKeyExportedAt(req.id).has_value(),
+                               req.accept_key_loss, live->name, s3->bucket, vault::model::keyExportCommand(req.id),
+                               vault::retention::windowsFor(live->type).key_retention_window);
+    }
+    if (req.now) requireNowConfirmed(req.confirm_now, live->name);
+
+    try {
+        auto record = vault::retention::schedule(req.id, actor->id, req.now, deleteUpstream);
+        log::Registry::audit()->info("[ops::vaults] {} deleted vault {} ('{}'){}{}", actor->name, req.id, live->name,
+                                     req.now ? ", purge now" : "", deleteUpstream ? ", with its upstream data" : "");
+        return record;
+    } catch (const std::runtime_error& e) {
+        // A concurrent delete of the same vault won the row lock.
+        if (!runtime::Deps::get().storageManager->getVault(req.id)) throw NotFound("vault not found: " + std::to_string(req.id));
+        throw;
+    }
+}
+
+RemovalPlan removalPlan(const Actor& actor, const unsigned int vaultId) {
+    requireActor(actor);
+    const auto vault = requireVault(vaultId);
+    if (!canOnVault(actor, VaultPerm::Remove, vaultId)) throw Denied("you do not have permission to remove vault " + vault->name);
+
+    const auto windows = vault::retention::windowsFor(vault->type);
+    RemovalPlan plan{.vault = vault,
+                     .provider = {},
+                     .bucket = {},
+                     .encrypted_upstream = false,
+                     .key_version = 0,
+                     .key_exported_at = db::query::vault::Key::currentKeyExportedAt(vaultId),
+                     .retention_window = windows.retention_window,
+                     .key_retention_window = windows.key_retention_window,
+                     .export_command = vault::model::keyExportCommand(vaultId)};
+    if (const auto key = db::query::vault::Key::getVaultKey(vaultId)) plan.key_version = key->version;
+    if (vault->type == VaultType::S3) {
+        const auto s3 = std::static_pointer_cast<S3Vault>(vault);
+        plan.bucket = s3->bucket;
+        plan.encrypted_upstream = s3->encrypt_upstream;
+        if (const auto key = db::query::vault::APIKey::getAPIKey(s3->api_key_id))
+            plan.provider = vault::model::to_string(key->provider);
+    }
+    return plan;
+}
+
+std::vector<DeletionPtr> listDeleted(const Actor& actor) {
+    requireActor(actor);
+    auto all = db::query::vault::Deletion::list();
+    std::erase_if(all, [&](const DeletionPtr& d) { return !d || !canRemoveDeleted(actor, *d); });
+    return all;
+}
+
+VaultPtr restore(const Actor& actor, const unsigned int vaultId) {
+    requireActor(actor);
+    if (vaultId == 0) throw Invalid("vault ID must be a positive integer");
+    const auto d = db::query::vault::Deletion::get(vaultId);
+    if (!d) throw NotFound("no deleted vault with ID " + std::to_string(vaultId));
+    if (!canRemoveDeleted(actor, *d)) throw Denied("you do not have permission to restore vault " + d->vault_name);
+    if (!d->restorable())
+        throw Conflict("vault '" + d->vault_name + "' can no longer be restored: its purge " +
+                       (d->state == vault::model::DeletionState::Purged ? std::string("has finished") : std::string("has started")));
+    auto restored = vault::retention::restore(vaultId);
+    if (!restored) throw Conflict("vault '" + d->vault_name + "' can no longer be restored: its purge has started");
+    log::Registry::audit()->info("[ops::vaults] {} restored vault {} ('{}')", actor->name, vaultId, d->vault_name);
+    return restored;
+}
+
+DeletionPtr findDeleted(const Actor& actor, const std::string& idOrName, const std::optional<unsigned int> ownerId) {
+    requireActor(actor);
+    DeletionPtr d;
+    bool numeric = !idOrName.empty() && std::ranges::all_of(idOrName, [](const unsigned char c) { return std::isdigit(c) != 0; });
+    if (numeric && idOrName.size() < 10) d = db::query::vault::Deletion::get(static_cast<unsigned int>(std::stoul(idOrName)));
+    if (!d) d = db::query::vault::Deletion::findByName(idOrName, ownerId.value_or(actor->id));
+    if (!d && !ownerId) d = db::query::vault::Deletion::findByName(idOrName, std::nullopt);
+    if (!d || !canRemoveDeleted(actor, *d)) throw NotFound("no deleted vault '" + idOrName + "'");
+    return d;
 }
 
 Details get(const Actor& actor, const unsigned int vaultId) {

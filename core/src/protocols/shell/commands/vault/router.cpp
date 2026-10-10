@@ -29,6 +29,8 @@ static CommandResult handle_vault(const CommandCall& call) {
     if (isVaultMatch("create", sub)) return handle_vault_create(subcall);
     if (isVaultMatch("update", sub)) return handle_vault_update(subcall);
     if (isVaultMatch("delete", sub)) return handle_vault_delete(subcall);
+    if (isVaultMatch("restore", sub)) return handle_vault_restore(subcall);
+    if (isVaultMatch("deleted", sub)) return handle_vaults_deleted(subcall);
     if (isVaultMatch("keys", sub)) return handle_vault_keys(subcall);
     if (isVaultMatch("role", sub)) return handle_vault_role(subcall);
 

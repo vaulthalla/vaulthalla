@@ -142,6 +142,8 @@ namespace vh::test::integration::cmd {
         std::ostringstream oss;
         oss << "vh " << randomAlias(root_->aliases) << ' ' << randomAlias(cmd->aliases) << ' ';
         oss << randomizePrimaryPositional(v);
+        // Deletion asks how to delete in a terminal (#162); the harness has none. A scheduled delete is the default.
+        oss << " --yes";
         return oss.str();
     }
 
