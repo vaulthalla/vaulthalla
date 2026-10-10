@@ -12,7 +12,7 @@ websocket_server:
   enabled: true
   host: 127.0.0.1              # loopback: browsers reach /ws through nginx; set 0.0.0.0 only for direct exposure
   port: 36969
-  max_connections: 1024
+  max_connections: 1024        # Concurrent console/share sockets; more are refused with 503 until one closes
   max_upload_size_mb: 2048
 
 
@@ -23,7 +23,7 @@ http_preview_server:
   enabled: true
   host: 127.0.0.1              # loopback: nginx proxies /preview, /download and /upload
   port: 36970
-  max_connections: 512
+  max_connections: 512         # Concurrent connections (one thread each); more are refused with 503 + Retry-After
   max_preview_size_mb: 512
 
 
@@ -41,8 +41,6 @@ s3_gateway:
   allow_virtual_hosted_style: true
   default_bucket_mode: local          # local | remote_cache | remote_proxy
   default_api_exclusive: true
-  default_remote_sync_strategy: cache
-  default_remote_conflict_policy: keep_local
   multipart:
     min_part_size_mb: 5
     abort_after_days: 7
@@ -132,13 +130,23 @@ stats_snapshots:
 
 
 # === 🤝 SHARING SETTINGS ===
-# Sharing features allow users to share files and folders internally
-# and via public links.
-# Public links can be enabled or disabled based on security requirements.
-# This will be released alongside vaulthalla-web.
+# Share links let users hand out files and folders. Turning a switch off refuses new links of that kind
+# and stops existing ones from opening or serving files (they come back when it is turned on again).
+# Older configs call enable_email_validated enable_public_links; that name is still read.
 sharing:
-  enabled: true                # Enable internal sharing features
-  enable_public_links: true    # Enable public share links
+  enabled: true                # Master switch for all share links
+  enable_anonymous: true       # Links anyone with the URL can open
+  enable_email_validated: true # Links that require the recipient to verify an invited email address
+  enable_internal: true        # Reserved for links to signed-in vault users (not available yet)
+
+
+# === 🗃️ VAULT DEFAULTS ===
+# Defaults for new vaults. A vault created without an explicit setting gets these; existing vaults keep theirs.
+# Older configs keep the two s3 keys under s3_gateway; that location is still read.
+vaults:
+  s3:
+    default_remote_sync_strategy: cache        # cache (index the bucket, fetch files on demand) | sync | mirror
+    default_remote_conflict_policy: keep_local # keep_local | keep_remote | keep_newest | ask (conflicts wait, unresolved)
 
 
 # === ⚡ Caching & Previews ===

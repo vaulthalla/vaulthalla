@@ -45,8 +45,6 @@ s3_gateway:
   allow_virtual_hosted_style: true
   default_bucket_mode: local
   default_api_exclusive: true
-  default_remote_sync_strategy: cache
-  default_remote_conflict_policy: keep_local
   multipart:
     min_part_size_mb: 5
     abort_after_days: 7
@@ -60,6 +58,8 @@ s3_gateway:
     downloaded_gb: "0.00000000"
     uploaded_gb: "0.00000000"
 ```
+
+Older configuration files also carry `default_remote_sync_strategy` and `default_remote_conflict_policy` here. They were never gateway settings: they are the defaults for new S3/R2 vaults and now live under `vaults.s3` (see [Configuration](/reference/configuration#vault-defaults)). The old keys are still read when the new ones are absent. Remote-cache gateway buckets always use the `cache` strategy with `keep_local`.
 
 `synthetic_local_request_cost_usd` is used only when a gateway credential has `enforce_budget_for_local_requests` enabled. It gives local/cache requests a tiny nominal cost for gateway key budgets without creating provider, vault, or global upstream usage.
 

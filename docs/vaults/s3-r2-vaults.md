@@ -91,8 +91,8 @@ Useful options:
 | `--api-key` | Upstream provider credential name or id. |
 | `--bucket` | Upstream S3/R2 bucket name. |
 | `--storage-tier` or `--storage-class` | Provider storage class such as `standard`, `standard_ia`, or `infrequent_access`. |
-| `--sync-strategy` | `cache`, `sync`, or `mirror`. |
-| `--on-sync-conflict` | S3 conflict policy: `keep_local`, `keep_remote`, or `ask`. |
+| `--sync-strategy` | `cache`, `sync`, or `mirror`. Without it, the vault gets `vaults.s3.default_remote_sync_strategy` from `config.yaml` (`cache`). |
+| `--on-sync-conflict` | S3 conflict policy: `keep_local`, `keep_remote`, `keep_newest`, or `ask`. Without it, the vault gets `vaults.s3.default_remote_conflict_policy` (`keep_local`). |
 | `--encrypt` | Encrypt upstream object bodies before upload. |
 | `--no-encrypt` | Store upstream object bodies without Vaulthalla encryption. |
 | `--interval` | Sync interval. |

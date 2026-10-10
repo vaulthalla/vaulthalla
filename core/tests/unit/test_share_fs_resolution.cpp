@@ -1,5 +1,8 @@
+#include "config/Config.hpp"
+#include "config/Registry.hpp"
 #include "fs/model/Directory.hpp"
 #include "fs/model/File.hpp"
+#include "ops/Error.hpp"
 #include "share/TargetResolver.hpp"
 
 #include <gtest/gtest.h>
@@ -264,4 +267,35 @@ TEST(ShareFsResolutionTest, CanConvertShareRelativePathForInternalCallers) {
 
     EXPECT_EQ(target.vault_path, "/shared/reports/q1.pdf");
     EXPECT_EQ(target.share_path, "/reports/q1.pdf");
+}
+
+// sharing.* (#164): every file access through a link re-checks the switches, including a principal that was
+// resolved (and cached by the HTTP lane) before the operator turned its kind of link off.
+TEST(ShareFsResolutionTest, RefusesEveryAccessWhileItsKindOfLinkIsDisabled) {
+    const auto provider = providerWithSharedTree();
+    const TargetResolver resolver(provider);
+    auto principal = makeFsPrincipal();
+    const TargetResolveRequest request{.path = "/shared", .operation = Operation::Metadata};
+
+    const auto previous = vh::config::Registry::get();
+    struct Restore {
+        const vh::config::Config& cfg;
+        ~Restore() { vh::config::Registry::set(cfg); }
+    } restore{previous};
+
+    auto cfg = previous;
+    cfg.sharing.enable_anonymous = false;
+    vh::config::Registry::set(cfg);
+    principal.access_mode = AccessMode::Public;
+    EXPECT_THROW({ (void)resolver.resolve(principal, request); }, vh::ops::Denied);
+    principal.access_mode = AccessMode::EmailValidated;
+    EXPECT_NO_THROW({ (void)resolver.resolve(principal, request); });
+
+    cfg.sharing.enable_anonymous = true;
+    cfg.sharing.enabled = false;
+    vh::config::Registry::set(cfg);
+    EXPECT_THROW({ (void)resolver.resolve(principal, request); }, vh::ops::Denied);
+
+    vh::config::Registry::set(previous);
+    EXPECT_NO_THROW({ (void)resolver.resolve(principal, request); });
 }

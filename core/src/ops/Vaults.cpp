@@ -2,6 +2,7 @@
 
 #include "ops/Users.hpp"
 
+#include "config/Registry.hpp"
 #include "db/query/identities/User.hpp"
 #include "db/query/sync/Policy.hpp"
 #include "db/query/vault/APIKey.hpp"
@@ -115,8 +116,16 @@ void applySync(sync::model::Policy& policy, const VaultType type, const SyncPatc
     policy.rehash_config();
 }
 
+// A new vault's policy before the caller's settings: S3 vaults start from the operator's vaults.s3.* defaults, so
+// whatever the request leaves out (CLI without --sync-strategy/--on-sync-conflict, ws without sync fields) gets them.
 PolicyPtr freshPolicy(const VaultType type) {
-    if (type == VaultType::S3) return std::make_shared<sync::model::RemotePolicy>();
+    if (type == VaultType::S3) {
+        auto remote = std::make_shared<sync::model::RemotePolicy>();
+        const auto& defaults = vh::config::Registry::get().vaults.s3;
+        remote->strategy = sync::model::strategyFromString(defaults.default_remote_sync_strategy);
+        remote->conflict_policy = sync::model::rsConflictPolicyFromString(defaults.default_remote_conflict_policy);
+        return remote;
+    }
     return std::make_shared<sync::model::LocalPolicy>();
 }
 

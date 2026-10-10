@@ -3,6 +3,8 @@
 // omitted fields on update; key changes needed Consume only on the CLI; owner changes needed only Edit; and sync
 // settings were gated by two different permissions. Everything now goes through ops::vaults.
 
+#include "config/Config.hpp"
+#include "config/Registry.hpp"
 #include "db/Transactions.hpp"
 #include "db/query/identities/User.hpp"
 #include "db/query/rbac/role/Admin.hpp"
@@ -26,6 +28,7 @@
 #include "storage/Manager.hpp"
 #include "sync/model/LocalPolicy.hpp"
 #include "sync/model/Policy.hpp"
+#include "sync/model/RemotePolicy.hpp"
 #include "UsageManager.hpp"
 #include "vault/APIKeyManager.hpp"
 #include "vault/model/APIKey.hpp"
@@ -229,6 +232,46 @@ TEST_F(VaultParityTest, ChangingTheApiKeyNeedsConsumeOnBothSurfaces) {
     EXPECT_TRUE(wsOk([&] {
         (void)protocols::ws::handler::Vaults::update(json{{"id", vault->id}, {"api_key_id", keyA}, {"description", "x"}}, ws(editor));
     }));
+}
+
+// vaults.s3.* (#164): an S3 vault created without a strategy or conflict policy gets the operator's defaults, on
+// both surfaces; an explicit setting still wins. (These keys used to sit unread under s3_gateway.)
+TEST_F(VaultParityTest, NewS3VaultsTakeTheConfiguredRemoteDefaults) {
+    const auto previous = config::Registry::get();
+    struct Restore {
+        const config::Config& cfg;
+        ~Restore() { config::Registry::set(cfg); }
+    } restore{previous};
+    auto cfg = previous;
+    cfg.vaults.s3.default_remote_sync_strategy = "mirror";
+    cfg.vaults.s3.default_remote_conflict_policy = "keep_newest";
+    config::Registry::set(cfg);
+
+    const auto key = seedKey(superUser);
+    const auto cliName = "vp_def_cli_" + vaultTag(), wsName = "vp_def_ws_" + vaultTag();
+    const auto [code, out] = cli("vault create " + cliName + " --s3 --api-key " + std::to_string(key) + " --bucket vp-def",
+                                 superUser);
+    ASSERT_EQ(code, 0) << out;
+    const auto added = protocols::ws::handler::Vaults::add(
+        json{{"name", wsName}, {"type", "s3"}, {"api_key_id", key}, {"bucket", "vp-def"}}, ws(superUser));
+
+    for (const auto id : {db::query::vault::Vault::getVault(cliName, superUser->id)->id,
+                          added.at("vault").at("id").get<unsigned int>()}) {
+        const auto policy = std::dynamic_pointer_cast<sync::model::RemotePolicy>(db::query::sync::Policy::getSync(id));
+        ASSERT_TRUE(policy) << "vault " << id;
+        EXPECT_EQ(policy->strategy, sync::model::RemotePolicy::Strategy::Mirror) << "vault " << id;
+        EXPECT_EQ(policy->conflict_policy, sync::model::RemotePolicy::ConflictPolicy::KeepNewest) << "vault " << id;
+    }
+
+    // Explicit settings win over the defaults.
+    const auto explicitName = "vp_def_explicit_" + vaultTag();
+    ASSERT_EQ(cli("vault create " + explicitName + " --s3 --api-key " + std::to_string(key) +
+                  " --bucket vp-def --sync-strategy sync --on-sync-conflict keep_remote", superUser).first, 0);
+    const auto explicitPolicy = std::dynamic_pointer_cast<sync::model::RemotePolicy>(
+        db::query::sync::Policy::getSync(db::query::vault::Vault::getVault(explicitName, superUser->id)->id));
+    ASSERT_TRUE(explicitPolicy);
+    EXPECT_EQ(explicitPolicy->strategy, sync::model::RemotePolicy::Strategy::Sync);
+    EXPECT_EQ(explicitPolicy->conflict_policy, sync::model::RemotePolicy::ConflictPolicy::KeepRemote);
 }
 
 TEST_F(VaultParityTest, SyncSettingsUseOnePermissionOnBothSurfaces) {

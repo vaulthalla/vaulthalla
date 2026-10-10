@@ -1,6 +1,11 @@
+#include "config/Config.hpp"
+#include "config/Registry.hpp"
 #include "identities/User.hpp"
+#include "ops/Error.hpp"
 #include "protocols/ws/Router.hpp"
 #include "protocols/ws/Session.hpp"
+#include "protocols/ws/core/handler_templates.hpp"
+#include "protocols/ws/handler/Settings.hpp"
 #include "protocols/ws/handler/share/Links.hpp"
 #include "share/AuditEvent.hpp"
 #include "share/EmailChallenge.hpp"
@@ -359,6 +364,43 @@ TEST_F(WsShareLinksTest, ManagerErrorsSurfaceAsHandlerErrors) {
     authorizer->allow_manage = false;
     EXPECT_THROW(Links::get({{"id", id}}, session), std::runtime_error);
     EXPECT_THROW(Links::rotateToken({{"id", id}}, session), std::runtime_error);
+}
+
+// sharing.* (#164) through the ws surface: refused with the stable "denied" code the console maps, and the policy
+// the console reads to hide what it can't create.
+TEST_F(WsShareLinksTest, CreateIsRefusedWithDeniedWhileSharingOrItsKindIsOff) {
+    const auto previous = vh::config::Registry::get();
+    struct Restore {
+        const vh::config::Config& cfg;
+        ~Restore() { vh::config::Registry::set(cfg); }
+    } restore{previous};
+
+    auto cfg = previous;
+    cfg.sharing.enabled = false;
+    vh::config::Registry::set(cfg);
+    try {
+        (void)createShare();
+        ADD_FAILURE() << "share.link.create succeeded with sharing.enabled = false";
+    } catch (...) {
+        const auto reply = vh::protocols::ws::core::describeCurrentError();
+        EXPECT_EQ(reply.data, (nlohmann::json{{"code", "denied"}}));
+        EXPECT_EQ(reply.message, "Sharing is disabled on this server");
+    }
+    auto policy = vh::protocols::ws::handler::Settings::policy(session).at("policy");
+    EXPECT_FALSE(policy.at("sharing").at("enabled").get<bool>());
+
+    cfg.sharing.enabled = true;
+    cfg.sharing.enable_anonymous = false;
+    vh::config::Registry::set(cfg);
+    EXPECT_THROW((void)createShare(), vh::ops::Denied);
+    EXPECT_TRUE(store->links.empty());
+    policy = vh::protocols::ws::handler::Settings::policy(session).at("policy");
+    EXPECT_FALSE(policy.at("sharing").at("enable_anonymous").get<bool>());
+    EXPECT_TRUE(policy.at("sharing").at("enable_email_validated").get<bool>());
+    EXPECT_EQ(policy.at("vaults").at("s3").at("default_remote_sync_strategy"), cfg.vaults.s3.default_remote_sync_strategy);
+
+    vh::config::Registry::set(previous);
+    EXPECT_NO_THROW((void)createShare());
 }
 
 }

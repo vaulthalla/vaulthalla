@@ -55,6 +55,8 @@ vh vault sync set archive --max-remote-index-age 24h
 
 Choose the strategy before connecting Vaulthalla to a bucket with existing data. Use dry-run and request budgets to understand planned work.
 
+A vault created without a strategy or conflict policy gets the operator's defaults, `vaults.s3.default_remote_sync_strategy` (`cache` unless changed) and `vaults.s3.default_remote_conflict_policy` (`keep_local`); see [Configuration](/reference/configuration#vault-defaults).
+
 ## Conflict Policies
 
 Local vault policies:
@@ -67,9 +69,10 @@ S3/R2 vault policies:
 
 - `keep_local`
 - `keep_remote`
+- `keep_newest`
 - `ask`
 
-Use `ask` when automatic conflict resolution would be risky and an operator should review conflicts.
+On an S3/R2 vault, `ask` records the conflict (it shows in the vault's conflict count) and leaves both copies as they are, so that file stops syncing. There is no command to resolve a recorded conflict yet: switch the vault to a `keep_*` policy to let the next sync settle it.
 
 ## Remote Index
 

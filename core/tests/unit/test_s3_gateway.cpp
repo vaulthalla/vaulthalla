@@ -263,8 +263,10 @@ TEST(S3GatewayConfigTest, DefaultsToDisabledFiveGiBBodyLimit) {
     EXPECT_TRUE(cfg.require_sigv4);
     EXPECT_EQ(cfg.default_bucket_mode, "local");
     EXPECT_TRUE(cfg.default_api_exclusive);
-    EXPECT_EQ(cfg.default_remote_sync_strategy, "cache");
-    EXPECT_EQ(cfg.default_remote_conflict_policy, "keep_local");
+    // The remote vault defaults moved to vaults.s3 (#164).
+    const vh::config::VaultsS3Config vaultDefaults;
+    EXPECT_EQ(vaultDefaults.default_remote_sync_strategy, "cache");
+    EXPECT_EQ(vaultDefaults.default_remote_conflict_policy, "keep_local");
     EXPECT_EQ(cfg.synthetic_local_request_cost_usd.list, "0.00000001");
     EXPECT_EQ(cfg.synthetic_local_request_cost_usd.head, "0.00000001");
     EXPECT_EQ(cfg.synthetic_local_request_cost_usd.get, "0.00000001");

@@ -31,6 +31,7 @@ websocket_server:
   enabled: true
   host: 127.0.0.1
   port: 36969
+  max_connections: 1024
 
 http_preview_server:
   enabled: true
@@ -39,6 +40,8 @@ http_preview_server:
   max_connections: 512
   max_preview_size_mb: 512
 ```
+
+`websocket_server` is the API the web console (and public share pages) talk to through Nginx's `/ws` route. `max_connections` caps open WebSocket connections across all users and share recipients; past the cap, new connections get `503` with `Retry-After` until one closes, and the daemon logs a warning at most once a minute. Each open console tab holds one connection.
 
 `http_preview_server` serves previews, downloads, media playback and text saves behind Nginx's `/preview`, `/download` and `/upload` routes. `max_connections` caps concurrent connections (each runs on its own thread, so a long video stream never blocks other requests); over the cap, new connections get `503` with `Retry-After`. `max_preview_size_mb` is the largest source file the server will render into an image or PDF preview (the shipped file sets 512; without the key the built-in default is 100). See [Rich Previews](#rich-previews).
 
@@ -117,17 +120,39 @@ auth:
 
 Changing token lifetimes affects web and API sessions. Use short access tokens and rotate secrets deliberately.
 
+Both `max_connections` caps are read for every new connection, so a change made in the web console applies at once; the minimum is 1.
+
 ## Sharing
 
-Sharing settings control whether share features and public links are enabled:
+Sharing settings decide which share links can be created and opened:
 
 ```yaml
 sharing:
-  enabled: true
-  enable_public_links: true
+  enabled: true                # every share link
+  enable_anonymous: true       # public links: anyone with the URL
+  enable_email_validated: true # links whose recipients verify an invited email address
+  enable_internal: true        # reserved; no link kind uses it yet
 ```
 
-Use [Sharing](/sharing) for operational guidance.
+Turning a switch off also stops links of that kind that were already handed out; turning it back on restores them. `enable_email_validated` was called `enable_public_links` before; the old name is still read, with a deprecation warning, and the new name wins if both are set. See [Sharing](/sharing#turning-sharing-off).
+
+## Vault Defaults
+
+New vaults start from these settings when the request doesn't name its own:
+
+```yaml
+vaults:
+  s3:
+    default_remote_sync_strategy: cache
+    default_remote_conflict_policy: keep_local
+```
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `vaults.s3.default_remote_sync_strategy` | `cache` | Sync strategy for a new S3/R2 vault created without `--sync-strategy` (or the web form's choice): `cache` indexes the bucket and fetches files when they are opened, `sync` keeps both sides complete, `mirror` makes one side match the other. |
+| `vaults.s3.default_remote_conflict_policy` | `keep_local` | What a new S3/R2 vault does when a file differs on both sides: `keep_local`, `keep_remote`, `keep_newest` or `ask`. With `ask` the conflict is recorded and that file stops syncing; Vaulthalla has no command to resolve recorded conflicts yet, so prefer one of the `keep_*` policies. |
+
+Existing vaults keep their own settings; change them with `vh vault sync update` or the vault's **Sync** tab. An unknown value is a configuration error and the daemon refuses to start until it is fixed. Before these keys moved here they were `s3_gateway.default_remote_sync_strategy` and `s3_gateway.default_remote_conflict_policy`; the old keys are still read (with a deprecation warning) when the new ones are absent, and an invalid old value is ignored. See [Sync Policies](/vaults/sync).
 
 ## Pricing And Storage Rates
 

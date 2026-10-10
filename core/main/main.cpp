@@ -197,6 +197,8 @@ int main() {
     try {
         Registry::init();
         vh::log::Registry::init();
+        for (const auto& deprecation : Registry::deprecations())
+            vh::log::Registry::vaulthalla()->warn("[config] {}", deprecation);
 
         PdfiumGuard pdfium;
 

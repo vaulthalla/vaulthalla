@@ -19,6 +19,7 @@
 #include "storage/Manager.hpp"
 #include "share/AuditEvent.hpp"
 #include "share/EmailChallenge.hpp"
+#include "share/Policy.hpp"
 #include "share/PrincipalResolver.hpp"
 #include "share/Token.hpp"
 
@@ -720,6 +721,7 @@ void requireUploadQuota(ShareStore& store, const Link& link, const uint64_t expe
     const std::string_view publicToken,
     const std::time_t current
 ) {
+    policy::requireEnabled();
     const auto parsed = Token::parse(publicToken);
     if (parsed.kind != TokenKind::PublicShare) throw std::invalid_argument("Expected public share token");
 
@@ -727,6 +729,7 @@ void requireUploadQuota(ShareStore& store, const Link& link, const uint64_t expe
     if (!link || !Token::verify(link->token_hash, TokenKind::PublicShare, parsed.secret))
         throw std::runtime_error("Invalid public share token");
     if (!link->isActive(current)) throw std::runtime_error("Share link is inactive");
+    policy::requireEnabled(link->access_mode);
 
     return link;
 }
@@ -789,6 +792,7 @@ CreateLinkResult Manager::createLink(const rbac::Actor& actor, CreateLinkRequest
     attachLink(*audit, *link);
 
     try {
+        policy::requireEnabled(link->access_mode);
         requireAllowed(authorizer_->canCreateLink(actor, *link), "create");
         const auto token = Token::generate(TokenKind::PublicShare);
         link->token_lookup_id = token.lookup_id;
@@ -860,6 +864,8 @@ std::shared_ptr<Link> Manager::updateLink(const rbac::Actor& actor, UpdateLinkRe
     attachLink(*audit, *existing);
 
     try {
+        // An update can't move a link into a kind the operator turned off (or touch links while sharing is off).
+        policy::requireEnabled(updated->access_mode);
         requireAllowed(authorizer_->canUpdateLink(actor, *existing, *updated), "update");
         if (request.public_role) persistPublicAssignment(*store_, *updated, request.public_role);
         if (request.recipients) replaceRecipientAssignments(*store_, *updated, *request.recipients);
@@ -953,8 +959,10 @@ StartEmailChallengeResult Manager::startEmailChallenge(StartEmailChallengeReques
     std::string rawSessionToken;
 
     if (request.session_token) {
+        policy::requireEnabled();
         session = sessionFromToken(*store_, *request.session_token, now(options_));
         link = requirePtr(store_->getLink(session->share_id), "Share link not found");
+        policy::requireEnabled(link->access_mode);
     } else {
         link = linkFromPublicToken(*store_, *request.public_token, now(options_));
         auto created = createSessionForLink(*store_, *link, options_, request.ip_address, request.user_agent);
@@ -1023,6 +1031,7 @@ ConfirmEmailChallengeResult Manager::confirmEmailChallenge(ConfirmEmailChallenge
     attachLink(*audit, *link);
 
     try {
+        policy::requireEnabled(link->access_mode);
         if (!link->requiresEmail()) throw std::runtime_error("Share link does not require email verification");
         if (!link->isActive(now(options_))) throw std::runtime_error("Share link is inactive");
         if (!loadedSession->isActive(now(options_))) throw std::runtime_error("Share session is inactive");
@@ -1064,10 +1073,12 @@ std::shared_ptr<Principal> Manager::resolvePrincipal(
     audit->user_agent = userAgent;
 
     try {
+        policy::requireEnabled();
         auto session = sessionFromToken(*store_, sessionToken, now(options_));
         audit->share_session_id = session->id;
         auto link = requirePtr(store_->getLink(session->share_id), "Share link not found");
         attachLink(*audit, *link);
+        policy::requireEnabled(link->access_mode);
         auto principal = PrincipalResolver::resolve(*link, *session, now(options_));
         attachScopedVaultRole(*store_, *link, *session, *principal);
         store_->touchSession(session->id);

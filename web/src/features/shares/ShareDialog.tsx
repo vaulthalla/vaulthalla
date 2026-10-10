@@ -13,9 +13,15 @@ import { InlineError } from '@/components/ui/State'
 import { DownloadIcon, EyeIcon, UploadIcon, XmarkIcon, PlusIcon } from '@/components/ui/icons'
 import type { Entry } from '@/features/files/entries'
 import { PRESETS, presetOperations, publicUrl, type SharePreset } from '@/features/shares/shareMeta'
-import { OneTimeUrl, ShareLinkList } from '@/features/shares/ShareLinks'
+import { OneTimeUrl, ShareLinkList, SharingNotice } from '@/features/shares/ShareLinks'
+import { useSharingPolicy } from '@/features/shares/policy'
 
 const PRESET_ICONS = { access: EyeIcon, download: DownloadIcon, upload: UploadIcon }
+
+const ACCESS_OPTIONS: { value: ShareAccessMode; label: string }[] = [
+  { value: 'public', label: 'Anyone with the link' },
+  { value: 'email_validated', label: 'Verified email only' },
+]
 
 export const ShareDialog = ({ vaultId, target, onClose }: { vaultId: number; target: Entry | null; onClose: () => void }) => {
   const isDir = target?.kind === 'dir'
@@ -34,6 +40,14 @@ export const ShareDialog = ({ vaultId, target, onClose }: { vaultId: number; tar
   const roles = useWs('roles.vault.list', null, { enabled: Boolean(target), staleTime: 5 * 60_000 })
   const templates = useMemo(() => roles.data?.roles ?? [], [roles.data])
   const presetRole = (p: SharePreset) => templates.find(r => r.name === PRESETS[p].role) ?? null
+  // Only the kinds of link the operator allows (sharing.*); the daemon refuses the rest anyway.
+  const policy = useSharingPolicy()
+  const accessOptions = ACCESS_OPTIONS.filter(o => policy.modes.includes(o.value))
+
+  // Keep the choice on an allowed kind (the form resets to 'public', and the policy may load after it opens).
+  useEffect(() => {
+    if (!policy.modes.includes(access) && policy.modes.length) setAccess(policy.modes[0])
+  }, [access, policy.modes])
 
   useEffect(() => {
     if (!target) return
@@ -99,7 +113,16 @@ export const ShareDialog = ({ vaultId, target, onClose }: { vaultId: number; tar
               <TabsTrigger value="existing">Existing links</TabsTrigger>
             </TabsList>
             <TabsContent value="new">
-              {url ? (
+              {!url && policy.loaded && !policy.modes.length ? (
+                <div className="space-y-4">
+                  <SharingNotice />
+                  <div className="flex justify-end">
+                    <Button variant="ghost" onClick={onClose}>
+                      Close
+                    </Button>
+                  </div>
+                </div>
+              ) : url ? (
                 <div className="space-y-4">
                   <OneTimeUrl url={url} />
                   <div className="flex justify-end gap-2">
@@ -155,15 +178,10 @@ export const ShareDialog = ({ vaultId, target, onClose }: { vaultId: number; tar
 
                   <div className="space-y-2">
                     <div className="text-[13px] font-medium text-fg-muted">Who can open it?</div>
-                    <Segmented
-                      label="Who can open it"
-                      value={access}
-                      onChange={setAccess}
-                      options={[
-                        { value: 'public', label: 'Anyone with the link' },
-                        { value: 'email_validated', label: 'Verified email only' },
-                      ]}
-                    />
+                    <Segmented label="Who can open it" value={access} onChange={setAccess} options={accessOptions} />
+                    {accessOptions.length < ACCESS_OPTIONS.length ? (
+                      <p className="text-xs text-fg-subtle">Other kinds of link are turned off on this server.</p>
+                    ) : null}
                     {access === 'email_validated' ? (
                       <div className="space-y-2 rounded-card border border-line bg-surface-1 p-3">
                         <p className="text-xs text-fg-subtle">Recipients confirm a code sent to their inbox before the link opens.</p>
