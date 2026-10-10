@@ -87,7 +87,7 @@ make uninstall && make clean-full && make run_test   # destructive to local dev/
 ```
 
 This runs `core/tests/integrations/main.cpp` in test mode: it wipes, inits, and seeds the DB, starts FUSE + shell, and runs the CLI and FUSE suites
-against **`/tmp/vh_mount`**. The last known result was 83/83 (2026-10-09, after #170 and #183). It's isolated from systemd/prod state.
+against **`/tmp/vh_mount`**. The last known result was 97/97 (2026-10-10, `fix/decision-bugs`: #162 #164 #166 #167 #168 #143). It's isolated from systemd/prod state.
 The "Copy And Delete" stage (#167/#168, 14 cases, runs unprivileged too) copies a nested folder over ws
 `fs.entry.copy` and reads every copied file through FUSE and through `/download` (in-process `http::Router`), then checks
 that unlink / `fs.entry.delete` keep folders and that rmdir of a non-empty folder is ENOTEMPTY; with it the expected
