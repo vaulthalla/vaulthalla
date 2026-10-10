@@ -64,7 +64,9 @@ The build needs the private icons (`$VAULTHALLA_WEB_ICON_SRC`, default `~/vaulth
   - **Push gate (#185, 2026-10-10):** on pushes, a `gate` job (`ubuntu-latest`, seconds, `.github/scripts/ci_gate.py`)
     skips `build`/`tooling` when CI already tested the exact tree: a merged PR whose head has the pushed commit's tree
     and a `pull_request` run whose `build` job succeeded (i.e. the branch was up to date), or a `vlr cut` commit
-    (`chore(release): vX.Y.Z`, the push's only commit, tagged `vX.Y.Z`) whose parent is covered. A gated skip never
+    (`chore(release): vX.Y.Z`, the push's only commit, tagged `vX.Y.Z`) whose parent is covered and whose diff is
+    purely the bump (only `release.toml`'s version files, every changed line old→new version). `vlr cut`'s resume paths
+    push whatever is at HEAD (e.g. a release commit amended with code keeps its subject), hence the content check. A gated skip never
     counts as a passing build. Direct pushes always build; PRs always build; any gate error builds (fails open).
     `vlr finalize` commits carry `[skip ci]` (`release.toml` `finalize_commit_message`). Never add a skip marker to
     the cut commit: the tag points at it and GitHub would skip `release.yml`. Contract: `tools/contracts/test_ci_gate_contract.py`.

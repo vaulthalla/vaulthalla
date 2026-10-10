@@ -42,6 +42,7 @@ jobs:
     outputs:
       run: ${{ steps.decide.outputs.run }}
     steps:
+      # Cone mode always includes top-level files: the gate reads release.toml's version files.
       - uses: actions/checkout@v4
         with:
           sparse-checkout: .github/scripts

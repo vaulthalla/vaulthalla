@@ -32,6 +32,18 @@ class FakeGitHub:
         self.pulls: dict[str, list[dict]] = {}
         self.runs: dict[str, list[tuple[str, str]]] = {}  # sha -> [(event, build job conclusion)]
         self.tags: dict[str, str] = {}
+        self.diffs: dict[tuple[str, str], list[dict]] = {}  # (base, head) -> compare API files
+
+    def bump(self, base: str, head: str, old: str = "1.2.2", new: str = "1.2.3", extra: list[dict] = ()) -> None:
+        """A `vlr cut` diff: VERSION, meson.build and web/package.json change only their version lines."""
+        self.diffs[(base, head)] = [
+            {"filename": "VERSION", "status": "modified", "patch": f"@@ -1 +1 @@\n-{old}\n+{new}"},
+            {"filename": "meson.build", "status": "modified",
+             "patch": f"@@ -1,3 +1,3 @@\n project('vaulthalla', 'cpp',\n-  version: '{old}',\n+  version: '{new}',"},
+            {"filename": "web/package.json", "status": "modified",
+             "patch": f'@@ -2,3 +2,3 @@\n   "name": "web",\n-  "version": "{old}",\n+  "version": "{new}",'},
+            *extra,
+        ]
 
     def commit(self, sha: str, tree: str, *parents: str) -> None:
         self.commits[sha] = {"tree": {"sha": tree}, "parents": [{"sha": p} for p in parents]}
@@ -57,6 +69,9 @@ class FakeGitHub:
             sha, index = path.split("/")[2].split(":")
             conclusion = self.runs[sha][int(index)][1]
             return {"jobs": [{"name": "build", "conclusion": conclusion}, {"name": "gate", "conclusion": "success"}]}
+        if path.startswith("compare/"):
+            base, head = path.removeprefix("compare/").split("...")
+            return {"files": self.diffs.get((base, head), [])}
         if path.startswith("git/ref/tags/"):
             tag = path.removeprefix("git/ref/tags/")
             if tag not in self.tags:
@@ -83,7 +98,12 @@ class CiGateDecisionTests(unittest.TestCase):
         gh.run("prhead", "pull_request")
 
     def decide(self, event: dict, name: str = "push") -> tuple[bool, str]:
-        return ci_gate.decide(name, event, self.gh)
+        return ci_gate.decide(name, event, self.gh, ci_gate.version_files())
+
+    def cut(self, parent: str = "merge", **bump) -> None:
+        self.gh.commit("cut", "T3", parent)
+        self.gh.tags["v1.2.3"] = "cut"
+        self.gh.bump(parent, "cut", **bump)
 
     def test_pull_requests_always_build(self) -> None:
         self.assertEqual(self.decide({}, "pull_request")[0], True)
@@ -112,14 +132,36 @@ class CiGateDecisionTests(unittest.TestCase):
         self.assertTrue(self.decide(push("merge", "Merge pull request #7", deleted=True))[0])
 
     def test_release_cut_on_a_tested_parent_skips(self) -> None:
-        self.gh.commit("cut", "T3", "merge")
-        self.gh.tags["v1.2.3"] = "cut"
+        self.cut()
         run, reason = self.decide(push("cut", "chore(release): v1.2.3"))
         self.assertFalse(run)
-        self.assertIn("v1.2.3", reason)
+        self.assertIn("only a version bump", reason)
+
+    def test_release_commit_carrying_real_changes_builds(self) -> None:
+        # `vlr cut` (no --push), `git commit --amend` with code, `vlr cut X.Y.Z --push`: the resume path pushes the
+        # amended commit under the release subject, tagged. Only its content gives it away.
+        code = {"filename": "core/src/main.cpp", "status": "modified", "patch": "@@ -1 +1 @@\n-a\n+b"}
+        self.cut(extra=[code])
+        run, reason = self.decide(push("cut", "chore(release): v1.2.3"))
+        self.assertTrue(run)
+        self.assertIn("core/src/main.cpp", reason)
+
+    def test_version_file_edits_beyond_the_version_line_build(self) -> None:
+        self.cut()
+        meson = self.gh.diffs[("merge", "cut")][1]
+        meson["patch"] += "\n-  default_options: ['warning_level=3'],\n+  default_options: ['warning_level=1'],"
+        self.assertTrue(self.decide(push("cut", "chore(release): v1.2.3"))[0])
+        self.gh.bump("merge", "cut", new="1.2.4")  # bumped to a version other than the tag's
+        self.assertTrue(self.decide(push("cut", "chore(release): v1.2.3"))[0])
+        self.gh.diffs[("merge", "cut")] = []  # compare API gave nothing back
+        self.assertTrue(self.decide(push("cut", "chore(release): v1.2.3"))[0])
+
+    def test_version_files_come_from_release_toml(self) -> None:
+        self.assertEqual(ci_gate.version_files(), {"VERSION", "meson.build", "web/package.json"})
 
     def test_release_cut_needs_its_tag_one_commit_and_a_tested_parent(self) -> None:
         self.gh.commit("cut", "T3", "merge")
+        self.gh.bump("merge", "cut")
         self.assertTrue(self.decide(push("cut", "chore(release): v1.2.3"))[0], "no tag")
         self.gh.tags["v1.2.3"] = "elsewhere"
         self.assertTrue(self.decide(push("cut", "chore(release): v1.2.3"))[0], "tag on another commit")
@@ -127,6 +169,7 @@ class CiGateDecisionTests(unittest.TestCase):
         self.assertTrue(self.decide(push("cut", "chore(release): v1.2.3", commits=2))[0], "untested commit along")
         self.gh.commit("direct", "T9", "main0")
         self.gh.commit("cut", "T3", "direct")
+        self.gh.bump("direct", "cut")
         self.assertTrue(self.decide(push("cut", "chore(release): v1.2.3"))[0], "parent never passed CI")
         self.gh.run("direct", "push")
         self.assertFalse(self.decide(push("cut", "chore(release): v1.2.3"))[0], "parent passed push CI")
@@ -134,8 +177,7 @@ class CiGateDecisionTests(unittest.TestCase):
     def test_a_gated_skip_is_not_a_passing_build(self) -> None:
         self.gh.commit("direct", "T9", "main0")
         self.gh.run("direct", "push", build="skipped")
-        self.gh.commit("cut", "T3", "direct")
-        self.gh.tags["v1.2.3"] = "cut"
+        self.cut(parent="direct")
         self.assertTrue(self.decide(push("cut", "chore(release): v1.2.3"))[0])
 
     def test_finalize_record_is_not_treated_as_a_cut(self) -> None:
