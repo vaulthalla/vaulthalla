@@ -1,5 +1,11 @@
 import { LocalDiskVault, RemoteSyncPolicy, S3Vault, Vault } from '@/models/vaults'
 import type { VaultDeletion, VaultRemovalPlan } from '@/models/vaultDeletion'
+import type {
+  SyncConflict,
+  SyncConflictResolution,
+  SyncConflictResolveResponse,
+  SyncConflictSummary,
+} from '@/models/syncConflicts'
 import { VaultStats } from '@/models/stats/vaultStats'
 import { VaultActivity } from '@/models/stats/vaultActivity'
 import { VaultRecovery } from '@/models/stats/vaultRecovery'
@@ -235,6 +241,15 @@ export interface WebSocketCommandMap {
   'storage.vault.get': { payload: { id: number }; response: { vault: LocalDiskVault | S3Vault } }
 
   'storage.vault.sync': { payload: { id: number }; response: { status: 'started' | 'rerun_queued' } }
+
+  // Sync conflicts (#187): open conflicts recorded under the `ask` policy, only in vaults where the caller holds
+  // vault.sync.action.resolve_conflicts. Resolving is per item (one failure never aborts the batch).
+  'sync.conflicts.summary': { payload: null; response: SyncConflictSummary }
+  'sync.conflicts.list': { payload: { vault_id?: number } | null; response: { conflicts: SyncConflict[] } }
+  'sync.conflicts.resolve': {
+    payload: { resolution: SyncConflictResolution; conflict_ids: number[] }
+    response: SyncConflictResolveResponse
+  }
 
   // API Key commands
 

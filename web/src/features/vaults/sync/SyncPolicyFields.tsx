@@ -26,6 +26,7 @@ export const SyncPolicyFields = ({ disabled }: { disabled?: boolean }) => {
   const { register, control, setValue } = useFormContext<WithSync>()
   const ids = useId()
   const strategy = useWatch({ control, name: 'sync.strategy' })
+  const conflictPolicy = useWatch({ control, name: 'sync.conflict_policy' })
   const interval = useWatch({ control, name: 'sync.interval_seconds' })
   const enabled = useWatch({ control, name: 'sync.enabled' })
   const custom = !INTERVAL_CHOICES.some(c => c.value === Number(interval))
@@ -51,7 +52,7 @@ export const SyncPolicyFields = ({ disabled }: { disabled?: boolean }) => {
             ))}
           </Select>
         </Field>
-        <Field label="On conflict" htmlFor={`${ids}-conflict`} hint="Which copy wins when a file changed on both sides.">
+        <Field label="On conflict" htmlFor={`${ids}-conflict`} hint={CONFLICT_OPTIONS.find(o => o.value === conflictPolicy)?.hint ?? 'Which copy wins when a file changed on both sides.'}>
           <Select id={`${ids}-conflict`} disabled={disabled} {...register('sync.conflict_policy')}>
             {CONFLICT_OPTIONS.map(o => (
               <option key={o.value} value={o.value}>

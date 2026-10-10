@@ -251,7 +251,7 @@ export const SECTIONS: SectionDef[] = [
           {
             key: 'default_remote_conflict_policy',
             label: 'On conflict',
-            hint: 'Ask records the conflict and stops syncing that file; nothing resolves it yet.',
+            hint: 'Default for new S3 vaults. Ask records a file changed on both sides as a sync conflict and keeps syncing everything else; that file waits for a decision on the Sync Conflicts page or with vh sync resolve.',
             type: {
               kind: 'enum',
               options: [
