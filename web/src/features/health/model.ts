@@ -231,37 +231,26 @@ export const issueCountText = (errors: number | null, warnings: number | null) =
   return parts.join(' · ')
 }
 
-// The backend still links to the old console routes. Map them onto /health (and /cost) so drilldowns work against
-// both old and new daemons.
-export const healthHref = (href: string | null | undefined, fallback = '/health'): string => {
-  if (!href) return fallback
-  const [path, hash] = href.split('#')
-  const suffix = hash ? `#${hash}` : ''
-  if (path === '/dashboard' || path === '/dashboard/') return `/health${suffix}`
-  if (path.startsWith('/dashboard/operations') || path.startsWith('/dashboard/trends')) return `/health/activity${suffix}`
-  if (path.startsWith('/dashboard/')) return `/health/${path.slice('/dashboard/'.length)}${suffix}`
-  if (path.startsWith('/pricing-budget')) return `/cost${suffix}`
-  return href
-}
+// Drilldown links come from the daemon as console routes (/health/*, /cost).
+export const healthHref = (href: string | null | undefined, fallback = '/health'): string => href || fallback
 
 const UNKNOWN_WORDS = new Set(['', 'unknown', 'n/a', 'not available', 'unavailable'])
 
-// A metric's display string. Unknown words become null ("not available"); money is reformatted (the backend sends
-// catalog precision, e.g. "0.00000000 USD").
-export const metricDisplay = (metric: Pick<Metric, 'value'>): string | null => {
+// Money metrics carry numeric_value plus their ISO currency as the unit.
+const CURRENCY_UNIT = /^[A-Z]{3}$/
+
+// A metric's display string. Unknown words become null ("not available"); money is formatted from its number and
+// currency in the viewer's locale.
+export const metricDisplay = (metric: Pick<Metric, 'value' | 'unit' | 'numeric'>): string | null => {
   const value = metric.value.trim()
   if (UNKNOWN_WORDS.has(value.toLowerCase())) return null
-  const money = /^(-?\d+(?:\.\d+)?)\s+([A-Z]{3})$/.exec(value)
-  if (money) return formatMoney(money[1], money[2])
+  if (metric.unit && CURRENCY_UNIT.test(metric.unit) && metric.numeric !== null) return formatMoney(metric.numeric, metric.unit)
   return value
 }
 
-// Numeric reading of a metric: the backend's numeric_value, else a plain number in the display string.
-export const metricNumber = (metric: Metric): number | null => {
-  if (metric.numeric !== null) return metric.numeric
-  const plain = /^-?\d+(?:\.\d+)?$/.exec(metric.value.trim().replace(/,/g, ''))
-  return plain ? Number(plain[0]) : null
-}
+// Numeric reading of a metric: the backend's numeric_value (every count carries one; null means not measured or not
+// a number, e.g. "3/4").
+export const metricNumber = (metric: Metric): number | null => metric.numeric
 
 // Only warnings and errors get color on a value; healthy/info values read in plain ink, and a value the backend
 // couldn't measure never inherits a tone.

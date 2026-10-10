@@ -74,7 +74,7 @@ export const NAV: NavSection[] = [
   {
     label: 'System',
     items: [
-      { label: 'Health', href: '/health', icon: GaugeHighIcon, requires: { admin: true }, keywords: 'dashboard stats status' },
+      { label: 'Health', href: '/health', icon: GaugeHighIcon, requires: { permission: 'admin.stats.view' }, keywords: 'dashboard stats status' },
       { label: 'Notifications', href: '/notifications', icon: EnvelopeIcon, requires: { superAdmin: true }, keywords: 'operator email' },
       { label: 'Settings', href: '/settings', icon: SlidersIcon, requires: { superAdmin: true }, keywords: 'config' },
     ],

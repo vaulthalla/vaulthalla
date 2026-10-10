@@ -26,6 +26,7 @@ const ADMIN_GROUPS: PermissionGroupDef[] = [
   { prefix: 'admin.keys.encryption', label: 'Encryption keys', section: 'Keys' },
   { prefix: 'admin.s3_gateway', label: 'S3 gateway', section: 'Services' },
   { prefix: 'admin.settings', label: 'Settings', section: 'System' },
+  { prefix: 'admin.stats', label: 'Health and stats', section: 'System', hint: 'Server, daemon and system telemetry (the Health area)' },
   { prefix: 'admin.audits', label: 'Audit logs', section: 'System' },
 ]
 
