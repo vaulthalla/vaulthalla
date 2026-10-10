@@ -194,7 +194,7 @@ vh_identity_is_forbidden() {
   haystack="${haystack,,}"
 
   case "$haystack" in
-    *jetbrains*|*remotedev*|*remote-dev*|*remote-dev-serv*|*rider.backend*|*jetbrainsd*|*fsnotifier*|*clangd*|*copilot*|*semantic-search*)
+    *jetbrains*|*remotedev*|*remote-dev*|*rider.backend*|*fsnotifier*|*clangd*|*copilot*|*semantic-search*)
       return 0
       ;;
     *)
@@ -539,7 +539,7 @@ vh_thread_owners_for_inode() {
 }
 
 vh_listener_owners_for_port() {
-  local port="$1" pid inode owner
+  local port="$1" pid inode owner owner_pid owner_tid
   local -a pids=()
   local -a inodes=()
 
@@ -555,7 +555,8 @@ vh_listener_owners_for_port() {
       [[ -n "$inode" ]] || continue
       while IFS= read -r owner; do
         [[ -n "$owner" ]] || continue
-        printf '%s %s %s\n' "$owner" "$inode"
+        read -r owner_pid owner_tid <<< "$owner"
+        printf '%s %s %s\n' "$owner_pid" "$owner_tid" "$inode"
       done < <(vh_thread_owners_for_inode "$inode")
     done
   } | awk '!seen[$1 " " $2]++'

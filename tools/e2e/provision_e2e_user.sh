@@ -160,7 +160,6 @@ guard_test_db_target() {
   case "${VH_TEST_DB_NAME:-}:${VH_TEST_DB_USER:-}" in
     *test*:*) return 0 ;;
     *:vaulthalla_test) return 0 ;;
-    vh_cli_test:*) return 0 ;;
   esac
 
   echo "Refusing direct E2E DB seed because VH_TEST_DB_* does not look like a test database." >&2

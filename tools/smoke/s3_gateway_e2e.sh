@@ -341,6 +341,8 @@ start_gateway_with_build_runtime() {
   echo "Starting branch-built gateway runtime $server; log: $GATEWAY_LOG"
   run_root systemctl stop vaulthalla.service >>"$GATEWAY_SYSTEMD_LOG" 2>&1 || true
   STOPPED_SYSTEMD_GATEWAY=1
+  # The log belongs to the caller, not the vaulthalla user: the redirect is meant to run outside sudo.
+  # shellcheck disable=SC2024
   sudo -n -u vaulthalla bash -lc \
     'set -a; source /etc/vaulthalla/vaulthalla.env; set +a; cd /var/lib/vaulthalla; exec "$1"' \
     _ "$server" >"$GATEWAY_LOG" 2>&1 &

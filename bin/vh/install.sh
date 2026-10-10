@@ -233,6 +233,8 @@ ensure_repo_bootstrap() {
     tmp_keyring="$(mktemp)"
     local tmp_source
     tmp_source="$(mktemp)"
+    # Expanded now on purpose: the locals are gone by the time the EXIT trap runs.
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_key' '$tmp_keyring' '$tmp_source'" EXIT
 
     log "Ensuring Vaulthalla apt key and source are configured."
