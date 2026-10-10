@@ -141,8 +141,12 @@ vh vaults --local
 vh vaults --s3 --limit 5
 vh vaults --json
 vh vault info <id-or-name> [--owner <user-or-id>]
-vh vault delete <id-or-name> [--owner <user-or-id>]
+vh vault delete <id-or-name> [--owner <user-or-id>] [--now] [--delete-upstream | --keep-upstream] [--accept-key-loss] [--yes]
+vh vault deleted [--json]
+vh vault restore <id-or-name> [--owner <user-or-id>]
 ```
+
+`vault delete` schedules the deletion: the vault disappears at once and `vault restore` brings it back until `vaults.retention_window` ends (default `5m`); then its data is purged. `--now` purges right away and needs `--yes` (or a typed confirmation in a terminal). For S3 vaults, `--delete-upstream` also deletes the bucket's objects at purge time; the default keeps them, and keeping encrypted objects whose key was never exported needs `--accept-key-loss`. In a terminal, without `--yes`, the command asks instead. `vault deleted` lists pending, purging and purged vaults whose key is still kept. See [Deleting And Restoring Vaults](/vaults/deleting-vaults).
 
 Create a local vault:
 

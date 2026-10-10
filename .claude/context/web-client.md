@@ -44,6 +44,15 @@
   URL-addressed paths, virtualized list/grid, transfer manager), `shares`, `share` (anonymous recipient page),
   `health`, `vaults`, `access`, `account`, `credentials`, `cost`, `gateway`, `notifications`, `settings`, `auth`.
 
+## Vault deletion (#162)
+
+`features/vaults/DeleteVaultDialog.tsx` (lazy, from Settings → Delete vault) is one dialog: it reads
+`storage.vault.remove.plan` (re-read on window focus, so a key exported from a terminal clears the warning), shows the
+restore and key windows, the S3 upstream choice (keep by default), the key-loss warning with the export command and a
+required "I understand" checkbox, then Delete or Delete now (typed name). `features/vaults/DeletedVaults.tsx` (lazy, Vaults
+page, accounts with a vault remove permission) lists `storage.vault.deleted.list` with Restore / Purge now and keeps the
+"export this key" warning on records with `upstream_key_at_risk`. Keys are never exported through the browser.
+
 ## File previews (renderer registry)
 
 - **The server decides.** Every file entry carries `preview: {kind, renderer, requires, thumbnail, derived?}`

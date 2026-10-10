@@ -45,7 +45,7 @@ for SIGINT/SIGTERM. Shutdown: `Manager::stopAll` → `preview::derive::Queue::sh
 a service after 500ms. Start order:
 
 ```
-FUSE → SyncController → DBJanitor → LogRotationService → StatsSnapshotService →
+FUSE → SyncController → DBJanitor → VaultRetentionService → LogRotationService → StatsSnapshotService →
 OperatorEmailService → ConnectionLifecycleManager → ProtocolService → S3GatewayService (+ ShellServer)
 ```
 
@@ -279,7 +279,7 @@ bytes, inline by default), `GET|HEAD /download` (files stream with no size cap; 
 
 ## Database
 
-- PostgreSQL via libpqxx. The schema is `deploy/psql/000…104_*.sql`, applied in order (all in ONE transaction by `core/seed/include/SqlDeployer.hpp`) and installed to `/usr/share/vaulthalla/psql`.
+- PostgreSQL via libpqxx. The schema is `deploy/psql/000…106_*.sql`, applied in order (all in ONE transaction by `core/seed/include/SqlDeployer.hpp`) and installed to `/usr/share/vaulthalla/psql`.
   New migrations take the next number and must be idempotent against upgraded installs. SqlDeployer records sha256(raw bytes)
   per file and refuses to start on a mismatch, so **never edit a shipped migration**: 020/060/082 were edited in place and
   bricked upgrades (1.5.x→1.6.x crash loop on 060). Reviewed exceptions live in `kHistoricalMigrationChecksums` (accepted, recorded
@@ -383,8 +383,8 @@ gates (stats/settings/email/pricing admin checks, share upload scope) throw `ops
 `ops::` (managers, `db::query`) never authorizes; internal callers use those primitives directly, not ops; no
 registry, base class or transport abstraction. Parity is proven by `test_ops_parity_groups.cpp`, which runs each
 group operation through both surfaces for every seeded admin role and compares verdicts and DB state.
-Migrated families (each with `test_ops_parity_<family>.cpp`): `groups`, `roles`, `api_keys`, `vaults` (lifecycle +
-sync policy), `users`, `s3_gateway` (credentials, grants, buckets, credential budgets), `pricing` (price budget
+Migrated families (each with `test_ops_parity_<family>.cpp`): `groups`, `roles`, `api_keys`, `vaults` (lifecycle,
+safe deletion/restore, sync policy), `users`, `s3_gateway` (credentials, grants, buckets, credential budgets), `pricing` (price budget
 policies), `config` (every settings write: one validation, one apply step that restarts the S3 gateway when
 `s3_gateway.enabled` changes). Still per-surface: the ws-only pricing preflight/override/notification endpoints,
 email test-send/history, vault keys/sync diagnostics, and lifecycle commands (`setup`, `teardown`, `secrets`).
@@ -437,6 +437,32 @@ subject's assignment; both `vh vault role override ...` and ws `role.vault.overr
 - Every `users(id)` reference has a delete action (migration 104): attribution/audit columns `SET NULL`, while
   `file_locks.locked_by` and `share_link.created_by` `CASCADE` (a deleted account's public links die with it). New
   tables referencing `users` must pick one; a bare `REFERENCES users` blocks `vh user delete`.
+
+**Safe vault deletion with retention** (#162, migration 106, `vault/Retention.*`, `vault/RetentionService.*`,
+`db/query/vault/Deletion.*`, `VaultRetentionTest`, `VaultParityTest.DeletionLifecycleAgreesOnBothSurfaces`)
+- A delete is a schedule (`ops::vaults::remove` → `vault::retention::schedule`): one transaction sets
+  `vault.deleted_at`, detaches the vault root (`fs_entry.parent_id = NULL`), nulls the vault's inodes, copies every key
+  version (still TPM-sealed) into `vault_deletion_key` and writes the `vault_deletion` record (purge_after,
+  key_retain_until, delete_upstream); then `storage::Manager::retireVault` drops the engine, evicts the FS cache, purges
+  derived artifacts and refreshes sync. Read paths filter deleted vaults: `get_vault*`, `listVaults/listUserVaults`, share
+  link statements, S3 gateway bucket resolve/list. `vault_exists`, slug/FUSE-name uniqueness and the `s3` binding still
+  see them: **the name, slug, FUSE name and bucket stay reserved until the purge** (`ops::vaults::create` says how to
+  restore or purge). Restore (pending only) re-attaches the root and rebuilds the engine (`reinstateVault`; descendants get
+  inodes lazily). Restore and the purge claim the same row (`DELETE … WHERE state='pending'` vs `UPDATE … SET
+  state='purging'`), so they never both win.
+- `VaultRetentionService` (30 s, or at once after "delete now") runs `retention::runPass(now)`: claims due records,
+  deletes upstream objects when chosen (≤ 10 LIST pages / 10 000 DELETEs per pass via `Controller::listObjectKeysPage`,
+  resumable, refused when the binding is gone or another vault uses the same bucket+endpoint+region: the purge then
+  finishes locally with a note), removes the backing and cache dirs through `removeVaultDirectory` (alias must be one
+  `[A-Za-z0-9_-]` name, a real directory directly under the resolved root, never a symlink), then deletes the vault row
+  (`finishPurge`, only `deleted_at IS NOT NULL`). Failures retry with backoff (30 s → 1 h). Key copies are dropped when
+  `key_retain_until` passes; the tombstone row stays. "Delete now" never shortens the key window.
+- RBAC: delete, delete now, restore and listing need vault Remove; a deleted vault has no engine, so the admin resolver
+  takes `admin::Context::vault` (built from the record's owner). Export tracking: `vault_keys.exported_version/at`
+  (set by `vh vault keys export`; a rotation makes it stale). NeedsConfirmation codes `vault_upstream_key_loss` (S3,
+  encrypted objects kept, key never exported) and `vault_delete_now`. `storage::Manager::removeVault` stays the
+  immediate hard delete (create rollbacks, empty S3-gateway buckets) and now removes the backing dirs too.
+- An account whose API keys are bound to any vault (deleted ones included, until purged) cannot be deleted.
 
 **Operator email** (`email/`, `notifications/`, `085_operator_notifications.sql`, `vh email …`)
 - Provider secrets are encrypted in `internal_secrets` and entered by hidden prompt. They never go in `.env` or files, and are never logged or rendered.

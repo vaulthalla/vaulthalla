@@ -79,8 +79,10 @@ middleware only checks that the refresh cookie exists, so a page load no longer 
 #165: `s3.gateway.credentials.*` ws handlers read only explicit ids (`credential_id`, `override_id`,
 `permission_id`); a payload carrying a bare `id` is refused with `data.code: "invalid"` naming the expected field.
 
-Still open: #160 stats payload problems (24 h trends, FS cache capacity, hrefs, money strings) · #162 vault delete
-leaves backing data (decision) · #164 settings the daemon never reads (decision) · #166 built-in `admin` role can't see Health/stats (decision) · #167 directory copy is shallow / file copy has no
+#162 (vault delete left backing data) is fixed on its branch: delete is a retention schedule (see architecture.md,
+"Safe vault deletion with retention").
+
+Still open: #160 stats payload problems (24 h trends, FS cache capacity, hrefs, money strings) · #164 settings the daemon never reads (decision) · #166 built-in `admin` role can't see Health/stats (decision) · #167 directory copy is shallow / file copy has no
 bytes until sync · #168 deleting a file prunes the user's empty ancestor folders (decision) · #170 harness `FUSE deny: ls seed`
 · #172 cost-alerts bell payload · **#173 FUSE serves
 ciphertext for web-uploaded/renamed files (P0, decision on the local at-rest model)**.
