@@ -67,6 +67,8 @@ public:
     void setSharePrincipal(std::shared_ptr<vh::share::Principal> principal, std::string sessionToken);
     void clearShareSession();
     void setHandshakeRequest(const RequestType& req);
+    // The server's connection-cap slot; released when the session closes (close() or destruction).
+    void holdConnectionSlot(std::unique_ptr<ConnectionSlot> slot);
 
     void sendAccessTokenOnNextResponse() { sendAccessToken_ = true; }
 
@@ -123,6 +125,7 @@ private:
     bool shareHandshake_{false};
 
     std::atomic_bool closing_{false};
+    std::unique_ptr<ConnectionSlot> connectionSlot_;  // set before accept(); reset by the first close()
 
     bool writing_ = false;                 // only touched on strand
     std::deque<std::string> writeQueue_;   // only touched on strand

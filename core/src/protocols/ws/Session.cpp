@@ -5,6 +5,7 @@
 #include "auth/model/TokenPair.hpp"
 #include "log/Registry.hpp"
 #include "protocols/ws/Router.hpp"
+#include "protocols/ws/ConnectionLimit.hpp"
 #include "protocols/ws/CookiePolicy.hpp"
 #include "crypto/util/hash.hpp"
 #include "protocols/ws/handler/fs/Upload.hpp"
@@ -111,6 +112,8 @@ void Session::clearShareSession() {
 
 void Session::setHandshakeRequest(const RequestType& req) { handshakeRequest_ = req; }
 
+void Session::holdConnectionSlot(std::unique_ptr<ConnectionSlot> slot) { connectionSlot_ = std::move(slot); }
+
 std::shared_ptr<handler::fs::Upload> Session::getUploadHandler() {
     if (!uploadHandler_) uploadHandler_ = std::make_shared<handler::fs::Upload>(shared_from_this());
     return uploadHandler_;
@@ -148,7 +151,12 @@ void Session::accept(tcp::socket&& socket) {
 }
 
 void Session::onHeadersRead(const std::shared_ptr<RequestType>& req, const beast::error_code& ec, std::size_t) {
-    if (ec) return logFail("Error reading HTTP headers", ec);
+    // A connection that never became a websocket is closed (and leaves the session manager) right away instead of
+    // waiting for the lifecycle sweep; until then it would hold a websocket_server.max_connections slot.
+    if (ec) {
+        logFail("Error reading HTTP headers", ec);
+        return close();
+    }
     if (closing_.load(std::memory_order_acquire)) return;
 
     // Hydration touches the DB and the secrets manager; a failure there must reject this one connection,
@@ -158,10 +166,7 @@ void Session::onHeadersRead(const std::shared_ptr<RequestType>& req, const beast
     } catch (const std::exception& e) {
         log::Registry::ws()->error("[ws::Session] Rejecting handshake from IP {}: session hydration failed: {}",
                                    getIPAddress(), e.what());
-        beast::error_code ignored;
-        ws_->next_layer().shutdown(tcp::socket::shutdown_both, ignored);
-        ws_->next_layer().close(ignored);
-        return;
+        return close();  // pre-handshake: closeOnStrand shuts the TCP socket
     }
     if (closing_.load(std::memory_order_acquire)) return;  // closed during hydration (e.g. by the sweeper)
 
@@ -266,7 +271,10 @@ void Session::installHandshakeDecorator() const {
 }
 
 void Session::onHandshakeAccepted(const beast::error_code& ec) {
-    if (ec) return logFail("Handshake error", ec);
+    if (ec) {
+        logFail("Handshake error", ec);
+        return close();
+    }
     handshakeDone_ = true;
     handshakeComplete_.store(true, std::memory_order_release);
     if (closing_.load(std::memory_order_acquire)) {
@@ -287,6 +295,8 @@ void Session::startReadLoop() {
 
 void Session::close() {
     if (closing_.exchange(true)) return;
+    // Only the first close() gets here: give the connection-cap slot back now, not when the last handler lets go.
+    connectionSlot_.reset();
 
     auto self = weak_from_this().lock();
     if (self) {

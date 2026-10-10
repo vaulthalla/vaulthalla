@@ -16,7 +16,9 @@ namespace vh::auth::session {
 
 class Manager {
 public:
-    void accept(boost::asio::ip::tcp::socket&& socket, const std::shared_ptr<protocols::ws::Router>& router);
+    // `slot`: the server's websocket_server.max_connections slot, held by the session until it closes.
+    void accept(boost::asio::ip::tcp::socket&& socket, const std::shared_ptr<protocols::ws::Router>& router,
+                std::unique_ptr<protocols::ws::ConnectionSlot> slot);
     void tryRehydrate(const std::shared_ptr<protocols::ws::Session>& session);
 
     void promote(const std::shared_ptr<protocols::ws::Session>& session);
