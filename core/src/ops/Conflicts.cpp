@@ -9,7 +9,7 @@
 #include "log/Registry.hpp"
 #include "rbac/permission/vault/Filesystem.hpp"
 #include "rbac/permission/vault/sync/Action.hpp"
-#include "rbac/resolver/Vault.hpp"
+#include "rbac/resolver/vault/all.hpp"
 #include "rbac/role/Vault.hpp"
 #include "runtime/Deps.hpp"
 #include "storage/CloudEngine.hpp"

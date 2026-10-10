@@ -7,6 +7,7 @@
 
 #include <pqxx/pqxx>
 
+#include <algorithm>
 #include <stdexcept>
 
 namespace vh::db::query::sync {
@@ -241,43 +242,60 @@ std::optional<ConflictRecord> Conflict::get(const uint32_t id) {
 
 void Conflict::applyPass(const uint32_t vaultId, const std::optional<uint32_t> eventId, const ConflictPassWrites& writes) {
     if (writes.empty()) return;
-    Transactions::exec("SyncConflict::applyPass", [&](pqxx::work& txn) {
-        for (const auto& b : writes.baselines) upsertBaselineTxn(txn, vaultId, b);
 
-        for (const auto& [fileId, resolution] : writes.close)
-            txn.exec("UPDATE sync_conflicts SET resolution = $2, resolved_at = NOW(), updated_at = NOW() "
-                     "WHERE file_id = $1 AND resolution = 'unresolved'",
-                     pqxx::params{fileId, resolution});
+    // Short transactions: the first pass over a large vault records a baseline per file, and a pool slot must never
+    // be held for the whole batch (FUSE needs the pool too). Each row stands on its own.
+    constexpr std::size_t kBaselineBatch = 500;
+    for (std::size_t i = 0; i < writes.baselines.size(); i += kBaselineBatch)
+        Transactions::exec("SyncConflict::applyPass.baselines", [&](pqxx::work& txn) {
+            const auto end = std::min(writes.baselines.size(), i + kBaselineBatch);
+            for (std::size_t j = i; j < end; ++j) upsertBaselineTxn(txn, vaultId, writes.baselines[j]);
+        });
 
-        for (const auto& c : writes.open) {
-            if (!c) continue;
-            // event_id only on insert: it is the run that first saw the conflict. A sync_event row that no longer
-            // exists (the event is pruned or was never saved) records NULL instead of failing the pass.
-            const auto id = txn.exec(R"SQL(
-                INSERT INTO sync_conflicts (event_id, file_id, vault_id, conflict_type, resolution, created_at, updated_at)
-                VALUES ((SELECT id FROM sync_event WHERE id = $1), $2, $3, $4, 'unresolved', NOW(), NOW())
-                ON CONFLICT (file_id) WHERE resolution = 'unresolved'
-                DO UPDATE SET conflict_type = EXCLUDED.conflict_type,
-                              vault_id = EXCLUDED.vault_id,
-                              updated_at = NOW()
-                RETURNING id
-            )SQL", pqxx::params{eventId, c->file_id, vaultId, c->typeToString()}).one_field().as<uint32_t>();
-            c->id = id;
+    for (std::size_t i = 0; i < writes.close.size(); i += kBaselineBatch)
+        Transactions::exec("SyncConflict::applyPass.close", [&](pqxx::work& txn) {
+            const auto end = std::min(writes.close.size(), i + kBaselineBatch);
+            for (std::size_t j = i; j < end; ++j)
+                txn.exec("UPDATE sync_conflicts SET resolution = $2, resolved_at = NOW(), updated_at = NOW() "
+                         "WHERE file_id = $1 AND resolution = 'unresolved'",
+                         pqxx::params{writes.close[j].first, writes.close[j].second});
+        });
 
-            writeArtifact(txn, id, c->artifacts.local, false);
-            writeArtifact(txn, id, c->artifacts.upstream, true);
+    // A conflict (row, both artifacts, reasons) is written whole; a few of them per transaction.
+    constexpr std::size_t kConflictBatch = 50;
+    for (std::size_t i = 0; i < writes.open.size(); i += kConflictBatch)
+        Transactions::exec("SyncConflict::applyPass.open", [&](pqxx::work& txn) {
+            const auto end = std::min(writes.open.size(), i + kConflictBatch);
+            for (std::size_t j = i; j < end; ++j) {
+                const auto& c = writes.open[j];
+                if (!c) continue;
+                // event_id only on insert: it is the run that first saw the conflict. A sync_event row that no longer
+                // exists (the event is pruned or was never saved) records NULL instead of failing the pass.
+                const auto id = txn.exec(R"SQL(
+                    INSERT INTO sync_conflicts (event_id, file_id, vault_id, conflict_type, resolution, created_at, updated_at)
+                    VALUES ((SELECT id FROM sync_event WHERE id = $1), $2, $3, $4, 'unresolved', NOW(), NOW())
+                    ON CONFLICT (file_id) WHERE resolution = 'unresolved'
+                    DO UPDATE SET conflict_type = EXCLUDED.conflict_type,
+                                  vault_id = EXCLUDED.vault_id,
+                                  updated_at = NOW()
+                    RETURNING id
+                )SQL", pqxx::params{eventId, c->file_id, vaultId, c->typeToString()}).one_field().as<uint32_t>();
+                c->id = id;
 
-            txn.exec("DELETE FROM sync_conflict_reasons WHERE conflict_id = $1", pqxx::params{id});
-            for (auto& reason : c->reasons) {
-                reason.conflict_id = id;
-                reason.id = txn.exec(
-                    "INSERT INTO sync_conflict_reasons (conflict_id, reason_code, reason_message) VALUES ($1, $2, $3) "
-                    "ON CONFLICT (conflict_id, reason_code) DO UPDATE SET reason_message = EXCLUDED.reason_message "
-                    "RETURNING id",
-                    pqxx::params{id, reason.code, reason.message}).one_field().as<uint32_t>();
+                writeArtifact(txn, id, c->artifacts.local, false);
+                writeArtifact(txn, id, c->artifacts.upstream, true);
+
+                txn.exec("DELETE FROM sync_conflict_reasons WHERE conflict_id = $1", pqxx::params{id});
+                for (auto& reason : c->reasons) {
+                    reason.conflict_id = id;
+                    reason.id = txn.exec(
+                        "INSERT INTO sync_conflict_reasons (conflict_id, reason_code, reason_message) VALUES ($1, $2, $3) "
+                        "ON CONFLICT (conflict_id, reason_code) DO UPDATE SET reason_message = EXCLUDED.reason_message "
+                        "RETURNING id",
+                        pqxx::params{id, reason.code, reason.message}).one_field().as<uint32_t>();
+                }
             }
-        }
-    });
+        });
 }
 
 bool Conflict::finishResolution(const uint32_t conflictId, const std::string& resolution,
