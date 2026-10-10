@@ -10,6 +10,7 @@
 #include "db/query/rbac/role/Admin.hpp"
 #include "db/query/sync/Policy.hpp"
 #include "db/query/vault/APIKey.hpp"
+#include "db/query/vault/Deletion.hpp"
 #include "db/query/vault/Vault.hpp"
 #include "fs/Filesystem.hpp"
 #include "identities/User.hpp"
@@ -31,6 +32,8 @@
 #include "sync/model/RemotePolicy.hpp"
 #include "UsageManager.hpp"
 #include "vault/APIKeyManager.hpp"
+#include "vault/Retention.hpp"
+#include "vault/model/Deletion.hpp"
 #include "vault/model/APIKey.hpp"
 #include "vault/model/S3Vault.hpp"
 #include "vault/model/Vault.hpp"
@@ -46,6 +49,7 @@
 #include <functional>
 #include <iostream>
 #include <memory>
+#include <set>
 #include <shared_mutex>
 #include <string>
 
@@ -301,6 +305,75 @@ TEST_F(VaultParityTest, DeleteAndListAgree) {
 
     const auto listed = protocols::ws::handler::Vaults::list(ws(bob)).at("vaults");
     for (const auto& v : listed) EXPECT_EQ(v.at("owner_id").get<unsigned int>(), bob->id);
+}
+
+// Safe deletion (#162): delete, delete now, the deleted list and restore agree on both surfaces, and need vault
+// Remove (the owner the deletion recorded decides the scope).
+TEST_F(VaultParityTest, DeletionLifecycleAgreesOnBothSurfaces) {
+    const auto viaCli = ops::vaults::create(superUser, {.name = "vp_rm_cli_" + vaultTag(), .type = vault::model::VaultType::Local});
+    const auto viaWs = ops::vaults::create(superUser, {.name = "vp_rm_ws_" + vaultTag(), .type = vault::model::VaultType::Local});
+    const auto cliId = std::to_string(viaCli->id);
+
+    // Without a terminal a delete is the safe default: scheduled, restorable; it says how to undo it.
+    const auto [code, out] = cli("vault delete " + cliId, superUser);
+    ASSERT_EQ(code, 0) << out;
+    EXPECT_NE(out.find("vh vault restore " + cliId), std::string::npos) << out;
+    ASSERT_TRUE(wsOk([&] { (void)protocols::ws::handler::Vaults::remove(json{{"id", viaWs->id}}, ws(superUser)); }));
+    EXPECT_FALSE(vaultFacts(viaCli->id).at("exists"));
+    EXPECT_FALSE(vaultFacts(viaWs->id).at("exists"));
+
+    // Both surfaces list both deletions for the super admin, neither for bob.
+    const auto listedIds = [](const json& rows) {
+        std::set<unsigned int> ids;
+        for (const auto& r : rows) ids.insert(r.at("vault_id").get<unsigned int>());
+        return ids;
+    };
+    const auto [listCode, listOut] = cli("vault deleted --json", superUser);
+    ASSERT_EQ(listCode, 0) << listOut;
+    const auto cliIds = listedIds(json::parse(listOut));
+    const auto wsIds = listedIds(protocols::ws::handler::Vaults::listDeleted(ws(superUser)).at("deleted"));
+    EXPECT_EQ(cliIds, wsIds);
+    EXPECT_TRUE(cliIds.contains(viaCli->id) && cliIds.contains(viaWs->id));
+    EXPECT_TRUE(protocols::ws::handler::Vaults::listDeleted(ws(bob)).at("deleted").empty());
+    const auto [bobList, bobOut] = cli("vault deleted --json", bob);
+    ASSERT_EQ(bobList, 0) << bobOut;
+    EXPECT_TRUE(json::parse(bobOut).empty());
+
+    // Restore and delete now: refused for bob on both surfaces, allowed for the super admin.
+    EXPECT_NE(cli("vault restore " + cliId, bob).first, 0);
+    EXPECT_FALSE(wsOk([&] { (void)protocols::ws::handler::Vaults::restore(json{{"id", viaWs->id}}, ws(bob)); }));
+    EXPECT_NE(cli("vault delete " + cliId + " --now --yes", bob).first, 0);
+    EXPECT_FALSE(wsOk([&] {
+        (void)protocols::ws::handler::Vaults::remove(json{{"id", viaWs->id}, {"now", true}, {"confirm_now", true}}, ws(bob));
+    }));
+
+    ASSERT_EQ(cli("vault restore " + cliId, superUser).first, 0);
+    ASSERT_TRUE(wsOk([&] { (void)protocols::ws::handler::Vaults::restore(json{{"id", viaWs->id}}, ws(superUser)); }));
+    EXPECT_TRUE(vaultFacts(viaCli->id).at("exists"));
+    EXPECT_TRUE(vaultFacts(viaWs->id).at("exists"));
+
+    // Delete now needs a confirmation on both surfaces; without one nothing changes.
+    EXPECT_NE(cli("vault delete " + cliId + " --now", superUser).first, 0);
+    EXPECT_FALSE(wsOk([&] { (void)protocols::ws::handler::Vaults::remove(json{{"id", viaWs->id}, {"now", true}}, ws(superUser)); }));
+    EXPECT_TRUE(vaultFacts(viaCli->id).at("exists"));
+    EXPECT_TRUE(vaultFacts(viaWs->id).at("exists"));
+    ASSERT_EQ(cli("vault delete " + cliId + " --now --yes", superUser).first, 0);
+    ASSERT_TRUE(wsOk([&] {
+        (void)protocols::ws::handler::Vaults::remove(json{{"id", viaWs->id}, {"now", true}, {"confirm_now", true}}, ws(superUser));
+    }));
+    for (const auto id : {viaCli->id, viaWs->id}) {
+        const auto d = db::query::vault::Deletion::get(id);
+        ASSERT_TRUE(d);
+        EXPECT_EQ(d->purge_after, d->deleted_at) << "delete now purges on the next pass";
+    }
+
+    // The removal plan the web dialog reads: Remove permission, same windows as the op uses.
+    const auto planned = ops::vaults::create(superUser, {.name = "vp_rm_plan_" + vaultTag(), .type = vault::model::VaultType::Local});
+    const auto plan = protocols::ws::handler::Vaults::removalPlan(json{{"id", planned->id}}, ws(superUser)).at("plan");
+    EXPECT_EQ(plan.at("retention_window_seconds").get<int64_t>(),
+              vault::retention::windowsFor(vault::model::VaultType::Local).retention_window.count());
+    EXPECT_FALSE(plan.at("key_exported").get<bool>());
+    EXPECT_FALSE(wsOk([&] { (void)protocols::ws::handler::Vaults::removalPlan(json{{"id", planned->id}}, ws(bob)); }));
 }
 
 // The waiver flow without a real bucket: the CLI asks (or takes the accept flag) and repeats the op accepted.

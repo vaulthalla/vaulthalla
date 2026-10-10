@@ -140,13 +140,22 @@ sharing:
   enable_internal: true        # Reserved for links to signed-in vault users (not available yet)
 
 
-# === 🗃️ VAULT DEFAULTS ===
-# Defaults for new vaults. A vault created without an explicit setting gets these; existing vaults keep theirs.
-# Older configs keep the two s3 keys under s3_gateway; that location is still read.
+# === 🗃️ VAULTS: DEFAULTS, DELETION & RETENTION ===
+# Defaults for new vaults: a vault created without an explicit setting gets these; existing vaults keep theirs.
+# Older configs keep the two default_remote_* keys under s3_gateway; that location is still read.
+#
+# Deleting a vault schedules its removal. It disappears at once (listings, the mount, shares, sync, the S3 gateway)
+# and can be restored with `vh vault restore` until retention_window ends; then its local data is removed, and its
+# upstream bucket data too when that was chosen at delete time. The vault's sealed encryption key is kept for the
+# full key retention window even after "delete now", so encrypted copies elsewhere stay recoverable with
+# `vh vault keys export`. Durations: s, m, h, d or w (e.g. 5m, 90d). Changes apply to vaults deleted afterwards.
 vaults:
+  retention_window: 5m           # Restore window before a deleted vault's data is purged
+  tpm_retention_window: 90d      # How long a deleted vault's encryption key is kept
   s3:
     default_remote_sync_strategy: cache        # cache (index the bucket, fetch files on demand) | sync | mirror
     default_remote_conflict_policy: keep_local # keep_local | keep_remote | keep_newest | ask (conflicts wait, unresolved)
+    tpm_retention_window: 180d                 # Key retention for S3-backed vaults (their data may stay upstream)
 
 
 # === ⚡ Caching & Previews ===

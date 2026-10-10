@@ -2,11 +2,45 @@
 
 #include "log/Rotator.hpp"
 
-#include <string>
+#include <algorithm>
+#include <cctype>
 #include <chrono>
+#include <cstdint>
 #include <stdexcept>
+#include <string>
 
 namespace vh::config {
+
+// Config durations: a non-negative integer followed by s, m, h, d or w ("30s", "5m", "12h", "90d", "2w"); a bare
+// integer is seconds. Throws std::invalid_argument on anything else.
+inline std::chrono::seconds parseDuration(const std::string& str) {
+    if (str.empty()) throw std::invalid_argument("duration cannot be empty");
+    const auto last = static_cast<unsigned char>(str.back());
+    const bool hasUnit = std::isalpha(last) != 0;
+    const auto digits = hasUnit ? str.substr(0, str.size() - 1) : str;
+    if (digits.empty() || digits.size() > 9 ||
+        !std::ranges::all_of(digits, [](const unsigned char c) { return std::isdigit(c) != 0; }))
+        throw std::invalid_argument("invalid duration '" + str + "': use a number with s, m, h, d or w (e.g. 5m, 90d)");
+    const auto n = static_cast<int64_t>(std::stoll(digits));
+    switch (hasUnit ? std::tolower(last) : 's') {
+        case 's': return std::chrono::seconds(n);
+        case 'm': return std::chrono::minutes(n);
+        case 'h': return std::chrono::hours(n);
+        case 'd': return std::chrono::days(n);
+        case 'w': return std::chrono::weeks(n);
+        default: throw std::invalid_argument("invalid duration unit in '" + str + "': use s, m, h, d or w");
+    }
+}
+
+// The largest unit that states the duration exactly ("5m", "90d", "45s").
+inline std::string durationToString(const std::chrono::seconds d) {
+    const auto s = d.count();
+    if (s != 0 && s % (7 * 86400) == 0) return std::to_string(s / (7 * 86400)) + "w";
+    if (s != 0 && s % 86400 == 0) return std::to_string(s / 86400) + "d";
+    if (s != 0 && s % 3600 == 0) return std::to_string(s / 3600) + "h";
+    if (s != 0 && s % 60 == 0) return std::to_string(s / 60) + "m";
+    return std::to_string(s) + "s";
+}
 
 inline std::chrono::hours parseHoursFromDayOrHour(const std::string& str) {
     if (str.empty()) throw std::invalid_argument("Interval string cannot be empty");

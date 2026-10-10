@@ -60,6 +60,8 @@ vh vault delete <vault> --owner <user-or-id>
 
 Ownership is useful when administrators manage vaults on behalf of users or teams. For scripts, prefer stable ids where possible.
 
+Deleting a vault is reversible for a while: it disappears at once, can be restored with `vh vault restore` until the retention window ends, and its encryption key is kept for longer. See [Deleting And Restoring Vaults](/vaults/deleting-vaults).
+
 ## Vault Roles
 
 Vault roles grant permissions inside a vault. Assign them to users or groups:

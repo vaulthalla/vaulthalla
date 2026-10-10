@@ -183,6 +183,18 @@ sync:
 
 Short retention reduces database growth but can remove useful sync troubleshooting context.
 
+## Vault Deletion
+
+```yaml
+vaults:
+  retention_window: 5m           # restorable this long after a delete; then the data is purged
+  tpm_retention_window: 90d      # how long a deleted vault's sealed key is kept
+  s3:
+    tpm_retention_window: 180d   # key retention for S3 vaults (their data may stay in the bucket)
+```
+
+Durations take `s`, `m`, `h`, `d` or `w`. Each deletion records its own deadlines, so a change applies to vaults deleted afterwards. "Delete now" skips `retention_window` but never shortens the key retention window. The section is optional: a missing key keeps the default shown here. Settings saved from the web console apply immediately. See [Deleting And Restoring Vaults](/vaults/deleting-vaults).
+
 ## Stats Snapshots
 
 Stats snapshot settings control dashboard trend collection:

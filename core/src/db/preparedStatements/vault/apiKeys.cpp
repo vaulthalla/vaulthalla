@@ -26,7 +26,9 @@ void vh::db::Connection::initPreparedAPIKeys() const {
                    "WHERE id = $1");
 
     conn_->prepare("list_api_key_vaults",
-                   "SELECT v.id, v.name FROM s3 JOIN vault v ON v.id = s3.vault_id "
+                   // A deleted vault keeps its key until it is purged (an upstream purge needs it).
+                   "SELECT v.id, v.name || CASE WHEN v.deleted_at IS NULL THEN '' ELSE ' (deleted, pending purge)' END AS name "
+                   "FROM s3 JOIN vault v ON v.id = s3.vault_id "
                    "WHERE s3.api_key_id = $1 ORDER BY v.name, v.id");
 
     conn_->prepare("remove_api_key",

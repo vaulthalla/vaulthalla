@@ -84,9 +84,10 @@ entry (Copy + Read on the source, Write/Touch at the destination) and against th
 #165: `s3.gateway.credentials.*` ws handlers read only explicit ids (`credential_id`, `override_id`,
 `permission_id`); a payload carrying a bare `id` is refused with `data.code: "invalid"` naming the expected field.
 
-Still open: #160 stats payload problems (24 h trends, FS cache capacity, hrefs, money strings) · #162 vault delete
-leaves backing data (decision) · #164 settings the daemon never reads (decision) · #166 built-in `admin` role can't see Health/stats (decision) · #170 harness `FUSE deny: ls seed`
-· #172 cost-alerts bell payload · **#173 FUSE serves
+#160, #162, #164, #166, #167 and #168 are fixed on `fix/decision-bugs` (see architecture.md: "Safe vault deletion
+with retention", "Delete keeps folders; copy is deep", and the stats/sharing sections).
+
+Still open: #170 harness `FUSE deny: ls seed` · #172 cost-alerts bell payload · **#173 FUSE serves
 ciphertext for web-uploaded/renamed files (P0, decision on the local at-rest model)**.
 
 `make run_test` ran on 2026-10-04: 71/72, the known `FUSE deny: ls seed` EACCES/ENOENT case (#170), as in Phase 2.

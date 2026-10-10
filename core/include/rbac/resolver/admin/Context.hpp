@@ -4,6 +4,10 @@
 #include <optional>
 #include <type_traits>
 #include "identities/Fwd.hpp"
+#include "vault/Fwd.hpp"
+
+#include <cstdint>
+#include <vector>
 
 namespace vh::rbac::resolver::admin {
 
@@ -20,6 +24,9 @@ namespace vh::rbac::resolver::admin {
         std::optional<uint32_t> api_key_id{};
         std::optional<uint32_t> target_user_id{};
         std::optional<uint32_t> vault_id{std::nullopt};
+        // A vault without a live engine (one pending deletion, #162): its owner decides the scope instead of the
+        // engine's. Takes precedence over vault_id.
+        std::shared_ptr<::vh::vault::model::Vault> vault{};
 
         [[nodiscard]] bool isValid() const {
             return !!user && (permission || !permissions.empty());

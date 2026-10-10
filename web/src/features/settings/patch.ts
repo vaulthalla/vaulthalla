@@ -52,6 +52,13 @@ export const parseSize = (value: unknown) => {
   return { amount: Number(m[1]), unit: m[2].toUpperCase().startsWith('G') ? 'GB' : 'MB' }
 }
 
+// Config durations (vaults.*): a number with s, m, h, d or w.
+export const parseDuration = (value: unknown) => {
+  const m = typeof value === 'string' ? value.trim().match(/^(\d+)\s*([smhdw])$/i) : null
+  if (!m) return null
+  return { amount: Number(m[1]), unit: m[2].toLowerCase() as 's' | 'm' | 'h' | 'd' | 'w' }
+}
+
 // "24h" / "1d" ⇄ { amount, unit }
 export const parseInterval = (value: unknown) => {
   const m = typeof value === 'string' ? value.trim().match(/^(\d+)\s*([hd])$/i) : null

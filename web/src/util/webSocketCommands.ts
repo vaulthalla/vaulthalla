@@ -1,4 +1,5 @@
 import { LocalDiskVault, RemoteSyncPolicy, S3Vault, Vault } from '@/models/vaults'
+import type { VaultDeletion, VaultRemovalPlan } from '@/models/vaultDeletion'
 import { VaultStats } from '@/models/stats/vaultStats'
 import { VaultActivity } from '@/models/stats/vaultActivity'
 import { VaultRecovery } from '@/models/stats/vaultRecovery'
@@ -215,7 +216,21 @@ export interface WebSocketCommandMap {
     response: { vault: LocalDiskVault | S3Vault }
   }
 
-  'storage.vault.remove': { payload: { id: number }; response: null }
+  // Safe deletion (#162): schedules the deletion (restorable until the retention window ends) or, with `now`, purges on
+  // the next pass; on a vault already pending deletion, `now` purges it. Refusals with data.code
+  // 'vault_upstream_key_loss' (resend with accept_key_loss) or 'vault_delete_now' (resend with confirm_now).
+  'storage.vault.remove': {
+    payload: { id: number; now?: boolean; delete_upstream?: boolean; confirm_now?: boolean; accept_key_loss?: boolean }
+    response: { deletion: VaultDeletion | null }
+  }
+
+  // What a delete would do (windows, provider, whether the key was ever exported). Changes nothing.
+  'storage.vault.remove.plan': { payload: { id: number }; response: { plan: VaultRemovalPlan } }
+
+  // Deletions the caller could have made: pending, purging, and purged ones (tombstones), newest first.
+  'storage.vault.deleted.list': { payload: null; response: { deleted: VaultDeletion[] } }
+
+  'storage.vault.restore': { payload: { id: number }; response: { vault: LocalDiskVault | S3Vault } }
 
   'storage.vault.get': { payload: { id: number }; response: { vault: LocalDiskVault | S3Vault } }
 

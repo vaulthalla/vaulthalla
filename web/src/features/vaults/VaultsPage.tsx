@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useMemo } from 'react'
+import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { PageHeader } from '@/components/ui/Panel'
 import { Button } from '@/components/ui/Button'
@@ -11,13 +12,17 @@ import { PlusIcon, VaultIcon } from '@/components/ui/icons'
 import { useCan } from '@/lib/permissions'
 import { formatDate } from '@/lib/format'
 import { titleCase } from '@/lib/format'
-import { useCredentials, useStorageOverview, useUserNames, useVaultList, VAULT_CREATE } from '@/features/vaults/hooks'
+import { useCredentials, useStorageOverview, useUserNames, useVaultList, VAULT_CREATE, VAULT_REMOVE } from '@/features/vaults/hooks'
 import { providerLabel, vaultTypeLabel, type VaultRow } from '@/features/vaults/model'
 import { UsageCell, VaultGlyph, type BackendEntry } from '@/features/vaults/parts'
+
+// Pending and purged-with-key deletions (#162); only for accounts that may delete vaults.
+const DeletedVaults = dynamic(() => import('@/features/vaults/DeletedVaults'), { ssr: false })
 
 export const VaultsPage = () => {
   const vaults = useVaultList()
   const canCreate = useCan(VAULT_CREATE)
+  const canRemove = useCan(VAULT_REMOVE)
   const credentials = useCredentials()
   const { names } = useUserNames()
   const storage = useStorageOverview()
@@ -143,6 +148,7 @@ export const VaultsPage = () => {
           )
         }
       </QueryState>
+      {canRemove ? <DeletedVaults /> : null}
     </>
   )
 }

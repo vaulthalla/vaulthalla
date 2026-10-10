@@ -191,9 +191,17 @@ struct SharingConfig {
 struct VaultsS3Config {
     std::string default_remote_sync_strategy = "cache";        // cache | sync | mirror
     std::string default_remote_conflict_policy = "keep_local"; // keep_local | keep_remote | keep_newest | ask
+    // Key retention for S3-backed vaults (#162): their data may stay in the bucket, so the key is kept longer.
+    std::chrono::seconds tpm_retention_window = std::chrono::days(180);
 };
 
+// vaults.* retention (#162). Durations are config duration strings ("30s", "5m", "12h", "90d", "2w"; util.hpp). A
+// window applies to vaults deleted after it changes: each deletion records its own purge and key-retention deadlines.
 struct VaultsConfig {
+    // A deleted vault can be restored for this long; then its local data (and upstream data, when chosen) is purged.
+    std::chrono::seconds retention_window = std::chrono::minutes(5);
+    // How long a deleted vault's sealed key is kept (always the full period, even for "delete now").
+    std::chrono::seconds tpm_retention_window = std::chrono::days(90);
     VaultsS3Config s3;
 };
 

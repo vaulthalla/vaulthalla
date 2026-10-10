@@ -24,7 +24,7 @@ auth: {}
 sharing: {}
 
 
-# === 🗃️ VAULT DEFAULTS ===
+# === 🗃️ VAULTS: DEFAULTS, DELETION & RETENTION ===
 vaults: {}
 
 
@@ -44,6 +44,8 @@ stats_snapshots: {}
 
 # === Caching & Previews ===
 caching: {}
+
+
 
 
 # === 📜 LOGGING SETTINGS ===

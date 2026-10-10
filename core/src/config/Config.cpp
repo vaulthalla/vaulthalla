@@ -744,7 +744,8 @@ Config& Config::operator=(Config&&) noexcept = default;
     void to_json(nlohmann::json &j, const VaultsS3Config &c) {
         j = {
             {"default_remote_sync_strategy", c.default_remote_sync_strategy},
-            {"default_remote_conflict_policy", c.default_remote_conflict_policy}
+            {"default_remote_conflict_policy", c.default_remote_conflict_policy},
+            {"tpm_retention_window", durationToString(c.tpm_retention_window)}
         };
     }
 
@@ -753,15 +754,22 @@ Config& Config::operator=(Config&&) noexcept = default;
         c.default_remote_sync_strategy = j.value("default_remote_sync_strategy", defaults.default_remote_sync_strategy);
         c.default_remote_conflict_policy = j.value("default_remote_conflict_policy", defaults.default_remote_conflict_policy);
         requireRemoteDefaults(c);
+        if (j.contains("tpm_retention_window"))
+            c.tpm_retention_window = parseDuration(j.at("tpm_retention_window").get<std::string>());
     }
 
     void to_json(nlohmann::json &j, const VaultsConfig &c) {
         j = {
+            {"retention_window", durationToString(c.retention_window)},
+            {"tpm_retention_window", durationToString(c.tpm_retention_window)},
             {"s3", c.s3}
         };
     }
 
     void from_json(const nlohmann::json &j, VaultsConfig &c) {
+        if (j.contains("retention_window")) c.retention_window = parseDuration(j.at("retention_window").get<std::string>());
+        if (j.contains("tpm_retention_window"))
+            c.tpm_retention_window = parseDuration(j.at("tpm_retention_window").get<std::string>());
         if (j.contains("s3")) j.at("s3").get_to(c.s3);
     }
 

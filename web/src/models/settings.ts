@@ -54,7 +54,9 @@ export interface VaultRemoteDefaults extends SettingsSection {
 }
 
 export interface VaultsSettings extends SettingsSection {
-  s3: VaultRemoteDefaults
+  retention_window: string
+  tpm_retention_window: string
+  s3: VaultRemoteDefaults & { tpm_retention_window: string }
 }
 
 // settings.policy.get: the part of the config any signed-in console needs (super admins get all of it from

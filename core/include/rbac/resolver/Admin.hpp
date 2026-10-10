@@ -155,7 +155,8 @@ namespace vh::rbac::resolver {
                 //     resolved.group = db::query::identities::Group::getById(*ctx.group_id);
             }
             else if constexpr (AdminResolverTraits<EnumT>::domain == Domain::Vault) {
-                if (ctx.vault_id)
+                if (ctx.vault) resolved.vault = ctx.vault;
+                else if (ctx.vault_id)
                     resolved.engine = runtime::Deps::get().storageManager->getEngine(*ctx.vault_id);
 
                 if (resolved.engine)

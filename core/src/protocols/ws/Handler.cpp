@@ -85,6 +85,9 @@ void Handler::registerStorageHandlers(const std::shared_ptr<Router>& r) {
     r->registerPayload("storage.vault.add", &handler::Vaults::add);
     r->registerPayload("storage.vault.update", &handler::Vaults::update);
     r->registerPayload("storage.vault.remove", &handler::Vaults::remove);
+    r->registerPayload("storage.vault.remove.plan", &handler::Vaults::removalPlan);
+    r->registerSessionOnlyHandler("storage.vault.deleted.list", &handler::Vaults::listDeleted);
+    r->registerPayload("storage.vault.restore", &handler::Vaults::restore);
     r->registerPayload("storage.vault.get", &handler::Vaults::get);
     r->registerPayload("storage.vault.sync", &handler::Vaults::sync);
 }

@@ -61,7 +61,10 @@ inline std::string appendPaginationAndFilter(const std::string_view base,
     std::ostringstream out;
     out << base;
 
-    if (p.filter && filterCol) out << " WHERE " << *filterCol << " ILIKE '%" << escape(*p.filter) << "%'";
+    // A base that already filters (a plain top-level WHERE) gets the name filter ANDed onto it.
+    if (p.filter && filterCol)
+        out << (base.find(" WHERE ") != std::string_view::npos ? " AND " : " WHERE ") << *filterCol << " ILIKE '%"
+            << escape(*p.filter) << "%'";
 
     if (p.sort) {
         if (!isSortColumn(*p.sort)) throw std::invalid_argument("Invalid sort column: " + *p.sort);
