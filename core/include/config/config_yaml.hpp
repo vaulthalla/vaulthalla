@@ -826,6 +826,40 @@ struct convert<AuditConfig> {
 };
 
 template<>
+struct convert<VaultsS3Config> {
+    static Node encode(const VaultsS3Config& rhs) {
+        Node node;
+        node["tpm_retention_window"] = durationToString(rhs.tpm_retention_window);
+        return node;
+    }
+
+    static bool decode(const Node& node, VaultsS3Config& rhs) {
+        if (!node.IsMap()) return false;
+        if (node["tpm_retention_window"]) rhs.tpm_retention_window = parseDuration(node["tpm_retention_window"].as<std::string>());
+        return true;
+    }
+};
+
+template<>
+struct convert<VaultsConfig> {
+    static Node encode(const VaultsConfig& rhs) {
+        Node node;
+        node["retention_window"] = durationToString(rhs.retention_window);
+        node["tpm_retention_window"] = durationToString(rhs.tpm_retention_window);
+        node["s3"] = rhs.s3;
+        return node;
+    }
+
+    static bool decode(const Node& node, VaultsConfig& rhs) {
+        if (!node.IsMap()) return false;
+        if (node["retention_window"]) rhs.retention_window = parseDuration(node["retention_window"].as<std::string>());
+        if (node["tpm_retention_window"]) rhs.tpm_retention_window = parseDuration(node["tpm_retention_window"].as<std::string>());
+        if (node["s3"]) convert<VaultsS3Config>::decode(node["s3"], rhs.s3);
+        return true;
+    }
+};
+
+template<>
 struct convert<DevConfig> {
     static Node encode(const DevConfig& rhs) {
         Node node;

@@ -227,7 +227,8 @@ std::vector<Vault::VaultPtr> Vault::listVaults(const std::optional<vh::vault::mo
         const auto sql = appendPaginationAndFilter(
             "SELECT v.*, s.* "
             "FROM vault v "
-            "LEFT JOIN s3 s ON v.id = s.vault_id",
+            "LEFT JOIN s3 s ON v.id = s.vault_id "
+            "WHERE v.deleted_at IS NULL",
             params, "v.id", "v.name"
         );
 
@@ -263,7 +264,7 @@ std::vector<Vault::VaultPtr> Vault::listUserVaults(const unsigned int userId, co
             "SELECT v.*, s.* "
                 "FROM vault v "
                 "LEFT JOIN s3 s ON v.id = s.vault_id "
-                "WHERE v.owner_id = " + txn.quote(userId),
+                "WHERE v.owner_id = " + txn.quote(userId) + " AND v.deleted_at IS NULL",
                 params, "v.id", "v.name"
             );
         } else if (*type == vh::vault::model::VaultType::S3) {
@@ -271,7 +272,8 @@ std::vector<Vault::VaultPtr> Vault::listUserVaults(const unsigned int userId, co
             "SELECT v.*, s.* "
                 "FROM vault v "
                 "JOIN s3 s ON v.id = s.vault_id "
-                "WHERE v.owner_id = " + txn.quote(userId) + " AND v.type = " + to_string(vh::vault::model::VaultType::S3),
+                "WHERE v.owner_id = " + txn.quote(userId) + " AND v.type = " + txn.quote(to_string(vh::vault::model::VaultType::S3)) +
+                " AND v.deleted_at IS NULL",
                 params, "v.id", "v.name"
             );
         } else if (*type == vh::vault::model::VaultType::Local) {
@@ -279,7 +281,8 @@ std::vector<Vault::VaultPtr> Vault::listUserVaults(const unsigned int userId, co
             "SELECT v.*, s.* "
                 "FROM vault v "
                 "LEFT JOIN s3 s ON v.id = s.vault_id "
-                "WHERE v.owner_id = " + txn.quote(userId) + " AND v.type = " + to_string(vh::vault::model::VaultType::Local),
+                "WHERE v.owner_id = " + txn.quote(userId) + " AND v.type = " + txn.quote(to_string(vh::vault::model::VaultType::Local)) +
+                " AND v.deleted_at IS NULL",
                 params, "v.id", "v.name"
             );
         } else throw std::runtime_error("Unsupported VaultType in listUserVaults(): " + to_string(*type));
@@ -305,7 +308,7 @@ std::vector<Vault::VaultPtr> Vault::listUserVaults(const unsigned int userId, co
 
 bool Vault::localDiskVaultExists() {
     return Transactions::exec("Vault::localDiskVaultExists", [&](pqxx::work& txn) {
-        const auto res = txn.exec("SELECT COUNT(*) FROM vault WHERE type = " +
+        const auto res = txn.exec("SELECT COUNT(*) FROM vault WHERE deleted_at IS NULL AND type = " +
                                   txn.quote(static_cast<int>(vh::vault::model::VaultType::Local)));
         return res[0][0].as<int>() > 0;
     });
@@ -328,6 +331,18 @@ bool Vault::vaultExists(const std::string& name, const unsigned int ownerId) {
     return Transactions::exec("Vault::vaultExists", [&](pqxx::work& txn) {
         const auto res = txn.exec(pqxx::prepped{"vault_exists"}, pqxx::params{name, ownerId});
         return res.one_field().as<bool>();
+    });
+}
+
+std::optional<Vault::BucketOwner> Vault::bucketOwner(const unsigned int apiKeyId, const std::string& bucket) {
+    return Transactions::exec("Vault::bucketOwner", [&](pqxx::work& txn) -> std::optional<BucketOwner> {
+        const auto res = txn.exec(
+            "SELECT v.id, v.name, v.deleted_at IS NOT NULL AS deleted FROM s3 JOIN vault v ON v.id = s3.vault_id "
+            "WHERE s3.api_key_id = $1 AND s3.bucket = $2",
+            pqxx::params{apiKeyId, bucket});
+        if (res.empty()) return std::nullopt;
+        const auto row = res.one_row();
+        return BucketOwner{row["id"].as<unsigned int>(), row["name"].as<std::string>(), row["deleted"].as<bool>()};
     });
 }
 

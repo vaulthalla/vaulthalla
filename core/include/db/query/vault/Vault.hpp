@@ -31,7 +31,16 @@ public:
 
     static void updateVaultSync(const PolicyPtr& sync, const VaultT& type);
 
+    // Counts deleted vaults pending purge too: their names stay reserved (#162).
     [[nodiscard]] static bool vaultExists(const std::string& name, unsigned int ownerId);
+
+    // The vault (live or deleted) bound to this API key and bucket, if any.
+    struct BucketOwner {
+        unsigned int vault_id{};
+        std::string vault_name;
+        bool deleted{};
+    };
+    [[nodiscard]] static std::optional<BucketOwner> bucketOwner(unsigned int apiKeyId, const std::string& bucket);
 
     [[nodiscard]] static bool vaultRootExists(unsigned int vaultId);
 

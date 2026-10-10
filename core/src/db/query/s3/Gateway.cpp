@@ -1045,7 +1045,10 @@ bool Gateway::unbindBucket(const std::string& bucketName) {
 
 std::optional<BucketBinding> Gateway::resolveBucket(const std::string& bucketName) {
     return Transactions::exec("S3Gateway::resolveBucket", [&](pqxx::work& txn) -> std::optional<BucketBinding> {
-        const auto res = txn.exec("SELECT * FROM s3_gateway_bucket WHERE bucket_name = $1", pqxx::params{bucketName});
+        // A deleted vault's bucket is gone from the gateway at once (#162); the binding returns if the vault is restored.
+        const auto res = txn.exec(
+            "SELECT b.* FROM s3_gateway_bucket b JOIN vault v ON v.id = b.vault_id "
+            "WHERE b.bucket_name = $1 AND v.deleted_at IS NULL", pqxx::params{bucketName});
         if (res.empty()) return std::nullopt;
         return bucketFromRow(res.one_row());
     });
@@ -1054,8 +1057,10 @@ std::optional<BucketBinding> Gateway::resolveBucket(const std::string& bucketNam
 std::vector<BucketBinding> Gateway::listBuckets(const std::optional<uint32_t> userId) {
     return Transactions::exec("S3Gateway::listBuckets", [&](pqxx::work& txn) {
         const auto sql = userId
-            ? "SELECT b.* FROM s3_gateway_bucket b JOIN vault v ON v.id = b.vault_id WHERE v.owner_id = " + txn.quote(*userId) + " ORDER BY b.bucket_name"
-            : "SELECT * FROM s3_gateway_bucket ORDER BY bucket_name";
+            ? "SELECT b.* FROM s3_gateway_bucket b JOIN vault v ON v.id = b.vault_id WHERE v.owner_id = " + txn.quote(*userId) +
+                  " AND v.deleted_at IS NULL ORDER BY b.bucket_name"
+            : "SELECT b.* FROM s3_gateway_bucket b JOIN vault v ON v.id = b.vault_id WHERE v.deleted_at IS NULL "
+              "ORDER BY b.bucket_name";
         const auto res = txn.exec(sql);
         std::vector<BucketBinding> out;
         out.reserve(res.size());

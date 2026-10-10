@@ -261,6 +261,21 @@ struct AuditConfig {
     FilesTrashedConfig files_trashed;
 };
 
+// vaults.* (#162). Durations are config duration strings ("30s", "5m", "12h", "90d", "2w"; util.hpp). A window
+// applies to vaults deleted after it changes: each deletion records its own purge and key-retention deadlines.
+struct VaultsS3Config {
+    // Key retention for S3-backed vaults: their data may stay in the bucket, so the key is kept longer.
+    std::chrono::seconds tpm_retention_window = std::chrono::days(180);
+};
+
+struct VaultsConfig {
+    // A deleted vault can be restored for this long; then its local data (and upstream data, when chosen) is purged.
+    std::chrono::seconds retention_window = std::chrono::minutes(5);
+    // How long a deleted vault's sealed key is kept (always the full period, even for "delete now").
+    std::chrono::seconds tpm_retention_window = std::chrono::days(90);
+    VaultsS3Config s3;
+};
+
 struct DevConfig {
     bool enabled = false;
     bool init_r2_test_vault = false;
@@ -310,6 +325,7 @@ struct Config {
     EmailConfig email;
     OperatorEmailsConfig operator_emails;
     AuditConfig auditing;
+    VaultsConfig vaults;
     DevConfig dev;
 
     LoggingConfig logging; // internal only
@@ -412,6 +428,10 @@ void to_json(nlohmann::json& j, const FilesTrashedConfig& c);
 void from_json(const nlohmann::json& j, FilesTrashedConfig& c);
 void to_json(nlohmann::json& j, const AuditConfig& c);
 void from_json(const nlohmann::json& j, AuditConfig& c);
+void to_json(nlohmann::json& j, const VaultsS3Config& c);
+void from_json(const nlohmann::json& j, VaultsS3Config& c);
+void to_json(nlohmann::json& j, const VaultsConfig& c);
+void from_json(const nlohmann::json& j, VaultsConfig& c);
 void to_json(nlohmann::json& j, const DevConfig& c);
 void from_json(const nlohmann::json& j, DevConfig& c);
 

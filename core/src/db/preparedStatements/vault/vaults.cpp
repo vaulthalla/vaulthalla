@@ -24,13 +24,13 @@ void vh::db::Connection::initPreparedVaults() const {
                    "SELECT v.*, s.* "
                    "FROM vault v "
                    "LEFT JOIN s3 s ON v.id = s.vault_id "
-                   "WHERE v.id = $1");
+                   "WHERE v.id = $1 AND v.deleted_at IS NULL");
 
     conn_->prepare("get_vault_by_name_and_owner",
                    "SELECT v.*, s.* "
                    "FROM vault v "
                    "LEFT JOIN s3 s ON v.id = s.vault_id "
-                   "WHERE v.name = $1 AND v.owner_id = $2");
+                   "WHERE v.name = $1 AND v.owner_id = $2 AND v.deleted_at IS NULL");
 
     conn_->prepare("get_vault_owners_name",
                    "SELECT u.name FROM users u "
@@ -43,6 +43,7 @@ void vh::db::Connection::initPreparedVaults() const {
 
     conn_->prepare("get_vault_root_dir_id_by_vault_id", "SELECT id FROM fs_entry WHERE vault_id = $1 AND path = '/'");
 
+    // Counts deleted vaults too: a deleted vault's name stays reserved until it is purged (#162).
     conn_->prepare("vault_exists", "SELECT EXISTS(SELECT 1 FROM vault WHERE name = $1 AND owner_id = $2) AS exists");
 
     conn_->prepare("is_s3_vault", "SELECT EXISTS(SELECT 1 FROM s3 WHERE vault_id = $1) AS is_s3");

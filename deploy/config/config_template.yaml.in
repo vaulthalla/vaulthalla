@@ -42,6 +42,10 @@ stats_snapshots: {}
 caching: {}
 
 
+# === 🗄️ VAULT DELETION & RETENTION ===
+vaults: {}
+
+
 # === 📜 LOGGING SETTINGS ===
 logging: {}
 

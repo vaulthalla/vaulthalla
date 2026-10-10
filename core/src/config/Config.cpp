@@ -64,6 +64,7 @@ Config& Config::operator=(Config&&) noexcept = default;
         if (auto node = root["email"]) YAML::convert<EmailConfig>::decode(node, cfg.email);
         if (auto node = root["operator_emails"]) YAML::convert<OperatorEmailsConfig>::decode(node, cfg.operator_emails);
         if (auto node = root["auditing"]) YAML::convert<AuditConfig>::decode(node, cfg.auditing);
+        if (auto node = root["vaults"]) YAML::convert<VaultsConfig>::decode(node, cfg.vaults);
         if (auto node = root["dev"]) YAML::convert<DevConfig>::decode(node, cfg.dev);
 
         if (auto node = root["logging"]) YAML::convert<LoggingConfig>::decode(node, cfg.logging);
@@ -104,6 +105,7 @@ Config& Config::operator=(Config&&) noexcept = default;
         put("caching", caching);
         put("preview", preview);
         put("auditing", auditing);
+        put("vaults", vaults);
         put("logging", logging);
         put("dev", dev);
 
@@ -136,6 +138,7 @@ Config& Config::operator=(Config&&) noexcept = default;
             {"email", c.email},
             {"operator_emails", c.operator_emails},
             {"auditing", c.auditing},
+            {"vaults", c.vaults},
             {"logging", c.logging},
             {"dev", c.dev}
         };
@@ -157,6 +160,7 @@ Config& Config::operator=(Config&&) noexcept = default;
         if (j.contains("email")) j.at("email").get_to(c.email);
         if (j.contains("operator_emails")) j.at("operator_emails").get_to(c.operator_emails);
         j.at("auditing").get_to(c.auditing);
+        if (j.contains("vaults")) j.at("vaults").get_to(c.vaults);
         if (j.contains("logging")) j.at("logging").get_to(c.logging);
         j.at("dev").get_to(c.dev);
     }
@@ -841,6 +845,30 @@ Config& Config::operator=(Config&&) noexcept = default;
         j.at("audit_log").get_to(c.audit_log);
         j.at("encryption_waivers").get_to(c.encryption_waivers);
         j.at("files_trashed").get_to(c.files_trashed);
+    }
+
+    void to_json(nlohmann::json &j, const VaultsS3Config &c) {
+        j = {{"tpm_retention_window", durationToString(c.tpm_retention_window)}};
+    }
+
+    void from_json(const nlohmann::json &j, VaultsS3Config &c) {
+        if (j.contains("tpm_retention_window"))
+            c.tpm_retention_window = parseDuration(j.at("tpm_retention_window").get<std::string>());
+    }
+
+    void to_json(nlohmann::json &j, const VaultsConfig &c) {
+        j = {
+            {"retention_window", durationToString(c.retention_window)},
+            {"tpm_retention_window", durationToString(c.tpm_retention_window)},
+            {"s3", c.s3}
+        };
+    }
+
+    void from_json(const nlohmann::json &j, VaultsConfig &c) {
+        if (j.contains("retention_window")) c.retention_window = parseDuration(j.at("retention_window").get<std::string>());
+        if (j.contains("tpm_retention_window"))
+            c.tpm_retention_window = parseDuration(j.at("tpm_retention_window").get<std::string>());
+        if (j.contains("s3")) j.at("s3").get_to(c.s3);
     }
 
     void to_json(nlohmann::json &j, const DevConfig &c) {

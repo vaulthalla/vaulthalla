@@ -17,11 +17,16 @@ void vh::db::Connection::initPreparedShareLinks() const {
         RETURNING *
     )SQL");
 
-    conn_->prepare("share_link_get", "SELECT * FROM share_link WHERE id = $1");
-    conn_->prepare("share_link_get_by_lookup_id", "SELECT * FROM share_link WHERE token_lookup_id = $1");
-    conn_->prepare("share_link_list_for_user", "SELECT * FROM share_link WHERE created_by = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3");
-    conn_->prepare("share_link_list_for_vault", "SELECT * FROM share_link WHERE vault_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3");
-    conn_->prepare("share_link_list_for_target", "SELECT * FROM share_link WHERE root_entry_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3");
+    // A deleted vault's links vanish with it (#162): they resolve and list again if the vault is restored.
+    constexpr auto live = " AND vault_id NOT IN (SELECT id FROM vault WHERE deleted_at IS NOT NULL)";
+    conn_->prepare("share_link_get", std::string("SELECT * FROM share_link WHERE id = $1") + live);
+    conn_->prepare("share_link_get_by_lookup_id", std::string("SELECT * FROM share_link WHERE token_lookup_id = $1") + live);
+    conn_->prepare("share_link_list_for_user", std::string("SELECT * FROM share_link WHERE created_by = $1") + live +
+                                                   " ORDER BY created_at DESC LIMIT $2 OFFSET $3");
+    conn_->prepare("share_link_list_for_vault", std::string("SELECT * FROM share_link WHERE vault_id = $1") + live +
+                                                    " ORDER BY created_at DESC LIMIT $2 OFFSET $3");
+    conn_->prepare("share_link_list_for_target", std::string("SELECT * FROM share_link WHERE root_entry_id = $1") + live +
+                                                     " ORDER BY created_at DESC LIMIT $2 OFFSET $3");
 
     conn_->prepare("share_link_update", R"SQL(
         UPDATE share_link

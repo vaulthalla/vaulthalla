@@ -13,6 +13,7 @@
 #include "runtime/Deps.hpp"
 #include "stats/SnapshotService.hpp"
 #include "sync/Controller.hpp"
+#include "vault/RetentionService.hpp"
 
 #include <array>
 #include <chrono>
@@ -31,6 +32,7 @@ constexpr std::array kBaseStartOrder{
     "FUSE",
     "SyncController",
     "DBJanitor",
+    "VaultRetentionService",
     "LogRotationService",
     "StatsSnapshotService",
     "OperatorEmailService",
@@ -46,6 +48,7 @@ constexpr std::array kBaseStopOrder{
     "ConnectionLifecycleManager",
     "OperatorEmailService",
     "StatsSnapshotService",
+    "VaultRetentionService",
     "DBJanitor",
     "LogRotationService",
     "SyncController",
@@ -66,6 +69,7 @@ Manager::Manager()
       connectionLifecycleManager(std::make_shared<protocols::ws::ConnectionLifecycleManager>()),
       logRotationService(std::make_shared<log::RotationService>()),
       dbSweeperService(std::make_shared<db::Janitor>()),
+      vaultRetentionService(std::make_shared<vault::RetentionService>()),
       statsSnapshotService(std::make_shared<stats::SnapshotService>()),
       operatorEmailService(std::make_shared<notifications::OperatorEmailService>()) {
 
@@ -76,6 +80,7 @@ Manager::Manager()
     services_["ConnectionLifecycleManager"] = connectionLifecycleManager;
     services_["LogRotationService"] = logRotationService;
     services_["DBJanitor"] = dbSweeperService;
+    services_["VaultRetentionService"] = vaultRetentionService;
     services_["StatsSnapshotService"] = statsSnapshotService;
     services_["OperatorEmailService"] = operatorEmailService;
 
