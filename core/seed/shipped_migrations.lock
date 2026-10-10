@@ -53,6 +53,7 @@ current    a47c021ed16871e55ae0bf3501bfd09976da66681e4934814abf3332aa83f2ec  101
 current    45c438117fd8d0d1aa7b82b859d6efcfc819f51edb120dc4e891062b6945c657  102_password_changed_at.sql  unreleased
 current    60631df7ba045bbdc0cc56c033d41483078e799d1d4bf6829603bb6f27af4183  103_preview_artifacts.sql  unreleased
 current    a56ef3705ef4c33ca0223597bd5d78672b843236a303e6f5c424770f9d4b3840  104_user_delete_references.sql  unreleased
+current    ad2a13bcd7c86e7621b85c84e74d08aa7e4c43d450dcde98704a47f1e08ab0c6  105_admin_stats_permission.sql  unreleased
 historical 64170212eb3f9fbe0f7c949791b953f0376a1f2bcf66b3dec7afc5db6325d570  020_vaults.sql  v0.28.0-alpha..v1.5.0
 historical c154cd7e10f7931f29c12b9221c90f66d6b953cfb5e3dc15ea50f0940e5d4220  060_acl.sql  v0.28.0-alpha..v1.5.1
 historical 720caaa27c0d51635fe3f459a8426f019d3f0dbdc0b7ae176d283309933a7f53  082_stats_metric_samples.sql  v1.2.4..v1.2.5

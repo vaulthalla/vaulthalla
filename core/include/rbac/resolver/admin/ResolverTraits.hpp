@@ -47,4 +47,10 @@ namespace vh::rbac::resolver {
         static const auto& direct(const role::Admin& role) { return role.s3Gateway; }
     };
 
+    template <>
+    struct AdminResolverTraits<permission::admin::StatsPermissions> {
+        static constexpr auto domain = Domain::Global;
+        static const auto& direct(const role::Admin& role) { return role.stats; }
+    };
+
 }

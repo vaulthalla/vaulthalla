@@ -16,6 +16,15 @@ namespace vh::rbac::resolver {
     };
 
     template<>
+    struct PermissionTargetTraits<permission::admin::StatsPermissions> {
+        static constexpr auto domain = RoleDomain::Admin;
+        static constexpr bool canOverride = false;
+
+        static auto& target(role::Admin& role) { return role.stats; }
+        static const auto& target(const role::Admin& role) { return role.stats; }
+    };
+
+    template<>
     struct PermissionTargetTraits<permission::admin::keys::EncryptionKeyPermissions> {
         static constexpr auto domain = RoleDomain::Admin;
         static constexpr bool canOverride = false;
