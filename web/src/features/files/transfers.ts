@@ -94,11 +94,12 @@ const readError = async (response: Response, fallback: string) => {
   return new HttpError(response.status, text.length && text.length < 400 ? text : fallback)
 }
 
-const headRefusal = (status: number) => {
+const headRefusal = (status: number, isDir: boolean) => {
   if (status === 401) return 'Your session has ended. Sign in again to download.'
-  if (status === 403) return 'You don’t have permission to download this.'
+  if (status === 403) return isDir ? 'You don’t have permission to download everything in this folder.' : 'You don’t have permission to download this.'
   if (status === 404) return 'This item no longer exists.'
-  if (status === 413) return 'This is too large to download as one archive.'
+  // Folder archives have no size cap, only an entry-count limit for the up-front listing.
+  if (status === 413) return isDir ? 'This folder has too many items to download as one archive. Download its subfolders instead.' : 'This is too large to download.'
   if (status === 429 || status === 503) return 'The server is busy. Try again in a moment.'
   return `Download failed (HTTP ${status})`
 }
@@ -295,9 +296,10 @@ export const startUpload = (source: FsSource, targetDir: string, files: PickedFi
   return id
 }
 
-// Asks the server first with a HEAD (same URL, same authorization, no body), so a refusal (too large, gone, no
+// Asks the server first with a HEAD (same URL, same authorization, no body), so a refusal (too many entries, gone, no
 // permission) becomes a failed task instead of the browser navigating to an error page; then hands the URL to the
-// browser's own download manager, which the server streams to (files have no size cap).
+// browser's own download manager, which the server streams to. Files and folder ZIPs have no size cap, and both
+// answer HEAD with their exact length (a folder's is computed from its listing, without reading any file).
 export const startDownload = async (source: FsSource, path: string, label: string, isDir: boolean) => {
   const id = randomId()
   const url = source.downloadUrl(path)
@@ -305,7 +307,7 @@ export const startDownload = async (source: FsSource, path: string, label: strin
     id,
     kind: 'download',
     label: isDir ? `${label}.zip` : label,
-    detail: isDir ? 'Preparing archive' : 'Starting',
+    detail: isDir ? 'Listing folder' : 'Starting',
     status: 'running',
     bytesTotal: 0,
     bytesDone: 0,
@@ -319,7 +321,7 @@ export const startDownload = async (source: FsSource, path: string, label: strin
   try {
     const probe = await fetch(url, { method: 'HEAD', credentials: 'same-origin', cache: 'no-store' })
     // A HEAD carries no body: name the refusal from the status alone.
-    if (!probe.ok) throw new HttpError(probe.status, headRefusal(probe.status))
+    if (!probe.ok) throw new HttpError(probe.status, headRefusal(probe.status, isDir))
     const size = Number(probe.headers.get('content-length') ?? '')
     const anchor = document.createElement('a')
     anchor.href = url
@@ -332,7 +334,10 @@ export const startDownload = async (source: FsSource, path: string, label: strin
       status: 'done',
       finishedAt: Date.now(),
       filesDone: 1,
-      detail: Number.isFinite(size) && size > 0 ? `${formatBytes(size)} · handed to your browser` : 'Handed to your browser',
+      detail:
+        Number.isFinite(size) && size > 0 ?
+          `${formatBytes(size)}${isDir ? ' ZIP' : ''} · handed to your browser`
+        : 'Handed to your browser',
     })
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') return
