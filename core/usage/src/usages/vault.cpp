@@ -17,11 +17,15 @@ static const Optional localConflictOpt = Optional::Multi("local_conflict",
                                                          "Conflict resolution strategy for local vaults",
                                                          {"on-sync-conflict", "conflict"},
                                                          {"overwrite", "keep_both", "ask"}, "overwrite");
-static const Optional syncStrategyOpt = Optional::Multi("sync_strategy", "Sync strategy for S3 vaults",
+static const Optional syncStrategyOpt = Optional::Multi("sync_strategy",
+                                                        "Sync strategy for S3 vaults (new vaults default to "
+                                                        "vaults.s3.default_remote_sync_strategy in config.yaml)",
                                                         {"sync-strategy", "strategy"}, {"cache", "sync", "mirror"});
-static const Optional s3ConflictOpt = Optional::Multi("s3_conflict", "Conflict resolution strategy",
+static const Optional s3ConflictOpt = Optional::Multi("s3_conflict",
+                                                      "Conflict resolution strategy for S3 vaults (new vaults default "
+                                                      "to vaults.s3.default_remote_conflict_policy in config.yaml)",
                                                       {"on-sync-conflict", "conflict"},
-                                                      {"keep_local", "keep_remote", "ask"});
+                                                      {"keep_local", "keep_remote", "keep_newest", "ask"});
 
 static const auto intervalOpt = Optional::ManyToOne("interval", "Sync interval in seconds (default 5m)", {"interval", "sync-interval"}, "interval");
 
