@@ -6,13 +6,14 @@ void vh::db::Connection::initPreparedSyncConflicts() const {
         "sync_conflict.upsert",
         R"SQL(
         INSERT INTO sync_conflicts
-            (event_id, file_id, conflict_type, resolution, resolved_at)
+            (event_id, file_id, conflict_type, resolution, resolved_at, vault_id)
         VALUES
             ($1, $2, $3, $4::VARCHAR(24),
              CASE
                  WHEN $4::VARCHAR(24) <> 'unresolved'::VARCHAR(24) THEN NOW()
                  ELSE NULL
-             END)
+             END,
+             (SELECT vault_id FROM fs_entry WHERE id = $2))
         ON CONFLICT (event_id, file_id)
         DO UPDATE SET
             conflict_type = EXCLUDED.conflict_type,

@@ -17,6 +17,7 @@
 #include "ops/Error.hpp"
 #include "ops/Roles.hpp"
 #include "ops/Vaults.hpp"
+#include "rbac/role/Vault.hpp"
 #include "runtime/Deps.hpp"
 #include "seed/include/init_db_tables.hpp"
 #include "seed/include/seed_db.hpp"

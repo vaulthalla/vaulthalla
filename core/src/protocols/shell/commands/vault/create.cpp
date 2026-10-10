@@ -52,9 +52,9 @@ On-Sync-Conflict Policy Options:
   keep_local  - In case of conflict, keep the local version and overwrite the remote.
   keep_remote - In case of conflict, keep the remote version and overwrite the local.
   keep_newest - In case of conflict, keep whichever version was modified last.
-  ask         - Record the conflict and leave both versions as they are. Vaulthalla has no
-                command to resolve a recorded conflict yet, so that file stops syncing until
-                the vault's policy changes.
+  ask         - Record the conflict and leave both versions as they are until someone decides
+                (`vh sync resolve` or the console's Sync Conflicts page). Everything else keeps
+                syncing; a file changed on only one side still syncs normally.
 
 The default is vaults.s3.default_remote_conflict_policy in config.yaml.
 )";

@@ -3,6 +3,8 @@
 #include "fs/model/File.hpp"
 #include "log/Registry.hpp"
 #include "sync/model/ScopedOp.hpp"
+#include "sync/model/Baseline.hpp"
+#include "sync/tasks/Baseline.hpp"
 
 using namespace vh::sync::tasks;
 using namespace vh::storage;
@@ -17,6 +19,7 @@ void Upload::operator()() {
         op->start(file->size_bytes);
         engine->upload(file);
         op->success = true;
+        recordBaseline(engine, vh::sync::model::Baseline::afterUpload(*file));
     } catch (const std::exception& e) {
         log::Registry::sync()->error("[UploadTask] Failed to upload file: {} - {}", file->path.string(), e.what());
     }

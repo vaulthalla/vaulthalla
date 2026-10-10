@@ -210,6 +210,19 @@ vh vault sync reconcile <vault> --allow-list-scan
 
 S3/R2 sync policy fields include strategy, conflict policy, interval, request budgets, and maximum remote-index age. See [Sync](/vaults/sync) and [Request Budgets](/cost-control/request-budgets).
 
+### Sync Conflicts
+
+Conflicts recorded under the `ask` policy (S3/R2 vaults) wait for a decision:
+
+```bash
+vh sync resolve                                         # interactive session (needs a terminal)
+vh sync resolve --list [--vault <vault>] [--json]
+vh sync resolve <id>... --keep-local | --keep-remote [--json]
+vh sync resolve --vault <vault> --all --keep-local | --keep-remote [--yes]
+```
+
+`vh resolve` takes the same arguments. Keep local uploads the local copy over the remote object; keep remote downloads the remote object over the local copy. A decision needs `vault.sync.action.resolve_conflicts` and Overwrite on the file, and is refused when either side changed since the conflict was recorded. Exit status is 2 when any conflict was not resolved; each one is reported with its reason. Without a terminal, `--all` needs `--yes`. See [Resolving Conflicts](/vaults/sync#resolving-conflicts).
+
 ## Vault Keys
 
 ```bash

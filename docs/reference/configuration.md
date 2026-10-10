@@ -143,13 +143,13 @@ New vaults start from these settings when the request doesn't name its own:
 vaults:
   s3:
     default_remote_sync_strategy: cache
-    default_remote_conflict_policy: keep_local
+    default_remote_conflict_policy: ask
 ```
 
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `vaults.s3.default_remote_sync_strategy` | `cache` | Sync strategy for a new S3/R2 vault created without `--sync-strategy` (or the web form's choice): `cache` indexes the bucket and fetches files when they are opened, `sync` keeps both sides complete, `mirror` makes one side match the other. |
-| `vaults.s3.default_remote_conflict_policy` | `keep_local` | What a new S3/R2 vault does when a file differs on both sides: `keep_local`, `keep_remote`, `keep_newest` or `ask`. With `ask` the conflict is recorded and that file stops syncing; Vaulthalla has no command to resolve recorded conflicts yet, so prefer one of the `keep_*` policies. |
+| `vaults.s3.default_remote_conflict_policy` | `ask` | What a new S3/R2 vault does when a file changed on both sides: `ask`, `keep_local`, `keep_remote` or `keep_newest`. With `ask` the conflict is recorded, that file waits for a decision (`vh sync resolve` or the console's Sync Conflicts page) and everything else keeps syncing; see [Sync](/vaults/sync#resolving-conflicts). |
 
 Existing vaults keep their own settings; change them with `vh vault sync update` or the vault's **Sync** tab. An unknown value is a configuration error and the daemon refuses to start until it is fixed. Before these keys moved here they were `s3_gateway.default_remote_sync_strategy` and `s3_gateway.default_remote_conflict_policy`; the old keys are still read (with a deprecation warning) when the new ones are absent, and an invalid old value is ignored. See [Sync Policies](/vaults/sync).
 

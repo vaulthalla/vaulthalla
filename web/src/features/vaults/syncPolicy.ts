@@ -71,11 +71,13 @@ export const STRATEGY_OPTIONS: { value: SyncStrategy; label: string; hint: strin
   { value: 'mirror', label: 'Mirror', hint: 'One-way: make the bucket match the vault.' },
 ]
 
-export const CONFLICT_OPTIONS: { value: ConflictPolicy; label: string }[] = [
-  { value: 'keep_local', label: 'Keep local' },
-  { value: 'keep_remote', label: 'Keep remote' },
-  { value: 'keep_newest', label: 'Keep newest' },
-  { value: 'ask', label: 'Ask' },
+// When a file changed on both sides since the last sync. Under Ask the file waits for a person (Sync Conflicts page or
+// `vh sync resolve`) while everything else keeps syncing.
+export const CONFLICT_OPTIONS: { value: ConflictPolicy; label: string; hint: string }[] = [
+  { value: 'keep_local', label: 'Keep local', hint: 'The vault’s copy wins: it is uploaded over the bucket’s.' },
+  { value: 'keep_remote', label: 'Keep remote', hint: 'The bucket’s copy wins: it is downloaded over the vault’s.' },
+  { value: 'keep_newest', label: 'Keep newest', hint: 'The most recently modified copy wins.' },
+  { value: 'ask', label: 'Ask', hint: 'Records a sync conflict and waits for a decision on the Sync Conflicts page; everything else keeps syncing.' },
 ]
 
 export const DEFAULT_INTERVAL_SECONDS = 300
@@ -136,7 +138,7 @@ export const syncFormDefaults = (sync?: Partial<SyncPolicy> | null): SyncFormVal
   const budget = sync?.s3_request_budget ? normalizeBudget(sync.s3_request_budget) : BUDGET_PRESETS.balanced
   return {
     strategy: sync?.strategy ?? 'cache',
-    conflict_policy: sync?.conflict_policy ?? 'keep_local',
+    conflict_policy: sync?.conflict_policy ?? 'ask',
     interval_seconds: parseIntervalSeconds(sync?.interval ?? DEFAULT_INTERVAL_SECONDS),
     enabled: sync?.enabled ?? true,
     preset: presetFor(budget),

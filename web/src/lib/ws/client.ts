@@ -61,6 +61,8 @@ const COMMAND_TIMEOUTS: Partial<Record<Command, number>> = {
   'email.test.send': 60_000,
   's3.gateway.buckets.createRemoteCache': 180_000,
   'pricing.budget.preflight': 60_000,
+  // Resolving uploads or downloads each file (price-preflighted, metered); a bulk run can take minutes.
+  'sync.conflicts.resolve': 600_000,
 }
 
 export const commandTimeout = (command: Command) => COMMAND_TIMEOUTS[command] ?? DEFAULT_TIMEOUT_MS

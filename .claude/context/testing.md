@@ -45,7 +45,7 @@
 
 CLI ↔ ws parity for families migrated to `core/ops/`:
 `--gtest_filter='*Parity*:OpsGroups*:AuthPasswordChange*'` (groups, roles, API keys, vaults, users, S3 gateway,
-pricing/config). The whole binary takes ~7 minutes against a local DB; meson's test timeout is 30 minutes (#123). A parity case
+pricing/config, sync conflicts). The whole binary takes ~7 minutes against a local DB; meson's test timeout is 30 minutes (#123). A parity case
 runs one logical operation through `shell::Router::executeLine` and through the ws handler, for every seeded admin
 role, and compares allow/deny (against an oracle from the role's permission bits) and resulting DB state, never text.
 New families add a `test_ops_parity_<family>.cpp` on the same pattern.
@@ -66,6 +66,7 @@ stale secrets, or port conflicts: `make uninstall` → `make test` → re-source
 | `DeriveRunnerTest`, `PreviewConfigTest` (`test_derive_runner.cpp`) | Runner against `vh_fake_derive_helper` (range pulls, caps, timeout, crash, RLIMIT_AS, fd/env hygiene), `preview.*` parsing | nothing |
 | `PreviewCadHelperTest`, `PreviewMediaHelper`, `PreviewMediaBrowser` | the real helpers via the protocol | skip when the helper isn't built (media also skips without the `ffmpeg` CLI) |
 | `KeyRotationSafetyTest` (`test_key_rotation_safety.cpp`) | crash/failure-safe rotation, seam-injected | nothing |
+| `SyncConflictsTest`, `SyncConflictBaseline` (`test_sync_conflicts.cpp`), `ConflictParityTest` (`test_ops_parity_conflicts.cpp`) | #187: `ask` records a two-sided conflict once and syncs one-sided changes, converges on its own, keep_local / keep_remote through an in-memory bucket (`tests/helpers/sync_conflict_harness.hpp`: fake controller + real passes run inline), stale refusals, RBAC (no permission, no Overwrite, vault role, admin via vault globals), the `/download/conflict` lane, CLI vs ws for every seeded admin role | test DB env |
 | `VaultRetentionTest` (`test_vault_retention.cpp`) | safe deletion (#162): schedule → restore, purge after the window (injected pass clock), delete now, resumed purge, key tombstone + expiry, S3 key-loss gate, bounded upstream purge (fake controller), shared-bucket guard, path guard | test DB env |
 
 - Tests that run helpers under `RLIMIT_AS` (`DeriveRunnerTest`, the helper suites) need a **non-sanitized** build:

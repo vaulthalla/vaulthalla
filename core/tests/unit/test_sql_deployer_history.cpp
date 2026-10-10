@@ -7,6 +7,8 @@
 
 #include "seed/include/SqlDeployer.hpp"
 #include "rbac/role/Admin.hpp"
+#include "rbac/role/Vault.hpp"
+#include "rbac/permission/vault/sync/Action.hpp"
 
 #include <paths.h>
 #include <gtest/gtest.h>
@@ -302,6 +304,146 @@ TEST_F(SqlDeployerHistoryDb, StatsPermissionMigrationMatchesFreshSeedAndKeepsOld
             "SELECT bit_position FROM permission WHERE name = 'admin.stats.view' AND category = 'admin'");
         ASSERT_EQ(catalog.size(), 1u);
         EXPECT_EQ(catalog.one_row()[0].as<int>(), 0);
+
+        migseed::SqlDeployReport again;
+        ASSERT_NO_THROW(again = migseed::SqlDeployer::applyDir(txn, repoPsqlDir()));
+        EXPECT_TRUE(again.applied.empty());
+    });
+}
+
+// #187: 107 grants vault.sync.action.resolve_conflicts wherever sync trigger is held (built-in and custom vault roles,
+// admin vault globals), lists the permission, makes event_id survive event pruning, and closes duplicate open
+// conflicts before enforcing one open conflict per file.
+TEST_F(SqlDeployerHistoryDb, SyncConflictMigrationGrantsResolveWhereTriggerIsAndKeepsOneOpenConflictPerFile) {
+    inRolledBackTxn([](pqxx::work& txn) {
+        using SyncAction = vh::rbac::permission::vault::sync::SyncActionPermissions;
+        using vh::rbac::role::Vault;
+
+        // A <= 1.10.x database: 107 never applied.
+        txn.exec("DROP INDEX IF EXISTS uq_sync_conflicts_open_file");
+        txn.exec("DROP INDEX IF EXISTS idx_sync_conflicts_open_vault");
+        txn.exec("DROP TABLE IF EXISTS sync_file_baseline");
+        txn.exec("ALTER TABLE sync_conflict_artifacts DROP COLUMN IF EXISTS remote_etag, DROP COLUMN IF EXISTS encrypted");
+        txn.exec("ALTER TABLE sync_conflicts DROP COLUMN IF EXISTS vault_id, DROP COLUMN IF EXISTS updated_at");
+        txn.exec("ALTER TABLE sync_conflicts DROP CONSTRAINT IF EXISTS sync_conflicts_event_id_fkey");
+        txn.exec("ALTER TABLE sync_conflicts DROP CONSTRAINT IF EXISTS sync_conflicts_resolution_check");
+        txn.exec("DELETE FROM sync_conflicts WHERE event_id IS NULL OR resolution NOT IN ('unresolved', 'kept_local', "
+                 "'kept_remote', 'kept_both', 'overwritten', 'fixed_remote_encryption')");
+        txn.exec("ALTER TABLE sync_conflicts ADD CONSTRAINT sync_conflicts_event_id_fkey FOREIGN KEY (event_id) "
+                 "REFERENCES sync_event (id) ON DELETE CASCADE");
+        txn.exec("ALTER TABLE sync_conflicts ALTER COLUMN event_id SET NOT NULL");
+        txn.exec("ALTER TABLE sync_conflicts ADD CONSTRAINT sync_conflicts_resolution_check CHECK (resolution IN "
+                 "('unresolved', 'kept_local', 'kept_remote', 'kept_both', 'overwritten', 'fixed_remote_encryption'))");
+        txn.exec("DELETE FROM schema_migrations WHERE filename = '107_sync_conflict_resolution.sql'");
+        txn.exec("DELETE FROM permission WHERE name = 'vault.sync.action.resolve_conflicts' AND category = 'vault'");
+
+        // Vault roles as an old install has them: the built-ins as seeded then (no resolve bit), plus custom ones.
+        const auto oldBits = [](Vault role) {
+            role.sync.action.revoke(SyncAction::ResolveConflicts);
+            return role.sync.toBitString();
+        };
+        const auto upsert = [&](const std::string& name, const std::string& syncBits) {
+            txn.exec(R"SQL(
+                INSERT INTO vault_role (name, description, files_permissions, directories_permissions, sync_permissions,
+                                        roles_permissions)
+                VALUES ($1, 'x', B'00000000000000000000000000000000', B'00000000000000000000000000000000', $2::bit(32),
+                        B'0000000000000000')
+                ON CONFLICT (name) DO UPDATE SET sync_permissions = EXCLUDED.sync_permissions
+            )SQL", pqxx::params{name, syncBits});
+        };
+        const std::vector<Vault> builtins{Vault::ImplicitDeny(), Vault::Guest(), Vault::Reader(), Vault::Contributor(),
+                                          Vault::Editor(), Vault::Manager(), Vault::PowerUser()};
+        for (const auto& role : builtins) upsert(role.name, oldBits(role));
+        Vault trigger, waiver, none;
+        trigger.sync.action.grant(SyncAction::Trigger);
+        waiver.sync.action.grant(SyncAction::SignWaiver);
+        upsert("claude_test_trigger_role", trigger.sync.toBitString());
+        upsert("claude_test_waiver_role", waiver.sync.toBitString());
+        upsert("claude_test_plain_role", none.sync.toBitString());
+
+        // A user with admin vault globals holding trigger, and a vault with a file that has two open conflicts (what
+        // every pass used to add) and one closed one.
+        const auto userId = txn.exec("INSERT INTO users (name, password_hash) VALUES ('claude_test_107_user', 'x') "
+                                     "RETURNING id").one_field().as<int>();
+        txn.exec(R"SQL(
+            INSERT INTO user_global_vault_policy (user_id, scope, files_permissions, directories_permissions,
+                                                  sync_permissions, roles_permissions)
+            VALUES ($1, 'admin', B'00000000000000000000000000000000', B'00000000000000000000000000000000', $2::bit(32),
+                    B'0000000000000000'),
+                   ($1, 'user', B'00000000000000000000000000000000', B'00000000000000000000000000000000', $3::bit(32),
+                    B'0000000000000000')
+        )SQL", pqxx::params{userId, trigger.sync.toBitString(), none.sync.toBitString()});
+        const auto vaultId = txn.exec("INSERT INTO vault (type, name, owner_id, mount_point) "
+                                      "VALUES ('s3', 'claude_test_107_vault', $1, '0123456789ABCDEFGHJKMNPQRSTVWX107') "
+                                      "RETURNING id", pqxx::params{userId}).one_field().as<int>();
+        const auto fileId = txn.exec("INSERT INTO fs_entry (vault_id, name, path) VALUES ($1, 'f.txt', '/f.txt') "
+                                     "RETURNING id", pqxx::params{vaultId}).one_field().as<int>();
+        txn.exec("INSERT INTO files (fs_entry_id, size_bytes) VALUES ($1, 1)", pqxx::params{fileId});
+        std::vector<int> conflicts;
+        for (const auto* resolution : {"kept_local", "unresolved", "unresolved"}) {
+            const auto eventId = txn.exec("INSERT INTO sync_event (vault_id) VALUES ($1) RETURNING id",
+                                          pqxx::params{vaultId}).one_field().as<int>();
+            conflicts.push_back(txn.exec("INSERT INTO sync_conflicts (event_id, file_id, conflict_type, resolution) "
+                                         "VALUES ($1, $2, 'mismatch', $3) RETURNING id",
+                                         pqxx::params{eventId, fileId, resolution}).one_field().as<int>());
+        }
+
+        migseed::SqlDeployReport report;
+        ASSERT_NO_THROW(report = migseed::SqlDeployer::applyDir(txn, repoPsqlDir()));
+        EXPECT_TRUE(applied(report, "107_sync_conflict_resolution.sql"));
+
+        const auto syncBitsOf = [&](const std::string& name) {
+            return txn.exec("SELECT sync_permissions::text FROM vault_role WHERE name = $1", pqxx::params{name})
+                .one_field().as<std::string>();
+        };
+        for (const auto& role : builtins) {
+            SCOPED_TRACE(role.name);
+            EXPECT_EQ(syncBitsOf(role.name), role.sync.toBitString()) << "migration and fresh seed disagree";
+        }
+        Vault triggerAfter = trigger;
+        triggerAfter.sync.action.grant(SyncAction::ResolveConflicts);
+        EXPECT_EQ(syncBitsOf("claude_test_trigger_role"), triggerAfter.sync.toBitString());
+        EXPECT_EQ(syncBitsOf("claude_test_waiver_role"), waiver.sync.toBitString());
+        EXPECT_EQ(syncBitsOf("claude_test_plain_role"), none.sync.toBitString());
+
+        const auto globalBits = [&](const std::string& scope) {
+            return txn.exec("SELECT sync_permissions::text FROM user_global_vault_policy WHERE user_id = $1 AND scope = $2",
+                            pqxx::params{userId, scope}).one_field().as<std::string>();
+        };
+        EXPECT_EQ(globalBits("admin"), triggerAfter.sync.toBitString()) << "admin vault globals with trigger";
+        EXPECT_EQ(globalBits("user"), none.sync.toBitString());
+
+        const auto catalog = txn.exec(
+            "SELECT bit_position FROM permission WHERE name = 'vault.sync.action.resolve_conflicts' AND category = 'vault'");
+        ASSERT_EQ(catalog.size(), 1u);
+        const auto permissions = Vault().toPermissions();
+        const auto exported = std::ranges::find_if(permissions, [](const auto& p) {
+            return p.qualified_name == "vault.sync.action.resolve_conflicts";
+        });
+        ASSERT_NE(exported, permissions.end());
+        EXPECT_EQ(catalog.one_field().as<int>(), static_cast<int>(exported->bit_position)) << "same as the fresh seed";
+
+        // One open conflict per file: the newest stays open, the older duplicate is superseded, history untouched.
+        const auto resolution = [&](const int id) {
+            return txn.exec("SELECT resolution, vault_id FROM sync_conflicts WHERE id = $1", pqxx::params{id}).one_row();
+        };
+        EXPECT_EQ(resolution(conflicts[0])[0].as<std::string>(), "kept_local");
+        EXPECT_EQ(resolution(conflicts[1])[0].as<std::string>(), "superseded");
+        EXPECT_EQ(resolution(conflicts[2])[0].as<std::string>(), "unresolved");
+        EXPECT_EQ(resolution(conflicts[2])[1].as<int>(), vaultId) << "vault_id backfilled";
+        {
+            pqxx::subtransaction dup(txn, "dup");
+            EXPECT_THROW(dup.exec("INSERT INTO sync_conflicts (event_id, file_id, conflict_type, resolution) "
+                                  "VALUES (NULL, $1, 'mismatch', 'unresolved')", pqxx::params{fileId}),
+                         std::exception) << "a second open conflict for the file is refused";
+        }
+
+        // Pruning a sync event no longer deletes the conflict it first saw.
+        const auto eventOfOpen = txn.exec("SELECT event_id FROM sync_conflicts WHERE id = $1",
+                                          pqxx::params{conflicts[2]}).one_field().as<int>();
+        txn.exec("DELETE FROM sync_event WHERE id = $1", pqxx::params{eventOfOpen});
+        EXPECT_TRUE(txn.exec("SELECT event_id FROM sync_conflicts WHERE id = $1", pqxx::params{conflicts[2]})
+                        .one_field().is_null());
 
         migseed::SqlDeployReport again;
         ASSERT_NO_THROW(again = migseed::SqlDeployer::applyDir(txn, repoPsqlDir()));

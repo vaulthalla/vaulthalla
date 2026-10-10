@@ -29,6 +29,7 @@ The Vaulthalla web console is the browser-based control surface for most operato
 | Manage roles | Roles (admin and vault roles in one list) | `vh role ...`, `vh vault role ...` |
 | Manage shares | Shares, and Share link… on a file or folder in Files | Web-first workflow |
 | Manage price budgets | Cost control | `vh pricing budget ...` |
+| Resolve sync conflicts | Sync Conflicts (top bar and System) | `vh sync resolve` |
 | Manage S3 Gateway | S3 gateway | `vh s3-gateway ...` |
 | Configure operator email | Notifications | `vh email ...` |
 
@@ -78,6 +79,25 @@ After creating or editing an S3/R2 vault, confirm the policy from the CLI:
 ```bash
 vh vault sync info <vault>
 ```
+
+## Sync Conflicts
+
+When an S3/R2 vault's conflict policy is `ask` (the default for new S3/R2 vaults), a file that changed both in the vault and in the bucket since they were last in sync is recorded as a sync conflict. That file stops syncing until someone decides; everything else keeps syncing. See [Vault Sync](/vaults/sync) for how conflicts are detected.
+
+A **Sync Conflicts** button with the number of open conflicts appears in the top bar, and a **Sync Conflicts** page appears under **System** in the sidebar. Both are hidden while there is nothing for you to resolve. You only see conflicts in vaults where you hold `vault.sync.action.resolve_conflicts` (through a vault role, your own role's scope as the owner, or an admin's vault globals); resolving a file also needs Overwrite on that file.
+
+On the page you can:
+
+- Filter by vault (only vaults that have conflicts are listed).
+- Choose **Keep local** (upload the vault's copy over the bucket's) or **Keep remote** (download the bucket's copy over the vault's) for one file.
+- Tick several files, or select all, and apply **Keep local** or **Keep remote** to all of them at once. Each file is handled on its own, and the page lists every file that could not be resolved with the reason.
+- Click a file to compare both copies side by side: sizes, modification times, hashes and types always; images, video and audio next to each other; text files as a line diff.
+
+:::callout{theme="info" title="Bucket reads are metered"}
+Previewing the bucket's copy downloads it from your provider, within the vault's request and price budgets. Small copies load when you open the comparison; larger ones wait for **Load the bucket copy**, and copies over 32 MiB are not previewed.
+:::
+
+A file whose copy changed again after the conflict was recorded is refused with "Changed since recorded" and stays in the list, so a decision never overwrites a change you have not seen.
 
 ## Cost Control
 

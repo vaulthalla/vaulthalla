@@ -151,6 +151,7 @@ TEST(CliOptions, EveryHandlerDispatchNameIsADefinedSubcommand) {
         {"s3-gateway", "disable"},
         {"s3-gateway", "enable"},
         {"s3-gateway", "status"},
+        {"sync", "resolve"},
         {"secrets", "export"},
         {"secrets", "set"},
         {"setup", "assign-admin"},
