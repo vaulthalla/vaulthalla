@@ -265,3 +265,83 @@ TEST(ShareFsResolutionTest, CanConvertShareRelativePathForInternalCallers) {
     EXPECT_EQ(target.vault_path, "/shared/reports/q1.pdf");
     EXPECT_EQ(target.share_path, "/reports/q1.pdf");
 }
+
+// Folder downloads (#143) authorize each listed entry with resolveListedChild instead of resolve(): the decision
+// and the resolved target must be the same, only the per-entry root/entry reloads are skipped.
+TEST(ShareFsResolutionTest, ResolveListedChildMatchesResolveForEveryListedEntry) {
+    const auto provider = providerWithSharedTree();
+    const TargetResolver resolver(provider);
+
+    for (const uint32_t extraOps : {0u, bit(Operation::Download), bit(Operation::Download) | bit(Operation::Preview)}) {
+        auto principal = makeFsPrincipal();
+        principal.grant.allowed_ops |= extraOps;
+        for (const auto* dirPath : {"/shared", "/shared/reports"}) {
+            const auto parent = resolver.resolve(principal, {
+                .path = dirPath,
+                .operation = Operation::List,
+                .expected_target_type = TargetType::Directory
+            });
+            for (const auto& child : resolver.listChildren(principal, parent)) {
+                for (const auto op : {Operation::Metadata, Operation::List, Operation::Download, Operation::Preview}) {
+                    std::optional<ResolvedTarget> viaResolve, viaListed;
+                    std::string resolveError, listedError;
+                    try {
+                        viaResolve = resolver.resolve(principal, {
+                            .path = TargetResolver::shareRelativePath(principal, child->path.string()),
+                            .operation = op,
+                            .path_mode = TargetPathMode::ShareRelative,
+                            .expected_target_type = TargetResolver::targetTypeOf(*child)
+                        });
+                    } catch (const std::exception& e) {
+                        resolveError = e.what();
+                    }
+                    try {
+                        viaListed = resolver.resolveListedChild(principal, parent, child, op);
+                    } catch (const std::exception& e) {
+                        listedError = e.what();
+                    }
+                    const auto where = child->path.string() + " op " + std::to_string(static_cast<int>(op)) +
+                                       " ops " + std::to_string(principal.grant.allowed_ops);
+                    ASSERT_EQ(viaResolve.has_value(), viaListed.has_value())
+                        << where << ": " << resolveError << " / " << listedError;
+                    EXPECT_EQ(resolveError, listedError) << where;
+                    if (!viaResolve) continue;
+                    EXPECT_EQ(viaResolve->vault_path, viaListed->vault_path) << where;
+                    EXPECT_EQ(viaResolve->share_path, viaListed->share_path) << where;
+                    EXPECT_EQ(viaResolve->requested_path, viaListed->requested_path) << where;
+                    EXPECT_EQ(viaResolve->root_path, viaListed->root_path) << where;
+                    EXPECT_EQ(viaResolve->target_type, viaListed->target_type) << where;
+                    EXPECT_EQ(viaResolve->operation, viaListed->operation) << where;
+                    EXPECT_EQ(viaResolve->entry->id, viaListed->entry->id) << where;
+                    EXPECT_EQ(viaResolve->root_entry->id, viaListed->root_entry->id) << where;
+                }
+            }
+        }
+    }
+}
+
+TEST(ShareFsResolutionTest, ResolveListedChildRefusesEntriesThatAreNotListedChildrenInScope) {
+    const auto provider = providerWithSharedTree();
+    const TargetResolver resolver(provider);
+    auto principal = makeFsPrincipal();
+    principal.grant.allowed_ops |= bit(Operation::Download);
+    const auto parent = resolver.resolve(principal, {
+        .path = "/shared",
+        .operation = Operation::List,
+        .expected_target_type = TargetType::Directory
+    });
+
+    // A grandchild (not a child of the listed directory), outside the share, another vault, a missing entry.
+    EXPECT_THROW({ (void)resolver.resolveListedChild(principal, parent, provider->by_id.at(12), Operation::Download); },
+                 std::runtime_error);
+    EXPECT_THROW({ (void)resolver.resolveListedChild(principal, parent, makeFile(98, 42, "/outside.txt", 10),
+                                                     Operation::Download); }, std::runtime_error);
+    EXPECT_THROW({ (void)resolver.resolveListedChild(principal, parent, makeFile(97, 43, "/shared/x.txt", 10),
+                                                     Operation::Download); }, std::runtime_error);
+    EXPECT_THROW({ (void)resolver.resolveListedChild(principal, parent, nullptr, Operation::Download); },
+                 std::runtime_error);
+    // A file is not a listing.
+    const auto file = resolver.resolve(principal, {.path = "/shared/readme.txt", .operation = Operation::Download});
+    EXPECT_THROW({ (void)resolver.resolveListedChild(principal, file, provider->by_id.at(13), Operation::Download); },
+                 std::runtime_error);
+}

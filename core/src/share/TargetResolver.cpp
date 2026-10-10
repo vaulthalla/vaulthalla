@@ -129,17 +129,16 @@ TargetType TargetResolver::targetTypeOf(const fs::model::Entry& entry) {
     return entry.isDirectory() ? TargetType::Directory : TargetType::File;
 }
 
-ResolvedTarget TargetResolver::resolve(const Principal& principal, TargetResolveRequest request) const {
-    requireValidPrincipal(principal);
+namespace {
 
-    const auto vaultId = request.vault_id.value_or(principal.vault_id);
-    const auto vaultPath = toVaultPath(principal, request.path, request.path_mode);
-
-    const auto scopeDecision = Scope::authorize(principal, {
+// Scope: the normalized path must be inside the share and the operation granted (file links: the root only).
+ScopeDecision authorizeScope(const Principal& principal, const uint32_t vaultId, const std::string& vaultPath,
+                               const Operation operation, const std::optional<TargetType> expected) {
+    auto scopeDecision = Scope::authorize(principal, {
         .vault_id = vaultId,
         .path = vaultPath,
-        .operation = request.operation,
-        .target_type = request.expected_target_type
+        .operation = operation,
+        .target_type = expected
     });
     if (!scopeDecision.allowed)
         throw std::runtime_error("Share filesystem scope denied: " + scopeDecision.reason);
@@ -148,37 +147,35 @@ ResolvedTarget TargetResolver::resolve(const Principal& principal, TargetResolve
         scopeDecision.normalized_path != Scope::normalizeVaultPath(principal.root_path)) {
         throw std::runtime_error("Share file target does not allow descendants");
     }
+    return scopeDecision;
+}
 
-    auto rootEntry = provider_->getEntryById(principal.root_entry_id);
-    if (!rootEntry) throw std::runtime_error("Share root entry not found");
-    if (!entryHasVault(*rootEntry, principal.vault_id))
-        throw std::runtime_error("Share root entry vault mismatch");
-    if (entryPath(*rootEntry) != Scope::normalizeVaultPath(principal.root_path))
-        throw std::runtime_error("Share root entry has moved");
-    requireEntryType(*rootEntry, principal.grant.target_type, "Share root entry type mismatch");
-
-    auto entry = provider_->getEntryByVaultPath(vaultId, scopeDecision.normalized_path);
+// The entry checks, the resolved target and the share RBAC decision, for an entry already loaded by path.
+ResolvedTarget finishResolve(const Principal& principal, const uint32_t vaultId, const std::string& requestedPath,
+                             const std::string& normalizedPath, const Operation operation,
+                             const std::optional<TargetType> expected, std::shared_ptr<fs::model::Entry> rootEntry,
+                             std::shared_ptr<fs::model::Entry> entry) {
     if (!entry) throw std::runtime_error("Share filesystem target not found");
     if (!entryHasVault(*entry, vaultId)) throw std::runtime_error("Share filesystem target vault mismatch");
-    if (entryPath(*entry) != scopeDecision.normalized_path)
+    if (entryPath(*entry) != normalizedPath)
         throw std::runtime_error("Share filesystem target path mismatch");
     if (!Scope::contains(principal.root_path, entryPath(*entry)))
         throw std::runtime_error("Share filesystem target escapes share root");
 
-    const auto targetType = targetTypeOf(*entry);
-    if (request.expected_target_type && targetType != *request.expected_target_type)
+    const auto targetType = TargetResolver::targetTypeOf(*entry);
+    if (expected && targetType != *expected)
         throw std::runtime_error("Share filesystem target type mismatch");
-    if (request.operation == Operation::List && targetType != TargetType::Directory)
+    if (operation == Operation::List && targetType != TargetType::Directory)
         throw std::runtime_error("Share filesystem list target is not a directory");
 
     ResolvedTarget resolved{
         .vault_id = vaultId,
         .root_entry_id = principal.root_entry_id,
         .root_path = Scope::normalizeVaultPath(principal.root_path),
-        .requested_path = normalizeRequestedPath(request.path),
-        .vault_path = scopeDecision.normalized_path,
-        .share_path = shareRelativePath(principal, scopeDecision.normalized_path),
-        .operation = request.operation,
+        .requested_path = requestedPath,
+        .vault_path = normalizedPath,
+        .share_path = TargetResolver::shareRelativePath(principal, normalizedPath),
+        .operation = operation,
         .target_type = targetType,
         .root_entry = std::move(rootEntry),
         .entry = std::move(entry)
@@ -190,6 +187,46 @@ ResolvedTarget TargetResolver::resolve(const Principal& principal, TargetResolve
             "Share filesystem RBAC denied: " + rbac::fs::policy::reasonToString(rbacDecision.reason));
 
     return resolved;
+}
+
+}
+
+ResolvedTarget TargetResolver::resolve(const Principal& principal, TargetResolveRequest request) const {
+    requireValidPrincipal(principal);
+
+    const auto vaultId = request.vault_id.value_or(principal.vault_id);
+    const auto vaultPath = toVaultPath(principal, request.path, request.path_mode);
+    const auto scopeDecision =
+        authorizeScope(principal, vaultId, vaultPath, request.operation, request.expected_target_type);
+
+    auto rootEntry = provider_->getEntryById(principal.root_entry_id);
+    if (!rootEntry) throw std::runtime_error("Share root entry not found");
+    if (!entryHasVault(*rootEntry, principal.vault_id))
+        throw std::runtime_error("Share root entry vault mismatch");
+    if (entryPath(*rootEntry) != Scope::normalizeVaultPath(principal.root_path))
+        throw std::runtime_error("Share root entry has moved");
+    requireEntryType(*rootEntry, principal.grant.target_type, "Share root entry type mismatch");
+
+    auto entry = provider_->getEntryByVaultPath(vaultId, scopeDecision.normalized_path);
+    return finishResolve(principal, vaultId, normalizeRequestedPath(request.path), scopeDecision.normalized_path,
+                         request.operation, request.expected_target_type, std::move(rootEntry), std::move(entry));
+}
+
+ResolvedTarget TargetResolver::resolveListedChild(const Principal& principal, const ResolvedTarget& parent,
+                                                  std::shared_ptr<fs::model::Entry> child,
+                                                  const Operation operation) const {
+    requireValidPrincipal(principal);
+    if (!parent.entry || !parent.root_entry || parent.target_type != TargetType::Directory)
+        throw std::runtime_error("Share filesystem list target is not a directory");
+    if (!child) throw std::runtime_error("Share filesystem list contains missing entry");
+    if (child->parent_id != std::optional<int32_t>(static_cast<int32_t>(parent.entry->id)))
+        throw std::runtime_error("Share filesystem entry is not a child of the listed directory");
+
+    const auto vaultPath = entryPath(*child);
+    const auto expected = targetTypeOf(*child);
+    const auto scopeDecision = authorizeScope(principal, parent.vault_id, vaultPath, operation, expected);
+    return finishResolve(principal, parent.vault_id, normalizeRequestedPath(shareRelativePath(principal, vaultPath)),
+                         scopeDecision.normalized_path, operation, expected, parent.root_entry, std::move(child));
 }
 
 ResolvedTarget TargetResolver::resolve(const rbac::Actor& actor, TargetResolveRequest request) const {
