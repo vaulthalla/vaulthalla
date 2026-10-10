@@ -28,6 +28,11 @@ public:
 
     static std::vector<EntryPtr> listDir(const std::optional<unsigned int>& entryId, bool recursive = false);
 
+    // Every entry under directory `dirId` at any depth (directories, files and symlinks). listDir(id, true) is not
+    // that: its file and symlink queries recurse through files, so they return only direct children (startup cache
+    // seeding relies on that shape, so it is left alone).
+    [[nodiscard]] static std::vector<EntryPtr> listSubtree(unsigned int dirId);
+
     static void renameEntry(const EntryPtr& entry);
 
     [[nodiscard]] static ino_t getNextInode();

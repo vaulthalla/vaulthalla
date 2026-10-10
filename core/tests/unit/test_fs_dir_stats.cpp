@@ -263,17 +263,21 @@ TEST_F(FsDirStatsDbTest, DeletingEmptyDirectoriesRemovesThemAndTheirCounts) {
     expectConsistent({"/", "/holder"});
 }
 
-// fs.entry.copy of a directory copies only the directory row; it must not claim the source's contents.
-TEST_F(FsDirStatsDbTest, ShallowDirectoryCopyStartsEmpty) {
+// fs.entry.copy of a directory copies everything under it (#167), so the copy carries the source's totals, built up
+// entry by entry (it used to copy only the folder row, which then had to start at zero).
+TEST_F(FsDirStatsDbTest, DirectoryCopyCarriesItsSubtreeTotals) {
     mkdir("/srcdir");
+    mkdir("/srcdir/inner");
     write("/srcdir/f.txt", 12);
+    write("/srcdir/inner/g.txt", 30);
     const auto rootBefore = stats("/");
 
     engine->copy("/srcdir", "/dircopy", superUser->id);
 
-    EXPECT_EQ(stats("/dircopy"), (DirStats{0, 0, 0}));
-    EXPECT_EQ(stats("/") - rootBefore, (DirStats{0, 0, 1}));
-    expectConsistent({"/", "/srcdir", "/dircopy"});
+    EXPECT_EQ(stats("/dircopy"), (DirStats{42, 2, 1}));
+    EXPECT_EQ(stats("/dircopy/inner"), (DirStats{30, 1, 0}));
+    EXPECT_EQ(stats("/") - rootBefore, (DirStats{42, 2, 2}));
+    expectConsistent({"/", "/srcdir", "/dircopy", "/dircopy/inner"});
 }
 
 // #168: deleting a file never removes the folder it was in, nor that folder's ancestors, including folders the user

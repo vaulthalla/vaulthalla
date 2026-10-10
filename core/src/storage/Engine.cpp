@@ -24,6 +24,8 @@
 #include "crypto/util/encrypt.hpp"
 #include "preview/cache/Store.hpp"
 
+#include <cerrno>
+#include <cstring>
 #include <system_error>
 
 using namespace vh::fs::model;
@@ -241,11 +243,29 @@ namespace vh::storage {
             throw std::runtime_error("Failed to rename: " + from.string() + " to " + to.string());
     }
 
-    void Engine::copy(const fs::path &from, const fs::path &to, const unsigned int userId) {
-        if (const auto err = Filesystem::copy(vaultPathToFusePath(from),
-                         vaultPathToFusePath(to), userId,
-                         shared_from_this()); err)
-            throw std::runtime_error("Failed to copy: " + from.string() + " to " + to.string());
+    void Engine::copy(const fs::path &from, const fs::path &to, const unsigned int userId,
+                      const std::function<void(const vh::fs::model::Entry &, const fs::path &)> &authorize) {
+        const auto err = Filesystem::copy({
+            .from = vaultPathToFusePath(from),
+            .to = vaultPathToFusePath(to),
+            .userId = userId,
+            .engine = shared_from_this(),
+            .authorize = authorize
+        });
+        if (!err) return;
+
+        const auto reason = [&]() -> std::string {
+            switch (-err) {
+            case ENOENT: return "the source or the destination folder does not exist";
+            case EEXIST: return "the destination already exists";
+            case EXDEV: return "copying between vaults is not supported";
+            case EINVAL: return "a folder cannot be copied into itself, and a symlink in it may not point outside the vault";
+            case ENOSPC: return "not enough space left in the vault's quota";
+            case ENODATA: return "a file's content is not stored locally and could not be fetched";
+            default: return std::strerror(-err);
+            }
+        }();
+        throw std::runtime_error("Failed to copy " + from.string() + " to " + to.string() + ": " + reason);
     }
 
     void Engine::remove(const fs::path &rel_path, const unsigned int userId) const {

@@ -409,6 +409,25 @@ namespace vh::test::integration::fuse {
         return 0;
     }
 
+    // unlink(2) / rmdir(2) of exactly one entry (rm -rf would hide what a single delete does to its parents).
+    inline int unlink_path(const std::filesystem::path& p) {
+        if (::unlink(p.c_str()) != 0) return errno;
+        std::string out = "OK unlink ";
+        detail::append_path(out, p);
+        out.push_back('\n');
+        detail::emit_ok(out);
+        return 0;
+    }
+
+    inline int rmdir_path(const std::filesystem::path& p) {
+        if (::rmdir(p.c_str()) != 0) return errno;
+        std::string out = "OK rmdir ";
+        detail::append_path(out, p);
+        out.push_back('\n');
+        detail::emit_ok(out);
+        return 0;
+    }
+
     inline int truncate_path(const std::filesystem::path& p, const off_t size) {
         if (::truncate(p.c_str(), size) != 0) return errno;
         std::string out = "OK truncate ";
@@ -462,6 +481,14 @@ namespace vh::test::integration::fuse {
 
     inline ExecResult truncate_as(const uid_t uid, const std::filesystem::path& p, const off_t size) {
         return run_as_user(uid, uid, [=] { return truncate_path(p, size); });
+    }
+
+    inline ExecResult unlink_as(const uid_t uid, const std::filesystem::path& p) {
+        return run_as_user(uid, uid, [=] { return unlink_path(p); });
+    }
+
+    inline ExecResult rmdir_as(const uid_t uid, const std::filesystem::path& p) {
+        return run_as_user(uid, uid, [=] { return rmdir_path(p); });
     }
 
     // Back-compat overloads while you migrate callers.
