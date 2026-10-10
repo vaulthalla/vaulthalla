@@ -83,7 +83,8 @@ namespace vh::storage {
             const std::shared_ptr<vh::fs::model::File> &remoteFile,
             RemoteEncryptionResolveOptions options) const;
 
-        void indexAndDeleteFile(const std::shared_ptr<vh::fs::model::File> &remoteFile);
+        // Records a remote object as a local row without a local copy; returns the row as written.
+        std::shared_ptr<vh::fs::model::File> indexAndDeleteFile(const std::shared_ptr<vh::fs::model::File> &remoteFile);
 
         [[nodiscard]] std::string getRemoteContentHash(const std::filesystem::path &rel_path) const;
 
@@ -129,6 +130,32 @@ namespace vh::storage {
         // The copy stays local afterwards: the Cache strategy has no eviction yet.
         std::shared_ptr<vh::fs::model::File> hydrate(const std::shared_ptr<vh::fs::model::File> &f) const;
 
+        // What one HEAD says about a remote object.
+        struct RemoteObjectHead {
+            std::string etag;
+            std::optional<uint64_t> content_length;
+            bool encrypted{};
+            std::string iv_b64;           // empty when the object carries none (or is plaintext)
+            unsigned int key_version{};
+            bool requires_restore{};      // archive tier without a completed restore
+            std::optional<std::string> content_hash;  // Vaulthalla's content-hash metadata, when present
+        };
+
+        // One metered HEAD; nullopt when the object does not exist.
+        [[nodiscard]] std::optional<RemoteObjectHead> headRemoteObject(const std::filesystem::path &rel_path) const;
+
+        // Sync conflict resolution and previews (#187). One metered GET of the object (If-Match `ifMatch` when
+        // given: ConditionalRequestFailed when it changed), aborted past `maxBytes`, decrypted (authenticated) with
+        // the object's own encryption metadata exactly like a sync download. Returns the plaintext.
+        [[nodiscard]] std::vector<uint8_t> fetchRemotePlaintext(const std::shared_ptr<vh::fs::model::File> &remoteFile,
+                                                                const std::optional<std::string> &ifMatch,
+                                                                std::optional<uint64_t> maxBytes) const;
+        // Writes a downloaded object's plaintext as the file's content, as a sync download does, but only while the
+        // local copy is still generation `expectedSourceId` (fs::ContentConflict otherwise).
+        std::shared_ptr<vh::fs::model::File> replaceLocalContent(const std::filesystem::path &rel_path,
+                                                                 const std::vector<uint8_t> &plaintext,
+                                                                 const std::string &expectedSourceId);
+
         // Price preflight for remote reads (default: priceBudgetRemoteFetchGate).
         void setRemoteFetchGate(RemoteFetchGate gate);
         // Per-reader request caps for the opt-in ranged reader.
@@ -143,17 +170,6 @@ namespace vh::storage {
             const std::shared_ptr<vh::fs::model::File> &f, const ReaderOptions &options) const override;
 
     private:
-        // What one HEAD says about a remote object.
-        struct RemoteObjectHead {
-            std::string etag;
-            std::optional<uint64_t> content_length;
-            bool encrypted{};
-            std::string iv_b64;           // empty when the object carries none (or is plaintext)
-            unsigned int key_version{};
-            bool requires_restore{};      // archive tier without a completed restore
-        };
-
-        [[nodiscard]] std::optional<RemoteObjectHead> headRemoteObject(const std::filesystem::path &rel_path) const;
         [[nodiscard]] std::shared_ptr<vh::fs::model::File> hydrateNow(const std::shared_ptr<vh::fs::model::File> &f) const;
         [[nodiscard]] std::unique_ptr<PlaintextReader> openRangedReader(
             const std::shared_ptr<vh::fs::model::File> &f) const;

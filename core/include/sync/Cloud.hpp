@@ -6,6 +6,9 @@
 #include "fs/Fwd.hpp"
 #include "storage/Fwd.hpp"
 #include "sync/Fwd.hpp"
+#include "sync/model/Action.hpp"
+#include "sync/model/Baseline.hpp"
+#include "db/query/sync/Conflict.hpp"
 
 #include <memory>
 #include <unordered_map>
@@ -17,6 +20,12 @@ namespace vh::sync {
         std::vector<std::shared_ptr<fs::model::File> > localFiles, s3Files;
         std::unordered_map<std::u8string, std::shared_ptr<fs::model::File> > localMap, s3Map;
         std::unordered_map<std::u8string, std::optional<std::string> > remoteHashMap;
+
+        // Conflict state for this pass (#187): loaded with the bins, decided by the planner, written by
+        // flushConflictState() before anything executes.
+        std::unordered_map<uint32_t, model::Baseline> baselines;                       // by file id
+        std::unordered_map<uint32_t, db::query::sync::ConflictRecord> openConflicts;    // by file id
+        db::query::sync::ConflictPassWrites conflictWrites;
 
         ~Cloud() override = default;
 
@@ -73,7 +82,21 @@ namespace vh::sync {
         std::shared_ptr<model::Conflict> maybeBuildConflict(const std::shared_ptr<fs::model::File> &local,
                                                             const std::shared_ptr<fs::model::File> &upstream) const;
 
-        bool handleConflict(const std::shared_ptr<model::Conflict> &c) const;
+        // Records the conflict on the event; an unresolved one is queued for its single open row (or left alone
+        // when that row already describes both sides), an auto-resolved one closes the file's open row.
+        // True when it stays unresolved (nothing is planned for the file).
+        bool handleConflict(const std::shared_ptr<model::Conflict> &c);
+
+        void loadConflictState();
+        void flushConflictState();
+        // Planner::build followed by flushConflictState(): what one pass plans and records.
+        std::vector<model::Action> planPass(model::S3CostEstimate *planningNotes = nullptr);
+
+        [[nodiscard]] const model::Baseline *baselineFor(uint32_t fileId) const;
+        [[nodiscard]] bool hasOpenConflict(uint32_t fileId) const;
+        // Both sides agree: refresh the file's baseline if it moved and close an open conflict as converged.
+        void noteInSync(const fs::model::File &local, const fs::model::File &remote);
+        void closeOpenConflict(uint32_t fileId, const std::string &resolution);
 
         // ##########################################
         // ########### Static Helpers ###############

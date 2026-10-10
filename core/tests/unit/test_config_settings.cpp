@@ -49,7 +49,7 @@ TEST_F(ConfigSettingsTest, MissingSectionsKeepTheDefaults) {
     EXPECT_TRUE(cfg.sharing.enable_anonymous);
     EXPECT_TRUE(cfg.sharing.enable_email_validated);
     EXPECT_EQ(cfg.vaults.s3.default_remote_sync_strategy, "cache");
-    EXPECT_EQ(cfg.vaults.s3.default_remote_conflict_policy, "keep_local");
+    EXPECT_EQ(cfg.vaults.s3.default_remote_conflict_policy, "ask");
     EXPECT_EQ(cfg.websocket.max_connections, 1024u);
     EXPECT_EQ(cfg.http_preview.max_connections, 512u);
     EXPECT_TRUE(deprecations.empty());
@@ -127,7 +127,7 @@ TEST_F(ConfigSettingsTest, InvalidLegacyValueIsReportedNotFatal) {
     std::vector<std::string> deprecations;
     config::Config cfg;
     ASSERT_NO_THROW(cfg = load("s3_gateway:\n  default_remote_conflict_policy: keep_both\n", &deprecations));
-    EXPECT_EQ(cfg.vaults.s3.default_remote_conflict_policy, "keep_local");
+    EXPECT_EQ(cfg.vaults.s3.default_remote_conflict_policy, "ask");
     ASSERT_EQ(deprecations.size(), 1u);
     EXPECT_TRUE(mentions(deprecations, "'keep_both' is not valid"));
 }
@@ -231,7 +231,7 @@ TEST(ShippedConfig, UsesTheNewKeysWithTheirDefaults) {
     EXPECT_TRUE(cfg.sharing.enable_anonymous);
     EXPECT_TRUE(cfg.sharing.enable_email_validated);
     EXPECT_EQ(cfg.vaults.s3.default_remote_sync_strategy, "cache");
-    EXPECT_EQ(cfg.vaults.s3.default_remote_conflict_policy, "keep_local");
+    EXPECT_EQ(cfg.vaults.s3.default_remote_conflict_policy, "ask");
     EXPECT_EQ(cfg.websocket.max_connections, 1024u);
     EXPECT_EQ(cfg.http_preview.max_connections, 512u);
 }

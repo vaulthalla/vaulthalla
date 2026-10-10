@@ -190,7 +190,7 @@ struct SharingConfig {
 // or conflict policy. Lowercase spellings of sync::model::RemotePolicy (validated here, parsed by ops::vaults).
 struct VaultsS3Config {
     std::string default_remote_sync_strategy = "cache";        // cache | sync | mirror
-    std::string default_remote_conflict_policy = "keep_local"; // keep_local | keep_remote | keep_newest | ask
+    std::string default_remote_conflict_policy = "ask";        // ask | keep_local | keep_remote | keep_newest (#187)
     // Key retention for S3-backed vaults (#162): their data may stay in the bucket, so the key is kept longer.
     std::chrono::seconds tpm_retention_window = std::chrono::days(180);
 };

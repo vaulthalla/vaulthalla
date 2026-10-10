@@ -154,7 +154,7 @@ vaults:
   tpm_retention_window: 90d      # How long a deleted vault's encryption key is kept
   s3:
     default_remote_sync_strategy: cache        # cache (index the bucket, fetch files on demand) | sync | mirror
-    default_remote_conflict_policy: keep_local # keep_local | keep_remote | keep_newest | ask (conflicts wait, unresolved)
+    default_remote_conflict_policy: ask        # ask (record it; resolve with `vh sync resolve` or the console) | keep_local | keep_remote | keep_newest
     tpm_retention_window: 180d                 # Key retention for S3-backed vaults (their data may stay upstream)
 
 

@@ -84,6 +84,17 @@ std::vector<RemoteObjectIndex::FilePtr> RemoteObjectIndex::listFilesForVault(con
     });
 }
 
+RemoteObjectIndex::FilePtr RemoteObjectIndex::getFile(const uint32_t vaultId, const std::filesystem::path& key) {
+    return Transactions::exec("RemoteObjectIndex::getFile", [&](pqxx::work& txn) -> FilePtr {
+        auto normalized = to_utf8_string(key.lexically_normal().u8string());
+        while (!normalized.empty() && normalized.front() == '/') normalized.erase(normalized.begin());
+        const auto res = txn.exec("SELECT * FROM remote_object_index WHERE vault_id = $1 AND object_key = $2 LIMIT 1",
+                                  pqxx::params{vaultId, normalized});
+        if (res.empty()) return nullptr;
+        return vh::sync::model::RemoteObject(res[0]).toFile();
+    });
+}
+
 void RemoteObjectIndex::replaceFromListObjects(const uint32_t vaultId, const std::vector<FilePtr>& files) {
     replace(vaultId, files, "list_objects_v2");
 }

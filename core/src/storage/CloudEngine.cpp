@@ -332,7 +332,7 @@ std::shared_ptr<File> CloudEngine::downloadFileWithRemoteMetadata(
     return f;
 }
 
-void CloudEngine::indexAndDeleteFile(const std::shared_ptr<File>& remoteFile) {
+std::shared_ptr<File> CloudEngine::indexAndDeleteFile(const std::shared_ptr<File>& remoteFile) {
     if (!remoteFile) throw std::invalid_argument("[CloudStorageEngine] Cannot index null remote file");
 
     const auto owner = db::query::identities::User::getUserById(vault->owner_id);
@@ -365,6 +365,7 @@ void CloudEngine::indexAndDeleteFile(const std::shared_ptr<File>& remoteFile) {
 
     if (!indexed->backing_path.empty() && fs::exists(indexed->backing_path))
         fs::remove(indexed->backing_path);
+    return indexed;
 }
 
 std::unordered_map<std::u8string, std::shared_ptr<File>>
@@ -720,6 +721,7 @@ std::optional<CloudEngine::RemoteObjectHead> CloudEngine::headRemoteObject(const
         out.iv_b64 = payload->first;
         out.key_version = payload->second;
     }
+    if (const auto hash = header_value(*head, META_CONTENT_HASH); hash && !hash->empty()) out.content_hash = *hash;
 
     if (auto storageClass = header_value(*head, "x-amz-storage-class")) {
         std::ranges::transform(*storageClass, storageClass->begin(), [](unsigned char c) {
@@ -734,6 +736,39 @@ std::optional<CloudEngine::RemoteObjectHead> CloudEngine::headRemoteObject(const
         out.requires_restore = true;
 
     return out;
+}
+
+std::vector<uint8_t> CloudEngine::fetchRemotePlaintext(const std::shared_ptr<File>& remoteFile,
+                                                       const std::optional<std::string>& ifMatch,
+                                                       const std::optional<uint64_t> maxBytes) const {
+    if (!remoteFile) throw std::invalid_argument("[CloudStorageEngine] Cannot fetch a null remote file");
+    const auto relPath = makeAbsolute(remoteFile->path);
+    std::vector<uint8_t> payload;
+    if (remoteFile->size_bytes) payload.reserve(maxBytes ? std::min<uint64_t>(remoteFile->size_bytes, *maxBytes)
+                                                         : remoteFile->size_bytes);
+    s3Provider_->streamObject(
+        stripLeadingSlash(relPath),
+        s3::GetObjectOptions{.range = std::nullopt, .if_match = ifMatch, .max_body_bytes = maxBytes},
+        [&](const std::span<const uint8_t> chunk) { payload.insert(payload.end(), chunk.begin(), chunk.end()); });
+    return decryptRemotePayload(relPath, payload, remoteFile, RemoteEncryptionResolveOptions{true, true});
+}
+
+std::shared_ptr<File> CloudEngine::replaceLocalContent(const fs::path& rel_path, const std::vector<uint8_t>& plaintext,
+                                                       const std::string& expectedSourceId) {
+    const auto owner = db::query::identities::User::getUserById(vault->owner_id);
+    if (!owner) throw std::runtime_error("[CloudStorageEngine] Vault owner not found for file replacement");
+    const auto path = makeAbsolute(rel_path);
+    const auto f = Filesystem::createFile({
+        .path = path,
+        .fuse_path = vaultPathToFusePath(path),
+        .buffer = plaintext,
+        .engine = shared_from_this(),
+        .user = owner,
+        .overwrite = true,
+        .expected_source_id = expectedSourceId
+    });
+    preview::render::enqueueThumbnails(shared_from_this(), f, plaintext);
+    return f;
 }
 
 void CloudEngine::setRemoteFetchGate(RemoteFetchGate gate) { fetchGate_ = std::move(gate); }
