@@ -239,6 +239,9 @@ class CiGateWiringTests(unittest.TestCase):
         web_verify = self.release.split("\n  web-verify:\n", 1)[1].split("\n  docs-validate:\n", 1)[0]
         self.assertNotIn("build_web", web_verify)
         self.assertIn("./.github/actions/test_web", web_verify)
+        # build_web used to sync the licensed icons for this job; without them the typecheck fails (v1.11.0's
+        # first release run). Every job that typechecks must sync them first.
+        self.assertLess(web_verify.index("./.github/actions/sync_web_icons"), web_verify.index("./.github/actions/test_web"))
         artifacts = self.release.split("\n  release-artifacts:\n", 1)[1].split("\n  publish-debian:\n", 1)[0]
         self.assertLess(artifacts.index("vlr build-deb"), artifacts.index("pnpm --dir web budgets"))
 

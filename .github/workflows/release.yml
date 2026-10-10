@@ -135,6 +135,10 @@ jobs:
         with:
           ref: ${{ github.event.inputs.ref || github.ref }}
 
+      # The typecheck resolves the licensed icons and logo (@/fa-*, @/public/vaulthalla-logo.png): sync them first.
+      - name: Sync private web icons
+        uses: ./.github/actions/sync_web_icons
+
       - name: Setup web toolchain
         uses: ./.github/actions/setup_web
 

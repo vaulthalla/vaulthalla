@@ -193,6 +193,21 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
                 with self.subTest(path=path, line=line):
                     self.assertTrue("DPkg::Lock::Timeout" in line or "APT_LOCK_OPTS" in line)
 
+    def test_every_job_that_checks_or_builds_the_web_syncs_the_icons_first(self) -> None:
+        for path in (".github/workflows/release.yml", ".github/workflows/build_and_test.yml"):
+            jobs = _jobs(_read(path))
+            for name, job in jobs.items():
+                uses_web = [a for a in ("./.github/actions/test_web", "./.github/actions/runner") if a in job]
+                if not uses_web:
+                    continue
+                with self.subTest(path=path, job=name):
+                    if "./.github/actions/runner" in job:
+                        continue  # the runner action syncs through build/build_web (checked below)
+                    self.assertIn("./.github/actions/sync_web_icons", job)
+                    self.assertLess(job.index("./.github/actions/sync_web_icons"), job.index("./.github/actions/test_web"))
+        runner = _read(".github/actions/runner/action.yml")
+        self.assertLess(runner.index("./.github/actions/build"), runner.index("./.github/actions/test_web"))
+
     def test_cpp_and_web_builds_sync_private_icons_through_one_script(self) -> None:
         self.assertIn("web/bin/sync_private_icons.sh", _read(".github/actions/sync_web_icons/action.yml"))
         self.assertIn("sync_private_icons.sh", _read("web/bin/build_release_payload.sh"))

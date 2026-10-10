@@ -106,7 +106,7 @@ run_release() {
 
 run_packaging() {
   log "product contracts (tools/contracts)"
-  run_suite "tools/contracts" 162 discover -s tools/contracts -t .
+  run_suite "tools/contracts" 163 discover -s tools/contracts -t .
   log "lab tooling tests (tools/lab/tests)"
   run_suite "tools/lab/tests" 34 discover -s tools/lab/tests -t .
   log "project board tooling tests (tools/project/tests)"
