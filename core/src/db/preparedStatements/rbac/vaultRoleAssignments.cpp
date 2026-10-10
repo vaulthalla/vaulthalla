@@ -195,11 +195,14 @@ void vh::db::Connection::initPreparedVaultRoleAssignments() const {
         )SQL"
     );
 
+    // Assignments that keep a vault role in use. A vault waiting for its purge (#162) doesn't count: deleting the role
+    // removes its assignments there too (ON DELETE CASCADE), and a restore brings the vault back without them.
     conn_->prepare("count_vault_role_assignments_by_role_id",
         R"SQL(
             SELECT COUNT(*)
-            FROM vault_role_assignments
-            WHERE role_id = $1
+            FROM vault_role_assignments a
+            JOIN vault v ON v.id = a.vault_id
+            WHERE a.role_id = $1 AND v.deleted_at IS NULL
             )SQL"
         );
 }

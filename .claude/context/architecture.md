@@ -522,6 +522,8 @@ stage "Copy And Delete")
   encrypted objects kept, key never exported) and `vault_delete_now`. `storage::Manager::removeVault` stays the
   immediate hard delete (create rollbacks, empty S3-gateway buckets) and now removes the backing dirs too.
 - An account whose API keys are bound to any vault (deleted ones included, until purged) cannot be deleted.
+- A vault role assigned only on deleted vaults is not in use (`count_vault_role_assignments_by_role_id` joins live
+  vaults): deleting it cascades those assignments, and a restore brings the vault back without them.
 
 **Operator email** (`email/`, `notifications/`, `085_operator_notifications.sql`, `vh email …`)
 - Provider secrets are encrypted in `internal_secrets` and entered by hidden prompt. They never go in `.env` or files, and are never logged or rendered.

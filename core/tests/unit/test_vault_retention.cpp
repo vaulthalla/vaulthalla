@@ -15,6 +15,7 @@
 #include "fs/model/Entry.hpp"
 #include "identities/User.hpp"
 #include "ops/Error.hpp"
+#include "ops/Roles.hpp"
 #include "ops/Vaults.hpp"
 #include "runtime/Deps.hpp"
 #include "seed/include/init_db_tables.hpp"
@@ -232,6 +233,34 @@ TEST_F(VaultRetentionTest, ScheduleHidesTheVaultAndRestoreBringsItBackAsItWas) {
     EXPECT_TRUE(runtime::Deps::get().fsCache->getEntry(back->vaultPathToFusePath("/docs"))) << "the vault's contents came back";
     EXPECT_FALSE(DeletionQuery::get(v->id));
     EXPECT_THROW((void)ops::vaults::restore(superUser, v->id), ops::NotFound);
+}
+
+// A vault waiting for its purge doesn't keep a vault role in use (before #162 deleting the vault cascaded its
+// assignments away at once; the integration harness deletes a vault, then its role). Deleting the role removes the
+// assignment there too, so a restore brings the vault back without it.
+TEST_F(VaultRetentionTest, ARoleAssignedOnlyOnADeletedVaultCanBeDeleted) {
+    const auto v = localVault("vr_role_");
+    const auto role = ops::roles::createVaultRole(superUser, {.name = "vr_role_" + tag()});
+    ASSERT_TRUE(role);
+    const auto assignments = [&] {
+        return db::Transactions::exec("VaultRetentionTest::assignments", [&](pqxx::work& txn) {
+            return txn.exec("SELECT COUNT(*) FROM vault_role_assignments WHERE role_id = $1", pqxx::params{role->id})
+                .one_field().as<unsigned int>();
+        });
+    };
+    db::Transactions::exec("VaultRetentionTest::assign", [&](pqxx::work& txn) {
+        txn.exec("INSERT INTO vault_role_assignments (vault_id, subject_type, subject_id, role_id) VALUES ($1, 'user', $2, $3)",
+                 pqxx::params{v->id, bob->id, role->id});
+    });
+
+    EXPECT_THROW((void)ops::roles::removeVaultRole(superUser, role->id), ops::Conflict) << "a live vault keeps it in use";
+
+    (void)ops::vaults::remove(superUser, {.id = v->id});
+    EXPECT_NO_THROW((void)ops::roles::removeVaultRole(superUser, role->id));
+    EXPECT_EQ(assignments(), 0u);
+
+    ASSERT_TRUE(ops::vaults::restore(superUser, v->id));
+    EXPECT_EQ(assignments(), 0u);
 }
 
 TEST_F(VaultRetentionTest, PurgeAfterTheWindowRemovesDataAndKeepsTheKeyUntilItsWindowEnds) {
