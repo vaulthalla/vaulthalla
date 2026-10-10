@@ -9,6 +9,7 @@
 #include "protocols/ws/handler/S3Gateway.hpp"
 #include "protocols/ws/handler/Groups.hpp"
 #include "protocols/ws/handler/Stats.hpp"
+#include "protocols/ws/handler/SyncConflicts.hpp"
 #include "protocols/ws/handler/dashboard/Preferences.hpp"
 #include "protocols/ws/handler/rbac/roles/Admin.hpp"
 #include "protocols/ws/handler/rbac/roles/Vault.hpp"
@@ -37,6 +38,7 @@ void Handler::registerAllHandlers(const std::shared_ptr<Router>& r) {
     registerS3GatewayHandlers(r);
     registerGroupHandlers(r);
     registerStatHandlers(r);
+    registerSyncConflictHandlers(r);
     registerDashboardPreferenceHandlers(r);
     registerShareManagementHandlers(r);
     registerShareSessionHandlers(r);
@@ -203,6 +205,12 @@ void Handler::registerGroupHandlers(const std::shared_ptr<Router>& r) {
     r->registerPayload("group.get.byName", &handler::Groups::getByName);
     r->registerPayload("groups.list.byUser", &handler::Groups::listByUser);
     r->registerSessionOnlyHandler("groups.list", &handler::Groups::list);
+}
+
+void Handler::registerSyncConflictHandlers(const std::shared_ptr<Router>& r) {
+    r->registerSessionOnlyHandler("sync.conflicts.summary", &handler::SyncConflicts::summary);
+    r->registerPayload("sync.conflicts.list", &handler::SyncConflicts::list);
+    r->registerPayload("sync.conflicts.resolve", &handler::SyncConflicts::resolve);
 }
 
 void Handler::registerStatHandlers(const std::shared_ptr<Router>& r) {
