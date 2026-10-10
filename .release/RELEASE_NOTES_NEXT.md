@@ -59,13 +59,17 @@ and copying, and makes folder downloads stream at any size.
 
 - Operators can turn share links off: `sharing.enabled` turns off every link, and `sharing.enable_anonymous` and
   `sharing.enable_email_validated` turn off one kind each. Links already handed out stop working while their switch
-  is off and work again when it is turned back on. The console hides what is turned off. `sharing.enable_internal`
-  is reserved for a future link kind.
+  is off and work again when it is turned back on. The console hides what is turned off.
 - New S3/R2 vaults take their sync strategy and conflict policy from `vaults.s3.default_remote_sync_strategy`
   (`cache`) and `vaults.s3.default_remote_conflict_policy` (`keep_local`) when none is given, from the CLI or the
   console.
 - `websocket_server.max_connections` (default 1024) now limits open console and share connections. Connections over
   the limit get `503` and the console reconnects.
+
+### Web console
+
+- Icons are cyan again, matching the console's accent. They rendered black everywhere; status icons keep their
+  status colors.
 
 ### Files
 

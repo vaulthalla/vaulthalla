@@ -9,13 +9,13 @@ export const buttonVariants = cva(
   {
     variants: {
       variant: {
-        primary: 'bg-accent text-accent-ink shadow-[0_0_0_1px_rgb(34_211_238/0.5),0_8px_24px_-10px_var(--accent-glow)] hover:bg-accent-text',
+        primary: 'bg-accent text-accent-ink [&_svg]:text-inherit shadow-[0_0_0_1px_rgb(34_211_238/0.5),0_8px_24px_-10px_var(--accent-glow)] hover:bg-accent-text',
         secondary: 'border border-line-strong bg-surface-2 text-fg hover:border-accent-line hover:bg-surface-3',
         ghost: 'text-fg-muted hover:bg-surface-2 hover:text-fg',
-        subtle: 'border border-accent-line bg-accent-soft text-accent-text hover:bg-accent/20',
-        danger: 'border border-danger-line bg-danger-soft text-danger hover:bg-danger/20',
-        'danger-solid': 'bg-danger-strong text-white hover:bg-danger-strong/85',
-        link: 'h-auto px-0 text-accent-text underline-offset-4 hover:underline',
+        subtle: 'border border-accent-line bg-accent-soft text-accent-text [&_svg]:text-inherit hover:bg-accent/20',
+        danger: 'border border-danger-line bg-danger-soft text-danger [&_svg]:text-inherit hover:bg-danger/20',
+        'danger-solid': 'bg-danger-strong text-white [&_svg]:text-inherit hover:bg-danger-strong/85',
+        link: 'h-auto px-0 text-accent-text [&_svg]:text-inherit underline-offset-4 hover:underline',
       },
       size: {
         sm: 'h-8 px-3 text-[13px]',

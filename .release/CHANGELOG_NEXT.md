@@ -29,9 +29,9 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
   - users: deletion refuses while the account's API keys are bound to any vault, deleted ones included.
 - psql 105: add admin_role.stats_permissions and grant view to admin, auditor, platform_operator, super_admin and
   any role that passed the old gate; register `admin.stats.view` in the permission catalog (#166).
-- config: `sharing.enable_public_links` renamed `enable_email_validated`; new `enable_anonymous`, `enable_internal`
-  (reserved); `s3_gateway.default_remote_*` moved to `vaults.s3.*` and used as defaults for new S3 vaults. Old keys
-  are read as deprecated aliases (new key wins, one warning at startup); settings saves write the new keys (#164).
+- config: `sharing.enable_public_links` renamed `enable_email_validated`; new `enable_anonymous`;
+  `s3_gateway.default_remote_*` moved to `vaults.s3.*` and used as defaults for new S3 vaults. Old keys are read
+  as deprecated aliases (new key wins, one warning at startup); settings saves write the new keys (#164).
 - ws: cap concurrent connections at `websocket_server.max_connections` (503 + Retry-After); sessions failing before
   the handshake close immediately; new `settings.policy.get` for any signed-in user (#164).
 - fs: deleting a file keeps its parent folders on every path (console, FUSE, S3 gateway, sync, trash purge); FUSE
@@ -53,6 +53,9 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
 - `vh vault create` uses the `vaults.s3` defaults when no sync strategy or conflict policy is given (#164).
 
 ## Web console
+- icons: SVGR sets fill="currentColor" through svgProps (the `fill` option it was given doesn't exist, so every
+  icon painted black) and marks icons data-vh-icon; a base-layer rule makes them cyan, filled buttons and toned
+  containers pass their own color (#188).
 - One vault delete dialog (upstream choice, key warning, delete / delete now), a Deleted vaults panel with Restore and
   Purge now, and vault retention settings (#162).
 - Health, the health dot and system storage sizes follow `admin.stats.view`; the roles editor lists "Health and
