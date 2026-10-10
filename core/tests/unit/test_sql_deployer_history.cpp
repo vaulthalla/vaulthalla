@@ -243,6 +243,72 @@ TEST_F(SqlDeployerHistoryDb, ForwardMigrationIsNoOpOnDatabasesThatRanNewAcl) {
     });
 }
 
+// #166: an upgraded database gets admin_role.stats_permissions with the same grants a fresh install seeds, and
+// every role that passed the old isAdmin() stats gate keeps stats access.
+TEST_F(SqlDeployerHistoryDb, StatsPermissionMigrationMatchesFreshSeedAndKeepsOldGateHolders) {
+    inRolledBackTxn([](pqxx::work& txn) {
+        // A <= 1.10.x database: no stats column, 105 never applied, no catalog row.
+        txn.exec("ALTER TABLE admin_role DROP COLUMN stats_permissions");
+        txn.exec("DELETE FROM schema_migrations WHERE filename = '105_admin_stats_permission.sql'");
+        txn.exec("DELETE FROM permission WHERE name = 'admin.stats.view' AND category = 'admin'");
+
+        const auto upsert = [&](const std::string& name, const vh::rbac::role::Admin& bits) {
+            txn.exec(R"SQL(
+                INSERT INTO admin_role (name, description, identity_permissions, audit_permissions,
+                                        settings_permissions, roles_permissions, vaults_permissions, keys_permissions,
+                                        s3_gateway_permissions)
+                VALUES ($1, 'x', $2::bit(32), $3::bit(8), $4::bit(64), $5::bit(16), $6::bit(32), $7::bit(32), $8::bit(8))
+                ON CONFLICT (name) DO UPDATE SET
+                    identity_permissions = EXCLUDED.identity_permissions, audit_permissions = EXCLUDED.audit_permissions,
+                    settings_permissions = EXCLUDED.settings_permissions, roles_permissions = EXCLUDED.roles_permissions,
+                    vaults_permissions = EXCLUDED.vaults_permissions, keys_permissions = EXCLUDED.keys_permissions,
+                    s3_gateway_permissions = EXCLUDED.s3_gateway_permissions
+            )SQL", pqxx::params{
+                name, bits.identities.toBitString(), bits.audits.toBitString(), bits.settings.toBitString(),
+                bits.roles.toBitString(), bits.vaults.toBitString(), bits.keys.toBitString(),
+                bits.s3Gateway.toBitString()
+            });
+        };
+        for (const auto& role : builtInAdminRoles()) upsert(role.name, role);
+
+        // The old gate: admin.identities.admins.delete AND admin.vaults.admin.remove. The migration reads those two
+        // bits by position, so build them from the permission model rather than hard-coding them here.
+        vh::rbac::role::Admin oldGate;
+        oldGate.identities.admins.grant(vh::rbac::permission::admin::identities::IdentityPermissions::Delete);
+        oldGate.vaults.admin.grant(vh::rbac::permission::admin::VaultPermissions::Remove);
+        upsert("claude_test_old_gate_role", oldGate);
+        vh::rbac::role::Admin halfGate;
+        halfGate.identities.admins.grant(vh::rbac::permission::admin::identities::IdentityPermissions::Delete);
+        upsert("claude_test_half_gate_role", halfGate);
+        upsert("claude_test_plain_role", vh::rbac::role::Admin{});
+
+        migseed::SqlDeployReport report;
+        ASSERT_NO_THROW(report = migseed::SqlDeployer::applyDir(txn, repoPsqlDir()));
+        EXPECT_TRUE(applied(report, "105_admin_stats_permission.sql"));
+
+        const auto bitsOf = [&](const std::string& name) {
+            return txn.exec("SELECT stats_permissions::text FROM admin_role WHERE name = $1", pqxx::params{name})
+                .one_row()[0].as<std::string>();
+        };
+        for (const auto& role : builtInAdminRoles()) {
+            SCOPED_TRACE(role.name);
+            EXPECT_EQ(bitsOf(role.name), role.stats.toBitString()) << "migration and fresh seed disagree";
+        }
+        EXPECT_EQ(bitsOf("claude_test_old_gate_role"), "00000001");
+        EXPECT_EQ(bitsOf("claude_test_half_gate_role"), "00000000");
+        EXPECT_EQ(bitsOf("claude_test_plain_role"), "00000000");
+
+        const auto catalog = txn.exec(
+            "SELECT bit_position FROM permission WHERE name = 'admin.stats.view' AND category = 'admin'");
+        ASSERT_EQ(catalog.size(), 1u);
+        EXPECT_EQ(catalog.one_row()[0].as<int>(), 0);
+
+        migseed::SqlDeployReport again;
+        ASSERT_NO_THROW(again = migseed::SqlDeployer::applyDir(txn, repoPsqlDir()));
+        EXPECT_TRUE(again.applied.empty());
+    });
+}
+
 TEST_F(SqlDeployerHistoryDb, EveryHistoricalChecksumReconcilesToCurrent) {
     for (const auto& e : migseed::kHistoricalMigrationChecksums) {
         const std::string filename{e.filename};

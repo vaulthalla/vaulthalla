@@ -3,7 +3,7 @@
 import { useMemo } from 'react'
 import { useParams } from 'next/navigation'
 import { useWs } from '@/lib/query'
-import { useCan, useIsAdmin } from '@/lib/permissions'
+import { STATS_VIEW, useCan } from '@/lib/permissions'
 import { useSession } from '@/lib/session'
 import { parseCredentials, type VaultDetail, type VaultRow } from '@/features/vaults/model'
 
@@ -54,10 +54,10 @@ export const useGroupNames = () => {
   }, [groups.data, canList])
 }
 
-// Per-vault size, quota and backend status in one read (admin only: it is a system-wide stat).
+// Per-vault size, quota and backend status in one read (a system-wide stat: needs admin.stats.view).
 export const useStorageOverview = () => {
-  const isAdmin = useIsAdmin()
-  return useWs('stats.system.storage', null, { enabled: isAdmin, retry: false, refetchInterval: 30_000 })
+  const canView = useCan(STATS_VIEW)
+  return useWs('stats.system.storage', null, { enabled: canView, retry: false, refetchInterval: 30_000 })
 }
 
 export const VAULT_EDIT = { anyOf: ['admin.vaults.self.edit', 'admin.vaults.user.edit', 'admin.vaults.admin.edit'] }

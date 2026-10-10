@@ -38,6 +38,8 @@ Use the CLI for lifecycle commands, recovery exports, automation, and host-local
 
 The Health area (formerly the dashboard) summarizes runtime health, filesystem activity, storage, operations, and trends. It can show setup advisories, such as an unbound CLI admin UID, without marking the whole runtime unhealthy.
 
+Health needs the `admin.stats.view` admin permission (held by the built-in `admin`, `auditor`, `platform_operator` and `super_admin` roles). A vault's own statistics are shown to its owner and to admins with `view_stats` on that vault. `vh status` stays available to every local operator in the `vaulthalla` group: it is the host-level liveness check and works while the database is down, so it doesn't look up an account.
+
 Treat dashboard backup/recovery indicators as status signals. They do not prove a real backup has completed.
 
 ## Filesystem

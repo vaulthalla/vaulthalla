@@ -116,6 +116,8 @@ The form defaults new S3 vaults toward bounded behavior: cache-style sync, upstr
 
 **Health** shows the daemon's own view of runtime, filesystem, storage and activity, with a customizable overview of cards. Severity always comes from the daemon: when a value isn't measured, or the daemon can't be reached, the console says "not available" or "unknown" rather than showing it as healthy. The dot next to the search box in the top bar shows the overall status.
 
+Health and the top-bar dot need the `admin.stats.view` admin permission. The built-in `admin`, `auditor`, `platform_operator` and `super_admin` roles have it; grant it to another role in **Roles** (Health and stats) or with `vh role admin update <role> --allow-stats-view`. A vault's own statistics on its **Overview** tab don't need it: they are shown to the vault's owner and to admins whose role can view that vault's statistics (`admin.vaults.*.view_stats`).
+
 ## Cost Control
 
 **Cost control** manages price budgets. Use it to set global, provider-level, or vault-level policies; review status and ledger entries; and handle approved overrides. Request budgets for a specific S3/R2 vault are configured on the vault sync policy and are covered in [Request Budgets](/cost-control/request-budgets).

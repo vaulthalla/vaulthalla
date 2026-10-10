@@ -108,7 +108,8 @@ Dev mode requires both `VH_BUILD_MODE=dev` and the gitignored `enable_dev_mode` 
 ## Known test gaps
 
 - Web has no unit runner (`pnpm test` is typecheck + lint only).
-- No seeded DB tests for the stats rollups or share stats. No operator-email dedupe, digest scheduler, or security-enqueue tests.
+- Stats: `StatsAccessTest` covers who may read stats, the overview payload contract and that 24 h trends come from the
+  rollups; there are still no seeded DB tests for the other stats rollups or share stats. No operator-email dedupe, digest scheduler, or security-enqueue tests.
 - DB loss/reconnect and pool exhaustion: `DBPoolReconnectTest` (`test_db_pool_reconnect.cpp`) kills pool backends
   with `pg_terminate_backend` (never restart the shared system PostgreSQL). Its unreachable-DB case needs a
   non-superuser test role that owns its DB, and skips otherwise. A burner DB works:

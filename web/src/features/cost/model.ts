@@ -319,7 +319,6 @@ export interface BudgetStats {
 export const toStats = (input: unknown): BudgetStats => {
   const d = rec(input)
   const trends = list(d.trends, toTrend)
-  const monthly = trends.filter(t => t.window_type === 'monthly')
   return {
     active_policies: num(d.active_policies),
     blocked_syncs_24h: num(d.blocked_syncs_24h),
@@ -327,10 +326,9 @@ export const toStats = (input: unknown): BudgetStats => {
     critical_notifications: num(d.critical_notifications),
     unacknowledged_notifications: num(d.unacknowledged_notifications),
     pending_overrides: num(d.pending_overrides),
-    // Core starts both sums at "0" and only adds monthly windows; with none there's nothing measured.
-    current_monthly_spend: monthly.length ? str(d.current_monthly_spend) : null,
-    projected_monthly_spend:
-      monthly.some(t => t.projected_window_cost !== null) ? str(d.projected_monthly_spend) : null,
+    // Core sends null when no monthly window (or no projection) exists: nothing measured, never a fake zero.
+    current_monthly_spend: str(d.current_monthly_spend),
+    projected_monthly_spend: str(d.projected_monthly_spend),
     currency: str(d.currency) ?? 'USD',
     trends,
   }

@@ -41,7 +41,8 @@ with it) and delete the role.
 
 - #133 is resolved on this branch: deleting an account asks first and transfers or destroys its vaults.
 - Vault/API-key resolver scopes still classify owners with `User::isAdmin()` (a strict "full admin" predicate also used
-  as a gate for S3 policy bypass and system stats); account management uses `ops::users::isAdminIdentity`.
+  as a gate for S3 policy bypass; system stats moved to `admin.stats.view` in #166); account management uses
+  `ops::users::isAdminIdentity`.
 - Fixed: every account had an empty global vault policy (one all-zero `self` row in `user_global_vault_policy`):
   `VaultGlobals`' default constructor labelled all three scopes `self`, and roles loaded from `admin_role` carry no
   preset. Only the super admin (who bypasses the check) could use vaults through the global policy, which is why the

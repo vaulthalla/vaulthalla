@@ -6,5 +6,6 @@
 #include "Roles.hpp"
 #include "S3Gateway.hpp"
 #include "Settings.hpp"
+#include "Stats.hpp"
 #include "VaultGlobals.hpp"
 #include "Vaults.hpp"

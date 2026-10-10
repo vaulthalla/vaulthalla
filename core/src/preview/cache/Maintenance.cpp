@@ -3,6 +3,8 @@
 #include "config/Registry.hpp"
 #include "log/Registry.hpp"
 #include "preview/cache/Store.hpp"
+#include "runtime/Deps.hpp"
+#include "stats/model/CacheStats.hpp"
 #include "storage/Engine.hpp"
 #include "storage/GcmFileReader.hpp"
 #include "vault/model/Vault.hpp"
@@ -24,6 +26,10 @@ void applyConfig() {
         case config::PreviewRemoteMode::Off: storage::setDefaultRemotePolicy(storage::RemoteFetchPolicy::Off); break;
     }
     Store::setFailureTtl(std::chrono::hours(preview.derive.failure_ttl_hours));
+    // The preview cache's cap is configured, not measured: report it from boot instead of only after the first
+    // periodic eviction (#160). Usage is filled in by Store::evict.
+    if (const auto& stats = runtime::Deps::get().httpCacheStats)
+        stats->set_capacity(static_cast<uint64_t>(config::Registry::get().caching.max_size_mb) << 20);
 }
 
 std::size_t sweepAtStartup(const std::vector<std::shared_ptr<storage::Engine>>& engines) {

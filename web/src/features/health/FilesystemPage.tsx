@@ -130,7 +130,8 @@ const CacheBody = ({ stats }: { stats: Raw }) => {
         <StatTile
           label="Used"
           value={bytes(stats.used_bytes)}
-          hint={capacity ? `of ${formatBytes(capacity)}` : capacity === 0 ? 'capacity not reported' : undefined}
+          // A null capacity is a cache without a byte cap (the FS metadata cache), not a full or empty one.
+          hint={capacity ? `of ${formatBytes(capacity)}` : 'no size cap'}
         />
         <StatTile label="Inserts" value={int(stats.inserts)} />
         <StatTile label="Evictions" value={int(stats.evictions)} />

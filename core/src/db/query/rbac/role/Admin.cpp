@@ -26,7 +26,8 @@ unsigned int Admin::insert(const AdminRolePtr& role) {
                 role->roles.toBitString(),
                 role->vaults.toBitString(),
                 role->keys.toBitString(),
-                role->s3Gateway.toBitString()
+                role->s3Gateway.toBitString(),
+                role->stats.toBitString()
             }
         ).one_row()["id"].as<unsigned int>();
     });
@@ -50,7 +51,8 @@ unsigned int Admin::upsert(const AdminRolePtr& role) {
                     role->roles.toBitString(),
                     role->vaults.toBitString(),
                     role->keys.toBitString(),
-                    role->s3Gateway.toBitString()
+                    role->s3Gateway.toBitString(),
+                    role->stats.toBitString()
                 }
             );
 
@@ -69,7 +71,8 @@ unsigned int Admin::upsert(const AdminRolePtr& role) {
                 role->roles.toBitString(),
                 role->vaults.toBitString(),
                 role->keys.toBitString(),
-                role->s3Gateway.toBitString()
+                role->s3Gateway.toBitString(),
+                role->stats.toBitString()
             }
         );
 

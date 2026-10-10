@@ -7,7 +7,9 @@ Historical checkpoint log migrated from `.codex/context/`. Read for design ratio
 Historical implementation log. All phases below merged to `main` via PR #63
 (`277ab29a`, `aa4cf329`); the `stats-dashboards` branch referenced in entries is gone.
 Later work not logged here: `082_stats_metric_samples.sql`, `084_stats_fuse_alertable_errors.sql`,
-S3 pricing stats. Still-open items are tracked in `.claude/context/production-hardening.md`.
+S3 pricing stats, and the 2026-10 access/payload pass (#166 `admin.stats.view` replaced the `isAdmin()` gate; #160
+rolled 24 h trends up, fixed hrefs, money, `numeric_value` and fake zeros; see `architecture.md`, "Stats / dashboards").
+Still-open items are tracked in `.claude/context/production-hardening.md`.
 
 ## Completed Checkpoints
 

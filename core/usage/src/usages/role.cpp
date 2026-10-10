@@ -65,6 +65,8 @@ static std::shared_ptr<CommandUsage> admin_update(const std::weak_ptr<CommandUsa
                             "Revoke user identity modification permission from 'user_ops'."});
     cmd->examples.push_back({"vh role admin update settings_admin --deny-settings-share-edit --deny-settings-services-edit",
                             "Revoke sharing and services settings edit permissions from 'settings_admin'."});
+    cmd->examples.push_back({"vh role admin update support --allow-stats-view",
+                            "Let the 'support' role view runtime health and system stats (the console's Health area)."});
     cmd->option_prefixes = {"allow-", "deny-"};
     return cmd;
 }

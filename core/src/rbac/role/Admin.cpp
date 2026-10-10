@@ -28,6 +28,8 @@ namespace vh::rbac::role {
               row["keys_permissions"].as<uint64_t>())),
           s3Gateway(static_cast<typename decltype(s3Gateway)::Mask>(
               try_get<uint64_t>(row, "s3_gateway_permissions").value_or(0))),
+          stats(static_cast<typename decltype(stats)::Mask>(
+              try_get<uint64_t>(row, "stats_permissions").value_or(0))),
           vGlobals(globalVaultRoles) {
         if (const auto id = try_get<uint32_t>(row, "user_id")) user_id = *id;
     }
@@ -45,7 +47,9 @@ namespace vh::rbac::role {
           keys(static_cast<typename decltype(keys)::Mask>(
               row["keys_permissions"].as<uint64_t>())),
           s3Gateway(static_cast<typename decltype(s3Gateway)::Mask>(
-              try_get<uint64_t>(row, "s3_gateway_permissions").value_or(0))) {
+              try_get<uint64_t>(row, "s3_gateway_permissions").value_or(0))),
+          stats(static_cast<typename decltype(stats)::Mask>(
+              try_get<uint64_t>(row, "stats_permissions").value_or(0))) {
         if (const auto id = try_get<uint32_t>(row, "user_id")) user_id = *id;
     }
 
@@ -106,6 +110,7 @@ namespace vh::rbac::role {
         auto rolesFlags = roles.getFlags();
         auto keysFlags = keys.getFlags();
         auto s3GatewayFlags = s3Gateway.getFlags();
+        auto statsFlags = stats.getFlags();
 
         std::vector<std::string> flags;
         flags.reserve(
@@ -115,7 +120,8 @@ namespace vh::rbac::role {
             settingsFlags.size() +
             rolesFlags.size() +
             keysFlags.size() +
-            s3GatewayFlags.size()
+            s3GatewayFlags.size() +
+            statsFlags.size()
         );
 
         auto append = [&](auto &src) { std::move(src.begin(), src.end(), std::back_inserter(flags)); };
@@ -127,6 +133,7 @@ namespace vh::rbac::role {
         append(rolesFlags);
         append(keysFlags);
         append(s3GatewayFlags);
+        append(statsFlags);
 
         return flags;
     }
@@ -139,6 +146,7 @@ namespace vh::rbac::role {
         auto rolesPerms = roles.exportPermissions();
         auto keysPerms = keys.exportPermissions();
         auto s3GatewayPerms = s3Gateway.exportPermissions();
+        auto statsPerms = stats.exportPermissions();
 
         std::vector<permission::Permission> perms;
         perms.reserve(
@@ -148,7 +156,8 @@ namespace vh::rbac::role {
             settingsPerms.size() +
             rolesPerms.size() +
             keysPerms.size() +
-            s3GatewayPerms.size()
+            s3GatewayPerms.size() +
+            statsPerms.size()
         );
 
         auto appendMoved = [&](auto &exportResult) {
@@ -163,6 +172,7 @@ namespace vh::rbac::role {
         appendMoved(rolesPerms);
         appendMoved(keysPerms);
         appendMoved(s3GatewayPerms);
+        appendMoved(statsPerms);
 
         return perms;
     }
@@ -170,7 +180,8 @@ namespace vh::rbac::role {
     std::string Admin::toFlagsString() const {
         return identities.toFlagsString() + " " + vaults.toFlagsString() + " " + audits.toFlagsString() + " " + settings
                .toFlagsString() + " " +
-               roles.toFlagsString() + " " + keys.toFlagsString() + " " + s3Gateway.toFlagsString();
+               roles.toFlagsString() + " " + keys.toFlagsString() + " " + s3Gateway.toFlagsString() + " " +
+               stats.toFlagsString();
     }
 
     std::optional<Admin> Admin::builtin(const std::string_view name, const uint32_t userId) {
@@ -222,7 +233,8 @@ namespace vh::rbac::role {
                 << settings.toString(i)
                 << roles.toString(i)
                 << keys.toString(i)
-                << s3Gateway.toString(i);
+                << s3Gateway.toString(i)
+                << stats.toString(i);
         return oss.str();
     }
 
@@ -246,6 +258,7 @@ Admin Admin::None(const std::optional<uint32_t> userId) {
         permission::admin::Roles::None(),
         permission::admin::Keys::None(),
         permission::admin::S3Gateway::None(),
+        permission::admin::Stats::None(),
         permission::admin::VaultGlobals::NoneIfBound(userId)
     );
 }
@@ -262,6 +275,7 @@ Admin Admin::Auditor(const std::optional<uint32_t> userId) {
         permission::admin::Roles::ViewOnly(),
         permission::admin::Keys::ViewOnly(),
         permission::admin::S3Gateway::ViewOnly(),
+        permission::admin::Stats::ViewOnly(),
         permission::admin::VaultGlobals::ReaderIfBound(userId)
     );
 }
@@ -278,6 +292,7 @@ Admin Admin::Support(const std::optional<uint32_t> userId) {
         permission::admin::Roles::ViewOnly(),
         permission::admin::Keys::ViewOnly(),
         permission::admin::S3Gateway::ViewOnly(),
+        permission::admin::Stats::None(),
         permission::admin::VaultGlobals::ReaderIfBound(userId)
     );
 }
@@ -294,6 +309,7 @@ Admin Admin::IdentityAdmin(const std::optional<uint32_t> userId) {
         permission::admin::Roles::LifecycleManager(),
         permission::admin::Keys::ViewOnly(),
         permission::admin::S3Gateway::ViewOnly(),
+        permission::admin::Stats::None(),
         permission::admin::VaultGlobals::ManagerIfBound(userId)
     );
 }
@@ -310,6 +326,7 @@ Admin Admin::SecurityAdmin(const std::optional<uint32_t> userId) {
         permission::admin::Roles::AdminManager(),
         permission::admin::Keys::SecurityAdmin(),
         permission::admin::S3Gateway::PrincipalAssigner(),
+        permission::admin::Stats::None(),
         permission::admin::VaultGlobals::ManagerIfBound(userId)
     );
 }
@@ -326,6 +343,7 @@ Admin Admin::PlatformOperator(const std::optional<uint32_t> userId) {
         permission::admin::Roles::VaultManager(),
         permission::admin::Keys::PlatformOperator(),
         permission::admin::S3Gateway::Operator(),
+        permission::admin::Stats::ViewOnly(),
         permission::admin::VaultGlobals::PowerUserIfBound(userId)
     );
 }
@@ -342,6 +360,7 @@ Admin Admin::VaultAdmin(const std::optional<uint32_t> userId) {
         permission::admin::Roles::VaultManager(),
         permission::admin::Keys::APIKeyManager(),
         permission::admin::S3Gateway::Operator(),
+        permission::admin::Stats::None(),
         permission::admin::VaultGlobals::PowerUserIfBound(userId)
     );
 }
@@ -358,6 +377,7 @@ Admin Admin::OrgAdmin(const std::optional<uint32_t> userId) {
         permission::admin::Roles::Full(),
         permission::admin::Keys::SecurityAdmin(),
         permission::admin::S3Gateway::Full(),
+        permission::admin::Stats::ViewOnly(),
         permission::admin::VaultGlobals::FullIfBound(userId)
     );
 }
@@ -374,6 +394,7 @@ Admin Admin::SuperAdmin(const std::optional<uint32_t> userId) {
         permission::admin::Roles::Full(),
         permission::admin::Keys::Full(),
         permission::admin::S3Gateway::Full(),
+        permission::admin::Stats::Full(),
         permission::admin::VaultGlobals::FullIfBound(userId)
     );
 }
@@ -390,6 +411,7 @@ Admin Admin::KeyCustodian(const std::optional<uint32_t> userId) {
         permission::admin::Roles::ViewOnly(),
         permission::admin::Keys::KeyCustodian(),
         permission::admin::S3Gateway::ViewOnly(),
+        permission::admin::Stats::None(),
         permission::admin::VaultGlobals::ReaderIfBound(userId)
     );
 }

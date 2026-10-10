@@ -1,5 +1,6 @@
 #include "protocols/ws/handler/Stats.hpp"
 #include "ops/Error.hpp"
+#include "ops/Stats.hpp"
 
 #include "concurrency/ThreadPoolManager.hpp"
 #include "concurrency/ThreadPool.hpp"
@@ -61,13 +62,7 @@ std::uint32_t statsTrendWindowHours(const json& payload) {
 json Stats::vault(const json& payload, const std::shared_ptr<Session>& session) {
     const auto& vaultId = payload.at("vault_id").get<uint32_t>();
 
-    using Perm = permission::admin::VaultPermissions;
-
-    if (!resolver::Admin::has<Perm>({
-        .user = session->user,
-        .permissions = { Perm::View, Perm::ViewStats },
-        .vault_id = vaultId
-    })) throw vh::ops::Denied("You do not have permission to view stats for this vault.");
+    vh::ops::stats::requireVault(session->user, vaultId, "stats");
 
     const auto task = std::make_shared<vault::task::Stats>(vaultId);
     auto future = task->getFuture().value();
@@ -82,13 +77,7 @@ json Stats::vault(const json& payload, const std::shared_ptr<Session>& session) 
 json Stats::vaultSync(const json& payload, const std::shared_ptr<Session>& session) {
     const auto& vaultId = payload.at("vault_id").get<uint32_t>();
 
-    using Perm = permission::admin::VaultPermissions;
-
-    if (!resolver::Admin::has<Perm>({
-        .user = session->user,
-        .permissions = { Perm::View, Perm::ViewStats },
-        .vault_id = vaultId
-    })) throw vh::ops::Denied("You do not have permission to view sync stats for this vault.");
+    vh::ops::stats::requireVault(session->user, vaultId, "sync stats");
 
     const auto stats = vh::db::query::sync::Stats::getVaultSyncHealth(vaultId);
     return {{"stats", stats ? json(*stats) : json(nullptr)}};
@@ -97,13 +86,7 @@ json Stats::vaultSync(const json& payload, const std::shared_ptr<Session>& sessi
 json Stats::vaultActivity(const json& payload, const std::shared_ptr<Session>& session) {
     const auto& vaultId = payload.at("vault_id").get<uint32_t>();
 
-    using Perm = permission::admin::VaultPermissions;
-
-    if (!resolver::Admin::has<Perm>({
-        .user = session->user,
-        .permissions = { Perm::View, Perm::ViewStats },
-        .vault_id = vaultId
-    })) throw vh::ops::Denied("You do not have permission to view activity stats for this vault.");
+    vh::ops::stats::requireVault(session->user, vaultId, "activity stats");
 
     const auto stats = vh::db::query::vault::Activity::getVaultActivity(vaultId);
     return {{"stats", stats ? json(*stats) : json(nullptr)}};
@@ -112,13 +95,7 @@ json Stats::vaultActivity(const json& payload, const std::shared_ptr<Session>& s
 json Stats::vaultShares(const json& payload, const std::shared_ptr<Session>& session) {
     const auto& vaultId = payload.at("vault_id").get<uint32_t>();
 
-    using Perm = permission::admin::VaultPermissions;
-
-    if (!resolver::Admin::has<Perm>({
-        .user = session->user,
-        .permissions = { Perm::View, Perm::ViewStats },
-        .vault_id = vaultId
-    })) throw vh::ops::Denied("You do not have permission to view share stats for this vault.");
+    vh::ops::stats::requireVault(session->user, vaultId, "share stats");
 
     const auto stats = vh::db::query::share::Stats::getVaultShareStats(vaultId);
     return {{"stats", stats ? json(*stats) : json(nullptr)}};
@@ -127,13 +104,7 @@ json Stats::vaultShares(const json& payload, const std::shared_ptr<Session>& ses
 json Stats::vaultRecovery(const json& payload, const std::shared_ptr<Session>& session) {
     const auto& vaultId = payload.at("vault_id").get<uint32_t>();
 
-    using Perm = permission::admin::VaultPermissions;
-
-    if (!resolver::Admin::has<Perm>({
-        .user = session->user,
-        .permissions = { Perm::View, Perm::ViewStats },
-        .vault_id = vaultId
-    })) throw vh::ops::Denied("You do not have permission to view recovery stats for this vault.");
+    vh::ops::stats::requireVault(session->user, vaultId, "recovery stats");
 
     const auto stats = vh::db::query::vault::Recovery::getVaultRecovery(vaultId);
     return {{"stats", stats ? json(*stats) : json(nullptr)}};
@@ -142,13 +113,7 @@ json Stats::vaultRecovery(const json& payload, const std::shared_ptr<Session>& s
 json Stats::vaultOperations(const json& payload, const std::shared_ptr<Session>& session) {
     const auto& vaultId = payload.at("vault_id").get<uint32_t>();
 
-    using Perm = permission::admin::VaultPermissions;
-
-    if (!resolver::Admin::has<Perm>({
-        .user = session->user,
-        .permissions = { Perm::View, Perm::ViewStats },
-        .vault_id = vaultId
-    })) throw vh::ops::Denied("You do not have permission to view operation stats for this vault.");
+    vh::ops::stats::requireVault(session->user, vaultId, "operation stats");
 
     const auto stats = vh::db::query::stats::OperationStats::snapshotForVault(vaultId);
     return {{"stats", stats ? json(*stats) : json(nullptr)}};
@@ -157,13 +122,7 @@ json Stats::vaultOperations(const json& payload, const std::shared_ptr<Session>&
 json Stats::vaultStorage(const json& payload, const std::shared_ptr<Session>& session) {
     const auto& vaultId = payload.at("vault_id").get<uint32_t>();
 
-    using Perm = permission::admin::VaultPermissions;
-
-    if (!resolver::Admin::has<Perm>({
-        .user = session->user,
-        .permissions = { Perm::View, Perm::ViewStats },
-        .vault_id = vaultId
-    })) throw vh::ops::Denied("You do not have permission to view storage backend stats for this vault.");
+    vh::ops::stats::requireVault(session->user, vaultId, "storage backend stats");
 
     return {{"stats", vh::stats::model::StorageBackendStats::snapshotForVault(vaultId)}};
 }
@@ -171,13 +130,7 @@ json Stats::vaultStorage(const json& payload, const std::shared_ptr<Session>& se
 json Stats::vaultRetention(const json& payload, const std::shared_ptr<Session>& session) {
     const auto& vaultId = payload.at("vault_id").get<uint32_t>();
 
-    using Perm = permission::admin::VaultPermissions;
-
-    if (!resolver::Admin::has<Perm>({
-        .user = session->user,
-        .permissions = { Perm::View, Perm::ViewStats },
-        .vault_id = vaultId
-    })) throw vh::ops::Denied("You do not have permission to view retention stats for this vault.");
+    vh::ops::stats::requireVault(session->user, vaultId, "retention stats");
 
     const auto stats = vh::db::query::stats::RetentionStats::snapshotForVault(vaultId);
     return {{"stats", stats ? json(*stats) : json(nullptr)}};
@@ -186,13 +139,7 @@ json Stats::vaultRetention(const json& payload, const std::shared_ptr<Session>& 
 json Stats::vaultTrends(const json& payload, const std::shared_ptr<Session>& session) {
     const auto& vaultId = payload.at("vault_id").get<uint32_t>();
 
-    using Perm = permission::admin::VaultPermissions;
-
-    if (!resolver::Admin::has<Perm>({
-        .user = session->user,
-        .permissions = { Perm::View, Perm::ViewStats },
-        .vault_id = vaultId
-    })) throw vh::ops::Denied("You do not have permission to view trend stats for this vault.");
+    vh::ops::stats::requireVault(session->user, vaultId, "trend stats");
 
     const auto stats = vh::db::query::stats::Snapshot::vaultTrends(vaultId, statsTrendWindowHours(payload));
     return {{"stats", stats ? json(*stats) : json(nullptr)}};
@@ -201,123 +148,107 @@ json Stats::vaultTrends(const json& payload, const std::shared_ptr<Session>& ses
 json Stats::vaultSecurity(const json& payload, const std::shared_ptr<Session>& session) {
     const auto& vaultId = payload.at("vault_id").get<uint32_t>();
 
-    using Perm = permission::admin::VaultPermissions;
-
-    if (!resolver::Admin::has<Perm>({
-        .user = session->user,
-        .permissions = { Perm::View, Perm::ViewStats },
-        .vault_id = vaultId
-    })) throw vh::ops::Denied("You do not have permission to view security stats for this vault.");
+    vh::ops::stats::requireVault(session->user, vaultId, "security stats");
 
     const auto stats = vh::db::query::vault::Security::getVaultSecurity(vaultId);
     return {{"stats", stats ? json(*stats) : json(nullptr)}};
 }
 
 json Stats::dashboardOverview(const json& payload, const std::shared_ptr<Session>& session) {
-    if (!session->user->isAdmin()) throw vh::ops::Denied("Must be an admin to view dashboard overview stats.");
+    vh::ops::stats::requireSystem(session->user, "dashboard overview stats");
     return {{"stats", vh::stats::model::DashboardOverview::snapshot(vh::stats::model::dashboardOverviewRequestFromJson(payload))}};
 }
 
 json Stats::dashboardSeverity(const std::shared_ptr<Session>& session) {
-    if (!session->user->isAdmin()) throw vh::ops::Denied("Must be an admin to view dashboard overview stats.");
+    vh::ops::stats::requireSystem(session->user, "dashboard overview stats");
     // Wrapped in `stats` like every other stats.* response.
     return {{"stats", vh::stats::model::dashboardSeverityJson(vh::stats::model::DashboardOverview::severity())}};
 }
 
 json Stats::systemHealth(const std::shared_ptr<Session>& session) {
-    if (!session->user->isAdmin()) throw vh::ops::Denied("Must be an admin to view system health.");
+    vh::ops::stats::requireSystem(session->user, "system health");
     return {{"stats", vh::stats::model::SystemHealth::snapshot()}};
 }
 
 json Stats::systemThreadPools(const std::shared_ptr<Session>& session) {
-    if (!session->user->isAdmin()) throw vh::ops::Denied("Must be an admin to view thread pool stats.");
+    vh::ops::stats::requireSystem(session->user, "thread pool stats");
     return {{"stats", vh::stats::model::ThreadPoolManagerSnapshot::snapshot()}};
 }
 
 json Stats::systemFuse(const std::shared_ptr<Session>& session) {
-    if (!session->user->isAdmin()) throw vh::ops::Denied("Must be an admin to view FUSE stats.");
+    vh::ops::stats::requireSystem(session->user, "FUSE stats");
     const auto& stats = runtime::Deps::get().fuseStats;
     if (!stats) throw std::runtime_error("No FUSE stats available.");
     return {{"stats", stats->snapshot()}};
 }
 
 json Stats::systemDb(const std::shared_ptr<Session>& session) {
-    if (!session->user->isAdmin()) throw vh::ops::Denied("Must be an admin to view database health.");
+    vh::ops::stats::requireSystem(session->user, "database health");
     const auto stats = vh::db::query::stats::DbStats::snapshot();
     return {{"stats", stats ? json(*stats) : json(nullptr)}};
 }
 
 json Stats::systemOperations(const std::shared_ptr<Session>& session) {
-    if (!session->user->isAdmin()) throw vh::ops::Denied("Must be an admin to view operation queue stats.");
+    vh::ops::stats::requireSystem(session->user, "operation queue stats");
     const auto stats = vh::db::query::stats::OperationStats::snapshot();
     return {{"stats", stats ? json(*stats) : json(nullptr)}};
 }
 
 json Stats::systemConnections(const std::shared_ptr<Session>& session) {
-    if (!session->user->isAdmin()) throw vh::ops::Denied("Must be an admin to view connection stats.");
+    vh::ops::stats::requireSystem(session->user, "connection stats");
     return {{"stats", vh::stats::model::ConnectionStats::snapshot()}};
 }
 
 json Stats::systemStorage(const std::shared_ptr<Session>& session) {
-    if (!session->user->isAdmin()) throw vh::ops::Denied("Must be an admin to view storage backend stats.");
+    vh::ops::stats::requireSystem(session->user, "storage backend stats");
     return {{"stats", vh::stats::model::StorageBackendStats::snapshot()}};
 }
 
 json Stats::systemRetention(const std::shared_ptr<Session>& session) {
-    if (!session->user->isAdmin()) throw vh::ops::Denied("Must be an admin to view retention stats.");
+    vh::ops::stats::requireSystem(session->user, "retention stats");
     const auto stats = vh::db::query::stats::RetentionStats::snapshot();
     return {{"stats", stats ? json(*stats) : json(nullptr)}};
 }
 
 json Stats::systemTrends(const json& payload, const std::shared_ptr<Session>& session) {
-    if (!session->user->isAdmin()) throw vh::ops::Denied("Must be an admin to view trend stats.");
+    vh::ops::stats::requireSystem(session->user, "trend stats");
     const auto stats = vh::db::query::stats::Snapshot::systemTrends(statsTrendWindowHours(payload));
     return {{"stats", stats ? json(*stats) : json(nullptr)}};
 }
 
 json Stats::pricingBudget(const json& payload, const std::shared_ptr<Session>& session) {
     if (!payload.is_object() || !payload.contains("vault_id") || payload.at("vault_id").is_null()) {
-        if (!session->user->isAdmin()) throw vh::ops::Denied("Must be an admin to view system pricing budget stats.");
+        vh::ops::stats::requireSystem(session->user, "system pricing budget stats");
         return {{"stats", vh::storage::s3::pricing::PriceBudgetService{}.dashboardStats()}};
     }
 
     const auto vaultId = payload.at("vault_id").get<std::uint32_t>();
-    using Perm = permission::admin::VaultPermissions;
-    if (!resolver::Admin::has<Perm>({
-        .user = session->user,
-        .permissions = { Perm::View, Perm::ViewStats },
-        .vault_id = vaultId
-    })) throw vh::ops::Denied("You do not have permission to view pricing budget stats for this vault.");
+    vh::ops::stats::requireVault(session->user, vaultId, "pricing budget stats");
 
     return {{"stats", vh::storage::s3::pricing::PriceBudgetService{}.dashboardStats(vaultId)}};
 }
 
 json Stats::vaultPricing(const json& payload, const std::shared_ptr<Session>& session) {
     const auto vaultId = payload.at("vault_id").get<std::uint32_t>();
-    using Perm = permission::admin::VaultPermissions;
-    if (!resolver::Admin::has<Perm>({
-        .user = session->user,
-        .permissions = { Perm::View, Perm::ViewStats },
-        .vault_id = vaultId
-    })) throw vh::ops::Denied("You do not have permission to view pricing stats for this vault.");
+    vh::ops::stats::requireVault(session->user, vaultId, "pricing stats");
 
     return {{"stats", vh::storage::s3::pricing::PriceBudgetService{}.dashboardStats(vaultId)}};
 }
 
 json Stats::systemPricing(const std::shared_ptr<Session>& session) {
-    if (!session->user->isAdmin()) throw vh::ops::Denied("Must be an admin to view system pricing stats.");
+    vh::ops::stats::requireSystem(session->user, "system pricing stats");
     return {{"stats", vh::storage::s3::pricing::PriceBudgetService{}.dashboardStats()}};
 }
 
 json Stats::fsCache(const std::shared_ptr<Session>& session) {
-    if (!session->user->isAdmin()) throw vh::ops::Denied("Must be an admin to view cache stats.");
+    vh::ops::stats::requireSystem(session->user, "cache stats");
     const auto stats = runtime::Deps::get().fsCache->stats();
     if (!stats) throw std::runtime_error("No cache stats available.");
     return {{"stats", stats}};
 }
 
 json Stats::httpCache(const std::shared_ptr<Session>& session) {
-    if (!session->user->isAdmin()) throw vh::ops::Denied("Must be an admin to view cache stats.");
+    vh::ops::stats::requireSystem(session->user, "cache stats");
     return {{"stats", runtime::Deps::get().httpCacheStats->snapshot()}};
 }
 
