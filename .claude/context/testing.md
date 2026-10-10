@@ -87,6 +87,10 @@ make uninstall && make clean-full && make run_test   # destructive to local dev/
 
 This runs `core/tests/integrations/main.cpp` in test mode: it wipes, inits, and seeds the DB, starts FUSE + shell, and runs the CLI and FUSE suites
 against **`/tmp/vh_mount`**. The last known result was 83/83 (2026-10-09, after #170 and #183). It's isolated from systemd/prod state.
+The "Copy And Delete" stage (#167/#168, 14 cases, runs unprivileged too) copies a nested folder over ws
+`fs.entry.copy` and reads every copied file through FUSE and through `/download` (in-process `http::Router`), then checks
+that unlink / `fs.entry.delete` keep folders and that rmdir of a non-empty folder is ENOTEMPTY; with it the expected
+total is 97.
 If `apt-get update` fails in `bin/setup/install_deps.sh` on an unrelated host apt source (e.g. a Caddy Cloudsmith
 `402 Payment Required`), run the remaining steps directly: `bin/tests/uninstall.sh`, `bin/setup/install_users.sh`,
 `bin/tests/install_dirs.sh`, `bin/tests/install_db.sh`, `bin/tests/install_core.sh --run`.
@@ -107,6 +111,12 @@ Dev mode requires both `VH_BUILD_MODE=dev` and the gitignored `enable_dev_mode` 
   `.vaulthalla/index-v1.json` isn't left stale.
 
 ## Known test gaps
+
+- Copying a cloud file with no local copy (hydrate-then-copy in `Filesystem::copy`) has no test: `FsCopyDbTest`
+  covers local vaults, and the cloud fakes in `test_cloud_remote_read.cpp` are DB-free.
+- DB-backed suites share the process-wide `runtime::Deps` (fs cache, storage engines) across schema resets, so ids
+  reused by a later suite can hit an earlier suite's cached entries. `FsCopyDbTest` installs a fresh cache and reloads
+  engines in `SetUpTestSuite`; copy that if a suite drives ws handlers that reach the sync controller.
 
 - Web has no unit runner (`pnpm test` is typecheck + lint only).
 - Stats: `StatsAccessTest` covers who may read stats, the overview payload contract and that 24 h trends come from the

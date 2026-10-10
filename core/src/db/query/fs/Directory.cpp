@@ -63,14 +63,6 @@ bool Directory::isDirectoryEmpty(unsigned int id) {
     });
 }
 
-void Directory::deleteEmptyDirectory(const unsigned int id) {
-    Transactions::exec("Directory::deleteDirectory", [&](pqxx::work& txn) {
-        const auto parent = txn.exec(pqxx::prepped{"get_fs_entry_parent_id"}, id).one_field().as<std::optional<unsigned int>>();
-        if (parent) txn.exec(pqxx::prepped{"update_dir_stats"}, pqxx::params{parent, 0, 0, -1});
-        txn.exec(pqxx::prepped{"delete_fs_entry"}, pqxx::params{id});
-    });
-}
-
 void Directory::moveDirectory(const DirPtr& directory, const std::filesystem::path& newPath, unsigned int userId) {
     if (!directory) throw std::invalid_argument("Directory cannot be null");
     if (!newPath.string().starts_with("/")) throw std::invalid_argument("New path must start with '/'");
@@ -192,6 +184,17 @@ void Directory::deleteDirectoryTree(const unsigned int id) {
         if (!totals) return;
         for (const auto ancestor : ancestorChain(txn, parentIdOf(txn, id))) addToDirStats(txn, ancestor, *totals, -1);
         txn.exec(pqxx::prepped{"delete_fs_entry"}, pqxx::params{id}); // children cascade
+    });
+}
+
+bool Directory::deleteEmptyDirectory(const unsigned int id) {
+    return Transactions::exec("Directory::deleteEmptyDirectory", [&](pqxx::work& txn) {
+        if (!txn.exec(pqxx::prepped{"is_dir_empty"}, pqxx::params{id}).one_field().as<bool>()) return false;
+        const auto totals = subtreeTotalsOf(txn, id);
+        if (!totals) return true;  // already gone
+        for (const auto ancestor : ancestorChain(txn, parentIdOf(txn, id))) addToDirStats(txn, ancestor, *totals, -1);
+        txn.exec(pqxx::prepped{"delete_fs_entry"}, pqxx::params{id});
+        return true;
     });
 }
 

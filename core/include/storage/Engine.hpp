@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <functional>
 #include <vector>
 #include <memory>
 #include <shared_mutex>
@@ -67,7 +68,11 @@ namespace vh::storage {
 
         void rename(const fs::path &from, const fs::path &to, const std::shared_ptr<identities::User>& user);
 
-        void copy(const fs::path &from, const fs::path &to, unsigned int userId);
+        // Copies an entry (a directory with everything under it) within this vault; vault paths. `authorize` sees every
+        // source entry and its destination FUSE path before anything is written, and throws to refuse
+        // (fs::Filesystem::copy). Throws std::runtime_error naming the reason on any other failure.
+        void copy(const fs::path &from, const fs::path &to, unsigned int userId,
+                  const std::function<void(const vh::fs::model::Entry &source, const fs::path &destination)> &authorize = {});
 
         void remove(const fs::path &rel_path, unsigned int userId) const;
 

@@ -684,7 +684,10 @@ std::vector<std::shared_ptr<Entry>> Registry::listDir(const unsigned int parentI
         std::unordered_set<unsigned int> visited;
         visited.reserve(childToParent_.size());
 
-        for (const auto& e : entries) {
+        // By index: append_children grows `entries`, and a range-for would stop at the size it started with (so
+        // nothing deeper than grandchildren was collected and every deeper subtree fell back to the DB listing).
+        for (std::size_t i = 0; i < entries.size(); ++i) {
+            const auto& e = entries[i];
             if (!e) continue;
             const unsigned int eid = e->id;
             if (!visited.insert(eid).second) continue;
@@ -696,7 +699,10 @@ std::vector<std::shared_ptr<Entry>> Registry::listDir(const unsigned int parentI
 
     if (entries.size() != numEntries) {
         log::Registry::fs()->warn("[FSCache] Expected {} entries, but found {}", numEntries, entries.size());
-        const auto expected = db::query::fs::Entry::listDir(parentId, recursive);
+        // listDir(id, true) returns only direct child files and symlinks (see Entry::listSubtree): a recursive
+        // fallback through it dropped everything deeper, e.g. from a directory rename.
+        const auto expected = recursive ? db::query::fs::Entry::listSubtree(parentId)
+                                        : db::query::fs::Entry::listDir(parentId, false);
         if (expected.size() != numEntries) {
             if (expected.size() == entries.size())
                 log::Registry::fs()->warn("Computed number of entries mismatch with actual");

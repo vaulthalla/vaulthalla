@@ -11,12 +11,24 @@
 #include "vault/model/Vault.hpp"
 #include "db/query/rbac/role/Vault.hpp"
 #include "db/query/rbac/role/vault/Assignments.hpp"
+#include "protocols/http/Router.hpp"
+#include "protocols/http/model/preview/Response.hpp"
+#include "protocols/ws/Router.hpp"
+#include "protocols/ws/Session.hpp"
+#include "protocols/ws/handler/fs/Storage.hpp"
+#include "storage/PlaintextReader.hpp"
+
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <chrono>
 #include <stdexcept>
+#include <span>
 #include <string>
+#include <utility>
+#include <variant>
 #include <vector>
 
 #include "rbac/role/Vault.hpp"
@@ -106,6 +118,181 @@ namespace vh::test::integration {
             db::query::rbac::role::vault::Assignments::assign(role);
             user->roles.vaults[vaultId] = role;
         }
+
+        std::shared_ptr<::vh::protocols::ws::Session> wsSessionFor(const std::shared_ptr<User>& user) {
+            auto session = std::make_shared<::vh::protocols::ws::Session>(std::make_shared<::vh::protocols::ws::Router>());
+            session->user = user;
+            return session;
+        }
+
+        // Runs a ws filesystem command in-process as `user`, the way the console sends it.
+        ExecResult wsCommand(const std::function<nlohmann::json(const std::shared_ptr<::vh::protocols::ws::Session>&)>& fn,
+                             const std::shared_ptr<User>& user, const std::string& okText) {
+            try {
+                (void)fn(wsSessionFor(user));
+                return {.exit_code = 0, .stdout_text = okText + "\n", .stderr_text = {}};
+            } catch (const std::exception& e) {
+                return {.exit_code = EIO, .stdout_text = {}, .stderr_text = e.what()};
+            }
+        }
+
+        // GET /download?vault_id=&path= through the HTTP router as `user`; stdout is the body.
+        ExecResult httpDownload(const std::shared_ptr<storage::Engine>& engine, const std::shared_ptr<User>& user,
+                                const std::string& vaultPath) {
+            namespace http = ::vh::protocols::http;
+            std::string encoded;
+            for (const char c : vaultPath) encoded += c == '/' ? std::string("%2F") : std::string(1, c);
+
+            const auto session = wsSessionFor(user);
+            http::Router::setPreviewSessionResolverForTesting([session](const http::request&) { return session; });
+            ExecResult out;
+            try {
+                http::request req{http::verb::get,
+                                  "/download?vault_id=" + std::to_string(engine->vault->id) + "&path=" + encoded, 11};
+                auto res = http::Router::route(std::move(req));
+                const auto code = std::visit([](const auto& r) { return static_cast<int>(r.result()); }, res);
+                std::string body;
+                if (const auto* v = std::get_if<http::vector_response>(&res)) body.assign(v->body().begin(), v->body().end());
+                else if (const auto* s = std::get_if<http::string_response>(&res)) body = s->body();
+                else if (const auto* st = std::get_if<http::model::preview::StreamResponse>(&res); st && st->reader) {
+                    std::vector<uint8_t> buf(static_cast<std::size_t>(st->length));
+                    std::size_t done = 0;
+                    while (done < buf.size()) {
+                        const auto n = st->reader->read(st->offset + done, std::span(buf.data() + done, buf.size() - done));
+                        if (n == 0) break;
+                        done += n;
+                    }
+                    body.assign(buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(done));
+                }
+                out = {.exit_code = code == 200 ? 0 : (code & 0xFF), .stdout_text = body, .stderr_text = {}};
+            } catch (const std::exception& e) {
+                out = {.exit_code = EIO, .stdout_text = {}, .stderr_text = e.what()};
+            }
+            http::Router::resetPreviewSessionResolverForTesting();
+            return out;
+        }
+
+        // Runs `first`, and `then` only when it succeeded (a delete followed by a look at what it left).
+        ExecResult andThen(const ExecResult& first, const std::function<ExecResult()>& then) {
+            if (first.exit_code != 0) return first;
+            return then();
+        }
+    }
+
+    // #167: fs.entry.copy of a folder copies the whole subtree, and every copied file is readable at once (through the
+    // mount and /download), with no sync pass in between. #168: deleting a file never removes the folder it was in,
+    // whether it is deleted through the mount or the console; rmdir of a non-empty folder is ENOTEMPTY.
+    static TestStage testCopyAndDelete() {
+        auto builder = Builder::make({
+            .name = "Copy And Delete",
+            .baseDir = "copy_delete_seed"
+        });
+
+        const auto [ctx, subj] = builder.scenario();
+        (void)subj;
+
+        const auto uid = *ctx.admin->meta.linux_uid;
+        const auto src = ctx.base() / "src";
+        const auto copy = ctx.base() / "copy";
+        const std::string vaultBase = "/" + ctx.baseDir;
+        const std::vector<std::pair<std::string, std::string>> files{
+            {"a.txt", "alpha copy\n"},
+            {"sub/b.txt", "bravo copy\n"},
+            {"sub/deep/c.txt", "charlie copy\n"}
+        };
+
+        (void)mkdir_as(uid, src / "sub" / "deep");
+        (void)mkdir_as(uid, src / "empty");
+        for (const auto& [rel, content] : files) (void)write_as(uid, src / rel, content);
+
+        builder.makeTestCase({
+            .name = "fs.entry.copy of a nested folder (admin)",
+            .path = "fs/copy",
+            .must_contain = {"OK copy"},
+            .fn = [=] {
+                return wsCommand([&](const auto& session) {
+                    return ::vh::protocols::ws::handler::fs::Storage::copy(
+                        {{"vault_id", ctx.engine->vault->id}, {"from", vaultBase + "/src"}, {"to", vaultBase + "/copy"}},
+                        session);
+                }, ctx.admin, "OK copy");
+            }
+        });
+
+        builder.makeTestCase({
+            .name = "FUSE ls of the copy shows its subtree (admin)",
+            .path = "fuse/ls",
+            .must_contain = {"a.txt\n", "sub\n", "empty\n"},
+            .fn = [=] { return ls_as(uid, copy); }
+        });
+
+        for (const auto& [rel, content] : files) {
+            builder.makeTestCase({
+                .name = "FUSE read of copied " + rel + " (admin)",
+                .path = "fuse/read",
+                .must_contain = {content},
+                .fn = [=] { return read_as(uid, copy / rel); }
+            });
+
+            builder.makeTestCase({
+                .name = "/download of copied " + rel + " (admin)",
+                .path = "http/download",
+                .must_contain = {content},
+                .fn = [=] { return httpDownload(ctx.engine, ctx.admin, vaultBase + "/copy/" + rel); }
+            });
+        }
+
+        builder.makeTestCase({
+            .name = "FUSE ls of the copied empty folder (admin)",
+            .path = "fuse/ls",
+            .fn = [=] { return ls_as(uid, copy / "empty"); }
+        });
+
+        builder.makeTestCase({
+            .name = "FUSE unlink of a folder's last file keeps the folder (admin)",
+            .path = "fuse/unlink",
+            .must_contain = {"deep\n"},
+            .fn = [=] {
+                return andThen(unlink_as(uid, copy / "sub" / "deep" / "c.txt"), [=] { return ls_as(uid, copy / "sub"); });
+            }
+        });
+
+        builder.makeTestCase({
+            .name = "fs.entry.delete of a folder's last file keeps it and its parents (admin)",
+            .path = "fs/delete",
+            .must_contain = {"deep\n"},
+            .fn = [=] {
+                const auto deleted = wsCommand([&](const auto& session) {
+                    return ::vh::protocols::ws::handler::fs::Storage::remove(
+                        {{"vault_id", ctx.engine->vault->id}, {"path", vaultBase + "/copy/sub/b.txt"}}, session);
+                }, ctx.admin, "OK delete");
+                return andThen(deleted, [=] { return ls_as(uid, copy / "sub"); });
+            }
+        });
+
+        builder.makeTestCase({
+            .name = "FUSE rmdir of a non-empty folder is ENOTEMPTY (admin)",
+            .path = "fuse/rmdir",
+            .expect_exit = ENOTEMPTY,
+            .fn = [=] { return rmdir_as(uid, copy / "sub"); }
+        });
+
+        builder.makeTestCase({
+            .name = "FUSE rmdir of empty folders (admin)",
+            .path = "fuse/rmdir",
+            .must_contain = {"OK rmdir"},
+            .fn = [=] {
+                return andThen(rmdir_as(uid, copy / "sub" / "deep"), [=] { return rmdir_as(uid, copy / "sub"); });
+            }
+        });
+
+        builder.makeTestCase({
+            .name = "The source is untouched by all of it (admin)",
+            .path = "fuse/read",
+            .must_contain = {"charlie copy\n"},
+            .fn = [=] { return read_as(uid, src / "sub" / "deep" / "c.txt"); }
+        });
+
+        return builder.exec();
     }
 
     static TestStage testFUSECRUD() {
@@ -719,7 +906,8 @@ namespace vh::test::integration {
 
     void IntegrationsTestRunner::runFUSETests() {
         constexpr std::array always_run {
-            testFUSECRUD
+            testFUSECRUD,
+            testCopyAndDelete
         };
 
         for (const auto& function : always_run) {

@@ -5,13 +5,11 @@
 #include "storage/Engine.hpp"
 #include "storage/CloudEngine.hpp"
 #include "sync/model/Policy.hpp"
-#include "sync/model/Operation.hpp"
 #include "vault/model/Vault.hpp"
 #include "fs/model/File.hpp"
 #include "fs/model/file/Trashed.hpp"
 #include "fs/model/Path.hpp"
 #include "fs/ops/file.hpp"
-#include "db/query/sync/Operation.hpp"
 #include "db/query/fs/File.hpp"
 #include "vault/EncryptionManager.hpp"
 #include "fs/Filesystem.hpp"
@@ -125,7 +123,6 @@ void Local::processSharedOps() {
 
     const std::vector<NamedOp> ops = {
         {"repairAtRest", [this]{ repairAtRestOnce(); }},
-        {"processOperations", [this]{ processOperations(); }},
         {"removeTrashedFiles", [this]{ removeTrashedFiles(); }},
         {"handleVaultKeyRotation", [this]{ handleVaultKeyRotation(); }},
       };
@@ -262,54 +259,10 @@ std::shared_ptr<ScopedOp> Local::op(const Throughput::Metric& metric) const {
     return event->getOrCreateThroughput(metric).newOp();
 }
 
-void Local::processOperations() const {
-    for (const auto& op : db::query::sync::Operation::listOperationsByVault(engine->vault->id)) {
-        const auto scopedOp = event->getOrCreateThroughput(op->opToThroughputMetric()).newOp();
-        scopedOp->start();
-
-        const auto absSrc = engine->paths->absPath(op->source_path, PathType::BACKING_VAULT_ROOT);
-        const auto absDest = engine->paths->absPath(op->destination_path, PathType::BACKING_VAULT_ROOT);
-        if (absDest.has_parent_path())
-            if (const auto err = Filesystem::mkdir({.path = absDest.parent_path()}); err)
-                handleError(fmt::format("[FSTask] Failed to create parent directory for '{}': {}", absDest.parent_path().string(), std::strerror(err)));
-
-        const auto f = db::query::fs::File::getFileByPath(engine->vault->id, op->destination_path);
-        if (!f) {
-            log::Registry::sync()->error("[FSTask] File not found for operation: {}", op->destination_path);
-            scopedOp->stop();
-            continue;
-        }
-
-        scopedOp->size_bytes = f->size_bytes;
-
-        if (f->size_bytes == 0 && op->operation != Operation::Op::Copy) {
-            log::Registry::sync()->error("[FSTask] File size is zero for operation: {}", op->destination_path);
-            scopedOp->stop();
-            continue;
-        }
-
-        auto buffer = decrypt_file_to_memory(vaultId(), op->source_path, engine);
-
-        if (buffer.empty()) {
-            log::Registry::sync()->error("[FSTask] Empty file buffer for operation: {}", op->source_path);
-            scopedOp->stop();
-            continue;
-        }
-
-        const auto ciphertext = engine->encryptionManager->encrypt(buffer, f);
-        writeFile(absDest, ciphertext);
-        db::query::fs::File::setEncryptionIVAndVersion(f);
-
-        // Derived artifacts are keyed by file id and content generation, not path: a move keeps them (the reseal
-        // above already made them stale), a copy is a new file id that derives its own on demand.
-        if (op->operation == Operation::Op::Move || op->operation == Operation::Op::Rename) {
-            if (std::filesystem::exists(absSrc)) std::filesystem::remove(absSrc);
-        } else if (op->operation != Operation::Op::Copy)
-            throw std::runtime_error("Unknown operation type: " + std::to_string(static_cast<int>(op->operation)));
-
-        scopedOp->stop();
-    }
-}
+// Copy, move and rename write their bytes themselves, at the alias backing layout (fs::Filesystem). A sync pass
+// used to replay 'pending' operation rows by re-encrypting into BACKING_VAULT_ROOT/<vault path>, the layout from
+// before alias backing paths; nothing has queued such a row since Filesystem became the primary handler, and the
+// operations table now only records activity (#167).
 
 // Once per vault per daemon start: files older builds left in plaintext (or with ciphertext sizes) are brought to
 // the at-rest format before anything else reads them (#173).

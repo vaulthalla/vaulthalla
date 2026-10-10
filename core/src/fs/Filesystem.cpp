@@ -1,6 +1,7 @@
 #include "fs/Filesystem.hpp"
 #include "storage/Manager.hpp"
 #include "storage/Engine.hpp"
+#include "storage/CloudEngine.hpp"
 #include "vault/model/Vault.hpp"
 #include "fs/model/File.hpp"
 #include "fs/model/Directory.hpp"
@@ -32,6 +33,8 @@
 
 #include <ranges>
 #include <set>
+#include <string_view>
+#include <unordered_map>
 #include <fstream>
 #include <vector>
 #include <algorithm>
@@ -463,162 +466,328 @@ Filesystem::createSymlink(const FuseCreateSymlinkContext& ctx) {
     }
 }
 
-int Filesystem::copy(const std::filesystem::path& from,
-                     const std::filesystem::path& to,
-                     const unsigned int userId,
-                     std::shared_ptr<Engine> engine) {
-    std::scoped_lock lock(mutex_);
+namespace {
 
+// One entry of a copy: the source and where it goes. Planned before anything is written.
+struct CopyItem {
+    std::shared_ptr<Entry> source;
+    std::filesystem::path to;       // destination FUSE path
+    std::filesystem::path toVault;  // destination vault path
+    std::string alias;
+    std::filesystem::path backing;  // destination backing path (alias layout, under its destination parent)
+    std::shared_ptr<File> content;  // files: the source row the copied bytes belong to (taken with them)
+};
+
+constexpr std::string_view kHttpUploadTempPrefix = ".upload-http-";
+
+// In-flight HTTP upload staging files (fuse/Bridge.cpp) are not content: they are never copied.
+bool isUploadStaging(const std::string& name) {
+    return name.starts_with(kHttpUploadTempPrefix) && name.ends_with(".part");
+}
+
+std::size_t depthOf(const std::filesystem::path& p) {
+    return static_cast<std::size_t>(std::ranges::distance(p.begin(), p.end()));
+}
+
+bool isWithin(const std::filesystem::path& path, const std::filesystem::path& root) {
+    const auto rel = path.lexically_normal().lexically_relative(root.lexically_normal());
+    return !rel.empty() && rel.native() != ".." && !rel.native().starts_with("../");
+}
+
+// Copies a sealed backing file byte for byte (copy_file_range/sendfile under the hood), durably, to a fresh path.
+void copyBackingBytes(const std::filesystem::path& from, const std::filesystem::path& to) {
+    replaceFileAtomic(to, [&](const std::filesystem::path& temp) {
+        std::filesystem::copy_file(from, temp, std::filesystem::copy_options::overwrite_existing);
+    });
+}
+
+} // namespace
+
+int Filesystem::copy(const CopyContext& ctx) {
+    const auto& from = ctx.from;
+    const auto& to = ctx.to;
+    const auto& cache = runtime::Deps::get().fsCache;
+
+    std::shared_ptr<Engine> engine = ctx.engine;
+    std::shared_ptr<Entry> destParent;
+    std::vector<CopyItem> items;
+
+    // 1. Plan: what is copied where. Nothing is written yet.
     try {
-        if (!storageManager_) {
-            log::Registry::fs()->error("[Filesystem::copy] StorageManager is not initialized");
-            return -EIO;
+        {
+            std::scoped_lock lock(mutex_);
+            if (!storageManager_) {
+                log::Registry::fs()->error("[Filesystem::copy] StorageManager is not initialized");
+                return -EIO;
+            }
+            if (!engine) engine = storageManager_->resolveStorageEngine(from);
+            if (!engine) {
+                log::Registry::fs()->error("[Filesystem::copy] No storage engine found for source path: {}", from.string());
+                return -EIO;
+            }
+            const auto toEngine = storageManager_->resolveStorageEngine(to);
+            if (!toEngine) {
+                log::Registry::fs()->error("[Filesystem::copy] No storage engine found for destination path: {}", to.string());
+                return -EIO;
+            }
+            if (toEngine->vault->id != engine->vault->id) {
+                log::Registry::fs()->error("[Filesystem::copy] Cross-vault copy not supported: {} -> {}", from.string(), to.string());
+                return -EXDEV;
+            }
         }
 
-        if (from == to)
-            return 0;
-
-        if (!engine)
-            engine = storageManager_->resolveStorageEngine(from);
-
-        if (!engine) {
-            log::Registry::fs()->error(
-                "[Filesystem::copy] No storage engine found for source path: {}",
-                from.string());
-            return -EIO;
-        }
-
-        const auto toEngine = storageManager_->resolveStorageEngine(to);
-        if (!toEngine) {
-            log::Registry::fs()->error(
-                "[Filesystem::copy] No storage engine found for destination path: {}",
-                to.string());
-            return -EIO;
-        }
-
-        if (toEngine->vault->id != engine->vault->id) {
-            log::Registry::fs()->error(
-                "[Filesystem::copy] Cross-vault copy not supported: {} -> {}",
-                from.string(),
-                to.string());
-            return -EXDEV;
-        }
-
-        const auto fromVaultPath = engine->fusePathToVaultPath(from);
-        const auto toVaultPath = engine->fusePathToVaultPath(to);
-
-        const auto& cache = runtime::Deps::get().fsCache;
+        if (from == to) return 0;
 
         const auto entry = cache->getEntry(from);
-        const bool isSymlink = entry && entry->isSymlink();
-        const bool isFile = !isSymlink && engine->isFile(fromVaultPath);
-        const bool isDirectory = !isSymlink && engine->isDirectory(fromVaultPath);
-        if (!isSymlink && !isFile && !isDirectory) {
-            log::Registry::fs()->error(
-                "[Filesystem::copy] Source path does not exist: {}",
-                from.string());
-            return -ENOENT;
-        }
-
         if (!entry) {
-            log::Registry::fs()->error(
-                "[Filesystem::copy] Source entry not found in cache: {}",
-                from.string());
+            log::Registry::fs()->error("[Filesystem::copy] Source path does not exist: {}", from.string());
             return -ENOENT;
         }
-
-        const auto parent = cache->getEntry(resolveParent(to));
-        if (!parent) {
-            log::Registry::fs()->error(
-                "[Filesystem::copy] Destination parent does not exist: {}",
-                to.parent_path().string());
-            return -ENOENT;
+        if (entry->isDirectory() && (!entry->parent_id || isWithin(to, from))) {
+            log::Registry::fs()->error("[Filesystem::copy] Cannot copy {} into itself ({})", from.string(), to.string());
+            return -EINVAL;
         }
 
+        destParent = cache->getEntry(resolveParent(to));
+        if (!destParent || !destParent->isDirectory()) {
+            log::Registry::fs()->error("[Filesystem::copy] Destination parent does not exist: {}", to.parent_path().string());
+            return -ENOENT;
+        }
         if (cache->entryExists(to)) {
-            log::Registry::fs()->error(
-                "[Filesystem::copy] Destination already exists: {}",
-                to.string());
+            log::Registry::fs()->error("[Filesystem::copy] Destination already exists: {}", to.string());
             return -EEXIST;
         }
 
-        if (entry->isSymlink()) {
-            auto copied = std::make_shared<Symlink>(*std::static_pointer_cast<Symlink>(entry));
-            copied->id = 0;
-            copied->path = toVaultPath;
-            copied->fuse_path = to;
-            copied->name = to.filename().string();
-            copied->base32_alias = id::Generator({ .namespace_token = copied->name }).generate();
-            copied->backing_path = parent->backing_path / copied->base32_alias;
-            copied->created_by = copied->last_modified_by = userId;
-            copied->created_at = copied->updated_at = std::time(nullptr);
-            copied->parent_id = parent->id;
-            copied->inode = cache->getOrAssignInode(to);
-            copied->is_hidden = !copied->name.empty() && copied->name.front() == '.' && !copied->name.starts_with("..");
-            copied->is_system = false;
-            copied->size_bytes = copied->target.size();
-
-            std::filesystem::create_directories(copied->backing_path.parent_path());
-            std::filesystem::create_symlink(copied->target, copied->backing_path);
-
-            copied->id = db::query::fs::Symlink::upsertSymlink(copied);
-            cache->cacheEntry(copied);
-        } else if (isFile) {
-            auto copied = std::make_shared<File>(*std::static_pointer_cast<File>(entry));
-            copied->id = 0;
-            copied->path = toVaultPath;
-            copied->fuse_path = to;
-            copied->name = to.filename().string();
-            copied->base32_alias = id::Generator({ .namespace_token = copied->name }).generate();
-            copied->backing_path = parent->backing_path / copied->base32_alias;
-            copied->created_by = copied->last_modified_by = userId;
-            copied->created_at = copied->updated_at = std::time(nullptr);
-            copied->parent_id = parent->id;
-            copied->inode = cache->getOrAssignInode(to);
-            copied->is_hidden = !copied->name.empty() && copied->name.front() == '.' && !copied->name.starts_with("..");
-            copied->is_system = false;
-
-            copied->id = db::query::fs::File::upsertFile(copied);
-            cache->cacheEntry(copied);
-        } else {
-            auto copied = std::make_shared<Directory>(*std::static_pointer_cast<Directory>(entry));
-            copied->id = 0;
-            copied->path = toVaultPath;
-            copied->fuse_path = to;
-            copied->name = to.filename().string();
-            copied->base32_alias = id::Generator({ .namespace_token = copied->name }).generate();
-            copied->backing_path = parent->backing_path / copied->base32_alias;
-            copied->created_by = copied->last_modified_by = userId;
-            copied->created_at = copied->updated_at = std::time(nullptr);
-            copied->parent_id = parent->id;
-            copied->inode = cache->getOrAssignInode(to);
-            copied->is_hidden = !copied->name.empty() && copied->name.front() == '.' && !copied->name.starts_with("..");
-            copied->is_system = false;
-            // Only the directory row is copied, not what is under it, so it starts empty: carrying the source's
-            // totals would claim files it doesn't have (#158).
-            copied->size_bytes = 0;
-            copied->file_count = 0;
-            copied->subdirectory_count = 0;
-
-            copied->id = db::query::fs::Directory::upsertDirectory(copied);
-            cache->cacheEntry(copied);
+        std::vector<std::shared_ptr<Entry>> sources{entry};
+        if (entry->isDirectory()) {
+            // From the database, the authority on what is under it (the cache can lag or hold stale entries).
+            auto descendants = db::query::fs::Entry::listSubtree(entry->id);
+            std::erase_if(descendants, [](const std::shared_ptr<Entry>& e) { return !e || isUploadStaging(e->name); });
+            // Shallowest first, so every copied entry's destination parent is created before it.
+            std::ranges::stable_sort(descendants, {}, [](const std::shared_ptr<Entry>& e) { return depthOf(e->path); });
+            sources.insert(sources.end(), descendants.begin(), descendants.end());
         }
 
-        log::Registry::fs()->debug("[Filesystem::copy] Successfully copied {} -> {}", from.string(), to.string());
-        return 0;
-    } catch (const std::bad_alloc& ex) {
-        log::Registry::fs()->error("[Filesystem::copy] Out of memory copying {} -> {}: {}", from.string(), to.string(), ex.what());
-        return -ENOMEM;
+        const auto toVault = engine->fusePathToVaultPath(to);
+        std::unordered_map<std::string, std::filesystem::path> backingOf;  // destination vault path -> backing path
+        for (const auto& source : sources) {
+            CopyItem item;
+            item.source = source;
+            if (source == entry) {
+                item.toVault = toVault;
+            } else {
+                const auto rel = source->path.lexically_relative(entry->path);
+                if (rel.empty() || rel.native().starts_with("..")) continue;  // not under the source (moved meanwhile)
+                item.toVault = toVault / rel;
+            }
+            item.to = engine->vaultPathToFusePath(item.toVault);
+
+            const auto parentVault = resolveParent(item.toVault);
+            const auto parentBacking = source == entry ? destParent->backing_path : backingOf.at(parentVault.string());
+            item.alias = id::Generator({ .namespace_token = item.to.filename().string() }).generate();
+            item.backing = parentBacking / item.alias;
+            if (source->isDirectory()) backingOf.emplace(item.toVault.string(), item.backing);
+
+            if (source->isSymlink() &&
+                targetEscapesVaultRoot(item.toVault, std::static_pointer_cast<Symlink>(source)->target)) {
+                log::Registry::fs()->error("[Filesystem::copy] Symlink {} would point outside the vault at {}",
+                                           source->path.string(), item.toVault.string());
+                return -EINVAL;
+            }
+            items.push_back(std::move(item));
+        }
+    } catch (const std::out_of_range&) {
+        log::Registry::fs()->error("[Filesystem::copy] The source tree of {} changed while copying it", from.string());
+        return -EAGAIN;
+    } catch (const std::exception& ex) {
+        log::Registry::fs()->error("[Filesystem::copy] Failed to plan copying {} -> {}: {}", from.string(), to.string(), ex.what());
+        return -EIO;
+    }
+
+    // 2. Authorize every entry before anything is written. A refusal propagates as thrown.
+    if (ctx.authorize)
+        for (const auto& item : items) ctx.authorize(*item.source, item.to);
+
+    const auto cleanup = [&items] {
+        if (items.empty()) return;
+        std::error_code ec;
+        std::filesystem::remove_all(items.front().backing, ec);
+    };
+
+    try {
+        // 3. Cloud files with no local copy are fetched first (metered and price-preflighted like any remote read):
+        //    a copy needs its bytes now, and the next sync uploads it as a new object.
+        const auto cloud = engine->type() == StorageType::Cloud ? std::static_pointer_cast<CloudEngine>(engine) : nullptr;
+        uintmax_t required = 0;
+        for (auto& item : items) {
+            if (item.source->isDirectory() || item.source->isSymlink()) continue;
+            auto file = db::query::fs::File::getFileById(item.source->id);
+            if (!file) {
+                log::Registry::fs()->error("[Filesystem::copy] Source file vanished: {}", item.source->path.string());
+                return -ENOENT;
+            }
+            std::error_code ec;
+            const bool local = std::filesystem::is_regular_file(file->backing_path, ec);
+            if (local) required += std::filesystem::file_size(file->backing_path, ec);
+            else if (file->size_bytes > 0) {
+                if (!cloud) {
+                    log::Registry::fs()->error("[Filesystem::copy] {} has no bytes on disk: refusing to create an unreadable copy",
+                                               file->path.string());
+                    return -EIO;
+                }
+                // The hydrated source copy and the new one both count against the quota.
+                required += 2 * (file->size_bytes + vh::crypto::util::AES_TAG_SIZE);
+            }
+        }
+
+        // 4. Quota: everything the copy adds on disk, before any of it is written.
+        if (required > 0 && required > engine->freeSpace()) {
+            log::Registry::fs()->warn("[Filesystem::copy] {} -> {} needs {} bytes, more than the vault has left",
+                                      from.string(), to.string(), required);
+            return -ENOSPC;
+        }
+
+        // 5. Bytes: directories, then each file's sealed bytes under its content lock with the row that describes
+        //    them, so an overwrite, FUSE seal or key rotation of the source can't hand us bytes of one generation and
+        //    the IV of another. Not under mutex_: copying can take a while and the destinations are fresh names.
+        for (auto& item : items) {
+            if (item.source->isDirectory()) {
+                std::filesystem::create_directories(item.backing);
+                continue;
+            }
+            if (item.source->isSymlink()) {
+                std::filesystem::create_directories(item.backing.parent_path());
+                std::filesystem::create_symlink(std::static_pointer_cast<Symlink>(item.source)->target, item.backing);
+                continue;
+            }
+
+            if (cloud) {
+                const auto file = db::query::fs::File::getFileById(item.source->id);
+                std::error_code ec;
+                if (file && file->size_bytes > 0 && !std::filesystem::is_regular_file(file->backing_path, ec))
+                    (void)cloud->hydrate(file);
+            }
+
+            std::scoped_lock contentLock(contentWriteMutex(item.source->id));
+            const auto current = db::query::fs::File::getFileById(item.source->id);
+            if (!current) {
+                cleanup();
+                return -ENOENT;
+            }
+            std::filesystem::create_directories(item.backing.parent_path());
+            std::error_code ec;
+            if (std::filesystem::is_regular_file(current->backing_path, ec)) copyBackingBytes(current->backing_path, item.backing);
+            else if (current->size_bytes == 0) writeFileAtomic(item.backing, {});
+            else {
+                log::Registry::fs()->error("[Filesystem::copy] {} has no bytes on disk", current->path.string());
+                cleanup();
+                return -EIO;
+            }
+            item.content = current;
+        }
+    } catch (const ContentUnavailable& ex) {
+        log::Registry::fs()->warn("[Filesystem::copy] {} -> {}: remote content unavailable: {}", from.string(), to.string(), ex.what());
+        cleanup();
+        return -ENODATA;
+    } catch (const IntegrityError& ex) {
+        log::Registry::fs()->error("[Filesystem::copy] {} -> {}: remote content failed authentication: {}", from.string(), to.string(), ex.what());
+        cleanup();
+        return -EIO;
     } catch (const std::filesystem::filesystem_error& ex) {
         log::Registry::fs()->error("[Filesystem::copy] Filesystem error copying {} -> {}: {}", from.string(), to.string(), ex.what());
+        cleanup();
         return ex.code() ? -ex.code().value() : -EIO;
     } catch (const std::exception& ex) {
         log::Registry::fs()->error("[Filesystem::copy] Failed to copy {} -> {}: {}", from.string(), to.string(), ex.what());
-        return -EIO;
-    } catch (...) {
-        log::Registry::fs()->error("[Filesystem::copy] Unknown failure copying {} -> {}", from.string(), to.string());
+        cleanup();
         return -EIO;
     }
+
+    // 6. Rows, shallowest first: each one adds itself to its ancestors' totals, so a copied directory ends up with
+    //    the totals of what it holds (#158).
+    std::scoped_lock lock(mutex_);
+    std::optional<unsigned int> topId;
+    try {
+        if (cache->entryExists(to)) {
+            cleanup();
+            return -EEXIST;
+        }
+        const auto parentNow = cache->getEntry(resolveParent(to));
+        if (!parentNow || parentNow->id != destParent->id) {
+            cleanup();
+            return -ENOENT;
+        }
+
+        std::unordered_map<std::string, unsigned int> idOf;  // destination vault path -> new row id
+        const auto now = std::time(nullptr);
+        for (auto& item : items) {
+            const auto parentId = item.source == items.front().source
+                                      ? destParent->id
+                                      : idOf.at(resolveParent(item.toVault).string());
+            const auto name = item.to.filename().string();
+            const auto stamp = [&](Entry& e) {
+                e.id = 0;
+                e.vault_id = engine->vault->id;
+                e.parent_id = static_cast<int32_t>(parentId);
+                e.name = name;
+                e.path = item.toVault;
+                e.fuse_path = item.to;
+                e.base32_alias = item.alias;
+                e.backing_path = item.backing;
+                e.created_by = e.last_modified_by = static_cast<int32_t>(ctx.userId);
+                e.created_at = e.updated_at = now;
+                e.is_hidden = !name.empty() && name.front() == '.' && !name.starts_with("..");
+                e.is_system = false;
+            };
+
+            std::shared_ptr<Entry> created;
+            if (item.source->isDirectory()) {
+                auto dir = std::make_shared<Directory>(*std::static_pointer_cast<Directory>(item.source));
+                stamp(*dir);
+                dir->inode = cache->assignInode(item.to);
+                dir->size_bytes = 0;          // totals arrive with each copied child
+                dir->file_count = 0;
+                dir->subdirectory_count = 0;
+                dir->id = db::query::fs::Directory::upsertDirectory(dir);
+                idOf.emplace(item.toVault.string(), dir->id);
+                created = dir;
+            } else if (item.source->isSymlink()) {
+                auto link = std::make_shared<Symlink>(*std::static_pointer_cast<Symlink>(item.source));
+                stamp(*link);
+                link->inode = cache->getOrAssignInode(item.to);
+                link->size_bytes = link->target.size();
+                link->id = db::query::fs::Symlink::upsertSymlink(link);
+                created = link;
+            } else {
+                // The row the bytes were copied with: same IV, key version, plaintext size and content hash.
+                auto file = std::make_shared<File>(*item.content);
+                stamp(*file);
+                file->inode = cache->getOrAssignInode(item.to);
+                file->id = db::query::fs::File::upsertFile(file);
+                created = file;
+            }
+            if (!topId) topId = created->id;
+            cache->cacheEntry(created);
+        }
+    } catch (const std::exception& ex) {
+        log::Registry::fs()->error("[Filesystem::copy] Failed to record the copy {} -> {}: {}", from.string(), to.string(), ex.what());
+        // Take back what was recorded: the top row with everything under it, off its ancestors' totals.
+        try {
+            if (topId) {
+                db::query::fs::Directory::deleteDirectoryTree(*topId);
+                for (const auto& item : items) cache->evictPath(item.to);
+                cache->refreshDirStats(destParent->id);
+            }
+        } catch (const std::exception& undo) {
+            log::Registry::fs()->error("[Filesystem::copy] Could not take back the partial copy at {}: {}", to.string(), undo.what());
+        }
+        cleanup();
+        return -EIO;
+    }
+
+    // Derived artifacts (thumbnails, renders) are keyed by file id: the copies derive their own on demand.
+    log::Registry::fs()->debug("[Filesystem::copy] Copied {} -> {} ({} entries)", from.string(), to.string(), items.size());
+    return 0;
 }
 
 void Filesystem::remove(const std::filesystem::path& path, const unsigned int userId) {
@@ -644,8 +813,8 @@ void Filesystem::remove(const std::filesystem::path& path, const unsigned int us
             cache->evictPath(file->fuse_path);
             purgeDerived(file->id);
         }
-        // Trashing the last file removes a directory that ends up empty, but an empty directory (or one holding
-        // only empty directories or symlinks) is still there: delete what is left, off its ancestors' totals.
+        // Trashing files never removes folders (#168): the directory, its subfolders and any symlinks are still
+        // there. Delete what is left, off its ancestors' totals.
         db::query::fs::Directory::deleteDirectoryTree(entry->id);
         cache->evictPath(path);
     }
@@ -663,8 +832,8 @@ void Filesystem::remove(const std::filesystem::path& path, const unsigned int us
         if (symlinkStatusExists(entry->backing_path)) std::filesystem::remove(entry->backing_path);
     } else if (std::filesystem::exists(entry->backing_path)) std::filesystem::remove_all(entry->backing_path);
 
-    // fs.dir.list reads directory totals from the cache: refresh what the delete changed (#158), from the nearest
-    // ancestor that still exists (cleanup may have removed folders the delete left without files).
+    // fs.dir.list reads directory totals from the cache: refresh what the delete changed (#158). Deleting never
+    // removes the parent folder (#168); the loop only guards against a concurrent delete of it.
     for (const auto id : ancestors)
         if (cache->refreshDirStats(id)) break;
 }

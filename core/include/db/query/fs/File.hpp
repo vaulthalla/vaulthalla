@@ -47,9 +47,9 @@ public:
 
     static std::vector<TrashedFilePtr> listTrashedFiles(unsigned int vaultId);
 
-    static void markFileAsTrashed(unsigned int userId, unsigned int vaultId, const std::filesystem::path& relPath, bool isFuseCall = false);
+    static void markFileAsTrashed(unsigned int userId, unsigned int vaultId, const std::filesystem::path& relPath);
 
-    static void markFileAsTrashed(unsigned int userId, unsigned int fsId, bool isFuseCall = false);
+    static void markFileAsTrashed(unsigned int userId, unsigned int fsId);
 
     static void markRemoteFileAsTrashed(
         unsigned int userId,
@@ -57,10 +57,9 @@ public:
         const std::filesystem::path& relPath,
         std::uint64_t sizeBytes = 0);
 
-    static void updateParentStatsAndCleanEmptyDirs(pqxx::work& txn,
-                                               std::optional<unsigned int> parentId,
-                                               unsigned int sizeBytes,
-                                               bool isFuseCall = false);
+    // Takes a removed file's (or symlink's) size and count off every ancestor's subtree totals. Never removes a
+    // folder: one left without files stays (#168).
+    static void updateParentStats(pqxx::work& txn, std::optional<unsigned int> parentId, std::uint64_t sizeBytes);
 
     [[nodiscard]] static EncryptionPair getEncryptionIVAndVersion(unsigned int vaultId, const std::filesystem::path& relPath);
 

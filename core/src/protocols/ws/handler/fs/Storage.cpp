@@ -454,12 +454,28 @@ json Storage::copy(const json& payload, const std::shared_ptr<Session>& session)
         engine,
         from,
         permission::vault::FilesystemAction::Copy,
-        "Permission denied: User does not have read permission for the source path in the vault"
+        "Permission denied: User does not have copy permission for the source path in the vault"
     );
+
+    // Every copied entry passes the checks a single one would (#167), before anything is written: Copy on the source,
+    // Read on a source file (the copy is readable wherever it lands, so it must not route around a download deny),
+    // and creating it at the destination: Write for a file or symlink (as an upload), Touch for a folder (as mkdir).
+    const auto authorize = [&](const vh::fs::model::Entry& source, const std::filesystem::path& destinationFuse) {
+        const auto destination = engine->fusePathToVaultPath(destinationFuse);
+        enforcePermission(session, engine, source.path, permission::vault::FilesystemAction::Copy,
+                          "Permission denied: User does not have copy permission for " + source.path.string());
+        if (!source.isDirectory())
+            enforcePermission(session, engine, source.path, permission::vault::FilesystemAction::Read,
+                              "Permission denied: User does not have read permission for " + source.path.string());
+        enforcePermission(session, engine, destination,
+                          source.isDirectory() ? permission::vault::FilesystemAction::Touch
+                                               : permission::vault::FilesystemAction::Write,
+                          "Permission denied: User cannot create " + destination.string() + " in the vault");
+    };
 
     auto operation = startMutationOperation(engine, from, to, session->user->id, SyncOperation::Op::Copy);
     try {
-        engine->copy(from, to, session->user->id);
+        engine->copy(from, to, session->user->id, authorize);
         finishMutationOperation(operation, SyncOperation::Status::Success);
     } catch (const std::exception& e) {
         finishMutationOperation(operation, SyncOperation::Status::Failed, e.what());
