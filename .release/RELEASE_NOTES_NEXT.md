@@ -7,10 +7,10 @@ Format: the first line is "# <release title>" WITHOUT a version number (vlr adds
 Everything after the title is the Markdown release body. Describe the resulting behavior
 for users and operators; keep it representative of what actually ships.
 -->
-# Health access, sharing controls, deep copy and streaming folder downloads
+# Recoverable vault deletion, Health access, sharing controls and streaming folder downloads
 
-This release resolves the open product decisions on stats access, sharing settings, folder deletion and copying, and
-makes folder downloads stream at any size.
+This release resolves the open product decisions on vault deletion, stats access, sharing settings, folder deletion
+and copying, and makes folder downloads stream at any size.
 
 ### Upgrade notes
 
@@ -18,11 +18,33 @@ makes folder downloads stream at any size.
   `s3_gateway.default_remote_sync_strategy` / `default_remote_conflict_policy` moved to `vaults.s3`. Your
   `config.yaml` is not rewritten: the old names keep working and the daemon logs a deprecation warning at startup.
   Rename them when convenient; saving settings from the console writes the new names.
+- **Deleting a vault is now a schedule, not an immediate delete.** `vh vault delete` and the console make the vault
+  disappear at once and purge its data when `vaults.retention_window` ends (default 5 minutes); until then
+  `vh vault restore` brings it back. A deleted vault's name, mount name and bucket stay reserved until it is purged.
+  Scripts that delete vaults keep working; `--now` and keeping an S3 vault's encrypted objects without an exported
+  key need `--yes` / `--accept-key-loss` when there is no terminal. Migration 106 adds the deletion records.
+- **A user whose API keys are still bound to a vault can't be deleted**, including vaults deleted but not yet purged.
 - **Health has its own permission.** Migration 105 adds "view stats" (`admin.stats.view`) and grants it to the admin,
   auditor, platform operator and super admin roles, plus any custom role that could already see Health.
 - **`rmdir` on the mount refuses a folder that still has contents** (`ENOTEMPTY`). It used to delete the contents.
 - **Copying needs create permission where the copy lands** and download permission on what is copied. The built-in
   `reader` role (no upload) can no longer copy.
+
+### Vault deletion
+
+- Deleting a vault no longer leaves its data behind. It disappears from listings, the mount, shares, sync and the S3
+  gateway at once, stays restorable for `vaults.retention_window` (`vh vault restore`, or Vaults → Deleted vaults),
+  and is then purged: local data always, and the bucket's objects too when you chose that at delete time.
+- **Delete now** skips the restore window after one extra confirmation. It never shortens the key retention window.
+- Encryption keys of deleted vaults are kept for `vaults.tpm_retention_window` (90 days), or
+  `vaults.s3.tpm_retention_window` (180 days) for S3 vaults, and stay exportable with `vh vault keys export`. A small
+  record of the vault (name, key, dates) remains after the purge.
+- Deleting an S3 vault asks whether to delete the bucket's objects too. Keeping encrypted objects whose key was never
+  exported needs an explicit acknowledgement on the CLI and in the console, because without the key they can never be
+  decrypted again. `vh vault keys export` now records each export, and every delete warns when a vault's key was never
+  exported. Existing installs have no export records yet, so the first delete of each encrypted vault warns.
+- New: `vh vault deleted` lists vaults waiting for their purge, `vh vault restore` brings one back, and `vh vault delete`
+  takes `--now`, `--delete-upstream` / `--keep-upstream`, `--accept-key-loss` and `--yes`.
 
 ### Health and stats
 

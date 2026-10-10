@@ -17,6 +17,16 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
 - fs copy: each entry needs Copy and Read on its source and Write (file) or Touch (folder) at its destination (#167).
 
 ## Runtime
+- vaults: deleting a vault schedules it (psql 106: vault.deleted_at, vault_deletion, vault_deletion_key, vault_keys
+  export tracking). Deleted vaults leave every read path at once and are restorable until vaults.retention_window
+  (5m); VaultRetentionService then purges upstream objects (when chosen; bounded per pass, resumable), the backing and
+  cache directories (path-guarded) and the vault row. Sealed keys are kept for vaults.tpm_retention_window (90d) /
+  vaults.s3.tpm_retention_window (180d), never shortened by delete-now; a tombstone stays (#162).
+  - NeedsConfirmation codes vault_upstream_key_loss and vault_delete_now; ws storage.vault.remove.plan,
+    storage.vault.deleted.list, storage.vault.restore.
+  - sync: pruneStaleTasks no longer indexes a bitset by MAX(vault.id); list queries AND a filter onto an existing
+    WHERE; listUserVaults quotes its type literals.
+  - users: deletion refuses while the account's API keys are bound to any vault, deleted ones included.
 - psql 105: add admin_role.stats_permissions and grant view to admin, auditor, platform_operator, super_admin and
   any role that passed the old gate; register `admin.stats.view` in the permission catalog (#166).
 - config: `sharing.enable_public_links` renamed `enable_email_validated`; new `enable_anonymous`, `enable_internal`
@@ -36,10 +46,15 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
   numeric values, cards carry at most 3 series of 64 points; unmeasured spend and FS cache capacity are null (#160).
 
 ## CLI
+- `vh vault delete [--now] [--delete-upstream|--keep-upstream] [--accept-key-loss] [--yes]`, `vh vault deleted`,
+  `vh vault restore`; `vh vault keys export` records the exported key version and exports a deleted vault's retained
+  key (#162).
 - `vh role admin create|update --allow-stats-view|--deny-stats-view` (#166).
 - `vh vault create` uses the `vaults.s3` defaults when no sync strategy or conflict policy is given (#164).
 
 ## Web console
+- One vault delete dialog (upstream choice, key warning, delete / delete now), a Deleted vaults panel with Restore and
+  Purge now, and vault retention settings (#162).
 - Health, the health dot and system storage sizes follow `admin.stats.view`; the roles editor lists "Health and
   stats"; the console uses the daemon's hrefs, money and counts instead of parsing display text (#166, #160).
 - Share UI follows the sharing policy; the new-vault form uses the vault defaults; the settings editor gains the
@@ -47,6 +62,6 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
 - Folder download tasks show the ZIP size and name an entry-limit refusal (#143).
 
 ## Tests
-- StatsAccessTest, SqlDeployerHistory migration 105, role parity stats bits; config/settings round trips and
+- VaultRetentionTest, VaultParityTest deletion lifecycle; StatsAccessTest, SqlDeployerHistory migration 105, role parity stats bits; config/settings round trips and
   aliases, WsConnectionLimit, share policy refusals; FsCopyDbTest, keep-folder FsDirStats cases; HttpArchiveZip
   (validated with Python zipfile and unzip -t), share folder ZIP accounting; harness stage "Copy And Delete".
