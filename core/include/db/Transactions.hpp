@@ -15,6 +15,11 @@
 namespace vh::db {
 
     class Transactions {
+        static void markIfPoisoned(Connection& conn, const std::exception& e) noexcept {
+            if (const auto* failure = dynamic_cast<const pqxx::failure*>(&e); failure && failure->poisons_connection())
+                conn.markPoisoned();
+        }
+
     public:
         static inline std::shared_ptr<DBPool> dbPool_;
 
@@ -42,6 +47,7 @@ namespace vh::db {
                 // A session the server dropped while idle (PostgreSQL restart, pg_terminate_backend) only shows
                 // up when BEGIN is sent. Nothing of `func` has run yet, so replacing the connection and beginning
                 // once more is always safe. Failures after `func` starts are surfaced, never retried.
+                markIfPoisoned(*conn, e);
                 if (conn->healthy()) {
                     log::Registry::db()->error(
                         "[Transactions::exec] Failed to begin transaction '{}': {}", ctx, e.what());
@@ -71,6 +77,13 @@ namespace vh::db {
                 // is the caller's answer, not a database fault: roll back quietly and let it propagate.
                 log::Registry::db()->debug(
                     "[Transactions::exec] Refusal in transaction context '{}', rolling back: {}", ctx, e.what());
+                throw;
+            } catch (const std::exception& e) {
+                // libpqxx flags errors after which the session can't be trusted even if the socket looks open
+                // (unknown COMMIT outcome, protocol violation); the pool replaces it on the next acquire().
+                markIfPoisoned(*conn, e);
+                log::Registry::db()->error(
+                    "[Transactions::exec] Exception in transaction context '{}', rolling back: {}", ctx, e.what());
                 throw;
             } catch (...) {
                 log::Registry::db()->error(

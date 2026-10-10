@@ -1,6 +1,7 @@
 #pragma once
 
 #include "rbac/role/Meta.hpp"
+#include "db/Fwd.hpp"
 #include "rbac/role/Vault.hpp"
 #include "Base.hpp"
 
@@ -22,7 +23,7 @@ namespace vh::rbac::role::vault {
 
         Global() = default;
 
-        explicit Global(const pqxx::row &row);
+        explicit Global(pqxx::row_ref row);
 
         explicit Global(const nlohmann::json &j);
 
@@ -156,8 +157,6 @@ namespace vh::rbac::role::vault {
     void from_json(const nlohmann::json &j, Global &r);
 
     std::vector<Global> global_vault_roles_from_json(const nlohmann::json &j);
-
-    std::vector<Global> global_vault_roles_from_pq_result(const pqxx::result &res);
 
     std::string to_string(const Global &role);
 

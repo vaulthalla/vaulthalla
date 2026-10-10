@@ -4,7 +4,7 @@
 using namespace vh::fs::model::file;
 using namespace vh::db::encoding;
 
-Share::Share(const pqxx::row& row)
+Share::Share(pqxx::row_ref row)
     : id(row["id"].as<unsigned int>()),
       file_acl_id(row["file_acl_id"].as<unsigned int>()),
       shared_by(row["shared_by"].as<unsigned int>()),

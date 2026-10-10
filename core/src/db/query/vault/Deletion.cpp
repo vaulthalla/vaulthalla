@@ -42,7 +42,7 @@ Deletion::DeletionPtr Deletion::schedule(const Schedule& s) {
             pqxx::params{s.vault_id});
         if (vault.empty())
             throw std::runtime_error("vault " + std::to_string(s.vault_id) + " does not exist or is already deleted");
-        const auto row = vault.one_row();
+        const auto row = vault.one_row_ref();
 
         txn.exec("UPDATE vault SET deleted_at = NOW() WHERE id = $1", pqxx::params{s.vault_id});
         // Off the mount: the root is no longer a child of the mount root, and no inode leads into the vault.
@@ -187,7 +187,7 @@ void Deletion::deferPurge(const unsigned int vaultId, const Clock::time_point re
 void Deletion::finishPurge(const unsigned int vaultId, const std::optional<std::string>& note) {
     Transactions::exec("Deletion::finishPurge", [&](pqxx::work& txn) {
         const auto state = txn.exec("SELECT state FROM vault_deletion WHERE vault_id = $1 FOR UPDATE", pqxx::params{vaultId});
-        if (state.empty() || state.one_field().as<std::string>() != "purging")
+        if (state.empty() || state.one_field_ref().as<std::string>() != "purging")
             throw std::runtime_error("vault " + std::to_string(vaultId) + " is not being purged");
         // deleted_at IS NOT NULL: a live vault is never deleted here, whatever the record says.
         txn.exec("DELETE FROM vault WHERE id = $1 AND deleted_at IS NOT NULL", pqxx::params{vaultId});
@@ -238,7 +238,7 @@ std::shared_ptr<vh::vault::model::Vault> Deletion::getDeletedVault(const unsigne
             "SELECT v.*, s.* FROM vault v LEFT JOIN s3 s ON v.id = s.vault_id WHERE v.id = $1 AND v.deleted_at IS NOT NULL",
             pqxx::params{vaultId});
         if (res.empty()) return nullptr;
-        const auto row = res.one_row();
+        const auto row = res.one_row_ref();
         if (vh::vault::model::from_string(row["type"].as<std::string>()) == vh::vault::model::VaultType::S3)
             return std::make_shared<vh::vault::model::S3Vault>(row);
         return std::make_shared<vh::vault::model::Vault>(row);
@@ -267,7 +267,7 @@ bool Deletion::backingAliasShared(const unsigned int vaultId, const std::string&
     return Transactions::exec("Deletion::backingAliasShared", [&](pqxx::work& txn) {
         return txn.exec("SELECT EXISTS(SELECT 1 FROM vault WHERE btrim(mount_point) = $2 AND id <> $1)",
                         pqxx::params{vaultId, alias})
-            .one_field()
+            .one_field_ref()
             .as<bool>();
     });
 }

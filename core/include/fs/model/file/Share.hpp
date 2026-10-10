@@ -3,7 +3,7 @@
 #include <ctime>
 #include <optional>
 #include <string>
-#include <pqxx/row>
+#include "db/Fwd.hpp"
 
 namespace vh::fs::model::file {
 
@@ -15,7 +15,7 @@ struct Share {
     std::optional<std::time_t> expires_at;
     std::time_t created_at;
 
-    explicit Share(const pqxx::row& row);
+    explicit Share(pqxx::row_ref row);
 };
 
 }

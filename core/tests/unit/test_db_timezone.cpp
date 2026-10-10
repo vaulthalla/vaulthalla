@@ -46,7 +46,7 @@ std::string migrationSql() {
 }
 
 std::time_t epochOf(pqxx::work& txn, const std::string& expr) {
-    return txn.exec("SELECT EXTRACT(EPOCH FROM " + expr + ")::bigint").one_field().as<std::time_t>();
+    return txn.exec("SELECT EXTRACT(EPOCH FROM " + expr + ")::bigint").one_field_ref().as<std::time_t>();
 }
 
 class DbTimezoneTest : public ::testing::Test {
@@ -62,14 +62,14 @@ TEST_F(DbTimezoneTest, DaemonSessionsRunInUtcAndRememberTheDatabaseZone) {
     pqxx::connection conn(*conninfo);
     {
         pqxx::nontransaction tx(conn);
-        ASSERT_EQ(tx.exec("SHOW TimeZone").one_field().as<std::string>(), "America/Denver");
+        ASSERT_EQ(tx.exec("SHOW TimeZone").one_field_ref().as<std::string>(), "America/Denver");
     }
 
     db::Connection::configureSession(conn);
 
     pqxx::work txn(conn);
-    EXPECT_EQ(txn.exec("SHOW TimeZone").one_field().as<std::string>(), "UTC");
-    EXPECT_EQ(txn.exec("SELECT current_setting('vaulthalla.database_timezone')").one_field().as<std::string>(),
+    EXPECT_EQ(txn.exec("SHOW TimeZone").one_field_ref().as<std::string>(), "UTC");
+    EXPECT_EQ(txn.exec("SELECT current_setting('vaulthalla.database_timezone')").one_field_ref().as<std::string>(),
               "America/Denver");
 
     // A naive column written with CURRENT_TIMESTAMP now holds UTC, which the daemon parses as UTC.
@@ -97,7 +97,7 @@ TEST_F(DbTimezoneTest, TimestamptzWrittenInDenverReadsBackCorrectlyInTheDaemonSe
     }
     {
         pqxx::work r(daemon);
-        const auto text = r.exec("SELECT at::text FROM tz_probe_shared WHERE id = 'denver'").one_field().as<std::string>();
+        const auto text = r.exec("SELECT at::text FROM tz_probe_shared WHERE id = 'denver'").one_field_ref().as<std::string>();
         EXPECT_TRUE(text.ends_with("+00")) << text;
         EXPECT_LE(std::llabs(db::encoding::parsePostgresTimestamp(text) - std::time(nullptr)), 5) << text;
         r.exec("DROP TABLE tz_probe_shared");
@@ -132,7 +132,7 @@ TEST_F(DbTimezoneTest, MigrationReadsNaiveValuesInTheRecordedZoneAndIsIdempotent
     const auto typeOf = [&](const std::string& column) {
         return txn.exec("SELECT data_type FROM information_schema.columns WHERE table_schema = current_schema() "
                         "AND table_name = 'sample' AND column_name = $1", pqxx::params{column})
-            .one_field().as<std::string>();
+            .one_field_ref().as<std::string>();
     };
     EXPECT_EQ(typeOf("stamp"), "timestamp with time zone");
     EXPECT_EQ(typeOf("created_at"), "timestamp with time zone");
@@ -148,7 +148,7 @@ TEST_F(DbTimezoneTest, MigrationReadsNaiveValuesInTheRecordedZoneAndIsIdempotent
     const auto defaultExpr = txn.exec(
         "SELECT pg_get_expr(d.adbin, d.adrelid) FROM pg_attrdef d JOIN pg_attribute a "
         "ON a.attrelid = d.adrelid AND a.attnum = d.adnum WHERE a.attrelid = 'sample'::regclass "
-        "AND a.attname = 'created_at'").one_field().as<std::string>();
+        "AND a.attname = 'created_at'").one_field_ref().as<std::string>();
     EXPECT_EQ(defaultExpr, "CURRENT_TIMESTAMP");
     EXPECT_FALSE(txn.exec("SELECT 1 FROM pg_indexes WHERE schemaname = current_schema() "
                           "AND indexname = 'sample_stamp_idx'").empty());
@@ -191,7 +191,7 @@ TEST_F(DbTimezoneTest, RowsWrittenEarlierInTheSameDeployAreNotShifted) {
     txn.abort();
 
     pqxx::nontransaction after(conn);
-    EXPECT_EQ(after.exec("SHOW TimeZone").one_field().as<std::string>(), "UTC") << "the deploy's zone is transaction-local";
+    EXPECT_EQ(after.exec("SHOW TimeZone").one_field_ref().as<std::string>(), "UTC") << "the deploy's zone is transaction-local";
 }
 
 TEST_F(DbTimezoneTest, MigrationFallsBackToTheSessionZoneWhenRunOutsideTheDaemon) {

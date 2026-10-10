@@ -10,18 +10,18 @@ using namespace vh::db::encoding;
 
 namespace vh::share {
 namespace session_model_detail {
-std::optional<std::time_t> opt_time(const pqxx::row& row, const char* column) {
+std::optional<std::time_t> opt_time(pqxx::row_ref row, const char* column) {
     if (row[column].is_null()) return std::nullopt;
     return parsePostgresTimestamp(row[column].as<std::string>());
 }
 
-std::optional<std::string> opt_string(const pqxx::row& row, const char* column) {
+std::optional<std::string> opt_string(pqxx::row_ref row, const char* column) {
     if (row[column].is_null()) return std::nullopt;
     return row[column].as<std::string>();
 }
 }
 
-Session::Session(const pqxx::row& row)
+Session::Session(pqxx::row_ref row)
     : id(row["id"].as<std::string>()),
       share_id(row["share_id"].as<std::string>()),
       session_token_lookup_id(row["session_token_lookup_id"].as<std::string>()),

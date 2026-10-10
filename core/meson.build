@@ -56,14 +56,19 @@ vh_paths_header = configure_file(
 # ╭──────────────────────────── DEFINE DEPENDENCIES ────────────────────────────╮
 
 fmt_dep = dependency('fmt', required: true)
+# apt.vaulthalla.sh's libpqxx-vh-dev: a static libpqxx SDK under its own pkg-config name (the .pc links libpqxx.a
+# by path and the system libpq by SONAME), so neither Ubuntu's libpqxx-dev nor its headers can be picked up.
+pqxx_dep = dependency('libpqxx-vh', version: '>=8.0.2', method: 'pkg-config', static: true, required: true)
 
 deps = [
     dependency('fuse3', required: true),
     dependency('libsodium', required: true),
     dependency('libcurl', required: true),
     dependency('boost', modules: ['filesystem', 'system'], required: true),
-    dependency('libpqxx', required: true),
-    dependency('pdfium', required: true),
+    pqxx_dep,
+    # apt.vaulthalla.sh's Chromium-tracking build (<milestone>.<branch>.<n>). The retired 2025.06.29 fork snapshot sorts
+    # higher, so the upper bound is what keeps a stale host from building against (and depending on) it.
+    dependency('pdfium', version: ['>=155.8059', '<1000'], required: true),
     dependency('libmagic', required: true),
     dependency('yaml-cpp', required: true),
     dependency('libjpeg', required: true),
@@ -176,6 +181,7 @@ lib_core = static_library(
 lib_seed = static_library('vhseed', files(join_paths(core_root, 'seed/src/seed_db.cpp'),
                                          join_paths(core_root, 'seed/src/SqlDeployer.cpp')),
                           include_directories: include_directories('seed/include', 'include', 'vendor'),
+                          dependencies: deps,
                           link_with: lib_core
 )
 

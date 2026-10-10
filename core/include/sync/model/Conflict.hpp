@@ -6,7 +6,7 @@
 #include <ctime>
 #include <memory>
 #include <nlohmann/json_fwd.hpp>
-#include <pqxx/types>
+#include "db/Fwd.hpp"
 
 namespace vh::sync::model {
 
@@ -18,7 +18,7 @@ struct Conflict {
 
         Reason() = default;
         Reason(std::string c, std::string m) : code{std::move(c)}, message{std::move(m)} {}
-        explicit Reason(const pqxx::row& row);
+        explicit Reason(pqxx::row_ref row);
     };
 
     enum class Type { MISMATCH, ENCRYPTION, BOTH };
@@ -37,7 +37,7 @@ struct Conflict {
     bool failed_to_decrypt_upstream{};
 
     Conflict() = default;
-    explicit Conflict(const pqxx::row& row, const pqxx::result& artifactRows, const pqxx::result& reasonRows);
+    explicit Conflict(pqxx::row_ref row, const pqxx::result& artifactRows, const pqxx::result& reasonRows);
 
     [[nodiscard]] std::string typeToString() const;
     [[nodiscard]] std::string resolutionToString() const;

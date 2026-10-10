@@ -9,7 +9,7 @@
 #include <cstdint>
 
 #include <nlohmann/json_fwd.hpp>
-#include <pqxx/types>
+#include "db/Fwd.hpp"
 
 namespace vh::rbac::permission {
     enum class OverrideOpt {
@@ -30,7 +30,7 @@ namespace vh::rbac::permission {
 
         Override() = default;
 
-        explicit Override(const pqxx::row &row);
+        explicit Override(pqxx::row_ref row);
 
         explicit Override(const nlohmann::json &j);
 

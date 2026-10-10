@@ -12,7 +12,7 @@ using namespace vh::db::encoding;
 
 namespace vh::auth::model {
 
-RefreshToken::RefreshToken(const pqxx::row& row)
+RefreshToken::RefreshToken(pqxx::row_ref row)
     : Token(row),
       hashedToken(row["token_hash"].as<std::string>()),
       userAgent(row["user_agent"].as<std::string>()),

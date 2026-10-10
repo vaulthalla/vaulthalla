@@ -5,7 +5,7 @@
 #include <optional>
 #include <string_view>
 #include <nlohmann/json_fwd.hpp>
-#include <pqxx/types>
+#include "db/Fwd.hpp"
 
 namespace vh::rbac::role {
     struct BasicMeta {
@@ -16,7 +16,7 @@ namespace vh::rbac::role {
 
         BasicMeta() = default;
 
-        explicit BasicMeta(const pqxx::row &row);
+        explicit BasicMeta(pqxx::row_ref row);
 
         [[nodiscard]] virtual std::string toString(uint8_t indent) const;
 
@@ -35,7 +35,7 @@ namespace vh::rbac::role {
 
         Meta() = default;
 
-        explicit Meta(const pqxx::row &row);
+        explicit Meta(pqxx::row_ref row);
 
         explicit Meta(const nlohmann::json &json);
 

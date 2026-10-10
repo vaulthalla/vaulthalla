@@ -8,7 +8,7 @@
 #include <typeindex>
 #include <optional>
 #include <nlohmann/json_fwd.hpp>
-#include <pqxx/row>
+#include "db/Fwd.hpp"
 #include <typeindex>
 
 namespace vh::rbac::permission {
@@ -23,7 +23,7 @@ struct Permission {
     std::optional<bool> value{std::nullopt};
 
     Permission() = default;
-    explicit Permission(const pqxx::row& row);
+    explicit Permission(pqxx::row_ref row);
     explicit Permission(const nlohmann::json& j);
     Permission(uint32_t bitPos, std::string name, std::string description, const std::vector<std::string>& flags = {}, uint64_t rawValue = 0, std::type_index enumType = typeid(void));
 };

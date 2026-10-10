@@ -6,7 +6,7 @@
 
 using namespace vh::fs::model;
 
-Symlink::Symlink(const pqxx::row& row, const pqxx::result& parentRows)
+Symlink::Symlink(pqxx::row_ref row, const pqxx::result& parentRows)
     : Entry(row, parentRows),
       target(row["target"].as<std::string>()) {
     size_bytes = target.size();

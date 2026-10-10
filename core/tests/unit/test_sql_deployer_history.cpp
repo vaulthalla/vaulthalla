@@ -66,7 +66,7 @@ bool columnExists(pqxx::work& txn, const std::string& table, const std::string& 
 
 std::string recordedHash(pqxx::work& txn, const std::string& filename) {
     return txn.exec("SELECT sha256 FROM schema_migrations WHERE filename = $1", pqxx::params{filename})
-        .one_row()[0].as<std::string>();
+        .one_row_ref()[0].as<std::string>();
 }
 
 bool reconciled(const migseed::SqlDeployReport& r, const std::string& filename) {
@@ -209,11 +209,11 @@ TEST_F(SqlDeployerHistoryDb, UpgradeFromPre160AclChecksumSucceedsAndAddsGatewayC
         for (const auto& role : builtInAdminRoles()) {
             SCOPED_TRACE(role.name);
             const auto bits = txn.exec("SELECT s3_gateway_permissions::text FROM admin_role WHERE name = $1",
-                                       pqxx::params{role.name}).one_row()[0].as<std::string>();
+                                       pqxx::params{role.name}).one_row_ref()[0].as<std::string>();
             EXPECT_EQ(bits, role.s3Gateway.toBitString());
         }
         EXPECT_EQ(txn.exec("SELECT s3_gateway_permissions::text FROM admin_role WHERE name = 'claude_test_custom_role'")
-                      .one_row()[0].as<std::string>(), "00000000");
+                      .one_row_ref()[0].as<std::string>(), "00000000");
 
         // Second run is a clean no-op with strict checks back in force.
         migseed::SqlDeployReport again;
@@ -241,7 +241,7 @@ TEST_F(SqlDeployerHistoryDb, ForwardMigrationIsNoOpOnDatabasesThatRanNewAcl) {
         EXPECT_TRUE(applied(report, "097_admin_role_s3_gateway_permissions.sql"));
         EXPECT_TRUE(report.reconciled.empty());
         EXPECT_EQ(txn.exec("SELECT s3_gateway_permissions::text FROM admin_role WHERE name = 'super_admin'")
-                      .one_row()[0].as<std::string>(), "00000000");
+                      .one_row_ref()[0].as<std::string>(), "00000000");
     });
 }
 
@@ -290,7 +290,7 @@ TEST_F(SqlDeployerHistoryDb, StatsPermissionMigrationMatchesFreshSeedAndKeepsOld
 
         const auto bitsOf = [&](const std::string& name) {
             return txn.exec("SELECT stats_permissions::text FROM admin_role WHERE name = $1", pqxx::params{name})
-                .one_row()[0].as<std::string>();
+                .one_row_ref()[0].as<std::string>();
         };
         for (const auto& role : builtInAdminRoles()) {
             SCOPED_TRACE(role.name);
@@ -303,7 +303,7 @@ TEST_F(SqlDeployerHistoryDb, StatsPermissionMigrationMatchesFreshSeedAndKeepsOld
         const auto catalog = txn.exec(
             "SELECT bit_position FROM permission WHERE name = 'admin.stats.view' AND category = 'admin'");
         ASSERT_EQ(catalog.size(), 1u);
-        EXPECT_EQ(catalog.one_row()[0].as<int>(), 0);
+        EXPECT_EQ(catalog.one_row_ref()[0].as<int>(), 0);
 
         migseed::SqlDeployReport again;
         ASSERT_NO_THROW(again = migseed::SqlDeployer::applyDir(txn, repoPsqlDir()));
@@ -364,7 +364,7 @@ TEST_F(SqlDeployerHistoryDb, SyncConflictMigrationGrantsResolveWhereTriggerIsAnd
         // A user with admin vault globals holding trigger, and a vault with a file that has two open conflicts (what
         // every pass used to add) and one closed one.
         const auto userId = txn.exec("INSERT INTO users (name, password_hash) VALUES ('claude_test_107_user', 'x') "
-                                     "RETURNING id").one_field().as<int>();
+                                     "RETURNING id").one_field_ref().as<int>();
         txn.exec(R"SQL(
             INSERT INTO user_global_vault_policy (user_id, scope, files_permissions, directories_permissions,
                                                   sync_permissions, roles_permissions)
@@ -375,17 +375,17 @@ TEST_F(SqlDeployerHistoryDb, SyncConflictMigrationGrantsResolveWhereTriggerIsAnd
         )SQL", pqxx::params{userId, trigger.sync.toBitString(), none.sync.toBitString()});
         const auto vaultId = txn.exec("INSERT INTO vault (type, name, owner_id, mount_point) "
                                       "VALUES ('s3', 'claude_test_107_vault', $1, '0123456789ABCDEFGHJKMNPQRSTVWX107') "
-                                      "RETURNING id", pqxx::params{userId}).one_field().as<int>();
+                                      "RETURNING id", pqxx::params{userId}).one_field_ref().as<int>();
         const auto fileId = txn.exec("INSERT INTO fs_entry (vault_id, name, path) VALUES ($1, 'f.txt', '/f.txt') "
-                                     "RETURNING id", pqxx::params{vaultId}).one_field().as<int>();
+                                     "RETURNING id", pqxx::params{vaultId}).one_field_ref().as<int>();
         txn.exec("INSERT INTO files (fs_entry_id, size_bytes) VALUES ($1, 1)", pqxx::params{fileId});
         std::vector<int> conflicts;
         for (const auto* resolution : {"kept_local", "unresolved", "unresolved"}) {
             const auto eventId = txn.exec("INSERT INTO sync_event (vault_id) VALUES ($1) RETURNING id",
-                                          pqxx::params{vaultId}).one_field().as<int>();
+                                          pqxx::params{vaultId}).one_field_ref().as<int>();
             conflicts.push_back(txn.exec("INSERT INTO sync_conflicts (event_id, file_id, conflict_type, resolution) "
                                          "VALUES ($1, $2, 'mismatch', $3) RETURNING id",
-                                         pqxx::params{eventId, fileId, resolution}).one_field().as<int>());
+                                         pqxx::params{eventId, fileId, resolution}).one_field_ref().as<int>());
         }
 
         migseed::SqlDeployReport report;
@@ -394,7 +394,7 @@ TEST_F(SqlDeployerHistoryDb, SyncConflictMigrationGrantsResolveWhereTriggerIsAnd
 
         const auto syncBitsOf = [&](const std::string& name) {
             return txn.exec("SELECT sync_permissions::text FROM vault_role WHERE name = $1", pqxx::params{name})
-                .one_field().as<std::string>();
+                .one_field_ref().as<std::string>();
         };
         for (const auto& role : builtins) {
             SCOPED_TRACE(role.name);
@@ -408,7 +408,7 @@ TEST_F(SqlDeployerHistoryDb, SyncConflictMigrationGrantsResolveWhereTriggerIsAnd
 
         const auto globalBits = [&](const std::string& scope) {
             return txn.exec("SELECT sync_permissions::text FROM user_global_vault_policy WHERE user_id = $1 AND scope = $2",
-                            pqxx::params{userId, scope}).one_field().as<std::string>();
+                            pqxx::params{userId, scope}).one_field_ref().as<std::string>();
         };
         EXPECT_EQ(globalBits("admin"), triggerAfter.sync.toBitString()) << "admin vault globals with trigger";
         EXPECT_EQ(globalBits("user"), none.sync.toBitString());
@@ -421,11 +421,11 @@ TEST_F(SqlDeployerHistoryDb, SyncConflictMigrationGrantsResolveWhereTriggerIsAnd
             return p.qualified_name == "vault.sync.action.resolve_conflicts";
         });
         ASSERT_NE(exported, permissions.end());
-        EXPECT_EQ(catalog.one_field().as<int>(), static_cast<int>(exported->bit_position)) << "same as the fresh seed";
+        EXPECT_EQ(catalog.one_field_ref().as<int>(), static_cast<int>(exported->bit_position)) << "same as the fresh seed";
 
         // One open conflict per file: the newest stays open, the older duplicate is superseded, history untouched.
         const auto resolution = [&](const int id) {
-            return txn.exec("SELECT resolution, vault_id FROM sync_conflicts WHERE id = $1", pqxx::params{id}).one_row();
+            return txn.exec("SELECT resolution, vault_id FROM sync_conflicts WHERE id = $1", pqxx::params{id}).one_row();  // owning: the result is a temporary
         };
         EXPECT_EQ(resolution(conflicts[0])[0].as<std::string>(), "kept_local");
         EXPECT_EQ(resolution(conflicts[1])[0].as<std::string>(), "superseded");
@@ -440,10 +440,10 @@ TEST_F(SqlDeployerHistoryDb, SyncConflictMigrationGrantsResolveWhereTriggerIsAnd
 
         // Pruning a sync event no longer deletes the conflict it first saw.
         const auto eventOfOpen = txn.exec("SELECT event_id FROM sync_conflicts WHERE id = $1",
-                                          pqxx::params{conflicts[2]}).one_field().as<int>();
+                                          pqxx::params{conflicts[2]}).one_field_ref().as<int>();
         txn.exec("DELETE FROM sync_event WHERE id = $1", pqxx::params{eventOfOpen});
         EXPECT_TRUE(txn.exec("SELECT event_id FROM sync_conflicts WHERE id = $1", pqxx::params{conflicts[2]})
-                        .one_field().is_null());
+                        .one_field_ref().is_null());
 
         migseed::SqlDeployReport again;
         ASSERT_NO_THROW(again = migseed::SqlDeployer::applyDir(txn, repoPsqlDir()));

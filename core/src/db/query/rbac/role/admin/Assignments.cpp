@@ -44,7 +44,7 @@ namespace vh::db::query::rbac::role::admin {
 
             if (result.empty()) return nullptr;
 
-            return std::make_shared<vh::rbac::role::Admin>(result.one_row());
+            return std::make_shared<vh::rbac::role::Admin>(result.one_row_ref());
         });
     }
 
@@ -57,7 +57,7 @@ namespace vh::db::query::rbac::role::admin {
 
             if (result.empty()) return nullptr;
 
-            return std::make_shared<vh::rbac::role::Admin>(result.one_row());
+            return std::make_shared<vh::rbac::role::Admin>(result.one_row_ref());
         });
     }
 
@@ -86,7 +86,7 @@ namespace vh::db::query::rbac::role::admin {
             );
 
             if (result.empty()) return 0;
-            return result.one_field().as<uint32_t>();
+            return result.one_field_ref().as<uint32_t>();
         });
     }
 }

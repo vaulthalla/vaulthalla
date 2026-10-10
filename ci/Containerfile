@@ -7,7 +7,7 @@
 # runtime tools of bin/setup/install_deps.sh that tests use (swtpm, tpm2-tools), g++ 14 as the default `cc`/`c++`
 # (the previous runner's compiler; meson and dh pick `c++`, which tools/dev/check_build_flags.py expects) + ccache,
 # Node (web/.nvmrc) + pnpm (web/package.json packageManager), Debian packaging tools, shellcheck, and
-# vl-release, pmdocs and gh. libpqxx-dev and libpdfium-dev come from apt.vaulthalla.sh.
+# vl-release, pmdocs and gh. libpqxx-vh-dev and libpdfium-dev come only from apt.vaulthalla.sh.
 FROM docker.io/library/ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55
 
 ARG NODE_VERSION=24.13.1
@@ -40,7 +40,7 @@ RUN apt-get update \
       debhelper devscripts dpkg-dev fakeroot \
       meson ninja-build pkg-config pandoc \
       libfuse3-dev libsodium-dev libcurl4-openssl-dev libboost-filesystem-dev libboost-system-dev \
-      libpqxx-dev libpdfium-dev libmagic-dev libmagic1 libyaml-cpp-dev libjpeg-dev libturbojpeg0-dev \
+      libpqxx-vh-dev libpdfium-dev libmagic-dev libmagic1 libyaml-cpp-dev libjpeg-dev libturbojpeg0-dev \
       libpugixml-dev uuid-dev libspdlog-dev libfmt-dev libtss2-dev libssl-dev zlib1g-dev libgtest-dev \
       libseccomp-dev libocct-data-exchange-dev libocct-foundation-dev libocct-modeling-algorithms-dev \
       libocct-modeling-data-dev libocct-ocaf-dev \

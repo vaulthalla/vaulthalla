@@ -11,7 +11,7 @@ using namespace vh::sync::model;
 using namespace vh::fs::model;
 using namespace vh::db::encoding;
 
-LocalPolicy::LocalPolicy(const pqxx::row& row)
+LocalPolicy::LocalPolicy(pqxx::row_ref row)
     : Policy(row),
       conflict_policy(fsConflictPolicyFromString(row.at("conflict_policy").as<std::string>())) {
     rehash_config();

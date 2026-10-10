@@ -46,7 +46,8 @@ class PackageLayoutContractTests(unittest.TestCase):
             "pkg-config",
             "pandoc",
             "libfuse3-dev",
-            "libpqxx-dev",
+            "libpqxx-vh-dev",
+            "libpdfium-dev",
             "libspdlog-dev",
             "libfmt-dev",
             "libtss2-dev",
@@ -56,6 +57,16 @@ class PackageLayoutContractTests(unittest.TestCase):
         ):
             self.assertIn(package, build_depends)
         self.assertNotIn("cmake", build_depends)
+        # Ubuntu's shared libpqxx-dev is not a substitute: core links apt.vaulthalla.sh's static libpqxx-vh SDK.
+        self.assertNotRegex(build_depends, r"(?m)^\s*libpqxx-dev\b")
+
+    def test_core_consumes_the_vaulthalla_db_and_pdf_sdks(self) -> None:
+        meson = self._read("core/meson.build")
+        self.assertRegex(meson, r"dependency\('libpqxx-vh', version: '>=8\.0\.2', method: 'pkg-config', static: true")
+        self.assertNotIn("dependency('libpqxx'", meson)
+        # The retired 2025.06.29 PDFium fork snapshot sorts above Chromium milestones; only the upper bound keeps a
+        # stale build host from producing a package that depends on it.
+        self.assertIn("dependency('pdfium', version: ['>=155.8059', '<1000']", meson)
 
     def test_core_unit_wants_postgresql_and_bounds_restarts(self) -> None:
         unit = self._read("deploy/systemd/vaulthalla.service.in")

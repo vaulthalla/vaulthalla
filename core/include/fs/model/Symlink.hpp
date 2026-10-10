@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Entry.hpp"
+#include "db/Fwd.hpp"
 
 namespace vh::fs::model {
     struct Symlink final : Entry {
@@ -8,7 +9,7 @@ namespace vh::fs::model {
 
         Symlink() = default;
 
-        Symlink(const pqxx::row &row, const pqxx::result &parentRows);
+        Symlink(pqxx::row_ref row, const pqxx::result &parentRows);
 
         [[nodiscard]] bool isDirectory() const override { return false; }
 

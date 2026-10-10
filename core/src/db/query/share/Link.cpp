@@ -1,5 +1,6 @@
 #include "db/query/share/Link.hpp"
 
+#include "db/Rows.hpp"
 #include "db/Transactions.hpp"
 #include "db/encoding/bytea.hpp"
 #include "db/encoding/timestamp.hpp"
@@ -57,10 +58,7 @@ std::optional<std::string> pg_time(const std::optional<std::time_t>& value) {
 }
 
 std::vector<std::shared_ptr<vh::share::Link>> links_from_result(const pqxx::result& res) {
-    std::vector<std::shared_ptr<vh::share::Link>> out;
-    out.reserve(res.size());
-    for (const auto& row : res) out.push_back(std::make_shared<vh::share::Link>(row));
-    return out;
+    return db::sharedRows<vh::share::Link>(res);
 }
 
 void require_link(const std::shared_ptr<vh::share::Link>& link) {
@@ -107,7 +105,7 @@ std::shared_ptr<vh::share::Link> Link::create(const std::shared_ptr<vh::share::L
             link->metadata.empty() ? "{}" : link->metadata
         };
         const auto res = txn.exec(pqxx::prepped{"share_link_insert"}, p);
-        return std::make_shared<vh::share::Link>(res.one_row());
+        return std::make_shared<vh::share::Link>(res.one_row_ref());
     });
 }
 
@@ -116,7 +114,7 @@ std::shared_ptr<vh::share::Link> Link::get(const std::string& id) {
     return Transactions::exec("share::Link::get", [&](pqxx::work& txn) -> std::shared_ptr<vh::share::Link> {
         const auto res = txn.exec(pqxx::prepped{"share_link_get"}, id);
         if (res.empty()) return nullptr;
-        return std::make_shared<vh::share::Link>(res.one_row());
+        return std::make_shared<vh::share::Link>(res.one_row_ref());
     });
 }
 
@@ -125,7 +123,7 @@ std::shared_ptr<vh::share::Link> Link::getByLookupId(const std::string& lookup_i
     return Transactions::exec("share::Link::getByLookupId", [&](pqxx::work& txn) -> std::shared_ptr<vh::share::Link> {
         const auto res = txn.exec(pqxx::prepped{"share_link_get_by_lookup_id"}, lookup_id);
         if (res.empty()) return nullptr;
-        return std::make_shared<vh::share::Link>(res.one_row());
+        return std::make_shared<vh::share::Link>(res.one_row_ref());
     });
 }
 
@@ -191,7 +189,7 @@ std::shared_ptr<vh::share::Link> Link::update(const std::shared_ptr<vh::share::L
         };
         const auto res = txn.exec(pqxx::prepped{"share_link_update"}, p);
         link_query_detail::expect_row(res, "update");
-        return std::make_shared<vh::share::Link>(res.one_row());
+        return std::make_shared<vh::share::Link>(res.one_row_ref());
     });
 }
 

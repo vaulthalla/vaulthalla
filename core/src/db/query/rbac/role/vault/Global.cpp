@@ -21,7 +21,7 @@ void Global::upsert(const GlobalVaultRolePtr& role) {
                 role->user_id,
                 role->template_role_id,
                 role->enforce_template,
-                role->scope,
+                to_string(role->scope),
                 role->fs.files.toBitString(),
                 role->fs.directories.toBitString(),
                 role->sync.toBitString(),
@@ -41,7 +41,7 @@ void Global::add(const GlobalVaultRolePtr& role) {
                 role->user_id,
                 role->template_role_id,
                 role->enforce_template,
-                role->scope,
+                to_string(role->scope),
                 role->fs.files.toBitString(),
                 role->fs.directories.toBitString(),
                 role->sync.toBitString(),
@@ -59,7 +59,7 @@ void Global::update(const GlobalVaultRolePtr& role) {
             pqxx::prepped{"user_global_vault_policy_update"},
             pqxx::params{
                 role->user_id,
-                role->scope,
+                to_string(role->scope),
                 role->template_role_id,
                 role->enforce_template,
                 role->fs.files.toBitString(),
@@ -97,7 +97,7 @@ GlobalVaultRolePtr Global::get(const unsigned int userId, const std::string& sco
         );
 
         if (res.empty()) return nullptr;
-        return std::make_shared<GlobalVaultRole>(res.one_row());
+        return std::make_shared<GlobalVaultRole>(res.one_row_ref());
     });
 }
 
@@ -109,7 +109,7 @@ bool Global::exists(const unsigned int userId, const std::string& scope) {
         );
 
         if (res.empty()) return false;
-        return res.one_row()[0].as<bool>();
+        return res.one_row_ref()[0].as<bool>();
     });
 }
 

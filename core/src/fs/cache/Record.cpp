@@ -7,7 +7,7 @@
 using namespace vh::fs::cache;
 using namespace vh::db::encoding;
 
-Record::Record(const pqxx::row& row)
+Record::Record(pqxx::row_ref row)
     : id(row.at("id").as<unsigned int>()),
       vault_id(row.at("vault_id").as<unsigned int>()),
       file_id(row.at("file_id").as<unsigned int>()),
@@ -73,9 +73,3 @@ Record::Type vh::fs::cache::typeFromString(const std::string& str) {
     throw std::invalid_argument("Unknown CacheIndex type: " + str);
 }
 
-std::vector<std::shared_ptr<Record>> vh::fs::cache::cache_indices_from_pq_res(const pqxx::result& res) {
-    std::vector<std::shared_ptr<Record>> indexes;
-    indexes.reserve(res.size());
-    for (const auto& row : res) indexes.emplace_back(std::make_shared<Record>(row));
-    return indexes;
-}

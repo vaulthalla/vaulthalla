@@ -8,6 +8,9 @@
 // that push/pop state across a precompiled header, leaving every file that uses the PCH in an -Og state with
 // __OPTIMIZE__ defined (emmintrin.h then switches to its inline-function forms, which fail at -O0). FMT_GCC_PRAGMA
 // is fmt's own override for those pragmas; they only made unoptimized fmt code more compact.
+//
+// libpqxx stays out for the same reason: its headers fence their own uses of deprecated APIs with #pragma GCC
+// diagnostic, and through a precompiled header every std::optional parameter would warn from inside libpqxx.
 #define FMT_GCC_PRAGMA(arg)
 
 #include <algorithm>
@@ -35,7 +38,6 @@
 #include <boost/beast/websocket.hpp>
 #include <fmt/format.h>
 #include <nlohmann/json.hpp>
-#include <pqxx/pqxx>
 #include <spdlog/spdlog.h>
 
 #include "compat/fmt_extern.hpp"

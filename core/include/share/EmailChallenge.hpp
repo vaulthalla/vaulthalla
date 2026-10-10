@@ -6,7 +6,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
-#include <pqxx/types>
+#include "db/Fwd.hpp"
 
 namespace vh::share {
 
@@ -25,7 +25,7 @@ struct EmailChallenge {
     std::optional<std::string> user_agent;
 
     EmailChallenge() = default;
-    explicit EmailChallenge(const pqxx::row& row);
+    explicit EmailChallenge(pqxx::row_ref row);
 
     static std::string normalizeEmail(std::string_view email);
     static std::vector<uint8_t> hashEmail(std::string_view normalized_email);

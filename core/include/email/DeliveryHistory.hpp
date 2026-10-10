@@ -5,7 +5,7 @@
 #include <optional>
 #include <string>
 #include <vector>
-#include <pqxx/types>
+#include "db/Fwd.hpp"
 
 namespace vh::email {
 
@@ -42,7 +42,7 @@ struct DeliveryRecord {
     std::time_t createdAt = 0;
 
     DeliveryRecord() = default;
-    explicit DeliveryRecord(const pqxx::row& row);
+    explicit DeliveryRecord(pqxx::row_ref row);
 };
 
 struct DeliveryHistory {

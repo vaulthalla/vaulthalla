@@ -89,7 +89,7 @@ protected:
     void terminateBackends(const std::vector<int>& pids) const {
         pqxx::nontransaction tx(*admin);
         for (const auto pid : pids)
-            EXPECT_TRUE(tx.exec("SELECT pg_terminate_backend($1, 5000)", pqxx::params{pid}).one_field().as<bool>());
+            EXPECT_TRUE(tx.exec("SELECT pg_terminate_backend($1, 5000)", pqxx::params{pid}).one_field_ref().as<bool>());
     }
 
     void setConnectionLimit(const int limit) const {
@@ -182,6 +182,26 @@ TEST_F(DBPoolReconnectTest, ExceptionsInsideTransactionsNeverLeakSlots) {
     }
     expectPoolWhole();
     EXPECT_FALSE(runQuery());
+    EXPECT_EQ(pool->stats().reconnects, 0u) << "an SQL error must not poison its connection";
+}
+
+// libpqxx 8 flags errors after which a session can't be trusted although its socket still looks open
+// (pqxx::failure::poisons_connection(): an unknown COMMIT outcome, a protocol violation). Such a connection is
+// replaced instead of being handed to the next caller; the plain SQL errors above never cost a reconnect.
+TEST_F(DBPoolReconnectTest, PoisonedConnectionsAreReplacedOnTheNextAcquire) {
+    int poisonedBackend = 0;
+    EXPECT_THROW(vh::db::Transactions::exec("DBPoolReconnectTest::poisoned", [&](pqxx::work& txn) {
+        poisonedBackend = txn.conn().backendpid();
+        throw pqxx::in_doubt_error{"simulated: COMMIT outcome unknown"};
+    }), pqxx::in_doubt_error);
+
+    expectPoolWhole();
+    EXPECT_EQ(pool->stats().brokenIdle, 1u);
+    EXPECT_EQ(pool->stats().reconnects, 0u);
+    for (std::size_t i = 0; i < kPoolSize; ++i) EXPECT_FALSE(runQuery()); // FIFO reaches the poisoned one
+    EXPECT_EQ(pool->stats().brokenIdle, 0u);
+    EXPECT_EQ(pool->stats().reconnects, 1u);
+    for (const auto pid : poolBackendPids()) EXPECT_NE(pid, poisonedBackend);
 }
 
 TEST_F(DBPoolReconnectTest, AcquireTimesOutInsteadOfBlockingWhenExhausted) {

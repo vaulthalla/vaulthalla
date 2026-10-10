@@ -7,7 +7,7 @@
 using namespace vh::crypto::model;
 using namespace vh::db::encoding;
 
-Secret::Secret(const pqxx::row& row)
+Secret::Secret(pqxx::row_ref row)
     : key(row["key"].c_str()),
       value(from_hex_bytea(row["value"].as<std::string>())),
       iv(from_hex_bytea(row["iv"].as<std::string>())),

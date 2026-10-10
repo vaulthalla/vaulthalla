@@ -134,7 +134,7 @@ protected:
         return db::Transactions::exec("APIKeyParityTest::bindS3Vault", [&](pqxx::work& txn) {
             const auto id = txn.exec(
                 "INSERT INTO vault (type, name, owner_id, mount_point, description) VALUES ('s3', $1, $2, $3, '') RETURNING id",
-                pqxx::params{name, owner->id, name.substr(0, 30)}).one_field().as<unsigned int>();
+                pqxx::params{name, owner->id, name.substr(0, 30)}).one_field_ref().as<unsigned int>();
             txn.exec("INSERT INTO s3 (vault_id, api_key_id, bucket) VALUES ($1, $2, $3)", pqxx::params{id, keyId, bucket});
             txn.exec("WITH ins AS (INSERT INTO sync (vault_id, interval) VALUES ($1, 300) RETURNING id) "
                      "INSERT INTO rsync (sync_id, strategy, conflict_policy) SELECT id, 'cache', 'keep_remote' FROM ins",
@@ -147,7 +147,7 @@ protected:
     static unsigned int boundKey(const unsigned int vaultId) {
         return db::Transactions::exec("APIKeyParityTest::boundKey", [&](pqxx::work& txn) -> unsigned int {
             const auto res = txn.exec("SELECT api_key_id FROM s3 WHERE vault_id = $1", pqxx::params{vaultId});
-            return res.empty() ? 0u : res.one_field().as<unsigned int>();
+            return res.empty() ? 0u : res.one_field_ref().as<unsigned int>();
         });
     }
 };
@@ -289,7 +289,7 @@ TEST_F(APIKeyParityTest, VaultUsingAConsumableKeyOfAnotherOwnerBuildsItsEngine) 
         const auto name = "ak_vault_" + keysTag();
         const auto id = txn.exec(
             "INSERT INTO vault (type, name, owner_id, mount_point, description) VALUES ('s3', $1, $2, $3, '') RETURNING id",
-            pqxx::params{name, alice->id, name.substr(0, 30)}).one_field().as<unsigned int>();
+            pqxx::params{name, alice->id, name.substr(0, 30)}).one_field_ref().as<unsigned int>();
         txn.exec("INSERT INTO s3 (vault_id, api_key_id, bucket) VALUES ($1, $2, 'ak-bucket')", pqxx::params{id, adminKey});
         txn.exec("WITH ins AS (INSERT INTO sync (vault_id, interval) VALUES ($1, 300) RETURNING id) "
                  "INSERT INTO rsync (sync_id, strategy, conflict_policy) SELECT id, 'cache', 'keep_remote' FROM ins",

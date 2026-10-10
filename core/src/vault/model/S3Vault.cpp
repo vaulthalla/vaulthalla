@@ -15,7 +15,7 @@ S3Vault::S3Vault(const std::string& name, const unsigned int apiKeyID, std::stri
     this->created_at = std::time(nullptr);
 }
 
-S3Vault::S3Vault(const pqxx::row& row)
+S3Vault::S3Vault(pqxx::row_ref row)
     : Vault(row),
       api_key_id(row["api_key_id"].as<std::optional<unsigned int>>().value_or(0)),
       bucket(row["bucket"].as<std::optional<std::string>>().value_or("")),

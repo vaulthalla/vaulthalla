@@ -13,7 +13,7 @@
 
 using namespace vh::fs::model;
 
-File::File(const pqxx::row& row, const pqxx::result& parentRows)
+File::File(pqxx::row_ref row, const pqxx::result& parentRows)
     : Entry(row, parentRows),
       encryption_iv(row.at("encryption_iv").as<std::string>()),
       mime_type(row.at("mime_type").as<std::optional<std::string>>()),

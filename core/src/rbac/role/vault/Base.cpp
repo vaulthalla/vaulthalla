@@ -5,7 +5,7 @@
 #include <ostream>
 
 namespace vh::rbac::role::vault {
-    Base::Base(const pqxx::row &row)
+    Base::Base(pqxx::row_ref row)
         : roles(static_cast<permission::vault::Roles::Mask>(
               row["roles_permissions"].as<uint64_t>())),
           sync(static_cast<permission::vault::Sync::Mask>(
@@ -13,7 +13,7 @@ namespace vh::rbac::role::vault {
           fs(row) {
     }
 
-    Base::Base(const pqxx::row &row, const pqxx::result &overrides)
+    Base::Base(pqxx::row_ref row, const pqxx::result &overrides)
         : roles(static_cast<permission::vault::Roles::Mask>(
               row["roles_permissions"].as<uint64_t>())),
           sync(static_cast<permission::vault::Sync::Mask>(

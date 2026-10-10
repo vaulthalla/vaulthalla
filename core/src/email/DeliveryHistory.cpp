@@ -1,5 +1,6 @@
 #include "email/DeliveryHistory.hpp"
 
+#include "db/Rows.hpp"
 #include "db/Transactions.hpp"
 #include "db/encoding/timestamp.hpp"
 
@@ -11,12 +12,12 @@ namespace vh::email {
 
 namespace {
 
-std::optional<std::string> optString(const pqxx::row& row, const char* column) {
+std::optional<std::string> optString(pqxx::row_ref row, const char* column) {
     if (row[column].is_null()) return std::nullopt;
     return row[column].as<std::string>();
 }
 
-std::optional<std::time_t> optTimestamp(const pqxx::row& row, const char* column) {
+std::optional<std::time_t> optTimestamp(pqxx::row_ref row, const char* column) {
     if (row[column].is_null()) return std::nullopt;
     return db::encoding::parsePostgresTimestamp(row[column].as<std::string>());
 }
@@ -32,15 +33,12 @@ void validateInput(const DeliveryRecordInput& input) {
 }
 
 std::vector<DeliveryRecord> recordsFromResult(const pqxx::result& rows) {
-    std::vector<DeliveryRecord> out;
-    out.reserve(rows.size());
-    for (const auto& row : rows) out.emplace_back(row);
-    return out;
+    return db::rowsAs<DeliveryRecord>(rows);
 }
 
 }
 
-DeliveryRecord::DeliveryRecord(const pqxx::row& row)
+DeliveryRecord::DeliveryRecord(pqxx::row_ref row)
     : id(row["id"].as<std::uint64_t>()),
       eventKey(row["event_key"].as<std::string>()),
       eventType(row["event_type"].as<std::string>()),
@@ -74,7 +72,7 @@ std::uint64_t DeliveryHistory::record(const DeliveryRecordInput& input) {
         p.append(input.errorSummary);
         p.append(input.fingerprint);
         const auto res = txn.exec(pqxx::prepped{"operator_notification_delivery.insert"}, p);
-        return res.one_field().as<std::uint64_t>();
+        return res.one_field_ref().as<std::uint64_t>();
     });
 }
 
@@ -97,7 +95,7 @@ std::optional<DeliveryRecord> DeliveryHistory::latestFor(const std::string& even
             pqxx::params{eventKey, fingerprint}
         );
         if (rows.empty()) return std::nullopt;
-        return DeliveryRecord(rows.one_row());
+        return DeliveryRecord(rows.one_row_ref());
     });
 }
 
@@ -113,7 +111,7 @@ std::optional<DeliveryRecord> DeliveryHistory::latestForStatus(
             pqxx::params{eventKey, fingerprint, status}
         );
         if (rows.empty()) return std::nullopt;
-        return DeliveryRecord(rows.one_row());
+        return DeliveryRecord(rows.one_row_ref());
     });
 }
 
@@ -128,7 +126,7 @@ std::optional<DeliveryRecord> DeliveryHistory::latestForEventStatus(
             pqxx::params{eventKey, status}
         );
         if (rows.empty()) return std::nullopt;
-        return DeliveryRecord(rows.one_row());
+        return DeliveryRecord(rows.one_row_ref());
     });
 }
 

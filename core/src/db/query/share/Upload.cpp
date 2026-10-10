@@ -1,5 +1,6 @@
 #include "db/query/share/Upload.hpp"
 
+#include "db/Rows.hpp"
 #include "db/Transactions.hpp"
 #include "db/model/ListQueryParams.hpp"
 #include "share/Types.hpp"
@@ -32,10 +33,7 @@ void expect_row(const pqxx::result& res, const char* operation) {
 }
 
 std::vector<std::shared_ptr<vh::share::Upload>> uploads_from_result(const pqxx::result& res) {
-    std::vector<std::shared_ptr<vh::share::Upload>> out;
-    out.reserve(res.size());
-    for (const auto& row : res) out.push_back(std::make_shared<vh::share::Upload>(row));
-    return out;
+    return db::sharedRows<vh::share::Upload>(res);
 }
 }
 
@@ -64,7 +62,7 @@ std::shared_ptr<vh::share::Upload> Upload::create(const std::shared_ptr<vh::shar
             upload->error
         };
         const auto res = txn.exec(pqxx::prepped{"share_upload_insert"}, p);
-        return std::make_shared<vh::share::Upload>(res.one_row());
+        return std::make_shared<vh::share::Upload>(res.one_row_ref());
     });
 }
 
@@ -73,7 +71,7 @@ std::shared_ptr<vh::share::Upload> Upload::get(const std::string& upload_id) {
     return Transactions::exec("share::Upload::get", [&](pqxx::work& txn) -> std::shared_ptr<vh::share::Upload> {
         const auto res = txn.exec(pqxx::prepped{"share_upload_get"}, upload_id);
         if (res.empty()) return nullptr;
-        return std::make_shared<vh::share::Upload>(res.one_row());
+        return std::make_shared<vh::share::Upload>(res.one_row_ref());
     });
 }
 
@@ -108,14 +106,14 @@ void Upload::cancel(const std::string& upload_id) {
 uint64_t Upload::sumCompletedBytes(const std::string& share_id) {
     upload_query_detail::require_uuid(share_id, "share id");
     return Transactions::exec("share::Upload::sumCompletedBytes", [&](pqxx::work& txn) {
-        return txn.exec(pqxx::prepped{"share_upload_sum_completed_bytes"}, share_id).one_field().as<uint64_t>();
+        return txn.exec(pqxx::prepped{"share_upload_sum_completed_bytes"}, share_id).one_field_ref().as<uint64_t>();
     });
 }
 
 uint64_t Upload::countCompletedFiles(const std::string& share_id) {
     upload_query_detail::require_uuid(share_id, "share id");
     return Transactions::exec("share::Upload::countCompletedFiles", [&](pqxx::work& txn) {
-        return txn.exec(pqxx::prepped{"share_upload_count_completed_files"}, share_id).one_field().as<uint64_t>();
+        return txn.exec(pqxx::prepped{"share_upload_count_completed_files"}, share_id).one_field_ref().as<uint64_t>();
     });
 }
 

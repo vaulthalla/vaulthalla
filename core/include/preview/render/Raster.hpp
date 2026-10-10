@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <mutex>
 #include <span>
 #include <stdexcept>
 #include <vector>
@@ -50,7 +49,14 @@ public:
 // Baseline JPEG, 4:4:4, quality 85 (the thumbnail quality Vaulthalla has always shipped).
 [[nodiscard]] std::vector<uint8_t> encodeJpeg(const Raster& raster, int quality = 85);
 
-// The process-wide PDFium lock (render + thumbnail paths).
-[[nodiscard]] std::mutex& pdfiumMutex();
+// PDFium's process-wide init/teardown. Hold exactly one for as long as anything may render a PDF (the daemon's main,
+// test suites); every render serializes behind the same lock as init and destroy.
+class PdfiumLibrary {
+public:
+    PdfiumLibrary();
+    ~PdfiumLibrary();
+    PdfiumLibrary(const PdfiumLibrary&) = delete;
+    PdfiumLibrary& operator=(const PdfiumLibrary&) = delete;
+};
 
 }

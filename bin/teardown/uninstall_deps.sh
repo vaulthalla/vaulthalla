@@ -54,9 +54,9 @@ echo "⚠️ This script avoids removing common system dependencies unless expli
 echo "   Vaulthalla-specific packages/repo can be removed safely."
 echo
 
-if vh_confirm "❓ Remove Vaulthalla-managed development packages (libpdfium-dev, libpqxx-dev)?" "N" "N"; then
+if vh_confirm "❓ Remove Vaulthalla-managed development packages (libpdfium-dev, libpqxx-vh-dev)?" "N" "N"; then
     remove_pkg_if_installed "libpdfium-dev" "libpdfium-dev"
-    remove_pkg_if_installed "libpqxx-dev" "libpqxx-dev"
+    remove_pkg_if_installed "libpqxx-vh-dev" "libpqxx-vh-dev"
 else
     echo "✅ Vaulthalla-managed development packages left installed."
 fi

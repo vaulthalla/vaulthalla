@@ -8,7 +8,7 @@
 #include <vector>
 #include <nlohmann/json_fwd.hpp>
 #include <filesystem>
-#include <pqxx/types>
+#include "db/Fwd.hpp"
 
 namespace vh::vault::model {
 
@@ -31,7 +31,7 @@ struct Vault {
 
     Vault() = default;
     virtual ~Vault() = default;
-    explicit Vault(const pqxx::row& row);
+    explicit Vault(pqxx::row_ref row);
 
     [[nodiscard]] std::string quotaStr() const;
     void setQuotaFromStr(const std::string& str);

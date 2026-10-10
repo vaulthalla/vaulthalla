@@ -230,7 +230,7 @@ TEST_F(VaultLifecycleRegressionTest, DeletingAUserWithShareAndUploadHistorySucce
     const auto auditRows = [&] {
         return db::Transactions::exec("VaultLifecycleRegressionTest::audit", [&](pqxx::work& txn) {
             return txn.exec("SELECT COUNT(*) FROM share_access_event WHERE share_id = $1::uuid OR actor_user_id = $2",
-                            pqxx::params{link->id, leaver->id}).one_field().as<long>();
+                            pqxx::params{link->id, leaver->id}).one_field_ref().as<long>();
         });
     };
     ASSERT_GT(auditRows(), 0);
@@ -240,12 +240,12 @@ TEST_F(VaultLifecycleRegressionTest, DeletingAUserWithShareAndUploadHistorySucce
 
     const auto after = db::Transactions::exec("VaultLifecycleRegressionTest::after", [&](pqxx::work& txn) {
         const auto links = txn.exec("SELECT COUNT(*) FROM share_link WHERE id = $1::uuid", pqxx::params{link->id})
-                               .one_field().as<long>();
+                               .one_field_ref().as<long>();
         const auto attributed = txn.exec("SELECT created_by IS NULL AND last_modified_by IS NULL FROM fs_entry WHERE id = $1",
-                                         pqxx::params{drop->id}).one_field().as<bool>();
+                                         pqxx::params{drop->id}).one_field_ref().as<bool>();
         const auto orphanedAudit = txn.exec("SELECT COUNT(*) FROM share_access_event WHERE actor_user_id IS NULL AND "
                                             "event_type = 'share.link.create' AND target_entry_id = $1",
-                                            pqxx::params{drop->id}).one_field().as<long>();
+                                            pqxx::params{drop->id}).one_field_ref().as<long>();
         return std::tuple{links, attributed, orphanedAudit};
     });
     EXPECT_EQ(std::get<0>(after), 0) << "a deleted account's public links must not outlive it";

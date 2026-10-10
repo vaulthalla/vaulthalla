@@ -13,7 +13,7 @@ unsigned int Key::addVaultKey(const KeyPtr& key) {
         pqxx::params p{key->vaultId, to_hex_bytea(key->encrypted_key), to_hex_bytea(key->iv)};
         const auto res = txn.exec(pqxx::prepped{"insert_vault_key"}, p);
         if (res.empty()) throw std::runtime_error("Failed to add vault key: no result returned");
-        return res.one_field().as<unsigned int>();
+        return res.one_field_ref().as<unsigned int>();
     });
 }
 
@@ -43,7 +43,7 @@ unsigned int Key::rotateVaultKey(const KeyPtr& newKey) {
         pqxx::params p{newKey->vaultId, to_hex_bytea(newKey->encrypted_key), to_hex_bytea(newKey->iv)};
         const auto res = txn.exec(pqxx::prepped{"rotate_vault_key"}, p);
         if (res.empty()) throw std::runtime_error("Failed to rotate vault key: no result returned");
-        return res.one_field().as<unsigned int>();
+        return res.one_field_ref().as<unsigned int>();
     });
 }
 
@@ -55,7 +55,7 @@ void Key::markKeyRotationFinished(unsigned int vaultId) {
 
 bool Key::keyRotationInProgress(unsigned int vaultId) {
     return Transactions::exec("Key::keyRotationInProgress", [&](pqxx::work& txn) {
-        return txn.exec(pqxx::prepped{"vault_key_rotation_in_progress"}, vaultId).one_field().as<bool>();
+        return txn.exec(pqxx::prepped{"vault_key_rotation_in_progress"}, vaultId).one_field_ref().as<bool>();
     });
 }
 
@@ -72,7 +72,7 @@ std::optional<std::time_t> Key::currentKeyExportedAt(const unsigned int vaultId)
             "SELECT exported_at FROM vault_keys WHERE vault_id = $1 AND exported_version = version AND exported_at IS NOT NULL",
             pqxx::params{vaultId});
         if (res.empty()) return std::nullopt;
-        return db::encoding::parsePostgresTimestamp(res.one_field().c_str());
+        return db::encoding::parsePostgresTimestamp(res.one_field_ref().c_str());
     });
 }
 

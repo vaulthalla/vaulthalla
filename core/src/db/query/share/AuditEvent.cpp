@@ -1,5 +1,6 @@
 #include "db/query/share/AuditEvent.hpp"
 
+#include "db/Rows.hpp"
 #include "db/Transactions.hpp"
 #include "db/model/ListQueryParams.hpp"
 #include "share/AuditEvent.hpp"
@@ -28,10 +29,7 @@ std::pair<uint64_t, uint64_t> page(const db::model::ListQueryParams& params) {
 }
 
 std::vector<std::shared_ptr<vh::share::AuditEvent>> events_from_result(const pqxx::result& res) {
-    std::vector<std::shared_ptr<vh::share::AuditEvent>> out;
-    out.reserve(res.size());
-    for (const auto& row : res) out.push_back(std::make_shared<vh::share::AuditEvent>(row));
-    return out;
+    return db::sharedRows<vh::share::AuditEvent>(res);
 }
 }
 

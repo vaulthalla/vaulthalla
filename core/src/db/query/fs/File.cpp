@@ -1,4 +1,5 @@
 #include "db/query/fs/File.hpp"
+#include "db/Rows.hpp"
 #include "db/Transactions.hpp"
 #include "fs/model/File.hpp"
 #include "fs/model/Directory.hpp"
@@ -25,9 +26,9 @@ unsigned int File::upsertFile(const FilePtr& file) {
     if (file->updated_at == 0) file->updated_at = file->created_at;
 
     return Transactions::exec("File::addFile", [&](pqxx::work& txn) {
-        const auto exists = txn.exec(pqxx::prepped{"fs_entry_exists_by_inode"}, file->inode).one_field().as<bool>();
+        const auto exists = txn.exec(pqxx::prepped{"fs_entry_exists_by_inode"}, file->inode).one_field_ref().as<bool>();
         const auto sizeRes = txn.exec(pqxx::prepped{"get_file_size_by_inode"}, file->inode);
-        const auto existingSize = sizeRes.empty() ? 0 : sizeRes.one_field().as<uintmax_t>();
+        const auto existingSize = sizeRes.empty() ? 0 : sizeRes.one_field_ref().as<uintmax_t>();
         if (file->inode) txn.exec(pqxx::prepped{"delete_fs_entry_by_inode"}, file->inode);
 
         pqxx::params p;
@@ -50,7 +51,7 @@ unsigned int File::upsertFile(const FilePtr& file) {
         p.append(file->encryption_iv);
         p.append(file->encrypted_with_key_version);
 
-        const auto fileId = txn.exec(pqxx::prepped{"upsert_file_full"}, p).one_row()["fs_entry_id"].as<unsigned int>();
+        const auto fileId = txn.exec(pqxx::prepped{"upsert_file_full"}, p).one_row_ref()["fs_entry_id"].as<unsigned int>();
         txn.exec(
             pqxx::prepped{"insert_file_activity"},
             pqxx::params{
@@ -67,7 +68,7 @@ unsigned int File::upsertFile(const FilePtr& file) {
             txn.exec(pqxx::prepped{"update_dir_stats"}, stats_params);
             const auto res = txn.exec(pqxx::prepped{"get_fs_entry_parent_id"}, parentId);
             if (res.empty()) break;
-            parentId = res.one_field().as<std::optional<unsigned int>>();
+            parentId = res.one_field_ref().as<std::optional<unsigned int>>();
         }
 
         return fileId;
@@ -80,9 +81,9 @@ void File::updateFile(const FilePtr& file) {
     if (!file->path.string().starts_with("/")) file->setPath("/" + to_utf8_string(file->path.u8string()));
 
     Transactions::exec("File::updateFile", [&](pqxx::work& txn) {
-        const auto exists = txn.exec(pqxx::prepped{"fs_entry_exists_by_inode"}, file->inode).one_field().as<bool>();
+        const auto exists = txn.exec(pqxx::prepped{"fs_entry_exists_by_inode"}, file->inode).one_field_ref().as<bool>();
         const auto sizeRes = txn.exec(pqxx::prepped{"get_file_size_by_inode"}, file->inode);
-        const auto existingSize = sizeRes.empty() ? 0 : sizeRes.one_field().as<uintmax_t>();
+        const auto existingSize = sizeRes.empty() ? 0 : sizeRes.one_field_ref().as<uintmax_t>();
 
         pqxx::params p;
         p.append(file->id);
@@ -107,7 +108,7 @@ void File::updateFile(const FilePtr& file) {
             txn.exec(pqxx::prepped{"update_dir_stats"}, stats_params);
             const auto res = txn.exec(pqxx::prepped{"get_fs_entry_parent_id"}, parentId);
             if (res.empty()) break;
-            parentId = res.one_field().as<std::optional<unsigned int>>();
+            parentId = res.one_field_ref().as<std::optional<unsigned int>>();
         }
     });
 }
@@ -157,7 +158,7 @@ void File::moveFile(const FilePtr& file, const std::filesystem::path& newPath, u
         // update the file's path and parent_id
         file->path = newPath;
         pqxx::params search_params{userId, to_utf8_string(newPath.parent_path().u8string())};
-        file->parent_id = txn.exec(pqxx::prepped{"get_fs_entry_id_by_path"}, search_params).one_field().as<unsigned int>();
+        file->parent_id = txn.exec(pqxx::prepped{"get_fs_entry_id_by_path"}, search_params).one_field_ref().as<unsigned int>();
         file->last_modified_by = userId;
 
         pqxx::params p;
@@ -199,8 +200,8 @@ File::FilePtr File::getFileByPath(const unsigned int vaultId, const std::filesys
     return Transactions::exec("File::getFileByPath", [&](pqxx::work& txn) -> FilePtr {
         const auto res = txn.exec(pqxx::prepped{"get_file_by_path"}, pqxx::params{vaultId, to_utf8_string(relPath.u8string())});
         if (res.empty()) return nullptr;
-        const auto parentRows = txn.exec(pqxx::prepped{"collect_parent_chain"}, res.one_row()["parent_id"].as<std::optional<unsigned int>>());
-        return std::make_shared<F>(res.one_row(), parentRows);
+        const auto parentRows = txn.exec(pqxx::prepped{"collect_parent_chain"}, res.one_row_ref()["parent_id"].as<std::optional<unsigned int>>());
+        return std::make_shared<F>(res.one_row_ref(), parentRows);
     });
 }
 
@@ -208,8 +209,8 @@ File::FilePtr File::getFileById(unsigned int id) {
     return Transactions::exec("File::getFileById", [&](pqxx::work& txn) -> FilePtr {
         const auto res = txn.exec(pqxx::prepped{"get_file_by_id"}, id);
         if (res.empty()) return nullptr; // No file found with the given ID
-        const auto parentRows = txn.exec(pqxx::prepped{"collect_parent_chain"}, res.one_row()["parent_id"].as<std::optional<unsigned int>>());
-        return std::make_shared<F>(res.one_row(), parentRows);
+        const auto parentRows = txn.exec(pqxx::prepped{"collect_parent_chain"}, res.one_row_ref()["parent_id"].as<std::optional<unsigned int>>());
+        return std::make_shared<F>(res.one_row_ref(), parentRows);
     });
 }
 
@@ -219,14 +220,14 @@ std::string File::getMimeType(const unsigned int vaultId, const std::filesystem:
         pqxx::params p{vaultId, to_utf8_string(relPath.u8string())};
         const auto res = txn.exec(pqxx::prepped{"get_file_mime_type"}, p);
         if (res.empty()) return "application/octet-stream"; // Default MIME type if not found
-        return res.one_field().as<std::string>();
+        return res.one_field_ref().as<std::string>();
     });
 }
 
 bool File::isFile(const unsigned int vaultId, const std::filesystem::path& relPath) {
     return Transactions::exec("File::isFile", [&](pqxx::work& txn) -> bool {
         pqxx::params p{vaultId, to_utf8_string(relPath.u8string())};
-        return txn.exec(pqxx::prepped{"is_file"}, p).one_row()["exists"].as<bool>();
+        return txn.exec(pqxx::prepped{"is_file"}, p).one_row_ref()["exists"].as<bool>();
     });
 }
 
@@ -246,7 +247,7 @@ std::vector<File::FilePtr> File::listFilesInDir(
 std::vector<File::TrashedFilePtr> File::listTrashedFiles(unsigned int vaultId) {
     return Transactions::exec("File::listTrashedFiles", [&](pqxx::work& txn) {
         const auto res = txn.exec(pqxx::prepped{"list_trashed_files"}, vaultId);
-        return vh::fs::model::file::trashed_files_from_pq_res(res);
+        return db::sharedRows<vh::fs::model::file::Trashed>(res);
     });
 }
 
@@ -319,7 +320,7 @@ void File::updateParentStats(pqxx::work& txn, std::optional<unsigned int> parent
                  pqxx::params{*parentId, -static_cast<long long>(sizeBytes), -1, 0});
         const auto parentRes = txn.exec(pqxx::prepped{"get_fs_entry_parent_id"}, *parentId);
         if (parentRes.empty()) break;
-        parentId = parentRes.one_field().as<std::optional<unsigned int>>();
+        parentId = parentRes.one_field_ref().as<std::optional<unsigned int>>();
     }
 }
 
@@ -328,7 +329,7 @@ std::optional<std::pair<std::string, unsigned int>>  File::getEncryptionIVAndVer
         pqxx::params p{vaultId, to_utf8_string(relPath.u8string())};
         const auto res = txn.exec(pqxx::prepped{"get_file_encryption_iv_and_version"}, p);
         if (res.empty()) return std::nullopt;
-        const auto row = res.one_row();
+        const auto row = res.one_row_ref();
         if (row["encryption_iv"].is_null() || row["encrypted_with_key_version"].is_null())
             return std::nullopt;
         const auto iv = row["encryption_iv"].as<std::string>();
@@ -357,7 +358,7 @@ bool File::compareAndSetEncryptionIVAndVersion(const F& f, const std::string& ex
 std::string File::getContentHash(const unsigned int vaultId, const std::filesystem::path& relPath) {
     return Transactions::exec("File::getContentHash", [&](pqxx::work& txn) -> std::string {
         pqxx::params p{vaultId, to_utf8_string(relPath.u8string())};
-        return txn.exec(pqxx::prepped{"get_file_content_hash"}, p).one_field().as<std::string>();
+        return txn.exec(pqxx::prepped{"get_file_content_hash"}, p).one_field_ref().as<std::string>();
     });
 }
 
@@ -373,8 +374,8 @@ File::FilePtr File::getLargestFile(unsigned int vaultId) {
     return Transactions::exec("File::getLargestFile", [&](pqxx::work& txn) {
         const auto res = txn.exec(pqxx::prepped{"get_n_largest_files"}, pqxx::params{vaultId, 1});
         if (res.empty()) return FilePtr();
-        const auto parentRows = txn.exec(pqxx::prepped{"collect_parent_chain"}, res.one_row()["parent_id"].as<std::optional<unsigned int>>());
-        return std::make_shared<F>(res.one_row(), parentRows);
+        const auto parentRows = txn.exec(pqxx::prepped{"collect_parent_chain"}, res.one_row_ref()["parent_id"].as<std::optional<unsigned int>>());
+        return std::make_shared<F>(res.one_row_ref(), parentRows);
     });
 }
 

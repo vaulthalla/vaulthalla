@@ -21,7 +21,7 @@ using UserPtr = std::shared_ptr<U>;
 
 namespace vh::db::query::identities {
     namespace {
-        bool rowBool(const pqxx::row& row, const char* column, const bool fallback = false) {
+        bool rowBool(pqxx::row_ref row, const char* column, const bool fallback = false) {
             try {
                 const auto field = row[column];
                 if (field.is_null()) return fallback;
@@ -52,7 +52,7 @@ namespace vh::db::query::identities {
             if (res.empty())
                 throw std::runtime_error("User not found: " + std::to_string(user->id));
 
-            if (rowBool(res.one_row(), "protected"))
+            if (rowBool(res.one_row_ref(), "protected"))
                 throw std::runtime_error("protected users cannot be updated through normal user paths");
 
             if (user->isProtected || user->systemOnly)
@@ -69,7 +69,7 @@ namespace vh::db::query::identities {
             );
 
             if (res.empty()) return;
-            if (rowBool(res.one_row(), "protected"))
+            if (rowBool(res.one_row_ref(), "protected"))
                 throw std::runtime_error("protected users cannot be deleted");
         }
 
@@ -78,7 +78,7 @@ namespace vh::db::query::identities {
                 "SELECT system_only FROM users WHERE id = $1",
                 pqxx::params{userId}
             );
-            return !res.empty() && rowBool(res.one_row(), "system_only");
+            return !res.empty() && rowBool(res.one_row_ref(), "system_only");
         }
     }
 
@@ -94,7 +94,7 @@ namespace vh::db::query::identities {
                 return nullptr;
             }
 
-            return hydrateUser(txn, res.one_row());
+            return hydrateUser(txn, res.one_row_ref());
         });
     }
 
@@ -110,7 +110,7 @@ namespace vh::db::query::identities {
                 return nullptr;
             }
 
-            return hydrateUser(txn, res.one_row());
+            return hydrateUser(txn, res.one_row_ref());
         });
     }
 
@@ -126,7 +126,7 @@ namespace vh::db::query::identities {
                 return nullptr;
             }
 
-            return hydrateUser(txn, res.one_row());
+            return hydrateUser(txn, res.one_row_ref());
         });
     }
 
@@ -140,7 +140,7 @@ namespace vh::db::query::identities {
             if (res.empty())
                 throw std::runtime_error("No user found with Linux UID: " + std::to_string(linuxUid));
 
-            return res.one_field().as<unsigned int>();
+            return res.one_field_ref().as<unsigned int>();
         });
     }
 
@@ -165,7 +165,7 @@ namespace vh::db::query::identities {
             user->id = txn.exec(
                 pqxx::prepped{"insert_user"},
                 userParams
-            ).one_row()[0].as<uint32_t>();
+            ).one_row_ref()[0].as<uint32_t>();
 
             upsertUserRoles(txn, user);
 
@@ -209,9 +209,9 @@ namespace vh::db::query::identities {
             );
 
             if (res.empty()) return false;
-            if (rowBool(res.one_row(), "system_only")) return false;
+            if (rowBool(res.one_row_ref(), "system_only")) return false;
 
-            const auto storedHash = res.one_row()["password_hash"].as<std::string>();
+            const auto storedHash = res.one_row_ref()["password_hash"].as<std::string>();
             return vh::crypto::hash::verifyPassword(password, storedHash);
         });
     }
@@ -300,7 +300,7 @@ namespace vh::db::query::identities {
             return txn.exec(
                 pqxx::prepped{"user_exists"},
                 pqxx::params{name}
-            ).one_field().as<bool>();
+            ).one_field_ref().as<bool>();
         });
     }
 
@@ -308,7 +308,7 @@ namespace vh::db::query::identities {
         return Transactions::exec("User::adminUserExists", [](pqxx::work &txn) -> bool {
             return txn.exec(
                 pqxx::prepped{"admin_user_exists"}
-            ).one_field().as<bool>();
+            ).one_field_ref().as<bool>();
         });
     }
 }

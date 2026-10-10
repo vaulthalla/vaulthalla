@@ -267,7 +267,7 @@ unsigned int upsertBootstrapPrincipal(
     if (res.empty())
         throw std::runtime_error("Failed to upsert bootstrap principal: " + name);
 
-    return res.one_row()["id"].as<unsigned int>();
+    return res.one_row_ref()["id"].as<unsigned int>();
 }
 
 unsigned int upsertBootstrapAdmin(
@@ -299,7 +299,7 @@ unsigned int upsertBootstrapAdmin(
     if (res.empty())
         throw std::runtime_error("Failed to upsert bootstrap admin principal");
 
-    return res.one_row()["id"].as<unsigned int>();
+    return res.one_row_ref()["id"].as<unsigned int>();
 }
 
 void assignSuperAdminRole(pqxx::work& txn, const unsigned int userId, const unsigned int roleId) {
@@ -723,7 +723,7 @@ void vh::seed::reconcileSystemPrincipals() {
         if (roleRes.empty())
             throw std::runtime_error("super_admin role is missing; cannot reconcile protected principals");
 
-        const auto superAdminRoleId = roleRes.one_row()["id"].as<unsigned int>();
+        const auto superAdminRoleId = roleRes.one_row_ref()["id"].as<unsigned int>();
 
         txn.exec("UPDATE users SET linux_uid = NULL WHERE linux_uid = 0 AND name <> 'root'");
 

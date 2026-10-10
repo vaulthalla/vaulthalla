@@ -19,13 +19,13 @@ std::uint64_t operationStatsUnixTimestamp() {
     return static_cast<std::uint64_t>(std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()));
 }
 
-std::optional<std::uint64_t> optionalOperationStatsTimestamp(const pqxx::row& row, const char* column) {
+std::optional<std::uint64_t> optionalOperationStatsTimestamp(pqxx::row_ref row, const char* column) {
     const auto field = row[column];
     if (field.is_null()) return std::nullopt;
     return static_cast<std::uint64_t>(parsePostgresTimestamp(field.as<std::string>()));
 }
 
-std::optional<std::uint64_t> optionalOperationStatsUInt64(const pqxx::row& row, const char* column) {
+std::optional<std::uint64_t> optionalOperationStatsUInt64(pqxx::row_ref row, const char* column) {
     const auto field = row[column];
     if (field.is_null()) return std::nullopt;
     const auto value = field.as<double>();
@@ -33,23 +33,23 @@ std::optional<std::uint64_t> optionalOperationStatsUInt64(const pqxx::row& row, 
     return static_cast<std::uint64_t>(value);
 }
 
-std::uint64_t operationStatsUInt64(const pqxx::row& row, const char* column) {
+std::uint64_t operationStatsUInt64(pqxx::row_ref row, const char* column) {
     return optionalOperationStatsUInt64(row, column).value_or(0);
 }
 
-std::string operationStatsString(const pqxx::row& row, const char* column) {
+std::string operationStatsString(pqxx::row_ref row, const char* column) {
     const auto field = row[column];
     return field.is_null() ? std::string{} : field.as<std::string>();
 }
 
-std::optional<std::string> optionalOperationStatsString(const pqxx::row& row, const char* column) {
+std::optional<std::string> optionalOperationStatsString(pqxx::row_ref row, const char* column) {
     const auto value = operationStatsString(row, column);
     return value.empty() ? std::nullopt : std::optional<std::string>(value);
 }
 
 void applyOperations(Model& stats, const pqxx::result& res) {
     if (res.empty()) return;
-    const auto row = res.one_row();
+    const auto row = res.one_row_ref();
 
     stats.pendingOperations = operationStatsUInt64(row, "pending_operations");
     stats.inProgressOperations = operationStatsUInt64(row, "in_progress_operations");
@@ -71,7 +71,7 @@ void applyOperations(Model& stats, const pqxx::result& res) {
 
 void applyUploads(Model& stats, const pqxx::result& res) {
     if (res.empty()) return;
-    const auto row = res.one_row();
+    const auto row = res.one_row_ref();
 
     stats.activeShareUploads = operationStatsUInt64(row, "active_share_uploads");
     stats.stalledShareUploads = operationStatsUInt64(row, "stalled_share_uploads");

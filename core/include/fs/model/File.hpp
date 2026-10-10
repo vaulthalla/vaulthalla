@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Entry.hpp"
+#include "db/Fwd.hpp"
 
 namespace vh::fs::model {
     struct File final : Entry {
@@ -13,7 +14,7 @@ namespace vh::fs::model {
 
         File() = default;
 
-        File(const pqxx::row &row, const pqxx::result &parentRows);
+        File(pqxx::row_ref row, const pqxx::result &parentRows);
 
         File(const std::string &s3_key, uint64_t size, const std::optional<std::time_t> &updated = {});
 

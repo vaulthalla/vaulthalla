@@ -1,6 +1,7 @@
 #include "storage/s3/pricing/PriceBudget.hpp"
 
 #include "config/Registry.hpp"
+#include "db/Rows.hpp"
 #include "db/Transactions.hpp"
 #include "email/RenderedEmail.hpp"
 #include "notifications/OperatorNotificationBus.hpp"
@@ -62,19 +63,19 @@ std::string optionalNumericSql(pqxx::work& txn, const std::optional<std::string>
     return value && !value->empty() ? txn.quote(*value) + "::numeric" : std::string{"NULL"};
 }
 
-std::optional<std::string> optionalString(const pqxx::row& row, const char* column) {
+std::optional<std::string> optionalString(pqxx::row_ref row, const char* column) {
     const auto field = row[column];
     if (field.is_null()) return std::nullopt;
     return field.as<std::string>();
 }
 
-std::optional<std::uint32_t> optionalUInt(const pqxx::row& row, const char* column) {
+std::optional<std::uint32_t> optionalUInt(pqxx::row_ref row, const char* column) {
     const auto field = row[column];
     if (field.is_null()) return std::nullopt;
     return field.as<std::uint32_t>();
 }
 
-std::optional<std::int64_t> optionalInt64(const pqxx::row& row, const char* column) {
+std::optional<std::int64_t> optionalInt64(pqxx::row_ref row, const char* column) {
     const auto field = row[column];
     if (field.is_null()) return std::nullopt;
     return field.as<std::int64_t>();
@@ -92,7 +93,7 @@ std::string budgetFormatDecimal(const Decimal& value) {
     return text;
 }
 
-PriceBudgetPolicy policyFromRow(const pqxx::row& row) {
+PriceBudgetPolicy policyFromRow(pqxx::row_ref row) {
     PriceBudgetPolicy policy;
     policy.id = row["id"].as<std::uint32_t>();
     policy.scope = priceBudgetScopeFromString(row["scope"].as<std::string>());
@@ -111,7 +112,7 @@ PriceBudgetPolicy policyFromRow(const pqxx::row& row) {
     return policy;
 }
 
-PriceBudgetLedgerEntry ledgerFromRow(const pqxx::row& row) {
+PriceBudgetLedgerEntry ledgerFromRow(pqxx::row_ref row) {
     PriceBudgetLedgerEntry entry;
     entry.id = row["id"].as<std::uint32_t>();
     entry.policy_id = row["policy_id"].as<std::uint32_t>();
@@ -136,7 +137,7 @@ PriceBudgetLedgerEntry ledgerFromRow(const pqxx::row& row) {
     return entry;
 }
 
-nlohmann::json jsonFromField(const pqxx::row& row, const char* column, nlohmann::json fallback) {
+nlohmann::json jsonFromField(pqxx::row_ref row, const char* column, nlohmann::json fallback) {
     const auto field = row[column];
     if (field.is_null()) return fallback;
     try {
@@ -171,7 +172,7 @@ std::string uintVectorJsonSql(pqxx::work& txn, const std::vector<std::uint32_t>&
     return jsonSql(txn, payload);
 }
 
-PriceBudgetNotification notificationFromRow(const pqxx::row& row) {
+PriceBudgetNotification notificationFromRow(pqxx::row_ref row) {
     PriceBudgetNotification notification;
     notification.id = row["id"].as<std::uint32_t>();
     notification.type = row["type"].as<std::string>();
@@ -191,7 +192,7 @@ PriceBudgetNotification notificationFromRow(const pqxx::row& row) {
     return notification;
 }
 
-PriceBudgetOverride overrideFromRow(const pqxx::row& row) {
+PriceBudgetOverride overrideFromRow(pqxx::row_ref row) {
     PriceBudgetOverride overrideRequest;
     overrideRequest.id = row["id"].as<std::uint32_t>();
     overrideRequest.run_uuid = optionalString(row, "run_uuid");
@@ -272,7 +273,7 @@ std::string usedForWindow(pqxx::work& txn, const PriceBudgetPolicy& policy, cons
         "AND status IN (" + txn.quote(kLedgerReserved) + ", " + txn.quote(kLedgerCommitted) + ")";
     const auto result = txn.exec(sql);
     if (result.empty()) return "0.00000000";
-    return result.one_row()["used"].as<std::string>();
+    return result.one_row_ref()["used"].as<std::string>();
 }
 
 std::string policyWhereClause(
@@ -541,11 +542,11 @@ std::optional<VaultBudgetContext> vaultBudgetContext(pqxx::work& txn, const std:
     if (rows.empty()) return std::nullopt;
 
     VaultBudgetContext context;
-    if (rows.one_row()["type"].as<std::string>() != "s3") return context;
+    if (rows.one_row_ref()["type"].as<std::string>() != "s3") return context;
 
     context.is_s3 = true;
     try {
-        const auto providerText = optionalString(rows.one_row(), "provider").value_or("Other");
+        const auto providerText = optionalString(rows.one_row_ref(), "provider").value_or("Other");
         const auto profile = provider::resolve(vault::model::s3_provider_from_string(providerText));
         const auto costProfileId = profile ? profile->costProfileId() : std::optional<std::string>{};
         context.provider_key = costProfileId ? *costProfileId : (profile ? profile->id() : std::string{"unknown"});
@@ -1132,7 +1133,7 @@ PriceBudgetDecision PriceBudgetService::preflight(const PriceBudgetPreflightRequ
                 const auto inserted = txn.exec(insertSql);
                 if (inserted.empty()) throw std::runtime_error("failed to create S3 price budget reservation");
                 decision.reservations.push_back({
-                    .id = inserted.one_row()["id"].as<std::uint32_t>(),
+                    .id = inserted.one_row_ref()["id"].as<std::uint32_t>(),
                     .policy_id = policy.id,
                     .window = window
                 });
@@ -1183,7 +1184,7 @@ std::optional<PriceBudgetOverride> PriceBudgetService::consumeApprovedOverride(
             "ORDER BY expires_at ASC, id ASC LIMIT 1 FOR UPDATE");
         if (selected.empty()) return std::nullopt;
 
-        const auto id = selected.one_row()["id"].as<std::uint32_t>();
+        const auto id = selected.one_row_ref()["id"].as<std::uint32_t>();
         std::string update =
             "UPDATE s3_price_budget_override "
             "SET status = 'used', used_at = CURRENT_TIMESTAMP";
@@ -1193,7 +1194,7 @@ std::optional<PriceBudgetOverride> PriceBudgetService::consumeApprovedOverride(
 
         const auto updated = txn.exec(update);
         if (updated.empty()) throw std::runtime_error("failed to consume S3 price budget override");
-        return overrideFromRow(updated.one_row());
+        return overrideFromRow(updated.one_row_ref());
     });
 
     if (consumed) {
@@ -1300,10 +1301,7 @@ std::vector<PriceBudgetPolicy> PriceBudgetService::listPolicies(const bool inclu
             (includeInactive ? "" : "WHERE is_active = TRUE ") +
             "ORDER BY scope, provider_key NULLS FIRST, vault_id NULLS FIRST, id";
         const auto result = txn.exec(sql);
-        std::vector<PriceBudgetPolicy> policies;
-        policies.reserve(result.size());
-        for (const auto& row : result) policies.push_back(policyFromRow(row));
-        return policies;
+        return db::mapRows(result, policyFromRow);
     });
 }
 
@@ -1350,12 +1348,12 @@ PriceBudgetPolicy PriceBudgetService::upsertPolicy(PriceBudgetPolicy policy) con
                 "allow_stale_catalog = " + std::string(policy.allow_stale_catalog ? "TRUE" : "FALSE") + ", "
                 "max_catalog_age_seconds = " + optionalInt64Sql(policy.max_catalog_age_seconds) + ", "
                 "is_active = TRUE "
-                "WHERE id = " + std::to_string(existing.one_row()["id"].as<std::uint32_t>()) + " RETURNING *";
+                "WHERE id = " + std::to_string(existing.one_row_ref()["id"].as<std::uint32_t>()) + " RETURNING *";
         }
 
         const auto result = txn.exec(sql);
         if (result.empty()) throw std::runtime_error("failed to upsert S3 price budget policy");
-        return policyFromRow(result.one_row());
+        return policyFromRow(result.one_row_ref());
     });
 
     PriceBudgetNotification notification;
@@ -1389,7 +1387,7 @@ bool PriceBudgetService::disablePolicy(
             "SET is_active = FALSE, mode = 'off' "
             "WHERE " + identity + " RETURNING id");
         if (result.empty()) return std::nullopt;
-        return result.one_row()["id"].as<std::uint32_t>();
+        return result.one_row_ref()["id"].as<std::uint32_t>();
     });
     if (disabledId) {
         PriceBudgetNotification notification;
@@ -1430,10 +1428,7 @@ std::vector<PriceBudgetLedgerEntry> PriceBudgetService::listLedger(
         }
         sql += "ORDER BY created_at DESC, id DESC LIMIT " + std::to_string(safeLimit);
         const auto result = txn.exec(sql);
-        std::vector<PriceBudgetLedgerEntry> entries;
-        entries.reserve(result.size());
-        for (const auto& row : result) entries.push_back(ledgerFromRow(row));
-        return entries;
+        return db::mapRows(result, ledgerFromRow);
     });
 }
 
@@ -1459,7 +1454,7 @@ PriceBudgetNotification PriceBudgetService::createNotification(PriceBudgetNotifi
             optionalSql(txn, notification.expires_at) + ") RETURNING *";
         const auto result = txn.exec(sql);
         if (result.empty()) throw std::runtime_error("failed to create operator notification");
-        return notificationFromRow(result.one_row());
+        return notificationFromRow(result.one_row_ref());
     });
 
     enqueueBudgetNotificationEmail(saved);
@@ -1478,10 +1473,7 @@ std::vector<PriceBudgetNotification> PriceBudgetService::listNotifications(
         const auto result = txn.exec(
             "SELECT * FROM operator_notification " + where +
             "ORDER BY created_at DESC, id DESC LIMIT " + std::to_string(safeLimit));
-        std::vector<PriceBudgetNotification> notifications;
-        notifications.reserve(result.size());
-        for (const auto& row : result) notifications.push_back(notificationFromRow(row));
-        return notifications;
+        return db::mapRows(result, notificationFromRow);
     });
 }
 
@@ -1520,7 +1512,7 @@ PriceBudgetNotification PriceBudgetService::acknowledgeNotification(
             "SET acknowledged_at = CURRENT_TIMESTAMP, acknowledged_by = " + std::to_string(userId) + " "
             "WHERE id = " + std::to_string(notificationId) + " RETURNING *");
         if (result.empty()) throw std::runtime_error("operator notification not found");
-        return notificationFromRow(result.one_row());
+        return notificationFromRow(result.one_row_ref());
     });
 }
 
@@ -1551,7 +1543,7 @@ PriceBudgetOverride PriceBudgetService::requestOverride(const PriceBudgetOverrid
             "CURRENT_TIMESTAMP + interval '" + std::to_string(ttlMinutes) + " minutes') "
             "RETURNING *");
         if (result.empty()) throw std::runtime_error("failed to request S3 price budget override");
-        return overrideFromRow(result.one_row());
+        return overrideFromRow(result.one_row_ref());
     });
 
     PriceBudgetNotification notification;
@@ -1587,7 +1579,7 @@ PriceBudgetOverride PriceBudgetService::approveOverride(const std::uint32_t over
             "AND expires_at > CURRENT_TIMESTAMP "
             "RETURNING *");
         if (result.empty()) throw std::runtime_error("S3 price budget override is not pending or has expired");
-        return overrideFromRow(result.one_row());
+        return overrideFromRow(result.one_row_ref());
     });
 
     PriceBudgetNotification notification;
@@ -1620,7 +1612,7 @@ PriceBudgetOverride PriceBudgetService::denyOverride(
             "AND status = 'requested' "
             "RETURNING *");
         if (result.empty()) throw std::runtime_error("S3 price budget override is not pending");
-        return overrideFromRow(result.one_row());
+        return overrideFromRow(result.one_row_ref());
     });
 
     PriceBudgetNotification notification;
@@ -1651,10 +1643,7 @@ std::vector<PriceBudgetOverride> PriceBudgetService::listOverrides(
         const auto result = txn.exec(
             "SELECT * FROM s3_price_budget_override " + where +
             "ORDER BY created_at DESC, id DESC LIMIT " + std::to_string(safeLimit));
-        std::vector<PriceBudgetOverride> overrides;
-        overrides.reserve(result.size());
-        for (const auto& row : result) overrides.push_back(overrideFromRow(row));
-        return overrides;
+        return db::mapRows(result, overrideFromRow);
     });
 }
 
@@ -1685,7 +1674,7 @@ std::vector<PriceBudgetTrendStats> PriceBudgetService::trendStats(
                 "GROUP BY 1"
                 ") daily");
             if (result.empty()) return std::pair<std::string, std::uint32_t>{"0.00000000", 0};
-            const auto row = result.one_row();
+            const auto row = result.one_row_ref();
             return std::pair<std::string, std::uint32_t>{
                 row["avg_daily"].as<std::string>(),
                 row["sample_days"].as<std::uint32_t>()
@@ -1701,7 +1690,7 @@ std::vector<PriceBudgetTrendStats> PriceBudgetService::trendStats(
             const auto result = txn.exec(
                 "SELECT (CURRENT_TIMESTAMP + (" + txn.quote(intervalSeconds.str()) + " || ' seconds')::interval)::text AS ts");
             if (result.empty()) return std::nullopt;
-            return result.one_row()["ts"].as<std::string>();
+            return result.one_row_ref()["ts"].as<std::string>();
         };
 
         const auto insertAlertState = [&](const PriceBudgetTrendStats& trend, const std::string& alertKey) {
@@ -1761,7 +1750,7 @@ std::vector<PriceBudgetTrendStats> PriceBudgetService::trendStats(
                     + ledgerScopeFilter +
                     "AND status IN ('reserved', 'committed')");
                 if (current.empty()) continue;
-                const auto row = current.one_row();
+                const auto row = current.one_row_ref();
 
                 const auto [avg7, days7] = avgForDays(policy, window, 7);
                 const auto [avg30, days30] = avgForDays(policy, window, 30);
@@ -1875,33 +1864,33 @@ PriceBudgetDashboardStats PriceBudgetService::dashboardStats(const std::optional
         result["active_policies"] = txn.exec(
             "SELECT COUNT(*) AS c FROM s3_price_budget_policy "
             "WHERE " + statsPolicyWhereClause(txn, vaultId, std::nullopt))
-            .one_row()["c"].as<std::uint32_t>();
+            .one_row_ref()["c"].as<std::uint32_t>();
         result["blocked_syncs_24h"] = txn.exec(
             "SELECT COUNT(*) AS c FROM sync_event "
             "WHERE status = 'stalled' "
             "AND stall_reason ILIKE '%price budget%' "
             "AND timestamp_begin >= CURRENT_TIMESTAMP - interval '24 hours'" + vaultFilter)
-            .one_row()["c"].as<std::uint32_t>();
+            .one_row_ref()["c"].as<std::uint32_t>();
         result["warning_notifications"] = txn.exec(
             "SELECT COUNT(*) AS c FROM operator_notification "
             "WHERE acknowledged_at IS NULL AND severity = 'warning' "
             "AND type LIKE 'budget.%'" + vaultFilter)
-            .one_row()["c"].as<std::uint32_t>();
+            .one_row_ref()["c"].as<std::uint32_t>();
         result["critical_notifications"] = txn.exec(
             "SELECT COUNT(*) AS c FROM operator_notification "
             "WHERE acknowledged_at IS NULL AND severity = 'critical' "
             "AND type LIKE 'budget.%'" + vaultFilter)
-            .one_row()["c"].as<std::uint32_t>();
+            .one_row_ref()["c"].as<std::uint32_t>();
         result["unacknowledged_notifications"] = txn.exec(
             "SELECT COUNT(*) AS c FROM operator_notification "
             "WHERE acknowledged_at IS NULL "
             "AND (type LIKE 'budget.%' OR type LIKE 'pricing.%')" + vaultFilter)
-            .one_row()["c"].as<std::uint32_t>();
+            .one_row_ref()["c"].as<std::uint32_t>();
         result["pending_overrides"] = txn.exec(
             "SELECT COUNT(*) AS c FROM s3_price_budget_override "
             "WHERE status = 'requested' "
             "AND expires_at > CURRENT_TIMESTAMP" + vaultFilter)
-            .one_row()["c"].as<std::uint32_t>();
+            .one_row_ref()["c"].as<std::uint32_t>();
         return result;
     });
 

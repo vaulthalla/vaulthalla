@@ -6,7 +6,7 @@
 #include <vector>
 
 #include <nlohmann/json_fwd.hpp>
-#include <pqxx/types>
+#include "db/Fwd.hpp"
 
 namespace vh::share {
 
@@ -25,7 +25,7 @@ struct Session {
     std::optional<std::string> user_agent;
 
     Session() = default;
-    explicit Session(const pqxx::row& row);
+    explicit Session(pqxx::row_ref row);
 
     [[nodiscard]] bool isExpired(std::time_t now) const;
     [[nodiscard]] bool isRevoked() const;

@@ -10,7 +10,7 @@
 using namespace vh::db::encoding;
 
 namespace vh::rbac::role {
-    Vault::Vault(const pqxx::row &row)
+    Vault::Vault(pqxx::row_ref row)
         : Meta(row),
           Base(row),
           assignment(std::nullopt) {
@@ -22,7 +22,7 @@ namespace vh::rbac::role {
         }
     }
 
-    Vault::Vault(const pqxx::row &row, const pqxx::result &overrides)
+    Vault::Vault(pqxx::row_ref row, const pqxx::result &overrides)
         : Meta(row),
           Base(row, overrides),
           assignment(std::nullopt) {

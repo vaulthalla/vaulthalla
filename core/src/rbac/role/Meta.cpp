@@ -9,7 +9,7 @@
 using namespace vh::db::encoding;
 
 namespace vh::rbac::role {
-    BasicMeta::BasicMeta(const pqxx::row &row) {
+    BasicMeta::BasicMeta(pqxx::row_ref row) {
         if (const auto v = try_get<std::string>(row, std::vector<std::string_view>{"role_created_at", "created_at"}))
             created_at = parsePostgresTimestamp(*v);
 
@@ -20,7 +20,7 @@ namespace vh::rbac::role {
             assigned_at = parsePostgresTimestamp(*v);
     }
 
-    Meta::Meta(const pqxx::row &row)
+    Meta::Meta(pqxx::row_ref row)
         : BasicMeta(row) {
         if (const auto v = try_get<uint32_t>(row, std::vector<std::string_view>{"vault_role_id", "role_id", "id"}))
             id = *v;

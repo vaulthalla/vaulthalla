@@ -29,7 +29,7 @@ unsigned int Admin::insert(const AdminRolePtr& role) {
                 role->s3Gateway.toBitString(),
                 role->stats.toBitString()
             }
-        ).one_row()["id"].as<unsigned int>();
+        ).one_row_ref()["id"].as<unsigned int>();
     });
 }
 
@@ -77,7 +77,7 @@ unsigned int Admin::upsert(const AdminRolePtr& role) {
         );
 
         if (res.empty()) throw std::runtime_error("role::Admin::upsert failed to return row");
-        return res.one_row()["id"].as<unsigned int>();
+        return res.one_row_ref()["id"].as<unsigned int>();
     });
 }
 
@@ -96,7 +96,7 @@ AdminRolePtr Admin::get(unsigned int id) {
     return Transactions::exec("role::Admin::get(id)", [&](pqxx::work& txn) -> AdminRolePtr {
         const auto res = txn.exec(pqxx::prepped{"admin_role_get_by_id"}, pqxx::params{id});
         if (res.empty()) return nullptr;
-        return std::make_shared<AdminRole>(res.one_row());
+        return std::make_shared<AdminRole>(res.one_row_ref());
     });
 }
 
@@ -104,7 +104,7 @@ AdminRolePtr Admin::get(const std::string& name) {
     return Transactions::exec("role::Admin::get(name)", [&](pqxx::work& txn) -> AdminRolePtr {
         const auto res = txn.exec(pqxx::prepped{"admin_role_get_by_name"}, pqxx::params{name});
         if (res.empty()) return nullptr;
-        return std::make_shared<AdminRole>(res.one_row());
+        return std::make_shared<AdminRole>(res.one_row_ref());
     });
 }
 
@@ -112,7 +112,7 @@ bool Admin::exists(unsigned int id) {
     return Transactions::exec("role::Admin::exists(id)", [&](pqxx::work& txn) -> bool {
         const auto res = txn.exec(pqxx::prepped{"admin_role_exists_by_id"}, pqxx::params{id});
         if (res.empty()) return false;
-        return res.one_row()[0].as<bool>();
+        return res.one_row_ref()[0].as<bool>();
     });
 }
 
@@ -120,7 +120,7 @@ bool Admin::exists(const std::string& name) {
     return Transactions::exec("role::Admin::exists(name)", [&](pqxx::work& txn) -> bool {
         const auto res = txn.exec(pqxx::prepped{"admin_role_exists_by_name"}, pqxx::params{name});
         if (res.empty()) return false;
-        return res.one_row()[0].as<bool>();
+        return res.one_row_ref()[0].as<bool>();
     });
 }
 

@@ -43,7 +43,7 @@ bool RemoteIndexSummary::isStale(const std::optional<std::chrono::seconds> maxAg
 
 uint64_t RemoteObjectIndex::countForVault(const uint32_t vaultId) {
     return Transactions::exec("RemoteObjectIndex::countForVault", [&](pqxx::work& txn) {
-        return txn.exec(pqxx::prepped{"remote_object_index.count_for_vault"}, vaultId).one_field().as<uint64_t>();
+        return txn.exec(pqxx::prepped{"remote_object_index.count_for_vault"}, vaultId).one_field_ref().as<uint64_t>();
     });
 }
 
@@ -53,7 +53,7 @@ RemoteIndexSummary RemoteObjectIndex::summaryForVault(const uint32_t vaultId, co
 
         const auto indexRes = txn.exec(pqxx::prepped{"remote_object_index.summary_for_vault"}, vaultId);
         if (!indexRes.empty()) {
-            const auto row = indexRes.one_row();
+            const auto row = indexRes.one_row_ref();
             summary.object_count = row["object_count"].as<uint64_t>();
             if (!row["source"].is_null()) summary.source = row["source"].as<std::string>();
             if (!row["indexed_at"].is_null()) summary.indexed_at = parsePostgresTimestamp(row["indexed_at"].as<std::string>());
@@ -61,7 +61,7 @@ RemoteIndexSummary RemoteObjectIndex::summaryForVault(const uint32_t vaultId, co
 
         const auto manifestRes = txn.exec(pqxx::prepped{"remote_manifest_state.get"}, pqxx::params{vaultId, manifestKey});
         if (!manifestRes.empty()) {
-            const auto row = manifestRes.one_row();
+            const auto row = manifestRes.one_row_ref();
             if (!row["etag"].is_null()) summary.manifest_etag = row["etag"].as<std::string>();
             if (!row["updated_at"].is_null()) summary.manifest_updated_at = parsePostgresTimestamp(row["updated_at"].as<std::string>());
             if (!row["generated_at"].is_null()) summary.manifest_generated_at = parsePostgresTimestamp(row["generated_at"].as<std::string>());
@@ -189,8 +189,8 @@ void RemoteObjectIndex::deleteEventKey(
 std::optional<std::string> RemoteObjectIndex::getManifestETag(const uint32_t vaultId, const std::string& manifestKey) {
     return Transactions::exec("RemoteObjectIndex::getManifestETag", [&](pqxx::work& txn) -> std::optional<std::string> {
         const auto res = txn.exec(pqxx::prepped{"remote_manifest_state.get_etag"}, pqxx::params{vaultId, manifestKey});
-        if (res.empty() || res.one_row()["etag"].is_null()) return std::nullopt;
-        return res.one_row()["etag"].as<std::string>();
+        if (res.empty() || res.one_row_ref()["etag"].is_null()) return std::nullopt;
+        return res.one_row_ref()["etag"].as<std::string>();
     });
 }
 

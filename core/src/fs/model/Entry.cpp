@@ -22,7 +22,7 @@ using namespace vh::fs::model;
 using namespace vh::db::encoding;
 using namespace vh::config;
 
-Entry::Entry(const pqxx::row& row, const pqxx::result& parentRows)
+Entry::Entry(pqxx::row_ref row, const pqxx::result& parentRows)
     : id(row["id"].as<unsigned int>()),
       name(row["name"].as<std::string>()),
       base32_alias(row["base32_alias"].as<std::string>()),

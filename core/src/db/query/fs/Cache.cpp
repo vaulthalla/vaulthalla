@@ -1,11 +1,11 @@
 #include "db/query/fs/Cache.hpp"
+#include "db/Rows.hpp"
 #include "db/Transactions.hpp"
 #include "fs/cache/Record.hpp"
 #include "db/encoding/u8.hpp"
 
 namespace vh::db::query::fs {
 
-using vh::fs::cache::cache_indices_from_pq_res;
 using vh::fs::cache::Record;
 
 void Cache::upsertCacheIndex(const std::shared_ptr<Record>& index) {
@@ -36,15 +36,15 @@ void Cache::deleteCacheIndex(unsigned int vaultId, const std::filesystem::path& 
 
 std::shared_ptr<Record> Cache::getCacheIndex(unsigned int indexId) {
     return Transactions::exec("Cache::getCacheIndex", [&](pqxx::work& txn) -> std::shared_ptr<Record> {
-        const auto row = txn.exec(pqxx::prepped{"get_cache_index"}, pqxx::params{indexId}).one_row();
-        return std::make_shared<Record>(row);
+        const auto res = txn.exec(pqxx::prepped{"get_cache_index"}, pqxx::params{indexId});
+        return std::make_shared<Record>(res.one_row_ref());
     });
 }
 
 std::shared_ptr<Record> Cache::getCacheIndexByPath(unsigned int vaultId, const std::filesystem::path& path) {
     return Transactions::exec("Cache::getCacheIndexByPath", [&](pqxx::work& txn) -> std::shared_ptr<Record> {
-        const auto row = txn.exec(pqxx::prepped{"get_cache_index_by_path"}, pqxx::params{vaultId, encoding::to_utf8_string(path.u8string())}).one_row();
-        return std::make_shared<Record>(row);
+        const auto res = txn.exec(pqxx::prepped{"get_cache_index_by_path"}, pqxx::params{vaultId, encoding::to_utf8_string(path.u8string())});
+        return std::make_shared<Record>(res.one_row_ref());
     });
 }
 
@@ -59,28 +59,28 @@ std::vector<std::shared_ptr<Record>> Cache::listCacheIndices(unsigned int vaultI
             else res = txn.exec(pqxx::prepped{"list_cache_indices_by_path"}, pqxx::params{vaultId, patterns.like, patterns.not_like});
         }
 
-        return cache_indices_from_pq_res(res);
+        return db::sharedRows<Record>(res);
     });
 }
 
 std::vector<std::shared_ptr<Record>> Cache::listCacheIndicesByFile(unsigned int fileId) {
     return Transactions::exec("Cache::listCacheIndicesByFile", [&](pqxx::work& txn) -> std::vector<std::shared_ptr<Record>> {
         const auto res = txn.exec(pqxx::prepped{"list_cache_indices_by_file"}, pqxx::params{fileId});
-        return cache_indices_from_pq_res(res);
+        return db::sharedRows<Record>(res);
     });
 }
 
 std::vector<std::shared_ptr<Record>> Cache::listCacheIndicesByType(const unsigned int vaultId, const Record::Type& type) {
     return Transactions::exec("Cache::listCacheIndicesByType", [&](pqxx::work& txn) -> std::vector<std::shared_ptr<Record>> {
         const auto res = txn.exec(pqxx::prepped{"list_cache_indices_by_type"}, pqxx::params{vaultId, to_string(type)});
-        return cache_indices_from_pq_res(res);
+        return db::sharedRows<Record>(res);
     });
 }
 
 std::vector<std::shared_ptr<Record>> Cache::nLargestCacheIndicesByType(const unsigned int n, const unsigned int vaultId, const Record::Type& type) {
     return Transactions::exec("Cache::nLargestCacheIndicesByType", [&](pqxx::work& txn) -> std::vector<std::shared_ptr<Record>> {
         const auto res = txn.exec(pqxx::prepped{"n_largest_cache_indices_by_type"}, pqxx::params{vaultId, to_string(type), n});
-        return cache_indices_from_pq_res(res);
+        return db::sharedRows<Record>(res);
     });
 }
 
@@ -95,20 +95,20 @@ std::vector<std::shared_ptr<Record>> Cache::nLargestCacheIndices(const unsigned 
             else res = txn.exec(pqxx::prepped{"n_largest_cache_indices_by_path"}, pqxx::params{vaultId, patterns.like, patterns.not_like, n});
         }
 
-        return cache_indices_from_pq_res(res);
+        return db::sharedRows<Record>(res);
     });
 }
 
 bool Cache::cacheIndexExists(unsigned int vaultId, const std::filesystem::path& relPath) {
     return Transactions::exec("Cache::cacheIndexExists", [&](pqxx::work& txn) -> bool {
-        return txn.exec(pqxx::prepped{"cache_index_exists"}, pqxx::params{vaultId, encoding::to_utf8_string(relPath.u8string())}).one_row()["exists"].as<bool>();
+        return txn.exec(pqxx::prepped{"cache_index_exists"}, pqxx::params{vaultId, encoding::to_utf8_string(relPath.u8string())}).one_row_ref()["exists"].as<bool>();
     });
 }
 
 unsigned int Cache::countCacheIndices(unsigned int vaultId, const std::optional<Record::Type>& type) {
     return Transactions::exec("Cache::countCacheIndices", [&](pqxx::work& txn) -> unsigned int {
-        if (type) return txn.exec(pqxx::prepped{"count_cache_indices_by_type"}, pqxx::params{vaultId, to_string(*type)}).one_row()["count"].as<unsigned int>();
-        return txn.exec(pqxx::prepped{"count_cache_indices"}, pqxx::params{vaultId}).one_row()["count"].as<unsigned int>();
+        if (type) return txn.exec(pqxx::prepped{"count_cache_indices_by_type"}, pqxx::params{vaultId, to_string(*type)}).one_row_ref()["count"].as<unsigned int>();
+        return txn.exec(pqxx::prepped{"count_cache_indices"}, pqxx::params{vaultId}).one_row_ref()["count"].as<unsigned int>();
     });
 }
 
@@ -155,38 +155,38 @@ bool Cache::deleteDerivedArtifactIfUnchanged(const unsigned int id, const std::s
 
 std::vector<std::shared_ptr<Record>> Cache::listDerivedArtifactsByFile(const unsigned int fileId) {
     return Transactions::exec("Cache::listDerivedArtifactsByFile", [&](pqxx::work& txn) {
-        return cache_indices_from_pq_res(txn.exec(pqxx::prepped{"list_derived_artifacts_by_file"}, pqxx::params{fileId}));
+        return db::sharedRows<Record>(txn.exec(pqxx::prepped{"list_derived_artifacts_by_file"}, pqxx::params{fileId}));
     });
 }
 
 std::vector<std::shared_ptr<Record>> Cache::listDerivedArtifactsByVault(const unsigned int vaultId) {
     return Transactions::exec("Cache::listDerivedArtifactsByVault", [&](pqxx::work& txn) {
-        return cache_indices_from_pq_res(txn.exec(pqxx::prepped{"list_derived_artifacts_by_vault"}, pqxx::params{vaultId}));
+        return db::sharedRows<Record>(txn.exec(pqxx::prepped{"list_derived_artifacts_by_vault"}, pqxx::params{vaultId}));
     });
 }
 
 uint64_t Cache::derivedArtifactsTotalSize() {
     return Transactions::exec("Cache::derivedArtifactsTotalSize", [&](pqxx::work& txn) {
-        return txn.exec(pqxx::prepped{"derived_artifacts_total_size"}).one_row()["total"].as<uint64_t>();
+        return txn.exec(pqxx::prepped{"derived_artifacts_total_size"}).one_row_ref()["total"].as<uint64_t>();
     });
 }
 
 std::vector<std::shared_ptr<Record>> Cache::listDerivedArtifactsLru(const unsigned int limit) {
     return Transactions::exec("Cache::listDerivedArtifactsLru", [&](pqxx::work& txn) {
-        return cache_indices_from_pq_res(txn.exec(pqxx::prepped{"list_derived_artifacts_lru"}, pqxx::params{limit}));
+        return db::sharedRows<Record>(txn.exec(pqxx::prepped{"list_derived_artifacts_lru"}, pqxx::params{limit}));
     });
 }
 
 std::vector<std::shared_ptr<Record>> Cache::listDerivedArtifactsIdle(const uint64_t idleSeconds, const unsigned int limit) {
     return Transactions::exec("Cache::listDerivedArtifactsIdle", [&](pqxx::work& txn) {
-        return cache_indices_from_pq_res(txn.exec(pqxx::prepped{"list_derived_artifacts_idle"},
+        return db::sharedRows<Record>(txn.exec(pqxx::prepped{"list_derived_artifacts_idle"},
                                                   pqxx::params{static_cast<int64_t>(idleSeconds), limit}));
     });
 }
 
 std::vector<std::shared_ptr<Record>> Cache::listDerivedArtifactsWithStaleKey(const unsigned int vaultId, const unsigned int currentKeyVersion) {
     return Transactions::exec("Cache::listDerivedArtifactsWithStaleKey", [&](pqxx::work& txn) {
-        return cache_indices_from_pq_res(txn.exec(pqxx::prepped{"list_derived_artifacts_stale_key"},
+        return db::sharedRows<Record>(txn.exec(pqxx::prepped{"list_derived_artifacts_stale_key"},
                                                   pqxx::params{vaultId, currentKeyVersion}));
     });
 }

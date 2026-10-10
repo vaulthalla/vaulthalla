@@ -33,7 +33,7 @@ unsigned int Symlink::upsertSymlink(const SymlinkPtr& symlink) {
         p.append(symlink->is_system);
         p.append(symlink->target);
 
-        const auto id = txn.exec(pqxx::prepped{"insert_symlink_full"}, p).one_field().as<unsigned int>();
+        const auto id = txn.exec(pqxx::prepped{"insert_symlink_full"}, p).one_field_ref().as<unsigned int>();
 
         std::optional<unsigned int> parentId = symlink->parent_id;
         while (parentId) {
@@ -46,7 +46,7 @@ unsigned int Symlink::upsertSymlink(const SymlinkPtr& symlink) {
             txn.exec(pqxx::prepped{"update_dir_stats"}, stats_params);
             const auto res = txn.exec(pqxx::prepped{"get_fs_entry_parent_id"}, parentId);
             if (res.empty()) break;
-            parentId = res.one_field().as<std::optional<unsigned int>>();
+            parentId = res.one_field_ref().as<std::optional<unsigned int>>();
         }
 
         return id;
@@ -71,8 +71,8 @@ Symlink::SymlinkPtr Symlink::getSymlinkById(const unsigned int id) {
     return Transactions::exec("Symlink::getSymlinkById", [&](pqxx::work& txn) -> SymlinkPtr {
         const auto res = txn.exec(pqxx::prepped{"get_symlink_by_id"}, id);
         if (res.empty()) return nullptr;
-        const auto parentRows = txn.exec(pqxx::prepped{"collect_parent_chain"}, res.one_row()["parent_id"].as<std::optional<unsigned int>>());
-        return std::make_shared<S>(res.one_row(), parentRows);
+        const auto parentRows = txn.exec(pqxx::prepped{"collect_parent_chain"}, res.one_row_ref()["parent_id"].as<std::optional<unsigned int>>());
+        return std::make_shared<S>(res.one_row_ref(), parentRows);
     });
 }
 
@@ -80,8 +80,8 @@ Symlink::SymlinkPtr Symlink::getSymlinkByPath(const unsigned int vaultId, const 
     return Transactions::exec("Symlink::getSymlinkByPath", [&](pqxx::work& txn) -> SymlinkPtr {
         const auto res = txn.exec(pqxx::prepped{"get_symlink_by_path"}, pqxx::params{vaultId, to_utf8_string(relPath.u8string())});
         if (res.empty()) return nullptr;
-        const auto parentRows = txn.exec(pqxx::prepped{"collect_parent_chain"}, res.one_row()["parent_id"].as<std::optional<unsigned int>>());
-        return std::make_shared<S>(res.one_row(), parentRows);
+        const auto parentRows = txn.exec(pqxx::prepped{"collect_parent_chain"}, res.one_row_ref()["parent_id"].as<std::optional<unsigned int>>());
+        return std::make_shared<S>(res.one_row_ref(), parentRows);
     });
 }
 
@@ -89,8 +89,8 @@ Symlink::SymlinkPtr Symlink::getSymlinkByInode(const ino_t ino) {
     return Transactions::exec("Symlink::getSymlinkByInode", [&](pqxx::work& txn) -> SymlinkPtr {
         const auto res = txn.exec(pqxx::prepped{"get_symlink_by_inode"}, ino);
         if (res.empty()) return nullptr;
-        const auto parentRows = txn.exec(pqxx::prepped{"collect_parent_chain"}, res.one_row()["parent_id"].as<std::optional<unsigned int>>());
-        return std::make_shared<S>(res.one_row(), parentRows);
+        const auto parentRows = txn.exec(pqxx::prepped{"collect_parent_chain"}, res.one_row_ref()["parent_id"].as<std::optional<unsigned int>>());
+        return std::make_shared<S>(res.one_row_ref(), parentRows);
     });
 }
 

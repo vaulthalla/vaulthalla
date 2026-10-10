@@ -117,9 +117,9 @@ std::string mimeTypeFromSourceFile(
 } // namespace
 
 static void updateFile(pqxx::work& txn, const std::shared_ptr<File>& file) {
-    const auto exists = txn.exec(pqxx::prepped{"fs_entry_exists_by_inode"}, file->inode).one_field().as<bool>();
+    const auto exists = txn.exec(pqxx::prepped{"fs_entry_exists_by_inode"}, file->inode).one_field_ref().as<bool>();
     const auto sizeRes = txn.exec(pqxx::prepped{"get_file_size_by_inode"}, file->inode);
-    const auto existingSize = sizeRes.empty() ? 0 : sizeRes.one_field().as<unsigned int>();
+    const auto existingSize = sizeRes.empty() ? 0 : sizeRes.one_field_ref().as<unsigned int>();
 
     pqxx::params p;
     p.append(file->id);
@@ -139,7 +139,7 @@ static void updateFile(pqxx::work& txn, const std::shared_ptr<File>& file) {
         txn.exec(pqxx::prepped{"update_dir_stats"}, stats_params);
         const auto res = txn.exec(pqxx::prepped{"get_fs_entry_parent_id"}, parentId);
         if (res.empty()) break;
-        parentId = res.one_field().as<std::optional<unsigned int>>();
+        parentId = res.one_field_ref().as<std::optional<unsigned int>>();
     }
 }
 

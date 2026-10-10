@@ -8,8 +8,13 @@ core-backend, and protocol-map docs, with stale claims corrected.
 - Root `meson.build` holds `project('vaulthalla', 'cpp', version: '1.6.6')`: `cpp_std=c++23`,
   `unity=on`, `unity_size=9`, `warning_level=3`, `werror=false`, `prefix=/usr`, meson >= 1.3.0.
   It enters C++ via `subdir('core')` and also installs `deploy/lifecycle` → `/usr/lib/vaulthalla/lifecycle`.
-- `core/meson.build`: deps `fuse3 libsodium libcurl boost libpqxx pdfium yaml-cpp spdlog fmt
+- `core/meson.build`: deps `fuse3 libsodium libcurl boost libpqxx-vh pdfium yaml-cpp spdlog fmt
   openssl>=3 tss2-esys tss2-tctildr tss2-rc libmagic libjpeg libturbojpeg pugixml uuid zlib threads`.
+  The two Vaulthalla-built SDKs come only from apt.vaulthalla.sh: `libpqxx-vh-dev` (libpqxx 8, a **static** archive
+  under its own pkg-config name `libpqxx-vh`, so servers need only `libpq5`) and `libpdfium-dev` (Chromium-tracking
+  PDFium, runtime `libpdfium<branch>`, e.g. `libpdfium8059`). The pdfium dependency carries a version window
+  (`>=155.8059`, `<1000`) because the retired `20250629` fork snapshot sorts higher; `tools/contracts` pins both.
+  libpqxx stays out of the -O0 PCH (GCC drops its `#pragma GCC diagnostic` fences there).
   It generates `paths.h` (config/runtime/mount/state/log/psql paths, lines ~35-44).
 - Artifacts: `vaulthalla-server`, `vaulthalla-cli`, `vh_usage` (manpage markdown generator),
   static libs `vaulthalla`, `vhseed`, `vhusage`, `vhusage-native`; tests `vh_unit_tests`, `vh_integration_tests`.
@@ -30,7 +35,8 @@ CI-only `reference to 'Vault' is ambiguous` failures came from filesystem-order-
 **Forward declarations.** Each subsystem that other code refers to by pointer or reference has a declaration-only
 `Fwd.hpp` (`identities/`, `auth/`, `storage/`, `vault/`, `fs/`, `rbac/`, `share/`, `sync/`, `crypto/`,
 `protocols/ws/`, `protocols/shell/`; earlier: `rbac/resolver/*/Fwd.hpp`). Include the narrowest one instead of
-writing `namespace vh::x { struct Y; }` again, and `<pqxx/types>` for libpqxx classes. Keep them declarations only:
+writing `namespace vh::x { struct Y; }` again, and `db/Fwd.hpp` for libpqxx classes (it adds libpqxx 8's `row_ref`/`field_ref`
+to `<pqxx/types>`). Keep them declarations only:
 no includes of definitions, no aliases, one subsystem each (no global fwd header). Add a type to its subsystem's
 Fwd.hpp once it's forward-declared in more than one place. The `vh_usage` library (`core/usage`) can't see
 `core/include` and keeps its own declarations.
@@ -242,7 +248,8 @@ Range ignored; HEAD answers from the recorded artifact without contacting the bu
   never visible over FUSE.
 - **Render pipeline** (`preview::render::{Raster,Service}`). Header-checked decodes against
   `preview.max_render_pixels` and `http_preview_server.max_preview_size_mb`; TurboJPEG DCT-scaled decode, stb from
-  memory otherwise; PDF pages behind one process-wide PDFium lock; output edges ≤ 2048, never upscaled. Thumbnails
+  memory otherwise; PDF pages behind one process-wide PDFium lock (`PdfiumLibrary` is the one init/teardown, held by
+  `main` and test suites), rendered by PDFium straight into the packed RGB raster (24bpp + `FPDF_REVERSE_BYTE_ORDER`); output edges ≤ 2048, never upscaled. Thumbnails
   decode once and resize down a chain for every `caching.thumbnails.sizes` entry (16-2048). A render gate bounds CPU
   (`render::Busy` → 503 + Retry-After). Uploads hand their in-memory plaintext to thumbnailing. A derived-cache outage
   degrades to uncached renders. Preview plans (`preview::classify`, file JSON `"preview"`, see `web-client.md`) decide
@@ -316,7 +323,17 @@ Range ignored; HEAD answers from the recorded artifact without contacting the bu
 - `core/include/db/DBPool.hpp` is a fixed pool of 4 connections (config `database.pool_size` is **not** wired to it)
   handed out as RAII `DBPool::Lease`s (FIFO) that always return the slot. A dead connection is replaced on
   `acquire()` (reconnect + re-prepare, pool-wide backoff 250ms→5s, callers inside the window get
-  `DatabaseUnavailable`). `acquire()` throws `PoolAcquireTimeout` after 30s. libpq `connect_timeout=10`.
+  `DatabaseUnavailable`). "Dead" also covers a session poisoned by a libpqxx error
+  (`pqxx::failure::poisons_connection()`: unknown COMMIT outcome, protocol violation), which `Transactions::exec`
+  marks. `acquire()` throws `PoolAcquireTimeout` after 30s. `db::Connection` hands libpq keyword/value parameters
+  (no assembled or URI-escaped connection string): `connect_timeout=10`, `application_name=vaulthalla`, and TCP
+  keepalives (30s idle, 10s × 3) + `tcp_user_timeout=60000`, so a server that stops answering surfaces as a broken
+  connection within about a minute.
+- libpqxx 8 rows: models and mappers take `pqxx::row_ref` / `pqxx::field_ref` **by value**; they are views into a
+  `pqxx::result` and never keep it alive. Name the result before taking a row from it (`const auto res =
+  txn.exec(...); res.one_row_ref()`); a `row_ref` from `txn.exec(...)[0]` in a declaration dangles. Only an owning
+  `one_row()` may outlive its result. `db/Rows.hpp` maps results (`db::sharedRows<T>`, `db::rowsAs<T>`,
+  `db::mapRows(res, fn)`); enums bound as parameters go through their SQL text (`to_string`).
   `core/include/db/Transactions.hpp` has `Transactions::exec(ctx, fn)`, the only path to a `pqxx::work`. It
   reconnects and retries once only when BEGIN fails on a dead connection (before `fn` runs); later failures
   surface. Pool state is in `SystemHealth.database` (`vh status`, stats ws, watchdog). Queries live in

@@ -1,4 +1,5 @@
 #include "db/query/sync/Operation.hpp"
+#include "db/Rows.hpp"
 #include "db/Transactions.hpp"
 #include "sync/model/Operation.hpp"
 
@@ -19,7 +20,7 @@ unsigned int Operation::createOperation(const OperationPtr& op) {
         p.append(op->source_path);
         p.append(op->destination_path);
 
-        op->id = txn.exec(pqxx::prepped{"insert_operation"}, p).one_row()["id"].as<unsigned int>();
+        op->id = txn.exec(pqxx::prepped{"insert_operation"}, p).one_row_ref()["id"].as<unsigned int>();
         return op->id;
     });
 }
@@ -34,7 +35,7 @@ std::vector<Operation::OperationPtr> Operation::listOperationsByVault(unsigned i
     return Transactions::exec("Operation::listOperationsByVault", [&](pqxx::work& txn) {
         pqxx::params p{vaultId};
         const auto res = txn.exec(pqxx::prepped{"list_pending_operations_by_vault"}, p);
-        return vh::sync::model::operations_from_pq_res(res);
+        return db::sharedRows<vh::sync::model::Operation>(res);
     });
 }
 

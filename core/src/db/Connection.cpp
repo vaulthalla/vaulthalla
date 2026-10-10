@@ -2,7 +2,6 @@
 #include "config/Config.hpp"
 #include "config/Registry.hpp"
 #include "crypto/secrets/TPMKeyProvider.hpp"
-#include "crypto/password/Strength.hpp"
 #include "log/Registry.hpp"
 
 #include <fstream>
@@ -18,6 +17,28 @@ namespace vh::db {
 // kernel's TCP timeout. libpq's default is to wait forever.
 static constexpr int DB_CONNECT_TIMEOUT_SECONDS = 10;
 
+// Session parameters every connection gets. TCP keepalives (probe after 30s idle, every 10s, give up after 3) and
+// tcp_user_timeout make a server or network that silently stops answering surface as a broken connection within
+// about a minute, which the pool then replaces, instead of a caller blocking in recv() for the kernel's ~2h default.
+// libpq ignores them on Unix-domain sockets, where a dead server closes the socket anyway.
+static void addSessionParams(std::vector<std::pair<std::string, std::string>>& params) {
+    params.insert(params.end(), {
+        {"connect_timeout", std::to_string(DB_CONNECT_TIMEOUT_SECONDS)},
+        {"application_name", paths::testMode ? "vaulthalla-test" : "vaulthalla"},
+        {"keepalives", "1"},
+        {"keepalives_idle", "30"},
+        {"keepalives_interval", "10"},
+        {"keepalives_count", "3"},
+        {"tcp_user_timeout", "60000"},
+    });
+}
+
+// libpq takes the bare address: an IPv6 literal written for the old URI connection string ("[::1]") drops its brackets.
+static std::string libpqHost(const std::string& host) {
+    if (host.size() > 2 && host.front() == '[' && host.back() == ']') return host.substr(1, host.size() - 2);
+    return host;
+}
+
 void Connection::configureSession(pqxx::connection& conn) {
     // Every daemon session runs in UTC: naive `timestamp` values are then written and read as UTC (the C++ side
     // parses and prints them as UTC), and timestamptz text carries +00. Before this, a non-UTC server TimeZone made
@@ -25,7 +46,7 @@ void Connection::configureSession(pqxx::connection& conn) {
     // The zone the session started in (database/role/server default) is kept in vaulthalla.database_timezone, so
     // migration 100 can interpret rows written before the switch in that zone.
     pqxx::nontransaction tx(conn);
-    const auto original = tx.exec("SELECT current_setting('TimeZone')").one_field().as<std::string>();
+    const auto original = tx.exec("SELECT current_setting('TimeZone')").one_field_ref().as<std::string>();
     tx.exec("SELECT set_config('vaulthalla.database_timezone', $1, false), set_config('TimeZone', 'UTC', false)",
             pqxx::params{original});
 }
@@ -123,16 +144,10 @@ Connection::Connection() : tpmKeyProvider_(
         const auto name = getTestEnvValue("VH_TEST_DB_NAME");
 
         if (user && pass && host && port && name) {
-            DB_CONNECTION_STR =
-                "user=" + *user +
-                " password=" + *pass +
-                " host=" + *host +
-                " port=" + *port +
-                " dbname=" + *name +
-                " connect_timeout=" + std::to_string(DB_CONNECT_TIMEOUT_SECONDS);
-
-            conn_ = std::make_unique<pqxx::connection>(DB_CONNECTION_STR);
-            configureSession(*conn_);
+            params_ = {{"user", *user}, {"password", *pass}, {"host", libpqHost(*host)}, {"port", *port},
+                       {"dbname", *name}};
+            addSessionParams(params_);
+            conn_ = open();
 
             log::Registry::runtime()->info(
                 "[DBConnection] Test mode: using connection string from environment variables");
@@ -173,15 +188,12 @@ Connection::Connection() : tpmKeyProvider_(
     }
 
     const auto& key = tpmKeyProvider_->getMasterKey();
-    const auto password = password::Strength::escape_uri_component({key.begin(), key.end()});
-
-    const auto& config = config::Registry::get();
-    const auto db = config.database;
-    DB_CONNECTION_STR = "postgresql://" + db.user + ":" + password + "@" + db.host + ":" + std::to_string(db.port) + "/"
-                        + db.name + "?connect_timeout=" + std::to_string(DB_CONNECT_TIMEOUT_SECONDS);
+    const auto& db = config::Registry::get().database;
+    params_ = {{"user", db.user}, {"password", std::string(key.begin(), key.end())}, {"host", libpqHost(db.host)},
+               {"port", std::to_string(db.port)}, {"dbname", db.name}};
+    addSessionParams(params_);
     try {
-        conn_ = std::make_unique<pqxx::connection>(DB_CONNECTION_STR);
-        configureSession(*conn_);
+        conn_ = open();
     } catch (const std::exception& e) {
         // libpq's message names the cause (e.g. password authentication failed) and never includes the password.
         const auto msg = "Database connection failed for " + db.user + "@" + db.host + ":" + std::to_string(db.port) +
@@ -195,13 +207,19 @@ Connection::~Connection() { if (conn_ && conn_->is_open()) conn_->close(); }
 
 pqxx::connection& Connection::get() const { return *conn_; }
 
-bool Connection::healthy() const noexcept { return conn_ && conn_->is_open(); }
+bool Connection::healthy() const noexcept { return !poisoned_ && conn_ && conn_->is_open(); }
+
+std::unique_ptr<pqxx::connection> Connection::open() const {
+    auto conn = std::make_unique<pqxx::connection>(params_);
+    configureSession(*conn);
+    return conn;
+}
 
 void Connection::reconnect() {
-    auto fresh = std::make_unique<pqxx::connection>(DB_CONNECTION_STR);
-    configureSession(*fresh);
+    auto fresh = open();
     conn_.swap(fresh);
     fresh.reset();
+    poisoned_ = false;
 
     if (!prepared_) return;
 

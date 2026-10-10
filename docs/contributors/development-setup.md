@@ -102,7 +102,7 @@ For Linux contributors on a machine or VM you are comfortable modifying, the rep
 ./bin/setup/install_deps.sh
 ```
 
-That script adds the Vaulthalla APT repository if needed and installs native dependencies such as Meson, Ninja, PostgreSQL, FUSE, PDFium, `libpqxx`, `libsodium`, `libtss2`, `swtpm`, and related packages.
+That script configures the Vaulthalla APT repository and installs native dependencies such as Meson, Ninja, PostgreSQL, FUSE, `libsodium`, `libtss2`, `swtpm`, and related packages. The two Vaulthalla-built SDKs come only from apt.vaulthalla.sh: `libpdfium-dev` (PDFium) and `libpqxx-vh-dev` (a static libpqxx 8 build; the package build links it in, so servers need only `libpq5`). Ubuntu's `libpqxx-dev` is not used.
 
 Run it deliberately. It changes the host.
 

@@ -3,7 +3,7 @@
 #include <chrono>
 #include <string>
 #include <ctime>
-#include <pqxx/row>
+#include "db/Fwd.hpp"
 #include <nlohmann/json_fwd.hpp>
 #include "sync/Fwd.hpp"
 
@@ -20,7 +20,7 @@ struct Policy {
 
     Policy() = default;
     virtual ~Policy() = default;
-    explicit Policy(const pqxx::row& row);
+    explicit Policy(pqxx::row_ref row);
 
     static std::chrono::seconds clampInterval(std::chrono::seconds value);
 

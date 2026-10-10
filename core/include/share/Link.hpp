@@ -8,7 +8,7 @@
 #include <vector>
 
 #include <nlohmann/json_fwd.hpp>
-#include <pqxx/types>
+#include "db/Fwd.hpp"
 
 namespace vh::share {
 
@@ -50,7 +50,7 @@ struct Link {
     std::string metadata{"{}"};
 
     Link() = default;
-    explicit Link(const pqxx::row& row);
+    explicit Link(pqxx::row_ref row);
 
     [[nodiscard]] Grant grant() const;
     [[nodiscard]] bool isExpired(std::time_t now) const;

@@ -4,7 +4,7 @@
 
 #include <string>
 #include <nlohmann/json_fwd.hpp>
-#include <pqxx/types>
+#include "db/Fwd.hpp"
 
 namespace vh::sync::model {
 
@@ -15,7 +15,7 @@ struct LocalPolicy final : public Policy {
 
     LocalPolicy() = default;
     ~LocalPolicy() override = default;
-    explicit LocalPolicy(const pqxx::row& row);
+    explicit LocalPolicy(pqxx::row_ref row);
 
     void rehash_config() override;
     [[nodiscard]] bool resolve_conflict(const std::shared_ptr<Conflict>& conflict) const override;

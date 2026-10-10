@@ -7,7 +7,7 @@
 using namespace vh::sync::model;
 using namespace vh::db::encoding;
 
-Policy::Policy(const pqxx::row& row)
+Policy::Policy(pqxx::row_ref row)
     : id(row.at("id").as<unsigned int>()),
       vault_id(row.at("vault_id").as<unsigned int>()),
       interval(clampInterval(std::chrono::seconds(row.at("interval").as<int64_t>()))),

@@ -1,7 +1,7 @@
 #pragma once
 
 #include <ctime>
-#include <pqxx/row>
+#include "db/Fwd.hpp"
 
 namespace vh::vault::model {
 
@@ -13,7 +13,7 @@ struct Usage {
     std::time_t created_at;
     std::time_t updated_at;
 
-    explicit Usage(const pqxx::row& row);
+    explicit Usage(pqxx::row_ref row);
 };
 
 }

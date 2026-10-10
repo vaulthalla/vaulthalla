@@ -4,7 +4,7 @@
 #include <optional>
 #include <vector>
 #include <boost/uuid/uuid.hpp>
-#include <pqxx/types>
+#include "db/Fwd.hpp"
 
 namespace vh::fs::model::file {
 
@@ -17,9 +17,6 @@ struct Trashed {
     uint64_t size_bytes{};
 
     Trashed() = default;
-    explicit Trashed(const pqxx::row& row);
+    explicit Trashed(pqxx::row_ref row);
 };
-
-std::vector<std::shared_ptr<Trashed>> trashed_files_from_pq_res(const pqxx::result& res);
-
 }

@@ -83,12 +83,12 @@ void probeDatabase(db::DBPool& pool, DatabaseHealth& out) {
         auto lease = pool.acquire(kDatabaseProbeAcquireTimeout);
         try {
             pqxx::nontransaction tx(lease->get());
-            (void)tx.exec("SELECT 1").one_row();
+            (void)tx.exec("SELECT 1").one_row_ref();
         } catch (const std::exception&) {
             if (lease->healthy()) throw;
             pool.repair(lease);
             pqxx::nontransaction tx(lease->get());
-            (void)tx.exec("SELECT 1").one_row();
+            (void)tx.exec("SELECT 1").one_row_ref();
         }
         out.reachable = true;
     } catch (const std::exception& e) {

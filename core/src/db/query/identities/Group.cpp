@@ -15,7 +15,7 @@ uint32_t Group::createGroup(const GroupPtr& group) {
 
         const auto res = txn.exec(pqxx::prepped{"create_group"}, p);
         if (res.empty()) throw std::runtime_error("Failed to create group: " + group->name);
-        const auto row = res.one_row();
+        const auto row = res.one_row_ref();
 
         group->id = row["id"].as<uint32_t>();
         group->created_at = parsePostgresTimestamp(row["created_at"].as<std::string>());
@@ -88,7 +88,7 @@ Group::GroupPtr Group::getGroup(const uint32_t groupId) {
     return Transactions::exec("Group::getGroup", [&](pqxx::work& txn) -> GroupPtr {
         const auto res = txn.exec(pqxx::prepped{"get_group"}, groupId);
         if (res.empty()) return nullptr;
-        return hydrateGroup(txn, res.one_row());
+        return hydrateGroup(txn, res.one_row_ref());
     });
 }
 
@@ -97,7 +97,7 @@ Group::GroupPtr Group::getGroupByName(const std::string& name) {
         [&](pqxx::work& txn) -> GroupPtr {
             const auto res = txn.exec(pqxx::prepped{"get_group_by_name"}, name);
             if (res.empty()) return nullptr;
-            return hydrateGroup(txn, res.one_row());
+            return hydrateGroup(txn, res.one_row_ref());
         });
 }
 
@@ -105,7 +105,7 @@ bool Group::groupExists(const std::string& name) {
     return Transactions::exec("Group::groupExists", [&](pqxx::work& txn) {
         const auto res = txn.exec(pqxx::prepped{"group_exists_by_name"}, name);
         if (res.empty()) return false;
-        return res.one_field().as<bool>();
+        return res.one_field_ref().as<bool>();
     });
 }
 
@@ -113,7 +113,7 @@ Group::GroupPtr Group::getGroupByLinuxGID(uint32_t gid) {
     return Transactions::exec("Group::getGroupByLinuxGID", [&](pqxx::work& txn) -> GroupPtr {
             const auto res = txn.exec(pqxx::prepped{"get_group_by_linux_gid"}, gid);
             if (res.empty()) return nullptr;
-            return hydrateGroup(txn, res.one_row());
+            return hydrateGroup(txn, res.one_row_ref());
         });
 }
 

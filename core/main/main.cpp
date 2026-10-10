@@ -15,6 +15,7 @@
 // Previews
 #include "preview/cache/Maintenance.hpp"
 #include "preview/derive/Queue.hpp"
+#include "preview/render/Raster.hpp"
 
 // Seed
 #include "seed/include/seed_db.hpp"
@@ -36,7 +37,6 @@
 #include <execinfo.h>
 #include <sys/prctl.h>
 #include <unistd.h>
-#include <pdfium/fpdfview.h>
 
 using namespace vh::config;
 using namespace vh::concurrency;
@@ -90,23 +90,6 @@ void registerSignalHandlers() {
     std::signal(SIGINT, signalHandler);
     std::signal(SIGTERM, signalHandler);
 }
-
-// --- External Libs ---
-
-struct PdfiumGuard {
-    PdfiumGuard() {
-        FPDF_LIBRARY_CONFIG config;
-        config.version = 3;
-        config.m_pUserFontPaths = nullptr;
-        config.m_pIsolate = nullptr;
-        config.m_v8EmbedderSlot = 0;
-        FPDF_InitLibraryWithConfig(&config);
-    }
-
-    ~PdfiumGuard() {
-        FPDF_DestroyLibrary();
-    }
-};
 
 // --- Core Init ---
 
@@ -200,7 +183,7 @@ int main() {
         for (const auto& deprecation : Registry::deprecations())
             vh::log::Registry::vaulthalla()->warn("[config] {}", deprecation);
 
-        PdfiumGuard pdfium;
+        vh::preview::render::PdfiumLibrary pdfium;
 
         startVaulthalla();
         registerSignalHandlers();

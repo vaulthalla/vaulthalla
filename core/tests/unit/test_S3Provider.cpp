@@ -2,6 +2,7 @@
 #include "storage/s3/Controller.hpp"
 #include "preview/image.hpp"
 #include "preview/pdf.hpp"
+#include "preview/render/Raster.hpp"
 #include "fs/model/Entry.hpp"
 
 #include <filesystem>
@@ -11,7 +12,6 @@
 #include <cctype>
 #include <optional>
 #include <unordered_map>
-#include <pdfium/fpdfview.h>
 
 using namespace vh::storage::s3;
 using namespace vh::vault::model;
@@ -25,6 +25,7 @@ protected:
     inline static std::shared_ptr<Controller> s3Provider_;
     inline static std::filesystem::path test_dir;
     inline static bool skipTests = false;
+    inline static std::optional<vh::preview::render::PdfiumLibrary> pdfium;
 
     static void SetUpTestSuite() {
         test_dir = std::filesystem::temp_directory_path() / "vaulthalla_test_dir";
@@ -64,17 +65,12 @@ protected:
 
         s3Provider_ = std::make_shared<Controller>(apiKey_, bucket_);
 
-        FPDF_LIBRARY_CONFIG config;
-        config.version = 3;
-        config.m_pUserFontPaths = nullptr;
-        config.m_pIsolate = nullptr;
-        config.m_v8EmbedderSlot = 0;
-        FPDF_InitLibraryWithConfig(&config);
+        pdfium.emplace();
     }
 
     static void TearDownTestSuite() {
         std::filesystem::remove_all(test_dir);
-        FPDF_DestroyLibrary();
+        pdfium.reset();
     }
 
     static void writeTextFile(const std::filesystem::path &path, const std::string &content) {

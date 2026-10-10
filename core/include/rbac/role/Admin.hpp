@@ -3,6 +3,7 @@
 #include <string_view>
 
 #include "rbac/role/Meta.hpp"
+#include "db/Fwd.hpp"
 #include "rbac/permission/admin/all.hpp"
 #include "rbac/permission/Permission.hpp"
 
@@ -29,9 +30,9 @@ namespace vh::rbac::role {
 
         Admin() = default;
 
-        Admin(const pqxx::row &row, const pqxx::result &globalVaultRoles);
+        Admin(pqxx::row_ref row, const pqxx::result &globalVaultRoles);
 
-        explicit Admin(const pqxx::row &row);
+        explicit Admin(pqxx::row_ref row);
 
         explicit Admin(const nlohmann::json &j);
 
@@ -147,8 +148,6 @@ namespace vh::rbac::role {
     void to_json(nlohmann::json &j, const Admin &a);
 
     void from_json(const nlohmann::json &j, Admin &a);
-
-    std::vector<Admin> admin_roles_from_pq_res(const pqxx::result &res);
 
     void to_json(nlohmann::json &j, const std::vector<Admin> &roles);
 

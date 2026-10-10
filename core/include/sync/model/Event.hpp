@@ -1,6 +1,7 @@
 #pragma once
 
 #include "sync/model/Throughput.hpp"
+#include "db/Fwd.hpp"
 #include "sync/Fwd.hpp"
 
 #include <ctime>
@@ -121,7 +122,7 @@ struct Event : public std::enable_shared_from_this<Event> {
     std::time_t last_heartbeat_persisted_at{0};
 
     Event() = default;
-    explicit Event(const pqxx::row& row);
+    explicit Event(pqxx::row_ref row);
 
     // -------------------------
     // Convenience helpers

@@ -128,7 +128,7 @@ std::string issueInitialCredential() {
 bool superAdminPasswordIsGenerated() {
     return db::Transactions::exec("auth::bootstrap::isGenerated", [](pqxx::work& txn) {
         const auto res = txn.exec("SELECT super_admin_password_generated FROM auth_bootstrap_state WHERE id = 1");
-        return !res.empty() && res.one_field().as<bool>();
+        return !res.empty() && res.one_field_ref().as<bool>();
     });
 }
 

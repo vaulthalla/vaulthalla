@@ -6,7 +6,7 @@
 
 #include <nlohmann/json_fwd.hpp>
 #include <utility>
-#include <pqxx/types>
+#include "db/Fwd.hpp"
 
 namespace vh::rbac::permission {
 

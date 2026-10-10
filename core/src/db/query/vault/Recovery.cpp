@@ -18,13 +18,13 @@ std::uint64_t recoveryUnixTimestamp() {
     return static_cast<std::uint64_t>(std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()));
 }
 
-std::optional<std::uint64_t> optionalRecoveryTimestamp(const pqxx::row& row, const char* column) {
+std::optional<std::uint64_t> optionalRecoveryTimestamp(pqxx::row_ref row, const char* column) {
     const auto field = row[column];
     if (field.is_null()) return std::nullopt;
     return static_cast<std::uint64_t>(parsePostgresTimestamp(field.as<std::string>()));
 }
 
-std::optional<std::uint64_t> optionalRecoveryUInt64(const pqxx::row& row, const char* column) {
+std::optional<std::uint64_t> optionalRecoveryUInt64(pqxx::row_ref row, const char* column) {
     const auto field = row[column];
     if (field.is_null()) return std::nullopt;
     const auto value = field.as<double>();
@@ -32,11 +32,11 @@ std::optional<std::uint64_t> optionalRecoveryUInt64(const pqxx::row& row, const 
     return static_cast<std::uint64_t>(value);
 }
 
-std::uint64_t recoveryUInt64(const pqxx::row& row, const char* column) {
+std::uint64_t recoveryUInt64(pqxx::row_ref row, const char* column) {
     return optionalRecoveryUInt64(row, column).value_or(0);
 }
 
-std::optional<std::string> optionalRecoveryString(const pqxx::row& row, const char* column) {
+std::optional<std::string> optionalRecoveryString(pqxx::row_ref row, const char* column) {
     const auto field = row[column];
     if (field.is_null()) return std::nullopt;
     const auto value = field.as<std::string>();
@@ -46,7 +46,7 @@ std::optional<std::string> optionalRecoveryString(const pqxx::row& row, const ch
 void applyPolicy(VaultRecovery& recovery, const pqxx::result& res) {
     if (res.empty()) return;
 
-    const auto row = res.one_row();
+    const auto row = res.one_row_ref();
     recovery.backupPolicyPresent = true;
     recovery.backupEnabled = !row["enabled"].is_null() && row["enabled"].as<bool>();
     recovery.backupStatus = recovery.backupEnabled ? row["status"].as<std::string>("unknown") : "disabled";

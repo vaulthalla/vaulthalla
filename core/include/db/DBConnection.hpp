@@ -2,6 +2,8 @@
 
 #include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 #include <pqxx/connection>
 
 namespace vh::crypto::secrets { class TPMKeyProvider; }
@@ -16,8 +18,13 @@ class Connection {
     [[nodiscard]] pqxx::connection& get() const;
 
     // False once libpq has seen the server drop the session (PostgreSQL restart, pg_terminate_backend,
-    // network loss) or a reconnect could not re-prepare statements. DBPool replaces such connections.
+    // network loss), a libpqxx error poisoned it (markPoisoned), or a reconnect could not re-prepare
+    // statements. DBPool replaces such connections on the next acquire().
     [[nodiscard]] bool healthy() const noexcept;
+
+    // For errors after which libpqxx says the session can't be trusted (pqxx::failure::poisons_connection():
+    // protocol violations, a COMMIT whose outcome is unknown, ...) even though the socket may still look open.
+    void markPoisoned() noexcept { poisoned_ = true; }
 
     // Opens a fresh session with the stored connection string and re-prepares statements if this
     // connection had them. Throws, leaving the connection unhealthy, if either step fails.
@@ -30,10 +37,17 @@ class Connection {
     static void configureSession(pqxx::connection& conn);
 
   private:
+    // libpq keyword/value parameters (user, password, host, ...), handed to libpq as-is: no connection string
+    // to assemble, quote or URI-escape.
+    using Params = std::vector<std::pair<std::string, std::string>>;
+
     std::unique_ptr<crypto::secrets::TPMKeyProvider> tpmKeyProvider_;
-    std::string DB_CONNECTION_STR;
+    Params params_;
     std::unique_ptr<pqxx::connection> conn_;
     bool prepared_ = false;
+    bool poisoned_ = false;
+
+    [[nodiscard]] std::unique_ptr<pqxx::connection> open() const;
 
     // Auth
     void initPreparedUsers() const;

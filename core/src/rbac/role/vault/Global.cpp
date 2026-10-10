@@ -10,7 +10,7 @@
 using namespace vh::db::encoding;
 
 namespace vh::rbac::role::vault {
-    Global::Global(const pqxx::row &row)
+    Global::Global(pqxx::row_ref row)
         : BasicMeta(row),
           Base(row),
           user_id(row["user_id"].as<uint32_t>()),
@@ -151,9 +151,4 @@ namespace vh::rbac::role::vault {
         return roles;
     }
 
-    std::vector<Global> global_vault_roles_from_pq_result(const pqxx::result &res) {
-        std::vector<Global> roles;
-        for (const auto &row: res) roles.emplace_back(row);
-        return roles;
-    }
 }

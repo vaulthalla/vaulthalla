@@ -17,14 +17,14 @@ std::uint64_t unixTimestamp() {
     return static_cast<std::uint64_t>(std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()));
 }
 
-std::uint64_t asUInt64(const pqxx::row& row, const char* column) {
+std::uint64_t asUInt64(pqxx::row_ref row, const char* column) {
     const auto field = row[column];
     if (field.is_null()) return 0;
     const auto value = field.as<long long>();
     return value > 0 ? static_cast<std::uint64_t>(value) : 0;
 }
 
-std::optional<std::uint64_t> optionalUInt64(const pqxx::row& row, const char* column) {
+std::optional<std::uint64_t> optionalUInt64(pqxx::row_ref row, const char* column) {
     const auto field = row[column];
     if (field.is_null()) return std::nullopt;
     const auto value = field.as<long long>();
@@ -32,13 +32,13 @@ std::optional<std::uint64_t> optionalUInt64(const pqxx::row& row, const char* co
     return static_cast<std::uint64_t>(value);
 }
 
-std::optional<double> optionalDouble(const pqxx::row& row, const char* column) {
+std::optional<double> optionalDouble(pqxx::row_ref row, const char* column) {
     const auto field = row[column];
     if (field.is_null()) return std::nullopt;
     return field.as<double>();
 }
 
-std::optional<std::string> optionalString(const pqxx::row& row, const char* column) {
+std::optional<std::string> optionalString(pqxx::row_ref row, const char* column) {
     const auto field = row[column];
     if (field.is_null()) return std::nullopt;
     const auto value = field.as<std::string>();
@@ -47,7 +47,7 @@ std::optional<std::string> optionalString(const pqxx::row& row, const char* colu
 
 void applySummary(vh::stats::model::DbStats& stats, const pqxx::result& res) {
     if (res.empty()) return;
-    const auto row = res.one_row();
+    const auto row = res.one_row_ref();
     stats.databaseName = optionalString(row, "database_name");
     stats.dbSizeBytes = asUInt64(row, "db_size_bytes");
     stats.connectionsMax = optionalUInt64(row, "connections_max");
@@ -113,7 +113,7 @@ std::optional<std::uint64_t> slowQueryCount() {
             )SQL");
 
             if (res.empty()) return 0;
-            return asUInt64(res.one_row(), "count");
+            return asUInt64(res.one_row_ref(), "count");
         });
     } catch (const std::exception&) {
         return std::nullopt;
@@ -132,7 +132,7 @@ std::shared_ptr<vh::stats::model::DbStats> DbStats::snapshot() {
             applySummary(*stats, txn.exec(pqxx::prepped{"db_stats.summary"}));
             applyConnections(*stats, txn.exec(pqxx::prepped{"db_stats.connections"}));
             const auto extension = txn.exec(pqxx::prepped{"db_stats.pg_stat_statements_enabled"});
-            stats->pgStatStatementsEnabled = !extension.empty() && extension.one_row()["enabled"].as<bool>(false);
+            stats->pgStatStatementsEnabled = !extension.empty() && extension.one_row_ref()["enabled"].as<bool>(false);
             stats->largestTables = tablesFromResult(txn.exec(pqxx::prepped{"db_stats.largest_tables"}));
         });
 

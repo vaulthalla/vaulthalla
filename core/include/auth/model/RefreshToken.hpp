@@ -2,7 +2,7 @@
 
 #include "auth/model/Token.hpp"
 #include "protocols/ws/Fwd.hpp"
-#include <pqxx/types>
+#include "db/Fwd.hpp"
 
 namespace vh::auth::model {
 
@@ -13,7 +13,7 @@ struct RefreshToken final : Token {
     ~RefreshToken() override = default;
     RefreshToken() = default;
     explicit RefreshToken(std::string rawToken);
-    explicit RefreshToken(const pqxx::row& row);
+    explicit RefreshToken(pqxx::row_ref row);
 
     [[nodiscard]] bool isValid() const override;
 

@@ -7,7 +7,7 @@
 #include <string>
 
 #include <nlohmann/json_fwd.hpp>
-#include <pqxx/types>
+#include "db/Fwd.hpp"
 
 namespace vh::share {
 
@@ -30,7 +30,7 @@ struct AuditEvent {
     std::time_t created_at{};
 
     AuditEvent() = default;
-    explicit AuditEvent(const pqxx::row& row);
+    explicit AuditEvent(pqxx::row_ref row);
 
     [[nodiscard]] nlohmann::json toRedactedJson() const;
 };

@@ -26,7 +26,7 @@ unsigned int Override::upsert(const OverridePtr &permOverride) {
         const auto res = txn.exec(pqxx::prepped{"upsert_vault_permission_override"}, p);
         if (res.empty()) throw std::runtime_error("Failed to upsert vault permission override");
 
-        return res.one_row()[0].as<unsigned int>();
+        return res.one_row_ref()[0].as<unsigned int>();
     });
 }
 
@@ -44,7 +44,7 @@ unsigned int Override::add(const OverridePtr &permOverride) {
         const auto res = txn.exec(pqxx::prepped{"insert_vault_permission_override"}, p);
         if (res.empty()) throw std::runtime_error("Failed to insert vault permission override");
 
-        return res.one_row()[0].as<unsigned int>();
+        return res.one_row_ref()[0].as<unsigned int>();
     });
 }
 
@@ -82,7 +82,7 @@ OverridePtr Override::get(unsigned int permOverrideId) {
         );
 
         if (res.empty()) return nullptr;
-        return std::make_shared<OverrideT>(res.one_row());
+        return std::make_shared<OverrideT>(res.one_row_ref());
     });
 }
 
@@ -100,7 +100,7 @@ OverridePtr Override::get(const Query &query) {
         );
 
         if (res.empty()) return nullptr;
-        return std::make_shared<OverrideT>(res.one_row());
+        return std::make_shared<OverrideT>(res.one_row_ref());
     });
 }
 
@@ -111,7 +111,7 @@ bool Override::exists(unsigned int assignmentId, unsigned int permissionId, cons
             pqxx::params{assignmentId, permissionId, globPath}
         );
 
-        return !res.empty() && res.one_row()[0].as<bool>();
+        return !res.empty() && res.one_row_ref()[0].as<bool>();
     });
 }
 

@@ -64,7 +64,7 @@ APIKey::APIKey(const unsigned int userId, std::string name,
       endpoint(std::move(endpoint)),
       secret_access_key(std::move(secretAccessKey)) {}
 
-APIKey::APIKey(const pqxx::row& row)
+APIKey::APIKey(pqxx::row_ref row)
     : id(row["id"].as<unsigned int>()),
       user_id(row["user_id"].as<unsigned int>()),
       name(row["name"].as<std::string>()),
@@ -86,13 +86,6 @@ void vh::vault::model::from_json(const nlohmann::json& j, APIKey& key) {
     key.region = j.at("region").get<std::string>();
     key.endpoint = j.at("endpoint").get<std::string>();
     // secret_access_key intentionally not parsed (comes from decryption at runtime)
-}
-
-std::vector<std::shared_ptr<APIKey>> vh::vault::model::api_keys_from_pq_res(const pqxx::result& res) {
-    std::vector<std::shared_ptr<APIKey>> keys;
-    keys.reserve(res.size());
-    for (const auto& row : res) keys.push_back(std::make_shared<APIKey>(row));
-    return keys;
 }
 
 void vh::vault::model::to_json(nlohmann::json& j, const APIKey& k) {

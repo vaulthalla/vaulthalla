@@ -25,14 +25,14 @@ std::uint32_t clampWindowHours(std::uint32_t windowHours) {
     return std::clamp<std::uint32_t>(windowHours == 0 ? 168 : windowHours, 1, 24 * 30);
 }
 
-std::uint64_t statsSnapshotUInt64(const pqxx::row& row, const char* column) {
+std::uint64_t statsSnapshotUInt64(pqxx::row_ref row, const char* column) {
     const auto field = row[column];
     if (field.is_null()) return 0;
     const auto value = field.as<long long>();
     return value > 0 ? static_cast<std::uint64_t>(value) : 0;
 }
 
-double statsSnapshotDouble(const pqxx::row& row, const char* column) {
+double statsSnapshotDouble(pqxx::row_ref row, const char* column) {
     const auto field = row[column];
     return field.is_null() ? 0.0 : field.as<double>();
 }

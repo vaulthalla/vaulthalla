@@ -13,7 +13,7 @@ namespace vh::vault::model {
 
 namespace {
 
-std::optional<std::time_t> optionalTime(const pqxx::row& row, const char* column) {
+std::optional<std::time_t> optionalTime(pqxx::row_ref row, const char* column) {
     if (row[column].is_null()) return std::nullopt;
     return db::encoding::parsePostgresTimestamp(row[column].c_str());
 }
@@ -54,7 +54,7 @@ DeletionState deletionStateFromString(const std::string& state) {
     throw std::invalid_argument("unknown vault deletion state: " + state);
 }
 
-Deletion::Deletion(const pqxx::row& row)
+Deletion::Deletion(pqxx::row_ref row)
     : vault_id(row["vault_id"].as<uint32_t>()),
       vault_name(row["vault_name"].as<std::string>()),
       owner_id(db::encoding::try_get<uint32_t>(row, "owner_id")),

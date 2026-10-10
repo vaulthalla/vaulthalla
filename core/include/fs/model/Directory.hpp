@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Entry.hpp"
+#include "db/Fwd.hpp"
 #include <vector>
 
 namespace vh::fs::model {
@@ -10,7 +11,7 @@ namespace vh::fs::model {
 
         Directory() = default;
 
-        Directory(const pqxx::row &row, const pqxx::result &parentRows);
+        Directory(pqxx::row_ref row, const pqxx::result &parentRows);
 
         [[nodiscard]] bool isDirectory() const override { return true; }
     };

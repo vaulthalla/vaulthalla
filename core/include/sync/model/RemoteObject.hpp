@@ -7,7 +7,7 @@
 #include <optional>
 #include <string>
 #include "fs/Fwd.hpp"
-#include <pqxx/types>
+#include "db/Fwd.hpp"
 
 namespace vh::sync::model {
 
@@ -29,7 +29,7 @@ struct RemoteObject {
     std::string source{"list_objects_v2"};
 
     RemoteObject() = default;
-    explicit RemoteObject(const pqxx::row& row);
+    explicit RemoteObject(pqxx::row_ref row);
     explicit RemoteObject(uint32_t vaultId, const std::shared_ptr<fs::model::File>& file, std::string source = "list_objects_v2");
 
     [[nodiscard]] std::shared_ptr<fs::model::File> toFile() const;

@@ -9,6 +9,7 @@
 #include "fs/model/File.hpp"
 #include "identities/User.hpp"
 #include "ops/Vaults.hpp"
+#include "preview/render/Raster.hpp"
 #include "protocols/http/Router.hpp"
 #include "protocols/ws/Router.hpp"
 #include "protocols/ws/Session.hpp"
@@ -27,13 +28,13 @@
 
 #include <gtest/gtest.h>
 #include <paths.h>
-#include <pdfium/fpdfview.h>
 #include <turbojpeg.h>
 
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <thread>
 
 namespace vh::protocols::http::bench {
@@ -135,10 +136,12 @@ class DISABLED_HttpBench : public ::testing::Test {
 protected:
     inline static bool skip = false;
     inline static std::filesystem::path root;
+    inline static std::optional<vh::preview::render::PdfiumLibrary> pdfium;
 
     static void TearDownTestSuite() {
         std::error_code ec;
         if (!root.empty()) std::filesystem::remove_all(root, ec);  // test vault backing (encrypted files up to 300 MiB)
+        pdfium.reset();
     }
     inline static std::shared_ptr<identities::User> admin;
     inline static std::shared_ptr<storage::Engine> engine;
@@ -154,7 +157,7 @@ protected:
         paths::mountPath = root / "mount";
         std::filesystem::create_directories(paths::backingPath);
         std::filesystem::create_directories(paths::mountPath);
-        FPDF_InitLibrary();
+        pdfium.emplace();
         db::Transactions::init();
         db::seed::nuke_and_recreate_schema_public();
         db::Transactions::dbPool_->initPreparedStatements();

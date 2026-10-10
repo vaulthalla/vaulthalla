@@ -16,18 +16,18 @@ using namespace vh::db::encoding;
 
 namespace vh::share {
 namespace email_challenge_model_detail {
-std::optional<std::time_t> opt_time(const pqxx::row& row, const char* column) {
+std::optional<std::time_t> opt_time(pqxx::row_ref row, const char* column) {
     if (row[column].is_null()) return std::nullopt;
     return parsePostgresTimestamp(row[column].as<std::string>());
 }
 
-std::optional<std::string> opt_string(const pqxx::row& row, const char* column) {
+std::optional<std::string> opt_string(pqxx::row_ref row, const char* column) {
     if (row[column].is_null()) return std::nullopt;
     return row[column].as<std::string>();
 }
 }
 
-EmailChallenge::EmailChallenge(const pqxx::row& row)
+EmailChallenge::EmailChallenge(pqxx::row_ref row)
     : id(row["id"].as<std::string>()),
       share_id(row["share_id"].as<std::string>()),
       share_session_id(email_challenge_model_detail::opt_string(row, "share_session_id")),
