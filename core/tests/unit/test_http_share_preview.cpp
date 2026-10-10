@@ -9,6 +9,7 @@
 #include "identities/User.hpp"
 #include "protocols/http/Access.hpp"
 #include "protocols/http/Router.hpp"
+#include "protocols/http/handler/Archive.hpp"
 #include "protocols/ws/Session.hpp"
 #include "runtime/Deps.hpp"
 #include "share/AuditEvent.hpp"
@@ -21,6 +22,8 @@
 #include "storage/PlaintextReader.hpp"
 #include "vault/model/Vault.hpp"
 #include "protocols/ws/Router.hpp"
+
+#include "../helpers/zip_check.hpp"
 
 #include <gtest/gtest.h>
 #include <paths.h>
@@ -1006,9 +1009,12 @@ TEST_F(HttpSharePreviewTest, ShareDirectoryArchiveContainsScopedRelativeEntries)
     installSharePreviewHooks(session);
 
     auto response = Router::handleDownload(previewRequest("/download?share=1&path=%2F"));
+    const auto* stream = std::get_if<vh::protocols::http::model::preview::StreamResponse>(&response);
+    ASSERT_NE(stream, nullptr);  // streamed, never buffered
     const auto archive = vectorBody(response);
 
     EXPECT_EQ(status::ok, responseStatus(response));
+    EXPECT_EQ(stream->length, archive.size());  // exact Content-Length up front
     EXPECT_EQ("application/zip", responseHeader(response, field::content_type));
     EXPECT_NE(std::string::npos, archive.find("report.jpg"));
     EXPECT_NE(std::string::npos, archive.find("nested/"));
@@ -1016,6 +1022,65 @@ TEST_F(HttpSharePreviewTest, ShareDirectoryArchiveContainsScopedRelativeEntries)
     EXPECT_EQ(std::string::npos, archive.find("/secret.txt"));
     EXPECT_EQ(std::string::npos, archive.find(".."));
     EXPECT_EQ("attachment; filename=\"shared.zip\"; filename*=UTF-8''shared.zip", responseHeader(response, field::content_disposition));
+
+    const auto path = testRoot / "shared.zip";
+    std::ofstream(path, std::ios::binary).write(archive.data(), static_cast<std::streamsize>(archive.size()));
+    const auto listing = vh::test::zip::pythonCheck(path);
+    if (!listing) GTEST_SKIP() << "python3 unavailable";
+    EXPECT_EQ("", listing->badMember);
+    std::vector<std::string> names;
+    for (const auto& item : listing->items) names.push_back(item.name);
+    EXPECT_EQ((std::vector<std::string>{"nested/", "nested/empty.txt", "report.jpg"}), names);
+}
+
+TEST_F(HttpSharePreviewTest, ShareDirectoryArchiveHeadIsCheapAndOneGetIsOneDownload) {
+    const auto png = tinyPng();
+    auto session = readySession(vh::share::bit(vh::share::Operation::Download) | vh::share::bit(vh::share::Operation::List));
+    store->links.at("share-1")->max_downloads = 1;
+    installSharePreviewHooks(session);
+
+    // HEAD: the exact length, no reader, no download counted.
+    auto head = Router::handleDownload(request{verb::head, "/download?share=1&path=%2F", 11});
+    ASSERT_EQ(status::ok, responseStatus(head));
+    const auto* headStream = std::get_if<vh::protocols::http::model::preview::StreamResponse>(&head);
+    ASSERT_NE(headStream, nullptr);
+    EXPECT_TRUE(headStream->headOnly);
+    EXPECT_FALSE(headStream->reader);
+    EXPECT_EQ(0u, store->links.at("share-1")->download_count);
+
+    auto get = Router::handleDownload(previewRequest("/download?share=1&path=%2F"));
+    ASSERT_EQ(status::ok, responseStatus(get));
+    const auto body = vectorBody(get);
+    EXPECT_EQ(headStream->length, body.size());
+    EXPECT_NE(std::string::npos, body.find(std::string(png.begin(), png.end())));  // stored, not compressed
+    EXPECT_EQ(1u, store->links.at("share-1")->download_count);
+
+    // The next logical download is over the limit.
+    vh::protocols::http::access::clearCachesForTesting();
+    auto refused = Router::handleDownload(previewRequest("/download?share=1&path=%2F"));
+    EXPECT_EQ(status::forbidden, responseStatus(refused));
+    EXPECT_NE(std::string::npos, stringBody(refused).find("max_downloads_reached"));
+    EXPECT_EQ(1u, store->links.at("share-1")->download_count);
+}
+
+TEST_F(HttpSharePreviewTest, ShareDirectoryArchiveOverTheEntryLimitIsRefusedBeforeAnyByte) {
+    for (uint32_t i = 0; i < vh::protocols::http::handler::archive::kMaxEntries; ++i) {
+        auto extra = std::make_shared<vh::fs::model::File>(*file);
+        extra->id = 1000 + i;
+        extra->name = "f" + std::to_string(i);
+        extra->path = "/shared/" + extra->name;
+        provider->byId[extra->id] = extra;
+        provider->byPath[extra->path.string()] = extra;
+        provider->children[kRootEntryId].push_back(extra);
+    }
+    auto session = readySession(vh::share::bit(vh::share::Operation::Download) | vh::share::bit(vh::share::Operation::List));
+    installSharePreviewHooks(session);
+
+    for (const auto method : {verb::head, verb::get}) {
+        auto response = Router::handleDownload(request{method, "/download?share=1&path=%2F", 11});
+        EXPECT_EQ(status::payload_too_large, responseStatus(response));
+    }
+    EXPECT_EQ(0u, store->links.at("share-1")->download_count);  // refused before counting
 }
 
 TEST_F(HttpSharePreviewTest, ShareDownloadSanitizesContentDispositionFilename) {

@@ -119,7 +119,10 @@ wasm + wrapper emitted to `/_next/static/media` via `new URL(..., import.meta.ur
   proxy that routes `/ws` → 36969 and `/preview|/download|/upload` → 36970 (nginx in prod, `Caddyfile` in dev).
   HTTP uploads: `POST /upload/session[?share=1]` → `PUT /upload/<id>/files/<fileId>` → `POST /upload/<id>/finish`
   (`DELETE` on failure); the client splits large drops into several sessions. Downloads are preflighted with a
-  `HEAD` of the same `/download` URL (status → failed-task message) before handing the URL to the browser.
+  `HEAD` of the same `/download` URL (status → failed-task message; a folder's 413 means too many entries) before
+  handing the URL to the browser with `anchor.download`. Folder ZIPs report their exact size like files. Browsers
+  strip a leading dot from saved names themselves (Chromium `SanitizeGeneratedFileName`, Firefox
+  `ValidateFileNameForSaving`); the server and the console keep it, and ZIP members keep it.
 - `next.config.ts`: SVGR loader (webpack + `turbopack.rules`), `images.localPatterns /preview**`, redirects,
   `devIndicators: false`. `package.json` `sideEffects: ["**/*.css"]`.
 

@@ -155,8 +155,8 @@ Routes (nginx prefixes `/preview`, `/download`, `/upload` only; never add prefix
 (RenderedImage plans only, JPEG; `size` clamped 16-2048, default 1024; `page` 0-based; `X-Vaulthalla-Page-Count`
 for PDFs; `scale` accepted and ignored), `POST /preview/batch` (≤ 200 items, per-item RBAC,
 `ready|queued|missing|unsupported|error`, never fetches remote-only files), `GET|HEAD /download/content` (original
-bytes, inline by default), `GET|HEAD /download` (files stream with no size cap; directories are a buffered ZIP,
-≤ 256 MiB source / 4096 entries), `GET /preview/derived?kind=&variant=` (200 artifact | 202 queued + Retry-After |
+bytes, inline by default), `GET|HEAD /download` (files stream with no size cap; directories stream a STORE ZIP,
+see "Folder ZIPs" below), `GET /preview/derived?kind=&variant=` (200 artifact | 202 queued + Retry-After |
 415 | 422 `conversion_failed` | 503 `converter_unavailable`/`busy`), `PUT /upload/text`.
 - **Server.** One thread per connection, capped by `http_preview_server.max_connections` (over the cap: raw `503` +
   `Retry-After: 1`). `TimedStream` polls a non-blocking socket against real deadlines (idle keep-alive 20 s,
@@ -178,6 +178,21 @@ bytes, inline by default), `GET|HEAD /download` (files stream with no size cap; 
   sets `X-Accel-Buffering: no`, `nosniff`, a sandbox CSP and `Cross-Origin-Resource-Policy: same-origin`; non-media
   originals are served inline as `application/octet-stream`. Fresh nginx sites also set `proxy_buffering off` +
   `proxy_max_temp_file_size 0` on `/preview` and `/download`; upgrades keep the old site and rely on the header.
+- **Folder ZIPs** (`handler/Archive.cpp`, #143). `archive::plan` walks the folder first (one `fsCache->listDir` /
+  share `listChildren` per directory, name-sorted) and authorizes every entry exactly as before (human: Read on files,
+  Read + List on dirs via `access::requireHumanChild`; share: List per dir via `resolve`, Download per entry via
+  `TargetResolver::resolveListedChild`: the same scope/entry/RBAC checks without reloading root and entry per entry,
+  parity-tested against `resolve`; one denial → 403 for the whole archive). It reads no bytes, skips symlinks and `.upload-http-*.part` staging, and caps the plan at
+  `archive::kMaxEntries` (50,000 → 413 `limit_exceeded`: bounds the walk, done for HEAD and GET, and the
+  plan's ~1 KiB/entry); there is no byte cap. Members are STOREd with data
+  descriptors (CRC-32 computed while streaming), ZIP64 where a size, offset or the entry count needs it, UTF-8 names
+  (bit 11; invalid UTF-8, `\`, control bytes → `_`; never absolute or `..`), DOS + UT mtime. STORE + plaintext
+  `files.size_bytes` make the length exact up front: GET and HEAD carry `Content-Length`, HEAD stops after the plan.
+  The body is `archive::stream`, a sequential `PlaintextReader` the session pulls like a file: one member open at a
+  time (≤ 1 MiB members read in one authenticated pass, larger ones streamed and `requireAuthenticated()` before
+  their descriptor, so a CRC never vouches for unverified bytes); a member that fails integrity, changed size or is
+  unavailable (remote-only + policy) throws mid-body → truncated response + closed connection. Share archives count
+  one `max_downloads` unit per logical download on GET (never HEAD), coalesced like files (key `dir`).
 - **Text saves** (`handler/Text.cpp`): human only (shares 403), TextDocument plans only, `If-Match` required (428
   without, 412 + current ETag on mismatch), UTF-8 without NUL, ≤ `preview.text.max_edit_bytes` (413). Re-seals through
   `Filesystem::createFile(overwrite, expected_source_id)`, which takes a per-file content lock

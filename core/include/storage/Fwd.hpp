@@ -6,4 +6,5 @@ namespace vh::storage {
     struct Engine;
     class CloudEngine;
     class Manager;
+    class PlaintextReader;
 }

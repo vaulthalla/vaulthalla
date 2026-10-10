@@ -40,7 +40,8 @@ for archaeology, because parts of it are stale (for example, it says uploads sta
   (`Router::attachmentContentDisposition`); leading dots are kept. Single-file downloads stream with no size cap:
   positioned reads decrypt only the requested ciphertext with the GCM CTR keystream, and the whole message is
   authenticated once per file version (`IntegrityRegistry`, see `architecture.md` "Byte-serving spine"). Folder ZIPs
-  are still buffered (≤ 256 MiB source, 4096 entries). A chunked AEAD at-rest format would only be needed for
+  stream too (STORE, exact `Content-Length`, ≤ 50,000 entries, no byte cap; `architecture.md` "Folder ZIPs"), on the
+  same path with share scoping and one `max_downloads` unit per logical GET. A chunked AEAD at-rest format would only be needed for
   *authenticated* random access to remote-only objects (`preview.media.remote: ranged`).
 - **Preview ≠ Download.** The share op `preview` gets only lossy server renders (`/preview` JPEGs, PDF pages,
   `poster-jpg`); `download` gets original bytes and full-fidelity derivatives (`/download`, `/download/content`
