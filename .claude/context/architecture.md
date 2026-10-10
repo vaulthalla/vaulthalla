@@ -255,7 +255,8 @@ bytes, inline by default), `GET|HEAD /download` (files stream with no size cap; 
   dropped) only when no file failed, no sidecar is unresolved and re-querying `getFilesOlderThanKeyVersion` (rows
   with an IV only: empty/legacy-plaintext files are excluded) is empty; otherwise both keys stay loaded and the next
   pass retries. Files open in FUSE are deferred. `fs::ops::replaceFileAtomic`/`writeFileAtomic` (temp + fsync +
-  rename + dir fsync) back `Filesystem::createFile`'s overwrite branch.
+  rename + dir fsync) back `Filesystem::createFile`'s overwrite branch. A copy (ws `fs.entry.copy`) copies the sealed
+  bytes with their IV under the same content lock (see "Delete keeps folders; copy is deep" below).
 - No writeback cache (`FUSE_CAP_WRITEBACK_CACHE` off): with it the kernel owns `i_size` and ignores getattr sizes,
   so out-of-band changes showed stale `stat` sizes. Handles are `direct_io` anyway.
 - `forget` does not evict the metadata cache (it is seeded at startup and updated by the daemon's own changes);
@@ -437,6 +438,28 @@ subject's assignment; both `vh vault role override ...` and ws `role.vault.overr
 - Every `users(id)` reference has a delete action (migration 104): attribution/audit columns `SET NULL`, while
   `file_locks.locked_by` and `share_link.created_by` `CASCADE` (a deleted account's public links die with it). New
   tables referencing `users` must pick one; a bare `REFERENCES users` blocks `vh user delete`.
+
+**Delete keeps folders; copy is deep and readable at once** (#168, #167; `FsDirStatsDbTest`, `FsCopyDbTest`, harness
+stage "Copy And Delete")
+- Deleting a file never removes its parent folders, on every path: ws `fs.entry.delete`, FUSE unlink, the S3 gateway
+  (DeleteObject, local purge), sync DeleteLocal and trash purge. `File::updateParentStats` only takes the file off
+  every ancestor's totals (it was `updateParentStatsAndCleanEmptyDirs`, which deleted ancestors left without files
+  except on FUSE calls, so the console and the mount disagreed). The S3 view still loses an implicit prefix with its
+  last object: ListObjects derives CommonPrefixes from object keys, not folder rows, and `bucketIsEmpty` counts files
+  only. A folder goes only when it is what's deleted. FUSE rmdir refuses a non-empty folder (ENOTEMPTY, including
+  children the caller can't see; it used to cascade-delete them) and takes the folder off every ancestor's count.
+  Trash purge removes only the file's backing path.
+- `Filesystem::copy(CopyContext)`: plan (source subtree from the DB via `Entry::listSubtree`; `Entry::listDir(id, true)`
+  returns only direct child files/symlinks and seeds the startup cache in that shape) → `authorize` every entry
+  (ws: Copy + Read on each source file, Write/Touch at each destination) → quota (`freeSpace`) → bytes (outside
+  `mutex_`): each file's sealed backing bytes are copied as-is to `<dest parent backing>/<new alias>` under the
+  source's content lock, with the row snapshot taken under that lock (same IV, key version, plaintext size, content
+  hash; no AAD, and any later write draws a fresh IV, so the shared (key, IV) only ever sealed that plaintext; a
+  corrupted source stays detectable). Cloud files without a local copy are hydrated first (metered,
+  price-preflighted); the next sync uploads the copy as a new object (one PUT each, planned and price-checked like any
+  upload). → rows under `mutex_`, shallowest first, so totals build up entry by entry. Any failure takes back rows and
+  bytes. The sync pass no longer replays `operations` rows (`Local::processOperations` wrote to the pre-alias
+  `BACKING_VAULT_ROOT/<vault path>` layout and nothing had queued a pending row since 2025); the table records activity.
 
 **Operator email** (`email/`, `notifications/`, `085_operator_notifications.sql`, `vh email …`)
 - Provider secrets are encrypted in `internal_secrets` and entered by hidden prompt. They never go in `.env` or files, and are never logged or rendered.
