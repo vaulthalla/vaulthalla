@@ -8,7 +8,7 @@ import { VaultSyncHealth } from '@/models/stats/vaultSyncHealth'
 import { APIKey, S3APIKey } from '@/models/apiKey'
 import type { GroupRecord, UserRecord } from '@/features/access/types'
 import { Permission } from '@/models/role'
-import { Settings, SettingsSection } from '@/models/settings'
+import { ServerPolicy, Settings, SettingsSection } from '@/models/settings'
 import { File, IFileUpload } from '@/models/file'
 import { Directory } from '@/models/directory'
 import {
@@ -318,6 +318,9 @@ export interface WebSocketCommandMap {
 
   // Settings
   'settings.get': { payload: null; response: { settings: Settings } }
+
+  // Any signed-in user: which share links the operator allows and the defaults for new vaults.
+  'settings.policy.get': { payload: null; response: { policy: ServerPolicy } }
 
   // A JSON merge patch (RFC 7386) onto the current config: send only what changed; null removes an optional key.
   'settings.update': { payload: Partial<Record<keyof Settings, SettingsSection>>; response: { settings: Settings } }

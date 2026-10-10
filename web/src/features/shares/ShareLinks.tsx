@@ -13,6 +13,8 @@ import { QueryState, EmptyState } from '@/components/ui/State'
 import { CopyIcon, EllipsisIcon, ArrowsRotateIcon, BanIcon, LinkIcon, CheckIcon } from '@/components/ui/icons'
 import { formatDate, formatInt, formatRelative } from '@/lib/format'
 import { describeOps, publicUrl, shareState, shareStateTone } from '@/features/shares/shareMeta'
+import { sharingNotice, useSharingPolicy } from '@/features/shares/policy'
+import { cn } from '@/util/cn'
 
 // The one-time URL, shown right after create or rotate (the server never returns it again).
 export const OneTimeUrl = ({ url, onDismiss }: { url: string; onDismiss?: () => void }) => {
@@ -128,6 +130,20 @@ export const ShareLinkRow = ({ share, vaultName, onUrl }: { share: ShareLink; va
   )
 }
 
+// The operator turned sharing (or one kind of link) off: links are kept and can be managed, but not opened.
+export const SharingNotice = ({ className }: { className?: string }) => {
+  const notice = sharingNotice(useSharingPolicy())
+  if (!notice) return null
+  return (
+    <p
+      role="status"
+      data-testid="sharing-disabled-notice"
+      className={cn('rounded-control border border-warn-line bg-warn-soft px-3 py-2 text-sm text-warn', className)}>
+      {notice}
+    </p>
+  )
+}
+
 export const ShareLinkList = ({
   vaultId,
   rootEntryId,
@@ -143,6 +159,7 @@ export const ShareLinkList = ({
   const [url, setUrl] = useState<string | null>(null)
   return (
     <div className="space-y-3">
+      <SharingNotice />
       {url ? <OneTimeUrl url={url} onDismiss={() => setUrl(null)} /> : null}
       <QueryState query={query}>
         {data => {

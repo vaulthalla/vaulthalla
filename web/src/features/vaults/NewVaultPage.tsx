@@ -21,6 +21,7 @@ import { syncFormDefaults, syncPayload, type SyncFormValues } from '@/features/v
 import { RequestGuardrailFields, SyncPolicyFields } from '@/features/vaults/sync/SyncPolicyFields'
 import { QuotaInput, quotaBytes, SLUG_PATTERN, storageTierOptions, validateFuseName, type QuotaUnit } from '@/features/vaults/fields'
 import { withEncryptionWaiver } from '@/features/vaults/waiver'
+import { useServerPolicy } from '@/lib/serverPolicy'
 
 interface NewVaultValues {
   type: VaultType
@@ -82,13 +83,23 @@ const NewVaultForm = () => {
       sync: syncFormDefaults(null),
     },
   })
-  const { register, handleSubmit, control, setValue, formState } = form
+  const { register, handleSubmit, control, setValue, formState, getFieldState, resetField } = form
   const errors = formState.errors
   const type = useWatch({ control, name: 'type' })
   const apiKeyId = useWatch({ control, name: 'api_key_id' })
   const encrypt = useWatch({ control, name: 'encrypt_upstream' })
   const credential = credentials.data?.find(c => String(c.api_key_id) === apiKeyId)
   const tiers = storageTierOptions(credential?.provider)
+
+  // New S3 vaults start from the operator's defaults (config vaults.s3.*), unless the user already chose.
+  const remoteDefaults = useServerPolicy().data?.policy?.vaults?.s3
+  useEffect(() => {
+    if (!remoteDefaults) return
+    if (!getFieldState('sync.strategy').isDirty)
+      resetField('sync.strategy', { defaultValue: remoteDefaults.default_remote_sync_strategy })
+    if (!getFieldState('sync.conflict_policy').isDirty)
+      resetField('sync.conflict_policy', { defaultValue: remoteDefaults.default_remote_conflict_policy })
+  }, [remoteDefaults, getFieldState, resetField])
 
   // A single credential is the obvious choice.
   useEffect(() => {

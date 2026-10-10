@@ -15,6 +15,7 @@ import dynamic from 'next/dynamic'
 
 const ShareDialog = dynamic(() => import('@/features/shares/ShareDialog').then(m => m.ShareDialog), { ssr: false })
 import { useCan } from '@/lib/permissions'
+import { useSharingPolicy } from '@/features/shares/policy'
 import Link from 'next/link'
 
 const LAST_VAULT = 'vaulthalla-ui-last-vault'
@@ -40,6 +41,8 @@ export function FilesPage() {
   const vaults = useWs('storage.vault.list', null, { staleTime: 60_000 })
   const canCreateVault = useCan({ anyOf: ['admin.vaults.self.create', 'admin.vaults.user.create', 'admin.vaults.admin.create'] })
   const [shareTarget, setShareTarget] = useState<Entry | null>(null)
+  // No "Share link…" while the operator allows no kind of link (sharing.*); the daemon would refuse it.
+  const canShare = useSharingPolicy().modes.length > 0
 
   const list = useMemo(() => vaults.data?.vaults ?? [], [vaults.data])
   const vault = list.find(v => v.id === vaultParam) ?? null
@@ -115,7 +118,7 @@ export function FilesPage() {
         path={path}
         onNavigate={next => router.push(filesHref(vault.id, next))}
         leading={list.length > 1 ? switcher : null}
-        onShare={setShareTarget}
+        onShare={canShare ? setShareTarget : undefined}
       />
       {shareTarget ? <ShareDialog vaultId={vault.id} target={shareTarget} onClose={() => setShareTarget(null)} /> : null}
     </>
