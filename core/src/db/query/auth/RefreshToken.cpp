@@ -47,7 +47,7 @@ namespace vh::db::query::auth {
                     return nullptr;
                 }
 
-                return std::make_shared<vh::auth::model::RefreshToken>(res.one_row());
+                return std::make_shared<vh::auth::model::RefreshToken>(res.one_row_ref());
             });
     }
 
@@ -114,7 +114,7 @@ namespace vh::db::query::auth {
             "RefreshToken::getUserByRefreshToken",
             [&](pqxx::work& txn) -> std::shared_ptr<vh::identities::User> {
                 const auto res = txn.exec(pqxx::prepped{"get_user_by_refresh_token_jti"}, pqxx::params{jti});
-                return identities::hydrateUser(txn, res.one_row());
+                return identities::hydrateUser(txn, res.one_row_ref());
             });
     }
 }

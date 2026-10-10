@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 #include <nlohmann/json_fwd.hpp>
-#include <pqxx/types>
+#include "db/Fwd.hpp"
 
 namespace vh::vault::model {
 
@@ -44,7 +44,7 @@ struct Deletion {
     std::optional<std::string> last_error{};
 
     Deletion() = default;
-    explicit Deletion(const pqxx::row& row);
+    explicit Deletion(pqxx::row_ref row);
 
     [[nodiscard]] bool isS3() const;
     [[nodiscard]] bool restorable() const { return state == DeletionState::Pending; }

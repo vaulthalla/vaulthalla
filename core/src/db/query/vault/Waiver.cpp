@@ -25,7 +25,7 @@ void Waiver::addWaiver(const std::shared_ptr<vh::sync::model::Waiver>& waiver) {
         const auto res = txn.exec(pqxx::prepped{"insert_cloud_encryption_waiver"}, p);
         if (res.empty() || res.affected_rows() == 0)
             throw std::runtime_error("Failed to insert waiver for user " + std::to_string(waiver->user->id));
-        waiver->id = res.one_field().as<unsigned int>();
+        waiver->id = res.one_field_ref().as<unsigned int>();
 
         if (waiver->owner && waiver->vault->owner_id != waiver->user->id) {
             const auto ctx = waiver->resolveOverridingRole();

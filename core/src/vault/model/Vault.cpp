@@ -146,7 +146,7 @@ VaultType vh::vault::model::from_string(const std::string& type) {
     throw std::invalid_argument("Invalid VaultType: " + type);
 }
 
-Vault::Vault(const pqxx::row& row)
+Vault::Vault(pqxx::row_ref row)
     : id(row["id"].as<unsigned int>()),
       // vault.owner_id is ON DELETE SET NULL: deleting a user leaves their vaults ownerless (0, shown as N/A).
       // Reading it as non-null threw in listVaults and stopped the daemon from starting at all (vh-storage).

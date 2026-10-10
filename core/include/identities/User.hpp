@@ -11,7 +11,7 @@
 #include <nlohmann/json_fwd.hpp>
 #include "identities/Fwd.hpp"
 #include "rbac/Fwd.hpp"
-#include <pqxx/types>
+#include "db/Fwd.hpp"
 
 namespace vh::rbac {
 
@@ -86,11 +86,11 @@ namespace vh::identities {
 
         explicit User(std::string name, std::string email = "", bool isActive = true);
 
-        explicit User(const pqxx::row &row);
+        explicit User(pqxx::row_ref row);
 
         User(
-            const pqxx::row &user,
-            const pqxx::row &adminRole,
+            pqxx::row_ref user,
+            pqxx::row_ref adminRole,
             const pqxx::result &globalVaultRoles,
             std::unordered_map<uint32_t, std::shared_ptr<rbac::role::Vault> > &&vRoles,
             std::vector<std::shared_ptr<Group> > &&groups

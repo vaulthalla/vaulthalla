@@ -79,7 +79,7 @@ unsigned int Vault::upsertVault(const VaultPtr& vault,
                 "SELECT slug FROM vault WHERE id = $1",
                 pqxx::params{vault->id});
             if (current.empty()) throw std::runtime_error("Vault not found for ID: " + std::to_string(vault->id));
-            vault->slug = current.one_field().as<std::string>();
+            vault->slug = current.one_field_ref().as<std::string>();
         }
 
         validateExternalNames(txn, *vault, exists);
@@ -122,7 +122,7 @@ unsigned int Vault::upsertVault(const VaultPtr& vault,
         }
         if (vaultRes.empty() || vaultRes.affected_rows() == 0)
             throw std::runtime_error("Failed to upsert vault: " + vault->name);
-        const auto vaultId = vaultRes.one_field().as<unsigned int>();
+        const auto vaultId = vaultRes.one_field_ref().as<unsigned int>();
 
         if (!exists) {
             if (vault->type == vh::vault::model::VaultType::Local) {
@@ -195,7 +195,7 @@ Vault::VaultPtr Vault::getVault(unsigned int vaultID) {
                               [vaultID](pqxx::work& txn) -> VaultPtr {
                                   const auto res = txn.exec(pqxx::prepped{"get_vault"}, pqxx::params{vaultID});
                                   if (res.empty()) return nullptr;
-                                  const auto row = res.one_row();
+                                  const auto row = res.one_row_ref();
                                   const auto typeStr = row["type"].as<std::string>();
 
                                   switch (vh::vault::model::from_string(typeStr)) {
@@ -211,7 +211,7 @@ Vault::VaultPtr Vault::getVault(const std::string& name, unsigned int ownerId) {
         const auto res = txn.exec(pqxx::prepped{"get_vault_by_name_and_owner"}, pqxx::params{name, ownerId});
         if (res.empty()) return nullptr;
 
-        const auto row = res.one_row();
+        const auto row = res.one_row_ref();
         const auto typeStr = row["type"].as<std::string>();
 
         switch (vh::vault::model::from_string(typeStr)) {
@@ -323,14 +323,14 @@ std::string Vault::getVaultOwnersName(const unsigned int vaultId) {
 
 unsigned int Vault::maxVaultId() {
     return Transactions::exec("Vault::maxVaultId", [](pqxx::work& txn) {
-        return txn.exec(pqxx::prepped{"get_max_vault_id"}).one_field().as<unsigned int>();
+        return txn.exec(pqxx::prepped{"get_max_vault_id"}).one_field_ref().as<unsigned int>();
     });
 }
 
 bool Vault::vaultExists(const std::string& name, const unsigned int ownerId) {
     return Transactions::exec("Vault::vaultExists", [&](pqxx::work& txn) {
         const auto res = txn.exec(pqxx::prepped{"vault_exists"}, pqxx::params{name, ownerId});
-        return res.one_field().as<bool>();
+        return res.one_field_ref().as<bool>();
     });
 }
 
@@ -341,14 +341,14 @@ std::optional<Vault::BucketOwner> Vault::bucketOwner(const unsigned int apiKeyId
             "WHERE s3.api_key_id = $1 AND s3.bucket = $2",
             pqxx::params{apiKeyId, bucket});
         if (res.empty()) return std::nullopt;
-        const auto row = res.one_row();
+        const auto row = res.one_row_ref();
         return BucketOwner{row["id"].as<unsigned int>(), row["name"].as<std::string>(), row["deleted"].as<bool>()};
     });
 }
 
 bool Vault::vaultRootExists(const unsigned int vaultId) {
     return Transactions::exec("Vault::vaultRootExists", [&](pqxx::work& txn) {
-        return txn.exec(pqxx::prepped{"vault_root_exists"}, vaultId).one_field().as<bool>();
+        return txn.exec(pqxx::prepped{"vault_root_exists"}, vaultId).one_field_ref().as<bool>();
     });
 }
 
@@ -377,7 +377,7 @@ std::string Vault::getVaultMountPoint(unsigned int vaultId) {
     return Transactions::exec("Vault::getVaultMountPoint", [&](pqxx::work& txn) {
         const auto res = txn.exec(pqxx::prepped{"get_vault_mount_point"}, pqxx::params{vaultId});
         if (res.empty()) throw std::runtime_error("Vault not found for ID: " + std::to_string(vaultId));
-        return res.one_field().as<std::string>();
+        return res.one_field_ref().as<std::string>();
     });
 }
 
@@ -385,7 +385,7 @@ unsigned int Vault::getVaultOwnerId(unsigned int vaultId) {
     return Transactions::exec("Vault::getVaultOwnerId", [&](pqxx::work& txn) {
         const auto res = txn.exec(pqxx::prepped{"get_vault_owner_id"}, pqxx::params{vaultId});
         if (res.empty()) throw std::runtime_error("Vault not found for ID: " + std::to_string(vaultId));
-        return res.one_field().as<unsigned int>();
+        return res.one_field_ref().as<unsigned int>();
     });
 }
 

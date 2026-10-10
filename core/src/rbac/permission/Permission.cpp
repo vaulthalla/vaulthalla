@@ -9,7 +9,7 @@ using namespace vh::db::encoding;
 
 namespace vh::rbac::permission {
 
-Permission::Permission(const pqxx::row& row)
+Permission::Permission(pqxx::row_ref row)
     : bit_position(row["bit_position"].as<uint32_t>()),
       qualified_name(row["name"].as<std::string>()),
       description(row["description"].as<std::string>()),

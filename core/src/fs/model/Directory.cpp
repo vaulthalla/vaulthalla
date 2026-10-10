@@ -8,7 +8,7 @@
 using namespace vh::fs::model;
 using namespace vh::db::encoding;
 
-Directory::Directory(const pqxx::row& row, const pqxx::result& parentRows)
+Directory::Directory(pqxx::row_ref row, const pqxx::result& parentRows)
     : Entry(row, parentRows),
       file_count(row["file_count"].as<unsigned int>()),
       subdirectory_count(row["subdirectory_count"].as<unsigned int>()) {}

@@ -11,7 +11,7 @@ using namespace vh::sync::model;
 using namespace vh::fs::model;
 using namespace vh::db::encoding;
 
-Artifact::Artifact(const pqxx::row& row)
+Artifact::Artifact(pqxx::row_ref row)
     : id(row["id"].as<uint32_t>()),
       conflict_id(row["conflict_id"].as<uint32_t>()),
       file(std::static_pointer_cast<File>(runtime::Deps::get().fsCache->getEntryById(row["file_id"].as<uint32_t>()))) {

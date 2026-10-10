@@ -7,7 +7,7 @@
 using namespace vh::fs::model::file;
 using namespace vh::db::encoding;
 
-Trashed::Trashed(const pqxx::row& row)
+Trashed::Trashed(pqxx::row_ref row)
     : id(row["id"].as<unsigned int>()),
       vault_id(row["vault_id"].as<unsigned int>()),
       base32_alias(row["base32_alias"].as<std::string>()),
@@ -20,9 +20,3 @@ Trashed::Trashed(const pqxx::row& row)
     else deleted_at = parsePostgresTimestamp(row["deleted_at"].as<std::string>());
 }
 
-std::vector<std::shared_ptr<Trashed>> vh::fs::model::file::trashed_files_from_pq_res(const pqxx::result& res) {
-    std::vector<std::shared_ptr<Trashed>> files;
-    files.reserve(res.size());
-    for (const auto& row : res) files.emplace_back(std::make_shared<Trashed>(row));
-    return files;
-}

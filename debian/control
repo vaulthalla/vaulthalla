@@ -14,7 +14,7 @@ Build-Depends:
  libcurl4-openssl-dev,
  libboost-filesystem-dev,
  libboost-system-dev,
- libpqxx-dev,
+ libpqxx-vh-dev (>= 8.0.2),
  libpdfium-dev,
  libmagic-dev,
  libyaml-cpp-dev,

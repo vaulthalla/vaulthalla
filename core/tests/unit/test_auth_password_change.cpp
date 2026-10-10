@@ -121,7 +121,7 @@ protected:
                     RETURNING id
                 )SQL",
                 pqxx::params{name, name + "@vaulthalla.test", vh::crypto::hash::password(password)}
-            ).one_field().as<unsigned int>();
+            ).one_field_ref().as<unsigned int>();
 
             txn.exec(
                 "INSERT INTO admin_role_assignments (user_id, role_id) VALUES ($1, $2)",
@@ -145,7 +145,7 @@ void backdatePasswordChange(const unsigned int userId) {
 std::optional<double> passwordChangedSecondsAgo(const unsigned int userId) {
     return vh::db::Transactions::exec("AuthPasswordChangeTest::changedAgo", [&](pqxx::work& txn) {
         return txn.exec("SELECT EXTRACT(EPOCH FROM (NOW() - password_changed_at))::double precision FROM users WHERE id = $1",
-                        pqxx::params{userId}).one_field().as<std::optional<double>>();
+                        pqxx::params{userId}).one_field_ref().as<std::optional<double>>();
     });
 }
 

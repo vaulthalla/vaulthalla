@@ -7,7 +7,7 @@
 #include <nlohmann/json_fwd.hpp>
 #include <string>
 #include <optional>
-#include <pqxx/types>
+#include "db/Fwd.hpp"
 
 namespace vh::fs::cache {
 
@@ -30,7 +30,7 @@ struct Record {
     std::string failure_reason{};
 
     Record() = default;
-    explicit Record(const pqxx::row& row);
+    explicit Record(pqxx::row_ref row);
 };
 
 void to_json(nlohmann::json& j, const Record& index);
@@ -38,7 +38,4 @@ void from_json(const nlohmann::json& j, Record& index);
 
 std::string to_string(const Record::Type& type);
 Record::Type typeFromString(const std::string& str);
-
-std::vector<std::shared_ptr<Record>> cache_indices_from_pq_res(const pqxx::result& res);
-
 }

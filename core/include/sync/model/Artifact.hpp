@@ -4,7 +4,7 @@
 #include <string>
 #include <nlohmann/json_fwd.hpp>
 #include "fs/Fwd.hpp"
-#include <pqxx/types>
+#include "db/Fwd.hpp"
 
 namespace vh::sync::model {
 
@@ -16,7 +16,7 @@ struct Artifact {
     Side side{};
 
     Artifact() = default;
-    explicit Artifact(const pqxx::row& row);
+    explicit Artifact(pqxx::row_ref row);
     explicit Artifact(const std::shared_ptr<fs::model::File>& f, const Side& s);
 
     [[nodiscard]] std::string sideToString() const;

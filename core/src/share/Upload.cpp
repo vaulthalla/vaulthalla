@@ -9,24 +9,24 @@ using namespace vh::db::encoding;
 
 namespace vh::share {
 namespace upload_model_detail {
-std::optional<std::time_t> opt_time(const pqxx::row& row, const char* column) {
+std::optional<std::time_t> opt_time(pqxx::row_ref row, const char* column) {
     if (row[column].is_null()) return std::nullopt;
     return parsePostgresTimestamp(row[column].as<std::string>());
 }
 
-std::optional<std::string> opt_string(const pqxx::row& row, const char* column) {
+std::optional<std::string> opt_string(pqxx::row_ref row, const char* column) {
     if (row[column].is_null()) return std::nullopt;
     return row[column].as<std::string>();
 }
 
 template <typename T>
-std::optional<T> opt_num(const pqxx::row& row, const char* column) {
+std::optional<T> opt_num(pqxx::row_ref row, const char* column) {
     if (row[column].is_null()) return std::nullopt;
     return row[column].as<T>();
 }
 }
 
-Upload::Upload(const pqxx::row& row)
+Upload::Upload(pqxx::row_ref row)
     : id(row["id"].as<std::string>()),
       share_id(row["share_id"].as<std::string>()),
       share_session_id(row["share_session_id"].as<std::string>()),

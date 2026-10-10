@@ -10,13 +10,13 @@ using namespace vh::sync::model;
 using namespace vh::db::encoding;
 
 namespace {
-    std::optional<std::string> optional_string(const pqxx::row& row, const char* name) {
+    std::optional<std::string> optional_string(pqxx::row_ref row, const char* name) {
         const auto field = row[name];
         if (field.is_null()) return std::nullopt;
         return field.as<std::string>();
     }
 
-    std::optional<bool> optional_bool(const pqxx::row& row, const char* name) {
+    std::optional<bool> optional_bool(pqxx::row_ref row, const char* name) {
         const auto field = row[name];
         if (field.is_null()) return std::nullopt;
         return field.as<bool>();
@@ -30,7 +30,7 @@ namespace {
     }
 }
 
-RemoteObject::RemoteObject(const pqxx::row& row)
+RemoteObject::RemoteObject(pqxx::row_ref row)
     : id(row["id"].as<uint32_t>()),
       vault_id(row["vault_id"].as<uint32_t>()),
       object_key(normalize_object_key(row["object_key"].as<std::string>())),

@@ -50,7 +50,7 @@ std::shared_ptr<vh::share::EmailChallenge> EmailChallenge::create(const std::sha
             challenge->user_agent
         };
         const auto res = txn.exec(pqxx::prepped{"share_email_challenge_insert"}, p);
-        return std::make_shared<vh::share::EmailChallenge>(res.one_row());
+        return std::make_shared<vh::share::EmailChallenge>(res.one_row_ref());
     });
 }
 
@@ -59,7 +59,7 @@ std::shared_ptr<vh::share::EmailChallenge> EmailChallenge::get(const std::string
     return Transactions::exec("share::EmailChallenge::get", [&](pqxx::work& txn) -> std::shared_ptr<vh::share::EmailChallenge> {
         const auto res = txn.exec(pqxx::prepped{"share_email_challenge_get"}, id);
         if (res.empty()) return nullptr;
-        return std::make_shared<vh::share::EmailChallenge>(res.one_row());
+        return std::make_shared<vh::share::EmailChallenge>(res.one_row_ref());
     });
 }
 
@@ -69,7 +69,7 @@ std::shared_ptr<vh::share::EmailChallenge> EmailChallenge::getActive(const std::
     return Transactions::exec("share::EmailChallenge::getActive", [&](pqxx::work& txn) -> std::shared_ptr<vh::share::EmailChallenge> {
         const auto res = txn.exec(pqxx::prepped{"share_email_challenge_get_active"}, pqxx::params{share_id, to_hex_bytea(email_hash)});
         if (res.empty()) return nullptr;
-        return std::make_shared<vh::share::EmailChallenge>(res.one_row());
+        return std::make_shared<vh::share::EmailChallenge>(res.one_row_ref());
     });
 }
 

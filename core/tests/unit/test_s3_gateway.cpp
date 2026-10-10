@@ -216,7 +216,7 @@ uint32_t ensureS3GatewayAdminRole(pqxx::work& txn, const vh::rbac::role::Admin& 
             role.vaults.toBitString(),
             role.keys.toBitString(),
             role.s3Gateway.toBitString()
-        }).one_field().as<uint32_t>();
+        }).one_field_ref().as<uint32_t>();
 }
 
 uint32_t insertS3GatewayHydratableTestUser(
@@ -227,7 +227,7 @@ uint32_t insertS3GatewayHydratableTestUser(
     const auto userId = txn.exec(
         "INSERT INTO users (name, email, password_hash) VALUES ($1, $2, $3) RETURNING id",
         pqxx::params{name, email, "hash"}
-    ).one_field().as<uint32_t>();
+    ).one_field_ref().as<uint32_t>();
     const auto roleId = ensureS3GatewayAdminRole(txn, role);
     txn.exec(
         "INSERT INTO admin_role_assignments (user_id, role_id) VALUES ($1, $2)",
@@ -991,7 +991,7 @@ protected:
             const auto seededVaultId = txn.exec(
                 "INSERT INTO vault (type, name, owner_id, mount_point, description) VALUES ($1, $2, $3, $4, $5) RETURNING id",
                 pqxx::params{"local", "S3 Gateway Test Vault", userId, "s3_gateway_test", ""}
-            ).one_field().as<uint32_t>();
+            ).one_field_ref().as<uint32_t>();
             txn.exec(
                 "WITH ins AS (INSERT INTO sync (vault_id, interval) VALUES ($1, 300) RETURNING id) "
                 "INSERT INTO fsync (sync_id, conflict_policy) SELECT id, 'keep_both' FROM ins",
@@ -1035,7 +1035,7 @@ protected:
             const auto seededVaultId = txn.exec(
                 "INSERT INTO vault (type, name, owner_id, mount_point, description) VALUES ($1, $2, $3, $4, $5) RETURNING id",
                 pqxx::params{"local", "S3 Gateway " + label, ownerId, mountPoint.substr(0, 33), ""}
-            ).one_field().as<uint32_t>();
+            ).one_field_ref().as<uint32_t>();
             txn.exec(
                 "WITH ins AS (INSERT INTO sync (vault_id, interval) VALUES ($1, 300) RETURNING id) "
                 "INSERT INTO fsync (sync_id, conflict_policy) SELECT id, 'keep_both' FROM ins",
@@ -1052,7 +1052,7 @@ protected:
                 "SELECT id FROM vault_role WHERE name = $1 LIMIT 1",
                 pqxx::params{roleName});
             if (res.empty()) throw std::runtime_error("vault role not found: " + roleName);
-            return res.one_field().as<uint32_t>();
+            return res.one_field_ref().as<uint32_t>();
         });
     }
 
@@ -1100,7 +1100,7 @@ protected:
         vh::db::Transactions::exec("S3GatewayDbTest::assignPrincipalVaultRole", [&](pqxx::work& txn) {
             const auto roleId = txn.exec(
                 "SELECT id FROM vault_role WHERE name = $1 LIMIT 1",
-                pqxx::params{roleName}).one_field().as<uint32_t>();
+                pqxx::params{roleName}).one_field_ref().as<uint32_t>();
             txn.exec(
                 "INSERT INTO vault_role_assignments (vault_id, subject_type, subject_id, role_id) "
                 "VALUES ($1, 'user', $2, $3) "
@@ -1871,7 +1871,7 @@ TEST_F(S3GatewayDbTest, NonAdminScopeMutationCannotNameUnownedVaultEvenWithNoAct
             const auto seededVaultId = txn.exec(
                 "INSERT INTO vault (type, name, owner_id, mount_point, description) VALUES ($1, $2, $3, $4, $5) RETURNING id",
                 pqxx::params{"local", "S3 Gateway Unowned Scope Vault", admin->id, mount, ""}
-            ).one_field().as<uint32_t>();
+            ).one_field_ref().as<uint32_t>();
             txn.exec(
                 "WITH ins AS (INSERT INTO sync (vault_id, interval) VALUES ($1, 300) RETURNING id) "
                 "INSERT INTO fsync (sync_id, conflict_policy) SELECT id, 'keep_both' FROM ins",
@@ -2587,7 +2587,7 @@ TEST_F(S3GatewayDbTest, CredentialScopeShorthandWritesFinalRbacTablesAndGatesAct
     vh::db::Transactions::exec("S3GatewayDbTest::assignPrincipalGatewayScopeVaultRole", [&](pqxx::work& txn) {
         const auto roleId = txn.exec(
             "SELECT id FROM vault_role WHERE name = 'manager' LIMIT 1"
-        ).one_field().as<uint32_t>();
+        ).one_field_ref().as<uint32_t>();
         txn.exec(
             "INSERT INTO vault_role_assignments (vault_id, subject_type, subject_id, role_id) "
             "VALUES ($1, 'user', $2, $3) "
@@ -2834,7 +2834,7 @@ TEST_F(S3GatewayDbTest, DeleteObjectStateAndRemoteIndexRemovesGatewayAndRemoteRo
         [](pqxx::work& txn) {
             return txn.exec(
                 "SELECT COUNT(*) FROM remote_object_index WHERE vault_id = $1 AND object_key = $2",
-                pqxx::params{S3GatewayDbTest::vaultId, "delete-me.txt"}).one_field().as<int>();
+                pqxx::params{S3GatewayDbTest::vaultId, "delete-me.txt"}).one_field_ref().as<int>();
         });
     EXPECT_EQ(remoteRows, 0);
 }

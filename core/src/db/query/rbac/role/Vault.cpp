@@ -25,7 +25,7 @@ namespace vh::db::query::rbac::role {
                     role->sync.toBitString(),
                     role->roles.toBitString()
                 }
-            ).one_row()["id"].as<unsigned int>();
+            ).one_row_ref()["id"].as<unsigned int>();
         });
     }
 
@@ -70,7 +70,7 @@ namespace vh::db::query::rbac::role {
         );
 
         if (res.empty()) throw std::runtime_error("role::Vault::upsert failed to return row");
-        role->id = res.one_row()["id"].as<unsigned int>();
+        role->id = res.one_row_ref()["id"].as<unsigned int>();
         return role->id;
     }
 
@@ -94,7 +94,7 @@ namespace vh::db::query::rbac::role {
 
             if (roleRes.empty()) return nullptr;
 
-            return std::make_shared<VaultRole>(roleRes.one_row());
+            return std::make_shared<VaultRole>(roleRes.one_row_ref());
         });
     }
 
@@ -107,7 +107,7 @@ namespace vh::db::query::rbac::role {
 
             if (roleRes.empty()) return nullptr;
 
-            return std::make_shared<VaultRole>(roleRes.one_row());
+            return std::make_shared<VaultRole>(roleRes.one_row_ref());
         });
     }
 
@@ -119,7 +119,7 @@ namespace vh::db::query::rbac::role {
             );
 
             if (res.empty()) return false;
-            return res.one_row()[0].as<bool>();
+            return res.one_row_ref()[0].as<bool>();
         });
     }
 
@@ -131,7 +131,7 @@ namespace vh::db::query::rbac::role {
             );
 
             if (res.empty()) return false;
-            return res.one_row()[0].as<bool>();
+            return res.one_row_ref()[0].as<bool>();
         });
     }
 

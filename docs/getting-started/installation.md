@@ -57,11 +57,15 @@ From a checked-out repository, the same helper is available as:
 If you prefer to add the repository yourself:
 
 ```bash
-sudo curl -fsSL https://apt.vaulthalla.sh/pubkey.gpg -o /etc/apt/trusted.gpg.d/vaulthalla.gpg
-echo "deb [arch=amd64] https://apt.vaulthalla.sh stable main" | sudo tee /etc/apt/sources.list.d/vaulthalla.list > /dev/null
+sudo curl -fsSL https://apt.vaulthalla.sh/pubkey.gpg -o /usr/share/keyrings/vaulthalla.gpg
+echo "deb [arch=amd64 signed-by=/usr/share/keyrings/vaulthalla.gpg] https://apt.vaulthalla.sh stable main" | sudo tee /etc/apt/sources.list.d/vaulthalla.list > /dev/null
 sudo apt update
 sudo apt install vaulthalla
 ```
+
+:::callout{theme="info" title="apt.vaulthalla.sh is required"}
+Vaulthalla depends on libraries that are built for it and published only in this repository (PDFium as `libpdfium<branch>`, for example `libpdfium8059`). Installing a downloaded `.deb` without the repository configured leaves those dependencies unresolved.
+:::
 
 ## Install Profiles
 
@@ -206,6 +210,19 @@ systemctl status vaulthalla-web.service
 ```
 
 If the CLI reports a socket or permission error, finish [First Run](/getting-started/first-run), especially the admin Linux UID and `vaulthalla` group steps.
+
+## Upgrade
+
+```bash
+sudo apt update
+sudo apt upgrade
+```
+
+Use `apt upgrade`, `apt full-upgrade`, or `sudo apt install vaulthalla`. A release can add a new library dependency (1.12 adds `libpdfium8059`), and plain `apt-get upgrade` never installs new packages: it reports Vaulthalla as "kept back" and leaves the old version running.
+
+The upgrade restarts the running Vaulthalla services. Libraries the previous release needed and nothing needs anymore (after 1.12: `libpdfium-2025`, `libpqxx-7.10`) stay installed until `sudo apt autoremove`. Keep them until you no longer want to roll back: they are no longer published, and an older release can't be reinstalled without them.
+
+The database server must be PostgreSQL 11 or newer; local installs on Ubuntu 24.04 use PostgreSQL 16.
 
 ## Remove Or Purge
 

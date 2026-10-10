@@ -4,15 +4,24 @@ set -euo pipefail
 
 echo "🔍 Checking for required build dependencies..."
 
-echo "🔗 Installing Vaulthalla public key..."
-sudo curl -fsSL https://apt.vaulthalla.sh/pubkey.gpg | sudo gpg --dearmor --y -o /etc/apt/trusted.gpg.d/vaulthalla.gpg
+# apt.vaulthalla.sh is the only source of Vaulthalla's own packages and build SDKs (libpdfium-dev,
+# libpqxx-vh-dev). Same keyring and source line as bin/vh/install.sh.
+readonly VH_KEYRING="/usr/share/keyrings/vaulthalla.gpg"
+readonly VH_SOURCE_FILE="/etc/apt/sources.list.d/vaulthalla.list"
+VH_ARCH="$(dpkg --print-architecture)"
+readonly VH_ARCH
+readonly VH_SOURCE_LINE="deb [arch=${VH_ARCH} signed-by=${VH_KEYRING}] https://apt.vaulthalla.sh stable main"
 
-# Check if Vaulthalla debian source list is available
-if ! grep -q "https://apt.vaulthalla.sh" /etc/apt/sources.list.d/vaulthalla.list; then
-    echo "🔗 Adding Vaulthalla repository..."
-    echo "deb [arch=amd64] https://apt.vaulthalla.sh stable main" | sudo tee /etc/apt/sources.list.d/vaulthalla.list > /dev/null
+echo "🔗 Installing Vaulthalla public key..."
+curl -fsSL https://apt.vaulthalla.sh/pubkey.gpg | sudo install -D -m 0644 /dev/stdin "$VH_KEYRING"
+
+if [ "$(cat "$VH_SOURCE_FILE" 2>/dev/null)" != "$VH_SOURCE_LINE" ]; then
+    echo "🔗 Configuring the Vaulthalla repository..."
+    echo "$VH_SOURCE_LINE" | sudo tee "$VH_SOURCE_FILE" > /dev/null
+    # The old setup trusted the key globally; the source line now names its keyring.
+    sudo rm -f /etc/apt/trusted.gpg.d/vaulthalla.gpg
 else
-    echo "✅ Vaulthalla repository already exists."
+    echo "✅ Vaulthalla repository already configured."
 fi
 
 # Wait for other apt/dpkg users (e.g. unattended-upgrades after a reboot) instead of failing after 120s.
@@ -39,9 +48,17 @@ else
     echo "✅ Meson and Ninja already installed."
 fi
 
-# -- Vaulthalla maintained packages --
-check_pkg libpdfium-dev "libpdfium-dev"
-check_pkg libpqxx-dev "libpqxx-dev"
+# -- Vaulthalla maintained packages (apt.vaulthalla.sh) --
+# libpdfium-dev moved from date versions (20250629) to Chromium ones (155.8059.x), which dpkg orders lower, so
+# apt never replaces the retired snapshot by itself: install the repository's version explicitly.
+pdfium_repo_version="$(apt-cache madison libpdfium-dev | awk -F'|' '/apt\.vaulthalla\.sh/ {gsub(/ /, "", $2); print $2; exit}')"
+if [[ "$(dpkg-query -W -f='${Version}' libpdfium-dev 2>/dev/null)" != "$pdfium_repo_version" ]]; then
+    echo "🔌 Installing libpdfium-dev ${pdfium_repo_version}..."
+    sudo apt-get "${APT_LOCK_OPTS[@]}" install -y --allow-downgrades "libpdfium-dev=${pdfium_repo_version}"
+else
+    echo "✅ libpdfium-dev ${pdfium_repo_version} already installed."
+fi
+check_pkg libpqxx-vh-dev "libpqxx-vh-dev (static libpqxx SDK)"
 
 # -- Libraries --
 check_pkg postgresql "postgresql"

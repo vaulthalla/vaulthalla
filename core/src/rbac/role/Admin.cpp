@@ -14,7 +14,7 @@ using namespace vh::db::encoding;
 using namespace vh::protocols::shell;
 
 namespace vh::rbac::role {
-    Admin::Admin(const pqxx::row &row, const pqxx::result &globalVaultRoles)
+    Admin::Admin(pqxx::row_ref row, const pqxx::result &globalVaultRoles)
         : Meta(row),
           identities(static_cast<typename decltype(identities)::Mask>(
               row["identity_permissions"].as<uint64_t>())),
@@ -34,7 +34,7 @@ namespace vh::rbac::role {
         if (const auto id = try_get<uint32_t>(row, "user_id")) user_id = *id;
     }
 
-    Admin::Admin(const pqxx::row &row)
+    Admin::Admin(pqxx::row_ref row)
         : Meta(row),
           identities(static_cast<typename decltype(identities)::Mask>(
               row["identity_permissions"].as<uint64_t>())),
@@ -193,13 +193,6 @@ namespace vh::rbac::role {
     }
 
     Admin Admin::fromJson(const nlohmann::json &j) { return Admin(j); }
-
-    std::vector<Admin> admin_roles_from_pq_res(const pqxx::result &res) {
-        std::vector<Admin> roles;
-        roles.reserve(res.size());
-        for (const auto &row: res) roles.emplace_back(row);
-        return roles;
-    }
 
     void to_json(nlohmann::json &j, const Admin &a) {
         j = static_cast<const Meta &>(a);

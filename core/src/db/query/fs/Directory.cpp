@@ -18,7 +18,7 @@ unsigned int Directory::upsertDirectory(const DirPtr& directory) {
     if (directory->created_at == 0) directory->created_at = std::time(nullptr);
     if (directory->updated_at == 0) directory->updated_at = directory->created_at;
     return Transactions::exec("Directory::addDirectory", [&](pqxx::work& txn) {
-        const auto exists = txn.exec(pqxx::prepped{"fs_entry_exists_by_inode"}, directory->inode).one_field().as<bool>();
+        const auto exists = txn.exec(pqxx::prepped{"fs_entry_exists_by_inode"}, directory->inode).one_field_ref().as<bool>();
         if (directory->inode && *directory->inode != 1) txn.exec(pqxx::prepped{"delete_fs_entry_by_inode"}, directory->inode);
 
         pqxx::params p;
@@ -39,7 +39,7 @@ unsigned int Directory::upsertDirectory(const DirPtr& directory) {
         p.append(directory->file_count);
         p.append(directory->subdirectory_count);
 
-        const auto id = txn.exec(pqxx::prepped{"upsert_directory"}, p).one_field().as<unsigned int>();
+        const auto id = txn.exec(pqxx::prepped{"upsert_directory"}, p).one_field_ref().as<unsigned int>();
 
         if (directory->parent_id) {
             std::optional<unsigned int> parentId = directory->parent_id;
@@ -48,7 +48,7 @@ unsigned int Directory::upsertDirectory(const DirPtr& directory) {
                 txn.exec(pqxx::prepped{"update_dir_stats"}, stats_params);
                 const auto res = txn.exec(pqxx::prepped{"get_fs_entry_parent_id"}, parentId);
                 if (res.empty()) break;
-                parentId = res.one_field().as<std::optional<unsigned int>>();
+                parentId = res.one_field_ref().as<std::optional<unsigned int>>();
             }
         }
 
@@ -59,7 +59,7 @@ unsigned int Directory::upsertDirectory(const DirPtr& directory) {
 bool Directory::isDirectoryEmpty(unsigned int id) {
     return Transactions::exec("Directory::isDirectoryEmpty", [&](pqxx::work& txn) -> bool {
         const auto res = txn.exec(pqxx::prepped{"is_dir_empty"}, id);
-        return res.one_field().as<bool>();
+        return res.one_field_ref().as<bool>();
     });
 }
 
@@ -84,7 +84,7 @@ void Directory::moveDirectory(const DirPtr& directory, const std::filesystem::pa
         // Update the directory's path and parent_id
         directory->path = newPath;
         pqxx::params search_params{userId, to_utf8_string(newPath.parent_path().u8string())};
-        directory->parent_id = txn.exec(pqxx::prepped{"get_fs_entry_id_by_path"}, search_params).one_field().as<unsigned int>();
+        directory->parent_id = txn.exec(pqxx::prepped{"get_fs_entry_id_by_path"}, search_params).one_field_ref().as<unsigned int>();
         directory->last_modified_by = userId;
 
         pqxx::params p;
@@ -128,7 +128,7 @@ std::optional<Directory::SubtreeTotals> Directory::subtreeTotalsOf(pqxx::work& t
     )SQL", pqxx::params{id});
     if (res.empty()) return std::nullopt;
 
-    const auto row = res.one_row();
+    const auto row = res.one_row_ref();
     const auto size = row["size_bytes"].as<int64_t>();
     if (row["is_dir"].as<bool>())
         return SubtreeTotals{.size_bytes = size, .files = row["file_count"].as<int64_t>(),
@@ -139,7 +139,7 @@ std::optional<Directory::SubtreeTotals> Directory::subtreeTotalsOf(pqxx::work& t
 std::optional<unsigned int> Directory::parentIdOf(pqxx::work& txn, const unsigned int id) {
     const auto res = txn.exec(pqxx::prepped{"get_fs_entry_parent_id"}, pqxx::params{id});
     if (res.empty()) return std::nullopt;
-    return res.one_field().as<std::optional<unsigned int>>();
+    return res.one_field_ref().as<std::optional<unsigned int>>();
 }
 
 namespace {
@@ -189,7 +189,7 @@ void Directory::deleteDirectoryTree(const unsigned int id) {
 
 bool Directory::deleteEmptyDirectory(const unsigned int id) {
     return Transactions::exec("Directory::deleteEmptyDirectory", [&](pqxx::work& txn) {
-        if (!txn.exec(pqxx::prepped{"is_dir_empty"}, pqxx::params{id}).one_field().as<bool>()) return false;
+        if (!txn.exec(pqxx::prepped{"is_dir_empty"}, pqxx::params{id}).one_field_ref().as<bool>()) return false;
         const auto totals = subtreeTotalsOf(txn, id);
         if (!totals) return true;  // already gone
         for (const auto ancestor : ancestorChain(txn, parentIdOf(txn, id))) addToDirStats(txn, ancestor, *totals, -1);
@@ -200,7 +200,8 @@ bool Directory::deleteEmptyDirectory(const unsigned int id) {
 
 Directory::DirPtr Directory::getDirectoryByPath(const unsigned int vaultId, const std::filesystem::path& relPath) {
     return Transactions::exec("Directory::getDirectoryByPath", [&](pqxx::work& txn) {
-        const auto row = txn.exec(pqxx::prepped{"get_dir_by_path"}, pqxx::params{vaultId, relPath.string()}).one_row();
+        const auto res = txn.exec(pqxx::prepped{"get_dir_by_path"}, pqxx::params{vaultId, relPath.string()});
+        const auto row = res.one_row_ref();
         const auto parentRows = txn.exec(pqxx::prepped{"collect_parent_chain"}, row["parent_id"].as<std::optional<unsigned int>>());
         return std::make_shared<Dir>(row, parentRows);
     });
@@ -211,21 +212,21 @@ std::optional<unsigned int> Directory::getDirectoryIdByPath(const unsigned int v
         pqxx::params p{vaultId, path.string()};
         const auto res = txn.exec(pqxx::prepped{"get_fs_entry_id_by_path"}, p);
         if (res.empty()) return std::nullopt;
-        return res.one_row()["id"].as<unsigned int>();
+        return res.one_row_ref()["id"].as<unsigned int>();
     });
 }
 
 unsigned int Directory::getRootDirectoryId(const unsigned int vaultId) {
     return Transactions::exec("Directory::getRootDirectoryId", [&](pqxx::work& txn) -> unsigned int {
         pqxx::params p{vaultId, "/"};
-        return txn.exec(pqxx::prepped{"get_fs_entry_id_by_path"}, p).one_row()["id"].as<unsigned int>();
+        return txn.exec(pqxx::prepped{"get_fs_entry_id_by_path"}, p).one_row_ref()["id"].as<unsigned int>();
     });
 }
 
 bool Directory::isDirectory(const unsigned int vaultId, const std::filesystem::path& relPath) {
     return Transactions::exec("Directory::isDirectory", [&](pqxx::work& txn) -> bool {
         pqxx::params p{vaultId, relPath.string()};
-        return txn.exec(pqxx::prepped{"is_directory"}, p).one_row()["exists"].as<bool>();
+        return txn.exec(pqxx::prepped{"is_directory"}, p).one_row_ref()["exists"].as<bool>();
     });
 }
 

@@ -10,7 +10,7 @@
 #include <nlohmann/json_fwd.hpp>
 #include "identities/Fwd.hpp"
 #include "rbac/Fwd.hpp"
-#include <pqxx/types>
+#include "db/Fwd.hpp"
 
 namespace vh::identities {
 
@@ -21,7 +21,7 @@ struct GroupMember {
     std::time_t joined_at{};
 
     GroupMember() = default;
-    explicit GroupMember(const pqxx::row& row);
+    explicit GroupMember(pqxx::row_ref row);
 };
 
 struct Group {
@@ -40,7 +40,7 @@ struct Group {
     RoleAssignments roles{};
 
     Group() = default;
-    Group(const pqxx::row& gr, const pqxx::result& members, std::unordered_map<uint32_t, std::shared_ptr<rbac::role::Vault>>&& vRoles);
+    Group(pqxx::row_ref gr, const pqxx::result& members, std::unordered_map<uint32_t, std::shared_ptr<rbac::role::Vault>>&& vRoles);
     explicit Group(const nlohmann::json& j);
 };
 

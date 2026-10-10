@@ -168,7 +168,7 @@ protected:
 
     static unsigned int vaultRows(const unsigned int id) {
         return db::Transactions::exec("VaultRetentionTest::rows", [&](pqxx::work& txn) {
-            return txn.exec("SELECT COUNT(*) FROM vault WHERE id = $1", pqxx::params{id}).one_field().as<unsigned int>();
+            return txn.exec("SELECT COUNT(*) FROM vault WHERE id = $1", pqxx::params{id}).one_field_ref().as<unsigned int>();
         });
     }
 
@@ -246,7 +246,7 @@ TEST_F(VaultRetentionTest, ARoleAssignedOnlyOnADeletedVaultCanBeDeleted) {
     const auto assignments = [&] {
         return db::Transactions::exec("VaultRetentionTest::assignments", [&](pqxx::work& txn) {
             return txn.exec("SELECT COUNT(*) FROM vault_role_assignments WHERE role_id = $1", pqxx::params{role->id})
-                .one_field().as<unsigned int>();
+                .one_field_ref().as<unsigned int>();
         });
     };
     db::Transactions::exec("VaultRetentionTest::assign", [&](pqxx::work& txn) {

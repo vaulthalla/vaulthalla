@@ -22,18 +22,18 @@ std::uint64_t unixTimestamp() {
     return static_cast<std::uint64_t>(std::chrono::system_clock::to_time_t(now));
 }
 
-std::optional<std::uint64_t> optionalTimestamp(const pqxx::row& row, const char* column) {
+std::optional<std::uint64_t> optionalTimestamp(pqxx::row_ref row, const char* column) {
     const auto field = row[column];
     if (field.is_null()) return std::nullopt;
     return static_cast<std::uint64_t>(parsePostgresTimestamp(field.as<std::string>()));
 }
 
-std::uint64_t timestamp(const pqxx::row& row, const char* column) {
+std::uint64_t timestamp(pqxx::row_ref row, const char* column) {
     const auto value = optionalTimestamp(row, column);
     return value.value_or(0);
 }
 
-std::optional<std::uint32_t> optionalUInt32(const pqxx::row& row, const char* column) {
+std::optional<std::uint32_t> optionalUInt32(pqxx::row_ref row, const char* column) {
     const auto field = row[column];
     if (field.is_null()) return std::nullopt;
     const auto value = field.as<long long>();
@@ -41,14 +41,14 @@ std::optional<std::uint32_t> optionalUInt32(const pqxx::row& row, const char* co
     return static_cast<std::uint32_t>(value);
 }
 
-std::uint64_t asUInt64(const pqxx::row& row, const char* column) {
+std::uint64_t asUInt64(pqxx::row_ref row, const char* column) {
     const auto field = row[column];
     if (field.is_null()) return 0;
     const auto value = field.as<long long>();
     return value > 0 ? static_cast<std::uint64_t>(value) : 0;
 }
 
-std::optional<std::string> optionalString(const pqxx::row& row, const char* column) {
+std::optional<std::string> optionalString(pqxx::row_ref row, const char* column) {
     const auto field = row[column];
     if (field.is_null()) return std::nullopt;
     const auto value = field.as<std::string>();
@@ -57,7 +57,7 @@ std::optional<std::string> optionalString(const pqxx::row& row, const char* colu
 
 void applySummary(VaultActivity& activity, const pqxx::result& res) {
     if (res.empty()) return;
-    const auto row = res.one_row();
+    const auto row = res.one_row_ref();
 
     activity.lastActivityAt = optionalTimestamp(row, "last_activity_at");
     activity.lastActivityAction = optionalString(row, "last_activity_action");

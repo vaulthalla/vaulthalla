@@ -13,7 +13,7 @@ using vh::db::encoding::to_utf8_string;
 
 bool Entry::rootExists() {
     return Transactions::exec("Entry::rootExists", [&](pqxx::work& txn) {
-        return txn.exec(pqxx::prepped{"root_entry_exists"}).one_field().as<bool>();
+        return txn.exec(pqxx::prepped{"root_entry_exists"}).one_field_ref().as<bool>();
     });
 }
 
@@ -24,7 +24,7 @@ Entry::EntryPtr Entry::getRootEntry() {
             log::Registry::db()->warn("[Entry::getRootEntry] No root entry found in the database");
             return nullptr;
         }
-        return std::make_shared<vh::fs::model::Directory>(res.one_row(), pqxx::result{});
+        return std::make_shared<vh::fs::model::Directory>(res.one_row_ref(), pqxx::result{});
     });
 }
 
@@ -52,20 +52,20 @@ Entry::EntryPtr Entry::getFSEntry(const std::string& base32) {
     return Transactions::exec("Entry::getFSEntry", [&](pqxx::work& txn) -> Entry::EntryPtr {
         const auto fileRes = txn.exec(pqxx::prepped{"get_file_by_base32_alias"}, base32);
         if (!fileRes.empty()) {
-            const auto parentRows = txn.exec(pqxx::prepped{"collect_parent_chain"}, fileRes.one_row()["parent_id"].as<std::optional<unsigned int>>());
-            return std::make_shared<vh::fs::model::File>(fileRes.one_row(), parentRows);
+            const auto parentRows = txn.exec(pqxx::prepped{"collect_parent_chain"}, fileRes.one_row_ref()["parent_id"].as<std::optional<unsigned int>>());
+            return std::make_shared<vh::fs::model::File>(fileRes.one_row_ref(), parentRows);
         }
 
         const auto symlinkRes = txn.exec(pqxx::prepped{"get_symlink_by_base32_alias"}, base32);
         if (!symlinkRes.empty()) {
-            const auto parentRows = txn.exec(pqxx::prepped{"collect_parent_chain"}, symlinkRes.one_row()["parent_id"].as<std::optional<unsigned int>>());
-            return std::make_shared<vh::fs::model::Symlink>(symlinkRes.one_row(), parentRows);
+            const auto parentRows = txn.exec(pqxx::prepped{"collect_parent_chain"}, symlinkRes.one_row_ref()["parent_id"].as<std::optional<unsigned int>>());
+            return std::make_shared<vh::fs::model::Symlink>(symlinkRes.one_row_ref(), parentRows);
         }
 
         const auto dirRes = txn.exec(pqxx::prepped{"get_dir_by_base32_alias"}, base32);
         if (!dirRes.empty()) {
-            const auto parentRows = txn.exec(pqxx::prepped{"collect_parent_chain"}, dirRes.one_row()["parent_id"].as<std::optional<unsigned int>>());
-            return std::make_shared<vh::fs::model::Directory>(dirRes.one_row(), parentRows);
+            const auto parentRows = txn.exec(pqxx::prepped{"collect_parent_chain"}, dirRes.one_row_ref()["parent_id"].as<std::optional<unsigned int>>());
+            return std::make_shared<vh::fs::model::Directory>(dirRes.one_row_ref(), parentRows);
         }
 
         return nullptr;
@@ -76,20 +76,20 @@ Entry::EntryPtr Entry::getFSEntryByInode(const ino_t ino) {
     return Transactions::exec("Entry::getFSEntryByInode", [&](pqxx::work& txn) -> Entry::EntryPtr {
         const auto fileRes = txn.exec(pqxx::prepped{"get_file_by_inode"}, ino);
         if (!fileRes.empty()) {
-            const auto parentRows = txn.exec(pqxx::prepped{"collect_parent_chain"}, fileRes.one_row()["parent_id"].as<std::optional<unsigned int>>());
-            return std::make_shared<vh::fs::model::File>(fileRes.one_row(), parentRows);
+            const auto parentRows = txn.exec(pqxx::prepped{"collect_parent_chain"}, fileRes.one_row_ref()["parent_id"].as<std::optional<unsigned int>>());
+            return std::make_shared<vh::fs::model::File>(fileRes.one_row_ref(), parentRows);
         }
 
         const auto symlinkRes = txn.exec(pqxx::prepped{"get_symlink_by_inode"}, ino);
         if (!symlinkRes.empty()) {
-            const auto parentRows = txn.exec(pqxx::prepped{"collect_parent_chain"}, symlinkRes.one_row()["parent_id"].as<std::optional<unsigned int>>());
-            return std::make_shared<vh::fs::model::Symlink>(symlinkRes.one_row(), parentRows);
+            const auto parentRows = txn.exec(pqxx::prepped{"collect_parent_chain"}, symlinkRes.one_row_ref()["parent_id"].as<std::optional<unsigned int>>());
+            return std::make_shared<vh::fs::model::Symlink>(symlinkRes.one_row_ref(), parentRows);
         }
 
         const auto dirRes = txn.exec(pqxx::prepped{"get_dir_by_inode"}, ino);
         if (!dirRes.empty()) {
-            const auto parentRows = txn.exec(pqxx::prepped{"collect_parent_chain"}, dirRes.one_row()["parent_id"].as<std::optional<unsigned int>>());
-            return std::make_shared<vh::fs::model::Directory>(dirRes.one_row(), parentRows);
+            const auto parentRows = txn.exec(pqxx::prepped{"collect_parent_chain"}, dirRes.one_row_ref()["parent_id"].as<std::optional<unsigned int>>());
+            return std::make_shared<vh::fs::model::Directory>(dirRes.one_row_ref(), parentRows);
         }
 
         return nullptr;
@@ -102,20 +102,20 @@ Entry::EntryPtr Entry::getFSEntryByPath(const unsigned int vaultId, const std::f
 
         const auto fileRes = txn.exec(pqxx::prepped{"get_file_by_path"}, params);
         if (!fileRes.empty()) {
-            const auto parentRows = txn.exec(pqxx::prepped{"collect_parent_chain"}, fileRes.one_row()["parent_id"].as<std::optional<unsigned int>>());
-            return std::make_shared<vh::fs::model::File>(fileRes.one_row(), parentRows);
+            const auto parentRows = txn.exec(pqxx::prepped{"collect_parent_chain"}, fileRes.one_row_ref()["parent_id"].as<std::optional<unsigned int>>());
+            return std::make_shared<vh::fs::model::File>(fileRes.one_row_ref(), parentRows);
         }
 
         const auto symlinkRes = txn.exec(pqxx::prepped{"get_symlink_by_path"}, params);
         if (!symlinkRes.empty()) {
-            const auto parentRows = txn.exec(pqxx::prepped{"collect_parent_chain"}, symlinkRes.one_row()["parent_id"].as<std::optional<unsigned int>>());
-            return std::make_shared<vh::fs::model::Symlink>(symlinkRes.one_row(), parentRows);
+            const auto parentRows = txn.exec(pqxx::prepped{"collect_parent_chain"}, symlinkRes.one_row_ref()["parent_id"].as<std::optional<unsigned int>>());
+            return std::make_shared<vh::fs::model::Symlink>(symlinkRes.one_row_ref(), parentRows);
         }
 
         const auto dirRes = txn.exec(pqxx::prepped{"get_dir_by_path"}, params);
         if (!dirRes.empty()) {
-            const auto parentRows = txn.exec(pqxx::prepped{"collect_parent_chain"}, dirRes.one_row()["parent_id"].as<std::optional<unsigned int>>());
-            return std::make_shared<vh::fs::model::Directory>(dirRes.one_row(), parentRows);
+            const auto parentRows = txn.exec(pqxx::prepped{"collect_parent_chain"}, dirRes.one_row_ref()["parent_id"].as<std::optional<unsigned int>>());
+            return std::make_shared<vh::fs::model::Directory>(dirRes.one_row_ref(), parentRows);
         }
 
         return nullptr;
@@ -130,20 +130,20 @@ Entry::EntryPtr Entry::getFSEntryById(unsigned int entryId) {
 
         const auto fileRes = txn.exec(pqxx::prepped{"get_file_by_id"}, entryId);
         if (!fileRes.empty()) {
-            const auto parentRows = txn.exec(pqxx::prepped{"collect_parent_chain"}, fileRes.one_row()["parent_id"].as<std::optional<unsigned int>>());
-            return std::make_shared<vh::fs::model::File>(fileRes.one_row(), parentRows);
+            const auto parentRows = txn.exec(pqxx::prepped{"collect_parent_chain"}, fileRes.one_row_ref()["parent_id"].as<std::optional<unsigned int>>());
+            return std::make_shared<vh::fs::model::File>(fileRes.one_row_ref(), parentRows);
         }
 
         const auto symlinkRes = txn.exec(pqxx::prepped{"get_symlink_by_id"}, entryId);
         if (!symlinkRes.empty()) {
-            const auto parentRows = txn.exec(pqxx::prepped{"collect_parent_chain"}, symlinkRes.one_row()["parent_id"].as<std::optional<unsigned int>>());
-            return std::make_shared<vh::fs::model::Symlink>(symlinkRes.one_row(), parentRows);
+            const auto parentRows = txn.exec(pqxx::prepped{"collect_parent_chain"}, symlinkRes.one_row_ref()["parent_id"].as<std::optional<unsigned int>>());
+            return std::make_shared<vh::fs::model::Symlink>(symlinkRes.one_row_ref(), parentRows);
         }
 
         const auto dirRes = txn.exec(pqxx::prepped{"get_dir_by_id"}, entryId);
         if (!dirRes.empty()) {
-            const auto parentRows = txn.exec(pqxx::prepped{"collect_parent_chain"}, dirRes.one_row()["parent_id"].as<std::optional<unsigned int>>());
-            return std::make_shared<vh::fs::model::Directory>(dirRes.one_row(), parentRows);
+            const auto parentRows = txn.exec(pqxx::prepped{"collect_parent_chain"}, dirRes.one_row_ref()["parent_id"].as<std::optional<unsigned int>>());
+            return std::make_shared<vh::fs::model::Directory>(dirRes.one_row_ref(), parentRows);
         }
 
         return nullptr;
@@ -227,7 +227,7 @@ ino_t Entry::getNextInode() {
     return Transactions::exec("Entry::getNextInode", [&](pqxx::work& txn) {
         const auto res = txn.exec(pqxx::prepped{"get_next_inode"});
         if (res.empty()) throw std::runtime_error("No inode available");
-        return res.one_field().as<ino_t>();
+        return res.one_field_ref().as<ino_t>();
     });
 }
 

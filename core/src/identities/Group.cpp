@@ -13,11 +13,11 @@ using namespace vh::db::encoding;
 
 namespace vh::identities {
 
-GroupMember::GroupMember(const pqxx::row& row)
+GroupMember::GroupMember(pqxx::row_ref row)
     : user(std::make_shared<User>(row)),
       joined_at(parsePostgresTimestamp(row["joined_at"].as<std::string>())) {}
 
-Group::Group(const pqxx::row& gr, const pqxx::result& members, std::unordered_map<uint32_t, std::shared_ptr<rbac::role::Vault>>&& vRoles)
+Group::Group(pqxx::row_ref gr, const pqxx::result& members, std::unordered_map<uint32_t, std::shared_ptr<rbac::role::Vault>>&& vRoles)
     : id(gr["id"].as<unsigned int>()),
       linux_gid(gr["linux_gid"].as<std::optional<unsigned int>>()),
       name(gr["name"].as<std::string>()),

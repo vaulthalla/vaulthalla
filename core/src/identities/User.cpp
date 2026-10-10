@@ -23,7 +23,7 @@ using namespace vh::rbac::role;
 
 namespace {
     template<typename T>
-    std::optional<T> try_as_optional(const pqxx::row &row, const char *column) {
+    std::optional<T> try_as_optional(pqxx::row_ref row, const char *column) {
         try {
             const auto field = row[column];
             if (field.is_null()) return std::nullopt;
@@ -33,7 +33,7 @@ namespace {
         }
     }
 
-    std::optional<std::string> try_as_optional_string(const pqxx::row &row, const char *column) {
+    std::optional<std::string> try_as_optional_string(pqxx::row_ref row, const char *column) {
         try {
             const auto field = row[column];
             if (field.is_null()) return std::nullopt;
@@ -43,7 +43,7 @@ namespace {
         }
     }
 
-    std::optional<std::time_t> try_as_optional_timestamp(const pqxx::row &row, const char *column) {
+    std::optional<std::time_t> try_as_optional_timestamp(pqxx::row_ref row, const char *column) {
         try {
             const auto field = row[column];
             if (field.is_null()) return std::nullopt;
@@ -53,7 +53,7 @@ namespace {
         }
     }
 
-    std::time_t try_as_timestamp_or_now(const pqxx::row &row, const char *column) {
+    std::time_t try_as_timestamp_or_now(pqxx::row_ref row, const char *column) {
         try {
             const auto field = row[column];
             if (field.is_null()) return std::time(nullptr);
@@ -80,7 +80,7 @@ namespace vh::identities {
         if (!email.empty()) this->email = std::move(email);
     }
 
-    User::User(const pqxx::row &row)
+    User::User(pqxx::row_ref row)
         : id(try_as_optional<uint32_t>(row, "id").value_or(0)),
           name(try_as_optional_string(row, "name").value_or("")),
           password_hash(try_as_optional_string(row, "password_hash").value_or("")) {
@@ -106,8 +106,8 @@ namespace vh::identities {
     }
 
     User::User(
-        const pqxx::row &user,
-        const pqxx::row &adminRole,
+        pqxx::row_ref user,
+        pqxx::row_ref adminRole,
         const pqxx::result &globalVaultRoles,
         std::unordered_map<uint32_t, std::shared_ptr<rbac::role::Vault> > &&vRoles,
         std::vector<std::shared_ptr<Group> > &&groups

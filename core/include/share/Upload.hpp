@@ -7,7 +7,7 @@
 #include <string>
 
 #include <nlohmann/json_fwd.hpp>
-#include <pqxx/types>
+#include "db/Fwd.hpp"
 
 namespace vh::share {
 
@@ -31,7 +31,7 @@ struct Upload {
     std::optional<std::time_t> completed_at;
 
     Upload() = default;
-    explicit Upload(const pqxx::row& row);
+    explicit Upload(pqxx::row_ref row);
 
     [[nodiscard]] bool isTerminal() const;
     [[nodiscard]] bool exceedsExpectedSize(uint64_t next_bytes) const;

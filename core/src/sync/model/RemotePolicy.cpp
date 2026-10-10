@@ -20,13 +20,13 @@ using namespace vh::concurrency;
 using namespace vh::db::encoding;
 
 namespace {
-    std::optional<uint64_t> optional_uint64(const pqxx::row& row, const char* name) {
+    std::optional<uint64_t> optional_uint64(pqxx::row_ref row, const char* name) {
         const auto field = row[name];
         if (field.is_null()) return std::nullopt;
         return field.as<uint64_t>();
     }
 
-    std::optional<std::chrono::seconds> optional_seconds(const pqxx::row& row, const char* name) {
+    std::optional<std::chrono::seconds> optional_seconds(pqxx::row_ref row, const char* name) {
         const auto raw = optional_uint64(row, name);
         if (!raw) return std::nullopt;
         return std::chrono::seconds(*raw);
@@ -173,7 +173,7 @@ RemotePolicy::RemotePolicy() {
     s3_request_budget = s3RequestBudgetForPreset(S3BudgetPreset::Balanced);
 }
 
-RemotePolicy::RemotePolicy(const pqxx::row& row)
+RemotePolicy::RemotePolicy(pqxx::row_ref row)
     : Policy(row),
       strategy(strategyFromString(row.at("strategy").as<std::string>())),
       conflict_policy(rsConflictPolicyFromString(row.at("conflict_policy").as<std::string>())) {

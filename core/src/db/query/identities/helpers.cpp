@@ -10,7 +10,7 @@
 
 namespace vh::db::query::identities {
 
-    std::shared_ptr<vh::identities::User> hydrateUser(pqxx::work &txn, const pqxx::row &userRow) {
+    std::shared_ptr<vh::identities::User> hydrateUser(pqxx::work &txn, pqxx::row_ref userRow) {
         const auto userId = userRow["id"].as<unsigned int>();
 
         // Singular admin-role assignment joined to full admin_role
@@ -22,7 +22,7 @@ namespace vh::db::query::identities {
         if (adminRoleRes.empty())
             throw std::runtime_error("User " + std::to_string(userId) + " is missing an admin role assignment");
 
-        const auto adminRoleRow = adminRoleRes.one_row();
+        const auto adminRoleRow = adminRoleRes.one_row_ref();
 
         // Three global vault policy rows: self / user / admin
         const auto globalPoliciesRes = txn.exec(
@@ -45,7 +45,7 @@ namespace vh::db::query::identities {
         upsertVaultRoles(txn, user->roles.vaults, "user", user->id);
     }
 
-    std::shared_ptr<vh::identities::Group> hydrateGroup(pqxx::work &txn, const pqxx::row &groupRow) {
+    std::shared_ptr<vh::identities::Group> hydrateGroup(pqxx::work &txn, pqxx::row_ref groupRow) {
         const auto groupId = groupRow["id"].as<uint32_t>();
         const auto members = txn.exec(pqxx::prepped{"list_group_members"}, groupId);
         return std::make_shared<vh::identities::Group>(groupRow, members, getVaultRoles(txn, "group", groupId));
@@ -72,7 +72,7 @@ namespace vh::db::query::identities {
             );
 
             if (res.empty()) continue;
-            role->assignment_id = res.one_row()["id"].as<unsigned int>();
+            role->assignment_id = res.one_row_ref()["id"].as<unsigned int>();
 
             for (auto &override: role->fs.overrides) {
                 override.assignment_id = role->assignment_id;

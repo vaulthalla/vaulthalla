@@ -4,7 +4,7 @@
 #include <vector>
 #include <ctime>
 #include <cstdint>
-#include <pqxx/types>
+#include "db/Fwd.hpp"
 
 namespace vh::crypto::model {
 
@@ -14,7 +14,7 @@ struct Secret {
     std::time_t created_at{std::time(nullptr)}, updated_at{std::time(nullptr)};
 
     Secret() = default;
-    explicit Secret(const pqxx::row& row);
+    explicit Secret(pqxx::row_ref row);
 };
 
 }

@@ -9,7 +9,7 @@ using namespace vh::auth::model;
 using namespace vh::db::encoding;
 using namespace std::chrono;
 
-Token::Token(const pqxx::row& row)
+Token::Token(pqxx::row_ref row)
     : jti(row["jti"].as<std::string>()),
       userId(row["user_id"].as<unsigned short>()),
       issuedAt(system_clock::from_time_t(parsePostgresTimestamp(row["issued_at"].as<std::string>()))),

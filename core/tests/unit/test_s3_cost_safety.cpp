@@ -467,7 +467,7 @@ uint32_t ensureS3CostAdminRole(pqxx::work& txn, const vh::rbac::role::Admin& rol
             role.vaults.toBitString(),
             role.keys.toBitString(),
             role.s3Gateway.toBitString()
-        }).one_field().as<uint32_t>();
+        }).one_field_ref().as<uint32_t>();
 }
 
 uint32_t ensureS3CostUnprivilegedAdminRole(pqxx::work& txn) {
@@ -502,7 +502,7 @@ uint32_t insertS3CostHydratableTestUser(pqxx::work& txn, const std::string& name
     const auto userId = txn.exec(
         "INSERT INTO users (name, email, password_hash) VALUES ($1, $2, $3) RETURNING id",
         pqxx::params{name, email, "hash"}
-    ).one_field().as<uint32_t>();
+    ).one_field_ref().as<uint32_t>();
     const auto roleId = ensureS3CostUnprivilegedAdminRole(txn);
     txn.exec(
         "INSERT INTO admin_role_assignments (user_id, role_id) VALUES ($1, $2)",
@@ -527,7 +527,7 @@ uint32_t seedS3CostSuperAdminUserForDbTest(const std::string& suffix, const std:
                 "s3_cost_safety_admin_" + label + "_" + suffix,
                 "s3-cost-safety-admin-" + label + "-" + suffix + "@vaulthalla.test",
                 "hash"
-            }).one_field().as<uint32_t>();
+            }).one_field_ref().as<uint32_t>();
         const auto roleId = ensureS3CostSuperAdminRole(txn);
         txn.exec(
             "INSERT INTO admin_role_assignments (user_id, role_id) VALUES ($1, $2)",
@@ -544,7 +544,7 @@ uint32_t seedS3CostVaultAdminUserForDbTest(const std::string& suffix, const std:
                 "s3_cost_safety_vault_admin_" + label + "_" + suffix,
                 "s3-cost-safety-vault-admin-" + label + "-" + suffix + "@vaulthalla.test",
                 "hash"
-            }).one_field().as<uint32_t>();
+            }).one_field_ref().as<uint32_t>();
         const auto roleId = ensureS3CostVaultAdminRole(txn);
         txn.exec(
             "INSERT INTO admin_role_assignments (user_id, role_id) VALUES ($1, $2)",
@@ -714,7 +714,7 @@ uint32_t seedS3VaultForDbTest(const std::string& suffix) {
                 userId,
                 "0123456789ABCDEFGHJKMNPQRSTVWXYZ",
                 ""
-            }).one_field().as<uint32_t>();
+            }).one_field_ref().as<uint32_t>();
     });
 }
 
@@ -745,7 +745,7 @@ std::uint32_t ownerForVaultDbTest(const std::uint32_t vaultId) {
     return vh::db::Transactions::exec("S3CostSafetyTest::ownerForVault", [&](pqxx::work& txn) {
         return txn.exec(
             "SELECT owner_id FROM vault WHERE id = $1",
-            pqxx::params{vaultId}).one_field().as<std::uint32_t>();
+            pqxx::params{vaultId}).one_field_ref().as<std::uint32_t>();
     });
 }
 
@@ -753,7 +753,7 @@ void attachS3ProviderForDbTest(const std::uint32_t vaultId, const std::string& p
     vh::db::Transactions::exec("S3CostSafetyTest::attachS3Provider", [&](pqxx::work& txn) {
         const auto ownerId = txn.exec(
             "SELECT owner_id FROM vault WHERE id = $1",
-            pqxx::params{vaultId}).one_field().as<std::uint32_t>();
+            pqxx::params{vaultId}).one_field_ref().as<std::uint32_t>();
         const auto apiKeyId = txn.exec(
             "INSERT INTO api_keys "
             "(user_id, name, provider, access_key, encrypted_secret_access_key, iv, region, endpoint) "
@@ -765,7 +765,7 @@ void attachS3ProviderForDbTest(const std::uint32_t vaultId, const std::string& p
                 "access-" + std::to_string(vaultId),
                 "us-east-1",
                 "https://s3.example.com"
-            }).one_field().as<std::uint32_t>();
+            }).one_field_ref().as<std::uint32_t>();
         txn.exec(
             "INSERT INTO s3 (vault_id, api_key_id, bucket) VALUES ($1, $2, $3) "
             "ON CONFLICT (vault_id) DO UPDATE SET api_key_id = EXCLUDED.api_key_id, bucket = EXCLUDED.bucket",
@@ -811,7 +811,7 @@ uint32_t s3CostVaultRoleIdByName(const std::string& roleName) {
         const auto res = txn.exec(
             "SELECT id FROM vault_role WHERE name = $1 LIMIT 1",
             pqxx::params{roleName});
-        if (!res.empty()) return res.one_field().as<uint32_t>();
+        if (!res.empty()) return res.one_field_ref().as<uint32_t>();
 
         const auto role = [&]() {
             if (roleName == "implicit_deny") return vh::rbac::role::Vault::ImplicitDeny();
@@ -846,7 +846,7 @@ uint32_t s3CostVaultRoleIdByName(const std::string& roleName) {
                 role.fs.directories.toBitString(),
                 role.sync.toBitString(),
                 role.roles.toBitString()
-            }).one_field().as<uint32_t>();
+            }).one_field_ref().as<uint32_t>();
     });
 }
 
@@ -904,7 +904,7 @@ std::uint32_t countPriceBudgetLedgerForRunDbTest(const std::string& runUuid) {
     return vh::db::Transactions::exec("S3CostSafetyTest::countPriceBudgetLedgerForRun", [&](pqxx::work& txn) {
         return txn.exec(
             "SELECT COUNT(*) AS c FROM s3_price_budget_ledger WHERE run_uuid = $1",
-            pqxx::params{runUuid}).one_row()["c"].as<std::uint32_t>();
+            pqxx::params{runUuid}).one_row_ref()["c"].as<std::uint32_t>();
     });
 }
 
@@ -916,7 +916,7 @@ std::uint32_t countGatewaySyncOriginForDbTest(
         return txn.exec(
             "SELECT COUNT(*) AS c FROM s3_gateway_sync_origin "
             "WHERE vault_id = $1 AND object_key = $2 AND operation = $3",
-            pqxx::params{vaultId, objectKey, operation}).one_row()["c"].as<std::uint32_t>();
+            pqxx::params{vaultId, objectKey, operation}).one_row_ref()["c"].as<std::uint32_t>();
     });
 }
 
@@ -993,7 +993,7 @@ uint32_t seedLocalGatewayRouteVaultForDbTest(const std::string& suffix) {
                 owner->id,
                 mountPoint,
                 "local gateway route budget test"
-            }).one_field().as<uint32_t>();
+            }).one_field_ref().as<uint32_t>();
         txn.exec(
             "WITH ins AS (INSERT INTO sync (vault_id, interval) VALUES ($1, 300) RETURNING id) "
             "INSERT INTO fsync (sync_id, conflict_policy) SELECT id, 'keep_both' FROM ins",
@@ -1066,7 +1066,7 @@ uint32_t seedLegacyRsyncPolicyForDbTest(
     vh::db::Transactions::exec("S3CostSafetyTest::seedLegacyRsyncPolicy", [&](pqxx::work& txn) {
         const auto syncId = txn.exec(
             "INSERT INTO sync (vault_id) VALUES ($1) RETURNING id",
-            pqxx::params{vaultId}).one_field().as<uint32_t>();
+            pqxx::params{vaultId}).one_field_ref().as<uint32_t>();
 
         if (customGetBudget) {
             txn.exec(
@@ -1093,7 +1093,7 @@ std::shared_ptr<vh::sync::model::RemotePolicy> loadRemotePolicyForDbTest(const u
             "FROM rsync rs JOIN sync s ON s.id = rs.sync_id "
             "WHERE s.vault_id = $1",
             pqxx::params{vaultId});
-        return std::make_shared<vh::sync::model::RemotePolicy>(res.one_row());
+        return std::make_shared<vh::sync::model::RemotePolicy>(res.one_row_ref());
     });
 }
 
@@ -1760,7 +1760,7 @@ TEST(S3CostSafetyTest, DbFileBackingPathOmitsGlobalRootAlias) {
                 userId,
                 mountAlias,
                 ""
-            }).one_field().as<uint32_t>();
+            }).one_field_ref().as<uint32_t>();
         txn.exec(
             "WITH ins AS (INSERT INTO sync (vault_id, interval) VALUES ($1, 300) RETURNING id) "
             "INSERT INTO fsync (sync_id, conflict_policy) SELECT id, 'keep_both' FROM ins",
@@ -1768,13 +1768,13 @@ TEST(S3CostSafetyTest, DbFileBackingPathOmitsGlobalRootAlias) {
 
         const auto rootId = txn.exec(
             "SELECT id FROM fs_entry WHERE parent_id IS NULL AND vault_id IS NULL AND path = '/' AND name = '/'"
-        ).one_field().as<uint32_t>();
+        ).one_field_ref().as<uint32_t>();
 
         const auto vaultEntryId = txn.exec(
             "INSERT INTO fs_entry (vault_id, parent_id, name, base32_alias, created_by, last_modified_by, path, mode) "
             "VALUES ($1, $2, $3, $4, $5, $5, '/', 0755) RETURNING id",
             pqxx::params{seededVaultId, rootId, "entry_backing_" + suffix, mountAlias, userId}
-        ).one_field().as<uint32_t>();
+        ).one_field_ref().as<uint32_t>();
         txn.exec(
             "INSERT INTO directories (fs_entry_id, size_bytes, file_count, subdirectory_count) VALUES ($1, 4, 1, 1)",
             pqxx::params{vaultEntryId});
@@ -1783,7 +1783,7 @@ TEST(S3CostSafetyTest, DbFileBackingPathOmitsGlobalRootAlias) {
             "INSERT INTO fs_entry (vault_id, parent_id, name, base32_alias, created_by, last_modified_by, path, mode) "
             "VALUES ($1, $2, $3, $4, $5, $5, $6, 0755) RETURNING id",
             pqxx::params{seededVaultId, vaultEntryId, dirName, dirAlias, userId, "/" + dirName}
-        ).one_field().as<uint32_t>();
+        ).one_field_ref().as<uint32_t>();
         txn.exec(
             "INSERT INTO directories (fs_entry_id, size_bytes, file_count, subdirectory_count) VALUES ($1, 4, 1, 0)",
             pqxx::params{dirId});
@@ -1792,7 +1792,7 @@ TEST(S3CostSafetyTest, DbFileBackingPathOmitsGlobalRootAlias) {
             "INSERT INTO fs_entry (vault_id, parent_id, name, base32_alias, created_by, last_modified_by, path, mode) "
             "VALUES ($1, $2, $3, $4, $5, $5, $6, 0644) RETURNING id",
             pqxx::params{seededVaultId, dirId, fileName, fileAlias, userId, filePath.string()}
-        ).one_field().as<uint32_t>();
+        ).one_field_ref().as<uint32_t>();
         txn.exec(
             "INSERT INTO files (fs_entry_id, size_bytes, mime_type, content_hash, encryption_iv) "
             "VALUES ($1, 4, 'text/plain', 'hash', 'iv')",
@@ -4684,7 +4684,7 @@ TEST(S3CostSafetyTest, PriceBudgetStaleReservationsExpireSafely) {
     const auto status = vh::db::Transactions::exec("S3CostSafetyTest::priceBudgetReservationStatus", [&](pqxx::work& txn) {
         return txn.exec(
             "SELECT status FROM s3_price_budget_ledger WHERE id = $1",
-            pqxx::params{reservationId}).one_field().as<std::string>();
+            pqxx::params{reservationId}).one_field_ref().as<std::string>();
     });
     EXPECT_EQ("expired", status);
 }
@@ -4745,7 +4745,7 @@ TEST(S3CostSafetyTest, VaultPricingDashboardStatsOnlyUseApplicableProviderScopeA
         const auto vaultId = txn.exec(
             "INSERT INTO vault (type, name, owner_id, mount_point, description) VALUES ($1, $2, $3, $4, $5) RETURNING id",
             pqxx::params{"local", uniqueSuffix("Local Pricing"), userId, "ABCDEFGHJKMNPQRSTVWXYZ0123456789", ""})
-            .one_field().as<std::uint32_t>();
+            .one_field_ref().as<std::uint32_t>();
         txn.exec(
             "WITH ins AS (INSERT INTO sync (vault_id, interval) VALUES ($1, 300) RETURNING id) "
             "INSERT INTO fsync (sync_id, conflict_policy) SELECT id, 'keep_both' FROM ins",

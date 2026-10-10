@@ -10,7 +10,7 @@ using namespace vh::sync::model;
 using namespace vh::fs::model;
 using namespace vh::db::encoding;
 
-Conflict::Conflict(const pqxx::row& row, const pqxx::result& artifactRows, const pqxx::result& reasonRows)
+Conflict::Conflict(pqxx::row_ref row, const pqxx::result& artifactRows, const pqxx::result& reasonRows)
     : id(row["id"].as<uint32_t>()),
       event_id(row["event_id"].as<uint32_t>()),
       file_id(row["file_id"].as<uint32_t>()),
@@ -22,7 +22,7 @@ Conflict::Conflict(const pqxx::row& row, const pqxx::result& artifactRows, const
     for (const auto& reasonRow : reasonRows) reasons.emplace_back(reasonRow);
 }
 
-Conflict::Reason::Reason(const pqxx::row& row)
+Conflict::Reason::Reason(pqxx::row_ref row)
     : id(row["id"].as<uint32_t>()),
       conflict_id(row["conflict_id"].as<uint32_t>()),
       code(row["code"].as<std::string>()),

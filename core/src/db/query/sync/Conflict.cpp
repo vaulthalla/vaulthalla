@@ -17,12 +17,12 @@ namespace {
 using vh::sync::model::Baseline;
 
 template <typename T>
-std::optional<T> opt(const pqxx::field& f) {
+std::optional<T> opt(pqxx::field_ref f) {
     if (f.is_null()) return std::nullopt;
     return f.as<T>();
 }
 
-std::optional<std::time_t> optEpoch(const pqxx::field& f) {
+std::optional<std::time_t> optEpoch(pqxx::field_ref f) {
     if (f.is_null()) return std::nullopt;
     return static_cast<std::time_t>(f.as<int64_t>());
 }
@@ -61,7 +61,7 @@ constexpr auto kSelectConflict = R"SQL(
     LEFT JOIN sync_conflict_artifacts r ON r.conflict_id = c.id AND r.side = 'upstream'
 )SQL";
 
-ConflictSide sideFromRow(const pqxx::row& row, const std::string& p) {
+ConflictSide sideFromRow(pqxx::row_ref row, const std::string& p) {
     ConflictSide s;
     s.size_bytes = opt<int64_t>(row[p + "_size"]).value_or(0);
     s.mime_type = opt<std::string>(row[p + "_mime"]);
@@ -74,7 +74,7 @@ ConflictSide sideFromRow(const pqxx::row& row, const std::string& p) {
     return s;
 }
 
-ConflictRecord recordFromRow(const pqxx::row& row) {
+ConflictRecord recordFromRow(pqxx::row_ref row) {
     ConflictRecord r;
     r.id = row["id"].as<uint32_t>();
     r.vault_id = opt<uint32_t>(row["vault_id"]).value_or(0);
@@ -279,7 +279,7 @@ void Conflict::applyPass(const uint32_t vaultId, const std::optional<uint32_t> e
                                   vault_id = EXCLUDED.vault_id,
                                   updated_at = NOW()
                     RETURNING id
-                )SQL", pqxx::params{eventId, c->file_id, vaultId, c->typeToString()}).one_field().as<uint32_t>();
+                )SQL", pqxx::params{eventId, c->file_id, vaultId, c->typeToString()}).one_field_ref().as<uint32_t>();
                 c->id = id;
 
                 writeArtifact(txn, id, c->artifacts.local, false);
@@ -292,7 +292,7 @@ void Conflict::applyPass(const uint32_t vaultId, const std::optional<uint32_t> e
                         "INSERT INTO sync_conflict_reasons (conflict_id, reason_code, reason_message) VALUES ($1, $2, $3) "
                         "ON CONFLICT (conflict_id, reason_code) DO UPDATE SET reason_message = EXCLUDED.reason_message "
                         "RETURNING id",
-                        pqxx::params{id, reason.code, reason.message}).one_field().as<uint32_t>();
+                        pqxx::params{id, reason.code, reason.message}).one_field_ref().as<uint32_t>();
                 }
             }
         });

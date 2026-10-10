@@ -1,5 +1,6 @@
 #include "db/query/s3/Gateway.hpp"
 
+#include "db/Rows.hpp"
 #include "db/Transactions.hpp"
 #include "db/encoding/bytea.hpp"
 #include "db/encoding/timestamp.hpp"
@@ -22,17 +23,17 @@ using vh::db::encoding::from_hex_bytea;
 using vh::db::encoding::parsePostgresTimestamp;
 using vh::db::encoding::to_hex_bytea;
 
-std::time_t ts(const pqxx::row& row, const char* column) {
+std::time_t ts(pqxx::row_ref row, const char* column) {
     if (row[column].is_null()) return 0;
     return parsePostgresTimestamp(row[column].as<std::string>());
 }
 
-std::optional<std::time_t> optionalTs(const pqxx::row& row, const char* column) {
+std::optional<std::time_t> optionalTs(pqxx::row_ref row, const char* column) {
     if (row[column].is_null()) return std::nullopt;
     return parsePostgresTimestamp(row[column].as<std::string>());
 }
 
-GatewayCredential credentialFromRow(const pqxx::row& row) {
+GatewayCredential credentialFromRow(pqxx::row_ref row) {
     const auto userId = row["user_id"].as<uint32_t>();
     return {
         .id = row["id"].as<uint32_t>(),
@@ -55,7 +56,7 @@ GatewayCredential credentialFromRow(const pqxx::row& row) {
     };
 }
 
-CredentialVaultRoleAssignment roleAssignmentFromRow(const pqxx::row& row) {
+CredentialVaultRoleAssignment roleAssignmentFromRow(pqxx::row_ref row) {
     return {
         .id = row["id"].as<uint32_t>(),
         .credential_id = row["credential_id"].as<uint32_t>(),
@@ -68,7 +69,7 @@ CredentialVaultRoleAssignment roleAssignmentFromRow(const pqxx::row& row) {
     };
 }
 
-CredentialDefaultVaultRole defaultRoleFromRow(const pqxx::row& row) {
+CredentialDefaultVaultRole defaultRoleFromRow(pqxx::row_ref row) {
     return {
         .id = row["id"].as<uint32_t>(),
         .credential_id = row["credential_id"].as<uint32_t>(),
@@ -80,7 +81,7 @@ CredentialDefaultVaultRole defaultRoleFromRow(const pqxx::row& row) {
     };
 }
 
-CredentialSelectedVault selectedVaultFromRow(const pqxx::row& row) {
+CredentialSelectedVault selectedVaultFromRow(pqxx::row_ref row) {
     return {
         .credential_id = row["credential_id"].as<uint32_t>(),
         .vault_id = row["vault_id"].as<uint32_t>(),
@@ -101,7 +102,7 @@ uint32_t permissionIdForOverride(pqxx::work& txn, const ::vh::rbac::permission::
     if (res.empty())
         throw std::runtime_error("S3 gateway credential role override permission is not registered: " +
                                  overrideRule.permission.qualified_name);
-    return res.one_field().as<uint32_t>();
+    return res.one_field_ref().as<uint32_t>();
 }
 
 std::optional<uint32_t> vaultRoleIdByName(pqxx::work& txn, const std::string& roleName) {
@@ -109,7 +110,7 @@ std::optional<uint32_t> vaultRoleIdByName(pqxx::work& txn, const std::string& ro
         "SELECT id FROM vault_role WHERE name = $1 LIMIT 1",
         pqxx::params{roleName});
     if (res.empty()) return std::nullopt;
-    return res.one_field().as<uint32_t>();
+    return res.one_field_ref().as<uint32_t>();
 }
 
 uint32_t requireVaultRoleIdByName(pqxx::work& txn, const std::string& roleName) {
@@ -130,7 +131,7 @@ uint32_t credentialRoleAssignmentId(pqxx::work& txn, const uint32_t credentialId
         pqxx::params{credentialId, vaultId});
     if (res.empty())
         throw std::runtime_error("S3 gateway credential vault role assignment not found");
-    return res.one_field().as<uint32_t>();
+    return res.one_field_ref().as<uint32_t>();
 }
 
 uint32_t credentialDefaultRoleId(pqxx::work& txn, const uint32_t credentialId) {
@@ -144,7 +145,7 @@ uint32_t credentialDefaultRoleId(pqxx::work& txn, const uint32_t credentialId) {
         pqxx::params{credentialId});
     if (res.empty())
         throw std::runtime_error("S3 gateway credential default vault role not found");
-    return res.one_field().as<uint32_t>();
+    return res.one_field_ref().as<uint32_t>();
 }
 
 pqxx::result credentialRoleOverrides(pqxx::work& txn, const uint32_t assignmentId) {
@@ -264,7 +265,7 @@ pqxx::result credentialVaultRoleRow(
         pqxx::params{credentialId, vaultId});
 }
 
-BucketBinding bucketFromRow(const pqxx::row& row) {
+BucketBinding bucketFromRow(pqxx::row_ref row) {
     return {
         .vault_id = row["vault_id"].as<uint32_t>(),
         .bucket_name = row["bucket_name"].as<std::string>(),
@@ -276,7 +277,7 @@ BucketBinding bucketFromRow(const pqxx::row& row) {
     };
 }
 
-ObjectState objectFromRow(const pqxx::row& row) {
+ObjectState objectFromRow(pqxx::row_ref row) {
     return {
         .vault_id = row["vault_id"].as<uint32_t>(),
         .object_key = row["object_key"].as<std::string>(),
@@ -299,7 +300,7 @@ std::map<std::string, std::string> metadataFromJson(const std::string& raw) {
     return out;
 }
 
-MultipartUpload uploadFromRow(const pqxx::row& row) {
+MultipartUpload uploadFromRow(pqxx::row_ref row) {
     return {
         .upload_id = row["upload_id"].as<std::string>(),
         .parts_dir_id = row["parts_dir_id"].as<std::string>(),
@@ -315,7 +316,7 @@ MultipartUpload uploadFromRow(const pqxx::row& row) {
     };
 }
 
-MultipartPart partFromRow(const pqxx::row& row) {
+MultipartPart partFromRow(pqxx::row_ref row) {
     return {
         .upload_id = row["upload_id"].as<std::string>(),
         .part_number = row["part_number"].as<uint32_t>(),
@@ -435,7 +436,7 @@ uint32_t Gateway::createCredential(const GatewayCredential& credential) {
                 credential.description,
                 credential.expires_at
             });
-        return res.one_field().as<uint32_t>();
+        return res.one_field_ref().as<uint32_t>();
     });
 }
 
@@ -445,10 +446,7 @@ std::vector<GatewayCredential> Gateway::listCredentials(const std::optional<uint
             ? txn.exec("SELECT * FROM s3_gateway_credentials WHERE principal_user_id = " + txn.quote(*userId) +
                        " OR (principal_user_id IS NULL AND user_id = " + txn.quote(*userId) + ") ORDER BY id")
             : txn.exec("SELECT * FROM s3_gateway_credentials ORDER BY id");
-        std::vector<GatewayCredential> out;
-        out.reserve(res.size());
-        for (const auto& row : res) out.push_back(credentialFromRow(row));
-        return out;
+        return db::mapRows(res, credentialFromRow);
     });
 }
 
@@ -461,10 +459,7 @@ std::vector<GatewayCredential> Gateway::listCredentialsAdmin(const bool includeD
         const auto res = txn.exec(std::string{"SELECT * FROM s3_gateway_credentials "} +
                                   (includeDisabled ? "" : "WHERE enabled = TRUE ") +
                                   "ORDER BY principal_user_id NULLS LAST, id");
-        std::vector<GatewayCredential> out;
-        out.reserve(res.size());
-        for (const auto& row : res) out.push_back(credentialFromRow(row));
-        return out;
+        return db::mapRows(res, credentialFromRow);
     });
 }
 
@@ -474,7 +469,7 @@ std::optional<GatewayCredential> Gateway::getCredentialByAccessKey(const std::st
             "SELECT * FROM s3_gateway_credentials WHERE access_key = $1",
             pqxx::params{accessKey});
         if (res.empty()) return std::nullopt;
-        return credentialFromRow(res.one_row());
+        return credentialFromRow(res.one_row_ref());
     });
 }
 
@@ -598,10 +593,7 @@ std::vector<CredentialVaultRoleAssignment> Gateway::listCredentialVaultRoleAssig
                 ORDER BY vault_id
             )SQL",
             pqxx::params{credentialId});
-        std::vector<CredentialVaultRoleAssignment> out;
-        out.reserve(res.size());
-        for (const auto& row : res) out.push_back(roleAssignmentFromRow(row));
-        return out;
+        return db::mapRows(res, roleAssignmentFromRow);
     });
 }
 
@@ -630,7 +622,7 @@ uint32_t Gateway::upsertCredentialVaultRoleAssignment(const CredentialVaultRoleA
                 input.enabled,
                 input.created_by
             });
-        const auto assignmentId = res.one_field().as<uint32_t>();
+        const auto assignmentId = res.one_field_ref().as<uint32_t>();
         txn.exec(
             "DELETE FROM s3_gateway_credential_vault_role_override WHERE gateway_credential_vault_role_id = $1",
             pqxx::params{assignmentId});
@@ -707,7 +699,7 @@ uint32_t Gateway::upsertCredentialVaultRoleOverride(
                 overrideRule.enabled,
                 ::vh::rbac::permission::to_string(overrideRule.effect)
             });
-        return res.one_field().as<uint32_t>();
+        return res.one_field_ref().as<uint32_t>();
     });
 }
 
@@ -733,8 +725,8 @@ std::shared_ptr<::vh::rbac::role::Vault> Gateway::getCredentialVaultRoleForVault
     return Transactions::exec("S3Gateway::getCredentialVaultRoleForVault", [&](pqxx::work& txn) -> std::shared_ptr<::vh::rbac::role::Vault> {
         const auto res = credentialVaultRoleRow(txn, credentialId, vaultId);
         if (res.empty()) return nullptr;
-        const auto assignmentId = res.one_row()["assignment_id"].as<uint32_t>();
-        return std::make_shared<::vh::rbac::role::Vault>(res.one_row(), credentialRoleOverrides(txn, assignmentId));
+        const auto assignmentId = res.one_row_ref()["assignment_id"].as<uint32_t>();
+        return std::make_shared<::vh::rbac::role::Vault>(res.one_row_ref(), credentialRoleOverrides(txn, assignmentId));
     });
 }
 
@@ -748,7 +740,7 @@ std::optional<CredentialDefaultVaultRole> Gateway::getCredentialDefaultVaultRole
             )SQL",
             pqxx::params{credentialId});
         if (res.empty()) return std::nullopt;
-        return defaultRoleFromRow(res.one_row());
+        return defaultRoleFromRow(res.one_row_ref());
     });
 }
 
@@ -774,7 +766,7 @@ uint32_t Gateway::upsertCredentialDefaultVaultRole(
                 RETURNING id
             )SQL",
             pqxx::params{credentialId, vaultRoleId, enabled, createdBy});
-        return res.one_field().as<uint32_t>();
+        return res.one_field_ref().as<uint32_t>();
     });
 }
 
@@ -824,7 +816,7 @@ uint32_t Gateway::upsertCredentialDefaultVaultRoleOverride(
                 overrideRule.enabled,
                 ::vh::rbac::permission::to_string(overrideRule.effect)
             });
-        return res.one_field().as<uint32_t>();
+        return res.one_field_ref().as<uint32_t>();
     });
 }
 
@@ -853,10 +845,7 @@ std::vector<CredentialSelectedVault> Gateway::listCredentialSelectedVaults(const
                 ORDER BY vault_id
             )SQL",
             pqxx::params{credentialId});
-        std::vector<CredentialSelectedVault> out;
-        out.reserve(res.size());
-        for (const auto& row : res) out.push_back(selectedVaultFromRow(row));
-        return out;
+        return db::mapRows(res, selectedVaultFromRow);
     });
 }
 
@@ -909,7 +898,7 @@ CredentialSelectedVault Gateway::upsertCredentialSelectedVault(
                 RETURNING *
             )SQL",
             pqxx::params{credentialId, vaultId, enabled, createdBy});
-        return selectedVaultFromRow(res.one_row());
+        return selectedVaultFromRow(res.one_row_ref());
     });
 }
 
@@ -948,15 +937,15 @@ std::shared_ptr<::vh::rbac::role::Vault> Gateway::getEffectiveCredentialVaultRol
         const auto defaultRole = credentialDefaultRoleRow(txn, credentialId, vaultId);
         if (defaultRole.empty()) return nullptr;
 
-        const auto defaultRoleId = defaultRole.one_row()["assignment_id"].as<uint32_t>();
+        const auto defaultRoleId = defaultRole.one_row_ref()["assignment_id"].as<uint32_t>();
         const auto perVaultRole = credentialVaultRoleRow(txn, credentialId, vaultId);
         const auto usePerVaultRole = !perVaultRole.empty();
-        const pqxx::row roleRow = usePerVaultRole ? perVaultRole.one_row() : defaultRole.one_row();
+        const auto roleRow = usePerVaultRole ? perVaultRole.one_row_ref() : defaultRole.one_row_ref();
 
         auto overrides = ::vh::rbac::permission::permissionOverridesFromPqRes(
             credentialDefaultRoleOverrides(txn, defaultRoleId));
         if (usePerVaultRole) {
-            const auto perVaultAssignmentId = perVaultRole.one_row()["assignment_id"].as<uint32_t>();
+            const auto perVaultAssignmentId = perVaultRole.one_row_ref()["assignment_id"].as<uint32_t>();
             overrides = mergeDefaultAndPerVaultOverrides(
                 std::move(overrides),
                 ::vh::rbac::permission::permissionOverridesFromPqRes(
@@ -1050,7 +1039,7 @@ std::optional<BucketBinding> Gateway::resolveBucket(const std::string& bucketNam
             "SELECT b.* FROM s3_gateway_bucket b JOIN vault v ON v.id = b.vault_id "
             "WHERE b.bucket_name = $1 AND v.deleted_at IS NULL", pqxx::params{bucketName});
         if (res.empty()) return std::nullopt;
-        return bucketFromRow(res.one_row());
+        return bucketFromRow(res.one_row_ref());
     });
 }
 
@@ -1062,10 +1051,7 @@ std::vector<BucketBinding> Gateway::listBuckets(const std::optional<uint32_t> us
             : "SELECT b.* FROM s3_gateway_bucket b JOIN vault v ON v.id = b.vault_id WHERE v.deleted_at IS NULL "
               "ORDER BY b.bucket_name";
         const auto res = txn.exec(sql);
-        std::vector<BucketBinding> out;
-        out.reserve(res.size());
-        for (const auto& row : res) out.push_back(bucketFromRow(row));
-        return out;
+        return db::mapRows(res, bucketFromRow);
     });
 }
 
@@ -1108,7 +1094,7 @@ std::optional<ObjectState> Gateway::getObjectState(const uint32_t vaultId, const
             "AND " + notHiddenByActiveTrashSql("s3_gateway_object.vault_id", "object_key"),
             pqxx::params{vaultId, normalizeKey(objectKey)});
         if (res.empty()) return std::nullopt;
-        return objectFromRow(res.one_row());
+        return objectFromRow(res.one_row_ref());
     });
 }
 
@@ -1315,7 +1301,7 @@ std::optional<MultipartUpload> Gateway::getMultipartUpload(const std::string& up
             "SELECT * FROM s3_gateway_multipart_upload WHERE upload_id = $1 AND aborted = FALSE AND completed = FALSE",
             pqxx::params{uploadId});
         if (res.empty()) return std::nullopt;
-        return uploadFromRow(res.one_row());
+        return uploadFromRow(res.one_row_ref());
     });
 }
 
@@ -1328,10 +1314,7 @@ std::vector<MultipartUpload> Gateway::listMultipartUploads(const uint32_t vaultI
                 ORDER BY object_key, initiated_at
             )SQL",
             pqxx::params{vaultId, normalizeKey(prefix)});
-        std::vector<MultipartUpload> out;
-        out.reserve(res.size());
-        for (const auto& row : res) out.push_back(uploadFromRow(row));
-        return out;
+        return db::mapRows(res, uploadFromRow);
     });
 }
 
@@ -1346,10 +1329,7 @@ std::vector<MultipartUpload> Gateway::listMultipartUploadsInitiatedBefore(const 
                 ORDER BY initiated_at
             )SQL",
             pqxx::params{cutoff});
-        std::vector<MultipartUpload> out;
-        out.reserve(res.size());
-        for (const auto& row : res) out.push_back(uploadFromRow(row));
-        return out;
+        return db::mapRows(res, uploadFromRow);
     });
 }
 
@@ -1395,10 +1375,7 @@ std::vector<MultipartPart> Gateway::listMultipartParts(const std::string& upload
         const auto res = txn.exec(
             "SELECT * FROM s3_gateway_multipart_part WHERE upload_id = $1 ORDER BY part_number",
             pqxx::params{uploadId});
-        std::vector<MultipartPart> out;
-        out.reserve(res.size());
-        for (const auto& row : res) out.push_back(partFromRow(row));
-        return out;
+        return db::mapRows(res, partFromRow);
     });
 }
 
@@ -1408,7 +1385,7 @@ std::optional<MultipartPart> Gateway::getMultipartPart(const std::string& upload
             "SELECT * FROM s3_gateway_multipart_part WHERE upload_id = $1 AND part_number = $2",
             pqxx::params{uploadId, partNumber});
         if (res.empty()) return std::nullopt;
-        return partFromRow(res.one_row());
+        return partFromRow(res.one_row_ref());
     });
 }
 

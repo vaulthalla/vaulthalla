@@ -6,7 +6,7 @@
 using namespace vh::sync::model;
 using namespace std::chrono;
 
-Throughput::Throughput(const pqxx::row& row) :
+Throughput::Throughput(pqxx::row_ref row) :
     id(row["id"].as<uint32_t>()),
     run_uuid(row["run_uuid"].as<std::string>()),
     num_ops(row["num_ops"].as<uint64_t>()),

@@ -9,19 +9,19 @@ using namespace vh::db::encoding;
 
 namespace vh::share {
 namespace audit_model_detail {
-std::optional<std::string> opt_string(const pqxx::row& row, const char* column) {
+std::optional<std::string> opt_string(pqxx::row_ref row, const char* column) {
     if (row[column].is_null()) return std::nullopt;
     return row[column].as<std::string>();
 }
 
 template <typename T>
-std::optional<T> opt_num(const pqxx::row& row, const char* column) {
+std::optional<T> opt_num(pqxx::row_ref row, const char* column) {
     if (row[column].is_null()) return std::nullopt;
     return row[column].as<T>();
 }
 }
 
-AuditEvent::AuditEvent(const pqxx::row& row)
+AuditEvent::AuditEvent(pqxx::row_ref row)
     : id(row["id"].as<uint64_t>()),
       share_id(audit_model_detail::opt_string(row, "share_id")),
       share_session_id(audit_model_detail::opt_string(row, "share_session_id")),

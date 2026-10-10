@@ -17,7 +17,7 @@ std::uint64_t retentionStatsUnixTimestamp() {
     return static_cast<std::uint64_t>(std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()));
 }
 
-std::optional<std::uint64_t> optionalRetentionStatsUInt64(const pqxx::row& row, const char* column) {
+std::optional<std::uint64_t> optionalRetentionStatsUInt64(pqxx::row_ref row, const char* column) {
     const auto field = row[column];
     if (field.is_null()) return std::nullopt;
     const auto value = field.as<double>();
@@ -25,11 +25,11 @@ std::optional<std::uint64_t> optionalRetentionStatsUInt64(const pqxx::row& row, 
     return static_cast<std::uint64_t>(value);
 }
 
-std::uint64_t retentionStatsUInt64(const pqxx::row& row, const char* column) {
+std::uint64_t retentionStatsUInt64(pqxx::row_ref row, const char* column) {
     return optionalRetentionStatsUInt64(row, column).value_or(0);
 }
 
-void applyRetentionStatsRow(RetentionModel& stats, const pqxx::row& row) {
+void applyRetentionStatsRow(RetentionModel& stats, pqxx::row_ref row) {
     stats.trashedFilesCount = retentionStatsUInt64(row, "trashed_files_count");
     stats.trashedBytesTotal = retentionStatsUInt64(row, "trashed_bytes_total");
     stats.oldestTrashedAgeSeconds = optionalRetentionStatsUInt64(row, "oldest_trashed_age_seconds");
@@ -93,7 +93,7 @@ std::shared_ptr<::vh::stats::model::RetentionStats> RetentionStats::snapshot() {
         applyRetentionStatsConfig(*stats);
 
         const auto res = txn.exec(pqxx::prepped{"retention_stats.system"}, retentionStatsQueryParams(*stats));
-        if (!res.empty()) applyRetentionStatsRow(*stats, res.one_row());
+        if (!res.empty()) applyRetentionStatsRow(*stats, res.one_row_ref());
 
         stats->finalize();
         return stats;
@@ -109,7 +109,7 @@ std::shared_ptr<::vh::stats::model::RetentionStats> RetentionStats::snapshotForV
         applyRetentionStatsConfig(*stats);
 
         const auto res = txn.exec(pqxx::prepped{"retention_stats.vault"}, retentionStatsQueryParamsForVault(*stats, vaultId));
-        if (!res.empty()) applyRetentionStatsRow(*stats, res.one_row());
+        if (!res.empty()) applyRetentionStatsRow(*stats, res.one_row_ref());
 
         stats->finalize();
         return stats;

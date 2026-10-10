@@ -5,7 +5,7 @@
 #include "rbac/permission/vault/Filesystem.hpp"
 
 #include <nlohmann/json_fwd.hpp>
-#include <pqxx/types>
+#include "db/Fwd.hpp"
 
 namespace vh::rbac::role::vault {
 
@@ -16,8 +16,8 @@ struct Base {
 
     virtual ~Base() = default;
     Base() = default;
-    explicit Base(const pqxx::row& row);
-    Base(const pqxx::row& row, const pqxx::result& overrides);
+    explicit Base(pqxx::row_ref row);
+    Base(pqxx::row_ref row, const pqxx::result& overrides);
 
     [[nodiscard]] virtual std::string toString(uint8_t indent) const;
     [[nodiscard]] std::string toFlagsString() const;

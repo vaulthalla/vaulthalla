@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 #include <nlohmann/json_fwd.hpp>
-#include <pqxx/types>
+#include "db/Fwd.hpp"
 
 namespace vh::sync::model {
 
@@ -35,7 +35,7 @@ struct Throughput {
     std::vector<std::shared_ptr<ScopedOp>> scoped_ops;
 
     Throughput() = default;
-    explicit Throughput(const pqxx::row& row);
+    explicit Throughput(pqxx::row_ref row);
 
     void computeDashboardStats();
 

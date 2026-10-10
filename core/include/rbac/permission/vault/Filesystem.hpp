@@ -8,7 +8,7 @@
 #include <cstdint>
 #include <nlohmann/json_fwd.hpp>
 #include <vector>
-#include <pqxx/types>
+#include "db/Fwd.hpp"
 
 namespace vh::rbac::permission {
     namespace vault {
@@ -117,9 +117,9 @@ namespace vh::rbac::permission {
 
             Filesystem() = default;
 
-            explicit Filesystem(const pqxx::row &row);
+            explicit Filesystem(pqxx::row_ref row);
 
-            Filesystem(const pqxx::row &row, const pqxx::result &overrideRes);
+            Filesystem(pqxx::row_ref row, const pqxx::result &overrideRes);
 
             [[nodiscard]] std::string toString(uint8_t indent) const;
 

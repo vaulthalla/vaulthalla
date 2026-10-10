@@ -1,6 +1,7 @@
 #pragma once
 
 #include "sync/model/Policy.hpp"
+#include "db/Fwd.hpp"
 #include "sync/model/Action.hpp"
 #include "storage/s3/Controller.hpp"
 #include "fs/Fwd.hpp"
@@ -45,7 +46,7 @@ struct RemotePolicy final : public Policy {
 
     RemotePolicy();
     ~RemotePolicy() override = default;
-    explicit RemotePolicy(const pqxx::row& row);
+    explicit RemotePolicy(pqxx::row_ref row);
 
     void rehash_config() override;
     [[nodiscard]] bool resolve_conflict(const std::shared_ptr<Conflict>& conflict) const override;

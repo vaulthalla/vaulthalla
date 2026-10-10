@@ -11,7 +11,7 @@
 #include <memory>
 #include <boost/uuid/uuid.hpp>
 #include "fs/Fwd.hpp"
-#include <pqxx/types>
+#include "db/Fwd.hpp"
 
 namespace vh::fs::model {
 
@@ -32,7 +32,7 @@ namespace vh::fs::model {
 
         explicit Entry(const std::string &s3_key);
 
-        Entry(const pqxx::row &row, const pqxx::result &parentRows);
+        Entry(pqxx::row_ref row, const pqxx::result &parentRows);
 
         [[nodiscard]] bool operator==(const Entry &other) const;
 

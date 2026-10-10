@@ -5,7 +5,7 @@
 
 namespace {
 
-    std::shared_ptr<vh::rbac::role::Vault> makeAssignedVaultRole(pqxx::work& txn, const pqxx::row& row) {
+    std::shared_ptr<vh::rbac::role::Vault> makeAssignedVaultRole(pqxx::work& txn, pqxx::row_ref row) {
         const auto roleId = row["assignment_id"].as<uint32_t>();
 
         const auto overridesRes = txn.exec(
@@ -28,7 +28,7 @@ namespace vh::db::query::rbac::role::vault {
             );
 
             if (res.empty()) throw std::runtime_error("Failed to assign vault role - no result returned");
-            role->assignment_id = res.one_row()["id"].as<uint32_t>();
+            role->assignment_id = res.one_row_ref()["id"].as<uint32_t>();
 
             for (const auto& override : role->fs.overrides) {
                 txn.exec(
@@ -50,7 +50,7 @@ namespace vh::db::query::rbac::role::vault {
             );
 
             if (res.empty()) throw std::runtime_error("Failed to assign vault role - no result returned");
-            return res.one_row()["id"].as<uint32_t>();
+            return res.one_row_ref()["id"].as<uint32_t>();
         });
     }
 
@@ -90,7 +90,7 @@ namespace vh::db::query::rbac::role::vault {
 
             if (assignmentRes.empty()) return nullptr;
 
-            return makeAssignedVaultRole(txn, assignmentRes.one_row());
+            return makeAssignedVaultRole(txn, assignmentRes.one_row_ref());
         });
     }
 
@@ -103,7 +103,7 @@ namespace vh::db::query::rbac::role::vault {
 
             if (assignmentRes.empty()) return nullptr;
 
-            return makeAssignedVaultRole(txn, assignmentRes.one_row());
+            return makeAssignedVaultRole(txn, assignmentRes.one_row_ref());
         });
     }
 
@@ -167,7 +167,7 @@ namespace vh::db::query::rbac::role::vault {
             );
 
             if (result.empty()) return 0;
-            return result.one_field().as<uint32_t>();
+            return result.one_field_ref().as<uint32_t>();
         });
     }
 

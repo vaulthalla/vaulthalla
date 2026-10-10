@@ -5,7 +5,7 @@
 #include <vector>
 #include <ctime>
 #include "vault/Fwd.hpp"
-#include <pqxx/types>
+#include "db/Fwd.hpp"
 
 namespace vh::vault::model {
 
@@ -38,7 +38,7 @@ struct APIKey {
     std::string secret_access_key;
 
     APIKey() = default;
-    explicit APIKey(const pqxx::row& row);
+    explicit APIKey(pqxx::row_ref row);
     APIKey(unsigned int userId, std::string name,
            S3Provider provider, std::string accessKey,
            std::string secretAccessKey,
@@ -51,8 +51,6 @@ void to_json(nlohmann::json& j, const std::shared_ptr<APIKey>& k);
 void to_json(nlohmann::json& j, const std::vector<std::shared_ptr<APIKey>>& k);
 void from_json(const nlohmann::json& j, APIKey& key);
 
-std::vector<std::shared_ptr<APIKey>> api_keys_from_pq_res(const pqxx::result& res);
-
 std::string to_string(const std::shared_ptr<APIKey>& key);
 std::string to_string(const std::vector<std::shared_ptr<APIKey>>& keys);
 
@@ -64,5 +62,4 @@ nlohmann::json generate_json_key_object(const std::shared_ptr<Vault>& v,
 nlohmann::json generate_json_key_info_object(const std::shared_ptr<Vault>& v,
                                                const std::shared_ptr<Key>& vk,
                                                const std::string& exportedBy);
-
 }

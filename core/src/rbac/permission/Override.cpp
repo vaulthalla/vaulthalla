@@ -25,7 +25,7 @@ namespace {
     }
 }
 
-Override::Override(const pqxx::row &row)
+Override::Override(pqxx::row_ref row)
     : assignment_id(row["assignment_id"].as<unsigned int>()),
       permission(row),
       effect(overrideOptFromString(row["effect"].as<std::string>())),

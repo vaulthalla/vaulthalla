@@ -9,7 +9,7 @@
 #include <filesystem>
 #include <memory>
 #include <nlohmann/json_fwd.hpp>
-#include <pqxx/types>
+#include "db/Fwd.hpp"
 
 namespace vh::sync::model {
 
@@ -27,7 +27,7 @@ struct Operation {
     std::optional<std::string> error;
 
     Operation() = default;
-    explicit Operation(const pqxx::row& row);
+    explicit Operation(pqxx::row_ref row);
     explicit Operation(const std::shared_ptr<fs::model::Entry>& origEntry, const std::filesystem::path& dest, unsigned int userId, const Op& op);
 
     [[nodiscard]] Throughput::Metric opToThroughputMetric() const;
@@ -43,7 +43,4 @@ Operation::Status to_status(const std::string& str);
 
 void to_json(nlohmann::json& j, const std::shared_ptr<Operation>& op);
 void from_json(const nlohmann::json& j, std::shared_ptr<Operation>& op);
-
-std::vector<std::shared_ptr<Operation>> operations_from_pq_res(const pqxx::result& res);
-
 }

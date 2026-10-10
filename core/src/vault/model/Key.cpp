@@ -8,7 +8,7 @@
 using namespace vh::vault::model;
 using namespace vh::db::encoding;
 
-Key::Key(const pqxx::row &row)
+Key::Key(pqxx::row_ref row)
     : vaultId(row["vault_id"].as<unsigned int>()),
       version(row["version"].as<unsigned int>()),
       encrypted_key(from_hex_bytea(row["encrypted_key"].as<std::string>())),

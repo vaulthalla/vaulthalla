@@ -18,13 +18,13 @@ std::uint64_t securityUnixTimestamp() {
     return static_cast<std::uint64_t>(std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()));
 }
 
-std::optional<std::uint64_t> optionalSecurityTimestamp(const pqxx::row& row, const char* column) {
+std::optional<std::uint64_t> optionalSecurityTimestamp(pqxx::row_ref row, const char* column) {
     const auto field = row[column];
     if (field.is_null()) return std::nullopt;
     return static_cast<std::uint64_t>(parsePostgresTimestamp(field.as<std::string>()));
 }
 
-std::optional<std::uint32_t> optionalSecurityUInt32(const pqxx::row& row, const char* column) {
+std::optional<std::uint32_t> optionalSecurityUInt32(pqxx::row_ref row, const char* column) {
     const auto field = row[column];
     if (field.is_null()) return std::nullopt;
     const auto value = field.as<long long>();
@@ -32,7 +32,7 @@ std::optional<std::uint32_t> optionalSecurityUInt32(const pqxx::row& row, const 
     return static_cast<std::uint32_t>(value);
 }
 
-std::optional<std::uint64_t> optionalSecurityUInt64(const pqxx::row& row, const char* column) {
+std::optional<std::uint64_t> optionalSecurityUInt64(pqxx::row_ref row, const char* column) {
     const auto field = row[column];
     if (field.is_null()) return std::nullopt;
     const auto value = field.as<long long>();
@@ -40,11 +40,11 @@ std::optional<std::uint64_t> optionalSecurityUInt64(const pqxx::row& row, const 
     return static_cast<std::uint64_t>(value);
 }
 
-std::uint64_t asSecurityUInt64(const pqxx::row& row, const char* column) {
+std::uint64_t asSecurityUInt64(pqxx::row_ref row, const char* column) {
     return optionalSecurityUInt64(row, column).value_or(0);
 }
 
-std::optional<std::string> optionalSecurityString(const pqxx::row& row, const char* column) {
+std::optional<std::string> optionalSecurityString(pqxx::row_ref row, const char* column) {
     const auto field = row[column];
     if (field.is_null()) return std::nullopt;
     const auto value = field.as<std::string>();
@@ -66,7 +66,7 @@ std::string overallStatus(const VaultSecurity& security) {
 
 void applySummary(VaultSecurity& security, const pqxx::result& res) {
     if (res.empty()) return;
-    const auto row = res.one_row();
+    const auto row = res.one_row_ref();
 
     security.currentKeyVersion = optionalSecurityUInt32(row, "current_key_version");
     security.keyCreatedAt = optionalSecurityTimestamp(row, "key_created_at");

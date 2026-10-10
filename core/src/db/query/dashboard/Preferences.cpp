@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cctype>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <pqxx/pqxx>
 #include <stdexcept>
 
@@ -29,7 +30,7 @@ std::string normalizePreferenceKey(std::string preferenceKey) {
     return preferenceKey;
 }
 
-std::uint64_t optionalEpoch(const pqxx::row& row, const char* column) {
+std::uint64_t optionalEpoch(pqxx::row_ref row, const char* column) {
     const auto field = row[column];
     if (field.is_null()) return 0;
     const auto value = field.as<long long>(0);
@@ -39,7 +40,7 @@ std::uint64_t optionalEpoch(const pqxx::row& row, const char* column) {
 std::shared_ptr<::vh::stats::model::DashboardPreference> preferenceFromRow(
     const std::uint32_t userId,
     const std::string& preferenceKey,
-    const pqxx::row* row
+    const std::optional<pqxx::row_ref> row
 ) {
     auto preference = std::make_shared<::vh::stats::model::DashboardPreference>();
     preference->userId = userId;
@@ -115,9 +116,7 @@ std::shared_ptr<::vh::stats::model::DashboardPreference> Preferences::getForUser
     const auto key = normalizePreferenceKey(preferenceKey);
     return Transactions::exec("DashboardPreferences::getForUser", [&](pqxx::work& txn) {
         const auto rows = txn.exec(pqxx::prepped{"dashboard_preferences.get_for_user"}, pqxx::params{userId, key});
-        if (rows.empty()) return preferenceFromRow(userId, key, nullptr);
-        const auto row = rows.front();
-        return preferenceFromRow(userId, key, &row);
+        return preferenceFromRow(userId, key, rows.empty() ? std::nullopt : std::optional{rows.front()});
     });
 }
 
@@ -135,8 +134,7 @@ std::shared_ptr<::vh::stats::model::DashboardPreference> Preferences::upsertForU
             pqxx::params{userId, key, cleanLayout.dump()}
         );
         if (rows.empty()) throw std::runtime_error("Unable to save dashboard preferences.");
-        const auto row = rows.front();
-        return preferenceFromRow(userId, key, &row);
+        return preferenceFromRow(userId, key, rows.front());
     });
 }
 

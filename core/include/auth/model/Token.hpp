@@ -6,7 +6,7 @@
 #include <memory>
 #include "auth/Fwd.hpp"
 #include "protocols/ws/Fwd.hpp"
-#include <pqxx/types>
+#include "db/Fwd.hpp"
 
 namespace vh::auth::model {
 
@@ -27,7 +27,7 @@ struct Token {
     virtual ~Token() = default;
     Token() = default;
     explicit Token(std::string rawToken);
-    explicit Token(const pqxx::row& row);
+    explicit Token(pqxx::row_ref row);
 
     [[nodiscard]] bool isExpired() const;
     [[nodiscard]] virtual bool isValid() const;

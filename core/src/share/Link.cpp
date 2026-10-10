@@ -12,23 +12,23 @@ using namespace vh::db::encoding;
 
 namespace vh::share {
 namespace link_model_detail {
-std::optional<std::time_t> opt_time(const pqxx::row& row, const char* column) {
+std::optional<std::time_t> opt_time(pqxx::row_ref row, const char* column) {
     if (row[column].is_null()) return std::nullopt;
     return parsePostgresTimestamp(row[column].as<std::string>());
 }
 
-std::optional<std::string> opt_string(const pqxx::row& row, const char* column) {
+std::optional<std::string> opt_string(pqxx::row_ref row, const char* column) {
     if (row[column].is_null()) return std::nullopt;
     return row[column].as<std::string>();
 }
 
 template <typename T>
-std::optional<T> opt_num(const pqxx::row& row, const char* column) {
+std::optional<T> opt_num(pqxx::row_ref row, const char* column) {
     if (row[column].is_null()) return std::nullopt;
     return row[column].as<T>();
 }
 
-std::vector<std::string> parse_pg_text_array(const pqxx::row& row, const char* column) {
+std::vector<std::string> parse_pg_text_array(pqxx::row_ref row, const char* column) {
     if (row[column].is_null()) return {};
     const auto raw = row[column].as<std::string>();
     if (raw.size() < 2 || raw.front() != '{' || raw.back() != '}') return {};
@@ -59,7 +59,7 @@ nlohmann::json parse_metadata(const std::string& raw) {
 }
 }
 
-Link::Link(const pqxx::row& row)
+Link::Link(pqxx::row_ref row)
     : id(row["id"].as<std::string>()),
       token_lookup_id(row["token_lookup_id"].as<std::string>()),
       token_hash(from_hex_bytea(row["token_hash"].as<std::string>())),

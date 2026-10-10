@@ -4,7 +4,7 @@
 using namespace vh::vault::model;
 using namespace vh::db::encoding;
 
-Usage::Usage(const pqxx::row& row)
+Usage::Usage(pqxx::row_ref row)
     : user_id(row["user_id"].as<unsigned int>()),
       storage_volume_id(row["storage_volume_id"].as<unsigned int>()),
       total_bytes(row["total_bytes"].as<unsigned long long>()),

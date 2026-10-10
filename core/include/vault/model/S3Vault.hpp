@@ -5,7 +5,7 @@
 #include <nlohmann/json_fwd.hpp>
 #include <cstdint>
 #include <optional>
-#include <pqxx/types>
+#include "db/Fwd.hpp"
 
 namespace vh::vault::model {
 
@@ -17,7 +17,7 @@ struct S3Vault : Vault {
 
     S3Vault() = default;
     S3Vault(const std::string& name, uint32_t apiKeyID, std::string bucketName);
-    explicit S3Vault(const pqxx::row& row);
+    explicit S3Vault(pqxx::row_ref row);
 };
 
 void to_json(nlohmann::json& j, const S3Vault& v);

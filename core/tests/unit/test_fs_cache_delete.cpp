@@ -75,14 +75,14 @@ uint32_t ensureFsCacheUnprivilegedAdminRole(pqxx::work& txn) {
             role.roles.toBitString(),
             role.vaults.toBitString(),
             role.keys.toBitString()
-        }).one_field().as<uint32_t>();
+        }).one_field_ref().as<uint32_t>();
 }
 
 uint32_t insertFsCacheHydratableTestUser(pqxx::work& txn, const std::string& name, const std::string& email) {
     const auto userId = txn.exec(
         "INSERT INTO users (name, email, password_hash) VALUES ($1, $2, $3) RETURNING id",
         pqxx::params{name, email, "hash"}
-    ).one_field().as<uint32_t>();
+    ).one_field_ref().as<uint32_t>();
     const auto roleId = ensureFsCacheUnprivilegedAdminRole(txn);
     txn.exec(
         "INSERT INTO admin_role_assignments (user_id, role_id) VALUES ($1, $2)",
@@ -131,13 +131,13 @@ protected:
             seeded.vaultId = txn.exec(
                 "INSERT INTO vault (type, name, owner_id, mount_point) VALUES ($1, $2, $3, $4) RETURNING id",
                 pqxx::params{"local", "Cache Delete Vault", seeded.userId, "cache_delete_vault"}
-            ).one_field().as<uint32_t>();
+            ).one_field_ref().as<uint32_t>();
 
             seeded.rootId = txn.exec(
                 "INSERT INTO fs_entry (vault_id, parent_id, name, base32_alias, created_by, last_modified_by, path, inode, is_system) "
                 "VALUES (NULL, NULL, $1, $2, $3, $3, $4, $5, TRUE) RETURNING id",
                 pqxx::params{"/", aliasFor('R'), seeded.userId, "/", 1}
-            ).one_field().as<uint32_t>();
+            ).one_field_ref().as<uint32_t>();
             txn.exec(
                 "INSERT INTO directories (fs_entry_id, subdirectory_count) VALUES ($1, $2)",
                 pqxx::params{seeded.rootId, 1}
@@ -147,7 +147,7 @@ protected:
                 "INSERT INTO fs_entry (vault_id, parent_id, name, base32_alias, created_by, last_modified_by, path, inode) "
                 "VALUES ($1, $2, $3, $4, $5, $5, $6, $7) RETURNING id",
                 pqxx::params{seeded.vaultId, seeded.rootId, "cache_vault", aliasFor('V'), seeded.userId, "/", 2}
-            ).one_field().as<uint32_t>();
+            ).one_field_ref().as<uint32_t>();
             txn.exec("INSERT INTO directories (fs_entry_id) VALUES ($1)", pqxx::params{seeded.vaultRootId});
 
             return seeded;
@@ -280,7 +280,7 @@ TEST_F(FsCacheDeleteTest, DeleteFileTrashesAndMarksDeletedWithRegisteredStatemen
         out.liveCount = txn.exec(
             "SELECT COUNT(*) FROM fs_entry WHERE id = $1",
             pqxx::params{file->id}
-        ).one_field().as<uint32_t>();
+        ).one_field_ref().as<uint32_t>();
         const auto trashed = txn.exec(
             "SELECT backing_path, deleted_at IS NOT NULL AS marked_deleted "
             "FROM files_trashed WHERE base32_alias = $1",
@@ -288,8 +288,8 @@ TEST_F(FsCacheDeleteTest, DeleteFileTrashesAndMarksDeletedWithRegisteredStatemen
         );
         out.trashedCount = static_cast<uint32_t>(trashed.size());
         if (!trashed.empty()) {
-            out.backingPath = trashed.one_row()["backing_path"].as<std::string>();
-            out.markedDeleted = trashed.one_row()["marked_deleted"].as<bool>();
+            out.backingPath = trashed.one_row_ref()["backing_path"].as<std::string>();
+            out.markedDeleted = trashed.one_row_ref()["marked_deleted"].as<bool>();
         }
         return out;
     });

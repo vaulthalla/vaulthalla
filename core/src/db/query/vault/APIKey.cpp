@@ -1,4 +1,5 @@
 #include "db/query/vault/APIKey.hpp"
+#include "db/Rows.hpp"
 #include "db/Transactions.hpp"
 #include "vault/model/APIKey.hpp"
 #include "db/encoding/bytea.hpp"
@@ -22,7 +23,7 @@ namespace vh::db::query::vault {
                 key->region,
                 key->endpoint
             };
-            return txn.exec(pqxx::prepped{"upsert_api_key"}, p).one_field().as<unsigned int>();
+            return txn.exec(pqxx::prepped{"upsert_api_key"}, p).one_field_ref().as<unsigned int>();
         });
     }
 
@@ -63,7 +64,7 @@ namespace vh::db::query::vault {
                 "SELECT * FROM api_keys WHERE user_id = " + txn.quote(userId),
                 params, "id", "name"
             );
-            return vh::vault::model::api_keys_from_pq_res(txn.exec(sql));
+            return db::sharedRows<vh::vault::model::APIKey>(txn.exec(sql));
         });
     }
 
@@ -73,7 +74,7 @@ namespace vh::db::query::vault {
                 "SELECT * FROM api_keys",
                 params, "id", "name"
             );
-            return vh::vault::model::api_keys_from_pq_res(txn.exec(sql));
+            return db::sharedRows<vh::vault::model::APIKey>(txn.exec(sql));
         });
     }
 
@@ -81,7 +82,7 @@ namespace vh::db::query::vault {
         return Transactions::exec("APIKey::getAPIKey", [&](pqxx::work& txn) -> std::shared_ptr<vh::vault::model::APIKey> {
             const auto res = txn.exec(pqxx::prepped{"get_api_key"}, keyId);
             if (res.empty()) return nullptr;
-            return std::make_shared<AK>(res.one_row());
+            return std::make_shared<AK>(res.one_row_ref());
         });
     }
 
@@ -91,7 +92,7 @@ namespace vh::db::query::vault {
         return Transactions::exec("APIKey::getAPIKeyByName", [&](pqxx::work& txn) -> std::shared_ptr<vh::vault::model::APIKey> {
             const auto res = txn.exec(pqxx::prepped{"get_api_key_by_name"}, keyName);
             if (res.empty()) return nullptr;
-            return std::make_shared<AK>(res.one_row());
+            return std::make_shared<AK>(res.one_row_ref());
         });
     }
 
@@ -99,7 +100,7 @@ namespace vh::db::query::vault {
         return Transactions::exec("APIKey::getAPIKeyOwner", [&](pqxx::work& txn) -> std::shared_ptr<vh::identities::User> {
             const auto res = txn.exec(pqxx::prepped{"get_api_key_owner"}, keyId);
             if (res.empty()) return nullptr;
-            return identities::hydrateUser(txn, res.one_row());
+            return identities::hydrateUser(txn, res.one_row_ref());
         });
     }
 }

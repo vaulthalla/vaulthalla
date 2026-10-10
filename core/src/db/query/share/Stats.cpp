@@ -20,24 +20,24 @@ std::uint64_t unixTimestamp() {
     return static_cast<std::uint64_t>(std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()));
 }
 
-std::optional<std::uint64_t> optionalTimestamp(const pqxx::row& row, const char* column) {
+std::optional<std::uint64_t> optionalTimestamp(pqxx::row_ref row, const char* column) {
     const auto field = row[column];
     if (field.is_null()) return std::nullopt;
     return static_cast<std::uint64_t>(parsePostgresTimestamp(field.as<std::string>()));
 }
 
-std::uint64_t timestamp(const pqxx::row& row, const char* column) {
+std::uint64_t timestamp(pqxx::row_ref row, const char* column) {
     return optionalTimestamp(row, column).value_or(0);
 }
 
-std::uint64_t asUInt64(const pqxx::row& row, const char* column) {
+std::uint64_t asUInt64(pqxx::row_ref row, const char* column) {
     const auto field = row[column];
     if (field.is_null()) return 0;
     const auto value = field.as<long long>();
     return value > 0 ? static_cast<std::uint64_t>(value) : 0;
 }
 
-std::optional<std::string> optionalString(const pqxx::row& row, const char* column) {
+std::optional<std::string> optionalString(pqxx::row_ref row, const char* column) {
     const auto field = row[column];
     if (field.is_null()) return std::nullopt;
     const auto value = field.as<std::string>();
@@ -46,7 +46,7 @@ std::optional<std::string> optionalString(const pqxx::row& row, const char* colu
 
 void applySummary(VaultShareStats& stats, const pqxx::result& res) {
     if (res.empty()) return;
-    const auto row = res.one_row();
+    const auto row = res.one_row_ref();
     stats.activeLinks = asUInt64(row, "active_links");
     stats.expiredLinks = asUInt64(row, "expired_links");
     stats.revokedLinks = asUInt64(row, "revoked_links");
@@ -58,7 +58,7 @@ void applySummary(VaultShareStats& stats, const pqxx::result& res) {
 
 void applyEventWindow(VaultShareStats& stats, const pqxx::result& res) {
     if (res.empty()) return;
-    const auto row = res.one_row();
+    const auto row = res.one_row_ref();
     stats.downloads24h = asUInt64(row, "downloads_24h");
     stats.uploads24h = asUInt64(row, "uploads_24h");
     stats.deniedAttempts24h = asUInt64(row, "denied_attempts_24h");

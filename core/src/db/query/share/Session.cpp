@@ -55,7 +55,7 @@ std::shared_ptr<vh::share::Session> Session::create(const std::shared_ptr<vh::sh
             session->user_agent
         };
         const auto res = txn.exec(pqxx::prepped{"share_session_insert"}, p);
-        return std::make_shared<vh::share::Session>(res.one_row());
+        return std::make_shared<vh::share::Session>(res.one_row_ref());
     });
 }
 
@@ -64,7 +64,7 @@ std::shared_ptr<vh::share::Session> Session::get(const std::string& id) {
     return Transactions::exec("share::Session::get", [&](pqxx::work& txn) -> std::shared_ptr<vh::share::Session> {
         const auto res = txn.exec(pqxx::prepped{"share_session_get"}, id);
         if (res.empty()) return nullptr;
-        return std::make_shared<vh::share::Session>(res.one_row());
+        return std::make_shared<vh::share::Session>(res.one_row_ref());
     });
 }
 
@@ -73,7 +73,7 @@ std::shared_ptr<vh::share::Session> Session::getByLookupId(const std::string& lo
     return Transactions::exec("share::Session::getByLookupId", [&](pqxx::work& txn) -> std::shared_ptr<vh::share::Session> {
         const auto res = txn.exec(pqxx::prepped{"share_session_get_by_lookup_id"}, lookup_id);
         if (res.empty()) return nullptr;
-        return std::make_shared<vh::share::Session>(res.one_row());
+        return std::make_shared<vh::share::Session>(res.one_row_ref());
     });
 }
 

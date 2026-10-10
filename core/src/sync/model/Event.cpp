@@ -24,23 +24,23 @@ namespace {
 
     // Safer helper: returns 0 when NULL.
     template <typename T>
-    T as_or_default(const pqxx::row& r, const char* col, T def) {
+    T as_or_default(pqxx::row_ref r, const char* col, T def) {
         const auto f = r[col];
         return f.is_null() ? def : f.as<T>();
     }
 
     // Safer helper: returns empty string when NULL.
-    std::string as_or_empty(const pqxx::row& r, const char* col) {
+    std::string as_or_empty(pqxx::row_ref r, const char* col) {
         const auto f = r[col];
         return f.is_null() ? std::string{} : f.as<std::string>();
     }
 
-    std::optional<std::string> as_optional_string(const pqxx::row& r, const char* col) {
+    std::optional<std::string> as_optional_string(pqxx::row_ref r, const char* col) {
         const auto f = r[col];
         return f.is_null() ? std::nullopt : std::make_optional(f.as<std::string>());
     }
 
-    std::optional<bool> as_optional_bool(const pqxx::row& r, const char* col) {
+    std::optional<bool> as_optional_bool(pqxx::row_ref r, const char* col) {
         const auto f = r[col];
         return f.is_null() ? std::nullopt : std::make_optional(f.as<bool>());
     }
@@ -59,7 +59,7 @@ using namespace vh::sync::model;
 using namespace vh::db::encoding;
 using namespace std::chrono;
 
-Event::Event(const pqxx::row& row)
+Event::Event(pqxx::row_ref row)
     : id(row["id"].as<uint32_t>())
     , vault_id(row["vault_id"].as<uint32_t>())
     , run_uuid(row["run_uuid"].as<std::string>())

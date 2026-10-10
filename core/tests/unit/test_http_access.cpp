@@ -11,6 +11,7 @@
 #include "ops/Roles.hpp"
 #include "ops/Users.hpp"
 #include "ops/Vaults.hpp"
+#include "preview/render/Raster.hpp"
 #include "protocols/http/Access.hpp"
 #include "protocols/http/Router.hpp"
 #include "protocols/ws/Router.hpp"
@@ -28,7 +29,6 @@
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 #include <paths.h>
-#include <pdfium/fpdfview.h>
 #include <turbojpeg.h>
 
 #include <atomic>
@@ -36,6 +36,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <optional>
 #include <random>
 #include <thread>
 
@@ -148,10 +149,12 @@ class HttpAccessDbTest : public ::testing::Test {
 protected:
     inline static bool skipTests = false;
     inline static std::filesystem::path root;
+    inline static std::optional<vh::preview::render::PdfiumLibrary> pdfium;
 
     static void TearDownTestSuite() {
         std::error_code ec;
         if (!root.empty()) std::filesystem::remove_all(root, ec);  // test vault backing (encrypted files up to 300 MiB)
+        pdfium.reset();
     }
     inline static UserPtr admin, reader, plain;
     inline static std::shared_ptr<storage::Engine> vaultA, vaultB;
@@ -169,7 +172,7 @@ protected:
         paths::mountPath = root / "mount";
         std::filesystem::create_directories(paths::backingPath);
         std::filesystem::create_directories(paths::mountPath);
-        FPDF_InitLibrary();
+        pdfium.emplace();
 
         db::Transactions::init();
         db::seed::nuke_and_recreate_schema_public();

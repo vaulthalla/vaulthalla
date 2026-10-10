@@ -34,7 +34,7 @@ uint32_t resolveRoleTemplateId(
     );
     if (res.empty())
         throw std::runtime_error("Share vault role template is not persisted: " + role->name);
-    return res.one_row()["id"].as<uint32_t>();
+    return res.one_row_ref()["id"].as<uint32_t>();
 }
 
 uint32_t upsertAssignmentRow(pqxx::work& txn, const VaultRole::AssignmentInput& input) {
@@ -57,7 +57,7 @@ uint32_t upsertAssignmentRow(pqxx::work& txn, const VaultRole::AssignmentInput& 
         }
     );
     if (res.empty()) throw std::runtime_error("Failed to persist share vault role assignment");
-    return res.one_row()["id"].as<uint32_t>();
+    return res.one_row_ref()["id"].as<uint32_t>();
 }
 
 uint32_t upsertRecipientRow(
@@ -73,7 +73,7 @@ uint32_t upsertRecipientRow(
         pqxx::params{shareId, vh::db::encoding::to_hex_bytea(emailHash)}
     );
     if (res.empty()) throw std::runtime_error("Failed to persist share recipient");
-    return res.one_row()["id"].as<uint32_t>();
+    return res.one_row_ref()["id"].as<uint32_t>();
 }
 
 std::string pgIntArray(const std::vector<uint32_t>& values) {
@@ -99,7 +99,7 @@ uint32_t permissionIdForOverride(pqxx::work& txn, const vh::rbac::permission::Ov
     if (permRes.empty())
         throw std::runtime_error("Share vault role override permission is not registered: " +
                                  override.permission.qualified_name);
-    return permRes.one_row()["id"].as<uint32_t>();
+    return permRes.one_row_ref()["id"].as<uint32_t>();
 }
 
 void replaceAssignmentOverrides(
@@ -134,13 +134,13 @@ std::shared_ptr<vh::rbac::role::Vault> getAssignmentWithPrepared(
     const auto roleRes = txn.exec(pqxx::prepped{std::string{prepared}}, params);
     if (roleRes.empty()) return nullptr;
 
-    const auto assignmentId = roleRes.one_row()["assignment_id"].as<uint32_t>();
+    const auto assignmentId = roleRes.one_row_ref()["assignment_id"].as<uint32_t>();
     const auto overrideRes = txn.exec(
         pqxx::prepped{"share_vault_role_assignment_override_list_by_assignment_id"},
         pqxx::params{assignmentId}
     );
 
-    return std::make_shared<vh::rbac::role::Vault>(roleRes.one_row(), overrideRes);
+    return std::make_shared<vh::rbac::role::Vault>(roleRes.one_row_ref(), overrideRes);
 }
 
 }
@@ -276,13 +276,13 @@ std::shared_ptr<vh::rbac::role::Vault> VaultRole::getForShare(const std::string&
 
         if (roleRes.empty()) return nullptr;
 
-        const auto mappingId = roleRes.one_row()["share_vault_role_id"].as<uint32_t>();
+        const auto mappingId = roleRes.one_row_ref()["share_vault_role_id"].as<uint32_t>();
         const auto overrideRes = txn.exec(
             pqxx::prepped{"share_vault_role_override_list_by_mapping_id"},
             pqxx::params{mappingId}
         );
 
-        return std::make_shared<vh::rbac::role::Vault>(roleRes.one_row(), overrideRes);
+        return std::make_shared<vh::rbac::role::Vault>(roleRes.one_row_ref(), overrideRes);
     });
 }
 

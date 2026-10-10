@@ -9,7 +9,7 @@ using namespace vh::sync::model;
 using namespace vh::fs::model;
 using namespace vh::db::encoding;
 
-Operation::Operation(const pqxx::row& row)
+Operation::Operation(pqxx::row_ref row)
     : id(row["id"].as<unsigned int>()),
       fs_entry_id(row["fs_entry_id"].as<unsigned int>()),
       executed_by(row["executed_by"].as<unsigned int>()),
@@ -122,9 +122,3 @@ void vh::sync::model::from_json(const nlohmann::json& j, std::shared_ptr<Operati
     }
 }
 
-std::vector<std::shared_ptr<Operation>> vh::sync::model::operations_from_pq_res(const pqxx::result& res) {
-    std::vector<std::shared_ptr<Operation>> operations;
-    operations.reserve(res.size());
-    for (const auto& row : res) operations.emplace_back(std::make_shared<Operation>(row));
-    return operations;
-}

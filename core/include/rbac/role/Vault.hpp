@@ -1,6 +1,7 @@
 #pragma once
 
 #include "rbac/role/Meta.hpp"
+#include "db/Fwd.hpp"
 #include "vault/Base.hpp"
 #include "rbac/permission/Permission.hpp"
 
@@ -24,9 +25,9 @@ namespace vh::rbac::role {
 
         Vault() : Meta(), Base() {}
 
-        explicit Vault(const pqxx::row &row);
+        explicit Vault(pqxx::row_ref row);
 
-        Vault(const pqxx::row &row, const pqxx::result &overrides);
+        Vault(pqxx::row_ref row, const pqxx::result &overrides);
 
         explicit Vault(const nlohmann::json &j);
 

@@ -332,7 +332,7 @@ protected:
     static unsigned openRows(const uint32_t fileId) {
         return db::Transactions::exec("SyncConflictHarness::openRows", [&](pqxx::work& txn) {
             return txn.exec("SELECT COUNT(*) FROM sync_conflicts WHERE file_id = $1 AND resolution = 'unresolved'",
-                            pqxx::params{fileId}).one_field().as<unsigned>();
+                            pqxx::params{fileId}).one_field_ref().as<unsigned>();
         });
     }
 
@@ -367,7 +367,7 @@ protected:
                                         roles_permissions)
                 VALUES ($1, 'test', $2::bit(32), $3::bit(32), $4::bit(32), $5::bit(16)) RETURNING id
             )SQL", pqxx::params{name, role.fs.files.toBitString(), role.fs.directories.toBitString(),
-                                role.sync.toBitString(), role.roles.toBitString()}).one_field().as<uint32_t>();
+                                role.sync.toBitString(), role.roles.toBitString()}).one_field_ref().as<uint32_t>();
         });
     }
 

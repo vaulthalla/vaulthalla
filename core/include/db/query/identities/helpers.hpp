@@ -13,9 +13,9 @@ namespace vh {
     }
 
     namespace db::query::identities {
-        std::shared_ptr<vh::identities::User> hydrateUser(pqxx::work& txn, const pqxx::row& userRow);
+        std::shared_ptr<vh::identities::User> hydrateUser(pqxx::work& txn, pqxx::row_ref userRow);
 
-        std::shared_ptr<vh::identities::Group> hydrateGroup(pqxx::work& txn, const pqxx::row& groupRow);
+        std::shared_ptr<vh::identities::Group> hydrateGroup(pqxx::work& txn, pqxx::row_ref groupRow);
 
         void upsertUserRoles(pqxx::work& txn, const std::shared_ptr<vh::identities::User>& user);
 

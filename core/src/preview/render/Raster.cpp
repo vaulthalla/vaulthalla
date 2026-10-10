@@ -14,12 +14,14 @@
 #include <stb/stb_image.h>
 #include <stb/stb_image_resize.h>
 #include <turbojpeg.h>
-#include <pdfium/fpdfview.h>
+#include <fpdfview.h>
+#include <cpp/fpdf_scopers.h>
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
 #include <memory>
+#include <mutex>
 
 namespace vh::preview::render {
 
@@ -121,6 +123,24 @@ void checkSource(const std::span<const uint8_t> bytes, const Limits& limits) {
     return r;
 }
 
+// PDFium is not thread-safe: init, destroy and every render share this lock.
+std::mutex& pdfiumMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
+}
+
+PdfiumLibrary::PdfiumLibrary() {
+    FPDF_LIBRARY_CONFIG config{};
+    config.version = 2;  // no V8/XFA in the packaged build; later versions only add experimental knobs
+    std::scoped_lock lock(pdfiumMutex());
+    FPDF_InitLibraryWithConfig(&config);
+}
+
+PdfiumLibrary::~PdfiumLibrary() {
+    std::scoped_lock lock(pdfiumMutex());
+    FPDF_DestroyLibrary();
 }
 
 Limits limitsFromConfig() {
@@ -129,11 +149,6 @@ Limits limitsFromConfig() {
     limits.maxSourceBytes = std::max<uint64_t>(1, cfg.http_preview.max_preview_size_bytes);
     limits.maxPixels = std::max<uint64_t>(1, cfg.preview.max_render_pixels);
     return limits;
-}
-
-std::mutex& pdfiumMutex() {
-    static std::mutex mutex;
-    return mutex;
 }
 
 Raster decodeImage(const std::span<const uint8_t> bytes, const uint32_t targetMaxDim, const Limits& limits) {
@@ -147,56 +162,35 @@ Raster renderPdfPage(const std::span<const uint8_t> bytes, const uint32_t page, 
     const auto target = std::clamp<uint32_t>(targetMaxDim, 16, limits.maxDimension);
 
     std::scoped_lock lock(pdfiumMutex());
-    struct Doc {
-        FPDF_DOCUMENT d;
-        ~Doc() { if (d) FPDF_CloseDocument(d); }
-    } doc{FPDF_LoadMemDocument(bytes.data(), static_cast<int>(bytes.size()), nullptr)};
-    if (!doc.d) throw InvalidInput("Invalid or encrypted PDF");
+    const ScopedFPDFDocument doc(FPDF_LoadMemDocument64(bytes.data(), bytes.size(), nullptr));
+    if (!doc) throw InvalidInput("Invalid or encrypted PDF");
 
-    const int count = FPDF_GetPageCount(doc.d);
+    const int count = FPDF_GetPageCount(doc.get());
     if (count <= 0) throw InvalidInput("PDF has no pages");
     pageCount = static_cast<uint32_t>(count);
     if (page >= pageCount) throw InvalidInput("PDF page out of range");
 
-    struct Page {
-        FPDF_PAGE p;
-        ~Page() { if (p) FPDF_ClosePage(p); }
-    } pg{FPDF_LoadPage(doc.d, static_cast<int>(page))};
-    if (!pg.p) throw InvalidInput("Failed to load PDF page");
+    const ScopedFPDFPage pg(FPDF_LoadPage(doc.get(), static_cast<int>(page)));
+    if (!pg) throw InvalidInput("Failed to load PDF page");
 
-    const double pw = FPDF_GetPageWidth(pg.p);
-    const double ph = FPDF_GetPageHeight(pg.p);
+    const double pw = FPDF_GetPageWidth(pg.get());
+    const double ph = FPDF_GetPageHeight(pg.get());
     if (!(pw > 0) || !(ph > 0) || !std::isfinite(pw) || !std::isfinite(ph)) throw InvalidInput("Invalid PDF page size");
     const double ratio = static_cast<double>(target) / std::max(pw, ph);
     const int w = std::max(1, static_cast<int>(std::lround(pw * ratio)));
     const int h = std::max(1, static_cast<int>(std::lround(ph * ratio)));
     if (pixels(w, h) > limits.maxPixels) throw LimitExceeded("PDF page exceeds the pixel limit");
 
-    struct Bitmap {
-        FPDF_BITMAP b;
-        ~Bitmap() { if (b) FPDFBitmap_Destroy(b); }
-    } bmp{FPDFBitmap_Create(w, h, 0)};
-    if (!bmp.b) throw LimitExceeded("Could not allocate the PDF bitmap");
-    FPDFBitmap_FillRect(bmp.b, 0, 0, w, h, 0xFFFFFFFF);
-    FPDF_RenderPageBitmap(bmp.b, pg.p, 0, 0, w, h, 0, FPDF_ANNOT);
-
-    const auto* raw = static_cast<const uint8_t*>(FPDFBitmap_GetBuffer(bmp.b));
-    const int stride = FPDFBitmap_GetStride(bmp.b);
-    if (!raw || stride < w * 4) throw std::runtime_error("PDF bitmap unavailable");
-
+    // PDFium renders straight into the packed RGB raster: a 24bpp bitmap over our buffer, with
+    // FPDF_REVERSE_BYTE_ORDER turning its native BGR into RGB. No intermediate BGRA bitmap, no conversion pass.
     Raster r;
     r.width = static_cast<uint32_t>(w);
     r.height = static_cast<uint32_t>(h);
     r.rgb.resize(static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * 3);
-    for (int y = 0; y < h; ++y) {
-        const auto* row = raw + static_cast<std::ptrdiff_t>(y) * stride;
-        auto* out = r.rgb.data() + static_cast<std::size_t>(y) * static_cast<std::size_t>(w) * 3;
-        for (int x = 0; x < w; ++x) {
-            out[x * 3 + 0] = row[x * 4 + 2];
-            out[x * 3 + 1] = row[x * 4 + 1];
-            out[x * 3 + 2] = row[x * 4 + 0];
-        }
-    }
+    const ScopedFPDFBitmap bmp(FPDFBitmap_CreateEx(w, h, FPDFBitmap_BGR, r.rgb.data(), w * 3));
+    if (!bmp) throw LimitExceeded("Could not allocate the PDF bitmap");
+    FPDFBitmap_FillRect(bmp.get(), 0, 0, w, h, 0xFFFFFFFF);
+    FPDF_RenderPageBitmap(bmp.get(), pg.get(), 0, 0, w, h, 0, FPDF_ANNOT | FPDF_REVERSE_BYTE_ORDER);
     return r;
 }
 

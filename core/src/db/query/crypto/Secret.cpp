@@ -20,7 +20,7 @@ std::shared_ptr<S> Secret::getSecret(const std::string& key) {
     return Transactions::exec("Secret::getSecret", [&](pqxx::work& txn) -> std::shared_ptr<S> {
         const auto res = txn.exec(pqxx::prepped{"get_internal_secret"}, key);
         if (res.empty()) return nullptr;
-        return std::make_shared<S>(res.one_row());
+        return std::make_shared<S>(res.one_row_ref());
     });
 }
 
@@ -28,7 +28,7 @@ bool Secret::secretExists(const std::string& key) {
     return Transactions::exec("Secret::secretExists", [&](pqxx::work& txn) -> bool {
         const auto res = txn.exec(pqxx::prepped{"internal_secret_exists"}, key);
         if (res.empty()) return false;
-        return res.one_field().as<bool>();
+        return res.one_field_ref().as<bool>();
     });
 }
 

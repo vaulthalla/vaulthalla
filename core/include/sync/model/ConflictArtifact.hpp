@@ -3,7 +3,7 @@
 #include "Artifact.hpp"
 
 #include <nlohmann/json_fwd.hpp>
-#include <pqxx/types>
+#include "db/Fwd.hpp"
 
 namespace vh::sync::model {
 

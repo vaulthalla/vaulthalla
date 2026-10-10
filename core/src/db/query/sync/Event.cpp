@@ -50,7 +50,7 @@ void Event::create(const EventPtr& event) {
     Transactions::exec("SyncQueries::createSyncEvent", [&](pqxx::work& txn) {
         const auto res = txn.exec(pqxx::prepped{"sync_event.create"}, p);
         if (res.empty()) throw std::runtime_error("Failed to create sync event");
-        const auto row = res.one_row();
+        const auto row = res.one_row_ref();
         event->id = row["id"].as<unsigned int>();
         event->run_uuid = row["run_uuid"].as<std::string>();
     });
@@ -89,7 +89,7 @@ void Event::upsert(const EventPtr& event) {
 
                 const auto res = txn.exec(pqxx::prepped{"sync_conflict.upsert"}, p);
                 if (res.empty()) throw std::runtime_error("Failed to upsert sync conflict");
-                conflict->id = res.one_row()["id"].as<unsigned int>();
+                conflict->id = res.one_row_ref()["id"].as<unsigned int>();
             }
 
             const auto upsertArtifact = [&txn, &conflict](const vh::sync::model::Artifact& artifact) {
@@ -121,7 +121,7 @@ void Event::upsert(const EventPtr& event) {
 
                 const auto res = txn.exec(pqxx::prepped{"sync_conflict_reason.upsert"}, p);
                 if (res.empty()) throw std::runtime_error("Failed to upsert sync conflict reason");
-                const auto row = res.one_row();
+                const auto row = res.one_row_ref();
                 reason.id = row["id"].as<unsigned int>();
                 reason.conflict_id = conflict->id;
             }
@@ -154,7 +154,7 @@ Event::EventPtr Event::getLatest(unsigned int vaultId) {
         const auto res = txn.exec(pqxx::prepped{"sync_event.list_for_vault"}, p);
         if (res.empty()) return nullptr;
 
-        const auto event = std::make_shared<E>(res.one_row());
+        const auto event = std::make_shared<E>(res.one_row_ref());
         build_event(txn, event);
         return event;
     });

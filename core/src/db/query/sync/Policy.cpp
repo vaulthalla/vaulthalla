@@ -7,15 +7,15 @@ namespace vh::db::query::sync {
 
 Policy::PolicyPtr Policy::getSync(const unsigned int vaultId) {
     return Transactions::exec("Policy::getProxySyncConfig", [&](pqxx::work& txn) -> PolicyPtr {
-        const auto type = txn.exec("SELECT type FROM vault WHERE id = " + txn.quote(vaultId)).one_field().as<std::string>();
+        const auto type = txn.exec("SELECT type FROM vault WHERE id = " + txn.quote(vaultId)).one_field_ref().as<std::string>();
 
         if (type == "local")
             return std::make_shared<vh::sync::model::LocalPolicy>(
-                txn.exec(pqxx::prepped{"get_fsync_config"}, vaultId).one_row());
+                txn.exec(pqxx::prepped{"get_fsync_config"}, vaultId).one_row_ref());
 
         if (type == "s3")
             return std::make_shared<vh::sync::model::RemotePolicy>(
-                txn.exec(pqxx::prepped{"get_rsync_config"}, vaultId).one_row());
+                txn.exec(pqxx::prepped{"get_rsync_config"}, vaultId).one_row_ref());
 
         throw std::runtime_error("Unknown sync type: " + type);
     });
