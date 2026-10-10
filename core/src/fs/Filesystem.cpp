@@ -644,8 +644,8 @@ void Filesystem::remove(const std::filesystem::path& path, const unsigned int us
             cache->evictPath(file->fuse_path);
             purgeDerived(file->id);
         }
-        // Trashing the last file removes a directory that ends up empty, but an empty directory (or one holding
-        // only empty directories or symlinks) is still there: delete what is left, off its ancestors' totals.
+        // Trashing files never removes folders (#168): the directory, its subfolders and any symlinks are still
+        // there. Delete what is left, off its ancestors' totals.
         db::query::fs::Directory::deleteDirectoryTree(entry->id);
         cache->evictPath(path);
     }
@@ -663,8 +663,8 @@ void Filesystem::remove(const std::filesystem::path& path, const unsigned int us
         if (symlinkStatusExists(entry->backing_path)) std::filesystem::remove(entry->backing_path);
     } else if (std::filesystem::exists(entry->backing_path)) std::filesystem::remove_all(entry->backing_path);
 
-    // fs.dir.list reads directory totals from the cache: refresh what the delete changed (#158), from the nearest
-    // ancestor that still exists (cleanup may have removed folders the delete left without files).
+    // fs.dir.list reads directory totals from the cache: refresh what the delete changed (#158). Deleting never
+    // removes the parent folder (#168); the loop only guards against a concurrent delete of it.
     for (const auto id : ancestors)
         if (cache->refreshDirStats(id)) break;
 }

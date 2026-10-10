@@ -241,7 +241,7 @@ TEST_F(FsCacheDeleteTest, EvictedDirectoryPathCanBeRecreatedWithFreshMetadata) {
     ASSERT_TRUE(vh::runtime::Deps::get().fsCache->entryExists(path));
     const auto firstId = first->id;
 
-    vh::db::query::fs::Directory::deleteEmptyDirectory(first->id);
+    EXPECT_TRUE(vh::db::query::fs::Directory::deleteEmptyDirectory(first->id));
     ASSERT_TRUE(vh::runtime::Deps::get().fsCache->entryExists(path));
 
     vh::runtime::Deps::get().fsCache->evictPath(path);

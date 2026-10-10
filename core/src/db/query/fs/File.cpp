@@ -127,14 +127,14 @@ void File::deleteFile(const unsigned int userId, const FilePtr& file) {
         pqxx::params p{file->vault_id, path};
         const auto row = txn.exec(pqxx::prepped{"get_file_parent_id_and_size_by_path"}, p).one_row();
         const auto parentId = row["parent_id"].as<std::optional<unsigned int> >();
-        const auto sizeBytes = row["size_bytes"].as<unsigned int>();
+        const auto sizeBytes = row["size_bytes"].as<std::uint64_t>();
 
         txn.exec(
             pqxx::prepped{"mark_file_trashed"},
             pqxx::params{file->vault_id, path, userId, to_utf8_string(file->backing_path.u8string())}
         );
 
-        updateParentStatsAndCleanEmptyDirs(txn, parentId, sizeBytes);
+        updateParentStats(txn, parentId, sizeBytes);
 
         txn.exec(pqxx::prepped{"mark_trashed_file_deleted_by_base32_alias"}, pqxx::params{file->base32_alias});
     });
@@ -251,7 +251,7 @@ std::vector<File::TrashedFilePtr> File::listTrashedFiles(unsigned int vaultId) {
 }
 
 void File::markFileAsTrashed(const unsigned int userId, const unsigned int vaultId,
-                                    const std::filesystem::path& relPath, const bool isFuseCall) {
+                                    const std::filesystem::path& relPath) {
     const auto file = getFileByPath(vaultId, relPath);
     if (!file) throw std::runtime_error("[markFileAsTrashed] File not found: " + to_utf8_string(relPath.u8string()));
 
@@ -262,27 +262,27 @@ void File::markFileAsTrashed(const unsigned int userId, const unsigned int vault
 
         const auto row = res[0];
         const auto parentId = row["parent_id"].as<std::optional<unsigned int> >();
-        const auto sizeBytes = row["size_bytes"].as<unsigned int>();
+        const auto sizeBytes = row["size_bytes"].as<std::uint64_t>();
 
         txn.exec(pqxx::prepped{"mark_file_trashed"}, pqxx::params{vaultId, to_utf8_string(relPath.u8string()), userId, to_utf8_string(file->backing_path.u8string())});
 
-        updateParentStatsAndCleanEmptyDirs(txn, parentId, sizeBytes, isFuseCall);
+        updateParentStats(txn, parentId, sizeBytes);
     });
 }
 
-void File::markFileAsTrashed(const unsigned int userId, const unsigned int fsId, const bool isFuseCall) {
+void File::markFileAsTrashed(const unsigned int userId, const unsigned int fsId) {
     const auto file = getFileById(fsId);
     if (!file) throw std::runtime_error("[markFileAsTrashed] File not found with ID: " + std::to_string(fsId));
 
     Transactions::exec("File::markFileAsTrashed", [&](pqxx::work& txn) {
         const auto row = txn.exec(pqxx::prepped{"get_file_parent_id_and_size"}, fsId).one_row();
         const auto parentId = row["parent_id"].as<std::optional<unsigned int>>();
-        const auto sizeBytes = row["size_bytes"].as<unsigned int>();
+        const auto sizeBytes = row["size_bytes"].as<std::uint64_t>();
 
         pqxx::params p{fsId, userId, to_utf8_string(file->backing_path.u8string())};
         txn.exec(pqxx::prepped{"mark_file_trashed_by_id"}, p);
 
-        updateParentStatsAndCleanEmptyDirs(txn, parentId, sizeBytes, isFuseCall);
+        updateParentStats(txn, parentId, sizeBytes);
     });
 }
 
@@ -311,31 +311,13 @@ void File::markRemoteFileAsTrashed(
     });
 }
 
-void File::updateParentStatsAndCleanEmptyDirs(pqxx::work& txn,
-                                                     std::optional<unsigned int> parentId,
-                                                     const unsigned int sizeBytes,
-                                                     const bool isFuseCall) {
-    const auto vaultId = txn.exec("SELECT vault_id FROM fs_entry WHERE id = $1", parentId).one_field().as<std::optional<unsigned int>>();
-    const auto stopAt = vaultId ?
-    txn.exec(pqxx::prepped{"get_vault_root_dir_id_by_vault_id"}, *vaultId).one_field().as<unsigned int>()
-    : txn.exec(pqxx::prepped{"get_fs_entry_id_by_path"}, pqxx::params{vaultId, "/"}).one_field().as<unsigned int>();
-
-    int subDirsDeleted = 0;
-    bool deleteDirs = !isFuseCall;
+// A removed file (or symlink) comes off the subtree totals of every ancestor. Folders are never removed with it: a
+// folder the delete leaves without files stays, in the database and on disk, like in any file manager (#168).
+void File::updateParentStats(pqxx::work& txn, std::optional<unsigned int> parentId, const std::uint64_t sizeBytes) {
     while (parentId) {
-        pqxx::params stats_params{parentId, -static_cast<long long>(sizeBytes), -1, subDirsDeleted};
-        const auto fsCount = txn.exec(pqxx::prepped{"update_dir_stats"}, stats_params).one_field().as<unsigned int>();
+        txn.exec(pqxx::prepped{"update_dir_stats"},
+                 pqxx::params{*parentId, -static_cast<long long>(sizeBytes), -1, 0});
         const auto parentRes = txn.exec(pqxx::prepped{"get_fs_entry_parent_id"}, *parentId);
-        if (*parentId == stopAt) deleteDirs = false;
-        if (deleteDirs && fsCount == 0) {
-            const auto inode = txn.exec(pqxx::prepped{"get_fs_entry_inode"}, *parentId).one_field().as<ino_t>();
-            // Empty subdirectories still under it go with it (ON DELETE CASCADE); ancestors drop those too (#158).
-            const auto cascaded = txn.exec("SELECT subdirectory_count FROM directories WHERE fs_entry_id = $1",
-                                           pqxx::params{*parentId}).one_field().as<int>(0);
-            txn.exec(pqxx::prepped{"delete_fs_entry"}, *parentId);
-            runtime::Deps::get().fsCache->evictIno(inode);
-            subDirsDeleted -= 1 + cascaded;
-        }
         if (parentRes.empty()) break;
         parentId = parentRes.one_field().as<std::optional<unsigned int>>();
     }

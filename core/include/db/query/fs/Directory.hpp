@@ -38,7 +38,10 @@ public:
 
     [[nodiscard]] static pqxx::result collectParentStats(unsigned int parentId);
 
-    static void deleteEmptyDirectory(unsigned int id);
+    // rmdir(2): deletes directory `id` only while nothing is under it (false otherwise, nothing changed), taking it off
+    // every ancestor's subdirectory count. It used to drop a non-empty directory with everything under it (cascade)
+    // and only decrement its parent.
+    [[nodiscard]] static bool deleteEmptyDirectory(unsigned int id);
 
     [[nodiscard]] static bool isDirectoryEmpty(unsigned int id);
 

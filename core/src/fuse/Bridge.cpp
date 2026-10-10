@@ -763,6 +763,7 @@ void unlink(const fuse_req_t req, const fuse_ino_t parent, const char* name) {
             log::Registry::fuse()->debug("[unlink] Failed to remove backing symlink: {}: {}", entry->backing_path.string(), strerror(errno));
 
         runtime::Deps::get().fsCache->evictPath(entry->fuse_path);
+        if (entry->parent_id) runtime::Deps::get().fsCache->refreshDirStats(*entry->parent_id);
         replyOk(req, timer);
         return;
     }
@@ -774,11 +775,12 @@ void unlink(const fuse_req_t req, const fuse_ino_t parent, const char* name) {
             log::Registry::fuse()->debug("[unlink] Failed to remove backing upload temp file: {}: {}", entry->backing_path.string(), strerror(errno));
 
         runtime::Deps::get().fsCache->evictPath(entry->fuse_path);
+        if (entry->parent_id) runtime::Deps::get().fsCache->refreshDirStats(*entry->parent_id);
         replyOk(req, timer);
         return;
     }
 
-    db::query::fs::File::markFileAsTrashed(resolved.user->id, *entry->vault_id, entry->path, true);
+    db::query::fs::File::markFileAsTrashed(resolved.user->id, *entry->vault_id, entry->path);
 
     if (::unlink(entry->backing_path.c_str()) < 0)
         log::Registry::fuse()->debug("[unlink] Failed to remove backing file: {}: {}", entry->backing_path.string(), strerror(errno));
@@ -787,6 +789,8 @@ void unlink(const fuse_req_t req, const fuse_ino_t parent, const char* name) {
     if (resolved.engine) resolved.engine->purgeDerivedArtifacts(entry->id);
 
     runtime::Deps::get().fsCache->evictPath(entry->fuse_path);
+    // The folder stays (#168); its cached totals (what fs.dir.list shows) follow the delete.
+    if (entry->parent_id) runtime::Deps::get().fsCache->refreshDirStats(*entry->parent_id);
     replyOk(req, timer);
 }
 
@@ -808,12 +812,22 @@ void rmdir(const fuse_req_t req, const fuse_ino_t parent, const char* name) {
         return;
     }
 
-    db::query::fs::Directory::deleteEmptyDirectory(resolved.entry->id);
+    if (!resolved.entry->isDirectory()) {
+        replyError(req, timer, ENOTDIR);
+        return;
+    }
+
+    // Something is still under it (possibly entries this caller can't see): refuse instead of dropping it all.
+    if (!db::query::fs::Directory::deleteEmptyDirectory(resolved.entry->id)) {
+        replyError(req, timer, ENOTEMPTY);
+        return;
+    }
 
     if (::rmdir(resolved.entry->backing_path.c_str()) < 0)
         log::Registry::fuse()->warn("[rmdir] Failed to remove backing directory: {}: {}", resolved.entry->backing_path.string(), strerror(errno));
 
     runtime::Deps::get().fsCache->evictPath(resolved.entry->fuse_path);
+    if (resolved.entry->parent_id) runtime::Deps::get().fsCache->refreshDirStats(*resolved.entry->parent_id);
     replyOk(req, timer);
 }
 

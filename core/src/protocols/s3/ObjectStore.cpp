@@ -781,6 +781,8 @@ void ObjectStore::purgeLocalObjectState(
         cache->evictPath(fusePath);
         if (oldInode) cache->evictIno(*oldInode);
         if (oldId) cache->evictId(oldId);
+        // The folder stays (#168); the totals listings read from the cache follow the delete.
+        if (file && file->parent_id) cache->refreshDirStats(static_cast<unsigned int>(*file->parent_id));
     }
 
     if (file) {

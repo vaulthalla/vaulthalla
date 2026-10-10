@@ -2585,6 +2585,8 @@ TEST(S3CostSafetyTest, RemoveTrashedFileUsesAbsoluteBackingPathDirectly) {
     engine.removeLocally(trashed);
 
     EXPECT_FALSE(std::filesystem::exists(backing));
+    // Purging a trashed file never removes the folder it was in (#168).
+    EXPECT_TRUE(std::filesystem::is_directory(backing.parent_path()));
 }
 
 TEST(S3CostSafetyTest, PlannerMarksCacheRemoteOnlyAsIndexOnly) {

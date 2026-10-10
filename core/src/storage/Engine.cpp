@@ -255,11 +255,17 @@ namespace vh::storage {
     void Engine::removeLocally(const fs::path &rel_path) const {
         const auto path = rel_path.string().front() != '/' ? fs::path("/" / rel_path) : rel_path;
         const auto file = db::query::fs::File::getFileByPath(vault->id, path);
+        if (!file) return;
         db::query::fs::File::deleteFile(vault->owner_id, file);
-        if (file) purgeDerivedArtifacts(file->id);
+        purgeDerivedArtifacts(file->id);
+        if (const auto& cache = runtime::Deps::get().fsCache) {
+            cache->evictId(file->id);
+            if (file->parent_id) cache->refreshDirStats(*file->parent_id);
+        }
 
-        if (const auto absPath = paths->absPath(path, PathType::BACKING_VAULT_ROOT); fs::exists(absPath))
-            fs::remove(absPath);
+        // The file's own backing path (alias layout), not BACKING_VAULT_ROOT/<vault path>: nothing is stored there.
+        std::error_code ec;
+        fs::remove(file->backing_path, ec);
     }
 
     void Engine::removeLocally(const std::shared_ptr<file::Trashed> &f) const {
@@ -268,34 +274,12 @@ namespace vh::storage {
         fs::path absPath = f->backing_path;
         if (absPath.is_relative()) absPath = paths->absPath(absPath, PathType::BACKING_ROOT);
 
-        // Remove the file if present
+        // Remove the file if present. Only the file: the folder it was in still exists in the vault (#168), so its
+        // backing directory stays too. (A walk-up removing "now-empty" parents lived here; it compared backing paths
+        // against the FUSE vault root, so it never removed anything, and it must not.)
         std::error_code ec;
         fs::remove(absPath, ec); // ignore errors; file may not exist
 
-        // Normalize roots to avoid string mismatch
-        fs::path vaultRoot = paths->vaultRoot;
-        vaultRoot = fs::weakly_canonical(vaultRoot, ec);
-        absPath = fs::weakly_canonical(absPath, ec);
-
-        // Walk up deleting now-empty dirs, but never above vaultRoot
-        while (absPath.has_parent_path()) {
-            fs::path parent = absPath.parent_path();
-
-            // Stop if parent is (or is above) vaultRoot boundary
-            // Use lexically_relative to detect containment robustly.
-
-            if (const auto rel = parent.lexically_relative(vaultRoot);
-                rel.empty() || rel.native().starts_with(".."))
-                break; // outside or at boundary
-
-            // If parent doesn't exist or isn't empty, we're done
-            if (!fs::exists(parent) || !fs::is_empty(parent)) break;
-
-            fs::remove(parent, ec);
-            if (ec) break;
-
-            absPath = parent;
-        }
         // Derived artifacts were dropped when the file was trashed (its file id ended there); the startup sweep
         // collects anything an interrupted trash left behind.
     }
