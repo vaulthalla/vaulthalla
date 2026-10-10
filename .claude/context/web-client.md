@@ -21,8 +21,16 @@
 - **Server data:** TanStack Query over ws (`src/lib/query.ts`: `useWs`, `useWsMutation`, `invalidate`, `fetchWs`).
   Polling = `refetchInterval` (deduped, ref-counted, paused in hidden tabs). No Zustand stores for server data;
   Zustand only for client state (transfers, UI prefs, confirm/palette state).
-- **Permissions (UI only):** `src/lib/permissions.ts` `useCan({admin|permission|anyOf|prefix})`, mirroring core
-  `User::isAdmin()`. Nav items declare `requires`; pages render a typed denied state.
+- **Server policy:** `src/lib/serverPolicy.ts` `useServerPolicy()` reads `settings.policy.get` (any signed-in user:
+  `sharing.*` switches and `vaults.s3.*` defaults). `features/shares/policy.ts` turns it into the share kinds that
+  may be created: FilesPage drops "Share link…" when none, the share dialog offers only allowed kinds, and
+  `SharingNotice` (`data-testid="sharing-disabled-notice"`) explains on link lists. The new-vault form seeds its S3
+  strategy/conflict from the defaults unless the user changed them. The daemon enforces all of it; the UI only hides.
+- **Permissions (UI only):** `src/lib/permissions.ts` `useCan({superAdmin|permission|anyOf|prefix})` over the
+  session user's admin-role permission bits. Gate on the permission core checks: Health, the health dot and system
+  storage sizes use `STATS_VIEW` (`admin.stats.view`, core `ops::stats::canViewSystem`, #166); vault pages just ask
+  for `stats.vault.*` and render the typed denial. `isAdminUser`/`useIsAdmin` mirror core `User::isAdmin()` and only
+  remain inside `isSuperAdminUser` and the vault owner pickers. Nav items declare `requires`; pages render a typed denied state.
 - **Design system:** tokens in `src/app/globals.css` (dark only; one cyan accent; `surface-1/2/3`, `line`,
   `fg/-muted/-subtle/-faint`, status `ok|info|warn|danger|unknown`; utilities `glass`, `glass-strong`, `panel`,
   `tabular`, `skeleton`). Primitives in `src/components/ui/*` (Button, IconButton, Field/Input/Select/Textarea,
@@ -32,7 +40,8 @@
   `bin/check-colors.mjs` fails on raw palette/arbitrary colors outside `components/ui`. `/dev/ui` (development
   builds only) renders every primitive.
 - **Shell:** `src/components/shell/*` — permission-filtered rail (collapsible), top bar (⌘K command palette, health
-  dot from `stats.dashboard.severity`, transfers, cost-alerts bell, user menu), session gate (reconnecting state, never
+  dot from `stats.dashboard.severity` for `admin.stats.view`, Sync Conflicts button, transfers, cost-alerts bell, user
+  menu), session gate (reconnecting state, never
   an endless spinner), initial-password warning (`data-testid="initial-password-warning"`).
 - **Cost-alerts bell** (`features/cost/NotificationsBell.tsx`, super admins only): `pricing.notifications.list`
   `{limit: 8, include_acknowledged: false}` every 60 s (paused in hidden tabs). The badge count (capped "9+") and tone
@@ -42,7 +51,40 @@
 - **Features:** `src/features/<area>/*`; route files in `src/app/**/page.tsx` are thin and render a feature
   component. Areas: `files` (FileBrowser over an `FsSource` adapter — vault or share — with capability-driven UI,
   URL-addressed paths, virtualized list/grid, transfer manager), `shares`, `share` (anonymous recipient page),
-  `health`, `vaults`, `access`, `account`, `credentials`, `cost`, `gateway`, `notifications`, `settings`, `auth`.
+  `health`, `vaults`, `access`, `account`, `credentials`, `cost`, `gateway`, `notifications`, `settings`, `auth`,
+  `syncConflicts`.
+
+## Sync conflicts (#187)
+
+`features/syncConflicts/*`, route `/sync-conflicts`. Open conflicts recorded under the remote `ask` policy, only in
+vaults where the account holds `vault.sync.action.resolve_conflicts` (core filters; resolving also needs filesystem
+Overwrite, reported per row as `can_overwrite`).
+- **One poller:** `summary.ts` `useSyncConflictSummary()` reads `sync.conflicts.summary` every 60 s (paused in hidden
+  tabs; stops on denied/"Unknown command"). The top-bar `SyncConflictsButton` (count badge capped "9+",
+  `data-testid="sync-conflicts-button"`) and the System → "Sync Conflicts" nav item (`NavItem.shownWhen:
+  'syncConflicts'`, filtered in `useVisibleNav`, so rail, mobile nav and ⌘K agree) both hide while the total is 0 or
+  the query fails.
+- **Page:** `sync.conflicts.list {vault_id?}` in a DataTable with checkboxes + select-all (rows without Overwrite
+  can't be selected), a vault filter from the summary's vaults (only vaults with conflicts), per-row and bulk Keep
+  local / Keep remote (bulk behind `confirm()`), and a results panel listing every item that was not resolved with
+  its status and message (`sync.conflicts.resolve` is per item; batches over 500 ids are split client-side; 10 min
+  client timeout). Lists and summary are invalidated after every resolve.
+- **Preview sheet** (`ConflictSheet`, lazy): metadata comparison (size, modified, hash, type, ETag, encrypted in
+  bucket) always; images/video/audio side by side (local `src=/download/conflict?conflict_id&side=local`, remote
+  fetched once into a Blob/object URL); text/markdown as an aligned side-by-side line diff (`lineDiff.ts`, Myers with
+  common prefix/suffix trimming, gives up past 1000 differing lines; `TextDiff` is its own lazy chunk) when both sides
+  are ≤ 2 MiB and strict UTF-8; other types metadata only. The remote side is metered: it loads with the sheet only
+  when ≤ 2 MiB, larger copies need a "Load the bucket copy" click, and anything over the daemon's 32 MiB cap is not
+  requested. 409/413/503 from the lane become messages.
+
+## Vault deletion (#162)
+
+`features/vaults/DeleteVaultDialog.tsx` (lazy, from Settings → Delete vault) is one dialog: it reads
+`storage.vault.remove.plan` (re-read on window focus, so a key exported from a terminal clears the warning), shows the
+restore and key windows, the S3 upstream choice (keep by default), the key-loss warning with the export command and a
+required "I understand" checkbox, then Delete or Delete now (typed name). `features/vaults/DeletedVaults.tsx` (lazy, Vaults
+page, accounts with a vault remove permission) lists `storage.vault.deleted.list` with Restore / Purge now and keeps the
+"export this key" warning on records with `upstream_key_at_risk`. Keys are never exported through the browser.
 
 ## File previews (renderer registry)
 
@@ -88,7 +130,7 @@
 `/login`, `/files/[vaultId]/[...path]`, `/shares`, `/vaults` (+ `/new`, `/[id]` tabs: overview, access, shares,
 sync, gateway, settings), `/users` (+ `/new`, `/[name]`), `/groups`, `/roles` (+ `/new?type=`, `/[type]/[id]`),
 `/credentials` (+ `/new`, `/[id]`), `/cost`, `/s3-gateway`, `/health` (+ runtime, filesystem, storage, activity),
-`/notifications`, `/settings`, `/account`, `/share/[token]/[...path]` (public, no shell). Old URLs (`/fs`,
+`/notifications`, `/settings`, `/sync-conflicts`, `/account`, `/share/[token]/[...path]` (public, no shell). Old URLs (`/fs`,
 `/dashboard/*`, `/api-keys/*`, `/pricing-budget`, `/operator-email`, `/users/add`, `/vaults/:id/edit|assign`,
 `/roles/admin|vault/*`) redirect (`next.config.ts`).
 
@@ -119,7 +161,10 @@ wasm + wrapper emitted to `/_next/static/media` via `new URL(..., import.meta.ur
   proxy that routes `/ws` → 36969 and `/preview|/download|/upload` → 36970 (nginx in prod, `Caddyfile` in dev).
   HTTP uploads: `POST /upload/session[?share=1]` → `PUT /upload/<id>/files/<fileId>` → `POST /upload/<id>/finish`
   (`DELETE` on failure); the client splits large drops into several sessions. Downloads are preflighted with a
-  `HEAD` of the same `/download` URL (status → failed-task message) before handing the URL to the browser.
+  `HEAD` of the same `/download` URL (status → failed-task message; a folder's 413 means too many entries) before
+  handing the URL to the browser with `anchor.download`. Folder ZIPs report their exact size like files. Browsers
+  strip a leading dot from saved names themselves (Chromium `SanitizeGeneratedFileName`, Firefox
+  `ValidateFileNameForSaving`); the server and the console keep it, and ZIP members keep it.
 - `next.config.ts`: SVGR loader (webpack + `turbopack.rules`), `images.localPatterns /preview**`, redirects,
   `devIndicators: false`. `package.json` `sideEffects: ["**/*.css"]`.
 

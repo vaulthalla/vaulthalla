@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 if id vaulthalla &>/dev/null; then
     echo "👤 Removing system user 'vaulthalla'..."
     sudo userdel -r vaulthalla || echo "⚠️  Could not delete home or user not removable"

@@ -45,7 +45,7 @@ for SIGINT/SIGTERM. Shutdown: `Manager::stopAll` → `preview::derive::Queue::sh
 a service after 500ms. Start order:
 
 ```
-FUSE → SyncController → DBJanitor → LogRotationService → StatsSnapshotService →
+FUSE → SyncController → DBJanitor → VaultRetentionService → LogRotationService → StatsSnapshotService →
 OperatorEmailService → ConnectionLifecycleManager → ProtocolService → S3GatewayService (+ ShellServer)
 ```
 
@@ -91,6 +91,13 @@ shipped. The client waits at most `VAULTHALLA_CLI_TIMEOUT` (default 10s) for the
 healthy/degraded/critical and includes a live `SELECT 1` DB probe.
 
 ### WebSocket flow
+
+**Connection cap (#164).** `ws::Server::onAccept` takes a `ConnectionSlot` (`protocols/ws/ConnectionLimit.hpp`)
+under `websocket_server.max_connections` (read per accept, default 1024, 0 acts as 1); over the cap the socket gets
+a raw `503` + `Retry-After: 1` without reading the upgrade request, and a warning at most once a minute with the
+refused count. The session holds the slot and gives it back on its first `close()` (or destruction); connections
+that fail before the websocket handshake (header read, hydration, handshake error) now `close()` at once instead of
+lingering in the session manager until the lifecycle sweep.
 
 The web client builds `ws(s)://<host>/ws` in `web/src/util/getUrl.ts` (overridable with `NEXT_PUBLIC_VAULTHALLA_WS_ORIGIN`).
 `web/src/stores/useWebSocket.ts` handles reconnect, the pending-request map keyed by `requestId`, and token injection.
@@ -155,9 +162,14 @@ Routes (nginx prefixes `/preview`, `/download`, `/upload` only; never add prefix
 (RenderedImage plans only, JPEG; `size` clamped 16-2048, default 1024; `page` 0-based; `X-Vaulthalla-Page-Count`
 for PDFs; `scale` accepted and ignored), `POST /preview/batch` (≤ 200 items, per-item RBAC,
 `ready|queued|missing|unsupported|error`, never fetches remote-only files), `GET|HEAD /download/content` (original
-bytes, inline by default), `GET|HEAD /download` (files stream with no size cap; directories are a buffered ZIP,
-≤ 256 MiB source / 4096 entries), `GET /preview/derived?kind=&variant=` (200 artifact | 202 queued + Retry-After |
-415 | 422 `conversion_failed` | 503 `converter_unavailable`/`busy`), `PUT /upload/text`.
+bytes, inline by default), `GET|HEAD /download` (files stream with no size cap; directories stream a STORE ZIP,
+see "Folder ZIPs" below), `GET /preview/derived?kind=&variant=` (200 artifact | 202 queued + Retry-After |
+415 | 422 `conversion_failed` | 503 `converter_unavailable`/`busy`), `PUT /upload/text`, `GET|HEAD /download/conflict?
+conflict_id&side=local|remote` (#187, humans only: `ops::conflicts::previewTarget` = resolve_conflicts + filesystem Read;
+409 when the conflict is closed; local side served like `/download/content` with remote fetch off; remote side fetched
+on demand by `sync::ConflictResolver::fetchRemoteForPreview`: price preflight `conflict_preview`, a usage capture of
+1 HEAD + 1 GET + the cap, If-Match the HEAD's ETag, decrypted in memory, never stored, ≤ 32 MiB (413 `too_large`),
+Range ignored; HEAD answers from the recorded artifact without contacting the bucket).
 - **Server.** One thread per connection, capped by `http_preview_server.max_connections` (over the cap: raw `503` +
   `Retry-After: 1`). `TimedStream` polls a non-blocking socket against real deadlines (idle keep-alive 20 s,
   read/write inactivity 60 s); `SO_RCVTIMEO` was ignored by Asio. Long streams never occupy a shared pool slot.
@@ -178,6 +190,21 @@ bytes, inline by default), `GET|HEAD /download` (files stream with no size cap; 
   sets `X-Accel-Buffering: no`, `nosniff`, a sandbox CSP and `Cross-Origin-Resource-Policy: same-origin`; non-media
   originals are served inline as `application/octet-stream`. Fresh nginx sites also set `proxy_buffering off` +
   `proxy_max_temp_file_size 0` on `/preview` and `/download`; upgrades keep the old site and rely on the header.
+- **Folder ZIPs** (`handler/Archive.cpp`, #143). `archive::plan` walks the folder first (one `fsCache->listDir` /
+  share `listChildren` per directory, name-sorted) and authorizes every entry exactly as before (human: Read on files,
+  Read + List on dirs via `access::requireHumanChild`; share: List per dir via `resolve`, Download per entry via
+  `TargetResolver::resolveListedChild`: the same scope/entry/RBAC checks without reloading root and entry per entry,
+  parity-tested against `resolve`; one denial → 403 for the whole archive). It reads no bytes, skips symlinks and `.upload-http-*.part` staging, and caps the plan at
+  `archive::kMaxEntries` (50,000 → 413 `limit_exceeded`: bounds the walk, done for HEAD and GET, and the
+  plan's ~1 KiB/entry); there is no byte cap. Members are STOREd with data
+  descriptors (CRC-32 computed while streaming), ZIP64 where a size, offset or the entry count needs it, UTF-8 names
+  (bit 11; invalid UTF-8, `\`, control bytes → `_`; never absolute or `..`), DOS + UT mtime. STORE + plaintext
+  `files.size_bytes` make the length exact up front: GET and HEAD carry `Content-Length`, HEAD stops after the plan.
+  The body is `archive::stream`, a sequential `PlaintextReader` the session pulls like a file: one member open at a
+  time (≤ 1 MiB members read in one authenticated pass, larger ones streamed and `requireAuthenticated()` before
+  their descriptor, so a CRC never vouches for unverified bytes); a member that fails integrity, changed size or is
+  unavailable (remote-only + policy) throws mid-body → truncated response + closed connection. Share archives count
+  one `max_downloads` unit per logical download on GET (never HEAD), coalesced like files (key `dir`).
 - **Text saves** (`handler/Text.cpp`): human only (shares 403), TextDocument plans only, `If-Match` required (428
   without, 412 + current ETag on mismatch), UTF-8 without NUL, ≤ `preview.text.max_edit_bytes` (413). Re-seals through
   `Filesystem::createFile(overwrite, expected_source_id)`, which takes a per-file content lock
@@ -255,7 +282,8 @@ bytes, inline by default), `GET|HEAD /download` (files stream with no size cap; 
   dropped) only when no file failed, no sidecar is unresolved and re-querying `getFilesOlderThanKeyVersion` (rows
   with an IV only: empty/legacy-plaintext files are excluded) is empty; otherwise both keys stay loaded and the next
   pass retries. Files open in FUSE are deferred. `fs::ops::replaceFileAtomic`/`writeFileAtomic` (temp + fsync +
-  rename + dir fsync) back `Filesystem::createFile`'s overwrite branch.
+  rename + dir fsync) back `Filesystem::createFile`'s overwrite branch. A copy (ws `fs.entry.copy`) copies the sealed
+  bytes with their IV under the same content lock (see "Delete keeps folders; copy is deep" below).
 - No writeback cache (`FUSE_CAP_WRITEBACK_CACHE` off): with it the kernel owns `i_size` and ignores getattr sizes,
   so out-of-band changes showed stale `stat` sizes. Handles are `direct_io` anyway.
 - `forget` does not evict the metadata cache (it is seeded at startup and updated by the daemon's own changes);
@@ -279,7 +307,7 @@ bytes, inline by default), `GET|HEAD /download` (files stream with no size cap; 
 
 ## Database
 
-- PostgreSQL via libpqxx. The schema is `deploy/psql/000…104_*.sql`, applied in order (all in ONE transaction by `core/seed/include/SqlDeployer.hpp`) and installed to `/usr/share/vaulthalla/psql`.
+- PostgreSQL via libpqxx. The schema is `deploy/psql/000…107_*.sql`, applied in order (all in ONE transaction by `core/seed/include/SqlDeployer.hpp`) and installed to `/usr/share/vaulthalla/psql`.
   New migrations take the next number and must be idempotent against upgraded installs. SqlDeployer records sha256(raw bytes)
   per file and refuses to start on a mismatch, so **never edit a shipped migration**: 020/060/082 were edited in place and
   bricked upgrades (1.5.x→1.6.x crash loop on 060). Reviewed exceptions live in `kHistoricalMigrationChecksums` (accepted, recorded
@@ -311,6 +339,17 @@ converter-helper runner/queue (`derive/`, below) · `protocols` · `rbac` roles/
 sharing · `stats` dashboard telemetry + snapshots · `storage` local + S3 backends, remote index · `sync`
 controller, strategies `cache|sync|mirror`, cost guardrails · `vault` vault model, slugs, FUSE names ·
 `ops` actor-authorized operations shared by the CLI and ws handlers (below).
+
+**Config keys renamed or moved (#164).** `config.yaml` is never rewritten on upgrade, so `loadConfig` keeps reading
+the old spellings: `sharing.enable_public_links` → `sharing.enable_email_validated`, and
+`s3_gateway.default_remote_{sync_strategy,conflict_policy}` → `vaults.s3.*` (new key wins; an invalid old value is
+ignored; an invalid new value refuses to start). It collects one message per old key and `main.cpp` logs them via
+`config::Registry::deprecations()` after the log registry is up (config loads before logging). `Config::save`
+writes only the new keys, so a console save migrates the file. The settings JSON accepts the old spellings when the
+new ones are absent. `ops::vaults::create` starts S3 policies from `vaults.s3.*` (CLI interactive prompts offer the
+same defaults); gateway remote-cache buckets stay explicit `cache` + `keep_local`. Since #187 the remote default is
+`ask` (conflicts are resolvable; see "Sync conflicts" below); existing vaults keep their stored policy.
+`settings.policy.get` (any signed-in user) returns `{policy: {sharing, vaults}}`; `settings.get` stays super admin only.
 
 ### Converter helpers (`core/tools`, `preview::derive`)
 
@@ -379,20 +418,24 @@ waiver prompts go through `shell::commands::vault::runWithWaiver`). The ws handl
 and every ws handler template (`protocols/ws/core/handler_templates.hpp`, `describeCurrentError`) turns the exception into
 an `ERROR` response whose `data.code` is stable: `denied`, `not_found`, `invalid`, `conflict`, or the `NeedsConfirmation`
 code (the web asks and resends with `accept_encryption_waiver`); a non-`ops::Error` fault has no code. Handler-level
-gates (stats/settings/email/pricing admin checks, share upload scope) throw `ops::Denied` so they carry `denied`. Rules: RBAC for an operation lives in the op, never in the frontend as well; code beneath
+gates (settings/email/pricing admin checks, share upload scope) throw `ops::Denied` so they carry `denied`; every
+`stats.*` command authorizes through `ops::stats` (below). Rules: RBAC for an operation lives in the op, never in the frontend as well; code beneath
 `ops::` (managers, `db::query`) never authorizes; internal callers use those primitives directly, not ops; no
 registry, base class or transport abstraction. Parity is proven by `test_ops_parity_groups.cpp`, which runs each
 group operation through both surfaces for every seeded admin role and compares verdicts and DB state.
-Migrated families (each with `test_ops_parity_<family>.cpp`): `groups`, `roles`, `api_keys`, `vaults` (lifecycle +
-sync policy), `users`, `s3_gateway` (credentials, grants, buckets, credential budgets), `pricing` (price budget
+Migrated families (each with `test_ops_parity_<family>.cpp`): `groups`, `roles`, `api_keys`, `vaults` (lifecycle,
+safe deletion/restore, sync policy), `users`, `s3_gateway` (credentials, grants, buckets, credential budgets), `pricing` (price budget
 policies), `config` (every settings write: one validation, one apply step that restarts the S3 gateway when
-`s3_gateway.enabled` changes). Still per-surface: the ws-only pricing preflight/override/notification endpoints,
+`s3_gateway.enabled` changes), `stats` (authorization only, ws-only: there is no `vh` stats command; `vh status`
+is deliberately ungated, see Stats below), `conflicts` (sync conflicts, #187: ws `sync.conflicts.*`, `vh sync resolve` /
+`vh resolve`, the HTTP `/download/conflict` lane's authorization). Still per-surface: the ws-only pricing preflight/override/notification endpoints,
 email test-send/history, vault keys/sync diagnostics, and lifecycle commands (`setup`, `teardown`, `secrets`).
 
 Rules the families hold (keep them in ops, never re-add them in a handler):
 - **Users:** an account is an *admin identity* when its admin role grants anything outside the self scopes
-  (`ops::users::isAdminIdentity`); that, not `User::isAdmin()` (a strict "full admin" gate used by S3 policy bypass and
-  system stats), picks admins.* vs users.* identity permissions. The ceiling applies to assignment *and* to managing an
+  (`ops::users::isAdminIdentity`, which counts `admin.stats.view` too); that, not `User::isAdmin()` (a strict "full
+  admin" test kept for S3 policy bypass and the resolvers' owner scope), picks admins.* vs users.* identity
+  permissions. The ceiling applies to assignment *and* to managing an
   account above you (edit, delete, reset password). Deletion, deactivation, role change and password reset call
   `auth::Manager::revokeSessions` (refresh tokens revoked, live sessions invalidated). `auth::Manager` has no user cache.
 - **API keys:** `update` edits in place (keeps the id, so `s3` rows survive; an empty secret keeps the sealed one;
@@ -438,6 +481,89 @@ subject's assignment; both `vh vault role override ...` and ws `role.vault.overr
   `file_locks.locked_by` and `share_link.created_by` `CASCADE` (a deleted account's public links die with it). New
   tables referencing `users` must pick one; a bare `REFERENCES users` blocks `vh user delete`.
 
+**Delete keeps folders; copy is deep and readable at once** (#168, #167; `FsDirStatsDbTest`, `FsCopyDbTest`, harness
+stage "Copy And Delete")
+- Deleting a file never removes its parent folders, on every path: ws `fs.entry.delete`, FUSE unlink, the S3 gateway
+  (DeleteObject, local purge), sync DeleteLocal and trash purge. `File::updateParentStats` only takes the file off
+  every ancestor's totals (it was `updateParentStatsAndCleanEmptyDirs`, which deleted ancestors left without files
+  except on FUSE calls, so the console and the mount disagreed). The S3 view still loses an implicit prefix with its
+  last object: ListObjects derives CommonPrefixes from object keys, not folder rows, and `bucketIsEmpty` counts files
+  only. A folder goes only when it is what's deleted. FUSE rmdir refuses a non-empty folder (ENOTEMPTY, including
+  children the caller can't see; it used to cascade-delete them) and takes the folder off every ancestor's count.
+  Trash purge removes only the file's backing path.
+- `Filesystem::copy(CopyContext)`: plan (source subtree from the DB via `Entry::listSubtree`; `Entry::listDir(id, true)`
+  returns only direct child files/symlinks and seeds the startup cache in that shape) → `authorize` every entry
+  (ws: Copy + Read on each source file, Write/Touch at each destination) → quota (`freeSpace`) → bytes (outside
+  `mutex_`): each file's sealed backing bytes are copied as-is to `<dest parent backing>/<new alias>` under the
+  source's content lock, with the row snapshot taken under that lock (same IV, key version, plaintext size, content
+  hash; no AAD, and any later write draws a fresh IV, so the shared (key, IV) only ever sealed that plaintext; a
+  corrupted source stays detectable). Cloud files without a local copy are hydrated first (metered,
+  price-preflighted); the next sync uploads the copy as a new object (one PUT each, planned and price-checked like any
+  upload). → rows under `mutex_`, shallowest first, so totals build up entry by entry. Any failure takes back rows and
+  bytes. The sync pass no longer replays `operations` rows (`Local::processOperations` wrote to the pre-alias
+  `BACKING_VAULT_ROOT/<vault path>` layout and nothing had queued a pending row since 2025); the table records activity.
+
+**Safe vault deletion with retention** (#162, migration 106, `vault/Retention.*`, `vault/RetentionService.*`,
+`db/query/vault/Deletion.*`, `VaultRetentionTest`, `VaultParityTest.DeletionLifecycleAgreesOnBothSurfaces`)
+- A delete is a schedule (`ops::vaults::remove` → `vault::retention::schedule`): one transaction sets
+  `vault.deleted_at`, detaches the vault root (`fs_entry.parent_id = NULL`), nulls the vault's inodes, copies every key
+  version (still TPM-sealed) into `vault_deletion_key` and writes the `vault_deletion` record (purge_after,
+  key_retain_until, delete_upstream); then `storage::Manager::retireVault` drops the engine, evicts the FS cache, purges
+  derived artifacts and refreshes sync. Read paths filter deleted vaults: `get_vault*`, `listVaults/listUserVaults`, share
+  link statements, S3 gateway bucket resolve/list. `vault_exists`, slug/FUSE-name uniqueness and the `s3` binding still
+  see them: **the name, slug, FUSE name and bucket stay reserved until the purge** (`ops::vaults::create` says how to
+  restore or purge). Restore (pending only) re-attaches the root and rebuilds the engine (`reinstateVault`; descendants get
+  inodes lazily). Restore and the purge claim the same row (`DELETE … WHERE state='pending'` vs `UPDATE … SET
+  state='purging'`), so they never both win.
+- `VaultRetentionService` (30 s, or at once after "delete now") runs `retention::runPass(now)`: claims due records,
+  deletes upstream objects when chosen (≤ 10 LIST pages / 10 000 DELETEs per pass via `Controller::listObjectKeysPage`,
+  resumable, refused when the binding is gone or another vault uses the same bucket+endpoint+region: the purge then
+  finishes locally with a note), removes the backing and cache dirs through `removeVaultDirectory` (alias must be one
+  `[A-Za-z0-9_-]` name, a real directory directly under the resolved root, never a symlink), then deletes the vault row
+  (`finishPurge`, only `deleted_at IS NOT NULL`). Failures retry with backoff (30 s → 1 h). Key copies are dropped when
+  `key_retain_until` passes; the tombstone row stays. "Delete now" never shortens the key window.
+- RBAC: delete, delete now, restore and listing need vault Remove; a deleted vault has no engine, so the admin resolver
+  takes `admin::Context::vault` (built from the record's owner). Export tracking: `vault_keys.exported_version/at`
+  (set by `vh vault keys export`; a rotation makes it stale). NeedsConfirmation codes `vault_upstream_key_loss` (S3,
+  encrypted objects kept, key never exported) and `vault_delete_now`. `storage::Manager::removeVault` stays the
+  immediate hard delete (create rollbacks, empty S3-gateway buckets) and now removes the backing dirs too.
+- An account whose API keys are bound to any vault (deleted ones included, until purged) cannot be deleted.
+- A vault role assigned only on deleted vaults is not in use (`count_vault_role_assignments_by_role_id` joins live
+  vaults): deleting it cascades those assignments, and a restore brings the vault back without them.
+
+**Sync conflicts** (#187, migration 107, `sync/model/Baseline.*`, `db/query/sync/Conflict.*`, `sync/ConflictResolver.*`,
+`ops/Conflicts.*`; `SyncConflictsTest`, `ConflictParityTest`, `SqlDeployerHistoryDb.SyncConflictMigration*`)
+- One open (`resolution = 'unresolved'`) row per file (`uq_sync_conflicts_open_file`). `sync::Cloud::initBins` loads the
+  vault's baselines and open conflicts; the Planner decides; `Cloud::flushConflictState` (via `planPass`) writes them
+  in one transaction before anything executes. An open row's artifacts are refreshed in place only when a side
+  changed. Closed as `kept_local|kept_remote` (a decision, or the policy once it is no longer `ask`), `converged` (both
+  sides agree again), `superseded` (remote side gone; duplicates closed by 107). `event_id` is the first run that saw
+  it and is `ON DELETE SET NULL` (event retention no longer deletes open conflicts). Auto-resolved conflicts under
+  `keep_*` stay per-event history rows (`sync_conflict.upsert`); `Event::upsert` skips unresolved ones.
+- **Detection under `ask` is two-sided only.** `files.content_hash` is blake2b of the *sealed* backing file, so a
+  download re-sealed under a fresh IV never hashes like the object it came from, and `hasPotentialConflict` (size or
+  hash differ) fires on any one-sided edit. `sync_file_baseline` records each side's identity when they last agreed
+  (local hash/size; remote index hash, ETag, size), written on agreement (`Cloud::noteInSync`) and after every
+  successful upload/download/index refresh (`sync::tasks::recordBaseline`) and resolution. `Baseline::classify`:
+  LocalOnly → Upload, RemoteOnly → Download (archive tier skipped), InSync → nothing, Both or Unknown (no baseline) →
+  conflict. `keep_*` policies are unchanged (they still treat any difference as theirs to settle). Known pre-existing
+  churn (from reading the code, no test): under `keep_remote`/`keep_newest` a file downloaded from another writer's
+  object differs by hash on the next pass and is downloaded again (not changed here).
+- **Resolution** (`ConflictResolver::resolve`, trusted; `ops::conflicts::resolve` authorizes per item): the local row
+  must still match the local artifact and one HEAD must still match the remote artifact (ETag, else content-hash
+  metadata, else size, + 16 for GCM when encrypted), else `ConflictStale` (status `conflict`). keep_local =
+  `CloudEngine::upload` + `applyRemoteIndexMutation`; keep_remote = `fetchRemotePlaintext` (streamObject, If-Match the
+  HEAD's ETag, the object's own vh-iv/key version adopted from the HEAD) + `replaceLocalContent` (createFile with
+  `expected_source_id` = the checked generation: a true CAS against FUSE/HTTP writes). Price preflight
+  `conflict_resolve` (Planner estimate + the HEAD), per-thread `ScopedS3RequestUsageCapture` under the vault's
+  request budget (never the engine-wide budget a running pass owns), no FS/DB lock across network work, then one
+  transaction closes the row and records the baseline. One in-flight decision per conflict per process.
+- **Who:** `vault.sync.action.resolve_conflicts` (sync action bit 2 = mask bit 10) **plus** filesystem Overwrite on the
+  file (Read for previews). `ops::conflicts::canResolveIn` = the vault resolver (owner self scope, admin vault globals)
+  OR a vault role on that vault (the account's or a group's). The vault resolver itself only reads vault globals for
+  sync/roles permissions, so vault-role `sync.action.trigger`/`sign_waiver` are still not honoured anywhere (gap, not
+  changed here). Lists/summary include only vaults the actor can resolve in; deleted vaults are excluded.
+
 **Operator email** (`email/`, `notifications/`, `085_operator_notifications.sql`, `vh email …`)
 - Provider secrets are encrypted in `internal_secrets` and entered by hidden prompt. They never go in `.env` or files, and are never logged or rendered.
   Secret reveal was deliberately removed (`a7cc2f4b`).
@@ -445,6 +571,23 @@ subject's assignment; both `vh vault role override ...` and ws `role.vault.overr
   and never block the mutation. `Manager::startWatchdog()` stays restart-only.
 
 **Stats / dashboards** (26 `stats.*` ws commands, `dashboard.preferences.*`)
+- **Who may read (#166, `ops::stats`).** System stats (overview, severity, health, thread pools, FUSE, DB, operations,
+  connections, storage, retention, trends, FS/HTTP caches, system pricing totals) need the admin permission
+  `admin.stats.view` (module `admin.stats`, `admin_role.stats_permissions` BIT(8), bit 0; migration 105 added the
+  column and granted it to `admin`, `auditor`, `platform_operator`, `super_admin` and any role that passed the old
+  `isAdmin()` gate). Vault-scoped stats (`stats.vault.*`, `stats.pricing.budget {vault_id}`) are open to the vault's
+  owner or an admin role with `admin.vaults.<scope>.view` + `view_stats` on it; vault-role members who don't own the
+  vault are not enough (activity/share/security stats ignore path overrides). Missing and forbidden vaults refuse
+  alike. `vh status` is not gated: it skips the DB user lookup so it works while PostgreSQL is down. Guard:
+  `test_stats_access.cpp` (`StatsPermission*`, `StatsAccessTest`), `RoleParityTest.StatsView*`,
+  `SqlDeployerHistoryDb.StatsPermissionMigration*`.
+- **Payload contract (#160).** Trends read `stats_metric_rollup` for every window (5-minute buckets up to 7 d, hourly
+  beyond; rollups are upserted with each sample batch), so 24 h never returns more points than 7 d. Overview hrefs are
+  console routes (`/health/*`, `/cost#…`); counts carry `numeric_value`; money carries `numeric_value` + the ISO
+  currency as `unit`, or `"unknown"`/null when not measured. `PriceBudgetDashboardStats.{current,projected}_monthly_spend`
+  are null without a monthly window. A cache with no byte cap (the FS metadata cache) reports
+  `capacity_bytes`/`free_bytes` null; the preview cache reports `caching.max_size_mb` from boot. Cards carry at most
+  `kDashboardOverviewMaxSeriesPerCard` (3) series of `kDashboardOverviewMaxPointsPerSeries` (64) points.
 - The backend owns severity, warning, and error truth. Never show fake integrity, recoverability, or latency badges; report
   unavailable values as `null` / `"not_available"`.
 - Stats commands are read-only, and snapshots are background-only. Preferences are scoped to `session->user->id`.

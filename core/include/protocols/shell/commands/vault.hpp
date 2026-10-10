@@ -45,6 +45,11 @@ namespace vh::protocols::shell::commands::vault {
 
     CommandResult handle_vault_delete(const CommandCall &call);
 
+    // Safe deletion (#162): restore a pending deletion; list deletions.
+    CommandResult handle_vault_restore(const CommandCall &call);
+
+    CommandResult handle_vaults_deleted(const CommandCall &call);
+
     // listinfo.cpp
     CommandResult handle_vault_info(const CommandCall &call);
 

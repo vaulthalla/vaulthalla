@@ -27,6 +27,8 @@
 #include "sync/model/Artifact.hpp"
 #include "sync/model/ConflictArtifact.hpp"
 #include "sync/model/Conflict.hpp"
+#include "sync/model/Baseline.hpp"
+#include "db/query/sync/Conflict.hpp"
 #include "sync/model/RemotePolicy.hpp"
 #include "sync/model/helpers.hpp"
 #include "sync/Planner.hpp"
@@ -106,10 +108,17 @@ void Cloud::operator()() {
 // ############# Sync Operations ############
 // ##########################################
 
+std::vector<Action> Cloud::planPass(S3CostEstimate* planningNotes) {
+    const auto self = std::static_pointer_cast<Cloud>(shared_from_this());
+    auto plan = Planner::build(self, cloudEngine()->remote_policy(), planningNotes);
+    flushConflictState();
+    return plan;
+}
+
 void Cloud::sync() {
     const auto self = std::static_pointer_cast<Cloud>(shared_from_this());
     S3CostEstimate planningNotes;
-    const auto plan = Planner::build(self, cloudEngine()->remote_policy(), &planningNotes);
+    const auto plan = planPass(&planningNotes);
     auto estimate = Planner::estimateS3Cost(plan);
     estimate.archive_tier_downloads_skipped = planningNotes.archive_tier_downloads_skipped;
     event->applyS3CostEstimate(estimate);
@@ -265,6 +274,7 @@ void Cloud::initBins() {
 
     localFiles = db::query::fs::File::listFilesInDir(engine->vault->id);
     localMap = groupEntriesByPath(localFiles);
+    loadConflictState();
 
     event->heartbeat();
 }
@@ -275,6 +285,9 @@ void Cloud::clearBins() {
     s3Map.clear();
     localMap.clear();
     remoteHashMap.clear();
+    baselines.clear();
+    openConflicts.clear();
+    conflictWrites = {};
 }
 
 // ##########################################
@@ -399,11 +412,72 @@ std::shared_ptr<Conflict> Cloud::maybeBuildConflict(
     return c;
 }
 
-bool Cloud::handleConflict(const std::shared_ptr<Conflict>& c) const {
+bool Cloud::handleConflict(const std::shared_ptr<Conflict>& c) {
     const bool ok = engine->sync->resolve_conflict(c);
-    if (ok) c->resolved_at = system_clock::to_time_t(system_clock::now());
-    event->conflicts.push_back(c);
-    return !ok; // true => unresolved (Ask)
+    if (event) event->conflicts.push_back(c);
+
+    const auto open = openConflicts.find(c->file_id);
+    if (ok) {
+        c->resolved_at = system_clock::to_time_t(system_clock::now());
+        // The policy decided (it is no longer `ask`, or keep_newest found timestamps): close the open row too.
+        if (open != openConflicts.end()) closeOpenConflict(c->file_id, c->resolutionToString());
+        return false;
+    }
+
+    // One open row per file: write it when it is new or a side changed since it was recorded.
+    if (open != openConflicts.end()) {
+        c->id = open->second.id;
+        const auto& L = c->artifacts.local.file;
+        const auto& R = c->artifacts.upstream.file;
+        const bool same = L && R &&
+            db::query::sync::sideMatches(open->second.local, L->content_hash, L->size_bytes, std::nullopt) &&
+            db::query::sync::sideMatches(open->second.remote, R->content_hash, R->size_bytes, R->remote_etag);
+        if (same) return true;
+    }
+    conflictWrites.open.push_back(c);
+    return true; // unresolved: nothing is planned for the file
+}
+
+void Cloud::loadConflictState() {
+    baselines = db::query::sync::Conflict::baselinesForVault(engine->vault->id);
+    openConflicts = db::query::sync::Conflict::openForVault(engine->vault->id);
+    conflictWrites = {};
+}
+
+void Cloud::flushConflictState() {
+    if (conflictWrites.empty()) return;
+    const std::optional<uint32_t> eventId = event && event->id ? std::make_optional(event->id) : std::nullopt;
+    db::query::sync::Conflict::applyPass(engine->vault->id, eventId, conflictWrites);
+    if (!conflictWrites.open.empty() || !conflictWrites.close.empty())
+        log::Registry::sync()->info(
+            "[CloudSync] Vault {}: {} conflict(s) recorded or refreshed, {} closed",
+            engine->vault->id, conflictWrites.open.size(), conflictWrites.close.size());
+    for (const auto& b : conflictWrites.baselines) baselines[b.file_id] = b;
+    for (const auto& [fileId, _] : conflictWrites.close) openConflicts.erase(fileId);
+    conflictWrites = {};
+}
+
+const Baseline* Cloud::baselineFor(const uint32_t fileId) const {
+    const auto it = baselines.find(fileId);
+    return it == baselines.end() ? nullptr : &it->second;
+}
+
+bool Cloud::hasOpenConflict(const uint32_t fileId) const {
+    return openConflicts.contains(fileId) &&
+           std::ranges::none_of(conflictWrites.close, [&](const auto& c) { return c.first == fileId; });
+}
+
+void Cloud::noteInSync(const File& local, const File& remote) {
+    if (!local.id) return;
+    if (hasOpenConflict(local.id)) closeOpenConflict(local.id, "converged");
+    const auto agreed = Baseline::agreed(local, remote);
+    if (const auto* current = baselineFor(local.id); current && current->sameAs(agreed)) return;
+    conflictWrites.baselines.push_back(agreed);
+}
+
+void Cloud::closeOpenConflict(const uint32_t fileId, const std::string& resolution) {
+    if (!hasOpenConflict(fileId)) return;
+    conflictWrites.close.emplace_back(fileId, resolution);
 }
 
 // ##########################################

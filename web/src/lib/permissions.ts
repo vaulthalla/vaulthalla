@@ -11,7 +11,9 @@ const adminPermissions = (user: IUser | null): Set<string> => {
   return set
 }
 
-// Mirrors core User::isAdmin(): the admin role can delete admins and remove admin vaults.
+// Mirrors core User::isAdmin(): the admin role can delete admins and remove admin vaults. Core keeps that strict
+// "full admin" test for S3 policy bypass and the RBAC resolvers; don't gate new UI on it, gate on the permission the
+// server checks (e.g. Health/stats on admin.stats.view, #166).
 export const isAdminUser = (user: IUser | null) => {
   const perms = adminPermissions(user)
   return perms.has('admin.identities.admins.delete') && perms.has('admin.vaults.admin.remove')
@@ -23,6 +25,11 @@ export const isSuperAdminUser = (user: IUser | null) =>
 
 export const hasAdminPermission = (user: IUser | null, qualified: string) => adminPermissions(user).has(qualified)
 
+// Server, daemon and system stats (Health, the top-bar health dot, system-wide storage sizes). Mirrors core
+// ops::stats::canViewSystem. A vault's own stats are authorized per vault by the server (its owner, or
+// admin.vaults.*.view + view_stats), so vault pages just ask and render the typed denial.
+export const STATS_VIEW = { permission: 'admin.stats.view' } as const
+
 // Any admin permission under a prefix, e.g. 'admin.identities.users'.
 export const hasAnyAdminPermission = (user: IUser | null, prefix: string) => {
   for (const qualified of adminPermissions(user)) if (qualified === prefix || qualified.startsWith(`${prefix}.`)) return true
@@ -31,7 +38,6 @@ export const hasAnyAdminPermission = (user: IUser | null, prefix: string) => {
 
 export type Requirement =
   | { superAdmin: true }
-  | { admin: true }
   | { permission: string }
   | { anyOf: string[] }
   | { prefix: string }
@@ -39,7 +45,6 @@ export type Requirement =
 export const meets = (user: IUser | null, requirement?: Requirement): boolean => {
   if (!requirement) return true
   if ('superAdmin' in requirement) return isSuperAdminUser(user)
-  if ('admin' in requirement) return isAdminUser(user)
   if ('permission' in requirement) return hasAdminPermission(user, requirement.permission)
   if ('anyOf' in requirement) return requirement.anyOf.some(p => hasAdminPermission(user, p))
   return hasAnyAdminPermission(user, requirement.prefix)

@@ -3,6 +3,8 @@
 #include "fs/model/File.hpp"
 #include "log/Registry.hpp"
 #include "sync/model/ScopedOp.hpp"
+#include "sync/model/Baseline.hpp"
+#include "sync/tasks/Baseline.hpp"
 
 using namespace vh::sync::tasks;
 using namespace vh::storage;
@@ -18,13 +20,15 @@ void Download::operator()() {
     try {
         if (!op) throw std::runtime_error("DownloadTask: null scoped operation");
         op->start(file->size_bytes);
-        if (freeAfterDownload) engine->indexAndDeleteFile(file);
+        std::shared_ptr<File> local;
+        if (freeAfterDownload) local = engine->indexAndDeleteFile(file);
         else {
             if (engine->selectedDownloadRequiresRestore(file))
                 throw std::runtime_error("S3 object is in an archive tier and requires explicit restore before download");
-            engine->downloadFile(file);
+            local = engine->downloadFile(file);
         }
         op->success = true;
+        if (local) recordBaseline(engine, vh::sync::model::Baseline::afterDownload(*local, *file));
     } catch (const std::exception& e) {
         log::Registry::sync()->error("[DownloadTask] Failed to download file: {} - {}", file->path.string(), e.what());
     }

@@ -36,7 +36,16 @@ public:
     // No-op for an unknown vault.
     void reloadEngine(unsigned int vaultId);
 
+    // Immediate hard delete (rollbacks, empty S3-gateway buckets): rows, engine, cache and the backing directories.
+    // User-initiated deletes go through vault::retention instead.
     void removeVault(unsigned int vaultId);
+
+    // Soft delete (#162), after the vault row was marked deleted: the engine goes, the FS cache forgets the vault and
+    // its derived artifacts are purged, so FUSE, sync, shares and the S3 gateway lose it at once. No DB change.
+    void retireVault(unsigned int vaultId);
+
+    // Restore, after the vault row was marked live again: rebuilds its engine and re-caches its root.
+    std::shared_ptr<vault::model::Vault> reinstateVault(unsigned int vaultId);
 
     std::shared_ptr<vault::model::Vault> getVault(unsigned int vaultId) const;
 

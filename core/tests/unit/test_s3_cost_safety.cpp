@@ -2585,6 +2585,8 @@ TEST(S3CostSafetyTest, RemoveTrashedFileUsesAbsoluteBackingPathDirectly) {
     engine.removeLocally(trashed);
 
     EXPECT_FALSE(std::filesystem::exists(backing));
+    // Purging a trashed file never removes the folder it was in (#168).
+    EXPECT_TRUE(std::filesystem::is_directory(backing.parent_path()));
 }
 
 TEST(S3CostSafetyTest, PlannerMarksCacheRemoteOnlyAsIndexOnly) {
@@ -4780,12 +4782,16 @@ TEST(S3CostSafetyTest, VaultPricingDashboardStatsOnlyUseApplicableProviderScopeA
 
     const auto r2Stats = service.dashboardStats(r2VaultId);
     EXPECT_EQ(0u, r2Stats.active_policies);
-    EXPECT_EQ("0.00000000", r2Stats.current_monthly_spend);
+    // No monthly window in scope: spend is unknown (null), never a fake "0.00000000" (#160).
+    EXPECT_FALSE(r2Stats.current_monthly_spend.has_value());
+    EXPECT_FALSE(r2Stats.projected_monthly_spend.has_value());
     EXPECT_TRUE(r2Stats.trends.empty());
 
     const auto localStats = service.dashboardStats(localVaultId);
     EXPECT_EQ(0u, localStats.active_policies);
-    EXPECT_EQ("0.00000000", localStats.current_monthly_spend);
+    // No monthly window in scope: spend is unknown (null), never a fake "0.00000000" (#160).
+    EXPECT_FALSE(localStats.current_monthly_spend.has_value());
+    EXPECT_FALSE(localStats.projected_monthly_spend.has_value());
     EXPECT_TRUE(localStats.trends.empty());
 }
 

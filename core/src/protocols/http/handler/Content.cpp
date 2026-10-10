@@ -8,9 +8,6 @@
 #include "storage/Engine.hpp"
 #include "storage/PlaintextReader.hpp"
 
-#include <chrono>
-#include <semaphore>
-
 namespace vh::protocols::http::handler {
 
 namespace {
@@ -27,39 +24,33 @@ namespace {
     auto filename = name;
     if (!filename.ends_with(".zip")) filename += ".zip";
 
+    // The walk authorizes every entry and fixes names and sizes; no file byte is read until the body is pulled.
+    // HEAD stops here, with the exact length (STORE + known plaintext sizes) and the same refusals as GET.
+    auto members = archive::plan(caller, target);
+
+    model::preview::StreamResponse res;
+    res.version(req.version());
+    res.keep_alive(req.keep_alive());
+    res.result(status::ok);
+    res.set(field::content_type, "application/zip");
+    res.set(field::content_disposition, Router::attachmentContentDisposition(filename));
+    res.set(field::cache_control, "no-store");
+    res.set("X-Accel-Buffering", "no");  // never let nginx spool decrypted bytes to its temp files
+    res.set("X-Content-Type-Options", "nosniff");
+    res.offset = 0;
+    res.length = archive::archiveSize(members);  // Range is ignored: an archive is always served whole
     if (req.method() == verb::head) {
-        // Authorization already ran; building the archive just to measure it would cost the full read.
-        model::preview::StreamResponse res;
-        res.version(req.version());
-        res.keep_alive(req.keep_alive());
-        res.result(status::ok);
-        res.set(field::content_type, "application/zip");
-        res.set(field::content_disposition, Router::attachmentContentDisposition(filename));
-        res.set(field::cache_control, "no-store");
-        res.set("X-Accel-Buffering", "no");
         res.headOnly = true;
-        res.omitContentLength = true;
         return res;
     }
-
-    // ZIPs are still built in memory (up to 256 MiB of source + 320 MiB output): bound how many at once.
-    static std::counting_semaphore<> archiveSlots(2);
-    if (!archiveSlots.try_acquire_for(std::chrono::seconds(10))) {
-        auto busy = jsonError(req, status::service_unavailable, "busy", "Too many archive downloads in progress");
-        std::get<string_response>(busy).set(field::retry_after, "10");
-        return busy;
-    }
-    struct Release {
-        ~Release() { archiveSlots.release(); }
-    } release;
 
     if (target.share && !access::recordShareAccess(target, "share.download.http", true, std::nullopt))
         return jsonError(req, status::forbidden, "max_downloads_reached", "This link's download limit was reached");
     if (!target.share) access::recordHumanAccess(caller, target, "download.archive");
 
-    auto data = archive::build(caller, target);
-    auto res = Router::makeDownloadResponse(req, std::move(data), "application/zip", filename);
-    std::visit([](auto& r) { r.set("X-Accel-Buffering", "no"); }, res);
+    res.reader = archive::stream(std::move(members), [engine = target.engine](const archive::Member& member) {
+        return std::shared_ptr<storage::PlaintextReader>(engine->openPlaintextReader(member.file));
+    });
     return res;
 }
 

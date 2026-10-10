@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <ctime>
 #include <curl/curl.h>
+#include <fmt/format.h>
+#include <pugixml.hpp>
 #include <sstream>
 #include <utility>
 #include <vector>
@@ -203,6 +205,59 @@ namespace vh::storage::s3 {
 
         if (!resp.ok()) throw std::runtime_error(
             fmt::format("Failed to delete object from S3 (HTTP {}): {}", resp.http, resp.body));
+    }
+
+    ObjectKeyPage Controller::listObjectKeysPage(const std::string& continuationToken, const unsigned int maxKeys) const {
+        recordRequest(RequestKind::List);
+
+        const CurlEasy handle;
+        auto* curl = static_cast<CURL*>(handle);
+        if (!curl) throw std::runtime_error("listObjectKeysPage: curl_easy_init failed");
+
+        std::ostringstream uri;
+        uri << "/" << bucket_ << "?list-type=2&max-keys=" << std::clamp(maxKeys, 1u, 1000u);
+        if (!continuationToken.empty()) {
+            char* escaped = curl_easy_escape(curl, continuationToken.c_str(), static_cast<int>(continuationToken.size()));
+            if (!escaped) throw std::runtime_error("listObjectKeysPage: cannot escape the continuation token");
+            uri << "&continuation-token=" << escaped;
+            curl_free(escaped);
+        }
+
+        const std::string uriStr = uri.str();
+        const std::string url = apiKey_->endpoint + uriStr;
+        const std::string payloadHash = "UNSIGNED-PAYLOAD";
+        const auto hdrMap = buildHeaderMap(payloadHash);
+        const std::string authHeader = buildAuthorizationHeader(apiKey_, "GET", uriStr, hdrMap, payloadHash);
+
+        HeaderList headers;
+        headers.add("Authorization: " + authHeader);
+        for (const auto& [k, v] : hdrMap) headers.add(k + ": " + v);
+
+        std::string response;
+        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers.list);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeToString);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+
+        const CURLcode res = curl_easy_perform(curl);
+        long http = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http);
+        if (res != CURLE_OK || http != 200)
+            throw std::runtime_error(fmt::format("ListObjectsV2 failed (CURL {}, HTTP {}): {}", static_cast<int>(res), http,
+                                                 response.substr(0, 512)));
+
+        pugi::xml_document doc;
+        if (!doc.load_string(response.c_str()))
+            throw std::runtime_error("ListObjectsV2 returned a response that is not XML");
+        const auto result = doc.child("ListBucketResult");
+        if (!result) throw std::runtime_error("ListObjectsV2 response has no ListBucketResult");
+
+        ObjectKeyPage page;
+        for (const auto contents : result.children("Contents"))
+            if (const auto key = std::string(contents.child_value("Key")); !key.empty()) page.keys.push_back(key);
+        if (std::string(result.child_value("IsTruncated")) == "true")
+            page.next_continuation_token = result.child_value("NextContinuationToken");
+        return page;
     }
 
     std::u8string Controller::listObjects(const fs::path& prefix) const {

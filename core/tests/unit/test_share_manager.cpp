@@ -1,5 +1,9 @@
+#include "config/Config.hpp"
+#include "config/Registry.hpp"
 #include "identities/User.hpp"
 #include "db/encoding/bytea.hpp"
+#include "ops/Error.hpp"
+#include "share/Policy.hpp"
 #include "rbac/Actor.hpp"
 #include "share/AuditEvent.hpp"
 #include "share/EmailChallenge.hpp"
@@ -12,6 +16,7 @@
 
 #include <algorithm>
 #include <format>
+#include <functional>
 #include <memory>
 #include <stdexcept>
 #include <unordered_map>
@@ -1240,4 +1245,121 @@ TEST_F(ShareManagerTest, SweepStaleUploadsFailsOnlyOldActiveRecords) {
 
     const auto second = manager->sweepStaleUploads({.older_than_seconds = 3600, .limit = 10});
     EXPECT_EQ(second.failed, 0u);
+}
+
+// ── sharing.* switches (#164) ─────────────────────────────────────────────────────────────────────────────────
+
+namespace vh::share::test_manager {
+// Swaps config::Registry's sharing section for one test and puts the previous config back.
+struct SharingSwitches {
+    config::Config previous = config::Registry::get();
+    explicit SharingSwitches(const std::function<void(config::SharingConfig&)>& edit) {
+        auto next = previous;
+        edit(next.sharing);
+        config::Registry::set(next);
+    }
+    ~SharingSwitches() { config::Registry::set(previous); }
+};
+}
+
+TEST_F(ShareManagerTest, SharingDisabledRefusesCreateOpenAndUseButNotManagement) {
+    const auto created = create();
+    const auto opened = manager->openPublicSession(created.public_token);
+    {
+        SharingSwitches off([](auto& s) { s.enabled = false; });
+        EXPECT_THROW({ (void)create(); }, ops::Denied);
+        EXPECT_THROW({ (void)create(AccessMode::EmailValidated); }, ops::Denied);
+        EXPECT_THROW({ (void)manager->resolvePublicLink(created.public_token); }, ops::Denied);
+        EXPECT_THROW({ (void)manager->openPublicSession(created.public_token); }, ops::Denied);
+        EXPECT_THROW({ (void)manager->resolvePrincipal(opened.session_token); }, ops::Denied);
+        ASSERT_FALSE(store->audits.empty());
+        EXPECT_EQ(store->audits.back()->status, AuditStatus::Denied);
+        // Links can still be found and cleaned up.
+        EXPECT_NO_THROW({ (void)manager->getLinkForManagement(humanActor(), created.link->id); });
+    }
+    // Turning it back on restores the existing link and session.
+    EXPECT_NO_THROW({ (void)manager->resolvePrincipal(opened.session_token); });
+    EXPECT_EQ(store->links.size(), 1u);
+}
+
+TEST_F(ShareManagerTest, AnonymousSwitchGatesOnlyPublicLinks) {
+    const auto publicLink = create();
+    const auto publicSession = manager->openPublicSession(publicLink.public_token);
+    SharingSwitches off([](auto& s) { s.enable_anonymous = false; });
+
+    EXPECT_THROW({ (void)create(); }, ops::Denied);
+    EXPECT_THROW({ (void)manager->openPublicSession(publicLink.public_token); }, ops::Denied);
+    EXPECT_THROW({ (void)manager->resolvePrincipal(publicSession.session_token); }, ops::Denied);
+
+    const auto emailLink = create(AccessMode::EmailValidated);
+    const auto pending = manager->openPublicSession(emailLink.public_token);
+    EXPECT_EQ(pending.status, OpenSessionStatus::EmailRequired);
+}
+
+TEST_F(ShareManagerTest, EmailValidatedSwitchGatesOnlyEmailLinks) {
+    const auto emailLink = create(AccessMode::EmailValidated);
+    auto challenge = manager->startEmailChallenge(StartEmailChallengeRequest{
+        .public_token = emailLink.public_token,
+        .session_token = std::nullopt,
+        .email = "recipient@example.com",
+        .ip_address = std::nullopt,
+        .user_agent = std::nullopt
+    });
+    SharingSwitches off([](auto& s) { s.enable_email_validated = false; });
+
+    EXPECT_THROW({ (void)create(AccessMode::EmailValidated); }, ops::Denied);
+    EXPECT_THROW({ (void)manager->openPublicSession(emailLink.public_token); }, ops::Denied);
+    EXPECT_THROW({ (void)manager->startEmailChallenge(StartEmailChallengeRequest{
+        .public_token = std::nullopt,
+        .session_token = challenge.session_token,
+        .email = "recipient@example.com",
+        .ip_address = std::nullopt,
+        .user_agent = std::nullopt
+    }); }, ops::Denied);
+    EXPECT_THROW({ (void)manager->confirmEmailChallenge({
+        .challenge_id = challenge.challenge->id,
+        .session_id = challenge.session->id,
+        .session_token = challenge.session_token,
+        .code = challenge.verification_code
+    }); }, ops::Denied);
+    EXPECT_FALSE(challenge.challenge->consumed_at.has_value());
+
+    EXPECT_NO_THROW({ (void)create(); });
+}
+
+TEST_F(ShareManagerTest, UpdateCannotMoveALinkIntoADisabledKind) {
+    const auto created = create();
+    SharingSwitches off([](auto& s) { s.enable_email_validated = false; });
+
+    auto changed = std::make_shared<Link>(*created.link);
+    changed->access_mode = AccessMode::EmailValidated;
+    EXPECT_THROW({ (void)manager->updateLink(humanActor(), {.link = changed, .public_role = std::nullopt, .recipients = std::nullopt}); }, ops::Denied);
+    EXPECT_EQ(store->getLink(created.link->id)->access_mode, AccessMode::Public);
+
+    auto renamed = std::make_shared<Link>(*created.link);
+    renamed->name = "still public";
+    EXPECT_NO_THROW({ (void)manager->updateLink(humanActor(), {.link = renamed, .public_role = std::nullopt, .recipients = std::nullopt}); });
+}
+
+TEST(SharePolicy, RefusalNamesTheSwitchThatIsOff) {
+    config::SharingConfig sharing;
+    EXPECT_FALSE(policy::refusal(sharing));
+    EXPECT_FALSE(policy::refusal(sharing, AccessMode::Public));
+    EXPECT_FALSE(policy::refusal(sharing, AccessMode::EmailValidated));
+
+    sharing.enable_anonymous = false;
+    EXPECT_EQ(policy::refusal(sharing, AccessMode::Public), "Anonymous share links are disabled on this server");
+    EXPECT_FALSE(policy::refusal(sharing, AccessMode::EmailValidated));
+
+    sharing.enable_anonymous = true;
+    sharing.enable_email_validated = false;
+    EXPECT_EQ(policy::refusal(sharing, AccessMode::EmailValidated),
+              "Email-verified share links are disabled on this server");
+
+    sharing.enable_email_validated = true;
+    EXPECT_FALSE(policy::refusal(sharing, AccessMode::Public));
+
+    sharing.enabled = false;
+    EXPECT_EQ(policy::refusal(sharing), "Sharing is disabled on this server");
+    EXPECT_EQ(policy::refusal(sharing, AccessMode::Public), "Sharing is disabled on this server");
 }

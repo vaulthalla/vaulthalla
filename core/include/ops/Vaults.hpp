@@ -2,11 +2,13 @@
 
 #include "ops/Actor.hpp"
 #include "db/model/ListQueryParams.hpp"
+#include "vault/Fwd.hpp"
 #include "vault/model/Vault.hpp"
 #include "sync/Fwd.hpp"
 
 #include <chrono>
 #include <cstdint>
+#include <ctime>
 #include <memory>
 #include <optional>
 #include <string>
@@ -20,6 +22,7 @@ namespace vh::ops::vaults {
 
 using VaultPtr = std::shared_ptr<vault::model::Vault>;
 using PolicyPtr = std::shared_ptr<sync::model::Policy>;
+using DeletionPtr = std::shared_ptr<vault::model::Deletion>;
 
 // Absent = unchanged; an empty inner optional clears the limit.
 struct S3BudgetPatch {
@@ -88,11 +91,52 @@ struct Details {
 
 enum class SyncStart { Started, RerunQueued };
 
+// Safe deletion with retention (#162). A delete is a schedule: the vault vanishes at once and can be restored until
+// vaults.retention_window ends, then the retention service purges its data. RBAC: vault Remove for delete, delete
+// now, restore and listing deletions (the owner recorded at delete time decides the scope).
+//
+// NeedsConfirmation codes (the CLI asks, the web shows them in its delete dialog; both resend with the flag set):
+//   "vault_upstream_key_loss"  an S3 vault keeps encrypted objects upstream while its key was never exported; without
+//                              the key that data can never be decrypted again (accept_key_loss).
+//   "vault_delete_now"         purging now skips the restore window (confirm_now).
+inline constexpr const char* VAULT_UPSTREAM_KEY_LOSS = "vault_upstream_key_loss";
+inline constexpr const char* VAULT_DELETE_NOW = "vault_delete_now";
+
+struct Remove {
+    unsigned int id = 0;
+    bool now = false;                          // purge on the next retention pass instead of after the window
+    std::optional<bool> delete_upstream{};     // S3 only: delete the bucket's objects at purge time; absent = keep
+    bool confirm_now = false;
+    bool accept_key_loss = false;
+};
+
+// What deleting this vault would do, for the delete dialogs. Nothing changes.
+struct RemovalPlan {
+    VaultPtr vault;
+    std::string provider;                      // S3: the API key's provider, else empty
+    std::string bucket;
+    bool encrypted_upstream = false;           // S3 objects are encrypted with the vault key
+    unsigned int key_version = 0;
+    std::optional<std::time_t> key_exported_at{};   // when the current key version was exported, if ever
+    std::chrono::seconds retention_window{}, key_retention_window{};
+    std::string export_command;
+    [[nodiscard]] bool keyExported() const { return key_exported_at.has_value(); }
+};
+
 // Throws NeedsConfirmation{"encryption_waiver"} when an S3 vault would be created over, or switch encryption on,
 // a bucket that already holds data, unless accept_waiver is set. The accepted waiver is recorded.
 [[nodiscard]] VaultPtr create(const Actor& actor, const Create& req);
 [[nodiscard]] VaultPtr update(const Actor& actor, const Update& req);
-VaultPtr remove(const Actor& actor, unsigned int vaultId);
+// Schedules the deletion. On a vault already pending deletion, `now` purges it on the next pass (and
+// delete_upstream, when given, replaces the earlier choice); anything else is a Conflict.
+DeletionPtr remove(const Actor& actor, const Remove& req);
+[[nodiscard]] RemovalPlan removalPlan(const Actor& actor, unsigned int vaultId);
+// Deletions the actor could have made: pending, purging, and purged tombstones (newest first).
+[[nodiscard]] std::vector<DeletionPtr> listDeleted(const Actor& actor);
+// A pending deletion only; Conflict once the purge has started.
+VaultPtr restore(const Actor& actor, unsigned int vaultId);
+// A deleted vault by ID, or by name (owned by ownerId when given), that the actor may see.
+[[nodiscard]] DeletionPtr findDeleted(const Actor& actor, const std::string& idOrName, std::optional<unsigned int> ownerId);
 
 // Checks only, nothing changes: what update {owner_id} and remove would refuse. Ownership transfer is an
 // administrator's act: it needs an admin account, vault Edit, and the right to create vaults for the new owner, and

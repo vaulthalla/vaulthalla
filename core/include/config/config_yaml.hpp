@@ -116,8 +116,6 @@ struct convert<S3GatewayConfig> {
         node["allow_virtual_hosted_style"] = rhs.allow_virtual_hosted_style;
         node["default_bucket_mode"] = rhs.default_bucket_mode;
         node["default_api_exclusive"] = rhs.default_api_exclusive;
-        node["default_remote_sync_strategy"] = rhs.default_remote_sync_strategy;
-        node["default_remote_conflict_policy"] = rhs.default_remote_conflict_policy;
         node["multipart"] = rhs.multipart;
         node["synthetic_local_request_cost_usd"] = rhs.synthetic_local_request_cost_usd;
         return node;
@@ -136,8 +134,7 @@ struct convert<S3GatewayConfig> {
         rhs.allow_virtual_hosted_style = node["allow_virtual_hosted_style"].as<bool>(true);
         rhs.default_bucket_mode = node["default_bucket_mode"].as<std::string>("local");
         rhs.default_api_exclusive = node["default_api_exclusive"].as<bool>(true);
-        rhs.default_remote_sync_strategy = node["default_remote_sync_strategy"].as<std::string>("cache");
-        rhs.default_remote_conflict_policy = node["default_remote_conflict_policy"].as<std::string>("keep_local");
+        // default_remote_* are read by loadConfig as deprecated aliases of vaults.s3.*.
         if (node["multipart"]) rhs.multipart = node["multipart"].as<S3GatewayMultipartConfig>();
         if (node["synthetic_local_request_cost_usd"])
             rhs.synthetic_local_request_cost_usd = node["synthetic_local_request_cost_usd"].as<S3GatewaySyntheticLocalRequestCostConfig>();
@@ -563,14 +560,57 @@ struct convert<SharingConfig> {
     static Node encode(const SharingConfig& rhs) {
         Node node;
         node["enabled"] = rhs.enabled;
-        node["enable_public_links"] = rhs.enable_public_links;
+        node["enable_anonymous"] = rhs.enable_anonymous;
+        node["enable_email_validated"] = rhs.enable_email_validated;
         return node;
     }
 
     static bool decode(const Node& node, SharingConfig& rhs) {
         if (!node.IsMap()) return false;
         rhs.enabled = node["enabled"].as<bool>(true);
-        rhs.enable_public_links = node["enable_public_links"].as<bool>(true);
+        rhs.enable_anonymous = node["enable_anonymous"].as<bool>(true);
+        // enable_public_links is the pre-#164 name of enable_email_validated; the new key wins when both are set.
+        if (node["enable_email_validated"]) rhs.enable_email_validated = node["enable_email_validated"].as<bool>();
+        else rhs.enable_email_validated = node["enable_public_links"].as<bool>(true);
+        return true;
+    }
+};
+
+template<>
+struct convert<VaultsS3Config> {
+    static Node encode(const VaultsS3Config& rhs) {
+        Node node;
+        node["default_remote_sync_strategy"] = rhs.default_remote_sync_strategy;
+        node["default_remote_conflict_policy"] = rhs.default_remote_conflict_policy;
+        node["tpm_retention_window"] = durationToString(rhs.tpm_retention_window);
+        return node;
+    }
+
+    static bool decode(const Node& node, VaultsS3Config& rhs) {
+        if (!node.IsMap()) return false;
+        rhs.default_remote_sync_strategy = node["default_remote_sync_strategy"].as<std::string>(rhs.default_remote_sync_strategy);
+        rhs.default_remote_conflict_policy =
+            node["default_remote_conflict_policy"].as<std::string>(rhs.default_remote_conflict_policy);
+        if (node["tpm_retention_window"]) rhs.tpm_retention_window = parseDuration(node["tpm_retention_window"].as<std::string>());
+        return true;
+    }
+};
+
+template<>
+struct convert<VaultsConfig> {
+    static Node encode(const VaultsConfig& rhs) {
+        Node node;
+        node["retention_window"] = durationToString(rhs.retention_window);
+        node["tpm_retention_window"] = durationToString(rhs.tpm_retention_window);
+        node["s3"] = rhs.s3;
+        return node;
+    }
+
+    static bool decode(const Node& node, VaultsConfig& rhs) {
+        if (!node.IsMap()) return false;
+        if (node["retention_window"]) rhs.retention_window = parseDuration(node["retention_window"].as<std::string>());
+        if (node["tpm_retention_window"]) rhs.tpm_retention_window = parseDuration(node["tpm_retention_window"].as<std::string>());
+        if (node["s3"]) YAML::convert<VaultsS3Config>::decode(node["s3"], rhs.s3);
         return true;
     }
 };

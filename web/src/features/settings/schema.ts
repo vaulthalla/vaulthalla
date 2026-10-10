@@ -12,6 +12,7 @@ export type FieldKind =
   | { kind: 'megabytes' } // integer MB
   | { kind: 'sizeString' } // "50MB" / "1GB"
   | { kind: 'intervalString' } // "24h" / "1d"
+  | { kind: 'durationString' } // "30s" / "5m" / "12h" / "90d" / "2w"
   | { kind: 'decimal'; unit?: string }
   | { kind: 'tags'; numeric?: boolean; mono?: boolean }
   | { kind: 'lines'; placeholder?: string }
@@ -73,29 +74,37 @@ export const SECTIONS: SectionDef[] = [
     key: 'websocket_server',
     label: 'Console API',
     description: 'The WebSocket server the web console and its clients talk to.',
-    restart: true,
-    applies: 'Applies after the daemon restarts.',
+    applies: 'The connection cap applies to new connections right away; the rest after the daemon restarts.',
     warning: 'Turning this off or moving it disconnects this console.',
     fields: [
-      { key: 'enabled', label: 'Enabled', type: bool },
-      { key: 'host', label: 'Listen address', type: host },
-      { key: 'port', label: 'Port', type: { kind: 'port' } },
-      { key: 'max_connections', label: 'Max connections', type: int(undefined, 1) },
-      { key: 'max_upload_size_bytes', label: 'Max upload size', type: { kind: 'bytes' } },
+      { key: 'enabled', label: 'Enabled', type: bool, restart: true },
+      { key: 'host', label: 'Listen address', type: host, restart: true },
+      { key: 'port', label: 'Port', type: { kind: 'port' }, restart: true },
+      {
+        key: 'max_connections',
+        label: 'Max connections',
+        hint: 'Open console and share sockets; more are refused until one closes.',
+        type: int(undefined, 1, 1_000_000),
+      },
+      { key: 'max_upload_size_bytes', label: 'Max upload size', type: { kind: 'bytes' }, restart: true },
     ],
   },
   {
     key: 'http_preview_server',
     label: 'Preview & download server',
     description: 'Serves file previews, thumbnails and HTTP downloads.',
-    restart: true,
-    applies: 'Applies after the daemon restarts.',
+    applies: 'The connection cap applies to new connections right away; the rest after the daemon restarts.',
     fields: [
-      { key: 'enabled', label: 'Enabled', type: bool },
-      { key: 'host', label: 'Listen address', type: host },
-      { key: 'port', label: 'Port', type: { kind: 'port' } },
-      { key: 'max_connections', label: 'Max connections', type: int(undefined, 1) },
-      { key: 'max_preview_size_bytes', label: 'Largest file to preview', type: { kind: 'bytes' } },
+      { key: 'enabled', label: 'Enabled', type: bool, restart: true },
+      { key: 'host', label: 'Listen address', type: host, restart: true },
+      { key: 'port', label: 'Port', type: { kind: 'port' }, restart: true },
+      {
+        key: 'max_connections',
+        label: 'Max connections',
+        hint: 'Each connection (a preview, download or media stream) has its own thread; more get 503.',
+        type: int(undefined, 1, 1_000_000),
+      },
+      { key: 'max_preview_size_bytes', label: 'Largest file to preview', type: { kind: 'bytes' }, restart: true },
     ],
   },
   {
@@ -126,31 +135,6 @@ export const SECTIONS: SectionDef[] = [
         },
       },
       { key: 'default_api_exclusive', label: 'New buckets are gateway-only', type: bool },
-      {
-        key: 'default_remote_sync_strategy',
-        label: 'Default remote sync strategy',
-        type: {
-          kind: 'enum',
-          options: [
-            { value: 'cache', label: 'Cache' },
-            { value: 'sync', label: 'Sync' },
-            { value: 'mirror', label: 'Mirror' },
-          ],
-        },
-      },
-      {
-        key: 'default_remote_conflict_policy',
-        label: 'Default conflict policy',
-        type: {
-          kind: 'enum',
-          options: [
-            { value: 'keep_local', label: 'Keep local' },
-            { value: 'keep_remote', label: 'Keep remote' },
-            { value: 'keep_newest', label: 'Keep newest' },
-            { value: 'ask', label: 'Ask' },
-          ],
-        },
-      },
     ],
     groups: [
       {
@@ -211,10 +195,75 @@ export const SECTIONS: SectionDef[] = [
   {
     key: 'sharing',
     label: 'Sharing',
-    description: 'Share links.',
+    description: 'Which share links can be made and opened.',
+    applies:
+      'Applies right away, to new links and to links already handed out (they stop opening while their kind is off and work again when it is turned back on).',
     fields: [
-      { key: 'enabled', label: 'Sharing', type: bool },
-      { key: 'enable_public_links', label: 'Public links', type: bool },
+      { key: 'enabled', label: 'Sharing', hint: 'Off: no link can be created or opened. Links are kept.', type: bool },
+      { key: 'enable_anonymous', label: 'Anyone-with-the-link shares', type: bool },
+      {
+        key: 'enable_email_validated',
+        label: 'Verified-email shares',
+        hint: 'Links whose recipients confirm an invited address.',
+        type: bool,
+      },
+    ],
+  },
+  {
+    key: 'vaults',
+    label: 'Vaults',
+    description:
+      'Defaults new vaults start with (existing vaults keep theirs; change those on each vault’s Sync tab), and how long a deleted vault stays restorable. Its encryption key is kept for the key retention window either way.',
+    applies: 'Retention windows apply to vaults deleted after the change.',
+    fields: [
+      { key: 'retention_window', label: 'Restorable for', type: { kind: 'durationString' } },
+      {
+        key: 'tpm_retention_window',
+        label: 'Keep encryption keys for',
+        hint: 'Even when a vault is deleted now. Export keys you still need with `vh vault keys export`.',
+        type: { kind: 'durationString' },
+      },
+    ],
+    groups: [
+      {
+        key: 's3',
+        label: 'S3/R2 vaults',
+        fields: [
+          {
+            key: 'default_remote_sync_strategy',
+            label: 'Sync strategy',
+            hint: 'Cache indexes the bucket and fetches files when they are opened.',
+            type: {
+              kind: 'enum',
+              options: [
+                { value: 'cache', label: 'Cache' },
+                { value: 'sync', label: 'Sync' },
+                { value: 'mirror', label: 'Mirror' },
+              ],
+            },
+          },
+          {
+            key: 'default_remote_conflict_policy',
+            label: 'On conflict',
+            hint: 'Default for new S3 vaults. Ask records a file changed on both sides as a sync conflict and keeps syncing everything else; that file waits for a decision on the Sync Conflicts page or with vh sync resolve.',
+            type: {
+              kind: 'enum',
+              options: [
+                { value: 'keep_local', label: 'Keep local' },
+                { value: 'keep_remote', label: 'Keep remote' },
+                { value: 'keep_newest', label: 'Keep newest' },
+                { value: 'ask', label: 'Ask' },
+              ],
+            },
+          },
+          {
+            key: 'tpm_retention_window',
+            label: 'Keep encryption keys for',
+            hint: 'Longer by default: data kept in the bucket stays encrypted with this key.',
+            type: { kind: 'durationString' },
+          },
+        ],
+      },
     ],
   },
   {

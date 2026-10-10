@@ -79,7 +79,7 @@ See [Sharing](/sharing) for download counting and link limits.
 
 ## Downloads
 
-Downloading a file streams it directly at any size; the console checks the download with a lightweight request first instead of starting it twice. Folders download as a ZIP, built in memory and limited to 256 MiB of file content and 4096 entries, with at most two folder downloads prepared at once (others are asked to retry); download larger folders file by file or through the mount.
+Downloading a file streams it directly at any size; the console checks the download with a lightweight request first instead of starting it twice. Folders download as a ZIP that streams the same way, at any size: files are stored uncompressed (most content is already compressed), names keep their Unicode characters, and the browser shows the archive's exact size and progress from the start. A folder with more than 50,000 files and subfolders is refused as one archive; download its subfolders instead. If a file in the folder can't be read while the archive streams (for example a cloud file the server may not fetch), the download stops and the browser reports it as failed rather than saving an incomplete archive as finished.
 
 ## When A Preview Fails
 

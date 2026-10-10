@@ -45,6 +45,10 @@ vh vault keys export archive \
 
 If you omit `--recipient`, Vaulthalla warns and writes unencrypted JSON to the output file or stdout.
 
+Vaulthalla records every export of a vault's current key version. Deleting a vault whose key was never exported warns you, and deleting an S3 vault that keeps encrypted objects in its bucket asks you to accept that the data cannot be decrypted without the key. A key rotation makes earlier exports stale: export again.
+
+A deleted vault's key stays exportable with the same command (use the vault id) until `vaults.tpm_retention_window` ends: `90d` by default, `180d` for S3 vaults. See [Deleting And Restoring Vaults](/vaults/deleting-vaults).
+
 ## Export Internal Secrets
 
 ```bash

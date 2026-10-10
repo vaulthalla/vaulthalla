@@ -120,6 +120,25 @@ class PackageLayoutContractTests(unittest.TestCase):
         )
         self.assertIn('PACKAGED_CONFIG_DIR="/usr/share/vaulthalla/config"', postinst)
 
+    def test_shipped_config_has_no_duplicate_keys(self) -> None:
+        # yaml-cpp keeps one of two same-named keys without a word; two branches each adding a `vaults:` section
+        # merged without a conflict and shipped one of them unread.
+        import yaml
+
+        class StrictLoader(yaml.SafeLoader):
+            pass
+
+        def mapping(loader: yaml.SafeLoader, node: yaml.MappingNode, deep: bool = False) -> dict:
+            keys = [loader.construct_object(key, deep=deep) for key, _ in node.value]
+            duplicates = sorted({str(key) for key in keys if keys.count(key) > 1})
+            self.assertEqual(duplicates, [], f"duplicate keys at line {node.start_mark.line + 1}")
+            return loader.construct_mapping(node, deep)
+
+        StrictLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, mapping)
+        for path in ("deploy/config/config.yaml", "deploy/config/config_template.yaml.in"):
+            with self.subTest(path=path):
+                yaml.load(self._read(path), Loader=StrictLoader)
+
     def test_shipped_config_binds_ws_and_preview_to_loopback(self) -> None:
         config = self._read("deploy/config/config.yaml")
 

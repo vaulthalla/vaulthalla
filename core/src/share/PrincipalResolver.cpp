@@ -32,6 +32,7 @@ std::shared_ptr<Principal> PrincipalResolver::resolve(
     principal->link_created_by = link.created_by;
     principal->root_path = grant.root_path;
     principal->grant = grant;
+    principal->access_mode = link.access_mode;
     principal->email_verified = session.isVerified();
     principal->expires_at = link.expires_at ? std::min(*link.expires_at, session.expires_at) : session.expires_at;
     principal->ip_address = session.ip_address;

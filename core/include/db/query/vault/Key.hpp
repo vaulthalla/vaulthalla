@@ -1,6 +1,8 @@
 #pragma once
 
+#include <ctime>
 #include <memory>
+#include <optional>
 
 namespace vh::vault::model { struct Key; }
 
@@ -19,6 +21,11 @@ public:
     static void markKeyRotationFinished(unsigned int vaultId);
     [[nodiscard]] static bool keyRotationInProgress(unsigned int vaultId);
     [[nodiscard]] static KeyPtr getRotationInProgressOldKey(unsigned int vaultId);
+    // Export tracking (#162): `vh vault keys export` records the version it exported. A rotation makes the current
+    // version a new one, so an older export no longer counts.
+    static void markExported(unsigned int vaultId, unsigned int version);
+    // When the current key version was exported, or nullopt if it never was (or no export was recorded).
+    [[nodiscard]] static std::optional<std::time_t> currentKeyExportedAt(unsigned int vaultId);
 };
 
 }

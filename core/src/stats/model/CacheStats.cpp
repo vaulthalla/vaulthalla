@@ -88,6 +88,18 @@ double CacheStats::max_op_ms(const CacheStatsSnapshot& s) noexcept {
     return static_cast<double>(s.op_max_us) / 1000.0;
 }
 
+namespace {
+
+nlohmann::json cacheCapacityJson(const vh::stats::model::CacheStatsSnapshot& s) {
+    return s.capacity_bytes > 0 ? nlohmann::json(s.capacity_bytes) : nlohmann::json(nullptr);
+}
+
+nlohmann::json cacheFreeJson(const vh::stats::model::CacheStatsSnapshot& s) {
+    return s.capacity_bytes > 0 ? nlohmann::json(vh::stats::model::CacheStats::free_bytes(s)) : nlohmann::json(nullptr);
+}
+
+}
+
 // Snapshot serialization (best practice)
 void vh::stats::model::to_json(nlohmann::json& j, const CacheStatsSnapshot& s) {
     j = nlohmann::json{
@@ -101,7 +113,9 @@ void vh::stats::model::to_json(nlohmann::json& j, const CacheStatsSnapshot& s) {
         {"bytes_written", s.bytes_written},
 
         {"used_bytes", s.used_bytes},
-        {"capacity_bytes", s.capacity_bytes},
+        // 0 means the cache has no byte cap (the FS metadata cache) or none was reported yet: unknown, not "full".
+        {"capacity_bytes", cacheCapacityJson(s)},
+        {"free_bytes", cacheFreeJson(s)},
 
         {"op", {
             {"count", s.op_count},
@@ -132,8 +146,8 @@ void vh::stats::model::to_json(nlohmann::json& j, const CacheStats& s) {
         {"bytes_written", snap.bytes_written},
 
         {"used_bytes", snap.used_bytes},
-        {"free_bytes", CacheStats::free_bytes(snap)},
-        {"capacity_bytes", snap.capacity_bytes},
+        {"free_bytes", cacheFreeJson(snap)},
+        {"capacity_bytes", cacheCapacityJson(snap)},
 
         {"hit_rate", CacheStats::hit_rate(snap)},
 

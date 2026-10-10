@@ -76,6 +76,9 @@ void Event::upsert(const EventPtr& event) {
         }
 
         for (const auto& conflict : event->conflicts) {
+            // Open (unresolved) conflicts are one row per file, recorded by the pass itself
+            // (db::query::sync::Conflict::applyPass, #187); this keeps the per-run history of auto-resolved ones.
+            if (conflict->resolution == vh::sync::model::Conflict::Resolution::UNRESOLVED) continue;
             {
                 const pqxx::params p {
                     conflict->event_id,

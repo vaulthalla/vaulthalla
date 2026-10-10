@@ -23,6 +23,8 @@
 #include "storage/PlaintextReader.hpp"
 #include "vault/model/Vault.hpp"
 
+#include "../helpers/zip_check.hpp"
+
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 #include <paths.h>
@@ -33,6 +35,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <random>
 #include <thread>
 
@@ -380,6 +383,77 @@ TEST_F(HttpAccessDbTest, DownloadsLargerThanTheOldInMemoryCapStream) {
     std::vector<uint8_t> tail(4096);
     ASSERT_EQ(stream->reader->read((300ull << 20) - tail.size(), tail), tail.size());
     EXPECT_TRUE(std::ranges::all_of(tail, [](const uint8_t b) { return b == 43; }));  // 299 % 256
+}
+
+TEST_F(HttpAccessDbTest, FolderDownloadsStreamAValidZipOfDecryptedBytes) {
+    const std::string utf8Name = "na\xC3\xAFve \xE6\x97\xA5\xE6\x9C\xAC.pdf";
+    const auto pdf = twoPagePdf();
+    const std::string env = "KEY=value\n";
+    for (const auto* dir : {"/zipdir", "/zipdir/sub", "/zipdir/sub/nothing"})
+        ASSERT_EQ(fs::Filesystem::mkdir({.path = vaultA->vaultPathToFusePath(dir), .engine = vaultA, .user = admin}), 0);
+    write(vaultA, "/zipdir/" + utf8Name, pdf);
+    write(vaultA, "/zipdir/.env", {env.begin(), env.end()});
+    write(vaultA, "/zipdir/empty.txt", {});
+    write(vaultA, "/zipdir/sub/blob.bin", big);  // > 1 MiB: streamed member, authenticated before its descriptor
+
+    const auto url = inA("/download", "%2Fzipdir");
+    as(plain);
+    EXPECT_EQ(statusOf(Router::route(get(url))), status::forbidden);
+    EXPECT_EQ(statusOf(Router::route(get(url, verb::head))), status::forbidden);
+
+    as(reader);
+    auto head = Router::route(get(url, verb::head));
+    ASSERT_EQ(statusOf(head), status::ok);
+    const auto* headStream = std::get_if<StreamResponse>(&head);
+    ASSERT_NE(headStream, nullptr);
+    EXPECT_TRUE(headStream->headOnly);
+    EXPECT_FALSE(headStream->reader);  // HEAD never opens a member
+
+    auto res = Router::route(get(url));
+    ASSERT_EQ(statusOf(res), status::ok);
+    EXPECT_EQ(header(res, "Content-Type"), "application/zip");
+    EXPECT_EQ(header(res, "Content-Disposition"), "attachment; filename=\"zipdir.zip\"; filename*=UTF-8''zipdir.zip");
+    const auto body = bodyOf(res);
+    EXPECT_EQ(std::get<StreamResponse>(res).length, body.size());
+    EXPECT_EQ(headStream->length, body.size());
+
+    const auto path = root / "zipdir.zip";
+    std::ofstream(path, std::ios::binary).write(reinterpret_cast<const char*>(body.data()),
+                                                static_cast<std::streamsize>(body.size()));
+    const auto listing = vh::test::zip::pythonCheck(path);
+    if (!listing) GTEST_SKIP() << "python3 unavailable";
+    EXPECT_EQ(listing->badMember, "");
+    std::map<std::string, uint64_t> sizes;
+    for (const auto& item : listing->items) sizes[item.name] = item.size;
+    EXPECT_EQ(sizes, (std::map<std::string, uint64_t>{{".env", env.size()}, {"empty.txt", 0}, {utf8Name, pdf.size()},
+                                                      {"sub/", 0}, {"sub/blob.bin", big.size()}, {"sub/nothing/", 0}}));
+    // Plaintext, not ciphertext: the stored member bytes are the original file.
+    const std::string bodyText(body.begin(), body.end());
+    EXPECT_NE(bodyText.find(std::string(big.begin(), big.begin() + 4096)), std::string::npos);
+    EXPECT_NE(bodyText.find(env), std::string::npos);
+    const auto unzip = vh::test::zip::unzipTest(path);
+    if (unzip >= 0) {
+        EXPECT_EQ(unzip, 0);
+    }
+}
+
+TEST_F(HttpAccessDbTest, FolderDownloadOfTamperedCiphertextTruncatesInsteadOfVouching) {
+    std::vector<uint8_t> payload(2 * 1024 * 1024 + 77);
+    std::mt19937 rng(17);
+    for (auto& v : payload) v = static_cast<uint8_t>(rng());
+    ASSERT_EQ(fs::Filesystem::mkdir({.path = vaultA->vaultPathToFusePath("/ziptamper"), .engine = vaultA, .user = admin}), 0);
+    const auto file = write(vaultA, "/ziptamper/data.bin", payload);
+    {
+        std::fstream f(file->backing_path, std::ios::in | std::ios::out | std::ios::binary);
+        f.seekp(1000);
+        f.put('\x5a');
+    }
+    as(admin);
+    auto res = Router::route(get(inA("/download", "%2Fziptamper")));
+    ASSERT_EQ(statusOf(res), status::ok);  // the walk reads no bytes
+    // Draining throws before data.bin's descriptor (its CRC) is produced: the HTTP session turns this into a
+    // truncated body and a closed connection, which every client reports as a failed download.
+    EXPECT_THROW((void)bodyOf(res), storage::IntegrityError);
 }
 
 TEST_F(HttpAccessDbTest, TextSaveIsConditionalEncryptedAndAuthorized) {

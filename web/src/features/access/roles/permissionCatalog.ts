@@ -26,6 +26,7 @@ const ADMIN_GROUPS: PermissionGroupDef[] = [
   { prefix: 'admin.keys.encryption', label: 'Encryption keys', section: 'Keys' },
   { prefix: 'admin.s3_gateway', label: 'S3 gateway', section: 'Services' },
   { prefix: 'admin.settings', label: 'Settings', section: 'System' },
+  { prefix: 'admin.stats', label: 'Health and stats', section: 'System', hint: 'Server, daemon and system telemetry (the Health area)' },
   { prefix: 'admin.audits', label: 'Audit logs', section: 'System' },
 ]
 
@@ -72,6 +73,7 @@ const LEAF_LABELS: Record<string, string> = {
   'config.edit': 'Edit sync settings',
   'action.trigger': 'Run a sync',
   'action.sign_waiver': 'Sign encryption waiver',
+  'action.resolve_conflicts': 'Resolve sync conflicts',
   assign: 'Assign roles',
   modify: 'Change roles',
   revoke: 'Revoke roles',

@@ -3,6 +3,11 @@ import pkg from './package.json'
 
 const isTurbo = process.env.NEXT_TURBO === 'true'
 
+// Icons (FontAwesome SVGs) carry no fill of their own, so an SVG path would paint black: SVGR puts fill="currentColor"
+// on the root and marks it data-vh-icon, which globals.css colors with the brand cyan by default (#188). SVGR has no
+// `fill` option; it used to be passed here and was silently ignored.
+const svgrOptions = { icon: true, svgProps: { fill: 'currentColor', 'data-vh-icon': '' } }
+
 const nextConfig: NextConfig = {
   output: 'standalone',
   devIndicators: false,
@@ -42,7 +47,7 @@ const nextConfig: NextConfig = {
   },
   turbopack: {
     rules: {
-      '*.svg': { loaders: [{ loader: '@svgr/webpack', options: { icon: true, fill: 'currentColor' } }], as: '*.js' },
+      '*.svg': { loaders: [{ loader: '@svgr/webpack', options: svgrOptions }], as: '*.js' },
     },
   },
 
@@ -51,7 +56,7 @@ const nextConfig: NextConfig = {
       config.module.rules.push({
         test: /\.svg$/i,
         issuer: /\.[jt]sx?$/,
-        use: [{ loader: '@svgr/webpack', options: { icon: true, fill: 'currentColor' } }],
+        use: [{ loader: '@svgr/webpack', options: svgrOptions }],
       })
     }
     return config

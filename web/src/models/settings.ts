@@ -37,6 +37,34 @@ export interface AuthSettings extends SettingsSection {
   refresh_token_expiry_days: number
 }
 
+// sharing.* (core share::policy): `enabled` gates every link; the others gate one kind each. enable_anonymous is
+// access_mode 'public', enable_email_validated is 'email_validated'. Signed-in vault users are governed by RBAC.
+// Daemons before #164 sent enable_public_links instead of enable_email_validated.
+export interface SharingSettings extends SettingsSection {
+  enabled: boolean
+  enable_anonymous: boolean
+  enable_email_validated: boolean
+}
+
+// Defaults for vaults created without an explicit sync strategy / conflict policy.
+export interface VaultRemoteDefaults extends SettingsSection {
+  default_remote_sync_strategy: 'cache' | 'sync' | 'mirror'
+  default_remote_conflict_policy: 'keep_local' | 'keep_remote' | 'keep_newest' | 'ask'
+}
+
+export interface VaultsSettings extends SettingsSection {
+  retention_window: string
+  tpm_retention_window: string
+  s3: VaultRemoteDefaults & { tpm_retention_window: string }
+}
+
+// settings.policy.get: the part of the config any signed-in console needs (super admins get all of it from
+// settings.get). Not secret.
+export interface ServerPolicy {
+  sharing: SharingSettings
+  vaults: VaultsSettings
+}
+
 export interface Settings {
   websocket_server: WebsocketServerSettings
   http_preview_server: HttpPreviewServerSettings
@@ -48,7 +76,8 @@ export interface Settings {
   pricing: SettingsSection
   services: SettingsSection
   stats_snapshots: SettingsSection
-  sharing: SettingsSection
+  sharing: SharingSettings
+  vaults: VaultsSettings
   email: SettingsSection
   operator_emails: SettingsSection
   auditing: SettingsSection

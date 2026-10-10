@@ -10,6 +10,11 @@
 
 namespace vh::stats::model {
 
+// Trend series attached to an overview card: at most this many series (the console draws three), each trimmed to the
+// most recent points. Keeps stats.dashboard.overview small enough to poll (#160).
+inline constexpr std::size_t kDashboardOverviewMaxSeriesPerCard = 3;
+inline constexpr std::size_t kDashboardOverviewMaxPointsPerSeries = 64;
+
 struct DashboardMetricSummary {
     std::string key;
     std::string label;

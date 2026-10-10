@@ -405,7 +405,8 @@ void vh::seed::initRoles() {
                 role.roles.toBitString(),
                 role.vaults.toBitString(),
                 role.keys.toBitString(),
-                role.s3Gateway.toBitString()
+                role.s3Gateway.toBitString(),
+                role.stats.toBitString()
             }
         );
 

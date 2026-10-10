@@ -11,7 +11,7 @@
 #include "runtime/Deps.hpp"
 #include "log/Registry.hpp"
 
-#include <boost/dynamic_bitset.hpp>
+#include <unordered_set>
 #include <thread>
 
 namespace vh::sync {
@@ -162,8 +162,11 @@ void Controller::refreshEngines() {
 }
 
 void Controller::pruneStaleTasks(const std::vector<std::shared_ptr<Engine> >& engines) {
-    boost::dynamic_bitset<> latestBitset(db::query::vault::Vault::maxVaultId() + 1);
-    for (const auto& engine : engines) latestBitset.set(engine->vault->id);
+    // The live vault ids. A bitset sized by MAX(vault.id) asserted (or read out of bounds) for an engine or task whose
+    // vault row was gone, e.g. a vault purged by the retention service (#162).
+    std::unordered_set<unsigned int> live;
+    for (const auto& engine : engines)
+        if (engine && engine->vault) live.insert(engine->vault->id);
 
     {
         std::unique_lock lock(taskMapMutex_);
@@ -172,7 +175,7 @@ void Controller::pruneStaleTasks(const std::vector<std::shared_ptr<Engine> >& en
         std::vector<unsigned int> staleIds;
 
         for (const auto& [id, task] : taskMap_)
-            if (!latestBitset[task->vaultId()]) staleIds.push_back(id);
+            if (!live.contains(task->vaultId())) staleIds.push_back(id);
 
         for (auto id : staleIds) taskMap_.erase(id);
     }

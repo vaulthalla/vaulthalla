@@ -22,6 +22,9 @@ branch = "main"
 # Fast guardrails `vlr cut` runs before tagging. The C++ test suite is gated by PR CI (-O0); release CI builds the
 # -O3 package once and validates the artifacts.
 test_command = ["bash", "tools/dev/verify.sh", "release", "packaging", "lifecycle", "shell"]
+# The release record `vlr finalize` pushes to main changes only release history, so it skips push CI (#185). Never put
+# [skip ci] in cut_commit_message: the v* tag points at the cut commit, and GitHub would skip release.yml too.
+finalize_commit_message = "chore(release): record v{version} [skip ci]"
 
 [debian]
 distribution = "unstable"

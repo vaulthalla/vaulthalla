@@ -4,7 +4,12 @@
 #include "runtime/Deps.hpp"
 #include "CommandUsage.hpp"
 
+#include "db/query/vault/Deletion.hpp"
 #include "db/query/vault/Key.hpp"
+#include "ops/Vaults.hpp"
+#include "vault/Retention.hpp"
+#include "vault/model/Deletion.hpp"
+#include "vault/model/Key.hpp"
 
 #include "log/Registry.hpp"
 #include "sync/Controller.hpp"
@@ -30,6 +35,7 @@
 #include <vector>
 #include <memory>
 #include <fstream>
+#include <sodium.h>
 
 using namespace vh;
 using namespace vh::protocols::shell;
@@ -80,13 +86,41 @@ static CommandResult handle_key_encrypt_and_response(const CommandCall& call,
 }
 
 
+// A deleted vault's key stays exportable for the key retention window (#162), from the sealed copy kept with the
+// deletion record. Same permission as a live export; the exported_at mark stops the delete flows' warnings.
+static CommandResult export_deleted_key(const CommandCall& call, const std::shared_ptr<CommandUsage>& usage,
+                                        const std::string& notFound) {
+    std::shared_ptr<::vh::vault::model::Deletion> deletion;
+    try {
+        std::optional<unsigned int> ownerId;
+        if (optVal(call, usage->resolveOptional("owner")->option_tokens)) ownerId = resolveOwner(call, usage)->id;
+        deletion = ops::vaults::findDeleted(call.user, call.positionals[0], ownerId);
+    } catch (const std::exception&) {
+        return invalid(notFound);
+    }
+    if (!deletion->keyRetained())
+        return invalid("vault keys export: the key of deleted vault '" + deletion->vault_name + "' was destroyed when its key "
+                       "retention window ended");
+
+    auto retained = ::vh::vault::retention::retainedKey(deletion->vault_id);
+    auto v = std::make_shared<::vh::vault::model::Vault>();
+    v->id = deletion->vault_id;
+    v->name = deletion->vault_name;
+    auto out = generate_json_key_object(v, retained.key, retained.record, call.user->name);
+    sodium_memzero(retained.key.data(), retained.key.size());
+    out["deleted_vault"] = true;
+    const auto result = handle_key_encrypt_and_response(call, out, usage);
+    if (result.exit_code == 0) db::query::vault::Deletion::markKeyExported(deletion->vault_id);
+    return result;
+}
+
 static CommandResult export_one_key(const CommandCall& call, const std::shared_ptr<CommandUsage>& usage) {
     constexpr const auto* ERR = "vault keys export";
 
     const auto vaultArg = call.positionals[0];
 
     const auto engLkp = resolveEngine(call, vaultArg, usage, ERR);
-    if (!engLkp || !engLkp.ptr) return invalid(engLkp.error);
+    if (!engLkp || !engLkp.ptr) return export_deleted_key(call, usage, engLkp.error);
     const auto engine = engLkp.ptr;
 
     const auto context = fmt::format("User: {} -> {}", call.user->name, __func__);
@@ -95,7 +129,9 @@ static CommandResult export_one_key(const CommandCall& call, const std::shared_p
     if (!vaultKey) return invalid("vault keys export: no key record found for vault ID " + std::to_string(engine->vault->id));
 
     const auto out = generate_json_key_object(engine->vault, key, vaultKey, call.user->name);
-    return handle_key_encrypt_and_response(call, out, usage);
+    const auto result = handle_key_encrypt_and_response(call, out, usage);
+    if (result.exit_code == 0) db::query::vault::Key::markExported(engine->vault->id, vaultKey->version);
+    return result;
 }
 
 
@@ -113,7 +149,12 @@ static CommandResult export_all_keys(const CommandCall& call, const std::shared_
         out.push_back(generate_json_key_object(engine->vault, key, vaultKey, call.user->name));
     }
 
-    return handle_key_encrypt_and_response(call, out, usage);
+    const auto result = handle_key_encrypt_and_response(call, out, usage);
+    if (result.exit_code == 0)
+        for (const auto& item : out)
+            db::query::vault::Key::markExported(item.at("vault_id").get<unsigned int>(),
+                                                item.at("key_info").at("key_version").get<unsigned int>());
+    return result;
 }
 
 

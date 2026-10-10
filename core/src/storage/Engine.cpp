@@ -24,6 +24,8 @@
 #include "crypto/util/encrypt.hpp"
 #include "preview/cache/Store.hpp"
 
+#include <cerrno>
+#include <cstring>
 #include <system_error>
 
 using namespace vh::fs::model;
@@ -241,11 +243,29 @@ namespace vh::storage {
             throw std::runtime_error("Failed to rename: " + from.string() + " to " + to.string());
     }
 
-    void Engine::copy(const fs::path &from, const fs::path &to, const unsigned int userId) {
-        if (const auto err = Filesystem::copy(vaultPathToFusePath(from),
-                         vaultPathToFusePath(to), userId,
-                         shared_from_this()); err)
-            throw std::runtime_error("Failed to copy: " + from.string() + " to " + to.string());
+    void Engine::copy(const fs::path &from, const fs::path &to, const unsigned int userId,
+                      const std::function<void(const vh::fs::model::Entry &, const fs::path &)> &authorize) {
+        const auto err = Filesystem::copy({
+            .from = vaultPathToFusePath(from),
+            .to = vaultPathToFusePath(to),
+            .userId = userId,
+            .engine = shared_from_this(),
+            .authorize = authorize
+        });
+        if (!err) return;
+
+        const auto reason = [&]() -> std::string {
+            switch (-err) {
+            case ENOENT: return "the source or the destination folder does not exist";
+            case EEXIST: return "the destination already exists";
+            case EXDEV: return "copying between vaults is not supported";
+            case EINVAL: return "a folder cannot be copied into itself, and a symlink in it may not point outside the vault";
+            case ENOSPC: return "not enough space left in the vault's quota";
+            case ENODATA: return "a file's content is not stored locally and could not be fetched";
+            default: return std::strerror(-err);
+            }
+        }();
+        throw std::runtime_error("Failed to copy " + from.string() + " to " + to.string() + ": " + reason);
     }
 
     void Engine::remove(const fs::path &rel_path, const unsigned int userId) const {
@@ -255,11 +275,17 @@ namespace vh::storage {
     void Engine::removeLocally(const fs::path &rel_path) const {
         const auto path = rel_path.string().front() != '/' ? fs::path("/" / rel_path) : rel_path;
         const auto file = db::query::fs::File::getFileByPath(vault->id, path);
+        if (!file) return;
         db::query::fs::File::deleteFile(vault->owner_id, file);
-        if (file) purgeDerivedArtifacts(file->id);
+        purgeDerivedArtifacts(file->id);
+        if (const auto& cache = runtime::Deps::get().fsCache) {
+            cache->evictId(file->id);
+            if (file->parent_id) cache->refreshDirStats(*file->parent_id);
+        }
 
-        if (const auto absPath = paths->absPath(path, PathType::BACKING_VAULT_ROOT); fs::exists(absPath))
-            fs::remove(absPath);
+        // The file's own backing path (alias layout), not BACKING_VAULT_ROOT/<vault path>: nothing is stored there.
+        std::error_code ec;
+        fs::remove(file->backing_path, ec);
     }
 
     void Engine::removeLocally(const std::shared_ptr<file::Trashed> &f) const {
@@ -268,34 +294,12 @@ namespace vh::storage {
         fs::path absPath = f->backing_path;
         if (absPath.is_relative()) absPath = paths->absPath(absPath, PathType::BACKING_ROOT);
 
-        // Remove the file if present
+        // Remove the file if present. Only the file: the folder it was in still exists in the vault (#168), so its
+        // backing directory stays too. (A walk-up removing "now-empty" parents lived here; it compared backing paths
+        // against the FUSE vault root, so it never removed anything, and it must not.)
         std::error_code ec;
         fs::remove(absPath, ec); // ignore errors; file may not exist
 
-        // Normalize roots to avoid string mismatch
-        fs::path vaultRoot = paths->vaultRoot;
-        vaultRoot = fs::weakly_canonical(vaultRoot, ec);
-        absPath = fs::weakly_canonical(absPath, ec);
-
-        // Walk up deleting now-empty dirs, but never above vaultRoot
-        while (absPath.has_parent_path()) {
-            fs::path parent = absPath.parent_path();
-
-            // Stop if parent is (or is above) vaultRoot boundary
-            // Use lexically_relative to detect containment robustly.
-
-            if (const auto rel = parent.lexically_relative(vaultRoot);
-                rel.empty() || rel.native().starts_with(".."))
-                break; // outside or at boundary
-
-            // If parent doesn't exist or isn't empty, we're done
-            if (!fs::exists(parent) || !fs::is_empty(parent)) break;
-
-            fs::remove(parent, ec);
-            if (ec) break;
-
-            absPath = parent;
-        }
         // Derived artifacts were dropped when the file was trashed (its file id ended there); the startup sweep
         // collects anything an interrupted trash left behind.
     }

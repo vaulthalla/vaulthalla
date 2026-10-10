@@ -16,6 +16,9 @@
 #include "storage/s3/provider/Registry.hpp"
 #include "protocols/ws/Session.hpp"
 #include "ops/Vaults.hpp"
+#include "config/util.hpp"
+#include "db/encoding/timestamp.hpp"
+#include "vault/model/Deletion.hpp"
 #include "runtime/Deps.hpp"
 #include "sync/Controller.hpp"
 #include "rbac/role/Admin.hpp"
@@ -197,8 +200,43 @@ json Vaults::update(const json &payload, const std::shared_ptr<Session> &session
 }
 
 json Vaults::remove(const json &payload, const std::shared_ptr<Session> &session) {
-    (void)vh::ops::vaults::remove(session->user, payload.at("id").get<unsigned int>());
-    return {};
+    const auto deletion = vh::ops::vaults::remove(session->user, {
+        .id = payload.at("id").get<unsigned int>(),
+        .now = payload.value("now", false),
+        .delete_upstream = vaultPayloadField<bool>(payload, "delete_upstream"),
+        .confirm_now = payload.value("confirm_now", false),
+        .accept_key_loss = payload.value("accept_key_loss", false)
+    });
+    return {{"deletion", deletion ? json(*deletion) : json(nullptr)}};
+}
+
+json Vaults::removalPlan(const json &payload, const std::shared_ptr<Session> &session) {
+    const auto plan = vh::ops::vaults::removalPlan(session->user, payload.at("id").get<unsigned int>());
+    return {{"plan", {
+        {"vault_id", plan.vault->id},
+        {"name", plan.vault->name},
+        {"type", to_string(plan.vault->type)},
+        {"provider", plan.provider.empty() ? json(nullptr) : json(plan.provider)},
+        {"bucket", plan.bucket.empty() ? json(nullptr) : json(plan.bucket)},
+        {"encrypted_upstream", plan.encrypted_upstream},
+        {"key_version", plan.key_version},
+        {"key_exported", plan.keyExported()},
+        {"key_exported_at", plan.key_exported_at ? json(vh::db::encoding::timestampToString(*plan.key_exported_at)) : json(nullptr)},
+        {"retention_window", vh::config::durationToString(plan.retention_window)},
+        {"retention_window_seconds", plan.retention_window.count()},
+        {"key_retention_window", vh::config::durationToString(plan.key_retention_window)},
+        {"key_retention_window_seconds", plan.key_retention_window.count()},
+        {"export_command", plan.export_command}
+    }}};
+}
+
+json Vaults::listDeleted(const std::shared_ptr<Session> &session) {
+    return {{"deleted", json(vh::ops::vaults::listDeleted(session->user))}};
+}
+
+json Vaults::restore(const json &payload, const std::shared_ptr<Session> &session) {
+    const auto vault = vh::ops::vaults::restore(session->user, payload.at("id").get<unsigned int>());
+    return {{"vault", *vault}};
 }
 
 json Vaults::get(const json &payload, const std::shared_ptr<Session> &session) {

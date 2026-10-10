@@ -8,6 +8,7 @@
 #include "crypto/util/hash.hpp"
 #include "db/query/auth/RefreshToken.hpp"
 #include "log/Registry.hpp"
+#include "protocols/ws/ConnectionLimit.hpp"
 #include "protocols/ws/Session.hpp"
 #include "identities/User.hpp"
 #include "runtime/Deps.hpp"
@@ -116,8 +117,10 @@ void copyShareState(const std::shared_ptr<Session>& target, const std::shared_pt
 }
 }
 
-void Manager::accept(boost::asio::ip::tcp::socket&& socket, const std::shared_ptr<Router>& router) {
+void Manager::accept(boost::asio::ip::tcp::socket&& socket, const std::shared_ptr<Router>& router,
+                     std::unique_ptr<protocols::ws::ConnectionSlot> slot) {
     const auto session = std::make_shared<Session>(router);
+    session->holdConnectionSlot(std::move(slot));
     cache(session);
     session->accept(std::move(socket));
 }

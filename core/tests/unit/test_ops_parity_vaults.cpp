@@ -3,11 +3,14 @@
 // omitted fields on update; key changes needed Consume only on the CLI; owner changes needed only Edit; and sync
 // settings were gated by two different permissions. Everything now goes through ops::vaults.
 
+#include "config/Config.hpp"
+#include "config/Registry.hpp"
 #include "db/Transactions.hpp"
 #include "db/query/identities/User.hpp"
 #include "db/query/rbac/role/Admin.hpp"
 #include "db/query/sync/Policy.hpp"
 #include "db/query/vault/APIKey.hpp"
+#include "db/query/vault/Deletion.hpp"
 #include "db/query/vault/Vault.hpp"
 #include "fs/Filesystem.hpp"
 #include "identities/User.hpp"
@@ -26,8 +29,11 @@
 #include "storage/Manager.hpp"
 #include "sync/model/LocalPolicy.hpp"
 #include "sync/model/Policy.hpp"
+#include "sync/model/RemotePolicy.hpp"
 #include "UsageManager.hpp"
 #include "vault/APIKeyManager.hpp"
+#include "vault/Retention.hpp"
+#include "vault/model/Deletion.hpp"
 #include "vault/model/APIKey.hpp"
 #include "vault/model/S3Vault.hpp"
 #include "vault/model/Vault.hpp"
@@ -43,6 +49,7 @@
 #include <functional>
 #include <iostream>
 #include <memory>
+#include <set>
 #include <shared_mutex>
 #include <string>
 
@@ -231,6 +238,46 @@ TEST_F(VaultParityTest, ChangingTheApiKeyNeedsConsumeOnBothSurfaces) {
     }));
 }
 
+// vaults.s3.* (#164): an S3 vault created without a strategy or conflict policy gets the operator's defaults, on
+// both surfaces; an explicit setting still wins. (These keys used to sit unread under s3_gateway.)
+TEST_F(VaultParityTest, NewS3VaultsTakeTheConfiguredRemoteDefaults) {
+    const auto previous = config::Registry::get();
+    struct Restore {
+        const config::Config& cfg;
+        ~Restore() { config::Registry::set(cfg); }
+    } restore{previous};
+    auto cfg = previous;
+    cfg.vaults.s3.default_remote_sync_strategy = "mirror";
+    cfg.vaults.s3.default_remote_conflict_policy = "keep_newest";
+    config::Registry::set(cfg);
+
+    const auto key = seedKey(superUser);
+    const auto cliName = "vp_def_cli_" + vaultTag(), wsName = "vp_def_ws_" + vaultTag();
+    const auto [code, out] = cli("vault create " + cliName + " --s3 --api-key " + std::to_string(key) + " --bucket vp-def",
+                                 superUser);
+    ASSERT_EQ(code, 0) << out;
+    const auto added = protocols::ws::handler::Vaults::add(
+        json{{"name", wsName}, {"type", "s3"}, {"api_key_id", key}, {"bucket", "vp-def"}}, ws(superUser));
+
+    for (const auto id : {db::query::vault::Vault::getVault(cliName, superUser->id)->id,
+                          added.at("vault").at("id").get<unsigned int>()}) {
+        const auto policy = std::dynamic_pointer_cast<sync::model::RemotePolicy>(db::query::sync::Policy::getSync(id));
+        ASSERT_TRUE(policy) << "vault " << id;
+        EXPECT_EQ(policy->strategy, sync::model::RemotePolicy::Strategy::Mirror) << "vault " << id;
+        EXPECT_EQ(policy->conflict_policy, sync::model::RemotePolicy::ConflictPolicy::KeepNewest) << "vault " << id;
+    }
+
+    // Explicit settings win over the defaults.
+    const auto explicitName = "vp_def_explicit_" + vaultTag();
+    ASSERT_EQ(cli("vault create " + explicitName + " --s3 --api-key " + std::to_string(key) +
+                  " --bucket vp-def --sync-strategy sync --on-sync-conflict keep_remote", superUser).first, 0);
+    const auto explicitPolicy = std::dynamic_pointer_cast<sync::model::RemotePolicy>(
+        db::query::sync::Policy::getSync(db::query::vault::Vault::getVault(explicitName, superUser->id)->id));
+    ASSERT_TRUE(explicitPolicy);
+    EXPECT_EQ(explicitPolicy->strategy, sync::model::RemotePolicy::Strategy::Sync);
+    EXPECT_EQ(explicitPolicy->conflict_policy, sync::model::RemotePolicy::ConflictPolicy::KeepRemote);
+}
+
 TEST_F(VaultParityTest, SyncSettingsUseOnePermissionOnBothSurfaces) {
     const auto vault = ops::vaults::create(superUser, {.name = "vp_sync_" + vaultTag(), .type = vault::model::VaultType::Local,
                                                        .owner_id = alice->id});
@@ -258,6 +305,75 @@ TEST_F(VaultParityTest, DeleteAndListAgree) {
 
     const auto listed = protocols::ws::handler::Vaults::list(ws(bob)).at("vaults");
     for (const auto& v : listed) EXPECT_EQ(v.at("owner_id").get<unsigned int>(), bob->id);
+}
+
+// Safe deletion (#162): delete, delete now, the deleted list and restore agree on both surfaces, and need vault
+// Remove (the owner the deletion recorded decides the scope).
+TEST_F(VaultParityTest, DeletionLifecycleAgreesOnBothSurfaces) {
+    const auto viaCli = ops::vaults::create(superUser, {.name = "vp_rm_cli_" + vaultTag(), .type = vault::model::VaultType::Local});
+    const auto viaWs = ops::vaults::create(superUser, {.name = "vp_rm_ws_" + vaultTag(), .type = vault::model::VaultType::Local});
+    const auto cliId = std::to_string(viaCli->id);
+
+    // Without a terminal a delete is the safe default: scheduled, restorable; it says how to undo it.
+    const auto [code, out] = cli("vault delete " + cliId, superUser);
+    ASSERT_EQ(code, 0) << out;
+    EXPECT_NE(out.find("vh vault restore " + cliId), std::string::npos) << out;
+    ASSERT_TRUE(wsOk([&] { (void)protocols::ws::handler::Vaults::remove(json{{"id", viaWs->id}}, ws(superUser)); }));
+    EXPECT_FALSE(vaultFacts(viaCli->id).at("exists"));
+    EXPECT_FALSE(vaultFacts(viaWs->id).at("exists"));
+
+    // Both surfaces list both deletions for the super admin, neither for bob.
+    const auto listedIds = [](const json& rows) {
+        std::set<unsigned int> ids;
+        for (const auto& r : rows) ids.insert(r.at("vault_id").get<unsigned int>());
+        return ids;
+    };
+    const auto [listCode, listOut] = cli("vault deleted --json", superUser);
+    ASSERT_EQ(listCode, 0) << listOut;
+    const auto cliIds = listedIds(json::parse(listOut));
+    const auto wsIds = listedIds(protocols::ws::handler::Vaults::listDeleted(ws(superUser)).at("deleted"));
+    EXPECT_EQ(cliIds, wsIds);
+    EXPECT_TRUE(cliIds.contains(viaCli->id) && cliIds.contains(viaWs->id));
+    EXPECT_TRUE(protocols::ws::handler::Vaults::listDeleted(ws(bob)).at("deleted").empty());
+    const auto [bobList, bobOut] = cli("vault deleted --json", bob);
+    ASSERT_EQ(bobList, 0) << bobOut;
+    EXPECT_TRUE(json::parse(bobOut).empty());
+
+    // Restore and delete now: refused for bob on both surfaces, allowed for the super admin.
+    EXPECT_NE(cli("vault restore " + cliId, bob).first, 0);
+    EXPECT_FALSE(wsOk([&] { (void)protocols::ws::handler::Vaults::restore(json{{"id", viaWs->id}}, ws(bob)); }));
+    EXPECT_NE(cli("vault delete " + cliId + " --now --yes", bob).first, 0);
+    EXPECT_FALSE(wsOk([&] {
+        (void)protocols::ws::handler::Vaults::remove(json{{"id", viaWs->id}, {"now", true}, {"confirm_now", true}}, ws(bob));
+    }));
+
+    ASSERT_EQ(cli("vault restore " + cliId, superUser).first, 0);
+    ASSERT_TRUE(wsOk([&] { (void)protocols::ws::handler::Vaults::restore(json{{"id", viaWs->id}}, ws(superUser)); }));
+    EXPECT_TRUE(vaultFacts(viaCli->id).at("exists"));
+    EXPECT_TRUE(vaultFacts(viaWs->id).at("exists"));
+
+    // Delete now needs a confirmation on both surfaces; without one nothing changes.
+    EXPECT_NE(cli("vault delete " + cliId + " --now", superUser).first, 0);
+    EXPECT_FALSE(wsOk([&] { (void)protocols::ws::handler::Vaults::remove(json{{"id", viaWs->id}, {"now", true}}, ws(superUser)); }));
+    EXPECT_TRUE(vaultFacts(viaCli->id).at("exists"));
+    EXPECT_TRUE(vaultFacts(viaWs->id).at("exists"));
+    ASSERT_EQ(cli("vault delete " + cliId + " --now --yes", superUser).first, 0);
+    ASSERT_TRUE(wsOk([&] {
+        (void)protocols::ws::handler::Vaults::remove(json{{"id", viaWs->id}, {"now", true}, {"confirm_now", true}}, ws(superUser));
+    }));
+    for (const auto id : {viaCli->id, viaWs->id}) {
+        const auto d = db::query::vault::Deletion::get(id);
+        ASSERT_TRUE(d);
+        EXPECT_EQ(d->purge_after, d->deleted_at) << "delete now purges on the next pass";
+    }
+
+    // The removal plan the web dialog reads: Remove permission, same windows as the op uses.
+    const auto planned = ops::vaults::create(superUser, {.name = "vp_rm_plan_" + vaultTag(), .type = vault::model::VaultType::Local});
+    const auto plan = protocols::ws::handler::Vaults::removalPlan(json{{"id", planned->id}}, ws(superUser)).at("plan");
+    EXPECT_EQ(plan.at("retention_window_seconds").get<int64_t>(),
+              vault::retention::windowsFor(vault::model::VaultType::Local).retention_window.count());
+    EXPECT_FALSE(plan.at("key_exported").get<bool>());
+    EXPECT_FALSE(wsOk([&] { (void)protocols::ws::handler::Vaults::removalPlan(json{{"id", planned->id}}, ws(bob)); }));
 }
 
 // The waiver flow without a real bucket: the CLI asks (or takes the accept flag) and repeats the op accepted.

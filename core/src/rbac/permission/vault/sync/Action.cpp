@@ -11,6 +11,7 @@ std::string Action::toString(const uint8_t indent) const {
     const auto in = std::string(indent + 2, ' ');
     oss << in << "Trigger Sync: " << bool_to_string(canTrigger()) << "\n";
     oss << in << "Sign Upstream Encryption Waivers: " << bool_to_string(canSignWaiver()) << "\n";
+    oss << in << "Resolve Sync Conflicts: " << bool_to_string(canResolveConflicts()) << "\n";
     return oss.str();
 }
 
@@ -18,7 +19,8 @@ std::string Action::toString(const uint8_t indent) const {
 void to_json(nlohmann::json& j, const Action& a) {
     j = {
         {"trigger", a.canTrigger()},
-        {"sign_waiver", a.canSignWaiver()}
+        {"sign_waiver", a.canSignWaiver()},
+        {"resolve_conflicts", a.canResolveConflicts()}
     };
 }
 
@@ -26,6 +28,9 @@ void from_json(const nlohmann::json& j, Action& a) {
     a.clear();
     if (j.at("trigger").get<bool>()) a.grant(SyncActionPermissions::Trigger);
     if (j.at("sign_waiver").get<bool>()) a.grant(SyncActionPermissions::SignWaiver);
+    // Optional: clients written before #187 don't send it.
+    if (j.contains("resolve_conflicts") && j.at("resolve_conflicts").get<bool>())
+        a.grant(SyncActionPermissions::ResolveConflicts);
 }
 
 }

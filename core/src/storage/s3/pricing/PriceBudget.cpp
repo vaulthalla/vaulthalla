@@ -1860,10 +1860,11 @@ PriceBudgetDashboardStats PriceBudgetService::dashboardStats(const std::optional
     for (const auto& trend : stats.trends) {
         if (trend.window_type != "monthly") continue;
         stats.current_monthly_spend = budgetFormatDecimal(
-            budgetDecimalFromString(stats.current_monthly_spend) + budgetDecimalFromString(trend.total_cost));
+            budgetDecimalFromString(stats.current_monthly_spend.value_or("0")) + budgetDecimalFromString(trend.total_cost));
         if (trend.projected_window_cost)
             stats.projected_monthly_spend = budgetFormatDecimal(
-                budgetDecimalFromString(stats.projected_monthly_spend) + budgetDecimalFromString(*trend.projected_window_cost));
+                budgetDecimalFromString(stats.projected_monthly_spend.value_or("0")) +
+                budgetDecimalFromString(*trend.projected_window_cost));
     }
 
     auto summary = db::Transactions::exec("PriceBudgetService::dashboardStats", [&](pqxx::work& txn) {
@@ -2080,8 +2081,9 @@ void to_json(nlohmann::json& j, const PriceBudgetDashboardStats& stats) {
         {"critical_notifications", stats.critical_notifications},
         {"unacknowledged_notifications", stats.unacknowledged_notifications},
         {"pending_overrides", stats.pending_overrides},
-        {"current_monthly_spend", stats.current_monthly_spend},
-        {"projected_monthly_spend", stats.projected_monthly_spend},
+        // null when no monthly budget window (or projection) exists: not measured, never a fake "0.00000000" (#160).
+        {"current_monthly_spend", stats.current_monthly_spend ? nlohmann::json(*stats.current_monthly_spend) : nlohmann::json(nullptr)},
+        {"projected_monthly_spend", stats.projected_monthly_spend ? nlohmann::json(*stats.projected_monthly_spend) : nlohmann::json(nullptr)},
         {"currency", stats.currency},
         {"trends", stats.trends},
         {"active_notifications", stats.active_notifications},

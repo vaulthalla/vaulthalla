@@ -129,6 +129,12 @@
         background: var(--bg);
     }
 
+    /* Icons are cyan unless their context says otherwise (#188). Base layer on purpose: any text-* utility on the icon or
+       an ancestor's [&_svg]: rule (filled buttons, danger menu items) wins over it. */
+    svg[data-vh-icon] {
+        color: var(--accent-text);
+    }
+
     body {
         min-height: 100dvh;
         color: var(--fg);

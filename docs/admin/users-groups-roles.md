@@ -122,6 +122,7 @@ Useful admin permission areas include:
 - API key management.
 - Encryption key export.
 - Audit log access.
+- Health and system stats (`admin.stats.view`, flag `--allow-stats-view`): the console's Health area and the server, daemon and system stats behind it. Built-in `admin`, `auditor`, `platform_operator` and `super_admin` have it. A vault's own stats don't need it; they follow the vault (its owner, or `admin.vaults.*.view_stats`).
 - Admin management.
 
 Grant only the permissions needed for the operator's job.

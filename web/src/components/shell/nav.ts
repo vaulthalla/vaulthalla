@@ -2,6 +2,7 @@ import type React from 'react'
 import type { Requirement } from '@/lib/permissions'
 import {
   CloudIcon,
+  ArrowRightArrowLeftIcon,
   EnvelopeIcon,
   FolderIcon,
   GaugeHighIcon,
@@ -21,7 +22,11 @@ export interface NavItem {
   icon: React.ComponentType<React.SVGProps<SVGSVGElement>>
   requires?: Requirement
   keywords?: string
+  // Shown only while this live signal is on (e.g. there are open sync conflicts the account can resolve).
+  shownWhen?: NavSignal
 }
+
+export type NavSignal = 'syncConflicts'
 
 export interface NavSection {
   label?: string
@@ -74,7 +79,14 @@ export const NAV: NavSection[] = [
   {
     label: 'System',
     items: [
-      { label: 'Health', href: '/health', icon: GaugeHighIcon, requires: { admin: true }, keywords: 'dashboard stats status' },
+      {
+        label: 'Sync Conflicts',
+        href: '/sync-conflicts',
+        icon: ArrowRightArrowLeftIcon,
+        shownWhen: 'syncConflicts',
+        keywords: 'sync conflict resolve keep local remote s3',
+      },
+      { label: 'Health', href: '/health', icon: GaugeHighIcon, requires: { permission: 'admin.stats.view' }, keywords: 'dashboard stats status' },
       { label: 'Notifications', href: '/notifications', icon: EnvelopeIcon, requires: { superAdmin: true }, keywords: 'operator email' },
       { label: 'Settings', href: '/settings', icon: SlidersIcon, requires: { superAdmin: true }, keywords: 'config' },
     ],

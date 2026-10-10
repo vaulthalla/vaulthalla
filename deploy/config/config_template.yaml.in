@@ -24,6 +24,10 @@ auth: {}
 sharing: {}
 
 
+# === 🗃️ VAULTS: DEFAULTS, DELETION & RETENTION ===
+vaults: {}
+
+
 # === 💸 PRICING ESTIMATES ===
 pricing: {}
 
@@ -40,6 +44,8 @@ stats_snapshots: {}
 
 # === Caching & Previews ===
 caching: {}
+
+
 
 
 # === 📜 LOGGING SETTINGS ===

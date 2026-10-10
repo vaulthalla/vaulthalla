@@ -34,6 +34,9 @@ TEST(RuntimeManagerOrderTest, StartOrderIsExplicitAndDependencyAware) {
     EXPECT_LT(indexOf(names, "ConnectionLifecycleManager"), indexOf(names, "ProtocolService"));
     EXPECT_LT(indexOf(names, "ProtocolService"), indexOf(names, "S3GatewayService"));
     EXPECT_LT(indexOf(names, "S3GatewayService"), indexOf(names, "ShellServer"));
+    // Purges run against the storage the FUSE service and sync controller already hold (#162).
+    EXPECT_LT(indexOf(names, "SyncController"), indexOf(names, "VaultRetentionService"));
+    EXPECT_NE(indexOf(vh::runtime::Manager::serviceStopOrder(true), "VaultRetentionService"), -1);
 }
 
 TEST(RuntimeManagerOrderTest, TestModeOrderOmitsShellServerWhenRequested) {

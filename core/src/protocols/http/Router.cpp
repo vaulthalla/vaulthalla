@@ -147,6 +147,7 @@ Response Router::route(request&& req) {
     if (target.starts_with("/auth/session")) return handleAuthSession(std::move(req));
     if (target.starts_with("/preview/derived")) return handler::derived(std::move(req));
     if (target.starts_with("/preview")) return handlePreview(std::move(req));
+    if (target.starts_with("/download/conflict")) return handler::conflictSide(std::move(req));
     if (target.starts_with("/download")) return handleDownload(std::move(req));
 
     return makeErrorResponse(req, "Not found", status::not_found);

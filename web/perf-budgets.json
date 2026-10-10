@@ -5,7 +5,8 @@
     "/": 150,
     "/login": 170,
     "/files/[[...slug]]": 230,
-    "/share/[token]/[[...path]]": 220
+    "/share/[token]/[[...path]]": 220,
+    "/sync-conflicts": 220
   },
   "lazy": {
     "modelViewer": 325,

@@ -119,8 +119,10 @@ jobs:
       - name: shellcheck (maintainer scripts blocking, bin/ advisory)
         run: bash .github/scripts/shellcheck.sh
 
+  # Typecheck, lint and design-token checks only: release-artifacts runs the one production web build (vlr build-deb's
+  # pre_build) and checks its budgets, so the release never builds the web app twice (#185).
   web-verify:
-    name: Web build and checks
+    name: Web checks
     runs-on: [self-hosted, Linux, X64, vaulthalla, vps-ci]
     defaults:
       run:
@@ -135,9 +137,6 @@ jobs:
 
       - name: Setup web toolchain
         uses: ./.github/actions/setup_web
-
-      - name: Build web
-        uses: ./.github/actions/build_web
 
       - name: Run web checks
         uses: ./.github/actions/test_web
@@ -183,6 +182,10 @@ jobs:
 
       - name: Build Debian package and web tarball
         run: vlr build-deb
+
+      # The production web build pre_build just made (web/.next) is the one that ships.
+      - name: Check web performance budgets
+        run: pnpm --dir web budgets
 
       # The package is the only -O3 build in the release: no second build and no rerun of the test suite (the
       # required PR CI gate compiled and ran it at -O0). Check that the shipped binaries got the intended flags.

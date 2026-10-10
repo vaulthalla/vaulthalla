@@ -193,6 +193,36 @@ std::vector<Entry::EntryPtr> Entry::listDir(const std::optional<unsigned int>& e
     });
 }
 
+std::vector<Entry::EntryPtr> Entry::listSubtree(const unsigned int dirId) {
+    // The directories under dirId (recursing through directories only), then what each of them and dirId hold.
+    static constexpr auto kTree = R"SQL(
+        WITH RECURSIVE tree AS (
+            SELECT e.id FROM fs_entry e WHERE e.id = $1
+          UNION ALL
+            SELECT c.id FROM fs_entry c JOIN directories d ON d.fs_entry_id = c.id JOIN tree t ON c.parent_id = t.id
+        )
+    )SQL";
+
+    struct Rows { pqxx::result files, symlinks, directories; };
+    const auto rows = Transactions::exec("Entry::listSubtree", [&](pqxx::work& txn) {
+        const pqxx::params p{dirId};
+        return Rows{
+            txn.exec(std::string(kTree) +
+                     "SELECT fs.*, f.* FROM fs_entry fs JOIN files f ON f.fs_entry_id = fs.id "
+                     "WHERE fs.parent_id IN (SELECT id FROM tree)", p),
+            txn.exec(std::string(kTree) +
+                     "SELECT s.target, char_length(s.target)::bigint AS size_bytes, fs.* FROM fs_entry fs "
+                     "JOIN symlinks s ON s.fs_entry_id = fs.id WHERE fs.parent_id IN (SELECT id FROM tree)", p),
+            txn.exec(pqxx::prepped{"list_dirs_in_dir_by_parent_id_recursive"}, p)
+        };
+    });
+
+    // Built outside the transaction: each entry reads its parent chain (fuse and backing paths) with its own lease.
+    return merge_entries(vh::fs::model::files_from_pq_res(rows.files),
+                         vh::fs::model::symlinks_from_pq_res(rows.symlinks),
+                         vh::fs::model::directories_from_pq_res(rows.directories));
+}
+
 ino_t Entry::getNextInode() {
     return Transactions::exec("Entry::getNextInode", [&](pqxx::work& txn) {
         const auto res = txn.exec(pqxx::prepped{"get_next_inode"});

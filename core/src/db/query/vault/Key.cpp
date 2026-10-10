@@ -2,6 +2,7 @@
 #include "db/Transactions.hpp"
 #include "vault/model/Key.hpp"
 #include "db/encoding/bytea.hpp"
+#include "db/encoding/timestamp.hpp"
 
 namespace vh::db::query::vault {
 
@@ -55,6 +56,23 @@ void Key::markKeyRotationFinished(unsigned int vaultId) {
 bool Key::keyRotationInProgress(unsigned int vaultId) {
     return Transactions::exec("Key::keyRotationInProgress", [&](pqxx::work& txn) {
         return txn.exec(pqxx::prepped{"vault_key_rotation_in_progress"}, vaultId).one_field().as<bool>();
+    });
+}
+
+void Key::markExported(const unsigned int vaultId, const unsigned int version) {
+    Transactions::exec("Key::markExported", [&](pqxx::work& txn) {
+        txn.exec("UPDATE vault_keys SET exported_version = $2, exported_at = NOW() WHERE vault_id = $1 AND version = $2",
+                 pqxx::params{vaultId, version});
+    });
+}
+
+std::optional<std::time_t> Key::currentKeyExportedAt(const unsigned int vaultId) {
+    return Transactions::exec("Key::currentKeyExportedAt", [&](pqxx::work& txn) -> std::optional<std::time_t> {
+        const auto res = txn.exec(
+            "SELECT exported_at FROM vault_keys WHERE vault_id = $1 AND exported_version = version AND exported_at IS NOT NULL",
+            pqxx::params{vaultId});
+        if (res.empty()) return std::nullopt;
+        return db::encoding::parsePostgresTimestamp(res.one_field().c_str());
     });
 }
 

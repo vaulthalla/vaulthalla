@@ -95,6 +95,12 @@ namespace vh::storage::s3 {
     // Receives the body in order; throwing aborts the transfer (the exception propagates from streamObject).
     using BodySink = std::function<void(std::span<const uint8_t>)>;
 
+    // One ListObjectsV2 page (Controller::listObjectKeysPage).
+    struct ObjectKeyPage {
+        std::vector<std::string> keys;
+        std::string next_continuation_token;   // empty on the last page
+    };
+
     class Controller {
     public:
         static constexpr uintmax_t MIN_PART_SIZE = 5 * 1024 * 1024; // 5 MiB
@@ -231,6 +237,11 @@ namespace vh::storage::s3 {
         virtual void deleteObject(const fs::path &key) const;
 
         [[nodiscard]] virtual std::u8string listObjects(const fs::path &prefix = {}) const;
+
+        // One metered ListObjectsV2 request: up to maxKeys (1-1000) keys from the start of the bucket, or after
+        // continuationToken. Unlike listObjects it never returns a partial listing: a transport or HTTP error throws.
+        [[nodiscard]] virtual ObjectKeyPage listObjectKeysPage(const std::string &continuationToken = {},
+                                                               unsigned int maxKeys = 1000) const;
 
     protected:
         struct TransportResponse {

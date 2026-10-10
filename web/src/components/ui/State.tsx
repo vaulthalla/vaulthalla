@@ -91,7 +91,7 @@ export const Skeleton = ({ className }: { className?: string }) => <div classNam
 
 export const InlineError = ({ error, className }: { error: unknown; className?: string }) =>
   error ? (
-    <p role="alert" className={cn('rounded-control border border-danger-line bg-danger-soft px-3 py-2 text-sm text-danger', className)}>
+    <p role="alert" className={cn('rounded-control border border-danger-line bg-danger-soft px-3 py-2 text-sm text-danger [&_svg]:text-inherit', className)}>
       {errorMessage(error)}
     </p>
   ) : null

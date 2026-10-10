@@ -43,6 +43,7 @@ public:
     std::size_t read(uint64_t offset, std::span<uint8_t> out) override;
     [[nodiscard]] const Generation& generation() const override { return params_.generation; }
     [[nodiscard]] std::vector<uint8_t> readAllAuthenticated(uint64_t maxBytes) override;
+    void requireAuthenticated() override;
 
     [[nodiscard]] crypto::IntegrityState integrityState() const;
 

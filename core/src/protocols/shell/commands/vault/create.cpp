@@ -1,6 +1,7 @@
 #include "protocols/shell/commands/vault.hpp"
 #include "protocols/shell/util/argsHelpers.hpp"
 #include "runtime/Deps.hpp"
+#include "config/Registry.hpp"
 
 #include "db/query/vault/Vault.hpp"
 #include "db/query/vault/APIKey.hpp"
@@ -50,8 +51,12 @@ static constexpr const auto* REMOTE_CONFLICT_POLICY_HELP = R"(
 On-Sync-Conflict Policy Options:
   keep_local  - In case of conflict, keep the local version and overwrite the remote.
   keep_remote - In case of conflict, keep the remote version and overwrite the local.
-  ask         - Prompt the user to resolve conflicts during sync operations.
+  keep_newest - In case of conflict, keep whichever version was modified last.
+  ask         - Record the conflict and leave both versions as they are until someone decides
+                (`vh sync resolve` or the console's Sync Conflicts page). Everything else keeps
+                syncing; a file changed on only one side still syncs normally.
 
+The default is vaults.s3.default_remote_conflict_policy in config.yaml.
 )";
 
 static constexpr const auto& SYNC_INTERVAL_HELP = R"(
@@ -145,18 +150,26 @@ namespace vh::protocols::shell::commands::vault {
             if (s3.bucket.empty()) return invalid("vault create: S3 bucket name is required");
             if (const auto tier = io->prompt("Storage tier [provider default]:", ""); !tier.empty()) s3.storage_tier = tier;
 
-            auto strategyStr = io->prompt("Enter sync strategy (cache/sync/mirror) [cache] --help for details:", "cache");
+            // Offered defaults are the operator's vaults.s3.* settings (the same ones a non-interactive create gets).
+            const auto& remoteDefaults = config::Registry::get().vaults.s3;
+            const auto& strategyDefault = remoteDefaults.default_remote_sync_strategy;
+            const auto& conflictDefault = remoteDefaults.default_remote_conflict_policy;
+            auto strategyStr = io->prompt(
+                "Enter sync strategy (cache/sync/mirror) [" + strategyDefault + "] --help for details:", strategyDefault);
             while (isHelp(strategyStr)) {
                 io->print(SYNC_STRATEGY_HELP);
-                strategyStr = io->prompt("Enter sync strategy (cache/sync/mirror) [cache]:", "cache");
+                strategyStr = io->prompt("Enter sync strategy (cache/sync/mirror) [" + strategyDefault + "]:", strategyDefault);
             }
             req.sync.strategy = strategyStr;
 
             auto conflictStr = io->prompt(
-                "Enter on-sync-conflict policy (keep_local/keep_remote/ask) [ask] --help for details:", "ask");
+                "Enter on-sync-conflict policy (keep_local/keep_remote/keep_newest/ask) [" + conflictDefault +
+                "] --help for details:", conflictDefault);
             while (isHelp(conflictStr)) {
                 io->print(REMOTE_CONFLICT_POLICY_HELP);
-                conflictStr = io->prompt("Enter on-sync-conflict policy (keep_local/keep_remote/ask) [ask]:", "ask");
+                conflictStr = io->prompt(
+                    "Enter on-sync-conflict policy (keep_local/keep_remote/keep_newest/ask) [" + conflictDefault + "]:",
+                    conflictDefault);
             }
             req.sync.conflict_policy = conflictStr;
             s3.encrypt_upstream = io->confirm("Enable upstream encryption? (yes/no) [yes]", false);

@@ -9,6 +9,7 @@
 #include "protocols/ws/handler/S3Gateway.hpp"
 #include "protocols/ws/handler/Groups.hpp"
 #include "protocols/ws/handler/Stats.hpp"
+#include "protocols/ws/handler/SyncConflicts.hpp"
 #include "protocols/ws/handler/dashboard/Preferences.hpp"
 #include "protocols/ws/handler/rbac/roles/Admin.hpp"
 #include "protocols/ws/handler/rbac/roles/Vault.hpp"
@@ -37,6 +38,7 @@ void Handler::registerAllHandlers(const std::shared_ptr<Router>& r) {
     registerS3GatewayHandlers(r);
     registerGroupHandlers(r);
     registerStatHandlers(r);
+    registerSyncConflictHandlers(r);
     registerDashboardPreferenceHandlers(r);
     registerShareManagementHandlers(r);
     registerShareSessionHandlers(r);
@@ -85,6 +87,9 @@ void Handler::registerStorageHandlers(const std::shared_ptr<Router>& r) {
     r->registerPayload("storage.vault.add", &handler::Vaults::add);
     r->registerPayload("storage.vault.update", &handler::Vaults::update);
     r->registerPayload("storage.vault.remove", &handler::Vaults::remove);
+    r->registerPayload("storage.vault.remove.plan", &handler::Vaults::removalPlan);
+    r->registerSessionOnlyHandler("storage.vault.deleted.list", &handler::Vaults::listDeleted);
+    r->registerPayload("storage.vault.restore", &handler::Vaults::restore);
     r->registerPayload("storage.vault.get", &handler::Vaults::get);
     r->registerPayload("storage.vault.sync", &handler::Vaults::sync);
 }
@@ -129,6 +134,7 @@ void Handler::registerPermissionsHandlers(const std::shared_ptr<Router>& r) {
 
 void Handler::registerSettingsHandlers(const std::shared_ptr<Router>& r) {
     r->registerSessionOnlyHandler("settings.get", &handler::Settings::get);
+    r->registerSessionOnlyHandler("settings.policy.get", &handler::Settings::policy);
     r->registerPayload("settings.update", &handler::Settings::update);
 }
 
@@ -199,6 +205,12 @@ void Handler::registerGroupHandlers(const std::shared_ptr<Router>& r) {
     r->registerPayload("group.get.byName", &handler::Groups::getByName);
     r->registerPayload("groups.list.byUser", &handler::Groups::listByUser);
     r->registerSessionOnlyHandler("groups.list", &handler::Groups::list);
+}
+
+void Handler::registerSyncConflictHandlers(const std::shared_ptr<Router>& r) {
+    r->registerSessionOnlyHandler("sync.conflicts.summary", &handler::SyncConflicts::summary);
+    r->registerPayload("sync.conflicts.list", &handler::SyncConflicts::list);
+    r->registerPayload("sync.conflicts.resolve", &handler::SyncConflicts::resolve);
 }
 
 void Handler::registerStatHandlers(const std::shared_ptr<Router>& r) {

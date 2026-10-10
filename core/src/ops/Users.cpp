@@ -2,9 +2,14 @@
 
 #include "ops/Roles.hpp"
 #include "ops/Vaults.hpp"
+#include "config/util.hpp"
 #include "db/query/vault/APIKey.hpp"
+#include "db/query/vault/Key.hpp"
 #include "db/query/vault/Vault.hpp"
+#include "vault/Retention.hpp"
 #include "vault/model/APIKey.hpp"
+#include "vault/model/Deletion.hpp"
+#include "vault/model/S3Vault.hpp"
 #include "vault/model/Vault.hpp"
 #include "auth/Bootstrap.hpp"
 #include "auth/Manager.hpp"
@@ -125,8 +130,8 @@ std::string generatePassword() {
 }
 
 bool isAdminIdentity(const rbac::role::Admin& role) {
-    return role.identities.toMask() || role.audits.toMask() || role.settings.toMask() || role.roles.toMask() ||
-           role.s3Gateway.toMask() || role.vaults.admin.raw() || role.vaults.user.raw() ||
+    return role.identities.toMask() || role.audits.toMask() || role.stats.toMask() || role.settings.toMask() ||
+           role.roles.toMask() || role.s3Gateway.toMask() || role.vaults.admin.raw() || role.vaults.user.raw() ||
            role.keys.apiKeys.admin.raw() || role.keys.apiKeys.user.raw() || role.keys.encryptionKeys.raw();
 }
 
@@ -236,26 +241,39 @@ UserPtr remove(const Actor& actor, const Remove& req) {
 
     const auto owned = db::query::vault::Vault::listUserVaults(target->id);
 
-    // The account's API keys go with it (api_keys.user_id cascades), and a key still bound to a vault that survives
-    // the deletion blocks it (s3.api_key_id is ON DELETE RESTRICT; it used to cascade and silently drop the vault's
-    // S3 binding). Refuse up front, before anything changes.
+    // The account's API keys go with it (api_keys.user_id cascades), and a key still bound to a vault blocks it
+    // (s3.api_key_id is ON DELETE RESTRICT; it used to cascade and silently drop the vault's S3 binding). A deleted
+    // vault keeps its binding until it is purged (#162: a restore or an upstream purge needs the key), so the
+    // account's own S3 vaults block it too until they are purged. Refuse up front, before anything changes.
     std::string blocked;
-    for (const auto& key : db::query::vault::APIKey::listAPIKeys(target->id)) {
-        for (const auto& [vaultId, vaultName] : db::query::vault::APIKey::listVaultsUsingKey(key->id)) {
-            const bool destroyed = !heir && std::ranges::any_of(owned, [&](const auto& v) { return v->id == vaultId; });
-            if (!destroyed) blocked += (blocked.empty() ? "" : ", ") + vaultName + " (API key " + key->name + ")";
-        }
-    }
+    for (const auto& key : db::query::vault::APIKey::listAPIKeys(target->id))
+        for (const auto& [vaultId, vaultName] : db::query::vault::APIKey::listVaultsUsingKey(key->id))
+            blocked += (blocked.empty() ? "" : ", ") + vaultName + " (ID " + std::to_string(vaultId) + ", API key " +
+                       key->name + ")";
     if (!blocked.empty())
         throw Invalid(target->name + " owns API keys still used by vaults: " + blocked +
-                      ". Move those vaults to another API key or remove them first.");
+                      ". Move those vaults to another API key, or delete them and let them be purged "
+                      "(`vh vault delete <id> --now`) first.");
 
     if (!req.confirmed) {
         std::string text = USER_DELETE_CONFIRMATION;
         if (!owned.empty()) {
             text += "\n" + target->name + " owns " + std::to_string(owned.size()) + " vault(s):";
             for (const auto& v : owned) text += " " + v->name + ";";
-            text += heir ? "\nThey will be transferred to " + heir->name + "." : "\nThey will be destroyed.";
+            if (heir) text += "\nThey will be transferred to " + heir->name + ".";
+            else {
+                // Deleted like any vault (#162): restorable for the retention window, keys kept for theirs.
+                text += "\nThey will be deleted: restorable with `vh vault restore` for " +
+                        vh::config::durationToString(vault::retention::windowsFor(vault::model::VaultType::Local).retention_window) +
+                        ", then purged. Their encryption keys are kept for the key retention window.";
+                for (const auto& v : owned) {
+                    const auto s3 = std::dynamic_pointer_cast<vault::model::S3Vault>(v);
+                    if (s3 && s3->encrypt_upstream && !db::query::vault::Key::currentKeyExportedAt(v->id))
+                        text += "\nWARNING: " + v->name + " keeps encrypted data in bucket '" + s3->bucket +
+                                "' and its key was never exported; without it that data can never be decrypted. Export "
+                                "it first: " + vault::model::keyExportCommand(v->id);
+                }
+            }
         }
         throw NeedsConfirmation("user_delete", text);
     }
@@ -267,7 +285,8 @@ UserPtr remove(const Actor& actor, const Remove& req) {
     }
     for (const auto& v : owned) {
         if (heir) (void)vaults::update(actor, {.id = v->id, .owner_id = heir->id});
-        else (void)vaults::remove(actor, v->id);
+        // The user_delete confirmation above listed the key warnings: it is the acceptance.
+        else (void)vaults::remove(actor, {.id = v->id, .accept_key_loss = true});
     }
 
     runtime::Deps::get().authManager->revokeSessions(target->id);

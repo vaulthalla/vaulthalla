@@ -128,8 +128,7 @@ void vh::db::Connection::initPreparedSyncStats() const {
                     WHERE c.created_at >= CURRENT_TIMESTAMP - INTERVAL '7 days'
                 ) AS conflict_count_7d
             FROM sync_conflicts c
-            JOIN sync_event e ON e.id = c.event_id
-            WHERE e.vault_id = $1;
+            WHERE c.vault_id = $1;
         )SQL"
     );
 

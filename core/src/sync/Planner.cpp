@@ -3,6 +3,7 @@
 #include "sync/Cloud.hpp"
 #include "sync/model/helpers.hpp"
 #include "sync/model/Conflict.hpp"
+#include "sync/model/Baseline.hpp"
 #include "fs/model/File.hpp"
 #include "log/Registry.hpp"
 
@@ -32,6 +33,8 @@ std::vector<Action> Planner::build(
         if (auto it = ctx->s3Map.find(k.rel);    it != ctx->s3Map.end())    R = it->second;
 
         if (L && !R) {
+            // The remote side of an open conflict went away: there is nothing left to decide between.
+            if (ctx->hasOpenConflict(L->id)) ctx->closeOpenConflict(L->id, "superseded");
             if (policy->uploadLocalOnly())
                 plan.push_back({ ActionType::Upload, k, L, nullptr });
             continue;
@@ -55,25 +58,60 @@ std::vector<Action> Planner::build(
 
         if (L && R) {
             // Fast-path skip if equal content (let ctx decide via hashes, remoteHashMap, etc.)
-            if (*L == *R) continue;
-
-            // Conflict check lives in ctx (since it needs hashes/mtimes/last_success_at/etc.)
-            if (auto c = ctx->maybeBuildConflict(L, R)) {
-                if (ctx->handleConflict(c)) continue; // Ask mode, no action planned
-
-                // auto-resolved => planner needs to translate resolution into an action
-                switch (c->resolution) {
-                case Conflict::Resolution::KEPT_LOCAL:
-                    plan.push_back({ ActionType::Upload, k, L, R });
-                    break;
-                case Conflict::Resolution::KEPT_REMOTE:
-                    plan.push_back({ ActionType::Download, k, L, R });
-                    break;
-                // TODO: finishing handling Resolution cases (e.g. KEPT_BOTH, etc.)
-                default:
-                    break;
-                }
+            if (*L == *R) {
+                ctx->noteInSync(*L, *R);
                 continue;
+            }
+
+            if (!Cloud::hasPotentialConflict(L, R, false)) {
+                // Same content (size and hash agree, or no hash to disagree): both sides are in sync for conflict
+                // purposes. An open conflict on it converged on its own. Metadata-only differences still go through
+                // decideForBoth below, as before.
+                ctx->noteInSync(*L, *R);
+            } else {
+                // Under `ask`, only a change on both sides since they last agreed is a conflict (#187). A change on
+                // one side syncs in that direction; a file with an open conflict waits for its decision.
+                if (policy->conflict_policy == RemotePolicy::ConflictPolicy::Ask && !ctx->hasOpenConflict(L->id)) {
+                    switch (classify(*L, *R, ctx->baselineFor(L->id))) {
+                    case Divergence::InSync:
+                        continue;
+                    case Divergence::LocalOnly:
+                        plan.push_back({ ActionType::Upload, k, L, R });
+                        continue;
+                    case Divergence::RemoteOnly:
+                        if (R->requiresArchiveRestoreForBodyGet()) {
+                            if (planningNotes) ++planningNotes->archive_tier_downloads_skipped;
+                            log::Registry::sync()->warn(
+                                "[SyncPlanner] Skipping automatic body GET for archived S3 object '{}'",
+                                R->path.string());
+                            continue;
+                        }
+                        plan.push_back({ ActionType::Download, k, L, R });
+                        continue;
+                    case Divergence::Both:
+                    case Divergence::Unknown:
+                        break;
+                    }
+                }
+
+                // Conflict check lives in ctx (since it needs hashes/mtimes/last_success_at/etc.)
+                if (auto c = ctx->maybeBuildConflict(L, R)) {
+                    if (ctx->handleConflict(c)) continue; // unresolved: recorded once, the file waits
+
+                    // auto-resolved => planner needs to translate resolution into an action
+                    switch (c->resolution) {
+                    case Conflict::Resolution::KEPT_LOCAL:
+                        plan.push_back({ ActionType::Upload, k, L, R });
+                        break;
+                    case Conflict::Resolution::KEPT_REMOTE:
+                        plan.push_back({ ActionType::Download, k, L, R });
+                        break;
+                    // TODO: finishing handling Resolution cases (e.g. KEPT_BOTH, etc.)
+                    default:
+                        break;
+                    }
+                    continue;
+                }
             }
 
             // Non-conflict decision: by strategy/policy

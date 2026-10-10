@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useEffect, useId, useMemo } from 'react'
+import dynamic from 'next/dynamic'
 import { useRouter } from 'next/navigation'
 import { FormProvider, useForm, useWatch } from 'react-hook-form'
 import { api } from '@/lib/session'
@@ -19,6 +20,8 @@ import { useCredentials, useUserNames, VAULT_EDIT, VAULT_REMOVE } from '@/featur
 import { vaultTypeLabel, type VaultDetail } from '@/features/vaults/model'
 import { QuotaInput, quotaBytes, quotaDefaults, SLUG_PATTERN, storageTierOptions, validateFuseName, type QuotaUnit } from '@/features/vaults/fields'
 import { withEncryptionWaiver } from '@/features/vaults/waiver'
+
+const DeleteVaultDialog = dynamic(() => import('@/features/vaults/DeleteVaultDialog'), { ssr: false })
 
 export const VaultSettings = () => {
   const vault = useCurrentVault()
@@ -295,44 +298,31 @@ const BucketForm = ({ vault }: { vault: VaultDetail }) => {
   )
 }
 
+// Deleting is a schedule (#162): the vault disappears at once, stays restorable for the retention window, then is
+// purged. The dialog (lazy) asks about upstream data and an unexported key, and offers "delete now".
 const DangerZone = ({ vault }: { vault: VaultDetail }) => {
   const router = useRouter()
   const canRemove = useCan(VAULT_REMOVE)
-  const [busy, setBusy] = React.useState(false)
+  const [open, setOpen] = React.useState(false)
   if (!canRemove) return null
-
-  const remove = async () => {
-    const ok = await confirm({
-      title: `Delete “${vault.name}”?`,
-      description: `Vaulthalla forgets this vault: its file index, role assignments and share links are removed and its files stop being reachable here. Data already written ${vault.type === 's3' ? 'to the bucket' : 'to disk'} is not erased. This cannot be undone.`,
-      confirmLabel: 'Delete vault',
-      typeToConfirm: vault.name,
-    })
-    if (!ok) return
-    setBusy(true)
-    try {
-      await api.send('storage.vault.remove', { id: vault.id })
-      await invalidate('storage.vault.list', 'stats.system.storage')
-      notify.success(`Vault “${vault.name}” deleted`)
-      router.push('/vaults')
-    } catch (error) {
-      notify.error(error, 'Could not delete the vault')
-      setBusy(false)
-    }
-  }
 
   return (
     <section className="panel border-danger-line/60">
       <div className="flex flex-wrap items-center justify-between gap-4 px-5 py-4">
         <div className="min-w-0">
           <h2 className="text-[15px] font-semibold text-danger">Delete this vault</h2>
-          <p className="mt-0.5 text-sm text-fg-subtle">Removes the vault and everything that points at it. You’ll be asked to type its name.</p>
+          <p className="mt-0.5 text-sm text-fg-subtle">
+            It disappears at once and can be restored for a while; then its data is purged. Its encryption key is kept longer.
+          </p>
         </div>
-        <Button variant="danger" onClick={remove} loading={busy}>
+        <Button variant="danger" onClick={() => setOpen(true)} data-testid="vault-delete-open">
           <TrashIcon aria-hidden />
           Delete vault
         </Button>
       </div>
+      {open ?
+        <DeleteVaultDialog vault={vault} open={open} onOpenChange={setOpen} onDeleted={() => router.push('/vaults')} />
+      : null}
     </section>
   )
 }

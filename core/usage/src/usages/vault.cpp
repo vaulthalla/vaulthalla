@@ -17,11 +17,15 @@ static const Optional localConflictOpt = Optional::Multi("local_conflict",
                                                          "Conflict resolution strategy for local vaults",
                                                          {"on-sync-conflict", "conflict"},
                                                          {"overwrite", "keep_both", "ask"}, "overwrite");
-static const Optional syncStrategyOpt = Optional::Multi("sync_strategy", "Sync strategy for S3 vaults",
+static const Optional syncStrategyOpt = Optional::Multi("sync_strategy",
+                                                        "Sync strategy for S3 vaults (new vaults default to "
+                                                        "vaults.s3.default_remote_sync_strategy in config.yaml)",
                                                         {"sync-strategy", "strategy"}, {"cache", "sync", "mirror"});
-static const Optional s3ConflictOpt = Optional::Multi("s3_conflict", "Conflict resolution strategy",
+static const Optional s3ConflictOpt = Optional::Multi("s3_conflict",
+                                                      "Conflict resolution strategy for S3 vaults (new vaults default "
+                                                      "to vaults.s3.default_remote_conflict_policy in config.yaml)",
                                                       {"on-sync-conflict", "conflict"},
-                                                      {"keep_local", "keep_remote", "ask"});
+                                                      {"keep_local", "keep_remote", "keep_newest", "ask"});
 
 static const auto intervalOpt = Optional::ManyToOne("interval", "Sync interval in seconds (default 5m)", {"interval", "sync-interval"}, "interval");
 
@@ -191,15 +195,64 @@ static std::shared_ptr<CommandUsage> update(const std::weak_ptr<CommandUsage>& p
     return cmd;
 }
 
+static const auto deleteNowFlag = Flag::Alias(
+    "delete_now",
+    "Purge the vault's data right away instead of after vaults.retention_window. Asks once more (--yes confirms). "
+    "On a vault already pending deletion, purges it now. The encryption key is still kept for the full key retention window.",
+    "now");
+static const auto deleteUpstreamFlag = Flag::Alias(
+    "delete_upstream", "S3 vaults: also delete every object in the bucket when the vault is purged.", "delete-upstream");
+static const auto keepUpstreamFlag = Flag::Alias(
+    "keep_upstream", "S3 vaults: keep the bucket's objects (the default without a terminal).", "keep-upstream");
+static const auto deleteYesFlag = Flag::Alias(
+    "yes", "Don't ask: delete with the given flags (also confirms --now).", "yes");
+static const auto acceptKeyLossFlag = Flag::Alias(
+    "accept_key_loss",
+    "Delete an S3 vault whose encrypted objects stay in the bucket although its key was never exported. Without the key "
+    "that data can never be decrypted again: export it first (vh vault keys export).",
+    "accept-key-loss");
+
 static std::shared_ptr<CommandUsage> remove(const std::weak_ptr<CommandUsage>& parent) {
     auto cmd = buildBaseUsage(parent);
     cmd->aliases = {"delete", "remove", "del", "rm"};
-    cmd->description = "Delete an existing vault by ID or name.";
+    cmd->description = "Delete a vault. It disappears at once and can be restored (vh vault restore) until "
+                       "vaults.retention_window ends; then its data is purged. Its encryption key is kept for the key "
+                       "retention window. In a terminal it asks how to delete; S3 vaults are asked about their upstream data.";
+    cmd->positionals = {vaultPos};
+    cmd->optional = {owner};
+    cmd->optional_flags = {deleteNowFlag, deleteUpstreamFlag, keepUpstreamFlag, deleteYesFlag, acceptKeyLossFlag};
+    cmd->examples = {
+        {"vh vault delete 42", "Delete the vault with ID 42 (restorable until the retention window ends)."},
+        {"vh vault delete myvault --owner alice", "Delete the vault named 'myvault' owned by user 'alice'."},
+        {"vh vault delete 42 --now --yes", "Delete vault 42 and purge its data right away, without asking."},
+        {"vh vault delete 7 --delete-upstream --yes", "Delete S3 vault 7 and the objects in its bucket when it is purged."}
+    };
+    return cmd;
+}
+
+static std::shared_ptr<CommandUsage> restore(const std::weak_ptr<CommandUsage>& parent) {
+    auto cmd = buildBaseUsage(parent);
+    cmd->aliases = {"restore", "undelete"};
+    cmd->description = "Restore a deleted vault, exactly as it was, while it is pending deletion (until "
+                       "vaults.retention_window ends and its purge starts).";
     cmd->positionals = {vaultPos};
     cmd->optional = {owner};
     cmd->examples = {
-        {"vh vault delete 42", "Delete the vault with ID 42."},
-        {"vh vault delete myvault --owner alice", "Delete the vault named 'myvault' owned by user 'alice'."}
+        {"vh vault restore 42", "Restore the deleted vault with ID 42."},
+        {"vh vault restore myvault --owner alice", "Restore the deleted vault 'myvault' owned by 'alice'."}
+    };
+    return cmd;
+}
+
+static std::shared_ptr<CommandUsage> deleted(const std::weak_ptr<CommandUsage>& parent) {
+    auto cmd = buildBaseUsage(parent);
+    cmd->aliases = {"deleted", "trash"};
+    cmd->description = "List deleted vaults: pending (restorable), being purged, and purged ones whose encryption key "
+                       "is still kept. Warns about encrypted upstream data whose key was never exported.";
+    cmd->optional_flags = {jsonFlag};
+    cmd->examples = {
+        {"vh vault deleted", "List deleted vaults you could restore or purge."},
+        {"vh vault deleted --json", "The same, as JSON."}
     };
     return cmd;
 }
@@ -605,6 +658,8 @@ static std::shared_ptr<CommandUsage> base(const std::weak_ptr<CommandUsage>& par
     const auto listCmd = list(cmd->weak_from_this());
     const auto createCmd = create(cmd->weak_from_this());
     const auto removeCmd = remove(cmd->weak_from_this());
+    const auto restoreCmd = restore(cmd->weak_from_this());
+    const auto deletedCmd = deleted(cmd->weak_from_this());
     const auto infoCmd = info(cmd->weak_from_this());
     const auto updateCmd = update(cmd->weak_from_this());
 
@@ -737,6 +792,7 @@ static std::shared_ptr<CommandUsage> base(const std::weak_ptr<CommandUsage>& par
         {"vh vault update 42 --desc \"Updated Description\" --quota 20G",
          "Update the description and quota of the vault with ID 42."},
         {"vh vault delete myvault --owner alice", "Delete the vault named 'myvault' owned by user 'alice'."},
+        {"vh vault restore 42", "Restore the deleted vault with ID 42 while it is pending deletion."},
         {"vh vault info 42", "Show information for the vault with ID 42."},
         {"vh vaults", "List all vaults accessible to the current user."},
         {"vh vault role assign 42 read-only -u bob", "Add user 'bob' to the 'read-only' role for the vault with ID 42."},
@@ -750,6 +806,8 @@ static std::shared_ptr<CommandUsage> base(const std::weak_ptr<CommandUsage>& par
         listCmd,
         createCmd,
         removeCmd,
+        restoreCmd,
+        deletedCmd,
         infoCmd,
         updateCmd,
         vroleCmd,

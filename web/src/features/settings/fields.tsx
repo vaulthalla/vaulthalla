@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/Badge'
 import { titleCase } from '@/lib/format'
 import { BYTE_UNITS, ScaledInput, TagInput, UnitInput, isDecimal } from '@/features/settings/controls'
 import { LOG_LEVELS, type FieldDef, type FieldKind } from '@/features/settings/schema'
-import { parseInterval, parseSize, type Json } from '@/features/settings/patch'
+import { parseDuration, parseInterval, parseSize, type Json } from '@/features/settings/patch'
 
 const MB_UNITS = [
   { label: 'MB', factor: 1 },
@@ -42,6 +42,8 @@ export const validate = (type: FieldKind, value: Json | undefined): string | nul
       return parseSize(value) ? null : 'Enter a size in MB or GB'
     case 'intervalString':
       return parseInterval(value) ? null : 'Enter hours or days'
+    case 'durationString':
+      return parseDuration(value) ? null : 'Enter a duration'
     case 'decimal':
       return typeof value === 'string' && isDecimal(value) ? null : 'Use a plain decimal, e.g. 0.00000001'
     case 'text':
@@ -235,6 +237,25 @@ export const SettingField = ({
             units={[
               { value: 'h', label: 'hours' },
               { value: 'd', label: 'days' },
+            ]}
+            invalid={Boolean(error)}
+            onChange={(amount, unit) => onChange(amount === null ? '' : `${Math.max(0, Math.round(amount))}${unit}`)}
+          />
+        )
+      }
+      case 'durationString': {
+        const parsed = parseDuration(value)
+        return (
+          <SplitUnit
+            id={id}
+            amount={parsed?.amount ?? null}
+            unit={parsed?.unit ?? 'd'}
+            units={[
+              { value: 's', label: 'seconds' },
+              { value: 'm', label: 'minutes' },
+              { value: 'h', label: 'hours' },
+              { value: 'd', label: 'days' },
+              { value: 'w', label: 'weeks' },
             ]}
             invalid={Boolean(error)}
             onChange={(amount, unit) => onChange(amount === null ? '' : `${Math.max(0, Math.round(amount))}${unit}`)}

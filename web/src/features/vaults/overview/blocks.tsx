@@ -159,7 +159,7 @@ export const MiniList = ({
 )
 
 export const Note = ({ tone = 'neutral', children }: { tone?: Tone; children: React.ReactNode }) => (
-  <p className={cn('mt-4 rounded-control border px-3 py-2 text-xs', toneClasses[tone].border, toneClasses[tone].bg, tone === 'neutral' ? 'text-fg-muted' : toneClasses[tone].text)}>
+  <p className={cn('mt-4 rounded-control border px-3 py-2 text-xs [&_svg]:text-inherit', toneClasses[tone].border, toneClasses[tone].bg, tone === 'neutral' ? 'text-fg-muted' : toneClasses[tone].text)}>
     {children}
   </p>
 )

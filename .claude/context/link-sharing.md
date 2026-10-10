@@ -19,6 +19,16 @@ for archaeology, because parts of it are stale (for example, it says uploads sta
 
 ## Invariants
 
+- **Operator switches (`sharing.*`, #164) are enforced by `share::policy` (`share/Policy.hpp`), fail closed with
+  `ops::Denied` (ws code `denied`, HTTP 403).** `enabled` gates every link; `enable_anonymous` gates access mode
+  `public`; `enable_email_validated` (formerly `enable_public_links`, still read as an alias) gates
+  `email_validated`. Signed-in vault users' access is RBAC policy, not a switch. Checked in `share::Manager` on
+  create, update (an update can't move a link into a disabled kind), `resolvePublicLink`/`openPublicSession`, both email-challenge steps and
+  `resolvePrincipal`, and in `share::TargetResolver::resolve` on every file access, so principals cached by the HTTP
+  lane (and live ws share sessions) stop too. `Principal::access_mode` carries the link's mode for that. Management
+  (get/list/revoke/rotate) is never gated. A settings change that touches `sharing` bumps `rbac::policyEpoch()`.
+  The console reads the switches from `settings.policy.get` (any signed-in user) and hides what would be refused.
+  There is no CLI for share links, so there is no CLI/web parity surface here.
 - Share sessions never set `Session::user`. Admin/superadmin bypass is human-only (`canUseHumanPrivileges()`).
 - ws Router allowlists are exact per session mode. Adding a share-callable command means an explicit allowlist edit.
 - Link creation (`canGrant`) requires the human creator to hold every delegated filesystem permission.
@@ -40,7 +50,8 @@ for archaeology, because parts of it are stale (for example, it says uploads sta
   (`Router::attachmentContentDisposition`); leading dots are kept. Single-file downloads stream with no size cap:
   positioned reads decrypt only the requested ciphertext with the GCM CTR keystream, and the whole message is
   authenticated once per file version (`IntegrityRegistry`, see `architecture.md` "Byte-serving spine"). Folder ZIPs
-  are still buffered (≤ 256 MiB source, 4096 entries). A chunked AEAD at-rest format would only be needed for
+  stream too (STORE, exact `Content-Length`, ≤ 50,000 entries, no byte cap; `architecture.md` "Folder ZIPs"), on the
+  same path with share scoping and one `max_downloads` unit per logical GET. A chunked AEAD at-rest format would only be needed for
   *authenticated* random access to remote-only objects (`preview.media.remote: ranged`).
 - **Preview ≠ Download.** The share op `preview` gets only lossy server renders (`/preview` JPEGs, PDF pages,
   `poster-jpg`); `download` gets original bytes and full-fidelity derivatives (`/download`, `/download/content`

@@ -79,6 +79,8 @@ Press `⌘K` (`Ctrl+K`) anywhere to jump to a page, a vault, a user or an action
 
 - **Upload** with the Upload button (files or a whole folder), or drop files and folders anywhere on the page.
 - Open a folder or preview a file by double-clicking it or pressing Enter. Each row has a `⋯` menu, and right-click opens the same menu: download (folders download as a zip), share, rename, move to, copy to and delete. Deleting always asks first.
+- Copying a folder copies everything in it, and the copies open right away. Copying needs permission to copy and download what you copy and to create it where it lands, and it is refused if the vault's quota can't hold it.
+- Deleting a file leaves its folder in place, even when the folder ends up empty, here and in `/mnt/vaulthalla`. Delete a folder to remove it.
 - Keyboard: arrow keys move, Shift/Ctrl extend the selection, Ctrl+A selects all, F2 renames, Delete deletes, Backspace goes up a folder.
 - The preview sheet shows images, PDFs (every page), video and audio with seeking, 3D models (GLB, glTF, STL, OBJ, and STEP with the optional CAD helper) and text or Markdown, which you can also edit and save in place. See [File Previews](/web-console/previews).
 - The transfers indicator in the top bar shows progress, speed and time left. Uploads can be cancelled, briefly interrupted files are retried, and the browser warns before you close a tab mid-upload. File downloads stream at any size; a download the server refuses (for example for missing permission) is reported there instead of replacing the page.
@@ -115,6 +117,8 @@ The form defaults new S3 vaults toward bounded behavior: cache-style sync, upstr
 ## Health
 
 **Health** shows the daemon's own view of runtime, filesystem, storage and activity, with a customizable overview of cards. Severity always comes from the daemon: when a value isn't measured, or the daemon can't be reached, the console says "not available" or "unknown" rather than showing it as healthy. The dot next to the search box in the top bar shows the overall status.
+
+Health and the top-bar dot need the `admin.stats.view` admin permission. The built-in `admin`, `auditor`, `platform_operator` and `super_admin` roles have it; grant it to another role in **Roles** (Health and stats) or with `vh role admin update <role> --allow-stats-view`. A vault's own statistics on its **Overview** tab don't need it: they are shown to the vault's owner and to admins whose role can view that vault's statistics (`admin.vaults.*.view_stats`).
 
 ## Cost Control
 

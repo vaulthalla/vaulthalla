@@ -12,6 +12,7 @@
 #include "fs/model/File.hpp"
 #include "identities/User.hpp"
 #include "ops/Vaults.hpp"
+#include "protocols/s3/ObjectStore.hpp"
 #include "runtime/Deps.hpp"
 #include "seed/include/init_db_tables.hpp"
 #include "seed/include/seed_db.hpp"
@@ -219,7 +220,6 @@ TEST_F(FsDirStatsDbTest, CopyAddsToTheDestinationChain) {
     expectConsistent({"/", "/orig", "/copies"});
 }
 
-// (Deleting a file also removes ancestor folders it leaves without any file, so /keep holds one that stays.)
 TEST_F(FsDirStatsDbTest, DeleteRemovesFromTheParentChain) {
     mkdir("/keep");
     mkdir("/keep/trash");
@@ -263,17 +263,97 @@ TEST_F(FsDirStatsDbTest, DeletingEmptyDirectoriesRemovesThemAndTheirCounts) {
     expectConsistent({"/", "/holder"});
 }
 
-// fs.entry.copy of a directory copies only the directory row; it must not claim the source's contents.
-TEST_F(FsDirStatsDbTest, ShallowDirectoryCopyStartsEmpty) {
+// fs.entry.copy of a directory copies everything under it (#167), so the copy carries the source's totals, built up
+// entry by entry (it used to copy only the folder row, which then had to start at zero).
+TEST_F(FsDirStatsDbTest, DirectoryCopyCarriesItsSubtreeTotals) {
     mkdir("/srcdir");
+    mkdir("/srcdir/inner");
     write("/srcdir/f.txt", 12);
+    write("/srcdir/inner/g.txt", 30);
     const auto rootBefore = stats("/");
 
     engine->copy("/srcdir", "/dircopy", superUser->id);
 
-    EXPECT_EQ(stats("/dircopy"), (DirStats{0, 0, 0}));
-    EXPECT_EQ(stats("/") - rootBefore, (DirStats{0, 0, 1}));
-    expectConsistent({"/", "/srcdir", "/dircopy"});
+    EXPECT_EQ(stats("/dircopy"), (DirStats{42, 2, 1}));
+    EXPECT_EQ(stats("/dircopy/inner"), (DirStats{30, 1, 0}));
+    EXPECT_EQ(stats("/") - rootBefore, (DirStats{42, 2, 2}));
+    expectConsistent({"/", "/srcdir", "/dircopy", "/dircopy/inner"});
+}
+
+// #168: deleting a file never removes the folder it was in, nor that folder's ancestors, including folders the user
+// made. It used to remove every ancestor left without a file (ws, gateway and sync deletes; FUSE unlink did not), so
+// the console and the mount disagreed.
+TEST_F(FsDirStatsDbTest, DeletingTheLastFileKeepsItsFolders) {
+    mkdir("/Projects");
+    mkdir("/Projects/2026");
+    write("/Projects/2026/report.txt", 9);
+    const auto rootBefore = stats("/");
+
+    engine->remove("/Projects/2026/report.txt", superUser->id);
+
+    ASSERT_TRUE(db::query::fs::Directory::getDirectoryIdByPath(engine->vault->id, "/Projects/2026"));
+    ASSERT_TRUE(db::query::fs::Directory::getDirectoryIdByPath(engine->vault->id, "/Projects"));
+    EXPECT_EQ(stats("/Projects/2026"), (DirStats{0, 0, 0}));
+    EXPECT_EQ(stats("/Projects"), (DirStats{0, 0, 1}));
+    EXPECT_EQ(stats("/") - rootBefore, (DirStats{-9, -1, 0}));
+    const auto folder = runtime::Deps::get().fsCache->getEntry(engine->vaultPathToFusePath("/Projects/2026"));
+    ASSERT_TRUE(folder);
+    EXPECT_TRUE(std::filesystem::is_directory(folder->backing_path)) << "its backing directory stays too";
+    expectConsistent({"/", "/Projects", "/Projects/2026"});
+
+    // A folder still goes when it is what's deleted.
+    engine->remove("/Projects", superUser->id);
+    EXPECT_FALSE(db::query::fs::Directory::getDirectoryIdByPath(engine->vault->id, "/Projects/2026"));
+    EXPECT_EQ(stats("/") - rootBefore, (DirStats{-9, -1, -2}));
+    expectConsistent({"/"});
+}
+
+// FUSE unlink trashes through File::markFileAsTrashed and rmdir through Directory::deleteEmptyDirectory.
+TEST_F(FsDirStatsDbTest, FuseUnlinkKeepsFoldersAndRmdirRefusesANonEmptyOne) {
+    mkdir("/a");
+    mkdir("/a/b");
+    mkdir("/a/b/c");
+    write("/a/b/c/f.txt", 4);
+    const auto rootBefore = stats("/");
+
+    db::query::fs::File::markFileAsTrashed(superUser->id, engine->vault->id, "/a/b/c/f.txt");
+    ASSERT_TRUE(db::query::fs::Directory::getDirectoryIdByPath(engine->vault->id, "/a/b/c"));
+    EXPECT_EQ(stats("/a"), (DirStats{0, 0, 2}));
+
+    // rmdir of a folder with something under it is ENOTEMPTY; it used to drop the folder and all it held.
+    const auto b = db::query::fs::Directory::getDirectoryIdByPath(engine->vault->id, "/a/b");
+    const auto c = db::query::fs::Directory::getDirectoryIdByPath(engine->vault->id, "/a/b/c");
+    ASSERT_TRUE(b && c);
+    EXPECT_FALSE(db::query::fs::Directory::deleteEmptyDirectory(*b));
+    EXPECT_TRUE(db::query::fs::Directory::getDirectoryIdByPath(engine->vault->id, "/a/b/c"));
+
+    // An empty one goes, off every ancestor's count (it used to decrement only its parent).
+    EXPECT_TRUE(db::query::fs::Directory::deleteEmptyDirectory(*c));
+    EXPECT_FALSE(db::query::fs::Directory::getDirectoryIdByPath(engine->vault->id, "/a/b/c"));
+    EXPECT_EQ(stats("/a"), (DirStats{0, 0, 1}));
+    EXPECT_EQ(stats("/") - rootBefore, (DirStats{-4, -1, -1}));
+    for (const std::string p : {"/", "/a", "/a/b"}) EXPECT_EQ(stats(p), recomputed(p)) << p;
+}
+
+// The sync pass (cloud DeleteLocal / mirror) and the S3 gateway's local purge delete files the same way.
+TEST_F(FsDirStatsDbTest, SyncAndGatewayDeletesKeepFolders) {
+    mkdir("/m");
+    mkdir("/m/n");
+    write("/m/n/one.txt", 6);
+    write("/m/n/two.txt", 8);
+    const auto one = db::query::fs::File::getFileByPath(engine->vault->id, "/m/n/one.txt");
+    ASSERT_TRUE(one && std::filesystem::exists(one->backing_path));
+
+    engine->removeLocally("/m/n/one.txt");
+    EXPECT_FALSE(std::filesystem::exists(one->backing_path)) << "the file's own (alias) backing path is removed";
+    EXPECT_EQ(db::query::fs::File::getFileByPath(engine->vault->id, "/m/n/one.txt"), nullptr);
+
+    protocols::s3::ObjectStore().purgeLocalObjectState(engine, "/m/n/two.txt", superUser->id);
+
+    ASSERT_TRUE(db::query::fs::Directory::getDirectoryIdByPath(engine->vault->id, "/m/n"));
+    EXPECT_TRUE(std::filesystem::is_directory(one->backing_path.parent_path()));
+    EXPECT_EQ(stats("/m"), (DirStats{0, 0, 1}));
+    expectConsistent({"/", "/m", "/m/n"});
 }
 
 }

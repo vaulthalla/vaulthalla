@@ -17,6 +17,8 @@
 #include "crypto/id/Generator.hpp"
 #include "sync/model/LocalPolicy.hpp"
 #include "preview/cache/Store.hpp"
+#include "sync/Controller.hpp"
+#include "vault/Retention.hpp"
 
 #include <paths.h>
 #include <string>
@@ -271,15 +273,88 @@ void Manager::removeVault(const unsigned int vaultId) {
         }
     }
 
-    std::scoped_lock lock(mutex_);
-    const auto oldEngineIt = vaultToEngine_.find(vaultId);
-    if (oldEngineIt != vaultToEngine_.end()) eraseEnginePathEntry(engines_, oldEngineIt->second);
+    std::string backingAlias;
+    {
+        std::scoped_lock lock(mutex_);
+        const auto oldEngineIt = vaultToEngine_.find(vaultId);
+        if (oldEngineIt != vaultToEngine_.end()) eraseEnginePathEntry(engines_, oldEngineIt->second);
+        if (removed && removed->vault) backingAlias = removed->vault->mount_point.string();
 
-    db::query::vault::Vault::removeVault(vaultId);
+        db::query::vault::Vault::removeVault(vaultId);
 
-    vaultToEngine_.erase(vaultId);
-    evictCachedVault(vaultId, fuseRootOf(removed));
+        vaultToEngine_.erase(vaultId);
+        evictCachedVault(vaultId, fuseRootOf(removed));
+    }
+
+    // Its backing and cache directories too (#162), through the same path guard as the retention purge.
+    if (!backingAlias.empty()) {
+        try {
+            vault::retention::removeBackingData(backingAlias);
+        } catch (const std::exception& e) {
+            log::Registry::storage()->warn("[StorageManager] Left the backing data of removed vault {} in place: {}", vaultId,
+                                           e.what());
+        }
+    }
     log::Registry::storage()->info("[StorageManager] Removed vault with ID: {}", vaultId);
+}
+
+void Manager::retireVault(const unsigned int vaultId) {
+    std::shared_ptr<Engine> retired;
+    {
+        std::scoped_lock lock(mutex_);
+        if (const auto it = vaultToEngine_.find(vaultId); it != vaultToEngine_.end()) {
+            retired = it->second;
+            eraseEnginePathEntry(engines_, retired);
+            vaultToEngine_.erase(it);
+        }
+    }
+    evictCachedVault(vaultId, fuseRootOf(retired));
+    // Derived artifacts are a disposable cache; a restored vault regenerates them on demand.
+    if (retired) {
+        try {
+            preview::cache::Store::purgeVault(retired);
+        } catch (const std::exception& e) {
+            log::Registry::storage()->warn("[StorageManager] Failed to purge derived artifacts of deleted vault {}: {}", vaultId,
+                                           e.what());
+        }
+    }
+    // The sync controller drops the vault's task once its engine is gone.
+    if (const auto& sync = runtime::Deps::get().syncController) sync->refreshEngines();
+    log::Registry::storage()->info("[StorageManager] Vault {} deleted: engine retired, pending purge", vaultId);
+}
+
+std::shared_ptr<Vault> Manager::reinstateVault(const unsigned int vaultId) {
+    const auto vault = db::query::vault::Vault::getVault(vaultId);
+    if (!vault) throw std::runtime_error("vault " + std::to_string(vaultId) + " is not live; cannot reinstate it");
+
+    std::shared_ptr<Engine> engine;
+    if (vault->type == VaultType::S3) engine = std::make_shared<CloudEngine>(std::static_pointer_cast<S3Vault>(vault));
+    else engine = std::make_shared<Engine>(vault);
+
+    const auto fuseRoot = fuseRootOf(engine);
+    // Nothing of an earlier vault at this FUSE name may linger, then the root comes back (its inode was dropped at
+    // delete time; descendants get theirs lazily on lookup, as after a restart).
+    evictCachedVault(vaultId, fuseRoot);
+    if (auto root = db::query::fs::Entry::getFSEntryByPath(vaultId, "/"); root && runtime::Deps::get().fsCache) {
+        const auto& cache = runtime::Deps::get().fsCache;
+        root->fuse_path = fuseRoot;
+        root->backing_path = vh::paths::getBackingPath() / root->base32_alias;
+        if (!root->inode) {
+            root->inode = cache->assignInode(fuseRoot);
+            db::query::fs::Entry::updateFSEntry(root);
+        }
+        cache->cacheEntry(root);
+    }
+
+    {
+        std::scoped_lock lock(mutex_);
+        if (const auto it = vaultToEngine_.find(vaultId); it != vaultToEngine_.end()) eraseEnginePathEntry(engines_, it->second);
+        vaultToEngine_[vaultId] = engine;
+        engines_[enginePathKey(engine)] = engine;
+    }
+    if (const auto& sync = runtime::Deps::get().syncController) sync->refreshEngines();
+    log::Registry::storage()->info("[StorageManager] Vault {} restored", vaultId);
+    return vault;
 }
 
 std::shared_ptr<Vault> Manager::getVault(const unsigned int vaultId) const {

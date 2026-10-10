@@ -1,4 +1,11 @@
 import { LocalDiskVault, RemoteSyncPolicy, S3Vault, Vault } from '@/models/vaults'
+import type { VaultDeletion, VaultRemovalPlan } from '@/models/vaultDeletion'
+import type {
+  SyncConflict,
+  SyncConflictResolution,
+  SyncConflictResolveResponse,
+  SyncConflictSummary,
+} from '@/models/syncConflicts'
 import { VaultStats } from '@/models/stats/vaultStats'
 import { VaultActivity } from '@/models/stats/vaultActivity'
 import { VaultRecovery } from '@/models/stats/vaultRecovery'
@@ -8,7 +15,7 @@ import { VaultSyncHealth } from '@/models/stats/vaultSyncHealth'
 import { APIKey, S3APIKey } from '@/models/apiKey'
 import type { GroupRecord, UserRecord } from '@/features/access/types'
 import { Permission } from '@/models/role'
-import { Settings, SettingsSection } from '@/models/settings'
+import { ServerPolicy, Settings, SettingsSection } from '@/models/settings'
 import { File, IFileUpload } from '@/models/file'
 import { Directory } from '@/models/directory'
 import {
@@ -215,11 +222,34 @@ export interface WebSocketCommandMap {
     response: { vault: LocalDiskVault | S3Vault }
   }
 
-  'storage.vault.remove': { payload: { id: number }; response: null }
+  // Safe deletion (#162): schedules the deletion (restorable until the retention window ends) or, with `now`, purges on
+  // the next pass; on a vault already pending deletion, `now` purges it. Refusals with data.code
+  // 'vault_upstream_key_loss' (resend with accept_key_loss) or 'vault_delete_now' (resend with confirm_now).
+  'storage.vault.remove': {
+    payload: { id: number; now?: boolean; delete_upstream?: boolean; confirm_now?: boolean; accept_key_loss?: boolean }
+    response: { deletion: VaultDeletion | null }
+  }
+
+  // What a delete would do (windows, provider, whether the key was ever exported). Changes nothing.
+  'storage.vault.remove.plan': { payload: { id: number }; response: { plan: VaultRemovalPlan } }
+
+  // Deletions the caller could have made: pending, purging, and purged ones (tombstones), newest first.
+  'storage.vault.deleted.list': { payload: null; response: { deleted: VaultDeletion[] } }
+
+  'storage.vault.restore': { payload: { id: number }; response: { vault: LocalDiskVault | S3Vault } }
 
   'storage.vault.get': { payload: { id: number }; response: { vault: LocalDiskVault | S3Vault } }
 
   'storage.vault.sync': { payload: { id: number }; response: { status: 'started' | 'rerun_queued' } }
+
+  // Sync conflicts (#187): open conflicts recorded under the `ask` policy, only in vaults where the caller holds
+  // vault.sync.action.resolve_conflicts. Resolving is per item (one failure never aborts the batch).
+  'sync.conflicts.summary': { payload: null; response: SyncConflictSummary }
+  'sync.conflicts.list': { payload: { vault_id?: number } | null; response: { conflicts: SyncConflict[] } }
+  'sync.conflicts.resolve': {
+    payload: { resolution: SyncConflictResolution; conflict_ids: number[] }
+    response: SyncConflictResolveResponse
+  }
 
   // API Key commands
 
@@ -318,6 +348,9 @@ export interface WebSocketCommandMap {
 
   // Settings
   'settings.get': { payload: null; response: { settings: Settings } }
+
+  // Any signed-in user: which share links the operator allows and the defaults for new vaults.
+  'settings.policy.get': { payload: null; response: { policy: ServerPolicy } }
 
   // A JSON merge patch (RFC 7386) onto the current config: send only what changed; null removes an optional key.
   'settings.update': { payload: Partial<Record<keyof Settings, SettingsSection>>; response: { settings: Settings } }

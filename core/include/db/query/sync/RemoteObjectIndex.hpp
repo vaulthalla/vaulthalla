@@ -37,6 +37,8 @@ public:
     static uint64_t countForVault(uint32_t vaultId);
     static RemoteIndexSummary summaryForVault(uint32_t vaultId, const std::string& manifestKey = ".vaulthalla/index-v1.json");
     static std::vector<FilePtr> listFilesForVault(uint32_t vaultId);
+    // One indexed object by vault path or key (leading slashes ignored), or nullptr.
+    static FilePtr getFile(uint32_t vaultId, const std::filesystem::path& key);
     static void replaceFromListObjects(uint32_t vaultId, const std::vector<FilePtr>& files);
     static void replaceFromManifest(uint32_t vaultId, const std::vector<FilePtr>& files);
     static void replace(uint32_t vaultId, const std::vector<FilePtr>& files, const std::string& source);

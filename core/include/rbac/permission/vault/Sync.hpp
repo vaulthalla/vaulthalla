@@ -33,6 +33,7 @@ struct Sync final : Module<uint32_t> {
     [[nodiscard]] bool canEditConfig() const noexcept { return config.canEdit(); }
     [[nodiscard]] bool canTriggerSync() const noexcept { return action.canTrigger(); }
     [[nodiscard]] bool canSignWaiver() const noexcept { return action.canSignWaiver(); }
+    [[nodiscard]] bool canResolveConflicts() const noexcept { return action.canResolveConflicts(); }
 
     [[nodiscard]] PackedPermissionExportT<Mask> exportPermissions() const {
         return packAndExportPerms(
@@ -58,14 +59,14 @@ struct Sync final : Module<uint32_t> {
     static Sync Operator() {
         Sync s;
         s.config = sync::Config::ViewOnly();
-        s.action = sync::Action::TriggerOnly();
+        s.action = sync::Action::Operate();
         return s;
     }
 
     static Sync Manager() {
         Sync s;
         s.config = sync::Config::Editor();
-        s.action = sync::Action::TriggerOnly();
+        s.action = sync::Action::Operate();
         return s;
     }
 

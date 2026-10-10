@@ -3,7 +3,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-CORE_DIR="$REPO_ROOT/core"
 BIN_DIR="$REPO_ROOT/bin"
 BUILD_DIR="$REPO_ROOT/build"
 

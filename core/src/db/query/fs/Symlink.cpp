@@ -59,11 +59,11 @@ void Symlink::deleteSymlink(const SymlinkPtr& symlink) {
     Transactions::exec("Symlink::deleteSymlink", [&](pqxx::work& txn) {
         const auto row = txn.exec(pqxx::prepped{"get_symlink_parent_id_and_size"}, symlink->id).one_row();
         const auto parentId = row["parent_id"].as<std::optional<unsigned int>>();
-        const auto sizeBytes = row["size_bytes"].as<unsigned int>();
+        const auto sizeBytes = row["size_bytes"].as<std::uint64_t>();
 
         txn.exec(pqxx::prepped{"delete_fs_entry"}, symlink->id);
 
-        File::updateParentStatsAndCleanEmptyDirs(txn, parentId, sizeBytes, true);
+        File::updateParentStats(txn, parentId, sizeBytes);
     });
 }
 

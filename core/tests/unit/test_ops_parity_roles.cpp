@@ -58,7 +58,7 @@ std::string adminBits(const std::string& name) {
     const auto r = db::query::rbac::role::Admin::get(name);
     if (!r) return "<missing>";
     return r->identities.toBitString() + r->vaults.toBitString() + r->audits.toBitString() + r->settings.toBitString() +
-           r->roles.toBitString() + r->keys.toBitString() + r->s3Gateway.toBitString();
+           r->roles.toBitString() + r->keys.toBitString() + r->s3Gateway.toBitString() + r->stats.toBitString();
 }
 
 std::string vaultBits(const std::string& name) {
@@ -168,6 +168,26 @@ TEST_F(RoleParityTest, CliFlagsAndWebSnapshotProduceTheSameAdminRole) {
 
     EXPECT_EQ(grantedAdmin(cliName).size(), 2u) << "CLI flags were not applied";
     EXPECT_EQ(adminBits(cliName), adminBits(wsName));
+}
+
+// #166: admin.stats.view is an ordinary admin permission on both surfaces: `--allow-stats-view` and the web snapshot
+// store the same bit, and the plain `admin` role (which holds it) may grant it under the escalation ceiling.
+TEST_F(RoleParityTest, StatsViewIsGrantedTheSameWayOnBothSurfaces) {
+    const std::set<std::string> want{"admin.stats.view"};
+    const auto cliName = "rp_stats_cli_" + rolesTag(), wsName = "rp_stats_ws_" + rolesTag();
+
+    const auto [code, out] = cli("role admin create " + cliName + " --allow-stats-view", orgAdmin);
+    ASSERT_EQ(code, 0) << out;
+    (void)protocols::ws::handler::rbac::roles::Admin::add(json{{"name", wsName}, {"permissions", adminSnapshot(want)}},
+                                                         ws(orgAdmin));
+
+    EXPECT_EQ(grantedAdmin(cliName), want);
+    EXPECT_EQ(grantedAdmin(wsName), want);
+    EXPECT_EQ(adminBits(cliName), adminBits(wsName));
+    EXPECT_EQ(db::query::rbac::role::Admin::get(cliName)->stats.toBitString(), "00000001");
+
+    ASSERT_EQ(cli("role admin update " + cliName + " --deny-stats-view", orgAdmin).first, 0);
+    EXPECT_TRUE(grantedAdmin(cliName).empty());
 }
 
 TEST_F(RoleParityTest, CliCreateFromInheritsAndDenyRevokes) {

@@ -193,7 +193,8 @@ std::string dashboardOverviewTrendTone(const std::string& key) {
     return "info";
 }
 
-DashboardGraphSeries dashboardOverviewGraphSeriesFromTrend(const StatsTrendSeries& source, const std::size_t maxPoints = 64) {
+DashboardGraphSeries dashboardOverviewGraphSeriesFromTrend(const StatsTrendSeries& source,
+                                                           const std::size_t maxPoints = kDashboardOverviewMaxPointsPerSeries) {
     DashboardGraphSeries series;
     series.key = source.key;
     series.label = source.label;
@@ -217,7 +218,8 @@ bool dashboardOverviewTrendBelongsToCard(const std::string& cardId, const std::s
         return key == "threadpool_pressure" || key.rfind("threadpool_pool_pressure:", 0) == 0;
     if (cardId == "system.fuse")
         return key == "fuse_error_rate" || key == "fuse_ops_per_second" || key == "fuse_latency_avg_ms";
-    if (cardId == "system.fs_cache") return key == "fs_cache_hit_rate" || key == "fs_cache_occupancy";
+    // The FS metadata cache has no byte cap, so its occupancy series carries no information.
+    if (cardId == "system.fs_cache") return key == "fs_cache_hit_rate";
     if (cardId == "system.http_cache") return key == "http_cache_hit_rate" || key == "http_cache_occupancy";
     if (cardId == "system.db")
         return key == "db_cache_hit_ratio" || key == "db_connection_pressure" || key == "db_size_bytes";
@@ -276,7 +278,9 @@ void dashboardOverviewAttachTrendSeries(
             return a->key < b->key;
         });
 
-        const auto maxSeries = card.id == "system.threadpools" ? selected.size() : std::min<std::size_t>(selected.size(), 4);
+        // The console draws at most three series per card; sending every pool's series made up most of the ~80 KB
+        // overview (#160).
+        const auto maxSeries = std::min<std::size_t>(selected.size(), kDashboardOverviewMaxSeriesPerCard);
         card.series.reserve(maxSeries);
         for (std::size_t i = 0; i < maxSeries; ++i) {
             card.series.push_back(dashboardOverviewGraphSeriesFromTrend(*selected[i]));
@@ -311,34 +315,34 @@ DashboardCardSummary dashboardOverviewUnavailableCard(
 
 std::vector<DashboardOverviewSectionDescriptor> dashboardOverviewSectionDescriptors() {
     return {
-        {"runtime", "Runtime", "Runtime services, worker pressure, and connected sessions.", "/dashboard/runtime"},
-        {"filesystem", "Filesystem", "FUSE activity and preview cache readiness.", "/dashboard/filesystem"},
-        {"storage", "Storage", "Backing providers, database health, and cleanup pressure.", "/dashboard/storage"},
-        {"operations", "Operations", "Queued work, active transfers, and stuck-operation pressure.", "/dashboard/operations"},
-        {"cost_control", "Cost Control", "S3 price budgets, projected spend, catalog health, and override activity.", "/pricing-budget"},
-        {"trends", "Trends", "Historical samples for live telemetry surfaces.", "/dashboard/trends"},
+        {"runtime", "Runtime", "Runtime services, worker pressure, and connected sessions.", "/health/runtime"},
+        {"filesystem", "Filesystem", "FUSE activity and preview cache readiness.", "/health/filesystem"},
+        {"storage", "Storage", "Backing providers, database health, and cleanup pressure.", "/health/storage"},
+        {"operations", "Operations", "Queued work, active transfers, and stuck-operation pressure.", "/health/activity#operation-queue"},
+        {"cost_control", "Cost Control", "S3 price budgets, projected spend, catalog health, and override activity.", "/cost"},
+        {"trends", "Trends", "Historical samples for live telemetry surfaces.", "/health/activity#trends"},
     };
 }
 
 std::vector<DashboardOverviewCardDescriptor> dashboardOverviewCardDescriptors() {
     return {
-        {"system.health", "runtime", "System Health", "Core runtime, protocol, dependency, FUSE, and shell readiness.", "/dashboard/runtime#system-health", "hero", "3x2"},
-        {"system.threadpools", "runtime", "Thread Pools", "Runtime worker pressure across FUSE, sync, thumbnails, HTTP, and stats.", "/dashboard/runtime#thread-pools", "visual", "2x1"},
-        {"system.connections", "runtime", "Connection Health", "Websocket session mix and unauthenticated buildup.", "/dashboard/runtime#connections", "visual", "2x1"},
-        {"system.fuse", "filesystem", "FUSE Filesystem", "Live filesystem operation volume, errors, latency, and open handles.", "/dashboard/filesystem#fuse", "visual", "2x1"},
-        {"system.fs_cache", "filesystem", "FS Cache", "Filesystem cache hit rate, usage, and churn.", "/dashboard/filesystem#fs-cache", "visual", "2x1"},
-        {"system.http_cache", "filesystem", "HTTP Preview Cache", "Preview cache hit rate, usage, and churn.", "/dashboard/filesystem#http-cache", "visual", "2x1"},
-        {"system.storage", "storage", "Storage Backend", "Local and S3 vault backend configuration and free-space posture.", "/dashboard/storage#storage-backend", "visual", "2x1"},
-        {"system.db", "storage", "Database Health", "Database connectivity, connection pressure, cache hit ratio, and table size.", "/dashboard/storage#database", "visual", "2x1"},
-        {"system.retention", "storage", "Retention / Cleanup", "Trash, audit, sync, share, and cache cleanup backlog.", "/dashboard/storage#retention", "visual", "2x1"},
-        {"system.operations", "operations", "Operation Queue", "Pending, active, failed, and stalled filesystem/share work.", "/dashboard/operations#operation-queue", "visual", "2x2"},
-        {"system.pricing_budget", "cost_control", "S3 Price Budget Overview", "Active S3 price budget policies, current spend, projected spend, and budget blocks.", "/pricing-budget#overview", "tiles", "2x1"},
-        {"system.pricing_providers", "cost_control", "Provider Spend", "AWS S3 and Cloudflare R2 committed and projected budget pressure.", "/pricing-budget#providers", "tiles", "2x1"},
-        {"system.pricing_vaults", "cost_control", "Vault Spend", "Top vault spend and projected overage pressure.", "/pricing-budget#vaults", "tiles", "2x1"},
-        {"system.pricing_alerts", "cost_control", "Budget Alerts", "Active budget warnings, critical events, and acknowledgement backlog.", "/pricing-budget#alerts", "tiles", "2x1"},
-        {"system.pricing_catalog", "cost_control", "Catalog Health", "Pricing catalog verification, stale catalog, and unsupported-provider events.", "/pricing-budget#catalog", "tiles", "2x1"},
-        {"system.pricing_overrides", "cost_control", "Recent Blocks and Overrides", "Blocked syncs and single-run override request decisions.", "/pricing-budget#overrides", "tiles", "2x1"},
-        {"system.trends", "trends", "Trends", "Recently collected stats snapshot series.", "/dashboard/trends#trends", "visual", "2x1"},
+        {"system.health", "runtime", "System Health", "Core runtime, protocol, dependency, FUSE, and shell readiness.", "/health/runtime#system-health", "hero", "3x2"},
+        {"system.threadpools", "runtime", "Thread Pools", "Runtime worker pressure across FUSE, sync, thumbnails, HTTP, and stats.", "/health/runtime#thread-pools", "visual", "2x1"},
+        {"system.connections", "runtime", "Connection Health", "Websocket session mix and unauthenticated buildup.", "/health/runtime#connections", "visual", "2x1"},
+        {"system.fuse", "filesystem", "FUSE Filesystem", "Live filesystem operation volume, errors, latency, and open handles.", "/health/filesystem#fuse", "visual", "2x1"},
+        {"system.fs_cache", "filesystem", "FS Cache", "Filesystem cache hit rate, usage, and churn.", "/health/filesystem#fs-cache", "visual", "2x1"},
+        {"system.http_cache", "filesystem", "HTTP Preview Cache", "Preview cache hit rate, usage, and churn.", "/health/filesystem#http-cache", "visual", "2x1"},
+        {"system.storage", "storage", "Storage Backend", "Local and S3 vault backend configuration and free-space posture.", "/health/storage#storage-backend", "visual", "2x1"},
+        {"system.db", "storage", "Database Health", "Database connectivity, connection pressure, cache hit ratio, and table size.", "/health/storage#database", "visual", "2x1"},
+        {"system.retention", "storage", "Retention / Cleanup", "Trash, audit, sync, share, and cache cleanup backlog.", "/health/storage#retention", "visual", "2x1"},
+        {"system.operations", "operations", "Operation Queue", "Pending, active, failed, and stalled filesystem/share work.", "/health/activity#operation-queue", "visual", "2x2"},
+        {"system.pricing_budget", "cost_control", "S3 Price Budget Overview", "Active S3 price budget policies, current spend, projected spend, and budget blocks.", "/cost#spend", "tiles", "2x1"},
+        {"system.pricing_providers", "cost_control", "Provider Spend", "AWS S3 and Cloudflare R2 committed and projected budget pressure.", "/cost#spend", "tiles", "2x1"},
+        {"system.pricing_vaults", "cost_control", "Vault Spend", "Top vault spend and projected overage pressure.", "/cost#spend", "tiles", "2x1"},
+        {"system.pricing_alerts", "cost_control", "Budget Alerts", "Active budget warnings, critical events, and acknowledgement backlog.", "/cost#budget-alerts", "tiles", "2x1"},
+        {"system.pricing_catalog", "cost_control", "Catalog Health", "Pricing catalog verification, stale catalog, and unsupported-provider events.", "/cost#budget-alerts", "tiles", "2x1"},
+        {"system.pricing_overrides", "cost_control", "Recent Blocks and Overrides", "Blocked syncs and single-run override request decisions.", "/cost#overrides", "tiles", "2x1"},
+        {"system.trends", "trends", "Trends", "Recently collected stats snapshot series.", "/health/activity#trends", "visual", "2x1"},
     };
 }
 
@@ -394,15 +398,15 @@ DashboardCardSummary dashboardOverviewBuildThreadPools(const DashboardOverviewCa
     const auto busyWorkers =
         stats.totalWorkerCount > nonBusyWorkers ? static_cast<std::uint64_t>(stats.totalWorkerCount) - nonBusyWorkers : 0;
 
-    dashboardOverviewAddMetric(card, "workers", "Workers", dashboardOverviewFormatCount(stats.totalWorkerCount), card.severity);
-    dashboardOverviewAddMetric(card, "queue", "Queue", dashboardOverviewFormatCount(stats.totalQueueDepth), stats.totalQueueDepth == 0 ? "healthy" : "warning");
+    dashboardOverviewAddMetric(card, "workers", "Workers", dashboardOverviewFormatCount(stats.totalWorkerCount), card.severity, static_cast<double>(stats.totalWorkerCount));
+    dashboardOverviewAddMetric(card, "queue", "Queue", dashboardOverviewFormatCount(stats.totalQueueDepth), stats.totalQueueDepth == 0 ? "healthy" : "warning", static_cast<double>(stats.totalQueueDepth));
     dashboardOverviewAddMetric(card, "pressure", "Max Pressure", dashboardOverviewFormatRatio(stats.maxPressureRatio), card.severity, stats.maxPressureRatio);
     dashboardOverviewAddMetric(card, "pools", "Pools", dashboardOverviewFormatCount(poolCount), "info", static_cast<double>(poolCount));
     dashboardOverviewAddMetric(card, "busy", "Busy", dashboardOverviewFormatCount(busyWorkers), busyWorkers == 0 ? "healthy" : "info", static_cast<double>(busyWorkers));
-    dashboardOverviewAddMetric(card, "idle", "Idle", dashboardOverviewFormatCount(stats.totalIdleWorkerCount), "info");
-    dashboardOverviewAddMetric(card, "borrowed", "Borrowed", dashboardOverviewFormatCount(stats.totalBorrowedWorkerCount), stats.totalBorrowedWorkerCount == 0 ? "healthy" : "info");
-    dashboardOverviewAddMetric(card, "pressured", "Pressured", dashboardOverviewFormatCount(stats.pressuredPoolCount), stats.pressuredPoolCount == 0 ? "healthy" : "warning");
-    dashboardOverviewAddMetric(card, "saturated", "Saturated", dashboardOverviewFormatCount(stats.saturatedPoolCount), stats.saturatedPoolCount == 0 ? "healthy" : "error");
+    dashboardOverviewAddMetric(card, "idle", "Idle", dashboardOverviewFormatCount(stats.totalIdleWorkerCount), "info", static_cast<double>(stats.totalIdleWorkerCount));
+    dashboardOverviewAddMetric(card, "borrowed", "Borrowed", dashboardOverviewFormatCount(stats.totalBorrowedWorkerCount), stats.totalBorrowedWorkerCount == 0 ? "healthy" : "info", static_cast<double>(stats.totalBorrowedWorkerCount));
+    dashboardOverviewAddMetric(card, "pressured", "Pressured", dashboardOverviewFormatCount(stats.pressuredPoolCount), stats.pressuredPoolCount == 0 ? "healthy" : "warning", static_cast<double>(stats.pressuredPoolCount));
+    dashboardOverviewAddMetric(card, "saturated", "Saturated", dashboardOverviewFormatCount(stats.saturatedPoolCount), stats.saturatedPoolCount == 0 ? "healthy" : "error", static_cast<double>(stats.saturatedPoolCount));
     dashboardOverviewAddMetric(card, "stopped", "Stopped", dashboardOverviewFormatCount(stoppedPoolCount), stoppedPoolCount == 0 ? "healthy" : "error", static_cast<double>(stoppedPoolCount));
     dashboardOverviewAddMetric(card, "degraded", "Degraded", dashboardOverviewFormatCount(degradedPoolCount), degradedPoolCount == 0 ? "healthy" : "warning", static_cast<double>(degradedPoolCount));
 
@@ -424,11 +428,11 @@ DashboardCardSummary dashboardOverviewBuildConnections(const DashboardOverviewCa
     card.severity = dashboardOverviewSeverityFromStatus(stats.status);
     card.summary = stats.status == "healthy" ? "Connected sessions look normal." : "Connection mix needs attention.";
 
-    dashboardOverviewAddMetric(card, "sessions", "Sessions", dashboardOverviewFormatCount(stats.activeWsSessionsTotal), card.severity);
-    dashboardOverviewAddMetric(card, "human", "Human", dashboardOverviewFormatCount(stats.activeHumanSessions), "info");
-    dashboardOverviewAddMetric(card, "share", "Share", dashboardOverviewFormatCount(stats.activeShareSessions), "info");
-    dashboardOverviewAddMetric(card, "share_pending", "Share Pending", dashboardOverviewFormatCount(stats.activeSharePendingSessions), stats.activeSharePendingSessions == 0 ? "healthy" : "warning");
-    dashboardOverviewAddMetric(card, "unauthenticated", "Unauth", dashboardOverviewFormatCount(stats.activeUnauthenticatedSessions), stats.activeUnauthenticatedSessions == 0 ? "healthy" : "warning");
+    dashboardOverviewAddMetric(card, "sessions", "Sessions", dashboardOverviewFormatCount(stats.activeWsSessionsTotal), card.severity, static_cast<double>(stats.activeWsSessionsTotal));
+    dashboardOverviewAddMetric(card, "human", "Human", dashboardOverviewFormatCount(stats.activeHumanSessions), "info", static_cast<double>(stats.activeHumanSessions));
+    dashboardOverviewAddMetric(card, "share", "Share", dashboardOverviewFormatCount(stats.activeShareSessions), "info", static_cast<double>(stats.activeShareSessions));
+    dashboardOverviewAddMetric(card, "share_pending", "Share Pending", dashboardOverviewFormatCount(stats.activeSharePendingSessions), stats.activeSharePendingSessions == 0 ? "healthy" : "warning", static_cast<double>(stats.activeSharePendingSessions));
+    dashboardOverviewAddMetric(card, "unauthenticated", "Unauth", dashboardOverviewFormatCount(stats.activeUnauthenticatedSessions), stats.activeUnauthenticatedSessions == 0 ? "healthy" : "warning", static_cast<double>(stats.activeUnauthenticatedSessions));
     dashboardOverviewAddMetric(card, "oldest_session", "Oldest", dashboardOverviewFormatOptionalDuration(stats.oldestSessionAgeSeconds), "info", dashboardOverviewOptionalDouble(stats.oldestSessionAgeSeconds), "seconds");
     dashboardOverviewAddMetric(card, "oldest_unauth", "Oldest Unauth", dashboardOverviewFormatOptionalDuration(stats.oldestUnauthenticatedSessionAgeSeconds), stats.oldestUnauthenticatedSessionAgeSeconds ? "warning" : "healthy", dashboardOverviewOptionalDouble(stats.oldestUnauthenticatedSessionAgeSeconds), "seconds");
     dashboardOverviewAddMetric(card, "idle_timeout", "Idle Timeout", dashboardOverviewFormatDuration(stats.idleTimeoutMinutes * 60), "info", static_cast<double>(stats.idleTimeoutMinutes * 60), "seconds");
@@ -476,14 +480,14 @@ DashboardCardSummary dashboardOverviewBuildFuse(const DashboardOverviewCardDescr
     }
     if (stats.totalOps > 0) avgLatencyMs = (static_cast<double>(totalLatencyUs) / 1000.0) / static_cast<double>(stats.totalOps);
 
-    dashboardOverviewAddMetric(card, "ops", "Ops", dashboardOverviewFormatCount(stats.totalOps), card.severity);
+    dashboardOverviewAddMetric(card, "ops", "Ops", dashboardOverviewFormatCount(stats.totalOps), card.severity, static_cast<double>(stats.totalOps));
     dashboardOverviewAddMetric(card, "successes", "Success Ops", dashboardOverviewFormatCount(stats.totalSuccesses), "healthy", static_cast<double>(stats.totalSuccesses));
     dashboardOverviewAddMetric(card, "alertable_error_rate", "Alertable Errors", dashboardOverviewFormatPercent(stats.alertableErrorRate), card.severity, stats.alertableErrorRate);
     dashboardOverviewAddMetric(card, "alertable_errors", "Alertable Ops", dashboardOverviewFormatCount(stats.alertableErrors), stats.alertableErrors == 0 ? "healthy" : card.severity, static_cast<double>(stats.alertableErrors));
     dashboardOverviewAddMetric(card, "error_rate", "Raw Errors", dashboardOverviewFormatPercent(stats.errorRate), stats.totalErrors == 0 ? "healthy" : "info", stats.errorRate);
     dashboardOverviewAddMetric(card, "total_errors", "Raw Error Ops", dashboardOverviewFormatCount(stats.totalErrors), stats.totalErrors == 0 ? "healthy" : "info", static_cast<double>(stats.totalErrors));
     dashboardOverviewAddMetric(card, "expected_errors", "Expected Ops", dashboardOverviewFormatCount(stats.expectedErrors), stats.expectedErrors == 0 ? "healthy" : "info", static_cast<double>(stats.expectedErrors));
-    dashboardOverviewAddMetric(card, "open_handles", "Open Handles", dashboardOverviewFormatCount(stats.openHandlesCurrent), "info");
+    dashboardOverviewAddMetric(card, "open_handles", "Open Handles", dashboardOverviewFormatCount(stats.openHandlesCurrent), "info", static_cast<double>(stats.openHandlesCurrent));
     dashboardOverviewAddMetric(card, "open_peak", "Peak Handles", dashboardOverviewFormatCount(stats.openHandlesPeak), "info", static_cast<double>(stats.openHandlesPeak));
     dashboardOverviewAddMetric(card, "read_bytes", "Read", dashboardOverviewFormatBytes(stats.readBytes), "info", static_cast<double>(stats.readBytes), "bytes");
     dashboardOverviewAddMetric(card, "write_bytes", "Write", dashboardOverviewFormatBytes(stats.writeBytes), "info", static_cast<double>(stats.writeBytes), "bytes");
@@ -505,9 +509,14 @@ DashboardCardSummary dashboardOverviewBuildCache(const DashboardOverviewCardDesc
     auto card = dashboardOverviewBaseCard(descriptor);
     const auto requests = stats.hits + stats.misses;
     const auto hitRate = CacheStats::hit_rate(stats);
-    const auto occupancy =
-        stats.capacity_bytes > 0 ? static_cast<double>(stats.used_bytes) / static_cast<double>(stats.capacity_bytes) : 0.0;
-    const auto freeBytes = CacheStats::free_bytes(stats);
+    // No capacity means the cache has no byte cap (the FS metadata cache) or none was reported: occupancy, free and
+    // capacity are unknown then, never 0% of 0 B (#160).
+    const auto bounded = stats.capacity_bytes > 0;
+    const auto occupancy = bounded
+        ? std::optional<double>(static_cast<double>(stats.used_bytes) / static_cast<double>(stats.capacity_bytes))
+        : std::nullopt;
+    const auto freeBytes = bounded ? std::optional<double>(static_cast<double>(CacheStats::free_bytes(stats))) : std::nullopt;
+    const auto capacityBytes = bounded ? std::optional<double>(static_cast<double>(stats.capacity_bytes)) : std::nullopt;
     const auto avgOpMs = CacheStats::avg_op_ms(stats);
     const auto maxOpMs = CacheStats::max_op_ms(stats);
     card.checkedAt = checkedAt;
@@ -515,16 +524,16 @@ DashboardCardSummary dashboardOverviewBuildCache(const DashboardOverviewCardDesc
     card.summary = requests == 0 ? "No cache traffic has been observed yet." : "Cache telemetry is live.";
 
     dashboardOverviewAddMetric(card, "hit_rate", "Hit Rate", dashboardOverviewFormatPercent(hitRate), card.severity, hitRate);
-    dashboardOverviewAddMetric(card, "occupancy", "Occupancy", dashboardOverviewFormatPercent(occupancy), occupancy > 0.90 ? "warning" : "info", occupancy);
+    dashboardOverviewAddMetric(card, "occupancy", "Occupancy", occupancy ? dashboardOverviewFormatPercent(*occupancy) : "unknown", !occupancy ? "unknown" : *occupancy > 0.90 ? "warning" : "info", occupancy);
     dashboardOverviewAddMetric(card, "used", "Used", dashboardOverviewFormatBytes(stats.used_bytes), "info", static_cast<double>(stats.used_bytes), "bytes");
-    dashboardOverviewAddMetric(card, "free", "Free", dashboardOverviewFormatBytes(freeBytes), "info", static_cast<double>(freeBytes), "bytes");
-    dashboardOverviewAddMetric(card, "capacity", "Capacity", dashboardOverviewFormatBytes(stats.capacity_bytes), "info", static_cast<double>(stats.capacity_bytes), "bytes");
-    dashboardOverviewAddMetric(card, "requests", "Requests", dashboardOverviewFormatCount(requests), card.severity);
+    dashboardOverviewAddMetric(card, "free", "Free", bounded ? dashboardOverviewFormatBytes(CacheStats::free_bytes(stats)) : "unknown", bounded ? "info" : "unknown", freeBytes, "bytes");
+    dashboardOverviewAddMetric(card, "capacity", "Capacity", bounded ? dashboardOverviewFormatBytes(stats.capacity_bytes) : "unknown", bounded ? "info" : "unknown", capacityBytes, "bytes");
+    dashboardOverviewAddMetric(card, "requests", "Requests", dashboardOverviewFormatCount(requests), card.severity, static_cast<double>(requests));
     dashboardOverviewAddMetric(card, "hits", "Hits", dashboardOverviewFormatCount(stats.hits), "healthy", static_cast<double>(stats.hits));
-    dashboardOverviewAddMetric(card, "misses", "Misses", dashboardOverviewFormatCount(stats.misses), stats.misses == 0 ? "healthy" : "info");
+    dashboardOverviewAddMetric(card, "misses", "Misses", dashboardOverviewFormatCount(stats.misses), stats.misses == 0 ? "healthy" : "info", static_cast<double>(stats.misses));
     dashboardOverviewAddMetric(card, "inserts", "Inserts", dashboardOverviewFormatCount(stats.inserts), "info", static_cast<double>(stats.inserts));
-    dashboardOverviewAddMetric(card, "evictions", "Evictions", dashboardOverviewFormatCount(stats.evictions), stats.evictions == 0 ? "healthy" : "info");
-    dashboardOverviewAddMetric(card, "invalidations", "Invalidations", dashboardOverviewFormatCount(stats.invalidations), stats.invalidations == 0 ? "healthy" : "info");
+    dashboardOverviewAddMetric(card, "evictions", "Evictions", dashboardOverviewFormatCount(stats.evictions), stats.evictions == 0 ? "healthy" : "info", static_cast<double>(stats.evictions));
+    dashboardOverviewAddMetric(card, "invalidations", "Invalidations", dashboardOverviewFormatCount(stats.invalidations), stats.invalidations == 0 ? "healthy" : "info", static_cast<double>(stats.invalidations));
     dashboardOverviewAddMetric(card, "read_bytes", "Read", dashboardOverviewFormatBytes(stats.bytes_read), "info", static_cast<double>(stats.bytes_read), "bytes");
     dashboardOverviewAddMetric(card, "write_bytes", "Written", dashboardOverviewFormatBytes(stats.bytes_written), "info", static_cast<double>(stats.bytes_written), "bytes");
     dashboardOverviewAddMetric(card, "work_ops", "Work Ops", dashboardOverviewFormatCount(stats.op_count), "info", static_cast<double>(stats.op_count));
@@ -561,16 +570,16 @@ DashboardCardSummary dashboardOverviewBuildStorage(const DashboardOverviewCardDe
     const auto healthyVaultCount = stats.vaultCountTotal > problemVaultCount ? stats.vaultCountTotal - problemVaultCount : 0;
     const auto providerCount = (stats.localVaultCount > 0 ? 1 : 0) + (stats.s3VaultCount > 0 ? 1 : 0);
 
-    dashboardOverviewAddMetric(card, "vaults", "Vaults", dashboardOverviewFormatCount(stats.vaultCountTotal), card.severity);
+    dashboardOverviewAddMetric(card, "vaults", "Vaults", dashboardOverviewFormatCount(stats.vaultCountTotal), card.severity, static_cast<double>(stats.vaultCountTotal));
     dashboardOverviewAddMetric(card, "healthy", "Healthy", dashboardOverviewFormatCount(healthyVaultCount), "healthy", static_cast<double>(healthyVaultCount));
     dashboardOverviewAddMetric(card, "problem", "Problem", dashboardOverviewFormatCount(problemVaultCount), problemVaultCount == 0 ? "healthy" : "warning", static_cast<double>(problemVaultCount));
-    dashboardOverviewAddMetric(card, "active", "Active", dashboardOverviewFormatCount(stats.activeVaultCount), "healthy");
-    dashboardOverviewAddMetric(card, "inactive", "Inactive", dashboardOverviewFormatCount(stats.inactiveVaultCount), stats.inactiveVaultCount == 0 ? "healthy" : "warning");
-    dashboardOverviewAddMetric(card, "local", "Local", dashboardOverviewFormatCount(stats.localVaultCount), "info");
-    dashboardOverviewAddMetric(card, "s3", "S3", dashboardOverviewFormatCount(stats.s3VaultCount), "info");
+    dashboardOverviewAddMetric(card, "active", "Active", dashboardOverviewFormatCount(stats.activeVaultCount), "healthy", static_cast<double>(stats.activeVaultCount));
+    dashboardOverviewAddMetric(card, "inactive", "Inactive", dashboardOverviewFormatCount(stats.inactiveVaultCount), stats.inactiveVaultCount == 0 ? "healthy" : "warning", static_cast<double>(stats.inactiveVaultCount));
+    dashboardOverviewAddMetric(card, "local", "Local", dashboardOverviewFormatCount(stats.localVaultCount), "info", static_cast<double>(stats.localVaultCount));
+    dashboardOverviewAddMetric(card, "s3", "S3", dashboardOverviewFormatCount(stats.s3VaultCount), "info", static_cast<double>(stats.s3VaultCount));
     dashboardOverviewAddMetric(card, "providers", "Providers", dashboardOverviewFormatCount(providerCount), "info", static_cast<double>(providerCount));
-    dashboardOverviewAddMetric(card, "degraded", "Degraded", dashboardOverviewFormatCount(stats.degradedVaultCount), stats.degradedVaultCount == 0 ? "healthy" : "warning");
-    dashboardOverviewAddMetric(card, "backend_errors", "Errors", dashboardOverviewFormatCount(stats.errorVaultCount), stats.errorVaultCount == 0 ? "healthy" : "error");
+    dashboardOverviewAddMetric(card, "degraded", "Degraded", dashboardOverviewFormatCount(stats.degradedVaultCount), stats.degradedVaultCount == 0 ? "healthy" : "warning", static_cast<double>(stats.degradedVaultCount));
+    dashboardOverviewAddMetric(card, "backend_errors", "Errors", dashboardOverviewFormatCount(stats.errorVaultCount), stats.errorVaultCount == 0 ? "healthy" : "error", static_cast<double>(stats.errorVaultCount));
 
     if (stats.errorVaultCount > 0) {
         dashboardOverviewAddIssue(card, "system.storage.error_vaults", "error", std::to_string(stats.errorVaultCount) + " vault backend(s) are in error.", "vaults");
@@ -595,8 +604,8 @@ DashboardCardSummary dashboardOverviewBuildDb(const DashboardOverviewCardDescrip
     card.summary = stats->connected ? "Database telemetry is live." : "Database is not connected.";
 
     dashboardOverviewAddMetric(card, "size", "DB Size", dashboardOverviewFormatBytes(stats->dbSizeBytes), "info", static_cast<double>(stats->dbSizeBytes), "bytes");
-    dashboardOverviewAddMetric(card, "connections", "Connections", dashboardOverviewFormatCount(stats->connectionsTotal), card.severity);
-    dashboardOverviewAddMetric(card, "active_connections", "Active", dashboardOverviewFormatCount(stats->connectionsActive), "info");
+    dashboardOverviewAddMetric(card, "connections", "Connections", dashboardOverviewFormatCount(stats->connectionsTotal), card.severity, static_cast<double>(stats->connectionsTotal));
+    dashboardOverviewAddMetric(card, "active_connections", "Active", dashboardOverviewFormatCount(stats->connectionsActive), "info", static_cast<double>(stats->connectionsActive));
     dashboardOverviewAddMetric(card, "idle_connections", "Idle", dashboardOverviewFormatCount(stats->connectionsIdle), "info", static_cast<double>(stats->connectionsIdle));
     dashboardOverviewAddMetric(card, "idle_tx_connections", "Idle Tx", dashboardOverviewFormatCount(stats->connectionsIdleInTransaction), stats->connectionsIdleInTransaction == 0 ? "healthy" : "warning", static_cast<double>(stats->connectionsIdleInTransaction));
     dashboardOverviewAddMetric(card, "max_connections", "Max Conn", stats->connectionsMax ? dashboardOverviewFormatCount(*stats->connectionsMax) : "unknown", "info", dashboardOverviewOptionalDouble(stats->connectionsMax));
@@ -627,18 +636,18 @@ DashboardCardSummary dashboardOverviewBuildRetention(const DashboardOverviewCard
     card.severity = dashboardOverviewSeverityFromStatus(stats->cleanupStatus);
     card.summary = stats->cleanupStatus == "healthy" ? "Cleanup pressure is under control." : "Cleanup backlog needs attention.";
 
-    dashboardOverviewAddMetric(card, "trash", "Trash", dashboardOverviewFormatCount(stats->trashedFilesCount), "info");
-    dashboardOverviewAddMetric(card, "overdue", "Overdue", dashboardOverviewFormatCount(stats->trashedFilesPastRetentionCount), stats->trashedFilesPastRetentionCount == 0 ? "healthy" : "warning");
+    dashboardOverviewAddMetric(card, "trash", "Trash", dashboardOverviewFormatCount(stats->trashedFilesCount), "info", static_cast<double>(stats->trashedFilesCount));
+    dashboardOverviewAddMetric(card, "overdue", "Overdue", dashboardOverviewFormatCount(stats->trashedFilesPastRetentionCount), stats->trashedFilesPastRetentionCount == 0 ? "healthy" : "warning", static_cast<double>(stats->trashedFilesPastRetentionCount));
     dashboardOverviewAddMetric(card, "trash_bytes", "Trash Bytes", dashboardOverviewFormatBytes(stats->trashedBytesTotal), "info", static_cast<double>(stats->trashedBytesTotal), "bytes");
     dashboardOverviewAddMetric(card, "overdue_bytes", "Overdue Bytes", dashboardOverviewFormatBytes(stats->trashedBytesPastRetention), stats->trashedBytesPastRetention == 0 ? "healthy" : "warning", static_cast<double>(stats->trashedBytesPastRetention), "bytes");
     dashboardOverviewAddMetric(card, "oldest_trash", "Oldest Trash", dashboardOverviewFormatOptionalDuration(stats->oldestTrashedAgeSeconds), stats->oldestTrashedAgeSeconds ? "info" : "healthy", dashboardOverviewOptionalDouble(stats->oldestTrashedAgeSeconds), "seconds");
     dashboardOverviewAddMetric(card, "sync_events", "Sync Events", dashboardOverviewFormatCount(stats->syncEventsTotal), "info", static_cast<double>(stats->syncEventsTotal));
-    dashboardOverviewAddMetric(card, "sync_backlog", "Sync Backlog", dashboardOverviewFormatCount(stats->syncEventsPastRetentionCount), stats->syncEventsPastRetentionCount == 0 ? "healthy" : "warning");
+    dashboardOverviewAddMetric(card, "sync_backlog", "Sync Backlog", dashboardOverviewFormatCount(stats->syncEventsPastRetentionCount), stats->syncEventsPastRetentionCount == 0 ? "healthy" : "warning", static_cast<double>(stats->syncEventsPastRetentionCount));
     dashboardOverviewAddMetric(card, "audit_events", "Audit Events", dashboardOverviewFormatCount(stats->auditLogEntriesTotal), "info", static_cast<double>(stats->auditLogEntriesTotal));
-    dashboardOverviewAddMetric(card, "audit_backlog", "Audit Backlog", dashboardOverviewFormatCount(stats->auditLogEntriesPastRetentionCount), stats->auditLogEntriesPastRetentionCount == 0 ? "healthy" : "warning");
+    dashboardOverviewAddMetric(card, "audit_backlog", "Audit Backlog", dashboardOverviewFormatCount(stats->auditLogEntriesPastRetentionCount), stats->auditLogEntriesPastRetentionCount == 0 ? "healthy" : "warning", static_cast<double>(stats->auditLogEntriesPastRetentionCount));
     dashboardOverviewAddMetric(card, "share_events", "Share Events", dashboardOverviewFormatCount(stats->shareAccessEventsTotal), "info", static_cast<double>(stats->shareAccessEventsTotal));
     dashboardOverviewAddMetric(card, "cache_entries", "Cache Entries", dashboardOverviewFormatCount(stats->cacheEntriesTotal), "info", static_cast<double>(stats->cacheEntriesTotal));
-    dashboardOverviewAddMetric(card, "cache_expired", "Expired Cache", dashboardOverviewFormatCount(stats->cacheEntriesExpired), stats->cacheEntriesExpired == 0 ? "healthy" : "warning");
+    dashboardOverviewAddMetric(card, "cache_expired", "Expired Cache", dashboardOverviewFormatCount(stats->cacheEntriesExpired), stats->cacheEntriesExpired == 0 ? "healthy" : "warning", static_cast<double>(stats->cacheEntriesExpired));
     dashboardOverviewAddMetric(card, "cache_candidates", "Evictable", dashboardOverviewFormatCount(stats->cacheEvictionCandidates), stats->cacheEvictionCandidates == 0 ? "healthy" : "info", static_cast<double>(stats->cacheEvictionCandidates));
     dashboardOverviewAddMetric(card, "cache_bytes", "Cache", dashboardOverviewFormatBytes(stats->cacheBytesTotal), "info", static_cast<double>(stats->cacheBytesTotal), "bytes");
     dashboardOverviewAddMetric(card, "trash_retention", "Trash Retention", dashboardOverviewFormatDuration(stats->trashRetentionDays * 86400), "info", static_cast<double>(stats->trashRetentionDays * 86400), "seconds");
@@ -669,12 +678,12 @@ DashboardCardSummary dashboardOverviewBuildOperations(const DashboardOverviewCar
             static_cast<double>(stats->uploadBytesReceivedActive) / static_cast<double>(stats->uploadBytesExpectedActive)
         : 0.0;
 
-    dashboardOverviewAddMetric(card, "pending", "Pending", dashboardOverviewFormatCount(stats->pendingOperations), stats->pendingOperations == 0 ? "healthy" : "warning");
-    dashboardOverviewAddMetric(card, "in_progress", "In Progress", dashboardOverviewFormatCount(stats->inProgressOperations), "info");
-    dashboardOverviewAddMetric(card, "stalled", "Stalled", dashboardOverviewFormatCount(stats->stalledOperations + stats->stalledShareUploads), stats->stalledOperations + stats->stalledShareUploads == 0 ? "healthy" : "error");
-    dashboardOverviewAddMetric(card, "failed_24h", "Failed 24h", dashboardOverviewFormatCount(stats->failedOperations24h + stats->failedShareUploads24h), stats->failedOperations24h + stats->failedShareUploads24h == 0 ? "healthy" : "warning");
+    dashboardOverviewAddMetric(card, "pending", "Pending", dashboardOverviewFormatCount(stats->pendingOperations), stats->pendingOperations == 0 ? "healthy" : "warning", static_cast<double>(stats->pendingOperations));
+    dashboardOverviewAddMetric(card, "in_progress", "In Progress", dashboardOverviewFormatCount(stats->inProgressOperations), "info", static_cast<double>(stats->inProgressOperations));
+    dashboardOverviewAddMetric(card, "stalled", "Stalled", dashboardOverviewFormatCount(stats->stalledOperations + stats->stalledShareUploads), stats->stalledOperations + stats->stalledShareUploads == 0 ? "healthy" : "error", static_cast<double>(stats->stalledOperations + stats->stalledShareUploads));
+    dashboardOverviewAddMetric(card, "failed_24h", "Failed 24h", dashboardOverviewFormatCount(stats->failedOperations24h + stats->failedShareUploads24h), stats->failedOperations24h + stats->failedShareUploads24h == 0 ? "healthy" : "warning", static_cast<double>(stats->failedOperations24h + stats->failedShareUploads24h));
     dashboardOverviewAddMetric(card, "cancelled_24h", "Cancelled 24h", dashboardOverviewFormatCount(stats->cancelledOperations24h), stats->cancelledOperations24h == 0 ? "healthy" : "warning", static_cast<double>(stats->cancelledOperations24h));
-    dashboardOverviewAddMetric(card, "active_uploads", "Uploads", dashboardOverviewFormatCount(stats->activeShareUploads), stats->activeShareUploads == 0 ? "healthy" : "info");
+    dashboardOverviewAddMetric(card, "active_uploads", "Uploads", dashboardOverviewFormatCount(stats->activeShareUploads), stats->activeShareUploads == 0 ? "healthy" : "info", static_cast<double>(stats->activeShareUploads));
     dashboardOverviewAddMetric(card, "stalled_uploads", "Stalled Uploads", dashboardOverviewFormatCount(stats->stalledShareUploads), stats->stalledShareUploads == 0 ? "healthy" : "error", static_cast<double>(stats->stalledShareUploads));
     dashboardOverviewAddMetric(card, "failed_uploads_24h", "Failed Uploads", dashboardOverviewFormatCount(stats->failedShareUploads24h), stats->failedShareUploads24h == 0 ? "healthy" : "warning", static_cast<double>(stats->failedShareUploads24h));
     dashboardOverviewAddMetric(card, "upload_progress", "Upload Progress", dashboardOverviewFormatPercent(uploadProgress), "info", uploadProgress);
@@ -736,8 +745,8 @@ DashboardCardSummary dashboardOverviewBuildTrends(const DashboardOverviewCardDes
         dashboardOverviewAddMetric(card, "latest_sample_age", "Latest", "none", "info");
         dashboardOverviewAddMetric(card, "coverage", "Coverage", "no data", "info", 0.0);
     }
-    dashboardOverviewAddMetric(card, "series", "Series", dashboardOverviewFormatCount(seriesCount), card.severity);
-    dashboardOverviewAddMetric(card, "points", "Points", dashboardOverviewFormatCount(pointCount), card.severity);
+    dashboardOverviewAddMetric(card, "series", "Series", dashboardOverviewFormatCount(seriesCount), card.severity, static_cast<double>(seriesCount));
+    dashboardOverviewAddMetric(card, "points", "Points", dashboardOverviewFormatCount(pointCount), card.severity, static_cast<double>(pointCount));
     dashboardOverviewAddMetric(card, "threadpool_series", "Threadpool", dashboardOverviewFormatCount(threadpoolSeriesCount), "info", static_cast<double>(threadpoolSeriesCount));
     dashboardOverviewAddMetric(card, "fuse_series", "FUSE", dashboardOverviewFormatCount(fuseSeriesCount), "info", static_cast<double>(fuseSeriesCount));
     dashboardOverviewAddMetric(card, "cache_series", "Cache", dashboardOverviewFormatCount(cacheSeriesCount), "info", static_cast<double>(cacheSeriesCount));
@@ -745,10 +754,6 @@ DashboardCardSummary dashboardOverviewBuildTrends(const DashboardOverviewCardDes
     dashboardOverviewAddMetric(card, "operation_series", "Operations", dashboardOverviewFormatCount(operationSeriesCount), "info", static_cast<double>(operationSeriesCount));
 
     return card;
-}
-
-std::string dashboardOverviewFormatBudgetMoney(const std::string& amount, const std::string& currency) {
-    return amount + " " + (currency.empty() ? "USD" : currency);
 }
 
 double dashboardOverviewBudgetNumber(const std::string& amount) {
@@ -759,10 +764,46 @@ double dashboardOverviewBudgetNumber(const std::string& amount) {
     }
 }
 
-std::string dashboardOverviewFormatBudgetNumber(const double amount) {
-    char buffer[48];
-    std::snprintf(buffer, sizeof(buffer), "%.8f", amount);
+std::optional<double> dashboardOverviewBudgetAmount(const std::optional<std::string>& amount) {
+    if (!amount || amount->empty()) return std::nullopt;
+    try {
+        return std::stod(*amount);
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+// Cents, or enough significant digits to be honest about a sub-cent amount (the console formats the same way).
+std::string dashboardOverviewFormatMoney(const double amount, const std::string& currency) {
+    const auto magnitude = std::fabs(amount);
+    int digits = 2;
+    if (magnitude > 0.0 && magnitude < 0.01)
+        digits = std::min(8, std::max(2, static_cast<int>(-std::floor(std::log10(magnitude))) + 2));
+    char buffer[64];
+    std::snprintf(buffer, sizeof(buffer), "%.*f %s", digits, amount, currency.c_str());
     return buffer;
+}
+
+// Money carries numeric_value plus the ISO currency as its unit (#160). An amount that was not measured (no monthly
+// budget window, no projection yet) is "unknown" with a null numeric_value, never a fake zero.
+void dashboardOverviewAddMoneyMetric(
+    DashboardCardSummary& card,
+    std::string key,
+    std::string label,
+    const std::optional<double> amount,
+    const std::string& currency,
+    std::string tone
+) {
+    const auto code = currency.empty() ? std::string{"USD"} : currency;
+    dashboardOverviewAddMetric(
+        card,
+        std::move(key),
+        std::move(label),
+        amount ? dashboardOverviewFormatMoney(*amount, code) : "unknown",
+        amount ? std::move(tone) : "unknown",
+        amount,
+        code
+    );
 }
 
 std::string dashboardOverviewBudgetSeverity(const vh::storage::s3::pricing::PriceBudgetDashboardStats& stats) {
@@ -783,8 +824,8 @@ DashboardCardSummary dashboardOverviewBuildPricingBudget(const DashboardOverview
     dashboardOverviewAddMetric(card, "blocked_syncs", "Blocked 24h", dashboardOverviewFormatCount(stats.blocked_syncs_24h), stats.blocked_syncs_24h == 0 ? "healthy" : "error", stats.blocked_syncs_24h);
     dashboardOverviewAddMetric(card, "warnings", "Warnings", dashboardOverviewFormatCount(stats.warning_notifications), stats.warning_notifications == 0 ? "healthy" : "warning", stats.warning_notifications);
     dashboardOverviewAddMetric(card, "critical", "Critical", dashboardOverviewFormatCount(stats.critical_notifications), stats.critical_notifications == 0 ? "healthy" : "error", stats.critical_notifications);
-    dashboardOverviewAddMetric(card, "monthly_spend", "Month", dashboardOverviewFormatBudgetMoney(stats.current_monthly_spend, stats.currency), "info");
-    dashboardOverviewAddMetric(card, "projected_monthly", "Projected", dashboardOverviewFormatBudgetMoney(stats.projected_monthly_spend, stats.currency), stats.critical_notifications ? "error" : "info");
+    dashboardOverviewAddMoneyMetric(card, "monthly_spend", "Month", dashboardOverviewBudgetAmount(stats.current_monthly_spend), stats.currency, "info");
+    dashboardOverviewAddMoneyMetric(card, "projected_monthly", "Projected", dashboardOverviewBudgetAmount(stats.projected_monthly_spend), stats.currency, stats.critical_notifications ? "error" : "info");
     dashboardOverviewAddMetric(card, "pending_overrides", "Overrides", dashboardOverviewFormatCount(stats.pending_overrides), stats.pending_overrides == 0 ? "healthy" : "warning", stats.pending_overrides);
 
     if (stats.blocked_syncs_24h > 0)
@@ -810,9 +851,14 @@ DashboardCardSummary dashboardOverviewBuildPricingProviders(const DashboardOverv
         if (trend.projected_window_cost) projections[provider] += dashboardOverviewBudgetNumber(*trend.projected_window_cost);
     }
 
+    // A provider without a monthly budget window has no measured spend: unknown, not zero.
+    const auto amountFor = [](const std::map<std::string, double>& values, const std::string& provider) {
+        const auto it = values.find(provider);
+        return it == values.end() ? std::nullopt : std::optional<double>(it->second);
+    };
     for (const auto& provider : {std::string{"aws-s3"}, std::string{"cloudflare-r2"}}) {
-        dashboardOverviewAddMetric(card, provider + "_current", provider, dashboardOverviewFormatBudgetMoney(dashboardOverviewFormatBudgetNumber(totals[provider]), stats.currency), "info");
-        dashboardOverviewAddMetric(card, provider + "_projected", provider + " Proj", dashboardOverviewFormatBudgetMoney(dashboardOverviewFormatBudgetNumber(projections[provider]), stats.currency), "info");
+        dashboardOverviewAddMoneyMetric(card, provider + "_current", provider, amountFor(totals, provider), stats.currency, "info");
+        dashboardOverviewAddMoneyMetric(card, provider + "_projected", provider + " Proj", amountFor(projections, provider), stats.currency, "info");
     }
     dashboardOverviewAddMetric(card, "provider_policies", "Policies", dashboardOverviewFormatCount(stats.active_policies), stats.active_policies == 0 ? "info" : "healthy", stats.active_policies);
     return card;
@@ -837,7 +883,7 @@ DashboardCardSummary dashboardOverviewBuildPricingVaults(const DashboardOverview
     card.summary = totals.empty() ? "No vault-scoped S3 budget spend is visible." : "Vault spend trends are available.";
     dashboardOverviewAddMetric(card, "tracked_vaults", "Vaults", dashboardOverviewFormatCount(totals.size()), totals.empty() ? "info" : "healthy", static_cast<double>(totals.size()));
     dashboardOverviewAddMetric(card, "top_vault", "Top Vault", top == totals.end() ? "none" : std::to_string(top->first), "info");
-    dashboardOverviewAddMetric(card, "top_spend", "Top Spend", top == totals.end() ? "0.00000000 " + stats.currency : dashboardOverviewFormatBudgetMoney(dashboardOverviewFormatBudgetNumber(top->second), stats.currency), "info");
+    dashboardOverviewAddMoneyMetric(card, "top_spend", "Top Spend", top == totals.end() ? std::nullopt : std::optional<double>(top->second), stats.currency, "info");
     dashboardOverviewAddMetric(card, "projected_overage_vaults", "Overage", dashboardOverviewFormatCount(overageVaults), overageVaults == 0 ? "healthy" : "warning", overageVaults);
     if (overageVaults > 0)
         dashboardOverviewAddIssue(card, "system.pricing.vault_overage", "warning", "One or more vaults are projected to exceed a budget.", "projected_overage_vaults");
@@ -936,7 +982,7 @@ DashboardOverviewCardDescriptor dashboardOverviewDescriptorForUnknown(const std:
         .sectionId = "runtime",
         .title = id.empty() ? "Unknown Card" : id,
         .description = "Requested dashboard card is not registered.",
-        .href = "/dashboard",
+        .href = "/health",
         .variant = "tiles",
         .size = "2x1",
     };

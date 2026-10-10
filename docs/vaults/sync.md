@@ -55,6 +55,8 @@ vh vault sync set archive --max-remote-index-age 24h
 
 Choose the strategy before connecting Vaulthalla to a bucket with existing data. Use dry-run and request budgets to understand planned work.
 
+A vault created without a strategy or conflict policy gets the operator's defaults, `vaults.s3.default_remote_sync_strategy` (`cache` unless changed) and `vaults.s3.default_remote_conflict_policy` (`ask` unless changed); see [Configuration](/reference/configuration#vault-defaults).
+
 ## Conflict Policies
 
 Local vault policies:
@@ -67,9 +69,50 @@ S3/R2 vault policies:
 
 - `keep_local`
 - `keep_remote`
+- `keep_newest`
 - `ask`
 
-Use `ask` when automatic conflict resolution would be risky and an operator should review conflicts.
+| Policy | When a file differs on both sides |
+| --- | --- |
+| `ask` (default for new vaults) | The conflict is recorded and that file waits for a decision. Everything else keeps syncing. |
+| `keep_local` | The local copy is uploaded over the remote object. |
+| `keep_remote` | The remote object is downloaded over the local copy. |
+| `keep_newest` | The copy modified last wins. Without timestamps on both sides it falls back to `ask`. |
+
+Under `ask`, only a real two-sided change is a conflict. Each pass compares both sides with what they were when they last agreed (Vaulthalla records that after every sync of the file):
+
+- A file changed only locally is uploaded.
+- A file changed only in the bucket is downloaded.
+- A file changed on both sides is recorded as a conflict, once. Later passes refresh the recorded details if a side changes again, and never add a second open conflict for the same file.
+- If both sides become identical again, the open conflict closes itself.
+
+A file that has never been synced by a version that records this (for example, files synced before an upgrade) has nothing to compare against, so a difference on it is recorded as a conflict too. Resolve it once and later changes are classified normally.
+
+The `keep_*` policies settle every content difference themselves, as before. If you switch a vault from `ask` to a `keep_*` policy, its open conflicts are settled by the next sync with that policy.
+
+## Resolving Conflicts
+
+Resolving a conflict needs the vault permission `vault.sync.action.resolve_conflicts` and Overwrite on the file. Built-in vault roles that can trigger a sync (contributor, editor, manager, power user) include it, and upgrades grant it to every role that already had sync trigger. Admins get it through their vault globals. The vault owner gets it through their own role's self scope.
+
+Each conflict has two decisions:
+
+- **Keep local** uploads the local copy over the remote object.
+- **Keep remote** downloads the remote object over the local copy, decrypted and re-sealed exactly like a sync download.
+
+A decision applies to the versions that were recorded. If either side changed since then, the resolution is refused and the conflict stays open; the next sync refreshes it, then decide again. Transfers count against the vault's S3 request budget and price budgets like sync does.
+
+From the CLI:
+
+```bash
+vh sync resolve                                        # interactive, in a terminal
+vh sync resolve --list [--vault <vault>] [--json]
+vh sync resolve 12 13 --keep-local
+vh sync resolve --vault photos --all --keep-remote --yes
+```
+
+`vh resolve` is a shortcut for `vh sync resolve`. In a terminal with no arguments it opens an interactive session. It lists open conflicts by vault, shows both sides' metadata, can show a text diff for small text files (which fetches the remote copy, one GET), and resolves one conflict or every conflict in a vault.
+
+In the web console, the **Sync Conflicts** button in the top bar and the **System > Sync Conflicts** page appear while there are conflicts you can resolve. See [Web console](/web-console#sync-conflicts).
 
 ## Remote Index
 

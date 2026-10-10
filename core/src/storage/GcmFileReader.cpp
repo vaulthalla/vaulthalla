@@ -163,6 +163,14 @@ std::size_t GcmFileReader::read(const uint64_t offset, const std::span<uint8_t> 
     return want;
 }
 
+void GcmFileReader::requireAuthenticated() {
+    if (!params_.key) return;  // unencrypted legacy/empty file: nothing to authenticate
+    ensureTicket();
+    if (const auto state = ticket_->wait(); state != crypto::IntegrityState::Verified)
+        throw IntegrityError(state == crypto::IntegrityState::Superseded ? "Content changed while it was being read"
+                                                                         : "Content failed integrity verification");
+}
+
 std::vector<uint8_t> GcmFileReader::readAllAuthenticated(const uint64_t maxBytes) {
     throwIfFailed();
     if (params_.plaintextSize > maxBytes) throw std::length_error("Content exceeds the allowed size");

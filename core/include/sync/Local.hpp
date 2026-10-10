@@ -63,7 +63,6 @@ struct Local : concurrency::Task, std::enable_shared_from_this<Local> {
 
     void push(const std::shared_ptr<Task>& task);
     void handleInterrupt() const;
-    void processOperations() const;
     void repairAtRestOnce() const;
 
     void handleVaultKeyRotation();

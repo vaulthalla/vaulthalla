@@ -92,23 +92,35 @@ test.describe.serial('personas', () => {
     }
   })
 
-  test('a plain admin manages accounts and storage but not health or the super-admin areas', async ({ page, browser }) => {
-    // Core's isAdmin() (health/stats) needs "delete admins" + "remove admin vaults", which the built-in admin role
-    // lacks, and settings/email/price budgets are super-admin only (see #166). The console must match core exactly.
+  test('a plain admin manages accounts, storage and health but not the super-admin areas', async ({ page, browser }) => {
+    // Health/stats need admin.stats.view, which the built-in admin role holds (#166; it used to need core's isAdmin(),
+    // "delete admins" + "remove admin vaults", which this role lacks). Settings, email and price budgets stay
+    // super-admin only. The console must match core exactly.
     const persona = await createPersona(page, 'admin')
     try {
       const { context, page: p, sent } = await asPersona(browser, persona)
       const labels = await navLabels(p)
-      for (const label of ['Files', 'Shares', 'Vaults', 'Users', 'Groups', 'Roles', 'Provider credentials', 'S3 gateway']) expect(labels, label).toContain(label)
-      for (const label of ['Health', 'Settings', 'Cost control', 'Notifications']) expect(labels, label).not.toContain(label)
-      for (const route of ['/health', '/settings', '/cost']) {
+      for (const label of ['Files', 'Shares', 'Vaults', 'Users', 'Groups', 'Roles', 'Provider credentials', 'S3 gateway', 'Health']) expect(labels, label).toContain(label)
+      for (const label of ['Settings', 'Cost control', 'Notifications']) expect(labels, label).not.toContain(label)
+      for (const route of ['/settings', '/cost']) {
         await p.goto(route)
         await expect(p.getByText(/you don.t have access to this/i), route).toBeVisible({ timeout: 15_000 })
       }
+      // Health renders for the admin role: no denial and no stats refusal anywhere on the page.
+      const refusals: string[] = []
+      p.on('websocket', ws =>
+        ws.on('framereceived', frame => {
+          if (typeof frame.payload === 'string' && /"code"\s*:\s*"denied"/.test(frame.payload)) refusals.push(frame.payload)
+        }),
+      )
+      await p.goto('/health')
+      await expect(p.getByRole('heading', { level: 1, name: 'Health' })).toBeVisible({ timeout: 15_000 })
+      await expect(p.getByText(/you don.t have access to this/i)).toHaveCount(0)
+      await expect.poll(() => sent.includes('stats.dashboard.overview'), { timeout: 15_000 }).toBe(true)
       await p.goto('/users')
       await expect(p.getByText(/you don.t have access to this/i)).toHaveCount(0)
       await expect(p.getByRole('table')).toBeVisible({ timeout: 15_000 })
-      expect(sent.filter(c => c.startsWith('stats.'))).toEqual([])
+      expect(refusals.filter(r => r.includes('stats.'))).toEqual([])
       await context.close()
     } finally {
       await deletePersona(page, persona.name)

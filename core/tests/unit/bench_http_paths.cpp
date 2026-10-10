@@ -1,4 +1,4 @@
-// Disabled-by-default benchmarks for the HTTP byte and preview paths. Run with a release build and the test DB env:
+// Disabled-by-default benchmarks for the HTTP byte, folder-ZIP and preview paths. Run with a release build and the test DB env:
 //   ./vh_unit_tests --gtest_also_run_disabled_tests --gtest_filter='DISABLED_HttpBench*'
 // The same file compiles against the pre-rich-preview tree with -DVH_BENCH_LEGACY (whole-buffer responses, the old
 // thumbnail functions), so the numbers in the PR come from identical scenarios.
@@ -182,6 +182,22 @@ protected:
         (void)fs::Filesystem::createFile({.path = "/big.bin", .fuse_path = engine->vaultPathToFusePath("/big.bin"),
                                           .source_path = source, .engine = engine, .user = admin, .overwrite = true});
         std::filesystem::remove(source);
+        // A folder under the old archive caps (4 × 48 MiB), so both trees can zip it.
+        (void)fs::Filesystem::mkdir({.path = engine->vaultPathToFusePath("/folder"), .engine = engine, .user = admin});
+        for (int f = 0; f < 4; ++f) {
+            {
+                std::ofstream out(source, std::ios::binary);
+                std::vector<char> mib(1 << 20);
+                for (int i = 0; i < 48; ++i) {
+                    std::fill(mib.begin(), mib.end(), static_cast<char>(i + f));
+                    out.write(mib.data(), static_cast<std::streamsize>(mib.size()));
+                }
+            }
+            const auto path = "/folder/part" + std::to_string(f) + ".bin";
+            (void)fs::Filesystem::createFile({.path = path, .fuse_path = engine->vaultPathToFusePath(path),
+                                              .source_path = source, .engine = engine, .user = admin, .overwrite = true});
+            std::filesystem::remove(source);
+        }
         (void)fs::Filesystem::createFile({.path = "/photo.jpg", .fuse_path = engine->vaultPathToFusePath("/photo.jpg"),
                                           .buffer = photo(4000, 3000), .engine = engine, .user = admin, .overwrite = true});
         std::this_thread::sleep_for(std::chrono::seconds(3));  // let upload-time thumbnail generation finish
@@ -216,6 +232,21 @@ TEST_F(DISABLED_HttpBench, FourConcurrentDownloadsPeakRss) {
         threads.emplace_back([&] { (void)drain(Router::route(get(url("/download", "%2Fbig.bin"))), Clock::now()); });
     for (auto& t : threads) t.join();
     std::printf("[bench] 4 concurrent 256MiB downloads: %.1f ms, peak RSS +%ld MiB\n", ms(t0), peakRssMiB() - base);
+}
+
+// Folder ZIP of 192 MiB: streamed (exact Content-Length, one member open at a time) vs the old in-memory build.
+TEST_F(DISABLED_HttpBench, FolderZip192MiB) {
+    for (int run = 0; run < 3; ++run) {
+        resetPeakRss();
+        const auto base = currentRssMiB();
+        const auto h0 = Clock::now();
+        (void)Router::route(get(url("/download", "%2Ffolder"), verb::head));
+        const auto headMs = ms(h0);
+        const auto t0 = Clock::now();
+        const auto d = drain(Router::route(get(url("/download", "%2Ffolder"))), t0);
+        std::printf("[bench] folder zip 192MiB: HEAD %.2f ms, first byte %.1f ms, total %.1f ms (%.0f MB/s), peak RSS +%ld MiB\n",
+                    headMs, d.firstByteMs, d.totalMs, d.bytes / 1e6 / (d.totalMs / 1000.0), peakRssMiB() - base);
+    }
 }
 
 TEST_F(DISABLED_HttpBench, RangeRead1MiBAt200MiB) {

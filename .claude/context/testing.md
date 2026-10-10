@@ -45,7 +45,7 @@
 
 CLI ↔ ws parity for families migrated to `core/ops/`:
 `--gtest_filter='*Parity*:OpsGroups*:AuthPasswordChange*'` (groups, roles, API keys, vaults, users, S3 gateway,
-pricing/config). The whole binary takes ~7 minutes against a local DB; meson's test timeout is 30 minutes (#123). A parity case
+pricing/config, sync conflicts). The whole binary takes ~7 minutes against a local DB; meson's test timeout is 30 minutes (#123). A parity case
 runs one logical operation through `shell::Router::executeLine` and through the ws handler, for every seeded admin
 role, and compares allow/deny (against an oracle from the role's permission bits) and resulting DB state, never text.
 New families add a `test_ops_parity_<family>.cpp` on the same pattern.
@@ -58,18 +58,21 @@ stale secrets, or port conflicts: `make uninstall` → `make test` → re-source
 | Suite (file) | Covers | Needs |
 |---|---|---|
 | `GcmCtrDecryptAt`, `GcmFileReaderTest`, `GcmStreamVerifier`, `GcmOneShot`, `EncryptionManagerKeys`, `EngineReader`, `HttpRange` (`test_gcm_range_reader.cpp`) | CTR positioning at every block boundary vs authenticated decrypt, OpenSSL/libsodium interop, AAD/tag/body tampering (optimistic + strict), supersession, shared verification, key snapshots during rotation, the RFC 9110 range parser | nothing (DB-free) |
+| `HttpArchiveZip`, `HttpArchiveSessionTest` (`test_http_archive.cpp`) | streamed folder ZIP validated by Python `zipfile` + `unzip -t` (`tests/helpers/zip_check.hpp`; skip without them): UTF-8/dot names, empty file, empty dir, exact length, one member open at a time, integrity failure truncates before the CRC, size drift aborts, zip-slip names, ZIP64 (> 4 GiB member as a sparse file, ~25 s; > 65535 entries), and over a socket: HEAD length without opening members, disconnect, stalled client | nothing |
 | `HttpSessionTest` (`test_http_session.cpp`) | socket-level streaming, client disconnect stopping work, stalled/idle deadlines, HEAD framing | nothing |
-| `HttpAccessDbTest` (`test_http_access.cpp`) | human preview/download RBAC matrix, no path-existence oracle, D9 (SVG/WebP not Preview), Range/conditional/HEAD, 300 MiB download, text save 428/412/422/413/415/403 + ciphertext-only on disk, PDF paging, hostile size/scale/page, no `/tmp` plaintext residue | test DB env |
-| `HttpSharePreviewTest`, `HttpContentDisposition` (`test_http_share_preview.cpp`) | share lanes (Preview vs Download, Content-Disposition), `max_downloads` per logical download | nothing (injected fakes) |
+| `HttpAccessDbTest` (`test_http_access.cpp`) | human preview/download RBAC matrix, no path-existence oracle, D9 (SVG/WebP not Preview), Range/conditional/HEAD, 300 MiB download, folder ZIP of encrypted files (RBAC, HEAD, independent validation, tampered member truncates), text save 428/412/422/413/415/403 + ciphertext-only on disk, PDF paging, hostile size/scale/page, no `/tmp` plaintext residue | test DB env |
+| `HttpSharePreviewTest`, `HttpContentDisposition` (`test_http_share_preview.cpp`) | share lanes (Preview vs Download, Content-Disposition), `max_downloads` per logical download (files and folder ZIPs; HEAD never counts), scoped folder ZIP entries | nothing (injected fakes) |
 | `PreviewStoreDbTest` (`test_preview_store.cpp`) | `VHDERIV1` round trip (ciphertext only on disk), identity/AAD binding, invalidation by source id and generator version, negative cache TTL, writer limit, LRU eviction, legacy-thumbnail sweep, not charged to quota, purge | test DB env |
 | `DeriveRunnerTest`, `PreviewConfigTest` (`test_derive_runner.cpp`) | Runner against `vh_fake_derive_helper` (range pulls, caps, timeout, crash, RLIMIT_AS, fd/env hygiene), `preview.*` parsing | nothing |
 | `PreviewCadHelperTest`, `PreviewMediaHelper`, `PreviewMediaBrowser` | the real helpers via the protocol | skip when the helper isn't built (media also skips without the `ffmpeg` CLI) |
 | `KeyRotationSafetyTest` (`test_key_rotation_safety.cpp`) | crash/failure-safe rotation, seam-injected | nothing |
+| `SyncConflictsTest`, `SyncConflictBaseline` (`test_sync_conflicts.cpp`), `ConflictParityTest` (`test_ops_parity_conflicts.cpp`) | #187: `ask` records a two-sided conflict once and syncs one-sided changes, converges on its own, keep_local / keep_remote through an in-memory bucket (`tests/helpers/sync_conflict_harness.hpp`: fake controller + real passes run inline), stale refusals, RBAC (no permission, no Overwrite, vault role, admin via vault globals), the `/download/conflict` lane, CLI vs ws for every seeded admin role | test DB env |
+| `VaultRetentionTest` (`test_vault_retention.cpp`) | safe deletion (#162): schedule → restore, purge after the window (injected pass clock), delete now, resumed purge, key tombstone + expiry, S3 key-loss gate, bounded upstream purge (fake controller), shared-bucket guard, path guard | test DB env |
 
 - Tests that run helpers under `RLIMIT_AS` (`DeriveRunnerTest`, the helper suites) need a **non-sanitized** build:
   ASan reserves far more address space than the limit allows, so a sanitized helper can't start.
-- `bench_http_paths.cpp` holds `DISABLED_HttpBench*` benchmarks (256 MiB download TTFB/throughput/peak RSS, 4
-  concurrent downloads, 1 MiB range at 200 MiB, HEAD vs GET, 12 MP preview cold/warm, thumbnail generation). Run with
+- `bench_http_paths.cpp` holds `DISABLED_HttpBench*` benchmarks (256 MiB download TTFB/throughput/peak RSS, 192 MiB
+  folder ZIP HEAD/TTFB/peak RSS, 4 concurrent downloads, 1 MiB range at 200 MiB, HEAD vs GET, 12 MP preview cold/warm, thumbnail generation). Run with
   a release build and the test DB env:
   `./build-o3/core/vh_unit_tests --gtest_also_run_disabled_tests --gtest_filter='DISABLED_HttpBench*'`. The same file
   compiles against the pre-rich-preview tree with `-DVH_BENCH_LEGACY` for like-for-like numbers.
@@ -85,7 +88,11 @@ make uninstall && make clean-full && make run_test   # destructive to local dev/
 ```
 
 This runs `core/tests/integrations/main.cpp` in test mode: it wipes, inits, and seeds the DB, starts FUSE + shell, and runs the CLI and FUSE suites
-against **`/tmp/vh_mount`**. The last known result was 83/83 (2026-10-09, after #170 and #183). It's isolated from systemd/prod state.
+against **`/tmp/vh_mount`**. The last known result was 97/97 (2026-10-10, `fix/decision-bugs`: #143 #162 #164 #166 #167 #168 #187). It's isolated from systemd/prod state.
+The "Copy And Delete" stage (#167/#168, 14 cases, runs unprivileged too) copies a nested folder over ws
+`fs.entry.copy` and reads every copied file through FUSE and through `/download` (in-process `http::Router`), then checks
+that unlink / `fs.entry.delete` keep folders and that rmdir of a non-empty folder is ENOTEMPTY; with it the expected
+total is 97.
 If `apt-get update` fails in `bin/setup/install_deps.sh` on an unrelated host apt source (e.g. a Caddy Cloudsmith
 `402 Payment Required`), run the remaining steps directly: `bin/tests/uninstall.sh`, `bin/setup/install_users.sh`,
 `bin/tests/install_dirs.sh`, `bin/tests/install_db.sh`, `bin/tests/install_core.sh --run`.
@@ -107,8 +114,15 @@ Dev mode requires both `VH_BUILD_MODE=dev` and the gitignored `enable_dev_mode` 
 
 ## Known test gaps
 
+- Copying a cloud file with no local copy (hydrate-then-copy in `Filesystem::copy`) has no test: `FsCopyDbTest`
+  covers local vaults, and the cloud fakes in `test_cloud_remote_read.cpp` are DB-free.
+- DB-backed suites share the process-wide `runtime::Deps` (fs cache, storage engines) across schema resets, so ids
+  reused by a later suite can hit an earlier suite's cached entries. `FsCopyDbTest` installs a fresh cache and reloads
+  engines in `SetUpTestSuite`; copy that if a suite drives ws handlers that reach the sync controller.
+
 - Web has no unit runner (`pnpm test` is typecheck + lint only).
-- No seeded DB tests for the stats rollups or share stats. No operator-email dedupe, digest scheduler, or security-enqueue tests.
+- Stats: `StatsAccessTest` covers who may read stats, the overview payload contract and that 24 h trends come from the
+  rollups; there are still no seeded DB tests for the other stats rollups or share stats. No operator-email dedupe, digest scheduler, or security-enqueue tests.
 - DB loss/reconnect and pool exhaustion: `DBPoolReconnectTest` (`test_db_pool_reconnect.cpp`) kills pool backends
   with `pg_terminate_backend` (never restart the shared system PostgreSQL). Its unreachable-DB case needs a
   non-superuser test role that owns its DB, and skips otherwise. A burner DB works:

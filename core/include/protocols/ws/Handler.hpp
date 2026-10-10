@@ -22,6 +22,7 @@ class Handler {
     static void registerS3GatewayHandlers(const std::shared_ptr<Router>& r);
     static void registerGroupHandlers(const std::shared_ptr<Router>& r);
     static void registerStatHandlers(const std::shared_ptr<Router>& r);
+    static void registerSyncConflictHandlers(const std::shared_ptr<Router>& r);
     static void registerDashboardPreferenceHandlers(const std::shared_ptr<Router>& r);
     static void registerShareManagementHandlers(const std::shared_ptr<Router>& r);
     static void registerShareSessionHandlers(const std::shared_ptr<Router>& r);

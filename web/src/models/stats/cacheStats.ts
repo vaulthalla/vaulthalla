@@ -13,7 +13,9 @@ export interface ICacheStats {
   bytes_read: number
   bytes_written: number
   used_bytes: number
-  capacity_bytes: number
+  // null when the cache has no byte cap (the FS metadata cache); free_bytes follows it.
+  capacity_bytes: number | null
+  free_bytes?: number | null
   op: IOpCacheStats
 }
 
@@ -36,7 +38,8 @@ export class CacheStats implements ICacheStats {
   bytes_read: number = 0
   bytes_written: number = 0
   used_bytes: number = 0
-  capacity_bytes: number = 0
+  capacity_bytes: number | null = null
+  free_bytes: number | null = null
   op: IOpCacheStats = new OpCacheStats()
 
   constructor(data: Partial<ICacheStats>) {
