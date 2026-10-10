@@ -61,10 +61,18 @@ The build needs the private icons (`$VAULTHALLA_WEB_ICON_SRC`, default `~/vaulth
   1.8.x packages shipped -O0 and unhardened: a `cpp_args` default_option made meson drop dpkg-buildflags.
 - `build_and_test.yml` (push/PR to main): `build` (composite `runner`: core build at -O0 with -Werror → tests → web)
   and `tooling` (installs `vl-release`, `bash tools/dev/verify.sh release packaging lifecycle`, shellcheck).
+  - **Push gate (#185, 2026-10-10):** on pushes, a `gate` job (`ubuntu-latest`, seconds, `.github/scripts/ci_gate.py`)
+    skips `build`/`tooling` when CI already tested the exact tree: a merged PR whose head has the pushed commit's tree
+    and a `pull_request` run whose `build` job succeeded (i.e. the branch was up to date), or a `vlr cut` commit
+    (`chore(release): vX.Y.Z`, the push's only commit, tagged `vX.Y.Z`) whose parent is covered. A gated skip never
+    counts as a passing build. Direct pushes always build; PRs always build; any gate error builds (fails open).
+    `vlr finalize` commits carry `[skip ci]` (`release.toml` `finalize_commit_message`). Never add a skip marker to
+    the cut commit: the tag points at it and GitHub would skip `release.yml`. Contract: `tools/contracts/test_ci_gate_contract.py`.
+    `main`'s ruleset has no required status checks, so an untested PR merge simply gets the full push build.
 - `release.yml` (tag `v*`, or `workflow_dispatch` with `ref` + `publish: dry-run|publish`):
-  `release-check` (`vlr check --release --tag`, `vlr version check`) → `contracts-verify`, `web-verify`,
-  `docs-validate` → `release-artifacts` (`vlr prepare --record release/meta/prepare.json`, `build-deb`,
-  `check_build_flags.py release/build-deb.log`, `checksums`, `validate-artifacts`; uploads `release/`) → `publish-debian` → `github-release` →
+  `release-check` (`vlr check --release --tag`, `vlr version check`) → `contracts-verify`, `web-verify` (typecheck/lint/colors
+  only, no build), `docs-validate` → `release-artifacts` (`vlr prepare --record release/meta/prepare.json`, `build-deb`
+  (its pre_build is the release's only web build), `pnpm --dir web budgets`, `check_build_flags.py release/build-deb.log`, `checksums`, `validate-artifacts`; uploads `release/`) → `publish-debian` → `github-release` →
   `finalize`; `docs-publish` needs only `docs-validate` + `publish-debian`.
   - Every downstream job re-runs `vlr prepare` (deterministic: dates come from the release commit) and downloads the
     artifact; `finalize` passes `--record` so it persists exactly what was built and published.

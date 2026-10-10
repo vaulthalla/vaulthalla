@@ -26,7 +26,33 @@ env:
   VAULTHALLA_WEB_ICON_SRC: /opt/vaulthalla-web-icons
 
 jobs:
+  # Pushes to main skip the build when CI already tested the exact tree they land: a merged, up-to-date pull request,
+  # or a `vlr cut` release commit (release.yml builds it) on a tested parent. Direct pushes always build. The gate
+  # runs on a GitHub-hosted runner (seconds, no VPS slot) and fails open. `vlr finalize` commits carry [skip ci]
+  # (release.toml), so they never start this workflow. See .github/scripts/ci_gate.py (#185).
+  gate:
+    name: Decide whether this push needs CI
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+      - id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/ci_gate.py
+
   build:
+    needs: gate
+    if: ${{ !cancelled() && needs.gate.outputs.run != 'false' }}
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || fromJSON('["self-hosted","Linux","X64","vaulthalla","vps-ci"]') }}
     defaults:
       run:
@@ -42,6 +68,8 @@ jobs:
 
   tooling:
     name: Release contract, packaging contracts, lifecycle and lab tests, shellcheck
+    needs: gate
+    if: ${{ !cancelled() && needs.gate.outputs.run != 'false' }}
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || fromJSON('["self-hosted","Linux","X64","vaulthalla","vps-ci"]') }}
     defaults:
       run:
