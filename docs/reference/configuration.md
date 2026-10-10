@@ -131,7 +131,6 @@ sharing:
   enabled: true                # every share link
   enable_anonymous: true       # public links: anyone with the URL
   enable_email_validated: true # links whose recipients verify an invited email address
-  enable_internal: true        # reserved; no link kind uses it yet
 ```
 
 Turning a switch off also stops links of that kind that were already handed out; turning it back on restores them. `enable_email_validated` was called `enable_public_links` before; the old name is still read, with a deprecation warning, and the new name wins if both are set. See [Sharing](/sharing#turning-sharing-off).

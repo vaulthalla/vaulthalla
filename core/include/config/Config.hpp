@@ -176,12 +176,10 @@ struct ServicesConfig {
 // sharing.* (#164), enforced by share::policy at link creation and on every use of a link.
 // enabled is the wide gate: off, no link can be created, opened or used. Each enable_* gates one kind of link:
 // enable_anonymous: access_mode "public" (anyone with the link); enable_email_validated: access_mode
-// "email_validated" (recipient proves an invited address). enable_internal is reserved for links to signed-in vault
-// users, a kind Vaulthalla does not have yet. config.yaml still accepts enable_public_links as a deprecated alias of
-// enable_email_validated.
+// "email_validated" (recipient proves an invited address). Access for signed-in vault users is RBAC policy, not a
+// share switch. config.yaml still accepts enable_public_links as a deprecated alias of enable_email_validated.
 struct SharingConfig {
     bool enabled = true;
-    bool enable_internal = true;
     bool enable_anonymous = true;
     bool enable_email_validated = true;
 };

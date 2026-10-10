@@ -1356,9 +1356,7 @@ TEST(SharePolicy, RefusalNamesTheSwitchThatIsOff) {
     EXPECT_EQ(policy::refusal(sharing, AccessMode::EmailValidated),
               "Email-verified share links are disabled on this server");
 
-    // enable_internal gates no link kind yet.
     sharing.enable_email_validated = true;
-    sharing.enable_internal = false;
     EXPECT_FALSE(policy::refusal(sharing, AccessMode::Public));
 
     sharing.enabled = false;

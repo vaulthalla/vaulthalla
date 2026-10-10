@@ -34,7 +34,6 @@ sharing:
   enabled: true
   enable_anonymous: true
   enable_email_validated: true
-  enable_internal: true
 ```
 
 | Key | Turns off |
@@ -42,7 +41,6 @@ sharing:
 | `enabled` | Every share link. |
 | `enable_anonymous` | Public links (anyone with the URL). |
 | `enable_email_validated` | Email-validated links. |
-| `enable_internal` | Nothing yet. It is reserved for links to signed-in vault users, which Vaulthalla does not have. |
 
 A switch that is off refuses new links of that kind, and links already handed out stop opening, previewing, downloading and accepting uploads; recipients see that sharing is disabled on this server. Nothing is deleted: the links come back when the switch is turned on again. Share owners can still list, revoke and rotate their links while sharing is off. Console changes apply at once; edits to `config.yaml` apply after `sudo systemctl restart vaulthalla`.
 

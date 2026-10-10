@@ -38,11 +38,10 @@ export interface AuthSettings extends SettingsSection {
 }
 
 // sharing.* (core share::policy): `enabled` gates every link; the others gate one kind each. enable_anonymous is
-// access_mode 'public', enable_email_validated is 'email_validated'; enable_internal is reserved (no such links yet).
+// access_mode 'public', enable_email_validated is 'email_validated'. Signed-in vault users are governed by RBAC.
 // Daemons before #164 sent enable_public_links instead of enable_email_validated.
 export interface SharingSettings extends SettingsSection {
   enabled: boolean
-  enable_internal: boolean
   enable_anonymous: boolean
   enable_email_validated: boolean
 }

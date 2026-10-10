@@ -137,7 +137,6 @@ sharing:
   enabled: true                # Master switch for all share links
   enable_anonymous: true       # Links anyone with the URL can open
   enable_email_validated: true # Links that require the recipient to verify an invited email address
-  enable_internal: true        # Reserved for links to signed-in vault users (not available yet)
 
 
 # === 🗃️ VAULTS: DEFAULTS, DELETION & RETENTION ===

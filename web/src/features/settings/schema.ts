@@ -207,12 +207,6 @@ export const SECTIONS: SectionDef[] = [
         hint: 'Links whose recipients confirm an invited address.',
         type: bool,
       },
-      {
-        key: 'enable_internal',
-        label: 'Shares to vault users',
-        hint: 'Reserved: Vaulthalla has no shares to signed-in users yet.',
-        type: bool,
-      },
     ],
   },
   {

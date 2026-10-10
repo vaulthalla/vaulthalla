@@ -16,7 +16,6 @@ namespace vh::config { struct SharingConfig; }
 //   sharing.enabled                 every link
 //   sharing.enable_anonymous        access_mode "public": anyone holding the URL
 //   sharing.enable_email_validated  access_mode "email_validated": the recipient verifies an invited address
-//   sharing.enable_internal         no access mode yet (links to signed-in vault users don't exist)
 namespace vh::share::policy {
 
 // Why links of this mode are refused under `sharing`, or nullopt when they are allowed. No mode: the master switch only.

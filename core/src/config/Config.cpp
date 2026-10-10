@@ -726,7 +726,6 @@ Config& Config::operator=(Config&&) noexcept = default;
     void to_json(nlohmann::json &j, const SharingConfig &c) {
         j = {
             {"enabled", c.enabled},
-            {"enable_internal", c.enable_internal},
             {"enable_anonymous", c.enable_anonymous},
             {"enable_email_validated", c.enable_email_validated}
         };
@@ -734,7 +733,6 @@ Config& Config::operator=(Config&&) noexcept = default;
 
     void from_json(const nlohmann::json &j, SharingConfig &c) {
         c.enabled = j.value("enabled", true);
-        c.enable_internal = j.value("enable_internal", true);
         c.enable_anonymous = j.value("enable_anonymous", true);
         // enable_public_links: the pre-#164 name; the new key wins when both are present.
         c.enable_email_validated = j.contains("enable_email_validated") ? j.at("enable_email_validated").get<bool>()

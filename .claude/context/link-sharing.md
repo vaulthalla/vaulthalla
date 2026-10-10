@@ -22,9 +22,8 @@ for archaeology, because parts of it are stale (for example, it says uploads sta
 - **Operator switches (`sharing.*`, #164) are enforced by `share::policy` (`share/Policy.hpp`), fail closed with
   `ops::Denied` (ws code `denied`, HTTP 403).** `enabled` gates every link; `enable_anonymous` gates access mode
   `public`; `enable_email_validated` (formerly `enable_public_links`, still read as an alias) gates
-  `email_validated`; `enable_internal` gates nothing yet (there is no internal link kind; adding one needs a
-  `share_link.access_mode` CHECK migration). Checked in `share::Manager` on create, update (an update can't move a
-  link into a disabled kind), `resolvePublicLink`/`openPublicSession`, both email-challenge steps and
+  `email_validated`. Signed-in vault users' access is RBAC policy, not a switch. Checked in `share::Manager` on
+  create, update (an update can't move a link into a disabled kind), `resolvePublicLink`/`openPublicSession`, both email-challenge steps and
   `resolvePrincipal`, and in `share::TargetResolver::resolve` on every file access, so principals cached by the HTTP
   lane (and live ws share sessions) stop too. `Principal::access_mode` carries the link's mode for that. Management
   (get/list/revoke/rotate) is never gated. A settings change that touches `sharing` bumps `rbac::policyEpoch()`.

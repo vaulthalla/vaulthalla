@@ -45,7 +45,6 @@ TEST_F(ConfigSettingsTest, MissingSectionsKeepTheDefaults) {
     std::vector<std::string> deprecations;
     const auto cfg = load("dev:\n  enabled: false\n", &deprecations);
     EXPECT_TRUE(cfg.sharing.enabled);
-    EXPECT_TRUE(cfg.sharing.enable_internal);
     EXPECT_TRUE(cfg.sharing.enable_anonymous);
     EXPECT_TRUE(cfg.sharing.enable_email_validated);
     EXPECT_EQ(cfg.vaults.s3.default_remote_sync_strategy, "cache");
@@ -60,7 +59,6 @@ TEST_F(ConfigSettingsTest, NewKeysParse) {
     const auto cfg = load(R"(
 sharing:
   enabled: true
-  enable_internal: false
   enable_anonymous: false
   enable_email_validated: true
 vaults:
@@ -70,7 +68,6 @@ vaults:
 websocket_server:
   max_connections: 64
 )", &deprecations);
-    EXPECT_FALSE(cfg.sharing.enable_internal);
     EXPECT_FALSE(cfg.sharing.enable_anonymous);
     EXPECT_TRUE(cfg.sharing.enable_email_validated);
     EXPECT_EQ(cfg.vaults.s3.default_remote_sync_strategy, "mirror");
@@ -141,7 +138,6 @@ TEST_F(ConfigSettingsTest, InvalidNewValueRefusesToLoad) {
 TEST(ConfigSettingsSerialization, YamlRoundTripWritesOnlyTheNewKeys) {
     config::Config cfg;
     cfg.sharing.enable_anonymous = false;
-    cfg.sharing.enable_internal = false;
     cfg.vaults.s3.default_remote_sync_strategy = "mirror";
     cfg.vaults.s3.default_remote_conflict_policy = "ask";
 
@@ -227,7 +223,6 @@ TEST(ShippedConfig, UsesTheNewKeysWithTheirDefaults) {
     const auto cfg = config::loadConfig(path.string(), &deprecations);
     EXPECT_TRUE(deprecations.empty()) << deprecations.front();
     EXPECT_TRUE(cfg.sharing.enabled);
-    EXPECT_TRUE(cfg.sharing.enable_internal);
     EXPECT_TRUE(cfg.sharing.enable_anonymous);
     EXPECT_TRUE(cfg.sharing.enable_email_validated);
     EXPECT_EQ(cfg.vaults.s3.default_remote_sync_strategy, "cache");

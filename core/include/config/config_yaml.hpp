@@ -560,7 +560,6 @@ struct convert<SharingConfig> {
     static Node encode(const SharingConfig& rhs) {
         Node node;
         node["enabled"] = rhs.enabled;
-        node["enable_internal"] = rhs.enable_internal;
         node["enable_anonymous"] = rhs.enable_anonymous;
         node["enable_email_validated"] = rhs.enable_email_validated;
         return node;
@@ -569,7 +568,6 @@ struct convert<SharingConfig> {
     static bool decode(const Node& node, SharingConfig& rhs) {
         if (!node.IsMap()) return false;
         rhs.enabled = node["enabled"].as<bool>(true);
-        rhs.enable_internal = node["enable_internal"].as<bool>(true);
         rhs.enable_anonymous = node["enable_anonymous"].as<bool>(true);
         // enable_public_links is the pre-#164 name of enable_email_validated; the new key wins when both are set.
         if (node["enable_email_validated"]) rhs.enable_email_validated = node["enable_email_validated"].as<bool>();
