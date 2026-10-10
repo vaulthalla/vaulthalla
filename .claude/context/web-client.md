@@ -40,7 +40,8 @@
   `bin/check-colors.mjs` fails on raw palette/arbitrary colors outside `components/ui`. `/dev/ui` (development
   builds only) renders every primitive.
 - **Shell:** `src/components/shell/*` — permission-filtered rail (collapsible), top bar (⌘K command palette, health
-  dot from `stats.dashboard.severity` for `admin.stats.view`, transfers, cost-alerts bell, user menu), session gate (reconnecting state, never
+  dot from `stats.dashboard.severity` for `admin.stats.view`, Sync Conflicts button, transfers, cost-alerts bell, user
+  menu), session gate (reconnecting state, never
   an endless spinner), initial-password warning (`data-testid="initial-password-warning"`).
 - **Cost-alerts bell** (`features/cost/NotificationsBell.tsx`, super admins only): `pricing.notifications.list`
   `{limit: 8, include_acknowledged: false}` every 60 s (paused in hidden tabs). The badge count (capped "9+") and tone
@@ -50,7 +51,31 @@
 - **Features:** `src/features/<area>/*`; route files in `src/app/**/page.tsx` are thin and render a feature
   component. Areas: `files` (FileBrowser over an `FsSource` adapter — vault or share — with capability-driven UI,
   URL-addressed paths, virtualized list/grid, transfer manager), `shares`, `share` (anonymous recipient page),
-  `health`, `vaults`, `access`, `account`, `credentials`, `cost`, `gateway`, `notifications`, `settings`, `auth`.
+  `health`, `vaults`, `access`, `account`, `credentials`, `cost`, `gateway`, `notifications`, `settings`, `auth`,
+  `syncConflicts`.
+
+## Sync conflicts (#187)
+
+`features/syncConflicts/*`, route `/sync-conflicts`. Open conflicts recorded under the remote `ask` policy, only in
+vaults where the account holds `vault.sync.action.resolve_conflicts` (core filters; resolving also needs filesystem
+Overwrite, reported per row as `can_overwrite`).
+- **One poller:** `summary.ts` `useSyncConflictSummary()` reads `sync.conflicts.summary` every 60 s (paused in hidden
+  tabs; stops on denied/"Unknown command"). The top-bar `SyncConflictsButton` (count badge capped "9+",
+  `data-testid="sync-conflicts-button"`) and the System → "Sync Conflicts" nav item (`NavItem.shownWhen:
+  'syncConflicts'`, filtered in `useVisibleNav`, so rail, mobile nav and ⌘K agree) both hide while the total is 0 or
+  the query fails.
+- **Page:** `sync.conflicts.list {vault_id?}` in a DataTable with checkboxes + select-all (rows without Overwrite
+  can't be selected), a vault filter from the summary's vaults (only vaults with conflicts), per-row and bulk Keep
+  local / Keep remote (bulk behind `confirm()`), and a results panel listing every item that was not resolved with
+  its status and message (`sync.conflicts.resolve` is per item; batches over 500 ids are split client-side; 10 min
+  client timeout). Lists and summary are invalidated after every resolve.
+- **Preview sheet** (`ConflictSheet`, lazy): metadata comparison (size, modified, hash, type, ETag, encrypted in
+  bucket) always; images/video/audio side by side (local `src=/download/conflict?conflict_id&side=local`, remote
+  fetched once into a Blob/object URL); text/markdown as an aligned side-by-side line diff (`lineDiff.ts`, Myers with
+  common prefix/suffix trimming, gives up past 1000 differing lines; `TextDiff` is its own lazy chunk) when both sides
+  are ≤ 2 MiB and strict UTF-8; other types metadata only. The remote side is metered: it loads with the sheet only
+  when ≤ 2 MiB, larger copies need a "Load the bucket copy" click, and anything over the daemon's 32 MiB cap is not
+  requested. 409/413/503 from the lane become messages.
 
 ## Vault deletion (#162)
 
@@ -105,7 +130,7 @@ page, accounts with a vault remove permission) lists `storage.vault.deleted.list
 `/login`, `/files/[vaultId]/[...path]`, `/shares`, `/vaults` (+ `/new`, `/[id]` tabs: overview, access, shares,
 sync, gateway, settings), `/users` (+ `/new`, `/[name]`), `/groups`, `/roles` (+ `/new?type=`, `/[type]/[id]`),
 `/credentials` (+ `/new`, `/[id]`), `/cost`, `/s3-gateway`, `/health` (+ runtime, filesystem, storage, activity),
-`/notifications`, `/settings`, `/account`, `/share/[token]/[...path]` (public, no shell). Old URLs (`/fs`,
+`/notifications`, `/settings`, `/sync-conflicts`, `/account`, `/share/[token]/[...path]` (public, no shell). Old URLs (`/fs`,
 `/dashboard/*`, `/api-keys/*`, `/pricing-budget`, `/operator-email`, `/users/add`, `/vaults/:id/edit|assign`,
 `/roles/admin|vault/*`) redirect (`next.config.ts`).
 

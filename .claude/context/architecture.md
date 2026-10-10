@@ -164,7 +164,12 @@ for PDFs; `scale` accepted and ignored), `POST /preview/batch` (≤ 200 items, p
 `ready|queued|missing|unsupported|error`, never fetches remote-only files), `GET|HEAD /download/content` (original
 bytes, inline by default), `GET|HEAD /download` (files stream with no size cap; directories stream a STORE ZIP,
 see "Folder ZIPs" below), `GET /preview/derived?kind=&variant=` (200 artifact | 202 queued + Retry-After |
-415 | 422 `conversion_failed` | 503 `converter_unavailable`/`busy`), `PUT /upload/text`.
+415 | 422 `conversion_failed` | 503 `converter_unavailable`/`busy`), `PUT /upload/text`, `GET|HEAD /download/conflict?
+conflict_id&side=local|remote` (#187, humans only: `ops::conflicts::previewTarget` = resolve_conflicts + filesystem Read;
+409 when the conflict is closed; local side served like `/download/content` with remote fetch off; remote side fetched
+on demand by `sync::ConflictResolver::fetchRemoteForPreview`: price preflight `conflict_preview`, a usage capture of
+1 HEAD + 1 GET + the cap, If-Match the HEAD's ETag, decrypted in memory, never stored, ≤ 32 MiB (413 `too_large`),
+Range ignored; HEAD answers from the recorded artifact without contacting the bucket).
 - **Server.** One thread per connection, capped by `http_preview_server.max_connections` (over the cap: raw `503` +
   `Retry-After: 1`). `TimedStream` polls a non-blocking socket against real deadlines (idle keep-alive 20 s,
   read/write inactivity 60 s); `SO_RCVTIMEO` was ignored by Asio. Long streams never occupy a shared pool slot.
@@ -302,7 +307,7 @@ see "Folder ZIPs" below), `GET /preview/derived?kind=&variant=` (200 artifact | 
 
 ## Database
 
-- PostgreSQL via libpqxx. The schema is `deploy/psql/000…106_*.sql`, applied in order (all in ONE transaction by `core/seed/include/SqlDeployer.hpp`) and installed to `/usr/share/vaulthalla/psql`.
+- PostgreSQL via libpqxx. The schema is `deploy/psql/000…107_*.sql`, applied in order (all in ONE transaction by `core/seed/include/SqlDeployer.hpp`) and installed to `/usr/share/vaulthalla/psql`.
   New migrations take the next number and must be idempotent against upgraded installs. SqlDeployer records sha256(raw bytes)
   per file and refuses to start on a mismatch, so **never edit a shipped migration**: 020/060/082 were edited in place and
   bricked upgrades (1.5.x→1.6.x crash loop on 060). Reviewed exceptions live in `kHistoricalMigrationChecksums` (accepted, recorded
@@ -342,9 +347,9 @@ ignored; an invalid new value refuses to start). It collects one message per old
 `config::Registry::deprecations()` after the log registry is up (config loads before logging). `Config::save`
 writes only the new keys, so a console save migrates the file. The settings JSON accepts the old spellings when the
 new ones are absent. `ops::vaults::create` starts S3 policies from `vaults.s3.*` (CLI interactive prompts offer the
-same defaults); gateway remote-cache buckets stay explicit `cache` + `keep_local`. Remote `ask` only records the
-conflict (no resolve command exists), so the default stays `keep_local`. `settings.policy.get` (any signed-in user)
-returns `{policy: {sharing, vaults}}`; `settings.get` stays super admin only.
+same defaults); gateway remote-cache buckets stay explicit `cache` + `keep_local`. Since #187 the remote default is
+`ask` (conflicts are resolvable; see "Sync conflicts" below); existing vaults keep their stored policy.
+`settings.policy.get` (any signed-in user) returns `{policy: {sharing, vaults}}`; `settings.get` stays super admin only.
 
 ### Converter helpers (`core/tools`, `preview::derive`)
 
@@ -422,7 +427,8 @@ Migrated families (each with `test_ops_parity_<family>.cpp`): `groups`, `roles`,
 safe deletion/restore, sync policy), `users`, `s3_gateway` (credentials, grants, buckets, credential budgets), `pricing` (price budget
 policies), `config` (every settings write: one validation, one apply step that restarts the S3 gateway when
 `s3_gateway.enabled` changes), `stats` (authorization only, ws-only: there is no `vh` stats command; `vh status`
-is deliberately ungated, see Stats below). Still per-surface: the ws-only pricing preflight/override/notification endpoints,
+is deliberately ungated, see Stats below), `conflicts` (sync conflicts, #187: ws `sync.conflicts.*`, `vh sync resolve` /
+`vh resolve`, the HTTP `/download/conflict` lane's authorization). Still per-surface: the ws-only pricing preflight/override/notification endpoints,
 email test-send/history, vault keys/sync diagnostics, and lifecycle commands (`setup`, `teardown`, `secrets`).
 
 Rules the families hold (keep them in ops, never re-add them in a handler):
@@ -524,6 +530,39 @@ stage "Copy And Delete")
 - An account whose API keys are bound to any vault (deleted ones included, until purged) cannot be deleted.
 - A vault role assigned only on deleted vaults is not in use (`count_vault_role_assignments_by_role_id` joins live
   vaults): deleting it cascades those assignments, and a restore brings the vault back without them.
+
+**Sync conflicts** (#187, migration 107, `sync/model/Baseline.*`, `db/query/sync/Conflict.*`, `sync/ConflictResolver.*`,
+`ops/Conflicts.*`; `SyncConflictsTest`, `ConflictParityTest`, `SqlDeployerHistoryDb.SyncConflictMigration*`)
+- One open (`resolution = 'unresolved'`) row per file (`uq_sync_conflicts_open_file`). `sync::Cloud::initBins` loads the
+  vault's baselines and open conflicts; the Planner decides; `Cloud::flushConflictState` (via `planPass`) writes them
+  in one transaction before anything executes. An open row's artifacts are refreshed in place only when a side
+  changed. Closed as `kept_local|kept_remote` (a decision, or the policy once it is no longer `ask`), `converged` (both
+  sides agree again), `superseded` (remote side gone; duplicates closed by 107). `event_id` is the first run that saw
+  it and is `ON DELETE SET NULL` (event retention no longer deletes open conflicts). Auto-resolved conflicts under
+  `keep_*` stay per-event history rows (`sync_conflict.upsert`); `Event::upsert` skips unresolved ones.
+- **Detection under `ask` is two-sided only.** `files.content_hash` is blake2b of the *sealed* backing file, so a
+  download re-sealed under a fresh IV never hashes like the object it came from, and `hasPotentialConflict` (size or
+  hash differ) fires on any one-sided edit. `sync_file_baseline` records each side's identity when they last agreed
+  (local hash/size; remote index hash, ETag, size), written on agreement (`Cloud::noteInSync`) and after every
+  successful upload/download/index refresh (`sync::tasks::recordBaseline`) and resolution. `Baseline::classify`:
+  LocalOnly → Upload, RemoteOnly → Download (archive tier skipped), InSync → nothing, Both or Unknown (no baseline) →
+  conflict. `keep_*` policies are unchanged (they still treat any difference as theirs to settle). Known pre-existing
+  churn (from reading the code, no test): under `keep_remote`/`keep_newest` a file downloaded from another writer's
+  object differs by hash on the next pass and is downloaded again (not changed here).
+- **Resolution** (`ConflictResolver::resolve`, trusted; `ops::conflicts::resolve` authorizes per item): the local row
+  must still match the local artifact and one HEAD must still match the remote artifact (ETag, else content-hash
+  metadata, else size, + 16 for GCM when encrypted), else `ConflictStale` (status `conflict`). keep_local =
+  `CloudEngine::upload` + `applyRemoteIndexMutation`; keep_remote = `fetchRemotePlaintext` (streamObject, If-Match the
+  HEAD's ETag, the object's own vh-iv/key version adopted from the HEAD) + `replaceLocalContent` (createFile with
+  `expected_source_id` = the checked generation: a true CAS against FUSE/HTTP writes). Price preflight
+  `conflict_resolve` (Planner estimate + the HEAD), per-thread `ScopedS3RequestUsageCapture` under the vault's
+  request budget (never the engine-wide budget a running pass owns), no FS/DB lock across network work, then one
+  transaction closes the row and records the baseline. One in-flight decision per conflict per process.
+- **Who:** `vault.sync.action.resolve_conflicts` (sync action bit 2 = mask bit 10) **plus** filesystem Overwrite on the
+  file (Read for previews). `ops::conflicts::canResolveIn` = the vault resolver (owner self scope, admin vault globals)
+  OR a vault role on that vault (the account's or a group's). The vault resolver itself only reads vault globals for
+  sync/roles permissions, so vault-role `sync.action.trigger`/`sign_waiver` are still not honoured anywhere (gap, not
+  changed here). Lists/summary include only vaults the actor can resolve in; deleted vaults are excluded.
 
 **Operator email** (`email/`, `notifications/`, `085_operator_notifications.sql`, `vh email …`)
 - Provider secrets are encrypted in `internal_secrets` and entered by hidden prompt. They never go in `.env` or files, and are never logged or rendered.
