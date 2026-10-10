@@ -21,6 +21,11 @@
 - **Server data:** TanStack Query over ws (`src/lib/query.ts`: `useWs`, `useWsMutation`, `invalidate`, `fetchWs`).
   Polling = `refetchInterval` (deduped, ref-counted, paused in hidden tabs). No Zustand stores for server data;
   Zustand only for client state (transfers, UI prefs, confirm/palette state).
+- **Server policy:** `src/lib/serverPolicy.ts` `useServerPolicy()` reads `settings.policy.get` (any signed-in user:
+  `sharing.*` switches and `vaults.s3.*` defaults). `features/shares/policy.ts` turns it into the share kinds that
+  may be created: FilesPage drops "Share link…" when none, the share dialog offers only allowed kinds, and
+  `SharingNotice` (`data-testid="sharing-disabled-notice"`) explains on link lists. The new-vault form seeds its S3
+  strategy/conflict from the defaults unless the user changed them. The daemon enforces all of it; the UI only hides.
 - **Permissions (UI only):** `src/lib/permissions.ts` `useCan({admin|permission|anyOf|prefix})`, mirroring core
   `User::isAdmin()`. Nav items declare `requires`; pages render a typed denied state.
 - **Design system:** tokens in `src/app/globals.css` (dark only; one cyan accent; `surface-1/2/3`, `line`,

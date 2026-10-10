@@ -63,6 +63,8 @@ sudo nginx -t
 
 If the dashboard loads but filesystem or vault data does not, check the user's admin role, vault role, and group membership.
 
+If the console keeps showing its reconnecting state and the journal has `Connection limit (websocket_server.max_connections = N) reached`, every WebSocket slot is taken (each open console tab and public share page holds one). Close idle tabs or raise `websocket_server.max_connections`.
+
 ## Previews And Media
 
 Start with the basics:
@@ -210,6 +212,7 @@ If key material may be missing, stop and preserve current PostgreSQL, `/var/lib/
 Check:
 
 - The share is still enabled.
+- Sharing is allowed for that kind of link: "Sharing is disabled on this server" (or "Anonymous share links are disabled" / "Email-verified share links are disabled") means the operator turned the matching `sharing` switch off. See [Turning Sharing Off](/sharing#turning-sharing-off).
 - The URL was copied at create or rotate time.
 - The recipient completed email validation if required.
 - Operator email is healthy for email-validated shares.

@@ -92,6 +92,13 @@ healthy/degraded/critical and includes a live `SELECT 1` DB probe.
 
 ### WebSocket flow
 
+**Connection cap (#164).** `ws::Server::onAccept` takes a `ConnectionSlot` (`protocols/ws/ConnectionLimit.hpp`)
+under `websocket_server.max_connections` (read per accept, default 1024, 0 acts as 1); over the cap the socket gets
+a raw `503` + `Retry-After: 1` without reading the upgrade request, and a warning at most once a minute with the
+refused count. The session holds the slot and gives it back on its first `close()` (or destruction); connections
+that fail before the websocket handshake (header read, hydration, handshake error) now `close()` at once instead of
+lingering in the session manager until the lifecycle sweep.
+
 The web client builds `ws(s)://<host>/ws` in `web/src/util/getUrl.ts` (overridable with `NEXT_PUBLIC_VAULTHALLA_WS_ORIGIN`).
 `web/src/stores/useWebSocket.ts` handles reconnect, the pending-request map keyed by `requestId`, and token injection.
 Router allowlists are **exact and per session mode**: unauthenticated, human, pending-share, and ready-share.
@@ -311,6 +318,17 @@ converter-helper runner/queue (`derive/`, below) · `protocols` · `rbac` roles/
 sharing · `stats` dashboard telemetry + snapshots · `storage` local + S3 backends, remote index · `sync`
 controller, strategies `cache|sync|mirror`, cost guardrails · `vault` vault model, slugs, FUSE names ·
 `ops` actor-authorized operations shared by the CLI and ws handlers (below).
+
+**Config keys renamed or moved (#164).** `config.yaml` is never rewritten on upgrade, so `loadConfig` keeps reading
+the old spellings: `sharing.enable_public_links` → `sharing.enable_email_validated`, and
+`s3_gateway.default_remote_{sync_strategy,conflict_policy}` → `vaults.s3.*` (new key wins; an invalid old value is
+ignored; an invalid new value refuses to start). It collects one message per old key and `main.cpp` logs them via
+`config::Registry::deprecations()` after the log registry is up (config loads before logging). `Config::save`
+writes only the new keys, so a console save migrates the file. The settings JSON accepts the old spellings when the
+new ones are absent. `ops::vaults::create` starts S3 policies from `vaults.s3.*` (CLI interactive prompts offer the
+same defaults); gateway remote-cache buckets stay explicit `cache` + `keep_local`. Remote `ask` only records the
+conflict (no resolve command exists), so the default stays `keep_local`. `settings.policy.get` (any signed-in user)
+returns `{policy: {sharing, vaults}}`; `settings.get` stays super admin only.
 
 ### Converter helpers (`core/tools`, `preview::derive`)
 

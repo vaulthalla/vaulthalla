@@ -25,6 +25,29 @@ Vaulthalla shares expose selected file or directory access through scoped links.
 
 Use email validation for sensitive data or when you need recipient-level control.
 
+## Turning Sharing Off
+
+Operators control which links work with the `sharing` section of `/etc/vaulthalla/config.yaml`, or **Settings → Sharing** in the web console (super admins):
+
+```yaml
+sharing:
+  enabled: true
+  enable_anonymous: true
+  enable_email_validated: true
+  enable_internal: true
+```
+
+| Key | Turns off |
+| --- | --- |
+| `enabled` | Every share link. |
+| `enable_anonymous` | Public links (anyone with the URL). |
+| `enable_email_validated` | Email-validated links. |
+| `enable_internal` | Nothing yet. It is reserved for links to signed-in vault users, which Vaulthalla does not have. |
+
+A switch that is off refuses new links of that kind, and links already handed out stop opening, previewing, downloading and accepting uploads; recipients see that sharing is disabled on this server. Nothing is deleted: the links come back when the switch is turned on again. Share owners can still list, revoke and rotate their links while sharing is off. Console changes apply at once; edits to `config.yaml` apply after `sudo systemctl restart vaulthalla`.
+
+Older configuration files name `enable_email_validated` `enable_public_links`. That name is still read (the daemon logs a deprecation warning at startup); rename it when convenient. If both are present, `enable_email_validated` wins.
+
 ## Presets
 
 Common presets include:
