@@ -343,196 +343,10 @@ void vh::db::Connection::initPreparedStatsSnapshots() const {
                 SELECT
                     $1::int AS window_hours,
                     CURRENT_TIMESTAMP - ($1::int * INTERVAL '1 hour') AS cutoff,
+                    -- #160: every window reads the rollups (written with each sample batch, so the current bucket is
+                    -- live). Windows up to 7 days use 5-minute buckets, longer ones hourly, so a shorter window never
+                    -- returns more points than a longer one (24 h used to read raw ~10 s samples).
                     CASE WHEN $1::int <= 168 THEN 300 ELSE 3600 END AS rollup_resolution
-            ),
-            raw_typed AS (
-                SELECT
-                    CASE
-                        WHEN m.series_key <> '' THEN m.metric_key || ':' || m.series_key
-                        ELSE m.metric_key
-                    END AS metric_key,
-                    m.series_label AS label,
-                    m.unit,
-                    m.snapshot_type,
-                    m.window_end AS created_at,
-                    COALESCE(m.value_last, m.value_avg, m.value_max, m.value_min, m.rate_per_second, m.delta_value) AS value
-                FROM stats_metric_sample m
-                CROSS JOIN params p
-                WHERE p.window_hours <= 24
-                  AND m.scope = 'system'
-                  AND m.vault_id IS NULL
-                  AND m.window_end >= p.cutoff
-
-                UNION ALL
-
-                SELECT
-                    'threadpool_pressure' AS metric_key,
-                    'Aggregate pressure' AS label,
-                    'ratio' AS unit,
-                    'system.threadpools' AS snapshot_type,
-                    s.window_end AS created_at,
-                    s.pressure_avg AS value
-                FROM stats_threadpool_sample s
-                CROSS JOIN params p
-                WHERE p.window_hours <= 24
-                  AND s.pool_name = '__aggregate__'
-                  AND s.window_end >= p.cutoff
-
-                UNION ALL
-
-                SELECT
-                    'threadpool_pool_pressure:' || s.pool_name AS metric_key,
-                    s.pool_name || ' pressure' AS label,
-                    'ratio' AS unit,
-                    'system.threadpools' AS snapshot_type,
-                    s.window_end AS created_at,
-                    s.pressure_avg AS value
-                FROM stats_threadpool_sample s
-                CROSS JOIN params p
-                WHERE p.window_hours <= 24
-                  AND s.pool_name <> '__aggregate__'
-                  AND s.window_end >= p.cutoff
-
-                UNION ALL
-
-                SELECT
-                    'threadpool_queue_depth' AS metric_key,
-                    'Thread pool queue' AS label,
-                    'count' AS unit,
-                    'system.threadpools' AS snapshot_type,
-                    s.window_end AS created_at,
-                    s.queue_depth_avg AS value
-                FROM stats_threadpool_sample s
-                CROSS JOIN params p
-                WHERE p.window_hours <= 24
-                  AND s.pool_name = '__aggregate__'
-                  AND s.window_end >= p.cutoff
-
-                UNION ALL
-
-                SELECT
-                    'fuse_ops_per_second' AS metric_key,
-                    'FUSE ops/sec' AS label,
-                    'ops/s' AS unit,
-                    'system.fuse' AS snapshot_type,
-                    s.window_end AS created_at,
-                    SUM(s.count_delta)::double precision / NULLIF(MAX(s.window_seconds), 0) AS value
-                FROM stats_fuse_op_sample s
-                CROSS JOIN params p
-                WHERE p.window_hours <= 24
-                  AND s.window_end >= p.cutoff
-                  AND NOT s.counter_reset
-                GROUP BY s.window_end
-
-                UNION ALL
-
-                SELECT
-                    'fuse_total_ops' AS metric_key,
-                    'FUSE operations' AS label,
-                    'count' AS unit,
-                    'system.fuse' AS snapshot_type,
-                    s.window_end AS created_at,
-                    SUM(s.count_delta)::double precision AS value
-                FROM stats_fuse_op_sample s
-                CROSS JOIN params p
-                WHERE p.window_hours <= 24
-                  AND s.window_end >= p.cutoff
-                  AND NOT s.counter_reset
-                GROUP BY s.window_end
-
-                UNION ALL
-
-                SELECT
-                    'fuse_error_rate' AS metric_key,
-                    'FUSE alertable error rate' AS label,
-                    'ratio' AS unit,
-                    'system.fuse' AS snapshot_type,
-                    s.window_end AS created_at,
-                    SUM(s.alertable_error_delta)::double precision / NULLIF(SUM(s.count_delta), 0) AS value
-                FROM stats_fuse_op_sample s
-                CROSS JOIN params p
-                WHERE p.window_hours <= 24
-                  AND s.window_end >= p.cutoff
-                  AND NOT s.counter_reset
-                GROUP BY s.window_end
-
-                UNION ALL
-
-                SELECT
-                    'fuse_raw_error_rate' AS metric_key,
-                    'FUSE raw error rate' AS label,
-                    'ratio' AS unit,
-                    'system.fuse' AS snapshot_type,
-                    s.window_end AS created_at,
-                    SUM(s.error_delta)::double precision / NULLIF(SUM(s.count_delta), 0) AS value
-                FROM stats_fuse_op_sample s
-                CROSS JOIN params p
-                WHERE p.window_hours <= 24
-                  AND s.window_end >= p.cutoff
-                  AND NOT s.counter_reset
-                GROUP BY s.window_end
-
-                UNION ALL
-
-                SELECT
-                    'fuse_expected_error_rate' AS metric_key,
-                    'FUSE expected error rate' AS label,
-                    'ratio' AS unit,
-                    'system.fuse' AS snapshot_type,
-                    s.window_end AS created_at,
-                    SUM(s.expected_error_delta)::double precision / NULLIF(SUM(s.count_delta), 0) AS value
-                FROM stats_fuse_op_sample s
-                CROSS JOIN params p
-                WHERE p.window_hours <= 24
-                  AND s.window_end >= p.cutoff
-                  AND NOT s.counter_reset
-                GROUP BY s.window_end
-
-                UNION ALL
-
-                SELECT
-                    'fuse_latency_avg_ms' AS metric_key,
-                    'FUSE latency' AS label,
-                    'ms' AS unit,
-                    'system.fuse' AS snapshot_type,
-                    s.window_end AS created_at,
-                    SUM(s.avg_latency_ms * s.count_delta)::double precision / NULLIF(SUM(s.count_delta), 0) AS value
-                FROM stats_fuse_op_sample s
-                CROSS JOIN params p
-                WHERE p.window_hours <= 24
-                  AND s.window_end >= p.cutoff
-                  AND NOT s.counter_reset
-                  AND s.avg_latency_ms IS NOT NULL
-                GROUP BY s.window_end
-
-                UNION ALL
-
-                SELECT
-                    CASE WHEN s.source = 'http' THEN 'http_cache_hit_rate' ELSE 'fs_cache_hit_rate' END AS metric_key,
-                    CASE WHEN s.source = 'http' THEN 'HTTP cache hit rate' ELSE 'FS cache hit rate' END AS label,
-                    'ratio' AS unit,
-                    'system.cache' AS snapshot_type,
-                    s.window_end AS created_at,
-                    s.hit_rate AS value
-                FROM stats_cache_sample s
-                CROSS JOIN params p
-                WHERE p.window_hours <= 24
-                  AND s.window_end >= p.cutoff
-                  AND s.hit_rate IS NOT NULL
-
-                UNION ALL
-
-                SELECT
-                    CASE WHEN s.source = 'http' THEN 'http_cache_occupancy' ELSE 'fs_cache_occupancy' END AS metric_key,
-                    CASE WHEN s.source = 'http' THEN 'HTTP cache occupancy' ELSE 'FS cache occupancy' END AS label,
-                    'ratio' AS unit,
-                    'system.cache' AS snapshot_type,
-                    s.window_end AS created_at,
-                    s.occupancy_avg AS value
-                FROM stats_cache_sample s
-                CROSS JOIN params p
-                WHERE p.window_hours <= 24
-                  AND s.window_end >= p.cutoff
             ),
             rollup_typed AS (
                 SELECT
@@ -547,15 +361,12 @@ void vh::db::Connection::initPreparedStatsSnapshots() const {
                     COALESCE(r.value_last, r.value_avg, r.value_max, r.value_min, r.rate_per_second, r.delta_value) AS value
                 FROM stats_metric_rollup r
                 CROSS JOIN params p
-                WHERE p.window_hours > 24
-                  AND r.scope = 'system'
+                WHERE r.scope = 'system'
                   AND r.vault_id IS NULL
                   AND r.resolution_seconds = p.rollup_resolution
                   AND r.window_end >= p.cutoff
             ),
             typed AS (
-                SELECT * FROM raw_typed
-                UNION ALL
                 SELECT * FROM rollup_typed
             ),
             fallback AS (
@@ -739,25 +550,10 @@ void vh::db::Connection::initPreparedStatsSnapshots() const {
                 SELECT
                     $2::int AS window_hours,
                     CURRENT_TIMESTAMP - ($2::int * INTERVAL '1 hour') AS cutoff,
+                    -- #160: every window reads the rollups (written with each sample batch, so the current bucket is
+                    -- live). Windows up to 7 days use 5-minute buckets, longer ones hourly, so a shorter window never
+                    -- returns more points than a longer one (24 h used to read raw ~10 s samples).
                     CASE WHEN $2::int <= 168 THEN 300 ELSE 3600 END AS rollup_resolution
-            ),
-            raw_typed AS (
-                SELECT
-                    CASE
-                        WHEN m.series_key <> '' THEN m.metric_key || ':' || m.series_key
-                        ELSE m.metric_key
-                    END AS metric_key,
-                    m.series_label AS label,
-                    m.unit,
-                    m.snapshot_type,
-                    m.window_end AS created_at,
-                    COALESCE(m.value_last, m.value_avg, m.value_max, m.value_min, m.rate_per_second, m.delta_value) AS value
-                FROM stats_metric_sample m
-                CROSS JOIN params p
-                WHERE p.window_hours <= 24
-                  AND m.scope = 'vault'
-                  AND m.vault_id = $1
-                  AND m.window_end >= p.cutoff
             ),
             rollup_typed AS (
                 SELECT
@@ -772,15 +568,12 @@ void vh::db::Connection::initPreparedStatsSnapshots() const {
                     COALESCE(r.value_last, r.value_avg, r.value_max, r.value_min, r.rate_per_second, r.delta_value) AS value
                 FROM stats_metric_rollup r
                 CROSS JOIN params p
-                WHERE p.window_hours > 24
-                  AND r.scope = 'vault'
+                WHERE r.scope = 'vault'
                   AND r.vault_id = $1
                   AND r.resolution_seconds = p.rollup_resolution
                   AND r.window_end >= p.cutoff
             ),
             typed AS (
-                SELECT * FROM raw_typed
-                UNION ALL
                 SELECT * FROM rollup_typed
             ),
             fallback AS (

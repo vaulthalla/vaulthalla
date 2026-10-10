@@ -224,8 +224,10 @@ struct PriceBudgetDashboardStats {
     std::uint32_t critical_notifications{0};
     std::uint32_t unacknowledged_notifications{0};
     std::uint32_t pending_overrides{0};
-    std::string current_monthly_spend{"0.00000000"};
-    std::string projected_monthly_spend{"0.00000000"};
+    // Sums over monthly budget windows only; null when no monthly window (or no projection) exists. Spend outside a
+    // monthly budget is not tracked, so a zero here would be a fake measurement (#160).
+    std::optional<std::string> current_monthly_spend;
+    std::optional<std::string> projected_monthly_spend;
     std::string currency{"USD"};
     std::vector<PriceBudgetTrendStats> trends;
     std::vector<PriceBudgetNotification> active_notifications;
