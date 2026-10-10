@@ -17,6 +17,14 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
 - fs copy: each entry needs Copy and Read on its source and Write (file) or Touch (folder) at its destination (#167).
 
 ## Runtime
+- sync: under `ask`, per-file sync baselines (sync_file_baseline) tell one-sided changes (synced) from two-sided
+  ones (one open conflict per file, auto-closed on convergence); resolution keep_local/keep_remote refuses stale
+  decisions, uses price preflight and the vault's request budget, and holds no lock across network work (#187).
+  - psql 107: vault.sync.action.resolve_conflicts granted wherever sync trigger is held (vault_role,
+    user_global_vault_policy); sync_conflicts gains vault_id/updated_at, event_id ON DELETE SET NULL, one open row
+    per file (older duplicates closed as superseded); artifacts gain remote_etag/encrypted.
+  - ws sync.conflicts.{summary,list,resolve}; HTTP GET|HEAD /download/conflict (≤ 32 MiB, If-Match pinned).
+  - config: vaults.s3.default_remote_conflict_policy defaults to ask.
 - vaults: deleting a vault schedules it (psql 106: vault.deleted_at, vault_deletion, vault_deletion_key, vault_keys
   export tracking). Deleted vaults leave every read path at once and are restorable until vaults.retention_window
   (5m); VaultRetentionService then purges upstream objects (when chosen; bounded per pass, resumable), the backing and
@@ -46,6 +54,8 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
   numeric values, cards carry at most 3 series of 64 points; unmeasured spend and FS cache capacity are null (#160).
 
 ## CLI
+- `vh sync resolve` / `vh resolve`: interactive session, `--list [--vault] [--json]`, `<id...> --keep-local|--keep-remote`,
+  `--vault X --all --keep-* [--yes]`; `--allow/--deny-sync-action-resolve_conflicts` on vault roles (#187).
 - `vh vault delete [--now] [--delete-upstream|--keep-upstream] [--accept-key-loss] [--yes]`, `vh vault deleted`,
   `vh vault restore`; `vh vault keys export` records the exported key version and exports a deleted vault's retained
   key (#162).
@@ -53,6 +63,8 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
 - `vh vault create` uses the `vaults.s3` defaults when no sync strategy or conflict policy is given (#164).
 
 ## Web console
+- Sync Conflicts top-bar button and System page (hidden at zero): select-all, vault filter, bulk Keep local /
+  Keep remote, side-by-side preview with a lazy text diff (#187).
 - icons: SVGR sets fill="currentColor" through svgProps (the `fill` option it was given doesn't exist, so every
   icon painted black) and marks icons data-vh-icon; a base-layer rule makes them cyan, filled buttons and toned
   containers pass their own color (#188).
@@ -65,6 +77,7 @@ One level of nested "  - " detail bullets is allowed. Consolidate; don't paste c
 - Folder download tasks show the ZIP size and name an entry-limit refusal (#143).
 
 ## Tests
-- VaultRetentionTest, VaultParityTest deletion lifecycle; StatsAccessTest, SqlDeployerHistory migration 105, role parity stats bits; config/settings round trips and
+- SyncConflictsTest (baselines, one-sided changes, convergence, both resolutions, RBAC), ConflictParityTest,
+  migration 107 upgrade case; VaultRetentionTest, VaultParityTest deletion lifecycle; StatsAccessTest, SqlDeployerHistory migration 105, role parity stats bits; config/settings round trips and
   aliases, WsConnectionLimit, share policy refusals; FsCopyDbTest, keep-folder FsDirStats cases; HttpArchiveZip
   (validated with Python zipfile and unzip -t), share folder ZIP accounting; harness stage "Copy And Delete".
