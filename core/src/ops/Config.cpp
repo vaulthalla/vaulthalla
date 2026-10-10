@@ -4,6 +4,7 @@
 #include "email/Message.hpp"
 #include "identities/User.hpp"
 #include "log/Registry.hpp"
+#include "rbac/PolicyEpoch.hpp"
 #include "rbac/permission/admin/S3Gateway.hpp"
 #include "rbac/resolver/admin/all.hpp"
 #include "runtime/Manager.hpp"
@@ -74,8 +75,14 @@ void validateEmail(const Config& cfg) {
 // `restartGateway`: restart it even if s3_gateway.enabled is unchanged (the explicit enable/disable commands).
 Config commit(const Config& next, const bool restartGateway = false) {
     const bool gatewayWas = vh::config::Registry::get().s3_gateway.enabled;
+    const bool sharingChanged = nlohmann::json(vh::config::Registry::get().sharing) != nlohmann::json(next.sharing);
     next.save();
     vh::config::Registry::set(next);
+    // Share principals cached under the old switches (HTTP access, 15 s) must not outlive them.
+    if (sharingChanged) {
+        rbac::bumpPolicyEpoch();
+        log::Registry::audit()->info("[ops::config] sharing -> {}", nlohmann::json(next.sharing).dump());
+    }
     if (restartGateway || next.s3_gateway.enabled != gatewayWas) {
         auto& runtime = runtime::Manager::instance();
         // Only a daemon that runs the gateway restarts it; elsewhere the change applies on the next start.
@@ -96,6 +103,10 @@ void validateSettings(const nlohmann::json& settings) {
                  "operator_emails.alerting.repeat_after_hours");
     requireRange(settings, {"operator_emails", "alerting", "health_poll_seconds"}, 15, INT64_MAX,
                  "operator_emails.alerting.health_poll_seconds");
+    // Both servers refuse connections past these caps; there is no "unlimited" value.
+    requireRange(settings, {"websocket_server", "max_connections"}, 1, 1'000'000, "websocket_server.max_connections");
+    requireRange(settings, {"http_preview_server", "max_connections"}, 1, 1'000'000,
+                 "http_preview_server.max_connections");
     requireNonEmpty(settings, {"operator_emails", "weekly_digest", "timezone"}, "operator_emails.weekly_digest.timezone");
     requireNonEmpty(settings, {"email", "resend", "endpoint"}, "email.resend.endpoint");
     requireNonEmpty(settings, {"email", "ses", "region"}, "email.ses.region");

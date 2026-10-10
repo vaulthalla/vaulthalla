@@ -4,6 +4,7 @@
 
 #include <cstdlib>
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <yaml-cpp/yaml.h>
 #include <fstream>
@@ -45,9 +46,75 @@ Config& Config::operator=(Config&&) noexcept = default;
         throw std::invalid_argument("unknown email provider: " + normalized);
     }
 
-    Config loadConfig(const std::string &path) {
+    namespace {
+    constexpr std::array<std::string_view, 3> kRemoteSyncStrategies{"cache", "sync", "mirror"};
+    constexpr std::array<std::string_view, 4> kRemoteConflictPolicies{"keep_local", "keep_remote", "keep_newest", "ask"};
+
+    void noteDeprecation(std::vector<std::string>* deprecations, std::string message) {
+        if (deprecations) deprecations->push_back(std::move(message));
+    }
+
+    void requireRemoteDefaults(const VaultsS3Config& s3) {
+        if (!isRemoteSyncStrategy(s3.default_remote_sync_strategy))
+            throw std::invalid_argument("vaults.s3.default_remote_sync_strategy: unknown value '" +
+                                        s3.default_remote_sync_strategy + "' (cache, sync or mirror)");
+        if (!isRemoteConflictPolicy(s3.default_remote_conflict_policy))
+            throw std::invalid_argument("vaults.s3.default_remote_conflict_policy: unknown value '" +
+                                        s3.default_remote_conflict_policy +
+                                        "' (keep_local, keep_remote, keep_newest or ask)");
+    }
+
+    // Keys renamed or moved by #164. config.yaml is never rewritten on upgrade, so the old spellings keep working:
+    // their value applies unless the new key is also set (then the new key wins). Each one found is reported once.
+    void applyLegacyKeys(const YAML::Node& root, Config& cfg, std::vector<std::string>* deprecations) {
+        // The alias value itself is applied by convert<SharingConfig>::decode; only report it here.
+        if (const auto sharing = root["sharing"]; sharing && sharing.IsMap() && sharing["enable_public_links"]) {
+            noteDeprecation(deprecations, sharing["enable_email_validated"]
+                ? "sharing.enable_public_links is deprecated and ignored because sharing.enable_email_validated is set; "
+                  "remove it"
+                : "sharing.enable_public_links is deprecated: rename it to sharing.enable_email_validated (its value "
+                  "still applies)");
+        }
+
+        const auto gateway = root["s3_gateway"];
+        if (!gateway || !gateway.IsMap()) return;
+        const auto vaults = root["vaults"];
+        const auto s3 = vaults && vaults.IsMap() ? vaults["s3"] : YAML::Node();
+        const auto legacy = [&](const char* key, std::string& target, bool (*valid)(std::string_view)) {
+            if (!gateway[key]) return;
+            const std::string oldKey = std::string("s3_gateway.") + key;
+            const std::string newKey = std::string("vaults.s3.") + key;
+            if (s3 && s3.IsMap() && s3[key]) {
+                noteDeprecation(deprecations, oldKey + " is deprecated and ignored because " + newKey + " is set; remove it");
+                return;
+            }
+            const auto value = gateway[key].as<std::string>("");
+            if (!valid(value)) {
+                // Nothing read it before #164, so it may hold anything: report it, never refuse to start over it.
+                noteDeprecation(deprecations, oldKey + " is deprecated and its value '" + value + "' is not valid; using " +
+                                              newKey + ": " + target);
+                return;
+            }
+            target = value;
+            noteDeprecation(deprecations, oldKey + " is deprecated: move it to " + newKey + " (its value still applies)");
+        };
+        legacy("default_remote_sync_strategy", cfg.vaults.s3.default_remote_sync_strategy, &isRemoteSyncStrategy);
+        legacy("default_remote_conflict_policy", cfg.vaults.s3.default_remote_conflict_policy, &isRemoteConflictPolicy);
+    }
+    }
+
+    bool isRemoteSyncStrategy(const std::string_view value) {
+        return std::ranges::find(kRemoteSyncStrategies, value) != kRemoteSyncStrategies.end();
+    }
+
+    bool isRemoteConflictPolicy(const std::string_view value) {
+        return std::ranges::find(kRemoteConflictPolicies, value) != kRemoteConflictPolicies.end();
+    }
+
+    Config loadConfig(const std::string &path, std::vector<std::string>* deprecations) {
         Config cfg;
-        YAML::Node root = YAML::LoadFile(path);
+        // const: lookups of missing keys must never add nodes.
+        const YAML::Node root = YAML::LoadFile(path);
 
         if (auto node = root["websocket_server"]) YAML::convert<WebsocketConfig>::decode(node, cfg.websocket);
         if (auto node = root["http_preview_server"]) YAML::convert<HttpPreviewConfig>::decode(node, cfg.http_preview);
@@ -61,6 +128,7 @@ Config& Config::operator=(Config&&) noexcept = default;
         if (auto node = root["services"]) YAML::convert<ServicesConfig>::decode(node, cfg.services);
         if (auto node = root["stats_snapshots"]) YAML::convert<StatsSnapshotsConfig>::decode(node, cfg.stats_snapshots);
         if (auto node = root["sharing"]) YAML::convert<SharingConfig>::decode(node, cfg.sharing);
+        if (auto node = root["vaults"]) YAML::convert<VaultsConfig>::decode(node, cfg.vaults);
         if (auto node = root["email"]) YAML::convert<EmailConfig>::decode(node, cfg.email);
         if (auto node = root["operator_emails"]) YAML::convert<OperatorEmailsConfig>::decode(node, cfg.operator_emails);
         if (auto node = root["auditing"]) YAML::convert<AuditConfig>::decode(node, cfg.auditing);
@@ -68,6 +136,8 @@ Config& Config::operator=(Config&&) noexcept = default;
 
         if (auto node = root["logging"]) YAML::convert<LoggingConfig>::decode(node, cfg.logging);
 
+        applyLegacyKeys(root, cfg, deprecations);
+        requireRemoteDefaults(cfg.vaults.s3);
         return cfg;
     }
 
@@ -99,6 +169,7 @@ Config& Config::operator=(Config&&) noexcept = default;
         put("services", services);
         put("stats_snapshots", stats_snapshots);
         put("sharing", sharing);
+        put("vaults", vaults);
         put("email", email);
         put("operator_emails", operator_emails);
         put("caching", caching);
@@ -133,6 +204,7 @@ Config& Config::operator=(Config&&) noexcept = default;
             {"services", c.services},
             {"stats_snapshots", c.stats_snapshots},
             {"sharing", c.sharing},
+            {"vaults", c.vaults},
             {"email", c.email},
             {"operator_emails", c.operator_emails},
             {"auditing", c.auditing},
@@ -154,6 +226,20 @@ Config& Config::operator=(Config&&) noexcept = default;
         j.at("services").get_to(c.services);
         if (j.contains("stats_snapshots")) j.at("stats_snapshots").get_to(c.stats_snapshots);
         j.at("sharing").get_to(c.sharing);
+        if (j.contains("vaults")) j.at("vaults").get_to(c.vaults);
+        // Pre-#164 spelling from API clients: s3_gateway.default_remote_* when vaults.s3.* doesn't name the key.
+        if (j.contains("s3_gateway") && j.at("s3_gateway").is_object()) {
+            const auto& gateway = j.at("s3_gateway");
+            const auto* s3 = j.contains("vaults") && j.at("vaults").is_object() && j.at("vaults").contains("s3")
+                                 ? &j.at("vaults").at("s3") : nullptr;
+            const auto legacy = [&](const char* key, std::string& target) {
+                if (gateway.contains(key) && !(s3 && s3->is_object() && s3->contains(key)))
+                    target = gateway.at(key).get<std::string>();
+            };
+            legacy("default_remote_sync_strategy", c.vaults.s3.default_remote_sync_strategy);
+            legacy("default_remote_conflict_policy", c.vaults.s3.default_remote_conflict_policy);
+            requireRemoteDefaults(c.vaults.s3);
+        }
         if (j.contains("email")) j.at("email").get_to(c.email);
         if (j.contains("operator_emails")) j.at("operator_emails").get_to(c.operator_emails);
         j.at("auditing").get_to(c.auditing);
@@ -175,7 +261,7 @@ Config& Config::operator=(Config&&) noexcept = default;
         c.enabled = j.value("enabled", true);
         c.host = j.value("host", "0.0.0.0");
         c.port = j.value("port", 33369);
-        c.max_connections = j.value("max_connections", 10000);
+        c.max_connections = j.value("max_connections", 1024u);
         c.max_upload_size_bytes = j.value("max_upload_size_bytes", MAX_UPLOAD_SIZE_BYTES);
     }
 
@@ -246,8 +332,6 @@ Config& Config::operator=(Config&&) noexcept = default;
             {"allow_virtual_hosted_style", c.allow_virtual_hosted_style},
             {"default_bucket_mode", c.default_bucket_mode},
             {"default_api_exclusive", c.default_api_exclusive},
-            {"default_remote_sync_strategy", c.default_remote_sync_strategy},
-            {"default_remote_conflict_policy", c.default_remote_conflict_policy},
             {"multipart", c.multipart},
             {"synthetic_local_request_cost_usd", c.synthetic_local_request_cost_usd}
         };
@@ -269,8 +353,6 @@ Config& Config::operator=(Config&&) noexcept = default;
         c.allow_virtual_hosted_style = j.value("allow_virtual_hosted_style", true);
         c.default_bucket_mode = j.value("default_bucket_mode", "local");
         c.default_api_exclusive = j.value("default_api_exclusive", true);
-        c.default_remote_sync_strategy = j.value("default_remote_sync_strategy", "cache");
-        c.default_remote_conflict_policy = j.value("default_remote_conflict_policy", "keep_local");
         if (j.contains("multipart")) j.at("multipart").get_to(c.multipart);
         if (j.contains("synthetic_local_request_cost_usd"))
             j.at("synthetic_local_request_cost_usd").get_to(c.synthetic_local_request_cost_usd);
@@ -644,13 +726,43 @@ Config& Config::operator=(Config&&) noexcept = default;
     void to_json(nlohmann::json &j, const SharingConfig &c) {
         j = {
             {"enabled", c.enabled},
-            {"enable_public_links", c.enable_public_links}
+            {"enable_internal", c.enable_internal},
+            {"enable_anonymous", c.enable_anonymous},
+            {"enable_email_validated", c.enable_email_validated}
         };
     }
 
     void from_json(const nlohmann::json &j, SharingConfig &c) {
         c.enabled = j.value("enabled", true);
-        c.enable_public_links = j.value("enable_public_links", true);
+        c.enable_internal = j.value("enable_internal", true);
+        c.enable_anonymous = j.value("enable_anonymous", true);
+        // enable_public_links: the pre-#164 name; the new key wins when both are present.
+        c.enable_email_validated = j.contains("enable_email_validated") ? j.at("enable_email_validated").get<bool>()
+                                                                        : j.value("enable_public_links", true);
+    }
+
+    void to_json(nlohmann::json &j, const VaultsS3Config &c) {
+        j = {
+            {"default_remote_sync_strategy", c.default_remote_sync_strategy},
+            {"default_remote_conflict_policy", c.default_remote_conflict_policy}
+        };
+    }
+
+    void from_json(const nlohmann::json &j, VaultsS3Config &c) {
+        const VaultsS3Config defaults;
+        c.default_remote_sync_strategy = j.value("default_remote_sync_strategy", defaults.default_remote_sync_strategy);
+        c.default_remote_conflict_policy = j.value("default_remote_conflict_policy", defaults.default_remote_conflict_policy);
+        requireRemoteDefaults(c);
+    }
+
+    void to_json(nlohmann::json &j, const VaultsConfig &c) {
+        j = {
+            {"s3", c.s3}
+        };
+    }
+
+    void from_json(const nlohmann::json &j, VaultsConfig &c) {
+        if (j.contains("s3")) j.at("s3").get_to(c.s3);
     }
 
     void to_json(nlohmann::json &j, const ResendEmailConfig &c) {

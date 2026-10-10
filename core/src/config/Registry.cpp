@@ -9,7 +9,7 @@ void Registry::init() {
     std::call_once(init_flag_, [&]() {
         const auto path = paths::getConfigPath();
         try {
-            config_ = loadConfig(path);
+            config_ = loadConfig(path, &deprecations_);
         } catch (const std::exception& e) {
             throw std::runtime_error("cannot load config " + std::string(path) + ": " + e.what());
         }
@@ -21,6 +21,8 @@ const Config& Registry::get() {
     ensureInitialized();
     return config_;
 }
+
+const std::vector<std::string>& Registry::deprecations() { return deprecations_; }
 
 void Registry::set(const Config& config) {
     config_ = config;

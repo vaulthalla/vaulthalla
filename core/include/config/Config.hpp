@@ -60,8 +60,8 @@ struct S3GatewayConfig {
     bool allow_virtual_hosted_style = true;
     std::string default_bucket_mode = "local";
     bool default_api_exclusive = true;
-    std::string default_remote_sync_strategy = "cache";
-    std::string default_remote_conflict_policy = "keep_local";
+    // default_remote_sync_strategy / default_remote_conflict_policy moved to vaults.s3 (#164); config.yaml still
+    // accepts them here as deprecated aliases (loadConfig).
     S3GatewayMultipartConfig multipart;
     S3GatewaySyntheticLocalRequestCostConfig synthetic_local_request_cost_usd;
 };
@@ -173,9 +173,28 @@ struct ServicesConfig {
     ConnectionLifecycleManagerConfig connection_lifecycle_manager;
 };
 
+// sharing.* (#164), enforced by share::policy at link creation and on every use of a link.
+// enabled is the wide gate: off, no link can be created, opened or used. Each enable_* gates one kind of link:
+// enable_anonymous: access_mode "public" (anyone with the link); enable_email_validated: access_mode
+// "email_validated" (recipient proves an invited address). enable_internal is reserved for links to signed-in vault
+// users, a kind Vaulthalla does not have yet. config.yaml still accepts enable_public_links as a deprecated alias of
+// enable_email_validated.
 struct SharingConfig {
     bool enabled = true;
-    bool enable_public_links = true;
+    bool enable_internal = true;
+    bool enable_anonymous = true;
+    bool enable_email_validated = true;
+};
+
+// vaults.s3.*: defaults for S3/R2 (remote) vaults, used when a vault is created without an explicit sync strategy
+// or conflict policy. Lowercase spellings of sync::model::RemotePolicy (validated here, parsed by ops::vaults).
+struct VaultsS3Config {
+    std::string default_remote_sync_strategy = "cache";        // cache | sync | mirror
+    std::string default_remote_conflict_policy = "keep_local"; // keep_local | keep_remote | keep_newest | ask
+};
+
+struct VaultsConfig {
+    VaultsS3Config s3;
 };
 
 enum class EmailProviderKind {
@@ -307,6 +326,7 @@ struct Config {
     ServicesConfig services;
     StatsSnapshotsConfig stats_snapshots;
     SharingConfig sharing;
+    VaultsConfig vaults;
     EmailConfig email;
     OperatorEmailsConfig operator_emails;
     AuditConfig auditing;
@@ -326,7 +346,12 @@ struct Config {
     void save() const;
 };
 
-Config loadConfig(const std::string& path);
+// Deprecated keys found while loading (one message each, e.g. a renamed key). The daemon logs them once at startup,
+// after the log registry is up; config is loaded before logging, so loadConfig itself never logs.
+Config loadConfig(const std::string& path, std::vector<std::string>* deprecations = nullptr);
+// Accepted spellings for vaults.s3.* (and the per-vault sync settings they default).
+bool isRemoteSyncStrategy(std::string_view value);
+bool isRemoteConflictPolicy(std::string_view value);
 std::string emailProviderKindToString(EmailProviderKind kind);
 EmailProviderKind emailProviderKindFromString(std::string_view value);
 // Lowercase config spellings; the parsers throw std::invalid_argument on an unknown value.
@@ -388,6 +413,10 @@ void to_json(nlohmann::json& j, const ServicesConfig& c);
 void from_json(const nlohmann::json& j, ServicesConfig& c);
 void to_json(nlohmann::json& j, const SharingConfig& c);
 void from_json(const nlohmann::json& j, SharingConfig& c);
+void to_json(nlohmann::json& j, const VaultsS3Config& c);
+void from_json(const nlohmann::json& j, VaultsS3Config& c);
+void to_json(nlohmann::json& j, const VaultsConfig& c);
+void from_json(const nlohmann::json& j, VaultsConfig& c);
 void to_json(nlohmann::json& j, const ResendEmailConfig& c);
 void from_json(const nlohmann::json& j, ResendEmailConfig& c);
 void to_json(nlohmann::json& j, const SesEmailConfig& c);

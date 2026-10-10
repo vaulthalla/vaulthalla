@@ -24,6 +24,10 @@ auth: {}
 sharing: {}
 
 
+# === 🗃️ VAULT DEFAULTS ===
+vaults: {}
+
+
 # === 💸 PRICING ESTIMATES ===
 pricing: {}
 
