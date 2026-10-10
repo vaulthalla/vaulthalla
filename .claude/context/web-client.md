@@ -21,8 +21,11 @@
 - **Server data:** TanStack Query over ws (`src/lib/query.ts`: `useWs`, `useWsMutation`, `invalidate`, `fetchWs`).
   Polling = `refetchInterval` (deduped, ref-counted, paused in hidden tabs). No Zustand stores for server data;
   Zustand only for client state (transfers, UI prefs, confirm/palette state).
-- **Permissions (UI only):** `src/lib/permissions.ts` `useCan({admin|permission|anyOf|prefix})`, mirroring core
-  `User::isAdmin()`. Nav items declare `requires`; pages render a typed denied state.
+- **Permissions (UI only):** `src/lib/permissions.ts` `useCan({superAdmin|permission|anyOf|prefix})` over the
+  session user's admin-role permission bits. Gate on the permission core checks: Health, the health dot and system
+  storage sizes use `STATS_VIEW` (`admin.stats.view`, core `ops::stats::canViewSystem`, #166); vault pages just ask
+  for `stats.vault.*` and render the typed denial. `isAdminUser`/`useIsAdmin` mirror core `User::isAdmin()` and only
+  remain inside `isSuperAdminUser` and the vault owner pickers. Nav items declare `requires`; pages render a typed denied state.
 - **Design system:** tokens in `src/app/globals.css` (dark only; one cyan accent; `surface-1/2/3`, `line`,
   `fg/-muted/-subtle/-faint`, status `ok|info|warn|danger|unknown`; utilities `glass`, `glass-strong`, `panel`,
   `tabular`, `skeleton`). Primitives in `src/components/ui/*` (Button, IconButton, Field/Input/Select/Textarea,
@@ -32,7 +35,7 @@
   `bin/check-colors.mjs` fails on raw palette/arbitrary colors outside `components/ui`. `/dev/ui` (development
   builds only) renders every primitive.
 - **Shell:** `src/components/shell/*` — permission-filtered rail (collapsible), top bar (⌘K command palette, health
-  dot from `stats.dashboard.severity`, transfers, cost-alerts bell, user menu), session gate (reconnecting state, never
+  dot from `stats.dashboard.severity` for `admin.stats.view`, transfers, cost-alerts bell, user menu), session gate (reconnecting state, never
   an endless spinner), initial-password warning (`data-testid="initial-password-warning"`).
 - **Cost-alerts bell** (`features/cost/NotificationsBell.tsx`, super admins only): `pricing.notifications.list`
   `{limit: 8, include_acknowledged: false}` every 60 s (paused in hidden tabs). The badge count (capped "9+") and tone

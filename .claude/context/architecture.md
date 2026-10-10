@@ -279,7 +279,7 @@ bytes, inline by default), `GET|HEAD /download` (files stream with no size cap; 
 
 ## Database
 
-- PostgreSQL via libpqxx. The schema is `deploy/psql/000…104_*.sql`, applied in order (all in ONE transaction by `core/seed/include/SqlDeployer.hpp`) and installed to `/usr/share/vaulthalla/psql`.
+- PostgreSQL via libpqxx. The schema is `deploy/psql/000…105_*.sql`, applied in order (all in ONE transaction by `core/seed/include/SqlDeployer.hpp`) and installed to `/usr/share/vaulthalla/psql`.
   New migrations take the next number and must be idempotent against upgraded installs. SqlDeployer records sha256(raw bytes)
   per file and refuses to start on a mismatch, so **never edit a shipped migration**: 020/060/082 were edited in place and
   bricked upgrades (1.5.x→1.6.x crash loop on 060). Reviewed exceptions live in `kHistoricalMigrationChecksums` (accepted, recorded
@@ -379,20 +379,23 @@ waiver prompts go through `shell::commands::vault::runWithWaiver`). The ws handl
 and every ws handler template (`protocols/ws/core/handler_templates.hpp`, `describeCurrentError`) turns the exception into
 an `ERROR` response whose `data.code` is stable: `denied`, `not_found`, `invalid`, `conflict`, or the `NeedsConfirmation`
 code (the web asks and resends with `accept_encryption_waiver`); a non-`ops::Error` fault has no code. Handler-level
-gates (stats/settings/email/pricing admin checks, share upload scope) throw `ops::Denied` so they carry `denied`. Rules: RBAC for an operation lives in the op, never in the frontend as well; code beneath
+gates (settings/email/pricing admin checks, share upload scope) throw `ops::Denied` so they carry `denied`; every
+`stats.*` command authorizes through `ops::stats` (below). Rules: RBAC for an operation lives in the op, never in the frontend as well; code beneath
 `ops::` (managers, `db::query`) never authorizes; internal callers use those primitives directly, not ops; no
 registry, base class or transport abstraction. Parity is proven by `test_ops_parity_groups.cpp`, which runs each
 group operation through both surfaces for every seeded admin role and compares verdicts and DB state.
 Migrated families (each with `test_ops_parity_<family>.cpp`): `groups`, `roles`, `api_keys`, `vaults` (lifecycle +
 sync policy), `users`, `s3_gateway` (credentials, grants, buckets, credential budgets), `pricing` (price budget
 policies), `config` (every settings write: one validation, one apply step that restarts the S3 gateway when
-`s3_gateway.enabled` changes). Still per-surface: the ws-only pricing preflight/override/notification endpoints,
+`s3_gateway.enabled` changes), `stats` (authorization only, ws-only: there is no `vh` stats command; `vh status`
+is deliberately ungated, see Stats below). Still per-surface: the ws-only pricing preflight/override/notification endpoints,
 email test-send/history, vault keys/sync diagnostics, and lifecycle commands (`setup`, `teardown`, `secrets`).
 
 Rules the families hold (keep them in ops, never re-add them in a handler):
 - **Users:** an account is an *admin identity* when its admin role grants anything outside the self scopes
-  (`ops::users::isAdminIdentity`); that, not `User::isAdmin()` (a strict "full admin" gate used by S3 policy bypass and
-  system stats), picks admins.* vs users.* identity permissions. The ceiling applies to assignment *and* to managing an
+  (`ops::users::isAdminIdentity`, which counts `admin.stats.view` too); that, not `User::isAdmin()` (a strict "full
+  admin" test kept for S3 policy bypass and the resolvers' owner scope), picks admins.* vs users.* identity
+  permissions. The ceiling applies to assignment *and* to managing an
   account above you (edit, delete, reset password). Deletion, deactivation, role change and password reset call
   `auth::Manager::revokeSessions` (refresh tokens revoked, live sessions invalidated). `auth::Manager` has no user cache.
 - **API keys:** `update` edits in place (keeps the id, so `s3` rows survive; an empty secret keeps the sealed one;
@@ -445,6 +448,23 @@ subject's assignment; both `vh vault role override ...` and ws `role.vault.overr
   and never block the mutation. `Manager::startWatchdog()` stays restart-only.
 
 **Stats / dashboards** (26 `stats.*` ws commands, `dashboard.preferences.*`)
+- **Who may read (#166, `ops::stats`).** System stats (overview, severity, health, thread pools, FUSE, DB, operations,
+  connections, storage, retention, trends, FS/HTTP caches, system pricing totals) need the admin permission
+  `admin.stats.view` (module `admin.stats`, `admin_role.stats_permissions` BIT(8), bit 0; migration 105 added the
+  column and granted it to `admin`, `auditor`, `platform_operator`, `super_admin` and any role that passed the old
+  `isAdmin()` gate). Vault-scoped stats (`stats.vault.*`, `stats.pricing.budget {vault_id}`) are open to the vault's
+  owner or an admin role with `admin.vaults.<scope>.view` + `view_stats` on it; vault-role members who don't own the
+  vault are not enough (activity/share/security stats ignore path overrides). Missing and forbidden vaults refuse
+  alike. `vh status` is not gated: it skips the DB user lookup so it works while PostgreSQL is down. Guard:
+  `test_stats_access.cpp` (`StatsPermission*`, `StatsAccessTest`), `RoleParityTest.StatsView*`,
+  `SqlDeployerHistoryDb.StatsPermissionMigration*`.
+- **Payload contract (#160).** Trends read `stats_metric_rollup` for every window (5-minute buckets up to 7 d, hourly
+  beyond; rollups are upserted with each sample batch), so 24 h never returns more points than 7 d. Overview hrefs are
+  console routes (`/health/*`, `/cost#…`); counts carry `numeric_value`; money carries `numeric_value` + the ISO
+  currency as `unit`, or `"unknown"`/null when not measured. `PriceBudgetDashboardStats.{current,projected}_monthly_spend`
+  are null without a monthly window. A cache with no byte cap (the FS metadata cache) reports
+  `capacity_bytes`/`free_bytes` null; the preview cache reports `caching.max_size_mb` from boot. Cards carry at most
+  `kDashboardOverviewMaxSeriesPerCard` (3) series of `kDashboardOverviewMaxPointsPerSeries` (64) points.
 - The backend owns severity, warning, and error truth. Never show fake integrity, recoverability, or latency badges; report
   unavailable values as `null` / `"not_available"`.
 - Stats commands are read-only, and snapshots are background-only. Preferences are scoped to `session->user->id`.
