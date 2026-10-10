@@ -208,6 +208,13 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         runner = _read(".github/actions/runner/action.yml")
         self.assertLess(runner.index("./.github/actions/build"), runner.index("./.github/actions/test_web"))
 
+    def test_web_typecheck_generates_its_own_next_types(self) -> None:
+        # next-env.d.ts (the *.svg / *.png module types) is generated, not committed. release.yml's web-verify runs the
+        # checks without a build, so the typecheck must generate it (v1.11.0 and v1.11.1 failed there).
+        import json
+        scripts = json.loads(_read("web/package.json"))["scripts"]
+        self.assertTrue(scripts["typecheck"].startswith("next typegen && "), scripts["typecheck"])
+
     def test_cpp_and_web_builds_sync_private_icons_through_one_script(self) -> None:
         self.assertIn("web/bin/sync_private_icons.sh", _read(".github/actions/sync_web_icons/action.yml"))
         self.assertIn("sync_private_icons.sh", _read("web/bin/build_release_payload.sh"))

@@ -3,7 +3,7 @@
 - Next.js 16 app router + React 19, TypeScript strict, Tailwind 4. `output: 'standalone'`.
 - Toolchain: Node `24.13` (`web/.nvmrc`), `packageManager: pnpm@11.0.8`. `web/package.json` also carries `version`
   (release-managed, kept in sync with `VERSION`).
-- Scripts: `dev` (turbopack), `dev:e2e`, `build`, `start`, `typecheck` (`tsc --noEmit`), `lint` (`eslint src`),
+- Scripts: `dev` (turbopack), `dev:e2e`, `build`, `start`, `typecheck` (`next typegen && tsc --noEmit`: generates `next-env.d.ts`, so it works without a prior build), `lint` (`eslint src`),
   `colors` (design-token guard), `test` (= typecheck + lint + colors; **there is no unit test runner**),
   `budgets` (first-load JS gate, needs a `build`), `test:e2e` (Playwright, `web/tests/e2e`).
 
