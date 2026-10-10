@@ -52,6 +52,8 @@ export interface Settings {
   email: SettingsSection
   operator_emails: SettingsSection
   auditing: SettingsSection
+  // Older daemons have no vaults section.
+  vaults?: SettingsSection
   logging: SettingsSection
   dev: SettingsSection
 }

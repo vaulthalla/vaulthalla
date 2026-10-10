@@ -12,6 +12,7 @@ export type FieldKind =
   | { kind: 'megabytes' } // integer MB
   | { kind: 'sizeString' } // "50MB" / "1GB"
   | { kind: 'intervalString' } // "24h" / "1d"
+  | { kind: 'durationString' } // "30s" / "5m" / "12h" / "90d" / "2w"
   | { kind: 'decimal'; unit?: string }
   | { kind: 'tags'; numeric?: boolean; mono?: boolean }
   | { kind: 'lines'; placeholder?: string }
@@ -345,6 +346,36 @@ export const SECTIONS: SectionDef[] = [
         key: 'files_trashed',
         label: 'Trash',
         fields: [{ key: 'retention_days', label: 'Keep trashed files for', type: int('days', 1) }],
+      },
+    ],
+  },
+  {
+    key: 'vaults',
+    label: 'Vault deletion',
+    description:
+      'A deleted vault can be restored until the retention window ends; then its data is purged. Its encryption key is kept for the key retention window either way.',
+    applies: 'Applies to vaults deleted after the change.',
+    fields: [
+      { key: 'retention_window', label: 'Restorable for', type: { kind: 'durationString' } },
+      {
+        key: 'tpm_retention_window',
+        label: 'Keep encryption keys for',
+        hint: 'Even when a vault is deleted now. Export keys you still need with `vh vault keys export`.',
+        type: { kind: 'durationString' },
+      },
+    ],
+    groups: [
+      {
+        key: 's3',
+        label: 'S3 vaults',
+        fields: [
+          {
+            key: 'tpm_retention_window',
+            label: 'Keep encryption keys for',
+            hint: 'Longer by default: data kept in the bucket stays encrypted with this key.',
+            type: { kind: 'durationString' },
+          },
+        ],
       },
     ],
   },
