@@ -85,6 +85,11 @@ public:
     // The whole content, authenticated before it is returned when the format allows it (one pass, no
     // separate verification read). Throws std::length_error over maxBytes. Default: sequential read().
     [[nodiscard]] virtual std::vector<uint8_t> readAllAuthenticated(uint64_t maxBytes);
+
+    // Blocks until the whole generation is authenticated, throwing IntegrityError when it is not. For a consumer
+    // that streamed every byte through read() and must not vouch for them (a ZIP member's CRC) until they are known
+    // good. Default: nothing to wait for (readers whose format has no whole-message check, or already checked it).
+    virtual void requireAuthenticated() {}
 };
 
 // Reads the whole content into memory, refusing (std::length_error) anything larger than maxBytes. For small

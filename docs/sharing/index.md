@@ -94,7 +94,7 @@ See [File Previews](/web-console/previews) for what each file type looks like in
 
 ## Download Counting And Limits
 
-Share access is recorded once per **logical** access, not per HTTP request: one audit event per share session, file version and kind of access (viewing in the browser, downloading, a server conversion, or a preview) within 30 minutes. Every access that needs `download` also uses one unit of the link's download count, including playing a video or viewing a text file in the browser; previews never do. Playing and seeking through a video issues many small range requests, and those count once; the `HEAD` checks the console makes before a download don't count at all. Changing the file starts a new count for it.
+Share access is recorded once per **logical** access, not per HTTP request: one audit event per share session, file version and kind of access (viewing in the browser, downloading, a server conversion, or a preview) within 30 minutes. Every access that needs `download` also uses one unit of the link's download count, including playing a video or viewing a text file in the browser; previews never do. Playing and seeking through a video issues many small range requests, and those count once; the `HEAD` checks the console makes before a download don't count at all. Downloading a folder as a ZIP counts once, however many files it holds. Changing the file starts a new count for it.
 
 A link's `max_downloads` limit, when one is set through the share API (the console's share dialog sets an expiry but no download limit), is enforced atomically: the download that would exceed it is refused with "This link's download limit was reached", and the refusal is audited. The **Shares** page shows each link's opens, downloads and uploads.
 

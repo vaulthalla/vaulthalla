@@ -4,7 +4,7 @@
 
 namespace vh::protocols::http::handler {
 
-// GET|HEAD /download            files: streamed original bytes (attachment, Range-capable); dirs: ZIP
+// GET|HEAD /download            files: streamed original bytes (attachment, Range-capable); dirs: streamed STORE ZIP
 // GET|HEAD /download/content    files only; disposition=inline|attachment (default inline)
 [[nodiscard]] model::preview::Response content(request&& req);
 

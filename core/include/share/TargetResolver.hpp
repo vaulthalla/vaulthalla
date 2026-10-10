@@ -60,6 +60,15 @@ public:
         const Principal& principal,
         const ResolvedTarget& target
     ) const;
+    // resolve() for an entry listChildren(principal, parent) just returned, without reloading the share root and
+    // the entry (two DB lookups per entry on a folder walk): the same scope, entry and share RBAC checks, with the
+    // root as verified when `parent` was resolved. Throws like resolve().
+    [[nodiscard]] ResolvedTarget resolveListedChild(
+        const Principal& principal,
+        const ResolvedTarget& parent,
+        std::shared_ptr<fs::model::Entry> child,
+        Operation operation
+    ) const;
     [[nodiscard]] std::vector<std::shared_ptr<fs::model::Entry>> listChildren(
         const rbac::Actor& actor,
         const ResolvedTarget& target

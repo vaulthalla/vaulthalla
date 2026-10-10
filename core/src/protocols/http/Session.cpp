@@ -363,12 +363,11 @@ bool Session::write_stream(model::preview::StreamResponse&& response) {
     const auto length = response.length;
     const auto headOnly = response.headOnly;
     const bool keepAlive = response.keepAlive;
-    const bool omitLength = response.omitContentLength;
 
     bhttp::response<bhttp::buffer_body> res{std::move(static_cast<bhttp::response_header<>&>(response))};
     res.keep_alive(keepAlive);
     const bool hasBody = !headOnly && reader && length > 0;
-    if (res.result() != status::not_modified && !omitLength) res.content_length(length);
+    if (res.result() != status::not_modified) res.content_length(length);
     res.body().data = nullptr;
     res.body().size = 0;
     res.body().more = hasBody;

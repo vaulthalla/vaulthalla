@@ -1,15 +1,13 @@
 #pragma once
 
+#include "storage/Fwd.hpp"
+
 #include <boost/beast/http.hpp>
 
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <variant>
-
-namespace vh::storage {
-    class PlaintextReader;
-}
 
 namespace vh::protocols::http::model::preview {
 
@@ -23,7 +21,6 @@ struct StreamResponse : http::response_header<> {
     uint64_t offset{};
     uint64_t length{};
     bool headOnly{false};
-    bool omitContentLength{false};  // HEAD of a representation whose length is unknown without building it
     // Called once when the response ends: bytes of body sent and whether all `length` bytes went out.
     std::function<void(uint64_t sent, bool complete)> onFinish;
     bool keepAlive{true};
