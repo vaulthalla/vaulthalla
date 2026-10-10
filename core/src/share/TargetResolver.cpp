@@ -8,6 +8,7 @@
 #include "fs/model/File.hpp"
 #include "rbac/Actor.hpp"
 #include "rbac/fs/policy/Share.hpp"
+#include "share/Policy.hpp"
 #include "share/Scope.hpp"
 
 #include <filesystem>
@@ -130,6 +131,9 @@ TargetType TargetResolver::targetTypeOf(const fs::model::Entry& entry) {
 }
 
 ResolvedTarget TargetResolver::resolve(const Principal& principal, TargetResolveRequest request) const {
+    // Every share file access lands here, including ones served from a principal cached before the operator
+    // turned sharing (or this link's kind) off.
+    policy::requireEnabled(principal.access_mode);
     requireValidPrincipal(principal);
 
     const auto vaultId = request.vault_id.value_or(principal.vault_id);

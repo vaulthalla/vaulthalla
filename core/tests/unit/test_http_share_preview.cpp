@@ -625,6 +625,38 @@ TEST_F(HttpSharePreviewTest, AllowsReadyShareSessionWithPreviewGrant) {
     }));
 }
 
+// sharing.* (#164): the HTTP lanes refuse a ready share session once sharing, or its kind of link, is turned off,
+// even with the principal already cached for the lane.
+TEST_F(HttpSharePreviewTest, RefusesReadyShareSessionWhileSharingOrItsKindIsOff) {
+    auto session = readySession(vh::share::bit(vh::share::Operation::Preview));
+    installSharePreviewHooks(session);
+    const auto url = "/preview?share=1&path=%2Freport.jpg&size=" + std::to_string(previewSize);
+    ASSERT_EQ(status::ok, responseStatus(Router::handlePreview(previewRequest(url))));
+
+    const auto previous = vh::config::Registry::get();
+    struct Restore {
+        const vh::config::Config& cfg;
+        ~Restore() { vh::config::Registry::set(cfg); }
+    } restore{previous};
+
+    auto cfg = previous;
+    cfg.sharing.enable_anonymous = false;
+    vh::config::Registry::set(cfg);
+    auto response = Router::handlePreview(previewRequest(url));
+    EXPECT_EQ(status::forbidden, responseStatus(response));
+    EXPECT_NE(std::string::npos, stringBody(response).find("Anonymous share links are disabled"));
+
+    cfg.sharing.enable_anonymous = true;
+    cfg.sharing.enabled = false;
+    vh::config::Registry::set(cfg);
+    response = Router::handleDownload(previewRequest("/download?share=1&path=%2Freport.jpg"));
+    EXPECT_EQ(status::forbidden, responseStatus(response));
+    EXPECT_NE(std::string::npos, stringBody(response).find("Sharing is disabled"));
+
+    vh::config::Registry::set(previous);
+    EXPECT_EQ(status::ok, responseStatus(Router::handlePreview(previewRequest(url))));
+}
+
 TEST_F(HttpSharePreviewTest, SharePreviewRefusesSvgOriginals) {
     // D9: an SVG is original bytes, not a lossy render. A preview-only link must not receive it through /preview.
     auto session = readySession(vh::share::bit(vh::share::Operation::Preview));

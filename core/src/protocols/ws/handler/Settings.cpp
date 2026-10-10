@@ -16,6 +16,12 @@ json Settings::get(const std::shared_ptr<Session>& session) {
     return {{"settings", vh::config::Registry::get()}};
 }
 
+json Settings::policy(const std::shared_ptr<Session>& session) {
+    if (!session || !session->user) throw std::runtime_error("User not authenticated");
+    const auto& cfg = vh::config::Registry::get();
+    return {{"policy", {{"sharing", cfg.sharing}, {"vaults", cfg.vaults}}}};
+}
+
 json Settings::update(const json& payload, const std::shared_ptr<Session>& session) {
     if (!session || !session->user) throw std::runtime_error("User not authenticated");
     if (!payload.is_object()) throw std::runtime_error("settings.update expects an object of settings sections");

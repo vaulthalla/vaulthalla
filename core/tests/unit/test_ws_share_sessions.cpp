@@ -1,8 +1,11 @@
 #include "auth/model/RefreshToken.hpp"
 #include "auth/model/TokenPair.hpp"
 #include "auth/session/Manager.hpp"
+#include "config/Config.hpp"
+#include "config/Registry.hpp"
 #include "db/encoding/bytea.hpp"
 #include "identities/User.hpp"
+#include "ops/Error.hpp"
 #include "protocols/ws/Router.hpp"
 #include "protocols/ws/Session.hpp"
 #include "protocols/ws/handler/share/Sessions.hpp"
@@ -621,6 +624,37 @@ TEST_F(WsShareSessionsTest, PublicSessionRejectsMalformedWrongOrInactiveTokens) 
     created.link->revoked_at.reset();
     created.link->disabled_at = kNow;
     EXPECT_THROW(Sessions::open({{"public_token", created.public_token}}, publicSession()), std::runtime_error);
+}
+
+// sharing.* (#164): the public /ws/share entry point refuses links whose kind (or sharing as a whole) is off,
+// including a token the same socket had already opened.
+TEST_F(WsShareSessionsTest, OpenIsRefusedWhileSharingOrTheLinksKindIsOff) {
+    const auto publicLink = create();
+    const auto emailLink = create(vh::share::AccessMode::EmailValidated);
+    auto session = publicSession();
+    ASSERT_EQ("ready", Sessions::open({{"public_token", publicLink.public_token}}, session).at("status"));
+
+    const auto previous = vh::config::Registry::get();
+    struct Restore {
+        const vh::config::Config& cfg;
+        ~Restore() { vh::config::Registry::set(cfg); }
+    } restore{previous};
+
+    auto cfg = previous;
+    cfg.sharing.enable_anonymous = false;
+    vh::config::Registry::set(cfg);
+    EXPECT_THROW(Sessions::open({{"public_token", publicLink.public_token}}, session), vh::ops::Denied);
+    EXPECT_THROW(Sessions::open({{"public_token", publicLink.public_token}}, publicSession()), vh::ops::Denied);
+    EXPECT_EQ("email_required",
+              Sessions::open({{"public_token", emailLink.public_token}}, publicSession()).at("status"));
+
+    cfg.sharing.enable_anonymous = true;
+    cfg.sharing.enabled = false;
+    vh::config::Registry::set(cfg);
+    EXPECT_THROW(Sessions::open({{"public_token", emailLink.public_token}}, publicSession()), vh::ops::Denied);
+
+    vh::config::Registry::set(previous);
+    EXPECT_EQ("ready", Sessions::open({{"public_token", publicLink.public_token}}, publicSession()).at("status"));
 }
 
 TEST_F(WsShareSessionsTest, EmailValidatedShareOpensPendingAndDoesNotGrantPrincipal) {

@@ -18,6 +18,8 @@ struct Principal {
     uint32_t link_created_by{};
     std::string root_path{"/"};
     Grant grant;
+    // The link's access mode, so every use can re-check the operator's sharing.* switches (share::policy).
+    AccessMode access_mode{AccessMode::Public};
     bool email_verified{};
     std::time_t expires_at{};
     std::optional<std::string> ip_address;

@@ -129,6 +129,7 @@ void Handler::registerPermissionsHandlers(const std::shared_ptr<Router>& r) {
 
 void Handler::registerSettingsHandlers(const std::shared_ptr<Router>& r) {
     r->registerSessionOnlyHandler("settings.get", &handler::Settings::get);
+    r->registerSessionOnlyHandler("settings.policy.get", &handler::Settings::policy);
     r->registerPayload("settings.update", &handler::Settings::update);
 }
 
