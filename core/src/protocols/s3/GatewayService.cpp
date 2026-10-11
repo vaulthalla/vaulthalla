@@ -19,7 +19,8 @@ namespace vh::protocols::s3 {
 namespace asio = boost::asio;
 
 namespace {
-constexpr std::chrono::seconds kSessionDrainTimeout{10};
+// Sessions are cancelled before the drain; one still alive after this is stuck in a slow call.
+constexpr std::chrono::seconds kSessionDrainTimeout{3};
 
 asio::ip::address bindAddressForHost(const std::string& host) {
     if (host.empty() || host == "*") return asio::ip::make_address("0.0.0.0");
@@ -59,14 +60,14 @@ void GatewayService::runLoop() {
 
         if (!cfg.enabled) {
             log::Registry::runtime()->info("[S3GatewayService] Disabled in configuration.");
-            while (!shouldStop()) lazySleep(std::chrono::seconds(1), std::chrono::milliseconds(100));
+            while (!shouldStop()) lazySleep(std::chrono::seconds(1));
             return;
         }
 
         initGateway();
 
         while (!shouldStop())
-            lazySleep(std::chrono::seconds(1), std::chrono::milliseconds(100));
+            lazySleep(std::chrono::seconds(1));
 
         shutdownGateway();
     } catch (const std::exception& e) {

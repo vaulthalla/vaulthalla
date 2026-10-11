@@ -121,7 +121,6 @@ struct ThreadPoolWindowStats {
     UIntWindowGauge queueDepth;
     UIntWindowGauge busyWorkers;
     UIntWindowGauge idleWorkers;
-    UIntWindowGauge borrowedWorkers;
     std::uint32_t pressuredSamples = 0;
     std::uint32_t saturatedSamples = 0;
     std::string lastStatus = "unknown";
@@ -131,7 +130,6 @@ struct ThreadPoolWindowStats {
         queueDepth.observe(pool.queueDepth);
         busyWorkers.observe(pool.busyWorkerCount);
         idleWorkers.observe(pool.idleWorkerCount);
-        borrowedWorkers.observe(pool.borrowedWorkerCount);
         lastStatus = pool.status;
         if (pool.status == "pressured") ++pressuredSamples;
         if (pool.status == "saturated") ++saturatedSamples;
@@ -170,11 +168,9 @@ model::ThreadPoolSnapshot aggregateThreadPoolSnapshot(const model::ThreadPoolMan
         .name = "__aggregate__",
         .queueDepth = snapshot.totalQueueDepth,
         .workerCount = snapshot.totalWorkerCount,
-        .borrowedWorkerCount = snapshot.totalBorrowedWorkerCount,
         .idleWorkerCount = snapshot.totalIdleWorkerCount,
         .busyWorkerCount = busy,
         .hasIdleWorker = snapshot.totalIdleWorkerCount > 0,
-        .hasBorrowedWorker = snapshot.totalBorrowedWorkerCount > 0,
         .stopped = false,
         .pressureRatio = snapshot.maxPressureRatio,
         .status = normalizeThreadPoolStatus(snapshot.overallStatus)
@@ -387,10 +383,6 @@ struct RuntimeWindowAccumulator {
                 .idleWorkersAvg = stats.idleWorkers.avg(),
                 .idleWorkersMax = static_cast<std::uint32_t>(stats.idleWorkers.max),
                 .idleWorkersLast = static_cast<std::uint32_t>(stats.idleWorkers.last),
-                .borrowedWorkersMin = static_cast<std::uint32_t>(stats.borrowedWorkers.min),
-                .borrowedWorkersAvg = stats.borrowedWorkers.avg(),
-                .borrowedWorkersMax = static_cast<std::uint32_t>(stats.borrowedWorkers.max),
-                .borrowedWorkersLast = static_cast<std::uint32_t>(stats.borrowedWorkers.last),
                 .pressuredSampleCount = stats.pressuredSamples,
                 .saturatedSampleCount = stats.saturatedSamples,
                 .queueDepthHighWater = stats.queueDepth.max,

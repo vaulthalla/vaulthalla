@@ -1,184 +1,120 @@
 #include "concurrency/ThreadPool.hpp"
-#include "concurrency/ThreadPoolManager.hpp"
 
-#include <algorithm>
-#include <ranges>
+namespace vh::concurrency {
 
-using namespace vh::concurrency;
-
-ThreadPool::ThreadPool(const std::shared_ptr<std::atomic<bool> > &interruptFlag,
-                       unsigned int nThreads)
-    : interruptFlag(interruptFlag), stopFlag(false) {
+ThreadPool::ThreadPool(const unsigned int nThreads) {
+    workers_.reserve(nThreads);
     for (unsigned int i = 0; i < nThreads; ++i) {
-        spawnWorker();
+        {
+            std::scoped_lock lock(state_->mutex);
+            ++state_->live;
+        }
+        auto exited = std::make_shared<std::atomic<bool>>(false);
+        workers_.push_back({std::thread([state = state_, exited] { workerLoop(state, exited); }), exited});
     }
 }
 
-ThreadPool::~ThreadPool() {
-    stop();
+ThreadPool::~ThreadPool() { stop(); }
+
+void ThreadPool::workerLoop(const std::shared_ptr<State>& state, const std::shared_ptr<std::atomic<bool>>& exited) {
+    std::unique_lock lock(state->mutex);
+    while (true) {
+        state->work.wait(lock, [&] { return state->stopping || !state->queue.empty(); });
+        if (state->stopping) break;
+
+        auto task = std::move(state->queue.front());
+        state->queue.pop();
+        ++state->busy;
+        lock.unlock();
+        try {
+            if (task) (*task)();
+        } catch (...) {
+            // A task's failure is its own; the worker keeps serving the queue.
+        }
+        task.reset();  // release the task (and any promise it holds) outside the lock
+        lock.lock();
+        --state->busy;
+        if (state->busy == 0 && state->queue.empty()) state->exited.notify_all();  // waitIdle()
+    }
+    --state->live;
+    exited->store(true);
+    state->exited.notify_all();
 }
 
-void ThreadPool::stop(std::chrono::milliseconds gracefulTimeout) { {
-        std::scoped_lock lock(mutex);
-        std::queue<std::shared_ptr<Task> > empty;
-        std::swap(queue, empty);
-    }
-
-    stopFlag.store(true);
-    cv.notify_all();
-
-    std::vector<std::thread> threads;
+void ThreadPool::submit(std::shared_ptr<Task> task) {
     {
-        std::scoped_lock lock(mutex);
-        threads.swap(threads_);
-        idleFlags_.clear();
+        std::scoped_lock lock(state_->mutex);
+        if (state_->stopping) return;  // shutting down: the task (and its promise) is dropped
+        state_->queue.push(std::move(task));
+    }
+    state_->work.notify_one();
+}
+
+void ThreadPool::requestStop() {
+    std::queue<std::shared_ptr<Task>> dropped;
+    {
+        std::scoped_lock lock(state_->mutex);
+        state_->stopping = true;
+        std::swap(dropped, state_->queue);
+    }
+    state_->work.notify_all();
+    // `dropped` destroys the queued tasks here, outside the lock: waiters on their futures see broken_promise.
+}
+
+unsigned int ThreadPool::join(const std::chrono::steady_clock::time_point deadline) {
+    if (workers_.empty()) return 0;
+    {
+        std::unique_lock lock(state_->mutex);
+        state_->exited.wait_until(lock, deadline, [&] { return state_->live == 0; });
     }
 
-    for (auto &t: threads) {
-        if (!t.joinable()) continue;
-
-        if (t.joinable()) {
-            if (t.joinable()) {
-                auto start = std::chrono::steady_clock::now();
-                while (std::chrono::steady_clock::now() - start < gracefulTimeout) {
-                    if (t.joinable()) {
-                        try {
-                            t.join();
-                            break;
-                        } catch (...) {
-                        }
-                    }
-                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-                }
-                if (t.joinable()) t.detach(); // force release
-            }
+    // Workers that left their loop are joined; the rest are still running a task past the deadline and are detached
+    // (they hold the shared state, never this object).
+    unsigned int detached = 0;
+    for (auto& worker : workers_) {
+        if (!worker.thread.joinable()) continue;
+        if (worker.exited->load()) worker.thread.join();
+        else {
+            worker.thread.detach();
+            ++detached;
         }
     }
+    workers_.clear();
+    return detached;
 }
 
-void ThreadPool::submit(std::shared_ptr<Task> task) { {
-        std::scoped_lock lock(mutex);
-        queue.push(std::move(task));
-    }
-    cv.notify_one();
+unsigned int ThreadPool::stop(const std::chrono::milliseconds timeout) {
+    requestStop();
+    return join(std::chrono::steady_clock::now() + timeout);
+}
 
-    // Notify manager about load change
-    ThreadPoolManager::instance().signalPressureChange();
+bool ThreadPool::waitIdle(const std::chrono::steady_clock::time_point deadline) {
+    std::unique_lock lock(state_->mutex);
+    return state_->exited.wait_until(lock, deadline, [&] { return state_->busy == 0 && state_->queue.empty(); });
 }
 
 size_t ThreadPool::queueDepth() const {
-    std::scoped_lock lock(mutex);
-    return queue.size();
-}
-
-bool ThreadPool::hasIdleWorker() const {
-    std::scoped_lock lock(mutex);
-    return std::ranges::any_of(idleFlags_, [](auto &flag) { return flag->load(); });
-}
-
-bool ThreadPool::isUnderloaded() const {
-    return queueDepth() == 0;
-}
-
-bool ThreadPool::hasBorrowedWorker() const {
-    return borrowedCount_.load() > 0;
-}
-
-ThreadPool::WorkerHandle ThreadPool::takeWorker() {
-    std::scoped_lock lock(mutex);
-    if (threads_.empty()) throw std::runtime_error("No workers to give");
-    auto t = std::move(threads_.back());
-    threads_.pop_back();
-
-    auto f = idleFlags_.back();
-    idleFlags_.pop_back();
-
-    return {std::move(t), f};
-}
-
-void ThreadPool::addWorker(std::thread t, std::shared_ptr<std::atomic<bool> > flag) {
-    std::scoped_lock lock(mutex);
-    threads_.push_back(std::move(t));
-    idleFlags_.push_back(std::move(flag));
-}
-
-void ThreadPool::decrementBorrowedWorkerCount() {
-    auto current = borrowedCount_.load();
-    while (current > 0 && !borrowedCount_.compare_exchange_weak(current, current - 1)) {}
-}
-
-ThreadPool::WorkerHandle ThreadPool::giveWorker() {
-    return takeWorker();
-}
-
-ThreadPool::WorkerHandle ThreadPool::returnBorrowedWorker() {
-    auto worker = takeWorker();
-    decrementBorrowedWorkerCount();
-    return worker;
-}
-
-void ThreadPool::acceptWorker(std::thread t, std::shared_ptr<std::atomic<bool> > flag) {
-    addWorker(std::move(t), std::move(flag));
-    borrowedCount_.fetch_add(1);
-}
-
-void ThreadPool::acceptReturnedWorker(std::thread t, std::shared_ptr<std::atomic<bool> > flag) {
-    addWorker(std::move(t), std::move(flag));
+    std::scoped_lock lock(state_->mutex);
+    return state_->queue.size();
 }
 
 unsigned int ThreadPool::workerCount() const {
-    std::scoped_lock lock(mutex);
-    return static_cast<unsigned int>(threads_.size());
+    std::scoped_lock lock(state_->mutex);
+    return state_->live;
 }
 
 ThreadPool::Snapshot ThreadPool::snapshot() const {
-    std::scoped_lock lock(mutex);
-
-    const auto workerCount = static_cast<unsigned int>(threads_.size());
-    const auto idleWorkerCount = static_cast<unsigned int>(std::ranges::count_if(
-        idleFlags_,
-        [](const auto& flag) { return flag && flag->load(); }
-    ));
-
+    std::scoped_lock lock(state_->mutex);
+    const auto workers = state_->live;
+    const auto busy = std::min(state_->busy, workers);
     return {
-        .queueDepth = queue.size(),
-        .workerCount = workerCount,
-        .borrowedWorkerCount = borrowedCount_.load(),
-        .idleWorkerCount = idleWorkerCount,
-        .busyWorkerCount = workerCount > idleWorkerCount ? workerCount - idleWorkerCount : 0,
-        .hasIdleWorker = idleWorkerCount > 0,
-        .hasBorrowedWorker = borrowedCount_.load() > 0,
-        .stopped = stopFlag.load()
+        .queueDepth = state_->queue.size(),
+        .workerCount = workers,
+        .idleWorkerCount = workers - busy,
+        .busyWorkerCount = busy,
+        .hasIdleWorker = workers > busy,
+        .stopped = state_->stopping,
     };
 }
 
-void ThreadPool::spawnWorker() {
-    auto flag = std::make_shared<std::atomic<bool> >(true); // idle at start
-    idleFlags_.push_back(flag);
-
-    threads_.emplace_back([this, flag] {
-        while (true) {
-            std::shared_ptr<Task> task; {
-                std::unique_lock lock(mutex);
-                cv.wait(lock, [this] {
-                    return stopFlag.load() || !queue.empty();
-                });
-
-                if (stopFlag.load() && queue.empty()) break;
-
-                task = std::move(queue.front());
-                queue.pop();
-            }
-
-            if (task) {
-                flag->store(false);
-                try {
-                    (*task)();
-                } catch (...) {
-                    // log and swallow so shutdown isn't blocked
-                }
-                flag->store(true);
-            }
-        }
-    });
 }

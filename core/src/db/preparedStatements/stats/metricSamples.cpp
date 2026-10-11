@@ -24,7 +24,6 @@ void vh::db::Connection::initPreparedStatsMetricSamples() const {
                 queue_depth_min, queue_depth_avg, queue_depth_max, queue_depth_last,
                 busy_workers_min, busy_workers_avg, busy_workers_max, busy_workers_last,
                 idle_workers_min, idle_workers_avg, idle_workers_max, idle_workers_last,
-                borrowed_workers_min, borrowed_workers_avg, borrowed_workers_max, borrowed_workers_last,
                 pressured_sample_count, saturated_sample_count, queue_depth_high_water,
                 pressure_high_water, last_status
             )
@@ -34,8 +33,7 @@ void vh::db::Connection::initPreparedStatsMetricSamples() const {
                 $10, $11, $12, $13,
                 $14, $15, $16, $17,
                 $18, $19, $20, $21,
-                $22, $23, $24, $25,
-                $26, $27, $28, $29, $30
+                $22, $23, $24, $25, $26
             )
             ON CONFLICT (pool_name, window_start) DO UPDATE SET
                 window_end = EXCLUDED.window_end,
@@ -57,10 +55,6 @@ void vh::db::Connection::initPreparedStatsMetricSamples() const {
                 idle_workers_avg = EXCLUDED.idle_workers_avg,
                 idle_workers_max = EXCLUDED.idle_workers_max,
                 idle_workers_last = EXCLUDED.idle_workers_last,
-                borrowed_workers_min = EXCLUDED.borrowed_workers_min,
-                borrowed_workers_avg = EXCLUDED.borrowed_workers_avg,
-                borrowed_workers_max = EXCLUDED.borrowed_workers_max,
-                borrowed_workers_last = EXCLUDED.borrowed_workers_last,
                 pressured_sample_count = EXCLUDED.pressured_sample_count,
                 saturated_sample_count = EXCLUDED.saturated_sample_count,
                 queue_depth_high_water = EXCLUDED.queue_depth_high_water,

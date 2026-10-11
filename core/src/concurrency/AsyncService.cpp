@@ -45,12 +45,14 @@ void AsyncService::start() {
     log::Registry::runtime()->info("[{}] Service started.", serviceName_);
 }
 
-void AsyncService::stop() {
-    const bool wasRunning = isRunning();
-    if (!wasRunning && !worker_.joinable()) return;
-
-    if (wasRunning) log::Registry::runtime()->info("[{}] Stopping service...", serviceName_);
-    interruptFlag_.store(true, std::memory_order_release);
+void AsyncService::requestStop() {
+    if (!isRunning() && !worker_.joinable()) return;
+    {
+        std::scoped_lock lock(stopMutex_);
+        if (interruptFlag_.exchange(true, std::memory_order_acq_rel)) return;  // already requested
+    }
+    stopCv_.notify_all();
+    log::Registry::runtime()->info("[{}] Stopping service...", serviceName_);
 
     try {
         onStop();
@@ -59,14 +61,20 @@ void AsyncService::stop() {
     } catch (...) {
         log::Registry::runtime()->error("[{}] onStop() failed: unknown exception", serviceName_);
     }
+}
 
-    if (worker_.joinable() && std::this_thread::get_id() != worker_.get_id()) {
-        worker_.join();
-    }
-
+void AsyncService::join() {
+    if (!worker_.joinable()) return;
+    if (std::this_thread::get_id() == worker_.get_id()) return;
+    worker_.join();
     running_.store(false, std::memory_order_release);
-    // Leave interruptFlag_ true until next start() resets it
-    if (wasRunning) log::Registry::runtime()->info("[{}] Service stopped.", serviceName_);
+    // interruptFlag_ stays true until the next start() resets it
+    log::Registry::runtime()->info("[{}] Service stopped.", serviceName_);
+}
+
+void AsyncService::stop() {
+    requestStop();
+    join();
 }
 
 void AsyncService::restart() {

@@ -4,12 +4,10 @@
 #include "log/Registry.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <memory>
-#include <mutex>
 #include <string>
 #include <thread>
-#include <condition_variable>
-#include <utility>
 #include <vector>
 
 namespace vh::concurrency {
@@ -45,38 +43,30 @@ public:
         unsigned int statsN = base + (rem > 4 ? 1 : 0);
         unsigned int s3N    = base + (rem > 5 ? 1 : 0);
 
-        fuse_  = std::make_shared<ThreadPool>(nullptr, fuseN);
-        sync_  = std::make_shared<ThreadPool>(nullptr, syncN);
-        thumb_ = std::make_shared<ThreadPool>(nullptr, thumbN);
-        http_  = std::make_shared<ThreadPool>(nullptr, httpN);
-        stats_ = std::make_shared<ThreadPool>(nullptr, statsN);
-        s3_    = std::make_shared<ThreadPool>(nullptr, s3N);
-
-        stopFlag_.store(false);
-
-        monitorThread_ = std::thread([this] { rebalanceLoop(); });
+        fuse_  = std::make_shared<ThreadPool>(fuseN);
+        sync_  = std::make_shared<ThreadPool>(syncN);
+        thumb_ = std::make_shared<ThreadPool>(thumbN);
+        http_  = std::make_shared<ThreadPool>(httpN);
+        stats_ = std::make_shared<ThreadPool>(statsN);
+        s3_    = std::make_shared<ThreadPool>(s3N);
     }
 
-    void shutdown() {
-        stopFlag_.store(true);
-        {
-            std::scoped_lock lock(pressureMutex_);
-            pressureFlag_.store(true); // optional, just to trip the predicate
-        }
-        pressureCv_.notify_all();  // wake the monitor
+    // Every pool is asked to stop before any is joined, and all joins share one deadline, so shutdown waits for
+    // the slowest in-flight task (bounded by `timeout`), never for the sum of the pools.
+    void shutdown(const std::chrono::milliseconds timeout = std::chrono::seconds(3)) {
+        if (!running_.exchange(false)) return;
 
-        log::Registry::runtime()->debug("[ThreadPoolManager] Waiting for monitor thread to finish...");
-        if (monitorThread_.joinable()) monitorThread_.join();
+        const auto pools = all();
+        for (const auto& pool : pools) pool->requestStop();
 
-        log::Registry::runtime()->info("[ThreadPoolManager] Stopping thread pools...");
-        if (fuse_)  fuse_->stop();
-        if (sync_)  sync_->stop();
-        if (thumb_) thumb_->stop();
-        if (http_)  http_->stop();
-        if (stats_) stats_->stop();
-        if (s3_)    s3_->stop();
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        unsigned int detached = 0;
+        for (const auto& pool : pools) detached += pool->join(deadline);
 
-        running_.store(false);
+        if (detached)
+            log::Registry::runtime()->warn("[ThreadPoolManager] {} worker(s) still running a task after {} ms; detached",
+                                           detached, timeout.count());
+        else log::Registry::runtime()->info("[ThreadPoolManager] Thread pools stopped.");
     }
 
     std::shared_ptr<ThreadPool>& fusePool() { return fuse_; }
@@ -95,14 +85,6 @@ public:
             namedSnapshot("stats", stats_),
             namedSnapshot("s3", s3_)
         };
-    }
-
-    void signalPressureChange() {
-        {
-            std::scoped_lock lock(pressureMutex_);
-            pressureFlag_.store(true);
-        }
-        pressureCv_.notify_one();
     }
 
 private:
@@ -125,64 +107,17 @@ private:
         };
     }
 
-    void rebalanceLoop() {
-        using namespace std::chrono_literals;
-        while (!stopFlag_.load()) {
-            std::unique_lock lock(pressureMutex_);
-            pressureCv_.wait(lock, [this] {
-                return stopFlag_.load() || pressureFlag_.load();
-            });
-            if (stopFlag_.load()) return;
-            pressureFlag_.store(false);
-
-            const auto fuseQ  = fuse_->queueDepth();
-            const auto syncQ  = sync_->queueDepth();
-            const auto httpQ  = http_->queueDepth();
-            const auto thumbQ = thumb_->queueDepth();
-            const auto statsQ = stats_->queueDepth();
-            const auto s3Q    = s3_->queueDepth();
-
-            // Compare backlog/worker ratios
-            const auto fuseRatio  = fuseQ  / std::max(1u, fuse_->workerCount());
-            const auto syncRatio  = syncQ  / std::max(1u, sync_->workerCount());
-            const auto httpRatio  = httpQ  / std::max(1u, http_->workerCount());
-            const auto thumbRatio = thumbQ / std::max(1u, thumb_->workerCount());
-            const auto statsRatio = statsQ / std::max(1u, stats_->workerCount());
-            const auto s3Ratio    = s3Q    / std::max(1u, s3_->workerCount());
-
-            maybeReassign(fuse_, http_, fuseRatio, httpRatio);
-            maybeReassign(fuse_, stats_, fuseRatio, statsRatio);
-            maybeReassign(sync_, thumb_, syncRatio, thumbRatio);
-            maybeReassign(s3_, http_, s3Ratio, httpRatio);
-            maybeReassign(s3_, stats_, s3Ratio, statsRatio);
-        }
-    }
-
-    static void maybeReassign(std::shared_ptr<ThreadPool>& hungry,
-                   std::shared_ptr<ThreadPool>& donor,
-                   unsigned int hungryRatio,
-                   unsigned int donorRatio) {
-        // If hungry backlog per worker > 4x donor backlog, steal
-        if (hungryRatio > donorRatio * 4 && donor->hasIdleWorker()) {
-            auto [t, flag] = donor->giveWorker();
-            hungry->acceptWorker(std::move(t), flag);
-        }
-        // Return borrowed if hungry is calm
-        else if (hungryRatio < 2 && hungry->hasBorrowedWorker()) {
-            auto [t, flag] = hungry->returnBorrowedWorker();
-            donor->acceptReturnedWorker(std::move(t), flag);
-        }
-    }
-
     static constexpr unsigned int RESERVE_FACTOR = 3, NUM_POOLS = 6;
     std::shared_ptr<ThreadPool> fuse_, sync_, thumb_, http_, stats_, s3_;
-    std::atomic<bool> stopFlag_{false};
     std::atomic<bool> running_{false};
-    std::thread monitorThread_;
     unsigned int totalThreads_{0};
-    std::condition_variable pressureCv_;
-    std::mutex pressureMutex_;
-    std::atomic<bool> pressureFlag_{false}; // true if pressure change signal received
+
+    [[nodiscard]] std::vector<std::shared_ptr<ThreadPool>> all() const {
+        std::vector<std::shared_ptr<ThreadPool>> pools;
+        for (const auto& pool : {fuse_, sync_, thumb_, http_, stats_, s3_})
+            if (pool) pools.push_back(pool);
+        return pools;
+    }
 };
 
 } // namespace vh::concurrency

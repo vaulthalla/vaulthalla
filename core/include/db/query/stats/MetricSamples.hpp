@@ -57,10 +57,6 @@ struct ThreadPoolSample {
     std::uint32_t idleWorkersMax = 0;
     std::uint32_t idleWorkersLast = 0;
 
-    std::uint32_t borrowedWorkersMin = 0;
-    double borrowedWorkersAvg = 0.0;
-    std::uint32_t borrowedWorkersMax = 0;
-    std::uint32_t borrowedWorkersLast = 0;
 
     std::uint32_t pressuredSampleCount = 0;
     std::uint32_t saturatedSampleCount = 0;

@@ -2,7 +2,9 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 
@@ -20,8 +22,15 @@ public:
     virtual ~AsyncService();
 
     virtual void start();
+    // requestStop() + join(). Manager stops services in two phases (request all, then join each) so shutdown
+    // takes as long as the slowest service, not the sum of all of them.
     virtual void stop();
     virtual void restart();
+
+    // Sets the interrupt flag, wakes lazySleep() and runs onStop(). Never blocks; safe to call more than once.
+    void requestStop();
+    // Joins the worker thread (after requestStop()).
+    void join();
 
     [[nodiscard]] bool isRunning() const { return running_.load(std::memory_order_acquire); }
     [[nodiscard]] virtual Status status() const;
@@ -42,27 +51,17 @@ protected:
                !running_.load(std::memory_order_relaxed);
     }
 
-    // Sleeps for up to `total`, waking periodically to honor interrupts.
-    // Returns true if it slept the full duration, false if interrupted early.
-    template <class Rep, class Period, class TickRep = long long, class TickPeriod = std::milli>
-    bool lazySleep(std::chrono::duration<Rep, Period> total,
-                   std::chrono::duration<TickRep, TickPeriod> tick = std::chrono::milliseconds(250)) {
-        using namespace std::chrono;
-
-        if (total <= total.zero()) return true;
-        if (tick <= tick.zero()) tick = milliseconds(1);
-
-        auto remaining = duration_cast<milliseconds>(total);
-        auto step      = duration_cast<milliseconds>(tick);
-
-        while (!shouldStop() && remaining.count() > 0) {
-            const auto s = (remaining < step) ? remaining : step;
-            std::this_thread::sleep_for(s);
-            remaining -= s;
-        }
-
-        return remaining.count() <= 0;
+    // Sleeps for up to `total`; returns true if it slept the full duration, false as soon as a stop is requested.
+    template <class Rep, class Period>
+    bool lazySleep(const std::chrono::duration<Rep, Period> total) {
+        if (total <= total.zero()) return !shouldStop();
+        std::unique_lock lock(stopMutex_);
+        return !stopCv_.wait_for(lock, total, [this] { return shouldStop(); });
     }
+
+private:
+    std::mutex stopMutex_;
+    std::condition_variable stopCv_;
 };
 
 }

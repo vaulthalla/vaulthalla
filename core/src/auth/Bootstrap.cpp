@@ -13,6 +13,7 @@
 #include <cerrno>
 #include <cstring>
 #include <fcntl.h>
+#include <fstream>
 #include <sys/stat.h>
 #include <stdexcept>
 #include <system_error>
@@ -24,6 +25,19 @@ namespace {
 
 // Seeded by every install before 1.8.0. Kept only to recognise and replace it.
 constexpr const char* kRetiredDefaultPassword = "vh!adm1n";
+
+// Digest of the last admin password hash verified not to be the retired default. The Argon2 verify costs ~0.3 s and
+// ran on every start; it now runs again only when admin's hash changed (any new password is a new hash).
+constexpr const char* kLegacyCheckMarkerName = ".legacy_default_password_checked";
+
+std::filesystem::path legacyCheckMarker() { return paths::getBackingPath() / kLegacyCheckMarkerName; }
+
+std::string readLegacyCheckMarker() {
+    std::ifstream in(legacyCheckMarker());
+    std::string line;
+    std::getline(in, line);
+    return line;
+}
 
 [[noreturn]] void throwErrno(const std::string& what) {
     throw std::system_error(errno, std::generic_category(), what);
@@ -160,7 +174,19 @@ bool retireLegacyDefaultPassword() {
         return res.empty() ? std::optional<std::pair<unsigned int, std::string>>{}
                            : std::make_optional(std::make_pair(res[0][0].as<unsigned int>(), res[0][1].as<std::string>()));
     });
-    if (!admin || !crypto::hash::verifyPassword(kRetiredDefaultPassword, admin->second)) return false;
+    if (!admin) return false;
+
+    const auto fingerprint = crypto::hash::tokenDigest(admin->second);
+    if (readLegacyCheckMarker() == fingerprint) return false;
+    if (!crypto::hash::verifyPassword(kRetiredDefaultPassword, admin->second)) {
+        try {
+            writePrivateFileAtomically(legacyCheckMarker(), fingerprint + "\n");
+        } catch (const std::exception& e) {
+            // Best effort: without the marker the next start just verifies again.
+            log::Registry::vaulthalla()->debug("[bootstrap] Could not record the legacy password check: {}", e.what());
+        }
+        return false;
+    }
 
     const auto hash = issueInitialCredential();
     db::Transactions::exec("auth::bootstrap::retireLegacy", [&](pqxx::work& txn) {

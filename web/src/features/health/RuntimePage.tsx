@@ -141,7 +141,6 @@ interface Pool {
   worker_count: number | null
   busy_worker_count: number | null
   idle_worker_count: number | null
-  borrowed_worker_count: number | null
   queue_depth: number | null
   pressure_ratio: number | null
   stopped: boolean | null
@@ -153,7 +152,6 @@ const poolColumns: Column<Pool>[] = [
   { key: 'workers', header: 'Workers', cell: p => <span className="tabular">{formatInt(p.worker_count)}</span>, sortValue: p => p.worker_count, className: 'text-right', headerClassName: 'text-right', hideBelow: 'sm' },
   { key: 'busy', header: 'Busy', cell: p => <span className="tabular">{formatInt(p.busy_worker_count)}</span>, sortValue: p => p.busy_worker_count, className: 'text-right', headerClassName: 'text-right', hideBelow: 'sm' },
   { key: 'idle', header: 'Idle', cell: p => <span className="tabular">{formatInt(p.idle_worker_count)}</span>, className: 'text-right', headerClassName: 'text-right', hideBelow: 'md' },
-  { key: 'borrowed', header: 'Borrowed', cell: p => <span className="tabular">{formatInt(p.borrowed_worker_count)}</span>, className: 'text-right', headerClassName: 'text-right', hideBelow: 'md' },
   { key: 'queue', header: 'Queue', cell: p => <span className="tabular">{formatInt(p.queue_depth)}</span>, sortValue: p => p.queue_depth, className: 'text-right', headerClassName: 'text-right' },
   {
     key: 'pressure',
@@ -174,7 +172,6 @@ const ThreadPoolsBody = ({ stats }: { stats: Raw }) => {
       worker_count: num(p.worker_count),
       busy_worker_count: num(p.busy_worker_count),
       idle_worker_count: num(p.idle_worker_count),
-      borrowed_worker_count: num(p.borrowed_worker_count),
       queue_depth: num(p.queue_depth),
       pressure_ratio: num(p.pressure_ratio),
       stopped: bool(p.stopped),
