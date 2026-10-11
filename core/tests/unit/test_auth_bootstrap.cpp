@@ -188,6 +188,25 @@ TEST_F(AuthBootstrapDbTest, RestartsNeverResetTheCredentialOrRecreateADeletedFil
     EXPECT_FALSE(bootstrap::initialPasswordExposed());
 }
 
+// Every daemon start runs this. Argon2 is deliberately slow (~0.3 s a hash), and the protected principals already
+// exist after the first boot, so a reconcile on an existing database hashes nothing and stays cheap.
+TEST_F(AuthBootstrapDbTest, ReconcilingExistingPrincipalsHashesNoPasswords) {
+    const auto before = admin()->password_hash;
+    const auto start = std::chrono::steady_clock::now();
+    seed::reconcileSystemPrincipals();
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    EXPECT_LT(elapsed, std::chrono::milliseconds(250)) << "a password was hashed on a restart";
+    EXPECT_EQ(admin()->password_hash, before);
+    for (const auto* name : {"root", "system"})
+        EXPECT_NE(db::query::identities::User::getUserByName(name), nullptr) << name;
+
+    // The legacy-default check verifies a given hash once; later starts skip the Argon2 verify until it changes.
+    EXPECT_FALSE(bootstrap::retireLegacyDefaultPassword());
+    const auto again = std::chrono::steady_clock::now();
+    EXPECT_FALSE(bootstrap::retireLegacyDefaultPassword());
+    EXPECT_LT(std::chrono::steady_clock::now() - again, std::chrono::milliseconds(100)) << "admin's hash was re-verified";
+}
+
 TEST_F(AuthBootstrapDbTest, ALegacyDefaultPasswordIsReplacedOnceAndOthersAreLeftAlone) {
     db::query::identities::User::updateUserPassword(admin()->id, crypto::hash::password(kRetiredDefault));
     std::filesystem::remove(bootstrap::initialPasswordFile());

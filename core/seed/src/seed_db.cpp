@@ -43,6 +43,7 @@
 #include <optional>
 #include <cstdlib>
 #include <fstream>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -709,12 +710,22 @@ void vh::seed::reconcileSystemPrincipals() {
     log::Registry::vaulthalla()->debug("[initdb] Reconciling protected system principals...");
 
     const auto systemUid = configuredSystemUid();
-    const auto rootHash = hash::password(id::Generator({ .namespace_token = "vaulthalla-root-user" }).generate());
-    const auto systemHash = hash::password(id::Generator({ .namespace_token = "vaulthalla-system-user" }).generate());
-    // Only used if 'admin' is missing (the seed normally creates it); an existing account's password is never touched.
-    const auto adminHash = db::query::identities::User::adminUserExists()
-        ? hash::password(id::Generator({ .namespace_token = "vaulthalla-admin-unused" }).generate())
-        : auth::bootstrap::issueInitialCredential();
+
+    // The upserts below only use a password hash to insert a missing principal; an existing account's password is
+    // never touched. Argon2 is deliberately slow (most of startup time when it ran three times per boot), so hash
+    // only for the principals that don't exist yet: after the first boot, none.
+    const auto existing = db::Transactions::exec("initdb::existingSystemPrincipals", [](pqxx::work& txn) {
+        std::set<std::string> names;
+        for (const auto row : txn.exec("SELECT name FROM users WHERE name IN ('root', 'system', 'admin')"))
+            names.insert(row[0].as<std::string>());
+        return names;
+    });
+    const auto unusableHash = [&](const std::string& name, const char* token) {
+        return existing.contains(name) ? std::string{} : hash::password(id::Generator({ .namespace_token = token }).generate());
+    };
+    const auto rootHash = unusableHash("root", "vaulthalla-root-user");
+    const auto systemHash = unusableHash("system", "vaulthalla-system-user");
+    const auto adminHash = existing.contains("admin") ? std::string{} : auth::bootstrap::issueInitialCredential();
 
     db::Transactions::exec("initdb::reconcileSystemPrincipals", [&](pqxx::work& txn) {
         txn.exec("SELECT set_config('vaulthalla.bootstrap', 'on', true)");

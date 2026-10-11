@@ -9,6 +9,9 @@
 #include "log/Registry.hpp"
 
 #include <cstring>
+#include <fstream>
+#include <optional>
+#include <sstream>
 #include <thread>
 #include <atomic>
 #include <utility>
@@ -155,33 +158,43 @@ void fuse_ll_init(void* userdata, fuse_conn_info* conn) {
                               conn->max_readahead, conn->max_write);
 }
 
-void Service::stop() {
-    const bool wasRunning = isRunning();
-    if (!wasRunning && !worker_.joinable()) return;
-
-    if (wasRunning) log::Registry::fuse()->info("[FUSE] Stopping FUSE connection...");
-    interruptFlag_.store(true, std::memory_order_release);
-
-    if (wasRunning) {
-        // Proactively detach the mountpoint to unblock fuse_session_receive_buf().
-        // This is required in production as well, not only in tests.
-        const auto mountPath = paths::getMountPath();
-        lazyUmount(mountPath);
-        waitUnmounted(mountPath);
-        if (isMountedOrStale(mountPath))
-            log::Registry::fuse()->warn("[FUSE] Mountpoint {} still appears mounted/stale during stop",
-                                         mountPath.string());
+// The fusectl connection id of the FUSE mount at `p` (the minor of its st_dev), read from /proc/self/mountinfo
+// rather than stat(): stat'ing the mount root is a FUSE request this process would have to answer itself.
+static std::optional<std::string> fuseConnectionId(const stdfs::path& p) {
+    std::ifstream mountinfo("/proc/self/mountinfo");
+    std::string line;
+    while (std::getline(mountinfo, line)) {
+        // <id> <parent> <major>:<minor> <root> <mount point> ... - <fstype> ...
+        std::istringstream fields(line);
+        std::string id, parent, dev, root, mountPoint;
+        if (!(fields >> id >> parent >> dev >> root >> mountPoint)) continue;
+        if (mountPoint != p.string() || line.find(" - fuse.") == std::string::npos) continue;
+        if (const auto colon = dev.find(':'); colon != std::string::npos) return dev.substr(colon + 1);
     }
+    return std::nullopt;
+}
 
-    // Wake the loop as an additional unblock path.
+void Service::onStop() {
+    const auto mountPath = paths::getMountPath();
+    const auto connection = fuseConnectionId(mountPath);
+    if (!loopActive_.load() && !connection) return;  // never mounted (or already gone)
+
+    // New lookups fail at once; the kernel ends the connection (and fuse_session_receive_buf() returns) when the
+    // last reference to the mount goes away.
+    lazyUmount(mountPath);
     if (session_) fuse_session_exit(session_);
 
-    if (worker_.joinable() && std::this_thread::get_id() != worker_.get_id())
-        worker_.join();
+    using namespace std::chrono_literals;
+    const auto deadline = std::chrono::steady_clock::now() + 1s;
+    while (loopActive_.load() && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(10ms);
+    if (!loopActive_.load() || !connection) return;
 
-    running_.store(false, std::memory_order_release);
-    // Leave interruptFlag_ true until next start() resets it.
-    if (wasRunning) log::Registry::fuse()->info("[FUSE] FUSE service stopped");
+    // Something (an open file, a shell's cwd) still holds the detached mount, so the receive loop would block
+    // forever. Aborting the connection fails its requests and wakes the loop. The mounting user owns the file.
+    std::ofstream abort("/sys/fs/fuse/connections/" + *connection + "/abort");
+    abort << "1" << std::flush;
+    log::Registry::fuse()->warn("[FUSE] Mount still referenced 1s after unmount; aborted FUSE connection {}{}",
+                                *connection, abort ? "" : " (failed)");
 }
 
 void Service::runLoop() {
@@ -230,14 +243,6 @@ void Service::runLoop() {
         return;
     }
 
-    if (fuse_set_signal_handlers(session_) != 0) {
-        log::Registry::fuse()->error("[FUSE] Failed to set signal handlers");
-        fuse_session_destroy(session_);
-        free(opts.mountpoint);
-        fuse_opt_free_args(&args);
-        return;
-    }
-
     // Working copies from a previous run hold plaintext and are no longer open anywhere.
     try {
         WorkingCopies::instance().clearStale();
@@ -247,7 +252,6 @@ void Service::runLoop() {
 
     if (fuse_session_mount(session_, opts.mountpoint) != 0) {
         log::Registry::fuse()->error("[FUSE] Failed to mount FUSE filesystem at {}", opts.mountpoint);
-        fuse_remove_signal_handlers(session_);
         fuse_session_destroy(session_);
         free(opts.mountpoint);
         fuse_opt_free_args(&args);
@@ -256,6 +260,7 @@ void Service::runLoop() {
 
     log::Registry::fuse()->info("[FUSE] Mounted FUSE filesystem at {}", opts.mountpoint);
     runtime::Deps::get().setFuseSession(session_);
+    loopActive_.store(true);
 
     while (!fuse_session_exited(session_) && !shouldStop()) {
         fuse_buf buf{};
@@ -282,11 +287,15 @@ void Service::runLoop() {
         }
     }
 
+    loopActive_.store(false);
     log::Registry::fuse()->info("[FUSE] FUSE service loop exiting");
 
-    fuse_remove_signal_handlers(session_);
     fuse_session_unmount(session_);
     runtime::Deps::get().setFuseSession(nullptr);
+    // Dispatched requests reply on this session: let them finish before it is freed.
+    if (const auto& pool = ThreadPoolManager::instance().fusePool();
+        pool && !pool->waitIdle(std::chrono::steady_clock::now() + std::chrono::seconds(2)))
+        log::Registry::fuse()->warn("[FUSE] FUSE requests still running 2s after the loop ended");
     fuse_session_destroy(session_);
     session_ = nullptr;
 

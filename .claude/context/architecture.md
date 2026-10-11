@@ -46,6 +46,14 @@ Fwd.hpp once it's forward-declared in more than one place. The `vh_usage` librar
 `core/main/main.cpp` boot sequence: config + log registries → DB init + prepared statements +
 optional seed → runtime deps → storage wiring (+ derived-cache startup sweep) → `runtime::Manager` start → wait
 for SIGINT/SIGTERM. Shutdown: `Manager::stopAll` → `preview::derive::Queue::shutdown()` → thread pools.
+Shutdown is bounded and fast (restart ≈1 s; guard: `test_shutdown_bounds.cpp`): the SIGTERM/SIGINT handler only sets
+an atomic and writes an eventfd; a watcher thread (started before startup) wakes main and `_Exit`s 10 s after the first
+signal whatever main is doing; a second signal exits at once. `stopAll` calls `requestStop()` on every service but FUSE
+(non-blocking: flag + cv notify + `onStop()`), joins them, then stops FUSE last. Services sleep with `lazySleep` (cv,
+woken by stop), never `sleep_for` loops. FUSE `onStop()` lazily unmounts, ends the session, and after 1 s aborts the
+fusectl connection (minor from `/proc/self/mountinfo`) if the mount is still referenced. Thread pools never lend
+workers; `ThreadPoolManager::shutdown` requests every pool's stop, then joins all against one 3 s deadline (stragglers
+are detached; workers hold only shared state).
 
 `core/src/runtime/Manager.cpp` owns the service lifecycle. It runs a watchdog every 2s and restarts
 a service after 500ms. Start order:

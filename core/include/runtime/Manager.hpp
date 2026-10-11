@@ -5,6 +5,7 @@
 #include "vault/Fwd.hpp"
 
 #include <atomic>
+#include <condition_variable>
 #include <csignal>
 #include <map>
 #include <memory>
@@ -98,6 +99,8 @@ private:
 
     std::thread watchdogThread;
     std::atomic<bool> watchdogRunning{false};
+    std::mutex watchdogMutex_;
+    std::condition_variable watchdogCv_;
 };
 
 }

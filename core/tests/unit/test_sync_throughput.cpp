@@ -70,7 +70,7 @@ TEST_F(SyncThroughputTest, DeleteTasksKeepStableScopedOpsAcrossThroughputGrowth)
     vh::sync::model::Throughput throughput;
     throughput.metric_type = vh::sync::model::Throughput::DELETE;
 
-    vh::concurrency::ThreadPool pool(std::make_shared<std::atomic<bool>>(false), 4);
+    vh::concurrency::ThreadPool pool(4);
     std::vector<std::future<ExpectedFuture>> futures;
     std::vector<std::shared_ptr<vh::sync::model::ScopedOp>> deleteOps;
     futures.reserve(kDeleteTasks);

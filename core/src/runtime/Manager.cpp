@@ -175,10 +175,20 @@ void Manager::stopAll(const int signal) {
         return serviceStopEntries();
     }();
 
+    // Every service but FUSE is asked to stop at once and then joined, so shutdown takes as long as the slowest
+    // service instead of the sum of all of them (each used to wait out its own sleep in turn). FUSE goes last, on
+    // its own: HTTP upload staging and other services read and write through the mount until they have stopped.
+    const auto start = std::chrono::steady_clock::now();
     for (const auto& entry : entries)
-        stopService(entry, signal);
+        if (entry.service && entry.name != "FUSE") entry.service->requestStop();
+    for (const auto& entry : entries)
+        if (entry.name != "FUSE") stopService(entry, signal);
+    for (const auto& entry : entries)
+        if (entry.name == "FUSE") stopService(entry, signal);
 
-    log::Registry::runtime()->debug("[ServiceManager] All services stopped.");
+    log::Registry::runtime()->info("[ServiceManager] All services stopped in {} ms.",
+                                   std::chrono::duration_cast<std::chrono::milliseconds>(
+                                       std::chrono::steady_clock::now() - start).count());
 }
 
 void Manager::restartService(const std::string& name) {
@@ -314,7 +324,8 @@ void Manager::startWatchdog() {
                 restartService(name);
             }
 
-            std::this_thread::sleep_for(kWatchdogInterval);
+            std::unique_lock lock(watchdogMutex_);
+            watchdogCv_.wait_for(lock, kWatchdogInterval, [this] { return !watchdogRunning.load(); });
         }
 
         log::Registry::runtime()->info("[ServiceManager] Watchdog stopped.");
@@ -322,7 +333,11 @@ void Manager::startWatchdog() {
 }
 
 void Manager::stopWatchdog() {
-    if (!watchdogRunning.exchange(false)) return;
+    {
+        std::scoped_lock lock(watchdogMutex_);
+        if (!watchdogRunning.exchange(false)) return;
+    }
+    watchdogCv_.notify_all();
     if (watchdogThread.joinable()) watchdogThread.join();
 }
 

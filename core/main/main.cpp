@@ -34,7 +34,9 @@
 #include <chrono>
 #include <csignal>
 #include <thread>
+#include <cstdint>
 #include <execinfo.h>
+#include <sys/eventfd.h>
 #include <sys/prctl.h>
 #include <unistd.h>
 
@@ -44,14 +46,21 @@ using namespace vh::storage;
 using namespace vh::fs;
 
 namespace {
-std::atomic shouldExit = false;
+// systemd SIGKILLs after TimeoutStopSec (30s). An orderly shutdown that hasn't finished by this deadline ends the
+// process itself, which also closes /dev/fuse and so aborts the mount.
+constexpr auto kShutdownDeadline = std::chrono::seconds(10);
 
+std::atomic<bool> shouldExit{false};
+std::atomic<int> receivedSignal{0};
+int signalWakeFd = -1;
+
+// Async-signal-safe only (atomics, write, _exit): logging from here could deadlock on a lock the interrupted
+// thread holds. The main thread reports the signal. A second SIGTERM/SIGINT during shutdown exits at once.
 void signalHandler(const int signum) {
-    vh::log::Registry::vaulthalla()->info(
-        "[!] Signal {} received. Shutting down gracefully...",
-        std::to_string(signum)
-    );
-    shouldExit = true;
+    if (shouldExit.exchange(true)) ::_exit(128 + signum);
+    receivedSignal.store(signum);
+    const std::uint64_t one = 1;
+    (void)!::write(signalWakeFd, &one, sizeof one);
 }
 
 // A crashing FUSE daemon must die at once. A core dump first waits for every thread to stop, but a thread in close()
@@ -86,9 +95,40 @@ void installCrashGuard() {
         ::sigaction(sig, &action, nullptr);
 }
 
-void registerSignalHandlers() {
-    std::signal(SIGINT, signalHandler);
-    std::signal(SIGTERM, signalHandler);
+// Installs the SIGTERM/SIGINT handler and starts the shutdown watcher, before anything else. From the first signal
+// on, the process has kShutdownDeadline to exit, whatever main is doing: still starting up (a database that never
+// answers), or stuck shutting down. The watcher also wakes main, which the handler itself can't safely do.
+void startShutdownWatcher() {
+    signalWakeFd = ::eventfd(0, EFD_CLOEXEC);
+    if (signalWakeFd < 0) throw std::runtime_error(std::string("eventfd: ") + std::strerror(errno));
+
+    struct sigaction action{};
+    action.sa_handler = signalHandler;
+    action.sa_flags = SA_RESTART;
+    sigemptyset(&action.sa_mask);
+    for (const int sig : {SIGINT, SIGTERM}) ::sigaction(sig, &action, nullptr);
+
+    std::thread([] {
+        std::uint64_t count = 0;
+        while (::read(signalWakeFd, &count, sizeof count) < 0)
+            if (errno != EINTR) {
+                // Not expected for an eventfd; fall back to polling the flag the handler sets.
+                while (!shouldExit.load()) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                break;
+            }
+        shouldExit.notify_all();
+
+        std::this_thread::sleep_for(kShutdownDeadline);
+        static constexpr char kMessage[] = "[vaulthalla] shutdown did not finish within 10s; exiting now\n";
+        (void)!::write(STDERR_FILENO, kMessage, sizeof(kMessage) - 1);
+        std::_Exit(EXIT_FAILURE);
+    }).detach();
+}
+
+// Blocks until SIGTERM/SIGINT (no polling interval to wait out).
+void waitForShutdownSignal() {
+    while (!shouldExit.load()) shouldExit.wait(false);
+    vh::log::Registry::vaulthalla()->info("[!] Signal {} received. Shutting down gracefully...", receivedSignal.load());
 }
 
 // --- Core Init ---
@@ -185,12 +225,10 @@ int main() {
 
         vh::preview::render::PdfiumLibrary pdfium;
 
+        startShutdownWatcher();  // first: its deadline also covers startup and static destruction after main
         startVaulthalla();
-        registerSignalHandlers();
 
-        while (!shouldExit)
-            std::this_thread::sleep_for(std::chrono::seconds(1));
-
+        waitForShutdownSignal();
         shutdownVaulthalla();
         return EXIT_SUCCESS;
 

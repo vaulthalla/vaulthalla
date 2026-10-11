@@ -394,7 +394,7 @@ DashboardCardSummary dashboardOverviewBuildThreadPools(const DashboardOverviewCa
         if (pool.stopped) ++stoppedPoolCount;
         if (pool.status != "healthy" && pool.status != "idle" && pool.status != "normal" && pool.status != "ready") ++degradedPoolCount;
     }
-    const auto nonBusyWorkers = static_cast<std::uint64_t>(stats.totalIdleWorkerCount + stats.totalBorrowedWorkerCount);
+    const auto nonBusyWorkers = static_cast<std::uint64_t>(stats.totalIdleWorkerCount);
     const auto busyWorkers =
         stats.totalWorkerCount > nonBusyWorkers ? static_cast<std::uint64_t>(stats.totalWorkerCount) - nonBusyWorkers : 0;
 
@@ -404,7 +404,6 @@ DashboardCardSummary dashboardOverviewBuildThreadPools(const DashboardOverviewCa
     dashboardOverviewAddMetric(card, "pools", "Pools", dashboardOverviewFormatCount(poolCount), "info", static_cast<double>(poolCount));
     dashboardOverviewAddMetric(card, "busy", "Busy", dashboardOverviewFormatCount(busyWorkers), busyWorkers == 0 ? "healthy" : "info", static_cast<double>(busyWorkers));
     dashboardOverviewAddMetric(card, "idle", "Idle", dashboardOverviewFormatCount(stats.totalIdleWorkerCount), "info", static_cast<double>(stats.totalIdleWorkerCount));
-    dashboardOverviewAddMetric(card, "borrowed", "Borrowed", dashboardOverviewFormatCount(stats.totalBorrowedWorkerCount), stats.totalBorrowedWorkerCount == 0 ? "healthy" : "info", static_cast<double>(stats.totalBorrowedWorkerCount));
     dashboardOverviewAddMetric(card, "pressured", "Pressured", dashboardOverviewFormatCount(stats.pressuredPoolCount), stats.pressuredPoolCount == 0 ? "healthy" : "warning", static_cast<double>(stats.pressuredPoolCount));
     dashboardOverviewAddMetric(card, "saturated", "Saturated", dashboardOverviewFormatCount(stats.saturatedPoolCount), stats.saturatedPoolCount == 0 ? "healthy" : "error", static_cast<double>(stats.saturatedPoolCount));
     dashboardOverviewAddMetric(card, "stopped", "Stopped", dashboardOverviewFormatCount(stoppedPoolCount), stoppedPoolCount == 0 ? "healthy" : "error", static_cast<double>(stoppedPoolCount));

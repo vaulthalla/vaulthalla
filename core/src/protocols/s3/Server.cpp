@@ -42,7 +42,6 @@ void Server::onAccept(tcp::socket socket) {
     }
 
     pool->submit(std::make_unique<task::AsyncSession>(std::move(session)));
-    pools.signalPressureChange();
 }
 
 } // namespace vh::protocols::s3

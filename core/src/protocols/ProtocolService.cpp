@@ -17,7 +17,8 @@
 namespace vh::protocols {
 
 namespace {
-constexpr std::chrono::seconds kHttpSessionDrainTimeout{10};
+// Sessions are cancelled before the drain; one still alive after this is stuck in a slow call.
+constexpr std::chrono::seconds kHttpSessionDrainTimeout{3};
 }
 
 ProtocolService::ProtocolService() : AsyncService("ProtocolService") {}
@@ -39,7 +40,7 @@ void ProtocolService::runLoop() {
         initThreatIntelligence();
         initProtocols();
 
-        while (!shouldStop()) lazySleep(std::chrono::seconds(1), std::chrono::milliseconds(100));
+        while (!shouldStop()) lazySleep(std::chrono::seconds(1));
 
         shutdownProtocols();
     } catch (const std::exception& e) {

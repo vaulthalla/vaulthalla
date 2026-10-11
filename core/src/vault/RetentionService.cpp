@@ -25,7 +25,7 @@ void RetentionService::runLoop() {
 
         for (auto waited = std::chrono::milliseconds(0); waited < kInterval && !shouldStop(); waited += tick) {
             if (retention::takePassRequest()) break;
-            std::this_thread::sleep_for(tick);
+            lazySleep(tick);  // a stop request wakes it at once
         }
     }
 }

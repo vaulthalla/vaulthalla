@@ -55,8 +55,8 @@ export const CATALOG: CatalogCard[] = [
     title: 'Thread pools',
     description: 'Worker pressure across FUSE, sync, thumbnails, HTTP and stats.',
     href: '/health/runtime#thread-pools',
-    priority: ['pressure', 'queue', 'saturated', 'pressured', 'workers', 'busy', 'idle', 'borrowed', 'pools', 'stopped', 'degraded'],
-    quietWhenZero: ['saturated', 'pressured', 'busy', 'borrowed', 'stopped', 'degraded'],
+    priority: ['pressure', 'queue', 'saturated', 'pressured', 'workers', 'busy', 'idle', 'pools', 'stopped', 'degraded'],
+    quietWhenZero: ['saturated', 'pressured', 'busy', 'stopped', 'degraded'],
     visual: { kind: 'series' },
   }),
   card({

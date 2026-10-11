@@ -43,6 +43,8 @@ void Controller::requeue(const std::shared_ptr<Local>& task) {
 }
 
 void Controller::onStop() {
+    // Under the lock: the run loop re-checks shouldStop() while holding it before it waits, so this can't be lost.
+    std::scoped_lock lock(pqMutex_);
     pqCv_.notify_all();
 }
 
@@ -89,6 +91,7 @@ void Controller::runLoop() {
 
         {
             std::unique_lock lock(pqMutex_);
+            if (shouldStop()) break;
             if (pq.empty()) continue;
             const auto& top = pq.top();
             const auto now = std::chrono::system_clock::now();

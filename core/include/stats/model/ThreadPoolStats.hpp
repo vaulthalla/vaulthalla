@@ -12,11 +12,9 @@ struct ThreadPoolSnapshot {
     std::string name;
     std::uint64_t queueDepth = 0;
     std::uint32_t workerCount = 0;
-    std::uint32_t borrowedWorkerCount = 0;
     std::uint32_t idleWorkerCount = 0;
     std::uint32_t busyWorkerCount = 0;
     bool hasIdleWorker = false;
-    bool hasBorrowedWorker = false;
     bool stopped = false;
     double pressureRatio = 0.0;
     std::string status = "degraded";
@@ -26,7 +24,6 @@ struct ThreadPoolManagerSnapshot {
     std::vector<ThreadPoolSnapshot> pools;
     std::uint32_t totalWorkerCount = 0;
     std::uint64_t totalQueueDepth = 0;
-    std::uint32_t totalBorrowedWorkerCount = 0;
     std::uint32_t totalIdleWorkerCount = 0;
     double maxPressureRatio = 0.0;
     std::uint32_t saturatedPoolCount = 0;
